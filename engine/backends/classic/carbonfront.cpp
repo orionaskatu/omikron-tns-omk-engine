@@ -376,7 +376,9 @@ void CarbonFrontend::close() {
         agl_ = nullptr;
         if (aglGetCurrentContext() == ctx) aglSetCurrentContext(nullptr);
         aglSetDrawable(ctx, nullptr);
-        aglDestroyContext(ctx);
+        aglDestroyContext(ctx);   // the frame's texture goes with it
+        uiTex_ = 0;
+        uiTexW_ = uiTexH_ = 0;
     }
 #endif
     if (gw_) { DisposeGWorld(static_cast<GWorldPtr>(gw_)); gw_ = nullptr; }
@@ -452,7 +454,7 @@ void* CarbonFrontend::glContext() {
     aglSwapBuffers(ctx);
     agl_ = ctx;
     std::printf("display: an AGL context on the window (%s); the frame is presented "
-                "by glDrawPixels and aglSwapBuffers from here on\n",
+                "as a textured quad and aglSwapBuffers from here on\n",
                 accelerated ? "accelerated" : "NOT accelerated");
 #endif
     return agl_;
@@ -460,38 +462,98 @@ void* CarbonFrontend::glContext() {
 
 void CarbonFrontend::presentGL(const Surface& fb) {
 #if defined(OMK_GL1_AGL)
+    // A frame the world is not swapped straight for - the interface alone,
+    // the films, a composite - as ONE TEXTURED QUAD. It was `glDrawPixels`
+    // with `glPixelZoom`, which the drivers of the period run in software:
+    // on a real iBook G3 under Mac OS X 10.2 (Rage 128) the menus were far
+    // slower than the city, whose world never takes this path (the reader,
+    // 2026-10-09). The frame stays in RGB565, the packed type in the host's
+    // own word order - the one `glDrawPixels` already read correctly on
+    // OS 9 and Tiger - into a 16-bit texture, and only the RUNS OF ROWS
+    // whose content changed since they were last sent are uploaded (a hash
+    // a row, the GL1 overlay's): a menu's text and frame stand still while
+    // only its animated parts move.
     AGLContext ctx = static_cast<AGLContext>(agl_);
     const AGLContext prev = aglGetCurrentContext();
     if (prev != ctx) aglSetCurrentContext(ctx);
     ::Rect b;
     GetPortBounds(GetWindowPort(static_cast<WindowRef>(win_)), &b);
     const int ww = b.right - b.left, wh = b.bottom - b.top;
-    // the 2D state for one image; the renderer sets all of its own in begin()
+    // the 2D state for one quad; the renderer sets all of its own in begin(),
+    // its texture cache included
     glViewport(0, 0, ww, wh);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     glOrtho(0, ww, 0, wh, -1, 1);
+    glMatrixMode(GL_TEXTURE);
+    glLoadIdentity();
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glDisable(GL_DEPTH_TEST);
-    glDisable(GL_TEXTURE_2D);
     glDisable(GL_BLEND);
     glDisable(GL_ALPHA_TEST);
     glDisable(GL_FOG);
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_LIGHTING);
     glDrawBuffer(GL_BACK);
-    // RGB565 in the host's own word order, which is what the packed type reads
+    int tw = 1, th = 1;
+    while (tw < fb.w) tw <<= 1;
+    while (th < fb.h) th <<= 1;
+    GLuint tex = static_cast<GLuint>(uiTex_);
+    if (!tex || uiTexW_ != tw || uiTexH_ != th) {
+        if (!tex) glGenTextures(1, &tex);
+        uiTex_ = tex;
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5, tw, th, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        uiTexW_ = tw;
+        uiTexH_ = th;
+        uiRowKey_.assign(static_cast<std::size_t>(th), 0);   // nothing sent yet
+    }
+    glBindTexture(GL_TEXTURE_2D, tex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    // the raster position at the TOP-left (a move by glBitmap is never
-    // clipped away, where a position on the window's edge can be), and the
-    // rows drawn downward, scaled to the window
-    glRasterPos2i(0, 0);
-    glBitmap(0, 0, 0.0f, 0.0f, 0.0f, static_cast<GLfloat>(wh), nullptr);
-    glPixelZoom(static_cast<GLfloat>(ww) / fb.w, -static_cast<GLfloat>(wh) / fb.h);
-    glDrawPixels(fb.w, fb.h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, fb.px.data());
-    glPixelZoom(1.0f, 1.0f);
+    int runStart = -1;
+    for (int y = 0; y <= fb.h; ++y) {
+        bool changed = false;
+        if (y < fb.h) {
+            const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
+            std::uint32_t h0 = 2166136261u, h1 = 0x9E3779B9u;
+            int x = 0;
+            for (; x + 2 <= fb.w; x += 2) {
+                h0 = (h0 ^ src[x]) * 16777619u;
+                h1 = (h1 ^ src[x + 1]) * 16777619u;
+            }
+            for (; x < fb.w; ++x) h0 = (h0 ^ src[x]) * 16777619u;
+            const std::uint32_t key = (h0 ^ (h1 * 3u)) | 1u;     // 0 = never sent
+            std::uint32_t& slot = uiRowKey_[static_cast<std::size_t>(y)];
+            changed = slot != key;
+            slot = key;
+        }
+        if (changed && runStart < 0) runStart = y;
+        if (!changed && runStart >= 0) {                         // a run ends: send it
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, GL_RGB,
+                            GL_UNSIGNED_SHORT_5_6_5,
+                            fb.px.data() + static_cast<std::size_t>(runStart) * fb.w);
+            runStart = -1;
+        }
+    }
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glColor4f(1, 1, 1, 1);
+    // texture row 0 is the frame's TOP, drawn at the window's top (GL's y up)
+    const float s1 = static_cast<float>(fb.w) / tw, t1 = static_cast<float>(fb.h) / th;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0);   glVertex2f(0, static_cast<float>(wh));
+    glTexCoord2f(s1, 0);  glVertex2f(static_cast<float>(ww), static_cast<float>(wh));
+    glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), 0);
+    glTexCoord2f(0, t1);  glVertex2f(0, 0);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
     aglSwapBuffers(ctx);
     if (prev != ctx) aglSetCurrentContext(prev);
 #else

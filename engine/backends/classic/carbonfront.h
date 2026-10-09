@@ -95,6 +95,9 @@ private:
     void* gw_ = nullptr;         // GWorldPtr, at the WINDOW's depth (16 or 32)
     int gwW_ = 0, gwH_ = 0, gwDepth_ = 0;
     void* agl_ = nullptr;        // AGLContext, once the GL backend asked
+    unsigned uiTex_ = 0;         // GLuint: the frame as a texture (`presentGL`)
+    int uiTexW_ = 0, uiTexH_ = 0;
+    std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent
     bool quit_ = false;
 };
 

@@ -85,12 +85,24 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     int ww = 0, wh = 0;
     omk::gl1AglWindowSize(ww, wh);
     presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovFade, ww, wh);
+    static bool refusedTold = false;
+    if (!presentedWorld && !refusedTold) {
+        refusedTold = true;
+        std::printf("gl1: the overlay REFUSED at frame %ld (window %dx%d, frame %dx%d) - "
+                    "composed on the CPU\n", n, ww, wh, fb.w, fb.h);
+    }
 }
 void PlayState::gpuPresentWorld(bool& presentedWorld) {
     if (presentedWorld || !worldVk) return;
     int ww = 0, wh = 0;
     omk::gl1AglWindowSize(ww, wh);
     presentedWorld = omk::gl1PresentWorld(worldVk, ww, wh);
+    static bool refusedTold = false;
+    if (!presentedWorld && !refusedTold) {
+        refusedTold = true;
+        std::printf("gl1: the straight present REFUSED at frame %ld (window %dx%d, frame %dx%d) - "
+                    "composed on the CPU\n", n, ww, wh, fb.w, fb.h);
+    }
 }
 bool PlayState::gpuWorldOnWindow() {
     static const bool composite = omk::envSet("OMK_GL1_COMPOSITE");
@@ -103,6 +115,17 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
         static std::string overlayWhy;
         overlayWhy = std::string("overlay (") + keep + ")";
         keep = overlayWhy.c_str();
+    }
+    // THE PATH, logged where it CHANGES: straight, the overlay, or the CPU
+    // composite (a readback) and why. A reader saw white screens in
+    // cutscenes and never in adventure mode on a real iBook G3 (Rage 128,
+    // Mac OS X 10.2, 2026-10-09), and a log is all that machine gives back;
+    // a build without the instruments has no other per-frame count.
+    static std::string lastPath;
+    const std::string path = keep ? keep : "straight";
+    if (path != lastPath) {
+        std::printf("gl1 present: %s from frame %ld\n", path.c_str(), n);
+        lastPath = path;
     }
 }
 #else

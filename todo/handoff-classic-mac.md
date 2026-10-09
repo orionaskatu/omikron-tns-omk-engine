@@ -209,6 +209,43 @@ frames (KO at 423, replay out at 511), `present` over the fade windows **26.0 /
 also carries the KO's gauges). Watched by the reader: see below.
 Not run on OS 9 (its emulation has no 3D card).
 
+## 3e. MAC OS X 10.2 JAGUAR - the reader's real PowerPC Mac (2026-10-09)
+
+The reader ran the SDL `omk-play` (`ppc-darwin.mk`, Tiger target) from a
+terminal on a real Mac under **Mac OS X 10.2**: `dyld: can't open library:
+/usr/lib/libiconv.2.dylib`. Jaguar has no libiconv (Panther and Tiger do);
+SDL 2.0.3's `SDL_iconv` imports it. It is only the first missing piece: the
+Mach-O build targets 10.4 (`-mmacosx-version-min=10.4`, GCC 14's static
+runtime against Tiger's libSystem, a Cocoa SDL port for 10.3+), so that
+binary is not for Jaguar. The route for 10.2 is the CARBON `OMKPlay` (CFM,
+runs on OS 9 and Tiger; Carbon runs on every Mac OS X) - handed over as
+`engine/build/classic/jaguar/` (`OMKPlay` with its fork as `._OMKPlay` on
+the reader's FAT32 stick, `OMKPlay.bin` MacBinary as the fallback, both
+`make classic` of 2026-10-09 at `4b9d27d` + the profile fix, AGL inside;
+`omk.args` with the relative paths `fr` / `tables`). **It RUNS on the
+reader's iBook G3 under 10.2** (2026-10-09) - but "the UI are extremely slow
+(even the city is faster)". Cause read in the code: a frame the world is not
+swapped straight for (the menus, the films, a composite) went through
+`CarbonFrontend::presentGL` as ONE `glDrawPixels` of the whole frame with
+`glPixelZoom` - a software path in the period's drivers - while the city's
+world is swapped straight and only its interface rows go up as a texture.
+Fixed the same day: `presentGL` uploads the frame as RGB565 into a 16-bit
+texture, only the runs of rows whose hash changed, and draws one quad.
+Built and `engine: classic build` green; NOT yet run on any machine - the
+reader's iBook is the test.
+
+**WHITE SCREENS IN CUTSCENES, never in adventure mode** (the reader, same
+machine, same day, on the build BEFORE the texture present). Not diagnosed.
+Ruled out by reading: the fade colour (normalised to 0..1 in
+`playframe_screens_huds.cpp`). Candidates: a frame forced onto the CPU
+composite (`keep` = `cpu mirror`, `screen`...), whose `readback()` copies the
+back buffer through a texture - on the Rage 128 that copy may fail and the
+frame show the texture's undefined content; or a refused straight/overlay
+present. The AGL build now LOGS its present path where it changes (`gl1
+present: <straight | overlay (why) | why> from frame N`, and a one-time
+`REFUSED` line), beside the existing `gl1: first readback ... centre pixel`
+line: the next `omk-out.txt` with a white cutscene answers which.
+
 ## 4. What is next, in the order proposed
 
 1. ~~**The filtering DEFAULT**~~ - **DONE 2026-10-03**, the reader's
@@ -389,5 +426,12 @@ Not run on OS 9 (its emulation has no 3D card).
 * **Tiger's display sleeps after 10 minutes** and `screencapture` then writes
   nothing: `/tmp/omk-wake` in Tiger (a 3-line `UpdateSystemActivity` program)
   wakes it without root.
+* **NO 8-BYTE ATOMIC ON 32-BIT POWERPC** (2026-10-08): GCC lowers
+  `std::atomic<long long>` to `__atomic_*_8` calls into libatomic, which the
+  ppc-darwin8 toolchain does not ship, so `omk-play` stopped LINKING once the
+  profiler's memory counters landed (`2b47a8a`, 2026-10-04) and nobody
+  rebuilt for Tiger until today. `profile.cpp` now picks the widest LOCK-FREE
+  type (`long` here; they count live memory, bounded by the address space).
+  Any new `std::atomic` of 64 bits in shared code breaks this build again.
 * **Tiger has no `seq` or `pgrep`** (`jot`, `ps | grep`); a host loop that
   greps for `done` can be fooled by a script that wrote one early.

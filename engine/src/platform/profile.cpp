@@ -17,6 +17,7 @@
 #  include <atomic>
 #  include <mutex>
 #  include <thread>
+#  include <type_traits>
 #endif
 
 // ---- THE MEMORY COUNTERS (step 4) -------------------------------------------
@@ -27,7 +28,14 @@ namespace omk::prof::mem {
 
 constexpr int kTags = 128;
 #if OMK_THREADS
-using Count = std::atomic<long long>;
+// The widest integer the CPU updates atomically on its own: 64 bits where
+// that is lock-free (arm64, x86-64, the Vita's and 3DS's ARM with `ldrexd`),
+// 32 on 32-bit PowerPC, which has no 8-byte atomic - GCC then calls
+// libatomic, which the Tiger cross-toolchain does not ship, and the link
+// failed. Every counter here is LIVE memory, bounded by the address space,
+// so 32 bits hold it on a 32-bit CPU.
+using CountValue = std::conditional_t<std::atomic<long long>::is_always_lock_free, long long, long>;
+using Count = std::atomic<CountValue>;
 #  if defined(__vita__)
 // On the Vita a `thread_local` is SHARED by the kernel threads `omk::Threads`
 // makes (`actor/pose.cpp`), so the category is the main thread's alone there:
@@ -51,8 +59,9 @@ int g_count = 1;
 
 inline void raise(Count& peak, long long v) {
 #if OMK_THREADS
-    long long cur = peak.load(std::memory_order_relaxed);
-    while (v > cur && !peak.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {}
+    CountValue cur = peak.load(std::memory_order_relaxed);
+    const CountValue want = static_cast<CountValue>(v);
+    while (want > cur && !peak.compare_exchange_weak(cur, want, std::memory_order_relaxed)) {}
 #else
     if (v > peak) peak = v;
 #endif

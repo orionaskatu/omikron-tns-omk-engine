@@ -75,6 +75,16 @@ public:
     std::string windowTitle() const override;
     void setWindowTitle(const std::string& t) override;
 
+    // THE BOOT FILMS THROUGH QUICKTIME (`Frontend::filmOpen`): the MPEG-1
+    // decoded and its sound played by the system. Under GL the picture is
+    // drawn into a 32-bit GWorld at the film's own 320x240 and sent to the
+    // card in the probe's ARGB layout, the card scaling it to the window;
+    // without GL, QuickTime draws into the window itself.
+    bool filmOpen(const std::string& hostFile) override;
+    bool filmStep() override;
+    void filmClose() override;
+    volatile bool filmDrawn_ = false;   // set by QuickTime's drawing-complete proc
+
 private:
     void blit();                 // the GWorld to the window
     void presentGL(const Surface& fb);   // the frame through the AGL context
@@ -101,6 +111,16 @@ private:
     std::vector<std::uint8_t> uiConv_;   // a run of rows converted to that format
     void probeUploads();         // times the upload formats once, on the new context
     std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent
+    bool argbOk_ = false;        // the probe: the driver takes ARGB8888 (BGRA 8-8-8-8-REV)
+    // the film playing (`filmOpen`): a QuickTime Movie, its GWorld under GL
+    void* film_ = nullptr;       // Movie
+    void* filmGw_ = nullptr;     // GWorldPtr, 32 bits, the film's own size
+    int filmW_ = 0, filmH_ = 0;
+    unsigned filmTex_ = 0;       // GLuint, power-of-two, made once
+    int filmTexW_ = 0, filmTexH_ = 0;
+    long filmFrames_ = 0;        // pictures QuickTime drew
+    int qtState_ = 0;            // 0 not asked, 1 QuickTime entered, -1 absent
+    void filmShow();             // the GWorld's picture through the AGL context
     bool quit_ = false;
 };
 

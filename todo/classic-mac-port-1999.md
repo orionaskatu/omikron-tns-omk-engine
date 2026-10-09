@@ -777,6 +777,9 @@ dropped.
    frames byte-identical to the host on OS 9 and Tiger; Sound Manager
    audio (`8b536ad`); and the FILMS without QuickTime (`32784eb`) - the
    vendored pl_mpeg decodes them on PowerPC, so QuickTime is not needed;
+   on a real G3 it was not fast enough (~0.5 fps on the reader's iBook), so
+   since 2026-10-09 the Carbon build plays them through QUICKTIME after all,
+   pl_mpeg kept as the fallback (`todo/handoff-classic-mac.md` 3f step 2a);
    the offscreen at the window's depth took Tiger's drops from a third to
    3-9%. Left in this step: playing it by hand (the keys are mapped but no
    person has driven it), and speed on real hardware.

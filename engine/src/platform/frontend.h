@@ -199,6 +199,19 @@ public:
     // at the rate a person hears.
     virtual double queuedSeconds() { return 0.0; }
 
+    // ---- THE HOST'S OWN FILM PLAYER. A frontend whose system plays MPEG-1
+    // itself - the classic Mac's QuickTime, what a 1999 Mac port would have
+    // used (`todo/classic-mac-port-1999.md`) - takes a boot film here: the
+    // picture AND its sound, decoded, paced and presented by the host. The
+    // boot chain keeps its own skip rules (any key ends a film, ALT all
+    // three; `docs/BOOT.md` 2) by pumping between steps. `filmOpen` false
+    // means not taken - no player, or this file refused - and the software
+    // decoder (`platform/movie.h`) plays it as before. `filmStep` shows
+    // what is due and answers false once the film has ended.
+    virtual bool filmOpen(const std::string& /*hostFile*/) { return false; }
+    virtual bool filmStep() { return false; }
+    virtual void filmClose() {}
+
     // ---- THE CLOCKS. What the viewer measures wall time with: a tick in
     // milliseconds that wraps as a 32-bit one does (SDL_GetTicks, the
     // original's timeGetTime), a high-resolution counter and its rate, and a

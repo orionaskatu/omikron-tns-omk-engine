@@ -11,7 +11,12 @@
 #  include <agl.h>
 #  include <gl.h>
 #endif
+#include "platform/datafs.h"      // hostPath, the films' HFS path
+
 #include <AppleEvents.h>
+#include <Files.h>
+#include <Gestalt.h>
+#include <Movies.h>
 #include <Events.h>
 #include <MacWindows.h>
 #include <QDOffscreen.h>
@@ -21,6 +26,7 @@
 #include <Timer.h>
 #include <ToolUtils.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -417,6 +423,8 @@ void CarbonFrontend::blit() {
 }
 
 void CarbonFrontend::close() {
+    filmClose();
+    if (qtState_ == 1) { ExitMovies(); qtState_ = 0; }
     closeAudio();
 #if defined(OMK_GL1_AGL)
     if (agl_) {
@@ -427,6 +435,8 @@ void CarbonFrontend::close() {
         aglDestroyContext(ctx);   // the frame's texture goes with it
         uiTex_ = 0;
         uiTexW_ = uiTexH_ = 0;
+        filmTex_ = 0;
+        filmTexW_ = filmTexH_ = 0;
     }
 #endif
     if (gw_) { DisposeGWorld(static_cast<GWorldPtr>(gw_)); gw_ = nullptr; }
@@ -700,6 +710,7 @@ void CarbonFrontend::probeUploads() {
         if (ui[f] >= 0 && (pick < 0 || ui[f] < ui[pick])) pick = f;
     }
     uiFmt_ = pick < 0 ? 0 : pick;
+    argbOk_ = ui[2] >= 0;                    // the films' layout (`filmShow`)
     // the overlay: RGBA bytes (what it sent) against ARGB 8888, both 8-bit
     // alpha and blended as the overlay draws; the conversion is in the time
     const auto fillRgba = [&](bool argb) -> const void* {
@@ -727,6 +738,225 @@ void CarbonFrontend::probeUploads() {
                 ovBytes, ovArgb, g_overlayArgb ? "ARGB8888" : "RGBA bytes");
 }
 #endif
+
+// ---- THE BOOT FILMS THROUGH QUICKTIME ------------------------------------
+//
+// What a 1999 Mac port would have done (`todo/classic-mac-port-1999.md`:
+// QuickTime for the MPEG-1 films), and what the iBook needs: the software
+// decoder showed ~0.5 fps there (2026-10-09, `GAME.mpg: 82 of 115 frames
+// dropped`) - every picture decoded by pl_mpeg, doubled on the CPU and
+// sent as a whole 640x480 frame. QuickTime decodes and paces the film and
+// plays its sound itself; only the picture it drew is sent, at its own
+// 320x240, and the card doubles it (GL_NEAREST: the same replication as the
+// CPU's exact 2x).
+
+namespace {
+pascal OSErr filmDrawn(::Movie, long refCon) {
+    reinterpret_cast<CarbonFrontend*>(refCon)->filmDrawn_ = true;
+    return noErr;
+}
+}  // namespace
+
+bool CarbonFrontend::filmOpen(const std::string& hostFile) {
+    if (!win_ || qtState_ < 0) return false;
+    if (qtState_ == 0) {
+        long version = 0;
+        if (Gestalt(gestaltQuickTime, &version) != noErr) {
+            std::printf("film: no QuickTime - the software decoder plays the films\n");
+            qtState_ = -1;
+            return false;
+        }
+        const OSErr e = EnterMovies();
+        if (e != noErr) {
+            std::printf("film: EnterMovies failed (%d) - the software decoder plays the films\n", e);
+            qtState_ = -1;
+            return false;
+        }
+        std::printf("film: QuickTime %lx entered\n", static_cast<unsigned long>(version) >> 16);
+        qtState_ = 1;
+    }
+    const std::string hp = hostPath(hostFile);
+    Str255 pname;
+    c2pstrcpy(pname, hp.c_str());
+    FSSpec spec;
+    OSErr e = FSMakeFSSpec(0, 0, pname, &spec);
+    short ref = 0;
+    if (e == noErr) e = OpenMovieFile(&spec, &ref, fsRdPerm);
+    if (e != noErr) {
+        std::printf("film: %s not opened by QuickTime (%d) - the software decoder\n", hp.c_str(), e);
+        return false;
+    }
+    ::Movie m = nullptr;
+    short resId = 0;
+    e = NewMovieFromFile(&m, ref, &resId, nullptr, newMovieActive, nullptr);
+    CloseMovieFile(ref);
+    if (e != noErr || !m) {
+        std::printf("film: %s not imported by QuickTime (%d) - the software decoder\n", hp.c_str(), e);
+        return false;
+    }
+    ::Rect box;
+    GetMovieBox(m, &box);
+    OffsetRect(&box, static_cast<short>(-box.left), static_cast<short>(-box.top));
+    filmW_ = box.right;
+    filmH_ = box.bottom;
+    ::Rect win;
+    CGrafPtr port = GetWindowPort(static_cast<WindowRef>(win_));
+    GetPortBounds(port, &win);
+    const int ww = win.right - win.left, wh = win.bottom - win.top;
+    if (agl_) {
+        // under GL: QuickTime draws into a GWorld, `filmShow` sends it
+        GWorldPtr gw = nullptr;
+        if (NewGWorld(&gw, 32, &box, nullptr, nullptr, 0) != noErr || !gw) {
+            std::printf("film: no 32-bit GWorld - the software decoder\n");
+            DisposeMovie(m);
+            return false;
+        }
+        LockPixels(GetGWorldPixMap(gw));
+        filmGw_ = gw;
+        SetMovieGWorld(m, gw, nullptr);
+    } else {
+        // the plain window: QuickTime draws into it, fitted and centred
+        SetPort(port);
+        ForeColor(blackColor);
+        PaintRect(&win);
+        const double fit = std::min(static_cast<double>(ww) / filmW_, static_cast<double>(wh) / filmH_);
+        const int ow = static_cast<int>(filmW_ * fit), oh = static_cast<int>(filmH_ * fit);
+        ::Rect r;
+        SetRect(&r, static_cast<short>((ww - ow) / 2), static_cast<short>((wh - oh) / 2),
+                static_cast<short>((ww - ow) / 2 + ow), static_cast<short>((wh - oh) / 2 + oh));
+        SetMovieGWorld(m, port, nullptr);
+        SetMovieBox(m, &r);
+    }
+    static MovieDrawingCompleteUPP drawn = NewMovieDrawingCompleteUPP(filmDrawn);
+    SetMovieDrawingCompleteProc(m, movieDrawingCallWhenChanged, drawn, reinterpret_cast<long>(this));
+    // the world's sound channel stays as it is: QuickTime opens its own
+    flushAudio();
+    film_ = m;
+    filmFrames_ = 0;
+    filmDrawn_ = false;
+    GoToBeginningOfMovie(m);
+    SetMovieVolume(m, kFullVolume);
+    StartMovie(m);
+    std::printf("film: %s through QuickTime, %dx%d, %.1f s, %s\n", hp.c_str(), filmW_, filmH_,
+                static_cast<double>(GetMovieDuration(m)) / GetMovieTimeScale(m),
+                agl_ ? (argbOk_ ? "sent to the card as ARGB8888" : "sent to the card as RGBA bytes")
+                     : "drawn into the window");
+    return true;
+}
+
+bool CarbonFrontend::filmStep() {
+    if (!film_) return false;
+    ::Movie m = static_cast<::Movie>(film_);
+    MoviesTask(m, 0);
+    if (filmDrawn_) {
+        filmDrawn_ = false;
+        ++filmFrames_;
+        if (agl_) filmShow();
+        else QDFlushPortBuffer(GetWindowPort(static_cast<WindowRef>(win_)), nullptr);
+    }
+    return !IsMovieDone(m) && GetMoviesError() == noErr;
+}
+
+void CarbonFrontend::filmClose() {
+    if (!film_) return;
+    ::Movie m = static_cast<::Movie>(film_);
+    StopMovie(m);
+    DisposeMovie(m);
+    film_ = nullptr;
+    if (filmGw_) {
+        DisposeGWorld(static_cast<GWorldPtr>(filmGw_));
+        filmGw_ = nullptr;
+    }
+    std::printf("film: %ld pictures drawn by QuickTime\n", filmFrames_);
+}
+
+void CarbonFrontend::filmShow() {
+#if defined(OMK_GL1_AGL)
+    AGLContext ctx = static_cast<AGLContext>(agl_);
+    const AGLContext prev = aglGetCurrentContext();
+    if (prev != ctx) aglSetCurrentContext(ctx);
+    PixMapHandle pm = GetGWorldPixMap(static_cast<GWorldPtr>(filmGw_));
+    const auto* base = reinterpret_cast<const std::uint8_t*>(GetPixBaseAddr(pm));
+    const int rowBytes = GetPixRowBytes(pm) & 0x3FFF;
+    ::Rect b;
+    GetPortBounds(GetWindowPort(static_cast<WindowRef>(win_)), &b);
+    const int ww = b.right - b.left, wh = b.bottom - b.top;
+    // fitted and centred, as the software path fits the film
+    const double fit = std::min(static_cast<double>(ww) / filmW_, static_cast<double>(wh) / filmH_);
+    const int ow = static_cast<int>(filmW_ * fit), oh = static_cast<int>(filmH_ * fit);
+    glViewport(0, 0, ww, wh);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glViewport((ww - ow) / 2, (wh - oh) / 2, ow, oh);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, ow, 0, oh, -1, 1);
+    glMatrixMode(GL_TEXTURE);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_FOG);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING);
+    glDrawBuffer(GL_BACK);
+    int tw = 1, th = 1;
+    while (tw < filmW_) tw <<= 1;
+    while (th < filmH_) th <<= 1;
+    GLuint tex = static_cast<GLuint>(filmTex_);
+    if (!tex || filmTexW_ != tw || filmTexH_ != th) {
+        if (!tex) glGenTextures(1, &tex);
+        filmTex_ = tex;
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        filmTexW_ = tw;
+        filmTexH_ = th;
+    }
+    glBindTexture(GL_TEXTURE_2D, tex);
+    {
+        OMK_ZONE("film: upload");
+        if (argbOk_) {
+            // a 32-bit GWorld is xRGB in memory, big-endian: one word
+            // x<<24|r<<16|g<<8|b, which BGRA 8-8-8-8-REV reads as it stands
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, rowBytes / 4);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, filmW_, filmH_, GL_BGRA,
+                            GL_UNSIGNED_INT_8_8_8_8_REV, base);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        } else {
+            const std::size_t n = static_cast<std::size_t>(filmW_) * filmH_;
+            if (uiConv_.size() < n * 4) uiConv_.resize(n * 4);
+            std::uint8_t* o = uiConv_.data();
+            for (int y = 0; y < filmH_; ++y) {
+                const std::uint8_t* s = base + static_cast<std::size_t>(y) * rowBytes;
+                for (int x = 0; x < filmW_; ++x, s += 4, o += 4) {
+                    o[0] = s[1]; o[1] = s[2]; o[2] = s[3]; o[3] = 255;
+                }
+            }
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, filmW_, filmH_, GL_RGBA, GL_UNSIGNED_BYTE,
+                            uiConv_.data());
+        }
+    }
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glColor4f(1, 1, 1, 1);
+    drawFrameQuad(ow, oh, static_cast<float>(filmW_) / tw, static_cast<float>(filmH_) / th);
+    glDisable(GL_TEXTURE_2D);
+    {
+        OMK_ZONE("film: swap");
+        aglSwapBuffers(ctx);
+    }
+    if (prev != ctx) aglSetCurrentContext(prev);
+#endif
+}
 
 void* gl1AglContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
 #if defined(OMK_GL1_AGL)

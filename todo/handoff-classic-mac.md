@@ -376,6 +376,24 @@ diagnosed past the reading below:
   9's cooperative scheduler; and a line-buffered log is not on the disk
   after a hard freeze without `FlushVol`.
 
+**Step 2a - THE FILMS THROUGH QUICKTIME, DONE 2026-10-09** (the reader:
+*"use quicktime for video"*; NOT yet run on the iBook). `Frontend::filmOpen /
+filmStep / filmClose` (`platform/frontend.h`, default "not taken"), tried by
+`playsetup_play.cpp` before the software decoder with the same skip rules;
+`CarbonFrontend` implements it: `EnterMovies`, `FSMakeFSSpec` on the
+`hostPath`, `NewMovieFromFile`, QuickTime playing the sound itself. Under GL
+the picture is drawn into a 32-bit GWorld at the film's 320x240 (a
+drawing-complete proc says when) and sent as ARGB8888 - the GWorld's xRGB
+word is BGRA 8-8-8-8-REV as it stands (RGBA bytes when the probe saw that
+refused) - and the card doubles it GL_NEAREST; without GL QuickTime draws
+into the window, fitted. Refused anywhere (no QuickTime, no MPEG importer -
+OS 9 needs the QuickTime MPEG extension), the software decoder plays it as
+before. CarbonLib's import stub carries QuickTime: no new library.
+Emulated Tiger (QuickTime 7): **EIDOS 277 pictures in 13.2 s, QUANTIC 610
+in 23.7, GAME 3065 in 108.2** - the whole films at nearly their own rate,
+colours right in a screenshot, then the world's 22050 device, the splash and
+the menu as before. `engine: classic build`, `engine: frontend gateway` green.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

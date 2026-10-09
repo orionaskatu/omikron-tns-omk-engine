@@ -105,6 +105,37 @@ int PlayState::setupPlay() {
             }
 #endif
             const auto real = fs.resolve(name);
+            // THE HOST'S PLAYER first (`Frontend::filmOpen`): on the classic
+            // Mac, QuickTime - the picture and the sound decoded by the
+            // system, the software decoder below too slow for a G3 (the
+            // reader's iBook, 2026-10-09: ~0.5 fps, `GAME.mpg: 82 of 115
+            // frames dropped`). Same skip rules as the decoder's loop.
+            if (real && front.filmOpen(*real)) {
+                const std::uint32_t t0 = front.ticksMs();
+                long steps = 0;
+                const char* end = "the film ended";
+                for (;;) {
+                    if (!front.filmStep()) break;
+                    ++steps;
+                    omk::HostInput h;
+                    if (!front.pump(h)) { skipAll = true; end = "the window closed"; break; }
+                    if (!h.held.empty() || h.pad.buttons != 0) {
+                        if (h.held.count(0x38)) skipAll = true;      // DIK_LMENU
+                        end = "skipped by a key";
+                        break;
+                    }
+                }
+                front.filmClose();
+                for (int guard = 0; guard < 300; ++guard) {
+                    omk::HostInput h;
+                    if (!front.pump(h)) break;
+                    if (h.held.empty() && h.pad.buttons == 0) break;
+                    front.delayMs(10);
+                }
+                std::printf("  %s: the host's player, %.1f s, %ld steps - %s\n", name,
+                            (front.ticksMs() - t0) / 1000.0, steps, end);
+                continue;
+            }
             omk::Movie mov;
             if (!real || !mov.open(*real)) {
                 std::printf("  %s: not decodable, skipped\n", name);

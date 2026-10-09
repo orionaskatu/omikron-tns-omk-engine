@@ -23,6 +23,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
 
 namespace omk {
@@ -75,6 +76,53 @@ pascal void soundPlayed(SndChannelPtr chan, SndCommand* cmd) {
 
 namespace {
 CarbonFrontend* g_carbon = nullptr;     // the one frontend, for gl1AglContext
+
+#if defined(OMK_GL1_AGL)
+// THE UPLOAD FORMATS a composed frame can go to the card in. Which one a
+// driver takes fastest is the driver's business: Mac OS X's take 32-bit
+// ARGB (BGRA, 8-8-8-8-REV) and 16-bit ARGB 1555 without converting, and an
+// RGB565 or an RGBA-bytes source may go through a software conversion texel
+// by texel. On the reader's iBook (Rage 128 Pro, Mac OS X 10.2) a 565 frame
+// cost 220-310 ms a menu frame to present (2026-10-09). So `probeUploads`
+// TIMES each when the context is made and the presents use the fastest.
+struct UpFmt { GLint internal; GLenum format, type; int bytes; const char* name; };
+const UpFmt kUiFmts[3] = {
+    {GL_RGB5,    GL_RGB,  GL_UNSIGNED_SHORT_5_6_5,       2, "RGB565"},
+    {GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV, 2, "ARGB1555"},
+    {GL_RGBA8,   GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,   4, "ARGB8888"},
+};
+bool g_overlayArgb = false;              // the overlay's pick (`gl1OverlayArgb`)
+
+// `n` RGB565 pixels into format `f` at `out` (format 0 is the 565 itself).
+// 1555 drops green's lowest bit; 8888 replicates the high bits down, as the
+// rest of the port widens a 565 colour.
+void convert565(int f, const std::uint16_t* in, std::size_t n, std::uint8_t* out) {
+    if (f == 1) {
+        auto* o = reinterpret_cast<std::uint16_t*>(out);
+        for (std::size_t i = 0; i < n; ++i) {
+            const unsigned p = in[i];
+            o[i] = static_cast<std::uint16_t>(0x8000u | ((p >> 1) & 0x7FE0u) | (p & 0x1Fu));
+        }
+    } else if (f == 2) {
+        auto* o = reinterpret_cast<std::uint32_t*>(out);
+        for (std::size_t i = 0; i < n; ++i) {
+            const unsigned p = in[i];
+            const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
+            o[i] = 0xFF000000u | (r5 << 3 | r5 >> 2) << 16 | (g6 << 2 | g6 >> 4) << 8 | (b5 << 3 | b5 >> 2);
+        }
+    }
+}
+
+// One quad over the window's `ww x wh`, texture rows top-down to `s1 x t1`.
+void drawFrameQuad(int ww, int wh, float s1, float t1) {
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0);   glVertex2f(0, static_cast<float>(wh));
+    glTexCoord2f(s1, 0);  glVertex2f(static_cast<float>(ww), static_cast<float>(wh));
+    glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), 0);
+    glTexCoord2f(0, t1);  glVertex2f(0, 0);
+    glEnd();
+}
+#endif
 }
 
 CarbonFrontend::~CarbonFrontend() {
@@ -449,6 +497,7 @@ void* CarbonFrontend::glContext() {
     // the surface brought up to the window now, and one black frame shown, so
     // the window holds nothing stale before the first world is drawn
     aglUpdateContext(ctx);
+    probeUploads();
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     aglSwapBuffers(ctx);
@@ -509,14 +558,17 @@ void CarbonFrontend::presentGL(const Surface& fb) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5, tw, th, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        const UpFmt& f = kUiFmts[uiFmt_];
+        glTexImage2D(GL_TEXTURE_2D, 0, f.internal, tw, th, 0, f.format, f.type, nullptr);
         uiTexW_ = tw;
         uiTexH_ = th;
         uiRowKey_.assign(static_cast<std::size_t>(th), 0);   // nothing sent yet
     }
     glBindTexture(GL_TEXTURE_2D, tex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+    const UpFmt& fmt = kUiFmts[uiFmt_];
+    glPixelStorei(GL_UNPACK_ALIGNMENT, fmt.bytes == 4 ? 4 : 2);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    OMK_ZONE("present: rows");               // the profiler (todo/debug-tools.md)
     int runStart = -1;
     for (int y = 0; y <= fb.h; ++y) {
         bool changed = false;
@@ -536,9 +588,16 @@ void CarbonFrontend::presentGL(const Surface& fb) {
         }
         if (changed && runStart < 0) runStart = y;
         if (!changed && runStart >= 0) {                         // a run ends: send it
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, GL_RGB,
-                            GL_UNSIGNED_SHORT_5_6_5,
-                            fb.px.data() + static_cast<std::size_t>(runStart) * fb.w);
+            const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(runStart) * fb.w;
+            const std::size_t n = static_cast<std::size_t>(fb.w) * static_cast<std::size_t>(y - runStart);
+            const void* send = src;
+            if (uiFmt_ != 0) {
+                if (uiConv_.size() < n * 4) uiConv_.resize(n * 4);
+                convert565(uiFmt_, src, n, uiConv_.data());
+                send = uiConv_.data();
+            }
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, fmt.format,
+                            fmt.type, send);
             runStart = -1;
         }
     }
@@ -554,14 +613,125 @@ void CarbonFrontend::presentGL(const Surface& fb) {
     glTexCoord2f(0, t1);  glVertex2f(0, 0);
     glEnd();
     glDisable(GL_TEXTURE_2D);
-    aglSwapBuffers(ctx);
+    {
+        OMK_ZONE("present: swap");
+        aglSwapBuffers(ctx);
+    }
     if (prev != ctx) aglSetCurrentContext(prev);
 #else
     (void)fb;
 #endif
 }
 
+#if defined(OMK_GL1_AGL)
+// What the window's drawable and the card are, and how long each upload
+// format takes to send a 640x480 frame AND draw it - a driver may defer a
+// texture's upload to its first use, so the draw and a `glFinish` are inside
+// the time. Best of four, the frame changed between them. A format the
+// driver refuses (a GL error) is never picked.
+void CarbonFrontend::probeUploads() {
+    GLint rb = 0, gb = 0, bb = 0, ab = 0, db = 0;
+    glGetIntegerv(GL_RED_BITS, &rb); glGetIntegerv(GL_GREEN_BITS, &gb);
+    glGetIntegerv(GL_BLUE_BITS, &bb); glGetIntegerv(GL_ALPHA_BITS, &ab);
+    glGetIntegerv(GL_DEPTH_BITS, &db);
+    std::printf("display: the drawable is %d-%d-%d bits (alpha %d), depth buffer %d bits%s\n",
+                static_cast<int>(rb), static_cast<int>(gb), static_cast<int>(bb),
+                static_cast<int>(ab), static_cast<int>(db),
+                rb <= 5 ? " - the display is in thousands of colours" : " - millions of colours");
+    ::Rect b;
+    GetPortBounds(GetWindowPort(static_cast<WindowRef>(win_)), &b);
+    const int ww = b.right - b.left, wh = b.bottom - b.top;
+    const int W = 640, H = 480, TW = 1024, TH = 512;
+    std::vector<std::uint16_t> frame(static_cast<std::size_t>(W) * H);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x)
+            frame[static_cast<std::size_t>(y) * W + x] = static_cast<std::uint16_t>(x * 37 ^ y * 101);
+    std::vector<std::uint8_t> conv(static_cast<std::size_t>(W) * H * 4);
+    std::vector<std::uint32_t> rgba(static_cast<std::size_t>(W) * H);   // the overlay's source
+    glViewport(0, 0, ww, wh);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, ww, 0, wh, -1, 1);
+    glMatrixMode(GL_TEXTURE); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glDisable(GL_DEPTH_TEST); glDisable(GL_ALPHA_TEST); glDisable(GL_FOG);
+    glDisable(GL_CULL_FACE); glDisable(GL_LIGHTING);
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glColor4f(1, 1, 1, 1);
+    // -> ms for one send-and-draw, best of four; -1 when the driver refused it
+    const auto timeOne = [&](GLint internal, GLenum format, GLenum type, int bytes,
+                             const std::function<const void*()>& source, bool blend) {
+        while (glGetError() != GL_NO_ERROR) {}
+        GLuint t = 0;
+        glGenTextures(1, &t);
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, TW, TH, 0, format, type, nullptr);
+        bool ok = glGetError() == GL_NO_ERROR;
+        if (blend) { glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_SRC_ALPHA); }
+        else glDisable(GL_BLEND);
+        double best = 1e30;
+        for (int rep = 0; rep < 4 && ok; ++rep) {
+            frame[static_cast<std::size_t>(rep)] ^= 0x0841u;
+            glFinish();
+            const std::uint64_t t0 = microseconds();
+            const void* src = source();
+            glPixelStorei(GL_UNPACK_ALIGNMENT, bytes == 4 ? 4 : 2);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W, H, format, type, src);
+            drawFrameQuad(ww, wh, static_cast<float>(W) / TW, static_cast<float>(H) / TH);
+            glFinish();
+            const double ms = static_cast<double>(microseconds() - t0) / 1000.0;
+            if (ms < best) best = ms;
+            ok = glGetError() == GL_NO_ERROR;
+        }
+        glDisable(GL_BLEND);
+        glDeleteTextures(1, &t);
+        return ok ? best : -1.0;
+    };
+    double ui[3];
+    int pick = -1;
+    for (int f = 0; f < 3; ++f) {
+        const UpFmt& u = kUiFmts[f];
+        ui[f] = timeOne(u.internal, u.format, u.type, u.bytes, [&]() -> const void* {
+            if (f == 0) return frame.data();
+            convert565(f, frame.data(), frame.size(), conv.data());
+            return conv.data();
+        }, false);
+        if (ui[f] >= 0 && (pick < 0 || ui[f] < ui[pick])) pick = f;
+    }
+    uiFmt_ = pick < 0 ? 0 : pick;
+    // the overlay: RGBA bytes (what it sent) against ARGB 8888, both 8-bit
+    // alpha and blended as the overlay draws; the conversion is in the time
+    const auto fillRgba = [&](bool argb) -> const void* {
+        for (std::size_t i = 0; i < rgba.size(); ++i) {
+            const unsigned p = frame[i];
+            const unsigned r = (p >> 8) & 0xF8, g = (p >> 3) & 0xFC, bl = (p << 3) & 0xF8, a = p & 0xFF;
+            if (argb) rgba[i] = a << 24 | r << 16 | g << 8 | bl;
+            else {
+                auto* o = reinterpret_cast<std::uint8_t*>(&rgba[i]);
+                o[0] = static_cast<std::uint8_t>(r); o[1] = static_cast<std::uint8_t>(g);
+                o[2] = static_cast<std::uint8_t>(bl); o[3] = static_cast<std::uint8_t>(a);
+            }
+        }
+        return rgba.data();
+    };
+    const double ovBytes = timeOne(GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4,
+                                   [&]() { return fillRgba(false); }, true);
+    const double ovArgb = timeOne(GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 4,
+                                  [&]() { return fillRgba(true); }, true);
+    g_overlayArgb = ovArgb >= 0 && (ovBytes < 0 || ovArgb < ovBytes);
+    glDisable(GL_TEXTURE_2D);
+    std::printf("gl1: upload probe, a 640x480 frame sent and drawn (ms, best of 4; -1 refused): "
+                "RGB565 %.1f, ARGB1555 %.1f, ARGB8888 %.1f -> the menus as %s; overlay RGBA "
+                "bytes %.1f, ARGB8888 %.1f -> %s\n", ui[0], ui[1], ui[2], kUiFmts[uiFmt_].name,
+                ovBytes, ovArgb, g_overlayArgb ? "ARGB8888" : "RGBA bytes");
+}
+#endif
+
 void* gl1AglContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
+#if defined(OMK_GL1_AGL)
+bool gl1OverlayArgb() { return g_overlayArgb; }
+#endif
 
 void gl1AglWindowSize(int& w, int& h) {
     w = h = 0;

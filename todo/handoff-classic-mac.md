@@ -289,6 +289,52 @@ cycles without pipelining. The iBook's own split will come from the log's
   0.9932 / 153), `engine: classic build` green, the Tiger GCC compiles the
   file clean. NOT yet run on the iBook.
 
+**THE iBOOK'S FIRST MEASUREMENTS (2026-10-09, the 13:54 build, the reader's
+run from the new game through the intro to the street, 3099 frames; the log
+kept as `omk-out-1354.txt` on the reader's stick).** The card is an **ATi
+Rage 128 Pro, OpenGL 1.1 ATI-1.3.28**. Means of 60 frames:
+- **the start menu**: `present` **220-310 ms** a frame (`presentGL`'s
+  RGB565 texture) plus `screens, hud` 52-175 ms (the menu's composing) -
+  "the UI extremely slow", NOT fixed by the texture present;
+- **a subtitle or a fade over the world** (`gl1 present: overlay`):
+  `present` **25-57 ms**, against 0.1-3 straight;
+- **the intro's scenes**: sim+draw 23-45 ms - `staged bodies` 8-20,
+  `submit` 7-11, `world begin, set` a steady ~8 even with 7 draws a pass
+  (on the emulated Tiger's street it is 0.2-0.5: not yet explained);
+- **the street**: sim+draw 165-200 ms (~5 fps) - `submit` **65-99**,
+  `pedestrians, traffic` **34-44**, `scripted motion: meshes placed` 13,
+  `staged bodies` 14;
+- one-off stalls: `audio` 95-137 (a voice line read and decoded on the
+  main thread - no threads on the classic build), `game frame` 123-199
+  (area loads), `controller` 81.
+- the batching saved nothing in the intro (420 draws, 420 calls - every
+  draw there a different texture); no `REFUSED`, no readback, no mirror
+  line in the whole run, so no frame was ever composed on the CPU.
+
+**Step 1b - DONE 2026-10-09, NOT yet run on the iBook**: measure what the
+log could not split, and stop guessing the upload format.
+- **`CarbonFrontend::probeUploads`**, run once when the AGL context is
+  made: a 640x480 frame sent AND drawn with `glFinish` inside the time (a
+  driver may defer an upload to the texture's first use), best of four, in
+  RGB565, ARGB1555 and ARGB8888 (BGRA 8-8-8-8-REV, Mac OS X's own layout),
+  and the overlay's RGBA bytes against ARGB8888; the presents then use the
+  fastest the driver did not refuse. It logs the drawable's bits (thousands
+  or millions of colours). On the emulated Tiger (Radeon 9700): **RGB565
+  13.4 ms, ARGB1555 7.9, ARGB8888 7.3 -> ARGB8888; overlay bytes 7.5,
+  ARGB8888 5.5 -> ARGB8888**.
+- the overlay's changed rows sent in RUNS (one call a run, not a row);
+- profiler zones `gl1: draw call` (the driver's share of submit),
+  `gl1: overlay rows`, `gl1: swap`, `present: rows`, `present: swap`;
+- the profiler looks for its `.ctl` every 30th frame while running (it
+  opened a file every frame - on the iBook, from FAT32, inside the frame).
+- Run on the emulated Tiger (the street, 240 frames): runs, exit 0,
+  sim+draw ~40 ms as before. `engine: classic build`, `engine: gl1
+  backend`, `engine: profiler` (3) green. The reader's stick now has the
+  build and `--profile omk.prof` in `omk.args` (the old one beside it as
+  `omk.args.old`); `python3 tools/omkprof.py omk.prof` reads the capture.
+  The VM shuts down without a password by
+  `osascript -e 'tell application "System Events" to shut down'`.
+
 **What is next, ranked by what it should save on the G3 (each to be
 confirmed by the iBook's `sections` line before it is started):**
 2. **The bodies posed per VERTEX, not per corner** - the original's

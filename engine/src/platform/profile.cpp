@@ -404,6 +404,7 @@ struct State {
     bool toldPaused = false;            // ...what it said, apart from the frame
     long toldSnaps = -1;
     long toldFrame = -1000000;
+    long ctlFrame = -1000000;   // the last frame the control file was looked for
     int tagsWritten = 0;                // TAG chunks already in the capture
 };
 
@@ -687,7 +688,13 @@ void tellState(long frame) {
 Run control(long frame) {
     if (!g_on || !mine()) return Run::Go;
     State& s = st();
-    if (std::FILE* c = std::fopen(hostPath(s.base + ".ctl").c_str(), "r")) {
+    // The control file is looked for every frame while PAUSED (a step must
+    // answer at once) and every 30th while running - an open that fails is
+    // a File Manager call a frame on a classic Mac, on the reader's iBook
+    // from a FAT32 stick, and it was inside the frame being measured.
+    const bool look = s.paused || frame - s.ctlFrame >= 30 || frame < s.ctlFrame;
+    if (look) s.ctlFrame = frame;
+    if (std::FILE* c = look ? std::fopen(hostPath(s.base + ".ctl").c_str(), "r") : nullptr) {
         long q = -1, n = 1;
         char cmd[32] = {};
         const int got = std::fscanf(c, "%ld %31s %ld", &q, cmd, &n);

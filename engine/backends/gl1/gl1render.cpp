@@ -559,6 +559,7 @@ public:
         if (ww != w_ || wh != h_) return false;
         Current c(ctx_);
         flush();
+        OMK_ZONE("gl1: swap");
         aglSwapBuffers(ctx_);
         return true;
     }
@@ -619,41 +620,67 @@ public:
             // hundreds of frames; re-sending the band every frame cost the
             // emulated Tiger ~45 ms an overlay frame. The key a row is
             // compared by is a hash, as the GLES overlay's (four chains).
+            // ...and the changed rows go up in RUNS, one call a run rather
+            // than one a row, in the format `CarbonFrontend::probeUploads`
+            // timed fastest on this driver (`gl1OverlayArgb`): ARGB 8888 as
+            // 32-bit words, or RGBA bytes.
+            OMK_ZONE("gl1: overlay rows");      // the profiler (todo/debug-tools.md)
             glBindTexture(GL_TEXTURE_2D, ovTex_);
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
             glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            ovRgba_.resize(static_cast<std::size_t>(fb.w) * 4);
-            for (int y = lo; y <= hi; ++y) {
-                const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
-                const std::uint8_t* msk = mask ? mask + static_cast<std::size_t>(y) * fb.w : nullptr;
-                std::uint32_t h0 = 2166136261u, h1 = 0x9E3779B9u, h2 = 0x7F4A7C15u, h3 = 0x94D049BBu;
-                int x = 0;
-                for (; x + 4 <= fb.w; x += 4) {
-                    h0 = (h0 ^ src[x])     * 16777619u;
-                    h1 = (h1 ^ src[x + 1]) * 16777619u;
-                    h2 = (h2 ^ src[x + 2]) * 16777619u;
-                    h3 = (h3 ^ src[x + 3]) * 16777619u;
-                }
-                for (; x < fb.w; ++x) h0 = (h0 ^ src[x]) * 16777619u;
-                if (msk)
-                    for (int m = 0; m < fb.w; ++m) h1 = (h1 ^ msk[m]) * 16777619u;
-                const std::uint32_t key = (h0 ^ (h1 * 3u) ^ (h2 * 5u) ^ (h3 * 7u)) | 1u;   // 0 = never sent
-                if (ovRowKey_[static_cast<std::size_t>(y)] == key) continue;
-                ovRowKey_[static_cast<std::size_t>(y)] = key;
-                for (int xx = 0; xx < fb.w; ++xx) {
-                    unsigned char* o = &ovRgba_[static_cast<std::size_t>(xx) * 4];
-                    const std::uint16_t p = src[xx];
-                    if (p == 0xF81F) {                             // the KEY: the world as it is
-                        o[0] = o[1] = o[2] = 0; o[3] = 255;
-                        continue;
+            const bool argb = gl1OverlayArgb();
+            const GLenum upFormat = argb ? GL_BGRA : GL_RGBA;
+            const GLenum upType = argb ? GL_UNSIGNED_INT_8_8_8_8_REV : GL_UNSIGNED_BYTE;
+            const std::size_t rowWords = static_cast<std::size_t>(fb.w);
+            int runStart = -1;
+            for (int y = lo; y <= hi + 1; ++y) {
+                bool changed = false;
+                const std::uint16_t* src = nullptr;
+                const std::uint8_t* msk = nullptr;
+                if (y <= hi) {
+                    src = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
+                    msk = mask ? mask + static_cast<std::size_t>(y) * fb.w : nullptr;
+                    std::uint32_t h0 = 2166136261u, h1 = 0x9E3779B9u, h2 = 0x7F4A7C15u, h3 = 0x94D049BBu;
+                    int x = 0;
+                    for (; x + 4 <= fb.w; x += 4) {
+                        h0 = (h0 ^ src[x])     * 16777619u;
+                        h1 = (h1 ^ src[x + 1]) * 16777619u;
+                        h2 = (h2 ^ src[x + 2]) * 16777619u;
+                        h3 = (h3 ^ src[x + 3]) * 16777619u;
                     }
-                    const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
-                    o[0] = static_cast<unsigned char>(r5 << 3 | r5 >> 2);
-                    o[1] = static_cast<unsigned char>(g6 << 2 | g6 >> 4);
-                    o[2] = static_cast<unsigned char>(b5 << 3 | b5 >> 2);
-                    o[3] = msk ? msk[xx] : 0;
+                    for (; x < fb.w; ++x) h0 = (h0 ^ src[x]) * 16777619u;
+                    if (msk)
+                        for (int m = 0; m < fb.w; ++m) h1 = (h1 ^ msk[m]) * 16777619u;
+                    const std::uint32_t key = (h0 ^ (h1 * 3u) ^ (h2 * 5u) ^ (h3 * 7u)) | 1u;   // 0 = never sent
+                    changed = ovRowKey_[static_cast<std::size_t>(y)] != key;
+                    ovRowKey_[static_cast<std::size_t>(y)] = key;
                 }
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, fb.w, 1, GL_RGBA, GL_UNSIGNED_BYTE, ovRgba_.data());
+                if (changed) {
+                    if (runStart < 0) runStart = y;
+                    const std::size_t at = static_cast<std::size_t>(y - runStart) * rowWords;
+                    if (ovBand_.size() < at + rowWords) ovBand_.resize(at + rowWords);
+                    std::uint32_t* o32 = ovBand_.data() + at;
+                    for (int xx = 0; xx < fb.w; ++xx) {
+                        const std::uint16_t p = src[xx];
+                        unsigned r = 0, g = 0, bl = 0, al = 255;   // the KEY: the world as it is
+                        if (p != 0xF81F) {
+                            const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
+                            r = r5 << 3 | r5 >> 2; g = g6 << 2 | g6 >> 4; bl = b5 << 3 | b5 >> 2;
+                            al = msk ? msk[xx] : 0;
+                        }
+                        if (argb) {
+                            o32[xx] = al << 24 | r << 16 | g << 8 | bl;
+                        } else {
+                            auto* o = reinterpret_cast<unsigned char*>(o32 + xx);
+                            o[0] = static_cast<unsigned char>(r); o[1] = static_cast<unsigned char>(g);
+                            o[2] = static_cast<unsigned char>(bl); o[3] = static_cast<unsigned char>(al);
+                        }
+                    }
+                } else if (runStart >= 0) {             // a run ends: send it
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, upFormat,
+                                    upType, ovBand_.data());
+                    runStart = -1;
+                }
             }
             glEnable(GL_TEXTURE_2D);
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
@@ -684,6 +711,7 @@ public:
             glColor4f(1, 1, 1, 1);
         }
         if (hi >= lo || fading) glDisable(GL_BLEND);
+        OMK_ZONE("gl1: swap");
         aglSwapBuffers(ctx_);
         return true;
     }
@@ -749,7 +777,7 @@ private:
     std::vector<unsigned char> readBig_;
     GLuint ovTex_ = 0;                   // the overlay (`presentOverlay`)
     GLsizei ovTexW_ = 0, ovTexH_ = 0;
-    std::vector<unsigned char> ovRgba_;  // one row, converted
+    std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
     std::vector<std::uint32_t> ovRowKey_;   // what each texture row was last sent from
 #endif
 
@@ -909,6 +937,7 @@ private:
         glColorPointer(4, GL_UNSIGNED_BYTE, stride, out_[0].c);
         glTexCoordPointer(2, GL_FLOAT, stride, out_[0].uv);
         if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, stride, out_[0].f);
+        OMK_ZONE("gl1: draw call");          // the driver's share (todo/debug-tools.md)
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(out_.size()));
         ++batches_;
         out_.clear();

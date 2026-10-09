@@ -97,6 +97,9 @@ private:
     void* agl_ = nullptr;        // AGLContext, once the GL backend asked
     unsigned uiTex_ = 0;         // GLuint: the frame as a texture (`presentGL`)
     int uiTexW_ = 0, uiTexH_ = 0;
+    int uiFmt_ = 0;              // its upload format, `probeUploads`' pick (0 RGB565)
+    std::vector<std::uint8_t> uiConv_;   // a run of rows converted to that format
+    void probeUploads();         // times the upload formats once, on the new context
     std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent
     bool quit_ = false;
 };

@@ -18,4 +18,9 @@ void* gl1AglContext();
 // The window's size in pixels (its port bounds) - what the straight present
 // needs to be 1:1 with the frame; 0 x 0 without a window.
 void gl1AglWindowSize(int& w, int& h);
+// The overlay texture's upload format, measured when the context was made
+// (`CarbonFrontend::probeUploads`): true for BGRA as 8-8-8-8-REV - the
+// 32-bit ARGB that Mac OS X's drivers take without converting - false for
+// RGBA bytes.
+bool gl1OverlayArgb();
 }  // namespace omk

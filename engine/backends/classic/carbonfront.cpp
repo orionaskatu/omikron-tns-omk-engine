@@ -711,6 +711,7 @@ void CarbonFrontend::probeUploads() {
     }
     uiFmt_ = pick < 0 ? 0 : pick;
     argbOk_ = ui[2] >= 0;                    // the films' layout (`filmShow`)
+    film1555_ = ui[1] >= 0 && (ui[2] < 0 || ui[1] < ui[2]);
     // the overlay: RGBA bytes (what it sent) against ARGB 8888, both 8-bit
     // alpha and blended as the overlay draws; the conversion is in the time
     const auto fillRgba = [&](bool argb) -> const void* {
@@ -805,9 +806,15 @@ bool CarbonFrontend::filmOpen(const std::string& hostFile) {
     const int ww = win.right - win.left, wh = win.bottom - win.top;
     if (agl_) {
         // under GL: QuickTime draws into a GWorld, `filmShow` sends it
+        // AT 16 BITS when the probe found ARGB1555 the faster upload - the
+        // reader's iBook in thousands of colours: 63 ms a 640x480 frame
+        // against 113 for ARGB8888 (2026-10-09). A 16-bit GWorld is xRGB
+        // 1-5-5-5, which BGRA 1-5-5-5-REV reads as it stands, and QuickTime
+        // converts less to fill it.
+        filmDepth_ = film1555_ ? 16 : 32;
         GWorldPtr gw = nullptr;
-        if (NewGWorld(&gw, 32, &box, nullptr, nullptr, 0) != noErr || !gw) {
-            std::printf("film: no 32-bit GWorld - the software decoder\n");
+        if (NewGWorld(&gw, static_cast<short>(filmDepth_), &box, nullptr, nullptr, 0) != noErr || !gw) {
+            std::printf("film: no %d-bit GWorld - the software decoder\n", filmDepth_);
             DisposeMovie(m);
             return false;
         }
@@ -839,7 +846,8 @@ bool CarbonFrontend::filmOpen(const std::string& hostFile) {
     StartMovie(m);
     std::printf("film: %s through QuickTime, %dx%d, %.1f s, %s\n", hp.c_str(), filmW_, filmH_,
                 static_cast<double>(GetMovieDuration(m)) / GetMovieTimeScale(m),
-                agl_ ? (argbOk_ ? "sent to the card as ARGB8888" : "sent to the card as RGBA bytes")
+                agl_ ? (filmDepth_ == 16 ? "sent to the card as ARGB1555"
+                        : argbOk_ ? "sent to the card as ARGB8888" : "sent to the card as RGBA bytes")
                      : "drawn into the window");
     return true;
 }
@@ -915,14 +923,21 @@ void CarbonFrontend::filmShow() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, filmDepth_ == 16 ? GL_RGB5 : GL_RGB8, tw, th, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
         filmTexW_ = tw;
         filmTexH_ = th;
     }
     glBindTexture(GL_TEXTURE_2D, tex);
     {
         OMK_ZONE("film: upload");
-        if (argbOk_) {
+        if (filmDepth_ == 16) {
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, rowBytes / 2);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, filmW_, filmH_, GL_BGRA,
+                            GL_UNSIGNED_SHORT_1_5_5_5_REV, base);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        } else if (argbOk_) {
             // a 32-bit GWorld is xRGB in memory, big-endian: one word
             // x<<24|r<<16|g<<8|b, which BGRA 8-8-8-8-REV reads as it stands
             glPixelStorei(GL_UNPACK_ALIGNMENT, 4);

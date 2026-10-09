@@ -264,6 +264,24 @@ public:
         glClearDepth(1.0);
         glDepthMask(GL_TRUE);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+#if defined(OMK_GL1_AGL)
+        // THE LETTERBOX BARS BLACK. On AGL the picture is drawn at its
+        // letterbox place in the window's own back buffer and presented as it
+        // stands, so the rows above and below it are the window's - and the
+        // clear above left them the FOG colour: on the reader's iBook the bars
+        // of every cutscene "blue-ish, a bit like the sky" (2026-10-09). The
+        // composed frame's bars are black, as the original's are; only the
+        // two bands are cleared again, scissored.
+        if (v.letterboxed()) {
+            const int top = std::max(0, std::min(v.vy, h_ - cam.h));
+            const int below = h_ - top - cam.h;
+            glEnable(GL_SCISSOR_TEST);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            if (top > 0) { glScissor(0, h_ - top, w_, top); glClear(GL_COLOR_BUFFER_BIT); }
+            if (below > 0) { glScissor(0, 0, w_, below); glClear(GL_COLOR_BUFFER_BIT); }
+            glDisable(GL_SCISSOR_TEST);
+        }
+#endif
         // the picture in the TOP-LEFT cam.w x cam.h, as the reference draws it;
         // GL's window origin is bottom-left. On classic Mac OS (AGL) it is
         // drawn at its LETTERBOX place in the window's back buffer instead -
@@ -662,11 +680,11 @@ public:
                     std::uint32_t* o32 = ovBand_.data() + at;
                     for (int xx = 0; xx < fb.w; ++xx) {
                         const std::uint16_t p = src[xx];
-                        unsigned r = 0, g = 0, bl = 0, al = 255;   // the KEY: the world as it is
+                        unsigned r = 0, g = 0, bl = 0, al = 0;     // the KEY: the world as it is
                         if (p != 0xF81F) {
                             const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
                             r = r5 << 3 | r5 >> 2; g = g6 << 2 | g6 >> 4; bl = b5 << 3 | b5 >> 2;
-                            al = msk ? msk[xx] : 0;
+                            al = 255u - (msk ? msk[xx] : 0u);   // alpha = 1 - M (the blend below)
                         }
                         if (argb) {
                             o32[xx] = al << 24 | r << 16 | g << 8 | bl;
@@ -684,7 +702,16 @@ public:
             }
             glEnable(GL_TEXTURE_2D);
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
-            glBlendFunc(GL_ONE, GL_SRC_ALPHA);
+            // `C + world * M` as the STANDARD premultiplied "over" - alpha
+            // stored as 1 - M and (GL_ONE, GL_ONE_MINUS_SRC_ALPHA) - the same
+            // sum to the bit. It was (GL_ONE, GL_SRC_ALPHA), M as alpha: a
+            // destination factor of SOURCE alpha, which period hardware need
+            // not have, and on the reader's iBook (Rage 128 Pro, 10.2) every
+            // frame with partly transparent text over the world - a subtitle,
+            // the credits, an examine line - went WHITE, while a dialogue box
+            // (alpha 0 or 1 only) drew right (2026-10-09). Not seen on the
+            // emulated Tiger's Radeon 9700.
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glColor4f(1, 1, 1, 1);
             // the band: fb rows lo..hi, top-down, onto window rows wh-lo..wh-hi-1
             const float t0 = static_cast<float>(lo) / th, t1 = static_cast<float>(hi + 1) / th,
@@ -711,6 +738,16 @@ public:
             glColor4f(1, 1, 1, 1);
         }
         if (hi >= lo || fading) glDisable(GL_BLEND);
+        // ANY GL ERROR the overlay raised, said once each: the iBook's log is
+        // all that machine gives back (a refused upload, out of memory)
+        for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError()) {
+            static unsigned told = 0;
+            const unsigned bit = e >= GL_INVALID_ENUM && e <= GL_OUT_OF_MEMORY ? 1u << (e - GL_INVALID_ENUM) : 64u;
+            if (told & bit) continue;
+            told |= bit;
+            std::printf("gl1: the overlay raised GL error 0x%04X (rows %d..%d, %s upload)\n",
+                        static_cast<unsigned>(e), lo, hi, gl1OverlayArgb() ? "ARGB8888" : "RGBA bytes");
+        }
         OMK_ZONE("gl1: swap");
         aglSwapBuffers(ctx_);
         return true;

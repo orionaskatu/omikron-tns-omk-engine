@@ -112,6 +112,8 @@ private:
     void probeUploads();         // times the upload formats once, on the new context
     std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent
     bool argbOk_ = false;        // the probe: the driver takes ARGB8888 (BGRA 8-8-8-8-REV)
+    bool film1555_ = false;      // the probe: ARGB1555 sent faster than ARGB8888 (a 16-bit display)
+    int filmDepth_ = 32;         // the film GWorld's depth, 16 or 32
     // the film playing (`filmOpen`): a QuickTime Movie, its GWorld under GL
     void* film_ = nullptr;       // Movie
     void* filmGw_ = nullptr;     // GWorldPtr, 32 bits, the film's own size

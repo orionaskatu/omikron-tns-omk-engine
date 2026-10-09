@@ -394,6 +394,36 @@ in 23.7, GAME 3065 in 108.2** - the whole films at nearly their own rate,
 colours right in a screenshot, then the world's 22050 device, the splash and
 the menu as before. `engine: classic build`, `engine: frontend gateway` green.
 
+**THE iBOOK'S SECOND RUN (2026-10-09, the QuickTime build, from its own
+disk, the display in THOUSANDS of colours)** and what it changed:
+- the films through QuickTime at **~9 fps** (EIDOS 113 pictures in 13.0 s,
+  GAME 126 in 13.8 s before a skip), against ~0.5 - not their own rate yet;
+- the probe in 16 bits: **RGB565 262 ms, ARGB1555 63, ARGB8888 113** a
+  640x480 frame -> the menus as ARGB1555; overlay bytes 223, ARGB8888 120;
+- **THE WHITE SCREENS, the reader's diagnosis**: the WHOLE window goes white
+  while a non-dialogue text is up - a subtitle (`media line`), the Bowie
+  intro's credits, an examine line - and comes back when it goes; never a
+  standard dialogue. What differs is the overlay's ALPHA: a dialogue box is
+  opaque (alpha 0/1 only), a subtitle's glyphs lie on the world with partial
+  alpha. Reproduced NOT on the emulated Tiger (`--area 222 --scene-chunk 55`,
+  two subtitles: drawn right), so the Rage 128's own;
+- **the letterbox bars blue-ish "like the sky"**: on a STRAIGHT frame the
+  bars were the window's rows, cleared to the FOG colour.
+
+**Step 2b - DONE 2026-10-09, NOT yet run on the iBook:**
+- the overlay blended as the STANDARD premultiplied over -
+  (GL_ONE, GL_ONE_MINUS_SRC_ALPHA) with alpha = 1 - M - in place of
+  (GL_ONE, GL_SRC_ALPHA) with alpha = M: the same `C + world * M` to the
+  bit, without a destination factor of source alpha. The likeliest cause of
+  the white, NOT proven: `gl1: the overlay raised GL error` now logs any
+  error the overlay raises, once each, and `--gl1-composite` (the CPU
+  composite, no overlay) is the reader's A/B if it stays white;
+- the bars cleared BLACK on AGL (`begin`, two scissored clears);
+- the films into a 16-bit GWorld sent as ARGB1555 when the probe found that
+  faster than ARGB8888 (the iBook in thousands of colours).
+On the emulated Tiger: the Impasse's two subtitles drawn as before, bars
+black, no GL error, exit 0; `engine: classic build` green.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

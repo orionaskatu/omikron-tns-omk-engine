@@ -46,6 +46,12 @@ add_compile_options(-fno-zero-initialized-in-bss)
 # where the host rounds twice, and the frames then differ by float noise
 # (ppc-darwin.mk does the same; the original ran on x87, which has no fused op)
 add_compile_options(-ffp-contract=off)
+# SCHEDULED FOR THE G3 (the PowerPC 750, `todo/classic-mac-port-1999.md`'s
+# target and the reader's iBook): Retro68's default tunes for no CPU in
+# particular. TUNE, not -mcpu: the instruction set stays the generic 32-bit
+# one, so a 603/604 Mac still runs the binary, and with no fused or fast-math
+# op allowed the arithmetic - and so every frame - is unchanged.
+add_compile_options(-mtune=750)
 set_source_files_properties(printf_c99.cpp PROPERTIES COMPILE_DEFINITIONS OMK_PRINTF_IMPL)
 
 # THE RELEASE BUILD (todo/debug-tools.md): every debugging aid out - the

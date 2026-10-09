@@ -203,6 +203,7 @@ public:
 
     void setTextures(std::span<const Texture> t) override {
         Current c(ctx_);
+        flush();
         if (!tex_.empty()) gpuForget(omk::prof::kGlTexture, tex_.data(), tex_.size());
         if (!tex_.empty()) glDeleteTextures(static_cast<GLsizei>(tex_.size()), tex_.data());
         tex_.assign(t.size(), 0);
@@ -250,11 +251,11 @@ public:
 
     void begin(const View& v) override {
         Current c(ctx_);
-        view_ = v;
+        flush();
+        setCamera(v);
         RCamera cam = v.cam;
-        cam.w = v.letterboxed() ? v.vw : w_;
-        cam.h = v.letterboxed() ? v.vh : h_;
-        flipX_ = cam.flipX;
+        cam.w = camW_;
+        cam.h = camH_;
         bindTarget();
         glViewport(0, 0, w_, h_);
         glDisable(GL_SCISSOR_TEST);
@@ -274,15 +275,8 @@ public:
 #endif
         glViewport(0, h_ - vy_ - cam.h, cam.w, cam.h);
 
-        // THE CAMERA is applied HERE, on the CPU, as the original did: it
-        // transformed every vertex itself and handed D3D screen positions
-        // (`D3DTLVERTEX`: sx, sy, sz, rhw), on cards that mostly had no T&L.
-        // `cameraBasis` is the reference's own basis (mirror, roll and flip
-        // folded in). Both GL matrices stay identity: what reaches GL is
-        // already in clip space.
-        cameraBasis(cam, bs_, bu_, bf_, th_, tv_);
-        for (int k = 0; k < 3; ++k) eye_[k] = cam.eye[k];
-        camW_ = cam.w; camH_ = cam.h;
+        // THE CAMERA is applied on the CPU (`setCamera`, in submit). Both GL
+        // matrices stay identity: what reaches GL is already in clip space.
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         glMatrixMode(GL_MODELVIEW);
@@ -324,6 +318,7 @@ public:
         stateValid_ = false;
         boundTex_ = ~0u;
         st_ = RasterStats{};
+        submits_ = batches_ = 0;
         readDone_ = false;
     }
 
@@ -333,26 +328,68 @@ public:
         const Geometry& g = *d.geo;
         if (d.start + d.count > g.corners.size()) return;
 
+        // ONE DRAW CALL A RUN OF EQUAL STATE, as the original's: it filled a
+        // bucket's vertices into one pool and made one `DrawPrimitive` a
+        // non-empty bucket (`Render_FlushBuckets`, `Raster_DrawTriangles`).
+        // The vertices below are already in clip space with the fog folded
+        // into their colours, so only the DEVICE state - blend, alpha test,
+        // texture - divides a batch; a draw that changes none of it appends
+        // to the one pending. Each `glDrawArrays` costs the driver a fixed
+        // set-up, which on Mac OS X 10.2's Rage 128 path is the CPU's.
+        {
+            const std::size_t slot = drawTextureSlot(d);
+            const bool hasTex = slot < tex_.size() && tex_[slot] != 0;
+            const unsigned want = hasTex ? static_cast<unsigned>(slot) : ~1u;
+            if (!out_.empty() && (!stateValid_ || d.blend != blend_ || d.cutout != cutout_ ||
+                                  want != boundTex_))
+                flush();
+        }
         setState(d);
+        ++submits_;
 
         // Per triangle, what the original's own vertex loop did before
         // DrawPrimitive: into view space, the near cut (Sutherland-Hodgman
-        // against z > kNearCut, as `raster.cpp`), the single-sided cull on the
-        // screen area with the reference's sign, then CLIP-SPACE positions -
+        // against z > kNearCut, as `raster.cpp`), the single-sided cull with
+        // the reference's sign, the screen edges, then CLIP-SPACE positions -
         // (x w, y w, depth w, w) with w the view depth, which is what keeps
         // the texturing perspective-correct the way `rhw` did for D3D.
+        //
+        // THE TRIANGLE WHOLLY INSIDE - most of a frame's - TAKES NO CLIP
+        // (2026-10-09, for the iBook G3): each corner's OUTCODE against the
+        // five planes is the clip's own test (`z > kNearCut`, then each
+        // edge's `dist >= 0` with the same expression), so a triangle with
+        // all corners inside comes out of the clips exactly as it went in,
+        // and one with all corners outside ONE plane comes out empty - both
+        // are decided here without running them. And NO DIVISION: the cull
+        // is the sign of the view-space determinant (the projected area's
+        // sign for corners in front of the eye), and the clip-space position
+        // is (x / th, y / tv, z - 2 near, z), the reference's screen mapping
+        // with the w multiplied back in. The G3 divides in 17-31 cycles and
+        // does not pipeline it; this was 6 divisions a triangle and 3 a
+        // vertex. What is lost is rounding: the old form went through the
+        // screen position and back, and a triangle edge-on to the eye (zero
+        // area, no pixels) may now cull on the other side of zero.
         const std::size_t nCorner = d.count - d.count % 3;
-        const bool haveCull = g.cornerCull.size() == g.corners.size();
-        pos_.clear(); col_.clear(); uv_.clear(); fogc_.clear();
+        const bool cullOn = g.cornerCull.size() == g.corners.size() && !noCull();
+        const float gx = gx_, gy = gy_;
         for (std::size_t t = 0; t < nCorner; t += 3) {
             ++st_.triangles;
+            if (out_.size() >= kBatchMax) flush();      // a bounded pool, as the original's
             Vtx in[3];
+            unsigned oc[3];
             for (int k = 0; k < 3; ++k) {
                 const Corner& c = g.corners[d.start + t + static_cast<std::size_t>(k)];
                 const float dx = c.x - eye_[0], dy = c.y - eye_[1], dz = c.z - eye_[2];
-                in[k].v[0] = dx * bs_[0] + dy * bs_[1] + dz * bs_[2];
-                in[k].v[1] = dx * bu_[0] + dy * bu_[1] + dz * bu_[2];
-                in[k].v[2] = dx * bf_[0] + dy * bf_[1] + dz * bf_[2];
+                const float x = dx * bs_[0] + dy * bs_[1] + dz * bs_[2];
+                const float y = dx * bu_[0] + dy * bu_[1] + dz * bu_[2];
+                const float z = dx * bf_[0] + dy * bf_[1] + dz * bf_[2];
+                in[k].v[0] = x; in[k].v[1] = y; in[k].v[2] = z;
+                unsigned o = z > kNearCut ? 0u : 1u;
+                if (z * gx - x < 0.0f) o |= 2u;
+                if (z * gx + x < 0.0f) o |= 4u;
+                if (z * gy - y < 0.0f) o |= 8u;
+                if (z * gy + y < 0.0f) o |= 16u;
+                oc[k] = o;
                 // the shimmer first, as the engine adds it into the bytes
                 const float sh = shimmerOffset(c.phase, view_.shimmerClock);
                 in[k].c[0] = c.r + sh; in[k].c[1] = c.g + sh; in[k].c[2] = c.b + sh;
@@ -361,6 +398,18 @@ public:
                     in[k].c[0] = in[k].c[1] = in[k].c[2] =
                         lumaGreyUnit(in[k].c[0], in[k].c[1], in[k].c[2]);
                 in[k].u = c.u; in[k].t = c.v;
+            }
+            const unsigned outAll = oc[0] & oc[1] & oc[2];
+            if (outAll) {
+                if (outAll & 1u) ++st_.behind; else ++st_.offscreen;
+                continue;
+            }
+            const bool cullThis = cullOn && g.cornerCull[d.start + t] != 0;
+            if ((oc[0] | oc[1] | oc[2]) == 0) {
+                if (cullThis && backFacing(in[0], in[1], in[2])) { ++st_.culled; continue; }
+                ++st_.drawn;
+                emit(in[0]); emit(in[1]); emit(in[2]);
+                continue;
             }
             Vtx poly[4];
             int np = 0;
@@ -374,15 +423,7 @@ public:
             if (np < 3) { ++st_.behind; continue; }
             // the single-sided cull on the near-clipped triangle - the
             // reference's own test, before anything else is cut away
-            if (haveCull && g.cornerCull[d.start + t] != 0 && !noCull()) {
-                float cx[3], cy[3];
-                for (int k = 0; k < 3; ++k) {
-                    cx[k] = camW_ * 0.5f * (1.0f + (poly[k].v[0] / poly[k].v[2]) / th_);
-                    cy[k] = camH_ * 0.5f * (1.0f - (poly[k].v[1] / poly[k].v[2]) / tv_);
-                }
-                const float area = (cx[1] - cx[0]) * (cy[2] - cy[0]) - (cx[2] - cx[0]) * (cy[1] - cy[0]);
-                if ((flipX_ ? -area : area) > 0.0f) { ++st_.culled; continue; }
-            }
+            if (cullThis && backFacing(poly[0], poly[1], poly[2])) { ++st_.culled; continue; }
             // ...then THE SCREEN EDGES, on the CPU too. A wall beside the eye
             // projects thousands of pixels off-screen once near-clipped, and
             // Tiger's emulated Radeon rasterised such a triangle unclipped -
@@ -392,7 +433,6 @@ public:
             Vtx buf[2][8];
             int nb = np;
             for (int k = 0; k < np; ++k) buf[0][k] = poly[k];
-            const float gx = th_ * 1.01f, gy = tv_ * 1.01f;
             int cur = 0;
             for (int plane = 0; plane < 4 && nb >= 3; ++plane) {
                 const auto dist = [&](const Vtx& q) {
@@ -415,57 +455,55 @@ public:
                 cur ^= 1;
             }
             if (nb < 3) { ++st_.offscreen; continue; }
-            np = nb;
             const Vtx* out = buf[cur];
-            float sx[8], sy[8];
-            for (int k = 0; k < np; ++k) {
-                sx[k] = camW_ * 0.5f * (1.0f + (out[k].v[0] / out[k].v[2]) / th_);
-                sy[k] = camH_ * 0.5f * (1.0f - (out[k].v[1] / out[k].v[2]) / tv_);
-            }
             ++st_.drawn;
-            for (int k = 1; k + 1 < np; ++k) {            // a fan: up to 6 triangles after the clips
-                const int idx[3] = {0, k, k + 1};
-                for (int j : idx) {
-                    const Vtx& p = out[j];
-                    const float w = p.v[2];
-                    // NDC from the reference's own screen mapping; depth
-                    // 1 - near/z, increasing away from the eye (the original
-                    // kept rhw = 1/w and tested GREATER - the same order)
-                    const float nx = 2.0f * sx[j] / camW_ - 1.0f;
-                    const float ny = 1.0f - 2.0f * sy[j] / camH_;
-                    const float nz = 2.0f * (1.0f - kNearCut / w) - 1.0f;
-                    pos_.insert(pos_.end(), {nx * w, ny * w, nz * w, w});
-                    // the reference's fog: f = (end - z) / (end - start) past
-                    // the start, the colour lerped toward the fog's by 1 - f
-                    float a = 0.0f;
-                    if (fogKind_ != 0 && w > fogStart_) {
-                        const float f = (fogEnd_ - w) / (fogEnd_ - fogStart_);
-                        a = 1.0f - (f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f));
-                    }
-                    col_.insert(col_.end(), {toByte(p.c[0] * (1.0f - a)), toByte(p.c[1] * (1.0f - a)),
-                                             toByte(p.c[2] * (1.0f - a)), 255});
-                    if (fogSum_)
-                        fogc_.insert(fogc_.end(), {fogRGB_[0] * a, fogRGB_[1] * a, fogRGB_[2] * a});
-                    uv_.insert(uv_.end(), {p.u, p.t});
-                }
+            for (int k = 1; k + 1 < nb; ++k) {            // a fan: up to 6 triangles after the clips
+                emit(out[0]); emit(out[k]); emit(out[k + 1]);
             }
         }
-        if (pos_.empty()) return;
-        glVertexPointer(4, GL_FLOAT, 0, pos_.data());
-        glColorPointer(4, GL_UNSIGNED_BYTE, 0, col_.data());
-        glTexCoordPointer(2, GL_FLOAT, 0, uv_.data());
-        if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, 0, fogc_.data());
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(pos_.size() / 4));
     }
 
     void end() override {
         Current c(ctx_);
+        flush();
         glFlush();
+        // what the batching saved, once: passes 61-120 summed (a street
+        // frame is past its setup by then; a frame may be several passes) -
+        // the draws handed over, the draw calls they became, the triangles
+        sum_[0] += submits_; sum_[1] += batches_; sum_[2] += st_.triangles;
+        sum_[3] += st_.drawn; sum_[4] += st_.culled;
+        if (++passes_ == 60) sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
+        if (passes_ == 120)
+            std::printf("gl1: 60 passes drew %ld draws in %ld draw calls, %ld of %ld triangles "
+                        "(%ld culled)\n", sum_[0], sum_[1], sum_[3], sum_[2], sum_[4]);
+    }
+
+    // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
+    // read 2026-09-30) and as the GLES backend does: the reflected scene
+    // first, then the room and the mirror over it with NO clear between -
+    // draw order and depth confine the reflection. Without this the frame
+    // took `drawWithMirror`'s CPU fallback: three passes, three readbacks and
+    // a composite, and the frame then went to the CPU present ("cpu mirror")
+    // - on the iBook, every frame Kay'l's bathroom mirror is in view.
+    // `OMK_CPU_MIRROR=1` keeps the fallback, as on GLES.
+    bool drawMirrorScene(const View& v, const View& refl, std::span<const Draw> scene,
+                         std::span<const Draw> sceneClipped, std::span<const Draw> mirror) override {
+        static const bool cpuMirror = std::getenv("OMK_CPU_MIRROR") != nullptr;
+        if (cpuMirror || mirror.empty()) return false;
+        begin(v);
+        setCamera(refl);                     // the camera alone: no clear, no state
+        for (const auto& d : sceneClipped) submit(d);
+        setCamera(v);
+        for (const auto& d : scene) submit(d);
+        for (const auto& d : mirror) submit(d);
+        end();
+        return true;
     }
 
     const Surface& readback() override {
         if (readDone_) return fb_;           // idempotent (renderer.h)
         Current c(ctx_);
+        flush();
         bindTarget();
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         // the first read over a known pattern: a read that writes nothing
@@ -520,6 +558,7 @@ public:
     bool presentWorld(int ww, int wh) {
         if (ww != w_ || wh != h_) return false;
         Current c(ctx_);
+        flush();
         aglSwapBuffers(ctx_);
         return true;
     }
@@ -547,6 +586,7 @@ public:
             if (any) { if (lo > y) lo = y; hi = y; }
         }
         Current c(ctx_);
+        flush();
         if (hi >= lo || fading) {
             // the 2D state for the quads; `begin` sets all of its own again
             glViewport(0, 0, ww, wh);
@@ -661,6 +701,7 @@ public:
             std::printf("gl1: trilinear asked - no mip chain in this backend, drawn bilinear\n");
         if (!tex_.empty()) {
             Current c(ctx_);
+            flush();
             for (GLuint id : tex_) {
                 if (!id) continue;
                 glBindTexture(GL_TEXTURE_2D, id);
@@ -807,6 +848,72 @@ private:
     // `OMK_NO_CULL=1` draws both sides, as it does for the reference
     static bool noCull() { static const bool n = std::getenv("OMK_NO_CULL") != nullptr; return n; }
 
+    // THE CAMERA, applied on the CPU as the original did: it transformed
+    // every vertex itself and handed D3D screen positions (`D3DTLVERTEX`:
+    // sx, sy, sz, rhw), on cards that mostly had no T&L. `cameraBasis` is the
+    // reference's own basis (mirror, roll and flip folded in). Apart from
+    // `begin` so the mirror's reflected pass can change it without a clear.
+    void setCamera(const View& v) {
+        view_ = v;
+        RCamera cam = v.cam;
+        cam.w = v.letterboxed() ? v.vw : w_;
+        cam.h = v.letterboxed() ? v.vh : h_;
+        flipX_ = cam.flipX;
+        cameraBasis(cam, bs_, bu_, bf_, th_, tv_);
+        for (int k = 0; k < 3; ++k) eye_[k] = cam.eye[k];
+        camW_ = cam.w; camH_ = cam.h;
+        ith_ = 1.0f / th_; itv_ = 1.0f / tv_;
+        gx_ = th_ * 1.01f; gy_ = tv_ * 1.01f;   // the screen edges' hair of margin
+    }
+
+    // The reference's cull (`raster.cpp`: the screen area's sign, flipped
+    // under the mirror) without its divisions. For corners in front of the
+    // eye the projected area is -det[v0; v1; v2] / (z0 z1 z2) times positive
+    // scales, so its sign is the determinant's, negated.
+    bool backFacing(const Vtx& a, const Vtx& b, const Vtx& c) const {
+        const float det = a.v[0] * (b.v[1] * c.v[2] - b.v[2] * c.v[1]) -
+                          a.v[1] * (b.v[0] * c.v[2] - b.v[2] * c.v[0]) +
+                          a.v[2] * (b.v[0] * c.v[1] - b.v[1] * c.v[0]);
+        return (flipX_ ? det : -det) > 0.0f;
+    }
+
+    // One clip-space vertex into the pending batch: (x / th, y / tv,
+    // z - 2 near, z) is NDC (the reference's screen mapping; depth
+    // 1 - near / z, increasing away from the eye, the order of the
+    // original's rhw tested GREATER) times w = z. The reference's fog:
+    // f = (end - z) / (end - start) past the start, the colour lerped toward
+    // the fog's by 1 - f.
+    void emit(const Vtx& p) {
+        OutV o;
+        const float w = p.v[2];
+        o.p[0] = p.v[0] * ith_; o.p[1] = p.v[1] * itv_;
+        o.p[2] = w - 2.0f * kNearCut; o.p[3] = w;
+        float a = 0.0f;
+        if (fogKind_ != 0 && w > fogStart_) {
+            const float f = (fogEnd_ - w) * fogInv_;
+            a = 1.0f - (f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f));
+        }
+        const float k = 1.0f - a;
+        o.c[0] = toByte(p.c[0] * k); o.c[1] = toByte(p.c[1] * k);
+        o.c[2] = toByte(p.c[2] * k); o.c[3] = 255;
+        o.uv[0] = p.u; o.uv[1] = p.t;
+        if (fogSum_) { o.f[0] = fogRGB_[0] * a; o.f[1] = fogRGB_[1] * a; o.f[2] = fogRGB_[2] * a; }
+        out_.push_back(o);
+    }
+
+    // The pending batch drawn, with the device state it was gathered under.
+    void flush() {
+        if (out_.empty()) return;
+        const GLsizei stride = static_cast<GLsizei>(sizeof(OutV));
+        glVertexPointer(4, GL_FLOAT, stride, out_[0].p);
+        glColorPointer(4, GL_UNSIGNED_BYTE, stride, out_[0].c);
+        glTexCoordPointer(2, GL_FLOAT, stride, out_[0].uv);
+        if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, stride, out_[0].f);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(out_.size()));
+        ++batches_;
+        out_.clear();
+    }
+
     static unsigned char toByte(float v) {
         // the corner colour is 0..1; the reference clamps after the multiply,
         // fixed function clamps the vertex colour first - equal for 0..1
@@ -841,6 +948,7 @@ private:
         const float fk = fogKind == 2 ? 2.0f : 1.0f;
         fogStart_ = view_.fogStart * fk;
         fogEnd_ = view_.fogEnd * fk;
+        fogInv_ = fogKind != 0 ? 1.0f / (fogEnd_ - fogStart_) : 0.0f;
         const unsigned want = hasTex ? slot : ~1u;
         if (want != boundTex_) {
             if (hasTex) {
@@ -884,12 +992,18 @@ private:
     bool fogSum_ = false;
     bool hasColourSum_ = true;   // EXT_secondary_color, asked on AGL (makeContext)
     unsigned boundTex_ = ~0u;
-    // the scratch arrays, kept between draws (no allocation per frame)
-    std::vector<float> pos_, uv_, fogc_;
-    // the camera, applied on the CPU (begin)
+    // THE PENDING BATCH, interleaved, kept between frames for its capacity
+    // (no allocation per frame); `f` is the fog's secondary colour, read only
+    // when `fogSum_`. Bounded so a frame's largest run stays a few MB.
+    struct OutV { float p[4]; unsigned char c[4]; float uv[2]; float f[3]; };
+    static constexpr std::size_t kBatchMax = 3 * 16384;
+    std::vector<OutV> out_;
+    float fogInv_ = 0;
+    long submits_ = 0, batches_ = 0, passes_ = 0, sum_[5]{};
+    // the camera, applied on the CPU (setCamera)
     float bs_[3]{}, bu_[3]{}, bf_[3]{}, th_ = 1, tv_ = 1, eye_[3]{};
+    float ith_ = 1, itv_ = 1, gx_ = 1.01f, gy_ = 1.01f;
     int camW_ = 1, camH_ = 1;
-    std::vector<unsigned char> col_;
 };
 
 }  // namespace

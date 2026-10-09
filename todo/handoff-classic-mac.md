@@ -246,6 +246,67 @@ present: <straight | overlay (why) | why> from frame N`, and a one-time
 `REFUSED` line), beside the existing `gl1: first readback ... centre pixel`
 line: the next `omk-out.txt` with a white cutscene answers which.
 
+## 3f. FASTER ON THE iBOOK - the reader's ask of 2026-10-09, IN STEPS
+
+*"The current version is a good start but I think it could be optimized a
+bit more (cpu/gpu). Could you, comparing with the original and also with
+your own ideas, find ways to optimize it more?"* No iBook figure exists yet,
+so the ranking comes from the host GL1 build (`verify.py: engine: gl1
+backend`'s recipe, `OUT=build/host-gl1`) SAMPLED on the M1 (macOS `sample`,
+Anekbah's street start, uncapped): of the main thread's work outside the
+host-only readback and SDL blits, the GL1 `submit` and its vector inserts
+were ~650 samples, the body posing (`composePoseAt`, `applyPose`,
+`applyLights`) ~360, the draw lists ~50. On a G3 the submit weighs more:
+it divided 6 times a triangle and 3 a vertex, and the 750 divides in 17-31
+cycles without pipelining. The iBook's own split will come from the log's
+`frame N sections (ms, mean of 60)` line, printed in every build.
+
+**Step 1 - DONE 2026-10-09** (`gl1render.cpp`, `backends/classic/CMakeLists.txt`):
+- **One draw call a run of equal state**, the original's mechanism (one
+  `DrawPrimitive` a non-empty bucket, `Render_FlushBuckets`): the vertices
+  are already clip-space with the fog folded into their colours, so only
+  blend, alpha test and texture divide a batch. Street: **89 draws a pass
+  -> 24 draw calls** (`gl1: 60 passes drew 5376 draws in 1466 draw calls`).
+- **The wholly-inside triangle takes no clip**: each corner's outcode is
+  the clip's own test, so all-inside comes out unchanged and all-outside-
+  one-plane empty, decided without running the five clips.
+- **No division**: the cull is the view-space determinant's sign, the
+  position `(x/th, y/tv, z - 2 near, z)`; the fog's range a reciprocal.
+- **One interleaved array** pushed per vertex (was four `insert`s of an
+  initializer list - out-of-line calls in the sample).
+- **The mirror on the card** (`drawMirrorScene`, the GLES/original order:
+  reflection first, the room over it, no clear). Before, a mirror in view
+  ran `drawWithMirror`'s CPU fallback - three passes, three readbacks, a
+  composite, and the frame sent to the CPU present ("cpu mirror"): Kay'l's
+  bathroom mirror, in the apartment where the opening cutscenes play.
+  Probed on the host (scratch probe, Aapkayl, two cameras on `AP_mirror`):
+  native against the fallback **68 and 12 pixels of 307200 differ by > 24**,
+  the reflection ~25000 pixels; laid side by side, the same picture.
+- **`-mtune=750`**: scheduled for the G3, instruction set unchanged.
+- Measured on the M1: `world begin..end (submit, GL)` **0.75 -> 0.44 ms**
+  (twice each); the street frame differs from the old one in 3 pixels.
+  `engine: gl1 backend` green (coverage 0.9945, 145 px > 24 - it was
+  0.9932 / 153), `engine: classic build` green, the Tiger GCC compiles the
+  file clean. NOT yet run on the iBook.
+
+**What is next, ranked by what it should save on the G3 (each to be
+confirmed by the iBook's `sections` line before it is started):**
+2. **The bodies posed per VERTEX, not per corner** - the original's
+   `sub_4947F0` transforms each unique vertex once (200 in PSH_FN against
+   1143 corners); the port's `applyPose` turns position AND normal per
+   corner, then `applyLights`. Or GL1 poses them itself (`posesBodies`):
+   the bone folded into the camera, one 3x4 a mesh, so a body corner costs
+   what a set corner costs. The second cost in the sample, ~360.
+3. **The set transformed per VERTEX** (`Render_SubmitMesh` into its 75000 x
+   48 pool): Anekbah is 139245 corners over 63079 vertices, 2.2 a vertex.
+   Needs `cornerVertex`, which `dropCharacterArrays` frees for a set today
+   (~0.5 MB in Anekbah, inside the 64 MB budget).
+4. **The display at 16 bits** - no code: the original ran a 640x480 16-bit
+   device, and a Rage 128 fills a 16-bit buffer about twice as fast. The
+   reader can try "Thousands" in the Displays panel; FULL SCREEN at 640x480
+   (AGL's own, as the original's DirectDraw exclusive mode) would be the
+   code step after it.
+
 ## 4. What is next, in the order proposed
 
 1. ~~**The filtering DEFAULT**~~ - **DONE 2026-10-03**, the reader's

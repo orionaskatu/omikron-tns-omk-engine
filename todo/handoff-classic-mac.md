@@ -353,6 +353,44 @@ confirmed by the iBook's `sections` line before it is started):**
    (AGL's own, as the original's DirectDraw exclusive mode) would be the
    code step after it.
 
+**THE READER'S THREE FURTHER REPORTS (2026-10-09, same iBook)**, none yet
+diagnosed past the reading below:
+- **the launch is very long** before the window appears: the area 118 load,
+  `Grid.SCX` (1.3 MB), the sneak's preview models, `aventure.scx` (3.0 MB,
+  20 sprites and 53 sounds) all come BEFORE the window, read from the
+  reader's USB stick - and the iBook's USB is 1.1 (~1 MB/s). The first log
+  already has `set load: GRID - 131 KB read in 1069.9 ms ... soups 369.4`.
+- **the intro films at ~0.5 fps**: the log's `GAME.mpg: 82 of 115 frames
+  dropped`. Read: on the classic build `glRen` is null, so
+  `playsetup_play.cpp` decodes into the DISPLAY-sized `mv` (the CPU 2x
+  scale, `Movie::nextFrame`) and `presentGL` uploads all 640x480 rows a
+  frame through the slow format - the menu's 220-310 ms present, every
+  film frame. `presentGL` already stretches its texture to the window with
+  GL_NEAREST, which is the same replication as the CPU's exact 2x, so
+  handing it the 320x240 `film` surface should be pixel-identical at a
+  quarter of the upload.
+- **Mac OS 9 freezes the whole computer** (which binary and whether an
+  `omk-out.txt` was written: not yet asked). The AGL path has NEVER run on
+  OS 9 with a real 3D card (its emulation has none, 3d above); `delayMs`
+  spins on `Delay(1)` and never yields - harmless on OS X, a hog under OS
+  9's cooperative scheduler; and a line-buffered log is not on the disk
+  after a hard freeze without `FlushVol`.
+
+**FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
+GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
+mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are
+placed per corner and patched into the set every frame - `scripted motion:
+meshes placed` 12-14 ms on the iBook); the set and bodies per VERTEX (2, 3
+above); the G3's missing `fsqrt` (the 750 has no square-root instruction:
+every `sqrt` is a library call - squared-distance tests where a distance is
+only compared); float<->int conversions per vertex (`toByte` x3 in `emit`,
+a store-and-reload each on a 32-bit PowerPC - colour bytes kept per corner,
+one fog weight a vertex); the vertex stride 40 bytes with the fog's 12
+sent even when there is no fog; the films through QuickTime (what
+`todo/classic-mac-port-1999.md` says a period port would have done) or
+straight YCbCr to the upload format; the boot's loads after the window is
+up; the voice lines decoded in pieces across frames (the `audio` stalls).
+
 ## 4. What is next, in the order proposed
 
 1. ~~**The filtering DEFAULT**~~ - **DONE 2026-10-03**, the reader's

@@ -575,6 +575,63 @@ sent` lines (2e), `gl1: texture pool` (2f), the `sections` lines of the menu
 and the street against the second run's (above), a dialogue `line load:`
 (2c), and the profile's `ui: cloud *` and `gl1: draw call` zones.
 
+**THE iBOOK'S THIRD RUN (2026-10-10, steps 2c-2i, the machine now on Mac OS
+X 10.3.9)** - the reader: *"White screen issue is not resolved"*. What the
+log (`omk-out.txt`, 3330 frames, exit 0) and `omk.prof` say:
+- **the white is the MEDIA LINE overlay and nothing else**: every white
+  stretch the run passed through is a `gl1 present: overlay (media line)`
+  span (the Impasse's *"Te voila enfin"* from frame 1637, the robot's
+  notice from 1931, the four tutorial lines of AREA 142, the credits'
+  *Eidos Interactive* / *Quantic Dream*); `overlay (conversation)`, `(colour
+  fade)` and `(black fade)` frames came through, and NO `GL error` line and
+  no `REFUSED` line was written;
+- **so step 2b's reading was BACKWARDS**: a subtitle is opaque text drawn
+  over the key with NO box (`SubBox::None`), so its overlay alpha is 0 or
+  255 only and no plane row is touched - it is the CONVERSATION's box (the
+  planes' affine pass) that carries partial alpha, and that draws right.
+  The blend change could not have mattered;
+- the overlay texture is 1024x512 RGBA8 = 2 MB; the profile's GPU memory is
+  3.25 MB in AREA 118 (the conversation) and 5.5 MB in the Impasse (28
+  texture slots + the overlay), 8 MB in Anekbah's street - against the
+  iBook's Rage 128 Mobility's 8 MB with ~1.8 MB of window buffers. A lead,
+  not a cause: the white covers the WHOLE window while the overlay quad
+  covers only the band of rows that differ from the key;
+- upload extensions: client storage YES, rectangle and texture range no; the
+  menus as ARGB1555 through client storage, 49.4 ms in the probe (85.1 sent
+  the old way);
+- a line's start: `opened and read` 40-50 ms (from 0.2-1.1 s); the first
+  line's frame still 650 ms (`audio 323`, `game frame 199`);
+- the texture pool kept: 192 kept / 43 uploaded over ten pools;
+- the street: 85-180 ms a frame - `world begin..end (submit, GL)` 28-78,
+  `pedestrians, traffic` 14-37, `scripted motion: meshes placed` 8-12;
+  `props, guns` down to 0.4-6;
+- the profile: `gl1: overlay rows` ~26 ms an overlay frame, `ui: cloud
+  warp` ~20 ms and `emboss` ~7 ms a menu frame.
+
+**Step 2j - THE WHITE-SCREEN DIAGNOSTIC, 2026-10-10, for the iBook's fourth
+run** (temporary - it goes when the fix lands). Each new media line is drawn
+by the next of four variants, `gl1: media line N drawn as variant V (...)`:
+0 as always (RGBA8 blended), 1 without blending (an alpha test - the same
+picture while the alpha is 0/255, a subtitle's), 2 through a 16-bit ARGB1555
+texture of its own, 3 NOT drawn (the world alone). The first frame of every
+present path and every line, and the 15th after it, logs `gl1 overlay
+probe`: the band and its texels by kind, `glAreTexturesResident` for the
+overlay and the world's textures, and three back-buffer pixels BEFORE the
+swap (centre, a text texel, a key texel). On the intro's path the lines come
+in order: *Te voila enfin* 0, the robot's notice 1, *Je me demande ce
+qu'etait* 2, *Je me demande ou* 3, then 0, 1 (the tutorial lines), the
+credits 2, 3. What the reader notes: which lines went white, and whether the
+text showed on the white.
+**A lead the probe found on the emulated Tiger (`--area 222 --scene-chunk
+55`)**: in a LETTERBOXED cutscene the band is rows **0..479** - the two
+64-row bars are opaque black in the composed frame (81920 texels), so the
+overlay quad covers the whole window; a quad whose texture the card fails to
+sample comes out the vertex colour, WHITE, over everything - the reader's
+symptom. Without a letterbox (AREA 142's lines) the band is the text's rows
+alone (414..460). On the emulated Radeon the overlay texture reads `NOT
+resident` (client storage keeps it in system memory) and `glReadPixels`
+returns zeros, as it did before (3d) - both to be read on the Rage 128.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

@@ -166,6 +166,8 @@ public:
 #if defined(OMK_GL1_AGL)
             if (readTex_) gpuForget(omk::prof::kGlTexture, &readTex_, 1);
             if (readTex_) glDeleteTextures(1, &readTex_);
+            for (GLuint* t : {&ovTex_, &ov16Tex_})
+                if (*t) { gpuForget(omk::prof::kGlTexture, t, 1); glDeleteTextures(1, t); }
 #else
             if (fbo_) glDeleteFramebuffersEXT(1, &fbo_);
             if (colour_) gpuForget(omk::prof::kGlRenderbuffer, &colour_, 1);
@@ -666,7 +668,7 @@ public:
     // Folded into the texture it changed every row every frame of a fade, and
     // the emulated Tiger re-sent the whole frame for 26-31 ms each.
     bool presentOverlay(const Surface& fb, const std::uint8_t* mask, const float fade[4],
-                        int ww, int wh) {
+                        int ww, int wh, int variant = 0, bool probe = false) {
         if (ww != w_ || wh != h_ || fb.w != w_ || fb.h != h_) return false;
         int lo = fb.h, hi = -1;
         const bool fading = fade[3] > 0.0f;
@@ -690,7 +692,7 @@ public:
             stateValid_ = false;             // the draw state the cache assumed is gone
             boundTex_ = ~0u;
         }
-        if (hi >= lo) {
+        if (hi >= lo && variant < 2) {
             // the probe's path (`gl1OverlayPath`): client storage stores ARGB
             // 8888 words, which is what it was timed with
             const Gl1UploadPath path = gl1OverlayPath();
@@ -812,6 +814,14 @@ public:
             // (alpha 0 or 1 only) drew right (2026-10-09). Not seen on the
             // emulated Tiger's Radeon 9700.
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            if (variant == 1) {
+                // the diagnostic's variant 1: no blending, the key's texels
+                // dropped by an alpha test - the same picture while every
+                // texel's alpha is 0 or 255 (a subtitle's)
+                glDisable(GL_BLEND);
+                glEnable(GL_ALPHA_TEST);
+                glAlphaFunc(GL_GREATER, 0.5f);
+            }
             glColor4f(1, 1, 1, 1);
             // the band: fb rows lo..hi, top-down, onto window rows wh-lo..wh-hi-1
             // (a rectangle texture is addressed in texels)
@@ -826,7 +836,57 @@ public:
             glTexCoord2f(0, t1);  glVertex2f(0, yBot);
             glEnd();
             glDisable(target);
+            if (variant == 1) { glDisable(GL_ALPHA_TEST); glEnable(GL_BLEND); }
+        } else if (hi >= lo && variant == 2) {
+            // the diagnostic's variant 2: the band through a 16-bit ARGB1555
+            // texture of its own (1 MB against the RGBA8 one's 2), every
+            // row of the band every frame, alpha 0 or 1 -
+            // what the texture pool's uploads already use on this card
+            const GLsizei tw = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.w)));
+            const GLsizei th = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.h)));
+            if (!ov16Tex_) {
+                glGenTextures(1, &ov16Tex_);
+                glBindTexture(GL_TEXTURE_2D, ov16Tex_);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, tw, th, 0, GL_BGRA,
+                             GL_UNSIGNED_SHORT_1_5_5_5_REV, nullptr);
+                gpuNote("overlay 16", omk::prof::kGlTexture, ov16Tex_, 2LL * tw * th);
+            }
+            glBindTexture(GL_TEXTURE_2D, ov16Tex_);
+            boundTex_ = ~0u;
+            const int rows = hi - lo + 1;
+            ov16Band_.resize(static_cast<std::size_t>(fb.w) * static_cast<std::size_t>(rows));
+            for (int y = lo; y <= hi; ++y)
+                for (int x = 0; x < fb.w; ++x) {
+                    const std::size_t i = static_cast<std::size_t>(y) * fb.w + static_cast<std::size_t>(x);
+                    const std::uint16_t p = fb.px[i];
+                    std::uint16_t word = 0;
+                    if (p != 0xF81F && (mask ? mask[i] : 0u) < 128u)
+                        word = static_cast<std::uint16_t>(0x8000u | (p >> 11) << 10 | ((p >> 6) & 31u) << 5 | (p & 31u));
+                    ov16Band_[static_cast<std::size_t>(y - lo) * fb.w + static_cast<std::size_t>(x)] = word;
+                }
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, lo, fb.w, rows, GL_BGRA,
+                            GL_UNSIGNED_SHORT_1_5_5_5_REV, ov16Band_.data());
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glEnable(GL_TEXTURE_2D);
+            glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            glColor4f(1, 1, 1, 1);
+            const float t0 = static_cast<float>(lo) / th, t1 = static_cast<float>(hi + 1) / th,
+                        s1 = static_cast<float>(fb.w) / tw;
+            const float yTop = static_cast<float>(wh - lo), yBot = static_cast<float>(wh - hi - 1);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, t0);  glVertex2f(0, yTop);
+            glTexCoord2f(s1, t0); glVertex2f(static_cast<float>(ww), yTop);
+            glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), yBot);
+            glTexCoord2f(0, t1);  glVertex2f(0, yBot);
+            glEnd();
+            glDisable(GL_TEXTURE_2D);
         }
+        // (variant 3 draws no overlay at all: the world as it stands, and the fade)
         if (fading) {
             // the fade over everything, interface included, as the GLES pass
             glDisable(GL_TEXTURE_2D);
@@ -841,6 +901,7 @@ public:
             glColor4f(1, 1, 1, 1);
         }
         if (hi >= lo || fading) glDisable(GL_BLEND);
+        if (probe) probeOverlay(fb, mask, lo, hi, ww, wh, variant);
         // ANY GL ERROR the overlay raised, said once each: the iBook's log is
         // all that machine gives back (a refused upload, out of memory)
         for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError()) {
@@ -854,6 +915,59 @@ public:
         OMK_ZONE("gl1: swap");
         aglSwapBuffers(ctx_);
         return true;
+    }
+    // THE WHITE-SCREEN PROBE (step 2j): what the overlay frame holds and what
+    // the card made of it, BEFORE the swap - the band and its texels by kind,
+    // whether the overlay texture and the world's are resident in video
+    // memory (`glAreTexturesResident`, OpenGL 1.1), and three pixels of the
+    // back buffer: the window's centre, a text texel and a key texel of the
+    // band. White there means the card drew white; the picture there and a
+    // white window means the white is not drawn by this context.
+    void probeOverlay(const Surface& fb, const std::uint8_t* mask, int lo, int hi,
+                      int ww, int wh, int variant) {
+        long nKey = 0, nOpaque = 0, nPartial = 0, nAdd = 0;
+        int tx = -1, ty = -1, kx = -1, ky = -1;
+        for (int y = lo; y <= hi; ++y)
+            for (int x = 0; x < fb.w; ++x) {
+                const std::size_t i = static_cast<std::size_t>(y) * fb.w + static_cast<std::size_t>(x);
+                const unsigned m = mask ? mask[i] : 0u;
+                if (fb.px[i] == 0xF81F) {
+                    ++nKey;
+                    if (kx < 0 && y >= (lo + hi) / 2) { kx = x; ky = y; }
+                } else if (m == 0) {
+                    ++nOpaque;
+                    if (tx < 0) { tx = x; ty = y; }
+                } else if (m == 255) ++nAdd;
+                else ++nPartial;
+            }
+        const GLuint ovName = variant == 2 ? ov16Tex_ : ovTex_;
+        GLboolean ovRes = GL_FALSE;
+        if (ovName) glAreTexturesResident(1, &ovName, &ovRes);
+        std::vector<GLuint> names;
+        for (const auto& [key, u] : uploaded_) names.push_back(u.name);
+        std::vector<GLboolean> res(names.size(), GL_FALSE);
+        int resident = 0;
+        if (!names.empty()) {
+            if (glAreTexturesResident(static_cast<GLsizei>(names.size()), names.data(), res.data()))
+                resident = static_cast<int>(names.size());
+            else
+                for (GLboolean b : res) resident += b ? 1 : 0;
+        }
+        unsigned char c[3][4];
+        std::memset(c, 0x55, sizeof c);     // a read that writes nothing shows as 85s
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadBuffer(GL_BACK);
+        glReadPixels(ww / 2, wh / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c[0]);
+        if (tx >= 0) glReadPixels(tx, wh - 1 - ty, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c[1]);
+        if (kx >= 0) glReadPixels(kx, wh - 1 - ky, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c[2]);
+        std::printf("gl1 overlay probe (variant %d): band rows %d..%d - %ld key, %ld opaque, %ld partial, "
+                    "%ld additive texels; overlay texture %s, world textures resident %d of %d; "
+                    "the back buffer before the swap - centre %u %u %u, text (%d,%d) %u %u %u, "
+                    "key (%d,%d) %u %u %u\n",
+                    variant, lo, hi, nKey, nOpaque, nPartial, nAdd,
+                    !ovName ? "none" : ovRes ? "RESIDENT" : "NOT resident", resident,
+                    static_cast<int>(names.size()), c[0][0], c[0][1], c[0][2], tx, ty,
+                    c[1][0], c[1][1], c[1][2], kx, ky, c[2][0], c[2][1], c[2][2]);
     }
 #endif
 
@@ -918,6 +1032,8 @@ private:
     GLuint ovTex_ = 0;                   // the overlay (`presentOverlay`)
     GLsizei ovTexW_ = 0, ovTexH_ = 0;
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
+    GLuint ov16Tex_ = 0;                 // the white-screen diagnostic's 16-bit overlay (variant 2)
+    std::vector<std::uint16_t> ov16Band_;
     std::vector<std::uint32_t> ovStore_; // the client-storage texture's own memory (`gl1OverlayPath`)
     std::vector<std::uint32_t> ovRowKey_;   // what each texture row was last sent from
 #endif
@@ -1218,8 +1334,8 @@ bool gl1PresentWorld(Renderer* r, int ww, int wh) {
     return r && static_cast<Gl1Renderer*>(r)->presentWorld(ww, wh);
 }
 bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
-                       const float fade[4], int ww, int wh) {
-    return r && static_cast<Gl1Renderer*>(r)->presentOverlay(fb, mask, fade, ww, wh);
+                       const float fade[4], int ww, int wh, int variant, bool probe) {
+    return r && static_cast<Gl1Renderer*>(r)->presentOverlay(fb, mask, fade, ww, wh, variant, probe);
 }
 #endif
 

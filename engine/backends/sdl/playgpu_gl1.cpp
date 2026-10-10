@@ -64,6 +64,21 @@ void PlayState::gpuOpenWorldHarness() {
 bool PlayState::gpuPresentSurface(const omk::Surface&) { return false; }
 void PlayState::gpuPresentVerify(bool&) {}
 #if defined(OMK_GL1_AGL)
+// THE WHITE-SCREEN DIAGNOSTIC (2026-10-10, `todo/handoff-classic-mac.md` 3f
+// step 2j). On the reader's iBook (Rage 128 Mobility) the whole window goes
+// white while a MEDIA LINE is up - a subtitle, a credit, an examine line - and
+// the third run tied it to `overlay (media line)` alone. Each new media line
+// is drawn by the next of four variants (`gl1PresentOverlay`): 0 as always,
+// 1 without blending, 2 through a 16-bit texture, 3 not at all; the line,
+// its variant and two probes of what the card drew are logged, so ONE run
+// says which way the white goes away. Temporary: it ends with the fix.
+namespace {
+int g_ovVariant = 0;
+bool g_ovProbe = false;
+const char* const kOvVariantName[4] = {
+    "as always: RGBA8, blended", "no blending: an alpha test",
+    "a 16-bit ARGB1555 texture, blended", "NOT DRAWN: the world alone"};
+}  // namespace
 void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     if (!overlayFrame || !worldVk) return;
     // the key resolved into the two planes (as `playgpu_gles.cpp` does): C
@@ -84,7 +99,8 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     }
     int ww = 0, wh = 0;
     omk::gl1AglWindowSize(ww, wh);
-    presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovFade, ww, wh);
+    presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovFade, ww, wh,
+                                            g_ovVariant, g_ovProbe);
     static bool refusedTold = false;
     if (!presentedWorld && !refusedTold) {
         refusedTold = true;
@@ -123,10 +139,28 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
     // a build without the instruments has no other per-frame count.
     static std::string lastPath;
     const std::string path = keep ? keep : "straight";
+    // the white-screen diagnostic: a new media line takes the next variant,
+    // and the first frame of every path and of every line - and the 15th
+    // after it, as the white may come late - is probed
+    static std::string lastLine;
+    static int lines = 0;
+    static long probeAt = -1;
+    const bool mediaLine = path == "overlay (media line)";
     if (path != lastPath) {
         std::printf("gl1 present: %s from frame %ld\n", path.c_str(), n);
         lastPath = path;
+        probeAt = n;
     }
+    if (mediaLine && mediaText != lastLine) {
+        lastLine = mediaText;
+        ++lines;
+        g_ovVariant = (lines - 1) % 4;
+        std::printf("gl1: media line %d drawn as variant %d (%s) from frame %ld - \"%.48s\"\n",
+                    lines, g_ovVariant, kOvVariantName[g_ovVariant], n, mediaText.c_str());
+        probeAt = n;
+    }
+    if (!mediaLine) g_ovVariant = 0;
+    g_ovProbe = overlayFrame && (n == probeAt || n == probeAt + 15);
 }
 #else
 void PlayState::gpuPresentOverlay(bool&) {}

@@ -54,8 +54,12 @@ int PlayState::run(int argc, char** argv) {
         { OMK_ZONE("setup: session"); if ((r = setupSession()) != -1) return r; }
         { OMK_ZONE("setup: adventure"); if ((r = setupAdventure()) != -1) return r; }
         { OMK_ZONE("setup: devices"); if ((r = setupDevices()) != -1) return r; }
-        { OMK_ZONE("setup: bodies"); if ((r = setupBodies()) != -1) return r; }
+        // THE FILMS BEFORE THE GLOBAL LIBRARY, in `Game_Main`'s order: the
+        // window, `Game_Init`, the three movies, THEN `Game_Start
+        // ("aventure.scx")` - which `setupBodies` reads - then the splash
+        // (`docs/BOOT.md` 1). The films need only the window.
         { OMK_ZONE("setup: play"); if ((r = setupPlay()) != -1) return r; }
+        { OMK_ZONE("setup: bodies"); if ((r = setupBodies()) != -1) return r; }
         { OMK_ZONE("setup: splash"); if ((r = setupSplash()) != -1) return r; }
     }
     omk::prof::endFrame();

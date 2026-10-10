@@ -2034,7 +2034,11 @@ int PlayState::loadSpritesInto(SpriteTable& spriteTab, const std::string& scx) {
     const auto& fs = *fs_;
     const auto ap = fs.resolve("SCPTDATA/" + scx);
     if (!ap) return 0;
-    const auto ad = omk::DataFs::readPath(*ap);
+    return loadSpritesFrom(spriteTab, omk::DataFs::readPath(*ap));
+}
+
+// ...out of a file already read
+int PlayState::loadSpritesFrom(SpriteTable& spriteTab, std::span<const std::byte> ad) {
     const auto st = omk::readScxStream(ad);
     int n = 0;
     for (const auto& sp : st.sprites) {

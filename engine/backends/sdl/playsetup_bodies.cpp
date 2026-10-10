@@ -186,8 +186,13 @@ int PlayState::setupBodies() {
     // and its 187 is a DEMON footstep where the library's 187 is SNEAKIN.WAV.
     // Searching the resident scene - what this did until 2026-09-05 - made
     // the grab silent and played a demon's step on the confirm.
+    // READ ONCE: the same bytes make the runtime and, below, the sprites - it
+    // was read twice here, and a third time by a headless boot before the
+    // window (3 MB each; `setupBoot`)
+    std::vector<std::byte> globalBytes;
     if (const auto gp = fs.resolve("SCPTDATA/aventure.SCX")) {
-        globalRt = std::make_unique<omk::ScxRuntime>(omk::DataFs::readPath(*gp));
+        globalBytes = omk::DataFs::readPath(*gp);
+        globalRt = std::make_unique<omk::ScxRuntime>(globalBytes);
         if (!globalRt->valid()) globalRt.reset();
     }
     // ...AND THE FIGHT'S OWN LIBRARY. `Fight_Begin` (0x004455B0) ends with
@@ -211,7 +216,8 @@ int PlayState::setupBodies() {
     // that never fights (todo/ram-vs-original.md tier B). Its SPRITES are
     // decoded here, below, once.
     {
-        const int glob = loadSpritesInto(spriteBase, "aventure.SCX");
+        const int glob = loadSpritesFrom(spriteBase, globalBytes);
+        std::vector<std::byte>().swap(globalBytes);   // the runtime kept what it needs
         // ...then the FIGHT's, which `Fight_Begin`'s own `Game_Start` installs
         // (see `fightRt` above). Its 16 sprites are the blow effects the
         // `.CTL` combat states spawn - ids 8..14, 32..35, 40, 43, 44, 192,

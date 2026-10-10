@@ -465,6 +465,32 @@ facing`, `audio`, `music storage`, `music ring`, `audio queue bound`,
 `dialogue stands still`, `dialogue line states`, `vita build`, `3ds build`
 green. **`engine: classic build` NOT run**: the tools drive was not connected.
 
+**Step 2d - THE LAUNCH IN `Game_Main`'s ORDER, DONE 2026-10-10, NOT yet run
+on the iBook** (the reader's item 3). The original's window exists before any
+game code (`WinMain`), then `Game_Init`, the three films, `Game_Start
+("aventure.scx")` - the 3 MB global library, read ONCE, after the films - the
+5 s splash, and the first area in the frame loop. The viewer instead read
+about 12.6 MB during its launch, 5 MB of it before the window: `setupBoot` ran a
+whole headless `omk::boot` for its report line (`aventure.scx` read to count
+its sprites and sounds, a Session built, area 118 loaded - all thrown away;
+the iBook's log shows area 118 "loaded" twice), and `setupBodies` read
+`aventure.scx` twice more, before the films. Now:
+- the viewer runs no `omk::boot` (its line counts the films; `build/omk` keeps
+  the headless boot, `engine: boot` green);
+- `setupPlay` (the films) runs BEFORE `setupBodies` (the library), as in
+  `Game_Main`: the films need only the window;
+- `aventure.scx` read once, its bytes making both the runtime and the sprites
+  (`PlayState::loadSpritesFrom`).
+On the M3 the setup before the window went from 20.4 to 7.5 ms; the reads
+before it from ~5 MB to ~2 MB (`Grid.SCX`, 1.3 MB, and the tables, 0.7), and
+the launch's total from ~12.6 to ~7.3 MB, the library now behind the films.
+NOT done: area 118 and its `Grid.SCX` are still loaded before the window
+(the original loads them in its frame loop) - the window section takes its
+size and settings from the middle of the 694-line `setupSession`, so moving
+it means splitting that section first. `engine: intro`, `intro beat`, `boot`,
+`movies`, `fight library`, `scene sprites`, `sprite table`, `sprite ids
+scene-local`, `start menu quit`, `frame rate` green.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are
@@ -478,7 +504,7 @@ one fog weight a vertex); the vertex stride 40 bytes with the fog's 12
 sent even when there is no fog; the films through QuickTime (what
 `todo/classic-mac-port-1999.md` says a period port would have done) or
 straight YCbCr to the upload format; the boot's loads after the window is
-up; the voice lines decoded in pieces across frames (the `audio` stalls) - DONE,
+up (step 2d above, all but the first area); the voice lines decoded in pieces across frames (the `audio` stalls) - DONE,
 step 2c above.
 
 ## 4. What is next, in the order proposed

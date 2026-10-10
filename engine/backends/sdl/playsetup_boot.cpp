@@ -21,13 +21,23 @@ int PlayState::setupBoot() {
     // reports them, and moves on. The first thing a player sees is therefore
     // missing here, and saying so is the point - a window that opens on the
     // menu would imply the app starts there.
-    bo.root = fr; bo.tables = tb; bo.frames = 1;
-    br = omk::boot(bo);
-    std::printf("boot: %d FLIS movie%s found; %s -> %d sprites, %d sounds; "
-                "start area %d\n",
-                br.moviesFound, br.moviesFound == 1 ? "" : "s",
-                br.bootScene.c_str(), br.bootSprites, br.bootSounds,
-                br.startArea);
+    //
+    // **AND THE VIEWER DOES NOT RUN `omk::boot`** (2026-10-10). It did, for
+    // this one report line: a whole headless boot - `aventure.scx` (3 MB)
+    // read to COUNT its sprites and sounds, a Session built, area 118 loaded
+    // and a frame run - all thrown away, before the window, and then done
+    // again for real by the sections after it. On an iBook G3 reading from a
+    // USB 1.1 stick that was seconds of a launch with nothing on screen
+    // (`todo/handoff-classic-mac.md` 3f). `Game_Main` reads the library once,
+    // AFTER the films (`setupBodies` now runs after `setupPlay`), and the
+    // area in its frame loop; `build/omk` keeps the headless boot and
+    // `engine: boot` checks it.
+    const auto& fs = *fs_;
+    int movies = 0;
+    for (const char* m : {"FLIS/EIDOS.mpg", "FLIS/QUANTIC.mpg", "FLIS/GAME.mpg"})
+        if (fs.resolve(m)) ++movies;
+    std::printf("boot: %d FLIS movie%s found; aventure.scx is read after them, "
+                "as Game_Main does\n", movies, movies == 1 ? "" : "s");
 
     OMK_HEAPCHECK("before live session");
     return -1;

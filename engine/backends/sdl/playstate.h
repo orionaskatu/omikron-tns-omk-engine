@@ -192,8 +192,6 @@ struct PlayState {
     omk::MenuCloud cloud{};
     omk::ControlSchemes schemes{};
     std::optional<omk::Input> in_;
-    omk::BootOptions bo{};
-    omk::BootReport br{};
     omk::OpcodeTable opcodes{};
     omk::GameState state{};
     std::vector<std::byte> saveBytes{};
@@ -907,6 +905,7 @@ struct PlayState {
     omk::NodeTracks idleTracksFor(const CharBank& b,
                                    const std::vector<omk::Mesh>& meshes);
     int loadSpritesInto(SpriteTable& spriteTab, const std::string& scx);
+    int loadSpritesFrom(SpriteTable& spriteTab, std::span<const std::byte> scxFile);
     int loadSprites(const std::string& scx);
     void refreshSprites();
     void prepareSet(SetLoad& L);

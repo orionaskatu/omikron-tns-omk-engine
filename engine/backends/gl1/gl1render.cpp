@@ -511,12 +511,23 @@ public:
             return P;
         };
 
+        // A VERTEX ONCE, NOT ONCE A CORNER (step 3d): `indexFor` says which
+        // corners of the geometry are one vertex (equal bytes, one mesh), and
+        // within this draw a corner whose vertex was already transformed takes
+        // its view position and outcode - and, once sent in this batch, its
+        // INDEX - instead of computing and sending its own. Taken only when
+        // its bytes are still the computing corner's, so a stale index costs
+        // sharing, never a picture. Anekbah's set is 139245 corners on 63079
+        // vertices; Kay'l 1626 on 272.
+        const VIndex* vi = indexFor(g);
+        ++drawStamp_;
         for (std::size_t t = 0; t < nCorner; t += 3) {
             ++st_.triangles;
             if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
             Vtx in[3];
             unsigned oc[3];
             std::int32_t meshOf[3] = {-1, -1, -1};
+            std::int32_t slot[3] = {-1, -1, -1};        // the corner's cached vertex, when it has one
             // the POSITIONS and the outcodes first: a triangle wholly outside
             // (two in five of a street frame's) or facing away leaves before
             // any of its colour work, which was done for every corner first
@@ -528,6 +539,23 @@ public:
                     const std::int32_t m = g.cornerMesh[ci];
                     if (m >= 0 && static_cast<std::size_t>(m) < d.meshPoses) meshOf[k] = m;
                 }
+                ++statCorners_;
+                if (vi) {
+                    const std::uint32_t v = vi->vert[ci];
+                    if (vStamp_[v] == drawStamp_) {
+                        const std::size_t r = vRep_[v];
+                        if (r == ci || sameCorner(g, r, ci)) {
+                            in[k].v[0] = vPos_[3 * v]; in[k].v[1] = vPos_[3 * v + 1]; in[k].v[2] = vPos_[3 * v + 2];
+                            oc[k] = vOc_[v];
+                            slot[k] = static_cast<std::int32_t>(v);
+                            continue;
+                        }
+                        // the same vertex by the index, other bytes now: its own
+                    } else {
+                        slot[k] = static_cast<std::int32_t>(v);   // computed below, kept
+                    }
+                }
+                ++statTransformed_;
                 if (meshOf[k] >= 0) {
                     const float* P = viewAffine(static_cast<std::size_t>(meshOf[k]));
                     x = P[0] * c.x + P[1] * c.y + P[2] * c.z + P[3];
@@ -546,6 +574,14 @@ public:
                 if (z * gy - y < 0.0f) o |= 8u;
                 if (z * gy + y < 0.0f) o |= 16u;
                 oc[k] = o;
+                if (slot[k] >= 0) {
+                    const auto v = static_cast<std::size_t>(slot[k]);
+                    vStamp_[v] = drawStamp_;
+                    vRep_[v] = static_cast<std::uint32_t>(ci);
+                    vPos_[3 * v] = x; vPos_[3 * v + 1] = y; vPos_[3 * v + 2] = z;
+                    vOc_[v] = static_cast<std::uint8_t>(o);
+                    vOutStamp_[v] = 0;                    // not sent yet
+                }
             }
             const unsigned outAll = oc[0] & oc[1] & oc[2];
             if (outAll) {
@@ -555,8 +591,8 @@ public:
             const bool cullThis = cullOn && g.cornerCull[d.start + t] != 0;
             const bool inside = (oc[0] | oc[1] | oc[2]) == 0;
             if (inside && cullThis && backFacing(in[0], in[1], in[2])) { ++st_.culled; continue; }
-            // ...then the COLOURS
-            for (int k = 0; k < 3; ++k) {
+            // ...then the COLOURS, of a corner that is sent (`colourOf`)
+            const auto colourOf = [&](int k) {
                 const Corner& c = g.corners[d.start + t + static_cast<std::size_t>(k)];
                 float cr = c.r, cg = c.g, cb = c.b;
                 if (relight) {
@@ -594,12 +630,26 @@ public:
                     in[k].c[0] = in[k].c[1] = in[k].c[2] =
                         lumaGreyUnit(in[k].c[0], in[k].c[1], in[k].c[2]);
                 in[k].u = c.u; in[k].t = c.v;
-            }
+            };
             if (inside) {
                 ++st_.drawn;
-                emit(in[0]); emit(in[1]); emit(in[2]);
+                for (int k = 0; k < 3; ++k) {
+                    const std::int32_t sl = slot[k];
+                    if (sl >= 0 && vOutStamp_[static_cast<std::size_t>(sl)] == batchStamp_) {
+                        idx_.push_back(vOut_[static_cast<std::size_t>(sl)]);   // sent: its index
+                        continue;
+                    }
+                    colourOf(k);
+                    const std::uint16_t o = emit(in[k]);
+                    idx_.push_back(o);
+                    if (sl >= 0) {
+                        vOut_[static_cast<std::size_t>(sl)] = o;
+                        vOutStamp_[static_cast<std::size_t>(sl)] = batchStamp_;
+                    }
+                }
                 continue;
             }
+            for (int k = 0; k < 3; ++k) colourOf(k);
             Vtx poly[4];
             int np = 0;
             for (int k = 0; k < 3 && np < 4; ++k) {
@@ -647,7 +697,7 @@ public:
             const Vtx* out = buf[cur];
             ++st_.drawn;
             for (int k = 1; k + 1 < nb; ++k) {            // a fan: up to 6 triangles after the clips
-                emit(out[0]); emit(out[k]); emit(out[k + 1]);
+                idx_.push_back(emit(out[0])); idx_.push_back(emit(out[k])); idx_.push_back(emit(out[k + 1]));
             }
         }
     }
@@ -675,10 +725,15 @@ public:
         // the draws handed over, the draw calls they became, the triangles
         sum_[0] += submits_; sum_[1] += batches_; sum_[2] += st_.triangles;
         sum_[3] += st_.drawn; sum_[4] += st_.culled;
-        if (++passes_ == 60) sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
+        if (++passes_ == 60) {
+            sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
+            statCorners_ = statTransformed_ = statSent_ = 0;
+        }
         if (passes_ == 120)
             std::printf("gl1: 60 passes drew %ld draws in %ld draw calls, %ld of %ld triangles "
-                        "(%ld culled)\n", sum_[0], sum_[1], sum_[3], sum_[2], sum_[4]);
+                        "(%ld culled); %ld corners, %ld transformed, %ld vertices sent\n",
+                        sum_[0], sum_[1], sum_[3], sum_[2], sum_[4],
+                        statCorners_, statTransformed_, statSent_);
     }
 
     // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
@@ -1371,7 +1426,9 @@ private:
     // original's rhw tested GREATER) times w = z. The reference's fog:
     // f = (end - z) / (end - start) past the start, the colour lerped toward
     // the fog's by 1 - f.
-    void emit(const Vtx& p) {
+    std::uint16_t emit(const Vtx& p) {
+        const auto at = static_cast<std::uint16_t>(pending());   // < kBatchMax + 18 < 65536
+        ++statSent_;
         OutV o;
         const float w = p.v[2];
         o.p[0] = p.v[0] * ith_; o.p[1] = p.v[1] * itv_;
@@ -1394,6 +1451,7 @@ private:
             outN_.push_back(OutN{{o.p[0], o.p[1], o.p[2], o.p[3]}, {o.c[0], o.c[1], o.c[2], o.c[3]},
                                  {o.uv[0], o.uv[1]}});
         }
+        return at;
     }
     std::size_t pending() const { return out_.size() + outN_.size(); }
 
@@ -1406,7 +1464,7 @@ private:
             glTexCoordPointer(2, GL_FLOAT, stride, out_[0].uv);
             if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, stride, out_[0].f);
             OMK_ZONE("gl1: draw call");          // the driver's share (todo/debug-tools.md)
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(out_.size()));
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(idx_.size()), GL_UNSIGNED_SHORT, idx_.data());
             ++batches_;
             out_.clear();
         }
@@ -1416,10 +1474,13 @@ private:
             glColorPointer(4, GL_UNSIGNED_BYTE, stride, outN_[0].c);
             glTexCoordPointer(2, GL_FLOAT, stride, outN_[0].uv);
             OMK_ZONE("gl1: draw call");
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(outN_.size()));
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(idx_.size()), GL_UNSIGNED_SHORT, idx_.data());
             ++batches_;
             outN_.clear();
         }
+        // the batch's vertices are gone: an index into them is no longer one
+        idx_.clear();
+        ++batchStamp_;
     }
 
     static unsigned char toByte(float v) {
@@ -1514,6 +1575,64 @@ private:
     // THE PENDING BATCH, interleaved, kept between frames for its capacity
     // (no allocation per frame); `f` is the fog's secondary colour, read only
     // when `fogSum_`. Bounded so a frame's largest run stays a few MB.
+    // THE VERTEX INDEX (step 3d): a geometry's corner -> its vertex, built
+    // once per geometry and size (equal bytes within one mesh, as the 3DS
+    // backend's `VertexIndex`); the per-vertex cache below is the current
+    // draw's (`drawStamp_`) and, for the sent index, the current batch's
+    struct VIndex { std::size_t n = 0; std::vector<std::uint32_t> vert; std::uint32_t nv = 0; };
+    std::map<const Geometry*, VIndex> vindex_;
+    std::vector<std::uint32_t> vStamp_, vRep_, vOutStamp_;
+    std::vector<float> vPos_;
+    std::vector<std::uint8_t> vOc_;
+    std::vector<std::uint16_t> vOut_, idx_;
+    std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
+    long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0;
+    static constexpr std::size_t kIndexMinCorners = 64;
+    bool sameCorner(const Geometry& g, std::size_t a, std::size_t b) const {
+        if (std::memcmp(&g.corners[a], &g.corners[b], sizeof(Corner)) != 0) return false;
+        return g.cornerMesh.size() != g.corners.size() || g.cornerMesh[a] == g.cornerMesh[b];
+    }
+    const VIndex* indexFor(const Geometry& g) {
+        const std::size_t n = g.corners.size();
+        if (n < kIndexMinCorners) return nullptr;
+        auto it = vindex_.find(&g);
+        if (it != vindex_.end() && it->second.n == n) return &it->second;
+        if (it == vindex_.end() && vindex_.size() >= 256) vindex_.clear();   // bounded: transient geometries
+        VIndex& x = vindex_[&g];
+        x.n = n; x.nv = 0;
+        x.vert.assign(n, 0);
+        const bool meshes = g.cornerMesh.size() == n;
+        std::size_t cap = 64;
+        while (cap < 2 * n) cap <<= 1;
+        std::vector<std::int32_t> table(cap, -1);
+        for (std::size_t k = 0; k < n; ++k) {
+            std::uint32_t w[sizeof(Corner) / 4];
+            std::memcpy(w, &g.corners[k], sizeof w);
+            std::uint32_t h = 2166136261u ^ static_cast<std::uint32_t>(meshes ? g.cornerMesh[k] : 0);
+            for (const std::uint32_t u : w) h = (h ^ u) * 16777619u;
+            std::size_t sl = (h ^ (h >> 15)) & (cap - 1);
+            for (;;) {
+                const std::int32_t e = table[sl];
+                if (e < 0) {
+                    table[sl] = static_cast<std::int32_t>(k);
+                    x.vert[k] = x.nv++;
+                    break;
+                }
+                if (sameCorner(g, static_cast<std::size_t>(e), k)) {
+                    x.vert[k] = x.vert[static_cast<std::size_t>(e)];
+                    break;
+                }
+                sl = (sl + 1) & (cap - 1);
+            }
+        }
+        if (vStamp_.size() < x.nv) {
+            vStamp_.resize(x.nv, 0); vRep_.resize(x.nv, 0); vOutStamp_.resize(x.nv, 0);
+            vPos_.resize(3 * static_cast<std::size_t>(x.nv)); vOc_.resize(x.nv); vOut_.resize(x.nv);
+        }
+        if (n >= 20000)
+            std::printf("gl1: a geometry of %zu corners indexed - %u vertices\n", n, x.nv);
+        return &x;
+    }
     struct OutV { float p[4]; unsigned char c[4]; float uv[2]; float f[3]; };
     struct OutN { float p[4]; unsigned char c[4]; float uv[2]; };   // a pass without the fog sum
     static constexpr std::size_t kBatchMax = 3 * 16384;

@@ -765,6 +765,24 @@ worth sent a frame. (The 3DS's overlay - `3ds-port.md` 6.7, which first
 replaced GL1's hash by a kept copy, the fix GL1 itself got only in 3b -
 still sends a changed row whole; the same block tracking applies there.)
 
+**Step 3d - A VERTEX ONCE, AND INDEXED DRAWS, DONE 2026-10-11, NOT yet run on
+the iBook.** The street's submit was ~39 ms of CPU (`world: mirror` self) and
+`gl1: draw call` 23.6 - and the Rage 128 has no transform unit, so the
+driver's vertex work is the CPU's too - with every triangle's three corners
+transformed and sent apart: Anekbah's set is 139245 corners on 63079
+vertices, Kay'l 1626 on 272. Now `indexFor` builds, once per geometry and
+size, which corners are one vertex (every byte equal, one mesh - the 3DS
+backend's `VertexIndex` rule), and within a draw a corner whose vertex was
+transformed takes its view position and outcode, and once sent in the batch
+its INDEX: the batch goes up as `glDrawElements` (16-bit, OpenGL 1.1, so OS 9
+has it). A corner shares only while its bytes still equal the computing
+corner's - a stale index loses sharing, never the picture. Colours are now
+computed for a sent vertex only. Host GL1: the street (renderer-posed and
+`--cpu-bodies`), the apartment (its mirror) and the Impasse BYTE-IDENTICAL
+to the unindexed backend; per 60 street passes 1415922 corners, **659816
+transformed, 389772 vertices sent** (713000+ before). Emulated Tiger street:
+`sim+draw` 25-29 -> 19-23 ms, the submit's own CPU 16.5 -> 11.9.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

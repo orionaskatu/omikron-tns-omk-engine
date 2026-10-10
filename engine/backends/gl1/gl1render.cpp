@@ -86,6 +86,7 @@
 
 #include "o3de/greybank.h"
 #include "o3de/shimmer.h"
+#include "o3de/vertexlight.h"
 #include "platform/profile.h"
 #include "ui/surface.h"
 
@@ -338,7 +339,13 @@ public:
                      v.clearColour[2] / 255.0f, 1.0f);   // the scene's fog colour
         glClearDepth(1.0);
         glDepthMask(GL_TRUE);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        {
+            // the frame's first call that needs the back buffer: where the
+            // CPU WAITS for the card to finish the last frame, if it does -
+            // the iBook's fixed 7 ms in `world begin, set` (step 3a)
+            OMK_ZONE("gl1: clear");
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
 #if defined(OMK_GL1_AGL)
         // THE LETTERBOX BARS BLACK. On AGL the picture is drawn at its
         // letterbox place in the window's own back buffer and presented as it
@@ -465,17 +472,73 @@ public:
         const std::size_t nCorner = d.count - d.count % 3;
         const bool cullOn = g.cornerCull.size() == g.corners.size() && !noCull();
         const float gx = gx_, gy = gy_;
+
+        // A POSED DRAW (`posesBodies`): each mesh's affine with the camera
+        // folded in, made the first time one of its corners comes up in this
+        // draw - view = B (R rest + t - eye), B the camera's three rows - and
+        // the lights that reach the body, applied per corner below
+        const bool posed = d.meshPose && d.meshPoses && g.cornerMesh.size() == g.corners.size();
+        struct PoseLight { float lx, ly, lz; unsigned char r, g, b; };
+        PoseLight pl[kPoseLights];
+        int nl = 0;
+        bool relight = false;
+        if (posed) {
+            if (++poseDraw_ == 0) { std::fill(poseGen_.begin(), poseGen_.end(), 0u); poseDraw_ = 1; }
+            if (poseGen_.size() < d.meshPoses) {
+                poseGen_.resize(d.meshPoses, 0u);
+                poseView_.resize(12 * d.meshPoses);
+            }
+            nl = d.vertexLights ? std::min(d.vertexLightCount, static_cast<int>(kPoseLights)) : 0;
+            for (int i = 0; i < nl; ++i) {
+                const float* v = d.vertexLights + 8 * i;   // dir * strength, then the colour bytes
+                pl[i] = {v[0], v[1], v[2], static_cast<unsigned char>(v[4]),
+                         static_cast<unsigned char>(v[5]), static_cast<unsigned char>(v[6])};
+            }
+            relight = nl > 0 || d.lightsFromBlack;
+        }
+        const auto viewAffine = [&](std::size_t m) -> const float* {
+            float* P = poseView_.data() + 12 * m;
+            if (poseGen_[m] == poseDraw_) return P;
+            poseGen_[m] = poseDraw_;
+            const float* a = d.meshPose + 12 * m;
+            const float t[3] = {a[3] - eye_[0], a[7] - eye_[1], a[11] - eye_[2]};
+            const float* rows[3] = {bs_, bu_, bf_};
+            for (int r = 0; r < 3; ++r) {
+                const float* B = rows[r];
+                for (int j = 0; j < 3; ++j) P[4 * r + j] = B[0] * a[j] + B[1] * a[4 + j] + B[2] * a[8 + j];
+                P[4 * r + 3] = B[0] * t[0] + B[1] * t[1] + B[2] * t[2];
+            }
+            return P;
+        };
+
         for (std::size_t t = 0; t < nCorner; t += 3) {
             ++st_.triangles;
             if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
             Vtx in[3];
             unsigned oc[3];
+            std::int32_t meshOf[3] = {-1, -1, -1};
+            // the POSITIONS and the outcodes first: a triangle wholly outside
+            // (two in five of a street frame's) or facing away leaves before
+            // any of its colour work, which was done for every corner first
             for (int k = 0; k < 3; ++k) {
-                const Corner& c = g.corners[d.start + t + static_cast<std::size_t>(k)];
-                const float dx = c.x - eye_[0], dy = c.y - eye_[1], dz = c.z - eye_[2];
-                const float x = dx * bs_[0] + dy * bs_[1] + dz * bs_[2];
-                const float y = dx * bu_[0] + dy * bu_[1] + dz * bu_[2];
-                const float z = dx * bf_[0] + dy * bf_[1] + dz * bf_[2];
+                const std::size_t ci = d.start + t + static_cast<std::size_t>(k);
+                const Corner& c = g.corners[ci];
+                float x, y, z;
+                if (posed) {
+                    const std::int32_t m = g.cornerMesh[ci];
+                    if (m >= 0 && static_cast<std::size_t>(m) < d.meshPoses) meshOf[k] = m;
+                }
+                if (meshOf[k] >= 0) {
+                    const float* P = viewAffine(static_cast<std::size_t>(meshOf[k]));
+                    x = P[0] * c.x + P[1] * c.y + P[2] * c.z + P[3];
+                    y = P[4] * c.x + P[5] * c.y + P[6] * c.z + P[7];
+                    z = P[8] * c.x + P[9] * c.y + P[10] * c.z + P[11];
+                } else {
+                    const float dx = c.x - eye_[0], dy = c.y - eye_[1], dz = c.z - eye_[2];
+                    x = dx * bs_[0] + dy * bs_[1] + dz * bs_[2];
+                    y = dx * bu_[0] + dy * bu_[1] + dz * bu_[2];
+                    z = dx * bf_[0] + dy * bf_[1] + dz * bf_[2];
+                }
                 in[k].v[0] = x; in[k].v[1] = y; in[k].v[2] = z;
                 unsigned o = z > kNearCut ? 0u : 1u;
                 if (z * gx - x < 0.0f) o |= 2u;
@@ -483,14 +546,6 @@ public:
                 if (z * gy - y < 0.0f) o |= 8u;
                 if (z * gy + y < 0.0f) o |= 16u;
                 oc[k] = o;
-                // the shimmer first, as the engine adds it into the bytes
-                const float sh = shimmerOffset(c.phase, view_.shimmerClock);
-                in[k].c[0] = c.r + sh; in[k].c[1] = c.g + sh; in[k].c[2] = c.b + sh;
-                // ...then the greyscale bank (ops 150/151, `o3de/greybank.h`)
-                if (view_.grey)
-                    in[k].c[0] = in[k].c[1] = in[k].c[2] =
-                        lumaGreyUnit(in[k].c[0], in[k].c[1], in[k].c[2]);
-                in[k].u = c.u; in[k].t = c.v;
             }
             const unsigned outAll = oc[0] & oc[1] & oc[2];
             if (outAll) {
@@ -498,8 +553,49 @@ public:
                 continue;
             }
             const bool cullThis = cullOn && g.cornerCull[d.start + t] != 0;
-            if ((oc[0] | oc[1] | oc[2]) == 0) {
-                if (cullThis && backFacing(in[0], in[1], in[2])) { ++st_.culled; continue; }
+            const bool inside = (oc[0] | oc[1] | oc[2]) == 0;
+            if (inside && cullThis && backFacing(in[0], in[1], in[2])) { ++st_.culled; continue; }
+            // ...then the COLOURS
+            for (int k = 0; k < 3; ++k) {
+                const Corner& c = g.corners[d.start + t + static_cast<std::size_t>(k)];
+                float cr = c.r, cg = c.g, cb = c.b;
+                if (relight) {
+                    // the GLES shader's rule: from the scene's grey when the
+                    // body starts black, else from the corner's colour, each
+                    // reaching light added and clamped in turn on the POSED
+                    // normal (`applyLights`' law and ramp)
+                    if (d.lightsFromBlack) cr = cg = cb = d.lightBase;
+                    if (nl > 0) {
+                        float nx = c.nx, ny = c.ny, nz = c.nz;
+                        if (meshOf[k] >= 0) {
+                            const float* a = d.meshPose + 12 * static_cast<std::size_t>(meshOf[k]);
+                            nx = a[0] * c.nx + a[1] * c.ny + a[2] * c.nz;
+                            ny = a[4] * c.nx + a[5] * c.ny + a[6] * c.nz;
+                            nz = a[8] * c.nx + a[9] * c.ny + a[10] * c.nz;
+                        }
+                        for (int i = 0; i < nl; ++i) {
+                            const float tl = -(nx * pl[i].lx + ny * pl[i].ly + nz * pl[i].lz);
+                            int ti = static_cast<int>(tl);
+                            ti = ti < 0 ? 0 : (ti > 255 ? 255 : ti);
+                            const float ar = static_cast<float>(lightRamp(pl[i].r, ti)) / 255.0f;
+                            const float ag = static_cast<float>(lightRamp(pl[i].g, ti)) / 255.0f;
+                            const float ab = static_cast<float>(lightRamp(pl[i].b, ti)) / 255.0f;
+                            cr = cr + ar > 1.0f ? 1.0f : cr + ar;
+                            cg = cg + ag > 1.0f ? 1.0f : cg + ag;
+                            cb = cb + ab > 1.0f ? 1.0f : cb + ab;
+                        }
+                    }
+                }
+                // the shimmer first, as the engine adds it into the bytes
+                const float sh = shimmerOffset(c.phase, view_.shimmerClock);
+                in[k].c[0] = cr + sh; in[k].c[1] = cg + sh; in[k].c[2] = cb + sh;
+                // ...then the greyscale bank (ops 150/151, `o3de/greybank.h`)
+                if (view_.grey)
+                    in[k].c[0] = in[k].c[1] = in[k].c[2] =
+                        lumaGreyUnit(in[k].c[0], in[k].c[1], in[k].c[2]);
+                in[k].u = c.u; in[k].t = c.v;
+            }
+            if (inside) {
                 ++st_.drawn;
                 emit(in[0]); emit(in[1]); emit(in[2]);
                 continue;
@@ -947,6 +1043,18 @@ public:
 #endif
 
     RasterStats stats() const override { return st_; }   // only `triangles` is known
+    // BODIES AND MOVING MESHES POSED HERE (`renderer.h` `Draw::meshPose`,
+    // `todo/handoff-classic-mac.md` 3f step 3a): a posed draw's corners are
+    // its REST corners and one affine a mesh, and `submit` folds the camera
+    // into each mesh's affine once a draw - so a corner is transformed ONCE,
+    // rest to view, where the frontend's CPU path placed it into the world
+    // (and the moving set meshes' were patched into the set's buffer) and
+    // `submit` transformed it again. The iBook's street spent ~20 ms a frame
+    // on the moving meshes' placement and patch alone. The lights that reach
+    // a body come as `Draw::vertexLights` and are applied per corner here by
+    // `vertexlight.cpp`'s law, as the GLES shader applies them.
+    bool posesBodies() const override { return true; }
+    int maxVertexLights() const override { return kPoseLights; }
     const char* name() const override { return "OpenGL 1.x fixed-function"; }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear. No mip chain -
     // the original set MIP NONE on both arms - so trilinear is drawn bilinear
@@ -1008,6 +1116,14 @@ private:
     GLsizei ovTexW_ = 0, ovTexH_ = 0;
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
     GLuint probeTex_ = 0;                // the white-screen probe's pixel reads
+#endif
+    // the posed draw's per-mesh affines with the camera folded in (`submit`),
+    // made on first use in a draw: `poseGen_[m] == poseDraw_` when made
+    static constexpr int kPoseLights = 32;
+    std::vector<float> poseView_;          // 12 a mesh: view = P * rest
+    std::vector<std::uint32_t> poseGen_;
+    std::uint32_t poseDraw_ = 0;
+#if defined(OMK_GL1_AGL)
     std::vector<std::uint32_t> ovStore_; // the client-storage texture's own memory (`gl1OverlayPath`)
     std::vector<std::uint32_t> ovRowKey_;   // what each texture row was last sent from
 #endif

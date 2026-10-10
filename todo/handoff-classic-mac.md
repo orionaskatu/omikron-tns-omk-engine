@@ -678,6 +678,40 @@ iBook's fourth run to the pattern; WITH it the same frames read the world
 before running (the first rebuild of the pair had come out IDENTICAL: GNU
 Make 3.81's one-second timestamps, CLAUDE.md 1 - `sleep 2; touch` fixed it).
 
+**Step 3a - GL1 POSES BODIES, DONE 2026-10-11, NOT yet run on the iBook**
+(the reader: *"continue with the optimizations in the meantime"*). The
+fourth run's street (frames 3800-4500, 146 ms a frame) by the profile and
+the `spans` lines: `world: mirror` self 35 ms (the submit's CPU, and
+whatever the first clear waits), `gl1: draw call` 23, `world: crowd` 21,
+`input: motion` 12; spans `motion corners` 8-11 + `motion patch` 10-13 (the
+moving set meshes placed corner by corner and patched into the set's buffer
+every frame), `vehicles` 9-16, `player` 9-12 (it also covers the draw lists),
+`ped bodies` 3-10. So GL1 now answers `posesBodies()`: a posed draw comes
+as REST corners and one affine a mesh (`Draw::meshPose`), and `submit`
+folds the camera into each mesh's affine once a draw - a corner is
+transformed ONCE, rest to view - and applies the `vertexLights` per corner
+with `applyLights`' law on the posed normal (`maxVertexLights` 32), from
+the scene's grey where `lightsFromBlack`: the GLES shader's rule. The
+walkers, the vehicles, the player, the moving set meshes and the sky take
+that path. Also in `submit`: a triangle's positions and outcodes first, its
+colour work only once it is neither wholly outside (two in five of a street
+frame's triangles) nor facing away. And a zone `gl1: clear` around the
+frame's first clear, to tell the iBook's fixed 7 ms of `world begin, set`
+(waiting for the card?) from work.
+**A fault on every CPU-posing backend found on the way**: the player's
+NORMALS were turned by his bones but not by his facing (`worldCrowd`'s
+placement loop rotated positions only) since his lighting arrived (L1,
+2026-10-06), so the set's lights fell on him as if he faced the way his
+model is authored - GL1's posed player differed from its CPU one by ~7800
+pixels; with the normal turned, 57 (`engine: gl1 backend` now renders a
+fourth frame with `--cpu-bodies`: at most 0.1% of the pixels, 8 by more
+than 24; shown to fail with the posed light on the rest normal - 8366, 1218).
+`street frame`, `actor lighting`, `gles pose`, `per-pixel lighting`,
+`traffic frame`, `pose equivalence` green. On the emulated Tiger (Anekbah,
+`--density 0`, the same 90 s, the 2k build against this one): `sim+draw`
+27-29 -> 22-24 ms; spans `motion corners` 3.0 -> 0.1, `motion patch` 3.3
+-> 0.3, `player` 3.7 -> 0.8, `vehicles` 0.6 -> 0.1; the submit unchanged.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

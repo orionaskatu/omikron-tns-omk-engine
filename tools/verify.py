@@ -28437,6 +28437,18 @@ def c_engine_gl1_backend():
     0 whatever it is asked, so the bilinear frame is the nearest one -
     changed 0, red.
 
+    And a FOURTH frame, `--cpu-bodies` (2026-10-11, handoff-classic-mac.md 3f
+    step 3a): GL1 now POSES BODIES - the walkers, the player, the vehicles and
+    the moving set meshes reach it as rest corners and one affine a mesh, and
+    the lights that reach a body are applied per corner in `submit` - so the
+    gl1 frame must say the walkers and the player went that way, the `cpu`
+    frame that they did not, and the two pictures differ by rounding only: at
+    most 0.1% of the pixels and 8 of them by more than 24. Measured
+    2026-10-11: 57 pixels, 1 by more than 24. Shown to fail: the posed light
+    taking the REST normal (no turn) - 8366 pixels, 1218 by more than 24; and the CPU path's own
+    fault it found, the player's normal not turned with his facing
+    (`worldCrowd`), was the same 7800 from the other side.
+
     Shown to fail (2026-10-03): the texture slot taken as `key & 0x1F`
     instead of the key's low SIX bits (ASSETS 4b), so every material past
     slot 31 samples another atlas - coverage 0.9884 and 45523 pixels
@@ -28463,14 +28475,15 @@ def c_engine_gl1_backend():
     tmp = tempfile.mkdtemp()
     try:
         frames, logs = {}, {}
-        for tag, env, filt in (("gl1", {}, "nearest"), ("sw", {"OMK_GL1": "0"}, "nearest"),
-                               ("bilinear", {}, "bilinear")):
+        for tag, env, filt, extra in (("gl1", {}, "nearest", []), ("sw", {"OMK_GL1": "0"}, "nearest", []),
+                                      ("bilinear", {}, "bilinear", []),
+                                      ("cpu", {}, "nearest", ["--cpu-bodies"])):
             out = os.path.join(tmp, tag + ".bin")
             r = subprocess.run([binp, fr, os.path.join(ROOT, "tables"),
                                 "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                                 "--area", "0", "--stand", "1804,0,-6890,336", "--nofmv",
                                 "--frames", "60", "--res", "640x480", "--filter", filt,
-                                "--dump", out],
+                                "--dump", out] + extra,
                                cwd=eng, capture_output=True, text=True,
                                env=dict(os.environ, SDL_VIDEODRIVER="dummy", **env))
             logs[tag] = r.stdout
@@ -28480,8 +28493,8 @@ def c_engine_gl1_backend():
                     return (f"{tag} dump {len(raw)} bytes",), ("640x480",), \
                         "the dump must be one 640x480 RGB565 frame: " + r.stdout[-400:]
                 frames[tag] = struct.unpack("<%dH" % (640 * 480), raw)
-        if len(frames) != 3:
-            return ("no frames",), ("three frames",), "omk-play must render all three"
+        if len(frames) != 4:
+            return ("no frames",), ("four frames",), "omk-play must render all four"
         g, sw, bl = frames["gl1"], frames["sw"], frames["bilinear"]
         N = len(g)
         def big(x, y):
@@ -28504,18 +28517,31 @@ def c_engine_gl1_backend():
                  for m in re.finditer(r"gl1: texture pool (\d+), (\d+) slots - (\d+) kept on the card, "
                                       r"(\d+) uploaded", logs["gl1"])]
         keptLater = len(pools) >= 2 and pools[1][1] > 0 and pools[1][1] + pools[1][2] == pools[1][0]
+        # the BODIES POSED BY THE RENDERER (2026-10-11): the walkers and the
+        # player went that way in the gl1 frame and the CPU way in `cpu`'s, and
+        # the two pictures differ by rounding only
+        cpuF = frames["cpu"]
+        posedDiff = sum(1 for x, y in zip(g, cpuF) if x != y and big(x, y))
+        posedAny = sum(1 for x, y in zip(g, cpuF) if x != y)
+        posedOn = ("walkers are posed and lit by the RENDERER" in logs["gl1"] and
+                   "the player posed by the RENDERER" in logs["gl1"] and
+                   "walkers are posed and lit on the CPU" in logs["cpu"])
         got = ("the world through OpenGL 1.x fixed-function" in logs["gl1"],
                g != sw, cover >= 0.99, differ <= N * 0.005,
-               len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98, keptLater)
+               len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98, keptLater,
+               posedOn, posedAny <= N * 0.001 and posedDiff <= 8)
         print(f"        gl1 vs software: coverage {cover:.4f}, {differ} pixels differ by >24 "
               f"({100.0 * differ / N:.2f}%); bilinear: {100.0 * len(changed) / N:.1f}% changed, "
               f"mean {meanB:.1f}, coverage {coverB:.4f}")
         print(f"        texture pools: {pools[:3]} (slots, kept, uploaded)")
-        return got, (True, True, True, True, True, True, True, True), \
+        print(f"        posed by the renderer vs on the CPU: {posedAny} pixels differ, "
+              f"{posedDiff} by >24 (posed paths on: {posedOn})")
+        return got, (True, True, True, True, True, True, True, True, True, True), \
             "the world drawn by the gl1 backend; its frame not the software one; " \
             "coverage agreement >= 0.99; <= 0.5% of pixels differing by > 24; " \
             "bilinear changes >= 20% of the pixels by a mean <= 16 and keeps coverage >= 0.98; " \
-            "and a texture pool handed over again KEEPS the textures already on the card"
+            "and a texture pool handed over again KEEPS the textures already on the card; " \
+            "the walkers and the player posed BY THE RENDERER, within 0.1% of the CPU-posed frame"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

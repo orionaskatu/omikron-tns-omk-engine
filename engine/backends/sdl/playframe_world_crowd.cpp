@@ -1186,6 +1186,17 @@ void PlayState::worldCrowd() {
             c.x = r[0] + pp[0];
             c.y = r[1] + pp[1] - playerFeet + rootDrop;
             c.z = r[2] + pp[2];
+            // THE NORMAL TURNS WITH HIM and does not move, as a walker's does
+            // (`worldCrowd`'s pedestrians) and as the renderer's path turns it
+            // (`meshAffines` folds this rotation into the affine). Missing here
+            // since his lighting arrived (drift audit L1, 2026-10-06): the set's
+            // lights fell on him as if he faced the way his model is authored,
+            // on every backend that poses him on the CPU - found 2026-10-11 by
+            // laying GL1's posed player beside its CPU one (7800 pixels).
+            const float nrm[3] = {c.nx, c.ny, c.nz};
+            float rn[3];
+            omk::rotateEuler(drawEuler, nrm, rn);
+            c.nx = rn[0]; c.ny = rn[1]; c.nz = rn[2];
         }
         // the head mesh, looked up again only when the player's model
         // changes (`player.become`) - it was an O(n^2) walk and a string

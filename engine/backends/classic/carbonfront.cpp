@@ -71,6 +71,30 @@ bool keyHeld(const KeyMap& km, unsigned code) {
     return (reinterpret_cast<const unsigned char*>(km)[code >> 3] >> (code & 7)) & 1;
 }
 
+// MAC OS 9 OR MAC OS X - the same Carbon binary runs on both, and two things
+// differ: OS 9's File Manager CACHES writes (a hard freeze loses the log), and
+// its multitasking is COOPERATIVE (an application that never yields starves
+// the system). `gestaltSystemVersion` below 0x1000 is OS 9.
+bool onMacOS9() {
+    static int v = -1;
+    if (v < 0) {
+        long sv = 0;
+        v = Gestalt(gestaltSystemVersion, &sv) == noErr && sv < 0x1000 ? 1 : 0;
+    }
+    return v == 1;
+}
+
+// A CHECKPOINT before a call that has never run on the reader's OS 9 machine
+// (a real 3D card's AGL, the Sound Manager, QuickTime): the line is written
+// and, on OS 9, the volume FLUSHED - so if the call freezes the computer,
+// `omk-out.txt` still says which one it was (the reader, 2026-10-09: "it just
+// made the computer freeze", and nothing to read afterwards).
+void checkpoint(const char* what) {
+    std::printf("checkpoint: %s\n", what);
+    std::fflush(stdout);
+    if (onMacOS9()) FlushVol(nullptr, 0);
+}
+
 std::uint64_t microseconds() {
     UnsignedWide us;
     Microseconds(&us);
@@ -155,6 +179,7 @@ bool CarbonFrontend::openAudio(int rate, int channels) {
     if (chan_) return true;
     static SndCallBackUPP played = NewSndCallBackUPP(soundPlayed);
     SndChannelPtr ch = nullptr;
+    checkpoint("the sound channel (SndNewChannel)");
     const OSErr e = SndNewChannel(&ch, sampledSynth, channels == 2 ? initStereo : initMono, played);
     if (e != noErr || !ch) {
         lastError_ = "SndNewChannel " + std::to_string(e);
@@ -267,6 +292,14 @@ bool CarbonFrontend::open(int w, int h, const std::string& title) {
     SetRect(&r, 40, 60, 40 + w, 60 + h);
     Str255 t;
     c2pstrcpy(t, title.c_str());
+    {
+        long sv = 0;
+        Gestalt(gestaltSystemVersion, &sv);
+        std::printf("system: Mac OS %lx.%lx.%lx%s\n", (sv >> 8) & 0xFF, (sv >> 4) & 0xF, sv & 0xF,
+                    onMacOS9() ? " - the log is flushed to the disk at each checkpoint and every 2 s"
+                               : "");
+    }
+    checkpoint("the window (NewCWindow)");
     WindowRef win = NewCWindow(nullptr, &r, t, true, noGrowDocProc,
                                reinterpret_cast<WindowRef>(-1), true, 0);
     if (!win) return false;
@@ -289,6 +322,17 @@ bool CarbonFrontend::open(int w, int h, const std::string& title) {
 
 bool CarbonFrontend::pump(HostInput& out) {
     refillAudio();
+    // OS 9 keeps written bytes in its cache: the log reaches the disk every
+    // 2 s, so a freeze leaves the last of it readable
+    if (onMacOS9()) {
+        static std::uint64_t lastFlush = 0;
+        const std::uint64_t now = microseconds();
+        if (now - lastFlush > 2000000) {
+            lastFlush = now;
+            std::fflush(stdout);
+            FlushVol(nullptr, 0);
+        }
+    }
     out.text.clear();
     EventRecord ev;
     // everything waiting, without sleeping: the frame loop is the clock
@@ -365,6 +409,8 @@ bool CarbonFrontend::pump(HostInput& out) {
 
 void CarbonFrontend::present(const Surface& fb) {
     if (!win_ || fb.w <= 0 || fb.h <= 0) return;
+    static bool first = true;
+    if (first) { first = false; checkpoint("the first frame presented"); }
     if (agl_) {
         presentGL(fb);
 #if OMK_PROFILE
@@ -470,9 +516,13 @@ void CarbonFrontend::delayMs(std::uint32_t ms) {
     for (;;) {
         const std::uint64_t now = microseconds();
         if (now >= end) break;
+        // YIELD, not spin: `Delay` busy-waits and never gives the processor
+        // up, which OS 9's cooperative scheduler cannot take back. An EMPTY
+        // event mask takes no event - the keys stay queued for the frame's
+        // own `pump` - and lets every other process run for up to a tick.
         if (end - now > 20000) {
-            unsigned long fin = 0;
-            Delay(1, &fin);
+            EventRecord ev;
+            WaitNextEvent(0, &ev, 1, nullptr);
         }
     }
 }
@@ -501,6 +551,7 @@ void* CarbonFrontend::glContext() {
     const GLint accel[] = {AGL_RGBA, AGL_DOUBLEBUFFER, AGL_DEPTH_SIZE, 16,
                            AGL_ACCELERATED, AGL_NO_RECOVERY, AGL_NONE};
     const GLint any[] = {AGL_RGBA, AGL_DOUBLEBUFFER, AGL_DEPTH_SIZE, 16, AGL_NONE};
+    checkpoint("an OpenGL pixel format (aglChoosePixelFormat)");
     AGLPixelFormat pf = aglChoosePixelFormat(nullptr, 0, accel);
     const bool accelerated = pf != nullptr;
     if (!pf) pf = aglChoosePixelFormat(nullptr, 0, any);
@@ -509,9 +560,12 @@ void* CarbonFrontend::glContext() {
                     reinterpret_cast<const char*>(aglErrorString(aglGetError())));
         return nullptr;
     }
+    checkpoint(accelerated ? "the OpenGL context, accelerated (aglCreateContext)"
+                           : "the OpenGL context, NOT accelerated (aglCreateContext)");
     AGLContext ctx = aglCreateContext(pf, nullptr);
     aglDestroyPixelFormat(pf);
     if (!ctx) return nullptr;
+    checkpoint("the context on the window (aglSetDrawable)");
     if (!aglSetDrawable(ctx, GetWindowPort(static_cast<WindowRef>(win_)))) {
         std::printf("display: aglSetDrawable failed (%s)\n",
                     reinterpret_cast<const char*>(aglErrorString(aglGetError())));
@@ -522,6 +576,7 @@ void* CarbonFrontend::glContext() {
     // the surface brought up to the window now, and one black frame shown, so
     // the window holds nothing stale before the first world is drawn
     aglUpdateContext(ctx);
+    checkpoint("the upload probe (the first textures and draws)");
     probeUploads();
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -914,6 +969,7 @@ bool CarbonFrontend::filmOpen(const std::string& hostFile) {
             qtState_ = -1;
             return false;
         }
+        checkpoint("QuickTime (EnterMovies)");
         const OSErr e = EnterMovies();
         if (e != noErr) {
             std::printf("film: EnterMovies failed (%d) - the software decoder plays the films\n", e);
@@ -936,6 +992,7 @@ bool CarbonFrontend::filmOpen(const std::string& hostFile) {
     }
     ::Movie m = nullptr;
     short resId = 0;
+    checkpoint("a film opened (NewMovieFromFile)");
     e = NewMovieFromFile(&m, ref, &resId, nullptr, newMovieActive, nullptr);
     CloseMovieFile(ref);
     if (e != noErr || !m) {

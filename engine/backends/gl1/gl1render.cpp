@@ -430,7 +430,7 @@ public:
             const std::size_t slot = drawTextureSlot(d);
             const bool hasTex = slot < tex_.size() && tex_[slot] != 0;
             const unsigned want = hasTex ? static_cast<unsigned>(slot) : ~1u;
-            if (!out_.empty() && (!stateValid_ || d.blend != blend_ || d.cutout != cutout_ ||
+            if (pending() && (!stateValid_ || d.blend != blend_ || d.cutout != cutout_ ||
                                   want != boundTex_))
                 flush();
         }
@@ -464,7 +464,7 @@ public:
         const float gx = gx_, gy = gy_;
         for (std::size_t t = 0; t < nCorner; t += 3) {
             ++st_.triangles;
-            if (out_.size() >= kBatchMax) flush();      // a bounded pool, as the original's
+            if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
             Vtx in[3];
             unsigned oc[3];
             for (int k = 0; k < 3; ++k) {
@@ -1066,29 +1066,55 @@ private:
         o.c[0] = toByte(p.c[0] * k); o.c[1] = toByte(p.c[1] * k);
         o.c[2] = toByte(p.c[2] * k); o.c[3] = 255;
         o.uv[0] = p.u; o.uv[1] = p.t;
-        if (fogSum_) { o.f[0] = fogRGB_[0] * a; o.f[1] = fogRGB_[1] * a; o.f[2] = fogRGB_[2] * a; }
-        out_.push_back(o);
+        if (fogSum_) {
+            o.f[0] = fogRGB_[0] * a; o.f[1] = fogRGB_[1] * a; o.f[2] = fogRGB_[2] * a;
+            out_.push_back(o);
+        } else {
+            // no secondary colour this pass: the 28-byte vertex, not the
+            // 40-byte one - a third less written and read a corner
+            outN_.push_back(OutN{{o.p[0], o.p[1], o.p[2], o.p[3]}, {o.c[0], o.c[1], o.c[2], o.c[3]},
+                                 {o.uv[0], o.uv[1]}});
+        }
     }
+    std::size_t pending() const { return out_.size() + outN_.size(); }
 
     // The pending batch drawn, with the device state it was gathered under.
     void flush() {
-        if (out_.empty()) return;
-        const GLsizei stride = static_cast<GLsizei>(sizeof(OutV));
-        glVertexPointer(4, GL_FLOAT, stride, out_[0].p);
-        glColorPointer(4, GL_UNSIGNED_BYTE, stride, out_[0].c);
-        glTexCoordPointer(2, GL_FLOAT, stride, out_[0].uv);
-        if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, stride, out_[0].f);
-        OMK_ZONE("gl1: draw call");          // the driver's share (todo/debug-tools.md)
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(out_.size()));
-        ++batches_;
-        out_.clear();
+        if (!out_.empty()) {
+            const GLsizei stride = static_cast<GLsizei>(sizeof(OutV));
+            glVertexPointer(4, GL_FLOAT, stride, out_[0].p);
+            glColorPointer(4, GL_UNSIGNED_BYTE, stride, out_[0].c);
+            glTexCoordPointer(2, GL_FLOAT, stride, out_[0].uv);
+            if (fogSum_) omkSecondaryColorPointer(3, GL_FLOAT, stride, out_[0].f);
+            OMK_ZONE("gl1: draw call");          // the driver's share (todo/debug-tools.md)
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(out_.size()));
+            ++batches_;
+            out_.clear();
+        }
+        if (!outN_.empty()) {
+            const GLsizei stride = static_cast<GLsizei>(sizeof(OutN));
+            glVertexPointer(4, GL_FLOAT, stride, outN_[0].p);
+            glColorPointer(4, GL_UNSIGNED_BYTE, stride, outN_[0].c);
+            glTexCoordPointer(2, GL_FLOAT, stride, outN_[0].uv);
+            OMK_ZONE("gl1: draw call");
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(outN_.size()));
+            ++batches_;
+            outN_.clear();
+        }
     }
 
     static unsigned char toByte(float v) {
         // the corner colour is 0..1; the reference clamps after the multiply,
-        // fixed function clamps the vertex colour first - equal for 0..1
+        // fixed function clamps the vertex colour first - equal for 0..1.
+        // Converted FIRST and clamped as an integer (2026-10-10, for the G3,
+        // whose float compares and int compares are separate units): the
+        // same byte, since truncation toward zero sends (-1, 0] to 0 as the
+        // float clamp did and the rest clamps the same on either side
         const float x = v * 255.0f + 0.5f;
-        return static_cast<unsigned char>(x <= 0.0f ? 0.0f : (x >= 255.0f ? 255.0f : x));
+        if (!(x > -1.0f)) return 0;                    // (and a NaN, as before: 0)
+        if (x >= 255.0f) return 255;
+        const int i = static_cast<int>(x);
+        return static_cast<unsigned char>(i < 0 ? 0 : i);
     }
 
     // The D3D render states the original changed between buckets, changed
@@ -1170,8 +1196,10 @@ private:
     // (no allocation per frame); `f` is the fog's secondary colour, read only
     // when `fogSum_`. Bounded so a frame's largest run stays a few MB.
     struct OutV { float p[4]; unsigned char c[4]; float uv[2]; float f[3]; };
+    struct OutN { float p[4]; unsigned char c[4]; float uv[2]; };   // a pass without the fog sum
     static constexpr std::size_t kBatchMax = 3 * 16384;
     std::vector<OutV> out_;
+    std::vector<OutN> outN_;
     float fogInv_ = 0;
     long submits_ = 0, batches_ = 0, passes_ = 0, sum_[5]{};
     // the camera, applied on the CPU (setCamera)

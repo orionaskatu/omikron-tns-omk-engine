@@ -632,6 +632,52 @@ alone (414..460). On the emulated Radeon the overlay texture reads `NOT
 resident` (client storage keeps it in system memory) and `glReadPixels`
 returns zeros, as it did before (3d) - both to be read on the Rage 128.
 
+**THE iBOOK'S FOURTH RUN (2026-10-10, the 2j build, 4512 frames, exit 0) -
+THE CAUSE.** `glReadPixels` WORKS on the Rage 128 (it returned zeros only
+under emulation), so the probe read what the card drew before each swap:
+- variants 0 (RGBA8 blended) and 2 (16-bit blended): the band's KEY texels
+  read **255 255 255** - a transparent texel drawn white - letterboxed or
+  not (the tutorial lines' band 414..465: centre, outside the band, the
+  world; key texel at (0,439) white);
+- variant 1 (no blending, alpha test): key texels the world (148 173 148,
+  41 49 49), text 255 - right; variant 3 (not drawn): the world - right;
+- the one CONVERSATION (frame 283, AREA 118): blended RIGHT (centre 16 33
+  41) - and AREA 118's fog is BLACK, while every white line was under a
+  COLOURED fog (the Impasse 162 197 210, AREA 142, the credits' street);
+- `overlay texture NOT resident` on every probe, the right frames included:
+  not the discriminator (client storage keeps it in system memory).
+The white fades the probe also read (frames 272, 563, 2958...) are the
+game's own: `Screen_FadeFromColor(0xFFFFFF, ...)` and ops 118/119 fade from
+WHITE.
+
+**Step 2k - THE FIX, 2026-10-11: the fog's colour sum ends with the world.**
+`begin` enables `GL_COLOR_SUM_EXT` (and the secondary colour array) for a
+coloured fog - the per-vertex fog is the secondary colour added after
+texturing - and NOTHING turned it off: the overlay's 2D state disabled fog,
+depth, cull, alpha test, scissor and lighting but not the colour sum. So the
+overlay quad (and the fade quad, and the frontend's menus/films after a
+world frame) had the CURRENT secondary colour added - which after a vertex
+array is undefined by the spec: the Rage 128 kept the last fog colour, so a
+transparent texel became fog colour + the world and saturated to white; a
+text texel was white anyway, which is why variant 1 (the key texels dropped
+by the alpha test) looked right. The emulated Radeon left it zero. Now
+`Gl1Renderer::end` turns the colour sum and its array off (and `begin` turns
+them on again), and `presentOverlay`'s 2D state turns it off too. The four
+variants are gone; the probe stays until a run confirms (it now reads its
+pixels by `glCopyTexSubImage2D` into a 16x16 texture and `glGetTexImage`, as
+`readWindow` does, so it reads on the emulated Radeon too). `engine: gl1
+backend` green (the world frames unchanged).
+**REPRODUCED ON THE EMULATED TIGER** by setting the current secondary colour
+to white before the overlay (`glSecondaryColor3fEXT(1, 1, 1)` - what the Rage
+128 keeps; a temporary build, not committed), the Impasse
+(`--area 222 --scene-chunk 55`): WITHOUT the fix every probe read
+255 255 255 in the letterboxed band, and on AREA 142's line (band 414..460)
+the centre the world (31 59 74) with the text and key texels white - the
+iBook's fourth run to the pattern; WITH it the same frames read the world
+(7 7 4, 92 105 102, key 12 7 3...). Both binaries checked different by md5
+before running (the first rebuild of the pair had come out IDENTICAL: GNU
+Make 3.81's one-second timestamps, CLAUDE.md 1 - `sleep 2; touch` fixed it).
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

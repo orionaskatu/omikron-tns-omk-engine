@@ -27,12 +27,10 @@ Renderer* makeGl1Renderer();
 // todo/cpu-vs-original.md). -> false where the window is not the frame's
 // size, and the caller presents the composed frame as before.
 bool gl1PresentWorld(Renderer* r, int ww, int wh);
-// `variant` and `probe` are the WHITE-SCREEN DIAGNOSTIC of 2026-10-10
-// (`todo/handoff-classic-mac.md` 3f, step 2j): 0 draws the overlay as it
-// always has, 1 without blending (an alpha test - exact while the overlay's
-// alpha is 0 or 255 only), 2 through a 16-bit ARGB1555 texture, 3 not at all;
-// `probe` logs the band, the texture's residency and three back-buffer pixels.
+// `probe` logs what the overlay frame held and three back-buffer pixels
+// before the swap (the white-screen probe, `todo/handoff-classic-mac.md` 3f
+// steps 2j/2k - kept until a run on the iBook confirms the fix).
 bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
-                       const float fade[4], int ww, int wh, int variant = 0, bool probe = false);
+                       const float fade[4], int ww, int wh, bool probe = false);
 #endif
 }  // namespace omk

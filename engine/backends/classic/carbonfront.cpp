@@ -10,6 +10,20 @@
 #  include "../gl1/gl1host.h"
 #  include <agl.h>
 #  include <gl.h>
+// Apple's upload extensions, by value: gl.h carries none of them and the
+// probe asks the driver before using any (`probeUploads`)
+#  ifndef GL_UNPACK_CLIENT_STORAGE_APPLE
+#    define GL_UNPACK_CLIENT_STORAGE_APPLE 0x85B2
+#  endif
+#  ifndef GL_TEXTURE_RECTANGLE_EXT
+#    define GL_TEXTURE_RECTANGLE_EXT 0x84F5
+#  endif
+#  ifndef GL_TEXTURE_STORAGE_HINT_APPLE
+#    define GL_TEXTURE_STORAGE_HINT_APPLE 0x85BC
+#  endif
+#  ifndef GL_STORAGE_SHARED_APPLE
+#    define GL_STORAGE_SHARED_APPLE 0x85BF
+#  endif
 #endif
 #include "platform/datafs.h"      // hostPath, the films' HFS path
 
@@ -98,6 +112,7 @@ const UpFmt kUiFmts[3] = {
     {GL_RGBA8,   GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,   4, "ARGB8888"},
 };
 bool g_overlayArgb = false;              // the overlay's pick (`gl1OverlayArgb`)
+omk::Gl1UploadPath g_overlayPath;        // ...and how it is sent (`gl1OverlayPath`)
 
 // `n` RGB565 pixels into format `f` at `out` (format 0 is the 565 itself).
 // 1555 drops green's lowest bit; 8888 replicates the high bits down, as the
@@ -556,28 +571,45 @@ void CarbonFrontend::presentGL(const Surface& fb) {
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_LIGHTING);
     glDrawBuffer(GL_BACK);
+    const GLenum target = uiRect_ ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
     int tw = 1, th = 1;
-    while (tw < fb.w) tw <<= 1;
-    while (th < fb.h) th <<= 1;
+    if (uiRect_) { tw = fb.w; th = fb.h; }
+    else {
+        while (tw < fb.w) tw <<= 1;
+        while (th < fb.h) th <<= 1;
+    }
+    const UpFmt& fmt = kUiFmts[uiFmt_];
     GLuint tex = static_cast<GLuint>(uiTex_);
     if (!tex || uiTexW_ != tw || uiTexH_ != th) {
-        if (!tex) glGenTextures(1, &tex);
+        if (tex) glDeleteTextures(1, &tex);          // client storage is bound at creation
+        glGenTextures(1, &tex);
         uiTex_ = tex;
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        const UpFmt& f = kUiFmts[uiFmt_];
-        glTexImage2D(GL_TEXTURE_2D, 0, f.internal, tw, th, 0, f.format, f.type, nullptr);
+        glBindTexture(target, tex);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        if (uiHint_) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+        if (uiClient_) {
+            // the texture's memory is OURS from here on: the rows are
+            // converted into it and the card reads it there
+            uiStore_.assign(static_cast<std::size_t>(tw) * th * fmt.bytes, 0);
+            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+            glTexImage2D(target, 0, fmt.internal, tw, th, 0, fmt.format, fmt.type, uiStore_.data());
+            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+        } else {
+            glTexImage2D(target, 0, fmt.internal, tw, th, 0, fmt.format, fmt.type, nullptr);
+        }
         uiTexW_ = tw;
         uiTexH_ = th;
-        uiRowKey_.assign(static_cast<std::size_t>(th), 0);   // nothing sent yet
+        uiRowKey_.assign(static_cast<std::size_t>(fb.h), 0);   // nothing sent yet
     }
-    glBindTexture(GL_TEXTURE_2D, tex);
-    const UpFmt& fmt = kUiFmts[uiFmt_];
+    glBindTexture(target, tex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, fmt.bytes == 4 ? 4 : 2);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, uiClient_ ? tw : 0);
+    // the card may still be reading the client memory for the last frame:
+    // the rows are rewritten only once it is done with them
+    if (uiClient_) glFinish();
     OMK_ZONE("present: rows");               // the profiler (todo/debug-tools.md)
     int runStart = -1;
     for (int y = 0; y <= fb.h; ++y) {
@@ -601,28 +633,38 @@ void CarbonFrontend::presentGL(const Surface& fb) {
             const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(runStart) * fb.w;
             const std::size_t n = static_cast<std::size_t>(fb.w) * static_cast<std::size_t>(y - runStart);
             const void* send = src;
-            if (uiFmt_ != 0) {
+            if (uiClient_) {
+                // into the texture's own memory, a row at a time (its stride is
+                // the texture's width)
+                const std::size_t pitch = static_cast<std::size_t>(tw) * fmt.bytes;
+                std::uint8_t* row0 = uiStore_.data() + static_cast<std::size_t>(runStart) * pitch;
+                for (int r = runStart; r < y; ++r) {
+                    const std::uint16_t* s = fb.px.data() + static_cast<std::size_t>(r) * fb.w;
+                    std::uint8_t* d = uiStore_.data() + static_cast<std::size_t>(r) * pitch;
+                    if (uiFmt_ == 0) std::memcpy(d, s, static_cast<std::size_t>(fb.w) * 2);
+                    else convert565(uiFmt_, s, static_cast<std::size_t>(fb.w), d);
+                }
+                send = row0;
+            } else if (uiFmt_ != 0) {
                 if (uiConv_.size() < n * 4) uiConv_.resize(n * 4);
                 convert565(uiFmt_, src, n, uiConv_.data());
                 send = uiConv_.data();
             }
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, fmt.format,
+            glTexSubImage2D(target, 0, 0, runStart, fb.w, y - runStart, fmt.format,
                             fmt.type, send);
             runStart = -1;
         }
     }
-    glEnable(GL_TEXTURE_2D);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glEnable(target);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     glColor4f(1, 1, 1, 1);
-    // texture row 0 is the frame's TOP, drawn at the window's top (GL's y up)
-    const float s1 = static_cast<float>(fb.w) / tw, t1 = static_cast<float>(fb.h) / th;
-    glBegin(GL_QUADS);
-    glTexCoord2f(0, 0);   glVertex2f(0, static_cast<float>(wh));
-    glTexCoord2f(s1, 0);  glVertex2f(static_cast<float>(ww), static_cast<float>(wh));
-    glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), 0);
-    glTexCoord2f(0, t1);  glVertex2f(0, 0);
-    glEnd();
-    glDisable(GL_TEXTURE_2D);
+    // texture row 0 is the frame's TOP, drawn at the window's top (GL's y up);
+    // a rectangle texture is addressed in texels
+    const float s1 = uiRect_ ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
+    const float t1 = uiRect_ ? static_cast<float>(fb.h) : static_cast<float>(fb.h) / th;
+    drawFrameQuad(ww, wh, s1, t1);
+    glDisable(target);
     {
         OMK_ZONE("present: swap");
         aglSwapBuffers(ctx);
@@ -710,6 +752,95 @@ void CarbonFrontend::probeUploads() {
         if (ui[f] >= 0 && (pick < 0 || ui[f] < ui[pick])) pick = f;
     }
     uiFmt_ = pick < 0 ? 0 : pick;
+    // APPLE'S FAST UPLOAD (2026-10-10): the same frame through CLIENT STORAGE
+    // - the texture's memory is ours and the card reads it there, with no
+    // copy into the driver - then also as a RECTANGLE (640x480, not a
+    // 1024x512 power of two), then with the SHARED storage hint. Each only
+    // where the driver names the extension; the conversion is in the time,
+    // written straight into the texture's memory as `presentGL` writes it.
+    // The Rage 128's figures above (63 ms for ARGB1555) are what this tries
+    // to beat: every menu, the films and the overlay pay one such upload.
+    const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+    const auto has = [&](const char* n) { return ext && std::strstr(ext, n) != nullptr; };
+    const bool hasClient = has("GL_APPLE_client_storage");
+    const bool hasRect = has("GL_EXT_texture_rectangle") || has("GL_ARB_texture_rectangle");
+    const bool hasRange = has("GL_APPLE_texture_range");
+    std::printf("gl1: upload extensions - client storage %s, rectangle textures %s, "
+                "texture range %s\n", hasClient ? "YES" : "no", hasRect ? "YES" : "no",
+                hasRange ? "YES" : "no");
+    const auto timeClient = [&](int f, bool rect, bool hint) {
+        while (glGetError() != GL_NO_ERROR) {}
+        const UpFmt& u = kUiFmts[f];
+        const GLenum target = rect ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
+        const int tw = rect ? W : TW, th = rect ? H : TH;
+        const std::size_t pitch = static_cast<std::size_t>(tw) * u.bytes;
+        std::vector<std::uint8_t> store(pitch * th);
+        glDisable(GL_TEXTURE_2D);
+        GLuint t = 0;
+        glGenTextures(1, &t);
+        glBindTexture(target, t);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        if (hint) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+        glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, u.bytes == 4 ? 4 : 2);
+        glTexImage2D(target, 0, u.internal, tw, th, 0, u.format, u.type, store.data());
+        glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+        glEnable(target);
+        bool ok = glGetError() == GL_NO_ERROR;
+        double best = 1e30;
+        for (int rep = 0; rep < 4 && ok; ++rep) {
+            frame[static_cast<std::size_t>(rep)] ^= 0x0841u;
+            glFinish();
+            const std::uint64_t t0 = microseconds();
+            for (int y = 0; y < H; ++y) {
+                const std::uint16_t* s = frame.data() + static_cast<std::size_t>(y) * W;
+                std::uint8_t* d = store.data() + static_cast<std::size_t>(y) * pitch;
+                if (f == 0) std::memcpy(d, s, static_cast<std::size_t>(W) * 2);
+                else convert565(f, s, static_cast<std::size_t>(W), d);
+            }
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, tw);
+            glTexSubImage2D(target, 0, 0, 0, W, H, u.format, u.type, store.data());
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            drawFrameQuad(ww, wh, rect ? static_cast<float>(W) : static_cast<float>(W) / TW,
+                          rect ? static_cast<float>(H) : static_cast<float>(H) / TH);
+            glFinish();
+            const double ms = static_cast<double>(microseconds() - t0) / 1000.0;
+            if (ms < best) best = ms;
+            ok = glGetError() == GL_NO_ERROR;
+        }
+        glDisable(target);
+        glDeleteTextures(1, &t);
+        glEnable(GL_TEXTURE_2D);
+        return ok ? best : -1.0;
+    };
+    double argbClient[3] = {-1.0, -1.0, -1.0};   // ARGB8888's three variants, for the overlay
+    if (hasClient && pick >= 0) {
+        // the variants of the format already picked, and of the other 16-bit
+        // one, so a format that loses as a copy may still win as client memory
+        double bestMs = ui[pick];
+        const char* how = "a copy";
+        for (const int f : {1, 2}) {
+            if (ui[f] < 0) continue;
+            const double c  = timeClient(f, false, false);
+            const double cr = hasRect ? timeClient(f, true, false) : -1.0;
+            const double ch = hasRect && hasRange ? timeClient(f, true, true) : -1.0;
+            if (f == 2) { argbClient[0] = c; argbClient[1] = cr; argbClient[2] = ch; }
+            std::printf("gl1: upload probe, %s through client storage: %.1f ms, as a rectangle "
+                        "%.1f, with the shared hint %.1f (-1: not offered or refused)\n",
+                        kUiFmts[f].name, c, cr, ch);
+            const struct { double ms; bool rect, hint; const char* how; } v[3] = {
+                {c, false, false, "client storage"}, {cr, true, false, "client storage, rectangle"},
+                {ch, true, true, "client storage, rectangle, shared"}};
+            for (const auto& o : v)
+                if (o.ms >= 0 && o.ms < bestMs) {
+                    bestMs = o.ms; uiFmt_ = f; uiClient_ = true; uiRect_ = o.rect; uiHint_ = o.hint;
+                    how = o.how;
+                }
+        }
+        std::printf("gl1: the menus will be sent as %s through %s (%.1f ms a frame in the probe)\n",
+                    kUiFmts[uiFmt_].name, how, bestMs);
+    }
     argbOk_ = ui[2] >= 0;                    // the films' layout (`filmShow`)
     film1555_ = ui[1] >= 0 && (ui[2] < 0 || ui[1] < ui[2]);
     // the overlay: RGBA bytes (what it sent) against ARGB 8888, both 8-bit
@@ -732,6 +863,22 @@ void CarbonFrontend::probeUploads() {
     const double ovArgb = timeOne(GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 4,
                                   [&]() { return fillRgba(true); }, true);
     g_overlayArgb = ovArgb >= 0 && (ovBytes < 0 || ovArgb < ovBytes);
+    // the overlay through client storage when an ARGB8888 variant beat its
+    // copy (the overlay is always 32-bit: it carries an 8-bit alpha)
+    {
+        double bestOv = g_overlayArgb ? ovArgb : ovBytes;
+        const char* how = "a copy";
+        const bool rect[3] = {false, true, true}, hint[3] = {false, false, true};
+        const char* name[3] = {"client storage", "client storage, rectangle",
+                               "client storage, rectangle, shared"};
+        for (int k = 0; k < 3; ++k)
+            if (argbClient[k] >= 0 && (bestOv < 0 || argbClient[k] < bestOv)) {
+                bestOv = argbClient[k];
+                g_overlayPath = {true, rect[k], hint[k]};
+                how = name[k];
+            }
+        std::printf("gl1: the overlay will be sent through %s\n", how);
+    }
     glDisable(GL_TEXTURE_2D);
     std::printf("gl1: upload probe, a 640x480 frame sent and drawn (ms, best of 4; -1 refused): "
                 "RGB565 %.1f, ARGB1555 %.1f, ARGB8888 %.1f -> the menus as %s; overlay RGBA "
@@ -871,6 +1018,19 @@ void CarbonFrontend::filmClose() {
     StopMovie(m);
     DisposeMovie(m);
     film_ = nullptr;
+#if defined(OMK_GL1_AGL)
+    // a texture made over the GWorld's own memory (client storage) must go
+    // BEFORE that memory does - and each film makes its own GWorld anyway
+    if (filmTex_ && agl_) {
+        const AGLContext prev = aglGetCurrentContext();
+        aglSetCurrentContext(static_cast<AGLContext>(agl_));
+        GLuint t = static_cast<GLuint>(filmTex_);
+        glDeleteTextures(1, &t);
+        if (prev != static_cast<AGLContext>(agl_)) aglSetCurrentContext(prev);
+        filmTex_ = 0;
+        filmTexW_ = filmTexH_ = 0;
+    }
+#endif
     if (filmGw_) {
         DisposeGWorld(static_cast<GWorldPtr>(filmGw_));
         filmGw_ = nullptr;
@@ -911,27 +1071,60 @@ void CarbonFrontend::filmShow() {
     glDisable(GL_CULL_FACE);
     glDisable(GL_LIGHTING);
     glDrawBuffer(GL_BACK);
+    // THE GWORLD AS THE TEXTURE'S MEMORY when the probe chose client storage
+    // and rectangles (`probeUploads`): QuickTime draws the picture where the
+    // card reads it, and nothing is copied - the period's own recipe for
+    // QuickTime under OpenGL. A rectangle, because the GWorld is the film's
+    // 320x240 and not a power of two.
+    const bool client = uiClient_ && uiRect_ && (filmDepth_ == 16 || argbOk_);
+    const GLenum target = client ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
+    const GLenum upFormat = GL_BGRA;
+    const GLenum upType = filmDepth_ == 16 ? GL_UNSIGNED_SHORT_1_5_5_5_REV : GL_UNSIGNED_INT_8_8_8_8_REV;
+    const int bpp = filmDepth_ == 16 ? 2 : 4;
     int tw = 1, th = 1;
-    while (tw < filmW_) tw <<= 1;
-    while (th < filmH_) th <<= 1;
+    if (client) { tw = filmW_; th = filmH_; }
+    else {
+        while (tw < filmW_) tw <<= 1;
+        while (th < filmH_) th <<= 1;
+    }
     GLuint tex = static_cast<GLuint>(filmTex_);
     if (!tex || filmTexW_ != tw || filmTexH_ != th) {
-        if (!tex) glGenTextures(1, &tex);
+        if (tex) glDeleteTextures(1, &tex);
+        glGenTextures(1, &tex);
         filmTex_ = tex;
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        glTexImage2D(GL_TEXTURE_2D, 0, filmDepth_ == 16 ? GL_RGB5 : GL_RGB8, tw, th, 0, GL_RGBA,
-                     GL_UNSIGNED_BYTE, nullptr);
+        glBindTexture(target, tex);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        if (client) {
+            if (uiHint_) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, bpp);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, rowBytes / bpp);
+            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+            glTexImage2D(target, 0, filmDepth_ == 16 ? GL_RGB5 : GL_RGB8, tw, th, 0, upFormat,
+                         upType, base);
+            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            std::printf("film: the GWorld is the texture's own memory (client storage, %s)\n",
+                        uiHint_ ? "rectangle, shared" : "rectangle");
+        } else {
+            glTexImage2D(target, 0, filmDepth_ == 16 ? GL_RGB5 : GL_RGB8, tw, th, 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, nullptr);
+        }
         filmTexW_ = tw;
         filmTexH_ = th;
     }
-    glBindTexture(GL_TEXTURE_2D, tex);
+    glBindTexture(target, tex);
     {
         OMK_ZONE("film: upload");
-        if (filmDepth_ == 16) {
+        if (client) {
+            // the same memory: this tells the driver the picture changed
+            glPixelStorei(GL_UNPACK_ALIGNMENT, bpp);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, rowBytes / bpp);
+            glTexSubImage2D(target, 0, 0, 0, filmW_, filmH_, upFormat, upType, base);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        } else if (filmDepth_ == 16) {
             glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
             glPixelStorei(GL_UNPACK_ROW_LENGTH, rowBytes / 2);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, filmW_, filmH_, GL_BGRA,
@@ -960,11 +1153,12 @@ void CarbonFrontend::filmShow() {
                             uiConv_.data());
         }
     }
-    glEnable(GL_TEXTURE_2D);
+    glEnable(target);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     glColor4f(1, 1, 1, 1);
-    drawFrameQuad(ow, oh, static_cast<float>(filmW_) / tw, static_cast<float>(filmH_) / th);
-    glDisable(GL_TEXTURE_2D);
+    if (client) drawFrameQuad(ow, oh, static_cast<float>(filmW_), static_cast<float>(filmH_));
+    else drawFrameQuad(ow, oh, static_cast<float>(filmW_) / tw, static_cast<float>(filmH_) / th);
+    glDisable(target);
     {
         OMK_ZONE("film: swap");
         aglSwapBuffers(ctx);
@@ -976,6 +1170,7 @@ void CarbonFrontend::filmShow() {
 void* gl1AglContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
 #if defined(OMK_GL1_AGL)
 bool gl1OverlayArgb() { return g_overlayArgb; }
+Gl1UploadPath gl1OverlayPath() { return g_overlayPath; }
 #endif
 
 void gl1AglWindowSize(int& w, int& h) {

@@ -58,6 +58,20 @@
 #if defined(OMK_GL1_AGL)
 #  include <agl.h>
 #  include <gl.h>
+// Apple's upload extensions by value (gl.h has none); `gl1OverlayPath` says
+// whether the driver offered them
+#  ifndef GL_UNPACK_CLIENT_STORAGE_APPLE
+#    define GL_UNPACK_CLIENT_STORAGE_APPLE 0x85B2
+#  endif
+#  ifndef GL_TEXTURE_RECTANGLE_EXT
+#    define GL_TEXTURE_RECTANGLE_EXT 0x84F5
+#  endif
+#  ifndef GL_TEXTURE_STORAGE_HINT_APPLE
+#    define GL_TEXTURE_STORAGE_HINT_APPLE 0x85BC
+#  endif
+#  ifndef GL_STORAGE_SHARED_APPLE
+#    define GL_STORAGE_SHARED_APPLE 0x85BF
+#  endif
 #elif defined(__APPLE__)
 #  define GL_SILENCE_DEPRECATION 1
 #  include <OpenGL/OpenGL.h>
@@ -619,18 +633,35 @@ public:
             boundTex_ = ~0u;
         }
         if (hi >= lo) {
-            const GLsizei tw = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.w)));
-            const GLsizei th = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.h)));
+            // the probe's path (`gl1OverlayPath`): client storage stores ARGB
+            // 8888 words, which is what it was timed with
+            const Gl1UploadPath path = gl1OverlayPath();
+            const GLenum target = path.rect ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
+            const GLsizei tw = path.rect ? fb.w : static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.w)));
+            const GLsizei th = path.rect ? fb.h : static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.h)));
             if (!ovTex_ || ovTexW_ != tw || ovTexH_ != th) {
-                if (!ovTex_) glGenTextures(1, &ovTex_);
-                glBindTexture(GL_TEXTURE_2D, ovTex_);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                if (ovTex_) glDeleteTextures(1, &ovTex_);   // client storage is bound at creation
+                glGenTextures(1, &ovTex_);
+                glBindTexture(target, ovTex_);
+                glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                if (path.hint) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+                if (path.client) {
+                    // the texture's memory is OURS: the changed rows are
+                    // converted straight into it and the card reads them there
+                    ovStore_.assign(static_cast<std::size_t>(tw) * th, 0);
+                    glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+                    glTexImage2D(target, 0, GL_RGBA8, tw, th, 0, GL_BGRA,
+                                 GL_UNSIGNED_INT_8_8_8_8_REV, ovStore_.data());
+                    glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+                } else {
+                    glTexImage2D(target, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                }
                 gpuNote("overlay", omk::prof::kGlTexture, ovTex_, 4LL * tw * th);
                 ovTexW_ = tw; ovTexH_ = th;
                 ovRowKey_.assign(static_cast<std::size_t>(th), 0);   // nothing sent yet
             }
+            bool storeWaited = false;    // the card done with the client memory, once a frame
             // ONLY THE ROWS THAT CHANGED (2026-10-05, run on Tiger): a row
             // keeps its place in the texture, and is converted and sent only
             // when its source - the 565 row and its mask row - differs from
@@ -643,10 +674,10 @@ public:
             // timed fastest on this driver (`gl1OverlayArgb`): ARGB 8888 as
             // 32-bit words, or RGBA bytes.
             OMK_ZONE("gl1: overlay rows");      // the profiler (todo/debug-tools.md)
-            glBindTexture(GL_TEXTURE_2D, ovTex_);
+            glBindTexture(target, ovTex_);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            const bool argb = gl1OverlayArgb();
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, path.client ? tw : 0);
+            const bool argb = path.client || gl1OverlayArgb();
             const GLenum upFormat = argb ? GL_BGRA : GL_RGBA;
             const GLenum upType = argb ? GL_UNSIGNED_INT_8_8_8_8_REV : GL_UNSIGNED_BYTE;
             const std::size_t rowWords = static_cast<std::size_t>(fb.w);
@@ -675,9 +706,16 @@ public:
                 }
                 if (changed) {
                     if (runStart < 0) runStart = y;
-                    const std::size_t at = static_cast<std::size_t>(y - runStart) * rowWords;
-                    if (ovBand_.size() < at + rowWords) ovBand_.resize(at + rowWords);
-                    std::uint32_t* o32 = ovBand_.data() + at;
+                    std::uint32_t* o32 = nullptr;
+                    if (path.client) {
+                        // the card may still be reading last frame's rows
+                        if (!storeWaited) { glFinish(); storeWaited = true; }
+                        o32 = ovStore_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(tw);
+                    } else {
+                        const std::size_t at = static_cast<std::size_t>(y - runStart) * rowWords;
+                        if (ovBand_.size() < at + rowWords) ovBand_.resize(at + rowWords);
+                        o32 = ovBand_.data() + at;
+                    }
                     for (int xx = 0; xx < fb.w; ++xx) {
                         const std::uint16_t p = src[xx];
                         unsigned r = 0, g = 0, bl = 0, al = 0;     // the KEY: the world as it is
@@ -695,12 +733,16 @@ public:
                         }
                     }
                 } else if (runStart >= 0) {             // a run ends: send it
-                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, runStart, fb.w, y - runStart, upFormat,
-                                    upType, ovBand_.data());
+                    const void* send = path.client
+                        ? static_cast<const void*>(ovStore_.data() + static_cast<std::size_t>(runStart) * static_cast<std::size_t>(tw))
+                        : static_cast<const void*>(ovBand_.data());
+                    glTexSubImage2D(target, 0, 0, runStart, fb.w, y - runStart, upFormat,
+                                    upType, send);
                     runStart = -1;
                 }
             }
-            glEnable(GL_TEXTURE_2D);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glEnable(target);
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
             // `C + world * M` as the STANDARD premultiplied "over" - alpha
             // stored as 1 - M and (GL_ONE, GL_ONE_MINUS_SRC_ALPHA) - the same
@@ -714,8 +756,10 @@ public:
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glColor4f(1, 1, 1, 1);
             // the band: fb rows lo..hi, top-down, onto window rows wh-lo..wh-hi-1
-            const float t0 = static_cast<float>(lo) / th, t1 = static_cast<float>(hi + 1) / th,
-                        s1 = static_cast<float>(fb.w) / tw;
+            // (a rectangle texture is addressed in texels)
+            const float tsc = path.rect ? 1.0f : 1.0f / static_cast<float>(th);
+            const float t0 = static_cast<float>(lo) * tsc, t1 = static_cast<float>(hi + 1) * tsc,
+                        s1 = path.rect ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
             const float yTop = static_cast<float>(wh - lo), yBot = static_cast<float>(wh - hi - 1);
             glBegin(GL_QUADS);
             glTexCoord2f(0, t0);  glVertex2f(0, yTop);
@@ -723,6 +767,7 @@ public:
             glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), yBot);
             glTexCoord2f(0, t1);  glVertex2f(0, yBot);
             glEnd();
+            glDisable(target);
         }
         if (fading) {
             // the fade over everything, interface included, as the GLES pass
@@ -815,6 +860,7 @@ private:
     GLuint ovTex_ = 0;                   // the overlay (`presentOverlay`)
     GLsizei ovTexW_ = 0, ovTexH_ = 0;
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
+    std::vector<std::uint32_t> ovStore_; // the client-storage texture's own memory (`gl1OverlayPath`)
     std::vector<std::uint32_t> ovRowKey_;   // what each texture row was last sent from
 #endif
 

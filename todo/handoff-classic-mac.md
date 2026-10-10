@@ -491,6 +491,42 @@ it means splitting that section first. `engine: intro`, `intro beat`, `boot`,
 `movies`, `fight library`, `scene sprites`, `sprite table`, `sprite ids
 scene-local`, `start menu quit`, `frame rate` green.
 
+**Step 2e - THE FULL-FRAME UPLOADS THROUGH APPLE'S CLIENT STORAGE, DONE
+2026-10-10, NOT yet run on the iBook** (the reader agreed to "the interface on
+the card"; what was built instead, and why). The iBook's second log put a menu
+frame at ~150 ms - `present, swap` 74 (the 640x480 upload: 63 ms as ARGB1555,
+113 as ARGB8888 in the probe), `screens, hud` 45 - and an overlay frame's
+`present, swap` at 40-185. **The interface drawn as card quads would not have
+removed the menu's upload**: the start menu's background is the CLOUD
+(`ui/cloud.h`), embossed and then resampled through a per-row AND per-column
+displacement every frame on the CPU - which the original does on the CPU too
+- and OpenGL 1.1 has no way to draw that warp exactly, so the menu would
+still send a whole frame. What every slow frame shares is THE UPLOAD, so that
+is what this step attacks:
+- `probeUploads` now prints the driver's `GL_APPLE_client_storage`,
+  `GL_EXT/ARB_texture_rectangle` and `GL_APPLE_texture_range`, and where they
+  are offered times the frame sent as CLIENT STORAGE (the texture's memory is
+  ours, the card reads it there - no copy into the driver), then as a
+  RECTANGLE texture (640x480, not 1024x512), then with the SHARED storage
+  hint; the conversion is inside the time, written straight into the
+  texture's memory;
+- the fastest is used by the three full-frame paths: `presentGL` (the menus,
+  every screen without the world), the GL1 overlay (`gl1OverlayPath()` in
+  `gl1host.h`; ARGB8888 words) and the films (`filmShow`: QuickTime's GWorld
+  IS the texture's memory - the period's own QuickTime-under-OpenGL recipe;
+  the texture is deleted before the GWorld). The client memory is rewritten
+  only after a `glFinish`, once a frame and only when a row changed;
+- each falls back to the copy where the driver offers nothing.
+On the emulated Tiger (Radeon 9700): all three extensions offered; ARGB8888 a
+frame 18.3 ms as client storage, 12.7 as a rectangle, **2.0 with the shared
+hint**, against 3.4 for the best copy - so the menus, the overlay and the
+films all took client storage, rectangle, shared; the splash, the menu (30
+fps), a film (EIDOS 290 pictures in 12.9 s, against 277 before) and the
+Impasse's subtitles over the world drew right in screenshots. **Whether the
+Rage 128 under 10.2 offers these at all is what the next run says** - the
+`gl1: upload extensions` line and the three `gl1: the ... will be sent`
+lines. `engine: classic build`, `engine: gl1 backend` green.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

@@ -112,6 +112,12 @@ private:
     unsigned uiTex_ = 0;         // GLuint: the frame as a texture (`presentGL`)
     int uiTexW_ = 0, uiTexH_ = 0;
     int uiFmt_ = 0;              // its upload format, `probeUploads`' pick (0 RGB565)
+    // ...and HOW it is sent, the probe's pick too: Apple's CLIENT STORAGE (the
+    // card reads `uiStore_` itself, no copy into the driver), a RECTANGLE
+    // texture (640x480 exactly, not 1024x512) and the SHARED storage hint -
+    // each only where the driver names the extension
+    bool uiClient_ = false, uiRect_ = false, uiHint_ = false;
+    std::vector<std::uint8_t> uiStore_;   // the client-storage texture's own memory
     std::vector<std::uint8_t> uiConv_;   // a run of rows converted to that format
     void probeUploads();         // times the upload formats once, on the new context
     std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent

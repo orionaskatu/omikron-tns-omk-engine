@@ -67,6 +67,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <span>
 #include <string>
 #include <vector>
@@ -350,8 +351,12 @@ private:
         VkImage img = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE; VkDescriptorSet ds = VK_NULL_HANDLE;
     };
-    std::vector<Tex> tex_;
+    std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
+    // the textures on the device, by their pixel storage (`setTextures`); the
+    // entry holds that storage so its address is not reused while cached
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
 
     std::map<const omk::Geometry*, std::pair<VkBuffer, VkDeviceMemory>> vbo_;
     std::map<const omk::Geometry*, std::size_t> vboN_;
@@ -1177,6 +1182,8 @@ bool VulkanRenderer::makePipelines() {
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpi.maxSets = 130; dpi.poolSizeCount = 2; dpi.pPoolSizes = ps;
+    // a texture's set is freed on its own when it leaves the pool (`setTextures`)
+    dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
 
     // ---- the SHADOW pipeline and its one descriptor set -------------------
@@ -1930,32 +1937,50 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
     };
 
-    // Releasing what a previous call made, so a second call REPLACES the pool
-    // instead of leaking it. This is a load-time call and should happen once
-    // per set, but "should" is not a guarantee: a per-frame call exhausted the
-    // descriptor pool and crashed, and a resource-owning setter that cannot
-    // survive being called twice is a trap for the next caller.
-    if (!tex_.empty()) {
-        vkDeviceWaitIdle(dev_);
-        for (auto& old : tex_) {
-            if (old.view) vkDestroyImageView(dev_, old.view, nullptr);
-            if (old.img)  vkDestroyImage(dev_, old.img, nullptr);
-            if (old.mem)  freeDeviceMemory(old.mem);
-        }
-        tex_.clear();
-        vkResetDescriptorPool(dev_, dpool_, 0);
-        white_ = Tex{};
-        ds1_ = VK_NULL_HANDLE;      // the reset freed it too
-        makeShadowSet();
-    }
-
+    // THE POOL, UPLOADED ONLY WHERE IT IS NEW (2026-10-10), as the GLES, 3DS
+    // and GL1 backends keep it. The frame hands the pool over again whenever
+    // it changes - a particle's sprite, a character coming into view - and
+    // this waited for the device to go idle, destroyed EVERY image and sent
+    // them all again. A texture already on the device from an earlier pool -
+    // the same pixel storage, palette and size - is kept with its image and
+    // its descriptor set, and the entry holds that storage, so its address
+    // cannot come back as another texture's while cached; what no slot of the
+    // new pool uses is destroyed, after a wait for the device only then.
+    // (This was also where a per-frame call had exhausted the descriptor pool
+    // and crashed: a set is now freed on its own, and only the new ones are
+    // allocated.)
     if (white_.img == VK_NULL_HANDLE)
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
-
+    const auto keyOf = [](const omk::Texture& x) {
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+    };
+    for (auto& [key, u] : uploaded_) u.used = false;
+    for (const auto& x : t)
+        if (x.hasPixels())
+            if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.used = true;
+    bool waited = false;
+    for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
+        if (it->second.used) { ++it; continue; }
+        if (!waited) { vkDeviceWaitIdle(dev_); waited = true; }
+        Tex& old = it->second.t;
+        if (old.ds)   vkFreeDescriptorSets(dev_, dpool_, 1, &old.ds);
+        if (old.view) vkDestroyImageView(dev_, old.view, nullptr);
+        if (old.img)  vkDestroyImage(dev_, old.img, nullptr);
+        if (old.mem)  freeDeviceMemory(old.mem);
+        it = uploaded_.erase(it);
+    }
     tex_.assign(t.size(), Tex{});
     for (std::size_t i = 0; i < t.size(); ++i) {
-        if (t[i].hasPixels())
-            upload([&](unsigned char* d) { t[i].toRgbaKeyed(d); }, t[i].width, t[i].height, tex_[i]);
+        const omk::Texture& x = t[i];
+        if (!x.hasPixels()) continue;
+        auto hit = uploaded_.find(keyOf(x));
+        if (hit == uploaded_.end()) {
+            Uploaded u;
+            u.idx = x.idx; u.pal = x.pal; u.used = true;
+            upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
+            hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
+        }
+        tex_[i] = hit->second.t;
     }
 }
 
@@ -2609,7 +2634,9 @@ VulkanRenderer::~VulkanRenderer() {
         if (t.img)  vkDestroyImage(dev_, t.img, nullptr);
         if (t.mem)  freeDeviceMemory(t.mem);
     };
-    for (auto& t : tex_) killTex(t);
+    for (auto& [key, u] : uploaded_) killTex(u.t);   // the slots' handles are theirs
+    uploaded_.clear();
+    tex_.clear();
     killTex(white_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);

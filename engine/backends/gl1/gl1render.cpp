@@ -94,6 +94,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <map>
+#include <tuple>
 #include <vector>
 
 namespace omk {
@@ -156,8 +158,11 @@ public:
 #endif
         {
             Current c(ctx_);
-            if (!tex_.empty()) gpuForget(omk::prof::kGlTexture, tex_.data(), tex_.size());
-            if (!tex_.empty()) glDeleteTextures(static_cast<GLsizei>(tex_.size()), tex_.data());
+            for (auto& [key, u] : uploaded_) {
+                gpuForget(omk::prof::kGlTexture, &u.name, 1);
+                glDeleteTextures(1, &u.name);
+            }
+            uploaded_.clear();
 #if defined(OMK_GL1_AGL)
             if (readTex_) gpuForget(omk::prof::kGlTexture, &readTex_, 1);
             if (readTex_) glDeleteTextures(1, &readTex_);
@@ -215,52 +220,105 @@ public:
         return true;
     }
 
+    // THE TEXTURE POOL, UPLOADED ONLY WHERE IT IS NEW (2026-10-10). The frame
+    // hands the pool over again whenever it changes - a particle's sprite
+    // arriving or leaving, a character coming into view - and this deleted
+    // EVERY texture on the card and sent them all again, set and bodies, each
+    // texel through a call: on the reader's iBook G3 that is the likeliest
+    // owner of `props, guns` at 12-65 ms a frame (`todo/handoff-classic-mac.md`
+    // 3f). The original binds a texture into its 58-slot cache once
+    // (`Tex3DT_BindMaterials`) and keeps it. As the GLES and 3DS backends do:
+    // a texture already on the card from an earlier pool - the same pixel
+    // storage, palette and size - is kept, and the entry holds that storage,
+    // so its address cannot come back as another texture's while cached;
+    // what no slot of the new pool uses leaves the card.
+    //
+    // A new one goes up as 16-bit ARGB 1555 words - the internal format it
+    // always had (`GL_RGB5_A1`) - built through the palette (256 entries,
+    // made once a texture) instead of RGBA bytes the driver converted: the
+    // channels TRUNCATED to five bits, as the engine's own 16-bit conversion
+    // does (`rgb565`), and the colour key (alpha 0) on a black palette entry
+    // as before.
     void setTextures(std::span<const Texture> t) override {
         Current c(ctx_);
         flush();
-        if (!tex_.empty()) gpuForget(omk::prof::kGlTexture, tex_.data(), tex_.size());
-        if (!tex_.empty()) glDeleteTextures(static_cast<GLsizei>(tex_.size()), tex_.data());
+        for (auto& [key, u] : uploaded_) u.used = false;
         tex_.assign(t.size(), 0);
         texW_.assign(t.size(), 1.0f);
         texH_.assign(t.size(), 1.0f);
-        if (t.empty()) return;
-        glGenTextures(static_cast<GLsizei>(tex_.size()), tex_.data());
-        std::vector<unsigned char> px;
+        const auto keyOf = [](const Texture& x) {
+            return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+        };
+        for (const Texture& x : t)
+            if (x.hasPixels())
+                if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.used = true;
+        int kept = 0, fresh = 0, dropped = 0;
+        for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
+            if (it->second.used) { ++it; continue; }
+            gpuForget(omk::prof::kGlTexture, &it->second.name, 1);
+            glDeleteTextures(1, &it->second.name);
+            it = uploaded_.erase(it);
+            ++dropped;
+        }
+        std::vector<std::uint16_t> px;
         for (std::size_t i = 0; i < t.size(); ++i) {
             const Texture& x = t[i];
-            if (!x.hasPixels()) { tex_[i] = 0; continue; }
-            // OpenGL 1.x wants power-of-two sides; the UVs are in texels, so
-            // a padded texture keeps them and only the texture matrix's scale
-            // changes. Every shipped .3DT is already a power of two.
-            const unsigned pw = nextPow2(static_cast<unsigned>(x.width));
-            const unsigned ph = nextPow2(static_cast<unsigned>(x.height));
-            px.assign(static_cast<std::size_t>(pw) * ph * 4, 0);
-            for (int y = 0; y < x.height; ++y)
-                for (int xx = 0; xx < x.width; ++xx) {
-                    const std::size_t d = (static_cast<std::size_t>(y) * pw + xx) * 4;
-                    int ri, gi, bi;
-                    x.texel(static_cast<std::size_t>(y) * x.width + xx, ri, gi, bi);
-                    const unsigned char r = static_cast<unsigned char>(ri),
-                                        g = static_cast<unsigned char>(gi),
-                                        b = static_cast<unsigned char>(bi);
-                    px[d] = r; px[d + 1] = g; px[d + 2] = b;
-                    // the colour key on black: alpha 0, which only a cutout
-                    // draw's alpha test reads
-                    px[d + 3] = (r | g | b) ? 255 : 0;
+            if (!x.hasPixels()) continue;
+            auto hit = uploaded_.find(keyOf(x));
+            if (hit == uploaded_.end()) {
+                // OpenGL 1.x wants power-of-two sides; the UVs are in texels, so
+                // a padded texture keeps them and only the texture matrix's scale
+                // changes. Every shipped .3DT is already a power of two.
+                const unsigned pw = nextPow2(static_cast<unsigned>(x.width));
+                const unsigned ph = nextPow2(static_cast<unsigned>(x.height));
+                std::uint16_t lut[256];
+                for (int k = 0; k < 256; ++k) {
+                    const std::uint8_t* q = x.pal.data() + 3 * k;
+                    lut[k] = static_cast<std::uint16_t>(((q[0] | q[1] | q[2]) ? 0x8000u : 0u) |
+                                                        (q[0] >> 3) << 10 | (q[1] >> 3) << 5 | (q[2] >> 3));
                 }
-            glBindTexture(GL_TEXTURE_2D, tex_[i]);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            // bytes in memory order: no packed type, so no byte order to get wrong
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, static_cast<GLsizei>(pw),
-                         static_cast<GLsizei>(ph), 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-            gpuNote("textures", omk::prof::kGlTexture, tex_[i], 2LL * pw * ph);   // 16 bits a texel
-            texW_[i] = static_cast<float>(pw);
-            texH_[i] = static_cast<float>(ph);
+                px.assign(static_cast<std::size_t>(pw) * ph, 0);
+                const std::uint8_t* idx = x.idx.data();
+                for (int y = 0; y < x.height; ++y) {
+                    std::uint16_t* d = px.data() + static_cast<std::size_t>(y) * pw;
+                    const std::uint8_t* sr = idx + static_cast<std::size_t>(y) * x.width;
+                    for (int xx = 0; xx < x.width; ++xx) d[xx] = lut[sr[xx]];
+                }
+                GLuint name = 0;
+                glGenTextures(1, &name);
+                glBindTexture(GL_TEXTURE_2D, name);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                // packed 16-bit words in the host's own order: the packed type
+                // is read as a host word on either byte order
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, static_cast<GLsizei>(pw),
+                             static_cast<GLsizei>(ph), 0, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV,
+                             px.data());
+                gpuNote("textures", omk::prof::kGlTexture, name, 2LL * pw * ph);   // 16 bits a texel
+                hit = uploaded_.emplace(keyOf(x), Uploaded{name, x.idx, x.pal, static_cast<float>(pw),
+                                                           static_cast<float>(ph), true}).first;
+                ++fresh;
+            } else {
+                ++kept;
+            }
+            tex_[i] = hit->second.name;
+            texW_[i] = hit->second.w;
+            texH_[i] = hit->second.h;
         }
         boundTex_ = ~0u;
+        // what stayed, what went up, what left - the first ten pools, then one
+        // line in fifty, since a sprite coming and going changes the pool
+        static long pools = 0;
+        static long keptAll = 0, freshAll = 0;
+        ++pools; keptAll += kept; freshAll += fresh;
+        if (pools <= 10 || pools % 50 == 0)
+            std::printf("gl1: texture pool %ld, %zu slots - %d kept on the card, %d uploaded, "
+                        "%d dropped (all pools so far: %ld kept, %ld uploaded)\n",
+                        pools, t.size(), kept, fresh, dropped, keptAll, freshAll);
     }
 
     void begin(const View& v) override {
@@ -809,11 +867,11 @@ public:
         filter_ = mode >= 1 ? 1 : 0;
         if (mode >= 2)
             std::printf("gl1: trilinear asked - no mip chain in this backend, drawn bilinear\n");
-        if (!tex_.empty()) {
+        if (!uploaded_.empty()) {
             Current c(ctx_);
             flush();
-            for (GLuint id : tex_) {
-                if (!id) continue;
+            for (auto& [key, u] : uploaded_) {
+                const GLuint id = u.name;
                 glBindTexture(GL_TEXTURE_2D, id);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter_ ? GL_LINEAR : GL_NEAREST);
@@ -1087,8 +1145,12 @@ private:
     GLuint fbo_ = 0, colour_ = 0, depth_ = 0;
     int w_ = 0, h_ = 0;
     int vy_ = 0;             // the picture's first row in the target (AGL: its letterbox place)
-    std::vector<GLuint> tex_;
+    std::vector<GLuint> tex_;            // per pool slot: a name `uploaded_` owns
     std::vector<float> texW_, texH_;
+    // the textures on the card, by their pixel storage (`setTextures`); the
+    // entry holds that storage so its address is not reused while cached
+    struct Uploaded { GLuint name; PixelBuffer idx, pal; float w, h; bool used; };
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
     View view_;
     bool flipX_ = false;
     Surface fb_{1, 1, 0};

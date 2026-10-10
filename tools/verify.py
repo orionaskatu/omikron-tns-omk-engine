@@ -28497,16 +28497,25 @@ def c_engine_gl1_backend():
         changed = [i for i in range(N) if g[i] != bl[i]]
         meanB = sum(mean_d(g[i], bl[i]) for i in changed) / len(changed) if changed else 0.0
         coverB = sum(1 for x, y in zip(bl, sw) if (x != 0) == (y != 0)) / N
+        # the POOL kept across a change (2026-10-10): the street's second pool
+        # keeps the first's textures on the card, counted where they are
+        # uploaded (`setTextures`), and uploads only the new ones
+        pools = [(int(m.group(2)), int(m.group(3)), int(m.group(4)))
+                 for m in re.finditer(r"gl1: texture pool (\d+), (\d+) slots - (\d+) kept on the card, "
+                                      r"(\d+) uploaded", logs["gl1"])]
+        keptLater = len(pools) >= 2 and pools[1][1] > 0 and pools[1][1] + pools[1][2] == pools[1][0]
         got = ("the world through OpenGL 1.x fixed-function" in logs["gl1"],
                g != sw, cover >= 0.99, differ <= N * 0.005,
-               len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98)
+               len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98, keptLater)
         print(f"        gl1 vs software: coverage {cover:.4f}, {differ} pixels differ by >24 "
               f"({100.0 * differ / N:.2f}%); bilinear: {100.0 * len(changed) / N:.1f}% changed, "
               f"mean {meanB:.1f}, coverage {coverB:.4f}")
-        return got, (True, True, True, True, True, True, True), \
+        print(f"        texture pools: {pools[:3]} (slots, kept, uploaded)")
+        return got, (True, True, True, True, True, True, True, True), \
             "the world drawn by the gl1 backend; its frame not the software one; " \
             "coverage agreement >= 0.99; <= 0.5% of pixels differing by > 24; " \
-            "bilinear changes >= 20% of the pixels by a mean <= 16 and keeps coverage >= 0.98"
+            "bilinear changes >= 20% of the pixels by a mean <= 16 and keeps coverage >= 0.98; " \
+            "and a texture pool handed over again KEEPS the textures already on the card"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -29713,6 +29722,12 @@ def c_engine_profiler_gpu():
     Shown to fail (2026-10-04): `freeDeviceMemory` made not to tell the
     profiler (red: staging left standing); every buffer filed as "buffers"
     (red: no vertex buffers).
+    
+    **41 -> 40 on 2026-10-10**: the street's pool is 39 textures and the white
+    fallback; the 41st was a LEAK - every pool change destroyed the slots'
+    images, then dropped the white one's handle (`white_ = Tex{}`) without
+    destroying it and uploaded another. The pool is now kept across changes
+    (`setTextures`) and the white image with it.
     """
     import subprocess, tempfile, shutil
     sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -29747,9 +29762,9 @@ def c_engine_profiler_gpu():
         growth // 1024))
     return (every, sums, tex[1], tex[0] > 8 << 20, "vertex buffers" in last, "staging" in last,
             0 <= growth < 1 << 20), \
-           (True, True, 41, True, True, False, True), \
+           (True, True, 40, True, True, False, True), \
         "the street through the Vulkan world renderer: GPU memory in every frame, its " \
-        "categories summing to the total, the 41 texture atlases over 8 MB, vertex " \
+        "categories summing to the total, the 40 texture atlases over 8 MB, vertex " \
         "buffers, no staging left at rest, no growth over frames 15..29"
 
 

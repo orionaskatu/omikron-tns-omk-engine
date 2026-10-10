@@ -527,6 +527,54 @@ Rage 128 under 10.2 offers these at all is what the next run says** - the
 `gl1: upload extensions` line and the three `gl1: the ... will be sent`
 lines. `engine: classic build`, `engine: gl1 backend` green.
 
+**Steps 2f-2i - ONE BATCH FOR ONE iBOOK RUN, DONE 2026-10-10, NOT yet run on
+the iBook** (the reader: "to test everything in one time instead of several
+small tests"; each its own commit and log line):
+- **2f, the texture pool kept** (`2a374c4`): the frame hands the pool over
+  again whenever it changes (a sprite, a character in view) and the GL1
+  backend deleted and re-sent EVERY texture, a call a texel - the likeliest
+  owner of the iBook's `props, guns` (12-65 ms). Now a texture already on the
+  card (same pixel storage, palette, size) is kept, as the GLES and 3DS
+  backends and the original's 58-slot cache keep it; new ones go up as 16-bit
+  ARGB1555 words through the palette. Vulkan did the same and leaked its
+  white fallback on every change (`engine: profiler gpu` 41 -> 40); fixed too.
+  Log: `gl1: texture pool N, S slots - K kept on the card, U uploaded`.
+  `engine: gl1 backend` asserts the street's second pool keeps 31 and
+  uploads 8 (red with the cache broken).
+- **2g, Mac OS 9 diagnosable** (`c35c083`): `checkpoint:` lines, each flushed
+  to the disk on OS 9 (its File Manager caches writes), before the window,
+  the AGL pixel format / context / drawable, the upload probe, the sound
+  channel, QuickTime and each film, and the first presented frame; the log
+  flushed every 2 s on OS 9; `system: Mac OS x.y.z` said first; `delayMs`
+  yields through `WaitNextEvent` with an EMPTY mask instead of spinning on
+  `Delay`. **Run on the emulated OS 9.2.1** (QEMU, Apple's software
+  renderer): every checkpoint written, the probe finding no Apple upload
+  extension and keeping the copy, the menu at 100-180 ms a frame - and the
+  log read off the disk after QEMU was KILLED at frame 479 ran to frame 479:
+  the tail a hard stop used to lose is there.
+- **2h, the menu's cloud for a slow CPU** (`76e8f73`): the same pixels (menu
+  dumps byte-identical at four frames and two sizes, a one-bit mutation
+  changes them), the emboss's clamp and ramp one lookup, its rows fetched
+  once; profiler zones `ui: cloud emboss` / `ui: cloud warp` so the next
+  profile splits the menu's ~45 ms.
+- **2i, a third less vertex data without the fog sum** (`016459f`): a pass
+  whose fog is black (Kay'l's apartment and most interiors) sends a 28-byte
+  vertex, not 40; host-GL1 dumps byte-identical for the street, the Impasse
+  (coloured fog) and the apartment (the new path). The SQUARE ROOTS were
+  read and left: on the per-frame path each one's VALUE is used (falloff,
+  speeds, normals), the one pure reach test already compares squared, and the
+  original itself has 190 `fsqrt` and compares the root
+  (`if (sqrt(dx*dx + dy*dy + dz*dz) < limit)`).
+The whole batch on the emulated Tiger: the street at 29 fps drawn right,
+every checkpoint, pools 31 -> 31 kept + 8 uploaded, exit 0.
+(`system:` reads 10.4.9 there: `gestaltSystemVersion` stops at .9.)
+
+**What the iBook's next run should bring back**: `omk-out.txt` and
+`omk.prof`. Read first: `gl1: upload extensions` and the three `will be
+sent` lines (2e), `gl1: texture pool` (2f), the `sections` lines of the menu
+and the street against the second run's (above), a dialogue `line load:`
+(2c), and the profile's `ui: cloud *` and `gl1: draw call` zones.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

@@ -783,6 +783,59 @@ to the unindexed backend; per 60 street passes 1415922 corners, **659816
 transformed, 389772 vertices sent** (713000+ before). Emulated Tiger street:
 `sim+draw` 25-29 -> 19-23 ms, the submit's own CPU 16.5 -> 11.9.
 
+**THE iBOOK'S SIXTH RUN (2026-10-11, the 3d build `75042b3`, 6329 frames,
+exit 0)**, the fifth's route (the Impasse, AREA 142, Anekbah, the hall, the
+apartment, the fight at 5995):
+- the STREET 120 -> **113.6 ms** (median 108.5): `gl1: draw call` 23.6 ->
+  20.3 (the driver's share of the indexed draws), but the submit's own CPU
+  38.9 -> **41.9** - the vertex cache did not pay on the G3; overlay frames
+  `gl1: overlay compare` 8.7 ms a street frame (0.7 calls);
+- the FIGHT 187 -> **191 ms**: `gl1: overlay rows` 74 -> 55, `gl1: overlay
+  compare` 19.5 (new), so nothing gained - though the stat line says only
+  **7.4 rows' worth** of texels went up a frame;
+- per 60 street passes the set was indexed (139245 corners, 63079 vertices).
+**THE LESSON: THIS MACHINE IS MEMORY-BOUND.** The compare reads the frame
+AND a kept copy - 1.2 MB a frame - and costs more than its arithmetic could
+(~170 MB/s: the iBook's bus); the vertex cache kept six arrays (~1.9 MB at
+the street) indexed at random, a cache miss each, and lost what the
+transforms saved. On the M3 and the emulated Tiger neither shows. And the
+fight's 55 ms with 7.4 rows' worth sent is the CALLS (a spark row a
+rectangle, a block at a time) and the `glFinish` before writing the
+client-storage texture - not the conversion.
+
+**Step 3e - FEWER BYTES, DONE 2026-10-11, NOT yet run on the iBook** (the
+sixth run's lesson): the overlay's compare reads the frame ONCE - two
+checksums a 32-pixel block of a row (a*31+w and a rotate-xor, 64 bits a
+64-byte block) against the ones it had, no kept copy (-0.9 MB of memory too);
+the stale blocks go up in a FEW RECTANGLES (each block's stale drawn rows
+as one span, neighbouring blocks merged) instead of a spark row a call, a
+`gl1: overlay wait` zone around the `glFinish` before the client memory is
+written, and the call count in the `gl1 overlay:` line; the vertex cache as
+ONE 32-byte record a vertex instead of six arrays. Host GL1: street and
+apartment byte-identical; emulated Tiger: the Impasse's probes as before,
+0-0.2 upload calls a frame.
+
+**THE iBOOK IS 640 MB / 8 MB VRAM (the reader, 2026-10-11), AND THE GAME'S
+OFFICIAL MINIMUM AND RECOMMENDED SPEC IS 4 MB OF VRAM.** So the original
+fitted 58 texture slots and a 640x480x16 front, back and depth buffer (~1.8
+MB) into 4 MB. Read 2026-10-11, how: every texture surface is created
+`DDSCAPS_TEXTURE | DDSCAPS2_TEXTUREMANAGE` (`sub_463310`, `sub_463420`, the
+DDSURFACEDESC2's `ddsCaps` 0x1000 / 0x10) - D3D MANAGED textures, the
+runtime keeping a system copy and paging them into video memory - AND the
+textures are DOWNSCALED to fit: `sub_45F4F0` (0x0045F4F0) asks
+`GetAvailableVidMem` for that caps pair, needs `(dword_80B060 + 5) << 16`
+bytes (`<< 17` when `dword_53ADE4 == 1`), and while the scale's product
+times that exceeds the memory, halves `flt_6A5388` or `flt_6A5384` (the
+larger first) - the texture's height and width factors, which `sub_463420`
+applies by creating a smaller surface and stretch-blitting the 256x256 into
+it. NOT YET READ: what `dword_80B060` counts (the slots?), what
+`dword_53ADE4` is (32-bit textures?), `dword_53ADEC`'s squaring of the two.
+So on a 4 MB card the original drew SMALLER textures; the port's GL1 sends
+every slot at 256x256 16-bit (6 MB at Anekbah) plus a 2 MB RGBA8 overlay,
+and Mac OS X's GL pages them as D3D's manager did. Porting the rule -
+the scale chosen from the card's memory (AGL's `AGL_VIDEO_MEMORY`) - is
+what the original does on this machine; a candidate step, not started.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

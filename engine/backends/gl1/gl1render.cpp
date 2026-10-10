@@ -542,11 +542,12 @@ public:
                 ++statCorners_;
                 if (vi) {
                     const std::uint32_t v = vi->vert[ci];
-                    if (vStamp_[v] == drawStamp_) {
-                        const std::size_t r = vRep_[v];
+                    const VSlot& vsl = vs_[v];
+                    if (vsl.stamp == drawStamp_) {
+                        const std::size_t r = vsl.rep;
                         if (r == ci || sameCorner(g, r, ci)) {
-                            in[k].v[0] = vPos_[3 * v]; in[k].v[1] = vPos_[3 * v + 1]; in[k].v[2] = vPos_[3 * v + 2];
-                            oc[k] = vOc_[v];
+                            in[k].v[0] = vsl.x; in[k].v[1] = vsl.y; in[k].v[2] = vsl.z;
+                            oc[k] = vsl.oc;
                             slot[k] = static_cast<std::int32_t>(v);
                             continue;
                         }
@@ -575,12 +576,12 @@ public:
                 if (z * gy + y < 0.0f) o |= 16u;
                 oc[k] = o;
                 if (slot[k] >= 0) {
-                    const auto v = static_cast<std::size_t>(slot[k]);
-                    vStamp_[v] = drawStamp_;
-                    vRep_[v] = static_cast<std::uint32_t>(ci);
-                    vPos_[3 * v] = x; vPos_[3 * v + 1] = y; vPos_[3 * v + 2] = z;
-                    vOc_[v] = static_cast<std::uint8_t>(o);
-                    vOutStamp_[v] = 0;                    // not sent yet
+                    VSlot& vsl = vs_[static_cast<std::size_t>(slot[k])];
+                    vsl.stamp = drawStamp_;
+                    vsl.rep = static_cast<std::uint32_t>(ci);
+                    vsl.x = x; vsl.y = y; vsl.z = z;
+                    vsl.oc = static_cast<std::uint8_t>(o);
+                    vsl.outStamp = 0;                     // not sent yet
                 }
             }
             const unsigned outAll = oc[0] & oc[1] & oc[2];
@@ -635,16 +636,16 @@ public:
                 ++st_.drawn;
                 for (int k = 0; k < 3; ++k) {
                     const std::int32_t sl = slot[k];
-                    if (sl >= 0 && vOutStamp_[static_cast<std::size_t>(sl)] == batchStamp_) {
-                        idx_.push_back(vOut_[static_cast<std::size_t>(sl)]);   // sent: its index
+                    if (sl >= 0 && vs_[static_cast<std::size_t>(sl)].outStamp == batchStamp_) {
+                        idx_.push_back(vs_[static_cast<std::size_t>(sl)].out);   // sent: its index
                         continue;
                     }
                     colourOf(k);
                     const std::uint16_t o = emit(in[k]);
                     idx_.push_back(o);
                     if (sl >= 0) {
-                        vOut_[static_cast<std::size_t>(sl)] = o;
-                        vOutStamp_[static_cast<std::size_t>(sl)] = batchStamp_;
+                        vs_[static_cast<std::size_t>(sl)].out = o;
+                        vs_[static_cast<std::size_t>(sl)].outStamp = batchStamp_;
                     }
                 }
                 continue;
@@ -850,10 +851,8 @@ public:
         {
             OMK_ZONE("gl1: overlay compare");
             const std::size_t W = static_cast<std::size_t>(fb.w);
-            const std::size_t N = W * static_cast<std::size_t>(fb.h);
-            if (ovSeenPx_.size() != N) {
-                ovSeenPx_.assign(N, 0);
-                ovSeenMask_.assign(N, 0);
+            if (ovSeenRow_.size() != static_cast<std::size_t>(fb.h) || ovSumW_ != fb.w) {
+                ovSumW_ = fb.w;
                 ovSeenRow_.assign(static_cast<std::size_t>(fb.h), 0);   // nothing seen
                 ovRowAny_.assign(static_cast<std::size_t>(fb.h), 0);
                 ovRowBlack_.assign(static_cast<std::size_t>(fb.h), 0);
@@ -864,6 +863,7 @@ public:
                 ovBlocks_ = (fb.w + ovBlockW_ - 1) / ovBlockW_;
                 ovAllBlocks_ = ovBlocks_ >= 32 ? ~0u : (1u << ovBlocks_) - 1u;
                 ovRowStale_.assign(static_cast<std::size_t>(fb.h), ovAllBlocks_);
+                ovSum_.assign(static_cast<std::size_t>(fb.h) * static_cast<std::size_t>(ovBlocks_) * 2u, 0u);
             }
             // the rows the world's pass cleared BLACK itself: the letterbox
             // bars (`begin`, AGL) - a composed row there that is opaque black
@@ -876,32 +876,31 @@ public:
                 const bool hasMask = mask && (!maskRow || maskRow[yy]);
                 // 1 = seen without a mask, 2 = seen with one, 0 = never seen
                 const std::uint8_t seenAs = hasMask ? 2 : 1;
-                bool same = ovSeenRow_[yy] == seenAs &&
-                            sameWords(row, ovSeenPx_.data() + o, W * sizeof(std::uint16_t));
-                if (same && hasMask) same = sameWords(mask + o, ovSeenMask_.data() + o, W);
-                if (!same) {
-                    // WHICH BLOCKS of the row changed (step 3c): the fight
-                    // HUD's two gauges run down the screen's two edges and
-                    // their sparks move every frame - every row they span
-                    // changed, a few pixels at each end, and each was sent
-                    // whole (74 ms a frame of `gl1: overlay rows` on the
-                    // iBook, its fifth run)
-                    std::uint32_t blocks = 0;
-                    if (ovSeenRow_[yy] != seenAs) {
-                        blocks = ovAllBlocks_;
-                    } else {
-                        for (int bk = 0; bk < ovBlocks_; ++bk) {
-                            const std::size_t x0 = static_cast<std::size_t>(bk * ovBlockW_);
-                            const std::size_t n = std::min<std::size_t>(W - x0, static_cast<std::size_t>(ovBlockW_));
-                            bool eq = sameWords(row + x0, ovSeenPx_.data() + o + x0, n * sizeof(std::uint16_t));
-                            if (eq && hasMask) eq = sameWords(mask + o + x0, ovSeenMask_.data() + o + x0, n);
-                            if (!eq) blocks |= 1u << bk;
-                        }
+                const bool seen = ovSeenRow_[yy] == seenAs;
+                ovSeenRow_[yy] = seenAs;
+                // WHICH BLOCKS of the row changed (steps 3c, 3e): each block's
+                // two CHECKSUMS against the ones it had - the frame read once
+                // and nothing else. Step 3c compared it with a KEPT COPY, and
+                // the iBook's sixth run showed what that costs on its bus:
+                // the copy read cold every frame, 1.2 MB in all, 8.7 ms a
+                // street frame and 19.5 in the fight. Two sums of different
+                // kinds (a*31 + w, and a rotate-xor) a 64-byte block: a change
+                // they both miss is not a practical case.
+                std::uint32_t* sum = ovSum_.data() + yy * static_cast<std::size_t>(ovBlocks_) * 2u;
+                std::uint32_t blocks = 0;
+                for (int bk = 0; bk < ovBlocks_; ++bk) {
+                    const std::size_t x0 = static_cast<std::size_t>(bk * ovBlockW_);
+                    const std::size_t n = std::min<std::size_t>(W - x0, static_cast<std::size_t>(ovBlockW_));
+                    std::uint32_t h1 = 0x811C9DC5u, h2 = 0x9E3779B9u;
+                    blockSums(row + x0, n * sizeof(std::uint16_t), h1, h2);
+                    if (hasMask) blockSums(mask + o + x0, n, h1, h2);
+                    if (!seen || sum[2 * bk] != h1 || sum[2 * bk + 1] != h2) {
+                        blocks |= 1u << bk;
+                        sum[2 * bk] = h1; sum[2 * bk + 1] = h2;
                     }
+                }
+                if (blocks) {
                     ovRowStale_[yy] |= blocks;
-                    std::memcpy(ovSeenPx_.data() + o, row, W * sizeof(std::uint16_t));
-                    if (hasMask) std::memcpy(ovSeenMask_.data() + o, mask + o, W);
-                    ovSeenRow_[yy] = seenAs;
                     bool any = false, black = true;
                     for (std::size_t x = 0; x < W; ++x) {
                         // a non-key pixel's mask is 0 (the glue's), so a 0
@@ -1000,38 +999,66 @@ public:
                     }
                 }
             };
-            for (int bk = 0; bk < ovBlocks_; ++bk) {
-                const std::uint32_t bit = 1u << bk;
-                const int x0 = bk * ovBlockW_, x1 = std::min(fb.w, x0 + ovBlockW_), cw = x1 - x0;
-                for (int y = lo; y <= hi;) {
-                    const auto stale = [&](int r) {
-                        const std::size_t rr = static_cast<std::size_t>(r);
-                        return ovRowDraw_[rr] && (ovRowStale_[rr] & bit);
-                    };
-                    if (!stale(y)) { ++y; continue; }
-                    int e = y;
-                    while (e + 1 <= hi && stale(e + 1)) ++e;
-                    const int rows = e - y + 1;
-                    if (path.client) {
-                        // the card may still be reading last frame's texels
-                        if (!storeWaited) { glFinish(); storeWaited = true; }
-                        for (int r = y; r <= e; ++r)
-                            convert(r, x0, x1, ovStore_.data() + static_cast<std::size_t>(r) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(x0));
-                        glPixelStorei(GL_UNPACK_ROW_LENGTH, tw);
-                        glTexSubImage2D(target, 0, x0, y, cw, rows, upFormat, upType,
-                                        ovStore_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(x0));
-                    } else {
-                        const std::size_t need = static_cast<std::size_t>(cw) * static_cast<std::size_t>(rows);
-                        if (ovBand_.size() < need) ovBand_.resize(need);
-                        for (int r = y; r <= e; ++r)
-                            convert(r, x0, x1, ovBand_.data() + static_cast<std::size_t>(r - y) * static_cast<std::size_t>(cw));
-                        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-                        glTexSubImage2D(target, 0, x0, y, cw, rows, upFormat, upType, ovBand_.data());
+            // ...in a FEW RECTANGLES (step 3e): each block's drawn stale rows
+            // taken as one span, top to bottom, and neighbouring blocks with
+            // any merged - the fight's sparks, a spark row a call until now
+            // (the sixth run: 55 ms a frame for 7.4 rows' worth of texels),
+            // are two rectangles. A cell inside a rectangle that was not
+            // stale holds what the texture holds already, so sending it
+            // again sends the same texels.
+            int bTop[32], bBot[32];
+            for (int bk = 0; bk < ovBlocks_; ++bk) { bTop[bk] = fb.h; bBot[bk] = -1; }
+            for (int y = lo; y <= hi; ++y) {
+                const std::size_t yy = static_cast<std::size_t>(y);
+                std::uint32_t m = ovRowDraw_[yy] ? ovRowStale_[yy] : 0u;
+                for (int bk = 0; m; ++bk, m >>= 1)
+                    if (m & 1u) {
+                        if (bTop[bk] > y) bTop[bk] = y;
+                        bBot[bk] = y;
                     }
-                    for (int r = y; r <= e; ++r) ovRowStale_[static_cast<std::size_t>(r)] &= ~bit;
-                    ovStatSent_ += static_cast<long>(cw) * rows;
-                    y = e + 1;
+            }
+            for (int bk = 0; bk < ovBlocks_;) {
+                if (bBot[bk] < 0) { ++bk; continue; }
+                const int g0 = bk;
+                int y0 = bTop[bk], y1 = bBot[bk];
+                while (bk + 1 < ovBlocks_ && bBot[bk + 1] >= 0) {
+                    ++bk;
+                    y0 = std::min(y0, bTop[bk]); y1 = std::max(y1, bBot[bk]);
                 }
+                const int x0 = g0 * ovBlockW_, x1 = std::min(fb.w, (bk + 1) * ovBlockW_), cw = x1 - x0;
+                const int rows = y1 - y0 + 1;
+                const std::uint32_t bits = (bk - g0 + 1 >= 32 ? ~0u : ((1u << (bk - g0 + 1)) - 1u)) << g0;
+                if (path.client) {
+                    // the card may still be reading last frame's texels
+                    if (!storeWaited) { OMK_ZONE("gl1: overlay wait"); glFinish(); storeWaited = true; }
+                    // only the stale cells are converted: the others hold
+                    // their texels already
+                    for (int r = y0; r <= y1; ++r) {
+                        const std::uint32_t st = ovRowStale_[static_cast<std::size_t>(r)] & bits;
+                        if (!st) continue;
+                        for (int c = g0; c <= bk; ++c) {
+                            if (!(st & (1u << c))) continue;
+                            const int cx0 = c * ovBlockW_, cx1 = std::min(fb.w, cx0 + ovBlockW_);
+                            convert(r, cx0, cx1, ovStore_.data() + static_cast<std::size_t>(r) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(cx0));
+                        }
+                        ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
+                    }
+                    glPixelStorei(GL_UNPACK_ROW_LENGTH, tw);
+                    glTexSubImage2D(target, 0, x0, y0, cw, rows, upFormat, upType,
+                                    ovStore_.data() + static_cast<std::size_t>(y0) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(x0));
+                } else {
+                    const std::size_t need = static_cast<std::size_t>(cw) * static_cast<std::size_t>(rows);
+                    if (ovBand_.size() < need) ovBand_.resize(need);
+                    for (int r = y0; r <= y1; ++r) {
+                        convert(r, x0, x1, ovBand_.data() + static_cast<std::size_t>(r - y0) * static_cast<std::size_t>(cw));
+                        ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
+                    }
+                    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                    glTexSubImage2D(target, 0, x0, y0, cw, rows, upFormat, upType, ovBand_.data());
+                }
+                ++ovStatCalls_;
+                ovStatSent_ += static_cast<long>(cw) * rows;
+                ++bk;
             }
             glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
             glEnable(target);
@@ -1096,9 +1123,9 @@ public:
             for (int y = lo; y <= hi; ++y) ovStatDrawn_ += ovRowDraw_[static_cast<std::size_t>(y)];
             if (ovStatFrames_ == 300) {
                 std::printf("gl1 overlay: over 300 frames %.1f rows drawn and %.1f rows' worth "
-                            "of texels sent a frame\n",
-                            ovStatDrawn_ / 300.0, ovStatSent_ / (300.0 * w_));
-                ovStatFrames_ = 0; ovStatDrawn_ = ovStatSent_ = 0;
+                            "of texels sent a frame, in %.1f calls\n",
+                            ovStatDrawn_ / 300.0, ovStatSent_ / (300.0 * w_), ovStatCalls_ / 300.0);
+                ovStatFrames_ = 0; ovStatDrawn_ = ovStatSent_ = ovStatCalls_ = 0;
             }
         }
         // ANY GL ERROR the overlay raised, said once each: the iBook's log is
@@ -1273,27 +1300,26 @@ private:
     // step 3b: each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
     // without / with a mask), whether it holds anything but the key, and
     // whether the texture row holds it
-    std::vector<std::uint16_t> ovSeenPx_;
-    std::vector<std::uint8_t> ovSeenMask_, ovSeenRow_, ovRowAny_;
+    std::vector<std::uint8_t> ovSeenRow_, ovRowAny_;
+    std::vector<std::uint32_t> ovSum_;   // two checksums a block of a row (step 3e)
+    int ovSumW_ = 0;
+    // a run of bytes into the two block checksums, a word at a time
+    static void blockSums(const void* p, std::size_t bytes, std::uint32_t& h1, std::uint32_t& h2) {
+        const unsigned char* q = static_cast<const unsigned char*>(p);
+        std::size_t i = 0;
+        for (; i + 4 <= bytes; i += 4) {
+            std::uint32_t w;
+            std::memcpy(&w, q + i, 4);
+            h1 = (h1 << 5) - h1 + w;
+            h2 = ((h2 << 7) | (h2 >> 25)) ^ w;
+        }
+        for (; i < bytes; ++i) { h1 = (h1 << 5) - h1 + q[i]; h2 = ((h2 << 7) | (h2 >> 25)) ^ q[i]; }
+    }
     std::vector<std::uint32_t> ovRowStale_;   // a row's blocks the texture does not hold yet (step 3c)
     int ovBlockW_ = 32, ovBlocks_ = 1;
     std::uint32_t ovAllBlocks_ = 1;
     std::vector<std::uint8_t> ovRowBlack_, ovRowDraw_;   // all 0x0000; drawn this frame
-    long ovStatFrames_ = 0, ovStatDrawn_ = 0, ovStatSent_ = 0;
-    // two runs of bytes equal, compared a word at a time
-    static bool sameWords(const void* a, const void* b, std::size_t bytes) {
-        const unsigned char* p = static_cast<const unsigned char*>(a);
-        const unsigned char* q = static_cast<const unsigned char*>(b);
-        std::size_t i = 0;
-        for (; i + 4 <= bytes; i += 4) {
-            std::uint32_t x, y;
-            std::memcpy(&x, p + i, 4);
-            std::memcpy(&y, q + i, 4);
-            if (x != y) return false;
-        }
-        for (; i < bytes; ++i) if (p[i] != q[i]) return false;
-        return true;
-    }
+    long ovStatFrames_ = 0, ovStatDrawn_ = 0, ovStatSent_ = 0, ovStatCalls_ = 0;
 #endif
 
     // Where the world is drawn and read from: the framebuffer object, or on
@@ -1581,10 +1607,17 @@ private:
     // draw's (`drawStamp_`) and, for the sent index, the current batch's
     struct VIndex { std::size_t n = 0; std::vector<std::uint32_t> vert; std::uint32_t nv = 0; };
     std::map<const Geometry*, VIndex> vindex_;
-    std::vector<std::uint32_t> vStamp_, vRep_, vOutStamp_;
-    std::vector<float> vPos_;
-    std::vector<std::uint8_t> vOc_;
-    std::vector<std::uint16_t> vOut_, idx_;
+    // ONE RECORD A VERTEX (step 3e): the six fields a lookup reads, in one
+    // 32-byte line - they were six arrays, six cache misses a corner on the
+    // G3 (the sixth run: the cache cost what the transforms saved)
+    struct VSlot {
+        std::uint32_t stamp, rep, outStamp;
+        float x, y, z;
+        std::uint16_t out;
+        std::uint8_t oc, pad[5];
+    };
+    std::vector<VSlot> vs_;
+    std::vector<std::uint16_t> idx_;
     std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
     long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0;
     static constexpr std::size_t kIndexMinCorners = 64;
@@ -1625,10 +1658,7 @@ private:
                 sl = (sl + 1) & (cap - 1);
             }
         }
-        if (vStamp_.size() < x.nv) {
-            vStamp_.resize(x.nv, 0); vRep_.resize(x.nv, 0); vOutStamp_.resize(x.nv, 0);
-            vPos_.resize(3 * static_cast<std::size_t>(x.nv)); vOc_.resize(x.nv); vOut_.resize(x.nv);
-        }
+        if (vs_.size() < x.nv) vs_.resize(x.nv, VSlot{});
         if (n >= 20000)
             std::printf("gl1: a geometry of %zu corners indexed - %u vertices\n", n, x.nv);
         return &x;

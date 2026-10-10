@@ -121,6 +121,7 @@ private:
     // the frame's 256x256 emboss and its two warp tables - the 0x20000 buffer
     // `sub_4B19C0` mallocs ONCE, at open; reused here rather than per frame
     mutable std::vector<std::uint16_t> buf_;
+    mutable std::vector<std::uint16_t> shade_;   // the clamp and the ramp as one lookup (`prepare`)
     mutable std::uint8_t colTab_[640] = {}, rowTab_[480] = {};
     void prepare(long frame) const;      // pass 1 and the tables, into the three above
 };

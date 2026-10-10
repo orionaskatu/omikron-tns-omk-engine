@@ -2,6 +2,7 @@
 // The menu's animated background. See `cloud.h` for where every constant in
 // here comes from; nothing below is chosen.
 #include "ui/cloud.h"
+#include "platform/profile.h"
 
 #include <cmath>
 #include <cstring>
@@ -87,29 +88,47 @@ void MenuCloud::prepare(long frame) const {
     // watching the original rejected both.
 
     // ---- pass 1: 256x256, `loc_4B1BC4`.
+    //
+    // (Written for a slow CPU, 2026-10-10 - the reader's iBook G3 draws the
+    // menu at ~6 fps - and SAME PIXELS, byte for byte: the weights the
+    // engine counts down per row and per pixel, `(255 - ly) - j2` and
+    // `(255 - lx) - i2`, ARE `cy - ly` and `cx - lx` since `cy = 255 - j2`
+    // and `cx = 255 - i2`; the two rows are fetched once a row; and the
+    // clamp to 0..63 and the ramp are ONE lookup in `shade_`, which spans
+    // every value the sum can take - gradients of -128..127 times weights of
+    // -383..255, twice, shifted by 5.)
+    OMK_ZONE("ui: cloud emboss");   // the profiler (todo/debug-tools.md)
     const double t = 0.0785 * f;
     const int lx = static_cast<int>(std::cos(t) * 64.0) + 128;
     const int ly = static_cast<int>(std::sin(t) * 64.0) + 128;
-    buf_.resize(256u * 256u);
-    std::uint16_t* buf = buf_.data();
-    for (int j2 = 0; j2 < 256; ++j2) {
-        const int cy = (255 - j2) & 0xFF;          // `dh` counts down from 255
-        const int wy = (255 - ly) - j2;            // `ebp`, `dec` per row
-        for (int i2 = 0; i2 < 256; ++i2) {
-            const int cx = (255 - i2) & 0xFF;      // `dl` counts down, wrapping
-            const int wx = (255 - lx) - i2;        // `ecx`, reset per row
-            const int h0 = tex_[static_cast<std::size_t>(cy) * 256 + cx];
-            const int hx = tex_[static_cast<std::size_t>(cy) * 256 + ((cx + 1) & 0xFF)];
-            const int hy = tex_[static_cast<std::size_t>((cy + 1) & 0xFF) * 256 + cx];
-            // `sub al, [esi+ebx]` then `movsx` - the gradients are SIGNED
-            // BYTES, so a wrap reads as a small step and not as 255.
-            const int gx = static_cast<std::int8_t>(h0 - hx);
-            const int gy = static_cast<std::int8_t>(h0 - hy);
-            int v = ((gx * wx + gy * wy) >> 5) + 32;
+    constexpr int kShadeLo = -3100, kShadeHi = 3100;   // (128*383*2) >> 5 = 3064
+    if (shade_.empty()) {
+        shade_.resize(kShadeHi - kShadeLo + 1);
+        for (int k = kShadeLo; k <= kShadeHi; ++k) {
+            int v = k + 32;
             if (v < 0) v = 0;
             if (v > 63) v = 63;
-            buf[static_cast<std::size_t>(j2) * 256 + i2] =
-                ramp_[static_cast<std::size_t>(v)];
+            shade_[static_cast<std::size_t>(k - kShadeLo)] = ramp_[static_cast<std::size_t>(v)];
+        }
+    }
+    const std::uint16_t* shade = shade_.data() - kShadeLo;
+    buf_.resize(256u * 256u);
+    std::uint16_t* buf = buf_.data();
+    const std::uint8_t* tex = tex_.data();
+    for (int j2 = 0; j2 < 256; ++j2) {
+        const int cy = 255 - j2;                   // `dh` counts down from 255
+        const int wy = cy - ly;                    // `ebp`, `dec` per row
+        const std::uint8_t* row = tex + static_cast<std::size_t>(cy) * 256;
+        const std::uint8_t* below = tex + static_cast<std::size_t>((cy + 1) & 0xFF) * 256;
+        std::uint16_t* out = buf + static_cast<std::size_t>(j2) * 256;
+        for (int i2 = 0; i2 < 256; ++i2) {
+            const int cx = 255 - i2;               // `dl` counts down, wrapping
+            const int h0 = row[cx];
+            // `sub al, [esi+ebx]` then `movsx` - the gradients are SIGNED
+            // BYTES, so a wrap reads as a small step and not as 255.
+            const int gx = static_cast<std::int8_t>(h0 - row[(cx + 1) & 0xFF]);
+            const int gy = static_cast<std::int8_t>(h0 - below[cx]);
+            out[i2] = shade[(gx * (cx - lx) + gy * wy) >> 5];
         }
     }
 
@@ -140,13 +159,19 @@ void MenuCloud::draw(Surface& fb, long frame) const {
     //     al = rowTab[479 - y]      the X source, then `inc al` per pixel
     //     ah = colTab[639 - x] + y  the Y source; `bl` is a per-row `inc`
     //     out = buf[ah * 256 + al]
+    //
+    // (The column table reversed once a frame, and `al` an 8-bit counter
+    // whose wrap is the register's own, as `inc al` wraps - the same pixels.)
+    OMK_ZONE("ui: cloud warp");   // the profiler (todo/debug-tools.md)
+    std::uint8_t colRev[640];
+    for (int x = 0; x < 640; ++x) colRev[x] = colTab[639 - x];
     for (int y = 0; y < 480; ++y) {
-        int al = rowTab[479 - y];
+        std::uint8_t al = rowTab[479 - y];
+        const std::uint8_t yy = static_cast<std::uint8_t>(y);
         std::uint16_t* dst = &fb.px[static_cast<std::size_t>(y) * 640];
-        for (int x = 0; x < 640; ++x) {
-            const int ah = (colTab[639 - x] + y) & 0xFF;
-            dst[x] = buf[static_cast<std::size_t>(ah) * 256 + al];
-            al = (al + 1) & 0xFF;
+        for (int x = 0; x < 640; ++x, ++al) {
+            const std::uint8_t ah = static_cast<std::uint8_t>(colRev[x] + yy);
+            dst[x] = buf[static_cast<std::size_t>(ah) << 8 | al];
         }
     }
 }

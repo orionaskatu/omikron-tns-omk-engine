@@ -254,13 +254,17 @@ std::vector<std::string> DataFs::subdirs(std::string_view relDir) const {
 }
 
 std::vector<std::byte> DataFs::readPath(const std::string& path) {
-    if (pathExists(path)) return slurp(path);
+    const auto r = findPath(path);
+    return r ? slurp(*r) : std::vector<std::byte>{};
+}
+
+std::optional<std::string> DataFs::findPath(const std::string& path) {
+    if (pathExists(path)) return path;
     // fall back to a case-insensitive lookup of the last component
     const std::string parent = parentOf(path);
     const auto dir = parent.empty() ? std::string(".") : parent;
     DataFs fsys(dir);
-    const auto r = fsys.resolve(baseName(path));
-    return r ? slurp(*r) : std::vector<std::byte>{};
+    return fsys.resolve(baseName(path));
 }
 
 bool safeOutputPath(const std::string& path) {
@@ -453,6 +457,79 @@ std::vector<std::byte> readFileRange(const std::string& path, std::uint64_t offs
         d.resize(got);
     }
     return d;
+}
+
+bool HostFile::open(const std::string& path) {
+    close();
+    size_ = fileSize(path);
+    if (size_ < 0) return false;
+#if defined(__vita__)
+    const SceUID fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
+    if (fd < 0) return false;
+    handle_ = fd;
+#elif defined(macintosh)
+    FSSpec spec; CInfoPBRec pb;
+    if (!catalogOf(path, spec, pb)) return false;
+    short ref = 0;
+    if (FSpOpenDF(&spec, fsRdPerm, &ref) != noErr) return false;
+    handle_ = ref;
+#else
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    file_ = f;
+#endif
+    open_ = true;
+    return true;
+}
+
+void HostFile::close() {
+    if (!open_) return;
+#if defined(__vita__)
+    sceIoClose(static_cast<SceUID>(handle_));
+#elif defined(macintosh)
+    FSClose(static_cast<short>(handle_));
+#else
+    std::fclose(static_cast<std::FILE*>(file_));
+#endif
+    open_ = false;
+    handle_ = -1;
+    file_ = nullptr;
+}
+
+std::size_t HostFile::readAt(std::uint64_t offset, void* dst, std::size_t n) {
+    if (!open_ || size_ < 0 || offset >= static_cast<std::uint64_t>(size_)) return 0;
+    n = static_cast<std::size_t>(std::min<std::uint64_t>(n, static_cast<std::uint64_t>(size_) - offset));
+    auto* d = static_cast<std::byte*>(dst);
+    std::size_t got = 0;
+#if defined(__vita__)
+    const SceUID fd = static_cast<SceUID>(handle_);
+    if (sceIoLseek(fd, static_cast<SceOff>(offset), SCE_SEEK_SET) < 0) return 0;
+    while (got < n) {
+        const std::size_t want = std::min<std::size_t>(n - got, 1u << 20);
+        const int r = sceIoRead(fd, d + got, static_cast<SceSize>(want));
+        if (r <= 0) break;
+        got += static_cast<std::size_t>(r);
+    }
+#elif defined(macintosh)
+    const short ref = static_cast<short>(handle_);
+    if (SetFPos(ref, fsFromStart, static_cast<long>(offset)) != noErr) return 0;
+    while (got < n) {
+        long want = static_cast<long>(std::min<std::size_t>(n - got, 1u << 20));
+        const OSErr e = FSRead(ref, &want, d + got);
+        if (want <= 0) break;
+        got += static_cast<std::size_t>(want);
+        if (e != noErr) break;
+    }
+#else
+    std::FILE* f = static_cast<std::FILE*>(file_);
+    if (std::fseek(f, static_cast<long>(offset), SEEK_SET) != 0) return 0;
+    while (got < n) {
+        const std::size_t r = std::fread(d + got, 1, n - got, f);
+        if (r == 0) break;
+        got += r;
+    }
+#endif
+    return got;
 }
 
 std::string readTextFile(const std::string& path) {

@@ -44,6 +44,15 @@ struct DeviceSound {
     bool exact = false;              // ...that, else `step`
     double step = 0.0;               // source frames per device frame
     std::size_t size = 0;            // device samples, interleaved stereo
+    // the device samples (stereo, interleaved) that `frames` source frames
+    // make: `wavToDevice`'s count, cut where the nearest source frame runs off
+    // the end - so a sound counted in pieces ends where it counts whole
+    std::size_t samplesFor(std::size_t frames) const {
+        if (exact) return (frames << shift) * 2;
+        std::size_t out = static_cast<std::size_t>(frames / step);
+        while (out > 0 && static_cast<std::size_t>((out - 1) * step) >= frames) --out;
+        return out * 2;
+    }
     float at(std::size_t i) const {
         const std::size_t frame = i >> 1;
         const std::size_t src = exact ? frame >> shift
@@ -51,6 +60,11 @@ struct DeviceSound {
         return pcm[src * channels + (channels > 1 ? (i & 1) : 0)] / 32768.0f;
     }
 };
+
+// An empty `DeviceSound` for samples at `rate` with `channels`, read at
+// `deviceRate`: exact for a power-of-two ratio up to 8, `step` otherwise (the
+// rule `wavToDeviceSound` applies to a file).
+std::shared_ptr<DeviceSound> makeDeviceSound(int channels, int rate, int deviceRate);
 
 class HostMixer {
 public:
@@ -65,6 +79,20 @@ public:
              std::shared_ptr<const void>* dropped = nullptr);
     // ...and one kept in its file's own form, read at the device rate
     int play(std::shared_ptr<const DeviceSound> s, bool loop, float gain,
+             std::shared_ptr<const void>* dropped = nullptr);
+    // A SOUND THAT GROWS WHILE IT PLAYS - a line's voice, decoded as the line
+    // is read (`formats/morphstream.h`, the original's `fptc` filling its
+    // DirectSound buffer). `s` starts with what is decoded so far and
+    // `totalSamples` (device samples) is its length once whole: it plays what
+    // it has, waits silent where it runs short (an underrun, not an end), and
+    // ends only once all of it has played. `feed` appends samples in its own
+    // form and is the only thing that touches `s` after this.
+    int open(std::shared_ptr<DeviceSound> s, std::size_t totalSamples, float gain,
+             std::shared_ptr<const void>* dropped = nullptr);
+    void feed(int handle, std::span<const std::int16_t> pcm);
+    // ...made here, for `Frontend::openSound`: `frames` sample frames at
+    // `rate` with `channels` once whole, read at `deviceRate`; nothing in it yet
+    int open(int channels, int rate, std::size_t frames, int deviceRate, float gain,
              std::shared_ptr<const void>* dropped = nullptr);
     void stop(int handle);
     // A playing shot's gain, changed in place - what `Sound_SetVoice3D`
@@ -94,7 +122,10 @@ private:
     struct Shot { std::shared_ptr<const std::vector<float>> pcm; std::size_t pos; int id;
                   bool loop = false; float gain = 1.0f;
                   std::shared_ptr<const DeviceSound> snd = nullptr;   // when `pcm` is null
-                  std::size_t size() const { return pcm ? pcm->size() : snd->size; } };
+                  std::shared_ptr<DeviceSound> grow = nullptr;        // `snd`, while it grows
+                  std::size_t total = 0;                              // ...its device samples when whole
+                  std::size_t size() const { return pcm ? pcm->size() : snd->size; }
+                  bool ended() const { return !loop && pos >= size() && (!grow || size() >= total); } };
     int add(Shot s, std::shared_ptr<const void>* dropped);
     int nextShot_ = 1;
     float musicGain_ = 1.0f;     // Music_SetVolume, applied to the stream

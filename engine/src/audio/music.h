@@ -14,11 +14,11 @@
 // the queue up when it ran low, which produced the right sound and put a
 // script's decision in the one place nothing can check it.
 //
-// **The decode is not streamed.** `Audio_SetStreamMode` selects a buffer size
-// through `music.play`'s field 2 and the original reads the file as it goes;
-// this decodes the whole track once. For the menu's 109 that is 155 seconds -
-// about 27 MB of interleaved float at 44100 - which is worth knowing and is
-// not worth fixing until something needs the memory back.
+// **The decode is streamed** (since 2026-09-21/23; this paragraph said the
+// opposite until 2026-10-10): `Audio_SetStreamMode` selects a buffer size
+// through `music.play`'s field 2 and the original reads the file as it goes,
+// and so does this - the file kept open, read a window at a time and decoded
+// forward as `pull` asks (the members below have the history).
 #pragma once
 
 #include "formats/adpcm.h"

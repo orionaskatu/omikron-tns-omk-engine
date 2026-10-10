@@ -43,6 +43,10 @@ struct MorphLayout {
 };
 
 MorphLayout morphLayout(std::span<const std::byte> d);
+// ...from the file's FIRST bytes and its size alone - what a reader that has
+// not read the frames yet knows (`formats/morphstream.h`). `head` must hold
+// the header and the preamble (16 + 4 x nodes bytes) for the iota test.
+MorphLayout morphLayout(std::span<const std::byte> head, std::size_t fileSize);
 
 // The ADPCM blocks, concatenated - what the decoder is handed.
 std::vector<std::byte> morphAudio(std::span<const std::byte> d,

@@ -13,9 +13,13 @@ std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
 }  // namespace
 
 MorphLayout morphLayout(std::span<const std::byte> d) {
+    return morphLayout(d, d.size());
+}
+
+MorphLayout morphLayout(std::span<const std::byte> d, std::size_t fileSize) {
     MorphLayout L;
-    L.size = d.size();
-    if (d.size() < 16) return L;
+    L.size = fileSize;
+    if (d.size() < 16 || fileSize < 16) return L;
     const auto w0 = u32(d, 0);
     L.audio    = w0 & 0xFFFFFFu;
     L.channels = (w0 >> 24) + 1;
@@ -30,11 +34,11 @@ MorphLayout morphLayout(std::span<const std::byte> d) {
     const std::uint64_t record   = std::uint64_t{L.audio} + 24 * std::uint64_t{L.vertices} +
                                    16 * std::uint64_t{L.nodes} + 12;
     const std::uint64_t preamble = 16 + 4 * std::uint64_t{L.nodes};
-    if (record > 0xFFFFFFFFu || d.size() < preamble) return L;
+    if (record > 0xFFFFFFFFu || d.size() < preamble || fileSize < preamble) return L;
     L.record   = static_cast<std::size_t>(record);
     L.preamble = static_cast<std::size_t>(preamble);
 
-    const auto body = d.size() - L.preamble;
+    const auto body = fileSize - L.preamble;
     L.frames = body / L.record;
     L.tail   = body % L.record;
     if (L.tail) {

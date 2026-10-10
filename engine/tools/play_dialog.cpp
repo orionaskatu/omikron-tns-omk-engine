@@ -8,7 +8,9 @@
 // does not press for does not happen, which is the property the check is
 // about. Run with no presses at all and a conversation must sit on its first
 // line for ever - a timer would show up as a walk that finishes anyway.
+#include "formats/adpcm.h"
 #include "formats/iam.h"
+#include "formats/morph.h"
 #include "platform/datafs.h"
 #include "script/dialogue.h"
 #include "script/gamestate.h"
@@ -52,7 +54,45 @@ int main(int argc, char** argv) {
     long ticks = 0;
     double voiced = 0.0;
     std::size_t at = 0;
-    int lines = 0, menus = 0, ahead = 0;
+    int lines = 0, menus = 0, streamedAtStart = 0, linesStreamed = 0;
+    std::size_t streamed = 0;
+    // WHAT a line IS, as the STREAM left it once it played - the FNV-1a of
+    // its samples and of its file - and the same two of the file read and
+    // decoded WHOLE (`morphAudio` + `adpcmDecode`): `verify.py: engine: line
+    // stream` asks that the two agree, line by line
+    const auto fnv = [](const unsigned char* b, std::size_t n) {
+        std::uint32_t h = 2166136261u;
+        for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 16777619u;
+        return h;
+    };
+    // the samples hashed as LITTLE-ENDIAN bytes, low byte first: the
+    // in-memory bytes made the same audio hash differently on PowerPC
+    const auto pcmHash = [&](const std::vector<std::int16_t>& pcm) {
+        std::vector<unsigned char> le;
+        le.reserve(pcm.size() * 2);
+        for (const std::int16_t v : pcm) {
+            const auto u = static_cast<std::uint16_t>(v);
+            le.push_back(static_cast<unsigned char>(u & 0xFF));
+            le.push_back(static_cast<unsigned char>(u >> 8));
+        }
+        return fnv(le.data(), le.size());
+    };
+    const auto lineRows = [&] {
+        f << "pcm " << p.pcm().size() << ' ' << pcmHash(p.pcm()) << ' '
+          << p.morph().size() << ' '
+          << fnv(reinterpret_cast<const unsigned char*>(p.morph().data()), p.morph().size())
+          << '\n';
+        const auto whole = p.voice().empty() ? std::vector<std::byte>{}
+                         : omk::DataFs::readPath(fr + "/MORPH/" + p.voice() + ".3DM");
+        const auto L = omk::morphLayout(whole);
+        const auto pcm = L.valid ? omk::adpcmDecode(omk::morphAudio(whole, L), L.channels > 1,
+                                                    omk::AdpcmTables::builtin())
+                                 : std::vector<std::int16_t>{};
+        f << "whole " << pcm.size() << ' ' << pcmHash(pcm) << ' ' << whole.size() << ' '
+          << fnv(reinterpret_cast<const unsigned char*>(whole.data()), whole.size()) << '\n';
+        if (streamed < L.frames) ++streamedAtStart;   // read a piece at a time, not whole
+        ++linesStreamed;
+    };
     for (int guard = 0; guard < 200; ++guard) {
         if (p.phase() == omk::DialogPhase::Finished) break;
         if (p.lineChanged()) {
@@ -68,29 +108,7 @@ int main(int argc, char** argv) {
               << (ca ? static_cast<long>(ca->eye[0]) : -9999) << ' '
               << (ca ? static_cast<long>(ca->roll) : -9999) << ' '
               << (ca && ca->absolute() ? 1 : 0) << '\n';
-            // WHAT the line is, whichever thread read and decoded it: the
-            // FNV-1a of its samples and of its file (`prefetch_` decodes the
-            // next lines ahead; `OMK_NO_LINE_AHEAD=1` does none of it)
-            const auto fnv = [](const unsigned char* b, std::size_t n) {
-                std::uint32_t h = 2166136261u;
-                for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 16777619u;
-                return h;
-            };
-            // the samples hashed as LITTLE-ENDIAN bytes, low byte first: the
-            // in-memory bytes made the same audio hash differently on PowerPC
-            std::vector<unsigned char> le;
-            le.reserve(p.pcm().size() * 2);
-            for (const std::int16_t v : p.pcm()) {
-                const auto u = static_cast<std::uint16_t>(v);
-                le.push_back(static_cast<unsigned char>(u & 0xFF));
-                le.push_back(static_cast<unsigned char>(u >> 8));
-            }
-            f << "pcm " << p.pcm().size() << ' '
-              << fnv(le.data(), le.size()) << ' '
-              << p.morph().size() << ' '
-              << fnv(reinterpret_cast<const unsigned char*>(p.morph().data()), p.morph().size())
-              << '\n';
-            ahead += p.loadPrefetched() ? 1 : 0;
+            streamed = p.streamedFrames();
         }
         // Let the voice run out and then keep running for a full minute -
         // longer than any line in the game. If anything advanced on its own,
@@ -98,6 +116,7 @@ int main(int argc, char** argv) {
         const int before = p.node();
         const auto phaseBefore = p.phase();
         for (int k = 0; k < 1800; ++k) { p.tick(dt); ++ticks; }
+        if (p.lineChanged() == false && linesStreamed < lines) lineRows();
         if (p.node() != before || p.phase() != phaseBefore) {
             f << "ADVANCED WITHOUT A PRESS\n";
             break;
@@ -121,7 +140,8 @@ int main(int argc, char** argv) {
     f << "end " << lines << ' ' << menus << ' '
       << static_cast<long>(voiced * 100) << ' '
       << (p.phase() == omk::DialogPhase::Finished ? 1 : 0) << '\n';
-    std::printf("%d of %d lines read and decoded ahead\n", ahead, lines);
+    std::printf("%d of %d lines streamed (a piece at a time from their start)\n",
+                streamedAtStart, linesStreamed);
     std::printf("%d lines, %d menus, %.1f s of voice, %s after %zu presses\n",
                 lines, menus, voiced,
                 p.phase() == omk::DialogPhase::Finished ? "finished" : "STILL OPEN",

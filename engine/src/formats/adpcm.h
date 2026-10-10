@@ -67,6 +67,22 @@ private:
     std::int32_t pred_[2], idx_[2];
 };
 
+// A WHOLE STREAM DECODED A PIECE AT A TIME, mono or stereo: the state carries
+// from one call to the next, so the pieces of a file decode to exactly the
+// samples the whole file does - `adpcmDecode` is this, called once. What the
+// morph streamer needs (`formats/morphstream.h`): the original's `fptc`
+// decodes a line's ADPCM a block at a time while it plays (`sub_42D960`).
+class AdpcmStream {
+public:
+    AdpcmStream(const AdpcmTables& t, bool stereo) : t_(&t), stereo_(stereo) {}
+    // appends two samples a byte to `out`, interleaved when stereo
+    void decode(std::span<const std::byte> in, std::vector<std::int16_t>& out);
+private:
+    const AdpcmTables* t_;
+    bool stereo_;
+    std::int32_t pred_[2] = {0, 0}, idx_[2] = {0, 0};
+};
+
 // -> interleaved 16-bit PCM. `stereo` decodes two independent channels.
 std::vector<std::int16_t> adpcmDecode(std::span<const std::byte> in,
                                       bool stereo, const AdpcmTables& t);

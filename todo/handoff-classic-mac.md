@@ -424,6 +424,47 @@ disk, the display in THOUSANDS of colours)** and what it changed:
 On the emulated Tiger: the Impasse's two subtitles drawn as before, bars
 black, no GL error, exit 0; `engine: classic build` green.
 
+**Step 2c - A LINE STREAMED AS IT PLAYS, DONE 2026-10-10, NOT yet run on the
+iBook** (the reader's item 4, "go ahead with 4 then 3"). The iBook's second
+log put a dialogue line's start at **0.2 to 1.1 s of ONE frame**: `line load:
+125338 - read 210 ms (3424 KB), voice decode 30 ms, ... resample 551 ms` (and
+125339's read 770 ms) - the whole `.3DM` read, its whole voice decoded, then
+copied to floats. **The original** never does that: `Morph_Start` (0x0042C870)
+calls `Morph_Open` (0x0042C300), which opens the file (`mmioOpenA`), reads the
+header and primes the buffer, then `timeSetEvent(15, 0, fptc, ...)` reads and
+decodes the next blocks every 15 ms while the line plays (`fptc` ->
+`sub_42D960`). Now the port does the same, once a frame:
+- `formats/morphstream.{h,cpp}` (new): the line opened (`HostFile`, a file
+  kept open - new in `platform/datafs.h`, the same three platform arms as
+  `readFileRange`), its header and FIRST SECOND read (30 records, ~115 KB),
+  and `fillTo` reading the next records with one read and decoding their
+  audio blocks through `AdpcmStream` (new in `formats/adpcm.h`; it carries the
+  decoder's state across blocks, and `adpcmDecode` is now that stream called
+  once, so the two cannot differ). The bytes land at a whole read's offsets in
+  a buffer of the file's size;
+- `DialogPlayer::tick` keeps the stream TWO SECONDS ahead of the line's
+  clock; the line's length comes from the layout, before any decode;
+- the voice is a sound that GROWS while it plays (`HostMixer::open/feed`,
+  `Frontend::openSound/feedSound` on the SDL, Carbon and 3DS frontends): kept
+  16-bit - no float copy, the iBook's 551 ms - silent where it runs short, ended
+  only once whole. The viewer feeds it what is new every frame and extends the
+  bone tracks (`extendNodeTracks`; `NodeTracks::built`), the latched copy too;
+- `media.play` voice-overs kept 16-bit the same way (read whole: at most 190 KB);
+- the threaded READ-AHEAD of 2026-09-23/30 is gone: it read every possible next
+  line whole (up to four files of 3-4 MB) for one to be used, and a threadless
+  build had none of it.
+Measured: Telis's first line in the apartment, `opened and read 1 ms (the
+first 30 of 174 frames, a 654 KB file)`, and with a device the voice plays to
+its end (`dialogue: line '000000' at 5.84 of 5.81 s`). `engine: line stream`
+(new, replacing `engine: line ahead`: five lines of 387 streamed, their
+samples and bytes hashing as the file read and decoded whole; red when the
+decoder is reset per block and when a fill reads a byte short), and `dialogue
+play`, `dialogue`, `pose blend`, `voice over`, `morph+ADPCM`, `line sync`,
+`stop sound`, `adpcm table`, `device sounds`, `frontend gateway`, `line
+facing`, `audio`, `music storage`, `music ring`, `audio queue bound`,
+`dialogue stands still`, `dialogue line states`, `vita build`, `3ds build`
+green. **`engine: classic build` NOT run**: the tools drive was not connected.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are
@@ -437,7 +478,8 @@ one fog weight a vertex); the vertex stride 40 bytes with the fog's 12
 sent even when there is no fog; the films through QuickTime (what
 `todo/classic-mac-port-1999.md` says a period port would have done) or
 straight YCbCr to the upload format; the boot's loads after the window is
-up; the voice lines decoded in pieces across frames (the `audio` stalls).
+up; the voice lines decoded in pieces across frames (the `audio` stalls) - DONE,
+step 2c above.
 
 ## 4. What is next, in the order proposed
 

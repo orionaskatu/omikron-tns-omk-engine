@@ -59,6 +59,10 @@ public:
                   float gain = 1.0f) override;
     int playSound(std::shared_ptr<const omk::DeviceSound> s, bool loop = false,
                   float gain = 1.0f) override;
+    int openSound(int channels, int rate, std::size_t frames, float gain) override {
+        return arate_ > 0 ? mix_.open(channels, rate, frames, arate_, gain) : -1;
+    }
+    void feedSound(int handle, std::span<const std::int16_t> pcm) override { mix_.feed(handle, pcm); }
     void stopSound(int handle) override { mix_.stop(handle); }
     void setSoundGain(int handle, float gain) override { mix_.setGain(handle, gain); }
     double soundPlayedSeconds(int handle) override {

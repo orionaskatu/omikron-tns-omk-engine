@@ -79,6 +79,8 @@ public:
     // Read an absolute or already-real path, still case-insensitively - for
     // the few callers handed a path from the command line.
     static std::vector<std::byte> readPath(const std::string& path);
+    // ...and only FOUND that way: the real path `readPath` would read
+    static std::optional<std::string> findPath(const std::string& path);
 
 private:
     std::string root_;
@@ -130,6 +132,28 @@ std::vector<std::byte> readWholeFile(const std::string& path);
 // `readWholeFile`.
 std::vector<std::byte> readFileRange(const std::string& path, std::uint64_t offset,
                                      std::size_t size);
+// ...and A FILE KEPT OPEN, read a piece at a time: `readFileRange` without an
+// open and a close (on Mac OS a catalogue lookup) for every piece - what a
+// file read AS IT PLAYS needs, the original's `mmioOpen` handle kept for a
+// line's length (`formats/morphstream.h`). The same three platform paths.
+class HostFile {
+public:
+    HostFile() = default;
+    ~HostFile() { close(); }
+    HostFile(const HostFile&) = delete;
+    HostFile& operator=(const HostFile&) = delete;
+    bool open(const std::string& path);      // a path as `readWholeFile` takes it
+    void close();
+    bool isOpen() const { return open_; }
+    long long size() const { return size_; }
+    // up to `n` bytes from `offset` into `dst` -> how many arrived
+    std::size_t readAt(std::uint64_t offset, void* dst, std::size_t n);
+private:
+    bool open_ = false;
+    long long size_ = -1;
+    long handle_ = -1;     // a SceUID, a File Manager refnum
+    void* file_ = nullptr; // std::FILE*
+};
 
 // A whole TEXT file as a string - `readWholeFile`'s bytes, empty when it cannot
 // be read (`fileSize(path) < 0` tells absent from empty). The engine reads its

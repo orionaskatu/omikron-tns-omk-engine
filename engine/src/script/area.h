@@ -161,9 +161,6 @@ public:
     // It draws nothing and offers no reply menu - see `DialogPlayer`.
     void attachDialogue(const std::string& morphDir) { morphDir_ = morphDir; }
     const DialogPlayer& dialogue() const { return dialog_; }
-    // how a frontend wants a line's voice for its device (`DialogPlayer::setToDevice`)
-    void setVoiceToDevice(DialogPlayer::ToDevice f) { dialog_.setToDevice(f); }
-    std::vector<float> takeVoiceDevicePcm() { return dialog_.takeDevicePcm(); }
     // WHICH character speaks the open conversation - the model named by the
     // actor record whose id at +272 is the DIALOG chunk's word 0. Resolved
     // against the RESIDENT chunks, because an actor id is reused across areas

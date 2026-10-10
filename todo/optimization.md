@@ -2137,6 +2137,14 @@ original does not spread either. Not run on a console.
 
 ### 32. A line's voice decoded on the read-ahead thread (2026-09-30, M3)
 
+> **SUPERSEDED 2026-10-10** (`todo/handoff-classic-mac.md` 3f step 2c): the
+> line is now STREAMED as the original streams it - `formats/morphstream.h`,
+> the first second read where it starts, the rest read and decoded two seconds
+> ahead of the clock, the voice a sound that grows while it plays. "The port's
+> mixer takes a whole sample" below stopped being true (`HostMixer::open`),
+> the read-ahead thread and `OMK_NO_LINE_AHEAD` are gone, and `engine: line
+> ahead` is `engine: line stream`.
+
 Row g of step 28: a line's start was 133-295 ms on the console (345 the
 first). The 22050 device (step 28 g/i/m) removed the resample; what was left
 on the frame a line starts was the ADPCM decode of the WHOLE voice, and the

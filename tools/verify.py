@@ -15560,26 +15560,28 @@ def c_engine_tie_equivalence():
         "the revisions were answered (replayed, walked, replays abandoned)"
 
 
-def c_engine_line_ahead():
-    r"""A line decoded AHEAD is the line decoded at its start
-    (`todo/optimization.md` step 32; `script/dialogue.h`).
+def c_engine_line_stream():
+    r"""A line STREAMED is the line read and decoded whole
+    (`engine/src/formats/morphstream.h`; `todo/handoff-classic-mac.md` 3f).
 
-    The original never decodes a line where it starts: `Morph_Open` walks the
-    file and `sub_42D960`, on the timer thread, decodes its ADPCM a piece at a
-    time into the sound buffer while the line plays. The port decodes a whole
-    voice before its first frame, so `DialogPlayer` does it for every branch
-    target of the line that is PLAYING, on a thread of its own
-    (`BackgroundJob`), and a line that was prepared that way costs its start
-    only the hand-over.
+    The original never reads a line where it starts: `Morph_Open` opens the
+    file and primes the buffer, and a 15 ms timer (`fptc` -> `sub_42D960`)
+    reads and decodes the next blocks as the line plays. The port read the
+    whole `.3DM` (3-4 MB) and decoded its whole voice on the line's first
+    frame - 0.2 to 1.1 s of it on an iBook G3 - with a read-ahead thread that
+    read every possible next line whole. Now `DialogPlayer` opens the line,
+    reads its first second, and its `tick` reads and decodes two seconds ahead
+    of the line's clock; `AdpcmStream` carries the decoder's state from one
+    block to the next.
 
-    `play_dialog` writes, per line, the FNV-1a of its samples and of its file.
-    Conversation 387 walked through four replies, with the read-ahead and with
-    `OMK_NO_LINE_AHEAD=1`: the two files must be the same bytes, and the first
-    run must actually have taken lines from the thread (4 of 5 - the first
-    line of a conversation is the script's choice and is read where it starts).
-    Shown to fail by not waiting for the job before taking its line: the
-    samples are then moved out from under a decode that has not finished, and
-    every line read ahead differs.
+    `play_dialog` writes, per line, the FNV-1a of the samples and of the file
+    as the STREAM left them once the line played (`pcm`), and the same two of
+    the file read with `readPath` and decoded whole by `morphAudio` +
+    `adpcmDecode` (`whole`). Conversation 387 through four replies: every
+    line's two rows must agree, every line must carry a voice, and every line
+    must have started with less than the whole file read.
+    Shown to fail by resetting the decoder's state at each block (the samples
+    differ) and by reading one record short per fill (the bytes differ).
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -15592,25 +15594,22 @@ def c_engine_line_ahead():
     ops = os.path.join(ROOT, "tables", "vm_opcodes.json")
     tmp = tempfile.mkdtemp()
     try:
-        got = []
-        for k, extra in enumerate(({}, {"OMK_NO_LINE_AHEAD": "1"})):
-            out = os.path.join(tmp, "d%d.txt" % k)
-            r = subprocess.run([binp, omkpaths.data_root(), ops, "387", out, "n0n1n0n2nnnn"],
-                               capture_output=True, text=True, env=dict(os.environ, **extra))
-            m = re.search(r"(\d+) of (\d+) lines read and decoded ahead", r.stdout)
-            rows = [ln.split() for ln in open(out)] if os.path.exists(out) else []
-            pcm = [tuple(f[1:]) for f in rows if f and f[0] == "pcm"]
-            got.append(((int(m.group(1)), int(m.group(2))) if m else None, pcm))
+        out = os.path.join(tmp, "d.txt")
+        r = subprocess.run([binp, omkpaths.data_root(), ops, "387", out, "n0n1n0n2nnnn"],
+                           capture_output=True, text=True)
+        m = re.search(r"(\d+) of (\d+) lines streamed", r.stdout)
+        rows = [ln.split() for ln in open(out)] if os.path.exists(out) else []
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    (aheadOn, pcmOn), (aheadOff, pcmOff) = got
-    voiced = sum(1 for p in pcmOn if int(p[0]) > 0)
-    return (aheadOn, aheadOff, len(pcmOn), voiced, pcmOn == pcmOff), \
-           ((4, 5), (0, 5), 5, 5, True), \
-           "conversation 387 through four replies: lines taken from the " \
-           "read-ahead thread with it on and with OMK_NO_LINE_AHEAD=1; the " \
-           "lines, how many carry a voice, and whether every line's samples " \
-           "and file hash the same both ways"
+    streamed = [tuple(f[1:]) for f in rows if f and f[0] == "pcm"]
+    whole = [tuple(f[1:]) for f in rows if f and f[0] == "whole"]
+    voiced = sum(1 for p in streamed if int(p[0]) > 0)
+    agree = sum(1 for a, w in zip(streamed, whole) if a == w)
+    return ((int(m.group(1)), int(m.group(2))) if m else None, len(streamed), voiced, agree), \
+           ((5, 5), 5, 5, 5), \
+           "conversation 387 through four replies: lines streamed from their start, " \
+           "lines, lines with a voice, and lines whose streamed samples AND bytes " \
+           "hash the same as the file read and decoded whole"
 
 
 def c_engine_threaded_bodies():
@@ -43534,9 +43533,11 @@ def c_licence_headers():
     # 594 on 2026-10-08: + `engine/tools/hostile_save.cpp` (the code audit's
     # damaged-save probe, `engine: hostile save`); 595 the same day: +
     # `engine/tools/hostile_files.cpp` (`engine: hostile files`); 596 the
-    # same day: + `engine/tools/harden_canary.cpp` (`engine: hardened`)
+    # same day: + `engine/tools/harden_canary.cpp` (`engine: hardened`); 598
+    # on 2026-10-10: + `engine/src/formats/morphstream.h` / `.cpp` (a line
+    # streamed as it plays, `engine: line stream`)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (596, [], 1, []), \
+           (598, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -46164,7 +46165,7 @@ SLOW = [
     ("engine: tie equivalence", c_engine_tie_equivalence, "todo/optimization.md 3; o3de/depthtie.h"),
     ("engine: body tie", c_engine_body_tie, "todo/vita-port.md 2026-09-22; o3de/geom3do.h tieClass"),
     ("engine: threaded bodies", c_engine_threaded_bodies, "todo/vita-port.md P4; platform/threads.h"),
-    ("engine: line ahead", c_engine_line_ahead, "todo/optimization.md step 32; script/dialogue.h"),
+    ("engine: line stream", c_engine_line_stream, "todo/handoff-classic-mac.md 3f; formats/morphstream.h"),
     ("engine: pixel tables", c_engine_pixel_tables, "todo/optimization.md 4; ui/surface.h"),
     ("engine: music storage", c_engine_music_storage, "todo/optimization.md 5; audio/music.h"),
     ("engine: adpcm table", c_engine_adpcm_table, "todo/optimization.md 16; formats/adpcm.h"),

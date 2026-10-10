@@ -367,9 +367,6 @@ int PlayState::setupBodies() {
 #endif
     // (a test's slow card: the job sleeps this long first - desktop only)
     loadDelayMs = std::getenv("OMK_LOAD_DELAY_MS") ? std::atoi(std::getenv("OMK_LOAD_DELAY_MS")) : 0;
-    session.setVoiceToDevice([](const std::vector<std::int16_t>& pcm, int channels) {
-        return resampleToDevice(pcm, channels, 22050, kDeviceRate);
-    });
     if (loadGate)
         session.setLoadGate([this](int slot) {
             const auto& L = setLoads[slot & 1];

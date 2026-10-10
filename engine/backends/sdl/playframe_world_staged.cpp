@@ -11,14 +11,17 @@
 // fade against the node's current pose. Adjudicated against the port's own
 // heading extractor on a real root: of the four candidate products only
 // `stored ⊗ Ry(+H)` moves the heading by exactly H (338.0 for H = 338).
-static void turnRootBy(omk::NodeTracks& t, float yawDeg) {
+// From frame `from` on: a line still streaming is turned as its frames arrive.
+static void turnRootBy(omk::NodeTracks& t, float yawDeg, int from) {
     if (!t.valid() || t.rootTrack < 0) return;
     const float h = yawDeg * 0.0174532925199433f * 0.5f;
     const omk::Quatf ry{std::cos(h), 0.0f, std::sin(h), 0.0f};
-    for (auto& frame : t.quats)
+    for (std::size_t f = static_cast<std::size_t>(std::max(0, from)); f < t.quats.size(); ++f) {
+        auto& frame = t.quats[f];
         if (static_cast<std::size_t>(t.rootTrack) < frame.size())
             frame[static_cast<std::size_t>(t.rootTrack)] =
                 omk::qmul(frame[static_cast<std::size_t>(t.rootTrack)], ry);
+    }
 }
 
 // Every staged body, posed by whatever drives it
@@ -2511,7 +2514,11 @@ void PlayState::worldStaged() {
         bool poseHeld = false;
         const char* src = "the rest pose (no bank clip)";
         if (useLine) {
-            const int frame = static_cast<int>(lineT);
+            // (never past what the stream has read - it keeps two seconds
+            // ahead of the clock, so this holds only through a stall)
+            const int frame = std::min(static_cast<int>(lineT),
+                                       std::max(0, (speakerTracks.built > 0 ? speakerTracks.built
+                                                                            : speakerTracks.frames) - 1));
             // THE LATCH, on the line's first frame - what `Morph_Play`
             // reads off the node once and `sub_42BE00` hands the morph
             // for its whole length. `heading` is the node's world yaw
@@ -2548,8 +2555,20 @@ void PlayState::worldStaged() {
                     : (s.restYawKnown ? s.restYaw - (s.progYawKnown ? progYawSign * s.progYaw : 0.0f) : 0.0f);
                 s.lineYaw = s.progYawKnown ? progYawSign * s.progYaw : 0.0f;   // the Euler
                 s.lineTracks = speakerTracks;
-                turnRootBy(s.lineTracks, s.lineRootYaw);
+                turnRootBy(s.lineTracks, s.lineRootYaw, 0);
                 s.lineYawLatched = true;
+            }
+            // ...and the frames the STREAM has read since (`formats/
+            // morphstream.h`): copied in and turned the same way, so the
+            // latched copy is the whole line once the line is read
+            if (s.lineTracks.built < speakerTracks.built) {
+                const int from = s.lineTracks.built;
+                for (int f = from; f < speakerTracks.built; ++f) {
+                    s.lineTracks.quats[static_cast<std::size_t>(f)] = speakerTracks.quats[static_cast<std::size_t>(f)];
+                    s.lineTracks.trans[static_cast<std::size_t>(f)] = speakerTracks.trans[static_cast<std::size_t>(f)];
+                }
+                s.lineTracks.built = speakerTracks.built;
+                turnRootBy(s.lineTracks, s.lineRootYaw, from);
             }
             // THE FADE at both ends of the line - `sub_42D120`'s,
             // pose.h has the read - and the root is NOT cancelled when

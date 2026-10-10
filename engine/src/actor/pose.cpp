@@ -287,7 +287,7 @@ int rootTrackOf(const std::vector<Mesh>& meshes) {
     return 0;
 }
 
-NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack) {
+NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack, std::size_t upto) {
     NodeTracks t;
     const auto L = morphLayout(d);
     if (!L.valid || !L.nodes || !L.frames) return t;
@@ -301,6 +301,19 @@ NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack) {
     for (std::uint32_t i = 0; i < L.nodes; ++i)
         t.ids.push_back(static_cast<std::int32_t>(u32at(d, 16u + 4u * i)));
 
+    t.quats.resize(L.frames);
+    t.trans.resize(L.frames);
+    extendNodeTracks(t, d, upto);
+    return t;
+}
+
+void extendNodeTracks(NodeTracks& t, std::span<const std::byte> d, std::size_t upto) {
+    if (!t.valid() || t.built >= t.frames) return;
+    const auto L = morphLayout(d);
+    if (!L.valid || L.nodes != static_cast<std::uint32_t>(t.count)) return;
+    const std::size_t end = std::min(upto, static_cast<std::size_t>(t.frames));
+    const int rootTrack = t.rootTrack;
+
     // The per-track offsets inside one record - the root's 12 bytes sit
     // BEFORE its own quaternion, wherever that track falls.
     std::vector<std::size_t> offs(L.nodes);
@@ -311,16 +324,18 @@ NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack) {
         o += 16;
     }
 
-    t.quats.resize(L.frames);
-    t.trans.resize(L.frames);
     float acc[3] = {0, 0, 0};
-    for (std::size_t f = 0; f < L.frames; ++f) {
+    if (t.built > 0) {
+        const auto& last = t.trans[static_cast<std::size_t>(t.built - 1)];
+        acc[0] = last[0]; acc[1] = last[1]; acc[2] = last[2];
+    }
+    for (std::size_t f = static_cast<std::size_t>(t.built); f < end; ++f) {
         const std::size_t base = L.preamble + f * L.record;
         auto& row = t.quats[f];
         row.resize(L.nodes);
         for (std::uint32_t i = 0; i < L.nodes; ++i) {
             const std::size_t at = base + offs[i];
-            if (at + 16 > d.size()) return t;
+            if (at + 16 > d.size()) return;
             row[i] = {f32at(d, at), f32at(d, at + 4),
                       f32at(d, at + 8), f32at(d, at + 12)};
         }
@@ -331,8 +346,8 @@ NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack) {
                     acc[k] += f32at(d, at + 4u * static_cast<std::size_t>(k));
         }
         t.trans[f] = {acc[0], acc[1], acc[2]};
+        t.built = static_cast<int>(f) + 1;
     }
-    return t;
 }
 
 namespace {

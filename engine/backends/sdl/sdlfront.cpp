@@ -640,6 +640,19 @@ int SdlFrontend::playSound(std::shared_ptr<const omk::DeviceSound> s, bool loop,
     return mix_.play(std::move(s), loop, gain, &dropped);
 }
 
+int SdlFrontend::openSound(int channels, int rate, std::size_t frames, float gain) {
+    if (arate_ <= 0) return -1;
+    std::shared_ptr<const void> dropped;
+    AudioLock lk(amx_);
+    return mix_.open(channels, rate, frames, arate_, gain, &dropped);
+}
+
+void SdlFrontend::feedSound(int handle, std::span<const std::int16_t> pcm) {
+    if (handle < 0 || pcm.empty()) return;
+    AudioLock lk(amx_);
+    mix_.feed(handle, pcm);
+}
+
 void SdlFrontend::stopSound(int handle) {
     if (handle < 0) return;
     AudioLock lk(amx_);

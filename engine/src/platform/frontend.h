@@ -175,6 +175,15 @@ public:
         for (std::size_t i = 0; i < f.size(); ++i) f[i] = s->at(i);
         return playSound(std::move(f), loop, gain);
     }
+    // A SOUND THAT GROWS WHILE IT PLAYS (`HostMixer::open`): a conversation
+    // line's voice, decoded as the line is read (`formats/morphstream.h`).
+    // 16-bit samples at `rate` with `channels`, `frames` sample frames once
+    // whole; `feedSound` hands over each new piece. -> its handle, which
+    // `stopSound` / `soundPlayedSeconds` take like any shot's; -1 where the
+    // frontend has no device (headless) - the line then runs on its own clock.
+    virtual int  openSound(int /*channels*/, int /*rate*/, std::size_t /*frames*/,
+                           float /*gain*/) { return -1; }
+    virtual void feedSound(int /*handle*/, std::span<const std::int16_t> /*pcm*/) {}
     // Silence one shot before it ends. `Dialog_TickUI` case 2/7/8 calls
     // `Morph_Stop` on the press that leaves a line, and `Morph_Stop` stops the
     // voice buffer (`sub_46CAE0`): a line cut short by NEXT falls silent at

@@ -87,6 +87,10 @@ public:
     int playSound(std::shared_ptr<const omk::DeviceSound> s, bool loop = false,
                   float gain = 1.0f) override;
 
+    int openSound(int channels, int rate, std::size_t frames, float gain) override;
+
+    void feedSound(int handle, std::span<const std::int16_t> pcm) override;
+
     void stopSound(int handle) override;
     void setSoundGain(int handle, float gain) override;
     double soundPlayedSeconds(int handle) override;

@@ -30,7 +30,7 @@
 
 #include "script/gamestate.h"
 #include "script/interp.h"
-#include "platform/threads.h"
+#include "formats/morphstream.h"
 
 #include <cstdint>
 #include <map>
@@ -230,7 +230,7 @@ public:
     DialogPhase phase() const { return phase_; }
     bool playing() const { return phase_ != DialogPhase::Finished; }
     void reset() {
-        phase_ = DialogPhase::Finished; pcm_.clear(); replies_.clear();
+        phase_ = DialogPhase::Finished; stream_.close(); replies_.clear();
         lineState_ = LineEnd::Confirm;
     }
 
@@ -293,22 +293,27 @@ public:
     // the delta is added as before.
     void setLineClock(double seconds) { lineClock_ = seconds; }
     bool   lineOver() const { return lineAt_ >= lineLen_; }
-    const std::vector<std::int16_t>& pcm() const { return pcm_; }
-    // the line's whole `.3DM`, as read for its voice - the face's tracks come
-    // out of the same file, and a frontend need not read it again
-    // out of line: a static local in an inline function is a WEAK object
-    // (see `kScxStride` in formats/scx.h for why that matters)
+    // THE LINE IS STREAMED (`formats/morphstream.h`), as `Morph_Open` and its
+    // timer stream it: `tick` reads and decodes a couple of seconds ahead of
+    // the clock. So `pcm()` is the voice DECODED SO FAR (16-bit at 22050) and
+    // grows while the line plays - a frontend feeds the device what is new
+    // (`Frontend::feedSound`) - and `streamedFrames()` is how many of the
+    // `.3DM`'s frames are read. `voiceFrames()` is the whole voice's length,
+    // known at the line's start. Out of line: a static local in an inline
+    // function is a WEAK object (see `kScxStride` in formats/scx.h).
+    const std::vector<std::int16_t>& pcm() const;
+    std::size_t voiceFrames() const { return stream_.totalSampleFrames(); }
+    std::size_t streamedFrames() const { return stream_.filled(); }
+    // the whole line read and decoded now - for a tool that wants every
+    // sample at once (`tools/play_dialog`); the game never calls it
+    void finishLine();
+    // the line's `.3DM` - the WHOLE file's size, read up to `streamedFrames()`
+    // - the face's tracks come out of the same bytes, and a frontend need not
+    // read it again
     const std::vector<std::byte>& morph() const;
     // ...SHARED, so a frontend keeps the 3-4 MB for the face without copying
     // them on the frame the line starts (a console, 2026-09-30)
-    std::shared_ptr<const std::vector<std::byte>> morphShared() const { return morph_; }
-    // THE VOICE FOR THE DEVICE, prepared with the line. A frontend says how
-    // its device wants a line's samples (a pure function - it runs on the
-    // read-ahead thread); a line prepared ahead then carries them, and
-    // `takeDevicePcm` hands them over once. Empty for a line loaded on its
-    // frame, which the frontend converts itself, as before.
-    using ToDevice = std::vector<float> (*)(const std::vector<std::int16_t>& pcm, int channels);
-    void setToDevice(ToDevice f) { toDevice_ = f; }
+    std::shared_ptr<const std::vector<std::byte>> morphShared() const { return stream_.bytes(); }
     // WHO RUNS A REPLY'S ACTION (event 59). `Game_HandleEvent` case 59 runs
     // it as a REAL context - `Script_NewContext` in the active slot, one
     // `Script_Execute` through every handler, then freed - so a world that
@@ -319,19 +324,11 @@ public:
     using ActionRunner = void (*)(void* self, std::span<const std::byte> chunk,
                                   std::size_t pc);
     void setActionRunner(ActionRunner f, void* self) { runner_ = f; runnerSelf_ = self; }
-    std::vector<float> takeDevicePcm() { return std::move(devPcm_); }
-    // what the line's start cost here, in ms: the file read and the voice's
-    // decode - a console's wait on a line (2026-09-23) is apportioned by these
+    // what the line's start cost here, in ms: the file's opening read (the
+    // header and its first second) and that second's decode - a console's wait
+    // on a line (2026-09-23) is apportioned by these
     double loadReadMs() const { return loadMs_[0]; }
     double loadDecodeMs() const { return loadMs_[1]; }
-    // whether this line's `.3DM` had been read - and its voice decoded - AHEAD,
-    // while the line before it played (`prefetch_`). The two costs above are
-    // then what the FRAME paid (the wait for the job, and nothing); what the
-    // job itself paid is `loadAheadMs`.
-    bool loadPrefetched() const { return loadPrefetched_; }
-    double loadAheadMs() const { return loadMs_[2]; }
-    // how many of the next lines are being read ahead now
-    std::size_t aheadCount() const { return prefetch_.size(); }
     int    channels() const { return channels_; }
     bool   lineChanged() const { return lineChanged_; }
     void   clearLineChanged() { lineChanged_ = false; }
@@ -394,40 +391,22 @@ private:
     double camFrames_ = 0.0;      // frames since the phase began
     std::string voice_, line_;
     std::vector<DialogReply>  replies_;
-    std::vector<std::int16_t> pcm_;
-    std::shared_ptr<const std::vector<std::byte>> morph_;
-    std::vector<float> devPcm_;
-    ToDevice toDevice_ = nullptr;
     ActionRunner runner_ = nullptr;
     void* runnerSelf_ = nullptr;
-    double loadMs_[3] = {0.0, 0.0, 0.0};
-    bool loadPrefetched_ = false;
-    // THE LINES THAT CAN COME NEXT, READ AHEAD (2026-09-23): the `.3DM` of
-    // every branch target of the line playing, keyed by path. Which one is
-    // taken is the player's choice, so all of them are read; the rest are
-    // dropped - without waiting - when the next line starts.
-    //
-    // ...AND DECODED AHEAD (2026-09-30, todo/optimization.md step 32). The
-    // original never decodes a line at its start: `Morph_Open` walks the file
-    // and `sub_42D960`, on the timer thread, decodes the ADPCM a piece at a
-    // time into the sound buffer as the line plays. Here the whole voice is
-    // decoded before the line starts - so that, too, is done on the reading
-    // thread, and a line that was read ahead costs its start nothing but the
-    // hand-over. What a line IS does not change: the same bytes through the
-    // same decoder.
-    struct LineAhead {
-        std::string path;
-        std::vector<std::byte> morph;
-        std::vector<std::int16_t> pcm;
-        int channels = 1;
-        std::vector<float> dev;             // ...for the device, when asked
-        ToDevice toDevice = nullptr;
-        double ms[2] = {0.0, 0.0};          // read, decode (and the device's)
-        std::unique_ptr<BackgroundJob> job;
-    };
-    static void loadLine(LineAhead& l);
-    std::map<std::string, std::shared_ptr<LineAhead>> prefetch_;
-    void prefetchSuccessors(int node);
+    double loadMs_[2] = {0.0, 0.0};
+    // THE LINE PLAYING, OPEN (`formats/morphstream.h`). It replaced a
+    // read-ahead (2026-09-23/30) that read the WHOLE `.3DM` of every branch
+    // target of the line playing on a thread - up to four files of 3-4 MB
+    // held at once, for one to be used - which the threadless classic build
+    // could not have at all, and which paid a whole line on the frame it
+    // started whenever the line had not been guessed (an iBook G3: 0.2 to
+    // 1.1 s, `todo/handoff-classic-mac.md` 3f). The original reads only the
+    // line it plays, as it plays.
+    MorphStream stream_;
+    // the first second of a line is read where it starts; `tick` keeps
+    // `kAheadSeconds` read past the clock
+    static constexpr std::size_t kOpenFrames = 30;
+    static constexpr double kAheadSeconds = 2.0;
 };
 
 }  // namespace omk

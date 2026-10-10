@@ -31,6 +31,49 @@ int HostMixer::play(std::shared_ptr<const DeviceSound> s, bool loop, float gain,
     return add({nullptr, 0, 0, loop, gain, std::move(s)}, dropped);
 }
 
+std::shared_ptr<DeviceSound> makeDeviceSound(int channels, int rate, int deviceRate) {
+    auto d = std::make_shared<DeviceSound>();
+    d->channels = channels > 1 ? 2 : 1;
+    if (rate > 0 && deviceRate % rate == 0) {
+        const int k = deviceRate / rate;
+        if (k == 1 || k == 2 || k == 4 || k == 8) {
+            d->exact = true;
+            d->shift = k == 1 ? 0u : k == 2 ? 1u : k == 4 ? 2u : 3u;
+            return d;
+        }
+    }
+    d->step = static_cast<double>(rate) / deviceRate;
+    return d;
+}
+
+int HostMixer::open(std::shared_ptr<DeviceSound> s, std::size_t totalSamples, float gain,
+                    std::shared_ptr<const void>* dropped) {
+    if (!s || !totalSamples) return -1;
+    Shot o{nullptr, 0, 0, false, gain, s};
+    o.grow = std::move(s);
+    o.total = totalSamples;
+    return add(std::move(o), dropped);
+}
+
+int HostMixer::open(int channels, int rate, std::size_t frames, int deviceRate, float gain,
+                    std::shared_ptr<const void>* dropped) {
+    if (deviceRate <= 0 || rate <= 0 || !frames) return -1;
+    auto d = makeDeviceSound(channels, rate, deviceRate);
+    d->pcm.reserve(frames * d->channels);      // fed without a reallocation
+    return open(d, d->samplesFor(frames), gain, dropped);
+}
+
+void HostMixer::feed(int handle, std::span<const std::int16_t> pcm) {
+    if (handle < 0 || pcm.empty()) return;
+    for (Shot& o : shots_)
+        if (o.id == handle && o.grow) {
+            DeviceSound& d = *o.grow;
+            d.pcm.insert(d.pcm.end(), pcm.begin(), pcm.end());
+            d.size = std::min(o.total, d.samplesFor(d.pcm.size() / d.channels));
+            return;
+        }
+}
+
 void HostMixer::queue(std::span<const float> s) {
     if (s.empty()) return;
     if (count_ + s.size() > ring_.size()) {
@@ -87,7 +130,7 @@ void HostMixer::mix(float* dst, std::size_t n) {
         dst[i] = v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v);
     }
     std::erase_if(shots_, [](const Shot& o) {
-        return !o.loop && o.pos >= o.size();  // a loop ends only on stop
+        return o.ended();                     // a loop ends only on stop
     });
 }
 

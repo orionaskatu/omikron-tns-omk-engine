@@ -72,6 +72,10 @@ struct NodeTracks {
     std::vector<std::string> names;        // the bone's name per track (+4), for a clip authored against another model's numbering
     std::vector<std::vector<Quatf>> quats; // [frame][track]
     std::vector<std::array<float, 3>> trans;   // [frame], accumulated
+    // the frames read so far: `frames` for a clip or a whole `.3DM`, fewer for
+    // a line still STREAMING (`extendNodeTracks`) - a row at or past it is
+    // empty, so a reader of a frame keeps below it
+    int  built = 0;
     bool valid() const { return count > 0 && frames > 0; }
 };
 
@@ -125,7 +129,13 @@ bool clipRootStart(std::span<const std::byte> clip, float out[3]);
 int rootTrackOf(const std::vector<Mesh>& meshes);
 
 // Read a `.3DM`'s tracks. `rootTrack` comes from the MODEL, not the file.
-NodeTracks nodeTracks(std::span<const std::byte> morph, int rootTrack);
+// `upto` frames of them (all by default): a line still streaming
+// (`formats/morphstream.h`) has its later records unread, and
+// `extendNodeTracks` adds them as they arrive - the same rows a whole read
+// gives, the root's accumulation carried on from the last one.
+NodeTracks nodeTracks(std::span<const std::byte> morph, int rootTrack,
+                      std::size_t upto = static_cast<std::size_t>(-1));
+void extendNodeTracks(NodeTracks& t, std::span<const std::byte> morph, std::size_t upto);
 
 // One mesh's resolved transform.
 struct MeshPose {

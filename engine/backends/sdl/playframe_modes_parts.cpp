@@ -115,9 +115,10 @@ void PlayState::modesSound() {
                     vo.substituted ? " [JINGOFF3 substitution]" : "",
                     static_cast<double>(pcm.size()) / omk::kAdpcmRate);
         front.stopSound(voiceOverShot);
+        // kept in its own 16-bit form, as a line's voice is (no float copy)
         voiceOverShot = pcm.empty() ? -1
-            : front.playSound(resampleToDevice(pcm, 1, omk::kAdpcmRate, kDeviceRate),
-                              false, dialogueGain());
+            : front.openSound(1, omk::kAdpcmRate, pcm.size(), dialogueGain());
+        front.feedSound(voiceOverShot, pcm);
         // ...and the TEXT. Step 13 of the handler is `Subtitle_Show` of
         // the buffer step 6 built: the record's +280 description, with a
         // `{C}` (centre) prefix when the player's ACTOR_STATE is 3 or
@@ -256,13 +257,17 @@ void PlayState::modesSound() {
                     // voice: a line's .3DM runs to 3.5 MB, and reading it
                     // a second time here cost a console ~700 ms on the
                     // frame the line started (2026-09-23)
+                    // ...and STREAMED (`formats/morphstream.h`): the file's
+                    // size, read so far up to `streamedFrames()`; the tracks
+                    // grow with it below, every frame
                     speakerMorph = dlg.morph().empty()
                         ? std::make_shared<const std::vector<std::byte>>(
                               omk::DataFs::readPath(*ma))
                         : dlg.morphShared();
                     const auto tt0 = std::chrono::steady_clock::now();
                     speakerTracks = omk::nodeTracks(
-                        *speakerMorph, omk::rootTrackOf(speakerMeshes));
+                        *speakerMorph, omk::rootTrackOf(speakerMeshes),
+                        dlg.morph().empty() ? static_cast<std::size_t>(-1) : dlg.streamedFrames());
                     tracksMs = lineMs(tt0);
                     const CharModel* fm = charModels.count(speakerModel)
                         ? &charModels.at(speakerModel) : nullptr;
@@ -278,33 +283,38 @@ void PlayState::modesSound() {
                         dlg.lineSeconds(), cp1252ToUtf8(dlg.lineText()).c_str());
             front.stopSound(voiceOverShot); voiceOverShot = -1;   // one streamer
             front.stopSound(voiceShot);
-            const auto rs0 = std::chrono::steady_clock::now();
-            // (prepared with the line when it was read ahead - then this
-            // is a hand-over and the `resample` below reads 0)
-            std::vector<float> voiceDev = session.takeVoiceDevicePcm();
-            if (voiceDev.empty() && !dlg.pcm().empty())
-                voiceDev = resampleToDevice(dlg.pcm(), dlg.channels(), 22050, kDeviceRate);
-            const double resampleMs = lineMs(rs0);
+            // THE VOICE AS IT IS DECODED: a sound that grows while it plays,
+            // kept in its own 16-bit form (no float copy - on an iBook G3 the
+            // copy of a 30 s line was 551 ms of the frame it started) and
+            // fed below, every frame, what the stream decoded since
             const auto ps0 = std::chrono::steady_clock::now();
-            voiceShot = voiceDev.empty() ? -1
-                      : front.playSound(std::move(voiceDev), false, dialogueGain());
+            voiceShot = dlg.voiceFrames() == 0 ? -1
+                      : front.openSound(dlg.channels(), 22050, dlg.voiceFrames(), dialogueGain());
+            voiceFed = 0;
             // WHERE A LINE'S START GOES (2026-09-23: "it is a bit long to
             // load the dialog" on a console) - the conversation's read and
             // decode, then this frontend's face tracks, resample, hand-over
-            std::printf("line load: %s - read %.0f ms (%zu KB%s), voice decode %.0f ms, "
-                        "face tracks %.0f ms, resample %.0f ms, into the mixer %.0f ms; "
-                        "%.0f ms here in all; %zu next line(s) reading ahead",
+            std::printf("line load: %s - opened and read %.0f ms (the first %zu of %d frames, "
+                        "a %zu KB file), voice decode %.0f ms, face tracks %.0f ms, "
+                        "into the mixer %.0f ms; %.0f ms here in all - the rest is "
+                        "read as it plays\n",
                         dlg.voice().empty() ? "no voice" : dlg.voice().c_str(),
-                        dlg.loadReadMs(), dlg.morph().size() / 1024,
-                        dlg.loadPrefetched() ? ", read and decoded AHEAD" : "",
-                        dlg.loadDecodeMs(),
-                        tracksMs, resampleMs, lineMs(ps0), lineMs(lineT0),
-                        dlg.aheadCount());
-            if (dlg.loadPrefetched())
-                std::printf("; its own thread spent %.0f ms on it", dlg.loadAheadMs());
-            std::printf("\n");
+                        dlg.loadReadMs(), dlg.streamedFrames(), speakerTracks.frames,
+                        dlg.morph().size() / 1024, dlg.loadDecodeMs(),
+                        tracksMs, lineMs(ps0), lineMs(lineT0));
             replySel = 0; menuShown = false; lineScroll = 0;
         }
+        // THE STREAM'S NEW PIECE, every frame (`formats/morphstream.h`): the
+        // conversation's tick read and decoded a little more of the line, so
+        // the device gets the samples and the pose the bone tracks - `fptc`'s
+        // refill, once a frame
+        if (voiceShot >= 0 && dlg.pcm().size() > voiceFed) {
+            front.feedSound(voiceShot, std::span<const std::int16_t>(dlg.pcm()).subspan(voiceFed));
+            voiceFed = dlg.pcm().size();
+        }
+        if (speakerTracks.valid() && speakerTracks.built < speakerTracks.frames &&
+            speakerMorph && speakerMorph == dlg.morphShared())
+            omk::extendNodeTracks(speakerTracks, *speakerMorph, dlg.streamedFrames());
         if (dlg.phase() == omk::DialogPhase::Menu && !menuShown) {
             menuShown = true;
             replySel = -1;

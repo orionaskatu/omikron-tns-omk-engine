@@ -88,8 +88,15 @@ std::vector<std::int16_t> adpcmDecode(std::span<const std::byte> in, bool stereo
     // two samples a byte, known before the first: grown by doubling, a
     // three-minute track asked for 4, 8 and then 16 MB in one piece
     out.reserve(in.size() * 2);
-    const int nch = stereo ? 2 : 1;
+    AdpcmStream(t, stereo).decode(in, out);
+    return out;
+}
+
+void AdpcmStream::decode(std::span<const std::byte> in, std::vector<std::int16_t>& out) {
+    if (!t_->valid()) return;
+    const AdpcmTables& t = *t_;
     Channel ch[2];
+    for (int c = 0; c < 2; ++c) { ch[c].pred = pred_[c]; ch[c].idx = idx_[c]; }
 
     // one nibble, through the table (`AdpcmTables::nibble`): the delta
     // WITHOUT IMA's `step >> 3` bias term, then the next index
@@ -109,9 +116,9 @@ std::vector<std::int16_t> adpcmDecode(std::span<const std::byte> in, bool stereo
         // BYTES between channels decodes without complaint and produces
         // garbage, which is why this is written out rather than assumed.
         out.push_back(nibble(ch[0], (byte >> 4) & 0xF));
-        out.push_back(nibble(ch[stereo ? 1 : 0], byte & 0xF));
+        out.push_back(nibble(ch[stereo_ ? 1 : 0], byte & 0xF));
     }
-    return out;
+    for (int c = 0; c < 2; ++c) { pred_[c] = ch[c].pred; idx_[c] = ch[c].idx; }
 }
 
 void AdpcmStereoStream::reset() {

@@ -735,6 +735,36 @@ overlay frame against the hash's 1.0, the probes' text and world pixels as
 before; `present` stays ~21 ms there whatever the overlay does (the emulated
 driver's own cost) - the iBook's figure is the one to read.
 
+**THE iBOOK'S FIFTH RUN (2026-10-11, the 3a build `6c12852`, 6672 frames,
+exit 0)**: the Impasse, AREA 142, Anekbah's street (frames ~3110-4980), a
+hall, the apartment and a FIGHT (frame 6312, `fight hud` overlay):
+- THE WHITE SCREENS ARE GONE: every `overlay (media line)` probe reads the
+  world behind its key texels (24 16 8, 41 33 8, 33 16 0...), the text
+  texels their own colour; the whites left are the game's own white fades;
+- the STREET 146 -> **120 ms** a frame (1700 frames, median 119):
+  `world: crowd` 21 -> 4.1, `input: motion` 12 -> 1.8 (step 3a); the
+  submit's own CPU (`world: mirror` self) 35 -> 39 (it now poses), `gl1:
+  draw call` 23.6; `gl1: overlay rows` 11.4 in the street (HUD/subtitles);
+- `gl1: clear` **0.09 ms**: the CPU does not wait for the card at the
+  frame's start - the fixed ~7 ms of `world begin, set` is `world`'s own CPU
+  work outside every zone, still unplaced;
+- the FIGHT **187 ms** a frame (320 frames): `gl1: overlay rows` **74 ms**,
+  `present` self 28, `screens: huds` 18, `gl1: swap` 11 - the two gauges
+  down the screen's edges spark every frame, so every row they span changed
+  and was sent WHOLE.
+
+**Step 3c - THE OVERLAY SENT BY BLOCK, DONE 2026-10-11, NOT yet run on the
+iBook.** A changed row's changes are tracked per 32-pixel column block (at
+most 32 a row): the compare finds which blocks differ, and each block's run
+of stale rows goes up as one rectangle (`glTexSubImage2D` at its x) - the
+fight's sparks are two narrow strips, not the band's whole rows. A line
+`gl1 overlay: over 300 frames N rows drawn and M rows' worth of texels sent
+a frame` says what it costs. The Impasse on the emulated Tiger: the probes'
+pixels as before; a subtitle standing, 42-66 rows drawn and 0.0-0.2 rows'
+worth sent a frame. (The 3DS's overlay - `3ds-port.md` 6.7, which first
+replaced GL1's hash by a kept copy, the fix GL1 itself got only in 3b -
+still sends a changed row whole; the same block tracking applies there.)
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

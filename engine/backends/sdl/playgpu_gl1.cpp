@@ -76,16 +76,25 @@ bool g_ovProbe = false;
 void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     if (!overlayFrame || !worldVk) return;
     // the key resolved into the two planes (as `playgpu_gles.cpp` does): C
-    // into `fb`, M beside it, on the rows a pass touched
-    static std::vector<std::uint8_t> ovMask;
-    if (ovMask.size() != fb.px.size()) ovMask.assign(fb.px.size(), std::uint8_t(0));
+    // into `fb`, M beside it, on the rows a pass touched - and a FLAG a row
+    // (step 3b, as GLES's): a row no pass touched keeps an all-zero mask,
+    // written once when it stops being touched rather than every frame
+    static std::vector<std::uint8_t> ovMask, ovMaskRow;
+    if (ovMask.size() != fb.px.size()) {
+        ovMask.assign(fb.px.size(), std::uint8_t(0));
+        ovMaskRow.assign(static_cast<std::size_t>(fb.h), 0);
+    }
     for (int y = 0; y < fb.h; ++y) {
         const std::size_t o = static_cast<std::size_t>(y) * fb.w;
         if (!g_ov.rowInit[static_cast<std::size_t>(y)]) {
-            std::fill(ovMask.begin() + static_cast<long>(o), ovMask.begin() + static_cast<long>(o + fb.w),
-                      std::uint8_t(0));
+            if (ovMaskRow[static_cast<std::size_t>(y)]) {
+                std::fill(ovMask.begin() + static_cast<long>(o), ovMask.begin() + static_cast<long>(o + fb.w),
+                          std::uint8_t(0));
+                ovMaskRow[static_cast<std::size_t>(y)] = 0;
+            }
             continue;
         }
+        ovMaskRow[static_cast<std::size_t>(y)] = 1;
         for (std::size_t i = o; i < o + static_cast<std::size_t>(fb.w); ++i) {
             if (fb.px[i] == kOverlayKey) { fb.px[i] = g_ov.c[i]; ovMask[i] = g_ov.m[i]; }
             else ovMask[i] = 0;
@@ -93,8 +102,8 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     }
     int ww = 0, wh = 0;
     omk::gl1AglWindowSize(ww, wh);
-    presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovFade, ww, wh,
-                                            g_ovProbe);
+    presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovMaskRow.data(), ovFade,
+                                            ww, wh, g_ovProbe);
     static bool refusedTold = false;
     if (!presentedWorld && !refusedTold) {
         refusedTold = true;

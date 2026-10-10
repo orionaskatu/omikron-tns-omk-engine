@@ -778,16 +778,66 @@ public:
     // fade*f`, the GLES shader's `rgb*(1-f) + fade*f` done by the blender.
     // Folded into the texture it changed every row every frame of a fade, and
     // the emulated Tiger re-sent the whole frame for 26-31 ms each.
-    bool presentOverlay(const Surface& fb, const std::uint8_t* mask, const float fade[4],
-                        int ww, int wh, bool probe = false) {
+    bool presentOverlay(const Surface& fb, const std::uint8_t* mask, const std::uint8_t* maskRow,
+                        const float fade[4], int ww, int wh, bool probe = false) {
         if (ww != w_ || wh != h_ || fb.w != w_ || fb.h != h_) return false;
         int lo = fb.h, hi = -1;
         const bool fading = fade[3] > 0.0f;
-        for (int y = 0; y < fb.h; ++y) {
-            const std::uint16_t* row = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
-            bool any = false;
-            for (int x = 0; x < fb.w && !any; ++x) any = row[x] != 0xF81F;
-            if (any) { if (lo > y) lo = y; hi = y; }
+        // EACH ROW AGAINST THE COPY LAST SEEN (step 3b, 2026-10-11): a row
+        // whose 565 pixels and mask are word for word what they were costs
+        // one compare - its band flag and its texture row stand - where every
+        // row of the band used to be HASHED every frame, and scanned for the
+        // key once more before that: ~14 ms an overlay frame on the iBook
+        // with nothing on the interface changing (a subtitle, a dialogue
+        // line), the fourth run's median. Exact where the hash was only
+        // nearly so. `maskRow` (the glue's, as GLES's): a row no blended
+        // pass touched has an all-zero mask, which is then never read.
+        {
+            OMK_ZONE("gl1: overlay compare");
+            const std::size_t W = static_cast<std::size_t>(fb.w);
+            const std::size_t N = W * static_cast<std::size_t>(fb.h);
+            if (ovSeenPx_.size() != N) {
+                ovSeenPx_.assign(N, 0);
+                ovSeenMask_.assign(N, 0);
+                ovSeenRow_.assign(static_cast<std::size_t>(fb.h), 0);   // nothing seen
+                ovRowAny_.assign(static_cast<std::size_t>(fb.h), 0);
+                ovRowBlack_.assign(static_cast<std::size_t>(fb.h), 0);
+                ovRowDraw_.assign(static_cast<std::size_t>(fb.h), 0);
+                ovRowSent_.assign(static_cast<std::size_t>(fb.h), 0);
+            }
+            // the rows the world's pass cleared BLACK itself: the letterbox
+            // bars (`begin`, AGL) - a composed row there that is opaque black
+            // and nothing else is already on the screen, and is not drawn
+            const int viewTop = vy_, viewBot = vy_ + camH_;
+            for (int y = 0; y < fb.h; ++y) {
+                const std::size_t yy = static_cast<std::size_t>(y);
+                const std::size_t o = yy * W;
+                const std::uint16_t* row = fb.px.data() + o;
+                const bool hasMask = mask && (!maskRow || maskRow[yy]);
+                // 1 = seen without a mask, 2 = seen with one, 0 = never seen
+                const std::uint8_t seenAs = hasMask ? 2 : 1;
+                bool same = ovSeenRow_[yy] == seenAs &&
+                            sameWords(row, ovSeenPx_.data() + o, W * sizeof(std::uint16_t));
+                if (same && hasMask) same = sameWords(mask + o, ovSeenMask_.data() + o, W);
+                if (!same) {
+                    std::memcpy(ovSeenPx_.data() + o, row, W * sizeof(std::uint16_t));
+                    if (hasMask) std::memcpy(ovSeenMask_.data() + o, mask + o, W);
+                    ovSeenRow_[yy] = seenAs;
+                    bool any = false, black = true;
+                    for (std::size_t x = 0; x < W; ++x) {
+                        // a non-key pixel's mask is 0 (the glue's), so a 0
+                        // pixel is opaque black
+                        if (row[x] != 0xF81F) any = true;
+                        if (row[x] != 0) { black = false; if (any) break; }
+                    }
+                    ovRowAny_[yy] = any ? 1 : 0;
+                    ovRowBlack_[yy] = black ? 1 : 0;
+                    ovRowSent_[yy] = 0;          // the texture row is stale
+                }
+                const bool barCleared = ovRowBlack_[yy] && (y < viewTop || y >= viewBot);
+                ovRowDraw_[yy] = ovRowAny_[yy] && !barCleared ? 1 : 0;
+                if (ovRowDraw_[yy]) { if (lo > y) lo = y; hi = y; }
+            }
         }
         Current c(ctx_);
         flush();
@@ -831,16 +881,15 @@ public:
                 }
                 gpuNote("overlay", omk::prof::kGlTexture, ovTex_, 4LL * tw * th);
                 ovTexW_ = tw; ovTexH_ = th;
-                ovRowKey_.assign(static_cast<std::size_t>(th), 0);   // nothing sent yet
+                std::fill(ovRowSent_.begin(), ovRowSent_.end(), std::uint8_t(0));   // nothing sent yet
             }
             bool storeWaited = false;    // the card done with the client memory, once a frame
             // ONLY THE ROWS THAT CHANGED (2026-10-05, run on Tiger): a row
             // keeps its place in the texture, and is converted and sent only
-            // when its source - the 565 row and its mask row - differs from
-            // what was last sent there. A subtitle is the same rows for
-            // hundreds of frames; re-sending the band every frame cost the
-            // emulated Tiger ~45 ms an overlay frame. The key a row is
-            // compared by is a hash, as the GLES overlay's (four chains).
+            // when it differs from what was last sent there (the compare
+            // above; it was a hash until step 3b). A subtitle is the same rows
+            // for hundreds of frames; re-sending the band every frame cost the
+            // emulated Tiger ~45 ms an overlay frame.
             // ...and the changed rows go up in RUNS, one call a run rather
             // than one a row, in the format `CarbonFrontend::probeUploads`
             // timed fastest on this driver (`gl1OverlayArgb`): ARGB 8888 as
@@ -859,22 +908,13 @@ public:
                 const std::uint16_t* src = nullptr;
                 const std::uint8_t* msk = nullptr;
                 if (y <= hi) {
-                    src = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
-                    msk = mask ? mask + static_cast<std::size_t>(y) * fb.w : nullptr;
-                    std::uint32_t h0 = 2166136261u, h1 = 0x9E3779B9u, h2 = 0x7F4A7C15u, h3 = 0x94D049BBu;
-                    int x = 0;
-                    for (; x + 4 <= fb.w; x += 4) {
-                        h0 = (h0 ^ src[x])     * 16777619u;
-                        h1 = (h1 ^ src[x + 1]) * 16777619u;
-                        h2 = (h2 ^ src[x + 2]) * 16777619u;
-                        h3 = (h3 ^ src[x + 3]) * 16777619u;
-                    }
-                    for (; x < fb.w; ++x) h0 = (h0 ^ src[x]) * 16777619u;
-                    if (msk)
-                        for (int m = 0; m < fb.w; ++m) h1 = (h1 ^ msk[m]) * 16777619u;
-                    const std::uint32_t key = (h0 ^ (h1 * 3u) ^ (h2 * 5u) ^ (h3 * 7u)) | 1u;   // 0 = never sent
-                    changed = ovRowKey_[static_cast<std::size_t>(y)] != key;
-                    ovRowKey_[static_cast<std::size_t>(y)] = key;
+                    const std::size_t yy = static_cast<std::size_t>(y);
+                    src = fb.px.data() + yy * fb.w;
+                    msk = mask && (!maskRow || maskRow[yy]) ? mask + yy * fb.w : nullptr;
+                    // a row drawn and not yet in the texture; a row between
+                    // two runs that is not drawn ends a run
+                    changed = ovRowDraw_[yy] && !ovRowSent_[yy];
+                    if (ovRowDraw_[yy]) ovRowSent_[yy] = 1;
                 }
                 if (changed) {
                     if (runStart < 0) runStart = y;
@@ -929,15 +969,26 @@ public:
             glColor4f(1, 1, 1, 1);
             // the band: fb rows lo..hi, top-down, onto window rows wh-lo..wh-hi-1
             // (a rectangle texture is addressed in texels)
+            // ...ONE QUAD A RUN OF DRAWN ROWS (step 3b): the rows holding
+            // only the key (the world through) and the letterbox's black are
+            // not drawn - in a letterboxed scene with a subtitle that is the
+            // 352 rows of the picture between the bars, a blended texture
+            // over the whole window on the card's fill for nothing
             const float tsc = path.rect ? 1.0f : 1.0f / static_cast<float>(th);
-            const float t0 = static_cast<float>(lo) * tsc, t1 = static_cast<float>(hi + 1) * tsc,
-                        s1 = path.rect ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
-            const float yTop = static_cast<float>(wh - lo), yBot = static_cast<float>(wh - hi - 1);
+            const float s1 = path.rect ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
             glBegin(GL_QUADS);
-            glTexCoord2f(0, t0);  glVertex2f(0, yTop);
-            glTexCoord2f(s1, t0); glVertex2f(static_cast<float>(ww), yTop);
-            glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), yBot);
-            glTexCoord2f(0, t1);  glVertex2f(0, yBot);
+            for (int y = lo; y <= hi;) {
+                if (!ovRowDraw_[static_cast<std::size_t>(y)]) { ++y; continue; }
+                int e = y;
+                while (e + 1 <= hi && ovRowDraw_[static_cast<std::size_t>(e + 1)]) ++e;
+                const float t0 = static_cast<float>(y) * tsc, t1 = static_cast<float>(e + 1) * tsc;
+                const float yTop = static_cast<float>(wh - y), yBot = static_cast<float>(wh - e - 1);
+                glTexCoord2f(0, t0);  glVertex2f(0, yTop);
+                glTexCoord2f(s1, t0); glVertex2f(static_cast<float>(ww), yTop);
+                glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), yBot);
+                glTexCoord2f(0, t1);  glVertex2f(0, yBot);
+                y = e + 1;
+            }
             glEnd();
             glDisable(target);
         }
@@ -1125,7 +1176,26 @@ private:
     std::uint32_t poseDraw_ = 0;
 #if defined(OMK_GL1_AGL)
     std::vector<std::uint32_t> ovStore_; // the client-storage texture's own memory (`gl1OverlayPath`)
-    std::vector<std::uint32_t> ovRowKey_;   // what each texture row was last sent from
+    // step 3b: each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
+    // without / with a mask), whether it holds anything but the key, and
+    // whether the texture row holds it
+    std::vector<std::uint16_t> ovSeenPx_;
+    std::vector<std::uint8_t> ovSeenMask_, ovSeenRow_, ovRowAny_, ovRowSent_;
+    std::vector<std::uint8_t> ovRowBlack_, ovRowDraw_;   // all 0x0000; drawn this frame
+    // two runs of bytes equal, compared a word at a time
+    static bool sameWords(const void* a, const void* b, std::size_t bytes) {
+        const unsigned char* p = static_cast<const unsigned char*>(a);
+        const unsigned char* q = static_cast<const unsigned char*>(b);
+        std::size_t i = 0;
+        for (; i + 4 <= bytes; i += 4) {
+            std::uint32_t x, y;
+            std::memcpy(&x, p + i, 4);
+            std::memcpy(&y, q + i, 4);
+            if (x != y) return false;
+        }
+        for (; i < bytes; ++i) if (p[i] != q[i]) return false;
+        return true;
+    }
 #endif
 
     // Where the world is drawn and read from: the framebuffer object, or on
@@ -1424,8 +1494,8 @@ bool gl1PresentWorld(Renderer* r, int ww, int wh) {
     return r && static_cast<Gl1Renderer*>(r)->presentWorld(ww, wh);
 }
 bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
-                       const float fade[4], int ww, int wh, bool probe) {
-    return r && static_cast<Gl1Renderer*>(r)->presentOverlay(fb, mask, fade, ww, wh, probe);
+                       const std::uint8_t* maskRow, const float fade[4], int ww, int wh, bool probe) {
+    return r && static_cast<Gl1Renderer*>(r)->presentOverlay(fb, mask, maskRow, fade, ww, wh, probe);
 }
 #endif
 

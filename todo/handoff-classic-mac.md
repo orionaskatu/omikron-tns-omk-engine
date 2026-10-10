@@ -712,6 +712,29 @@ than 24; shown to fail with the posed light on the rest normal - 8366, 1218).
 27-29 -> 22-24 ms; spans `motion corners` 3.0 -> 0.1, `motion patch` 3.3
 -> 0.3, `player` 3.7 -> 0.8, `vehicles` 0.6 -> 0.1; the submit unchanged.
 
+**Step 3b - THE INTERFACE OVERLAY'S FIXED COST, DONE 2026-10-11, NOT yet run
+on the iBook.** The fourth run's 977 overlay frames (a subtitle, a dialogue,
+a fade): `gl1: overlay rows` median **14 ms with nothing changing** (p90 66
+ms when rows changed), `present` 34 ms an overlay frame, of which ~8 ms its
+own. The floor was scanning: every row of the band HASHED every frame - in a
+letterboxed scene all 480 - after another whole-frame scan for the key, and
+the glue zero-filling the mask of every untouched row. Now:
+- each row is COMPARED word by word with the copy last seen (pixels and
+  mask): an unchanged row costs that compare, its band flag and texture row
+  stand; exact, where the hash was only nearly so (`gl1: overlay compare`);
+- the glue flags the rows a blended pass touched (`maskRow`, as GLES's) and
+  writes an untouched row's zero mask once, when it stops being touched;
+- ONE QUAD A RUN of rows that hold something: rows of nothing but the key
+  (the world through) are not drawn, nor a letterbox bar's row that is opaque
+  black and nothing else - `begin` cleared the bars black already. A
+  letterboxed subtitle's quad went from rows 0..479 to the text's own 16
+  (437..452); a fade with no interface draws only the fade's quad. Rows are
+  uploaded only where drawn.
+On the emulated Tiger (the Impasse, `--profile`): compare + rows 0.7 ms an
+overlay frame against the hash's 1.0, the probes' text and world pixels as
+before; `present` stays ~21 ms there whatever the overlay does (the emulated
+driver's own cost) - the iBook's figure is the one to read.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

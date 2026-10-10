@@ -30,7 +30,10 @@ bool gl1PresentWorld(Renderer* r, int ww, int wh);
 // `probe` logs what the overlay frame held and three back-buffer pixels
 // before the swap (the white-screen probe, `todo/handoff-classic-mac.md` 3f
 // steps 2j/2k - kept until a run on the iBook confirms the fix).
+// `maskRow`: 1 where a row of `mask` may be nonzero (a pass touched it), 0
+// where it is all zero and need not be read; null reads every row.
 bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
-                       const float fade[4], int ww, int wh, bool probe = false);
+                       const std::uint8_t* maskRow, const float fade[4], int ww, int wh,
+                       bool probe = false);
 #endif
 }  // namespace omk

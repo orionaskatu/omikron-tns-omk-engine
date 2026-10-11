@@ -1188,6 +1188,12 @@ public:
     // op 94 `image.show`'s file, `IMAGES\%06lx.BMP`, for the frontend to show
     // (`Image_Show`); taken once - "" when none is pending
     std::string takeImageShow() { std::string s; s.swap(imageShow_); return s; }
+    // ops 134/135: whether the live mirror is PARKED (`dword_534F48` moved to
+    // `dword_4E90A0`), and how many times the pair ran
+    bool mirrorParked() const { return mirrorParked_; }
+    long mirrorToggles() const { return mirrorToggles_; }
+    // op 137 `ui.close_all`: requests since the frontend last took them
+    int  takeCloseAllScreens() { const int v = closeAllScreens_; closeAllScreens_ = 0; return v; }
     // `ui.highscore` (op 142): what `HighScore_Insert` is handed - the name
     // (32 bytes of an actor record's +8), `Var_Get(field1)` and the table -
     // and the page `UI_LoadScreen(36, table, -1)` opens at. The table lives
@@ -1790,6 +1796,10 @@ private:
     bool followRequested_ = false;           // op 54, until a camera request
     long followRequests_ = 0, posSyncs_ = 0;
     std::string imageShow_;                  // op 94, until the frontend takes it
+    bool mirrorParked_ = false;              // ops 134/135
+    bool mirrorWasLive_ = false;             // `dword_4E90A0` holds one
+    long mirrorToggles_ = 0;
+    int  closeAllScreens_ = 0;               // op 137, until the frontend takes it
     std::vector<HighScoreCall> highScores_;  // op 142, until the frontend takes them
     std::map<int, int> heldSlot_;            // Actor_HeldObjectSlot, by id; -1 = player
     std::set<int> shownSlots_;               // Object_ShowInScene / HideFromScene

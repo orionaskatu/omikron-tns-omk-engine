@@ -42013,6 +42013,51 @@ def c_engine_weather():
            "Mahaleel's cave: state 2, no flake, a roof overhead"
 
 
+def c_engine_mirror_park():
+    r"""Ops 134/135 `set.mirror.on`/`.off` and op 137 `ui.close_all`
+    (`todo/scene-gameplay-audit.md` 17).
+
+    135 is `sub_41E1D0(0)`: the LIVE mirror (`dword_534F48`, the one
+    `sub_440D90` reflects through) parked in `dword_4E90A0`; 134 puts it back.
+    Kay'l's apartment (AREA 237) parks it from its zone scripts on frame 1:
+    standing at (4116, -742) it stays parked and never reflects, while at zone
+    84's centre (3738, -629) that zone's 134 restores it and it reflects. 137 is
+    `UI_CloseAllScreens` - every open screen's own close - and Jaunpur's message
+    17 handler (the hurt) runs it: with the sneak open, message 17 closes it
+    through its close (event 26).
+
+    Shown to fail: the viewer ignoring the park (the first spot reflects from
+    frame 0); the close request not taken (the sneak stays open).
+    """
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    def run(area, stand, frames, extra=(), env=None):
+        return subprocess.run(
+            [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+             "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", area,
+             "--stand", stand, "--no-crowd", "--nofmv", "--nodelay", "--frames", str(frames),
+             "--res", "800x600"] + list(extra),
+            capture_output=True, text=True, errors="replace",
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy", **(env or {}))).stdout
+    parked = run("237", "4116,1071,-742,0", 40)
+    restored = run("237", "3738,1071,-629,0", 40)
+    hurt = run("1", "15495,-261,10556,0", 160, ["--sneak"], {"OMK_POST_MESSAGE": "17@120"})
+    seq = lambda o: re.findall(r"(set\.mirror\.(?:on|off))|mirror is (REFLECTING)", o)
+    flat = lambda o: [a or b for a, b in seq(o)]
+    closed = ("ui.close_all - UI_CloseAllScreens" in hurt,
+              "UI_CloseAllScreens - screen 9 closes" in hurt,
+              "screen 9 closed by the player - event 26" in hurt)
+    return (flat(parked)[:3], flat(restored)[:3], closed), \
+           (["set.mirror.off", "set.mirror.off"],
+            ["set.mirror.off", "set.mirror.on", "REFLECTING"], (True, True, True)), \
+           "the apartment's mirror at a parked spot (never reflecting) and at zone 84 " \
+           "(restored, reflecting); Jaunpur's hurt with the sneak open: close_all, the " \
+           "screen closed, by its own close"
+
+
 def c_engine_follow_and_sync():
     r"""`camera.follow_player` (op 54) and `player.pos.sync` (op 127)
     (`todo/scene-gameplay-audit.md` 15, 16).
@@ -46764,6 +46809,7 @@ SLOW = [
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
     ("engine: image show", c_engine_image_show, "todo/scene-gameplay-audit.md 13; script/area.cpp"),
+    ("engine: mirror park", c_engine_mirror_park, "todo/scene-gameplay-audit.md 17; script/area.cpp"),
     ("engine: weather", c_engine_weather, "todo/scene-gameplay-audit.md 8; o3de/weather.h"),
     ("engine: ui highscore", c_engine_ui_highscore, "todo/scene-gameplay-audit.md 6; script/area.cpp, script/savefile.cpp"),
     ("engine: follow and sync", c_engine_follow_and_sync, "todo/scene-gameplay-audit.md 15, 16; script/area.cpp"),

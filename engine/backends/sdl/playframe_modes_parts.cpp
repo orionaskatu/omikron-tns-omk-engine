@@ -920,6 +920,28 @@ int PlayState::modesShoot() {
             if (!up && hsOpenPage < 0) hsOpenPage = h.table;
         }
         if (!walk && hsOpenPage >= 0 && playerScreen < 0) playerScreen = kScreenHighScore;
+        // `OMK_POST_MESSAGE=M@F`: an INSTRUMENT - message M posted from the
+        // player on frame F, as a hit posts message 0 to the hurt handler
+        // (`verify.py: engine: close all`)
+        {
+            static int pmMsg = -2, pmFrame = -1;
+            if (pmMsg == -2) {
+                pmMsg = -1;
+                if (const char* e = std::getenv("OMK_POST_MESSAGE"))
+                    if (std::sscanf(e, "%d@%d", &pmMsg, &pmFrame) != 2) pmMsg = -1;
+            }
+            if (pmMsg >= 0 && n == pmFrame) {
+                const bool ran = session.postMessage(pmMsg, session.playerActor());
+                std::printf("frame %ld: OMK_POST_MESSAGE - message %d posted, %s\n", n, pmMsg,
+                            ran ? "to its handler" : "no handler subscribes");
+            }
+        }
+        // op 137 `ui.close_all` - `UI_CloseAllScreens`: the open screen's own
+        // close, which the walk's close below then takes by its screen
+        if (session.takeCloseAllScreens() > 0 && walk && !walk->closed()) {
+            std::printf("frame %ld: UI_CloseAllScreens - screen %d closes\n", n, openScreen);
+            walk->closeScreen();
+        }
         // A script asked for a screen, or the PLAYER did. Which screen is the
         // SESSION's answer or the special move's, never this file's.
         if (!walk && (session.pendingUiScreen() >= 0 || playerScreen >= 0)) {

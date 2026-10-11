@@ -2099,10 +2099,10 @@ that reduced failures were kept. The rest are left as they are.
 | 131 | 0x405A10 | 4 |  | `music.volume` |  | 52 |
 | 132 | 0x405A90 | 0 |  | `fade.to_black` |  | 504 |
 | 133 | 0x405AB0 | 0 |  | `fade.from_black` |  | 505 |
-| 134 | 0x405AD0 | 0 |  |  |  | 2 |
-| 135 | 0x405AF0 | 0 |  |  |  | 3 |
+| 134 | 0x405AD0 | 0 |  | `set.mirror.on` |  | 2 |
+| 135 | 0x405AF0 | 0 |  | `set.mirror.off` |  | 3 |
 | 136 | 0x405B10 | 4 |  | `camera.shake` |  | 32 |
-| 137 | 0x405BA0 | 0 |  |  |  | 7 |
+| 137 | 0x405BA0 | 0 |  | `ui.close_all` |  | 7 |
 | 138 | 0x405BB0 | 2 |  | `character.look_at_player` | CHARACTERS | 251 |
 | 139 | 0x405C30 | 2 |  | `character.look_away` | CHARACTERS | 264 |
 | 140 | 0x405CB0 | 0 |  |  |  |  |

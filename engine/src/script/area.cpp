@@ -671,6 +671,12 @@ void Session::resetWorld() {
     // `dword_4E6B20 = 0`; `memset(word_4E6CA0, 0xFF, 100)`.
     zones_.registerAll({}, state_);
     promptCtx_.fill(-1);
+    // a set's load sets the live mirror afresh (`dword_534F48`), so ops
+    // 134/135's parking does not outlive the area. LABELLED: the engine never
+    // clears `dword_4E90A0`, so a 134 after a load would restore a mesh of
+    // the OLD set - a stale pointer the port does not reproduce
+    mirrorParked_ = false;
+    mirrorWasLive_ = false;
     activatesPending_ = 0;
     actionPressed_ = false;
     objectSlotIds_.fill(-1);
@@ -3130,6 +3136,33 @@ void Session::onCall(int i, const Call& call) {
                         static_cast<int>(h.score), call.fields[1], h.table, h.table);
             highScores_.push_back(std::move(h));
         }
+        break;
+    case 134:
+    case 135:
+        // `set.mirror.on` / `set.mirror.off` (0x405AD0 / 0x405AF0, read from
+        // the image): the dry-run test, then `sub_41E1D0(1)` / `(0)`. 0 parks
+        // the LIVE mirror - `if (dword_534F48) { dword_4E90A0 =
+        // dword_534F48; dword_534F48 = 0; }` - and 1 puts the parked one back
+        // when there is one, leaving it parked too. `dword_534F48` is the one
+        // mirror `sub_440D90` reflects through (CLAUDE.md 6). AREA 237's zone
+        // scripts park it on three camera cuts and restore it in two others.
+        if (call.op == 135) { if (!mirrorParked_) mirrorWasLive_ = true; mirrorParked_ = true; }
+        else if (mirrorWasLive_) mirrorParked_ = false;
+        ++mirrorToggles_;
+        std::printf("frame %ld: %s - the live mirror (dword_534F48) %s\n", frameNo_,
+                    call.op == 135 ? "set.mirror.off" : "set.mirror.on",
+                    mirrorParked_ ? "parked" : "live");
+        break;
+    case 137:
+        // `ui.close_all` (0x405BA0, read from the image): the dry-run test,
+        // then `jmp sub_41DF90` - `UI_CloseAllScreens()` and 1: every slot
+        // whose state (+8) is set gets its own CLOSE callback (instance +20,
+        // the record's +28). The screens are the frontend's
+        // (`takeCloseAllScreens`). Seven sites: the GLOBAL hurt handlers (Vie
+        // set, a red flash, a shake - so a hit closes the sneak), AREA 114
+        // after the translation, a cutscene's opening in AREA 101, SCENE 2.
+        ++closeAllScreens_;
+        std::printf("frame %ld: ui.close_all - UI_CloseAllScreens\n", frameNo_);
         break;
     case 122:
         // `set.show_piece` (0x405570, `asmfn.py --op 122`): op 123's handler

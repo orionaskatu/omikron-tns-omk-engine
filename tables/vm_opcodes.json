@@ -35,8 +35,8 @@
   },
   {
    "what": "named",
-   "got": 130,
-   "want": 130
+   "got": 133,
+   "want": 133
   }
  ],
  "rows": [
@@ -1252,7 +1252,7 @@
    "length": 0,
    "table_says": 0,
    "corrected": false,
-   "name": null,
+   "name": "set.mirror.on",
    "tag": null
   },
   {
@@ -1261,7 +1261,7 @@
    "length": 0,
    "table_says": 0,
    "corrected": false,
-   "name": null,
+   "name": "set.mirror.off",
    "tag": null
   },
   {
@@ -1279,7 +1279,7 @@
    "length": 0,
    "table_says": 0,
    "corrected": false,
-   "name": null,
+   "name": "ui.close_all",
    "tag": null
   },
   {

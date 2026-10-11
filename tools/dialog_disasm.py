@@ -475,7 +475,16 @@ NAME = {
   #     on the active camera's eye and aim that decays over field0, amplitude
   #     field1 in raw units. Explosions and rumbles: Grotte Gandhar, the
   #     Tetra raids.
+  # 134 / 135: `sub_41E1D0(1)` / `(0)` (0x405AD0 / 0x405AF0, read from the
+  #     image): 0 PARKS the live mirror (`dword_534F48` -> `dword_4E90A0`,
+  #     the live one zeroed), 1 puts the parked one back. AREA 237's camera
+  #     cuts.
+  134:"set.mirror.on", 135:"set.mirror.off",
   136:"camera.shake",
+  # 137: `UI_CloseAllScreens()` (0x405BA0, a `jmp sub_41DF90`, read from the
+  #     image) - every open screen's own close. The GLOBAL hurt handlers (a
+  #     hit closes the sneak), AREA 114, AREA 101, SCENE 2.
+  137:"ui.close_all",
   # 142: (actor, VARIABLE, table) - `HighScore_Insert(name, Var_Get(field1),
   #     field2)` with the name the actor record's +8 (`Actor_GetProperty`
   #     case 6; a field outside 0..99 resolves to the player record), then

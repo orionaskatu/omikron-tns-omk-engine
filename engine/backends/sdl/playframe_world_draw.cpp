@@ -1121,8 +1121,10 @@ void PlayState::worldMirror() {
     // The engine keeps a SINGLE global (`dword_534F48`), so at most
     // one mirror is live at a time; the shown slot's is the one.
     static const bool noMirror = std::getenv("OMK_NO_MIRROR") != nullptr;
-    const omk::MirrorPlane& wmp =
-        worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)].mirror;
+    // ...unless ops 134/135 parked it (`sub_41E1D0(0)`: `dword_534F48 = 0`)
+    static const omk::MirrorPlane parkedMirror{};
+    const omk::MirrorPlane& wmp = session.mirrorParked() ? parkedMirror
+        : worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)].mirror;
     {
         // `OMK_CAMLOG=1`: the frame's camera as DRAWN, every frame,
         // after every writer above. A creep of a hundredth of a unit
@@ -1159,7 +1161,9 @@ void PlayState::worldMirror() {
         if (mst.maskPixels > 0) mirrorSeen = true;
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
                     "%.0f in front)\n", n,
-                    mst.active ? "REFLECTING" : "out of view - the camera is behind it",
+                    mst.active ? "REFLECTING"
+                    : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
+                                             : "out of view - the camera is behind it",
                     mst.native ? " [native: the two passes]" : "",
                     mst.maskPixels, static_cast<double>(mst.distance));
     }

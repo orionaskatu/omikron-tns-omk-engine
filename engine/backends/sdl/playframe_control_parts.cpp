@@ -141,6 +141,9 @@ void PlayState::controlBinding() {
     // camera being aimed was not the camera being drawn
     // (`todo/omk-play.md` 97g).
     if (shootMode && shootCameraLive) followCam = true;
+    // op 54's MODE 0 (`camera.follow_player`): the follow camera, whatever
+    // the area's last world camera was, until a camera request replaces it
+    if (session.followRequested() && !session.playerAnimHeld()) followCam = true;
     if (forceAdventure && !hc) followCam = true;   // a street start: no camera asked, the follow one
     const bool wantAdventure = forceAdventure
         ? (session.playerPlaced() && !session.dialogOpen() && !walk && feetSetLoaded)

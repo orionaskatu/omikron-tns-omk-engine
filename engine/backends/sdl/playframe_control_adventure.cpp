@@ -6,12 +6,34 @@
 
 // The follow camera's offsets, first-person aim
 void PlayState::adventureAim() {
+    auto& session = *session_;
     // The follow camera is the world camera the script named -
     // SCENE 55's camera 0 carries its own offsets and travels
     // the same resolve as the mode-0 preset. Its three trailing
     // shorts (the smoothing divisors) are not lifted into
     // `WorldCamera`; the preset's 3/8/8 stand in, labelled.
-    if (followCam && hc && hc->id != playerCamId) {
+    // op 54 asked for MODE 0: the preset's own offsets - 3.00 m behind, the
+    // target on him, fov 75 (`camera_presets.json` row 0) - not the last
+    // world camera's, which may be an absolute shot
+    if (followCam && session.followRequested() && playerCamId != -3) {
+        playerCamId = -3;
+        shootCameraLive = false;
+        const float eye[3] = {0.0f, 0.0f, omk::kFollowEyeBack};
+        const float at[3]  = {0.0f, 0.0f, 0.0f};
+        player->setCameraOffsets(eye, at, 75.0f);
+        std::printf("frame %ld: follow camera (camera.follow_player) - preset 0, eye "
+                    "offset 0 0 %.0f, fov 75\n", n, double(omk::kFollowEyeBack));
+    }
+    if (session.posSyncs() != posSyncsSeen) {
+        posSyncsSeen = session.posSyncs();
+        if (player) {
+            player->posSync();
+            std::printf("frame %ld: player.pos.sync (sub_41C140) - at %.0f %.0f %.0f, the "
+                        "vertical state zeroed\n", n, double(player->pos()[0]),
+                        double(player->pos()[1]), double(player->pos()[2]));
+        }
+    }
+    if (followCam && hc && hc->id != playerCamId && !session.followRequested()) {
         playerCamId = hc->id;
         // ...AND THAT TAKES THE SHOOT CAMERA AWAY. `Shoot_Enter`
         // does `Camera_Request(4, ...)` with both camera actors

@@ -504,6 +504,7 @@ struct PlayState {
     omk::Surface imageShown{};
     bool imageLive{};
     std::uint32_t imageMask{}, imageLast{};
+    long posSyncsSeen{};   // op 127's count, applied once each
     bool lookCam{};
     bool lookMouse{};
     bool lookAtKnown{};

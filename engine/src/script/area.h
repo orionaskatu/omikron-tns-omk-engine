@@ -1188,6 +1188,19 @@ public:
     // op 94 `image.show`'s file, `IMAGES\%06lx.BMP`, for the frontend to show
     // (`Image_Show`); taken once - "" when none is pending
     std::string takeImageShow() { std::string s; s.swap(imageShow_); return s; }
+    // op 54 `camera.follow_player` (0x402ED0 -> `sub_41DDB0(player)`):
+    // `Camera_Request(0, {player, player})` with a 0-frame blend - the FOLLOW
+    // camera, preset 0 - until the next camera request replaces it (any
+    // `applyCamera`). And `byte_910308 = 0`, which turns off a set-mesh
+    // camera block (`sub_446AA0`) this port does not run - LABELLED.
+    bool followRequested() const { return followRequested_; }
+    long followRequests() const { return followRequests_; }
+    // op 127 `player.pos.sync` (0x405800 -> `sub_41C140`): the player's node
+    // position copied into +244 and +232, the ground cache to FLT_MAX, and
+    // the vertical state ZEROED - +416 (the pitch), +216..+224 (velocity),
+    // +1304 (the fall byte), +280/+284 and `dword_6A52CC`. Counted; the body
+    // is the frontend's (`PlayerController::posSync`).
+    long posSyncs() const { return posSyncs_; }
     // how many times `Script_Pump`'s restart arm has run - a frontend that
     // sees it move drops everything it holds for the old world
     long restarts() const { return restarts_; }
@@ -1765,6 +1778,8 @@ private:
 
     // ---- the world hooks (script/hooks.h) - see the public section
     std::array<int, 50> objectSlotIds_{};    // word_4E6CA0
+    bool followRequested_ = false;           // op 54, until a camera request
+    long followRequests_ = 0, posSyncs_ = 0;
     std::string imageShow_;                  // op 94, until the frontend takes it
     std::map<int, int> heldSlot_;            // Actor_HeldObjectSlot, by id; -1 = player
     std::set<int> shownSlots_;               // Object_ShowInScene / HideFromScene

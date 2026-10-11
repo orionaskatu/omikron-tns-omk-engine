@@ -1308,6 +1308,7 @@ void Session::restart() {
     playerAddress_ = -1;
     pendingAddress_ = -1;
     haveCam_ = false;
+    followRequested_ = false;
     camTravel_ = 0; camElapsed_ = 0.0;
     rootMotion_.clear();
     // `IAM\START` over a zeroed DB, `State_Apply`, day 52, 2000000 into it
@@ -1372,8 +1373,10 @@ void Session::applyCamera(int id, int travel) {
     // that belongs to somewhere else is not a decode failure.
     if (!c) return;
     // Past the `Camera_FindWorld` test this IS a `Camera_Request`, so it
-    // counts as one whatever it goes on to do with the camera.
+    // counts as one whatever it goes on to do with the camera - and it
+    // replaces op 54's mode 0.
     ++camRequests_;
+    followRequested_ = false;
     if (const char* e = std::getenv("OMK_CAMLOG"))
         if (*e == '1')
             std::fprintf(stderr, "[cam] frame %ld  camera %d  travel %d  %s\n",
@@ -3062,6 +3065,21 @@ void Session::onCall(int i, const Call& call) {
             std::printf("frame %ld: set.hide_piece %d - %s\n", frameNo_, call.fields[0],
                         hid ? "the row hidden" : "no row carries that id");
         }
+        break;
+    case 54:
+        // `camera.follow_player` (0x402ED0): the dry-run test, then
+        // `sub_41DDB0(Actor_Player())` - when that actor is present,
+        // `Camera_Request(0)` on him with `dword_930818 = 0` (no blend), and
+        // `byte_910308 = 0`. Three shipped sites, AREA 24's zones 2, 4 and 6,
+        // each an enter script that is this and `end`: walking into them
+        // hands Hall 42's fixed shots back to the follow camera.
+        followRequested_ = true;
+        ++followRequests_;
+        std::printf("frame %ld: camera.follow_player - Camera_Request(0) on the player\n", frameNo_);
+        break;
+    case 127:
+        // `player.pos.sync` (0x405800, a bare `jmp sub_41C140`)
+        ++posSyncs_;
         break;
     case 94:
         // `image.show` (0x4048D0, `asmfn.py --op 94`): the dry-run test, then

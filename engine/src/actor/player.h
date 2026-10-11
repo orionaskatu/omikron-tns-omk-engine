@@ -210,6 +210,16 @@ public:
     // nothing else. `start_` moves too, so `distanceWalked` measures the walk
     // from where he was put down, not from where he was first built.
     void placeAt(const float pos[3], float facing);
+    // op 127 `player.pos.sync` (`sub_41C140`): the position stays - the
+    // node and the walker are one point here - and the vertical state is
+    // zeroed: the pitch (+416), the velocity, the fall byte and the fall
+    // accumulators (`Walker::moveTo`), `dword_6A52CC` (the leap flag) with
+    // them. The ground cache (+260 = FLT_MAX) has no counterpart here.
+    void posSync() {
+        const double* p = walker_.pos();
+        walker_.moveTo(p[0], p[1], p[2]);
+        euler_[0] = 0.0f;
+    }
     // ...and the same WITHOUT the floor seat, for a body the ground does not
     // hold up. `sub_457F50` writes a rider's `+248` straight from the
     // slider's own y (`slider.y + 10`) and calls `o3de_SetNodePos` - there is

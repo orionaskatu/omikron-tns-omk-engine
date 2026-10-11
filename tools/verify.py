@@ -41841,6 +41841,49 @@ def c_engine_image_show():
            "the bitmap's stretch, of 480000; the close (edge, state)"
 
 
+def c_engine_follow_and_sync():
+    r"""`camera.follow_player` (op 54) and `player.pos.sync` (op 127)
+    (`todo/scene-gameplay-audit.md` 15, 16).
+
+    Op 54 is `sub_41DDB0(player)`: `Camera_Request(0)` on him with no blend -
+    the follow camera, preset 0 - until the next camera request. Its three
+    sites are AREA 24's zones 612, 614 and 616 (records 2, 4, 6), enter
+    scripts of nothing else: Hall 42's fixed shots handed back to the follow
+    camera. Standing in 612: the request, and the follow camera on preset 0.
+
+    Op 127 is `sub_41C140`: the node's position into +244/+232, the vertical
+    state zeroed. Its sites follow `scx.play.player.wait` - a program moved
+    the body. AREA 168's zone 2789 (record 3), run as its arm runs it: the
+    program ends, the player keeps the body's place, and the sync follows.
+
+    Shown to fail: without op 54's flag the follow line is missing; without
+    op 127's count the sync line is.
+    """
+    import subprocess, re as _re
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    def run(extra, frames):
+        return subprocess.run(
+            [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+             "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--no-crowd",
+             "--frames", str(frames), "--nodelay", "--res", "640x480"] + extra,
+            capture_output=True, text=True, errors="replace",
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    a = run(["--area", "24", "--stand", "8396,-101,2161,285", "--hold", "0*10,k200*40,0*20"], 70)
+    c = run(["--area", "168", "--zone-run", "2789"], 260)
+    req = len(_re.findall(r"camera\.follow_player - Camera_Request\(0\)", a))
+    fol = _re.findall(r"follow camera \(camera\.follow_player\) - preset 0, eye offset 0 0 (-?\d+), fov (\d+)", a)
+    ended = _re.search(r"^frame (\d+): the program ended", c, _re.M)
+    sync = _re.search(r"^frame (\d+): player\.pos\.sync \(sub_41C140\)", c, _re.M)
+    order = bool(ended and sync and int(sync.group(1)) >= int(ended.group(1)))
+    return (req, tuple(fol), bool(sync), order), (1, (("-118", "75"),), True, True), \
+           "op 54 requests; the follow camera it installs (eye z, fov); op 127 ran; " \
+           "after the program handed the body back"
+
+
 def c_engine_astaroth_souls():
     r"""ASTAROTH's SIX SOULS (`todo/astaroth.md` step 1).
 
@@ -46530,6 +46573,7 @@ SLOW = [
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
     ("engine: image show", c_engine_image_show, "todo/scene-gameplay-audit.md 13; script/area.cpp"),
+    ("engine: follow and sync", c_engine_follow_and_sync, "todo/scene-gameplay-audit.md 15, 16; script/area.cpp"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),
     ("engine: astaroth tick", c_engine_astaroth_tick, "todo/astaroth.md 3; actor/astaroth.h"),

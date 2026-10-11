@@ -802,6 +802,11 @@ struct PlayState {
     void screensLift();   // the lift's description box
     void screensPropertyTail();   // the tail of Actor_SetProperty
     void screensHuds();   // the fight HUD, the breath gauge, the shoot HUD
+    // THE CITY WEATHER (`o3de/weather.h`, `playframe_world_weather.cpp`):
+    // the cycle ticked and the drops projected before the present's gates,
+    // which then know whether `fb` carries any; drawn first by `screensHuds`
+    void weatherFrame(const omk::View& v);
+    void weatherDraw();
     void screensFps();   // the fps counter
     void screensFades();   // the screen fades, over everything
     void screensFlicker();   // the flicker catcher
@@ -849,6 +854,18 @@ struct PlayState {
     const omk::UiItem * vpItem{};
     bool screenReadsPicture{};
     omk::View view{};
+    // `sub_4815D0`'s state and this frame's projected drops: the rain's
+    // streaks (head colour, tail grey) and the snow's flake squares
+    omk::Weather weather{};
+    double weatherClockMs = 0.0;                    // the frame's milliseconds, summed
+    struct WeatherLine { int x0, y0, x1, y1; std::uint32_t c0, c1; };
+    struct WeatherFlake { int x0, y0, x1, y1; };
+    std::vector<WeatherLine> weatherLines{};
+    std::vector<WeatherFlake> weatherFlakes{};
+    omk::Surface weatherSnow{};
+    bool weatherSnowTried = false;
+    unsigned weatherBitsTold = 0xFFFFu;
+    int weatherStateTold = -1;
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

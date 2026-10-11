@@ -272,6 +272,7 @@ void PlayState::screensHuds() {
     auto& comp = *comp_;
     auto& optMenu = *optMenu_;
     auto& session = *session_;
+    weatherDraw();   // the city weather, under every interface layer
     // ---- THE FULL-SCREEN IMAGE (`image.show`, `sub_466E70`) -----------
     // A bitmap no bigger than the screen is STRETCHED over all of it; a
     // bigger one is scaled to fit, keeping its shape, and centred - the

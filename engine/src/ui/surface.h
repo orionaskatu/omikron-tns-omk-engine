@@ -204,6 +204,13 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
 long drawLine(Surface& dst, int x0, int y0, int x1, int y1, std::uint16_t colour,
               int left, int right, int top, int bottom);
 
+// The OPAQUE GOURAUD line, `I2D_DrawLine` flags 0x18 (bit 3 shades, bits
+// 0..2 clear so no blend): Bresenham, the last pixel left out, each channel
+// lerped from `c0` to `c1` (0xRRGGBB) per step. The radar's edges and the
+// city weather's rain (`o3de/weather.h`).
+void drawLineGouraud(Surface& fb, int x0, int y0, int x1, int y1,
+                     std::uint32_t c0, std::uint32_t c1);
+
 // The mode-2 triangle: three edges, no fill.
 long drawTriangleWire(Surface& dst, const int xy[6], std::uint16_t colour,
                       int left, int right, int top, int bottom);

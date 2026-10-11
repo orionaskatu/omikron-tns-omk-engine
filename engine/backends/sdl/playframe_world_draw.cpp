@@ -1187,6 +1187,7 @@ void PlayState::worldMirror() {
         // glReadPixels 36, the 888 -> 565 dither 35, the upload 16 -
         // against 9 ms for the game itself. `GlesRenderer::presentWorld`
         // dithers on the GPU as `present.frag` does on Vulkan.
+        weatherFrame(view);   // the city weather, before the gates (`playframe_world_weather.cpp`)
         const bool onVulkan = gpuWorldOnWindow();   // the world is the window's renderer
         // the gates in order; the first that holds names why the frame
         // stays on the CPU path (`OMK_GPU_PRESENT_STATS` counts them)
@@ -1227,6 +1228,9 @@ void PlayState::worldMirror() {
         // showed only while another gate (the fight's opening fade) held
         // the frame on the CPU - a reader: *"The health disappear after
         // some time (only the stats should disappear)"*.
+        // ...and the CITY WEATHER: its streaks and flakes go into `fb` over the
+        // picture, opaque, without reading it
+        else if (!weatherLines.empty() || !weatherFlakes.empty()) { keep = "weather"; softGate = true; }
         else if (fightRun.active && fightRun.fight && fightRun.fight->koCounter() == 0 &&
                  !omk::envSet("OMK_NOUI")) { keep = "fight hud"; softGate = true; }
         // ...and the BREATH gauge, under the test that draws it - the

@@ -216,6 +216,32 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
 
 // ------------------------------------------------- the software rasterizer
 
+// The opaque Gouraud line (flags 0x18: bit 3 shades, bits 0..2 clear so no
+// blend): Bresenham, the last pixel left out, colour lerped per step.
+void drawLineGouraud(Surface& fb, int x0, int y0, int x1, int y1,
+                 std::uint32_t c0, std::uint32_t c1) {
+    const int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
+    const int n = std::max(dx, dy);
+    if (n == 0) return;
+    const int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy, x = x0, y = y0;
+    for (int i = 0; i < n; ++i) {
+        if (x >= 0 && y >= 0 && x < fb.w && y < fb.h) {
+            const auto ch = [&](int s) {
+                const int a = static_cast<int>((c0 >> s) & 255u);
+                const int b = static_cast<int>((c1 >> s) & 255u);
+                return a + (b - a) * i / n;
+            };
+            fb.px[static_cast<std::size_t>(y) * static_cast<std::size_t>(fb.w) +
+                  static_cast<std::size_t>(x)] = rgb565(ch(16), ch(8), ch(0));
+        }
+        const int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx)  { err += dx; y += sy; }
+    }
+}
+
+
 long drawLine(Surface& dst, int x0, int y0, int x1, int y1, std::uint16_t colour,
               int left, int right, int top, int bottom) {
     if (!dst.valid()) return 0;

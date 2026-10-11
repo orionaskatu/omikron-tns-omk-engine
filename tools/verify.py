@@ -41953,6 +41953,66 @@ def c_engine_ui_highscore():
            "message); the frame oscillator 5 closes it; the player walking under it"
 
 
+def c_engine_weather():
+    r"""THE CITY WEATHER - `sub_4815D0` (`o3de/weather.h`, `todo/scene-gameplay-audit.md` 8).
+
+    The AREA chunk's `+176` low word picks it (`Area_TickLoad` case 9 ->
+    `sub_41D3F0`): 1 the rain, 2 the snow, 3 a cycle that draws nothing (the
+    sprite arm is called on `test al, 4` alone). Row 7, *Niveau de detail*,
+    must be 2 or nothing runs. Asserted: the shipped areas by type; Anekbah's
+    street at detail 2 with `OMK_WEATHER_SKIP_MS` past the first wait -
+    message 23 run by AREA 0's handler, the music switching to track 119, the
+    20 s ramp (29 drops at frame 90), state 2 at 200, streaks drawn; the same
+    run at detail 1 - nothing; and Mahaleel's ice cave, where the roof ray
+    (196.85 up through the bolts' world) keeps the snow from ever starting.
+
+    Shown to fail: the detail gate removed (the detail-1 run rains), the roof
+    ray ignored (the cave snows), the streaks not recorded (none drawn).
+    """
+    import dialog_triggers as T
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    types = {}
+    for k, bb in sorted(T.archive(omkpaths.data("IAM", "AREA")).items()):
+        if len(bb) >= 178:
+            t = struct.unpack_from("<H", bb, 176)[0]
+            if t:
+                types.setdefault(t, []).append(k)
+    def run(area, extra, frames, env=None):
+        return subprocess.run(
+            [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+             "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", area,
+             "--no-crowd", "--frames", str(frames), "--nodelay", "--res", "800x600"] + extra,
+            capture_output=True, text=True, errors="replace",
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy", **(env or {}))).stdout
+    street = ["--stand", "1804,0,-6890,336"]
+    skip = {"OMK_WEATHER_SKIP_MS": "900000"}
+    o2 = run("0", street + ["--detail", "2"], 700, skip)
+    o1 = run("0", street + ["--detail", "1"], 100, skip)
+    oc = run("145", ["--detail", "2"], 70)
+    posted = re.findall(r"weather - message (\d+) posted \(Game_RaiseEvent 43\) (to its handler)?", o2)
+    music = "music switch to 119" in o2
+    states = re.findall(r"weather - state (\d+), (-?\d+) drops", o2)
+    ramp = re.search(r"frame 90: weather - (\d+) drops stepped", o2)
+    full = re.search(r"frame 690: weather - (\d+) drops stepped, (\d+) streaks", o2)
+    quiet = ("row 7 is not 2" in o1, "message 23" in o1, "streaks and" in o1)
+    cave = (re.search(r"frame 60: weather - state (\d+), (\d+) drops, nothing stepped "
+                      r"\(a roof overhead\)", oc) or [None, None, None])
+    return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
+            [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
+            (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
+            (cave[1], cave[2]) if cave[0] else None), \
+           ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
+            ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0")), \
+           "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
+           "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
+           "ramp at frame 90, full strength drawing streaks; at detail 1 nothing; " \
+           "Mahaleel's cave: state 2, no flake, a roof overhead"
+
+
 def c_engine_follow_and_sync():
     r"""`camera.follow_player` (op 54) and `player.pos.sync` (op 127)
     (`todo/scene-gameplay-audit.md` 15, 16).
@@ -46704,6 +46764,7 @@ SLOW = [
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
     ("engine: image show", c_engine_image_show, "todo/scene-gameplay-audit.md 13; script/area.cpp"),
+    ("engine: weather", c_engine_weather, "todo/scene-gameplay-audit.md 8; o3de/weather.h"),
     ("engine: ui highscore", c_engine_ui_highscore, "todo/scene-gameplay-audit.md 6; script/area.cpp, script/savefile.cpp"),
     ("engine: follow and sync", c_engine_follow_and_sync, "todo/scene-gameplay-audit.md 15, 16; script/area.cpp"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),

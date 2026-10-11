@@ -111,30 +111,8 @@ bool clipRect(int a1, int a2, int a3, int a4, int a9, int a10, int a11, int a12,
     return true;
 }
 
-// The opaque Gouraud line (flags 0x18: bit 3 shades, bits 0..2 clear so no
-// blend): Bresenham, the last pixel left out, colour lerped per step.
-void lineGouraud(Surface& fb, int x0, int y0, int x1, int y1,
-                 std::uint32_t c0, std::uint32_t c1) {
-    const int dx = std::abs(x1 - x0), dy = std::abs(y1 - y0);
-    const int n = std::max(dx, dy);
-    if (n == 0) return;
-    const int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-    int err = dx - dy, x = x0, y = y0;
-    for (int i = 0; i < n; ++i) {
-        if (x >= 0 && y >= 0 && x < fb.w && y < fb.h) {
-            const auto ch = [&](int s) {
-                const int a = static_cast<int>((c0 >> s) & 255u);
-                const int b = static_cast<int>((c1 >> s) & 255u);
-                return a + (b - a) * i / n;
-            };
-            fb.px[static_cast<std::size_t>(y) * static_cast<std::size_t>(fb.w) +
-                  static_cast<std::size_t>(x)] = rgb565(ch(16), ch(8), ch(0));
-        }
-        const int e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx)  { err += dx; y += sy; }
-    }
-}
+// (the opaque Gouraud line is `omk::drawLineGouraud`, `ui/surface.h` -
+// shared with the city weather's rain since 2026-10-11)
 
 }  // namespace
 
@@ -303,7 +281,7 @@ RadarFrame Radar::draw(Surface& fb, const RadarView& v, const std::vector<RadarA
     });
     for (const Prim& p : prims) {
         if (p.line) {
-            lineGouraud(fb, p.x0, p.y0, p.x1, p.y1, p.c0, p.c1);
+            drawLineGouraud(fb, p.x0, p.y0, p.x1, p.y1, p.c0, p.c1);
         } else {
             const int xs[4] = {p.x0, p.x1, p.x1, p.x0};
             const int ys[4] = {p.y0, p.y0, p.y1, p.y1};

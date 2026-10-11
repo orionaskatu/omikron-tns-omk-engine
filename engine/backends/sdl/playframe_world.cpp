@@ -951,6 +951,10 @@ int PlayState::phaseWorld() {
             worldDrawLists();
             worldMirror();
         }
+        if (fbStale && !drawWorld && cloudCoversFrame()) {
+            fbStale = false;             // the cloud overwrites all of it (`fbCloudOwed`)
+            fbCloudOwed = true;
+        }
         if (fbStale && !(drawWorld && gpuFrame && !overlayFrame)) clearFrame();
         done = true;
     } while (false);

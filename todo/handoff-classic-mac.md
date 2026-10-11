@@ -1003,6 +1003,23 @@ CPU, and the SDL GL1 build presents through SDL. On the iBook read
 The cloud itself (`ui: cloud warp` 13.2 ms, `emboss` 4.6) is the menu's
 next cost.
 
+**Step 3m - NO CLEAR UNDER THE MENU'S CLOUD, DONE 2026-10-11, NOT yet run on
+the iBook.** Step 3j left a frame with no world clearing all of `fb` - 614
+KB of zeros, each line read in before it is written on the G3 - and on a
+menu frame the cloud then writes every pixel again (`MenuCloud::draw` at
+640x480, `drawScaled` at any other size): the seventh run's menu frames
+carried 6.7 ms of `world` self. `phaseWorld` now skips that clear when the
+cloud will cover the frame (`PlayState::cloudCoversFrame`: a screen open
+with no player, the cloud loaded, the composer's table holding the screen -
+the one early return before the cloud), and `screensHuds` settles the debt
+before the composer: if the cloud is not drawn after all it clears there and
+logs `the cloud was expected and not drawn`. Shared code, so every backend
+has it. Proved byte-identical: the start menu at 640x480 (frames 40, 97),
+800x600 and 1024x768, and the name dialog after ENTER, from the build before
+and after; and a MUTATION filling `fb` with 0x1234 where the clear is
+skipped left all three frames identical while counting the skip on every
+frame (97, 60, 140) - the cloud covers whatever is under it.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

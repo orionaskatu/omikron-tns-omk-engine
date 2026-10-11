@@ -709,6 +709,16 @@ struct PlayState {
     // `fb` NOT YET CLEARED this frame (`phaseWorld`'s deferred clear, 2026-10-11)
     bool fbStale = false;
     void clearFrame() { std::fill(fb.px.begin(), fb.px.end(), std::uint16_t(0)); fbStale = false; }
+    // ...and NOT cleared at all on a world-less frame the menu's CLOUD will
+    // cover (2026-10-11, step 3m): it writes every pixel of `fb` at any size,
+    // so the clear was 614 KB written for nothing. `screensHuds` settles the
+    // debt before the composer: if the cloud is not drawn after all, it
+    // clears there and says so.
+    bool fbCloudOwed = false;
+    bool cloudCoversFrame() const {
+        static const bool noUi = omk::envSet("OMK_NOUI");
+        return walk && !player && cloud.valid() && !noUi && comp_ && comp_->hasScreen(openScreen);
+    }
     float ovFade[4] = {0, 0, 0, 0};         // the colour fade, for its shader
     int gpuVy = 0, gpuVh = 0;               // where the GPU world is placed
     const char* gpuKeep = nullptr;          // the first gate that kept the frame on the CPU path

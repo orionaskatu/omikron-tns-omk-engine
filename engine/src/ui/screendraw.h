@@ -206,6 +206,10 @@ public:
     // which is colour-keyed over it. Optional: a composer with none draws the
     // sheet on black, which is what this did before the cloud was found.
     void attachCloud(const MenuCloud* c) { cloud_ = c; }
+    // `draw(fb, id, ...)` reaches the cloud: the screen is in the table (the
+    // one early return before it) - with a cloud attached, every pixel of
+    // `fb` is then written whatever was there (`PlayState::fbCloudOwed`)
+    bool hasScreen(int id) const { return w_ && w_->screen(id) != nullptr; }
     // `Ui_DrawItemCursor` - the HIGHLIGHT, and the reason it is attached
     // rather than owned: it carries sixteen elements of state that ease
     // between frames, so a composer that owned one would stop being a pure

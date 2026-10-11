@@ -569,6 +569,17 @@ void PlayState::screensHuds() {
                         session.shootMode().hudScreen(), line);
         }
     }
+    if (fbCloudOwed) {                   // `phaseWorld` skipped the clear for the cloud
+        fbCloudOwed = false;
+        if (!cloudCoversFrame()) {
+            clearFrame();
+            static bool told = false;
+            if (!told) {
+                told = true;
+                std::printf("frame %ld: the cloud was expected and not drawn - the frame cleared late\n", n);
+            }
+        }
+    }
     if (walk) {
         comp.setFrame(n);
         // The oscillators run on a MILLISECOND clock, not on the frame

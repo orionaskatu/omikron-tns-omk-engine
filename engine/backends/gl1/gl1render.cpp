@@ -86,6 +86,7 @@
 
 #include "o3de/greybank.h"
 #include "o3de/shimmer.h"
+#include "o3de/texscale.h"
 #include "o3de/vertexlight.h"
 #include "platform/profile.h"
 #include "ui/surface.h"
@@ -1313,17 +1314,9 @@ private:
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
     GLuint probeTex_ = 0;                // the white-screen probe's pixel reads
 #endif
-    // THE ORIGINAL'S TEXTURE SIZE RULE (`sub_45F4F0`, `docs/ASSETS.md` 4b),
-    // decided once, before the first texture goes up. The game's spec is a 4
-    // MB card, and the original made its 58 slots fit one: it asks the card's
-    // FREE texture memory and, while the textures would need more than that,
-    // halves their width or their height - the width first, then whichever
-    // is the larger - each texture then made at `256 * factor` a side. The
-    // need is `(slots + 5) << 17` bytes for its 16-bit textures (`<< 16` for
-    // 8-bit): 63 x 128 KB = 7.9 MB, so a 4 MB card drew 128x128 and the
-    // reader's 8 MB iBook 128x256. The square-only arm (`dword_53ADEC`, a
-    // D3D device cap) has no OpenGL counterpart. Where the host does not say
-    // (`gl1TextureMemory` -1, every non-AGL build) the textures stay whole.
+    // THE ORIGINAL'S TEXTURE SIZE RULE (`o3de/texscale.h`), decided once,
+    // before the first texture goes up, from the card's free texture memory
+    // (`gl1TextureMemory`, AGL); where the host does not say, whole.
     bool fullTextures_ = false, scaleDecided_ = false;
     float texScaleW_ = 1.0f, texScaleH_ = 1.0f;
     void decideTextureScale() {
@@ -1333,23 +1326,14 @@ private:
 #if defined(OMK_GL1_AGL)
         freeMem = gl1TextureMemory();
 #endif
-        // `OMK_GL1_TEXTURE_MEMORY=bytes`: a card's answer stood in for - the
-        // host's OpenGL gives none, so this is how the rule is run there
-        // (`verify.py: engine: gl1 backend`)
-        if (const char* e = std::getenv("OMK_GL1_TEXTURE_MEMORY")) freeMem = std::atol(e);
-        constexpr long kSlots = 58;                            // `SetMaterialsMemory(58, 0)`
-        const float need = static_cast<float>((kSlots + 5) << 17);
-        float w = 1.0f, h = 1.0f;
-        if (!fullTextures_ && freeMem > 0)
-            while (w * h * need > static_cast<float>(freeMem)) {
-                if (w >= h) w *= 0.5f; else h *= 0.5f;
-            }
-        texScaleW_ = w; texScaleH_ = h;
+        if (const char* e = std::getenv("OMK_TEXTURE_MEMORY")) freeMem = std::atol(e);
+        const TextureScale sc = fullTextures_ ? TextureScale{} : originalTextureScale(freeMem);
+        texScaleW_ = sc.w; texScaleH_ = sc.h;
         if (freeMem > 0 || fullTextures_)
             std::printf("gl1: texture size - %ld KB free for textures, the original's rule needs "
                         "(58 + 5) x 128 KB = %ld KB: textures at %gx%g of their size (a 256x256 page "
-                        "drawn %dx%d)%s\n", freeMem / 1024, static_cast<long>(need) / 1024, w, h,
-                        static_cast<int>(256 * w), static_cast<int>(256 * h),
+                        "drawn %dx%d)%s\n", freeMem / 1024, originalTextureNeed() / 1024, sc.w, sc.h,
+                        static_cast<int>(256 * sc.w), static_cast<int>(256 * sc.h),
                         fullTextures_ ? " - --full-textures: kept whole" : "");
     }
     // the posed draw's per-mesh affines with the camera folded in (`submit`),

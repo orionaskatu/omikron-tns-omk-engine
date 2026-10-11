@@ -28451,7 +28451,7 @@ def c_engine_gl1_backend():
 
     And a FIFTH (2026-10-11, handoff-classic-mac.md 3f step 3f): THE
     ORIGINAL'S TEXTURE SIZE RULE (`sub_45F4F0`, docs/ASSETS.md 4b) with a card
-    answering 5.5 MB free (`OMK_GL1_TEXTURE_MEMORY`, the host's OpenGL gives
+    answering 5.5 MB free (`OMK_TEXTURE_MEMORY`, the host's OpenGL gives
     no answer): the textures need (58 + 5) x 128 KB, so the width halves once
     - the log must say 0.5x1 - and the frame must differ from the whole
     textures' and keep coverage >= 0.99; the gl1 frame (no answer) must say
@@ -28488,7 +28488,7 @@ def c_engine_gl1_backend():
         for tag, env, filt, extra in (("gl1", {}, "nearest", []), ("sw", {"OMK_GL1": "0"}, "nearest", []),
                                       ("bilinear", {}, "bilinear", []),
                                       ("cpu", {}, "nearest", ["--cpu-bodies"]),
-                                      ("small", {"OMK_GL1_TEXTURE_MEMORY": "5500000"}, "nearest", [])):
+                                      ("small", {"OMK_TEXTURE_MEMORY": "5500000"}, "nearest", [])):
             out = os.path.join(tmp, tag + ".bin")
             r = subprocess.run([binp, fr, os.path.join(ROOT, "tables"),
                                 "--save", os.path.join(ROOT, "traces", "save-appart.bin"),

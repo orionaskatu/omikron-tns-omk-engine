@@ -853,7 +853,7 @@ video memory ...`), and GL1 halves as the original does (`gl1: texture size
 size by nearest sampling (the stretch blit's - a reconstruction) with the
 texture matrix on the logical size. `--full-textures` keeps them whole (an
 enhancement). A host with no answer keeps them whole: the street
-byte-identical. `OMK_GL1_TEXTURE_MEMORY=bytes` stands in for a card:
+byte-identical. `OMK_TEXTURE_MEMORY=bytes` stands in for a card:
 `engine: gl1 backend`'s fifth frame at 5.5 MB -> 0.5x1, 33.5% of pixels
 changed, coverage 0.994; shown to fail with the height halved first. On the
 emulated Tiger the card answers 124 MB: whole. The port's own interface

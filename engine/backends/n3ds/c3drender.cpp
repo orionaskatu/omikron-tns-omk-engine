@@ -10,6 +10,7 @@
 #include "c3dstereo.h"
 
 #include "o3de/shimmer.h"
+#include "o3de/texscale.h"
 #include "platform/profile.h"
 #include "ui/overlay.h"
 #include "ui/surface.h"
@@ -334,6 +335,7 @@ public:
         const u64 t0 = svcGetSystemTick();
         for (auto& [key, u] : uploaded_) u.used = false;
         tex_.assign(t.size(), Slot{});
+        decideTextureScale();
         int reused = 0, fresh = 0, failed = 0, dropped = 0;
         // what no slot of the new pool uses leaves FIRST, so the VRAM it held
         // is there for the new ones (6.3)
@@ -366,7 +368,8 @@ public:
                     ++failed;
                     continue;
                 }
-                hit = uploaded_.emplace(key, Uploaded{std::move(tex), x.idx, x.pal, 2LL * x.width * x.height,
+                hit = uploaded_.emplace(key, Uploaded{std::move(tex), x.idx, x.pal,
+                                                      2LL * scaledSide(x.width, texScaleW_) * scaledSide(x.height, texScaleH_),
                                                       false, x.width, x.height, onVram}).first;
                 ++fresh;
             } else {
@@ -923,6 +926,10 @@ public:
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear - the original's
     // hardware device (MAG/MIN LINEAR, MIP NONE). No mip chain yet, so
     // trilinear is drawn bilinear and said.
+    // `--full-textures`: every texture at its own size whatever the VRAM -
+    // the port's own (an enhancement); before the first pool
+    void setFullTextures(bool full) { fullTextures_ = full; }
+
     bool setTextureFilter(int mode) override {
         filter_ = mode >= 1 ? 1 : 0;
         if (mode >= 2) std::printf("c3d: trilinear asked - no mip chain yet, drawn bilinear\n");
@@ -1731,6 +1738,22 @@ private:
             pal[k] = static_cast<std::uint16_t>((r >> 3) << 11 | (g >> 3) << 6 | (b >> 3) << 1 |
                                                 ((r | g | b) ? 1u : 0u));
         }
+        // ...AT THE CARD'S SIZE (`decideTextureScale`, the original's rule):
+        // `size * factor` a side, the page sampled at the nearest texel as a
+        // plain stretch blit does (`sub_463420` - the blit's sampling was the
+        // card's: a reconstruction). The pool slot keeps the LOGICAL size, so
+        // the texel UVs land on the same picture.
+        const int sw = scaledSide(w, texScaleW_), sh = scaledSide(h, texScaleH_);
+        if (sw != w || sh != h) {
+            scaledIdx_.resize(static_cast<std::size_t>(sw) * static_cast<std::size_t>(sh));
+            for (int yy = 0; yy < sh; ++yy) {
+                const std::uint8_t* srow = idx + static_cast<std::size_t>(yy * h / sh) * static_cast<std::size_t>(w);
+                std::uint8_t* drow = scaledIdx_.data() + static_cast<std::size_t>(yy) * static_cast<std::size_t>(sw);
+                for (int xx = 0; xx < sw; ++xx) drow[xx] = srow[xx * w / sw];
+            }
+            idx = scaledIdx_.data();
+            w = sw; h = sh;
+        }
         tile(idx, w, h, pal, tiled_);
         const std::size_t bytes = tiled_.size() * sizeof(std::uint16_t);
         onVram = false;
@@ -1918,6 +1941,32 @@ private:
     std::uint32_t* stShown_[2] = {nullptr, nullptr};
     std::uint8_t q5_[17][256] = {}, q6_[17][256] = {};   // its tables: cells 0..15, 16 undithered
     std::vector<std::uint16_t> tiled_;  // a texture's tiled texels, staged
+    std::vector<std::uint8_t> scaledIdx_;   // a texture's indices at the card's size
+    // THE ORIGINAL'S TEXTURE SIZE RULE (`o3de/texscale.h`; the reader, 2026-10-11:
+    // "3DS has 6MB VRam and the New3DS has 10MB VRam"), decided once at the
+    // first pool from the VRAM the render targets left (`vramSpaceFree`): the
+    // need is 63 x 128 KB of 16-bit textures, as on the 4 MB card the game
+    // was specified for. Textures past what VRAM holds go to linear memory,
+    // which the PICA reads over the bus it shares with the CPU (6.3).
+    bool fullTextures_ = false, scaleDecided_ = false;
+    float texScaleW_ = 1.0f, texScaleH_ = 1.0f;
+    static int scaledSide(int v, float f) {
+        // a power of two from 8 up, as `C3D_TexInit` takes
+        const int s = static_cast<int>(static_cast<float>(v) * f);
+        return f >= 1.0f ? v : std::max(8, s);
+    }
+    void decideTextureScale() {
+        if (scaleDecided_) return;
+        scaleDecided_ = true;
+        const long freeMem = static_cast<long>(vramSpaceFree());
+        const TextureScale sc = fullTextures_ ? TextureScale{} : originalTextureScale(freeMem);
+        texScaleW_ = sc.w; texScaleH_ = sc.h;
+        std::printf("c3d: texture size - %ld KB of VRAM free, the original's rule needs (58 + 5) x "
+                    "128 KB = %ld KB: textures at %gx%g of their size (a 256x256 page drawn %dx%d)%s\n",
+                    freeMem / 1024, originalTextureNeed() / 1024, sc.w, sc.h,
+                    scaledSide(256, sc.w), scaledSide(256, sc.h),
+                    fullTextures_ ? " - --full-textures: kept whole" : "");
+    }
     std::vector<std::uint8_t> markC_;   // a partial update's scratch: corners seen
     std::vector<std::uint16_t> seenV_;  // ...and the corners seen on a vertex
     std::vector<std::uint32_t> touched_;
@@ -1949,6 +1998,9 @@ private:
 }  // namespace
 
 Renderer* makeC3dRenderer() { return new C3dRenderer(); }
+void c3dSetFullTextures(Renderer* r, bool full) {
+    if (r) static_cast<C3dRenderer*>(r)->setFullTextures(full);
+}
 
 void c3dReport(Renderer* r, long frame) {
     if (r) static_cast<C3dRenderer*>(r)->report(frame);

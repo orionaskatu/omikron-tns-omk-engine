@@ -184,6 +184,19 @@ reads the 2:1 copy (7.7 ms before its tiling). And GAME.MPG is still "not
 decodable" on the reader's card (an incomplete copy). Any `FATAL` - send the
 log; the `.elf` of that build names its line (section 5).
 
+**THE ORIGINAL'S TEXTURE SIZE RULE ON THE 3DS (2026-10-11, the reader: "3DS
+has 6MB VRam and the New3DS has 10MB VRam").** `o3de/texscale.h` (shared with
+GL1, `docs/ASSETS.md` 4b): at the first pool the free VRAM (`vramSpaceFree`,
+after the render targets) is the card's answer, and the textures are halved
+until 63 x 128 KB fits - each uploaded at `size * factor` by nearest
+sampling, the slot keeping its logical size for the UVs, the VRAM eviction
+going through the same `uploadTex`. Azahar (New 3DS mode), Anekbah's street:
+**3344 KB free -> 0.5x0.5 (128x128)**, as the 4 MB card the game was
+specified for; the pool 3968 KB (1792 of it in VRAM, 152 KB left) -> 992
+KB, ALL in VRAM, 2352 KB left. `--full-textures` (args.txt) keeps them
+whole. libctru's VRAM heap is the standard 6 MB on both models, so the New
+3DS's extra memory is not in the answer. Console figures owed.
+
 ## 4. What to do next, in order
 
 **ALSO 2026-10-07, after it**: 6.7 the interface over the world on the

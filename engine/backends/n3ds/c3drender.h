@@ -35,6 +35,10 @@ namespace omk {
 // -> never null; `init()` is what fails, and the caller keeps the software
 // reference then.
 Renderer* makeC3dRenderer();
+// `--full-textures` (an enhancement): every texture at its own size, not the
+// size the original's rule gives the free VRAM (`o3de/texscale.h`). Before
+// the first texture pool.
+void c3dSetFullTextures(Renderer* r, bool full);
 
 // THE STRAIGHT PRESENT (`todo/3ds-port.md` 3c): a frame nothing is drawn
 // over leaves the GPU already HALVED - the display transfer's own 2x2

@@ -737,3 +737,9 @@ type 11; a 0x4000 victim refuses anything else. 6 <= 10, so no explosion
 10. Replace `ShootAi::tickAstaroth` / `kAstarothEdges` labels in `shoot.cpp` and
     correct `docs/ASSETS.md` ~3580-3640 (impulse -> damage, turn -> muzzle wait,
     speed -> animation rate, grapple/throw -> wind-up/leap/slam).
+
+**2026-10-11: `engine: camera shake` red from `123d414`, re-pinned.** Bisected
+(green at `902a641`, red there): drawing him pelvis-on-node lowered him ~150,
+and the footstep shake his walk raises (shake 3, frame 85 of the check's run)
+now starts at dy -0.718 where it read -2.197. The two hurt shakes before it are
+unchanged at 2.693.

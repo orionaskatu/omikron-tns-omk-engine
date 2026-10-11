@@ -42514,13 +42514,17 @@ def c_engine_camera_shake():
     want = (30, "%.4f" % d[0], "%.4f" % d[1], "%.4f" % sum(d))
     shakes = _re.findall(r"CAMERA SHAKE \(sub_418030\) - shake (\d+), first dy (\S+) "
                          r"\(aim (\S+)\)", v)
+    # (shake 3 is his footstep at frame 85: -0.718 since 123d414 (2026-10-06,
+    # bisected), which draws him pelvis-on-node - ~150 lower, as Gandhar is -
+    # where it read -2.197 with him seated by his feet; red from there until
+    # re-pinned 2026-10-11. The two hurts are unchanged.)
     return ((int(direct.group(1)), direct.group(2), direct.group(3), direct.group(4))
             if direct else None,
             int(renewed.group(1)) if renewed else None,
             (int(script.group(1)), int(script.group(2))) if script else None,
             shakes[:3]), \
            (want, 30, (1, 20), [("1", "2.693", "2.693"), ("2", "2.693", "2.693"),
-                                 ("3", "-2.197", "-2.197")]), \
+                                 ("3", "-0.718", "-0.718")]), \
            "a (30, 10) shake: frames, the first two dy, their sum; renewed at frame 10: " \
            "frames; AREA 175's message 0: shakes, frames; the viewer's first three " \
            "applied shakes (two hurts, then his footstep mid-shake)"

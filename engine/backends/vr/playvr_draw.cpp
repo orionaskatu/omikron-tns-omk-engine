@@ -24,6 +24,9 @@ void glesSetWindowTarget(Renderer*, unsigned fbo);
 
 bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plane) {
     if (!vr.on || vr.mono || !vr.haveEyes) return false;
+    // the frame's deferred clear (`phaseWorld`), before the eyes are copied
+    // in - the two eyes need not cover all of `fb`
+    if (fbStale) clearFrame();
     omk::Renderer& world = *world_;
 #if OMK_OPENXR
     omk::xr::setQuadOverEyes(openScreen >= 0);

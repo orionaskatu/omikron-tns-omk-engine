@@ -255,6 +255,20 @@ carries a clip.
 
 ### `engine: shoot hit` IS STILL RED, and it must NOT be baselined as it stands
 
+**RESOLVED 2026-10-11 - GREEN, re-pinned with every cause named** (the reader:
+"fix the fails"). The refusal below was about EMPTY kill lists, and none is
+empty any more: three bolts into 237, 15 -> 10 -> 5 -> 0 at band 2, death type
+5, the death reported, his pelvis 7.5 above the floor - all exactly the want.
+What moved is downstream of where the walk leaves the gunmen: the roots (237
+at 4857/-2793, 238 at 5286/-2509 - the very values recorded below on
+2026-09-17), 237's fall (dying there, -16.8 / 11.4 with 21 of 39 ticks on a
+wall byte) and the body push. **The push's guard is now read**: it is the plain
+overlap - `adventureCrowdPush` prints only when `crowdPush` answers, i.e. when a
+body's spheres overlap his - and on this route none does, so it is the route
+and not the collider; the element is dropped from this check rather than
+baselined empty, and `engine: actor body` holds the body push. The history
+below is kept as it was.
+
 (2026-10-05, `todo/drift-audit.md` S13: with the requests applied, only 237
 dies now - three hits, as the check expects - where 240 died too; what still
 differs is the roots' positions, 237's fall and the push. Still red for the

@@ -1148,7 +1148,9 @@ void PlayState::worldMirror() {
         omk::greyClear565(view.clearColour, drawn.clearColour);
     }
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
-    if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) { clearFrame(); return; }
+    // (it clears `fb` itself, BEFORE the eyes land in it - the deferred
+    // clear here ran AFTER them from 4f6d611 on and left the frame black)
+    if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) return;
     const auto mst = omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");

@@ -177,10 +177,25 @@ int main(int argc, char** argv) {
         // working - what it must not do is descend into the verb panel, which
         // is what `ba1c335` was written about, three days before the call
         // itself was ported.
-        if (sw2.panel())
-            std::printf("slider row confirm lands on %#x\n", sw2.panel()->addr);
+        //
+        // ...AND SINCE THE DRIFT AUDIT'S B5 (2181e2c) THE CLOSE IS THE
+        // CALLER'S: `sub_49D400` writes `+8 = 3` only when `sub_452570`
+        // ACCEPTS, and a refusal keeps the page up with string 42 - so the
+        // walk REQUESTS the call (row remembered, not a journey: screen 9's
+        // param is 0) and stays on the page. Printed from the walk's own
+        // pending request, so a confirm that descended anywhere else, or
+        // requested nothing, says so.
+        const bool journey = sw2.travelIsJourney();
+        const int row = sw2.takeTravel();
+        if (sw2.panel() && row >= 0 && !journey)
+            std::printf("slider row confirm CALLS (row %d), the page left on %#x for the caller\n",
+                        row, sw2.panel()->addr);
+        else if (sw2.panel())
+            std::printf("slider row confirm lands on %#x, request %d journey %d\n",
+                        sw2.panel()->addr, row, journey ? 1 : 0);
         else
-            std::printf("slider row confirm CLOSES the screen\n");
+            std::printf("slider row confirm CLOSES the screen, request %d journey %d\n",
+                        row, journey ? 1 : 0);
     }
 
     // ---- THE OBJECT FLOW: rows -> verbs -> examine --------------------

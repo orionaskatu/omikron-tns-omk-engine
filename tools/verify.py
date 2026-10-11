@@ -17422,7 +17422,10 @@ def c_engine_dirty_corners():
     `OMK_TIE_STATS=1`, how the set's revisions were answered, and the last
     frame against the same run with `OMK_NO_DIRTY=1` (no list, so everything is
     re-done as before). Measured 2026-09-14: 88 replayed, 1 walked (the first
-    moving frame, which has no log yet), 0 fallbacks; 0 pixels differ.
+    moving frame, which has no log yet), 0 fallbacks; 0 pixels differ. Since
+    the clock's ambient re-floor (frame 0, a dirty revision of its own): 89
+    replayed, 1 walked (the re-floor), 1 fallback (frame 1, where the player's
+    draws first arrive); 0 pixels differ.
 
     SHOWN TO FAIL, 2026-09-14 (todo/optimization.md step 8): the motion patch
     listing no corners keeps the revisions replaying (88 / 1 / 0) and leaves 334
@@ -17479,7 +17482,15 @@ def c_engine_dirty_corners():
     differ = sum(1 for i in range(0, len(frame), 2) if frame[i:i+2] != frame0[i:i+2])
     got = (tuple(tuple(int(x) for x in s) for s in stats),
            tuple(tuple(int(x) for x in s) for s in stats0), differ)
-    return got, (((88, 1, 0),), ((0, 0, 0),), 0), \
+    # (89 / 1 / 1 since the clock's AMBIENT RE-FLOOR (2026-10-05/06, the
+    # day/night work): on frame 0 it floors 106 of ANEKBAH's corners - a
+    # revision with its own dirty list, the one WALKED - so the cargo's 89 are
+    # all replays, and the first of them meets the player's draws arriving for
+    # the first time (frame 1): a draw not as logged, one FALLBACK. Pixels
+    # still 0. The list-less run walked once from that same site, which did not
+    # honour `OMK_NO_DIRTY` until 2026-10-11; it does now, so it reads 0 / 0 / 0
+    # again. Red from the re-floor's commit until then.)
+    return got, (((89, 1, 1),), ((0, 0, 0),), 0), \
         "the set's revisions at frame 90 with the dirty list (replayed, walked, " \
         "replays abandoned) and without it, then 565 pixels differing between the two frames"
 
@@ -26871,7 +26882,11 @@ def c_sneak_page_colour():
             # "lands on 0x4dede8" from `ba1c335` (2026-09-04), three days
             # before the call itself was ported - the arm's job is to not
             # descend into the VERB panel, and closing satisfies that.
-            "slider row confirm CLOSES the screen" in o,
+            # And since 2181e2c (the slider drift audit's B5) the CLOSE is
+            # the caller's - `+8 = 3` only once `sub_452570` accepts, string
+            # 42 on a refusal - so the walk REQUESTS the call and stays on
+            # the page; this went red there and stayed red until 2026-10-11.
+            "slider row confirm CALLS (row 2), the page left on 0x4dede8 for the caller" in o,
             "confirm row -> panel 0x4deeb8, list 2, tabs off 1 rows off 1" in o,
             "confirm Examiner -> panel 0x4def20, verbs off 1" in o,
             # ...and the COLOUR survives the descent. `+8/+9/+10` are fields
@@ -36522,7 +36537,13 @@ def c_engine_shoot_hit():
     # pinned with his bolts meeting nobody for 1230 frames. He faces 215 now -
     # straight at 237's approach - and the gunmen walk down his line of fire:
     # nine hits, all three killed (death types 7, 6 and 7).
-    want = ([(237, 4759, -2567, "44.4"), (238, 5207, -2280, "44.4"),
+    # (RE-PINNED 2026-10-11, red since 2026-09-17: 237 and 238 stand at
+    # 4857/-2793 and 5286/-2509 at the first sweep - the value
+    # `todo/shoot-patrol.md` already recorded on 2026-09-17, unchanged since -
+    # where 4759/-2567 and 5207/-2280 were the walk of before the nav-edge and
+    # y-pinning work. No oracle reaches these: they are the port's own walk,
+    # held as a regression guard. The kill path below never moved.)
+    want = ([(237, 4857, -2793, "44.4"), (238, 5286, -2509, "44.4"),
              (240, 4516, -2797, "44.4")],
             # (since THE STEERING - the gunmen coming by the path field, their
             # cells stamped - the same nine hits in another order, all three
@@ -36559,25 +36580,31 @@ def c_engine_shoot_hit():
     # had no collider"*): each gunman's body is in the spatial index and the
     # player's query pushes HIM out of it - since B5 with the model's own
     # spheres, four of ~11: once, 237 at 61
-    pushes = re.findall(r"^frame (\d+): the player is pushed out of actor (\d+)'s body", o, re.M)
+    # (no longer read here since 2026-10-11 - see the re-pin below)
     # ...THE PUSH IS SWEPT (`Actor_ApplyMotion` hands the push to `Actor_Move`,
     # 154139d) was asserted here by a push that met a wall at 104 - and since
     # B5 the bodies push like people, and this fight shoves him into no wall
     # at all. That guard went with the route it rode on: the swept push, shown
     # to fail by mutation at 154139d and confirmed in play, needs a probe of
     # its own (`todo/shoot-mode.md` B5)
-    got = got + (falls, floors, pushes)
+    got = got + (falls, floors, None)
     # (237's type-5 fall: 35.6 down, a slide of -36.9 / 95.6 meeting no wall,
     # the pelvis left 7.5 above the floor)
-    want = want + ([("237", "-36.9", "35.6", "95.6", "39", "0")],
+    # RE-PINNED 2026-10-11 with the roots: dying where he now stands, 237's
+    # type-5 fall drops the same 35.6 but slides -16.8 / 11.4, 21 of its 39
+    # ticks meeting a wall byte, and his pelvis still ends 7.5 above the floor.
+    # And NO body push on this route: its guard (`adventureCrowdPush`) is the
+    # plain overlap test - `crowdPush` answers only when a body's spheres
+    # overlap his - and here none does. The element is dropped rather than
+    # baselined empty: the body push is held by `engine: actor body`.
+    want = want + ([("237", "-16.8", "35.6", "11.4", "39", "21")],
                    [("237", "7.5")],
-                   [("61", "237")])
+                   None)
     return got, want, (
         "the three gunmen's roots, 7 units into their walk at the first sweep; "
         "forty bolts at yaw 215, down the line the gunmen walk in on - three "
         "hits, 237 killed with death type 5; his fall through the wall test to "
-        "the floor; and the player pushed out of a gunman's body by the model's "
-        "own collision spheres")
+        "the floor (the body push is `engine: actor body`'s)")
 
 
 def c_engine_shoot_move():

@@ -190,10 +190,17 @@ void PlayState::worldCamera() {
                             floored, dirty.size());
             w.clampGrey = grey;
             if (!dirty.empty()) {
-                w.geo.dirtyFrom = w.geo.revision;
+                // `OMK_NO_DIRTY=1` leaves the list unset here too, as the motion
+                // patch does - the comparison run re-does everything (`engine:
+                // dirty corners`, whose list-less run walked once from this
+                // site until 2026-10-11)
+                static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
+                if (!noDirty) w.geo.dirtyFrom = w.geo.revision;
                 w.geo.revision = ++worldGeoRev;
-                w.geo.dirtyTo = w.geo.revision;
-                w.geo.dirtyCorners.swap(dirty);
+                if (!noDirty) {
+                    w.geo.dirtyTo = w.geo.revision;
+                    w.geo.dirtyCorners.swap(dirty);
+                }
             }
         }
     for (int k = 0; k < 3; ++k) {

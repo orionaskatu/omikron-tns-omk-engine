@@ -17,6 +17,7 @@
 #pragma once
 
 #include "playshared.h"
+#include "platform/cacheline.h"   // clearFrame
 #if OMK_VR
 #include "../vr/playvr.h"   // VrState: the VR build's only state (todo/quest-port.md)
 #endif
@@ -708,7 +709,8 @@ struct PlayState {
     bool overlayFrame = false, softGate = false;   // G6 step 2, the GLES window
     // `fb` NOT YET CLEARED this frame (`phaseWorld`'s deferred clear, 2026-10-11)
     bool fbStale = false;
-    void clearFrame() { std::fill(fb.px.begin(), fb.px.end(), std::uint16_t(0)); fbStale = false; }
+    // (`omk::zeroBytes`: `dcbz` on a PowerPC, so the 614 KB are not read first)
+    void clearFrame() { omk::zeroBytes(fb.px.data(), fb.px.size() * sizeof(std::uint16_t)); fbStale = false; }
     // ...and NOT cleared at all on a world-less frame the menu's CLOUD will
     // cover (2026-10-11, step 3m): it writes every pixel of `fb` at any size,
     // so the clear was 614 KB written for nothing. `screensHuds` settles the

@@ -43691,9 +43691,11 @@ def c_licence_headers():
     # `engine/tools/hostile_files.cpp` (`engine: hostile files`); 596 the
     # same day: + `engine/tools/harden_canary.cpp` (`engine: hardened`); 598
     # on 2026-10-10: + `engine/src/formats/morphstream.h` / `.cpp` (a line
-    # streamed as it plays, `engine: line stream`)
+    # streamed as it plays, `engine: line stream`); 601 on 2026-10-11: +
+    # `engine/src/o3de/texscale.h` (the original's texture size rule, missed
+    # by its commit) and `engine/src/platform/cacheline.h` / `.cpp` (`dcbz`)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (598, [], 1, []), \
+           (601, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

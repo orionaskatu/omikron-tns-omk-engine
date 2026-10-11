@@ -2,6 +2,7 @@
 // The menu's animated background. See `cloud.h` for where every constant in
 // here comes from; nothing below is chosen.
 #include "ui/cloud.h"
+#include "platform/cacheline.h"
 #include "platform/profile.h"
 
 #include <cmath>
@@ -121,9 +122,18 @@ void MenuCloud::prepare(long frame) const {
         const std::uint8_t* row = tex + static_cast<std::size_t>(cy) * 256;
         const std::uint8_t* below = tex + static_cast<std::size_t>((cy + 1) & 0xFF) * 256;
         std::uint16_t* out = buf + static_cast<std::size_t>(j2) * 256;
-        for (int i2 = 0; i2 < 256; ++i2) {
-            const int cx = 255 - i2;               // `dl` counts down, wrapping
-            const int h0 = row[cx];
+        claimLines(out, 256 * sizeof(std::uint16_t));   // the row is written whole (`platform/cacheline.h`)
+        // TWO PIXELS AN ITERATION (2026-10-11, step 3o): one pixel is a
+        // chain - two loads, a subtract, a multiply, a shift, the ramp's load
+        // - that the G3 ran at ~35 cycles a pixel, waiting on each link. Two
+        // independent chains side by side give it the other to work on; the
+        // arithmetic of each pixel is the one below, unchanged.
+        for (int i2 = 0; i2 < 256; i2 += 2) {
+            const int cx = 255 - i2, cxb = cx - 1;
+            const int h0 = row[cx], h0b = row[cxb];
+            const int gxb = static_cast<std::int8_t>(h0b - row[cx]);   // (cxb + 1) & 0xFF == cx
+            const int gyb = static_cast<std::int8_t>(h0b - below[cxb]);
+            out[i2 + 1] = shade[(gxb * (cxb - lx) + gyb * wy) >> 5];
             // `sub al, [esi+ebx]` then `movsx` - the gradients are SIGNED
             // BYTES, so a wrap reads as a small step and not as 255.
             const int gx = static_cast<std::int8_t>(h0 - row[(cx + 1) & 0xFF]);
@@ -169,9 +179,16 @@ void MenuCloud::draw(Surface& fb, long frame) const {
         std::uint8_t al = rowTab[479 - y];
         const std::uint8_t yy = static_cast<std::uint8_t>(y);
         std::uint16_t* dst = &fb.px[static_cast<std::size_t>(y) * 640];
-        for (int x = 0; x < 640; ++x, ++al) {
+        // the row's lines claimed before it is written whole: on the G3 each
+        // store to a line not in the cache read the line first, and this
+        // pass is 614 KB a frame (step 3o, `platform/cacheline.h`)
+        claimLines(dst, 640 * sizeof(std::uint16_t));
+        for (int x = 0; x < 640; x += 2, al = static_cast<std::uint8_t>(al + 2)) {
             const std::uint8_t ah = static_cast<std::uint8_t>(colRev[x] + yy);
+            const std::uint8_t ahb = static_cast<std::uint8_t>(colRev[x + 1] + yy);
+            const std::uint8_t alb = static_cast<std::uint8_t>(al + 1);
             dst[x] = buf[static_cast<std::size_t>(ah) << 8 | al];
+            dst[x + 1] = buf[static_cast<std::size_t>(ahb) << 8 | alb];
         }
     }
 }
@@ -194,6 +211,7 @@ bool MenuCloud::drawScaled(Surface& fb, long frame) const {
         const int sy = y * 480 / fb.h;
         const int al0 = rowTab_[479 - sy];
         std::uint16_t* dst = &fb.px[static_cast<std::size_t>(y) * static_cast<std::size_t>(fb.w)];
+        claimLines(dst, static_cast<std::size_t>(fb.w) * sizeof(std::uint16_t));   // written whole
         for (int x = 0; x < fb.w; ++x) {
             // pass 2's pixel (sx, sy): al = rowTab[479 - sy] + sx, ah = colTab[639 - sx] + sy
             const int ah = (colOf[static_cast<std::size_t>(x)] + sy) & 0xFF;

@@ -1250,11 +1250,15 @@ void PlayState::worldMirror() {
         // the rest cleared, in ONE pass (the clear was a pass of its own
         // before this one, `phaseWorld`)
         g_ov.begin(fb.w, fb.h);
+        // (each row's lines claimed or zeroed by `dcbz` on a PowerPC, not
+        // read first - `platform/cacheline.h`, step 3o)
+        const std::size_t rowBytes = static_cast<std::size_t>(fb.w) * sizeof(std::uint16_t);
         for (int dy = 0; dy < fb.h; ++dy) {
             const bool world = dy >= view.vy && dy < view.vy + view.vh;
-            std::fill(fb.px.begin() + static_cast<long>(dy) * fb.w,
-                      fb.px.begin() + static_cast<long>(dy + 1) * fb.w,
-                      std::uint16_t(world ? 0xF81F : 0));
+            std::uint16_t* row = fb.px.data() + static_cast<std::size_t>(dy) * fb.w;
+            if (!world) { omk::zeroBytes(row, rowBytes); continue; }
+            omk::claimLines(row, rowBytes);
+            std::fill(row, row + fb.w, std::uint16_t(0xF81F));
         }
         fbStale = false;
     } else if (!gpuFrame || verifyGpuPresent) {
@@ -1276,15 +1280,16 @@ void PlayState::worldMirror() {
         // the picture's rows copied over, every OTHER row cleared - the
         // deferred clear (`phaseWorld`), only where nothing lands
         const int top = std::max(0, view.vy), bot = std::min(fb.h, view.vy + std::min(view.vh, pic.h));
+        const std::size_t rowBytes = static_cast<std::size_t>(fb.w) * sizeof(std::uint16_t);
         for (int dy = 0; dy < fb.h; ++dy) {
+            std::uint16_t* row = fb.px.data() + static_cast<std::size_t>(dy) * fb.w;
             if (dy >= top && dy < bot) {
                 const int y = dy - view.vy;
+                omk::claimLines(row, rowBytes);              // written whole (step 3o)
                 std::copy(pic.px.begin() + static_cast<long>(y) * pic.w,
-                          pic.px.begin() + static_cast<long>(y + 1) * pic.w,
-                          fb.px.begin() + static_cast<long>(dy) * fb.w);
+                          pic.px.begin() + static_cast<long>(y + 1) * pic.w, row);
             } else {
-                std::fill(fb.px.begin() + static_cast<long>(dy) * fb.w,
-                          fb.px.begin() + static_cast<long>(dy + 1) * fb.w, std::uint16_t(0));
+                omk::zeroBytes(row, rowBytes);
             }
         }
         fbStale = false;

@@ -592,6 +592,15 @@ public:
             }
             ++st_.triangles;
             if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
+            // THE TRIANGLE TWO AHEAD, ASKED FOR NOW (step 3o): the G3 has no
+            // hardware prefetch, so each corner's 48 bytes were a miss the
+            // loop waited on (~170 MB/s, a street frame reads ~1 MB of them).
+            // A hint - `dcbt` on a PowerPC - over its 144 bytes, a 32-byte
+            // line at a time; it changes no value read.
+            if (t + 9 <= nCorner) {
+                const char* ahead = reinterpret_cast<const char*>(&g.corners[d.start + t + 6]);
+                for (std::size_t b = 0; b < 3 * sizeof(Corner); b += 32) __builtin_prefetch(ahead + b);
+            }
             Vtx in[3];
             unsigned oc[3];
             std::int32_t meshOf[3] = {-1, -1, -1};

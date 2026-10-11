@@ -1054,6 +1054,29 @@ before at the street (frames 200 and 600, the traffic patching the set)
 and the Impasse (300). On the iBook read `gl1: submit` / `gl1: end` self
 against `gl1: draw call` in the street, and the repeated `60 passes` line.
 
+**Step 3o - WHOLE LINES WITHOUT A READ, THE CLOUD'S EMBOSS INTERLEAVED, THE
+CORNERS PREFETCHED, DONE 2026-10-11, NOT yet run on the iBook.** Three G3
+habits. (1) A store to a line not in the cache makes the G3 READ the line
+first, so a pass writing a frame whole moves every byte twice:
+`platform/cacheline.h` claims the whole lines of such a range with `dcbz`
+(zeroed in the cache, no read) - the cloud's warp and its emboss rows, the
+frame's clear (`clearFrame` -> `zeroBytes`), the overlay frame's key fill
+and the readback's row copy. The line `dcbz` clears is MEASURED once on a
+scratch buffer (`cache: dcbz clears 32-byte lines` in the log; a wrong
+size would zero bytes outside the range), and off a PowerPC all of it is a
+`memset` or nothing. (2) The emboss was ~35 cycles a pixel for 21
+instructions - a chain the G3 waited on link by link; two pixels an
+iteration give it two chains (32 instructions for the two), the arithmetic
+of each unchanged; the warp likewise. (3) The GL1 submit asks for the
+corners of the triangle two ahead (`__builtin_prefetch`, `dcbt` on a
+PowerPC): the G3 has no hardware prefetch. Byte-identical menu frames on
+the host at 640x480, 800x600 and 1024x768; emulated Tiger measured 32-byte
+lines and drew the menu, the Impasse and a subtitle over it right; `gl1
+backend`, `classic build`, `menu cloud`, `licence headers` green (the
+census 601: `texscale.h`, missed by its own commit, and `cacheline.*`).
+On the iBook read `ui: cloud warp` / `emboss`, the menu's and the
+conversation's `world` self, and `gl1: submit`.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

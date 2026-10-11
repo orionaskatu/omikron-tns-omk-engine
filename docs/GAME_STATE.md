@@ -767,7 +767,7 @@ rows come in the same order the defaults function writes them:
 | +724 | `byte_90E454` | 720 bytes — the SHOOTING RANGE's **high scores** | |
 | +1444 | `LOWORD(dword_90E724)` | the display driver's, cleared on load | |
 | +1446 | `dword_90E724+2` | 6 *Niveau d'activité dans les rues* | |
-| +1447 | `dword_90E724+3` | 7 *Niveau de détail* | |
+| +1447 | `dword_90E724+3` | 7 *Niveau de détail* - and the CITY WEATHER's gate: `sub_4815D0` runs only at 2 (`cmp byte ptr [0x90E727], 2`; ASSETS 4e) | |
 
 The three device tables are the decisive part, because they are **168 values
 this repo had already lifted independently**: `tables/key_bindings.json` came

@@ -2456,6 +2456,55 @@ second being an outstretched arm.
 
 ---
 
+## 4e. The CITY WEATHER - rain, snow, and a third that never draws (2026-10-11)
+
+`sub_4815D0` (0x004815D0), read whole with `sub_481200` (the roof ray) and
+`sub_481D90` (the sprite weathers); ported as `engine/src/o3de/weather.*` and
+`backends/sdl/playframe_world_weather.cpp`, `verify.py: engine: weather`.
+
+* **Which areas.** `Area_TickLoad` case 9 hands `sub_41D3F0` the AREA chunk's
+  `+176`: the low word sets a SCENE flag (1 -> 0x10000, 2 -> 0x20000, 3 ->
+  0x40000), byte 2 the decor slot's `+109`. `sub_479C20` turns the scene flags
+  into the 3D view's `+80` bits 2/4/8, and the view's display-list draw calls
+  `sub_4815D0` whenever `+80 & 0xE`. Twelve areas ship a type - **1, the rain**:
+  Anekbah, the Impasse and its airlock, the rooftops, Khonsu; **2, the snow**:
+  Mahaleel and SASNEIGE (which no zone or address reaches); **3**: Jaunpur,
+  Boz's interior, the docks, the two rooftop streets - and **3 draws nothing**:
+  `sub_481D90` is called on `test al, 4` alone, so its `sand.bmp` arm (size 15,
+  speed 30, box 300) is unreachable. The cycle still runs there and posts its
+  messages.
+* **The gate is option row 7.** `cmp byte ptr [0x90E727], 2` - the settings
+  header's +1447, *Niveau de detail* - before anything else, so at the boot
+  default (1) there is no weather at all.
+* **The cycle** (`dword_4CFE10`, the WALL clock): boot state 4 with length 0;
+  state 0 waits `rand() % 360000 + 480000` ms, then posts **message 23**
+  (`Game_RaiseEvent(43)` -> `Message_RunHandlers` on the current area) and
+  ramps for 20000 ms (`200 * t / 20000` drops); state 2 holds 200 for `rand() %
+  60000 + 150000` and posts **message 24**; state 4 fades over 10000. AREA 0's
+  two handlers are `music.play 119` (the rain's track) and `music.play 2`. Snow
+  goes straight from 4 to 2 and never ends. Every frame of state 4 scatters the
+  200 drops afresh. No player actor, or ACTOR_STATE 14, zeroes it.
+* **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
+  `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
+  for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a
+  waiting one. In Mahaleel's ice cave the ceiling (`Neige01`) holds the snow
+  off for good: state 2 never runs its own case, so no flake is ever counted.
+* **The drops.** 200 points in a box a third of its size ahead of the eye,
+  stepped per FRAME (no delta) and drawn from the position before the step.
+  Rain: box 1000, `(0.5, 0.866, 0) x 64` a frame (0x4D0784/0x4D0788/0x657B3C
+  times 0x4D078C), each axis wrapping strictly past half the box to minus
+  half (`fcomp`, `test ah, 41h`); drawn as an `I2D_DrawLine` flags 0x18 GOURAUD
+  line from the scene's fog colour (`+336`) at the drop to 0xC0C0C0 twelve
+  frames of wind on. Snow: box 400, speed 20 - x back 0.866 of it, y down 0.3,
+  z only wrapped - each flake a colour-keyed `Blt` (`sub_4810D0`, key 0) of
+  `Images\snow.bmp` into a square of half its projected 8-unit size, kept only
+  wholly on the screen. Both near-clipped (`sub_4751A0`) and refused off screen.
+* **Labelled in the port**: the clock is the frame's milliseconds summed (the
+  engine's is `Sys_GetTimeMs`; at 30 fps they agree), the near plane is the
+  port's shared cut, and screen points come from the renderer's own
+  projection. `OMK_WEATHER_SKIP_MS` is an instrument that jumps the clock past
+  the first wait.
+
 ## 5. Not established
 
 * The remaining `.3DO` sections — doors, cameras and lights are parsed by the

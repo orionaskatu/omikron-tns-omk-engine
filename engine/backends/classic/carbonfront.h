@@ -110,18 +110,20 @@ private:
     void* gw_ = nullptr;         // GWorldPtr, at the WINDOW's depth (16 or 32)
     int gwW_ = 0, gwH_ = 0, gwDepth_ = 0;
     void* agl_ = nullptr;        // AGLContext, once the GL backend asked
-    unsigned uiTex_ = 0;         // GLuint: the frame as a texture (`presentGL`)
-    int uiTexW_ = 0, uiTexH_ = 0;
+    // the frame as 64x64 TILES, a texture each (`presentGL`), row-major
+    struct UiTile { unsigned tex = 0; std::vector<std::uint8_t> store; };
+    std::vector<UiTile> uiTiles_;
+    int uiTilesX_ = 0, uiTilesY_ = 0, uiTileFmt_ = -1;
+    long uiStatFrames_ = 0, uiStatTiles_ = 0;   // the `present:` line's counts
     int uiFmt_ = 0;              // its upload format, `probeUploads`' pick (0 RGB565)
     // ...and HOW it is sent, the probe's pick too: Apple's CLIENT STORAGE (the
     // card reads `uiStore_` itself, no copy into the driver), a RECTANGLE
     // texture (640x480 exactly, not 1024x512) and the SHARED storage hint -
     // each only where the driver names the extension
     bool uiClient_ = false, uiRect_ = false, uiHint_ = false;
-    std::vector<std::uint8_t> uiStore_;   // the client-storage texture's own memory
     std::vector<std::uint8_t> uiConv_;   // a run of rows converted to that format
     void probeUploads();         // times the upload formats once, on the new context
-    std::vector<std::uint32_t> uiRowKey_;   // per row, a hash of what was last sent
+    std::vector<std::uint32_t> uiRowKey_;   // per row and tile column, a sum of what was last sent
     bool argbOk_ = false;        // the probe: the driver takes ARGB8888 (BGRA 8-8-8-8-REV)
     bool film1555_ = false;      // the probe: ARGB1555 sent faster than ARGB8888 (a 16-bit display)
     int filmDepth_ = 32;         // the film GWorld's depth, 16 or 32

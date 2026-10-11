@@ -26,6 +26,7 @@
 #  endif
 #endif
 #include "platform/datafs.h"      // hostPath, the films' HFS path
+#include "ui/overlay.h"           // overlayBlockSums, the present's tile sums
 
 #include <AppleEvents.h>
 #include <Files.h>
@@ -494,9 +495,9 @@ void CarbonFrontend::close() {
         agl_ = nullptr;
         if (aglGetCurrentContext() == ctx) aglSetCurrentContext(nullptr);
         aglSetDrawable(ctx, nullptr);
-        aglDestroyContext(ctx);   // the frame's texture goes with it
-        uiTex_ = 0;
-        uiTexW_ = uiTexH_ = 0;
+        aglDestroyContext(ctx);   // the frame's tiles go with it
+        uiTiles_.clear();
+        uiTilesX_ = uiTilesY_ = 0;
         filmTex_ = 0;
         filmTexW_ = filmTexH_ = 0;
     }
@@ -593,16 +594,15 @@ void* CarbonFrontend::glContext() {
 void CarbonFrontend::presentGL(const Surface& fb) {
 #if defined(OMK_GL1_AGL)
     // A frame the world is not swapped straight for - the interface alone,
-    // the films, a composite - as ONE TEXTURED QUAD. It was `glDrawPixels`
+    // the films, a composite - as TEXTURED QUADS. It was `glDrawPixels`
     // with `glPixelZoom`, which the drivers of the period run in software:
     // on a real iBook G3 under Mac OS X 10.2 (Rage 128) the menus were far
     // slower than the city, whose world never takes this path (the reader,
     // 2026-10-09). The frame stays in RGB565, the packed type in the host's
     // own word order - the one `glDrawPixels` already read correctly on
-    // OS 9 and Tiger - into a 16-bit texture, and only the RUNS OF ROWS
-    // whose content changed since they were last sent are uploaded (a hash
-    // a row, the GL1 overlay's): a menu's text and frame stand still while
-    // only its animated parts move.
+    // OS 9 and Tiger - into 16-bit textures, and only the TILES whose
+    // content changed since they were last sent are uploaded: a menu's text
+    // and frame stand still while only its animated parts move.
     AGLContext ctx = static_cast<AGLContext>(agl_);
     const AGLContext prev = aglGetCurrentContext();
     if (prev != ctx) aglSetCurrentContext(ctx);
@@ -627,99 +627,121 @@ void CarbonFrontend::presentGL(const Surface& fb) {
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_LIGHTING);
     glDrawBuffer(GL_BACK);
-    const GLenum target = uiRect_ ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
-    int tw = 1, th = 1;
-    if (uiRect_) { tw = fb.w; th = fb.h; }
-    else {
-        while (tw < fb.w) tw <<= 1;
-        while (th < fb.h) th <<= 1;
-    }
+    // IN 64x64 TILES (step 3l, 2026-10-11), as the GL1 overlay since step 3i:
+    // it was ONE 1024x512 client-storage texture, and the seventh iBook run
+    // put `present: rows` at 44.9 ms a menu frame - the start menu's cloud
+    // (`ui/cloud.h`) changes every row below the title band every frame, and
+    // the Rage's driver sent the whole texture again after any change, the
+    // 384 columns and 32 rows of padding included (as the overlay's single
+    // texture was, step 3i). Now a sum a row a tile
+    // column (`overlayBlockSums`) says which tiles changed, only their rows
+    // are written into their memory and only they are sent; the title band,
+    // a menu's frame and the padding are not. Always GL_TEXTURE_2D: a
+    // 64x64 tile is a power of two, so the rectangle extension is moot.
     const UpFmt& fmt = kUiFmts[uiFmt_];
-    GLuint tex = static_cast<GLuint>(uiTex_);
-    if (!tex || uiTexW_ != tw || uiTexH_ != th) {
-        if (tex) glDeleteTextures(1, &tex);          // client storage is bound at creation
-        glGenTextures(1, &tex);
-        uiTex_ = tex;
-        glBindTexture(target, tex);
-        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP);
-        glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP);
-        if (uiHint_) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
-        if (uiClient_) {
-            // the texture's memory is OURS from here on: the rows are
-            // converted into it and the card reads it there
-            uiStore_.assign(static_cast<std::size_t>(tw) * th * fmt.bytes, 0);
-            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
-            glTexImage2D(target, 0, fmt.internal, tw, th, 0, fmt.format, fmt.type, uiStore_.data());
-            glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
-        } else {
-            glTexImage2D(target, 0, fmt.internal, tw, th, 0, fmt.format, fmt.type, nullptr);
-        }
-        uiTexW_ = tw;
-        uiTexH_ = th;
-        uiRowKey_.assign(static_cast<std::size_t>(fb.h), 0);   // nothing sent yet
+    constexpr int kTile = 64;
+    const int tilesX = (fb.w + kTile - 1) / kTile, tilesY = (fb.h + kTile - 1) / kTile;
+    if (tilesX != uiTilesX_ || tilesY != uiTilesY_ || uiTileFmt_ != uiFmt_) {
+        for (UiTile& t : uiTiles_) if (t.tex) { GLuint g = t.tex; glDeleteTextures(1, &g); }
+        uiTiles_.assign(static_cast<std::size_t>(tilesX) * tilesY, UiTile{});
+        uiTilesX_ = tilesX;
+        uiTilesY_ = tilesY;
+        uiTileFmt_ = uiFmt_;
+        uiRowKey_.assign(static_cast<std::size_t>(fb.h) * tilesX, 0);   // nothing sent yet
     }
-    glBindTexture(target, tex);
+    const std::size_t pitch = static_cast<std::size_t>(kTile) * fmt.bytes;
     glPixelStorei(GL_UNPACK_ALIGNMENT, fmt.bytes == 4 ? 4 : 2);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, uiClient_ ? tw : 0);
-    // the card may still be reading the client memory for the last frame:
-    // the rows are rewritten only once it is done with them
-    if (uiClient_) glFinish();
-    OMK_ZONE("present: rows");               // the profiler (todo/debug-tools.md)
-    int runStart = -1;
-    for (int y = 0; y <= fb.h; ++y) {
-        bool changed = false;
-        if (y < fb.h) {
-            const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(y) * fb.w;
-            std::uint32_t h0 = 2166136261u, h1 = 0x9E3779B9u;
-            int x = 0;
-            for (; x + 2 <= fb.w; x += 2) {
-                h0 = (h0 ^ src[x]) * 16777619u;
-                h1 = (h1 ^ src[x + 1]) * 16777619u;
-            }
-            for (; x < fb.w; ++x) h0 = (h0 ^ src[x]) * 16777619u;
-            const std::uint32_t key = (h0 ^ (h1 * 3u)) | 1u;     // 0 = never sent
-            std::uint32_t& slot = uiRowKey_[static_cast<std::size_t>(y)];
-            changed = slot != key;
-            slot = key;
-        }
-        if (changed && runStart < 0) runStart = y;
-        if (!changed && runStart >= 0) {                         // a run ends: send it
-            const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(runStart) * fb.w;
-            const std::size_t n = static_cast<std::size_t>(fb.w) * static_cast<std::size_t>(y - runStart);
-            const void* send = src;
-            if (uiClient_) {
-                // into the texture's own memory, a row at a time (its stride is
-                // the texture's width)
-                const std::size_t pitch = static_cast<std::size_t>(tw) * fmt.bytes;
-                std::uint8_t* row0 = uiStore_.data() + static_cast<std::size_t>(runStart) * pitch;
-                for (int r = runStart; r < y; ++r) {
-                    const std::uint16_t* s = fb.px.data() + static_cast<std::size_t>(r) * fb.w;
-                    std::uint8_t* d = uiStore_.data() + static_cast<std::size_t>(r) * pitch;
-                    if (uiFmt_ == 0) std::memcpy(d, s, static_cast<std::size_t>(fb.w) * 2);
-                    else convert565(uiFmt_, s, static_cast<std::size_t>(fb.w), d);
-                }
-                send = row0;
-            } else if (uiFmt_ != 0) {
-                if (uiConv_.size() < n * 4) uiConv_.resize(n * 4);
-                convert565(uiFmt_, src, n, uiConv_.data());
-                send = uiConv_.data();
-            }
-            glTexSubImage2D(target, 0, 0, runStart, fb.w, y - runStart, fmt.format,
-                            fmt.type, send);
-            runStart = -1;
-        }
-    }
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    glEnable(target);
+    glEnable(GL_TEXTURE_2D);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
     glColor4f(1, 1, 1, 1);
-    // texture row 0 is the frame's TOP, drawn at the window's top (GL's y up);
-    // a rectangle texture is addressed in texels
-    const float s1 = uiRect_ ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
-    const float t1 = uiRect_ ? static_cast<float>(fb.h) : static_cast<float>(fb.h) / th;
-    drawFrameQuad(ww, wh, s1, t1);
+    {
+        OMK_ZONE("present: rows");               // the profiler (todo/debug-tools.md)
+        bool waited = false;                     // the card done with the client memory, once
+        std::uint64_t rowChanged[kTile];         // per row of a band, the tile columns changed
+        for (int ty = 0; ty < tilesY; ++ty) {
+            const int y0 = ty * kTile, rows = std::min(kTile, fb.h - y0);
+            std::uint64_t bandChanged = 0;
+            for (int r = 0; r < rows; ++r) {
+                const std::uint16_t* src = fb.px.data() + static_cast<std::size_t>(y0 + r) * fb.w;
+                std::uint32_t* keys = uiRowKey_.data() + static_cast<std::size_t>(y0 + r) * tilesX;
+                std::uint64_t ch = 0;
+                for (int tx = 0; tx < tilesX; ++tx) {
+                    const int x0 = tx * kTile, n = std::min(kTile, fb.w - x0);
+                    std::uint32_t h1 = 0x811C9DC5u, h2 = 0x9E3779B9u;
+                    omk::overlayBlockSums(src + x0, static_cast<std::size_t>(n) * 2, h1, h2);
+                    const std::uint32_t key = (h1 ^ (h2 * 3u)) | 1u;        // 0 = never sent
+                    if (keys[tx] != key) { keys[tx] = key; ch |= std::uint64_t{1} << (tx & 63); }
+                }
+                rowChanged[r] = ch;
+                bandChanged |= ch;
+            }
+            if (!bandChanged) continue;
+            for (int tx = 0; tx < tilesX; ++tx) {
+                const std::uint64_t bit = std::uint64_t{1} << (tx & 63);
+                if (!(bandChanged & bit)) continue;
+                UiTile& T = uiTiles_[static_cast<std::size_t>(ty) * tilesX + tx];
+                const int x0 = tx * kTile, n = std::min(kTile, fb.w - x0);
+                if (!T.tex) {
+                    GLuint g = 0;
+                    glGenTextures(1, &g);
+                    T.tex = g;
+                    glBindTexture(GL_TEXTURE_2D, g);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+                    if (uiHint_) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+                    // the tile's memory: the client-storage texture's own, or
+                    // the band a row is converted into before it is sent
+                    T.store.assign(pitch * kTile, 0);
+                    if (uiClient_) glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+                    glTexImage2D(GL_TEXTURE_2D, 0, fmt.internal, kTile, kTile, 0, fmt.format, fmt.type,
+                                 uiClient_ ? T.store.data() : nullptr);
+                    if (uiClient_) glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+                }
+                // the card may still be reading last frame's texels
+                if (uiClient_ && !waited) { glFinish(); waited = true; }
+                for (int r = 0; r < rows; ++r) {
+                    if (!(rowChanged[r] & bit)) continue;       // the tile's memory has it already
+                    const std::uint16_t* s = fb.px.data() + static_cast<std::size_t>(y0 + r) * fb.w + x0;
+                    std::uint8_t* d = T.store.data() + static_cast<std::size_t>(r) * pitch;
+                    if (uiFmt_ == 0) std::memcpy(d, s, static_cast<std::size_t>(n) * 2);
+                    else convert565(uiFmt_, s, static_cast<std::size_t>(n), d);
+                }
+                glBindTexture(GL_TEXTURE_2D, T.tex);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kTile, rows, fmt.format, fmt.type, T.store.data());
+                ++uiStatTiles_;
+            }
+        }
+    }
+    // one quad a tile; texture row 0 is the frame's TOP, drawn at the
+    // window's top (GL's y up)
+    const float inv = 1.0f / kTile;
+    for (int ty = 0; ty < tilesY; ++ty) {
+        const int y0 = ty * kTile, rows = std::min(kTile, fb.h - y0);
+        const float yTop = static_cast<float>(wh) - static_cast<float>(y0) * wh / fb.h;
+        const float yBot = static_cast<float>(wh) - static_cast<float>(y0 + rows) * wh / fb.h;
+        for (int tx = 0; tx < tilesX; ++tx) {
+            const UiTile& T = uiTiles_[static_cast<std::size_t>(ty) * tilesX + tx];
+            if (!T.tex) continue;                               // never sent: cannot happen after frame 1
+            const int x0 = tx * kTile, n = std::min(kTile, fb.w - x0);
+            const float xl = static_cast<float>(x0) * ww / fb.w, xr = static_cast<float>(x0 + n) * ww / fb.w;
+            const float s1 = n * inv, t1 = rows * inv;
+            glBindTexture(GL_TEXTURE_2D, T.tex);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0);   glVertex2f(xl, yTop);
+            glTexCoord2f(s1, 0);  glVertex2f(xr, yTop);
+            glTexCoord2f(s1, t1); glVertex2f(xr, yBot);
+            glTexCoord2f(0, t1);  glVertex2f(xl, yBot);
+            glEnd();
+        }
+    }
+    if (++uiStatFrames_ % 300 == 0)
+        std::printf("present: %ld frames as %dx%d tiles, %ld tiles sent (%.1f a frame of %d)\n",
+                    uiStatFrames_, tilesX, tilesY, uiStatTiles_,
+                    static_cast<double>(uiStatTiles_) / uiStatFrames_, tilesX * tilesY);
+    const GLenum target = GL_TEXTURE_2D;
     glDisable(target);
     {
         OMK_ZONE("present: swap");

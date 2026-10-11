@@ -982,6 +982,27 @@ host, at views the dumps did not hit - the reading "not the flicker the
 reader saw" was wrong. On the iBook's 16-bit depth it matters more. `gl1
 backend`, `classic build` green.
 
+**Step 3l - THE MENUS' PRESENT IN TILES, DONE 2026-10-11, NOT yet run on the
+iBook.** The seventh run's menu frames (5-60) cost 88.8 ms, and half was
+`present: rows` - 44.9 ms - where `CarbonFrontend::presentGL` sends an
+interface-only frame as ONE 1024x512 client-storage texture. The start
+menu's cloud (`ui/cloud.h`) changes every row below the title band every
+frame, so a run of changed rows was nearly the whole frame, and the Rage's
+driver sent the whole texture (padding included) as it had for the overlay
+before step 3i. Now the frame is 64x64 TILES, a texture each, the overlay's
+shape: one sum a row a tile column (`overlayBlockSums`) says which tiles
+changed, only their changed rows are written into their memory and only
+they are sent. Emulated Tiger, the start menu for 11100 presents: `present:
+... 10x8 tiles, 58.9 a frame of 80` - the 20 tiles of the title band stay
+put, the 60 sent are 640x384 texels against the 1024x512 before (47% of
+the bytes); the picture right, no seam at a tile edge. The other backends
+were checked and need nothing: the Vita's GLES present already sends only
+changed rows into unified memory, the 3DS copies an interface frame on the
+CPU, and the SDL GL1 build presents through SDL. On the iBook read
+`present: rows` in the menu frames and the `present:` line's tiles a frame.
+The cloud itself (`ui: cloud warp` 13.2 ms, `emboss` 4.6) is the menu's
+next cost.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

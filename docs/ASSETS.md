@@ -1846,9 +1846,13 @@ while `flt_6A5384 * flt_6A5388 * ((dword_80B060 + 5) << 16)` (`<< 17` when
 `dword_53ADE4 == 1`) exceeds it, halves the larger of the two factors; a
 texture is then made at `256 * factor` a side and the 256x256 page
 stretch-blitted into it (`sub_463420`, `sub_4636D0`). So a small card drew
-smaller textures. Not yet read: what `dword_80B060` counts (the slots, 58,
-would make the 4 MB a 256x256 8-bit page each), `dword_53ADE4` and
-`dword_53ADEC` (which makes the two factors equal).
+smaller textures. `dword_80B060` is the slot count (58, `D3D_AllocTextureSlots`),
+`dword_53ADE4` is 1 for a 16-bit texture format (128 KB a 256x256 page, so
+the need is 63 x 128 KB = 7.9 MB), `dword_53ADEC` the device's square-only
+cap (which then makes the two factors equal), and the factor halved first is
+the WIDTH's (`flt_6A5388`): a 4 MB card drew 128x128, an 8 MB one 128x256.
+The GL1 backend applies it to the card's answer (`gl1TextureMemory`,
+`--full-textures` to keep them whole; `todo/handoff-classic-mac.md` 3f).
 
 ```c
 /* full-page (256x256) textures */

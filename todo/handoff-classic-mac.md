@@ -834,7 +834,32 @@ So on a 4 MB card the original drew SMALLER textures; the port's GL1 sends
 every slot at 256x256 16-bit (6 MB at Anekbah) plus a 2 MB RGBA8 overlay,
 and Mac OS X's GL pages them as D3D's manager did. Porting the rule -
 the scale chosen from the card's memory (AGL's `AGL_VIDEO_MEMORY`) - is
-what the original does on this machine; a candidate step, not started.
+what the original does on this machine: DONE as step 3f, below.
+
+**Step 3f - THE ORIGINAL'S TEXTURE SIZE RULE, DONE 2026-10-11 (the reader:
+"port the original's rule"), NOT yet run on the iBook.** Read to the end:
+`dword_80B060` is the slot count (`D3D_AllocTextureSlots(58, ...)` from
+`SetMaterialsMemory(58, 0)`), `dword_53ADE4` is 1 when the texture format is
+16 bits a texel (`dwRGBBitCount == 16`, so a 256x256 is 128 KB: `<< 17`),
+`dword_53ADEC` the device's SQUARE-ONLY cap (D3DPTEXTURECAPS_SQUAREONLY in
+the triangle caps, `sub_463610`), and the memory compared is the FREE
+memory after the screen buffers; the width factor `flt_6A5388` is the one
+halved first. So the need is 63 x 128 KB = 7.9 MB: a 4 MB card drew 128x128,
+an 8 MB one 128x256. The Carbon frontend now asks AGL for the accelerated
+renderer's `AGL_VIDEO_MEMORY` / `AGL_TEXTURE_MEMORY` and subtracts the
+window's back and depth buffers (`gl1TextureMemory`, logged as `display:
+video memory ...`), and GL1 halves as the original does (`gl1: texture size
+- ... textures at WxH of their size`), each texture uploaded at its scaled
+size by nearest sampling (the stretch blit's - a reconstruction) with the
+texture matrix on the logical size. `--full-textures` keeps them whole (an
+enhancement). A host with no answer keeps them whole: the street
+byte-identical. `OMK_GL1_TEXTURE_MEMORY=bytes` stands in for a card:
+`engine: gl1 backend`'s fifth frame at 5.5 MB -> 0.5x1, 33.5% of pixels
+changed, coverage 0.994; shown to fail with the height halved first. On the
+emulated Tiger the card answers 124 MB: whole. The port's own interface
+texture (2 MB) and the menus' (1 MB) are not in the sum, as the original
+had neither.
+
 
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x

@@ -21,6 +21,10 @@ namespace omk {
 // -> nullptr is never returned; `init()` is what fails when there is no
 // accelerated OpenGL to be had.
 Renderer* makeGl1Renderer();
+// `--full-textures` (an enhancement): every texture at its own size, not the
+// size the original's rule gives the card's free memory (`docs/ASSETS.md` 4b).
+// Before the first texture pool.
+void gl1SetFullTextures(Renderer* r, bool full);
 #if defined(OMK_GL1_AGL)
 // The world presented straight from the window's back buffer, and the same
 // with the composed interface over it (`gl1render.cpp`, tier B of

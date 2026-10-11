@@ -264,7 +264,8 @@ public:
             it = uploaded_.erase(it);
             ++dropped;
         }
-        std::vector<std::uint16_t> px;
+        std::vector<std::uint16_t> px, small;
+        decideTextureScale();
         for (std::size_t i = 0; i < t.size(); ++i) {
             const Texture& x = t[i];
             if (!x.hasPixels()) continue;
@@ -299,10 +300,29 @@ public:
                 // is read as a host word on either byte order
                 glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
                 glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, static_cast<GLsizei>(pw),
-                             static_cast<GLsizei>(ph), 0, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV,
-                             px.data());
-                gpuNote("textures", omk::prof::kGlTexture, name, 2LL * pw * ph);   // 16 bits a texel
+                // ...AT THE CARD'S SIZE (`decideTextureScale`): the original
+                // makes a texture `256 * factor` a side and stretch-blits the
+                // page into it (`sub_463420`). The blit's sampling was the
+                // card's own; a plain DirectDraw stretch takes the nearest
+                // source texel, `src = dst * srcSize / dstSize` - that, here,
+                // a RECONSTRUCTION. The texture matrix keeps the logical size
+                // (`texW_`), so the texel UVs land on the same picture.
+                const unsigned sw = std::max(1u, static_cast<unsigned>(pw * texScaleW_));
+                const unsigned sh = std::max(1u, static_cast<unsigned>(ph * texScaleH_));
+                const std::uint16_t* upload = px.data();
+                if (sw != pw || sh != ph) {
+                    small.assign(static_cast<std::size_t>(sw) * sh, 0);
+                    for (unsigned yy = 0; yy < sh; ++yy) {
+                        const std::uint16_t* srow = px.data() + static_cast<std::size_t>(yy * ph / sh) * pw;
+                        std::uint16_t* drow = small.data() + static_cast<std::size_t>(yy) * sw;
+                        for (unsigned xx = 0; xx < sw; ++xx) drow[xx] = srow[xx * pw / sw];
+                    }
+                    upload = small.data();
+                }
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB5_A1, static_cast<GLsizei>(sw),
+                             static_cast<GLsizei>(sh), 0, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV,
+                             upload);
+                gpuNote("textures", omk::prof::kGlTexture, name, 2LL * sw * sh);   // 16 bits a texel
                 hit = uploaded_.emplace(keyOf(x), Uploaded{name, x.idx, x.pal, static_cast<float>(pw),
                                                            static_cast<float>(ph), true}).first;
                 ++fresh;
@@ -1226,6 +1246,9 @@ public:
     // a body come as `Draw::vertexLights` and are applied per corner here by
     // `vertexlight.cpp`'s law, as the GLES shader applies them.
     bool posesBodies() const override { return true; }
+    // `--full-textures`: every texture at its own size whatever the card's
+    // memory - the port's own (an enhancement); before the first pool
+    void setFullTextures(bool full) { fullTextures_ = full; }
     int maxVertexLights() const override { return kPoseLights; }
     const char* name() const override { return "OpenGL 1.x fixed-function"; }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear. No mip chain -
@@ -1289,6 +1312,45 @@ private:
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
     GLuint probeTex_ = 0;                // the white-screen probe's pixel reads
 #endif
+    // THE ORIGINAL'S TEXTURE SIZE RULE (`sub_45F4F0`, `docs/ASSETS.md` 4b),
+    // decided once, before the first texture goes up. The game's spec is a 4
+    // MB card, and the original made its 58 slots fit one: it asks the card's
+    // FREE texture memory and, while the textures would need more than that,
+    // halves their width or their height - the width first, then whichever
+    // is the larger - each texture then made at `256 * factor` a side. The
+    // need is `(slots + 5) << 17` bytes for its 16-bit textures (`<< 16` for
+    // 8-bit): 63 x 128 KB = 7.9 MB, so a 4 MB card drew 128x128 and the
+    // reader's 8 MB iBook 128x256. The square-only arm (`dword_53ADEC`, a
+    // D3D device cap) has no OpenGL counterpart. Where the host does not say
+    // (`gl1TextureMemory` -1, every non-AGL build) the textures stay whole.
+    bool fullTextures_ = false, scaleDecided_ = false;
+    float texScaleW_ = 1.0f, texScaleH_ = 1.0f;
+    void decideTextureScale() {
+        if (scaleDecided_) return;
+        scaleDecided_ = true;
+        long freeMem = -1;
+#if defined(OMK_GL1_AGL)
+        freeMem = gl1TextureMemory();
+#endif
+        // `OMK_GL1_TEXTURE_MEMORY=bytes`: a card's answer stood in for - the
+        // host's OpenGL gives none, so this is how the rule is run there
+        // (`verify.py: engine: gl1 backend`)
+        if (const char* e = std::getenv("OMK_GL1_TEXTURE_MEMORY")) freeMem = std::atol(e);
+        constexpr long kSlots = 58;                            // `SetMaterialsMemory(58, 0)`
+        const float need = static_cast<float>((kSlots + 5) << 17);
+        float w = 1.0f, h = 1.0f;
+        if (!fullTextures_ && freeMem > 0)
+            while (w * h * need > static_cast<float>(freeMem)) {
+                if (w >= h) w *= 0.5f; else h *= 0.5f;
+            }
+        texScaleW_ = w; texScaleH_ = h;
+        if (freeMem > 0 || fullTextures_)
+            std::printf("gl1: texture size - %ld KB free for textures, the original's rule needs "
+                        "(58 + 5) x 128 KB = %ld KB: textures at %gx%g of their size (a 256x256 page "
+                        "drawn %dx%d)%s\n", freeMem / 1024, static_cast<long>(need) / 1024, w, h,
+                        static_cast<int>(256 * w), static_cast<int>(256 * h),
+                        fullTextures_ ? " - --full-textures: kept whole" : "");
+    }
     // the posed draw's per-mesh affines with the camera folded in (`submit`),
     // made on first use in a draw: `poseGen_[m] == poseDraw_` when made
     static constexpr int kPoseLights = 32;
@@ -1679,6 +1741,10 @@ private:
 }  // namespace
 
 Renderer* makeGl1Renderer() { return new Gl1Renderer(); }
+
+void gl1SetFullTextures(Renderer* r, bool full) {
+    if (r) static_cast<Gl1Renderer*>(r)->setFullTextures(full);
+}
 
 #if defined(OMK_GL1_AGL)
 // `r` is the renderer `makeGl1Renderer` made (the glue holds no other)

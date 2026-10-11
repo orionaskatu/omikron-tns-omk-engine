@@ -70,6 +70,7 @@ struct PlayState {
     int & threadFlag = opt.threadFlag;
     bool & noTieFlag = opt.noTieFlag;
     bool & cpuBodiesFlag = opt.cpuBodiesFlag;
+    bool & fullTexturesFlag = opt.fullTexturesFlag;
     int & detailFlag = opt.detailFlag;
     int & aaFlag = opt.aaFlag;
     int & filterFlag = opt.filterFlag;

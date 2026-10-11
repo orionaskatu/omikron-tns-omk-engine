@@ -28449,6 +28449,16 @@ def c_engine_gl1_backend():
     fault it found, the player's normal not turned with his facing
     (`worldCrowd`), was the same 7800 from the other side.
 
+    And a FIFTH (2026-10-11, handoff-classic-mac.md 3f step 3f): THE
+    ORIGINAL'S TEXTURE SIZE RULE (`sub_45F4F0`, docs/ASSETS.md 4b) with a card
+    answering 5.5 MB free (`OMK_GL1_TEXTURE_MEMORY`, the host's OpenGL gives
+    no answer): the textures need (58 + 5) x 128 KB, so the width halves once
+    - the log must say 0.5x1 - and the frame must differ from the whole
+    textures' and keep coverage >= 0.99; the gl1 frame (no answer) must say
+    nothing of a rule. Measured 2026-10-11: 33.5% of pixels changed, the
+    same picture coarser across. Shown to fail: the height halved first (red:
+    1x0.5).
+
     Shown to fail (2026-10-03): the texture slot taken as `key & 0x1F`
     instead of the key's low SIX bits (ASSETS 4b), so every material past
     slot 31 samples another atlas - coverage 0.9884 and 45523 pixels
@@ -28477,7 +28487,8 @@ def c_engine_gl1_backend():
         frames, logs = {}, {}
         for tag, env, filt, extra in (("gl1", {}, "nearest", []), ("sw", {"OMK_GL1": "0"}, "nearest", []),
                                       ("bilinear", {}, "bilinear", []),
-                                      ("cpu", {}, "nearest", ["--cpu-bodies"])):
+                                      ("cpu", {}, "nearest", ["--cpu-bodies"]),
+                                      ("small", {"OMK_GL1_TEXTURE_MEMORY": "5500000"}, "nearest", [])):
             out = os.path.join(tmp, tag + ".bin")
             r = subprocess.run([binp, fr, os.path.join(ROOT, "tables"),
                                 "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
@@ -28493,8 +28504,8 @@ def c_engine_gl1_backend():
                     return (f"{tag} dump {len(raw)} bytes",), ("640x480",), \
                         "the dump must be one 640x480 RGB565 frame: " + r.stdout[-400:]
                 frames[tag] = struct.unpack("<%dH" % (640 * 480), raw)
-        if len(frames) != 4:
-            return ("no frames",), ("four frames",), "omk-play must render all four"
+        if len(frames) != 5:
+            return ("no frames",), ("five frames",), "omk-play must render all five"
         g, sw, bl = frames["gl1"], frames["sw"], frames["bilinear"]
         N = len(g)
         def big(x, y):
@@ -28526,22 +28537,35 @@ def c_engine_gl1_backend():
         posedOn = ("walkers are posed and lit by the RENDERER" in logs["gl1"] and
                    "the player posed by the RENDERER" in logs["gl1"] and
                    "walkers are posed and lit on the CPU" in logs["cpu"])
+        # the ORIGINAL'S TEXTURE SIZE RULE (2026-10-11): a card answering 5.5
+        # MB free halves the width once - the textures drawn 128x256 - and the
+        # picture stays the picture; no answer (the host) keeps them whole
+        sm = frames["small"]
+        rule = re.search(r"gl1: texture size - (\d+) KB free.*textures at (\S+) of their size", logs["small"])
+        smallCover = sum(1 for x, y in zip(g, sm) if (x != 0) == (y != 0)) / N
+        smallGot = (rule.group(2) if rule else None, "gl1: texture size" in logs["gl1"],
+                    sm != g, smallCover >= 0.99)
         got = ("the world through OpenGL 1.x fixed-function" in logs["gl1"],
                g != sw, cover >= 0.99, differ <= N * 0.005,
                len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98, keptLater,
-               posedOn, posedAny <= N * 0.001 and posedDiff <= 8)
+               posedOn, posedAny <= N * 0.001 and posedDiff <= 8, smallGot)
         print(f"        gl1 vs software: coverage {cover:.4f}, {differ} pixels differ by >24 "
               f"({100.0 * differ / N:.2f}%); bilinear: {100.0 * len(changed) / N:.1f}% changed, "
               f"mean {meanB:.1f}, coverage {coverB:.4f}")
         print(f"        texture pools: {pools[:3]} (slots, kept, uploaded)")
         print(f"        posed by the renderer vs on the CPU: {posedAny} pixels differ, "
               f"{posedDiff} by >24 (posed paths on: {posedOn})")
-        return got, (True, True, True, True, True, True, True, True, True, True), \
+        print(f"        the texture size rule at 5.5 MB free: {smallGot[0]}, coverage {smallCover:.4f} "
+              f"against the whole textures")
+        return got, (True, True, True, True, True, True, True, True, True, True,
+                     ("0.5x1", False, True, True)), \
             "the world drawn by the gl1 backend; its frame not the software one; " \
             "coverage agreement >= 0.99; <= 0.5% of pixels differing by > 24; " \
             "bilinear changes >= 20% of the pixels by a mean <= 16 and keeps coverage >= 0.98; " \
             "and a texture pool handed over again KEEPS the textures already on the card; " \
-            "the walkers and the player posed BY THE RENDERER, within 0.1% of the CPU-posed frame"
+            "the walkers and the player posed BY THE RENDERER, within 0.1% of the CPU-posed frame; " \
+            "the original's texture size rule: 5.5 MB free -> 0.5x1 (128x256), coverage >= 0.99, " \
+            "and no rule at all where the card does not answer"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -137,6 +137,7 @@ const UpFmt kUiFmts[3] = {
 };
 bool g_overlayArgb = false;              // the overlay's pick (`gl1OverlayArgb`)
 omk::Gl1UploadPath g_overlayPath;        // ...and how it is sent (`gl1OverlayPath`)
+long g_textureMemory = -1;               // free for textures, bytes (`gl1TextureMemory`); -1 unknown
 
 // `n` RGB565 pixels into format `f` at `out` (format 0 is the 565 itself).
 // 1555 drops green's lowest bit; 8888 replicates the high bits down, as the
@@ -748,6 +749,43 @@ void CarbonFrontend::probeUploads() {
     ::Rect b;
     GetPortBounds(GetWindowPort(static_cast<WindowRef>(win_)), &b);
     const int ww = b.right - b.left, wh = b.bottom - b.top;
+    // THE CARD'S FREE TEXTURE MEMORY, which the original asks for before it
+    // sizes its textures (`sub_45F4F0`: `GetAvailableVidMem` on
+    // DDSCAPS_TEXTURE | DDSCAPS2_TEXTUREMANAGE, after its screen buffers are
+    // made - `docs/ASSETS.md` 4b): the accelerated renderer's texture memory
+    // (its video memory less the display's own buffer; the video memory less
+    // that buffer where the driver gives none), less this window's back and
+    // depth buffers. The GL1 backend applies the original's rule to it
+    // (`gl1TextureMemory`).
+    {
+        GLint vram = 0, tmem = 0;
+        GDHandle gd = GetMainDevice();
+        if (AGLRendererInfo ri = aglQueryRendererInfo(&gd, 1)) {
+            for (AGLRendererInfo r = ri; r; r = aglNextRendererInfo(r)) {
+                GLint acc = 0, vm = 0, tm = 0;
+                aglDescribeRenderer(r, AGL_ACCELERATED, &acc);
+                aglDescribeRenderer(r, AGL_VIDEO_MEMORY, &vm);
+                aglDescribeRenderer(r, AGL_TEXTURE_MEMORY, &tm);
+                if (acc && vm > vram) { vram = vm; tmem = tm; }
+            }
+            aglDestroyRendererInfo(ri);
+        }
+        long screen = 0;
+        if (gd && (**gd).gdPMap) {
+            const PixMapHandle pm = (**gd).gdPMap;
+            const ::Rect sb = (**pm).bounds;
+            screen = static_cast<long>(sb.right - sb.left) * (sb.bottom - sb.top) * (((**pm).pixelSize + 7) / 8);
+        }
+        const long back = static_cast<long>(ww) * wh * (rb <= 5 ? 2 : 4);
+        const long depth = static_cast<long>(ww) * wh * ((db + 7) / 8);
+        const long forTextures = tmem > 0 ? tmem : (vram > 0 ? vram - screen : 0);
+        g_textureMemory = vram > 0 ? forTextures - back - depth : -1;
+        std::printf("display: video memory %ld KB, %ld KB for textures by the driver (the screen's "
+                    "buffer %ld KB), this window's back and depth buffers %ld KB -> %ld KB free for "
+                    "textures%s\n", static_cast<long>(vram) / 1024, static_cast<long>(tmem) / 1024,
+                    screen / 1024, (back + depth) / 1024, g_textureMemory / 1024,
+                    vram > 0 ? "" : " (not reported: the textures are sized as on a large card)");
+    }
     const int W = 640, H = 480, TW = 1024, TH = 512;
     std::vector<std::uint16_t> frame(static_cast<std::size_t>(W) * H);
     for (int y = 0; y < H; ++y)
@@ -1228,6 +1266,7 @@ void* gl1AglContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
 #if defined(OMK_GL1_AGL)
 bool gl1OverlayArgb() { return g_overlayArgb; }
 Gl1UploadPath gl1OverlayPath() { return g_overlayPath; }
+long gl1TextureMemory() { return g_textureMemory; }
 #endif
 
 void gl1AglWindowSize(int& w, int& h) {

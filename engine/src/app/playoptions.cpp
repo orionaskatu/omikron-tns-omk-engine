@@ -105,6 +105,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --no-thread-bodies  pose the crowd on ONE core. The default poses it over\n"
 "                   several (`omk::Threads`), bit-identical to one core and\n"
 "                   proven on a console (--thread-bodies asks for the default)\n"
+"  --full-textures  the OpenGL 1.x backend's textures at their full size whatever\n"
+"                   the card's memory - the original HALVES them until they fit\n"
+"                   (docs/ASSETS.md 4b); an enhancement\n"
 "  --cpu-bodies     pose and light every body on the CPU, even on a renderer that\n"
 "                   poses them itself (GLES; todo/gpu-skinning.md) - for comparing\n"
 "  --no-tie         the GLES window draws WITHOUT the depth tie (o3de/depthtie.h),\n"
@@ -467,6 +470,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--no-thread-bodies") threadFlag = 0;
         else if (a == "--no-tie") noTieFlag = true;
         else if (a == "--cpu-bodies") cpuBodiesFlag = true;
+        else if (a == "--full-textures") fullTexturesFlag = true;
         else if (a == "--no-shadows") shadowFlag = 0;
         else if (a == "--detail" && i + 1 < argc) detailFlag = std::atoi(argv[++i]);
         else if (a == "--config" && i + 1 < argc) configFile = argv[++i];

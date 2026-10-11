@@ -30,4 +30,9 @@ bool gl1OverlayArgb();
 // probe timed it faster. All false: the copy, as before.
 struct Gl1UploadPath { bool client = false, rect = false, hint = false; };
 Gl1UploadPath gl1OverlayPath();
+// The card's FREE TEXTURE MEMORY in bytes - what the original's
+// `GetAvailableVidMem` answered (`docs/ASSETS.md` 4b): the renderer's texture
+// memory less this window's back and depth buffers. -1 when the driver does
+// not say; the backend then sizes the textures as on a large card.
+long gl1TextureMemory();
 }  // namespace omk

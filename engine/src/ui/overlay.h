@@ -30,6 +30,14 @@ struct OverlayPlanes {
     std::vector<std::uint16_t> c;
     std::vector<std::uint8_t>  m;
     std::vector<std::uint8_t>  rowInit;
+    // ...and WHICH 32-PIXEL BLOCKS of each row a pass touched (bit b = x in
+    // 32b..32b+31; past 2048 pixels the last bit): a reader may leave the
+    // rest of a touched row alone - an untouched pixel is the key there, and
+    // the planes' c = 0, m = 255 says the same thing (`playgpu_gl1.cpp`; the
+    // iBook's fight HUD, two gauges at the screen's two edges, touched ~300
+    // rows a few blocks wide each, and the glue walked all 640 of each)
+    std::vector<std::uint64_t> rowBlocks;
+    std::size_t curY = 0;
     // the row the last `row` call landed in, [lo, hi) as pixel indices: every
     // pass walks the frame row by row, so this spares the DIVIDE per pixel -
     // which the Vita's Cortex-A9 has no instruction for (a library call; the
@@ -41,13 +49,23 @@ struct OverlayPlanes {
         const std::size_t count = static_cast<std::size_t>(width) * height;
         if (c.size() != count) { c.assign(count, 0); m.assign(count, 255); }
         rowInit.assign(static_cast<std::size_t>(height), 0);
+        rowBlocks.assign(static_cast<std::size_t>(height), 0);
         lo = 1; hi = 0;
     }
     void row(std::size_t index) {
-        if (index >= lo && index < hi) return;   // initialised by the call that set them
+        if (index >= lo && index < hi) {          // initialised by the call that set them
+            const std::size_t b = (index - lo) >> 5;
+            rowBlocks[curY] |= std::uint64_t{1} << (b < 63 ? b : 63);
+            return;
+        }
         const std::size_t y = index / static_cast<std::size_t>(w);
         lo = y * static_cast<std::size_t>(w);
         hi = lo + static_cast<std::size_t>(w);
+        curY = y;
+        {
+            const std::size_t b = (index - lo) >> 5;
+            rowBlocks[y] |= std::uint64_t{1} << (b < 63 ? b : 63);
+        }
         if (rowInit[y]) return;
         rowInit[y] = 1;
         std::fill(c.begin() + y * w, c.begin() + (y + 1) * w, std::uint16_t(0));

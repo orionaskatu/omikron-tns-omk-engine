@@ -128,10 +128,15 @@ int PlayState::phasePresent() {
             }
             if (paceNext <= 0.0 || now > paceNext + kPeriod) paceNext = now;
             // ...unless the HOST paces (a headset's `xrWaitFrame`, step 5b)
-            while (!front.paces() && now < paceNext) {
-                const double left = paceNext - now;
-                front.delayMs(left > 0.002 ? static_cast<std::uint32_t>((left - 0.0015) * 1000.0) : 0);
-                now = nowSec();
+            {
+                // the WAIT for the frame's slot, apart from the work (`present`
+                // holds both; the iBook's profiles read the two as one)
+                OMK_ZONE("frame: pace");
+                while (!front.paces() && now < paceNext) {
+                    const double left = paceNext - now;
+                    front.delayMs(left > 0.002 ? static_cast<std::uint32_t>((left - 0.0015) * 1000.0) : 0);
+                    now = nowSec();
+                }
             }
             paceNext += kPeriod;
             paceLeft = nowSec();

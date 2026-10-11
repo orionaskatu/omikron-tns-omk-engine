@@ -250,6 +250,12 @@ public:
     virtual const void* windowId() const { return nullptr; }
     virtual std::string windowTitle() const { return {}; }
     virtual void setWindowTitle(const std::string&) {}
+    // Whether retitling the window costs a frame nothing worth counting. The
+    // fps counter retitles it once a second; on Mac OS X a Carbon window's
+    // title is redrawn by the window server, which the reader's iBook G3 paid
+    // ~20 ms for (`screens: fps` 3.8 ms a frame in a 5 fps fight) - so there
+    // the title carries the rate only under `--fps`.
+    virtual bool cheapWindowTitle() const { return true; }
     // Ask the host for typed characters (`HostInput::text`).
     virtual void startTextInput() {}
     // The interface's NAME FIELD has the focus (true) or not, said every

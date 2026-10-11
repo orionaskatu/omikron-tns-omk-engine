@@ -78,6 +78,7 @@ public:
     void* glContext();
     std::string windowTitle() const override;
     void setWindowTitle(const std::string& t) override;
+    bool cheapWindowTitle() const override { return false; }
 
     // THE BOOT FILMS THROUGH QUICKTIME (`Frontend::filmOpen`): the MPEG-1
     // decoded and its sound played by the system. Under GL the picture is

@@ -861,6 +861,24 @@ texture (2 MB) and the menus' (1 MB) are not in the sum, as the original
 had neither.
 
 
+**Step 3g - THE FIGHT'S OVERLAY GLUE AND THE TITLE, DONE 2026-10-11, NOT yet
+run on the iBook.** The sixth run's fight frame: `present` 112 ms, of it 27.7
+its own (the glue and the quads), and `screens: fps` 3.8 ms a frame - the
+once-a-second window RETITLE with the rate, which the window server redraws
+(~20 ms on the iBook; 5 fps puts it in every fifth frame). Now:
+- `OverlayPlanes::rowBlocks` (`ui/overlay.h`, shared): `row()` records which
+  32-pixel block of the row a pass touched; the GL1 glue resolves only those
+  blocks (an untouched pixel stays the key - the same transparent texel the
+  planes' c = 0, m = 255 gave) and zeroes a block's mask once when it stops
+  being touched - the fight's gauges touch ~300 rows a few blocks each;
+- `Frontend::cheapWindowTitle()`: the Carbon frontend says no, so its title
+  carries the rate only under `--fps`;
+- zones `gl1: overlay glue`, `gl1: overlay draw` (the quads, apart from the
+  uploads) and `frame: pace` (the frame-rate wait, which `present` held).
+`gles overlay`, `fight hud`, `subtitle box`, `frontend gateway`, `classic
+build`, `gl1 backend`, `frame rate` green; the Impasse on the emulated Tiger:
+the probes as step 3e's.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

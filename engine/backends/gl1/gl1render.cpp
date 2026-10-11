@@ -1081,6 +1081,7 @@ public:
                 ++bk;
             }
             glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            OMK_ZONE("gl1: overlay draw");      // the quads, apart from the uploads
             glEnable(target);
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
             // `C + world * M` as the STANDARD premultiplied "over" - alpha

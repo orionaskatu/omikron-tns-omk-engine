@@ -993,7 +993,8 @@ void PlayState::screensFps() {
         if (nowMs - fpsSince >= 1000) {
             const double secs = (nowMs - fpsSince) / 1000.0;
             const double rate = fpsFrames / secs;
-            if (const void* tw = front.windowId()) {
+            // ...where retitling is cheap, or asked for (`--fps`)
+            if (const void* tw = front.windowId(); tw && (showFps || front.cheapWindowTitle())) {
                 static std::string baseTitle;
                 static const void* titled = nullptr;
                 if (titled != tw) {

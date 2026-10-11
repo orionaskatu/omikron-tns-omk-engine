@@ -139,7 +139,7 @@ void Walker::land(double y) {
     }
     fall_ = 0.0;
     vy_ = vx_ = vz_ = 0.0;
-    airborne_ = sliding_ = false;
+    airborne_ = sliding_ = shortFall_ = false;
     jumping_ = false;            // MDJUMP03: dword_6A52CC = 0
 }
 
@@ -148,6 +148,19 @@ StepResult Walker::step(double dx, double dz, double dt) {
     // still applies the horizontal delta while an actor falls - a man who
     // steps off a kerb keeps going forward - so the request is carried, but
     // the ground does not get to answer it until he lands.
+    if (airborne_ && !sliding_ && shortFall_) {
+        // A SHORT FALL KEEPS WALKING. `+1304 = 2` asks for no bank group, so
+        // the walk's clip plays on and `Actor_ApplyMotion` hands its root
+        // motion to `Actor_Move` as on the ground - everything since the last
+        // safe stance is swept, airborne or not - and the probe then answers
+        // from where the sweep left him. Only a BANDED fall (below) goes
+        // straight down, because its clip (`H_FALL`) is a held pose.
+        double push[2] = {0.0, 0.0};
+        slide(dx, dz, push);
+        pos_[0] += dx;
+        pos_[2] += dz;
+        return tick(dt);
+    }
     if (airborne_ || sliding_) {
         if (tick(dt) != StepResult::Moved) {
             // A FALL IS VERTICAL. `Actor_ApplyMotion` moves the actor by
@@ -242,16 +255,29 @@ StepResult Walker::step(double dx, double dz, double dt) {
 
     pos_[0] = nx; pos_[2] = nz;
     standFlags_ = floorFl;
-    if (drop <= kSnapDrop || ignoreLedges) {
-        // absorbed in the frame, the way a kerb or a stair nosing is
+    // `Walk_GroundResponse` with the frame's gravity `a5`: a floor within it
+    // is reached in the frame (`a5` clamped to the gap, `v68 = 0`); past it
+    // the BELOW arm runs on the rest, and absorbs it only `g_IgnoreLedges ||
+    // v68 < 7.874 && !sub_47CF00()` - never outside shoot mode (`setNoAbsorb`)
+    const double desc = std::min(kTerminal, kGravity * dt) * (1.0 / 30.0) * dt;
+    if (drop <= desc || ignoreLedges || (!noAbsorb_ && drop - desc < kSnapDrop)) {
         land(*g);
         return StepResult::Moved;
     }
     // Off the edge. The horizontal move stands and the actor leaves the
     // ground; `tick` carries him down and lands him.
+    return leaveGround(drop, dt);
+}
+
+StepResult Walker::leaveGround(double drop, double dt) {
     apex_ = pos_[1];             // a plain fall's apex is where he stepped off
     airborne_ = true;
     sliding_  = false;
+    vy_ = std::min(kTerminal, kGravity * dt);
+    const double desc = vy_ * (1.0 / 30.0) * dt;
+    pos_[1] += desc;             // `+248 += a5`; `+280` takes nothing yet (byte 0)
+    // `v68 >= dword_910350` -> byte 1 and up, a banded fall; under it byte 2
+    shortFall_ = drop - desc < kFallShort;
     return StepResult::Fell;
 }
 
@@ -380,15 +406,16 @@ void Walker::slide(double& dx, double& dz, double push[2]) {
 //     refused only `!g_IgnoreLedges && rise > dword_910340` (2554). The
 //     refusal restores the last safe position, which for a frame with no move
 //     is where he stands;
-//   * the floor BELOW them - the airborne branch absorbs a drop under 7.874,
-//     or ANY drop while `g_IgnoreLedges` is set (2734), and otherwise he is
-//     falling. `kMaxUnsweptDrop` is NOT applied: it stands in for the
+//   * the floor BELOW them - reached in the frame when within the frame's
+//     gravity (`a5`); past it the airborne branch absorbs the rest under
+//     7.874 only for a shooter (`sub_47CF00`, `setNoAbsorb`), or ANY drop
+//     while `g_IgnoreLedges` is set (2734), and otherwise he is falling. `kMaxUnsweptDrop` is NOT applied: it stands in for the
 //     horizontal sweep, and nothing moved horizontally;
 //   * no floor at all - `Walk_ProbeGround` found nothing and
 //     `Actor_ApplyMotion` puts him back at the last safe position: here.
 // The gravity `Actor_ApplyMotion` adds first (12.86 / 30 a frame) is snapped
 // straight back by either branch on a floor, so it is not modelled here.
-StepResult Walker::settle() {
+StepResult Walker::settle(double dt) {
     const double y = pos_[1];
     auto g = ground(pos_[0], y, pos_[2]);
     std::uint32_t floorFl = 0u;
@@ -405,17 +432,16 @@ StepResult Walker::settle() {
     if (!g) return StepResult::Moved;
     const double rise = y - *g;                  // Y grows downward
     if (rise > kStepUp && !ignoreLedges) return StepResult::Blocked;
-    if (rise >= 0.0 || -rise <= kSnapDrop || ignoreLedges) {
+    const double desc = std::min(kTerminal, kGravity * dt) * (1.0 / 30.0) * dt;
+    if (rise >= 0.0 || -rise <= desc || ignoreLedges ||
+        (!noAbsorb_ && -rise - desc < kSnapDrop)) {
         if (*g != y) {
             land(*g);
             standFlags_ = floorFl;
         }
         return StepResult::Moved;
     }
-    apex_ = y;                                   // off the edge of a floor that went
-    airborne_ = true;
-    sliding_  = false;
-    return StepResult::Fell;
+    return leaveGround(-rise, dt);               // off the edge of a floor that went
 }
 
 StepResult Walker::tick(double dt) {
@@ -522,6 +548,7 @@ StepResult Walker::tick(double dt) {
     if (sliding_ && !(sf && sf->y - pos_[1] <= kSnapDrop)) {
         sliding_ = false;
         airborne_ = true;
+        shortFall_ = true;          // byte 0: banded below like any other
         apex_ = pos_[1];            // the descent is measured from here
     }
     if (!g && !sf) {
@@ -544,6 +571,7 @@ StepResult Walker::tick(double dt) {
         // those unconditionally, so leaving a ramp throws him off it.
         pos_[1] = ny;
         fall_ += dy;
+        if (!jumping_) shortFall_ = false;   // nothing below: the longest band
         return airborne_ ? StepResult::Fell : StepResult::Slid;
     }
     // Whichever of the two answered HIGHER is the one he meets first - and
@@ -568,10 +596,17 @@ StepResult Walker::tick(double dt) {
     // and the jump's apex is only 9 units up, so it landed after 9 airborne
     // frames of its 13 (`engine: player jump`, red since `d589d30`). The flag
     // holds for the whole flight, as `MDJUMP0A` sets it and only the landing
-    // clears it. NOT ported from the same arm: its `+1304` fall-tier test and
-    // `sub_47CF00()`.
-    // ...and `!sub_47CF00()` beside it, the shoot jump's (`setNoAbsorb`).
-    if (ny >= surf || (!jumping_ && !noAbsorb_ && surf - ny <= kSnapDrop)) {
+    // clears it. NOT ported from the same arm: its `+1304` fall-tier test.
+    // ...and `!sub_47CF00()` beside it (`setNoAbsorb`), which is 0 only for
+    // a shooter not jumping: in adventure nothing is absorbed.
+    // EXCEPT A SLIDE, and that is this port's, LABELLED: the engine's slider
+    // leaves a face that drops faster than 11.8 a frame, falls under gravity
+    // (`+1304 = 2`) and meets it again a few frames on, but this tick looks
+    // at the steep soup only WHILE sliding (the narrowing above), so once
+    // airborne he would never find the ramp again and would fall through it.
+    // The absorb keeps him on the face instead - the shape of the original's
+    // descent without its few-frame hops.
+    if (ny >= surf || (!jumping_ && (!noAbsorb_ || sliding_) && surf - ny < kSnapDrop)) {
         fall_ += surf - pos_[1];
         // A steep landing is not a landing: the engine re-writes the slide
         // speed and keeps him moving down the face.
@@ -589,6 +624,9 @@ StepResult Walker::tick(double dt) {
     }
     pos_[1] = ny;
     fall_ += dy;
+    // THE AIRBORNE ARM RE-BANDS while `+1304` is 0 or 2 and no jump holds
+    // (`21_d3d.c` 2729): 59.055 under him now makes it a banded fall
+    if (!jumping_ && shortFall_ && surf - ny >= kFallShort) shortFall_ = false;
     return airborne_ ? StepResult::Fell : StepResult::Slid;
 }
 

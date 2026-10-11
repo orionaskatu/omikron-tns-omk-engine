@@ -180,9 +180,10 @@ void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType = 
 // -> false when refused; nothing is touched then.
 bool shootJump(ShootMover& m, bool falling);
 inline float impulseFromProperty36(int slot3) { return static_cast<float>(slot3 * 0.38999999); }
-// `sub_47CF00` in shoot mode: `flags & 0x810` - no absorb while it is set.
+// `sub_47CF00` (0x0047CF00): `dword_6579CC ? flags & 0x810 : 1` - no absorb
+// while it is nonzero, which is ALWAYS outside shoot mode (`Walker::setNoAbsorb`).
 inline bool shootMoveNoAbsorb(const ShootMover& m) {
-    return m.active && (m.flags & (kShootMoveHold | kShootMoveBlock)) != 0;
+    return !m.active || (m.flags & (kShootMoveHold | kShootMoveBlock)) != 0;
 }
 
 // `sub_47D1F0`, the HURT REACTION - what `sub_4240E0` does with a bolt the

@@ -937,7 +937,6 @@ void PlayState::adventureScreenInput() {
                                 double(player->eulerRoll()));
                 // the vertical goes UP (`+248 -= flt_6579C0 x delta`, y down)
                 player->addShootMotion(st.dx, st.dz, -st.dy);
-                player->setShootNoAbsorb(omk::shootMoveNoAbsorb(shootMover));
                 if (st.dy != 0.0f)
                     std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", n,
                                 double(st.dy), shootMover.flags, double(player->pos()[1]));
@@ -1008,6 +1007,9 @@ void PlayState::adventureScreenInput() {
             }
             const bool wasAir = player->walker().airborne();
             const bool wasSlide = player->walker().sliding();
+            // `sub_47CF00` for this frame's ground response - 1 outside shoot
+            // mode, so the 7.874 absorb runs only for a shooter not jumping
+            player->setShootNoAbsorb(omk::shootMoveNoAbsorb(shootMover));
             player->tick(static_cast<float>(frameSec * 30.0),
                          tickBits ? tickBits : omk::kIdleInput);
             playerTicked = true;

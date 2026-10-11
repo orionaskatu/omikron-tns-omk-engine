@@ -174,12 +174,12 @@ public:
     // A TELEPORT: `actor.goto_address` writes the actor's position outright
     // (`sub_41BF50`), and the fall accounting starts over from the new floor.
     // `tick`'s GROUNDED half: `Walk_GroundResponse` on a frame with no move.
-    StepResult settle();
+    StepResult settle(double dt = 1.0);
 
     void moveTo(double x, double y, double z) {
         pos_[0] = x; pos_[1] = y; pos_[2] = z;
         fall_ = 0.0; vy_ = 0.0; vx_ = 0.0; vz_ = 0.0;
-        airborne_ = false; sliding_ = false; jumping_ = false;
+        airborne_ = false; sliding_ = false; jumping_ = false; shortFall_ = false;
     }
 
     // THE JUMP, `MDJUMP01` (0x0046BD50) - an IMPULSE into the same three
@@ -211,6 +211,7 @@ public:
         vy_ = vy; vx_ = dx; vz_ = dz;
         airborne_ = true;
         jumping_ = true;             // dword_6A52CC = 1
+        shortFall_ = false;          // the jump's arm bands nothing
         fall_ = 0.0;
         tier_ = 0;
         apex_ = pos_[1];
@@ -227,6 +228,7 @@ public:
         pos_[1] += dy;
         if (dy < 0.0 && !airborne_ && !sliding_) {
             airborne_ = true;
+            shortFall_ = true;           // byte 0: the airborne arm bands it
             vy_ = 0.0;
             fall_ = 0.0;
             tier_ = 0;
@@ -250,14 +252,17 @@ public:
         pos_[2] += dz;
         return true;
     }
-    // `sub_47CF00` in shoot mode, `flags & 0x810`: while it is nonzero the
-    // ground response's 7.874 ABSORB is off, as `dword_6A52CC` turns it off
-    // for the adventure leap - so a shoot jump is not snapped straight back
-    // onto the floor it has just left (`shootMoveNoAbsorb`). NOT ported, and
-    // labelled: outside shoot mode the same function returns 1, so the
-    // ORIGINAL never absorbs a drop in adventure either - it bands it as a
-    // short fall (`+1304 = 2`) and gravity takes him down; this walker
-    // absorbs it, as it has since the walker was written.
+    // `sub_47CF00` (0x0047CF00): `dword_6579CC ? flags & 0x810 : 1`. While
+    // it is nonzero the ground response's 7.874 ABSORB is off (`21_d3d.c`
+    // 2734, `v68 < 7.874 && !sub_47CF00()`), as `dword_6A52CC` turns it off
+    // for the adventure leap. `dword_6579CC` is the SHOOTER, written only by
+    // `Shoot_Enter` and `Shoot_TickPlayer` (`sub_47CC70`) and cleared by
+    // `sub_47CE70`, so OUTSIDE SHOOT MODE IT RETURNS 1 AND NOTHING IS EVER
+    // ABSORBED: a drop is banded a short fall (`+1304 = 2`) and gravity takes
+    // him down (`todo/scene-gameplay-audit.md` 22, 2026-10-12). In shoot mode
+    // the absorb is on except while the mover's jump flags hold, so a shoot
+    // jump is not snapped back onto the floor it has just left
+    // (`shootMoveNoAbsorb`). The default is the adventure answer.
     void setNoAbsorb(bool on) { noAbsorb_ = on; }
     bool noAbsorb() const { return noAbsorb_; }
 
@@ -296,6 +301,12 @@ public:
     bool   airborne() const { return airborne_; }
     bool   sliding() const { return sliding_; }
     bool   jumping() const { return jumping_; }   // dword_6A52CC
+    // In the air in the SHORT band - `+1304 == 2`, a drop under 59.055
+    // (`kFallShort`): no bank group is asked for, so the walk's clip keeps
+    // playing and its root motion keeps carrying him (`step`). The airborne
+    // arm re-bands every frame while the byte is 0 or 2, so a short fall
+    // that finds 59 units under him becomes a banded one, never back.
+    bool   shortFall() const { return airborne_ && shortFall_; }
 
     // The tier the LAST landing arrived in - 0 none, 1 a step, 2 a fall,
     // 3 hurt, 4 killed. The engine reads the same four bands off the drop and
@@ -353,7 +364,12 @@ private:
     // 7.874 absorb and the fall tiers - only `if (!dword_6A52CC)`, so while it
     // is set a leap is never snapped back onto the floor it is still above.
     bool   jumping_  = false;
-    bool   noAbsorb_ = false;    // `sub_47CF00` nonzero (shoot mode, flags & 0x810)
+    bool   noAbsorb_ = true;     // `sub_47CF00` nonzero: always outside shoot mode
+    bool   shortFall_ = false;   // `+1304` 0 or 2 while airborne (see `shortFall`)
+    // Leave the ground `drop` above the floor, in the frame: the gravity
+    // `Actor_ApplyMotion` adds before the ground response is spent at once
+    // (`a5`), and the rest (`v68`) bands the fall.
+    StepResult leaveGround(double drop, double dt);
     int    tier_ = 0;
     double landFall_ = 0.0;
     double drop_ = 0.0;          // the last landing's descent from its apex

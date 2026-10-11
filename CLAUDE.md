@@ -959,7 +959,7 @@ All of this is documented with its evidence in `docs/`. Headline verifications:
 | format | state |
 |---|---|
 | `IAM` archives, `IAM\DIALOG` conversations | solved |
-| the script VM (153 opcodes) | table decoded; 22 operand counts corrected (16, 43, 44 and 62 on 2026-09-02, 142 on 2026-10-11); **130 named**, 99.97% of executed instructions — every exercised opcode named or explicitly READ. 150/151 are `render.grey.on`/`.off`: they swap the renderer to a **greyscale** bank around a camera sequence, so the game has black-and-white cutscenes |
+| the script VM (153 opcodes) | table decoded; 22 operand counts corrected (16, 43, 44 and 62 on 2026-09-02, 142 on 2026-10-11); **133 named** (134/135/137 on 2026-10-11), 99.97% of executed instructions — every exercised opcode named or explicitly READ. 150/151 are `render.grey.on`/`.off`: they swap the renderer to a **greyscale** bank around a camera sequence, so the game has black-and-white cutscenes |
 | `.3DM` morph (PC) — bones, face, root motion, audio | 777/777 files |
 | OTNS ADPCM audio | decoder transcribed from `sub_483200` |
 | `.3DT` textures | 2534/2534 exact |

@@ -1579,6 +1579,29 @@ suspends with status 7 — `camera.set.wait` for a world camera.
 | field 1 in `ADDRESSES.TAG` | **84 / 84** |
 | field 2 (travel time) | **20 at all 84** |
 
+### 134 / 135 / 137 — `set.mirror.on` / `.off` and `ui.close_all`
+
+**read 2026-10-11** from the image (none of the three handlers has a `proc`
+label; `asmfn.py --op` snaps past them). No operands; each tests the dry run.
+
+* **135** is `sub_41E1D0(0)`: if a mirror is LIVE (`dword_534F48`, the one
+  `sub_440D90` reflects the scene through - ASSETS 4c), it is saved in
+  `dword_4E90A0` and the live one zeroed. **134** is `sub_41E1D0(1)`: if one is
+  saved, it is live again (and stays saved). Sites: AREA 237, Kay'l's
+  apartment - zone records 50, 54 and 61 park it on camera cuts, 84 and 85
+  restore it. Nothing clears `dword_4E90A0`, so a 134 after another set loaded
+  would restore a mesh of the old one; the port resets both with the area.
+* **137** is `jmp sub_41DF90`: `UI_CloseAllScreens()` and 1 - every screen
+  slot whose state (+8) is set gets its own CLOSE callback (instance +20, the
+  record's +28). Seven sites: the HURT handlers - AREA 1's and AREA 101's
+  message 17 and GLOBAL's slot 8 (Vie set, a red flash, a shake, then this), so
+  a hit closes the sneak - AREA 114 after the translation exchange, AREA 101's
+  cutscene opening and SCENE 2.
+
+Ported: the Session's `mirrorParked()` empties the plane the viewer draws
+through, and `takeCloseAllScreens()` closes the open screen by its own close
+path. `verify.py: engine: mirror park`.
+
 ### 142 — `ui.highscore`, the shooting gallery's board
 
 **read 2026-10-11** (0x00405CD0, `asmfn.py --op 142`; screen 36's open

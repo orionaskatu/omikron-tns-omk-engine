@@ -1233,6 +1233,11 @@ frame driving the face, through the same data path the browser app uses:
   > global (`dword_534F48`), so at most one mirror is live; and the pass is
   > gated on `!sub_45EF50()`, the display-driver index, so it runs in **mode 0
   > only** and a mirror really is a flat blended pane in the software modes.
+  > **And a script can PARK it** (read 2026-10-11): ops 135/134,
+  > `set.mirror.off`/`.on`, are `sub_41E1D0(0)`/`(1)` - `dword_534F48` moved to
+  > `dword_4E90A0` and zeroed, then put back. Kay'l's apartment parks its
+  > mirror from three zone scripts on its camera cuts and restores it from two
+  > (`docs/SCRIPT_VM.md`, "134 / 135 / 137"; `verify.py: engine: mirror park`).
   >
   > **Found by playing**, which is why it is here: a reader flying the C++
   > viewer reported *a wall has transparency but is supposed to be a mirror —

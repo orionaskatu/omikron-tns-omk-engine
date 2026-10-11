@@ -28532,6 +28532,13 @@ def c_engine_gl1_backend():
     same picture coarser across. Shown to fail: the height halved first (red:
     1x0.5).
 
+    And a SIXTH (2026-10-11, step 3h): RUNS OF 4 TRIANGLES whose bounding
+    sphere lies wholly beyond one plane are skipped without reading their
+    corners; with `OMK_GL1_NO_SKIP=1` they are not. A SIXTH and SEVENTH frame,
+    130 frames each (the 60-pass line): some corners must be skipped and the
+    two frames must be byte-identical. Measured 2026-10-11: 298980 corners over 60 street passes.
+    Shown to fail with the sphere's radius halved.
+
     Shown to fail (2026-10-03): the texture slot taken as `key & 0x1F`
     instead of the key's low SIX bits (ASSETS 4b), so every material past
     slot 31 samples another atlas - coverage 0.9884 and 45523 pixels
@@ -28561,12 +28568,15 @@ def c_engine_gl1_backend():
         for tag, env, filt, extra in (("gl1", {}, "nearest", []), ("sw", {"OMK_GL1": "0"}, "nearest", []),
                                       ("bilinear", {}, "bilinear", []),
                                       ("cpu", {}, "nearest", ["--cpu-bodies"]),
-                                      ("small", {"OMK_TEXTURE_MEMORY": "5500000"}, "nearest", [])):
+                                      ("small", {"OMK_TEXTURE_MEMORY": "5500000"}, "nearest", []),
+                                      ("skip", {}, "nearest", []),
+                                      ("noskip", {"OMK_GL1_NO_SKIP": "1"}, "nearest", [])):
             out = os.path.join(tmp, tag + ".bin")
             r = subprocess.run([binp, fr, os.path.join(ROOT, "tables"),
                                 "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                                 "--area", "0", "--stand", "1804,0,-6890,336", "--nofmv",
-                                "--frames", "60", "--res", "640x480", "--filter", filt,
+                                "--frames", "130" if tag in ("skip", "noskip") else "60",
+                                "--res", "640x480", "--filter", filt,
                                 "--dump", out] + extra,
                                cwd=eng, capture_output=True, text=True,
                                env=dict(os.environ, SDL_VIDEODRIVER="dummy", **env))
@@ -28577,8 +28587,8 @@ def c_engine_gl1_backend():
                     return (f"{tag} dump {len(raw)} bytes",), ("640x480",), \
                         "the dump must be one 640x480 RGB565 frame: " + r.stdout[-400:]
                 frames[tag] = struct.unpack("<%dH" % (640 * 480), raw)
-        if len(frames) != 5:
-            return ("no frames",), ("five frames",), "omk-play must render all five"
+        if len(frames) != 7:
+            return ("no frames",), ("seven frames",), "omk-play must render all seven"
         g, sw, bl = frames["gl1"], frames["sw"], frames["bilinear"]
         N = len(g)
         def big(x, y):
@@ -28618,10 +28628,15 @@ def c_engine_gl1_backend():
         smallCover = sum(1 for x, y in zip(g, sm) if (x != 0) == (y != 0)) / N
         smallGot = (rule.group(2) if rule else None, "gl1: texture size" in logs["gl1"],
                     sm != g, smallCover >= 0.99)
+        # the RUNS SKIPPED UNREAD (2026-10-11, step 3h): some were, and the
+        # frame is the one drawn without the skip, byte for byte
+        sk = re.search(r"(\d+) corners skipped unread", logs["skip"])
+        skipped = int(sk.group(1)) if sk else -1
+        skipGot = (skipped > 0, frames["noskip"] == frames["skip"])
         got = ("the world through OpenGL 1.x fixed-function" in logs["gl1"],
                g != sw, cover >= 0.99, differ <= N * 0.005,
                len(changed) >= N * 0.2, meanB <= 16.0, coverB >= 0.98, keptLater,
-               posedOn, posedAny <= N * 0.001 and posedDiff <= 8, smallGot)
+               posedOn, posedAny <= N * 0.001 and posedDiff <= 8, smallGot, skipGot)
         print(f"        gl1 vs software: coverage {cover:.4f}, {differ} pixels differ by >24 "
               f"({100.0 * differ / N:.2f}%); bilinear: {100.0 * len(changed) / N:.1f}% changed, "
               f"mean {meanB:.1f}, coverage {coverB:.4f}")
@@ -28630,15 +28645,18 @@ def c_engine_gl1_backend():
               f"{posedDiff} by >24 (posed paths on: {posedOn})")
         print(f"        the texture size rule at 5.5 MB free: {smallGot[0]}, coverage {smallCover:.4f} "
               f"against the whole textures")
+        print(f"        runs off the screen skipped unread: {skipped} corners over 60 passes, "
+              f"the frame {'identical' if skipGot[1] else 'DIFFERENT'} without the skip")
         return got, (True, True, True, True, True, True, True, True, True, True,
-                     ("0.5x1", False, True, True)), \
+                     ("0.5x1", False, True, True), (True, True)), \
             "the world drawn by the gl1 backend; its frame not the software one; " \
             "coverage agreement >= 0.99; <= 0.5% of pixels differing by > 24; " \
             "bilinear changes >= 20% of the pixels by a mean <= 16 and keeps coverage >= 0.98; " \
             "and a texture pool handed over again KEEPS the textures already on the card; " \
             "the walkers and the player posed BY THE RENDERER, within 0.1% of the CPU-posed frame; " \
             "the original's texture size rule: 5.5 MB free -> 0.5x1 (128x256), coverage >= 0.99, " \
-            "and no rule at all where the card does not answer"
+            "and no rule at all where the card does not answer; runs off the screen " \
+            "skipped unread and the frame byte-identical without the skip"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

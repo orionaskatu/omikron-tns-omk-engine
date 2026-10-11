@@ -879,6 +879,26 @@ once-a-second window RETITLE with the rate, which the window server redraws
 build`, `gl1 backend`, `frame rate` green; the Impasse on the emulated Tiger:
 the probes as step 3e's.
 
+**Step 3h - RUNS OFF THE SCREEN SKIPPED UNREAD, DONE 2026-10-11, NOT yet run
+on the iBook.** The street's submit was the iBook's largest cost (~42 ms of
+CPU, sixth run) on a machine bound by its bus, and two in five of a street
+frame's triangles lie wholly off the screen - each read (48 bytes a corner)
+and transformed before its outcodes rejected it. Each geometry of 4096+
+corners now keeps a bounding sphere a run of 4 TRIANGLES (`clustersFor`,
+kept per geometry and revision, the dirty list re-fitting only its runs, the
+caches dropped on the geometry-gone notice), and a run whose sphere lies
+wholly beyond the near plane or a screen edge - with a margin - is skipped
+without reading its corners: every triangle in it carries that plane's bit,
+so the picture is the same. Posed draws excluded (rest corners). Runs of 32
+triangles skipped 95040 corners over 60 street passes on the host, 16:
+185436, 8: 248580, **4: 298980** (a fifth). The street, the apartment and
+the Impasse BYTE-IDENTICAL; `engine: gl1 backend` renders the street with
+and without (`OMK_GL1_NO_SKIP=1`) and requires both - shown to fail with the
+radius halved. The emulated Tiger reads its memory through the M3 and shows
+no gain (submit 11.92 -> 11.86 ms with 285792 corners skipped): the iBook is
+the measure. The GPU backends transform on the GPU from resident buffers,
+so the skip does not apply to them.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

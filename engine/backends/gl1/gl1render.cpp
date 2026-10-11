@@ -153,7 +153,16 @@ unsigned nextPow2(unsigned v) {
 
 class Gl1Renderer final : public Renderer {
 public:
+    // the caches keyed by a geometry's ADDRESS (the vertex index, the runs'
+    // spheres) are dropped when it is destroyed (`geom3do.h` GpuResidency)
+    Gl1Renderer() { addGeometryListener(&Gl1Renderer::geometryGone, this); }
+    static void geometryGone(void* self, const Geometry* g) {
+        auto* r = static_cast<Gl1Renderer*>(self);
+        r->vindex_.erase(g);
+        r->clusters_.erase(g);
+    }
     ~Gl1Renderer() override {
+        removeGeometryListener(&Gl1Renderer::geometryGone, this);
         if (!ctx_) return;
 #if defined(OMK_GL1_AGL)
         // the context is the frontend's, and it may have closed first
@@ -543,7 +552,38 @@ public:
         // vertices; Kay'l 1626 on 272.
         const VIndex* vi = indexFor(g);
         ++drawStamp_;
+        // RUNS OF 4 TRIANGLES WHOLLY OUTSIDE ONE PLANE, SKIPPED UNREAD (step
+        // 3h): two in five of a street frame's triangles are off the screen,
+        // and each was read (48 bytes a corner, on a bus that reads ~170 MB/s)
+        // and transformed before its outcodes rejected it. A run's bounding
+        // sphere (`clustersFor`, built once a geometry) beyond one plane - by
+        // a margin - means every corner of it carries that plane's bit, so
+        // every triangle would have been rejected: the same picture. Not for
+        // a posed draw, whose corners are at rest.
+        // `OMK_GL1_NO_SKIP=1` turns the skip off, to show it changes no pixel
+        // (`verify.py: engine: gl1 backend`)
+        static const bool noSkip = std::getenv("OMK_GL1_NO_SKIP") != nullptr;
+        const Clusters* cl = posed || noSkip ? nullptr : clustersFor(g);
+        std::size_t clusterChecked = ~std::size_t{0};
         for (std::size_t t = 0; t < nCorner; t += 3) {
+            if (cl) {
+                const std::size_t c = (d.start + t) / kClusterCorners;
+                if (c != clusterChecked) {
+                    clusterChecked = c;
+                    const float* sp = cl->sph.data() + 4 * c;
+                    if (sphereOutside(sp)) {
+                        // to the end of the run (or of the draw)
+                        const std::size_t runEnd = (c + 1) * kClusterCorners - d.start;
+                        const std::size_t to = std::min(runEnd, nCorner);
+                        const std::size_t tris = (to - t + 2) / 3;
+                        st_.triangles += static_cast<long>(tris);
+                        st_.offscreen += static_cast<long>(tris);
+                        statSkipped_ += static_cast<long>(3 * tris);
+                        t = to - 3;                 // the loop's += 3 lands on `to`
+                        continue;
+                    }
+                }
+            }
             ++st_.triangles;
             if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
             Vtx in[3];
@@ -750,13 +790,14 @@ public:
         sum_[3] += st_.drawn; sum_[4] += st_.culled;
         if (++passes_ == 60) {
             sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
-            statCorners_ = statTransformed_ = statSent_ = 0;
+            statCorners_ = statTransformed_ = statSent_ = statSkipped_ = 0;
         }
         if (passes_ == 120)
             std::printf("gl1: 60 passes drew %ld draws in %ld draw calls, %ld of %ld triangles "
-                        "(%ld culled); %ld corners, %ld transformed, %ld vertices sent\n",
+                        "(%ld culled); %ld corners, %ld transformed, %ld vertices sent, %ld "
+                        "corners skipped unread in runs off the screen\n",
                         sum_[0], sum_[1], sum_[3], sum_[2], sum_[4],
-                        statCorners_, statTransformed_, statSent_);
+                        statCorners_, statTransformed_, statSent_, statSkipped_);
     }
 
     // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
@@ -1469,6 +1510,7 @@ private:
         camW_ = cam.w; camH_ = cam.h;
         ith_ = 1.0f / th_; itv_ = 1.0f / tv_;
         gx_ = th_ * 1.01f; gy_ = tv_ * 1.01f;   // the screen edges' hair of margin
+        gxLen_ = std::sqrt(1.0f + gx_ * gx_); gyLen_ = std::sqrt(1.0f + gy_ * gy_);   // `sphereOutside`
     }
 
     // The reference's cull (`raster.cpp`: the screen area's sign, flipped
@@ -1655,7 +1697,77 @@ private:
     std::vector<VSlot> vs_;
     std::vector<std::uint16_t> idx_;
     std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
-    long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0;
+    long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0, statSkipped_ = 0;
+    // THE RUNS' BOUNDING SPHERES (step 3h): a geometry's corners in runs of
+    // `kClusterCorners` from corner 0 (4 triangles; a draw starts on a
+    // triangle, so a run boundary is one too), a sphere (x, y, z, r) each,
+    // kept per geometry and REVISION - the corners `dirtyCorners` lists
+    // re-fit only their runs, anything else a rebuild. Only geometries large
+    // enough to pay for it.
+    // 4 triangles a run: measured over 60 street passes on the host, runs of
+    // 32 triangles skipped 95040 corners, 16 185436, 8 248580, 4 298980 (a
+    // fifth of the corners read, ~190 KB of spheres a set)
+    static constexpr std::size_t kClusterCorners = 12, kClusterMinCorners = 4096;
+    struct Clusters { std::size_t n = 0; std::uint64_t rev = 0; std::vector<float> sph; };
+    std::map<const Geometry*, Clusters> clusters_;
+    void fitCluster(const Geometry& g, std::size_t c, float* sp) const {
+        const std::size_t a = c * kClusterCorners, b = std::min(g.corners.size(), a + kClusterCorners);
+        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (std::size_t i = a; i < b; ++i) {
+            const Corner& k = g.corners[i];
+            lo[0] = std::min(lo[0], k.x); hi[0] = std::max(hi[0], k.x);
+            lo[1] = std::min(lo[1], k.y); hi[1] = std::max(hi[1], k.y);
+            lo[2] = std::min(lo[2], k.z); hi[2] = std::max(hi[2], k.z);
+        }
+        const float cx = 0.5f * (lo[0] + hi[0]), cy = 0.5f * (lo[1] + hi[1]), cz = 0.5f * (lo[2] + hi[2]);
+        float r2 = 0.0f;
+        for (std::size_t i = a; i < b; ++i) {
+            const Corner& k = g.corners[i];
+            const float dx = k.x - cx, dy = k.y - cy, dz = k.z - cz;
+            r2 = std::max(r2, dx * dx + dy * dy + dz * dz);
+        }
+        // a margin, so rounding in the per-corner transform can never put a
+        // corner the sphere calls outside on the inside
+        sp[0] = cx; sp[1] = cy; sp[2] = cz; sp[3] = std::sqrt(r2) * 1.001f + 1.0f;
+    }
+    const Clusters* clustersFor(const Geometry& g) {
+        const std::size_t n = g.corners.size();
+        if (n < kClusterMinCorners) return nullptr;
+        Clusters& c = clusters_[&g];
+        g.resident.mark();
+        const std::size_t runs = (n + kClusterCorners - 1) / kClusterCorners;
+        if (c.n == n && c.rev == g.revision) return &c;
+        if (c.n == n && g.dirtyTo == g.revision && c.rev == g.dirtyFrom) {
+            // only the runs the listed corners lie in (the list is not sorted)
+            std::size_t last = ~std::size_t{0};
+            for (const std::uint32_t k : g.dirtyCorners) {
+                const std::size_t r = k / kClusterCorners;
+                if (r == last || r >= runs) continue;
+                last = r;
+                fitCluster(g, r, c.sph.data() + 4 * r);
+            }
+        } else {
+            c.n = n;
+            c.sph.assign(4 * runs, 0.0f);
+            for (std::size_t r = 0; r < runs; ++r) fitCluster(g, r, c.sph.data() + 4 * r);
+        }
+        c.rev = g.revision;
+        return &c;
+    }
+    // the sphere wholly beyond the near plane or one screen edge, in the terms
+    // the corners' outcodes use (`submit`): behind when z + r <= near, beyond
+    // an edge when the edge's function plus r times its normal's length < 0
+    bool sphereOutside(const float* sp) const {
+        const float dx = sp[0] - eye_[0], dy = sp[1] - eye_[1], dz = sp[2] - eye_[2];
+        const float x = dx * bs_[0] + dy * bs_[1] + dz * bs_[2];
+        const float y = dx * bu_[0] + dy * bu_[1] + dz * bu_[2];
+        const float z = dx * bf_[0] + dy * bf_[1] + dz * bf_[2];
+        const float r = sp[3];
+        if (z + r <= kNearCut) return true;
+        const float lx = r * gxLen_, ly = r * gyLen_;
+        return z * gx_ - x + lx < 0.0f || z * gx_ + x + lx < 0.0f ||
+               z * gy_ - y + ly < 0.0f || z * gy_ + y + ly < 0.0f;
+    }
     static constexpr std::size_t kIndexMinCorners = 64;
     bool sameCorner(const Geometry& g, std::size_t a, std::size_t b) const {
         if (std::memcmp(&g.corners[a], &g.corners[b], sizeof(Corner)) != 0) return false;
@@ -1668,6 +1780,7 @@ private:
         if (it != vindex_.end() && it->second.n == n) return &it->second;
         if (it == vindex_.end() && vindex_.size() >= 256) vindex_.clear();   // bounded: transient geometries
         VIndex& x = vindex_[&g];
+        g.resident.mark();
         x.n = n; x.nv = 0;
         x.vert.assign(n, 0);
         const bool meshes = g.cornerMesh.size() == n;
@@ -1708,7 +1821,7 @@ private:
     long submits_ = 0, batches_ = 0, passes_ = 0, sum_[5]{};
     // the camera, applied on the CPU (setCamera)
     float bs_[3]{}, bu_[3]{}, bf_[3]{}, th_ = 1, tv_ = 1, eye_[3]{};
-    float ith_ = 1, itv_ = 1, gx_ = 1.01f, gy_ = 1.01f;
+    float ith_ = 1, itv_ = 1, gx_ = 1.01f, gy_ = 1.01f, gxLen_ = 1.42f, gyLen_ = 1.42f;
     int camW_ = 1, camH_ = 1;
 };
 

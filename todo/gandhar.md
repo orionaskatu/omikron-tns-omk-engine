@@ -239,3 +239,23 @@ root delta (`Anim_SetFrame`) moves his node. **`sub_47E5F0`**: a step of
    play-test entry, the drift-audit row closed.
 
 Not in scope: the twelve zombies (the generic arm, already run).
+
+## 2026-10-11: three checks red from 224321c, re-pinned
+
+`engine: gandhar`, `gandhar head` and `gandhar grab` went red at **`224321c`**
+("every shown character is solid", 2026-10-07) - found by bisect, good at
+`07f1642`, bad there. That commit made `Actor_Attach`'s rule the port's: every
+attached actor goes into the spatial index, so Gandhar (whose boss brain is not
+a generic `shootBrains` entry, so he was never registered before) and the
+twelve zombies are SOLID now, and his body shoves the player (frame 841 on the
+head route). That is the engine's behaviour, so the checks moved, not the code:
+
+* `gandhar`: his walk ends at (200, 531) / (175, 531) - a unit off - and the
+  player's first hit is slot 1's bolt at 1012 (20) where slot 0's was at 1024;
+* `gandhar head`: the fixed aim meets his head 6 times in 13 (six applied,
+  250 -> 214) where it was 2 in 13; the gate, the 4 refusals before it and the
+  Waver's 0 unchanged;
+* `gandhar grab`: the grab run's roll at frame 1000 became 23 - the STRIKE - so
+  the grab went untested; arriving at **1020** it rolls 91 and the grab plays
+  whole (the touch, message 8 from the player handled, camera 383). Re-placed,
+  not baselined empty.

@@ -42881,7 +42881,11 @@ def c_engine_gandhar():
     **2026-10-06, M2b: (224, 593) -> (199, 532) and (175, 532), and the first
     hit slot 0's at 1024 (damage 10)** - his rise out of the lava
     (`4_D+Pont2`, found by name) now plays before the entry, so he starts
-    where it leaves him rather than on his frozen placement at (202, 798).)
+    where it leaves him rather than on his frozen placement at (202, 798).
+    **2026-10-11: (200, 531) and (175, 531), and the first hit slot 1's at
+    1012 (damage 20)** - since 224321c every attached actor is solid, so his
+    body is in the spatial index and shoves the player (frame 841), which moves
+    where the walk ends by a unit and lets the slot-1 bolt land first.)
     SHOWN TO FAIL: the forward axis negated (he walks AWAY), the x-alone
     fallback removed (he stops at 166), the speed's /30 made /10.
 
@@ -42955,9 +42959,9 @@ def c_engine_gandhar():
     return (seq[:len(want)], done.get(18), done.get(17), crit, dead, steps, at20,
             first.get(1), first.get(0), burst, hit), \
            (want, 255, -153, (scripts["critical"][0]["action"], 2), (True, True),
-            [("free", 0, 224, 593, 6), ("CUT", 1, 199, 532, 6)], (175, 532),
+            [("free", 0, 224, 593, 6), ("CUT", 1, 200, 531, 6)], (175, 531),
             (897, 1, "Tire000000", 23.0, 20), (1016, 0, "Tire000001", 58.0, 10), 19,
-            (1024, 10)), \
+            (1012, 20)), \
            "the actions entered (the healthy script by its repeats, then its rewind), " \
            "where the sink and the rise end, the critical band's first action, and the " \
            "death posting message 3 and ending the shoot; his first step and the wall's " \
@@ -43037,12 +43041,18 @@ def c_engine_gandhar_head():
     # enters the shoot where it leaves him (224, 593), not on his frozen
     # placement (202, 798), so the fixed aim point meets his head twice where
     # it met it seven times
+    # re-pinned 2026-10-11 (was 4, 2, 11, 2, 238, two applied, (-201, -128)):
+    # since 224321c every attached actor is solid, Gandhar's body is in the
+    # spatial index (`Actor_Attach` registers it) and it shoves the player at
+    # frame 841, so the fixed aim point now meets his head six times in
+    # thirteen - six applied, 250 -> 214. The gate, the refusals before it
+    # and the Waver's are unchanged.
     wh = len(_re.findall(r"HIT ACTOR 187 ", w))
     wgate = len(_re.findall(r"GANDHAR's gate", w))
     return (hits - len(gates), meets, misses, len(applied),
             applied[-1][1] if applied else None, first,
             (min(ys), max(ys)) if ys else None, weapon, wh, wgate), \
-           (4, 2, 11, 2, 238, [("250", "244"), ("244", "238")], (-201, -128),
+           (4, 6, 7, 6, 214, [("250", "244"), ("244", "238"), ("238", "232")], (-201, -126),
             True, 20, 0), \
            "the baton: hits refused before the gate (0x800), bolts meeting his head and " \
            "missing it, the hits APPLIED to him and his health after them, the first " \
@@ -43188,12 +43198,12 @@ def c_engine_gandhar_grab():
     if b.returncode != 0 or not os.path.exists(play):
         return ("build failed",), ("built",), "engine/ must build"
 
-    def run(at, frames):
+    def run(at, frames, when=1000):
         return subprocess.run(
             [play, fr, os.path.join(ROOT, "tables"), "--save",
              os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "2",
              "--stand", "1811,-9,1216,0", "--player-at", "60:125,-9,401,0",
-             "--player-at", "1000:" + at + ",180", "--shoot-health", "50000",
+             "--player-at", "%d:%s,180" % (when, at), "--shoot-health", "50000",
              "--gandhar-health", "40", "--frames", str(frames), "--nodelay", "--no-crowd"],
             capture_output=True, encoding="latin-1",
             env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
@@ -43211,7 +43221,12 @@ def c_engine_gandhar_grab():
               int(ent.group(1)) if ent else None,
               (int(touch.group(1)), touch.group(2)) if touch else None,
               int(hit.group(1)) if hit else None)
-    g = run("175,-9,370", 1600)
+    # (2026-10-11: since every attached actor is solid (224321c) Gandhar's
+    # body is in the spatial index and the zombies with him, the fight's
+    # timing moves and the CRT's sequence with it: at 1000 this spot now
+    # rolls 23, the STRIKE, and the grab went untested. Placed at 1020 it
+    # rolls 91 - the grab, touching - which is what this run is for.)
+    g = run("175,-9,370", 1620, 1020)
     roll = _re.search(r"GANDHAR the attack reaches \(slot \d+\): rolled (\d+) against (\d+)", g)
     ent = _re.search(r"GANDHAR action (2[5-7]) entered", g)
     touch = _re.search(r"GANDHAR's TOUCH \(sub_45BC50\) MEETS the player: .* - his (\S+)", g)
@@ -43224,7 +43239,7 @@ def c_engine_gandhar_grab():
             (int(msg.group(1)), int(msg.group(2)), msg.group(3)) if msg else None,
             int(cam.group(1)) if cam else None)
     return (strike, grab), \
-           (((18, 40), 26, (381, "UAvantd"), 11), ((41, 40), 25, "UAvantd", (8, 49, "handled"), 383)), \
+           (((18, 40), 26, (381, "UAvantd"), 11), ((91, 40), 25, "UAvantd", (8, 49, "handled"), 383)), \
            "the STRIKE (the roll, the action, the touch's radius and the mesh met, the " \
            "damage applied) and the GRAB (the roll, the action, the mesh met, the message, " \
            "its sender and handling, the kill scene's camera)"

@@ -19,7 +19,12 @@ int PlayState::phasePresent() {
             gpuPresentVerify(presentedWorld);    // the GLES window's verify
             gpuPresentOverlay(presentedWorld);   // the GLES window's overlay pass
             if (gpuFrame && !verifyGpuPresent) gpuPresentWorld(presentedWorld);
-            if (!presentedWorld) present(fb);
+            if (!presentedWorld) {
+                // a straight frame whose present was refused: its `fb` was never
+                // cleared (`phaseWorld`'s deferred clear) - cleared now, as it was
+                if (fbStale) clearFrame();
+                present(fb);
+            }
             const double pr1 = phaseNow();
             mark("present, swap");
             for (std::size_t k = 1; k < phMarks.size(); ++k)

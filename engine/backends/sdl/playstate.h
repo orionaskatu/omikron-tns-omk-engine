@@ -706,6 +706,9 @@ struct PlayState {
     bool uiPause = false;                   // the pause screen is the open one
     bool gpuFrame = false;                  // the present pass: the world went to the GPU
     bool overlayFrame = false, softGate = false;   // G6 step 2, the GLES window
+    // `fb` NOT YET CLEARED this frame (`phaseWorld`'s deferred clear, 2026-10-11)
+    bool fbStale = false;
+    void clearFrame() { std::fill(fb.px.begin(), fb.px.end(), std::uint16_t(0)); fbStale = false; }
     float ovFade[4] = {0, 0, 0, 0};         // the colour fade, for its shader
     int gpuVy = 0, gpuVh = 0;               // where the GPU world is placed
     const char* gpuKeep = nullptr;          // the first gate that kept the frame on the CPU path

@@ -1148,7 +1148,7 @@ void PlayState::worldMirror() {
         omk::greyClear565(view.clearColour, drawn.clearColour);
     }
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
-    if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) return;
+    if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) { clearFrame(); return; }
     const auto mst = omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");
@@ -1246,20 +1246,23 @@ void PlayState::worldMirror() {
         gpuVh = view.vh;
     }
     if (overlayFrame) {
-        // the world's rows are the KEY: "the GPU's picture shows here"
+        // the world's rows are the KEY: "the GPU's picture shows here" - and
+        // the rest cleared, in ONE pass (the clear was a pass of its own
+        // before this one, `phaseWorld`)
         g_ov.begin(fb.w, fb.h);
-        for (int y = 0; y < view.vh; ++y) {
-            const int dy = view.vy + y;
-            if (dy < 0 || dy >= fb.h) continue;
+        for (int dy = 0; dy < fb.h; ++dy) {
+            const bool world = dy >= view.vy && dy < view.vy + view.vh;
             std::fill(fb.px.begin() + static_cast<long>(dy) * fb.w,
                       fb.px.begin() + static_cast<long>(dy + 1) * fb.w,
-                      std::uint16_t(0xF81F));
+                      std::uint16_t(world ? 0xF81F : 0));
         }
+        fbStale = false;
     } else if (!gpuFrame || verifyGpuPresent) {
     phRb0 = phaseNow();
     mark("world end, submit");
     const omk::Surface& pic = world.readback();
     phRb1 = phaseNow();
+    if (!(pic.w == fb.w && !vpItem)) clearFrame();   // nothing of the picture lands in `fb`
     if (vpItem && pic.w == fb.w) {
         // The picture is the viewport item's; the composer places it
         // at the item's layer, not the frame.
@@ -1270,13 +1273,21 @@ void PlayState::worldMirror() {
                       view3dPic.px.begin() + static_cast<long>(y) * view.vw);
         comp.attachView3D(&view3dPic);
     } else if (pic.w == fb.w) {
-        for (int y = 0; y < view.vh && y < pic.h; ++y) {
-            const int dy = view.vy + y;
-            if (dy < 0 || dy >= fb.h) continue;
-            std::copy(pic.px.begin() + static_cast<long>(y) * pic.w,
-                      pic.px.begin() + static_cast<long>(y + 1) * pic.w,
-                      fb.px.begin() + static_cast<long>(dy) * fb.w);
+        // the picture's rows copied over, every OTHER row cleared - the
+        // deferred clear (`phaseWorld`), only where nothing lands
+        const int top = std::max(0, view.vy), bot = std::min(fb.h, view.vy + std::min(view.vh, pic.h));
+        for (int dy = 0; dy < fb.h; ++dy) {
+            if (dy >= top && dy < bot) {
+                const int y = dy - view.vy;
+                std::copy(pic.px.begin() + static_cast<long>(y) * pic.w,
+                          pic.px.begin() + static_cast<long>(y + 1) * pic.w,
+                          fb.px.begin() + static_cast<long>(dy) * fb.w);
+            } else {
+                std::fill(fb.px.begin() + static_cast<long>(dy) * fb.w,
+                          fb.px.begin() + static_cast<long>(dy + 1) * fb.w, std::uint16_t(0));
+            }
         }
+        fbStale = false;
     }
     }   // the CPU composite
     ++worldFrames;

@@ -528,7 +528,15 @@ int PlayState::phaseWorld() {
             if (changed) bindSetEmittersNow();
         }
 
-        std::fill(fb.px.begin(), fb.px.end(), std::uint16_t(0));
+        // THE FRAME'S CLEAR, DEFERRED (2026-10-11, the iBook): it was a fill
+        // of all of `fb` here, every frame - 614 KB at 640x480, milliseconds
+        // on a G3's bus - before the frame knew how it would leave. A frame
+        // with no world clears it whole below; a frame with one clears in
+        // `worldMirror`'s present decision only what it does not overwrite
+        // (the overlay's key, the readback's rows), and a STRAIGHT frame,
+        // which nothing reads, not at all (`fbStale`) - `phasePresent`
+        // clears it if the straight present is refused after all.
+        fbStale = true;
         wc = session.camera();
 
         // THE DIALOGUE CAMERAS. A line uses two and travels between them:
@@ -943,6 +951,7 @@ int PlayState::phaseWorld() {
             worldDrawLists();
             worldMirror();
         }
+        if (fbStale && !(drawWorld && gpuFrame && !overlayFrame)) clearFrame();
         done = true;
     } while (false);
     return done ? -1 : -2;

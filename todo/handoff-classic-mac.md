@@ -929,6 +929,30 @@ overlay:` 21 rows' worth in 3.9 calls a frame. Not for GLES or the 3DS:
 the Vita copies into the texture memory itself and the PICA reads its
 overlay from linear memory - no driver sends a whole texture there.
 
+**Step 3j - THE FRAME'S CLEAR DEFERRED, DONE 2026-10-11, NOT yet run on the
+iBook.** `world` held ~7 ms of the iBook's frame outside every zone; on the
+host the same phase's own time is ~0 (7 of 1749 samples), its one direct
+cost a `__bzero`: `phaseWorld` cleared all of `fb` every frame (614 KB at
+640x480) before knowing how the frame would leave. Now (shared viewer code,
+every backend): a frame with no world clears it whole; an OVERLAY frame
+writes the key and the zeros in one pass (they were two); a READBACK frame
+clears only the rows its picture does not land on (a viewport screen, all);
+a STRAIGHT frame, which nothing reads, not at all (`fbStale`), and
+`phasePresent` clears it if that present is refused after all; the VR path
+clears it whole. 12 over the present paths green - `gpu present`, `fight gpu
+present` (every GPU frame against its CPU composite), `gles overlay`, `gles
+backend`, `gl1 backend`, `vulkan pose`, `street frame`, `traffic frame`,
+`frame hold`, `fight hud`, `subtitle box`, `classic build`.
+
+**A READER'S SCREENSHOT, 2026-10-11, NOT REPRODUCED**: the host GL1 window
+(from a sampling run whose window took the keyboard) showing the street with
+a dark flat wedge - the clear colour - at its bottom left, where the ground
+near the camera should be. Not this session's skipping or vertex sharing:
+skip against no skip is byte-identical at 36 viewpoints (three spots, twelve
+facings) and along a walk of 400 frames, which also matches the build from
+before both. The viewpoint is unknown - asked the reader for one (`P` in the
+viewer prints the camera as flags).
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

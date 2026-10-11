@@ -25848,11 +25848,11 @@ def c_engine_sneak_character():
     hook `0x004779C0` puts it through `sub_478DE0` at 118.11 and
     `I2D_Submit3DView` into item 0x004DE8A0's rect one layer below the item.
 
-    **The binding is by BONE**: F1AVNT's tracks are `Sh`-prefixed and Kay'l's
-    `HO1_FN` meshes `U`-prefixed, so an equality match binds 0 of 19 and the
-    first render of this page was a T-pose. The engine finds a bone by
-    `strstr`; the port's rule for that pairing (the crowd's, the gunmen's) is
-    that the bone begins at the second uppercase letter.
+    **The binding is by the track's KEY** (`Anim_BindNodeTrack`, ASSETS):
+    F1AVNT's tracks are `Sh`-prefixed and Kay'l's `HO1_FN` meshes
+    `U`-prefixed, so an equality match binds 0 of 19 and the first render of
+    this page was a T-pose. The bone suffix that fixed it first only
+    coincided with the key (19/19 the same).
 
     Anekbah from `save-appart.bin`, into the identity page. Asserted: the
     viewer's character line - the model, the bank, the default entry and its
@@ -25883,7 +25883,7 @@ def c_engine_sneak_character():
             "frame 1",), \
            "the viewer's character line after opening the identity page: the " \
            "player's model, the literal bank the sneak's open names, the default " \
-           "entry Cef_DefaultClip picks and its clip, the tracks bound by bone, " \
+           "entry Cef_DefaultClip picks and its clip, the tracks bound by key, " \
            "and the frame Anim_SetFrame applies"
 
 
@@ -41568,6 +41568,76 @@ def c_engine_hide_piece():
            "script hides; the shown count after it"
 
 
+def c_engine_show_piece():
+    r"""`set.show_piece` STARTS A SET PIECE - op 122, the inverse of 123.
+
+    Op 122 (0x405570) is op 123's handler instruction for instruction but
+    `push 1`: `sub_41BD40(id, 1)`, `SetPiece_Find(id)` in the current `.sfx`
+    and `SetPiece_Show(row)` - the whole show, chain and linked rows, the
+    clock restarted. Its three shipped sites are all AREA 2's startup script
+    (ids 0, 0, 1), Gandhar's cave; none of `Grotte.sfx`'s 12 rows is keyed, so
+    nothing else shows them and the port drew the cave without them
+    (`todo/scene-gameplay-audit.md` 14).
+
+    Shown to fail: without the 122 arm no row is shown, no emitter registers.
+    """
+    import subprocess, re as _re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(fr)):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run(
+        [play, fr, os.path.join(ROOT, "tables"), "--save",
+         os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "2",
+         "--frames", "60", "--res", "640x480", "--nofmv", "--no-crowd"],
+        capture_output=True, encoding="latin-1",
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    shownIds = _re.findall(r"set\.show_piece (\d+) - the row shown", out)
+    m = _re.search(r"effects: \d+ set pieces shown so far, (\d+) shown now, "
+                   r"(\d+) emitters registered", out)
+    return (shownIds, (int(m.group(1)), int(m.group(2))) if m else None), \
+           (["0", "0", "1"], (2, 2)), \
+           "the pieces AREA 2's startup shows; rows shown and emitters on the last frame"
+
+
+def c_engine_idle_key():
+    r"""A body's idle binds its tracks by KEY (`todo/scene-gameplay-audit.md` 21).
+
+    `Anim_BindNodeTrack` (0x00470FE0) gives a node the track whose key is the
+    node's index in the model file; the name is never read (ASSETS). The
+    player controller went over to it on 2026-10-07; the idle, a bank's tracks
+    and the sneak's character view still bound by name. In Kay'l's flat the
+    two VIR_FN wear bank H1AVNT, whose tracks are `U*` against their `Vi*`
+    meshes: by exact name 0 of 23 bound, by key 19 (the other four are the
+    `col*` tracks, key -1). The line is counted from the tracks BUILT.
+
+    Shown to fail: the exact-name rule back in `idleTracksFor` gives 0 of 23.
+    """
+    import subprocess, re as _re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(fr)):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run(
+        [play, fr, os.path.join(ROOT, "tables"), "--save",
+         os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "237",
+         "--stand", "3429,1111,-674,132", "--frames", "30",
+         "--res", "640x480", "--nofmv", "--no-crowd"],
+        capture_output=True, encoding="latin-1",
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    got = sorted(_re.findall(r"actor (\d+) (\S+) - idle tracks bound by key: (\d+ of \d+)", out))
+    return tuple(got), (("145", "VIR_FN", "19 of 23"), ("331", "VIR_FN", "19 of 23")), \
+           "the flat's bodies on a bank: actor, model, idle tracks bound"
+
+
 def c_engine_astaroth_souls():
     r"""ASTAROTH's SIX SOULS (`todo/astaroth.md` step 1).
 
@@ -46251,6 +46321,8 @@ SLOW = [
     ("engine: zone box", c_engine_zone_box, "todo/drift-audit.md S10; script/zones.cpp"),
     ("engine: message two", c_engine_message_two, "todo/drift-audit.md S8; SCRIPT_VM"),
     ("engine: hide piece", c_engine_hide_piece, "todo/drift-audit.md S11; o3de/setpiece.h"),
+    ("engine: show piece", c_engine_show_piece, "todo/scene-gameplay-audit.md 14; o3de/setpiece.h"),
+    ("engine: idle key", c_engine_idle_key, "todo/scene-gameplay-audit.md 21; ASSETS; actor/pose.h"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),
     ("engine: astaroth tick", c_engine_astaroth_tick, "todo/astaroth.md 3; actor/astaroth.h"),

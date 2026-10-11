@@ -534,13 +534,16 @@ engine's rule.
 
 ## Naming the opcodes (phase 1)
 
-**129 of 153** opcodes now carry a mnemonic, up from 46 when this phase
+**130 of 153** opcodes now carry a mnemonic, up from 46 when this phase
 started (127 until 2026-09-02, when `case.i16` and `case.i32` were added for
-43 and 44 — neither is used by any shipped script). The world scripts exercise
+43 and 44 — neither is used by any shipped script; 129 until 2026-10-11, when
+122 was read as `set.show_piece` - its three sites are all in AREA 2's `+4`
+startup script, which the 119 below do not enumerate). The world scripts exercise
 **119**, of which **114 are named** — **99.97% of all executed instructions**.
 The five that remain are read but deliberately not named (see the table below);
-together they are 17 instructions, 0.029% of the corpus. The 24 opcodes with no
-mnemonic at all are the ones the shipped scripts never execute.
+together they are 17 instructions, 0.029% of the corpus. The 23 opcodes with no
+mnemonic at all are the ones the shipped scripts never execute (122 was the
+24th, unnamed while it ran only from a startup script).
 Names are added only with the handler traced — the table below is generated
 from the same `NAME` and `LEN_FIX` the disassembler uses
 (`python3 tools/vm_doc.py`), so the doc cannot drift from the decoder.
@@ -1604,7 +1607,10 @@ variable.
 **The world** — 45 `area.preload` (load an area into the *other* resident slot
 without transitioning, status 8; sits before lift and door screens), 123
 `set.hide_piece` (clear a 76-byte decor piece's visible bit; the show path is
-never scripted - **corrected 2026-10-05**: the 76-byte "piece" is an `.SFX`
+never scripted - **wrong: op 122 is the show path**, the same handler with
+`push 1` (`sub_41BD40(id, 1)` -> `SetPiece_Show`), three sites in AREA 2's
+startup script, ported 2026-10-11 as `set.show_piece`, `verify.py: engine:
+show piece`; **corrected 2026-10-05**: the 76-byte "piece" is an `.SFX`
 section E SET PIECE, an effect row (`SetPiece_Find` over 19-dword rows, `+72
 &= ~1`), not decor geometry, so it switches an effect off and changes no
 collision; ported, `todo/drift-audit.md` S11, `verify.py: engine: hide piece`), 98 `object.place_at` (the ring a beaten character drops,
@@ -2013,7 +2019,7 @@ that reduced failures were kept. The rest are left as they are.
 | 119 | 0x405240 | 6 | **8** | `fade.from_color` |  | 256 |
 | 120 | 0x405480 | 6 |  | `var.set.random` |  | 255 |
 | 121 | 0x405540 | 2 |  |  |  |  |
-| 122 | 0x405570 | 2 |  |  |  |  |
+| 122 | 0x405570 | 2 |  | `set.show_piece` |  |  |
 | 123 | 0x4055C0 | 2 |  | `set.hide_piece` |  | 32 |
 | 124 | 0x405610 | 0 |  |  |  |  |
 | 125 | 0x405620 | 0 |  |  |  |  |

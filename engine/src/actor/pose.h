@@ -46,6 +46,7 @@
 // reader has watched. `verify.py: engine pose` differences the two.
 #pragma once
 
+#include "formats/anim.h"
 #include "formats/mesh3do.h"
 #include "o3de/geom3do.h"
 
@@ -62,6 +63,14 @@ struct Quatf { float w = 1, x = 0, y = 0, z = 0; };
 
 Quatf qmul(const Quatf& a, const Quatf& b);
 void  qrot(const Quatf& q, const float v[3], float out[3]);
+
+// `Anim_BindNodeTrack` (0x00470FE0): the mesh a track drives is the one whose
+// INDEX is the track's key (`AnimTrack::key`) less `lodOffset`
+// (`dword_6A50A4` - 0 from `Anim_BindToHierarchy`, a LOD level's node offset
+// chosen by `sub_48D7F0`, 25_sys.c:11989). The NAME is never
+// read: Sham.CTL's `KaBass` drives SHU_FN's `FiBass` (both 2). -> the mesh's
+// index, or -1 when no mesh carries it (H1Avnt's `col*` tracks are -1).
+int meshOfTrack(const AnimTrack& t, const std::vector<Mesh>& meshes, int lodOffset = 0);
 
 // One frame of every track, plus the root's accumulated translation.
 struct NodeTracks {

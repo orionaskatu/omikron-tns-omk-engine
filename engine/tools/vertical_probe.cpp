@@ -60,13 +60,7 @@ omk::NodeTracks tracksOf(std::span<const std::byte> data, std::size_t offset,
     t.count = static_cast<int>(d->tracks.size());
     t.frames = d->frames;
     t.rootTrack = -1;
-    for (const auto& tr : d->tracks) {
-        int mi = -1;
-        const std::string want = lower(tr.name);
-        for (const auto& m : meshes)
-            if (lower(m.name) == want) { mi = m.index; break; }
-        t.ids.push_back(mi);
-    }
+    for (const auto& tr : d->tracks) t.ids.push_back(omk::meshOfTrack(tr, meshes));   // by key, as the player
     t.quats.assign(static_cast<std::size_t>(d->frames), {});
     t.trans.assign(static_cast<std::size_t>(d->frames), {0.0f, 0.0f, 0.0f});
     for (const auto& tr : d->tracks) {

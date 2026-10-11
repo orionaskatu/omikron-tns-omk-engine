@@ -148,6 +148,11 @@ public:
     // S11). -> false when no row carries the id (the engine would write
     // through a null row there).
     bool hideById(std::int32_t id);
+    // `set.show_piece` (op 122, 0x405570 -> `sub_41BD40(id, 1)`): the same
+    // `SetPiece_Find(id)`, then `SetPiece_Show(row)` - the whole show, chain
+    // and linked rows included, the clock restarted. -> false when no row
+    // carries the id (the engine's `SetPiece_Show(0)` returns at once).
+    bool showById(std::int32_t id);
     // `sub_451600` for every shown row, spawning through `fx`, then the
     // end test. Call before `fx.tick()`, as the engine's frame does.
     void tick(float dt, ParticleField& fx);

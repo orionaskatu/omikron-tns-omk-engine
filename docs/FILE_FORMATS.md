@@ -1312,7 +1312,11 @@ a stride of **19 dwords = the section's own 76 bytes**, matching on the id at
 `+0`. At the end of the load it shows every piece whose `+8` is 1 and whose
 `+12` is -1 — **55 of the 310** shipped pieces — and VM opcode 123
 `set.hide_piece` clears the visible bit, which `sub_4501D0` does by masking
-`+72`. The show path is never scripted, only this load-time pass.
+`+72`. ~~The show path is never scripted, only this load-time pass.~~ It is:
+op 122 `set.show_piece` is op 123's handler with `push 1`, `SetPiece_Show` on
+the row - three sites, all AREA 2's startup script (ids 0, 0, 1: two of
+`Grotte.sfx`'s rows, which nothing else shows). Read and ported 2026-10-11,
+`verify.py: engine: show piece`.
 
 So a set can ship geometry that is hidden until something reveals it, and the
 32 `set.hide_piece` sites are the reverse. `xendar` carries the most pieces
@@ -3053,7 +3057,7 @@ side: they are types 1 and 2, which is why `pedClipsFrom` filters on those two
 group indices.
 
 **And the arming is a ZONE's, not the startup script's.** AREA 2's `+4` is
-three `op_122` calls and an `end`; its gunmen are entered by zone 313
+three `set.show_piece` (op 122) calls and an `end`; its gunmen are entered by zone 313
 *"Départ Shoot Grotte"* (ten of them) and zone 314 *"Zombie 1"* (one), both
 well inside the cave. Until the player trips those, nothing in the engine can
 pose these characters either — they have no `.CTL` and no shoot list — so a

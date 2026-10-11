@@ -111,6 +111,8 @@ public:
     const SetPieceRunner& pieces() const { return pieces_; }
     // `set.hide_piece` on this pool's `.sfx` (`SetPieceRunner::hideById`)
     bool hidePiece(std::int32_t id) { return pieces_.hideById(id); }
+    // `set.show_piece`, its inverse (`SetPieceRunner::showById`)
+    bool showPiece(std::int32_t id) { return pieces_.showById(id); }
     // How a piece linked to an ACTOR (type 2, a three-letter tag) or the
     // PLAYER (type 3) finds it. The frontend owns those positions; without
     // a resolver such a record stands absolute, and says so in setpiece.h.

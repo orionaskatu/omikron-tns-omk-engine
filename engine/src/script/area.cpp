@@ -3058,6 +3058,17 @@ void Session::onCall(int i, const Call& call) {
                         hid ? "the row hidden" : "no row carries that id");
         }
         break;
+    case 122:
+        // `set.show_piece` (0x405570, `asmfn.py --op 122`): op 123's handler
+        // instruction for instruction but `push 1` - `sub_41BD40(id, 1)`,
+        // `SetPiece_Find(id)` then `SetPiece_Show(row)`. Three shipped sites,
+        // all in AREA 2's startup script (ids 0, 0, 1): Gandhar's cave.
+        if (!call.fields.empty()) {
+            const bool shown = scene_.showPiece(call.fields[0]);
+            std::printf("frame %ld: set.show_piece %d - %s\n", frameNo_, call.fields[0],
+                        shown ? "the row shown" : "no row carries that id");
+        }
+        break;
     case 106: case 107:
         // `shoot.freeze_all` / `.unfreeze_all` (0x405300 / 0x405310, bare
         // `jmp`s to 0x422B90 / 0x422BD0, read from the image): bit 0x8000 of

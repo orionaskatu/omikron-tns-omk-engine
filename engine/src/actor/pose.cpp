@@ -407,6 +407,13 @@ std::vector<MeshPose> composePose(const std::vector<Mesh>& meshes,
     return out;
 }
 
+int meshOfTrack(const AnimTrack& t, const std::vector<Mesh>& meshes, int lodOffset) {
+    if (t.key < 0) return -1;
+    const std::int32_t want = t.key + lodOffset;
+    for (const auto& m : meshes) if (m.index == want) return m.index;
+    return -1;
+}
+
 namespace {
 void composePoseAt(const std::vector<Mesh>& meshes, const NodeTracks& t, int frame,
                    float frac, bool upright, std::vector<MeshPose>& out,

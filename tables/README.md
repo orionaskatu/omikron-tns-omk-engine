@@ -73,7 +73,7 @@ settled against the image on 2026-09-02: op **93** is `actor.stat.set`, not
 `hud.show_var` (both arms of `0x00404790` reach `Actor_SetProperty`; the HUD
 flash is the player-only extra the old name was taken from), and ops **111 /
 112** were **inverted** — 111 is `timer.stop`, 112 `timer.start`. The count of
-named opcodes is **129**. See [`docs/SCRIPT_VM.md`](../docs/SCRIPT_VM.md) for
+named opcodes is **130**. See [`docs/SCRIPT_VM.md`](../docs/SCRIPT_VM.md) for
 both derivations.
 
 > `verify.py`'s `engine: scripts` docstring still narrates "the 17 corrected

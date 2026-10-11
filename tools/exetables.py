@@ -112,7 +112,7 @@ def c_vm_opcodes(rows, e):
              all(int(rows[o]["handler"], 16) for o in blank), True),
             ("lengths corrected against the table",
              sum(1 for r in rows if r["corrected"]), 21),   # 43, 44, 16 and 62 added 2026-09-02
-            ("named", sum(1 for r in rows if r["name"]), 129)]   # case.i16, case.i32
+            ("named", sum(1 for r in rows if r["name"]), 130)]   # case.i16, case.i32; set.show_piece 2026-10-11
 
 
 def t_special_moves(e):

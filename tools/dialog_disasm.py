@@ -454,9 +454,10 @@ NAME = {
   106:"shoot.freeze_all", 107:"shoot.unfreeze_all",
   # 123: SetPiece_Find scans the loaded set's 76-byte piece records (id at
   #     +0) and clears bit 1 of the piece's +72 flags - remove one piece of
-  #     the decor. The show path of the same helper is never called from
-  #     here.
-  123:"set.hide_piece",
+  #     the decor (an .SFX section E effect row, not geometry).
+  # 122: the same handler with `push 1` - sub_41BD40(id, 1), SetPiece_Show:
+  #     the inverse. Three sites, all AREA 2's startup script.
+  122:"set.show_piece", 123:"set.hide_piece",
   # 127: copy the player node's current world position into the walker's
   #     position pair at +0xE8/+0xF4 and invalidate the ground cache
   #     (+0x104 = FLT_MAX) - re-sync collision after a scripted move.

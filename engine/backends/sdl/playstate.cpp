@@ -554,7 +554,7 @@ const omk::PedClip * PlayState::shootClipBySlot(int group, int slot) {
 const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, const std::vector<omk::Mesh>& meshes,
                                                 const std::string& model) {
     // `PlayerController::poseTracks`'s recipe over the crowd library: the
-    // descriptor's tracks resolve to meshes by name, key 0 is the rest
+    // descriptor's tracks resolve to meshes by key, key 0 is the rest
     // sentinel so frame f reads key f + 1
     //
     // KEYED BY THE SKELETON TOO. A track's `ids` are mesh INDICES of the
@@ -580,80 +580,19 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
     omk::NodeTracks t;
     const auto d = omk::animDescriptor(pedAni, c.descriptor);
     if (d && d->frames > 0 && !meshes.empty()) {
-        const auto lower = [](std::string v) {
-            for (auto& ch : v) if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
-            return v;
-        };
         t.count = static_cast<int>(d->tracks.size());
         t.frames = d->frames;
         t.rootTrack = -1;
-        // THE BONE NAMES CARRY A TWO-LETTER SKELETON PREFIX and the library
-        // does not share it with every model: the men's clips say
-        // `PhBassin`, the women's idle `ShBassin`, Jaunpur's men are
-        // `KhBassin` and their women `FhBassin`. Matched by the whole
-        // name, a woman idled and every Jaunpur man walked in a T-pose
-        // (a reader's frame, 2026-09-03). The bone is the name after the
-        // prefix, resolved inside the FIRST skeleton - the exact name is
-        // tried first, for the one model whose prefix does agree.
-        // THE BONE IS THE NAME AFTER ITS PREFIX, AND THE PREFIX IS NOT
-        // TWO LETTERS - it is whatever the library and the model each
-        // chose. `braqueur.ani`'s tracks are `UBassin`, `UCuissed`,
-        // `UPiedd`; VIR_FN's meshes are `ViBassin`, `ViCuissed`,
-        // `ViPiedd`. Stripping a fixed 2 from both gives "assin" against
-        // "bassin" and NOT ONE of the nineteen tracks bound, which is why
-        // the Shooting gallery's gunmen stood in their rest pose
-        // (`todo/omk-play.md` 96). The crowd's four libraries all happen
-        // to use two-letter prefixes (`Ph`, `Sh`, `Kh`, `Fh`), so the
-        // fixed strip was right everywhere it had been looked at.
-        //
-        // The ENGINE does not strip at all: `o3de_FindMeshByName`
-        // (0x00436D90) is `o3de_Traverse` running a `strstr` over the
-        // node names and keeping the LAST match, and its callers pass the
-        // BARE bone - `Bassin`, `Tete`, `Buste`, `Cuisseg`, `Piedd`
-        // (04_sys.c 5497-5513, seventeen of them in a row). So the bone
-        // name is a substring and the prefix's length never enters into
-        // it. The same `strstr`-on-the-last-match is what finds the
-        // shadow bones (`docs/ASSETS.md`).
-        //
-        // Reproduced here without hard-coding the seventeen: every prefix
-        // in the corpus is a capitalised letter followed by lower case,
-        // and every bone starts with a capital, so THE BONE BEGINS AT THE
-        // SECOND UPPERCASE LETTER. `verify.py: bone names` measures that
-        // over every shipped library and character model rather than
-        // taking it on trust.
-        const auto suffix = [&](const std::string& n) {
-            for (std::size_t i = 1; i < n.size(); ++i)
-                if (n[i] >= 'A' && n[i] <= 'Z') return lower(n.substr(i));
-            return n.size() > 2 ? lower(n.substr(2)) : lower(n);
-        };
-        int firstRoot = -1;
-        for (std::size_t j = 0; j < meshes.size() && firstRoot < 0; ++j) {
-            bool hasParent = false;
-            for (const auto& p : meshes) if (p.id == meshes[j].parent) { hasParent = true; break; }
-            if (!hasParent) firstRoot = static_cast<int>(j);
-        }
-        const auto underFirst = [&](std::size_t j) {
-            int m = static_cast<int>(j);
-            for (int guard = 0; guard < 64 && m >= 0; ++guard) {
-                if (m == firstRoot) return true;
-                const std::int32_t pid = meshes[static_cast<std::size_t>(m)].parent;
-                int next = -1;
-                for (std::size_t q = 0; q < meshes.size(); ++q) if (meshes[q].id == pid) { next = static_cast<int>(q); break; }
-                m = next;
-            }
-            return false;
-        };
-        for (const auto& tr : d->tracks) {
-            std::int32_t mi = -1;
-            const std::string want = lower(tr.name);
-            for (const auto& m : meshes) if (lower(m.name) == want) { mi = m.index; break; }
-            if (mi < 0) {
-                const std::string bone = suffix(tr.name);
-                for (std::size_t j = 0; j < meshes.size(); ++j)
-                    if (suffix(meshes[j].name) == bone && underFirst(j)) { mi = meshes[j].index; break; }
-            }
-            t.ids.push_back(mi);
-        }
+        // BY THE TRACK'S KEY, as `Anim_BindNodeTrack` binds (`omk::meshOfTrack`,
+        // `docs/ASSETS.md`): the key is the mesh's index in the model file and
+        // the name is never read. This bound by NAME - exact, then the bone
+        // after the prefix inside the first skeleton - because the prefixes
+        // differ (`PhBassin` on a man, `ShBassin` on a woman, `braqueur.ani`'s
+        // `UBassin` on VIR_FN's `ViBassin`); the key needs none of that. Over
+        // Anekbah's crowd and the supermarket's gunmen the two rules never
+        // disagreed. The LOD skeletons above the first are `lodTracksFor`'s,
+        // the key plus `level * count` - `dword_6A50A4` in `sub_48D7F0`.
+        for (const auto& tr : d->tracks) t.ids.push_back(omk::meshOfTrack(tr, meshes));
         t.quats.assign(static_cast<std::size_t>(d->frames), {});
         t.trans.assign(static_cast<std::size_t>(d->frames), {0.0f, 0.0f, 0.0f});
         for (int f = 0; f < d->frames; ++f) {
@@ -1988,7 +1927,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
 
 // `PlayerController::poseTracks`'s, transcribed rather than reinvented: a
 // `.CTL` clip is an `.ani` DESCRIPTOR with no "3.0V" wrapper, its tracks
-// resolve to meshes by name, and KEY 0 IS THE REST SENTINEL so frame `f`
+// resolve to meshes by key, and KEY 0 IS THE REST SENTINEL so frame `f`
 // reads key `f + 1`. Only frame 0 is built, because nothing here ticks a
 // channel per actor.
 omk::NodeTracks PlayState::idleTracksFor(const CharBank& b,
@@ -1998,20 +1937,17 @@ omk::NodeTracks PlayState::idleTracksFor(const CharBank& b,
     const auto d = omk::animDescriptor(
         b.data, b.ctl.clips[static_cast<std::size_t>(b.idleClip)].offset);
     if (!d || d->frames <= 0 || d->tracks.empty()) return t;
-    const auto lower = [](std::string v) {
-        for (auto& c : v) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        return v;
-    };
     t.count = static_cast<int>(d->tracks.size());
     t.frames = 1;
     t.rootTrack = -1;
-    for (const auto& tr : d->tracks) {
-        std::int32_t mi = -1;
-        const std::string want = lower(tr.name);
-        for (const auto& m : meshes)
-            if (lower(m.name) == want) { mi = m.index; break; }
-        t.ids.push_back(mi);
-    }
+    // By the track's KEY (`omk::meshOfTrack`), as `Anim_BindNodeTrack` binds.
+    // The exact NAME bound only where the bank's prefix is the model's - none
+    // of H1AVNT's `U*` tracks on VIR_FN's `Vi*` meshes, 855 of F1Avnt's 1575
+    // on FE1_FN against 1539 by key - and missed H1AVNT's misspelt
+    // `MBrasGung` (key 10, `MBrasGun`) everywhere. Only the PLAYER stands on
+    // this idle (an NPC nothing drives holds its rest pose, drift M2), so it
+    // was a body the soul moved into whose names are not its bank's.
+    for (const auto& tr : d->tracks) t.ids.push_back(omk::meshOfTrack(tr, meshes));
     t.quats.assign(1, {});
     t.trans.assign(1, {0.0f, 0.0f, 0.0f});
     t.quats[0].resize(d->tracks.size());

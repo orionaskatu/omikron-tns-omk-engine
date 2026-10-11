@@ -563,39 +563,18 @@ void PlayState::screensSneakRows() {
                     if (d && d->frames > 0 && !d->tracks.empty()) {
                         clipFrames = d->frames;
                         firstTrack = d->tracks.front().name;
-                        const auto lower = [](std::string v) {
-                            for (auto& c : v) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-                            return v;
-                        };
                         t.count = static_cast<int>(d->tracks.size());
                         t.frames = 1;
                         t.rootTrack = -1;
-                        // THE BINDING IS BY BONE, NOT BY NAME. F1AVNT's
-                        // tracks are `Sh`-prefixed (`ShBassin`) and Kay'l's
-                        // meshes `U`-prefixed (`UBassin`), so an equality
-                        // test binds 0 of 19 and he stands in his T-pose -
-                        // which is what this drew first. The engine finds a
-                        // bone by `strstr` on the node names
-                        // (`docs/ASSETS.md`, "the bones are found by
-                        // strstr"), and the port's rule for the same
-                        // pairing is the crowd's and the gunmen's: the bone
-                        // begins at the SECOND UPPERCASE LETTER
-                        // (`verify.py: bone names`). Exact first, as there.
-                        const auto boneOf = [&](const std::string& n) {
-                            for (std::size_t i = 1; i < n.size(); ++i)
-                                if (n[i] >= 'A' && n[i] <= 'Z') return lower(n.substr(i));
-                            return n.size() > 2 ? lower(n.substr(2)) : lower(n);
-                        };
+                        // BY THE TRACK'S KEY (`omk::meshOfTrack`), as
+                        // `Anim_BindNodeTrack` binds. F1AVNT's tracks are
+                        // `Sh`-prefixed (`ShBassin`) and Kay'l's meshes
+                        // `U`-prefixed (`UBassin`), so an exact name binds 0
+                        // of 19 - the T-pose this drew first - and the bone
+                        // suffix that replaced it only coincided with the key
+                        // (19/19 the same on the identity page).
                         for (const auto& tr : d->tracks) {
-                            std::int32_t mi = -1;
-                            const std::string want = lower(tr.name);
-                            for (const auto& m : cm->meshes)
-                                if (lower(m.name) == want) { mi = m.index; break; }
-                            if (mi < 0) {
-                                const std::string bone = boneOf(tr.name);
-                                for (const auto& m : cm->meshes)
-                                    if (boneOf(m.name) == bone) { mi = m.index; break; }
-                            }
+                            const std::int32_t mi = omk::meshOfTrack(tr, cm->meshes);
                             if (mi >= 0) ++bound;
                             t.ids.push_back(mi);
                         }

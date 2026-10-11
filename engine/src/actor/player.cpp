@@ -24,18 +24,12 @@ float f32at(std::span<const std::byte> d, std::size_t o) {
     float f; std::memcpy(&f, &b, 4); return f;
 }
 
-// `Anim_BindNodeTrack` (0x00470FE0): the mesh a track drives is the one whose
-// INDEX is the track's key (`AnimTrack::key`), never a name match. Binding by
-// name agreed with it everywhere both resolve (0 disagreements over H1Avnt,
-// F1Avnt, H1Cmbt, Meca and Sham against their models) and bound 0 of
+// The tracks bind by KEY (`omk::meshOfTrack`, `actor/pose.h`), never by name.
+// Binding by name agreed with it everywhere both resolve (0 disagreements over
+// H1Avnt, F1Avnt, H1Cmbt, Meca and Sham against their models) and bound 0 of
 // Sham.CTL's 484 tracks to SHU_FN, whose meshes are `Fi*`/`Shm*` where the
 // tracks are `Ka*`/`Sm*` - the ridden Sham stood in its rest pose, the rider
 // in a T-pose (AREA 137, `todo/scene-gameplay-audit.md` 4).
-int meshOfTrack(const AnimTrack& t, const std::vector<Mesh>& meshes) {
-    if (t.key < 0) return -1;
-    for (const auto& m : meshes) if (m.index == t.key) return m.index;
-    return -1;
-}
 
 const std::string kEmpty;
 

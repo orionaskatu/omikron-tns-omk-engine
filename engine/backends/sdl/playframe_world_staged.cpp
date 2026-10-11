@@ -487,7 +487,14 @@ void PlayState::worldStaged() {
         // clip at FRAME 0.
         if (!s.idleBuilt) {
             s.idleBuilt = true;
-            if (s.bk && s.bk->ready) s.idle = idleTracksFor(*s.bk, s.mo->meshes);
+            if (s.bk && s.bk->ready) {
+                s.idle = idleTracksFor(*s.bk, s.mo->meshes);
+                // from the tracks BUILT, not the rule that built them
+                int bound = 0;
+                for (const auto id : s.idle.ids) bound += id >= 0;
+                std::printf("frame %ld: actor %d %s - idle tracks bound by key: %d of %zu\n",
+                            session.frameNo(), s.actor, s.model.c_str(), bound, s.idle.ids.size());
+            }
         }
         // (c0) SHOOT MODE, ahead of the bank's idle: `Shoot_ActorEnter`
         // puts him in ACTOR_STATE 3 and his clips come from the area's

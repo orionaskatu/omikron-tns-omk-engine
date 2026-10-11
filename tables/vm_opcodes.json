@@ -35,8 +35,8 @@
   },
   {
    "what": "named",
-   "got": 129,
-   "want": 129
+   "got": 130,
+   "want": 130
   }
  ],
  "rows": [
@@ -1144,7 +1144,7 @@
    "length": 2,
    "table_says": 2,
    "corrected": false,
-   "name": null,
+   "name": "set.show_piece",
    "tag": null
   },
   {

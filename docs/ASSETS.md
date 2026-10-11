@@ -2785,9 +2785,16 @@ Sham/SHU_FN the two never disagree where both resolve, and the key binds
 more - 1539 of F1Avnt's 1575 tracks to 855 by exact name, and ALL 484 of
 Sham.CTL's to 0 (`Ka*`/`Sm*` tracks against `Fi*`/`Shm*` meshes, and
 `SmNatte112` against `ShmNate112`). The player controller binds by key since
-then (`engine/src/actor/player.cpp`, `verify.py: engine: become place`); the
-NPC idle, a bank's tracks in `playstate.cpp` and the sneak's character view
-still bind by name and suffix.
+then (`engine/src/actor/player.cpp`, `verify.py: engine: become place`), and
+since 2026-10-11 every other binding in the port does too (`omk::meshOfTrack`,
+`engine/src/actor/pose.h`): the idle, a bank's tracks (the crowd's and the
+gunmen's - the LOD skeletons above the first add `level x count`, which is
+`dword_6A50A4` in `sub_48D7F0`) and the sneak's character view. Over
+Anekbah's crowd, the supermarket's gunmen and the identity page the old name
+and suffix rules never disagreed with the key; the idle did - none of H1AVNT's
+`U*` tracks on VIR_FN's `Vi*` meshes (0 of 23 against 19), and H1AVNT's
+misspelt `MBrasGung`, key 10, the mesh `MBrasGun` (`verify.py: engine: idle
+key`).
 
 The bone list also **independently confirms the hierarchy order** that the
 `.3DM` tracks use:

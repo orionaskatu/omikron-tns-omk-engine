@@ -496,6 +496,12 @@ struct PlayState {
     long pedTold{};
     std::map<int, std::vector<omk::PedClip>> shootClips{};   // character type -> its group
     bool shootCameraLive{};
+    // THE FREE LOOK's camera (preset 3, `PlayerController::lookTick`): on
+    // while the arm runs, its lagged target, and the mouse flag 0x80
+    bool lookCam{};
+    bool lookMouse{};
+    bool lookAtKnown{};
+    float lookAt[3] = {0, 0, 0};
     float shootPitch{};
     std::map<int, omk::ShootRecord> shootBrains{};
     std::map<int, long> gunShots{};

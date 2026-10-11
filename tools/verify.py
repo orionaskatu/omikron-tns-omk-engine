@@ -41726,6 +41726,55 @@ def c_engine_shoot_jump():
            "his y when the rise is spent; Hold down"
 
 
+def c_engine_free_look():
+    r"""THE FREE LOOK - `Vue premiere personne`, L (`todo/scene-gameplay-audit.md` 11).
+
+    H1Avnt's H_STAND entry 18 (input 0x80) carries `MDHEAD00`, which sets the
+    actor's +1305; `Actors_TickAll`'s head arm then turns the head by the move
+    keys (6 a frame, pitch +-40, yaw +-70) and the mouse, binds the look to
+    the head node, and asks camera mode 3 - preset 3, the eye at the HEAD -
+    clearing +1305 every frame. So the move has to come EVERY tick, and it
+    does: `Cef_TickChannel` queues the current entry's move each tick when it
+    carries 0x10 | 0x200000 (0x004A85B7), the site the port did not have.
+    Release: `MDHEAD01`, the camera back (`Camera_Request(16)`), the head
+    easing an eighth a frame.
+
+    Anekbah's street: L alone, then L with LEFT (yaw +6 a frame to 70), then
+    with UP (pitch -6 a frame to -40), then released. Asserted: the look's
+    first and last frame, the head where the release finds it (one eighth of
+    the way back), the eye moved to the head while looking and back after.
+
+    Shown to fail: without the per-tick move the look lasts one frame (off at
+    frame 33) - it came back once per loop of the 53-frame H_STAND clip.
+    """
+    import subprocess, re as _re
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run(
+        [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+         "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+         "--stand", "1804,0,-6890,336", "--no-crowd", "--frames", "170", "--nodelay",
+         "--res", "640x480", "--hold", "0*30,k38*40,k38+203*30,k38+200*10,0*40"],
+        capture_output=True, text=True, errors="replace",
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_CAMEYE="1")).stdout
+    on = _re.findall(r"^frame (\d+): FREE LOOK on", out, _re.M)
+    off = _re.findall(r"^frame (\d+): FREE LOOK off .*head pitch (-?[\d.]+) yaw (-?[\d.]+)",
+                      out, _re.M)
+    eye = {int(m.group(1)): tuple(int(m.group(k)) for k in (2, 3, 4)) for m in _re.finditer(
+        r"\[cameye\] frame (\d+)  eye (-?\d+) (-?\d+) (-?\d+)", out)}
+    before, during, after = eye.get(30), eye.get(90), eye.get(150)
+    moved = bool(before and during and
+                 max(abs(a - b) for a, b in zip(before, during)) > 50)
+    back = bool(before and after and max(abs(a - b) for a, b in zip(before, after)) <= 1)
+    return (tuple(on), tuple(off), moved, back), \
+           (("32",), (("113", "-35.0", "61.2"),), True, True), \
+           "the look's first frame; its release (frame, head pitch, yaw); the eye " \
+           "moved to the head while looking; and back after"
+
+
 def c_engine_astaroth_souls():
     r"""ASTAROTH's SIX SOULS (`todo/astaroth.md` step 1).
 
@@ -46413,6 +46462,7 @@ SLOW = [
     ("engine: idle key", c_engine_idle_key, "todo/scene-gameplay-audit.md 21; ASSETS; actor/pose.h"),
     ("engine: shoot weapon change", c_engine_shoot_weapon_change, "todo/scene-gameplay-audit.md 9; actor/shootmode.h"),
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
+    ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),
     ("engine: astaroth tick", c_engine_astaroth_tick, "todo/astaroth.md 3; actor/astaroth.h"),

@@ -316,6 +316,13 @@ bool headRestOffset(const std::vector<Mesh>& meshes, float out[3]);
 void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int head,
              const float target[3], HeadLook& look, float dt, bool snap,
              float* wantedPitch = nullptr, float* wantedYaw = nullptr);
+// THE FREE LOOK's half of the same matrix (`Actors_TickAll`, the player in
+// ACTOR_STATE 1 or 13 holding `Vue premiere personne`): `+324` from the
+// look's pitch and yaw bound to the head with NO reset first - only the
+// look-at arm calls `sub_437190` - so the clip's head turn stays and the
+// look turns on top of it, in the head's own frame. A zero look is a no-op.
+void turnHeadBy(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int head,
+                float pitchDeg, float yawDeg);
 NodeTracks blendTracks(const NodeTracks& a, int frameA, bool cancelRootA,
                        const NodeTracks& b, int frameB, bool cancelRootB,
                        float t);

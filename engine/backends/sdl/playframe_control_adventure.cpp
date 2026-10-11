@@ -2069,6 +2069,11 @@ void PlayState::adventureShot() {
         // 134 of group 200 queues it on input 0x2000, between the arm
         // lowered (S_ARMOFF) and raised again (S_ARMON).
         if (mv == "MDGUN") shootChangeWeapon(n, "MDGUN");
+        // THE FREE LOOK's two handlers (`PlayerController::lookPress`). The
+        // second MDHEAD01 of `tab_special_move` (row 52, the shoot HEAD
+        // mode's) is never reached: the first match wins, row 2
+        if (mv == "MDHEAD00") player->lookPress();
+        if (mv == "MDHEAD01") player->lookRelease();
         // `MDJP` (0x0046B710): `dword_6A52CC = 0` - this walker's `jumping_`,
         // which only MDJUMP0A sets and group 200 never queues - then
         // `sub_47D2E0` (`omk::shootJump`)
@@ -2566,6 +2571,28 @@ void PlayState::adventureShot() {
             std::printf("MDSNEAK0: event %d opens object list 0, "
                         "screen %d\n", omk::kEventSneakOpen,
                         omk::kScreenSneak);
+        }
+    }
+    // ---- THE FREE LOOK, `Actors_TickAll`'s head arm (21_d3d.c 4483) ----
+    // after the moves, so this frame's MDHEAD00 counts this frame (the
+    // engine's order between the drain and the arm is not read - a frame at
+    // either end, LABELLED). The mouse is the frame's motion, as
+    // `sub_43D870` reads it; the camera is preset 3 while the arm runs and
+    // the one before it after (`Camera_Request(16)`).
+    if (playerTicked && player) {
+        bool moved = false;
+        const bool ran = player->lookTick(
+            bits, static_cast<int>(std::lround(host.mouseDX)),
+            static_cast<int>(std::lround(host.mouseDY)), mouseSensX, mouseSensY,
+            static_cast<float>(frameSec * 30.0), moved);
+        lookMouse = moved;
+        if (ran != lookCam) {
+            lookCam = ran;
+            lookAtKnown = false;
+            std::printf("frame %ld: FREE LOOK %s - camera %s, head pitch %.1f yaw %.1f\n", n,
+                        ran ? "on" : "off", ran ? "mode 3 (Camera_Request(3))"
+                                                : "back to the one before (Camera_Request(16))",
+                        double(player->headPitch()), double(player->headYaw()));
         }
     }
     // `Actor_TickNpc`: `Actor_ApplyMotion`, then `Actor_ScanZones`

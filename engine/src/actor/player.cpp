@@ -33,6 +33,13 @@ float f32at(std::span<const std::byte> d, std::size_t o) {
 
 const std::string kEmpty;
 
+// `Actor_SetHeadLook`'s ease (0x00468B50), as `aimHead` reads it: an eighth
+// of the way a frame, and a step that would pass the target lands on it
+float easeLook(float cur, float want, float dt) {
+    const float next = cur + (want - cur) * 0.125f * dt;
+    return ((want - cur) * (want - next) < 0.0f) ? want : next;
+}
+
 float wrap360(float a) {
     // Cef_ApplyTurn's own loops: subtract while > 360, add while < 0.
     while (a > 360.0f) a -= 360.0f;
@@ -886,6 +893,24 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     // frame as the previous tick left them - against the CURRENT entry's
     // window, before it searches for a transition.
     const int cur = rt_.channel().state();
+    // ...and THE CURRENT ENTRY'S MOVE, EVERY TICK, when it carries 0x10 and
+    // 0x200000 (0x004A85B7: `test byte [esi+4], 2; jnz` - channel flag 2 -
+    // then `test al, 10h` / `test eax, 200000h` on the entry the tick began
+    // in, and `Cef_QueueSpecialMove(actor, entry+64)`). The channel emits a
+    // move only when an entry is ENTERED, and the candidate loop's for an
+    // entry it does not take; this is the third site, for the entry he is
+    // IN. It is what keeps `MDHEAD00` coming while L is held - H_STAND entry
+    // 18 loops its clip, and the head arm clears +1305 every frame - and
+    // without it the free look lasted one frame in every 53, the clip's
+    // length. Queued after the tick's other moves, as the engine reaches it.
+    // (The window shift and turn below sit under the SAME `flag 2` test in
+    // the engine; this port gates them on 0x200 - not re-read here, LABELLED
+    // in todo/scene-gameplay-audit.md.)
+    std::string tickMove;
+    if (cur >= 0 && cur < static_cast<int>(S.size()) && !(rt_.channel().flags() & 0x2u)) {
+        const CtlState& st0 = S[static_cast<std::size_t>(cur)];
+        if ((st0.flags & 0x10u) && (st0.flags & 0x200000u)) tickMove = st0.moveName;
+    }
     if (cur >= 0 && cur < static_cast<int>(S.size()) &&
         !(rt_.channel().flags() & 0x200u)) {
         const CtlState& st = S[static_cast<std::size_t>(cur)];
@@ -965,6 +990,7 @@ void PlayerController::tick(float dt, std::uint32_t word) {
             for (int k = 0; k < 3; ++k) last_.shift[k] += w[k];
         }
     }
+    if (!tickMove.empty() && tickMove != "none") moves_.push_back(tickMove);
     rt_.channel().clearEvents();
 
     // ---- sub_45C680: the clip's root delta ------------------------------
@@ -1650,6 +1676,50 @@ FollowCamera PlayerController::followCameraSteady() const {
 double PlayerController::distanceWalked() const {
     const double dx = pos_[0] - start_[0], dz = pos_[2] - start_[2];
     return std::sqrt(dx * dx + dz * dz);
+}
+
+bool PlayerController::lookTick(std::uint32_t bits, int mdx, int mdy, int sensX, int sensY,
+                                float dt, bool& mouseMoved) {
+    mouseMoved = false;
+    float& p = headEuler_[0];
+    float& y = headEuler_[1];
+    const int st = static_cast<int>(rt_.state());
+    if ((st == 1 || st == 13) && lookFlag_) {
+        if (p >= 180.0f) p -= 360.0f;
+        if (y >= 180.0f) y -= 360.0f;
+        if (bits & 4u) p -= dt * 6.0f;
+        if (bits & 8u) p += dt * 6.0f;
+        if (bits & 1u) y += dt * 6.0f;
+        if (bits & 2u) y -= dt * 6.0f;
+        if (lookDropMouse_) { mdx = mdy = 0; lookDropMouse_ = false; }
+        y -= static_cast<float>(static_cast<double>(sensX * mdx) * dt * 0.0099999998);
+        p -= static_cast<float>(static_cast<double>(sensY * mdy) * dt * 0.0099999998);
+        if (p < -40.0f) p = -40.0f;
+        if (p >  40.0f) p =  40.0f;
+        if (y >  70.0f) y =  70.0f;
+        if (y < -70.0f) y = -70.0f;
+        if (p < 0.0f) p += 360.0f;
+        if (y < 0.0f) y += 360.0f;
+        mouseMoved = mdx != 0 || mdy != 0;
+        lookFlag_ = false;
+        return true;
+    }
+    // `Actor_SetHeadLook(a, 0, 0)`: the player has no look-at target
+    if (p >= 180.0f) p -= 360.0f;
+    if (y >= 180.0f) y -= 360.0f;
+    p = easeLook(p, 0.0f, dt);
+    y = easeLook(y, 0.0f, dt);
+    if (p < 0.0f) p += 360.0f;
+    if (y < 0.0f) y += 360.0f;
+    return false;
+}
+
+void headCamera(const float head[3], const float euler[3], float eye[3], float at[3]) {
+    float r[3];
+    rotateEuler(euler, kHeadCamEye, r);
+    for (int k = 0; k < 3; ++k) eye[k] = head[k] - r[k];
+    rotateEuler(euler, kHeadCamAt, r);
+    for (int k = 0; k < 3; ++k) at[k] = head[k] - r[k];
 }
 
 }  // namespace omk

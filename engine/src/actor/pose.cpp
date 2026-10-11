@@ -814,14 +814,11 @@ bool headRestOffset(const std::vector<Mesh>& meshes, float out[3]) {
     return false;
 }
 
-void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int head,
-             const float target[3], HeadLook& look, float dt, bool snap,
-             float* wantedPitch, float* wantedYaw) {
-    if (head < 0 || static_cast<std::size_t>(head) >= pose.size()) return;
-    const float kDeg = 57.29577951308232f;
-    // the head's subtree: every mesh whose chain reaches the head
-    std::vector<char> under(pose.size(), 0);
-    for (std::size_t i = 0; i < pose.size() && i < meshes.size(); ++i) {
+namespace {
+// the head's subtree: every mesh whose chain reaches the head
+std::vector<char> headSubtree(std::size_t n, const std::vector<Mesh>& meshes, int head) {
+    std::vector<char> under(n, 0);
+    for (std::size_t i = 0; i < n && i < meshes.size(); ++i) {
         int m = static_cast<int>(i);
         for (int guard = 0; guard < 64 && m >= 0; ++guard) {
             if (m == head) { under[i] = 1; break; }
@@ -831,21 +828,55 @@ void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int h
             m = next;
         }
     }
+    return under;
+}
+// turn the head and everything under it by `d` about the head's origin
+void turnSubtree(std::vector<MeshPose>& pose, const std::vector<char>& under,
+                 const float origin[3], const Quatf& d) {
+    for (std::size_t i = 0; i < pose.size(); ++i) {
+        if (!under[i]) continue;
+        MeshPose& mp = pose[i];
+        mp.q = qmul(d, mp.q);
+        const float rel[3] = {mp.pos[0] - origin[0], mp.pos[1] - origin[1], mp.pos[2] - origin[2]};
+        float rot[3];
+        qrot(d, rel, rot);
+        for (int k = 0; k < 3; ++k) mp.pos[k] = origin[k] + rot[k];
+    }
+}
+// the look as a rotation in the head's own frame `base`: `Matrix3x3_
+// FromEulerAngles(pitch, yaw, roll)` at +324, bound to the head's +156 and
+// multiplied after its +56 (`sub_4942A0`). Yaw about the local Y (turning -Z
+// toward +X), then pitch about the turned local X (nose up positive, Y down).
+Quatf headLookRot(const Quatf& base, float pitchDeg, float yawDeg) {
+    const float kDeg = 57.29577951308232f;
+    const float hy = yawDeg / kDeg * 0.5f, hp = pitchDeg / kDeg * 0.5f;
+    const Quatf qy{std::cos(hy), 0.0f, -std::sin(hy), 0.0f};
+    const Quatf qx{std::cos(hp), -std::sin(hp), 0.0f, 0.0f};
+    const Quatf local = qmul(qy, qx);
+    return qmul(qmul(base, local), Quatf{base.w, -base.x, -base.y, -base.z});
+}
+}  // namespace
+
+void turnHeadBy(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int head,
+                float pitchDeg, float yawDeg) {
+    if (head < 0 || static_cast<std::size_t>(head) >= pose.size()) return;
+    if (pitchDeg == 0.0f && yawDeg == 0.0f) return;
+    const std::vector<char> under = headSubtree(pose.size(), meshes, head);
+    const MeshPose& hp = pose[static_cast<std::size_t>(head)];
+    const float origin[3] = {hp.pos[0], hp.pos[1], hp.pos[2]};
+    turnSubtree(pose, under, origin, headLookRot(hp.q, pitchDeg, yawDeg));
+}
+
+void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int head,
+             const float target[3], HeadLook& look, float dt, bool snap,
+             float* wantedPitch, float* wantedYaw) {
+    if (head < 0 || static_cast<std::size_t>(head) >= pose.size()) return;
+    const float kDeg = 57.29577951308232f;
+    const std::vector<char> under = headSubtree(pose.size(), meshes, head);
     const float origin[3] = {pose[static_cast<std::size_t>(head)].pos[0],
                              pose[static_cast<std::size_t>(head)].pos[1],
                              pose[static_cast<std::size_t>(head)].pos[2]};
-    // turn the head and everything under it by `d` about the head's origin
-    const auto turn = [&](const Quatf& d) {
-        for (std::size_t i = 0; i < pose.size(); ++i) {
-            if (!under[i]) continue;
-            MeshPose& mp = pose[i];
-            mp.q = qmul(d, mp.q);
-            const float rel[3] = {mp.pos[0] - origin[0], mp.pos[1] - origin[1], mp.pos[2] - origin[2]};
-            float rot[3];
-            qrot(d, rel, rot);
-            for (int k = 0; k < 3; ++k) mp.pos[k] = origin[k] + rot[k];
-        }
-    };
+    const auto turn = [&](const Quatf& d) { turnSubtree(pose, under, origin, d); };
     // (1) THE HEAD'S OWN ANIMATION IS WIPED: `sub_437190(head, 4)`
     // (o3de_ResetXForm) sets its local matrix +56 to identity before the
     // aim, so the head takes its PARENT's orientation - the rest pose's
@@ -861,17 +892,9 @@ void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int h
         turn(qmul(pq, Quatf{hq.w, -hq.x, -hq.y, -hq.z}));
     }
     const Quatf base = pose[static_cast<std::size_t>(head)].q;
-    // the look as a rotation in the head's own (reset) frame: `Matrix3x3_
-    // FromEulerAngles(pitch, yaw, roll)` at +324, bound to the head's +156
-    // and multiplied after its +56 (`sub_4942A0`). Yaw about the local Y
-    // (turning -Z toward +X), then pitch about the turned local X (nose up
-    // positive, Y down).
+    // the look as a rotation in the head's own (reset) frame (`headLookRot`)
     const auto lookRot = [&](float pitchDeg, float yawDeg) {
-        const float hy = yawDeg / kDeg * 0.5f, hp = pitchDeg / kDeg * 0.5f;
-        const Quatf qy{std::cos(hy), 0.0f, -std::sin(hy), 0.0f};
-        const Quatf qx{std::cos(hp), -std::sin(hp), 0.0f, 0.0f};
-        const Quatf local = qmul(qy, qx);
-        return qmul(qmul(base, local), Quatf{base.w, -base.x, -base.y, -base.z});
+        return headLookRot(base, pitchDeg, yawDeg);
     };
     // (2) THE FORWARD IS MEASURED WITH LAST FRAME'S LOOK STILL ON. The
     // reset touches +56 only; +156 still points at +324, so `sub_440C80`

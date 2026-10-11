@@ -761,6 +761,19 @@ void PlayState::worldCrowd() {
                                           player->state() == omk::ActorState::Shoot,
                             *pt, player->poseFrameF())
             : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
+        // THE FREE LOOK's head turn, `+324` on the head with no reset
+        // (`omk::turnHeadBy`) - on while he looks and while it eases back
+        {
+            static const void* lookFor = nullptr;
+            static std::size_t lookForN = 0;
+            static int lookHead = -1;
+            if (lookFor != playerMeshes.data() || lookForN != playerMeshes.size()) {
+                lookFor = playerMeshes.data();
+                lookForN = playerMeshes.size();
+                lookHead = omk::headMeshOf(playerMeshes);
+            }
+            omk::turnHeadBy(pose, playerMeshes, lookHead, player->headPitch(), player->headYaw());
+        }
         // OUTSIDE THE VIEW, as any actor: `sub_48D3B0` skips a node
         // outside the four side planes before its matrices or its
         // vertices, and the Bowie sequence flies the camera round the

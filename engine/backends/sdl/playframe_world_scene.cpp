@@ -715,6 +715,31 @@ void PlayState::worldCamera() {
         view.cam.rollDeg = wc->roll;   // already wrapped to (-180,180]
         view.cam.w = dispW; view.cam.h = dispH;
     }
+    // THE FREE LOOK's camera, preset 3 (`omk::headCamera`), REPLACING
+    // whatever the frame chose - follow camera or world camera alike, as
+    // `Camera_Request(3)` does. The head is the DRAWN Tete (`playerHeadAt`,
+    // one frame old here) and the Euler the body's plus the look's. The
+    // target lags a quarter of the way a frame, or snaps on a frame the mouse
+    // moved (flag 0x80). Its first frame starts the target at the point
+    // itself - the engine starts from whatever the swapped block held, which
+    // is not ported, LABELLED.
+    if (lookCam && player && playerHeadKnown && !haveDlgCam) {
+        const float* be = player->euler();
+        const float e[3] = {be[0] + player->headPitch(), be[1] + player->headYaw(), be[2]};
+        float eye[3], at[3];
+        omk::headCamera(playerHeadAt, e, eye, at);
+        const float dt = static_cast<float>(frameSec * 30.0);
+        for (int k = 0; k < 3; ++k) {
+            if (!lookAtKnown || lookMouse) lookAt[k] = at[k];
+            else lookAt[k] += (at[k] - lookAt[k]) * dt / omk::kHeadCamTargetLag;
+            view.cam.eye[k] = eye[k];
+            view.cam.at[k] = lookAt[k];
+        }
+        lookAtKnown = true;
+        view.cam.hfovDeg = omk::kHeadCamFov;
+        view.cam.rollDeg = 0.0f;
+        view.cam.w = dispW; view.cam.h = dispH;
+    }
     // THE CAMERA SHAKE (`sub_418030`, `Session::cameraShakeStep`): the
     // camera tick runs it in every mode but 13 - the camera editings,
     // which this file draws in the `haveEdit` / `holdEditCam` arms - after

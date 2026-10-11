@@ -143,6 +143,19 @@ namespace omk {
 // Quoted here so the controller can stand without the table file; the check
 // asserts the table agrees.
 inline constexpr float kFollowEyeBack = -118.1102f;   // inches: 3.00 m
+// Camera preset 3, THE FREE LOOK's (`tables/camera_presets.json` row 3): eye
+// (0, 5, 6.8898) and target (0, 3.937, 39.3701), fov 75, both on subject
+// KIND 1 - `sub_415050`, the actor's HEAD node (`+16`, its world point after
+// `sub_440C80` updates the hierarchy) turned by the body's Euler (+416..+424)
+// PLUS the head's (+432..+440). f42 = 4 (the target chases a quarter of the
+// way a frame, or snaps under flag 0x80), f44 = f46 = 0 (the eye has no lag).
+inline constexpr float kHeadCamEye[3] = {0.0f, 5.0f, 6.8898f};
+inline constexpr float kHeadCamAt[3]  = {0.0f, 3.937f, 39.3701f};
+inline constexpr float kHeadCamFov = 75.0f;
+inline constexpr float kHeadCamTargetLag = 4.0f;
+// `P = head - R(euler) * offset` for both points (`sub_415D10`/`sub_415E60`),
+// `euler` the body's plus the head's.
+void headCamera(const float head[3], const float euler[3], float eye[3], float at[3]);
 inline constexpr float kFollowFov     = 75.0f;
 inline constexpr int   kFollowF42 = 3, kFollowF44 = 8, kFollowF46 = 8;
 
@@ -398,6 +411,48 @@ public:
     void addShootMotion(float dx, float dz, float dy = 0.0f) {
         shootMotion_[0] += dx; shootMotion_[1] += dz; shootMotion_[2] += dy;
     }
+    // ---- THE FREE LOOK - `Vue premiere personne` (L, input 0x80) --------
+    //
+    // H1Avnt group 100's H_STAND entry 18 queues `MDHEAD00` while the key is
+    // held, entry 21 (its release, 0x400000) `MDHEAD01` - and groups 301 and
+    // 302 the same. Read from the bytes:
+    //
+    //     MDHEAD00 (0x0046AE70): if (dword_4CB164) { sub_43D870(0, 0);
+    //                            dword_4CB164 = 0; }  actor[+1305] = 1
+    //     MDHEAD01 (0x0046AEA0): dword_4CB164 = 1;    actor[+1305] = 0
+    //
+    // `sub_43D870` is the MOUSE read; with (0, 0) it throws the motion away,
+    // so a look starts from where the mouse is. `Actors_TickAll`'s head arm
+    // (21_d3d.c 4483) then, in ACTOR_STATE 1 or 13 with +1305 up:
+    //
+    //     pitch (+432) and yaw (+436) wrapped to (-180, 180]
+    //     input 4 / 8: pitch -= / += 6 x delta;  1 / 2: yaw += / -= 6 x delta
+    //     yaw   -= sensX x mdx x delta x 0.01;  pitch -= sensY x mdy x ...
+    //     pitch clamped to +-40, yaw to +-70, back to [0, 360)
+    //     +324 = Euler(pitch, yaw, roll) on the head node (`turnHeadBy`)
+    //     camera flag 0x80 = the mouse moved;  the PLAYER: Camera_Request(3)
+    //     +1305 = 0
+    //
+    // and otherwise `Actor_SetHeadLook(a, 0, 0)` - the head eases back an
+    // eighth a frame - and the player's camera, if it is mode 3, goes back
+    // (`Camera_Request(16)`, which loads nothing and swaps the two blocks:
+    // the camera before the look returns). The flag is cleared only by the
+    // arm, so a press in another state waits for state 1.
+    void lookPress() {
+        if (lookFlush_) { lookDropMouse_ = true; lookFlush_ = false; }
+        lookFlag_ = true;
+    }
+    void lookRelease() { lookFlush_ = true; lookFlag_ = false; }
+    // The head arm, once a frame after the moves are drained. `bits` is the
+    // frame's input word (`dword_4E9718`), `mdx`/`mdy` the mouse's motion,
+    // `sensX`/`sensY` options rows 23/24. -> true when the free look ran
+    // (camera mode 3 this frame); `mouseMoved` is the camera's flag 0x80.
+    bool lookTick(std::uint32_t bits, int mdx, int mdy, int sensX, int sensY,
+                  float dt, bool& mouseMoved);
+    // +432 / +436 on (-180, 180], degrees
+    float headPitch() const { return headEuler_[0] >= 180.0f ? headEuler_[0] - 360.0f : headEuler_[0]; }
+    float headYaw() const   { return headEuler_[1] >= 180.0f ? headEuler_[1] - 360.0f : headEuler_[1]; }
+
     // `sub_47CF00`'s answer this frame (`Walker::setNoAbsorb`)
     void setShootNoAbsorb(bool on) { walker_.setNoAbsorb(on); }
     const float* euler() const { return euler_; }
@@ -724,6 +779,10 @@ private:
     // `sub_4A8F30` for ACTOR_STATEs 11..14 - see player.cpp
     void waterTick(double dx, double dy, double dz, float dt);
     float shootMotion_[3] = {0, 0, 0}; // `addShootMotion`, spent by the next tick
+    float headEuler_[2] = {0, 0};      // +432 / +436, [0, 360)
+    bool  lookFlag_ = false;           // +1305
+    bool  lookFlush_ = true;           // dword_4CB164
+    bool  lookDropMouse_ = false;      // `sub_43D870(0, 0)` this frame
     float camLift_ = 0.0f;             // pelvis above the feet - see cameraLift()
     float headLift_ = 0.0f;            // 0.7 * the model's extent - see headLift()
     // `sub_417070`'s state. `+328` is the distance it keeps between frames -

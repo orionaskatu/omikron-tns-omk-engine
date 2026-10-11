@@ -951,7 +951,19 @@ near the camera should be. Not this session's skipping or vertex sharing:
 skip against no skip is byte-identical at 36 viewpoints (three spots, twelve
 facings) and along a walk of 400 frames, which also matches the build from
 before both. The viewpoint is unknown - asked the reader for one (`P` in the
-viewer prints the camera as flags).
+viewer prints the camera as flags). The reader: it came from one of THIS
+session's host runs (the GL1 window is not hidden by `OMK_HIDDEN_WINDOW`, and
+both sampling runs took keyboard input - the player walked 84 and 209 units,
+the second ending at 1949, -7041 facing 61 with the skip on). Searched
+further: 40 more viewpoints along that path (skip = no skip, all), and a
+900-frame scripted wander at density 0 dumped every 30 frames in three modes
+- skip, no skip, the software reference: skip = no skip in all 29, GL1
+within a few dozen strongly-differing pixels of the software frame (one
+frame 822: a moving sign and the fire's particles, timing), no clear-colour
+wedge anywhere. NOT reproduced; candidates left: the shared per-mesh cull
+(`cullMesh`, the original's own sphere radii - 3776 meshes ship a radius
+smaller than their extent, CLAUDE.md 4) with the camera close to a ground
+mesh, or something the run's keys toggled.
 
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x

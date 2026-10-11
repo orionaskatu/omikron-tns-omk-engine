@@ -1632,7 +1632,9 @@ sin(t * 80°) * amp * (t / dur) * dt` with `t = dur - elapsed`, and a new
 shake does NOT reset the elapsed clock; 32 sites over AREA 0, 1, 2, 61, 64,
 101, 141, 175, SCENE 56, 62 and five in GLOBAL - the hurt and run-over
 handlers and the passer-by voices - `verify.py: engine: camera shake`), 94 `image.show` (`IMAGES\%06lx.BMP` — all
-four shipped operands name a file that exists), 146/147 `ambience.on` / `.off`
+four shipped operands name a file that exists; `Image_Show` holds the player in
+ACTOR_STATE 10 until a NEW press - ported 2026-10-11, `verify.py: engine: image
+show`), 146/147 `ambience.on` / `.off`
 (the flag the `.WRE` ambience updater runs under — `SOUKT.WRE`,
 `SMARKET1.WRE`), 144 `morph.play` (a `%06x.3dm` talking head on a named
 character — the mechanism is certain, but **all three shipped sites name

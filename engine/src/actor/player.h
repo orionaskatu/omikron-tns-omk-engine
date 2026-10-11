@@ -705,6 +705,10 @@ public:
     // table's own `kAny -> 6` and `6 -> 7` rows were never exercised by the
     // path that is supposed to exercise them.
     bool setActorState(ActorState to, const char* writer) { return rt_.setState(to, writer); }
+    // ACTOR_STATE 10, THE FULL-SCREEN IMAGE: `sub_468F20` parks [101] in
+    // [102] and writes 10; `sub_466E70`'s close puts [102] back
+    bool openImageScreen()  { return rt_.imageScreenOpen(); }
+    bool closeImageScreen() { return rt_.imageScreenClose(); }
     // THE JUMP, `tab_special_move` rows 14/15/16 (`MDJUMP0A`, `MDJUMP0B`,
     // `MDJUMP01`) - the arithmetic, so the frontend only has to name the move.
     // Returns false when the entry carries no hang time or he is already off

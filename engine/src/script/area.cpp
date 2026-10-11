@@ -3063,6 +3063,20 @@ void Session::onCall(int i, const Call& call) {
                         hid ? "the row hidden" : "no row carries that id");
         }
         break;
+    case 94:
+        // `image.show` (0x4048D0, `asmfn.py --op 94`): the dry-run test, then
+        // `sprintf(buf, "%06lx.BMP", operand)` and `Image_Show(buf)` - which
+        // loads `IMAGES\<buf>` into `dword_93072C` and puts the player in
+        // ACTOR_STATE 10 (`sub_468F20`). The bitmap and the state are the
+        // frontend's. Four shipped sites, every file present.
+        if (!call.fields.empty()) {
+            char buf[24];
+            std::snprintf(buf, sizeof buf, "%06lx.BMP",
+                          static_cast<unsigned long>(static_cast<std::uint32_t>(call.fields[0])));
+            imageShow_ = buf;
+            std::printf("frame %ld: image.show %d - IMAGES\\%s\n", frameNo_, call.fields[0], buf);
+        }
+        break;
     case 122:
         // `set.show_piece` (0x405570, `asmfn.py --op 122`): op 123's handler
         // instruction for instruction but `push 1` - `sub_41BD40(id, 1)`,

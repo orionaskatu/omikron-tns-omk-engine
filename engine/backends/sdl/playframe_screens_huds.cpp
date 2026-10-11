@@ -272,6 +272,20 @@ void PlayState::screensHuds() {
     auto& comp = *comp_;
     auto& optMenu = *optMenu_;
     auto& session = *session_;
+    // ---- THE FULL-SCREEN IMAGE (`image.show`, `sub_466E70`) -----------
+    // A bitmap no bigger than the screen is STRETCHED over all of it; a
+    // bigger one is scaled to fit, keeping its shape, and centred - the
+    // rectangle `sub_466E70` hands `I2D_BlitBitmap`.
+    if (imageLive && imageShown.valid() && fb.valid()) {
+        omk::Rect dr{0, 0, fb.w, fb.h};
+        if (fb.w < imageShown.w || fb.h < imageShown.h) {
+            const double sx = double(fb.w) / imageShown.w, sy = double(fb.h) / imageShown.h;
+            const double k = sx > sy ? sy : sx;
+            const int w = static_cast<int>(k * imageShown.w), h = static_cast<int>(k * imageShown.h);
+            dr = {(fb.w - w) / 2, (fb.h - h) / 2, (w + fb.w) / 2, (h + fb.h) / 2};
+        }
+        omk::blt(fb, dr, imageShown, omk::Rect{0, 0, imageShown.w, imageShown.h}, 0);
+    }
     // ---- THE FIGHT HUD (`todo/fight-mode.md` step 5) -----------------
     //
     // `Actors_TickAll`'s melee row ends with `Fight_UpdateHealthBars`

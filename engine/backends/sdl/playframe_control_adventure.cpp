@@ -937,10 +937,52 @@ void PlayState::adventureScreenInput() {
                     shootMoveFrames = 0;
                 }
             }
+            // ---- `image.show` (op 94), ACTOR_STATE 10 -----------------
+            // `Image_Show` (0x0041DFA0): with a player, `IMAGES\<file>` into
+            // `dword_93072C` and `sub_468F20` - [101] parked, state 10, the
+            // repeat mask `dword_4E9720` set to the keys held NOW and the
+            // word cleared. `sub_466E70` then draws it every frame while the
+            // pause screen is open or the frame's EDGE word (`dword_4E971C`,
+            // `held & (held ^ (mask & last))`, `Game_Frame`) is 0: a key held
+            // since it opened does not close it, a new press does - and then
+            // frees it, puts the mask back to 0 and [102] back in [101].
+            // The engine does not tick the channel in state 10; this hands
+            // it the idle word instead, LABELLED. Not modelled: `word_90EF2C`
+            // and `byte_90E155`, which the two write and nothing here reads.
+            if (std::string nm = session.takeImageShow(); !nm.empty()) {
+                imageShown = omk::surfaceFromBmp(fs.read("IMAGES/" + nm));
+                if (imageShown.valid() && player->openImageScreen()) {
+                    imageLive = true;
+                    imageMask = imageLast = bits;
+                    std::printf("frame %ld: Image_Show - IMAGES\\%s, %dx%d, ACTOR_STATE 10 "
+                                "(mask 0x%x)\n", n, nm.c_str(), imageShown.w, imageShown.h,
+                                bits);
+                } else {
+                    std::printf("frame %ld: Image_Show - IMAGES\\%s %s\n", n, nm.c_str(),
+                                imageShown.valid() ? "refused by the state table"
+                                                   : "did not load");
+                    imageShown = omk::Surface{};
+                }
+            }
+            std::uint32_t tickBits = bits;
+            if (imageLive) {
+                const std::uint32_t edges = bits & (bits ^ (imageMask & imageLast));
+                imageLast = bits;
+                if (edges && !uiPause) {
+                    player->closeImageScreen();
+                    imageLive = false;
+                    imageShown = omk::Surface{};
+                    imageMask = 0;
+                    std::printf("frame %ld: Image_Show closed by a press (edge 0x%x) - "
+                                "ACTOR_STATE %d\n", n, edges,
+                                static_cast<int>(player->state()));
+                }
+                tickBits = 0;
+            }
             const bool wasAir = player->walker().airborne();
             const bool wasSlide = player->walker().sliding();
             player->tick(static_cast<float>(frameSec * 30.0),
-                         bits ? bits : omk::kIdleInput);
+                         tickBits ? tickBits : omk::kIdleInput);
             playerTicked = true;
             // THE FALL, said as it happens - a reader in shoot mode:
             // "the character fall very slowly, in an not natural

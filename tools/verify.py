@@ -41775,6 +41775,72 @@ def c_engine_free_look():
            "moved to the head while looking; and back after"
 
 
+def c_engine_image_show():
+    r"""`image.show` - op 94, a full-screen bitmap (`todo/scene-gameplay-audit.md` 13).
+
+    The handler builds `"%06lx.BMP"` from its operand and calls `Image_Show`
+    (0x0041DFA0): `IMAGES\<file>` into `dword_93072C` and `sub_468F20` - the
+    player parked into ACTOR_STATE 10 with the repeat mask set to the keys he
+    holds. `sub_466E70` stretches a bitmap no bigger than the screen over all
+    of it until the frame's EDGE word is nonzero - a key held since it opened
+    does not close it, a new press does - then frees it and restores the
+    parked state.
+
+    AREA 56's zone 1108 (record 5, Jaunpur's BE entrance), activated with
+    Action: `000012.BMP`, 640x480, shown at 800x600; Action held three frames
+    does not close it, Space does. Asserted: the operand and file, the open
+    (size, state, mask), every pixel of the frame against the bitmap's nearest
+    stretch, and the close (the edge, the state restored).
+
+    Shown to fail: without the case 94 arm nothing opens.
+    """
+    import subprocess, re as _re
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    dump = os.path.join(tmp, "img.bin")
+    def run(frames, hold, d=None):
+        args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "56",
+                "--stand", "983,101,-360,85", "--no-crowd", "--frames", str(frames),
+                "--nodelay", "--res", "800x600", "--hold", hold]
+        if d: args += ["--dump", d]
+        return subprocess.run(args, capture_output=True, text=True, errors="replace",
+                              env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    out = run(160, "0*20,k28*3,0*60,k57*2,0*60")
+    run(50, "0*20,k28*3,0*60", dump)
+    op = _re.findall(r"image\.show (\d+) - IMAGES\\(\S+)", out)
+    opened = _re.findall(r"Image_Show - IMAGES\\\S+, (\d+x\d+), ACTOR_STATE (\d+) \(mask (0x[0-9a-f]+)\)", out)
+    closed = _re.findall(r"Image_Show closed by a press \(edge (0x[0-9a-f]+)\) - ACTOR_STATE (\d+)", out)
+    same = None
+    try:
+        bmp = open(omkpaths.data("IMAGES", "000012.BMP"), "rb").read()
+        fb = open(dump, "rb").read()
+        bw, bh = struct.unpack_from("<ii", bmp, 18)
+        off = struct.unpack_from("<I", bmp, 10)[0]
+        pal = [struct.unpack_from("<BBB", bmp, 54 + 4 * i) for i in range(256)]
+        c565 = [((r >> 3) << 11) | ((g >> 2) << 5) | (bb >> 3) for (bb, g, r) in pal]
+        stride = (bw + 3) & ~3
+        W, H = 800, 600
+        same = 0
+        for y in range(H):
+            sy = y * bh // H
+            row = off + (bh - 1 - sy) * stride
+            for x in range(W):
+                if struct.unpack_from("<H", fb, 2 * (y * W + x))[0] == c565[bmp[row + x * bw // W]]:
+                    same += 1
+    except (OSError, struct.error):
+        pass
+    return (tuple(op), tuple(opened), same, tuple(closed)), \
+           ((("18", "000012.BMP"),), (("640x480", "10", "0x10"),), 480000, (("0x20", "1"),)), \
+           "the operand and file; the open (size, state, mask); frame pixels equal to " \
+           "the bitmap's stretch, of 480000; the close (edge, state)"
+
+
 def c_engine_astaroth_souls():
     r"""ASTAROTH's SIX SOULS (`todo/astaroth.md` step 1).
 
@@ -46463,6 +46529,7 @@ SLOW = [
     ("engine: shoot weapon change", c_engine_shoot_weapon_change, "todo/scene-gameplay-audit.md 9; actor/shootmode.h"),
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
+    ("engine: image show", c_engine_image_show, "todo/scene-gameplay-audit.md 13; script/area.cpp"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),
     ("engine: astaroth tick", c_engine_astaroth_tick, "todo/astaroth.md 3; actor/astaroth.h"),

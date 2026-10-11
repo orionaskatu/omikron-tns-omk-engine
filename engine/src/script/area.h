@@ -1185,6 +1185,9 @@ public:
     // block; phase 2 is `Game_NewGame`. VM opcode 152 sets the request; the
     // menu's "new game" is this.
     void requestRestart() { restart_ = true; }
+    // op 94 `image.show`'s file, `IMAGES\%06lx.BMP`, for the frontend to show
+    // (`Image_Show`); taken once - "" when none is pending
+    std::string takeImageShow() { std::string s; s.swap(imageShow_); return s; }
     // how many times `Script_Pump`'s restart arm has run - a frontend that
     // sees it move drops everything it holds for the old world
     long restarts() const { return restarts_; }
@@ -1762,6 +1765,7 @@ private:
 
     // ---- the world hooks (script/hooks.h) - see the public section
     std::array<int, 50> objectSlotIds_{};    // word_4E6CA0
+    std::string imageShow_;                  // op 94, until the frontend takes it
     std::map<int, int> heldSlot_;            // Actor_HeldObjectSlot, by id; -1 = player
     std::set<int> shownSlots_;               // Object_ShowInScene / HideFromScene
     std::vector<PropEvent> propEvents_;

@@ -498,6 +498,12 @@ struct PlayState {
     bool shootCameraLive{};
     // THE FREE LOOK's camera (preset 3, `PlayerController::lookTick`): on
     // while the arm runs, its lagged target, and the mouse flag 0x80
+    // `image.show`'s bitmap (`dword_93072C`) while ACTOR_STATE 10 holds him,
+    // and the edge word's two inputs (`dword_4E9720` the mask - the keys held
+    // when it opened - and `dword_4E9724` the last poll)
+    omk::Surface imageShown{};
+    bool imageLive{};
+    std::uint32_t imageMask{}, imageLast{};
     bool lookCam{};
     bool lookMouse{};
     bool lookAtKnown{};

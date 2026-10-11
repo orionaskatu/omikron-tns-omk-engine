@@ -975,11 +975,12 @@ the losers once per set with the shared `DepthTie` and draws a loser two
 (a shared one is at the plain depth); `gl1: 60 passes ...` counts the losers
 drawn back. Anekbah: 87 losers baked, ~2 drawn a frame along the wander; the
 host's frames unchanged (its offscreen depth is 24-bit and the same face
-pair in a fixed order resolves alike) - so NOT the flicker the reader saw on
-the host; on the iBook's 16-bit depth it is the one that can fight. `gl1
-backend`, `classic build` green. The reader's ground flicker: asked what it
-looked like (a texture swapping, or distant texels sparkling as he moved -
-the original's bilinear without mipmaps).
+pair in a fixed order resolves alike) in the frames dumped - but **the
+reader, running the street again in the host GL1 window with it: "issue
+resolved"** (2026-10-11). So the ground's coincident faces DID fight on the
+host, at views the dumps did not hit - the reading "not the flicker the
+reader saw" was wrong. On the iBook's 16-bit depth it matters more. `gl1
+backend`, `classic build` green.
 
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x

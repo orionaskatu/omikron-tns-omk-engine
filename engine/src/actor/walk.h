@@ -217,6 +217,50 @@ public:
         return true;
     }
 
+    // THE SHOOT MOVER'S VERTICAL (`actor/shootmove.h`, MDJP): `+248 -=
+    // flt_6579C0 x delta` before `Actor_ApplyMotion` tries the frame - the
+    // body goes UP by `dy` (y down, so `dy` is negative) outright, and a body
+    // that was standing is now above the floor, so the ground response finds
+    // him in the air: airborne, falling from rest, apex here.
+    void lift(double dy) {
+        if (dy == 0.0) return;
+        pos_[1] += dy;
+        if (dy < 0.0 && !airborne_ && !sliding_) {
+            airborne_ = true;
+            vy_ = 0.0;
+            fall_ = 0.0;
+            tier_ = 0;
+            apex_ = pos_[1];
+        } else {
+            fall_ += dy;                 // the fall is the NET descent: the rise counts against it
+            if (pos_[1] < apex_) apex_ = pos_[1];   // y grows down: smaller is higher
+        }
+    }
+    // ...and the mover's HORIZONTAL in the air. The shoot mover writes
+    // `+244/+252` every frame, airborne or not (flag 0x10 freezes the
+    // velocities it comes from, so the run he jumped with carries him), and
+    // `Actor_ApplyMotion` hands it to `Actor_Move` - swept, as a walk is.
+    // `step` drops a walk's delta in the air ("a FALL IS VERTICAL", the
+    // clip's root motion); this is not that delta. -> false on the ground.
+    bool airMove(double dx, double dz) {
+        if (!airborne_) return false;
+        double push[2] = {0.0, 0.0};
+        slide(dx, dz, push);
+        pos_[0] += dx;
+        pos_[2] += dz;
+        return true;
+    }
+    // `sub_47CF00` in shoot mode, `flags & 0x810`: while it is nonzero the
+    // ground response's 7.874 ABSORB is off, as `dword_6A52CC` turns it off
+    // for the adventure leap - so a shoot jump is not snapped straight back
+    // onto the floor it has just left (`shootMoveNoAbsorb`). NOT ported, and
+    // labelled: outside shoot mode the same function returns 1, so the
+    // ORIGINAL never absorbs a drop in adventure either - it bands it as a
+    // short fall (`+1304 = 2`) and gravity takes him down; this walker
+    // absorbs it, as it has since the walker was written.
+    void setNoAbsorb(bool on) { noAbsorb_ = on; }
+    bool noAbsorb() const { return noAbsorb_; }
+
     // The steep faces of the same set - what the actor slides down. Optional:
     // with none installed a steep face is a hole, which is what the walker did
     // before it could see them.
@@ -309,6 +353,7 @@ private:
     // 7.874 absorb and the fall tiers - only `if (!dword_6A52CC)`, so while it
     // is set a leap is never snapped back onto the floor it is still above.
     bool   jumping_  = false;
+    bool   noAbsorb_ = false;    // `sub_47CF00` nonzero (shoot mode, flags & 0x810)
     int    tier_ = 0;
     double landFall_ = 0.0;
     double drop_ = 0.0;          // the last landing's descent from its apex

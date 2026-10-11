@@ -3073,6 +3073,16 @@ by writing the facing Euler directly.
   else if (v68 >= 118.11024) ...                /* 3 m: the injury tier  */
   ```
 
+  **And `sub_47CF00` (0x0047CF00, read from the bytes 2026-10-11) is not a
+  detail**: `if (!dword_6579CC) return 1; return dword_6579B0 & 0x810;`. With
+  no shooter - adventure mode - it returns 1, so the silent drop NEVER runs
+  outside shoot mode (unless `walk.ledges.ignore`): a 20 cm step down is
+  banded as a short fall (`+1304 = 2`) and gravity takes him down. In shoot
+  mode it runs unless the mover's flags 0x810 are up, which is the shoot JUMP
+  (`MDJP`, `engine/src/actor/shootmove.h`). `engine/` honours the shoot half
+  (`Walker::setNoAbsorb`); its adventure walker still absorbs, a divergence
+  labelled in `actor/walk.h` and not yet measured in play.
+
   `7.8740158` is **20 cm** in inches, and it is the fourth cm→inch constant in
   the engine. It is not the step limit: 30 cm is what you may climb, 20 cm is
   what you may drop without the fall path taking over. The same constant

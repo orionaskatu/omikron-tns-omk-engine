@@ -394,7 +394,12 @@ public:
     // x and z, added to THIS tick's motion before `Actor_ApplyMotion` tries it
     // against the ground - the engine writes it into +244/+252 beside the
     // clip's root delta, so the walls that stop a walk stop this too.
-    void addShootMotion(float dx, float dz) { shootMotion_[0] += dx; shootMotion_[1] += dz; }
+    // `dy` is the mover's vertical, y down (`Walker::lift`)
+    void addShootMotion(float dx, float dz, float dy = 0.0f) {
+        shootMotion_[0] += dx; shootMotion_[1] += dz; shootMotion_[2] += dy;
+    }
+    // `sub_47CF00`'s answer this frame (`Walker::setNoAbsorb`)
+    void setShootNoAbsorb(bool on) { walker_.setNoAbsorb(on); }
     const float* euler() const { return euler_; }
     // `MDACTION`'s WATER ARM, `sub_4A9580` (0x004A9580; table-called, so it has
     // no caller in the listing): the way OUT of the water. With the water line
@@ -718,7 +723,7 @@ private:
     bool   drowned_ = false;           // dword_68A58C: message 12 posted
     // `sub_4A8F30` for ACTOR_STATEs 11..14 - see player.cpp
     void waterTick(double dx, double dy, double dz, float dt);
-    float shootMotion_[2] = {0, 0};    // `addShootMotion`, spent by the next tick
+    float shootMotion_[3] = {0, 0, 0}; // `addShootMotion`, spent by the next tick
     float camLift_ = 0.0f;             // pelvis above the feet - see cameraLift()
     float headLift_ = 0.0f;            // 0.7 * the model's extent - see headLift()
     // `sub_417070`'s state. `+328` is the distance it keeps between frames -

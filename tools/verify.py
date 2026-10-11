@@ -41638,6 +41638,94 @@ def c_engine_idle_key():
            "the flat's bodies on a bank: actor, model, idle tracks bound"
 
 
+def _gallery_run(hold, frames, give=None):
+    """The shooting gallery's shoot harness (AREA 59, `--shoot`), as the
+    shoot checks run it: his stdout, or None when the viewer did not build."""
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return None
+    args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+            "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+            "--area", "59", "--stand", "5000,0,-2900,180", "--shoot",
+            "--shoot-health", "1000", "--frames", str(frames), "--nodelay",
+            "--res", "640x480", "--hold", hold]
+    if give: args += ["--give", give]
+    return subprocess.run(args, capture_output=True, text=True, errors="replace",
+                          env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+
+
+def c_engine_shoot_weapon_change():
+    r"""THE WEAPON CHANGE in shoot mode - event 48 (`todo/scene-gameplay-audit.md` 9).
+
+    `Game_HandleEvent` case 48 steps the weapon slot (5..14, 15 wraps to 5)
+    to the next one whose object he CARRIES (list 0) and that has rounds
+    (`+250 + 2*slot`, property 35) or needs none (slot 10 and up). Raised by
+    `MDGUN` (`Arme`, DIK 56, input 0x2000) and by a SHOT FROM AN EMPTY
+    MAGAZINE (17_script.c 1278), whose bolt then flies with the OLD gun's
+    speed and damage - read before the call - out of the NEW gun's magazine.
+
+    The gallery, with the DWAVER (189, slot 5) and the Baton (40, slot 10)
+    given: one press takes slot 11 to 5 (the harness's own gun, 42, is not
+    carried, so 12..14 and 11 are passed over); fire held empties its ten
+    rounds, and the eleventh shot changes to slot 10 and flies at the
+    DWAVER's 124.8 / 7 with no magazine, the next at the Baton's 104.0 / 6.
+
+    Shown to fail: `Session::changeWeapon` answering -1 leaves slot 11.
+    """
+    import re as _re
+    out = _gallery_run("0*30,k56,0*30,k54*130", 200, "40,189")
+    if out is None:
+        return ("build failed",), ("built",), "engine/ must build"
+    changes = _re.findall(r"^frame \d+: (MDGUN|an empty magazine) - event 48: "
+                          r"weapon slot (\d+) -> (\d+)", out, _re.M)
+    shots = _re.findall(r"^frame \d+: SHOT (\d+) - .*?speed ([\d.]+), damage (\d+), .*?"
+                        r"magazine (none|\d+ -> -?\d+)", out, _re.M)
+    s11 = next((x[1:] for x in shots if x[0] == "11"), None)
+    s12 = next((x[1:3] for x in shots if x[0] == "12"), None)
+    return (tuple(changes), s11, s12), \
+           ((("MDGUN", "11", "5"), ("an empty magazine", "5", "10")),
+            ("124.8", "7", "none"), ("104.0", "6")), \
+           "the changes (raiser, slot from, to); shot 11 (speed, damage, magazine); shot 12"
+
+
+def c_engine_shoot_jump():
+    r"""THE JUMP in shoot mode - `MDJP` (`todo/scene-gameplay-audit.md` 10).
+
+    `Sauter` (DIK 57, input 0x20) queues `MDJP` from group 200: `sub_47D2E0`
+    puts property 36 slot 3 x 0.39 into `flt_6579C0` (Kay'l's 20, so 7.8),
+    flags 0x810, and the mover lifts him by it a frame while spending it at
+    the acceleration (0.39 at Speed 70) - 20 frames of rise against the
+    walker's gravity. 0x810 is what `sub_47CF00` returns, so the 7.874
+    absorb is OFF and he is not snapped back onto the floor; flag 0x10 holds
+    until he lands. The gallery's floor is y 15209.1.
+
+    Asserted: the impulse, the frames he rose, the apex (33.4 up), that he
+    comes back to the floor, and that Hold is down after the landing.
+
+    Shown to fail: with the absorb left ON (`shootMoveNoAbsorb` false) the
+    first rise of 7.41 is under 7.874 and is absorbed - the apex is 0.
+    """
+    import re as _re
+    out = _gallery_run("0*30,k57,0*80", 120)
+    if out is None:
+        return ("build failed",), ("built",), "engine/ must build"
+    imp = _re.search(r"jump ([\d.]+) \(property 36\[3\] (-?\d+)\)", out)
+    rises = _re.findall(r"^frame \d+: SHOOT JUMP rises ([\d.]+) \(flags 0x([0-9a-f]+)\), "
+                        r"y ([\d.]+)", out, _re.M)
+    ys = [float(r[2]) for r in rises]
+    up = [r for r in rises if float(r[0]) > 0]
+    apex = round(max(ys) - min(ys), 1) if ys else None
+    last = rises[-1] if rises else None
+    return ((imp.group(1), imp.group(2)) if imp else None, len(up), apex,
+            last[2] if last else None, bool(last and not int(last[1], 16) & 0x10)), \
+           (("7.80", "20"), 19, 33.4, "15209.1", True), \
+           "the impulse (and property 36[3]); frames rising; apex in units; " \
+           "his y when the rise is spent; Hold down"
+
+
 def c_engine_astaroth_souls():
     r"""ASTAROTH's SIX SOULS (`todo/astaroth.md` step 1).
 
@@ -46323,6 +46411,8 @@ SLOW = [
     ("engine: hide piece", c_engine_hide_piece, "todo/drift-audit.md S11; o3de/setpiece.h"),
     ("engine: show piece", c_engine_show_piece, "todo/scene-gameplay-audit.md 14; o3de/setpiece.h"),
     ("engine: idle key", c_engine_idle_key, "todo/scene-gameplay-audit.md 21; ASSETS; actor/pose.h"),
+    ("engine: shoot weapon change", c_engine_shoot_weapon_change, "todo/scene-gameplay-audit.md 9; actor/shootmode.h"),
+    ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),
     ("engine: astaroth tick", c_engine_astaroth_tick, "todo/astaroth.md 3; actor/astaroth.h"),

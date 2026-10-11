@@ -477,6 +477,15 @@ public:
     // mode 4, `.CTL` group 200 and input scheme 2; the AI's brains are a
     // different question (`todo/standing-unknowns.md` 2).
     const ShootMode& shootMode() const { return shoot_; }
+    // EVENT 48, the weapon change (`ShootMode::changeWeapon`), over the DB:
+    // list 0 is what he carries, the player record's `+250 + 2*slot` the
+    // rounds. -> the weapon slot now held, or -1 when nothing changed. The
+    // model, `Shoot_InitWeapon` and the HUD are the frontend's.
+    int changeWeapon() {
+        return shoot_.changeWeapon(
+            [this](int obj) { return state_.listHas(0, obj); },
+            [this](int slot) { return static_cast<int>(state_.playerI16(250 + 2 * slot)); });
+    }
     // ...and the writable half, which the frontend also uses for the one field
     // the SCRIPT cannot supply: the player's character type, which
     // `Shoot_Enter` reads off his record (property 7), not out of the opcode.

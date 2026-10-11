@@ -176,6 +176,62 @@ public:
     // back; the cell each had claimed is released by the grid's owner.
     std::vector<int> actorsInMode() const;
 
+    // ---- THE WEAPON CHANGE, `Game_HandleEvent` case 48 (0x004067D0) -------
+    //
+    // What `MDGUN` (0x0046B740, H1Avnt group 200 entry 134, input 0x2000),
+    // `Shoot_Enter`, `shoot.player.resume` and a shot from an empty magazine
+    // all raise. Two flags steer it, `dword_4E6C80` (ARMED) and `dword_4E6C84`
+    // (LOAD):
+    //
+    //     if ARMED:  ++slot; then until back where it started:
+    //                    slot 15 wraps to 5;
+    //                    TAKE it if its object is in list 0 (carried) and
+    //                      (slot >= 10 || i16(record + 250 + 2*slot) > 0)
+    //                      - the ammunition, property 35, for slots 5..9;
+    //                    LOAD = (a slot was taken)
+    //     LOAD ? free the held slot and load the slot's object : nothing
+    //     ARMED = 1; return the new object slot, or -1
+    //
+    // So a slot 10..14 needs no rounds, a slot 5..9 one at least, and coming
+    // back round to the start changes nothing. The writers of the flags are
+    // all read from the image: op 80 sets LOAD 1 / ARMED 0 before
+    // `Shoot_Enter` (0x00403EE6), so the entry's own event loads the gun the
+    // slot names; op 117 does the same when his hand is empty and clears both
+    // when it is not (0x00405150); event 43 with MESSAGE 1 - the phase lost -
+    // clears both (0x004079A9). An unarmed call only arms.
+    //
+    // `carried(object)` is `ObjectList_Find(0, object) != -1`; `ammoAt(slot)`
+    // the record's `i16(+250 + 2*slot)`. -> the slot now held, or -1 when
+    // nothing changed. A slot of -1 cannot reach this in the engine (op 80 has
+    // set one); the engine's loop would not end there, the port returns -1.
+    template <class Carried, class AmmoAt>
+    int changeWeapon(Carried carried, AmmoAt ammoAt) {
+        const int start = weapon_;
+        if (cycleArmed_ && start >= 0) {
+            int s = ++weapon_;
+            if (s == start) cycleLoad_ = false;
+            else for (;;) {
+                if (s == 15) weapon_ = s = kWeaponSlotFirst;
+                const int obj = objectForSlot(s);
+                if (obj != -1 && carried(obj) && (s >= 10 || ammoAt(s) > 0)) {
+                    cycleLoad_ = true;
+                    break;
+                }
+                s = ++weapon_;
+                if (s == start) { cycleLoad_ = false; break; }
+            }
+        }
+        cycleArmed_ = true;
+        ++changes_;
+        return cycleLoad_ ? weapon_ : -1;
+    }
+    // op 80's and op 117's writes before their event 48 (above)
+    void armWeaponLoad(bool load) { cycleLoad_ = load; cycleArmed_ = false; }
+    // event 43, message 1
+    void resetWeaponCycle() { cycleLoad_ = cycleArmed_ = false; }
+    bool weaponCycleArmed() const { return cycleArmed_; }
+    long weaponChanges() const { return changes_; }
+
     // What the last begin/end decided, for a probe and for the frontend.
     struct Event { bool enter = false; int weapon = -1; int hud = -1; const char* why = ""; };
     const std::vector<Event>& log() const { return log_; }
@@ -194,6 +250,9 @@ private:
     bool frozen_ = false;              // dword_4E9760
     bool playerOff_ = false;           // g_PlayerBehaviourOff
     long suspends_ = 0, resumes_ = 0;
+    bool cycleArmed_ = false;          // dword_4E6C80
+    bool cycleLoad_  = false;          // dword_4E6C84
+    long changes_ = 0;                 // event 48s raised
 };
 
 }  // namespace omk

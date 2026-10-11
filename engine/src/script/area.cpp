@@ -1867,6 +1867,11 @@ void Session::sceneUnload(int area, int caller) {
 }
 
 bool Session::postMessage(int message, int sender) {
+    // `Game_HandleEvent` case 43's tail (0x004079A9): after the handlers,
+    // MESSAGE 1 - the shoot phase LOST - clears the weapon change's two
+    // flags, found or not (`ShootMode::changeWeapon`). Its handler is queued,
+    // not run, so clearing first is the same order.
+    if (message == 1) shoot_.resetWeaponCycle();
     // `Message_RunHandlers` (0x00409420), transcribed from readable/src/
     // 01_file.c: the SCENE's table, then the AREA's, then GLOBAL's; the first
     // record whose +4 equals the message wins. A record with script 0 (GLOBAL
@@ -3087,7 +3092,11 @@ void Session::onCall(int i, const Call& call) {
         break;
     case 117:
         // `shoot.player.resume` (0x405130 -> 0x4229C0): the player half of
-        // `Shoot_Enter` and `g_PlayerBehaviourOff = 0`.
+        // `Shoot_Enter` and `g_PlayerBehaviourOff = 0`. First the weapon
+        // change's two flags (0x00405150): `Actor_HeldObjectSlot(player)`
+        // -1 - the hand empty, as a suspend leaves it - asks event 48 to
+        // LOAD the slot's gun; a held object clears both, so it stays.
+        shoot_.armWeaponLoad(heldSlotOf(-1) == -1);
         shoot_.resumePlayer();
         break;
     case 129: case 130:

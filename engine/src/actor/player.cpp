@@ -1076,10 +1076,22 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     // wall; a drop past it -> a ledge. Actor_Move's collide-and-slide is
     // not ported (README, `engine walk`), so a blocked step stops instead of
     // sliding.
-    const double dx = static_cast<double>(world[0] + last_.shift[0] + shootMotion_[0]);
-    const double dz = static_cast<double>(world[2] + last_.shift[2] + shootMotion_[1]);
-    shootMotion_[0] = shootMotion_[1] = 0.0f;
+    double dx = static_cast<double>(world[0] + last_.shift[0] + shootMotion_[0]);
+    double dz = static_cast<double>(world[2] + last_.shift[2] + shootMotion_[1]);
     const int waterState = static_cast<int>(rt_.state());
+    // THE SHOOT MOVER'S HALF (`actor/shootmove.h`): its vertical lifts him
+    // before the frame is tried, and in the air its horizontal is swept
+    // outright - the walk's airborne rule drops a clip's root delta, and this
+    // is not one. Only in ACTOR_STATE 3, where the mover runs at all.
+    if (waterState == 3) {
+        walker_.lift(static_cast<double>(shootMotion_[2]));
+        if (walker_.airMove(static_cast<double>(shootMotion_[0]),
+                            static_cast<double>(shootMotion_[1]))) {
+            dx -= static_cast<double>(shootMotion_[0]);
+            dz -= static_cast<double>(shootMotion_[1]);
+        }
+    }
+    shootMotion_[0] = shootMotion_[1] = shootMotion_[2] = 0.0f;
     if (waterState >= 11 && waterState <= 14) {
         waterTick(dx, static_cast<double>(world[1] + last_.shift[1]), dz, dt);
     } else if (waterState == 16 || waterState == 17) {

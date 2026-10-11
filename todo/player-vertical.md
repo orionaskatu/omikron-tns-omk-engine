@@ -491,6 +491,11 @@ by the state resets, so it holds for the whole flight.
 **Fixed** (`actor/walk.*`): `Walker::jumping_`, set by `jump()`, cleared by
 `land()` and `moveTo()`; the absorb runs only while it is clear. Still not
 ported from that arm: its `+1304` fall-tier test and `sub_47CF00()`.
+(**`sub_47CF00` read 2026-10-11**: 1 with no shooter, else the shoot mover's
+`flags & 0x810` - so the ORIGINAL never absorbs in adventure, and in shoot
+mode not during a jump. The shoot half is ported with the shoot jump
+(`Walker::setNoAbsorb`); the adventure half is not - `docs/ASSETS.md`, "A DROP
+UNDER 20 cm IS SILENT".)
 
 **Measured.** `engine: player jump` back to 13 airborne frames, apex -9.00,
 symmetric, forward travel in band; `engine: player landing`, `player vertical`,

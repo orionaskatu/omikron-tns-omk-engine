@@ -31,6 +31,7 @@ bool ShootMode::begin(int weaponObject) {
         const int s = slotForObject(weaponObject);
         weapon_ = s == -1 ? kWeaponSlotDefault : s;
     }
+    armWeaponLoad(true);                           // 0x00403EE6, before Shoot_Enter
     active_ = true;
     hud_ = hudScreenFor(type_);
     log_.push_back({true, weapon_, hud_, "shoot.begin"});

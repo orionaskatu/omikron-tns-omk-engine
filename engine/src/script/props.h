@@ -143,6 +143,14 @@ bool writeActorProperty(std::span<std::byte> record, int property,
 // when the slot runs off the record.
 bool readAmmoSlot(std::span<const std::byte> record, int slot, std::int32_t& out);
 
+// Property 36 READ BY SLOT - `Actor_GetProperty` case 0x24, `u32(a1, 8) =
+// i16(v2 + 2 * u32(a1, 8), 252)`: four int16s at `+252`, the slot in and the
+// value out, as 35's. Two readers known, both `sub_47CC70` (the shoot mover's
+// init): slot 3 is the JUMP - `flt_6579D4 = value * 0.39` - and slot 1
+// `flt_657A00` (3.0 when it is not above 0; no reader traced). Kay'l's are
+// 9, 6, 12, 20. -> false when the slot runs off the record.
+bool readProperty36Slot(std::span<const std::byte> record, int slot, std::int32_t& out);
+
 // The record's `+270`: the OBJECTS id it holds, -1 for none.
 int  heldObjectOf(std::span<const std::byte> record);
 void setHeldObjectOf(std::span<std::byte> record, int objectId);

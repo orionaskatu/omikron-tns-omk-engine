@@ -79,8 +79,7 @@
 // HOLDS the stance at frame 1 while he stands; `word_657A16`/`word_657A18` are
 // their two sounds and are carried below), the turn momentum (flag 8 - nothing
 // writes it),
-// the jump in shoot mode (MDJP -> `sub_47D2E0`, and the vertical `flt_6579C0`
-// it feeds, which is decayed here but never raised), and the HEAD mode's key
+// and the HEAD mode's key
 // (action 7 has no keyboard binding in the shipped scheme). MDCO (run, flag 1)
 // and MDTR (flag 0x40) are ported but no H1Avnt entry queues either.
 #pragma once
@@ -108,12 +107,12 @@ enum : std::uint32_t {
     kShootMoveSide   = 0x2,     // a side intent this frame
     kShootMoveFwd    = 0x4,     // a forward intent this frame
     kShootMoveTurn   = 0x8,     // the turn momentum - nothing writes it
-    kShootMoveHold   = 0x10,    // the velocities frozen - nothing sets it
+    kShootMoveHold   = 0x10,    // the velocities frozen - MDJP sets it
     kShootMoveCrouch = 0x20,    // MDDO; halves the top speed
     kShootMoveTr     = 0x40,    // MDTR (0x0047CF30)
     kShootMoveHead   = 0x200,   // MDHEAD01: the move keys pitch the look
     kShootMoveShove  = 0x400,   // `sub_47D1F0`'s knockback
-    kShootMoveBlock  = 0x800,   // refuses the intents
+    kShootMoveBlock  = 0x800,   // refuses the intents - MDJP, for one tick
     kShootMoveMeca   = 0x1000,  // the shooter is a Mecagarde: he cannot PITCH
 };
 
@@ -124,7 +123,9 @@ struct ShootMover {
     float sideIntent = 0.0f;        // `flt_6579B4`
     float fwdIntent  = 0.0f;        // `flt_6579B8`
     float side       = 0.0f;        // `dword_6579BC`, the side velocity
-    float vertical   = 0.0f;        // `flt_6579C0`
+    float vertical   = 0.0f;        // `flt_6579C0`, the jump's rise a frame
+    float impulse    = 0.0f;        // `flt_6579D4`, what MDJP puts in it
+    float jumpCool   = 0.0f;        // `flt_6579F8`, 1.0 at a jump, spent once he stands
     float fwd        = 0.0f;        // `dword_6579C4`, the forward velocity
     float period     = 0.0f;        // `dword_6579C8`, the stance clip's frames
     float top        = 0.0f;        // `flt_6579D0`
@@ -152,8 +153,37 @@ int  shootSpeedRow(int speed);
 // `sub_47CC70`: the block zeroed, the shooter set, and the three speeds from
 // the row - `top = (30 * a / 100 + 5) * 1.3` with the division an INTEGER one,
 // `brake = top * 0.2`, `accel = b * 0.043333333`. `charType` is property 7,
-// which picks the hurt and footstep sounds and flag 0x10.
-void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType = 0);
+// which picks the hurt and footstep sounds and flag 0x10. `jumpSlot3` is
+// property 36 slot 3 (`readProperty36Slot`), the jump below.
+void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType = 0,
+                   int jumpSlot3 = 0);
+
+// THE JUMP IN SHOOT MODE - `MDJP` (0x0046B710, H1Avnt group 200 entry 140,
+// input 0x20 `Sauter`): `dword_6A52CC = 0` and a tail jump to `sub_47D2E0`,
+// read from the bytes:
+//
+//     if (shooter && flt_6579F8 == 0.0 && !(flags & 0x800) && !actor[+1304])
+//         flt_6579F8 = 1.0;  flt_6579C0 = flt_6579D4;  flags |= 0x810;
+//
+// `flt_6579D4` is `sub_47CC70`'s: property 36 slot 3 x 0.39 (20 for Kay'l,
+// so 7.8 a frame - `impulseFromProperty36`). The tick then rises the body by
+// `flt_6579C0 x delta` a frame (`+248 -= ...`, y down) and spends it at the
+// ACCELERATION a frame, the same `flt_6579D8` the walk accelerates by - 0.39
+// at Kay'l's Speed 70, so a 20-frame push of 74 units, against which the
+// walker's own gravity is pulling from the first airborne frame. Flag 0x800
+// refuses the intents for that frame; 0x10 freezes the velocities - the run
+// he jumped with carries him - until 0x800 is gone and the fall byte is down
+// (he has LANDED), and only then does `flt_6579F8` run down by the delta, so
+// the next jump waits a frame on the ground. And 0x810 is what `sub_47CF00`
+// returns, which keeps `Walk_GroundResponse` from ABSORBING him back onto the
+// floor while he is within 7.874 of it (`shootMoveNoAbsorb`).
+// -> false when refused; nothing is touched then.
+bool shootJump(ShootMover& m, bool falling);
+inline float impulseFromProperty36(int slot3) { return static_cast<float>(slot3 * 0.38999999); }
+// `sub_47CF00` in shoot mode: `flags & 0x810` - no absorb while it is set.
+inline bool shootMoveNoAbsorb(const ShootMover& m) {
+    return m.active && (m.flags & (kShootMoveHold | kShootMoveBlock)) != 0;
+}
 
 // `sub_47D1F0`, the HURT REACTION - what `sub_4240E0` does with a bolt the
 // player SURVIVES. `band` is `sub_423E20`'s (`shootHitBand`), 0..3; the two
@@ -199,7 +229,10 @@ struct ShootMoveStep { float dx = 0.0f, dz = 0.0f, dy = 0.0f; };
 // `eulerPitch` / `eulerRoll` are the actor's +416 and +424, which the SHOVE
 // arm spends and then zeroes. Pass neither and the arm is skipped - which is
 // what every probe that only wants the step does.
+// `falling` is the actor's fall byte (+1304) - the walker's airborne flag here,
+// as for the movers - which keeps flag 0x10 up until he lands.
 ShootMoveStep shootMoveTick(ShootMover& m, float facingDeg, float dt,
-                            float* eulerPitch = nullptr, float* eulerRoll = nullptr);
+                            float* eulerPitch = nullptr, float* eulerRoll = nullptr,
+                            bool falling = false);
 
 }  // namespace omk

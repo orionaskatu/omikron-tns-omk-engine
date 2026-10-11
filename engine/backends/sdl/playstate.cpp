@@ -715,6 +715,34 @@ void PlayState::shootInitWeapon(int& obj, int& kind, int& type) {
     }
 }
 
+// The raisers' common tail (`MDGUN` 0x0046B740, `Shoot_Enter`, the empty
+// magazine at 17_script.c 1278): on a slot, `sub_41C490` links the new object
+// under his hand, `Shoot_InitWeapon` gives his record the new row and the HUD
+// its count, and `dword_90E104 = 1` has screen 34's draw hook reload the held
+// object's model - which the port's HUD does by itself when the weapon object
+// changes (`UiModels::loadWeapon`). The hand's MODEL is not drawn: in shoot
+// mode his body, and the hand with it, is hidden.
+bool PlayState::shootChangeWeapon(long frame, const char* why) {
+    auto& session = *session_;
+    const int was = session.shootMode().weaponSlot();
+    const int slot = session.changeWeapon();
+    if (slot < 0) {
+        std::printf("frame %ld: %s - event 48: slot %d kept (nothing else carried "
+                    "with rounds)\n", frame, why, was);
+        return false;
+    }
+    int obj = -1, kind = -1, type = 0;
+    shootInitWeapon(obj, kind, type);
+    const auto& objs = voiceLib.objects();
+    const bool known = obj >= 0 && static_cast<std::size_t>(obj) < objs.size();
+    shotGunStem = known ? objs[static_cast<std::size_t>(obj)].stem : std::string();
+    std::printf("frame %ld: %s - event 48: weapon slot %d -> %d (object %d '%s'), "
+                "Shoot_InitWeapon type %d, row %s, magazine %d\n", frame, why, was, slot,
+                obj, shotGunStem.c_str(), type, playerShootRec.weapon ? "found" : "NONE",
+                hudAmmo);
+    return true;
+}
+
 // `if (dword_4E9760 && g_ShootRecords) { every +160 &= ~0x8000; dword_4E9760 = 0; }`
 // - the head of `sub_4246E0`, `sub_4240E0`, `sub_423B10` and `sub_424470`.
 // `sub_47FCF0`, Astaroth's world-hit callback (`actor/astaroth.h`), as

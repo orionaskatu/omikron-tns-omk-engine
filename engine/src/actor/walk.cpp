@@ -570,7 +570,8 @@ StepResult Walker::tick(double dt) {
     // holds for the whole flight, as `MDJUMP0A` sets it and only the landing
     // clears it. NOT ported from the same arm: its `+1304` fall-tier test and
     // `sub_47CF00()`.
-    if (ny >= surf || (!jumping_ && surf - ny <= kSnapDrop)) {
+    // ...and `!sub_47CF00()` beside it, the shoot jump's (`setNoAbsorb`).
+    if (ny >= surf || (!jumping_ && !noAbsorb_ && surf - ny <= kSnapDrop)) {
         fall_ += surf - pos_[1];
         // A steep landing is not a landing: the engine re-writes the slide
         // speed and keeps him moving down the face.

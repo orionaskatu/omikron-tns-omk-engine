@@ -11,7 +11,7 @@ int shootSpeedRow(int speed) {
     return r;
 }
 
-void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType) {
+void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType, int jumpSlot3) {
     m = ShootMover{};                                 // `memset(&dword_6579B0, 0, 0x6C)`
     m.active = true;
     m.period = periodFrames;
@@ -26,6 +26,7 @@ void shootMoveInit(ShootMover& m, int speed, float periodFrames, int charType) {
     m.top = static_cast<float>(static_cast<double>(30 * r.top / 100 + 5) * 1.3);
     m.brake = static_cast<float>(static_cast<double>(m.top) * 0.2);
     m.accel = static_cast<float>(static_cast<double>(r.accel) * 0.043333333);
+    m.impulse = impulseFromProperty36(jumpSlot3);    // `flt_6579D4`, 0x0047CD66
 }
 
 void shootMoveLeave(ShootMover& m) { m.active = false; }
@@ -95,8 +96,18 @@ float shootPitchStep(float pitchDeg, int dy, int sensitivity, bool inverted, flo
     return p;
 }
 
+bool shootJump(ShootMover& m, bool falling) {
+    // `sub_47D2E0`: `fld 6579F8; fcomp 0.0; test ah, 40h; jz ret` - only
+    // when the cool-down is exactly 0
+    if (!m.active || m.jumpCool != 0.0f || (m.flags & kShootMoveBlock) || falling) return false;
+    m.jumpCool = 1.0f;
+    m.vertical = m.impulse;
+    m.flags |= kShootMoveHold | kShootMoveBlock;
+    return true;
+}
+
 ShootMoveStep shootMoveTick(ShootMover& m, float facingDeg, float dt,
-                            float* eulerPitch, float* eulerRoll) {
+                            float* eulerPitch, float* eulerRoll, bool falling) {
     ShootMoveStep s;
     if (!m.active) return s;
     std::uint32_t f = m.flags;                        // the engine's `v2`, and the
@@ -172,6 +183,15 @@ ShootMoveStep shootMoveTick(ShootMover& m, float facingDeg, float dt,
     s.dz = static_cast<float>((c * m.fwd + sn * m.side) * dt);
     s.dy = static_cast<float>(static_cast<double>(m.vertical) * dt);
     // (the head bob and the footsteps are here in the engine - not modelled)
+    // THE JUMP'S HOLD AND COOL-DOWN (0x0047D95C..): flag 0x10 comes down
+    // once 0x800 is gone and the fall byte is clear; without it the
+    // cool-down runs down by the delta to 0
+    if (f & kShootMoveHold) {
+        if (!(f & kShootMoveBlock) && !falling) f &= ~kShootMoveHold;
+    } else {
+        m.jumpCool -= dt;
+        if (m.jumpCool < 0.0f) m.jumpCool = 0.0f;
+    }
     m.flags = f & 0x17F0u;
     return s;
 }

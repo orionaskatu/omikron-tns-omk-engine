@@ -1920,8 +1920,10 @@ forget to plan it."* The session's own log agrees with the gate: 245 latches
    along -X - every number summed by hand first, and every asked distance gone
    in full. NOT modelled, labelled: the head bob and footsteps (which also hold
    the stance at frame 1 while he stands), the shove `sub_47D1F0`, the jump in
-   shoot mode (MDJP), the HEAD mode's key; MDCO (run) and MDTR are ported and
-   queued by no H1Avnt entry.
+   shoot mode (MDJP - **ported 2026-10-11**, `engine: shoot jump`), the HEAD
+   mode's key; MDCO (run) and MDTR are ported and queued by no H1Avnt entry.
+   **The WEAPON CHANGE, ported 2026-10-11** (`engine: shoot weapon change`):
+   `MDGUN` and the empty magazine raise event 48, `ShootMode::changeWeapon`.
 5c. **GAMEPLAY EVENTS ARE NOT CUTSCENES — reported 2026-09-10** (*"be careful,
    some events (like some ennemie appearing with a special animation) are
    considered as cutscenes, stops move and change camera, even though they are

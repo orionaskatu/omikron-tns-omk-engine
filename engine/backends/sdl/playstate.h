@@ -902,6 +902,9 @@ struct PlayState {
     // in his hand and the magazine count - `Shoot_Enter` step 9 and
     // `shoot.player.resume` both call it; out: the object, its kind, the type
     void shootInitWeapon(int& obj, int& kind, int& type);
+    // EVENT 48 and what its raisers do with a slot: the gun, `Shoot_InitWeapon`
+    // and the HUD weapon (`Session::changeWeapon`). -> whether it changed.
+    bool shootChangeWeapon(long frame, const char* why);
     std::vector<omk::MeshPose> playerPoseNow(omk::PlayerController* pl, bool aimLayer,
                                    const omk::NodeTracks& pt, float frame);
     std::vector<omk::MeshPose> gunmanPoseNow(int actor, int deathType, const CharModel* mo,

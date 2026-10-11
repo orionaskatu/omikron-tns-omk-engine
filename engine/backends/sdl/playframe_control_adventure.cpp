@@ -899,7 +899,8 @@ void PlayState::adventureScreenInput() {
                 const omk::ShootMoveStep st = omk::shootMoveTick(
                     shootMover, player->facing(),
                     static_cast<float>(frameSec * 30.0),
-                    &player->eulerPitch(), &player->eulerRoll());
+                    &player->eulerPitch(), &player->eulerRoll(),
+                    player->walker().airborne());
                 if (shoveWas[0] != player->eulerPitch() ||
                     shoveWas[1] != player->eulerRoll())
                     std::printf("frame %ld: THE SHOVE (sub_47D1F0) - %.2f left, "
@@ -907,7 +908,12 @@ void PlayState::adventureScreenInput() {
                                 double(shootMover.shoveTimer),
                                 double(player->eulerPitch()),
                                 double(player->eulerRoll()));
-                player->addShootMotion(st.dx, st.dz);
+                // the vertical goes UP (`+248 -= flt_6579C0 x delta`, y down)
+                player->addShootMotion(st.dx, st.dz, -st.dy);
+                player->setShootNoAbsorb(omk::shootMoveNoAbsorb(shootMover));
+                if (st.dy != 0.0f)
+                    std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", n,
+                                double(st.dy), shootMover.flags, double(player->pos()[1]));
                 const bool moving = st.dx != 0.0f || st.dz != 0.0f;
                 if (moving && shootMoveFrames == 0) {
                     for (int k = 0; k < 3; ++k) shootMoveFrom[k] = player->pos()[k];
@@ -1952,15 +1958,32 @@ void PlayState::adventureShot() {
             std::int32_t count = 0;
             const std::size_t recAt = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
             const std::size_t recLen = static_cast<std::size_t>(omk::GameState::kPlayerRecordSize);
-            const bool mag = row->ammoIndex &&
+            bool mag = row->ammoIndex &&
                 omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
                                   row->ammoIndex - 1, count);
+            // AN EMPTY MAGAZINE CHANGES THE WEAPON (17_script.c 1278): at a
+            // count of 0 or less the player's shot raises event 48, and on a
+            // change `Shoot_InitWeapon`s the new gun and re-reads the count
+            // from ITS magazine - the round below comes out of that one. But
+            // the bolt's SPEED and DAMAGE were read from the old row before
+            // the call (`v68`, `v71`), so it flies as the old gun's: `flight`
+            // keeps them and takes the new row's magazine. No change, and the
+            // round is taken from the empty one anyway, as before.
+            omk::ShootWeaponRow flight = *row;
+            if (mag && count <= 0 && shootChangeWeapon(n, "an empty magazine")) {
+                const omk::ShootWeaponRow* nr = playerShootRec.weapon;
+                flight.ammoIndex = nr ? nr->ammoIndex : 0;
+                count = 0;
+                mag = flight.ammoIndex &&
+                      omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
+                                        flight.ammoIndex - 1, count);
+            }
             int left = static_cast<int>(count);
             if (mag) rs.ammo = &left;
-            const omk::RecordShotOut out = projectiles.fireFromRecord(-1, *row, rs);
+            const omk::RecordShotOut out = projectiles.fireFromRecord(-1, flight, rs);
             if (mag && out.ammoSpent)
                 omk::writeActorProperty(state.rawMutable().subspan(recAt, recLen), 0x23,
-                                        ((row->ammoIndex - 1) << 16) | (left & 0xFFFF));
+                                        ((flight.ammoIndex - 1) << 16) | (left & 0xFFFF));
             if (mag && out.ammoSpent) hudAmmo = out.hudAmmo;   // `dword_90E11C`
             if (out.entry >= 0) {
                 ++shotsFired;
@@ -2040,6 +2063,19 @@ void PlayState::adventureShot() {
                                  player->walker().airborne());
         if (mv == "MDDO" || mv == "MDUP")
             omk::shootMoveCrouch(shootMover, mv == "MDDO");
+        // `MDGUN` (0x0046B740): event 48, and on a change the gun into his
+        // hand (`sub_41C490`), `Shoot_InitWeapon` and the HUD weapon's
+        // reload (`dword_90E104`) - `PlayState::shootChangeWeapon`. Entry
+        // 134 of group 200 queues it on input 0x2000, between the arm
+        // lowered (S_ARMOFF) and raised again (S_ARMON).
+        if (mv == "MDGUN") shootChangeWeapon(n, "MDGUN");
+        // `MDJP` (0x0046B710): `dword_6A52CC = 0` - this walker's `jumping_`,
+        // which only MDJUMP0A sets and group 200 never queues - then
+        // `sub_47D2E0` (`omk::shootJump`)
+        if (mv == "MDJP" &&
+            omk::shootJump(shootMover, player->walker().airborne()))
+            std::printf("frame %ld: MDJP - the shoot jump, %.2f a frame\n", n,
+                        double(shootMover.vertical));
         if ((mv == "MDRG" || mv == "MDRD") && shootMover.active)
             player->aimYawBy(omk::shootTurnDegrees(mv == "MDRG" ? -50 : 50,
                                                    mouseSensX));

@@ -78,8 +78,9 @@ RecordShotOut ProjectilePool::fireFromRecord(int actor, const ShootWeaponRow& ro
     if (slot < 0) return out;
     if (row.ammoIndex) {
         const int count = in.ammo ? *in.ammo : 0;
-        // count <= 0 for the player raises event 48, the weapon change - not
-        // modelled - and the round below is taken regardless
+        // count <= 0 for the player raises event 48, the weapon change - the
+        // CALLER's, before this (it re-reads the count from the new gun's
+        // magazine) - and the round below is taken regardless
         out.hudAmmo = count - 1;
         if (in.ammo) *in.ammo = count - 1;
         out.ammoSpent = true;

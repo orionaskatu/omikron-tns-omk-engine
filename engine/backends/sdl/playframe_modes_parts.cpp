@@ -676,15 +676,25 @@ int PlayState::modesShoot() {
                     // ...and its three SOUND ids and flag 0x1000 off the
                     // player's character type (property 7), the same test that
                     // picked the HUD screen above.
+                    // ...and the JUMP's impulse, property 36 slot 3 x 0.39
+                    // (`shootJump`, 0x0047CD3C)
+                    std::int32_t jump3 = 0;
+                    omk::readProperty36Slot(
+                        state.raw().subspan(
+                            static_cast<std::size_t>(omk::GameState::kPlayerRecord),
+                            static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
+                        3, jump3);
                     omk::shootMoveInit(shootMover, speed, period,
-                                       session.shootMode().playerType());
+                                       session.shootMode().playerType(), jump3);
                     shootMoveFrames = 0;
                     std::printf("frame %ld: SHOOT MOVER (sub_47CC70) - Speed %d -> row %d: "
-                                "top %.3f, accel %.4f, brake %.3f a frame, period %.0f; "
+                                "top %.3f, accel %.4f, brake %.3f a frame, period %.0f, "
+                                "jump %.2f (property 36[3] %d); "
                                 "type %d -> hurt sound %d, steps %d/%d%s\n",
                                 n, int(speed), shootMover.row, double(shootMover.top),
                                 double(shootMover.accel), double(shootMover.brake),
-                                double(period), session.shootMode().playerType(),
+                                double(period), double(shootMover.impulse), int(jump3),
+                                session.shootMode().playerType(),
                                 shootMover.hurtSound, shootMover.stepLeft,
                                 shootMover.stepRight,
                                 omk::shootMovePitches(shootMover)
@@ -693,6 +703,11 @@ int PlayState::modesShoot() {
                 // `Shoot_InitWeapon`, step 9 (`PlayState::shootInitWeapon`,
                 // which `shoot.player.resume` calls too): the row and the
                 // magazine; `objs`/`known` are kept for the gun's stem below
+                // ...after `Shoot_Enter`'s own EVENT 48: op 80 asked it to
+                // LOAD, so it hands back the slot the operand named and ARMS
+                // the cycle - without it the first `MDGUN` would only arm
+                // (`ShootMode::changeWeapon`)
+                session.changeWeapon();
                 int obj = -1, kind = -1, type = 0;
                 shootInitWeapon(obj, kind, type);
                 const auto& objs = voiceLib.objects();
@@ -822,10 +837,17 @@ int PlayState::modesShoot() {
                     if (const omk::NodeTracks* st =
                             player->clipTracks(player->groupDefaultClip(200)))
                         period = static_cast<float>(st->frames);
+                    std::int32_t jump3 = 0;
+                    omk::readProperty36Slot(
+                        state.raw().subspan(
+                            static_cast<std::size_t>(omk::GameState::kPlayerRecord),
+                            static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
+                        3, jump3);
                     omk::shootMoveInit(shootMover, speed, period,
-                                       session.shootMode().playerType());
+                                       session.shootMode().playerType(), jump3);
                     shootMoveFrames = 0;
                 }
+                session.changeWeapon();       // event 48, as op 117 armed it
                 int obj = -1, kind = -1, type = 0;
                 shootInitWeapon(obj, kind, type);
                 in.installScheme(omk::ShootMode::kInputScheme);

@@ -137,6 +137,19 @@ struct SettingsBlock {
 inline constexpr std::size_t kHighScoreTable = 724;
 inline constexpr std::size_t kHighScoreStride = 36;
 
+// `HighScore_Insert` (0x00409370), the table half of `ui.highscore` (op 142).
+// Table `table` is the five rows at `+724 + table * 180`. The walk skips every
+// row whose score is <= the new one AND whose name is not empty, so LOWER IS
+// BETTER - these are times - and an equal time goes BELOW the one already
+// there. The first row it stops on takes the record and the rows from there
+// to the fourth move down one, the fifth falling off; a time no better than
+// five filled rows goes nowhere. The name is a 32-byte copy (`qmemcpy
+// 0x20`). -> the row written, or -1. The engine does not bound `table`
+// (`180 * a3` is added unchecked); the port refuses outside 0..3, which no
+// shipped site reaches.
+int insertHighScore(std::array<SettingsBlock::HighScore, 20>& t,
+                    const std::string& name, std::int32_t score, int table);
+
 inline constexpr std::size_t kBindKeyboard = 52;
 inline constexpr std::size_t kBindMouse    = 276;
 inline constexpr std::size_t kBindJoystick = 500;

@@ -1137,6 +1137,9 @@ public:
     int  xachen(int i) const { return xachen_[i & 3]; }
     // The HIGH-SCORE page the panel hook has stepped to, 0..3.
     int  highScorePage() const { return hsPage_; }
+    // ...and where it starts: the open callback (0x004AD9A0) takes the
+    // screen's `+4`, `UI_LoadScreen`'s second argument, with -1 read as 0.
+    void setHighScorePage(int page) { hsPage_ = page == -1 ? 0 : page; }
     bool xachenSolved() const {
         for (int i = 0; i < 4; ++i)
             if (xachen_[i] != kXachenCode[i]) return false;

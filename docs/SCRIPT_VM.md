@@ -538,8 +538,11 @@ engine's rule.
 started (127 until 2026-09-02, when `case.i16` and `case.i32` were added for
 43 and 44 — neither is used by any shipped script; 129 until 2026-10-11, when
 122 was read as `set.show_piece` - its three sites are all in AREA 2's `+4`
-startup script, which the 119 below do not enumerate). The world scripts exercise
-**119**, of which **114 are named** — **99.97% of all executed instructions**.
+startup script, which the 117 below do not enumerate). The world scripts exercise
+**117**, of which **112 are named** — **99.97% of all executed instructions**
+(119 and 114 until 2026-10-11: ops 1 `dbg.dump_code` and 2 `nop` were only ever
+op 142's third word, decoded as instructions while its length was the table's
+4).
 The five that remain are read but deliberately not named (see the table below);
 together they are 17 instructions, 0.029% of the corpus. The 23 opcodes with no
 mnemonic at all are the ones the shipped scripts never execute (122 was the
@@ -1576,6 +1579,50 @@ suspends with status 7 — `camera.set.wait` for a world camera.
 | field 1 in `ADDRESSES.TAG` | **84 / 84** |
 | field 2 (travel time) | **20 at all 84** |
 
+### 142 — `ui.highscore`, the shooting gallery's board
+
+**read 2026-10-11** (0x00405CD0, `asmfn.py --op 142`; screen 36's open
+callback 0x004AD9A0 has no `proc` label and was read from the image). Three
+fields, SIX bytes (the table says 4 - see "Recovering the true operand
+counts"): ACTOR, VARIABLE, TABLE. Skipped on a dry run. Then:
+
+* the NAME, `Actor_GetProperty` case 6 - the actor record's `+8` - with field 0
+  at the block's `+16` (`Actor_Player()` when it is -1). `Actor_GetProperty`
+  maps 0..99 through `word_69BC80` and anything else to -1, and
+  `Actor_FindById(-1)` answers `g_PlayerRecord`. All six sites pass **340**, so
+  it is the PLAYER RECORD's name - whoever he has become;
+* `HighScore_Insert(name, Var_Get(field1), field2)` (0x00409370): table N is the
+  five 36-byte rows at `0x90E454 + N * 180`, i.e. the SAVE HEADER's `+724`
+  (`docs/GAME_STATE.md` §8a). It skips rows whose time is <= the new one and
+  whose name is set, so **lower is better** (they are times, from
+  `var.set.timer`) and a tie goes below; the rest shift down, the fifth falls
+  off; a time no better than five filled rows is not recorded. Nothing is
+  written to disk here - the header goes out with the next save;
+* `UI_LoadScreen(36, field2, -1)`: HIGH-SCORE at page `field2` (its `+4`), and
+  -1 into the instance's `+0x78`. A screen already open returns at once, so
+  level 3's second call inserts and leaves the board where the first put it.
+
+`UI_LoadScreen` holds the player in ACTOR_STATE 9 (screen 36 lacks
+`0x40000`) and calls the open callback LAST. On page 0 the callback clears screen
+flag `0x20000008` and returns. On pages 1..3 it sets the flag (no reader found:
+not among `UI_TestScreenFlag`'s nine callers, nor any direct `+0x70` test) and
+fetches `IAM\HScore` string `+0x78 ? 0 : 1`. `+0x78` is -1, so it is ALWAYS
+string 0, *"Félicitations ! Votre score a été homologué."*, even for a time that
+made no row; string 1, the refusal, is reached by nothing. It then calls
+`sub_466B60(player)` when a screen holds him, undoing the hold, so **he walks
+while the board shows**. Then `Ui_StartOscillator(0, -1, buf)` (0x0042B660 copies
+the line into `0x6A4CA0`, period 5000 - the board's last line, drawn by
+`sub_4ADAD0` through `sub_478D60` while the oscillator's bit 0 is up) and
+`Ui_StartOscillator(5, 10000, screen)`: oscillator 5's start (0x0042B6A0) keeps
+the screen at `+0x18`, and its expiry (0x0042B7E0) writes the screen's `+8 = 3`,
+so **the board closes itself after ten seconds**. Its close slot is the generic
+`Ui_CloseScreenDefault`.
+
+The six sites are the gallery's three level exits: tables 1, 2, 3, and at level
+3 a second call into table 0 with the three times summed (`346 += 345 + 344`).
+Ported (`Session` case 142, `omk::insertHighScore`, the viewer's open and its
+two oscillators on the frame's milliseconds); `verify.py: engine: ui highscore`.
+
 ### The tail — everything at 32 uses or fewer
 
 Twenty-four opcodes named in one pass, closing the exercised set. Grouped by
@@ -1652,7 +1699,8 @@ NINETEEN entries to the first -1, the nineteenth being the first ammunition
 word. Ported then - `todo/drift-audit.md` S4, `verify.py: engine: inventory
 checkpoint`), 142 `ui.highscore` (insert `Var_Get(field1)`
 under the character's name, open screen 36 `HIGH-SCORE` — the shooting
-gallery's exit), 106/107 `shoot.freeze_all` / `.unfreeze_all` (bit 15 of every
+gallery's exit; **six operand bytes, not the table's four**, and ported
+2026-10-11 - see "142 — `ui.highscore`" above), 106/107 `shoot.freeze_all` / `.unfreeze_all` (bit 15 of every
 combat record's flag word at once - and `dword_4E9760`, which a record made
 under it inherits and which the noise, a bolt's hit, a strike and an explosion
 clear on every record before they act: a freeze holds until something
@@ -1804,7 +1852,8 @@ real conversation (100%)**, launching **235 of the 420**.
 ### The world scripts use far more of the VM
 
 **verified.** The 612 conversation scripts exercise 25 opcodes. The world
-scripts exercise **119** — the great majority of which `IAM\DIALOG` never
+scripts exercise **117** (119 before op 142's length was corrected on
+2026-10-11) — the great majority of which `IAM\DIALOG` never
 touches, including
 `jmp`, `case` and `dialog.start`. They are small: median 4 instructions, mean
 10, none longer than 372.
@@ -1841,6 +1890,7 @@ corpus isolated the ones that are real:
 | 57, 58 | 4 | **6** |
 | 78 | 2 | **4** |
 | 103 | 2 | **6** |
+| 142 | 4 | **6** (2026-10-11, below) |
 
 The last four take no operands at all — their handlers never touch the
 instruction pointer. Opcode 151's is eight instructions long and simply calls
@@ -1885,6 +1935,22 @@ Not everything the zero-padding heuristic suggests is real: `1 -> 3` would drop
 opcode 0 further, to 0.5%, but introduces **11 decode failures**. The corpus
 overrules it, and opcode 1 is left alone.
 
+**Op 142 was the last, found 2026-10-11 by READING its handler for the port**
+(`todo/scene-gameplay-audit.md` 6) - and `tools/vm_oplen.py` had printed `142:
+4 -> 6` all along, the shape op 62 had on 2026-09-02. Three shared fetches in a
+straight line, against the table's 4. Five sites, all in AREA 59 (the shooting
+gallery), and the third word is a small table number: `01 00` decoded as
+`dbg.dump_code` + `dbg.dump_ctx`, `02 00` as `nop` + `dbg.dump_ctx` - the
+zero-padding case above, harmless - but at record 21 it is `03 00`, and **op 3 is
+`end`**: the decode stopped there with the slot reading `[ok]`, and every check
+passed. The jumps were the tell (`jmp_if_false 13` at 13031 lands at 13047,
+which only an instruction ending at 13044 = 13037 + 1 + 6 allows). At 6: still
+5785/5785, **58428 → 58449** instructions (the uncut tail, a SIXTH site among
+them), and the distinct opcodes **119 → 117** - `dbg.dump_code` and `nop` occur
+nowhere in the shipped scripts except as this phantom. So "every slot decodes
+to `end`" was true and hid a script cut in half: **an `end` is only evidence of
+the slot's end if the instruction before it had the right length.**
+
 **Result: every script slot in `AREA`, `SCENE` and `GLOBAL` decodes
 cleanly — 5785 of 5785, against 53 failures before**, and the conversation
 corpus still decodes 612/612 — the corrections only touch opcodes it never used. The recovered
@@ -1899,26 +1965,26 @@ that reduced failures were kept. The rest are left as they are.
 
 | op | handler | table | actual | mnemonic | .TAG domain | uses |
 |---|---|---|---|---|---|---|
-| 0 | 0x401B00 | 0 |  | `dbg.dump_ctx` |  | 5 |
-| 1 | 0x401B40 | 0 |  | `dbg.dump_code` |  | 1 |
-| 2 | 0x000000 | 0 |  | `nop` |  | 3 |
+| 0 | 0x401B00 | 0 |  | `dbg.dump_ctx` |  | 1 |
+| 1 | 0x401B40 | 0 |  | `dbg.dump_code` |  |  |
+| 2 | 0x000000 | 0 |  | `nop` |  |  |
 | 3 | 0x401B90 | 0 |  | `end` |  | 5785 |
-| 4 | 0x401C50 | 2 |  | `jmp` |  | 2904 |
+| 4 | 0x401C50 | 2 |  | `jmp` |  | 2905 |
 | 5 | 0x401C90 | 2 |  | `jmp_if_true` |  |  |
 | 6 | 0x401CE0 | 2 |  | `jmp_if_false` |  | 2542 |
 | 7 | 0x401D30 | 1 |  | `push.i8` |  | 3083 |
 | 8 | 0x401D70 | 2 |  | `push.i16` |  | 737 |
 | 9 | 0x401DD0 | 4 |  | `push.i32` |  |  |
-| 10 | 0x401E30 | 2 |  | `push.var` | VARIABLES | 3388 |
+| 10 | 0x401E30 | 2 |  | `push.var` | VARIABLES | 3390 |
 | 11 | 0x401EA0 | 0 |  | `drop` |  | 347 |
-| 12 | 0x401EB0 | 2 |  | `set.var` | VARIABLES | 713 |
+| 12 | 0x401EB0 | 2 |  | `set.var` | VARIABLES | 717 |
 | 13 | 0x401F10 | 2 |  | `set.var2` | VARIABLES | 705 |
 | 14 | 0x401F70 | 3 |  | `set.var.i8` | VARIABLES | 217 |
 | 15 | 0x401FE0 | 4 |  | `set.var.i16` | VARIABLES | 9 |
 | 16 | 0x402070 | 5 | **6** | `set.var.i32` | VARIABLES |  |
 | 17 | 0x402110 | 2 | **4** | `set.var.var` |  | 150 |
 | 18 | 0x402190 | 2 |  | `set.var.pop` | VARIABLES | 73 |
-| 19 | 0x402210 | 2 |  | `var.add` | VARIABLES | 354 |
+| 19 | 0x402210 | 2 |  | `var.add` | VARIABLES | 356 |
 | 20 | 0x402290 | 2 |  | `var.sub` | VARIABLES | 403 |
 | 21 | 0x402310 | 2 |  | `var.mul` | VARIABLES |  |
 | 22 | 0x402390 | 2 |  | `var.div` | VARIABLES | 74 |
@@ -1963,7 +2029,7 @@ that reduced failures were kept. The rest are left as they are.
 | 61 | 0x403560 | 2 |  | `dialog.start` | DIALOGS | 1246 |
 | 62 | 0x4035D0 | 4 | **6** | `fight.begin` |  | 108 |
 | 63 | 0x403730 | 2 |  | `player.move` |  | 312 |
-| 64 | 0x403780 | 2 |  | `zone.enable` | ZONES | 1510 |
+| 64 | 0x403780 | 2 |  | `zone.enable` | ZONES | 1513 |
 | 65 | 0x4037F0 | 2 |  | `zone.disable` | ZONES | 1969 |
 | 66 | 0x40A910 | 2 |  | `object.hold` | OBJECTS | 11 |
 | 67 | 0x40A9D0 | 4 |  | `object.hold.actor` | OBJECTS | 159 |
@@ -1978,7 +2044,7 @@ that reduced failures were kept. The rest are left as they are.
 | 76 | 0x40ACF0 | 2 |  | `object.show` | OBJECTS | 249 |
 | 77 | 0x40ADD0 | 2 |  | `object.hide` | OBJECTS | 183 |
 | 78 | 0x403CB0 | 2 | **4** | `character.show` | CHARACTERS | 1256 |
-| 79 | 0x403DD0 | 2 |  | `character.hide` | CHARACTERS | 1980 |
+| 79 | 0x403DD0 | 2 |  | `character.hide` | CHARACTERS | 1992 |
 | 80 | 0x403E80 | 0 | **2** | `shoot.begin` |  | 30 |
 | 81 | 0x403F10 | 2 |  | `shoot.end` |  | 74 |
 | 82 | 0x403FB0 | 2 |  | `shoot.actor.enter` | CHARACTERS | 317 |
@@ -1991,10 +2057,10 @@ that reduced failures were kept. The rest are left as they are.
 | 89 | 0x4043F0 | 2 |  | `player.move.wait` |  | 548 |
 | 90 | 0x404450 | 4 |  | `scx.play.player` |  | 59 |
 | 91 | 0x404530 | 2 |  | `var.set.player_id` |  | 63 |
-| 92 | 0x404590 | 2 |  | `media.play` | OBJECTS | 2649 |
-| 93 | 0x404790 | 6 |  | `actor.stat.set` | VARIABLES | 781 |
+| 92 | 0x404590 | 2 |  | `media.play` | OBJECTS | 2650 |
+| 93 | 0x404790 | 6 |  | `actor.stat.set` | VARIABLES | 782 |
 | 94 | 0x4048D0 | 2 |  | `image.show` |  | 4 |
-| 95 | 0x404940 | 6 |  | `camera.set` | CAMERAS | 3754 |
+| 95 | 0x404940 | 6 |  | `camera.set` | CAMERAS | 3755 |
 | 96 | 0x404AF0 | 6 |  | `camera.set.wait` | CAMERAS | 1019 |
 | 97 | 0x404CE0 | 2 |  |  |  |  |
 | 98 | 0x404DB0 | 4 |  | `object.place_at` |  | 6 |
@@ -2002,7 +2068,7 @@ that reduced failures were kept. The rest are left as they are.
 | 100 | 0x404F60 | 4 |  |  |  |  |
 | 101 | 0x404FA0 | 0 |  |  |  | 2 |
 | 102 | 0x405090 | 0 |  |  |  |  |
-| 103 | 0x404FB0 | 2 | **6** | `music.play` |  | 521 |
+| 103 | 0x404FB0 | 2 | **6** | `music.play` |  | 522 |
 | 104 | 0x4050A0 | 0 |  | `player.anim.hold` |  | 647 |
 | 105 | 0x4050C0 | 0 |  | `player.anim.release` |  | 618 |
 | 106 | 0x405300 | 0 |  | `shoot.freeze_all` |  | 3 |
@@ -2041,7 +2107,7 @@ that reduced failures were kept. The rest are left as they are.
 | 139 | 0x405C30 | 2 |  | `character.look_away` | CHARACTERS | 264 |
 | 140 | 0x405CB0 | 0 |  |  |  |  |
 | 141 | 0x405CC0 | 0 |  |  |  |  |
-| 142 | 0x405CD0 | 4 |  | `ui.highscore` |  | 5 |
+| 142 | 0x405CD0 | 4 | **6** | `ui.highscore` |  | 6 |
 | 143 | 0x405DD0 | 2 |  |  | OBJECTS |  |
 | 144 | 0x405E30 | 2 | **6** | `morph.play` | CHARACTERS | 3 |
 | 145 | 0x405EF0 | 2 |  |  |  |  |

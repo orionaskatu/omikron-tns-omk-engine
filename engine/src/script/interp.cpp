@@ -966,6 +966,20 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
                 recordCall(op, {who, state});
                 continue;
             }
+            // 142 `ui.highscore` (0x405CD0): ACTOR, VARIABLE, TABLE - three
+            // shared fetches in a straight line, so SIX operand bytes against
+            // the opcode table's 4 (corrected 2026-10-11 with
+            // `dialog_disasm.LEN_FIX`). The Session does the rest - from
+            // the RAW fields, since it records with `recordAll_`; the shipped
+            // six are all literals, so the two agree.
+            if (op == 142) {
+                std::size_t q = start + 1;
+                const auto who   = fetch16(code, q);
+                const auto var   = fetch16(code, q);
+                const auto table = fetch16(code, q);
+                recordCall(op, {who, var, table});
+                continue;
+            }
         }
 
         // ---- everything else: stubbed, and recorded --------------------

@@ -758,6 +758,11 @@ def c_engine_scripts():
     2026-09-02: the instruction count went 57185 -> 56969, the 216 phantom
     `dbg`/`nop` instructions op 62's table length of 4 produced (two per
     `fight.begin` site over 108) - `engine: parking ops` adjudicates it.
+
+    2026-10-11: 56969 -> 56990, op 142 `ui.highscore` at its handler's 6
+    bytes: AREA 59 record 21 had stopped at a phantom `end` (the third word,
+    `03 00`), and its 21-instruction tail - the level-3 total, the second call,
+    the resets and re-enables - decodes now; ops 1 and 2 leave the corpus.
     """
     import subprocess, tempfile, shutil, json as _j
     import dialog_triggers as T, dialog_disasm as D
@@ -829,7 +834,7 @@ def c_engine_scripts():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return (slots, ok, match, instrs, rawfail), \
-           (5775, 5775, 5775, 56969, 77), \
+           (5775, 5775, 5775, 56990, 77), \
            "AREA and SCENE script slots; those decoding to `end`; those whose " \
            "instruction stream is identical to dialog_disasm's; instructions " \
            "decoded; and - the falsification - how many slots FAIL when the " \
@@ -859,7 +864,9 @@ def c_engine_execute():
        silently execute code the engine never reaches, and they are exactly
        the count the simulator reports.
     3. **Every slot's offset and status agrees**, in order, and both sides
-       record the same **18584** stubbed subsystem calls.
+       record the same **18603** stubbed subsystem calls (18584 until
+       2026-10-11, when op 142 took its handler's 6 bytes and AREA 59 record
+       21's cut tail started running - `engine: ui highscore`).
     4. **The final 8192-byte game database is byte-identical.** The corpus runs
        against ONE state carried across it, so every variable write, bit flip
        and `scene.load` accumulates into that block - which makes this the
@@ -924,7 +931,7 @@ def c_engine_execute():
     pycalls = sum(len(q[2]) for q in py)
     return (len(cpp), len(py), inorder, agree, ended, dialog, calls, pycalls,
             cppstate == bytes(state.raw)), \
-           (5958, 5958, 5958, 5958, 5818, 140, 18584, 18584, True), \
+           (5958, 5958, 5958, 5958, 5818, 140, 18603, 18603, True), \
            "slots executed by engine/ and by tools/sim; those whose offset " \
            "matches in order; those whose STATUS also agrees; how many reach " \
            "`end` and how many stop at dialog.start; the stubbed calls each " \
@@ -10466,7 +10473,9 @@ def c_engine_voice_over():
     `VoiceOverPlayer` falls back to `domain == "OBJECTS"` plus a ZVO tag name,
     which is measured rather than assumed: over the whole world-script corpus
     (both archives' zone scripts, second tables and `+4` startup scripts) op 92
-    has **2605** sites and **all 2605** name a ZVO object, while the other nine
+    has **2606** sites (2605 until op 142's length was corrected on 2026-10-11:
+    AREA 59 record 21's `media.play 786` sat in the tail the phantom `end` cut)
+    and **all 2606** name a ZVO object, while the other nine
     have **1584** between them and **exactly one** names a ZVO object -
     `inventory.remove_all 111` ("ZVO P006 Rien Partic") in AREA 65 at pc 3564.
     One false play in the shipped game. `todo/pending/E1.md` proposes the
@@ -10625,7 +10634,7 @@ def c_engine_voice_over():
         ("JINGOFF3.ADP", "1") + pcm("JINGOFF3.ADP"),
         ("1", "-", "0"),
         ("2", "142", "404", "0", "4"),
-        (2605, 2605, 1584, 1),
+        (2606, 2606, 1584, 1),
         (102, 56, 56, (142, 141, 404, 410)),
         (0, []),
     )
@@ -24011,6 +24020,9 @@ def c_music_play():
     something else would miss. The three that do not name a file are track 0,
     and Music_PlayTrack returns without playing for anything below 2.
 
+    521 -> 522 sites (518 -> 519 named) on 2026-10-11: op 142 `ui.highscore`
+    at its handler's 6 bytes uncut AREA 59 record 21, whose tail plays track 33.
+
     The same check on the area header's own music field (+142) is what ties the
     opcode to the engine: the area loader plays that track under the identical
     "already playing" guard.
@@ -24027,7 +24039,7 @@ def c_music_play():
            for k, b in sorted(T2.archive(omkpaths.data("IAM/AREA")).items()) if len(b) >= 144]
     hdr_named = sum(v in tracks for v in hdr if v)
     return (len(f0), named, zero, sum(1 for v in hdr if v), hdr_named), \
-           (521, 518, 3, 189, 189), \
+           (522, 519, 3, 189, 189), \
            "music.play sites, of which name a real TRACKS file, and track 0; " \
            "AREA +142 music fields, of which name a real TRACKS file"
 
@@ -33820,7 +33832,7 @@ def c_engine_world_camera():
 
     **And relative cameras are the MAJORITY of the game's camera work.** Over
     every `camera.set` / `camera.set.wait` site whose id resolves, the camera is
-    actor-relative in **1707 of 2852 cuts** and **715 of 1674 travels** - so
+    actor-relative in **1708 of 2853 cuts** (1707 of 2852 until op 142's length was corrected on 2026-10-11 and AREA 59 record 21's `camera.set 0` was decoded) and **715 of 1674 travels** - so
     "the relative ones are just follow cameras a cutscene never travels to" was
     written down here and was false, and the count is asserted so it cannot be
     written down again. A replica cannot point most scripted cameras until it
@@ -33928,7 +33940,7 @@ def c_engine_world_camera():
 
         return (totals, glob, imp, disagree, tuple(cuts), tuple(travels)), \
                ((5381, 3941, 449, 1440, 247), (4, 280, 0), (0, 0, -119), 0,
-                (1145, 1707), (959, 715)), \
+                (1145, 1708), (959, 715)), \
                "records / absolute / eye-relative / target-relative / fov>105; " \
                "GLOBAL size, id collisions with it, of which differ; the " \
                "Impasse's camera 0 (eye subject, target subject, eye z); " \
@@ -41841,6 +41853,79 @@ def c_engine_image_show():
            "the bitmap's stretch, of 480000; the close (edge, state)"
 
 
+def c_engine_ui_highscore():
+    r"""`ui.highscore` - op 142, the shooting gallery's board (`todo/scene-gameplay-audit.md` 6).
+
+    The handler (0x00405CD0) makes THREE shared fetches - actor, VARIABLE,
+    table - so it takes SIX operand bytes against the opcode table's 4. At 4
+    the third word of AREA 59 record 21's first site, `03 00`, decoded as
+    `end`: the level-3 exit stopped there, and its total, its second call, the
+    flag resets, the hides and the zone re-enables were never run. Then
+    `HighScore_Insert(player record +8, Var_Get(field1), field2)` into the SAVE
+    HEADER's table (+724, lower is better) and `UI_LoadScreen(36, field2, -1)`,
+    whose open callback 0x004AD9A0, on a level page, posts `IAM\HScore` string
+    0 (oscillator 0, 5000 ms - the board's last line), releases the player from
+    the state-9 hold, and starts oscillator 5 for 10000 ms, whose expiry closes
+    the screen.
+
+    Asserted: the six shipped sites' tables in order; then a run that walks
+    into zone 1166 with level 3 finished and two earlier times set - the two
+    calls (table 3, then table 0 with the three times summed), the two rows
+    written, the board at page 3 with the message drawn under the rows, the
+    player WALKING while it shows (forward held for 60 frames), and the board
+    closing itself on the 300th frame.
+
+    Shown to fail: op 142 back to 4 in `tables/vm_opcodes.json` (one call, the
+    level-3 slot cut); the release removed (he does not move).
+    """
+    import dialog_disasm as D, dialog_triggers as T
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    sites = []
+    for _k, bb in sorted(T.archive(omkpaths.data("IAM", "AREA")).items()):
+        rr = T.LAYOUT["AREA"](bb)
+        if not rr:
+            continue
+        lo, n = rr
+        offs = [off for _r, _f, off in T._scripts_from_records(bb, lo, n)]
+        offs += [off for _r, _f, off in T._second_table("AREA", bb)]
+        for off in offs:
+            ops, st = D.disasm(bb, off, len(bb))
+            sites += [struct.unpack_from("<h", o, 4)[0] for _pc, op, o in ops
+                      if op == 142 and len(o) == 6]
+    out = subprocess.run(
+        [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+         "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "59",
+         "--stand", "5191,15199,-3429,0", "--zone-enable", "1166",
+         "--var", "343=1,344=61230,345=72450", "--hold", "0*40,k200*60",
+         "--no-crowd", "--frames", "330", "--nodelay", "--res", "800x600"],
+        capture_output=True, text=True, errors="replace",
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    calls = [(int(t), int(ms)) for ms, t in
+             re.findall(r"ui\.highscore - '.*' (-?\d+) ms \(variable \d+\) into table (\d+)", out)]
+    summed = calls[1][1] - calls[0][1] if len(calls) == 2 else None
+    rows = re.findall(r"HighScore_Insert - '.*' \S+ into table (\d+) row (\d+)", out)
+    opened = re.findall(r"screen 36 HIGH-SCORE at page (\d+)( - message posted, the player released)?", out)
+    drawn = re.findall(r"high score: page (\d+), (\d+) blocks drawn: (.*)", out)
+    first = (drawn[0][0], drawn[0][1], "| 1.- KAY'L 669 |" in drawn[0][2],
+             "homologu" in drawn[0][2]) if drawn else None
+    closed = re.findall(r"frame (\d+): screen 36 - oscillator 5 expired", out)
+    walked = re.search(r"walked ([\d.]+) over \d+ ticks", out)
+    return (tuple(sites), tuple(calls[i][0] for i in range(len(calls))), summed,
+            tuple(rows), tuple(opened), first, tuple(closed),
+            walked is not None and float(walked.group(1)) > 10.0), \
+           ((1, 2, 3, 0, 2, 2), (3, 0), 61230 + 72450,
+            (("3", "1"), ("0", "1")), (("3", " - message posted, the player released"),),
+            ("3", "13", True, True), ("302",), True), \
+           "the shipped sites' tables; the level-3 exit's calls by table and the " \
+           "second's excess over the first (the two earlier times); the rows written; " \
+           "the board's page and its open arm; the first drawn page (blocks, row 1, the " \
+           "message); the frame oscillator 5 closes it; the player walking under it"
+
+
 def c_engine_follow_and_sync():
     r"""`camera.follow_player` (op 54) and `player.pos.sync` (op 127)
     (`todo/scene-gameplay-audit.md` 15, 16).
@@ -46573,6 +46658,7 @@ SLOW = [
     ("engine: shoot jump", c_engine_shoot_jump, "todo/scene-gameplay-audit.md 10; actor/shootmove.h"),
     ("engine: free look", c_engine_free_look, "todo/scene-gameplay-audit.md 11; actor/player.h"),
     ("engine: image show", c_engine_image_show, "todo/scene-gameplay-audit.md 13; script/area.cpp"),
+    ("engine: ui highscore", c_engine_ui_highscore, "todo/scene-gameplay-audit.md 6; script/area.cpp, script/savefile.cpp"),
     ("engine: follow and sync", c_engine_follow_and_sync, "todo/scene-gameplay-audit.md 15, 16; script/area.cpp"),
     ("engine: astaroth souls", c_engine_astaroth_souls, "todo/astaroth.md 1; actor/astaroth.h"),
     ("engine: astaroth back", c_engine_astaroth_back, "todo/astaroth.md 2; actor/astaroth.h"),

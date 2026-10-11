@@ -30,8 +30,8 @@
   },
   {
    "what": "lengths corrected against the table",
-   "got": 21,
-   "want": 21
+   "got": 22,
+   "want": 22
   },
   {
    "what": "named",
@@ -1321,9 +1321,9 @@
   {
    "op": 142,
    "handler": "0x00405CD0",
-   "length": 4,
+   "length": 6,
    "table_says": 4,
-   "corrected": false,
+   "corrected": true,
    "name": "ui.highscore",
    "tag": null
   },

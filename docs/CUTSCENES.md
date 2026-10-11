@@ -441,7 +441,7 @@ OFFSET from that actor, decided per point by `Camera_LoadParams`. 1440 of 5381
 set at least one, and [FILE_FORMATS](FILE_FORMATS.md) carries the decode.
 **And they are not a corner of the table.** Over every `camera.set` /
 `camera.set.wait` site whose id resolves, the camera is actor-relative in
-**1707 of 2852 cuts** and **715 of 1674 travels** — so the majority of the
+**1708 of 2853 cuts** (1707 of 2852 until op 142's length was corrected on 2026-10-11 and AREA 59 record 21's `camera.set 0` was decoded) and **715 of 1674 travels** — so the majority of the
 game's scripted camera work is framed on an actor rather than on the world, and
 a replica cannot point most of these cameras until it knows where its actors
 are. The shot lists in this document are the absolute ones. Their coordinates are **raw**, in the units

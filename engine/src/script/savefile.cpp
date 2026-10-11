@@ -165,6 +165,24 @@ std::vector<std::byte> blankSaveFile(const SettingsBlock& s) {
     return f;
 }
 
+int insertHighScore(std::array<SettingsBlock::HighScore, 20>& t,
+                    const std::string& name, std::int32_t score, int table) {
+    if (table < 0 || table > 3) return -1;
+    auto* rows = t.data() + table * 5;
+    int at = -1;
+    int k = 0;
+    // `while (a2 >= result[8] && u8(result, 0)) { ++v4; result += 9; if (v4 >= 5) goto LABEL_7; }`
+    while (score >= rows[k].ms && !rows[k].name.empty()) {
+        if (++k >= 5) break;
+    }
+    if (k < 5) at = k;
+    if (at == -1) return -1;
+    for (int r = 4; r > at; --r) rows[r] = rows[r - 1];   // the `qmemcpy(v7, v7 - 36, 0x24)` loop
+    rows[at].name = name.substr(0, std::min<std::size_t>(name.size(), 32));
+    rows[at].ms = score;
+    return at;
+}
+
 bool putSettings(std::vector<std::byte>& file, const SettingsBlock& s) {
     if (file.size() < kSaveHeader) return false;
     const auto head = settingsBytes(s);

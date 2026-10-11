@@ -476,9 +476,11 @@ NAME = {
   #     field1 in raw units. Explosions and rumbles: Grotte Gandhar, the
   #     Tetra raids.
   136:"camera.shake",
-  # 142: insert Var_Get(field1) under the character's name into the
-  #     high-score table and open UI screen 36, HIGH-SCORE. The shooting
-  #     gallery's exit.
+  # 142: (actor, VARIABLE, table) - `HighScore_Insert(name, Var_Get(field1),
+  #     field2)` with the name the actor record's +8 (`Actor_GetProperty`
+  #     case 6; a field outside 0..99 resolves to the player record), then
+  #     `UI_LoadScreen(36, field2, -1)`, HIGH-SCORE at that page. The
+  #     shooting gallery's exit: tables 1..3 per level, 0 the three summed.
   142:"ui.highscore",
   # 144: assemble a 32-bit number from fields 1-2, sprintf "%06x.3dm", play
   #     it on CHARACTERS[field0] via Morph_Play. The mechanism is certain;
@@ -592,9 +594,21 @@ FIELD_ENUM = {70: {0: SCREEN}}
 # `set.var.i8` is 2+1 = 3 and 15 `set.var.i16` is 2+2 = 4, both of which the
 # table gets right, so 16 is the odd one out and 5 is not a length any of the
 # three shapes can produce.
+#
+# 142 `ui.highscore` (2026-10-11), op 62's shape exactly: the handler at
+# 0x00405CD0 makes THREE shared fetches in a straight line (actor, VARIABLE,
+# table - `[ecx+0Ch]` advanced by 2 each time) against the table's 4. At 4
+# the third word decoded as inert ops after four of the six AREA 59 sites
+# (`01 00` -> dbg.dump_code + dbg.dump_ctx, `02 00` -> nop + dbg.dump_ctx) and
+# as `end` (`03 00`) at the fifth, which CUT record 21 short: the level-3
+# total, the sixth site, the flag resets and the exit message were never
+# decoded. The jumps say 6 - `jmp_if_false 13` at 13031 lands at 13047, which
+# is 13037 + 1 + 6 + the `jmp 3`. At 6: 5785/5785 slots still, 58428 -> 58449
+# instructions, and ops 1 and 2 leave the corpus (119 -> 117 distinct): they
+# were only ever this phantom.
 LEN_FIX = {16: 6, 42: 3, 43: 4, 44: 6, 62: 6, 17: 4, 57: 6, 58: 6, 78: 4, 80: 2,
-           84: 6, 103: 6, 118: 8, 119: 8, 144: 6, 146: 0, 147: 0, 148: 0,
-           149: 0, 150: 0, 151: 0}
+           84: 6, 103: 6, 118: 8, 119: 8, 142: 6, 144: 6, 146: 0, 147: 0,
+           148: 0, 149: 0, 150: 0, 151: 0}
 
 # Which IAM\*.TAG table an opcode's operand indexes. Taken from the section
 # name each handler passes to the debug logger sub_40EC70 - "VALUES" means a

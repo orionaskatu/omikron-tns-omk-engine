@@ -2889,7 +2889,9 @@ the raw image (none has a `proc` label):
   the screen's own file - TERMINAL `IAM\Term` 12 (Kay'l's dossiers), FIGHT SIM
   `IAM\Fsim` 5, MORGUE `IAM\Morg` 6, ARCHIVES `IAM\Arch` 5, and `IAM\Surv` 1 /
   3 / 2 for the three SURV screens. The two query branches (strings 11 and 4 /
-  6) sit behind `sub_42B5E0(6)`/`sub_42B5F0`, an object lookup not read;
+  6) sit behind `sub_42B5E0(6)`/`sub_42B5F0` - `Ui_Oscillator(6)` /
+  `Ui_OscillatorFlags`, oscillator 6's running bit (this said "an object
+  lookup not read" until 2026-10-11; what STARTS oscillator 6 here is not read);
   the default arm is what a first visit takes;
 * **the keypad**, list hook `sub_4AF300`: a 3x3 grid, a `0` cell (9) and the
   big button (10). UP from 10 goes to 9 and from 9 to 7, nothing from the top
@@ -3280,9 +3282,13 @@ fixture and reads them back off the drawn screen.
 **Not ported, and labelled in each source**: the interface sounds these
 screens play and the oscillator-5 timers their success arms start (in the
 engine Den's wheels blink for two seconds, XACHEN's lamps for four, before the
-screen closes; the port closes at once), and the high-score board's last line,
-behind the same unread `sub_42B5E0(0)`/`sub_42B5F0` pair as the terminal's
-query branches. Screen 0, the VIDEOPHONE, is the one left of the survey.
+screen closes; the port closes at once). **The high-score board's last line
+was on this list until 2026-10-11** and is ported: `sub_42B5E0(0)`/`sub_42B5F0`
+are `Ui_Oscillator(0)` / `Ui_OscillatorFlags`, the line is the message
+oscillator 0 holds for 5000 ms, and what posts it is screen 36's own OPEN
+callback (0x004AD9A0) on a level page - with the player released and
+oscillator 5 closing the board after 10000 ms (`docs/SCRIPT_VM.md`, "142 —
+`ui.highscore`"; `verify.py: engine: ui highscore`). Screen 0, the VIDEOPHONE, is the one left of the survey.
 
 ## 3e. The inventory screen's data channel — `Game_HandleEvent` 25..42
 

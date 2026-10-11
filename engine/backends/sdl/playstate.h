@@ -504,6 +504,16 @@ struct PlayState {
     omk::Surface imageShown{};
     bool imageLive{};
     std::uint32_t imageMask{}, imageLast{};
+    // THE HIGH-SCORE BOARD (op 142, screen 36). The page `UI_LoadScreen(36,
+    // table, -1)` asked for until the screen can open (-1 none); then what
+    // its open callback 0x004AD9A0 starts on a level page (1..3): the posted
+    // message (oscillator 0, 5000 ms - the board's last line), the close
+    // (oscillator 5, 10000 ms on the screen) and the player's release
+    // (`sub_466B60`, run AFTER the state-9 hold, so he walks while it shows).
+    int hsOpenPage = -1;
+    std::string hsMessage;
+    double hsMessageLeftMs = 0.0, hsCloseLeftMs = 0.0;
+    bool hsReleased = false;
     long posSyncsSeen{};   // op 127's count, applied once each
     bool lookCam{};
     bool lookMouse{};

@@ -959,7 +959,7 @@ All of this is documented with its evidence in `docs/`. Headline verifications:
 | format | state |
 |---|---|
 | `IAM` archives, `IAM\DIALOG` conversations | solved |
-| the script VM (153 opcodes) | table decoded; 21 operand counts corrected (16, 43, 44 and 62 on 2026-09-02); **130 named**, 99.97% of executed instructions — every exercised opcode named or explicitly READ. 150/151 are `render.grey.on`/`.off`: they swap the renderer to a **greyscale** bank around a camera sequence, so the game has black-and-white cutscenes |
+| the script VM (153 opcodes) | table decoded; 22 operand counts corrected (16, 43, 44 and 62 on 2026-09-02, 142 on 2026-10-11); **130 named**, 99.97% of executed instructions — every exercised opcode named or explicitly READ. 150/151 are `render.grey.on`/`.off`: they swap the renderer to a **greyscale** bank around a camera sequence, so the game has black-and-white cutscenes |
 | `.3DM` morph (PC) — bones, face, root motion, audio | 777/777 files |
 | OTNS ADPCM audio | decoder transcribed from `sub_483200` |
 | `.3DT` textures | 2534/2534 exact |
@@ -1662,7 +1662,8 @@ Listed with what has already been ruled out, so nobody repeats the search.
   the rig, the three CrossOver variables that fail silently, the `PATCH.dll`
   forwarder, and the three cases the logger filters out.
 * **VM opcodes** — most are identified only by their `.TAG` operand domain. The
-  world scripts exercise 119 of them (`docs/SCRIPT_VM.md`; this said 124), so
+  world scripts exercise 117 of them (`docs/SCRIPT_VM.md`; this said 124, then
+  119 until op 142's length was corrected), so
   there is a large corpus to test any guess against; `tools/vm_oplen.py`
   recovers operand lengths from handlers.
 * ~~**One Anekbah panel shows the wrong texture**~~ — **mechanism found

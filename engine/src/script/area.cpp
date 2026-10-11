@@ -3095,6 +3095,42 @@ void Session::onCall(int i, const Call& call) {
             std::printf("frame %ld: image.show %d - IMAGES\\%s\n", frameNo_, call.fields[0], buf);
         }
         break;
+    case 142:
+        // `ui.highscore` (0x405CD0, `asmfn.py --op 142`): the dry-run test,
+        // then the NAME through `Actor_GetProperty` case 6 - the actor record
+        // +8 - with a block whose +16 is field 0, or `Actor_Player()` when it
+        // is -1. `Actor_GetProperty` maps 0..99 through `word_69BC80` and
+        // anything else to -1, and `Actor_FindById(-1)` (like the player's
+        // own id) answers `g_PlayerRecord`. All six shipped sites pass 340,
+        // so it is the PLAYER RECORD's name, whoever he has become. Then
+        // `HighScore_Insert(name, Var_Get(field1), field2)` and
+        // `UI_LoadScreen(36, field2, -1)` - the frontend's (`takeHighScores`).
+        if (call.fields.size() >= 3) {
+            HighScoreCall h;
+            const int who = call.fields[0];
+            int id = -1;                               // `or eax, -1`
+            if (who >= 0 && who < 100) id = actorSlots_[static_cast<std::size_t>(who)];
+            std::vector<std::byte> chunk;
+            std::size_t o = 0;
+            if (who == -1 || id == -1 || id == state_.playerActorId()) {
+                h.name = state_.characterName();
+            } else if (actorRecord(id, chunk, o)) {
+                for (std::size_t k = 0; k < 32 && o + 8 + k < chunk.size(); ++k) {
+                    const char ch = static_cast<char>(chunk[o + 8 + k]);
+                    if (!ch) break;
+                    h.name.push_back(ch);
+                }
+            }
+            // (no record: `Actor_FindById` returns 0 and the engine copies
+            // from address 8 - a fault; the port inserts an empty name)
+            h.score = state_.var(call.fields[1]);
+            h.table = call.fields[2];
+            std::printf("frame %ld: ui.highscore - '%s' %d ms (variable %d) into table %d, "
+                        "then screen 36 at page %d\n", frameNo_, h.name.c_str(),
+                        static_cast<int>(h.score), call.fields[1], h.table, h.table);
+            highScores_.push_back(std::move(h));
+        }
+        break;
     case 122:
         // `set.show_piece` (0x405570, `asmfn.py --op 122`): op 123's handler
         // instruction for instruction but `push 1` - `sub_41BD40(id, 1)`,

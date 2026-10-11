@@ -891,6 +891,35 @@ int PlayState::modesShoot() {
                 }
             }
         }
+        // `ui.highscore` (op 142): `HighScore_Insert` into the SAVE HEADER's
+        // table, which is the one the board draws and the next save writes,
+        // then `UI_LoadScreen(36, table, -1)` - which returns at once when 36
+        // is already up (`if (*(v3 - 29) == a1) return 1`), so level 3's
+        // second call (table 0, the total) inserts and leaves the page at 3.
+        // The script does NOT park: the open is asked for as a player screen.
+        // The engine keeps three screen slots and this viewer one, so a board
+        // asked for over another screen waits for it to close - the port's
+        // limit, not the engine's.
+        for (const auto& h : session.takeHighScores()) {
+            std::array<omk::SettingsBlock::HighScore, 20> t{};
+            if (saveSettings) t = saveSettings->highScores;
+            else
+                for (std::size_t k = 0; k < t.size(); ++k)
+                    t[k] = {highScores[k].first, highScores[k].second};
+            const int row = omk::insertHighScore(t, h.name, h.score, h.table);
+            if (saveSettings) saveSettings->highScores = t;
+            for (std::size_t k = 0; k < t.size(); ++k) highScores[k] = {t[k].name, t[k].ms};
+            if (row >= 0)
+                std::printf("frame %ld: HighScore_Insert - '%s' %d'%02d\"%02d into table %d "
+                            "row %d\n", n, h.name.c_str(), (h.score / 60000) % 60,
+                            (h.score / 1000) % 60, (h.score % 1000) / 10, h.table, row + 1);
+            else
+                std::printf("frame %ld: HighScore_Insert - %d ms makes no row of table %d\n",
+                            n, static_cast<int>(h.score), h.table);
+            const bool up = walk && openScreen == kScreenHighScore;
+            if (!up && hsOpenPage < 0) hsOpenPage = h.table;
+        }
+        if (!walk && hsOpenPage >= 0 && playerScreen < 0) playerScreen = kScreenHighScore;
         // A script asked for a screen, or the PLAYER did. Which screen is the
         // SESSION's answer or the special move's, never this file's.
         if (!walk && (session.pendingUiScreen() >= 0 || playerScreen >= 0)) {
@@ -972,6 +1001,36 @@ int PlayState::modesShoot() {
                 walk = std::move(fresh);
                 openScreen = want;
                 screenFromScript = fromScript;
+                // HIGH-SCORE's open callback, 0x004AD9A0 (no `proc` label; read
+                // from the image): `+4 == -1` becomes 0; page 0 clears screen
+                // flag 0x20000008 and returns; pages 1..3 set it,
+                // `Ui_ScreenString(screen, buf, +0x78 ? 0 : 1, -1)` -
+                // `UI_LoadScreen`'s third argument, which op 142 passes as -1,
+                // so ALWAYS string 0, "Felicitations ! Votre score a ete
+                // homologue." even for a time that made no row - then
+                // `sub_466B60(player)` when a screen holds him (it undoes the
+                // state-9 hold `UI_LoadScreen` put on him BEFORE calling this),
+                // `Ui_StartOscillator(0, -1, buf)` (the message, period 5000)
+                // and `Ui_StartOscillator(5, 10000, screen)`, whose expiry
+                // 0x0042B7E0 writes the screen's `+8 = 3`: it closes itself.
+                // Flag 0x20000008 has no reader in `UI_TestScreenFlag`'s nine
+                // callers nor any direct `+0x70` test - stored, not consumed.
+                if (want == kScreenHighScore) {
+                    const int page = hsOpenPage == -1 ? 0 : hsOpenPage;
+                    hsOpenPage = -1;
+                    walk->setHighScorePage(page);
+                    hsReleased = false;
+                    if (page >= 1 && page <= 3) {
+                        const auto txt = omk::iamStrings(fs, "IAM/" + w.textFile(want));
+                        hsMessage = txt.empty() ? std::string() : txt[0];
+                        hsMessageLeftMs = 5000.0;
+                        hsCloseLeftMs = 10000.0;
+                        hsReleased = true;
+                    }
+                    std::printf("frame %ld: screen 36 HIGH-SCORE at page %d%s\n", n, page,
+                                hsReleased ? " - message posted, the player released, "
+                                             "closes in 10000 ms" : "");
+                }
                 // `ui.open`'s own `dword_4C0B64 = param` when it is not -1
                 // (SCRIPT_VM 70) - the inventory channel's OPEN LIST, which
                 // every shop site sets to 3, its stock. The bank's binder then
@@ -1740,6 +1799,21 @@ int PlayState::modesShoot() {
                 else
                     std::fprintf(stderr, "save: slot %d could not be written\n", slot);
             }
+            // The board's two oscillators, on the FRAME's milliseconds as
+            // `sub_42B6D0` adds them: the message line drops at 5000 and at
+            // 10000 oscillator 5's expiry closes the screen.
+            if (openScreen == kScreenHighScore) {
+                const double ms = frameSec * 1000.0;
+                if (hsMessageLeftMs > 0.0) hsMessageLeftMs -= ms;
+                if (hsCloseLeftMs > 0.0) {
+                    hsCloseLeftMs -= ms;
+                    if (hsCloseLeftMs <= 0.0 && !walk->closed()) {
+                        walk->closeScreen();
+                        std::printf("frame %ld: screen 36 - oscillator 5 expired, "
+                                    "screen +8 = 3: the board closes itself\n", n);
+                    }
+                }
+            }
             const bool leaving = walk->answer() >= 0 || walk->closed();
             // THE KEY THAT CLOSED THE SCREEN IS NOT THE WORLD'S ACTION.
             //
@@ -1771,6 +1845,16 @@ int PlayState::modesShoot() {
                 walk.reset();
                 openScreen = -1;
                 screenFromScript = true;
+            } else if (leaving && openScreen == kScreenHighScore) {
+                // its close slot is the generic `Ui_CloseScreenDefault`: no
+                // event 26, no list - and `sub_466B60` again only if the
+                // player is still held, which a level page already undid
+                std::printf("screen 36 HIGH-SCORE closed - the generic close\n");
+                walk.reset();
+                openScreen = -1;
+                screenFromScript = true;
+                hsReleased = false;
+                hsCloseLeftMs = 0.0;
             } else if (leaving && !screenFromScript) {
                 std::printf("screen %d closed by the player - event %d, object "
                             "list %d\n", openScreen, omk::kEventSneakClose,

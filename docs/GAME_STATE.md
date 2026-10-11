@@ -796,6 +796,14 @@ negative data result was a fact about the two captures, not about the field.
 names and times on page 1 and reads them back off the drawn screen, so the
 base, the stride and the `+0x20` are each testable.
 
+**Its one writer is op 142 `ui.highscore`** (2026-10-11): `HighScore_Insert`
+(0x00409370) puts the PLAYER RECORD's name and a `var.set.timer` time into table
+`field2` - lower is better, a tie goes below, the fifth row falls off and a time
+no better than five filled rows is dropped - in memory only; the table reaches
+the file with the next save, which copies the whole header. Tables 1..3 are the
+gallery's three levels and 0 their sum (`docs/SCRIPT_VM.md`, "142 —
+`ui.highscore`").
+
 **The two shipped saves disagree in exactly two of the 3496 bytes**, which is
 what makes them evidence rather than a fixed point. `+20` is 200 in
 `save-appart` and 150 in `games-resto`, and row 3's five choices are

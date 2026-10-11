@@ -2353,7 +2353,7 @@ in `verify.py` could see that; a picture showed it in one look.
 
 **They are the majority of the game's camera work, not a corner of the table.**
 Counted over every `camera.set` / `camera.set.wait` site whose id resolves, the
-camera is actor-relative in **1707 of 2852 cuts** and **715 of 1674 travels**.
+camera is actor-relative in **1708 of 2853 cuts** (1707 of 2852 until op 142's length was corrected on 2026-10-11 and AREA 59 record 21's `camera.set 0` was decoded) and **715 of 1674 travels**.
 So a replica cannot point most scripted cameras until it knows where its actors
 are — and on a new game it does not: `IAM\START` leaves the player at the
 `(-1, -1, -1)` sentinel, and he is placed by the actor runtime.

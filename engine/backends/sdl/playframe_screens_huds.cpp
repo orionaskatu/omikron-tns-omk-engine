@@ -627,7 +627,8 @@ void PlayState::screensHuds() {
         comp.setItemSection(itemSection.empty() ? nullptr : &itemSection);
         comp.setReportText(hintReport.empty() ? nullptr : &hintReport);
         comp.setHighScores(openScreen == 36 ? &highScores : nullptr,
-                           walk ? walk->highScorePage() : 0);
+                           walk ? walk->highScorePage() : 0,
+                           hsMessageLeftMs > 0.0 ? &hsMessage : nullptr);
         // THE CLOUD IS THE MENU'S BACKGROUND, NOT EVERY SCREEN'S.
         //
         // A reader's screenshots of the original settle it from both

@@ -178,6 +178,7 @@ using omk::resampleToDevice;
 // expression.
 constexpr int kFlickPre = 3, kFlickPost = 3, kFlickWindow = 31;
 
+constexpr int kScreenHighScore = 36;   // HIGH-SCORE, the shooting gallery's board (op 142)
 constexpr int kScreenPause = 31;   // PAUSE GAME - the only screen that
                                    // sets dword_4E9728, the pause flag
 

@@ -373,8 +373,11 @@ public:
     // five - out of the SAVE HEADER's +724, and which page the panel hook has
     // stepped to. Null means the screen draws its title and nothing else,
     // which is what a run with no save behind it should show.
-    void setHighScores(const std::array<std::pair<std::string, int>, 20>* s, int page) {
-        scores_ = s; scorePage_ = page;
+    // `message` is the posted line oscillator 0 holds (`sub_478D60`'s copy),
+    // drawn under the rows while its flag is up; null when it is not.
+    void setHighScores(const std::array<std::pair<std::string, int>, 20>* s, int page,
+                       const std::string* message = nullptr) {
+        scores_ = s; scorePage_ = page; scoreMessage_ = message;
     }
 
     // ---- THE CITY MAP (`ui/citymap.h`) ----------------------------------
@@ -479,6 +482,7 @@ private:
     bool reportHash_ = false;
     const std::array<std::pair<std::string, int>, 20>* scores_ = nullptr;
     int scorePage_ = 0;
+    const std::string* scoreMessage_ = nullptr;
     const CityMapView* cityMap_ = nullptr;
     const Surface*   view3d_ = nullptr;
     long             frame_ = 0;

@@ -1287,10 +1287,10 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // so all five rows always draw, an empty table as five numbered
             // blanks. Transcribed as written rather than "fixed".
             //
-            // NOT ported, labelled: the last line, which is behind the
-            // `sub_42B5E0(0)` / `sub_42B5F0` pair this project has not read -
-            // the same pair that gates two arms of the terminal's body - and
-            // whose text comes from `sub_478D60`.
+            // The last line is the posted MESSAGE: `sub_42B5E0(0)` /
+            // `sub_42B5F0` are `Ui_Oscillator` / `Ui_OscillatorFlags`, and
+            // `sub_478D60` copies the buffer oscillator 0's start fills
+            // (0x0042B660, `strncpy(0x6A4CA0, msg, 127)`).
             constexpr std::uint32_t kDrawHighScore = 0x004ADAD0u;
             if (scores_ && it.drawFn == kDrawHighScore) {
                 const int width = scaleX(it.w);
@@ -1347,6 +1347,14 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                     block(t, mid, px + width, 4, 'C');
                     py += scaleY(30);
                 }
+                // THE LAST LINE: `py += I2D_ScaleY(20)`, then while oscillator
+                // 0's flag is up (`Ui_OscillatorFlags(Ui_Oscillator(0), 1)`)
+                // `sub_478D60` copies the posted message out and it draws
+                // across the item, style 8 (`dword_6A4C60 = 8`), face 'C'
+                // still current: (left, py, left + width, py + height).
+                py += scaleY(20);
+                if (scoreMessage_ && !scoreMessage_->empty())
+                    block(*scoreMessage_, px, px + width, 8, 'C');
             }
 
             // ---- THE IDENTITY PAGE'S "CARACTERISTIQUES": draw hook 0x0049CA30

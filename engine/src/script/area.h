@@ -1188,6 +1188,15 @@ public:
     // op 94 `image.show`'s file, `IMAGES\%06lx.BMP`, for the frontend to show
     // (`Image_Show`); taken once - "" when none is pending
     std::string takeImageShow() { std::string s; s.swap(imageShow_); return s; }
+    // `ui.highscore` (op 142): what `HighScore_Insert` is handed - the name
+    // (32 bytes of an actor record's +8), `Var_Get(field1)` and the table -
+    // and the page `UI_LoadScreen(36, table, -1)` opens at. The table lives
+    // in the SAVE HEADER (+724) and the screen in the frontend, so both
+    // halves are theirs; level 3's exit runs it twice in one pump.
+    struct HighScoreCall { std::string name; std::int32_t score = 0; int table = 0; };
+    std::vector<HighScoreCall> takeHighScores() {
+        std::vector<HighScoreCall> v; v.swap(highScores_); return v;
+    }
     // op 54 `camera.follow_player` (0x402ED0 -> `sub_41DDB0(player)`):
     // `Camera_Request(0, {player, player})` with a 0-frame blend - the FOLLOW
     // camera, preset 0 - until the next camera request replaces it (any
@@ -1781,6 +1790,7 @@ private:
     bool followRequested_ = false;           // op 54, until a camera request
     long followRequests_ = 0, posSyncs_ = 0;
     std::string imageShow_;                  // op 94, until the frontend takes it
+    std::vector<HighScoreCall> highScores_;  // op 142, until the frontend takes them
     std::map<int, int> heldSlot_;            // Actor_HeldObjectSlot, by id; -1 = player
     std::set<int> shownSlots_;               // Object_ShowInScene / HideFromScene
     std::vector<PropEvent> propEvents_;

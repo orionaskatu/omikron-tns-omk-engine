@@ -343,7 +343,12 @@ void PlayState::adventureScreenInput() {
     // device for exactly that reason. So this is the same shape
     // as `player.anim.hold` right below: tick with nothing
     // pressed rather than not ticking.
-    if (walk) {
+    //
+    // EXCEPT UNDER THE HIGH-SCORE BOARD AT A LEVEL PAGE: its open callback
+    // runs `sub_466B60` AFTER `UI_LoadScreen` held him (state 9 is the gate
+    // this `walk` test stands for), so he takes the input word again while
+    // the board still pages on LEFT/RIGHT - both read the same device.
+    if (walk && !(openScreen == kScreenHighScore && hsReleased)) {
         player->tick(static_cast<float>(frameSec * 30.0), 0);
         playerTicked = true;
     } else if (session.playerAnimHeld()) {

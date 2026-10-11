@@ -493,7 +493,8 @@ carried across the whole corpus, and requires:
   `Script_Execute` returns outright (treating those as `end` would silently
   execute code the engine never reaches);
 * every slot's offset and status to agree in order, and both sides to record
-  the same **18584** stubbed subsystem calls;
+  the same **18603** stubbed subsystem calls (18584 until op 142's length was
+  corrected on 2026-10-11);
 * **the final 8192-byte game database to be byte-identical.**
 
 That last one is the strongest thing available: every variable write, bit flip

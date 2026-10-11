@@ -358,6 +358,8 @@ public:
     }
 
     void begin(const View& v) override {
+        OMK_ZONE("gl1: begin");   // the profiler; `begin`, `submit`, `end` split the frame's
+                                  // CPU share from the driver's (step 3n, the eighth iBook run)
         Current c(ctx_);
         flush();
         setCamera(v);
@@ -456,6 +458,7 @@ public:
 
     void submit(const Draw& d) override {
         if (!d.geo || d.count < 3) return;
+        OMK_ZONE("gl1: submit");  // the loop below; a batch's draw call nests inside it
         Current c(ctx_);
         const Geometry& g = *d.geo;
         if (d.start + d.count > g.corners.size()) return;
@@ -610,7 +613,9 @@ public:
                     const VSlot& vsl = vs_[v];
                     if (vsl.stamp == drawStamp_) {
                         const std::size_t r = vsl.rep;
-                        if (r == ci || sameCorner(g, r, ci)) {
+                        const bool asBuilt = !vi->allDoubt && !vi->doubt[ci] && !vi->doubt[r];
+                        if (asBuilt) ++statTrusted_;
+                        if (r == ci || asBuilt || sameCorner(g, r, ci)) {
                             in[k].v[0] = vsl.x; in[k].v[1] = vsl.y; in[k].v[2] = vsl.z;
                             oc[k] = vsl.oc;
                             slot[k] = static_cast<std::int32_t>(v);
@@ -781,6 +786,7 @@ public:
     }
 
     void end() override {
+        OMK_ZONE("gl1: end");     // the last batch, and the `glFlush` the driver may work in
         Current c(ctx_);
         flush();
         // THE FOG'S COLOUR SUM ENDS WITH THE WORLD. Left on, everything drawn
@@ -798,21 +804,26 @@ public:
         if (hasColourSum_) { glDisable(OMK_GL_COLOR_SUM); glDisableClientState(OMK_GL_SECONDARY_ARRAY); }
         stateValid_ = false;
         glFlush();
-        // what the batching saved, once: passes 61-120 summed (a street
-        // frame is past its setup by then; a frame may be several passes) -
-        // the draws handed over, the draw calls they became, the triangles
+        // what the batching saved: passes 61-120 summed (a street frame is
+        // past its setup by then; a frame may be several passes), and then
+        // the last 60 of every 600 (2026-10-11: one line said nothing about
+        // the street an iBook run reaches minutes later) - the draws handed
+        // over, the draw calls they became, the triangles
         sum_[0] += submits_; sum_[1] += batches_; sum_[2] += st_.triangles;
         sum_[3] += st_.drawn; sum_[4] += st_.culled;
-        if (++passes_ == 60) {
+        ++passes_;
+        if (passes_ == 60 || passes_ % 600 == 540) {
             sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
-            statCorners_ = statTransformed_ = statSent_ = statSkipped_ = statTieBack_ = 0;
+            statCorners_ = statTransformed_ = statSent_ = statSkipped_ = statTieBack_ = statTrusted_ = 0;
         }
-        if (passes_ == 120)
+        if (passes_ == 120 || passes_ % 600 == 0)
             std::printf("gl1: 60 passes drew %ld draws in %ld draw calls, %ld of %ld triangles "
                         "(%ld culled); %ld corners, %ld transformed, %ld vertices sent, %ld "
-                        "corners skipped unread in runs off the screen, %ld tie losers drawn back\n",
+                        "corners skipped unread in runs off the screen, %ld tie losers drawn back, "
+                        "%ld shared corners taken without a compare (to pass %ld)\n",
                         sum_[0], sum_[1], sum_[3], sum_[2], sum_[4],
-                        statCorners_, statTransformed_, statSent_, statSkipped_, statTieBack_);
+                        statCorners_, statTransformed_, statSent_, statSkipped_, statTieBack_,
+                        statTrusted_, passes_);
     }
 
     // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
@@ -1722,7 +1733,18 @@ private:
     // once per geometry and size (equal bytes within one mesh, as the 3DS
     // backend's `VertexIndex`); the per-vertex cache below is the current
     // draw's (`drawStamp_`) and, for the sent index, the current batch's
-    struct VIndex { std::size_t n = 0; std::vector<std::uint32_t> vert; std::uint32_t nv = 0; };
+    // ...and WHICH CORNERS MAY HAVE CHANGED since it was built (step 3n): a
+    // byte a corner, set from the geometry's dirty lists as its revisions
+    // pass (`Geometry::dirtyCorners`), or `allDoubt` when a revision came
+    // without one. Two corners of one vertex that are both still as built
+    // are equal by construction, so `submit` compares their 48 bytes only
+    // when one of them is in doubt - on the G3 that compare read every
+    // shared corner's bytes, ~11k a street frame, for a word the index
+    // already gave.
+    struct VIndex {
+        std::size_t n = 0; std::vector<std::uint32_t> vert; std::uint32_t nv = 0;
+        std::uint64_t rev = 0; std::vector<std::uint8_t> doubt; bool allDoubt = false;
+    };
     std::map<const Geometry*, VIndex> vindex_;
     // ONE RECORD A VERTEX (step 3e): the six fields a lookup reads, in one
     // 32-byte line - they were six arrays, six cache misses a corner on the
@@ -1737,6 +1759,7 @@ private:
     std::vector<std::uint16_t> idx_;
     std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
     long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0, statSkipped_ = 0, statTieBack_ = 0;
+    long statTrusted_ = 0;   // shared corners taken on the index's word, no compare (step 3n)
     // THE RUNS' BOUNDING SPHERES (step 3h): a geometry's corners in runs of
     // `kClusterCorners` from corner 0 (4 triangles; a draw starts on a
     // triangle, so a run boundary is one too), a sphere (x, y, z, r) each,
@@ -1818,12 +1841,33 @@ private:
         const std::size_t n = g.corners.size();
         if (n < kIndexMinCorners) return nullptr;
         auto it = vindex_.find(&g);
-        if (it != vindex_.end() && it->second.n == n) return &it->second;
+        if (it != vindex_.end() && it->second.n == n) {
+            VIndex& x = it->second;
+            if (x.rev != g.revision) {
+                if (!x.allDoubt && g.dirtyTo == g.revision && g.dirtyFrom == x.rev) {
+                    for (const std::uint32_t k : g.dirtyCorners)
+                        if (k < n) x.doubt[k] = 1;
+                } else {
+                    // a change it cannot account for: compare always (a
+                    // large geometry says so, once - the street's set has
+                    // had none in a 600-frame walk)
+                    if (!x.allDoubt && n >= 20000)
+                        std::printf("gl1: a geometry of %zu corners changed without a dirty list - "
+                                    "its shared corners compared from here on\n", n);
+                    x.allDoubt = true;
+                }
+                x.rev = g.revision;
+            }
+            return &x;
+        }
         if (it == vindex_.end() && vindex_.size() >= 256) vindex_.clear();   // bounded: transient geometries
         VIndex& x = vindex_[&g];
         g.resident.mark();
         x.n = n; x.nv = 0;
         x.vert.assign(n, 0);
+        x.rev = g.revision;
+        x.doubt.assign(n, 0);
+        x.allDoubt = false;
         const bool meshes = g.cornerMesh.size() == n;
         std::size_t cap = 64;
         while (cap < 2 * n) cap <<= 1;

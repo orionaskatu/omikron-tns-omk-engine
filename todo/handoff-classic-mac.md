@@ -1018,7 +1018,41 @@ has it. Proved byte-identical: the start menu at 640x480 (frames 40, 97),
 800x600 and 1024x768, and the name dialog after ENTER, from the build before
 and after; and a MUTATION filling `fb` with 0x1234 where the clear is
 skipped left all three frames identical while counting the skip on every
-frame (97, 60, 140) - the cloud covers whatever is under it.
+frame (97, 60, 140) - the cloud covers whatever is under it. **Its first
+build broke PORTING A10** - `cloudCoversFrame` inline in `playstate.h` with
+a local static, a weak object Retro68's linker left without storage;
+`verify.py: engine: classic build` caught it after that build had already
+gone to the stick, and the next copy (with step 3n) replaced it. The
+helper is in `playframe_world.cpp` now.
+
+**Step 3n - THE STREET'S SUBMIT: SPLIT IN THE PROFILE, AND THE SHARED
+CORNERS NOT RE-READ, DONE 2026-10-11, NOT yet run on the iBook.** The
+seventh run's Anekbah frames (3200-3480) spent 103-115 ms, ~77 of them in
+`world: mirror`: 29.5 in `gl1: draw call` and **47 of SELF**, which is the
+whole GL1 backend between its draw calls - the submit loop, `begin`, and
+`end`'s `glFlush`, where a driver with no hardware T&L (the Rage 128) may
+do its vertex work. The profile could not say which, so three zones now do
+(`gl1: begin`, `gl1: submit` - the draw calls nest inside it - and `gl1:
+end`), and the `gl1: 60 passes` line, printed ONCE at pass 120, now
+repeats over the last 60 of every 600 passes, so a run that reaches the
+street minutes in reports it (host, Anekbah: ~25 draw calls, 20k corners
+read, 8.9k transformed, 7.1k vertices sent a frame).
+And one saving on the bytes: of a street frame's 20k corners ~11k are a
+vertex already transformed in the draw, and each still read its own 48
+bytes and its representative's to confirm the vertex index's word
+(`sameCorner`, a `memcmp`) - ~0.5 MB a frame on a bus that reads ~170 MB/s.
+The index now keeps a byte a corner, "may have changed since it was
+built", set from the geometry's dirty lists as its revisions pass
+(`dirtyFrom`/`dirtyTo`/`dirtyCorners`, the run clusters' protocol), or for
+every corner on a revision with no list (logged once for a large
+geometry); two corners both still as built are equal by construction, so
+the compare runs only when one is in doubt. Host, Anekbah: 589246 of the
+604k shared corners in 60 passes taken without the compare, no geometry
+ever all in doubt over 600 frames; the transformed and sent counts
+unchanged to the vertex, and the frames byte-identical to the build
+before at the street (frames 200 and 600, the traffic patching the set)
+and the Impasse (300). On the iBook read `gl1: submit` / `gl1: end` self
+against `gl1: draw call` in the street, and the repeated `60 passes` line.
 
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x

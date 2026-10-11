@@ -4,6 +4,14 @@
 // (2026-10-02); see `playframe.h` for what the names below refer to.
 #include "playframe.h"
 
+// A world-less frame the menu's cloud will cover (`fbCloudOwed`): a screen
+// open with no player, the cloud loaded, and the composer's table holding the
+// screen - the one early return before `ScreenComposer::draw` draws the cloud
+bool PlayState::cloudCoversFrame() const {
+    static const bool noUi = omk::envSet("OMK_NOUI");
+    return walk && !player && cloud.valid() && !noUi && comp_ && comp_->hasScreen(openScreen);
+}
+
 int PlayState::phaseWorld() {
     const auto& fs = *fs_;
     auto& comp = *comp_;

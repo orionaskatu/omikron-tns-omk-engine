@@ -715,10 +715,9 @@ struct PlayState {
     // debt before the composer: if the cloud is not drawn after all, it
     // clears there and says so.
     bool fbCloudOwed = false;
-    bool cloudCoversFrame() const {
-        static const bool noUi = omk::envSet("OMK_NOUI");
-        return walk && !player && cloud.valid() && !noUi && comp_ && comp_->hasScreen(openScreen);
-    }
+    bool cloudCoversFrame() const;   // `playframe_world.cpp` - NOT inline: its local static
+                                     // would be a weak object the classic linker leaves
+                                     // without storage (PORTING A10)
     float ovFade[4] = {0, 0, 0, 0};         // the colour fade, for its shader
     int gpuVy = 0, gpuVh = 0;               // where the GPU world is placed
     const char* gpuKeep = nullptr;          // the first gate that kept the frame on the CPU path

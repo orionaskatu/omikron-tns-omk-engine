@@ -965,6 +965,22 @@ wedge anywhere. NOT reproduced; candidates left: the shared per-mesh cull
 smaller than their extent, CLAUDE.md 4) with the camera close to a ground
 mesh, or something the run's keys toggled.
 
+**Step 3k - THE DEPTH TIE ON GL1, DONE 2026-10-11, NOT yet run on the iBook.**
+The reader, running Anekbah through the host GL1 window: *"flickering
+texture on the ground"*. GL1 had NO depth tie (`bakeDepthTie`), which Vulkan
+and GLES have had since 2026-09-30: of two coincident faces the engine's
+strict test on its quantised depth shows the one drawn first. Now GL1 bakes
+the losers once per set with the shared `DepthTie` and draws a loser two
+16-bit depth steps back (`4/65535 w` in clip z), sending its own vertices
+(a shared one is at the plain depth); `gl1: 60 passes ...` counts the losers
+drawn back. Anekbah: 87 losers baked, ~2 drawn a frame along the wander; the
+host's frames unchanged (its offscreen depth is 24-bit and the same face
+pair in a fixed order resolves alike) - so NOT the flicker the reader saw on
+the host; on the iBook's 16-bit depth it is the one that can fight. `gl1
+backend`, `classic build` green. The reader's ground flicker: asked what it
+looked like (a texture swapping, or distant texels sparkling as he moved -
+the original's bilinear without mipmaps).
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

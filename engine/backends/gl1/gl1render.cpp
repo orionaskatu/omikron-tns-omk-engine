@@ -84,6 +84,7 @@
 #include "gl1render.h"
 #include "gl1host.h"
 
+#include "o3de/depthtie.h"
 #include "o3de/greybank.h"
 #include "o3de/shimmer.h"
 #include "o3de/texscale.h"
@@ -160,6 +161,7 @@ public:
         auto* r = static_cast<Gl1Renderer*>(self);
         r->vindex_.erase(g);
         r->clusters_.erase(g);
+        r->tieBaked_.erase(g);
     }
     ~Gl1Renderer() override {
         removeGeometryListener(&Gl1Renderer::geometryGone, this);
@@ -551,6 +553,8 @@ public:
         // vertices; Kay'l 1626 on 272.
         const VIndex* vi = indexFor(g);
         ++drawStamp_;
+        const std::vector<std::uint8_t>* tieLose = nullptr;
+        if (const auto bt = tieBaked_.find(&g); bt != tieBaked_.end()) tieLose = &bt->second;
         // RUNS OF 4 TRIANGLES WHOLLY OUTSIDE ONE PLANE, SKIPPED UNREAD (step
         // 3h): two in five of a street frame's triangles are off the screen,
         // and each was read (48 bytes a corner, on a bus that reads ~170 MB/s)
@@ -693,6 +697,17 @@ public:
                         lumaGreyUnit(in[k].c[0], in[k].c[1], in[k].c[2]);
                 in[k].u = c.u; in[k].t = c.v;
             };
+            // A TIE LOSER (`bakeDepthTie`) is drawn a hair BACK and sends its
+            // own vertices - a shared one is at the plain depth
+            const bool lose = tieLose && tieLose->size() > (d.start + t) / 3 && (*tieLose)[(d.start + t) / 3];
+            tieBack_ = lose;
+            if (lose) ++statTieBack_;
+            if (inside && lose) {
+                ++st_.drawn;
+                for (int k = 0; k < 3; ++k) { colourOf(k); idx_.push_back(emit(in[k])); }
+                tieBack_ = false;
+                continue;
+            }
             if (inside) {
                 ++st_.drawn;
                 for (int k = 0; k < 3; ++k) {
@@ -761,6 +776,7 @@ public:
             for (int k = 1; k + 1 < nb; ++k) {            // a fan: up to 6 triangles after the clips
                 idx_.push_back(emit(out[0])); idx_.push_back(emit(out[k])); idx_.push_back(emit(out[k + 1]));
             }
+            tieBack_ = false;
         }
     }
 
@@ -789,14 +805,14 @@ public:
         sum_[3] += st_.drawn; sum_[4] += st_.culled;
         if (++passes_ == 60) {
             sum_[0] = sum_[1] = sum_[2] = sum_[3] = sum_[4] = 0;
-            statCorners_ = statTransformed_ = statSent_ = statSkipped_ = 0;
+            statCorners_ = statTransformed_ = statSent_ = statSkipped_ = statTieBack_ = 0;
         }
         if (passes_ == 120)
             std::printf("gl1: 60 passes drew %ld draws in %ld draw calls, %ld of %ld triangles "
                         "(%ld culled); %ld corners, %ld transformed, %ld vertices sent, %ld "
-                        "corners skipped unread in runs off the screen\n",
+                        "corners skipped unread in runs off the screen, %ld tie losers drawn back\n",
                         sum_[0], sum_[1], sum_[3], sum_[2], sum_[4],
-                        statCorners_, statTransformed_, statSent_, statSkipped_);
+                        statCorners_, statTransformed_, statSent_, statSkipped_, statTieBack_);
     }
 
     // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
@@ -1279,6 +1295,29 @@ public:
     // a body come as `Draw::vertexLights` and are applied per corner here by
     // `vertexlight.cpp`'s law, as the GLES shader applies them.
     bool posesBodies() const override { return true; }
+    // THE DEPTH TIE, SETTLED ONCE (`renderer.h` bakeDepthTie, todo/optimization.md
+    // step 29), as Vulkan and GLES have had since 2026-09-30: of two coincident
+    // faces the engine's strict test on its quantised depth shows the one
+    // drawn FIRST, and the loser is drawn a hair back - GL1 had no tie at all,
+    // so the street's coincident ground faces fought in its depth buffer and
+    // flickered as the camera moved (the reader, 2026-10-11, running in
+    // Anekbah through the host GL1 window).
+    bool bakeDepthTie(const Geometry* g, std::span<const Draw> order) override {
+        static const bool off = std::getenv("OMK_NO_TIE") != nullptr || std::getenv("OMK_NO_TIE_BAKE") != nullptr;
+        if (off || !g) return false;
+        DepthTie t;
+        std::vector<std::size_t> losers, restore;
+        for (const Draw& d : order)
+            if (d.geo == g) t.resolve(*g, d.start, d.count, d.blend == Blend::Opaque, losers, restore);
+        std::vector<std::uint8_t> lose(g->corners.size() / 3 + 1, 0);
+        for (const std::size_t tri : losers) if (tri < lose.size()) lose[tri] = 1;
+        tieBaked_[g] = std::move(lose);
+        g->resident.mark();
+        static long told = 0;
+        if (told++ < 4)
+            std::printf("gl1: depth tie baked - %zu loser triangles over %zu draws\n", losers.size(), order.size());
+        return true;
+    }
     // `--full-textures`: every texture at its own size whatever the card's
     // memory - the port's own (an enhancement); before the first pool
     void setFullTextures(bool full) { fullTextures_ = full; }
@@ -1533,6 +1572,10 @@ private:
         const float w = p.v[2];
         o.p[0] = p.v[0] * ith_; o.p[1] = p.v[1] * itv_;
         o.p[2] = w - 2.0f * kNearCut; o.p[3] = w;
+        // a tie loser two 16-bit depth steps back (GL's NDC z spans 2, so a
+        // window step of 1/65535 is 2/65535 of it), as the Vulkan and GLES
+        // shaders draw theirs
+        if (tieBack_) o.p[2] += (4.0f / 65535.0f) * w;
         float a = 0.0f;
         if (fogKind_ != 0 && w > fogStart_) {
             const float f = (fogEnd_ - w) * fogInv_;
@@ -1693,7 +1736,7 @@ private:
     std::vector<VSlot> vs_;
     std::vector<std::uint16_t> idx_;
     std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
-    long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0, statSkipped_ = 0;
+    long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0, statSkipped_ = 0, statTieBack_ = 0;
     // THE RUNS' BOUNDING SPHERES (step 3h): a geometry's corners in runs of
     // `kClusterCorners` from corner 0 (4 triangles; a draw starts on a
     // triangle, so a run boundary is one too), a sphere (x, y, z, r) each,
@@ -1706,6 +1749,8 @@ private:
     static constexpr std::size_t kClusterCorners = 12, kClusterMinCorners = 4096;
     struct Clusters { std::size_t n = 0; std::uint64_t rev = 0; std::vector<float> sph; };
     std::map<const Geometry*, Clusters> clusters_;
+    std::map<const Geometry*, std::vector<std::uint8_t>> tieBaked_;   // a geometry's tie losers, a byte a triangle
+    bool tieBack_ = false;   // the triangle being emitted is a tie loser
     void fitCluster(const Geometry& g, std::size_t c, float* sp) const {
         const std::size_t a = c * kClusterCorners, b = std::min(g.corners.size(), a + kClusterCorners);
         float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};

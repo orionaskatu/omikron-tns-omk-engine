@@ -106,6 +106,7 @@
 #include "platform/profile.h"
 #include "o3de/renderer.h"
 #include "o3de/shimmer.h"
+#include "ui/overlay.h"
 #include "ui/surface.h"
 
 #include <algorithm>
@@ -3366,32 +3367,42 @@ bool GlesRenderer::presentOverlay(const Surface& s, const unsigned char* mask, c
     // upload" was 6.2 ms an overlay frame for 76 rows actually sent in 60
     // frames. Four chains over interleaved words run side by side; the value
     // only ever meets its own last frame's, so the function is free to change.
-    const auto rowHash = [](const unsigned char* p, std::size_t n) {
-        std::uint32_t h0 = 2166136261u, h1 = 0x811C9DC5u ^ 0x9E3779B9u,
-                      h2 = 0x811C9DC5u ^ 0x7F4A7C15u, h3 = 0x811C9DC5u ^ 0x94D049BBu;
-        const std::uint32_t* q = reinterpret_cast<const std::uint32_t*>(p);
-        const std::size_t words = n / 4;
-        std::size_t i = 0;
-        for (; i + 4 <= words; i += 4) {
-            h0 = (h0 ^ q[i])     * 16777619u;
-            h1 = (h1 ^ q[i + 1]) * 16777619u;
-            h2 = (h2 ^ q[i + 2]) * 16777619u;
-            h3 = (h3 ^ q[i + 3]) * 16777619u;
-        }
-        for (; i < words; ++i) h0 = (h0 ^ q[i]) * 16777619u;
-        return h0 ^ (h1 * 3u) ^ (h2 * 5u) ^ (h3 * 7u);
-    };
+    // ...and since 2026-10-11 two checksums a 32-pixel BLOCK of a row
+    // (`overlayBlockSums`, shared with GL1 and the 3DS): on the Vita only the
+    // blocks that changed are copied into the texture - a fight HUD's sparks
+    // change ~300 rows by a few pixels at each edge - and elsewhere a row
+    // with any changed block goes up whole, in runs, as before.
+    const int nb = (s.w + 31) / 32 > 64 ? 64 : (s.w + 31) / 32;
+    const int bw = (s.w + nb - 1) / nb;
     const auto sync = [&](GLuint tex, const unsigned char* cur, std::vector<std::uint32_t>& last,
                           int bpp, GLenum fmt, GLenum type, const unsigned char* rows,
                           std::vector<unsigned char>& wasFlagged) {
         glBindTexture(GL_TEXTURE_2D, tex);
         const std::size_t rowBytes = static_cast<std::size_t>(s.w) * bpp;
+        const std::size_t perRow = static_cast<std::size_t>(nb) * 2;
+        // the changed blocks of row y (their sums updated) -> a mask, 0 when none
+        const auto changedBlocks = [&](int y, bool all) {
+            std::uint64_t m = 0;
+            std::uint32_t* sum = last.data() + static_cast<std::size_t>(y) * perRow;
+            const unsigned char* row = cur + static_cast<std::size_t>(y) * rowBytes;
+            for (int b = 0; b < nb; ++b) {
+                const int x0 = b * bw, n = std::min(s.w - x0, bw);
+                if (n <= 0) break;
+                std::uint32_t h1 = 0x811C9DC5u, h2 = 0x9E3779B9u;
+                overlayBlockSums(row + static_cast<std::size_t>(x0) * bpp, static_cast<std::size_t>(n) * bpp, h1, h2);
+                if (all || sum[2 * b] != h1 || sum[2 * b + 1] != h2) {
+                    m |= std::uint64_t{1} << b;
+                    sum[2 * b] = h1; sum[2 * b + 1] = h2;
+                }
+            }
+            return m;
+        };
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        if (last.size() != static_cast<std::size_t>(s.h)) {
+        if (last.size() != static_cast<std::size_t>(s.h) * perRow) {
             glTexImage2D(GL_TEXTURE_2D, 0, fmt, s.w, s.h, 0, fmt, type, cur);
 gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
-            last.resize(static_cast<std::size_t>(s.h));
-            for (int y = 0; y < s.h; ++y) last[y] = rowHash(cur + y * rowBytes, rowBytes);
+            last.assign(static_cast<std::size_t>(s.h) * perRow, 0u);
+            for (int y = 0; y < s.h; ++y) changedBlocks(y, true);
             wasFlagged.assign(static_cast<std::size_t>(s.h), 1);
             overlayRows_ += s.h;
         } else {
@@ -3423,12 +3434,20 @@ gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
             for (int y = 0; y < s.h; ++y) {
                 if (rows && !rows[y] && !wasFlagged[y]) continue;
                 wasFlagged[y] = rows ? rows[y] : 1;
-                const std::uint32_t hsh = rowHash(cur + y * rowBytes, rowBytes);
-                if (hsh == last[y]) continue;
-                last[y] = hsh;
+                const std::uint64_t ch = changedBlocks(y, false);
+                if (!ch) continue;
                 ++overlayRows_;
 #if defined(__vita__)
-                if (texData) { std::memcpy(texData + y * stride, cur + y * rowBytes, rowBytes); continue; }
+                if (texData) {
+                    for (int b = 0; b < nb; ++b) {
+                        if (!(ch >> b & 1u)) continue;
+                        const int x0 = b * bw, n = std::min(s.w - x0, bw);
+                        std::memcpy(texData + y * stride + static_cast<std::size_t>(x0) * bpp,
+                                    cur + y * rowBytes + static_cast<std::size_t>(x0) * bpp,
+                                    static_cast<std::size_t>(n) * bpp);
+                    }
+                    continue;
+                }
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, s.w, 1, fmt, type, cur + y * rowBytes);
 #else
                 if (rowsOnly) {

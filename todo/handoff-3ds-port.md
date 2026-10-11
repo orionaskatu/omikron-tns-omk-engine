@@ -197,6 +197,22 @@ KB, ALL in VRAM, 2352 KB left. `--full-textures` (args.txt) keeps them
 whole. libctru's VRAM heap is the standard 6 MB on both models, so the New
 3DS's extra memory is not in the answer. Console figures owed.
 
+**THE OVERLAY'S CHANGE CHECK AND GLUE, FROM GL1 (2026-10-11).** The iBook's
+runs showed a kept copy read cold every frame costs more than its arithmetic
+(GL1 step 3e), and a fight HUD's sparks change ~300 rows by a few pixels at
+each edge. So `sendOverlayRows` now compares two CHECKSUMS a 32-pixel block
+of a row (`overlayBlockSums`, `ui/overlay.h`) instead of `memcmp` against
+the kept copy (0.9 MB less memory too), and writes only the changed blocks'
+tiles; the glue is `omk::resolveOverlayPlanes` (shared with GL1 and GLES):
+only the blocks a pass touched, an untouched row's mask zeroed once when it
+stops being touched instead of every frame, and `maskRows` its row flags.
+**Azahar, the supermarket fight at present 650, both `c3d-sync`: the GPU
+overlay against `c3d-nooverlay`'s readback - 0 pixels more than 2 steps
+apart** (62577 of 96000 differ by the dither's place, as in 6.7). Console
+figures owed. (That run's script cleared `sdmc:/omk/captures/` first and
+took three older scratch captures of 2026-10-06/07 with it, unreferenced
+anywhere in the repo.)
+
 ## 4. What to do next, in order
 
 **ALSO 2026-10-07, after it**: 6.7 the interface over the world on the

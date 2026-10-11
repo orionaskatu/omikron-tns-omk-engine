@@ -89,6 +89,7 @@
 #include "o3de/texscale.h"
 #include "o3de/vertexlight.h"
 #include "platform/profile.h"
+#include "ui/overlay.h"
 #include "ui/surface.h"
 
 #include <algorithm>
@@ -913,8 +914,8 @@ public:
                     const std::size_t x0 = static_cast<std::size_t>(bk * ovBlockW_);
                     const std::size_t n = std::min<std::size_t>(W - x0, static_cast<std::size_t>(ovBlockW_));
                     std::uint32_t h1 = 0x811C9DC5u, h2 = 0x9E3779B9u;
-                    blockSums(row + x0, n * sizeof(std::uint16_t), h1, h2);
-                    if (hasMask) blockSums(mask + o + x0, n, h1, h2);
+                    overlayBlockSums(row + x0, n * sizeof(std::uint16_t), h1, h2);
+                    if (hasMask) overlayBlockSums(mask + o + x0, n, h1, h2);
                     if (!seen || sum[2 * bk] != h1 || sum[2 * bk + 1] != h2) {
                         blocks |= 1u << bk;
                         sum[2 * bk] = h1; sum[2 * bk + 1] = h2;
@@ -1350,18 +1351,6 @@ private:
     std::vector<std::uint8_t> ovSeenRow_, ovRowAny_;
     std::vector<std::uint32_t> ovSum_;   // two checksums a block of a row (step 3e)
     int ovSumW_ = 0;
-    // a run of bytes into the two block checksums, a word at a time
-    static void blockSums(const void* p, std::size_t bytes, std::uint32_t& h1, std::uint32_t& h2) {
-        const unsigned char* q = static_cast<const unsigned char*>(p);
-        std::size_t i = 0;
-        for (; i + 4 <= bytes; i += 4) {
-            std::uint32_t w;
-            std::memcpy(&w, q + i, 4);
-            h1 = (h1 << 5) - h1 + w;
-            h2 = ((h2 << 7) | (h2 >> 25)) ^ w;
-        }
-        for (; i < bytes; ++i) { h1 = (h1 << 5) - h1 + q[i]; h2 = ((h2 << 7) | (h2 >> 25)) ^ q[i]; }
-    }
     std::vector<std::uint32_t> ovRowStale_;   // a row's blocks the texture does not hold yet (step 3c)
     int ovBlockW_ = 32, ovBlocks_ = 1;
     std::uint32_t ovAllBlocks_ = 1;

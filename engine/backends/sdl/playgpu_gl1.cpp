@@ -87,37 +87,7 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     OMK_ZONE("gl1: overlay glue");
     static std::vector<std::uint8_t> ovMask, ovMaskRow;
     static std::vector<std::uint64_t> ovMaskBlocks;   // the blocks whose mask may be nonzero
-    if (ovMask.size() != fb.px.size()) {
-        ovMask.assign(fb.px.size(), std::uint8_t(0));
-        ovMaskRow.assign(static_cast<std::size_t>(fb.h), 0);
-        ovMaskBlocks.assign(static_cast<std::size_t>(fb.h), 0);
-    }
-    const std::size_t W = static_cast<std::size_t>(fb.w);
-    for (int y = 0; y < fb.h; ++y) {
-        const std::size_t yy = static_cast<std::size_t>(y);
-        const std::size_t o = yy * W;
-        const std::uint64_t now = g_ov.rowInit[yy] ? g_ov.rowBlocks[yy] : 0u;
-        // blocks with a stale mask: zeroed
-        if (const std::uint64_t gone = ovMaskBlocks[yy] & ~now) {
-            for (std::size_t b = 0; b < 64; ++b) {
-                if (!(gone >> b & 1u)) continue;
-                const std::size_t x0 = b * 32, x1 = b == 63 ? W : std::min(W, x0 + 32);
-                if (x0 < x1) std::fill(ovMask.begin() + static_cast<long>(o + x0),
-                                       ovMask.begin() + static_cast<long>(o + x1), std::uint8_t(0));
-            }
-        }
-        ovMaskBlocks[yy] = now;
-        ovMaskRow[yy] = now ? 1 : 0;
-        if (!now) continue;
-        for (std::size_t b = 0; b < 64; ++b) {
-            if (!(now >> b & 1u)) continue;
-            const std::size_t x0 = b * 32, x1 = b == 63 ? W : std::min(W, x0 + 32);
-            for (std::size_t i = o + x0; i < o + x1; ++i) {
-                if (fb.px[i] == kOverlayKey) { fb.px[i] = g_ov.c[i]; ovMask[i] = g_ov.m[i]; }
-                else ovMask[i] = 0;
-            }
-        }
-    }
+    omk::resolveOverlayPlanes(fb.px.data(), fb.w, fb.h, g_ov, ovMask, ovMaskRow, ovMaskBlocks);
     int ww = 0, wh = 0;
     omk::gl1AglWindowSize(ww, wh);
     presentedWorld = omk::gl1PresentOverlay(worldVk, fb, ovMask.data(), ovMaskRow.data(), ovFade,

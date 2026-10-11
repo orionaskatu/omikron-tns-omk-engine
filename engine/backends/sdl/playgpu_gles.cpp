@@ -207,29 +207,13 @@ void PlayState::gpuPresentVerify(bool& presentedWorld) {
 void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     if (overlayFrame && glRen) {
         // the key resolves into the two planes: C in `fb`, M beside it
-        // - only on the rows a pass touched; an untouched key pixel stays
-        // the key, which the shader reads as "the world" by itself, so
-        // M is zero everywhere else and mostly never changes
+        // - only in the BLOCKS a pass touched (`omk::resolveOverlayPlanes`,
+        // shared with GL1 and the 3DS); an untouched key pixel stays the key,
+        // which the shader reads as "the world" by itself, so M is zero
+        // everywhere else and mostly never changes
         static std::vector<std::uint8_t> ovMask, ovMaskRow;
-        if (ovMask.size() != fb.px.size()) {
-            ovMask.assign(fb.px.size(), std::uint8_t(0));
-            ovMaskRow.assign(static_cast<std::size_t>(fb.h), 0);
-        }
-        for (int y = 0; y < fb.h; ++y) {
-            const std::size_t o = static_cast<std::size_t>(y) * fb.w;
-            if (!g_ov.rowInit[static_cast<std::size_t>(y)]) {
-                if (ovMaskRow[static_cast<std::size_t>(y)]) {
-                    std::fill(ovMask.begin() + o, ovMask.begin() + o + fb.w, std::uint8_t(0));
-                    ovMaskRow[static_cast<std::size_t>(y)] = 0;
-                }
-                continue;
-            }
-            ovMaskRow[static_cast<std::size_t>(y)] = 1;
-            for (std::size_t i = o; i < o + static_cast<std::size_t>(fb.w); ++i) {
-                if (fb.px[i] == kOverlayKey) { fb.px[i] = g_ov.c[i]; ovMask[i] = g_ov.m[i]; }
-                else ovMask[i] = 0;
-            }
-        }
+        static std::vector<std::uint64_t> ovMaskBlocks;
+        omk::resolveOverlayPlanes(fb.px.data(), fb.w, fb.h, g_ov, ovMask, ovMaskRow, ovMaskBlocks);
         int ww = 0, wh = 0;
 #if defined(OMK_SDL3)
         SDL_GetWindowSizeInPixels(glWin, &ww, &wh);

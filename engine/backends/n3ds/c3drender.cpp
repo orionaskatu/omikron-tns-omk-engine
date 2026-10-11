@@ -996,27 +996,31 @@ private:
         C3D_TexSetWrap(&ovTex_, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
         ovW_ = tw; ovH_ = th;
         ovRowSent_.clear();
+        ovSum_.clear();                          // every row new: `sendOverlayRows` resizes
         std::printf("c3d: the interface over the world on the GPU - a %dx%d RGBA8 overlay texture\n", tw, th);
         return true;
     }
 
-    // The world rows of `fb` into the texture, ONLY the rows whose pixels or
-    // mask changed since they were sent - found by comparing with a kept copy
-    // of what was sent (`memcmp`, a word at a time; a hash a pixel, GL1's way,
-    // cost ~30 ms a frame in Azahar with nothing to send). -> whether any
-    // world row holds something other than the world.
+    // The world rows of `fb` into the texture, ONLY the 32-pixel BLOCKS of a
+    // row whose pixels or mask changed since they were sent - found by two
+    // CHECKSUMS a block against the ones it had (`overlayBlockSums`, as GL1's
+    // overlay since the iBook's sixth run: a kept copy of what was sent, the
+    // way before, is read cold every frame - twice the frame's bytes - and a
+    // fight HUD's moving sparks changed ~300 rows by a few pixels at each
+    // edge, each written whole). -> whether any world row holds something
+    // other than the world.
     bool sendOverlayRows(const Surface& fb, const std::uint8_t* mask, const std::uint8_t* maskRows, int vy, int vh) {
         auto* tex = static_cast<std::uint32_t*>(ovTex_.data);
-        const std::size_t n = static_cast<std::size_t>(fb.w) * fb.h;
-        if (ovPrevPx_.size() != n) {
-            ovPrevPx_.assign(n, 0);
-            ovPrevMask_.assign(n, 0);
+        const int blocks = (fb.w + 31) / 32 > 32 ? 32 : (fb.w + 31) / 32;
+        const int bw = (fb.w + blocks - 1) / blocks;
+        if (ovSum_.size() != static_cast<std::size_t>(fb.h) * blocks * 2 || ovSumW_ != fb.w) {
+            ovSumW_ = fb.w;
+            ovSum_.assign(static_cast<std::size_t>(fb.h) * blocks * 2, 0u);
             ovRowSent_.assign(static_cast<std::size_t>(fb.h), 0);
             ovRowNonKey_.assign(static_cast<std::size_t>(fb.h), 0);
             ovPrevMaskZero_.assign(static_cast<std::size_t>(fb.h), 1);
         }
         if (ovKeyRow_.size() != static_cast<std::size_t>(fb.w)) ovKeyRow_.assign(static_cast<std::size_t>(fb.w), kOverlayKey);
-        if (ovZeroRow_.size() != static_cast<std::size_t>(fb.w)) ovZeroRow_.assign(static_cast<std::size_t>(fb.w), 0);
         static constexpr std::uint8_t mx[8] = {0, 1, 4, 5, 16, 17, 20, 21};   // x's Morton bits
         static constexpr std::uint8_t my[8] = {0, 2, 8, 10, 32, 34, 40, 42};  // y's
         int loTile = 1 << 30, hiTile = -1;
@@ -1026,18 +1030,28 @@ private:
             const std::size_t o = static_cast<std::size_t>(y) * fb.w;
             const std::uint16_t* src = fb.px.data() + o;
             const std::size_t yy = static_cast<std::size_t>(y);
-            // a mask row no plane touched is all zero: compared only when it
-            // may not be, or when the row sent last held one that was not
+            // a mask row no plane touched is all zero: not read
             const bool maskZero = !mask || (maskRows && !maskRows[yy]);
-            const std::uint8_t* msk = maskZero ? ovZeroRow_.data() : mask + o;
-            const bool maskSame = maskZero ? ovPrevMaskZero_[yy] != 0
-                                           : std::memcmp(msk, ovPrevMask_.data() + o, static_cast<std::size_t>(fb.w)) == 0;
-            if (ovRowSent_[yy] && maskSame && std::memcmp(src, ovPrevPx_.data() + o, rowPx) == 0) {
+            const std::uint8_t* msk = maskZero ? nullptr : mask + o;
+            // a row sent with the other kind of mask, or never, is new whole
+            const bool whole = !ovRowSent_[yy] || (ovPrevMaskZero_[yy] != 0) != maskZero;
+            std::uint32_t* sum = ovSum_.data() + yy * static_cast<std::size_t>(blocks) * 2;
+            std::uint32_t changed = 0;
+            for (int bk = 0; bk < blocks; ++bk) {
+                const int x0 = bk * bw, n = std::min(fb.w - x0, bw);
+                if (n <= 0) break;
+                std::uint32_t h1 = 0x811C9DC5u, h2 = 0x9E3779B9u;
+                overlayBlockSums(src + x0, static_cast<std::size_t>(n) * sizeof(std::uint16_t), h1, h2);
+                if (msk) overlayBlockSums(msk + x0, static_cast<std::size_t>(n), h1, h2);
+                if (whole || sum[2 * bk] != h1 || sum[2 * bk + 1] != h2) {
+                    changed |= 1u << bk;
+                    sum[2 * bk] = h1; sum[2 * bk + 1] = h2;
+                }
+            }
+            if (!changed) {
                 any |= ovRowNonKey_[yy] != 0;
                 continue;
             }
-            std::memcpy(ovPrevPx_.data() + o, src, rowPx);
-            std::memcpy(ovPrevMask_.data() + o, msk, static_cast<std::size_t>(fb.w));
             ovPrevMaskZero_[yy] = maskZero ? 1 : 0;
             ovRowSent_[yy] = 1;
             const bool nonKey = std::memcmp(src, ovKeyRow_.data(), rowPx) != 0;
@@ -1046,14 +1060,19 @@ private:
             ++rep_.overlayRows;
             const int ty = ovH_ - 1 - y, tileRow = ty >> 3, ly = ty & 7;
             std::uint32_t* base = tex + static_cast<std::size_t>(tileRow) * (ovW_ >> 3) * 64 + my[ly];
-            for (int xx = 0; xx < fb.w; ++xx) {
-                const std::uint16_t p = src[xx];
-                std::uint32_t v = 0x000000FFu;                     // the KEY: the world as it is
-                if (p != kOverlayKey) {
-                    const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
-                    v = (r5 << 3 | r5 >> 2) << 24 | (g6 << 2 | g6 >> 4) << 16 | (b5 << 3 | b5 >> 2) << 8 | msk[xx];
+            for (int bk = 0; bk < blocks; ++bk) {
+                if (!(changed >> bk & 1u)) continue;
+                const int x0 = bk * bw, x1 = std::min(fb.w, x0 + bw);
+                for (int xx = x0; xx < x1; ++xx) {
+                    const std::uint16_t p = src[xx];
+                    std::uint32_t v = 0x000000FFu;                 // the KEY: the world as it is
+                    if (p != kOverlayKey) {
+                        const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
+                        v = (r5 << 3 | r5 >> 2) << 24 | (g6 << 2 | g6 >> 4) << 16 | (b5 << 3 | b5 >> 2) << 8 |
+                            (msk ? msk[xx] : 0u);
+                    }
+                    base[static_cast<std::size_t>(xx >> 3) * 64 + mx[xx & 7]] = v;
                 }
-                base[static_cast<std::size_t>(xx >> 3) * 64 + mx[xx & 7]] = v;
             }
             loTile = std::min(loTile, tileRow);
             hiTile = std::max(hiTile, tileRow);
@@ -1924,8 +1943,10 @@ private:
     bool noOverlay_ = false;
     C3D_Tex ovTex_{};
     int ovW_ = 0, ovH_ = 0, vyOv_ = 0;
-    std::vector<std::uint16_t> ovPrevPx_, ovKeyRow_;   // what each world row last sent; a row of the key
-    std::vector<std::uint8_t> ovPrevMask_, ovZeroRow_, ovRowSent_, ovRowNonKey_, ovPrevMaskZero_;
+    std::vector<std::uint16_t> ovKeyRow_;          // a row of the key
+    std::vector<std::uint32_t> ovSum_;             // two checksums a block of each world row, as sent
+    int ovSumW_ = 0;
+    std::vector<std::uint8_t> ovRowSent_, ovRowNonKey_, ovPrevMaskZero_;
     std::vector<std::uint16_t> bands_[2];
     std::vector<int> bandRows_, bandRowsFor_[2];
     int bandsCur_ = 0;

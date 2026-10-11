@@ -8,6 +8,18 @@ frame on the M1 and why 30 fps is far off) - still true, not repeated here.
 
 ---
 
+**THE OVERLAY BY BLOCK, FROM GL1 (2026-10-11), NOT yet on the console.**
+`presentOverlay`'s row hash became two checksums a 32-pixel BLOCK of a row
+(`overlayBlockSums`, `ui/overlay.h`, shared with GL1 and the 3DS), and on
+the Vita only the changed blocks are copied into the texture memory
+(`vglGetTexDataPointer`) - a fight HUD's sparks change ~300 rows by a few
+pixels at each edge, each copied whole until now; elsewhere a row with any
+changed block still goes up whole, in runs. The glue is
+`omk::resolveOverlayPlanes`: only the blocks a pass touched. `engine: gles
+overlay` (the fight's frame, pixel for pixel against the CPU composite),
+`gles backend` and `vita build` green; the Vita's block copy is compiled,
+not run here.
+
 ## 1. Where it stands (rewritten 2026-09-22)
 
 * **The game runs on a real console INTO THE CITY.** 2026-09-21/22, three

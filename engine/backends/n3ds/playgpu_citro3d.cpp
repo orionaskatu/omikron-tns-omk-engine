@@ -55,25 +55,16 @@ void PlayState::gpuPresentVerify(bool&) {}
 // the readback path for every such frame, to lay the two side by side.
 void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     if (!overlayFrame || !worldVk || presentedWorld) return;
-    // the key resolved into the two planes (`playgpu_gl1.cpp`'s loop): C
-    // into `fb`, M beside it, on the rows a pass touched
-    static std::vector<std::uint8_t> ovMask;
-    if (ovMask.size() != fb.px.size()) ovMask.assign(fb.px.size(), std::uint8_t(0));
-    for (int y = 0; y < fb.h; ++y) {
-        const std::size_t o = static_cast<std::size_t>(y) * fb.w;
-        if (!g_ov.rowInit[static_cast<std::size_t>(y)]) {
-            std::fill(ovMask.begin() + static_cast<long>(o), ovMask.begin() + static_cast<long>(o + fb.w),
-                      std::uint8_t(0));
-            continue;
-        }
-        for (std::size_t i = o; i < o + static_cast<std::size_t>(fb.w); ++i) {
-            if (fb.px[i] == omk::kOverlayKey) { fb.px[i] = g_ov.c[i]; ovMask[i] = g_ov.m[i]; }
-            else ovMask[i] = 0;
-        }
-    }
+    // the key resolved into the two planes (`omk::resolveOverlayPlanes`,
+    // shared with GL1 and GLES): C into `fb`, M beside it, only in the blocks
+    // a pass touched; an untouched row's mask is no longer zero-filled every
+    // frame, only once when it stops being touched
+    static std::vector<std::uint8_t> ovMask, ovMaskRow;
+    static std::vector<std::uint64_t> ovMaskBlocks;
+    omk::resolveOverlayPlanes(fb.px.data(), fb.w, fb.h, g_ov, ovMask, ovMaskRow, ovMaskBlocks);
     if (omk::N3dsFrontend* f = omk::liveN3dsFrontend()) {
         std::uint16_t* dst = f->topFramebuffer();
-        if (dst && omk::c3dPresentOverlay(worldVk, fb, ovMask.data(), g_ov.rowInit.data(), ovFade, gpuVy, gpuVh,
+        if (dst && omk::c3dPresentOverlay(worldVk, fb, ovMask.data(), ovMaskRow.data(), ovFade, gpuVy, gpuVh,
                                           dst, f->topFramebufferRight())) {
             f->presentWritten();
             presentedWorld = true;

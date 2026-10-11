@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <vector>
 
@@ -84,5 +85,72 @@ struct OverlayPlanes {
 // whatever follows (`todo/classic-mac-port-1999.md` 3d-iv).
 extern OverlayPlanes g_overlayPlanes;
 inline OverlayPlanes& overlayPlanes() { return g_overlayPlanes; }
+
+// THE GLUE every GPU window runs before its overlay pass (GL1, GLES, the
+// 3DS): the planes resolved into the frame - C into `px` where it holds the
+// key, M into `mask` - ONLY in the 32-pixel blocks a pass touched (`rowBlocks`;
+// an untouched pixel stays the key, which every backend sends as "the world":
+// the same as the planes' c = 0, m = 255), `maskRow` 1 on a row whose mask may
+// be nonzero, and a block's mask zeroed ONCE when it stops being touched
+// (`maskBlocks` remembers which may be nonzero). It walked every pixel of a
+// touched row, and on the 3DS zero-filled every untouched row every frame -
+// the fight HUD's gauges touch ~300 rows a few blocks wide (the iBook,
+// 2026-10-11, `todo/handoff-classic-mac.md` 3f step 3g).
+inline void resolveOverlayPlanes(std::uint16_t* px, int w, int h, const OverlayPlanes& ov,
+                                 std::vector<std::uint8_t>& mask, std::vector<std::uint8_t>& maskRow,
+                                 std::vector<std::uint64_t>& maskBlocks) {
+    const std::size_t W = static_cast<std::size_t>(w), H = static_cast<std::size_t>(h);
+    if (mask.size() != W * H) {
+        mask.assign(W * H, std::uint8_t(0));
+        maskRow.assign(H, 0);
+        maskBlocks.assign(H, 0);
+    }
+    const auto span = [&](std::size_t b, std::size_t& x0, std::size_t& x1) {
+        x0 = b * 32;
+        x1 = b == 63 ? W : (x0 + 32 < W ? x0 + 32 : W);
+    };
+    for (std::size_t y = 0; y < H; ++y) {
+        const std::size_t o = y * W;
+        const std::uint64_t now = ov.rowInit[y] ? ov.rowBlocks[y] : 0u;
+        if (const std::uint64_t gone = maskBlocks[y] & ~now) {
+            for (std::size_t b = 0; b < 64; ++b) {
+                if (!(gone >> b & 1u)) continue;
+                std::size_t x0, x1;
+                span(b, x0, x1);
+                if (x0 < x1) std::fill(mask.begin() + static_cast<long>(o + x0),
+                                       mask.begin() + static_cast<long>(o + x1), std::uint8_t(0));
+            }
+        }
+        maskBlocks[y] = now;
+        maskRow[y] = now ? 1 : 0;
+        if (!now) continue;
+        for (std::size_t b = 0; b < 64; ++b) {
+            if (!(now >> b & 1u)) continue;
+            std::size_t x0, x1;
+            span(b, x0, x1);
+            for (std::size_t i = o + x0; i < o + x1; ++i) {
+                if (px[i] == kOverlayKey) { px[i] = ov.c[i]; mask[i] = ov.m[i]; }
+                else mask[i] = 0;
+            }
+        }
+    }
+}
+
+// Two checksums of a run of bytes, a word at a time - what the overlays
+// compare a block of a row by instead of a kept copy of it (the iBook is
+// memory-bound: reading the copy cold cost more than the arithmetic). Of two
+// kinds (a*31 + w, and a rotate-xor), so a change both miss is not a
+// practical case. `h1`, `h2` carry on from the caller's seeds.
+inline void overlayBlockSums(const void* p, std::size_t bytes, std::uint32_t& h1, std::uint32_t& h2) {
+    const unsigned char* q = static_cast<const unsigned char*>(p);
+    std::size_t i = 0;
+    for (; i + 4 <= bytes; i += 4) {
+        std::uint32_t v;
+        std::memcpy(&v, q + i, 4);
+        h1 = (h1 << 5) - h1 + v;
+        h2 = ((h2 << 7) | (h2 >> 25)) ^ v;
+    }
+    for (; i < bytes; ++i) { h1 = (h1 << 5) - h1 + q[i]; h2 = ((h2 << 7) | (h2 >> 25)) ^ q[i]; }
+}
 
 }  // namespace omk

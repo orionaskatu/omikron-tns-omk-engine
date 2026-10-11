@@ -1833,7 +1833,22 @@ error string) is called once as `SetMaterialsMemory(58, 0)` and allocates
 **58 texture slots** — `g_TextureSlots`, 36 bytes each — a 768-byte palette per
 slot and a `(58 + 1) << 16` page arena. `Tex3DT_BindMaterials` (0x004A6CF0)
 then walks the `.3dt` beside each `.3DO` and, for every material of that scene,
-either claims a free slot or **reuses one already loaded**:
+either claims a free slot or **reuses one already loaded**.
+
+**The DEVICE side fits a 4 MB card - the game's official minimum and
+recommended VRAM** (read 2026-10-11, `todo/handoff-classic-mac.md` 3f, step
+3e's note). Every texture surface is created `DDSCAPS_TEXTURE |
+DDSCAPS2_TEXTUREMANAGE` (`sub_463310`, `sub_463420`: the DDSURFACEDESC2's
+`ddsCaps` 0x1000 and 0x10) - D3D MANAGED textures, a system copy paged into
+video memory by the runtime - and the textures are DOWNSCALED to fit:
+`sub_45F4F0` (0x0045F4F0) asks `GetAvailableVidMem` for that caps pair and,
+while `flt_6A5384 * flt_6A5388 * ((dword_80B060 + 5) << 16)` (`<< 17` when
+`dword_53ADE4 == 1`) exceeds it, halves the larger of the two factors; a
+texture is then made at `256 * factor` a side and the 256x256 page
+stretch-blitted into it (`sub_463420`, `sub_4636D0`). So a small card drew
+smaller textures. Not yet read: what `dword_80B060` counts (the slots, 58,
+would make the 4 MB a 256x256 8-bit page each), `dword_53ADE4` and
+`dword_53ADEC` (which makes the two factors equal).
 
 ```c
 /* full-page (256x256) textures */

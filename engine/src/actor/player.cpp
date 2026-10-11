@@ -903,16 +903,23 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     // 18 loops its clip, and the head arm clears +1305 every frame - and
     // without it the free look lasted one frame in every 53, the clip's
     // length. Queued after the tick's other moves, as the engine reaches it.
-    // (The window shift and turn below sit under the SAME `flag 2` test in
-    // the engine; this port gates them on 0x200 - not re-read here, LABELLED
-    // in todo/scene-gameplay-audit.md.)
+    // The window shift and turn below sit under the SAME `flag 2` test
+    // (`Cef_TickChannel`'s `if ((u8(ch, 4) & 2) == 0)`), and NOTHING in the
+    // shipped engine sets channel bit 2: every write of the flags dword is a
+    // setter of another bit (`Perso_SetInputEnabled` 0x80, `Perso_SetNoPlayback`
+    // 0x200, 0x1, 0x4, 0x100) or a read-modify-write clearing one (0x800, 0x1),
+    // and the one `or [reg+4], 2` in the image (`sub_4B7AB1`) is a library
+    // object's. So the block always runs. Until 2026-10-11 this port gated the
+    // shift and the turn on 0x200 instead, which changed nothing it could show:
+    // under 0x200 the channel's frame does not advance (`Channel::tick`), so
+    // the window's portion is 0 either way (todo/scene-gameplay-audit.md 23).
     std::string tickMove;
     if (cur >= 0 && cur < static_cast<int>(S.size()) && !(rt_.channel().flags() & 0x2u)) {
         const CtlState& st0 = S[static_cast<std::size_t>(cur)];
         if ((st0.flags & 0x10u) && (st0.flags & 0x200000u)) tickMove = st0.moveName;
     }
     if (cur >= 0 && cur < static_cast<int>(S.size()) &&
-        !(rt_.channel().flags() & 0x200u)) {
+        !(rt_.channel().flags() & 0x2u)) {
         const CtlState& st = S[static_cast<std::size_t>(cur)];
         float portion = 0.0f;
         if ((st.flags & 0x80u) && st.hasShift &&

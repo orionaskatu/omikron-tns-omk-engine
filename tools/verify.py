@@ -14096,6 +14096,72 @@ def c_engine_fight_gpu_present():
            ("no fight frame presented from the GPU differs from its CPU composite, and " \
             "the fight HUD's own gate is what holds them")
 
+def c_engine_vulkan_pose():
+    r"""`omk-play --world-vulkan`: BODIES POSED BY THE VULKAN RENDERER (2026-10-11).
+
+    The reader: "Port it on vulkan too for consistency" - GLES, GL1 and the 3DS
+    pose a body from its rest corners and one affine a mesh, with the lights
+    that reach it applied per corner (`renderer.h` `Draw::meshPose`); Vulkan
+    now does too (`vkrender.cpp` set 2, `scene.vert`), and keeps the CPU path
+    for the shadow map's casters and a body past its pose buffer. Anekbah's
+    street start, 60 frames, twice - the renderer posing, and `--cpu-bodies`:
+      * the first log says the walkers and the player went the renderer's way,
+        the second that the walkers did not - without both the comparison
+        compares one path with itself;
+      * the two pictures differ by rounding only: at most 0.1% of the pixels,
+        8 of them by more than 24.
+    Measured 2026-10-11 on the M3: 71 pixels, 2 by more than 24 (GL1's
+    renderer path 57). Shown to fail: the posed normal left unturned in
+    `scene.vert` (the lights fall as on the rest pose).
+    """
+    import struct, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "SCPTDATA"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0:
+        return ("build failed",), ("built",), "engine/ must build"
+    if not os.path.exists(play):
+        return ("no sdl",), ("no sdl",), "needs SDL to render"
+    tmp = tempfile.mkdtemp(prefix="omk-vkpose-")
+    try:
+        frames, logs = {}, {}
+        for tag, extra in (("gpu", []), ("cpu", ["--cpu-bodies"])):
+            out = os.path.join(tmp, tag + ".bin")
+            r = subprocess.run(_viewer_args([play, fr, os.path.join(ROOT, "tables"),
+                                "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                                "--area", "0", "--stand", "1804,0,-6890,336", "--nofmv",
+                                "--frames", "60", "--res", "640x480", "--world-vulkan",
+                                "--dump", out] + extra),
+                               cwd=eng, capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+            logs[tag] = r.stdout + r.stderr
+            if "through VULKAN" not in logs[tag] and "Vulkan" not in logs[tag]:
+                return ("skipped",), ("skipped",), "no Vulkan device - the GPU backend is optional"
+            if r.returncode == 0 and os.path.exists(out):
+                raw = open(out, "rb").read()
+                if len(raw) == 640 * 480 * 2:
+                    frames[tag] = struct.unpack("<%dH" % (640 * 480), raw)
+        if len(frames) != 2:
+            return ("no frames",), ("two frames",), "omk-play must render both"
+        g, c = frames["gpu"], frames["cpu"]
+        def big(x, y):
+            return max(abs(((x >> 11) & 31) - ((y >> 11) & 31)) * 8,
+                       abs(((x >> 5) & 63) - ((y >> 5) & 63)) * 4,
+                       abs((x & 31) - (y & 31)) * 8) > 24
+        anyD = sum(1 for x, y in zip(g, c) if x != y)
+        bigD = sum(1 for x, y in zip(g, c) if x != y and big(x, y))
+        on = ("walkers are posed and lit by the RENDERER" in logs["gpu"] and
+              "the player posed by the RENDERER" in logs["gpu"] and
+              "walkers are posed and lit on the CPU" in logs["cpu"])
+        print(f"        posed by the Vulkan renderer vs on the CPU: {anyD} pixels differ, {bigD} by >24")
+        return (on, anyD <= len(g) * 0.001 and bigD <= 8), (True, True), \
+            "the walkers and the player posed by the Vulkan renderer, within 0.1% of the CPU-posed frame"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 def c_engine_fight_loser_pose():
     r"""`omk-play`: a knocked-down opponent lies ON the floor, and stays there after a win.
 
@@ -17377,8 +17443,15 @@ def c_engine_dirty_corners():
         # it at all - the stats line then read 0 / 0 / 0 and this went red on
         # a path that no longer runs by default. The dirty list still feeds the
         # upload, which the pixel comparison below covers either way.
+        # `OMK_CPU_MOTION=1`: the moving meshes PATCHED INTO THE SET, the path
+        # whose dirty list this measures. Since 2026-10-11 the Vulkan backend
+        # poses bodies and moving meshes itself (`posesBodies`), so by default
+        # the set's corners are not rewritten at all and nothing is listed -
+        # this went red (1 / 1 / 1) on a path that no longer runs by default,
+        # as it did once for the tie bake above. The CPU path still runs on
+        # the software reference and wherever a renderer does not pose.
         env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_TIE_STATS="1",
-                   OMK_NO_TIE_BAKE="1", **extra_env)
+                   OMK_NO_TIE_BAKE="1", OMK_CPU_MOTION="1", **extra_env)
         r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
                             "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
                             "--nofmv", "--world-vulkan", "--frames", "90", "--dump", out],
@@ -46343,6 +46416,7 @@ SLOW = [
     ("engine: near clip",  c_engine_near_clip,  "PORTING B6"),
     ("engine: renderer",   c_engine_renderer_boundary, "PORTING A2"),
     ("engine: gl1 backend", c_engine_gl1_backend, "todo/classic-mac-port-1999.md 3c-i; PORTING B6"),
+    ("engine: vulkan pose", c_engine_vulkan_pose, "backends/vulkan/vkrender.cpp posesBodies; todo/gpu-skinning.md"),
     ("engine: frontend gateway", c_engine_frontend_gateway, "todo/classic-mac-port-1999.md step 5; PORTING A1"),
     ("engine: classic build", c_engine_classic_build, "todo/classic-mac-port-1999.md step 5; platform/datafs.h"),
     ("engine: profiler", c_engine_profiler, "todo/debug-tools.md step 1; PORTING B6"),

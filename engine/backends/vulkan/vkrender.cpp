@@ -59,6 +59,7 @@
 
 #include "o3de/renderer.h"
 #include "o3de/depthtie.h"
+#include "o3de/vertexlight.h"
 
 #include <algorithm>
 #include <array>
@@ -154,6 +155,10 @@ struct GpuVert {
     float nx, ny, nz;
     // THE SHIMMER's phase (`o3de/shimmer.h`), -1 on a mesh that does not.
     float phase;
+    // THE CORNER'S MESH (`Geometry::cornerMesh`), -1 for none: which affine
+    // a POSED draw places it by (`scene.vert`, `posesBodies`); every other
+    // draw ignores it.
+    float mesh;
 };
 
 // It MUST match `scene.frag`'s block byte for byte, and the ordering is what
@@ -173,8 +178,9 @@ struct Push {
     int32_t lit;       // 92  this batch is LIT per pixel (row 7)
     int32_t cull;      // 96  the BACK-FACE CULL: 0 both sides, +1 discard
                        //     where !gl_FrontFacing, -1 where gl_FrontFacing
+    int32_t posed;     // 100 a body POSED HERE: set 2 holds its affines and lights
 };
-static_assert(sizeof(Push) == 100, "the push block is 100 bytes");
+static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -189,6 +195,15 @@ public:
     void shadowPass(const omk::View& v, std::span<const omk::Draw> casters) override;
     bool drawsPixelLights() const override { return true; }
     bool drawsShadowMap() const override { return true; }
+    // BODIES POSED BY THE RENDERER (`renderer.h` `Draw::meshPose`; the
+    // reader, 2026-10-11: "Port it on vulkan too for consistency"), as GLES,
+    // GL1 and the 3DS do: a posed draw's rest corners, one affine a mesh and
+    // the lights that reach the body go to set 2, and `scene.vert` places,
+    // turns and lights each corner by the GLES shader's rule. A draw that will
+    // not fit the frame's pose buffer, and every caster of the shadow map, is
+    // posed on the CPU instead (`cpuPose`) - so no path draws it wrong.
+    bool posesBodies() const override { return poseDs_ != VK_NULL_HANDLE; }
+    int maxVertexLights() const override { return poseDs_ != VK_NULL_HANDLE ? kPoseLights : 0; }
     bool drawMirrorScene(const omk::View& v, const omk::View& refl,
                          std::span<const omk::Draw> scene,
                          std::span<const omk::Draw> sceneClipped,
@@ -359,6 +374,25 @@ private:
     std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
 
     std::map<const omk::Geometry*, std::pair<VkBuffer, VkDeviceMemory>> vbo_;
+    // THE POSE BUFFER (set 2): host-visible, written from the start at every
+    // `begin` (the frame before it was waited for), one block a posed body -
+    // a header (lights, from-black, the base grey, the affines' count), the
+    // lights (two vec4 each, `kPoseLights` places), then three vec4 an affine
+    static constexpr int kPoseLights = 16, kPoseMaxMeshes = 256;
+    static constexpr VkDeviceSize kPoseBytes = 8u << 20;
+    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
+    VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
+    VkBuffer poseBuf_ = VK_NULL_HANDLE;
+    VkDeviceMemory poseMem_ = VK_NULL_HANDLE;
+    void* posePtr_ = nullptr;
+    VkDescriptorSet poseDs_ = VK_NULL_HANDLE;
+    VkDeviceSize poseUsed_ = 0, poseAlign_ = 256;
+    std::map<std::pair<const float*, const float*>, uint32_t> poseCache_;   // a body's block this frame
+    std::map<const omk::Geometry*, omk::Geometry> cpuPosed_;   // `cpuPose`'s corners
+    std::uint64_t cpuPoseRev_ = 0;
+    bool writePose(const omk::Draw& d, uint32_t& off);
+    omk::Draw cpuPose(const omk::Draw& d);
+    void submitOne(const omk::Draw& d, bool posed, uint32_t poseOff);
     std::map<const omk::Geometry*, std::size_t> vboN_;
     // ...and how many corners its buffer HOLDS, which a geometry that changes
     // size every frame (the particles) keeps above what it uses, so it refills
@@ -397,7 +431,8 @@ private:
     std::map<const omk::Geometry*, std::vector<std::uint8_t>> baked_;
     GpuVert vertOf(const omk::Geometry& g, std::size_t i, const std::vector<std::uint8_t>* lose) const {
         const auto& c = g.corners[i];
-        GpuVert v{c.x, c.y, c.z, c.u, c.v, c.r, c.g, c.b, c.nx, c.ny, c.nz, c.phase};
+        const float mesh = g.cornerMesh.size() == g.corners.size() ? static_cast<float>(g.cornerMesh[i]) : -1.0f;
+        GpuVert v{c.x, c.y, c.z, c.u, c.v, c.r, c.g, c.b, c.nx, c.ny, c.nz, c.phase, mesh};
         if (lose && i < lose->size() && (*lose)[i]) v.phase -= kTieLoserPhase;
         return v;
     }
@@ -924,11 +959,21 @@ bool VulkanRenderer::makePipelines() {
     dli1.bindingCount = 3; dli1.pBindings = b1;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli1, nullptr, &dsl1_), "descriptorSetLayout1");
 
+    // SET 2 is the POSE BUFFER (`posesBodies`): one dynamic storage buffer,
+    // offset per posed body, read by the vertex stage
+    VkDescriptorSetLayoutBinding b2{};
+    b2.binding = 0; b2.descriptorCount = 1;
+    b2.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    b2.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo dli2{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dli2.bindingCount = 1; dli2.pBindings = &b2;
+    VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli2, nullptr, &dsl2_), "descriptorSetLayout2");
+
     VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                             0, sizeof(Push)};
-    const VkDescriptorSetLayout sets[2] = {dsl_, dsl1_};
+    const VkDescriptorSetLayout sets[3] = {dsl_, dsl1_, dsl2_};
     VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pli.setLayoutCount = 2; pli.pSetLayouts = sets;
+    pli.setLayoutCount = 3; pli.pSetLayouts = sets;
     pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
     VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &plo_), "pipelineLayout");
 
@@ -950,16 +995,17 @@ bool VulkanRenderer::makePipelines() {
                  VK_SHADER_STAGE_FRAGMENT_BIT, fs, "main", nullptr};
 
     VkVertexInputBindingDescription vb{0, sizeof(GpuVert), VK_VERTEX_INPUT_RATE_VERTEX};
-    VkVertexInputAttributeDescription va[5] = {
+    VkVertexInputAttributeDescription va[6] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVert, x)},
         {1, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(GpuVert, u)},
         {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVert, r)},
         {3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GpuVert, nx)},
         {4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(GpuVert, phase)},
+        {5, 0, VK_FORMAT_R32_SFLOAT,       offsetof(GpuVert, mesh)},
     };
     VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &vb;
-    vi.vertexAttributeDescriptionCount = 5; vi.pVertexAttributeDescriptions = va;
+    vi.vertexAttributeDescriptionCount = 6; vi.pVertexAttributeDescriptions = va;
 
     VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -1178,13 +1224,37 @@ bool VulkanRenderer::makePipelines() {
 
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
-    VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 130},
-                                  {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8}};
+    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 130},
+                                  {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    dpi.maxSets = 130; dpi.poolSizeCount = 2; dpi.pPoolSizes = ps;
+    dpi.maxSets = 131; dpi.poolSizeCount = 3; dpi.pPoolSizes = ps;
     // a texture's set is freed on its own when it leaves the pool (`setTextures`)
     dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
+
+    // ---- the POSE BUFFER and its set (set 2) ------------------------------
+    // Without it every body is posed on the CPU, as before (`posesBodies` no).
+    poseAlign_ = std::max<VkDeviceSize>(16, props_.limits.minStorageBufferOffsetAlignment);
+    if (makeBuffer(kPoseBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   poseBuf_, poseMem_) &&
+        vkMapMemory(dev_, poseMem_, 0, kPoseBytes, 0, &posePtr_) == VK_SUCCESS) {
+        VkDescriptorSetAllocateInfo sai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        sai.descriptorPool = dpool_; sai.descriptorSetCount = 1; sai.pSetLayouts = &dsl2_;
+        if (vkAllocateDescriptorSets(dev_, &sai, &poseDs_) == VK_SUCCESS) {
+            VkDescriptorBufferInfo bufi{poseBuf_, 0, kPoseRange};
+            VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr.dstSet = poseDs_; wr.dstBinding = 0; wr.descriptorCount = 1;
+            wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+            wr.pBufferInfo = &bufi;
+            vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        } else {
+            poseDs_ = VK_NULL_HANDLE;
+        }
+    }
+    if (poseDs_ == VK_NULL_HANDLE)
+        std::fprintf(stderr, "vulkan: no pose buffer - every body posed on the CPU\n");
 
     // ---- the SHADOW pipeline and its one descriptor set -------------------
     if (shFbuf_ != VK_NULL_HANDLE) {
@@ -2255,7 +2325,14 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         vkBeginCommandBuffer(cb_, &bi);
         cbStarted_ = true;
     }
-    for (const auto& d : casters) if (d.geo) uploadGeometry(d.geo);
+    // a posed caster is placed on the CPU: the depth-only pipeline has no set 2
+    std::vector<omk::Draw> placed;
+    placed.reserve(casters.size());
+    for (const auto& d : casters)
+        placed.push_back(d.meshPose && d.meshPoses && d.geo &&
+                                 d.geo->cornerMesh.size() == d.geo->corners.size()
+                             ? cpuPose(d) : d);
+    for (const auto& d : placed) if (d.geo) uploadGeometry(d.geo);
 
     VkClearValue clear{};
     clear.depthStencil = {1.0f, 0};
@@ -2266,7 +2343,7 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, shPipe_);
     vkCmdPushConstants(cb_, shPlo_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof m, m);
-    for (const auto& d : casters) {
+    for (const auto& d : placed) {
         if (!d.geo || !d.count) continue;
         const auto it = vbo_.find(d.geo);
         if (it == vbo_.end()) continue;
@@ -2293,6 +2370,9 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
 
 void VulkanRenderer::begin(const omk::View& view) {
     st_ = omk::RasterStats{};
+    // the pose buffer from its start: the frame that wrote it was waited for
+    poseUsed_ = 0;
+    poseCache_.clear();
     // the previous frame's fence has been waited on (the present ends with it)
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
@@ -2366,8 +2446,93 @@ void VulkanRenderer::begin(const omk::View& view) {
     recording_ = true;
 }
 
+// A POSED body's block in the pose buffer (`posesBodies`): written once a
+// frame for each body (its draws share the `meshPose` and the lights), at an
+// offset the device's storage alignment allows. -> false when it does not fit.
+bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
+    const auto key = std::make_pair(d.meshPose, d.vertexLights);
+    if (const auto it = poseCache_.find(key); it != poseCache_.end()) { off = it->second; return true; }
+    const VkDeviceSize at = (poseUsed_ + poseAlign_ - 1) / poseAlign_ * poseAlign_;
+    if (!posePtr_ || at + kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
+    float* f = reinterpret_cast<float*>(static_cast<unsigned char*>(posePtr_) + at);
+    const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
+    f[0] = static_cast<float>(nl);
+    f[1] = d.lightsFromBlack ? 1.0f : 0.0f;
+    f[2] = d.lightBase;
+    f[3] = static_cast<float>(d.meshPoses);
+    for (int i = 0; i < nl; ++i) std::memcpy(f + 4 + 8 * i, d.vertexLights + 8 * i, 8 * sizeof(float));
+    float* a = f + 4 + 8 * kPoseLights;
+    std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));   // three vec4 an affine
+    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    off = static_cast<uint32_t>(at);
+    poseCache_.emplace(key, off);
+    return true;
+}
+
+// A posed draw's corners placed on the CPU instead - by the same affine and,
+// for the colour, `applyLights`' law on the posed normal from the scene's grey
+// where the body starts black (the shader's rule, `scene.vert`). For what the
+// pose buffer does not reach: a body past its room, and every caster of the
+// shadow map, whose depth-only pipeline has no set 2.
+omk::Draw VulkanRenderer::cpuPose(const omk::Draw& d) {
+    omk::Geometry& cp = cpuPosed_[d.geo];
+    if (cp.corners.size() != d.geo->corners.size()) cp = *d.geo;
+    const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
+    for (std::size_t i = 0; i < cp.corners.size(); ++i) {
+        const omk::Corner& rc = d.geo->corners[i];
+        omk::Corner& c = cp.corners[i];
+        c = rc;
+        const std::int32_t m = d.geo->cornerMesh[i];
+        if (m >= 0 && static_cast<std::size_t>(m) < d.meshPoses) {
+            const float* a = d.meshPose + 12 * static_cast<std::size_t>(m);
+            c.x = a[0] * rc.x + a[1] * rc.y + a[2] * rc.z + a[3];
+            c.y = a[4] * rc.x + a[5] * rc.y + a[6] * rc.z + a[7];
+            c.z = a[8] * rc.x + a[9] * rc.y + a[10] * rc.z + a[11];
+            c.nx = a[0] * rc.nx + a[1] * rc.ny + a[2] * rc.nz;
+            c.ny = a[4] * rc.nx + a[5] * rc.ny + a[6] * rc.nz;
+            c.nz = a[8] * rc.nx + a[9] * rc.ny + a[10] * rc.nz;
+        }
+        if (nl > 0 || d.lightsFromBlack) {
+            float cr = d.lightsFromBlack ? d.lightBase : rc.r;
+            float cg = d.lightsFromBlack ? d.lightBase : rc.g;
+            float cb = d.lightsFromBlack ? d.lightBase : rc.b;
+            for (int k = 0; k < nl; ++k) {
+                const float* L = d.vertexLights + 8 * k;
+                int ti = static_cast<int>(-(c.nx * L[0] + c.ny * L[1] + c.nz * L[2]));
+                ti = ti < 0 ? 0 : (ti > 255 ? 255 : ti);
+                const float ar = omk::lightRamp(static_cast<std::uint8_t>(L[4]), ti) / 255.0f;
+                const float ag = omk::lightRamp(static_cast<std::uint8_t>(L[5]), ti) / 255.0f;
+                const float ab = omk::lightRamp(static_cast<std::uint8_t>(L[6]), ti) / 255.0f;
+                cr = cr + ar > 1.0f ? 1.0f : cr + ar;
+                cg = cg + ag > 1.0f ? 1.0f : cg + ag;
+                cb = cb + ab > 1.0f ? 1.0f : cb + ab;
+            }
+            c.r = cr; c.g = cg; c.b = cb;
+        }
+    }
+    cp.revision = d.geo->revision + (++cpuPoseRev_ << 32);
+    omk::Draw out = d;
+    out.geo = &cp;
+    out.meshPose = nullptr;
+    out.meshPoses = 0;
+    out.vertexLights = nullptr;
+    out.vertexLightCount = 0;
+    out.lightsFromBlack = false;
+    return out;
+}
+
 void VulkanRenderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
+    if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
+        uint32_t off = 0;
+        if (poseDs_ != VK_NULL_HANDLE && writePose(d, off)) submitOne(d, true, off);
+        else submitOne(cpuPose(d), false, 0);
+        return;
+    }
+    submitOne(d, false, 0);
+}
+
+void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff) {
     if (!uploadGeometry(d.geo)) return;
     resolveTies(d);
     st_.triangles += static_cast<long>(d.count / 3);
@@ -2393,6 +2558,12 @@ void VulkanRenderer::submit(const omk::Draw& d) {
     if (ds1_ != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 1, 1,
                                 &ds1_, 0, nullptr);
+    // set 2, the pose buffer - bound for every draw (the shader declares it),
+    // at the body's block for a posed one
+    if (poseDs_ != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 2, 1,
+                                &poseDs_, 1, &poseOff);
+    push_.posed = posed ? 1 : 0;
 
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
@@ -2643,6 +2814,9 @@ VulkanRenderer::~VulkanRenderer() {
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (plo_) vkDestroyPipelineLayout(dev_, plo_, nullptr);
     if (dsl_) vkDestroyDescriptorSetLayout(dev_, dsl_, nullptr);
+    if (dsl2_) vkDestroyDescriptorSetLayout(dev_, dsl2_, nullptr);
+    if (poseBuf_) vkDestroyBuffer(dev_, poseBuf_, nullptr);
+    if (poseMem_) freeDeviceMemory(poseMem_);
     if (readBuf_) vkDestroyBuffer(dev_, readBuf_, nullptr);
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);

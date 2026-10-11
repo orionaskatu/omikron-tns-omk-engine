@@ -213,3 +213,30 @@ Each step ends in a commit and a report, and waits for the reader's go.
   and `player vertical` were run green over the change.
 * **Not seen on a console.** The posing program is the one the walkers already
   use, so the shader cache needs nothing new.
+
+## Vulkan too (2026-10-11)
+
+The reader: *"Port it on vulkan too for consistency (unless there is a good
+reason to not do so)"*. GLES (step 3-5), the classic Mac's GL1 and the 3DS
+posed bodies in the renderer; Vulkan answered no. Now it answers yes: every
+`GpuVert` carries its corner's MESH (attribute 5), a posed draw's affines and
+the lights that reach the body go to a host-visible STORAGE buffer (set 2,
+one dynamic offset a body, written from its start at every `begin` - the frame
+is synchronous), and `scene.vert` places the corner, turns its normal and
+lights it by the GLES shader's rule (from the scene's grey where the body
+starts black, each light `floor(t * c / 256) / 255` added and clamped) behind
+a new push flag `posed` (offset 100; the block is 104 bytes). Two cases stay
+on the CPU, by `cpuPose` (the same affine and law): a body past its 8 MB pose
+buffer, and every CASTER of the mapped shadow (an enhancement), whose
+depth-only pipeline has no set 2 - the one good reason not to pose there,
+taken rather than a second posed shadow shader.
+`engine: vulkan pose` (new): the street through `--world-vulkan`, the
+renderer posing against `--cpu-bodies`: **71 pixels differ, 2 by more than
+24** (GL1's 57); shown to fail with the posed normal left unturned. The other
+twenty checks that drive Vulkan green, once `engine: dirty corners` was told
+to measure the path it measures (`OMK_CPU_MOTION=1`: the moving meshes are no
+longer patched into the set on Vulkan by default). That check still reads
+replayed/walked/fallbacks **89/1/1 and 0/1/0** against its recorded 88/1/0
+and 0/0/0 - the SAME with every body and mesh on the CPU, so not this change;
+its invariant (0 pixels between the runs with and without the list) holds.
+Recorded, not chased.

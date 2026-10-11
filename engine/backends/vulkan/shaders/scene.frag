@@ -44,6 +44,7 @@ layout(push_constant) uniform Push {
     // discards where !gl_FrontFacing, -1 where gl_FrontFacing - the engine's
     // software test in `Render_SubmitMesh`, which the device never sees.
     int   cull;         // 96
+    int   posed;        // 100, a body posed in `scene.vert` (set 2)
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D tex;

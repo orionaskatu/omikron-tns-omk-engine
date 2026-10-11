@@ -178,8 +178,7 @@ public:
 #if defined(OMK_GL1_AGL)
             if (readTex_) gpuForget(omk::prof::kGlTexture, &readTex_, 1);
             if (readTex_) glDeleteTextures(1, &readTex_);
-            if (ovTex_) gpuForget(omk::prof::kGlTexture, &ovTex_, 1);
-            if (ovTex_) glDeleteTextures(1, &ovTex_);
+            freeOverlayTiles();
             if (probeTex_) glDeleteTextures(1, &probeTex_);
 #else
             if (fbo_) glDeleteFramebuffersEXT(1, &fbo_);
@@ -995,48 +994,27 @@ public:
             boundTex_ = ~0u;
         }
         if (hi >= lo) {
-            // the probe's path (`gl1OverlayPath`): client storage stores ARGB
-            // 8888 words, which is what it was timed with
+            // IN TILES (step 3i, 2026-10-11): the overlay is 64-row tiles two
+            // blocks wide (64 pixels at 640), each a texture of its own, made
+            // the first time a tile holds something. It was ONE 1024x512 RGBA8
+            // texture, and on the iBook a draw of it after any change cost
+            // ~43 ms - the driver sending the whole 2 MB again - every frame of
+            // a fight, whose gauges' sparks change it each frame (the seventh
+            // run: `gl1: overlay draw` 42.9 ms there, 0.75 in the street where
+            // it rarely changes). Now a change re-sends only the tiles it
+            // touches, and a tile with nothing drawn is neither sent nor drawn.
+            // The probe's path (`gl1OverlayPath`): client storage stores ARGB
+            // 8888 words, which is what it was timed with.
             const Gl1UploadPath path = gl1OverlayPath();
-            const GLenum target = path.rect ? GL_TEXTURE_RECTANGLE_EXT : GL_TEXTURE_2D;
-            const GLsizei tw = path.rect ? fb.w : static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.w)));
-            const GLsizei th = path.rect ? fb.h : static_cast<GLsizei>(nextPow2(static_cast<unsigned>(fb.h)));
-            if (!ovTex_ || ovTexW_ != tw || ovTexH_ != th) {
-                if (ovTex_) glDeleteTextures(1, &ovTex_);   // client storage is bound at creation
-                glGenTextures(1, &ovTex_);
-                glBindTexture(target, ovTex_);
-                glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                if (path.hint) glTexParameteri(target, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
-                if (path.client) {
-                    // the texture's memory is OURS: the changed rows are
-                    // converted straight into it and the card reads them there
-                    ovStore_.assign(static_cast<std::size_t>(tw) * th, 0);
-                    glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
-                    glTexImage2D(target, 0, GL_RGBA8, tw, th, 0, GL_BGRA,
-                                 GL_UNSIGNED_INT_8_8_8_8_REV, ovStore_.data());
-                    glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
-                } else {
-                    glTexImage2D(target, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-                }
-                gpuNote("overlay", omk::prof::kGlTexture, ovTex_, 4LL * tw * th);
-                ovTexW_ = tw; ovTexH_ = th;
+            const int tileW = 2 * ovBlockW_, tileH = 64;
+            const GLsizei texW = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(tileW)));
+            const int tilesX = (fb.w + tileW - 1) / tileW, tilesY = (fb.h + tileH - 1) / tileH;
+            if (ovTiles_.size() != static_cast<std::size_t>(tilesX * tilesY) || ovTileW_ != tileW) {
+                freeOverlayTiles();
+                ovTiles_.assign(static_cast<std::size_t>(tilesX * tilesY), OvTile{});
+                ovTileW_ = tileW;
                 std::fill(ovRowStale_.begin(), ovRowStale_.end(), ovAllBlocks_);   // nothing sent yet
             }
-            bool storeWaited = false;    // the card done with the client memory, once a frame
-            // ONLY WHAT CHANGED (2026-10-05, run on Tiger): a texel keeps its
-            // place in the texture and is converted and sent only when its
-            // block of its row differs from what was last sent there - whole
-            // rows by a hash until step 3b, blocks of a row since 3c. A
-            // subtitle is the same rows for hundreds of frames; the fight
-            // HUD's moving sparks are a few pixels at each edge.
-            // ...in RECTANGLES - a block's run of rows, one call each - in
-            // the format `CarbonFrontend::probeUploads` timed fastest on this
-            // driver (`gl1OverlayArgb`): ARGB 8888 as 32-bit words, or RGBA
-            // bytes.
-            OMK_ZONE("gl1: overlay rows");      // the profiler (todo/debug-tools.md)
-            glBindTexture(target, ovTex_);
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
             const bool argb = path.client || gl1OverlayArgb();
             const GLenum upFormat = argb ? GL_BGRA : GL_RGBA;
             const GLenum upType = argb ? GL_UNSIGNED_INT_8_8_8_8_REV : GL_UNSIGNED_BYTE;
@@ -1062,106 +1040,116 @@ public:
                     }
                 }
             };
-            // ...in a FEW RECTANGLES (step 3e): each block's drawn stale rows
-            // taken as one span, top to bottom, and neighbouring blocks with
-            // any merged - the fight's sparks, a spark row a call until now
-            // (the sixth run: 55 ms a frame for 7.4 rows' worth of texels),
-            // are two rectangles. A cell inside a rectangle that was not
-            // stale holds what the texture holds already, so sending it
-            // again sends the same texels.
-            int bTop[32], bBot[32];
-            for (int bk = 0; bk < ovBlocks_; ++bk) { bTop[bk] = fb.h; bBot[bk] = -1; }
-            for (int y = lo; y <= hi; ++y) {
-                const std::size_t yy = static_cast<std::size_t>(y);
-                std::uint32_t m = ovRowDraw_[yy] ? ovRowStale_[yy] : 0u;
-                for (int bk = 0; m; ++bk, m >>= 1)
-                    if (m & 1u) {
-                        if (bTop[bk] > y) bTop[bk] = y;
-                        bBot[bk] = y;
-                    }
-            }
-            for (int bk = 0; bk < ovBlocks_;) {
-                if (bBot[bk] < 0) { ++bk; continue; }
-                const int g0 = bk;
-                int y0 = bTop[bk], y1 = bBot[bk];
-                while (bk + 1 < ovBlocks_ && bBot[bk + 1] >= 0) {
-                    ++bk;
-                    y0 = std::min(y0, bTop[bk]); y1 = std::max(y1, bBot[bk]);
-                }
-                const int x0 = g0 * ovBlockW_, x1 = std::min(fb.w, (bk + 1) * ovBlockW_), cw = x1 - x0;
-                const int rows = y1 - y0 + 1;
-                const std::uint32_t bits = (bk - g0 + 1 >= 32 ? ~0u : ((1u << (bk - g0 + 1)) - 1u)) << g0;
-                if (path.client) {
-                    // the card may still be reading last frame's texels
-                    if (!storeWaited) { OMK_ZONE("gl1: overlay wait"); glFinish(); storeWaited = true; }
-                    // only the stale cells are converted: the others hold
-                    // their texels already
-                    for (int r = y0; r <= y1; ++r) {
-                        const std::uint32_t st = ovRowStale_[static_cast<std::size_t>(r)] & bits;
-                        if (!st) continue;
-                        for (int c = g0; c <= bk; ++c) {
-                            if (!(st & (1u << c))) continue;
-                            const int cx0 = c * ovBlockW_, cx1 = std::min(fb.w, cx0 + ovBlockW_);
-                            convert(r, cx0, cx1, ovStore_.data() + static_cast<std::size_t>(r) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(cx0));
+            {
+                OMK_ZONE("gl1: overlay rows");      // the profiler (todo/debug-tools.md)
+                bool storeWaited = false;    // the card done with the client memory, once a frame
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                for (int ty = 0; ty < tilesY; ++ty) {
+                    const int y0 = ty * tileH, y1 = std::min(fb.h, y0 + tileH) - 1;
+                    if (y1 < lo || y0 > hi) continue;          // nothing drawn this frame in its rows
+                    for (int tx = 0; tx < tilesX; ++tx) {
+                        const int x0 = tx * tileW, x1 = std::min(fb.w, x0 + tileW);
+                        const int b0 = x0 / ovBlockW_, b1 = (x1 - 1) / ovBlockW_;
+                        const std::uint32_t bits = ((b1 - b0 + 1 >= 32 ? ~0u : ((1u << (b1 - b0 + 1)) - 1u)) << b0);
+                        bool drawn = false, stale = false;
+                        for (int r = y0; r <= y1; ++r) {
+                            drawn |= ovRowDraw_[static_cast<std::size_t>(r)] != 0;
+                            stale |= (ovRowStale_[static_cast<std::size_t>(r)] & bits) != 0;
                         }
-                        ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
+                        if (!drawn) continue;                   // stays stale until it is
+                        OvTile& T = ovTiles_[static_cast<std::size_t>(ty * tilesX + tx)];
+                        const bool fresh = !T.tex;
+                        if (fresh) {
+                            glGenTextures(1, &T.tex);
+                            glBindTexture(GL_TEXTURE_2D, T.tex);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                            if (path.hint) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_STORAGE_HINT_APPLE, GL_STORAGE_SHARED_APPLE);
+                            if (path.client) {
+                                T.store.assign(static_cast<std::size_t>(texW) * tileH, 0u);
+                                glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_TRUE);
+                                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texW, tileH, 0, GL_BGRA,
+                                             GL_UNSIGNED_INT_8_8_8_8_REV, T.store.data());
+                                glPixelStorei(GL_UNPACK_CLIENT_STORAGE_APPLE, GL_FALSE);
+                            } else {
+                                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texW, tileH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                            }
+                            gpuNote("overlay", omk::prof::kGlTexture, T.tex, 4LL * texW * tileH);
+                        }
+                        if (!stale && !fresh) continue;
+                        const std::size_t need = static_cast<std::size_t>(texW) * tileH;
+                        if (path.client) {
+                            // the card may still be reading last frame's texels
+                            if (!storeWaited) { OMK_ZONE("gl1: overlay wait"); glFinish(); storeWaited = true; }
+                            for (int r = y0; r <= y1; ++r) {
+                                std::uint32_t* row = T.store.data() + static_cast<std::size_t>(r - y0) * texW;
+                                const std::uint32_t st = fresh ? bits : (ovRowStale_[static_cast<std::size_t>(r)] & bits);
+                                for (int bk = b0; bk <= b1; ++bk) {
+                                    if (!(st >> bk & 1u)) continue;
+                                    const int cx0 = bk * ovBlockW_, cx1 = std::min(x1, cx0 + ovBlockW_);
+                                    convert(r, cx0, cx1, row + (cx0 - x0));
+                                }
+                                ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
+                            }
+                            glBindTexture(GL_TEXTURE_2D, T.tex);
+                            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texW, y1 - y0 + 1, upFormat, upType, T.store.data());
+                        } else {
+                            if (ovBand_.size() < need) ovBand_.resize(need);
+                            for (int r = y0; r <= y1; ++r) {
+                                convert(r, x0, x1, ovBand_.data() + static_cast<std::size_t>(r - y0) * texW);
+                                ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
+                            }
+                            glBindTexture(GL_TEXTURE_2D, T.tex);
+                            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texW, y1 - y0 + 1, upFormat, upType, ovBand_.data());
+                        }
+                        ++ovStatCalls_;
+                        ovStatSent_ += static_cast<long>(x1 - x0) * (y1 - y0 + 1);
                     }
-                    glPixelStorei(GL_UNPACK_ROW_LENGTH, tw);
-                    glTexSubImage2D(target, 0, x0, y0, cw, rows, upFormat, upType,
-                                    ovStore_.data() + static_cast<std::size_t>(y0) * static_cast<std::size_t>(tw) + static_cast<std::size_t>(x0));
-                } else {
-                    const std::size_t need = static_cast<std::size_t>(cw) * static_cast<std::size_t>(rows);
-                    if (ovBand_.size() < need) ovBand_.resize(need);
-                    for (int r = y0; r <= y1; ++r) {
-                        convert(r, x0, x1, ovBand_.data() + static_cast<std::size_t>(r - y0) * static_cast<std::size_t>(cw));
-                        ovRowStale_[static_cast<std::size_t>(r)] &= ~bits;
-                    }
-                    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-                    glTexSubImage2D(target, 0, x0, y0, cw, rows, upFormat, upType, ovBand_.data());
                 }
-                ++ovStatCalls_;
-                ovStatSent_ += static_cast<long>(cw) * rows;
-                ++bk;
             }
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
             OMK_ZONE("gl1: overlay draw");      // the quads, apart from the uploads
-            glEnable(target);
+            glEnable(GL_TEXTURE_2D);
             glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
             // `C + world * M` as the STANDARD premultiplied "over" - alpha
             // stored as 1 - M and (GL_ONE, GL_ONE_MINUS_SRC_ALPHA) - the same
             // sum to the bit. It was (GL_ONE, GL_SRC_ALPHA), M as alpha: a
             // destination factor of SOURCE alpha, which period hardware need
-            // not have, and on the reader's iBook (Rage 128 Pro, 10.2) every
-            // frame with partly transparent text over the world - a subtitle,
-            // the credits, an examine line - went WHITE, while a dialogue box
-            // (alpha 0 or 1 only) drew right (2026-10-09). Not seen on the
-            // emulated Tiger's Radeon 9700.
+            // not have (the white screens were the fog's colour sum, `end`).
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glColor4f(1, 1, 1, 1);
-            // the band: fb rows lo..hi, top-down, onto window rows wh-lo..wh-hi-1
-            // (a rectangle texture is addressed in texels)
-            // ...ONE QUAD A RUN OF DRAWN ROWS (step 3b): the rows holding
-            // only the key (the world through) and the letterbox's black are
-            // not drawn - in a letterboxed scene with a subtitle that is the
-            // 352 rows of the picture between the bars, a blended texture
-            // over the whole window on the card's fill for nothing
-            const float tsc = path.rect ? 1.0f : 1.0f / static_cast<float>(th);
-            const float s1 = path.rect ? static_cast<float>(fb.w) : static_cast<float>(fb.w) / tw;
-            glBegin(GL_QUADS);
-            for (int y = lo; y <= hi;) {
-                if (!ovRowDraw_[static_cast<std::size_t>(y)]) { ++y; continue; }
-                int e = y;
-                while (e + 1 <= hi && ovRowDraw_[static_cast<std::size_t>(e + 1)]) ++e;
-                const float t0 = static_cast<float>(y) * tsc, t1 = static_cast<float>(e + 1) * tsc;
-                const float yTop = static_cast<float>(wh - y), yBot = static_cast<float>(wh - e - 1);
-                glTexCoord2f(0, t0);  glVertex2f(0, yTop);
-                glTexCoord2f(s1, t0); glVertex2f(static_cast<float>(ww), yTop);
-                glTexCoord2f(s1, t1); glVertex2f(static_cast<float>(ww), yBot);
-                glTexCoord2f(0, t1);  glVertex2f(0, yBot);
-                y = e + 1;
+            // ...ONE QUAD A RUN OF DRAWN ROWS of each tile (step 3b): the rows
+            // holding only the key (the world through) and the letterbox's
+            // black are not drawn
+            const float invW = 1.0f / static_cast<float>(texW), invH = 1.0f / static_cast<float>(tileH);
+            for (int ty = 0; ty < tilesY; ++ty) {
+                const int y0 = ty * tileH, y1 = std::min(fb.h, y0 + tileH) - 1;
+                if (y1 < lo || y0 > hi) continue;
+                for (int tx = 0; tx < tilesX; ++tx) {
+                    const OvTile& T = ovTiles_[static_cast<std::size_t>(ty * tilesX + tx)];
+                    if (!T.tex) continue;
+                    const int x0 = tx * tileW, x1 = std::min(fb.w, x0 + tileW);
+                    bool bound = false;
+                    for (int y = y0; y <= y1;) {
+                        if (!ovRowDraw_[static_cast<std::size_t>(y)]) { ++y; continue; }
+                        int e = y;
+                        while (e + 1 <= y1 && ovRowDraw_[static_cast<std::size_t>(e + 1)]) ++e;
+                        if (!bound) { glBindTexture(GL_TEXTURE_2D, T.tex); glBegin(GL_QUADS); bound = true; }
+                        const float t0 = static_cast<float>(y - y0) * invH, t1 = static_cast<float>(e + 1 - y0) * invH;
+                        const float s1 = static_cast<float>(x1 - x0) * invW;
+                        const float yTop = static_cast<float>(wh - y), yBot = static_cast<float>(wh - e - 1);
+                        const float xl = static_cast<float>(x0) * ww / fb.w, xr = static_cast<float>(x1) * ww / fb.w;
+                        glTexCoord2f(0, t0);  glVertex2f(xl, yTop);
+                        glTexCoord2f(s1, t0); glVertex2f(xr, yTop);
+                        glTexCoord2f(s1, t1); glVertex2f(xr, yBot);
+                        glTexCoord2f(0, t1);  glVertex2f(xl, yBot);
+                        y = e + 1;
+                    }
+                    if (bound) glEnd();
+                }
             }
-            glEnd();
-            glDisable(target);
+            glDisable(GL_TEXTURE_2D);
+            boundTex_ = ~0u;
         }
         if (fading) {
             // the fade over everything, interface included, as the GLES pass
@@ -1230,7 +1218,8 @@ public:
                 } else if (m == 255) ++nAdd;
                 else ++nPartial;
             }
-        const GLuint ovName = ovTex_;
+        GLuint ovName = 0;                       // the first tile made, for its residency
+        for (const OvTile& t : ovTiles_) if (t.tex) { ovName = t.tex; break; }
         GLboolean ovRes = GL_FALSE;
         if (ovName) glAreTexturesResident(1, &ovName, &ovRes);
         std::vector<GLuint> names;
@@ -1351,8 +1340,16 @@ private:
     GLuint readTex_ = 0;
     GLsizei readTexW_ = 0, readTexH_ = 0;
     std::vector<unsigned char> readBig_;
-    GLuint ovTex_ = 0;                   // the overlay (`presentOverlay`)
-    GLsizei ovTexW_ = 0, ovTexH_ = 0;
+    // the overlay's TILES (`presentOverlay`, step 3i): a texture each, made on
+    // first use, and with client storage its own memory
+    struct OvTile { GLuint tex = 0; std::vector<std::uint32_t> store; };
+    std::vector<OvTile> ovTiles_;
+    int ovTileW_ = 0;
+    void freeOverlayTiles() {
+        for (OvTile& t : ovTiles_)
+            if (t.tex) { gpuForget(omk::prof::kGlTexture, &t.tex, 1); glDeleteTextures(1, &t.tex); t.tex = 0; }
+        ovTiles_.clear();
+    }
     std::vector<std::uint32_t> ovBand_;  // a run of changed rows, converted
     GLuint probeTex_ = 0;                // the white-screen probe's pixel reads
 #endif
@@ -1385,7 +1382,6 @@ private:
     std::vector<std::uint32_t> poseGen_;
     std::uint32_t poseDraw_ = 0;
 #if defined(OMK_GL1_AGL)
-    std::vector<std::uint32_t> ovStore_; // the client-storage texture's own memory (`gl1OverlayPath`)
     // step 3b: each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
     // without / with a mask), whether it holds anything but the key, and
     // whether the texture row holds it

@@ -899,6 +899,36 @@ no gain (submit 11.92 -> 11.86 ms with 285792 corners skipped): the iBook is
 the measure. The GPU backends transform on the GPU from resident buffers,
 so the skip does not apply to them.
 
+**THE iBOOK'S SEVENTH RUN (2026-10-11, the 3h build `cb96d6f`, 7399 frames,
+exit 0)**, the same route:
+- `display: video memory 8192 KB, 6624 KB for textures by the driver (the
+  screen's buffer 1536 KB), back and depth 1200 KB -> 5424 KB free` and the
+  original's rule: **128x256** - as predicted for the 8 MB card;
+- the STREET 113.6 -> **103.7 ms** (median 99.1): the submit's own CPU 41.9
+  -> 38.5 (the runs skipped), `gl1: overlay compare` 8.7 -> 4.9, `gl1: draw
+  call` 20.3 -> **20.1** - the textures fitting the VRAM did not speed the
+  draws: the rule is the original's look, not a speed-up here;
+- the FIGHT 191 -> **135 ms**: `gl1: overlay draw` (the QUADS) **42.9 ms** a
+  frame against `gl1: overlay rows` (the uploads) 1.1 and `overlay compare`
+  8.9; in the street the same draw is 0.75 ms. So a draw of the 2 MB client
+  overlay texture after it CHANGED is what costs - the driver moving it whole
+  to the card again - and the fight's sparks change it every frame; `gl1
+  overlay:` 14-25 rows' worth sent a frame in 0.6-1.4 calls.
+
+**Step 3i - THE OVERLAY IN TILES, DONE 2026-10-11, NOT yet run on the iBook.**
+The seventh run's fight: drawing the overlay after it changed cost 42.9 ms a
+frame (0.75 in the street, where it rarely changes) - the driver sending the
+whole 2 MB client texture again. The overlay is now 64-row TILES two blocks
+wide (64 pixels at 640), a texture each, made the first time a tile holds
+something; a change re-sends only its tiles (the stale blocks with client
+storage), a tile with nothing drawn is neither sent nor drawn, and a tile's
+stale blocks wait for it to be drawn. The emulated Tiger: the Impasse's
+probes as step 3g's; the supermarket fight's HUD frames draw the gauges
+(band 18..454) with the world through a transparent texel of tile 0; `gl1
+overlay:` 21 rows' worth in 3.9 calls a frame. Not for GLES or the 3DS:
+the Vita copies into the texture memory itself and the PICA reads its
+overlay from linear memory - no driver sends a whole texture there.
+
 **FURTHER CANDIDATES, listed for the reader 2026-10-09 (none started):**
 GL1 posing bodies and moving meshes itself (`posesBodies`, one camera x
 mesh 3x4 a mesh: GL1 answers no today, so the street's moving meshes are

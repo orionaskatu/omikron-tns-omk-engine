@@ -15061,6 +15061,92 @@ def c_engine_hint_shop():
            "list 2 and how many of them carry a clue to sell (49 of 49)"
 
 
+def c_engine_dossier_reader():
+    r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
+
+    `todo/scene-gameplay-audit.md` 25. The keypad's activate callback
+    `0x004AF410` ends its TERMINAL arm (cells 0..4) and its ARCHIVES arm
+    (cells 0..3) in `sub_42A370(screen, 0x004E4170)` and `dword_6A5090 = 0` -
+    no answer-and-leave, no oscillator. Panel 0x004E4170 names the same three
+    lists as the screen's own 0x004E4108 with `+24 = 1`, so the focus moves
+    into the body box, whose list hook is the scroller `sub_42A9A0`; its
+    parent is 0x004E4108, so BACK returns to the cover page; and the body's
+    text hook `0x004AF5D0`, off panel 0x004E4108, draws the string the
+    highlighted keypad cell's TAG names. The ARCHIVES' cell 2 writes the answer
+    1 without closing, so AREA 180's parked script hears it when the PLAYER
+    closes the screen. `Ui_ItemTextStyle`'s bank C `0x80000002` arm clamps
+    the offset against the laid-out height, generically.
+
+    Two runs at 640x480 (where the `Meurtres` file is 48 pixels too tall for
+    its box):
+
+    * the ARCHIVES (AREA 180, address 565): RIGHT twice to cell 2, ENTER - the
+      body shows string 8 from list 1, scroll 0 of 48; seven DOWNs step it 8 at
+      a time and the clamp stops it at 48; BACK puts the cover page (string 5)
+      back; TAB closes it and only THEN does the script hear 1 - DATA
+      MEMORIZED, address 3 enabled;
+    * the TERMINAL (AREA 179): cell 3 and then BACK twice - the reader to the
+      cover page, the cover page closing the screen (its `+72` carries 0x10) -
+      answers 2: `sub_4AF0E0` is the screen's close slot, so BACK reaches it
+      as TAB does.
+
+    Shown to fail: the archives' answer written as before (the script hears 1
+    while the file is up); the reader's text taken from the cover-page arm;
+    the composer's clamp removed (the offset runs past 48); the top-panel
+    BACK closing without the close callback (the terminal answers -1).
+    """
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "SCPTDATA"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    def run(extra, hold, frames):
+        return subprocess.run(
+            [play, fr, os.path.join(ROOT, "tables"),
+             "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--frames", str(frames), "--nofmv", "--nodelay", "--no-crowd",
+             "--res", "640x480", "--hold", hold] + extra,
+            capture_output=True, text=True, errors="replace",
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    def story(out, scr):
+        """The log's own order: what the body said, where the reader stood,
+        and when the script heard the answer."""
+        pat = re.compile(r"terminal family: screen %d - the display says '.*' \(string (\d+), "
+                         r"([^)]*)\)|terminal family: dossier reader - (list \d+, scroll "
+                         r"\d+ of \d+)|screen %d answered (-?\d+) -> the script resumes"
+                         r"|screen %d closed without an answer -> (-1)" % (scr, scr, scr))
+        seq = []
+        for m in pat.finditer(out):
+            if m.group(1): seq.append("display %s (%s)" % (m.group(1), m.group(2)))
+            elif m.group(3): seq.append(m.group(3))
+            else: seq.append("answered %s" % (m.group(4) or m.group(5)))
+        return tuple(seq)
+    down = ",k208*2,k*4" * 7
+    a = run(["--area", "180", "--address", "565"],
+            "k*40,k28*2,k*80,k205*2,k*4,k205*2,k*10,k28*2,k*20" + down +
+            ",k*20,k57*2,k*20,k15*2,k*150", 460)
+    t = run(["--area", "179", "--stand", "5468,336,-12118,120"],
+            "k*40,k28*2,k*40,k208*2,k*20,k28*2,k*20,k57*2,k*20,k57*2,k*100", 300)
+    got = (story(a, 18), "ADDRESS 3 ENABLED" in a, story(t, 5))
+    want = (("display 5 (the cover page)",
+             "display 8 (the dossier reader, the cell's tag)",
+             "list 1, scroll 0 of 48", "list 1, scroll 8 of 48", "list 1, scroll 16 of 48",
+             "list 1, scroll 24 of 48", "list 1, scroll 32 of 48", "list 1, scroll 40 of 48",
+             "list 1, scroll 48 of 48",
+             "display 5 (the cover page)", "answered 1"), True,
+            ("display 11 (oscillator 6, the banner)",
+             "display 3 (the dossier reader, the cell's tag)",
+             "list 1, scroll 0 of 16",
+             "display 11 (oscillator 6, the banner)", "answered 2"))
+    return got, want, \
+        "the archives' Meurtres file stays up, scrolls 8 a press to the clamp at 48, BACK " \
+        "returns to the cover page and TAB closes it before the script hears 1; the " \
+        "terminal's BACK-close answers 2"
+
+
 def c_engine_terminal_family():
     r"""`omk-play`: Kay'l's TERMINAL and the FIGHT SIMULATOR - the keypad family.
 
@@ -15082,11 +15168,14 @@ def c_engine_terminal_family():
     a place is the reason to read it.
 
     Two runs. **The terminal** (AREA 179, standing on zone 3030 in Kay'l's
-    office): the body names his dossiers, the keypad walks to row 3, and
+    office): the body shows the start-up banner oscillator 6 holds for 7000 ms
+    (re-read 2026-10-12: the cover page naming his dossiers comes after it),
+    the keypad walks to row 3 and opens that file in the dossier reader, and
     closing answers **2** - `sub_4AF0E0` reports which protected dossier was
     opened - which is the branch of AREA 179's script that plays `ZVO P315 DATA
     MEMORIZED`. **The fight simulator** (AREA 237, the console at address 680):
-    the body names the machine, and confirming the first cell answers **1**,
+    the body names the machine - banner, cover page and, during the 4500 ms
+    delayed close, the closing page - and confirming the first cell answers **1**,
     which is `Interface == 1` - the script shows CHARACTERS 331 and
     `fight.begin` runs, so the training fight starts.
 
@@ -15115,16 +15204,25 @@ def c_engine_terminal_family():
     # the terminal: open, down one row, confirm the dossier, close with TAB
     t = run(["--area", "179", "--stand", "5468,336,-12118,120"],
             "k*40,k28*2,k*40,k208*2,k*20,k28*2,k*20,k15*2,k*150", 400)
-    tsay = re.search(r"terminal family: screen 5 - the display says '(.*)", t)
+    # THE BODY, in the text hook's order (`sub_4AF5D0`): the terminal's open
+    # starts oscillator 6 for 7000 ms, so this run - which confirms inside it -
+    # sees the BANNER (string 11) and then the dossier reader on cell 3's file
+    # (string 3, off panel 0x004E4170), never the cover page
+    disp = r"terminal family: screen %d - the display says '(.*)' \(string (\d+), ([^)]*)\)"
+    tsay = [(int(m.group(2)), m.group(3)) for m in re.finditer(disp % 5, t)]
     tans = re.search(r"screen 5 answered (\d+) -> the script resumes \(variable (\d+) now", t)
     # THE HEADER BAR - `textFn` 0x004AF5A0, the last of this family's gaps:
     # eleven bytes that hand `sub_476860` the KEYPAD item the cursor is on, so
     # the bar at (40, 28) is the highlighted cell's own label. Taken from the
     # bar's own line, which is printed from the text the composer will draw.
     tbar = re.findall(r"terminal family: screen 5 cell (\d+) - the bar says '(.*)'", t)
-    # the simulator: open, confirm the first cell
-    f = run(["--area", "237", "--address", "680"], "k*40,k28*2,k*80,k28*2,k*700", 900)
-    fsay = re.search(r"terminal family: screen 11 - the display says '(.*)", f)
+    # the simulator: open, wait out its 7000 ms banner, confirm the first cell -
+    # the body then takes all three of its arms: the banner (string 4,
+    # `Attente d'autorisation`), the cover page (5, `Bienvenue`) and, while
+    # oscillator 5 holds the choice 4500 ms, the closing page (6, `Merci`)
+    f = run(["--area", "237", "--address", "680"], "k*40,k28*2,k*300,k28*2,k*450", 900)
+    fsay = [(int(m.group(2)), m.group(3)) for m in re.finditer(disp % 11, f)]
+    fword = re.search(disp % 11, f)
     fans = re.search(r"screen 11 answered (\d+) -> the script resumes \(variable (\d+) now", f)
     # the bar on the cell the run walks to, and the CELL it names - two rows,
     # because a bar that never changed would satisfy either one alone
@@ -15132,16 +15230,21 @@ def c_engine_terminal_family():
     # subprocess is read as UTF-8 with replacement, so the degree sign in
     # "dossier n\xb01" is not a stable thing for a check to assert.
     bars = {int(c): "".join(ch for ch in b if ch.isascii()) for c, b in tbar}
-    return ("Dossiers agents Kay" in (tsay.group(1) if tsay else ""),
+    return (tuple(tsay),
             int(tans.group(1)) if tans else -1, int(tans.group(2)) if tans else -1,
-            "Simulateur de combat" in (fsay.group(1) if fsay else ""),
+            tuple(fsay), "Simulateur de combat" in (fword.group(1) if fword else ""),
             int(fans.group(1)) if fans else -1,
             "FIGHT BEGINS against CHARACTERS 331" in f,
             "DATA MEMORIZED" in t, "ADDRESS 33 ENABLED" in t,
             bars.get(0, ""), bars.get(3, "")), \
-           (True, 2, 19, True, 1, True, True, True,
+           (((11, "oscillator 6, the banner"), (3, "the dossier reader, the cell's tag")),
+            2, 19,
+            ((4, "oscillator 6, the banner"), (5, "the cover page"),
+             (6, "oscillator 5, the delayed close")), True, 1, True, True, True,
             "{fC}Consulter le dossier n1", "{fC}Consulter le dossier n4"), \
-           ("the terminal lists Kay'l's dossiers and answers 2 on the way out, the "
+           ("the terminal shows its banner, then the file cell 3 opens, and answers 2 on "
+            "the way out; the simulator's banner, cover page and closing page come in the "
+            "text hook's order; the "
             "header bar names the keypad cell the cursor is on, and the simulator's "
             "first cell answers 1 and starts the training fight")
 
@@ -47057,6 +47160,7 @@ SLOW = [
     ("engine: stairs down", c_engine_stairs_down, "todo/scene-gameplay-audit.md 22; actor/walk.h"),
     ("engine: call close", c_engine_call_close, "todo/scene-gameplay-audit.md 12; docs/UI.md 3i"),
     ("engine: delayed close", c_engine_delayed_close, "todo/scene-gameplay-audit.md 24; ui/widgets.h"),
+    ("engine: dossier reader", c_engine_dossier_reader, "todo/scene-gameplay-audit.md 25; docs/UI.md"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

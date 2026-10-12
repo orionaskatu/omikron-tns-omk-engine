@@ -28,6 +28,7 @@
 #include "script/gamestate.h"
 #include "script/interp.h"
 #include "script/script.h"
+#include "script/opcodes.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -157,7 +158,7 @@ int main(int argc, char** argv) {
         auto x = run(t, c, {0, 12, 34});
         int a = -1, sc = -1;
         for (const auto& call : x.r.calls)
-            if (call.op == 71 && call.fields.size() == 2) { a = call.fields[0]; sc = call.fields[1]; }
+            if (call.op == omk::op::SceneLoad && call.fields.size() == 2) { a = call.fields[0]; sc = call.fields[1]; }
         std::printf("scene.load [0x4000][0x4001] params={0,12,34} -> recorded %d %d ; "
                     "sceneOfArea(12)=%d (%s)\n",
                     a, sc, x.state.sceneOfArea(12), status(x.r.status));
@@ -181,7 +182,7 @@ int main(int argc, char** argv) {
             seen.insert(v);
             if (k && v == x.state.var(100 + k - 1)) ++consec;
         }
-        for (const auto& call : x.r.calls) recorded += (call.op == 120);
+        for (const auto& call : x.r.calls) recorded += (call.op == omk::op::VarSetRandom);
         std::printf("random [3,5] x50 -> inrange %d/50 consecutive-equal %d distinct %zu "
                     "recorded %d first %d %d %d %d %d (%s)\n",
                     inrange, consec, seen.size(), recorded,
@@ -195,7 +196,7 @@ int main(int argc, char** argv) {
         // and with writes off, the variable is untouched and the call recorded
         auto z = run(t, c, {}, 12345, false);
         int rec = 0;
-        for (const auto& call : z.r.calls) rec += (call.op == 120);
+        for (const auto& call : z.r.calls) rec += (call.op == omk::op::VarSetRandom);
         std::printf("random writes-off -> var9=%d recorded %d\n", z.state.var(9), rec);
     }
     {
@@ -206,7 +207,7 @@ int main(int argc, char** argv) {
         auto x = run(t, c, {0, 42, 42, 11}, 7);
         int f0 = -1, f1 = -1, f2 = -1;
         for (const auto& call : x.r.calls)
-            if (call.op == 120 && call.fields.size() == 3) { f0 = call.fields[0]; f1 = call.fields[1]; f2 = call.fields[2]; }
+            if (call.op == omk::op::VarSetRandom && call.fields.size() == 3) { f0 = call.fields[0]; f1 = call.fields[1]; f2 = call.fields[2]; }
         std::printf("random lo==hi 9 -> var9=%d ; indirect [0x4000][0x4001][0x4002] params={0,42,42,11} "
                     "-> var11=%d recorded %d %d %d (%s)\n",
                     x.state.var(9), x.state.var(11), f0, f1, f2, status(x.r.status));

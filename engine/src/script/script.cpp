@@ -2,6 +2,7 @@
 #include "formats/bytes.h"
 #include "script/script.h"
 #include "platform/datafs.h"
+#include "script/opcodes.h"
 
 #include <cctype>
 #include <cstdio>
@@ -69,7 +70,7 @@ Decoded decodeScript(std::span<const std::byte> b, std::size_t start,
             ins.operand.push_back(static_cast<std::uint8_t>(b[pc + 1 + static_cast<std::size_t>(k)]));
         out.code.push_back(std::move(ins));
         pc += 1 + static_cast<std::size_t>(n);
-        if (op == 3) { out.status = DecodeStatus::Ok; return out; }   // `end`
+        if (op == op::End) { out.status = DecodeStatus::Ok; return out; }   // `end`
         if (out.code.size() > 20000) { out.status = DecodeStatus::Runaway; return out; }
     }
 }

@@ -12,6 +12,7 @@
 #include "script/world.h"
 #include "script/inventory.h"
 #include "script/objects.h"
+#include "script/opcodes.h"
 
 #include <chrono>
 #include <cmath>
@@ -2871,7 +2872,7 @@ void Session::onCall(int i, const Call& call) {
     // Impasse's opening fade as `-1, 255, 25, 0`: the bytes are
     // `FF FF FF 00 19 00 00 00`, so the colour is 0x00FFFFFF (WHITE) and the
     // duration is 25.
-    case 118: case 119: {
+    case op::FadeToColor: case op::FadeFromColor: {
         if (call.fields.size() < 3) break;
         const auto lo = static_cast<std::uint32_t>(call.fields[0]) & 0xFFFFu;
         const auto hi = static_cast<std::uint32_t>(call.fields[1]) & 0xFFFFu;
@@ -2880,12 +2881,12 @@ void Session::onCall(int i, const Call& call) {
         // MESSAGE-0 handler is forced to pure red. The bookkeeping was already
         // here with a named reader and nothing to consume it; this consumes it.
         if (message0Ctx_ >= 0 && c && message0Ctx_ == c->slot) colour = 0xFF0000u;
-        startColourFade(call.op == 118 ? 1 : 2, colour,
+        startColourFade(call.op == op::FadeToColor ? 1 : 2, colour,
                         static_cast<float>(call.fields[2]));
         break;
     }
     // 132 is the fade IN and 133 the fade OUT, whatever the table calls them
-    case 136:
+    case op::CameraShake:
         // `camera.shake duration, amp` (0x00405B10): two int16 operands,
         // either a variable under 0x4000 (no shipped site uses one), and
         // `Camera_SetShake(dword_9307E4, (float)op1, op2)` unless the VM's
@@ -2893,11 +2894,11 @@ void Session::onCall(int i, const Call& call) {
         if (call.fields.size() >= 2)
             cameraShake(static_cast<float>(call.fields[0]), call.fields[1]);
         break;
-    case 150: case 151: {
+    case op::RenderGreyOn: case op::RenderGreyOff: {
         // `render.grey.on` / `.off` (0x406050 / 0x406070, read from the
         // image): `if (!dword_6A05E0) sub_42FA00(op == 150)` - no operand.
         // The bank swap calls the activate hook only on a CHANGE.
-        const bool on = call.op == 150;
+        const bool on = call.op == op::RenderGreyOn;
         if (on != greyBank_) {
             greyBank_ = on;
             ++greySwaps_;
@@ -2906,9 +2907,9 @@ void Session::onCall(int i, const Call& call) {
         }
         break;
     }
-    case 132: startBlackFade(true);  break;
-    case 133: startBlackFade(false); break;
-    case 103:
+    case op::FadeToBlack: startBlackFade(true);  break;
+    case op::FadeFromBlack: startBlackFade(false); break;
+    case op::MusicPlay:
         // `music.play`: field 0 is the track, field 1 the loop flag.
         // `Music_PlayTrack` refuses anything below 2, so 0 and 1 are the
         // engine's own "stop", not a file it failed to find.
@@ -2919,7 +2920,7 @@ void Session::onCall(int i, const Call& call) {
             if (call.fields[0] >= 2) musicFadeIn_ = musicLoop_ ? 100.0 : 0.0;
         }
         break;
-    case 131:
+    case op::MusicVolume:
         // `music.volume target, frames` - Music_SetVolumeRamp (0x0041E0E0):
         // target << 16 and the per-frame step towards it. An ATTENUATION:
         // 0 is full and 100 silent (SCRIPT_VM's "0 = fade out" gloss has the
@@ -2930,11 +2931,11 @@ void Session::onCall(int i, const Call& call) {
             musicRampStep_ = (musicRampTarget_ - musicRamp_) / frames;
         }
         break;
-    case 56:
+    case op::PlayerBecome:
         // `player.become`: the soul transfer - see `becomePlayer`.
         if (!call.fields.empty()) becomePlayer(call.fields[0]);
         break;
-    case 71:
+    case op::SceneLoad:
         // `scene.load` / `scene.unload`: on a RESIDENT area the swap is
         // immediate - see the two bodies. `sceneLoad` may free THIS context
         // (a scene's own script reloading its area); the run has already
@@ -2942,10 +2943,10 @@ void Session::onCall(int i, const Call& call) {
         // running context amounts to. `execute` checks for that.
         if (call.fields.size() >= 2) sceneLoad(call.fields[0], call.fields[1]);
         break;
-    case 72:
+    case op::SceneUnload:
         if (!call.fields.empty()) sceneUnload(call.fields[0], i);
         break;
-    case 82: case 84: {
+    case op::ShootActorEnter: case op::ShootActorAction: {
         // `shoot.actor.enter` (0x00422C10) and `shoot.actor.action`
         // (0x00423170). The first puts the actor in `ACTOR_STATE` 3 and
         // resolves his CHARACTER TYPE's animation list out of the area's
@@ -2964,7 +2965,7 @@ void Session::onCall(int i, const Call& call) {
         // characters. LABELLED as that, not as the shoot AI running.
         if (call.fields.empty()) break;
         const int who = call.fields[0];
-        if (call.op == 82) shoot_.actorEnter(who);     // no action (`kEnteredOnly`)
+        if (call.op == op::ShootActorEnter) shoot_.actorEnter(who);     // no action (`kEnteredOnly`)
         // op 84 is SIX bytes, three int16 operands: the actor, the action and
         // `a3` - which for the patrol names the route (`todo/shoot-patrol.md`).
         else if (call.fields.size() >= 2)
@@ -2972,7 +2973,7 @@ void Session::onCall(int i, const Call& call) {
                                call.fields.size() >= 3 ? call.fields[2] : 0);
         break;
     }
-    case 80: case 81: {
+    case op::ShootBegin: case op::ShootEnd: {
         // `shoot.begin` (0x00403E80) and `shoot.end` (0x00403F10). The first
         // takes a WEAPON OBJECT and stores the slot `Weapon_SlotForObject`
         // gives it in `dword_4C0134` - only if that is still -1, so a gun in
@@ -2985,11 +2986,11 @@ void Session::onCall(int i, const Call& call) {
         // slots 5..14; it is read once, here, because nothing else in the
         // Session needs it.
         const int operand = call.fields.empty() ? -1 : call.fields[0];
-        if (call.op == 80) shootBegin(operand);
+        if (call.op == op::ShootBegin) shootBegin(operand);
         else               shootEnd(operand);
         break;
     }
-    case 146: case 147:
+    case op::AmbienceOn: case op::AmbienceOff:
         // THE RADAR'S SWITCH (0x00405F00 / 0x00405F20): `dword_4EB8C8 = 1` and
         // `= 0`, each only while `dword_6A05E0` is 0 - a mode flag written by
         // three unlabelled functions past `game.restart`'s handler and not
@@ -2998,9 +2999,9 @@ void Session::onCall(int i, const Call& call) {
         // sites, every one in a shoot phase: an `on` after `shoot.begin` -
         // behind `has_object 0, 980, 20` in seven arenas, bare in AREA 63 and
         // 67 - and an `off` at `shoot.end` (`ui/radar.h`).
-        radarOn_ = call.op == 146;
+        radarOn_ = call.op == op::AmbienceOn;
         break;
-    case 148: {
+    case op::InventorySave: {
         // `inventory.save` (0x405F40, no `proc` label - read from the image;
         // todo/drift-audit.md S4). The shoot phases' checkpoint: AREA 2 saves
         // on entry and its "Mort Joueur" handlers restore.
@@ -3023,7 +3024,7 @@ void Session::onCall(int i, const Call& call) {
                     invCheckpoint_[20], invCheckpoint_[21], invCheckpoint_[22]);
         break;
     }
-    case 149: {
+    case op::InventoryRestore: {
         // `inventory.restore` (0x405FC0): empty list 0 from the front
         // (`ObjectList_RemoveAt(0, 0)` while it counts), re-insert each saved
         // id at the FRONT (`ObjectList_InsertFront(0, id, 0, 0)` - so the list
@@ -3042,7 +3043,7 @@ void Session::onCall(int i, const Call& call) {
                     state_.playerI16(264), state_.playerI16(266), state_.playerI16(268));
         break;
     }
-    case 152:
+    case op::GameRestart:
         // `game.restart` (0x406090, read from the image): the dry-run test,
         // then `g_RestartRequest = 1` and nothing else. `Script_Pump(1)`
         // serves it at the top of the NEXT pump (`frame`, above). Three
@@ -3050,7 +3051,7 @@ void Session::onCall(int i, const Call& call) {
         // todo/drift-audit.md S3.
         requestRestart();
         break;
-    case 123:
+    case op::SetHidePiece:
         // `set.hide_piece` (0x4055C0, `asmfn.py --op 123`): the dry-run test,
         // then `sub_41BD40(id, 0)` - `SetPiece_Find(id)` in the CURRENT `.sfx`
         // bank (`dword_536BC0`, the active slot's) and `+72 &= ~1`. A set
@@ -3062,7 +3063,7 @@ void Session::onCall(int i, const Call& call) {
                         hid ? "the row hidden" : "no row carries that id");
         }
         break;
-    case 54:
+    case op::CameraFollowPlayer:
         // `camera.follow_player` (0x402ED0): the dry-run test, then
         // `sub_41DDB0(Actor_Player())` - when that actor is present,
         // `Camera_Request(0)` on him with `dword_930818 = 0` (no blend), and
@@ -3073,11 +3074,11 @@ void Session::onCall(int i, const Call& call) {
         ++followRequests_;
         std::printf("frame %ld: camera.follow_player - Camera_Request(0) on the player\n", frameNo_);
         break;
-    case 127:
+    case op::PlayerPosSync:
         // `player.pos.sync` (0x405800, a bare `jmp sub_41C140`)
         ++posSyncs_;
         break;
-    case 94:
+    case op::ImageShow:
         // `image.show` (0x4048D0, `asmfn.py --op 94`): the dry-run test, then
         // `sprintf(buf, "%06lx.BMP", operand)` and `Image_Show(buf)` - which
         // loads `IMAGES\<buf>` into `dword_93072C` and puts the player in
@@ -3091,7 +3092,7 @@ void Session::onCall(int i, const Call& call) {
             std::printf("frame %ld: image.show %d - IMAGES\\%s\n", frameNo_, call.fields[0], buf);
         }
         break;
-    case 142:
+    case op::UiHighscore:
         // `ui.highscore` (0x405CD0, `asmfn.py --op 142`): the dry-run test,
         // then the NAME through `Actor_GetProperty` case 6 - the actor record
         // +8 - with a block whose +16 is field 0, or `Actor_Player()` when it
@@ -3127,8 +3128,8 @@ void Session::onCall(int i, const Call& call) {
             highScores_.push_back(std::move(h));
         }
         break;
-    case 134:
-    case 135:
+    case op::SetMirrorOn:
+    case op::SetMirrorOff:
         // `set.mirror.on` / `set.mirror.off` (0x405AD0 / 0x405AF0, read from
         // the image): the dry-run test, then `sub_41E1D0(1)` / `(0)`. 0 parks
         // the LIVE mirror - `if (dword_534F48) { dword_4E90A0 =
@@ -3136,14 +3137,14 @@ void Session::onCall(int i, const Call& call) {
         // when there is one, leaving it parked too. `dword_534F48` is the one
         // mirror `sub_440D90` reflects through (CLAUDE.md 6). AREA 237's zone
         // scripts park it on three camera cuts and restore it in two others.
-        if (call.op == 135) { if (!mirrorParked_) mirrorWasLive_ = true; mirrorParked_ = true; }
+        if (call.op == op::SetMirrorOff) { if (!mirrorParked_) mirrorWasLive_ = true; mirrorParked_ = true; }
         else if (mirrorWasLive_) mirrorParked_ = false;
         ++mirrorToggles_;
         std::printf("frame %ld: %s - the live mirror (dword_534F48) %s\n", frameNo_,
-                    call.op == 135 ? "set.mirror.off" : "set.mirror.on",
+                    call.op == op::SetMirrorOff ? "set.mirror.off" : "set.mirror.on",
                     mirrorParked_ ? "parked" : "live");
         break;
-    case 137:
+    case op::UiCloseAll:
         // `ui.close_all` (0x405BA0, read from the image): the dry-run test,
         // then `jmp sub_41DF90` - `UI_CloseAllScreens()` and 1: every slot
         // whose state (+8) is set gets its own CLOSE callback (instance +20,
@@ -3154,7 +3155,7 @@ void Session::onCall(int i, const Call& call) {
         ++closeAllScreens_;
         std::printf("frame %ld: ui.close_all - UI_CloseAllScreens\n", frameNo_);
         break;
-    case 122:
+    case op::SetShowPiece:
         // `set.show_piece` (0x405570, `asmfn.py --op 122`): op 123's handler
         // instruction for instruction but `push 1` - `sub_41BD40(id, 1)`,
         // `SetPiece_Find(id)` then `SetPiece_Show(row)`. Three shipped sites,
@@ -3165,15 +3166,15 @@ void Session::onCall(int i, const Call& call) {
                         shown ? "the row shown" : "no row carries that id");
         }
         break;
-    case 106: case 107:
+    case op::ShootFreezeAll: case op::ShootUnfreezeAll:
         // `shoot.freeze_all` / `.unfreeze_all` (0x405300 / 0x405310, bare
         // `jmp`s to 0x422B90 / 0x422BD0, read from the image): bit 0x8000 of
         // every record's `+160` and `dword_4E9760` - only when the records
         // exist (`if (!g_ShootRecords) return`), i.e. in a phase
         // (todo/drift-audit.md S7). The frontend owns the records.
-        if (shoot_.active()) shoot_.setFrozen(call.op == 106);
+        if (shoot_.active()) shoot_.setFrozen(call.op == op::ShootFreezeAll);
         break;
-    case 116:
+    case op::ShootPlayerSuspend:
         // `shoot.player.suspend` (0x4050E0, read from the image): the
         // dry-run test, the held object dropped, then `jmp 0x422950` - the
         // player half of `Shoot_Leave` and `g_PlayerBehaviourOff = 1`. The
@@ -3181,7 +3182,7 @@ void Session::onCall(int i, const Call& call) {
         // frontend's (todo/drift-audit.md S7).
         shoot_.suspendPlayer();
         break;
-    case 117:
+    case op::ShootPlayerResume:
         // `shoot.player.resume` (0x405130 -> 0x4229C0): the player half of
         // `Shoot_Enter` and `g_PlayerBehaviourOff = 0`. First the weapon
         // change's two flags (0x00405150): `Actor_HeldObjectSlot(player)`
@@ -3190,7 +3191,7 @@ void Session::onCall(int i, const Call& call) {
         shoot_.armWeaponLoad(heldSlotOf(-1) == -1);
         shoot_.resumePlayer();
         break;
-    case 129: case 130:
+    case op::WalkLedgesIgnore: case op::WalkLedgesObey:
         // `walk.ledges.ignore` / `.obey` (0x4059D0 / 0x4059F0, no `proc`
         // label - read from the image): the visible flag, the dry-run test,
         // then `sub_41C260(1 / 0)`, which is `g_IgnoreLedges = a1` and
@@ -3198,18 +3199,18 @@ void Session::onCall(int i, const Call& call) {
         // reset, read by the walker's two ledge tests (21_d3d.c 2554, 2734).
         // They bracket the lift and platform rides (28 / 29 sites;
         // todo/drift-audit.md S5).
-        ignoreLedges_ = call.op == 129;
+        ignoreLedges_ = call.op == op::WalkLedgesIgnore;
         break;
-    case 138: case 139: {
+    case op::CharacterLookAtPlayer: case op::CharacterLookAway: {
         // `character.look_at_player` / `character.look_away`: the actor's
         // look-at slot (+400) written with the player's index / -1. The head
         // aim itself is `Actors_TickAll`'s, per frame, in the frontend.
         if (call.fields.empty()) break;
-        if (call.op == 138) lookAtPlayer_.insert(call.fields[0]);
+        if (call.op == op::CharacterLookAtPlayer) lookAtPlayer_.insert(call.fields[0]);
         else lookAtPlayer_.erase(call.fields[0]);
         break;
     }
-    case 78: {
+    case op::CharacterShow: {
         // `character.show` / `character.hide`: a character is on screen
         // between them, which is well before `dialog.start`. Both handlers
         // (0x403CB0 / 0x403DD0) resolve the 20-byte record (`sub_40D6A0`),
@@ -3222,7 +3223,7 @@ void Session::onCall(int i, const Call& call) {
         characterShow(call.fields[0], call.fields.size() > 1 ? call.fields[1] : 0);
         break;
     }
-    case 79: {
+    case op::CharacterHide: {
         // -1 is the player: `cmp esi, -1 ; jz loc_403E61` ->
         // `sub_41CED0(Actor_Player(), 1)`. AREA 118 does exactly that at pc
         // 1050, three bytes after `player.become 136`, so the body the
@@ -3231,19 +3232,19 @@ void Session::onCall(int i, const Call& call) {
         characterHide(call.fields[0]);
         break;
     }
-    case 104:
+    case op::PlayerAnimHold:
         // `player.anim.hold`: `Actor_HoldAnimation(Actor_Player(), 1)` - the
         // 0x81 bits (area.h `playerAnimHeld`). The handler tests the dry-run
         // marker first (`mov eax, dword_6A05E0`), which is dead here
         // (SCRIPT_VM: the marker is never 1 on a path that reaches a handler).
         playerAnimHeld_ = true;
         break;
-    case 105:
+    case op::PlayerAnimRelease:
         // `player.anim.release`: the same with 0, and the accumulator cleared -
         // which is why he starts from the rest pose.
         playerAnimHeld_ = false;
         break;
-    case 73:
+    case op::ActorGotoAddress:
         // `actor.goto_address`: PLACE the actor at the address its operand
         // names. `Address_Find` resolves the id against both resident AREAs'
         // `+60` tables and the result goes to the actor through `sub_41BF50`.
@@ -3251,13 +3252,13 @@ void Session::onCall(int i, const Call& call) {
         // 654` is what gives him a world position at all.
         if (!call.fields.empty()) placeActorAt(call.fields[0]);
         break;
-    case 95:
+    case op::CameraSet:
         // `camera.set`: field 0 is the camera, field 1 the length of the
         // move in frames. 0 cuts.
         if (!call.fields.empty())
             applyCamera(call.fields[0], call.fields.size() >= 2 ? call.fields[1] : 0);
         break;
-    case 96:
+    case op::CameraSetWait:
         // `camera.set.wait` issues the SAME request and, with the hold on,
         // is handled where it parks - so it is applied here only when the
         // interpreter ran through it.
@@ -3265,7 +3266,7 @@ void Session::onCall(int i, const Call& call) {
             applyCamera(call.fields[0],
                         op96Travel(call.fields[0], call.fields.size() >= 2 ? call.fields[1] : 0));
         break;
-    case 126:
+    case op::CameraSetAtAddress:
         // `camera.set.at_address` issues the same mode-12 request; with the
         // hold on it is applied where it parks, so this is only the
         // ran-through path. Fields are [camera][address][travel].
@@ -3337,8 +3338,8 @@ void Session::execute(int i) {
         if (c->pc >= c->code.size()) { c->status = 0; finishRun(c); return; }
         const auto op = static_cast<std::uint8_t>(c->code[c->pc]);
         // the pre-dispatch refusal: one staged load at a time
-        if ((op == 45 || op == 47) && deferred_ != -1) {
-            if (op == 47) c->status = 9;
+        if ((op == op::AreaPreload || op == op::AreaGoto) && deferred_ != -1) {
+            if (op == op::AreaGoto) c->status = 9;
             // omk-play 70: this is the refusal that loses the tunnel's far
             // door - the doorless zone's transition is still in flight, so the
             // door-carrying goto never dispatches.
@@ -3400,10 +3401,10 @@ void Session::execute(int i) {
         const int waitOn = poolForSlot(c->slot, inOut).handle(r.calls);
         // the three transition opcodes, after their handler's announcement
         for (const auto& call : r.calls) {
-            if (call.op == 47 && call.fields.size() >= 3) {
+            if (call.op == op::AreaGoto && call.fields.size() >= 3) {
                 if (!areaTransition(0, i, c->slot, call.fields[0], call.fields[1], call.fields[2]))
                     c->pc = before;                       // `add [esi+0Ch], -7`
-            } else if (call.op == 45 && !call.fields.empty()) {
+            } else if (call.op == op::AreaPreload && !call.fields.empty()) {
                 // handler 0x402AB0: nothing when the ACTIVE slot holds it;
                 // the target is the active slot when that is empty, else
                 // the other; if the target already holds it `sub_419AF0`
@@ -3416,7 +3417,7 @@ void Session::execute(int i) {
                 loadIntoSlot(target, area);
                 c->status = 8;
                 deferred_ = i;
-            } else if (call.op == 48 && !call.fields.empty()) {
+            } else if (call.op == op::AreaArrive && !call.fields.empty()) {
                 areaTransition(1, i, active_, call.fields[0], -1, -1);
             }
         }
@@ -3484,7 +3485,7 @@ void Session::execute(int i) {
             // until the conversation closes. The pump's loop goes on.
             dialogState_ = 3;
             for (const auto& call : r.calls)
-                if (call.op == 61 && !call.fields.empty()) openDialog(call.fields[0]);
+                if (call.op == op::DialogStart && !call.fields.empty()) openDialog(call.fields[0]);
             return;
         case RunStatus::UiOpen:
             c->status = 6;
@@ -3617,10 +3618,10 @@ void Session::finishRun(Ctx* c) {
 
 bool Session::visibleOp(std::uint8_t op) {
     switch (op) {
-    case 46: case 57: case 58: case 59: case 61: case 62: case 63: case 70:
-    case 73: case 89: case 90: case 92: case 94: case 95: case 96: case 118:
-    case 119: case 122: case 123: case 126: case 129: case 130: case 138:
-    case 139:
+    case op::ScxPlayPlayerWait: case op::ScxPlay: case op::ScxPlayWait: case op::ScxPlayActor: case op::DialogStart: case op::FightBegin: case op::PlayerMove: case op::UiOpen:
+    case op::ActorGotoAddress: case op::PlayerMoveWait: case op::ScxPlayPlayer: case op::MediaPlay: case op::ImageShow: case op::CameraSet: case op::CameraSetWait: case op::FadeToColor:
+    case op::FadeFromColor: case op::SetShowPiece: case op::SetHidePiece: case op::CameraSetAtAddress: case op::WalkLedgesIgnore: case op::WalkLedgesObey: case op::CharacterLookAtPlayer:
+    case op::CharacterLookAway:
         return true;
     default:
         return false;

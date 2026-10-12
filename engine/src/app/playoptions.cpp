@@ -5,6 +5,7 @@
 #include "platform/datafs.h"
 
 #include "platform/settings.h"
+#include "script/opcodes.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -586,8 +587,8 @@ int PlayOptions::parse(int argc, char** argv) {
                 if (c != ',') { cur.push_back(c); continue; }
                 long f = -1; int op = -1;
                 if (std::sscanf(cur.c_str(), "%ld:%d", &f, &op) == 2 &&
-                    (op == 106 || op == 107 || op == 116 || op == 117 || op == 150 ||
-                     op == 151 || op == 152))
+                    (op == op::ShootFreezeAll || op == op::ShootUnfreezeAll || op == op::ShootPlayerSuspend || op == op::ShootPlayerResume || op == op::RenderGreyOn ||
+                     op == op::RenderGreyOff || op == op::GameRestart))
                     opAt.emplace_back(f, op);
                 else if (!cur.empty())
                     std::fprintf(stderr, "--op-at: '%s' refused (F:OP, OP one of "

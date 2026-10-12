@@ -13,6 +13,7 @@
 #include "platform/datafs.h"
 #include "script/script.h"
 #include "platform/json.h"
+#include "script/opcodes.h"
 
 #include <cstdio>
 #include <cstring>
@@ -41,7 +42,7 @@ int main(int argc, char** argv) {
                 const auto d = omk::decodeScript(span, sl.offset, span.size(), table);
                 if (d.status != omk::DecodeStatus::Ok) continue;
                 ++g_slots;
-                for (const auto& in : d.code) { if (in.op == 80) ++zone80; if (in.op == 82) ++g_op82; }
+                for (const auto& in : d.code) { if (in.op == omk::op::ShootBegin) ++zone80; if (in.op == omk::op::ShootActorEnter) ++g_op82; }
             }
             // ...AND THE STARTUP SCRIPT AT +4, which `chunkSlots` never
             // reaches: the zone walk comes from the zone records and the
@@ -50,7 +51,7 @@ int main(int argc, char** argv) {
             if (off > 0 && off < span.size()) {
                 const auto d = omk::decodeScript(span, off, span.size(), table);
                 if (d.status == omk::DecodeStatus::Ok)
-                    for (const auto& in : d.code) if (in.op == 80) ++start80;
+                    for (const auto& in : d.code) if (in.op == omk::op::ShootBegin) ++start80;
             }
             if (zone80 || start80)
                 std::printf("%s %zu: shoot.begin in %d zone slot(s), %d in the "

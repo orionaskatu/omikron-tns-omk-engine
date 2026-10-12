@@ -27,6 +27,7 @@
 #include "script/gamestate.h"
 #include "script/scenerunner.h"
 #include "script/world.h"
+#include "script/opcodes.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -109,7 +110,7 @@ int main(int argc, char** argv) {
     // the conversation the activate script launched
     int dialog = -1, nodes = 0;
     for (const auto& call : w.calls())
-        if (call.op == 61 && !call.fields.empty()) dialog = call.fields[0];
+        if (call.op == omk::op::DialogStart && !call.fields.empty()) dialog = call.fields[0];
     if (dialog >= 0) {
         const auto dd = omk::DataFs::readPath(iam + "/DIALOG");
         const auto ar = omk::IamArchive::open(dd);

@@ -106,6 +106,7 @@
 #include "formats/adpcm.h"
 #include "platform/datafs.h"
 #include "script/objects.h"
+#include "script/opcodes.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -224,7 +225,7 @@ public:
         for (; seen_ < announced.size(); ++seen_) {
             const auto& a = announced[seen_];
             if constexpr (requires { a.op; }) {
-                if (a.op != 92) continue;
+                if (a.op != op::MediaPlay) continue;
             } else {
                 if (a.domain != "OBJECTS") continue;
                 if (!lib_->isVoiceObject(static_cast<int>(a.value))) continue;

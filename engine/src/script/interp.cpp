@@ -3,6 +3,7 @@
 #include "script/interp.h"
 #include "platform/profile.h"
 #include "script/props.h"
+#include "script/opcodes.h"
 
 namespace omk {
 namespace {
@@ -195,20 +196,20 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
 
         // ---- flow ------------------------------------------------------
         if (op <= 2) continue;                      // dbg.dump_ctx/code, nop
-        if (op == 3) { r.status = RunStatus::End; r.pc = pc; return r; }
-        if (op == 4 || op == 5 || op == 6) {
+        if (op == op::End) { r.status = RunStatus::End; r.pc = pc; return r; }
+        if (op == op::Jmp || op == op::JmpIfTrue || op == op::JmpIfFalse) {
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
             // the target is relative to the pc AFTER the operand
             const auto target = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(pc) + v);
-            if (op == 4) { pc = target; continue; }
+            if (op == op::Jmp) { pc = target; continue; }
             const auto cond = pop(under);
             if (under) { r.status = RunStatus::StackUnderflow; r.pc = start; return r; }
-            if (op == 5) { if (cond) pc = target; }      // jmp_if_true
+            if (op == op::JmpIfTrue) { if (cond) pc = target; }      // jmp_if_true
             else         { if (!cond) pc = target; }     // jmp_if_false
             continue;
         }
-        if (op == 42) {                              // case label, target
+        if (op == op::Case) {                              // case label, target
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
             const auto label = static_cast<std::int32_t>(
@@ -234,27 +235,27 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // shipped operand with the indirect bit is one of these, in a
         // message handler, comparing the SENDER against an actor or object
         // id. Read raw it pushed the constant 16384.
-        if (op == 7 || op == 9) { stack_.push_back(imm(raw)); continue; }
-        if (op == 8) {
+        if (op == op::PushI8 || op == op::PushI32) { stack_.push_back(imm(raw)); continue; }
+        if (op == op::PushI16) {
             std::size_t q = start + 1;
             stack_.push_back(fetch16(code, q));
             continue;
         }
-        if (op == 10) {
+        if (op == op::PushVar) {
             std::size_t q = start + 1;
             stack_.push_back(state_.var(fetch16(code, q)));
             continue;
         }
-        if (op == 11) {
+        if (op == op::Drop) {
             pop(under);
             if (under) { r.status = RunStatus::StackUnderflow; r.pc = start; return r; }
             continue;
         }
 
         // ---- variable writes -------------------------------------------
-        if (op == 12 || op == 13) {
+        if (op == op::SetVar || op == op::SetVar2) {
             std::size_t q = start + 1;
-            state_.setVar(fetch16(code, q), op == 12 ? 0 : 1);
+            state_.setVar(fetch16(code, q), op == op::SetVar ? 0 : 1);
             continue;
         }
         // `set.var.i8/i16/i32` (14/15/16, 0x401F70/0x401FE0/0x402070) fetch
@@ -272,20 +273,20 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
             std::int32_t x = 0;
-            if (op == 14)      x = q < code.size() ? static_cast<std::int8_t>(code[q]) : 0;
-            else if (op == 15) x = fetch16(code, q);
+            if (op == op::SetVarI8)      x = q < code.size() ? static_cast<std::int8_t>(code[q]) : 0;
+            else if (op == op::SetVarI16) x = fetch16(code, q);
             else               x = i32(code, q);
             state_.setVar(v, x);
             continue;
         }
-        if (op == 17) {
+        if (op == op::SetVarVar) {
             std::size_t q = start + 1;
             const auto dst = fetch16(code, q);
             const auto src = fetch16(code, q);
             state_.setVar(dst, state_.var(src));
             continue;
         }
-        if (op == 18) {                              // set.var.pop
+        if (op == op::SetVarPop) {                              // set.var.pop
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
             const auto x = pop(under);
@@ -301,11 +302,11 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             const auto cur = state_.var(v);
             std::int32_t f = 0;
             switch (op) {
-                case 19: f = cur + x; break;
-                case 20: f = cur - x; break;
-                case 21: f = cur * x; break;
-                case 22: f = divTrunc(cur, x); break;
-                case 23: f = cur & x; break;
+                case op::VarAdd: f = cur + x; break;
+                case op::VarSub: f = cur - x; break;
+                case op::VarMul: f = cur * x; break;
+                case op::VarDiv: f = divTrunc(cur, x); break;
+                case op::VarAnd: f = cur & x; break;
                 default: f = cur | x; break;
             }
             state_.setVar(v, f);
@@ -318,9 +319,9 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (under) { r.status = RunStatus::StackUnderflow; r.pc = start; return r; }
             bool f = false;
             switch (op) {
-                case 25: f = a == b; break;  case 26: f = a <  b; break;
-                case 27: f = a >  b; break;  case 28: f = a <= b; break;
-                case 29: f = a >= b; break;  default: f = a != b; break;
+                case op::CmpEq: f = a == b; break;  case op::CmpLt: f = a <  b; break;
+                case op::CmpGt: f = a >  b; break;  case op::CmpLe: f = a <= b; break;
+                case op::CmpGe: f = a >= b; break;  default: f = a != b; break;
             }
             stack_.push_back(f ? 1 : 0);
             continue;
@@ -330,10 +331,10 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (under) { r.status = RunStatus::StackUnderflow; r.pc = start; return r; }
             std::int32_t f = 0;
             switch (op) {
-                case 31: f = a + b; break;   case 32: f = a - b; break;
-                case 33: f = a * b; break;   case 34: f = divTrunc(a, b); break;
-                case 35: f = a & b; break;   case 36: f = a | b; break;
-                case 37: f = (a && b) ? 1 : 0; break;
+                case op::Add: f = a + b; break;   case op::Sub: f = a - b; break;
+                case op::Mul: f = a * b; break;   case op::Div: f = divTrunc(a, b); break;
+                case op::Bitand: f = a & b; break;   case op::Bitor: f = a | b; break;
+                case op::And: f = (a && b) ? 1 : 0; break;
                 default: f = (a || b) ? 1 : 0; break;
             }
             stack_.push_back(f);
@@ -342,17 +343,17 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         if (op >= 39 && op <= 41) {
             const auto a = pop(under);
             if (under) { r.status = RunStatus::StackUnderflow; r.pc = start; return r; }
-            stack_.push_back(op == 39 ? -a : op == 40 ? (a ? 0 : 1) : ~a);
+            stack_.push_back(op == op::Neg ? -a : op == op::Not ? (a ? 0 : 1) : ~a);
             continue;
         }
 
         // ---- the state bitmaps -----------------------------------------
         // No subsystem needed, only a bit - and without them a spent trigger
         // never retires and the zone lifecycle is a fiction.
-        if (op == 64 || op == 65) {                  // zone.enable / disable
+        if (op == op::ZoneEnable || op == op::ZoneDisable) {                  // zone.enable / disable
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
-            state_.setBit(StateArray::ZoneState, v & 0x7FFF, op == 64 ? 1 : 0);
+            state_.setBit(StateArray::ZoneState, v & 0x7FFF, op == op::ZoneEnable ? 1 : 0);
             // ...and the handler's own tail: `call sub_406560`, which is
             // `Zones_RegisterAll`. The bit alone changes nothing until the
             // next area load, because the live list is a SNAPSHOT filtered at
@@ -361,14 +362,14 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (record_ && !recordAll_) r.calls.push_back({op, {static_cast<std::int16_t>(v)}});
             continue;
         }
-        if (op == 87 || op == 88) {                  // address.enable / disable
+        if (op == op::AddressEnable || op == op::AddressDisable) {                  // address.enable / disable
             std::size_t q = start + 1;
             const auto v = fetch16(code, q);
-            state_.setBit(StateArray::AddressEnabled, v, op == 87 ? 1 : 0);
+            state_.setBit(StateArray::AddressEnabled, v, op == op::AddressEnable ? 1 : 0);
             if (record_ && !recordAll_) r.calls.push_back({op, {static_cast<std::int16_t>(v)}});
             continue;
         }
-        if (op == 71) {                              // scene.load(area, scene)
+        if (op == op::SceneLoad) {                              // scene.load(area, scene)
             // 0x403950 fetches BOTH fields, so what is recorded is what the
             // handler resolved, not the raw halves.
             std::size_t q = start + 1;
@@ -386,7 +387,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // flag is set, `Var_Set(var, Random_NoRepeat(lo, hi))`. 235 shipped
         // sites, each followed by a `case` on the variable: stubbed, every
         // one of those branches took the same arm for ever.
-        if (op == 120) {
+        if (op == op::VarSetRandom) {
             std::size_t q = start + 1;
             const auto lo  = fetch16(code, q);
             const auto hi  = fetch16(code, q);
@@ -401,7 +402,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
 
         // `dialog.start` is where Script_Execute RETURNS - it does not fall
         // through to the next instruction, so the run stops here.
-        if (op == 61) {
+        if (op == op::DialogStart) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
@@ -416,7 +417,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // status 6 with a result variable named, and is resumed only when a
         // person answers the screen. The operands are
         // [screen][parameter][result variable].
-        if (op == 70 && uiSuspends_) {
+        if (op == op::UiOpen && uiSuspends_) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
@@ -437,7 +438,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // passed the caller's own slot rather than -1, so what releases the
         // script is the object's program ending - which the caller has to
         // arrange, since only it knows whether the object was resident.
-        if ((op == 46 || op == 58 || op == 60) && objWaitSuspends_) {
+        if ((op == op::ScxPlayPlayerWait || op == op::ScxPlayWait || op == op::ScxPlayActorWait) && objWaitSuspends_) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
@@ -455,7 +456,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // loops only while that word is 1. Field 0 is the camera, field 1 the
         // move's length in frames - and a 0-frame move is a cut, which holds
         // nothing, so this suspends only when there is something to wait for.
-        if (op == 96 && camWaitSuspends_) {
+        if (op == op::CameraSetWait && camWaitSuspends_) {
             Call c; c.op = op;
             for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
                 c.fields.push_back(i16(raw, k));
@@ -491,7 +492,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // result rather than being folded into `camTravel`: it is `camWaitOp`.
         // (The shipped corpus cannot show it - all 84 sites travel exactly 20
         // frames - so this is the handler's word, not the data's.)
-        if (op == 126 && camWaitSuspends_) {
+        if (op == op::CameraSetAtAddress && camWaitSuspends_) {
             std::size_t q = start + 1;
             const auto cam    = fetch16(code, q);
             const auto addr   = fetch16(code, q);
@@ -524,7 +525,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // What releases it is `Game_HandleEvent` case 3 - the same event the
         // waiting `scx.play*` variants use - raised when the move ends, so a
         // Session without a walker must leave `setMoveWaitSuspends` off.
-        if (op == 89 && moveWaitSuspends_) {
+        if (op == op::PlayerMoveWait && moveWaitSuspends_) {
             std::size_t q = start + 1;
             const auto addr = fetch16(code, q);
             if (record_ && !recordAll_)
@@ -540,7 +541,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // not do: 312 sites ran through here as no-ops, and the `player.move
         // 100` that stops the player in front of every staged sequence with
         // them (interp.h `playerMove`).
-        if (op == 63) {
+        if (op == op::PlayerMove) {
             std::size_t q = start + 1;
             r.playerMove = fetch16(code, q);
         }
@@ -586,7 +587,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // `Dbg_LogTagged` announce. This interpreter never sets it - see the
         // note on `StoppedAtOpcode` in interp.h - so there is nothing to
         // model here.
-        if (op == 62 && fightWaitSuspends_) {
+        if (op == op::FightBegin && fightWaitSuspends_) {
             std::size_t q = start + 1;
             const auto opponent = fetch16(code, q);
             const auto travel   = static_cast<int>(fetch16(code, q));
@@ -628,7 +629,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // `lea eax,[esi+esi*2]` indexes the list table with the FIRST
             // fetch and the second is what is announced to OBJECTS. The scan
             // runs over the stored count; -1 when none; 1 or 0 stored.
-            if (op == 49) {
+            if (op == op::VarSetHasObject) {
                 std::size_t q = start + 1;
                 const auto list = fetch16(code, q);
                 const auto id   = fetch16(code, q);
@@ -648,7 +649,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // and take no slot; ammunition (7..11) merges into a carried gun
             // (kind-5) when there is one; a gun (2..6) already carried takes
             // no second slot. Every shipped `inventory.add` takes a slot here.
-            if (op == 50) {
+            if (op == op::InventoryAdd) {
                 std::size_t q = start + 1;
                 const auto list = fetch16(code, q);
                 const auto id   = fetch16(code, q);
@@ -658,7 +659,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             }
             // 51 `inventory.remove` (0x40A5A0): one copy, tail shifted down,
             // 0xFFFF into the LAST slot, count decremented.
-            if (op == 51) {
+            if (op == op::InventoryRemove) {
                 std::size_t q = start + 1;
                 const auto list = fetch16(code, q);
                 const auto id   = fetch16(code, q);
@@ -675,7 +676,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // operand -1 into the find, so it searches for the TERMINATOR
             // inside the counted run and never finds it. Nothing is ever
             // removed by that arm; `listRemoveAll(list, -1)` returns 0 too.
-            if (op == 52) {
+            if (op == op::InventoryRemoveAll) {
                 std::size_t q = start + 1;
                 const auto list = fetch16(code, q);
                 const auto id   = fetch16(code, q);
@@ -693,7 +694,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // the result variable is -1. A negative n moves nothing and is
             // stored as is (`test ebp,ebp ; jle`). 3 shipped sites, all SCENE
             // 7, between lists 0 and 1 with variable 270 on both ends.
-            if (op == 128) {
+            if (op == op::InventoryTransfer) {
                 std::size_t q = start + 1;
                 const auto from = fetch16(code, q);
                 const auto to   = fetch16(code, q);
@@ -726,24 +727,24 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // (field)`, both refused unless stopped; 115 (0x405420) is
             // `Timer_Elapsed(&v); Var_Set(field, v)`, stored whether or not
             // the timer runs.
-            if (op == 110) { state_.timerReset(); recordCall(op, {}); continue; }
-            if (op == 111) { state_.timerStop();  recordCall(op, {}); continue; }
-            if (op == 112) { state_.timerStart(); recordCall(op, {}); continue; }
-            if (op == 113) {
+            if (op == op::Op110) { state_.timerReset(); recordCall(op, {}); continue; }
+            if (op == op::TimerStop) { state_.timerStop();  recordCall(op, {}); continue; }
+            if (op == op::TimerStart) { state_.timerStart(); recordCall(op, {}); continue; }
+            if (op == op::TimerSet) {
                 std::size_t q = start + 1;
                 const auto v = fetch16(code, q);
                 state_.timerSet(v * 1000);
                 recordCall(op, {v});
                 continue;
             }
-            if (op == 114) {
+            if (op == op::TimerMode) {
                 std::size_t q = start + 1;
                 const auto v = fetch16(code, q);
                 state_.timerMode(v);
                 recordCall(op, {v});
                 continue;
             }
-            if (op == 115) {
+            if (op == op::VarSetTimer) {
                 std::size_t q = start + 1;
                 const auto var = fetch16(code, q);
                 std::int32_t v = 0;
@@ -757,7 +758,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // 91 `var.set.player_id` (0x404530): `Var_Set(field,
             // Actor_IdBySlot(Actor_Player()))` - the DB player record's +272
             // (see `playerId()` above for why that is the same number).
-            if (op == 91) {
+            if (op == op::VarSetPlayerId) {
                 std::size_t q = start + 1;
                 const auto var = fetch16(code, q);
                 state_.setVar(var, playerId());
@@ -771,7 +772,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // instead (0 `Sexe` at 5 sites) or an actor no record names,
             // block+8 is whatever the stack held: the port leaves the
             // variable. 459 of 460 sites name the player.
-            if (op == 86) {
+            if (op == op::VarSetActorStat) {
                 std::size_t q = start + 1;
                 const auto actor = fetch16(code, q);
                 const auto prop  = fetch16(code, q);
@@ -787,7 +788,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // index})` for both arms, clamps included (`props.h`). Named
             // `hud.show_var` until 2026-09-02 after the flash rather than
             // the write.
-            if (op == 93) {
+            if (op == op::ActorStatSet) {
                 std::size_t q = start + 1;
                 const auto actor = fetch16(code, q);
                 const auto prop  = fetch16(code, q);
@@ -804,7 +805,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // held the variable reads -1, not its old value. It is the opcode
             // `Script_RunToOpcode75` stops at when an inventory item is used
             // on a zone; the activate script branches on it. 235 sites.
-            if (op == 75 && hooks_) {
+            if (op == op::VarSetUsedObject && hooks_) {
                 std::size_t q = start + 1;
                 const auto var  = fetch16(code, q);
                 const int  slot = hooks_->heldObjectSlot(-1);
@@ -835,7 +836,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             //     port does nothing instead; that is a DIVERGENCE, and the
             //     only one, on a path the shipped scripts evidently never
             //     take.
-            if (op == 66 && hooks_) {
+            if (op == op::ObjectHold && hooks_) {
                 std::size_t q = start + 1;
                 const auto obj = fetch16(code, q);
                 PropRef p;
@@ -850,7 +851,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // record was found and its `+0` slot is not -1, `Actor_HoldObject
             // (index, slot)`; and `+270 = object` either way. No prop-state
             // write. 159 sites.
-            if (op == 67 && hooks_) {
+            if (op == op::ObjectHoldActor && hooks_) {
                 std::size_t q = start + 1;
                 const auto actor = fetch16(code, q);
                 const auto obj   = fetch16(code, q);
@@ -873,7 +874,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // (slot)`. Otherwise `word_4E6CA0[slot] = -1` and `Actor_Release
             // Object(player, 1)` - freed. Both arms end with the player
             // record's +270 = -1. 226 sites.
-            if (op == 68 && hooks_) {
+            if (op == op::ObjectRelease && hooks_) {
                 const int slot = hooks_->heldObjectSlot(-1);
                 if (slot != -1) {
                     PropRef p;
@@ -898,7 +899,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // issue's `Actor_SetState(actor, 0)` is that function under its
             // old name - and `Actor_FindById(actor)->+270 = -1`. No prop
             // state. 499 sites.
-            if (op == 69 && hooks_) {
+            if (op == op::ObjectReleaseActor && hooks_) {
                 std::size_t q = start + 1;
                 const auto actor = fetch16(code, q);
                 if (hooks_->heldObjectSlot(actor) != -1) {
@@ -914,7 +915,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // (+0)`. Bit 0 clear: nothing. No record: the engine reads
             // `[0+16h]` - the Win9x null page - and the port does nothing.
             // 251 sites.
-            if (op == 76 && hooks_) {
+            if (op == op::ObjectShow && hooks_) {
                 std::size_t q = start + 1;
                 const auto obj = fetch16(code, q);
                 PropRef p;
@@ -931,7 +932,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // (`sub_41CC20`) on the record's `+0` slot. Bit 1 is EXISTS and
             // bit 2 is SHOWN, so hiding clears the shown bit and leaves the
             // prop in the world.
-            if (op == 77 && hooks_) {
+            if (op == op::ObjectHide && hooks_) {
                 std::size_t q = start + 1;
                 const auto obj = fetch16(code, q);
                 PropRef p;
@@ -947,7 +948,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // in the DB or a chunk record changes. 6 sites, every one the
             // ring a beaten character drops. (Read as "object, address" until
             // 2026-10-06.)
-            if (op == 98 && hooks_) {
+            if (op == op::ObjectPlaceAt && hooks_) {
                 std::size_t q = start + 1;
                 const auto who   = fetch16(code, q);
                 const auto state = fetch16(code, q);
@@ -961,7 +962,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // `dialog_disasm.LEN_FIX`). The Session does the rest - from
             // the RAW fields, since it records with `recordAll_`; the shipped
             // six are all literals, so the two agree.
-            if (op == 142) {
+            if (op == op::UiHighscore) {
                 std::size_t q = start + 1;
                 const auto who   = fetch16(code, q);
                 const auto var   = fetch16(code, q);

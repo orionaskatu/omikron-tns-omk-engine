@@ -15067,6 +15067,48 @@ def c_engine_hint_shop():
            "list 2 and how many of them carry a clue to sell (49 of 49)"
 
 
+def c_opcode_names():
+    r"""`engine/src/script/opcodes.h` spells every opcode the way the table does.
+
+    The C++ used to compare raw opcode numbers (`case 118: case 119:`), so
+    nothing could be grepped by name (`todo/code-readability-audit.md`).
+    `tools/gen_opcodes.py` writes `op::DialogStart = 61` and its 152 siblings
+    out of `tables/vm_opcodes.json`; this re-renders the header and compares,
+    so a renamed or added row cannot leave the C++ behind - and no opcode
+    COMPARISON may use a bare number again.
+
+    SHOWN TO FAIL: rename one row's spelling in the header by hand (the check
+    says STALE); put `case 118:` back into `Session::onCall` (the bare-number
+    scan names the line).
+    """
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "gen_opcodes.py"),
+                        "--check"], capture_output=True, text=True)
+    # an opcode compared by NUMBER in code (comments may quote the original)
+    bare = []
+    for d in ("engine/src", "engine/tools", "engine/backends"):
+        for root, _, files in os.walk(os.path.join(ROOT, d)):
+            if "third_party" in root:
+                continue
+            for f in files:
+                if not f.endswith((".cpp", ".h")):
+                    continue
+                p = os.path.join(root, f)
+                depth, opsw = 0, []      # the block depth of each open op switch
+                for k, line in enumerate(open(p, errors="replace"), 1):
+                    code = line.split("//", 1)[0]
+                    if re.search(r"\b(?:\w+\.)?op\s*(?:==|!=)\s*\d", code) or \
+                            (opsw and depth == opsw[-1] and re.search(r"\bcase \d", code)):
+                        bare.append("%s:%d" % (os.path.relpath(p, ROOT), k))
+                    if re.search(r"switch \((?:\w+\.)?op\)", code):
+                        opsw.append(depth + 1)
+                    flat = re.sub(r"'(\\.|[^'\\])'", "''", re.sub(r'"(\\.|[^"\\])*"', '""', code))
+                    depth += flat.count("{") - flat.count("}")
+                    while opsw and depth < opsw[-1]:
+                        opsw.pop()
+    return (r.returncode, bare[:5]), (0, []), \
+        "opcodes.h matches tables/vm_opcodes.json, and no opcode is compared by number"
+
+
 def c_engine_dossier_reader():
     r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
 
@@ -47001,6 +47043,7 @@ CHECKS = [
     ("INDEX.md fresh",     c_index_idempotent,  "CLAUDE.md 3"),
     ("boot sequence",      c_boot_sequence,     "BOOT"),
     ("opcode table fresh", c_vm_doc,            "SCRIPT_VM"),
+    ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

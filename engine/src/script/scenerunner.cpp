@@ -4,6 +4,7 @@
 #include "platform/datafs.h"
 #include "script/area.h"
 #include "script/scenehost.h"
+#include "script/opcodes.h"
 
 #include <cstring>
 
@@ -350,14 +351,14 @@ int SceneRunner::handle(const std::vector<Call>& calls) {
         // the script. (`ScriptObject_Start` ends `mov [esi+16h], 4`.)
         const char* how = nullptr;
         switch (c.op) {
-            case 57: case 58: how = "scene";  break;
-            case 59: case 60: how = "actor";  break;
-            case 46: case 90: how = "player"; break;
+            case op::ScxPlay: case op::ScxPlayWait: how = "scene";  break;
+            case op::ScxPlayActor: case op::ScxPlayActorWait: how = "actor";  break;
+            case op::ScxPlayPlayerWait: case op::ScxPlayPlayer: how = "player"; break;
             default: continue;
         }
-        const bool actorFirst = c.op == 59 || c.op == 60;
+        const bool actorFirst = c.op == op::ScxPlayActor || c.op == op::ScxPlayActorWait;
         if (c.fields.size() < (actorFirst ? 2u : 1u)) continue;
-        const bool waiting = c.op == 46 || c.op == 58 || c.op == 60;
+        const bool waiting = c.op == op::ScxPlayPlayerWait || c.op == op::ScxPlayWait || c.op == op::ScxPlayActorWait;
         // THE OBJECT WORD IS RAW AND UNSIGNED. All six handlers read it
         // `and ecx, 0FFFFh; mov ebp, ecx` - no 0xFFFF test, no `test ch, 40h`
         // indirect step - and only the actor word (59/60) and the trailing

@@ -33,6 +33,7 @@
 #include "platform/datafs.h"
 #include "platform/json.h"
 #include "script/script.h"
+#include "script/opcodes.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -155,7 +156,7 @@ int main(int argc, char** argv) {
                     const auto d = omk::decodeScript(span, sl.offset, span.size(), table);
                     if (d.status != omk::DecodeStatus::Ok) continue;
                     for (const auto& in : d.code) {
-                        if (in.op != 82 || in.operand.size() < 2) continue;
+                        if (in.op != omk::op::ShootActorEnter || in.operand.size() < 2) continue;
                         ++enterSites;
                         const auto id = static_cast<std::int16_t>(
                             static_cast<std::uint16_t>(in.operand[0]) |

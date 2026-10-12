@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     const int count = 12;
     omk::UiListState st;
     omk::UiWalk walk(w, st);
-    walk.open(omk::kScreenSneak);
+    walk.open(omk::screen::Sneak);
     walk.bindRows(omk::kListSneakRows, count, 0);
     std::printf("widgets %d window %d count %d\n", widgets,
                 walk.rowWindow(omk::kListSneakRows), count);

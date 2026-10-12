@@ -627,7 +627,7 @@ void PlayState::screensHuds() {
         comp.setItemLitSource(itemLitSource.empty() ? nullptr : &itemLitSource);
         comp.setItemSection(itemSection.empty() ? nullptr : &itemSection);
         comp.setReportText(hintReport.empty() ? nullptr : &hintReport);
-        comp.setHighScores(openScreen == 36 ? &highScores : nullptr,
+        comp.setHighScores(openScreen == omk::screen::HighScore ? &highScores : nullptr,
                            walk ? walk->highScorePage() : 0,
                            hsMessageLeftMs > 0.0 ? &hsMessage : nullptr);
         // THE CLOUD IS THE MENU'S BACKGROUND, NOT EVERY SCREEN'S.
@@ -663,8 +663,8 @@ void PlayState::screensHuds() {
             spanned("screen draw", [&] { sf = comp.draw(fb, openScreen, *walk); });
             // screen 35 over the menu while it has the focus - its panel
             // paints no background, so the menu's sheet shows through
-            const bool optShown = (openScreen == 29 && optMenu.focused()) ||
-                (openScreen == omk::kScreenSneak && optMenu.isOpen() && walk->panel() &&
+            const bool optShown = (openScreen == omk::screen::StartMenu && optMenu.focused()) ||
+                (openScreen == omk::screen::Sneak && optMenu.isOpen() && walk->panel() &&
                  walk->panel()->addr == omk::kPanelSneakOptions);
             if (optShown) {
                 const omk::OptionsDrawn od = comp.drawOptions(fb, optMenu);
@@ -721,7 +721,7 @@ void PlayState::screensHuds() {
             // "7 2 1 2" through a display that showed three figures and a
             // gap, which is the fault this is written against
             // (CLAUDE.md 1). `-` is a wheel drawn blank this frame.
-            if (openScreen == 13 && !denWheelItems.empty()) {
+            if (openScreen == omk::screen::Den && !denWheelItems.empty()) {
                 std::string read;
                 for (const std::uint32_t a : denWheelItems) {
                     const auto sr = sf.spriteSrc.find(a);
@@ -746,7 +746,7 @@ void PlayState::screensHuds() {
             // the page heading and two per row - so a page whose rows are
             // blank says so by its count, and a heading that resolved to
             // nothing cannot be claimed.
-            if (openScreen == 36) {
+            if (openScreen == omk::screen::HighScore) {
                 static std::string hsTold;
                 std::string rows;
                 for (const auto& r : sf.scoreRows) rows += " | " + r;
@@ -766,7 +766,7 @@ void PlayState::screensHuds() {
             // is the projection's own output. A run that matched the city
             // and then drew nothing would read differently here, which is
             // the half a line printed at the hand-over cannot see.
-            if (openScreen == omk::kScreenSneak && sf.mapPin) {
+            if (openScreen == omk::screen::Sneak && sf.mapPin) {
                 static std::string mapDrawTold;
                 std::string said = std::string("the sheet ") +
                     (sf.mapSheet ? "blitted" : "MISSING") + ", the pin at " +
@@ -789,7 +789,7 @@ void PlayState::screensHuds() {
             // is the rect the composer sampled; turning it back into the
             // value through the same table the hook used says the symbol
             // reached the screen rather than only the walk.
-            if (openScreen == 14 && !xachenItems.empty()) {
+            if (openScreen == omk::screen::Xachen && !xachenItems.empty()) {
                 std::string read;
                 for (const std::uint32_t a : xachenItems) {
                     const auto sr = sf.spriteSrc.find(a);
@@ -825,7 +825,7 @@ void PlayState::screensHuds() {
             // `rowMarked` the row tags it marked - the second mark being
             // what a `Utiliser sur` shows and nothing else in the device
             // does.
-            if (openScreen == 9) {
+            if (openScreen == omk::screen::Sneak) {
                 static std::string echoTold;
                 std::string marks;
                 for (int t : sf.rowMarked) marks += " " + std::to_string(t);
@@ -951,7 +951,7 @@ void PlayState::screensHuds() {
     // ...and it DOES draw over the videophone: two of the ten sneak
     // calls are a `media.play` and nothing else, so a subtitle suppressed
     // by "a screen is up" would lose the whole of those two.
-    if (!session.dialogOpen() && (!walk || openScreen == kScreenVideophone) &&
+    if (!session.dialogOpen() && (!walk || openScreen == omk::screen::Videophone) &&
         mediaTextFrames > 0) {
         // A DIFFERENT FACE, and it is the engine's choice. The
         // dialogue's params are TEXTP_FLAG_A alone, so its font stays the

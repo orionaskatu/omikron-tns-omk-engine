@@ -289,7 +289,7 @@ void PlayState::harnessHoldAndCall() {
         std::printf("--call: ui.open 0 + dialog.start %d (a "
                     "harness for the sneak call, UI 3i)\n",
                     callDialog);
-        playerScreen = kScreenVideophone;
+        playerScreen = omk::screen::Videophone;
         callHarness  = true;
         callPending  = callDialog;
         callDialog   = -1;

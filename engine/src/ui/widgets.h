@@ -354,6 +354,13 @@ inline constexpr std::uint32_t kDrawSneakMapPins  = 0x0049E6F0u;
 // named here so the next reader does not go looking again.
 inline constexpr std::uint32_t kCbSneakRingsInert = 0x0049BC30u;
 inline constexpr std::uint32_t kItemSneakExamine  = 0x004DE2C0u;
+// The three 50x50 tiles of list 0x004DE420 (setek, anneau, imager - the
+// last opens the city map), the first verb, and the sneak's examine box.
+inline constexpr std::uint32_t kItemSneakSeteks    = 0x004DE338u;
+inline constexpr std::uint32_t kItemSneakAnneaux   = 0x004DE380u;
+inline constexpr std::uint32_t kItemSneakMapReader = 0x004DE3C8u;
+inline constexpr std::uint32_t kItemSneakUse       = 0x004DE230u;   // `Utiliser`
+inline constexpr std::uint32_t kItemSneakExamineBox = 0x004DE710u;
 // `Utiliser sur` itself - `sub_49BF30` lights it with `0x40000002` while its
 // combine is open, the same way `sub_49B950` lights `Examiner`.
 inline constexpr std::uint32_t kItemSneakUseOn    = 0x004DE278u;
@@ -1683,6 +1690,11 @@ inline constexpr std::uint32_t kCbConfirmYes = 0x0047BA30u;
 // a whole profile is in 0x0047BA30's screen-29 arm, not here.
 inline constexpr std::uint32_t kCbDestroyYes   = 0x0047B800u;
 inline constexpr std::uint32_t kPanelLoadSlots   = 0x004CF2E8u;
+inline constexpr std::uint32_t kListLoadRows     = 0x004CEA98u;   // the load/save panel's row list
+inline constexpr std::uint32_t kPanelSaveRoot    = 0x004E2ED8u;   // screen 30's root panel
+inline constexpr std::uint32_t kPanelStartTree   = 0x004CF218u;   // screen 29's tree, which owns the load panel there
+inline constexpr std::uint32_t kPanelOptionsHost = 0x004CF420u;   // the start menu's `Options` page, which hosts screen 35
+inline constexpr std::uint32_t kItemShopExamineBox = 0x004E3900u; // the shop's Examiner page box, whose `+44` is the shop
 inline constexpr std::uint32_t kPanelSaveNoRings = 0x004E2FB0u;
 
 // ---- `Indices`, THE HINT SHOP on screen 30 --------------------------------

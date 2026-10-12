@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
 
     omk::UiListState st;
     omk::UiWalk walk(w, st);
-    walk.open(omk::kScreenSneak);
+    walk.open(omk::screen::Sneak);
     walk.bindRows(omk::kListSneakRows, 1, 0);
     // `list+2` is a STATIC record and the verb bar keeps what it last chose,
     // so only the FIRST walk has to move onto "Examiner"; the second finds it

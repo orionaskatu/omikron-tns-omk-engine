@@ -203,10 +203,10 @@ void PlayState::inputPause() {
     const bool esc = std::find(st.keyboard.begin(), st.keyboard.end(), 0x01)
                      != st.keyboard.end();
     if (esc && !walk && playerScreen < 0) {
-        playerScreen = kScreenPause;
+        playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "
                     "(`Game_RunLoop`'s own GetAsyncKeyState(27), guarded "
-                    "by the pause flag)\n", n, kScreenPause);
+                    "by the pause flag)\n", n, omk::screen::Pause);
     }
     // ---- THE LAST SCREEN'S CLOSE FLUSHES THE INPUT ------------------
     //
@@ -395,7 +395,7 @@ void PlayState::inputTick() {
     // on a delta of zero. Modelled here for the same reason - the port
     // used to express it as `adventure = false`, which stops the PLAYER
     // and leaves the crowd walking behind the menu.
-    uiPause = walk && openScreen == kScreenPause;
+    uiPause = walk && openScreen == omk::screen::Pause;
     if (uiPause) { frameSec = 0.0; session.setFrameSeconds(0.0); }
     gameClock += session.frameDelta();   // 1.0 exactly at 30 and under --frames
 

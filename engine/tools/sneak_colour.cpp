@@ -13,7 +13,7 @@
 // This prints the icon, the colour the builder wrote onto the row list, and
 // the pixel the composer then paints, so `verify.py: sneak page colour` can
 // assert all three without a window.
-#include "actor/moves.h"        // kScreenSneak - the screen table row
+#include "actor/moves.h"        // omk::screen::Sneak - the screen table row
 #include "platform/datafs.h"
 #include "ui/cursor.h"
 #include "ui/models.h"
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
 
     // The five tab icons, in the order they stand in the column. Their
     // records ARE the page colours, which is the finding.
-    const omk::UiPanel* p = w.screen(omk::kScreenSneak);
+    const omk::UiPanel* p = w.screen(omk::screen::Sneak);
     if (!p) { std::fprintf(stderr, "no panel for screen 9\n"); return 1; }
     for (const auto& l : p->lists)
         for (const auto& it : l.items)
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
                             it.addr, it.x, it.y, it.rgb[0], it.rgb[1], it.rgb[2]);
 
     omk::UiWalk walk(w);
-    walk.open(omk::kScreenSneak);
+    walk.open(omk::screen::Sneak);
     for (std::uint32_t list : {omk::kListSneakRows, omk::kListSneakVerbs,
                                omk::kListSneakEcho}) {
         for (const auto& l : p->lists) {
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
     {
         omk::UiListState st;
         omk::UiWalk a(w, st);
-        a.open(omk::kScreenSneak);
+        a.open(omk::screen::Sneak);
         a.bindRows(omk::kListSneakRows, 1);
         a.press(omk::kUiConfirm);                 // into the verb panel
         a.press(omk::kUiRight);
@@ -140,14 +140,14 @@ int main(int argc, char** argv) {
         for (const auto& l : a.panel()->lists)
             if (l.addr == omk::kListSneakVerbs) was = a.selectionOf(l);
         omk::UiWalk b(w, st);                     // the screen closes and reopens
-        b.open(omk::kScreenSneak);
+        b.open(omk::screen::Sneak);
         b.bindRows(omk::kListSneakRows, 1);
         b.press(omk::kUiConfirm);
         int now2 = -1;
         for (const auto& l : b.panel()->lists)
             if (l.addr == omk::kListSneakVerbs) now2 = b.selectionOf(l);
         omk::UiWalk c(w);                         // ...and with no shared state
-        c.open(omk::kScreenSneak);
+        c.open(omk::screen::Sneak);
         c.bindRows(omk::kListSneakRows, 1);
         c.press(omk::kUiConfirm);
         int fresh = -1;
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     // destination must NOT descend into the verb panel.
     {
         omk::UiWalk sw2(w);
-        sw2.open(omk::kScreenSneak);
+        sw2.open(omk::screen::Sneak);
         for (auto b : {omk::kUiRight, omk::kUiUp, omk::kUiConfirm})
             sw2.press(b);                       // into the slider page
         sw2.bindRows(omk::kListSneakRows, 3);
@@ -206,7 +206,7 @@ int main(int argc, char** argv) {
     // "Examiner" must reach the examine page.
     {
         omk::UiWalk f(w);
-        f.open(omk::kScreenSneak);
+        f.open(omk::screen::Sneak);
         f.bindRows(omk::kListSneakRows, 1);
         if (const int* c0 = f.itemColour(0x004DE440u))
             std::printf("on open, rows are %d %d %d (%zu coloured)\n", c0[0], c0[1], c0[2], f.colourCount());
@@ -239,7 +239,7 @@ int main(int argc, char** argv) {
                     q ? q->addr : 0, f.listOff(omk::kListSneakVerbs) ? 1 : 0);
     }
 
-    walk.open(omk::kScreenSneak);          // back to the inventory page
+    walk.open(omk::screen::Sneak);          // back to the inventory page
 
     // ...and the pixel. The fill is `src * (1 - 200/255)` over whatever is
     // under it, so the row bar over the page's dark window is the number a
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
     omk::ScreenComposer comp(fs, w, lay);
     comp.setDisplay(640, 480);
     omk::Surface fb(640, 480, 0);
-    comp.draw(fb, omk::kScreenSneak, walk);
+    comp.draw(fb, omk::screen::Sneak, walk);
     const omk::UiItem* row = nullptr;
     for (const auto& l : p->lists)
         if (l.addr == omk::kListSneakRows && !l.items.empty())
@@ -273,11 +273,11 @@ int main(int argc, char** argv) {
         comp.setDeltaMs(33);
         omk::Surface lit(640, 480, 0);
         omk::UiWalk w2(w);
-        w2.open(omk::kScreenSneak);
+        w2.open(omk::screen::Sneak);
         omk::ScreenFrame f;
         for (int i = 0; i < 60; ++i) {          // let the eases settle
             lit = omk::Surface(640, 480, 0);
-            f = comp.draw(lit, omk::kScreenSneak, w2);
+            f = comp.draw(lit, omk::screen::Sneak, w2);
         }
         // Sampled at the bar's flat RIGHT-HAND END, past the label - the
         // same place the original's screenshots were measured, and now that
@@ -297,8 +297,8 @@ int main(int argc, char** argv) {
         comp.attachModels(&mods);
         omk::Surface mv(640, 480, 0);
         omk::UiWalk mw(w);
-        mw.open(omk::kScreenSneak);
-        const auto mf = comp.draw(mv, omk::kScreenSneak, mw);
+        mw.open(omk::screen::Sneak);
+        const auto mf = comp.draw(mv, omk::screen::Sneak, mw);
         int painted[3] = {0, 0, 0};
         for (int sl = 0; sl < 3; ++sl)
             for (int yy = 100 + sl * 100; yy < 150 + sl * 100; ++yy)
@@ -308,8 +308,8 @@ int main(int argc, char** argv) {
         // measure what changed inside each slot.
         omk::Surface bare(640, 480, 0);
         comp.attachModels(nullptr);
-        omk::UiWalk bw2(w); bw2.open(omk::kScreenSneak);
-        comp.draw(bare, omk::kScreenSneak, bw2);
+        omk::UiWalk bw2(w); bw2.open(omk::screen::Sneak);
+        comp.draw(bare, omk::screen::Sneak, bw2);
         comp.attachModels(&mods);
         for (int sl = 0; sl < 3; ++sl) {
             int lo[2] = {99, 99}, hi[2] = {-1, -1};
@@ -330,7 +330,7 @@ int main(int argc, char** argv) {
         // while bank C 0x1 on the same item forces the colour to white.
         {
             omk::UiWalk fex(w);
-            fex.open(omk::kScreenSneak);
+            fex.open(omk::screen::Sneak);
             fex.bindRows(omk::kListSneakRows, 1);
             fex.press(omk::kUiConfirm);          // the verb panel
             fex.press(omk::kUiRight);
@@ -342,7 +342,7 @@ int main(int argc, char** argv) {
             for (int ph = 0; ph < 2; ++ph) {
                 c3.setClockMs(ph * 500);
                 omk::Surface fx(640, 480, 0);
-                c3.draw(fx, omk::kScreenSneak, fex);
+                c3.draw(fx, omk::screen::Sneak, fex);
                 for (int yy = 30; yy < 52; ++yy)
                     for (int xx = 456; xx < 590; ++xx) {
                         const std::uint16_t v = fx.px[static_cast<std::size_t>(yy) * 640 + xx];

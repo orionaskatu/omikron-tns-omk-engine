@@ -10,6 +10,7 @@
 // `--scene` instrument - include `sdlfront.h` themselves.
 #pragma once
 
+#include "ui/screens.h"
 #include "formats/anim.h"
 #include "formats/ctl.h"
 #include "formats/map2d.h"
@@ -179,9 +180,8 @@ using omk::resampleToDevice;
 // expression.
 constexpr int kFlickPre = 3, kFlickPost = 3, kFlickWindow = 31;
 
-constexpr int kScreenHighScore = 36;   // HIGH-SCORE, the shooting gallery's board (op 142)
-constexpr int kScreenPause = 31;   // PAUSE GAME - the only screen that
-                                   // sets dword_4E9728, the pause flag
+// The screens by name are `ui/screens.h` (`screen::Pause` is the only screen
+// that sets dword_4E9728, the pause flag).
 
 // ---- THE SNEAK CALL (screen 0, `VIDEOPHONE`) ----------------------
 //
@@ -209,7 +209,7 @@ constexpr int kScreenPause = 31;   // PAUSE GAME - the only screen that
 // actor 95, the guard `ARESTO14` parks 745 units above the restaurant
 // (docs/UI.md 3d-bis) - and the script hides him afterwards with
 // `character.hide`.
-constexpr int kScreenVideophone = 0;
+// (`screen::Videophone`, `ui/screens.h`)
 
 static constexpr const char* kAttachName[18] = {
     "Buste", "Tete", "Buste", "Buste", "Buste", "Bassin", "Brasg", "Brasd",

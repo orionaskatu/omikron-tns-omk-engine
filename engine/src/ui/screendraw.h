@@ -53,6 +53,20 @@ inline constexpr std::uint32_t kTextFnString = 0x00476860u;
 // anneaux are shown. `ScreenComposer::draw` transcribes it; `ScreenFrame::
 // echoBar` reports what came out.
 inline constexpr std::uint32_t kTextFnSneakEcho = 0x0049DC20u;
+// ...and the other native text hooks the viewer supplies a string for, by
+// what each draws (`docs/UI.md`'s table of `+32` callbacks):
+inline constexpr std::uint32_t kTextFnSneakClock      = 0x0049E090u;  // the sneak's date and time
+inline constexpr std::uint32_t kTextFnShopButton      = 0x004AEE30u;  // a shop's header: the selected button, or a posted message
+inline constexpr std::uint32_t kTextFnShopSellName    = 0x004AEFD0u;  // the Vente confirm's second line: the row's name
+inline constexpr std::uint32_t kTextFnShopMoney       = 0x004AEF10u;  // string 4 and the player's money
+inline constexpr std::uint32_t kTextFnShopPrice       = 0x004AEF60u;  // string 5 and the selected row's price (halved at the bank)
+inline constexpr std::uint32_t kTextFnTerminalBody    = 0x004AF5D0u;  // the terminal family's body (`screensTerminals`)
+inline constexpr std::uint32_t kTextFnTerminalBar     = 0x004AF5A0u;  // ...and its header bar: the highlighted keypad cell's label
+inline constexpr std::uint32_t kTextFnLiftDescription = 0x004B01C0u;  // the LIFT's description box
+inline constexpr std::uint32_t kTextFnMultiplanButton = 0x004B0B60u;  // MULTIPLAN's header, the shops' 0x004AEE30 again
+// Two DRAW hooks (`+20`) the composer branches on:
+inline constexpr std::uint32_t kDrawExamineBox = 0x004780A0u;  // an examine page's box: a model, a document, its text
+inline constexpr std::uint32_t kDrawMemoBody   = 0x00477F60u;  // the long-text drawer every examine arm ends in
 
 // `sub_0049C090` - the `+20` DRAW hook of the sneak's nine inventory row
 // widgets (0x004DE440..0x004DE680). A SECOND `Ui_DrawItemFill` over the row

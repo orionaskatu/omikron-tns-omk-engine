@@ -348,7 +348,7 @@ void PlayState::adventureScreenInput() {
     // runs `sub_466B60` AFTER `UI_LoadScreen` held him (state 9 is the gate
     // this `walk` test stands for), so he takes the input word again while
     // the board still pages on LEFT/RIGHT - both read the same device.
-    if (walk && !(openScreen == kScreenHighScore && hsReleased)) {
+    if (walk && !(openScreen == omk::screen::HighScore && hsReleased)) {
         player->tick(static_cast<float>(frameSec * 30.0), 0);
         playerTicked = true;
     } else if (session.playerAnimHeld()) {
@@ -1909,10 +1909,10 @@ void PlayState::adventureTake() {
     if (openSneak && !walk && playerScreen < 0) {
         openSneak = false;
         inv.openList(0);
-        playerScreen = omk::kScreenSneak;
+        playerScreen = omk::screen::Sneak;
         std::printf("--sneak: event %d opens object list 0, "
                     "screen %d\n", omk::kEventSneakOpen,
-                    omk::kScreenSneak);
+                    omk::screen::Sneak);
     }
     // WHERE THE ACTION RAISE COMES FROM, corrected 2026-09-04.
     //
@@ -2638,10 +2638,10 @@ void PlayState::adventureShot() {
             // if the open fails or when the close comes.
             if (walk || playerScreen >= 0) continue;   // already up
             inv.openList(0);          // Game_RaiseEvent(25, 0)
-            playerScreen = omk::kScreenSneak;
+            playerScreen = omk::screen::Sneak;
             std::printf("MDSNEAK0: event %d opens object list 0, "
                         "screen %d\n", omk::kEventSneakOpen,
-                        omk::kScreenSneak);
+                        omk::screen::Sneak);
         }
     }
     // ---- THE FREE LOOK, `Actors_TickAll`'s head arm (21_d3d.c 4483) ----

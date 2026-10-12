@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
     if (w.valid()) {
         omk::UiListState st;
         omk::UiWalk walk(w, st);
-        walk.open(omk::kScreenSneak);
+        walk.open(omk::screen::Sneak);
         const bool before = walk.combining();
         walk.beginCombine(0, false);          // a ROW - the unit the mode stores
         const bool opened = walk.combining();

@@ -40,6 +40,8 @@
 // is plenty of room to fall through into.
 #pragma once
 
+#include "ui/screens.h"
+
 #include <cstdint>
 #include <map>
 #include <string>
@@ -105,7 +107,6 @@ private:
 // status 6 - closing the sneak answers nobody, where leaving a `ui.open`
 // screen IS an answer of -1.
 inline constexpr const char* kMoveOpenSneak = "MDSNEAK0";
-inline constexpr int kScreenSneak = 9;      // the screen table's row 9
 // `Game_HandleEvent` 25 and 26, the two ends of the inventory data channel's
 // session (docs/UI.md "the inventory data channel").
 inline constexpr int kEventSneakOpen = 25, kEventSneakClose = 26;

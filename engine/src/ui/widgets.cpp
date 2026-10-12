@@ -5,6 +5,7 @@
 #include "script/savefile.h"
 
 #include "platform/json.h"
+#include "ui/screens.h"
 
 #include <algorithm>
 #include <iterator>
@@ -550,7 +551,7 @@ bool UiWalk::toParent() {
 }
 
 void UiWalk::closeNow(const char* how) {
-    if (screen_ == 5) {
+    if (screen_ == screen::Terminal) {
         // THE TERMINAL ANSWERS ON THE WAY OUT, and it is the only screen of
         // the family that does. `sub_4AF0E0` (read from the image):
         //
@@ -1382,11 +1383,11 @@ bool UiWalk::open(int screenId) {
     // (`bannerRunning`) - and the terminal also clears its two dossier
     // globals, `dword_68A600` and `dword_68A5FC`, so the answer on the way
     // out counts THIS visit's dossiers only.
-    if (screenId == 5 || screenId == 11) {
+    if (screenId == screen::Terminal || screenId == screen::FightSim) {
         bannerMs_ = 7000.0;
         log_.push_back("oscillator 6: the banner, 7000 ms");
     }
-    if (screenId == 5) termRow3_ = termRow4_ = false;
+    if (screenId == screen::Terminal) termRow3_ = termRow4_ = false;
     // GANDHAR'S DOOR's open (0x004AFDF0, read from the image): the count
     // `byte_68A608` and the mask `byte_68A60C` go to 0, the cursor's `+3C` to
     // cell 0, and `sub_428FF0(marker, 0x40000001, 1)` hides all four markers
@@ -1830,7 +1831,7 @@ bool UiWalk::confirm() {
             // reader and answer nothing - it REMEMBERS which protected dossier
             // was opened, `dword_68A5FC` for cell 4 and `dword_68A600` for 3,
             // and reports them on close (`closeNow`). Cells 5..9 `return 0`.
-            if (screen_ == 5) {
+            if (screen_ == screen::Terminal) {
                 if (row < 0 || row >= 5) return false;
                 if (row == 4) termRow4_ = true;
                 if (row == 3) termRow3_ = true;
@@ -1845,7 +1846,7 @@ bool UiWalk::confirm() {
             // stays on the file and the parked script hears 1 when the player
             // closes it (`closeAnswer_`). The port answered and left on the
             // frame the cell was confirmed until 2026-10-12.
-            if (screen_ == 18) {
+            if (screen_ == screen::Archives) {
                 if (row < 0 || row >= 4) return false;
                 if (row == 2) {
                     closeAnswer_ = 1;
@@ -1862,10 +1863,10 @@ bool UiWalk::confirm() {
             // ARCHIVES starts none (it goes to panel 0x004E4170, above).
             double closeMs = 0.0;
             switch (screen_) {
-                case 11: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
-                case 19: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
-                case 15: case 17: if (row == 0) a = 1; closeMs = 2000.0; break;
-                case 16: closeMs = 2000.0; break;
+                case screen::FightSim: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
+                case screen::Morgue: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
+                case screen::SurvError: case screen::SurvKit: if (row == 0) a = 1; closeMs = 2000.0; break;
+                case screen::SurvNoKit: closeMs = 2000.0; break;
                 default: break;
             }
             if (closeMs > 0.0) startCloseTimer(closeMs, "terminal cell");
@@ -2183,7 +2184,7 @@ bool UiWalk::confirm() {
             // panel sent every confirm down the delete arm and `Oui` did
             // nothing. `sub_47BA30` tests `*a1`, the screen the walk was
             // opened with.
-            if (screen_ != 30) {
+            if (screen_ != screen::SaveGame) {
                 approx_ = true;
                 log_.push_back("oui: the DELETE arm is not modelled");
                 return true;
@@ -2615,7 +2616,7 @@ bool UiWalk::confirm() {
             // `+44`, and the descent installs it without writing its `+24` -
             // which still holds the rows the button's confirm chose. The
             // lifted `current` is the open callback's 0, so put the rows back.
-            if (it->addr == 0x004E3900u && kid->addr == kPanelShop)
+            if (it->addr == kItemShopExamineBox && kid->addr == kPanelShop)
                 focusList(kListShopRows);
             log_.push_back("enter child panel");
             return true;
@@ -2993,9 +2994,9 @@ bool UiWalk::press(std::uint32_t bits) {
         // only way across was LEFT/RIGHT through the panel hook, which a
         // reader noticed was missing.
         if ((bits & kUiConfirm) && load_->row >= 0) {
-            load_->mode = screen_ == 30 ? 1 : 0;   // `word_4CEA9A`
+            load_->mode = screen_ == screen::SaveGame ? 1 : 0;   // `word_4CEA9A`
             for (std::size_t k = 0; k < panel_->lists.size(); ++k)
-                if (panel_->lists[k].addr == 0x004CEA98u) { cur_ = static_cast<int>(k); break; }
+                if (panel_->lists[k].addr == kListLoadRows) { cur_ = static_cast<int>(k); break; }
             log_.push_back("slot confirmed: the buttons take the focus");
             return true;
         }
@@ -3163,15 +3164,15 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
     // over the save screen - its name field included, which is why a reader
     // saw `Non : zfe` and the hints strings piled on one frame - and BACK
     // leaves to the wrong panel.
-    const std::uint32_t owner = screen == 30 ? 0x004E2ED8u : 0x004CF218u;
+    const std::uint32_t owner = screen == screen::SaveGame ? kPanelSaveRoot : kPanelStartTree;
     for (auto& p : w.panels_)
         if (p.addr == kPanelLoadSlots) p.parent = owner;
     for (auto& p : w.panels_)
         if (p.addr == kPanelLoadSlots)
             for (auto& l : p.lists)
-                if (l.addr == 0x004CEA98u && l.items.size() >= 4)
+                if (l.addr == kListLoadRows && l.items.size() >= 4)
                     l.items[3].child = owner;      // `Annuler` goes home
-    if (screen == 30) {
+    if (screen == screen::SaveGame) {
         // the SAVE panel: `Sauvegarde` in the top slot, Charger hidden
         place(L.nouvelle, 266, false, 0);
         place(L.charger,  266, true);
@@ -3195,24 +3196,24 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
     // and `Non`; unported it drew strings 6, 7 and 10, which there are
     // `Anneaux en votre possession :`, the save question and
     // `Votre ame va etre sauvegardee !`.
-    place(0x004CED50u, -1, false, screen == 30 ? 12 : 6);    // Oui
-    place(0x004CED98u, -1, false, screen == 30 ? 13 : 7);    // Non
-    place(0x004CF0C8u, -1, false, screen == 30 ? 16 : 10);   // the question
+    place(0x004CED50u, -1, false, screen == screen::SaveGame ? 12 : 6);    // Oui
+    place(0x004CED98u, -1, false, screen == screen::SaveGame ? 13 : 7);    // Non
+    place(0x004CF0C8u, -1, false, screen == screen::SaveGame ? 16 : 10);   // the question
     // `sub_47B710`, the DESTROY confirm's builder - the same shape again:
     //     screen 29   question 2,  oui 6,  no 7
     //     screen 30   question 11, oui 12, no 13
     // and the symbols are those items' own `+0x1C`: `word_4CECB4` is
     // 0x004CEC98 + 0x1C, `word_4CECFC` is 0x004CECE0 + 0x1C and `word_4CF074`
     // is 0x004CF058 + 0x1C.
-    place(0x004CEC98u, -1, false, screen == 30 ? 12 : 6);    // Oui
-    place(0x004CECE0u, -1, false, screen == 30 ? 13 : 7);    // Non
-    place(0x004CF058u, -1, false, screen == 30 ? 11 : 2);    // the question
+    place(0x004CEC98u, -1, false, screen == screen::SaveGame ? 12 : 6);    // Oui
+    place(0x004CECE0u, -1, false, screen == screen::SaveGame ? 13 : 7);    // Non
+    place(0x004CF058u, -1, false, screen == screen::SaveGame ? 11 : 2);    // the question
     // ...and BOTH buttons' `+44`, the child they return to. The builder's
     // `off_4CED7C` and `dword_4CEDC4` are `0x004CED50 + 0x2C` and
     // `0x004CED98 + 0x2C` - the child field, not the string. The table ships
     // `Non`'s as 0, so unported it went nowhere at all, which is what a
     // reader met: "pressing enter on oui or non does nothing".
-    const std::uint32_t back = screen == 30 ? kPanelLoadSlots : 0x004CF280u;
+    const std::uint32_t back = screen == screen::SaveGame ? kPanelLoadSlots : kPanelStartConfirm;
     for (auto& p : w.panels_)
         if (p.addr == kPanelSaveOverwrite)
             for (auto& l : p.lists)
@@ -3221,15 +3222,15 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
                         it.child = back;
     for (auto& p : w.panels_)
         if (p.addr == kPanelSaveOverwrite)
-            p.parent = screen == 30 ? kPanelLoadSlots : 0x004CF280u;
+            p.parent = screen == screen::SaveGame ? kPanelLoadSlots : kPanelStartConfirm;
     // Annuler is the fourth item of the button list, the one whose child is
     // the start menu; the table names the other three.
     for (auto& p : w.panels_)
-        if (p.addr == 0x004CF2E8u)
+        if (p.addr == kPanelLoadSlots)
             for (auto& l : p.lists)
-                if (l.addr == 0x004CEA98u && l.items.size() >= 4) {
+                if (l.addr == kListLoadRows && l.items.size() >= 4) {
                     l.items[3].y = 386;
-                    l.items[3].bindString = screen == 30 ? 3 : 9;   // Annuler
+                    l.items[3].bindString = screen == screen::SaveGame ? 3 : 9;   // Annuler
                 }
 }
 

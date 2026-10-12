@@ -929,7 +929,7 @@ int PlayState::phaseWorld() {
         screenReadsPicture = false;
         if (walk && openScreen >= 0) {
             constexpr std::uint32_t kDrawInterference = 0x00477ED0u;   // `ui/interference.h`
-            screenReadsPicture = openScreen == 30;                     // SAVE GAME
+            screenReadsPicture = openScreen == omk::screen::SaveGame;                     // SAVE GAME
             if (const omk::UiPanel* rp = walk->panel() ? walk->panel() : w.screen(openScreen))
                 for (const auto& l : rp->lists)
                     for (const auto& it : l.items)

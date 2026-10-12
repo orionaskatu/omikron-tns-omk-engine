@@ -6,6 +6,7 @@
 
 #include "ui/iamtext.h"
 #include "ui/options.h"
+#include "ui/screens.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -198,14 +199,14 @@ std::string ScreenComposer::echoBarText(const UiWalk& walk,
     // loads their models: setek, anneau, imager. The first two are COUNTERS
     // and the third is not - its arm has no `sub_42B1C0` and no format, just
     // the bare string, which is what settles that `imager` is a map reader.
-    if (sel->addr == 0x004DE338u) { *arm = 1; return withCount(seteks_); }
-    if (sel->addr == 0x004DE380u) { *arm = 2; return withCount(anneaux_); }
-    if (sel->addr == 0x004DE3C8u) { *arm = 3; return itemStringDefault(*sel, text); }
+    if (sel->addr == kItemSneakSeteks) { *arm = 1; return withCount(seteks_); }
+    if (sel->addr == kItemSneakAnneaux) { *arm = 2; return withCount(anneaux_); }
+    if (sel->addr == kItemSneakMapReader) { *arm = 3; return itemStringDefault(*sel, text); }
     // `Utiliser` and `Utiliser sur` force their OWN `+1E` to 1 across the
     // call. Both ship `+1E = 0`, and index 0 and index 1 of a field with no
     // brackets extract the same span, so the write changes nothing visible -
     // transcribed because it is what the function does.
-    if (sel->addr == 0x004DE230u || sel->addr == 0x004DE278u) {
+    if (sel->addr == kItemSneakUse || sel->addr == kItemSneakUseOn) {
         UiItem forced = *sel;
         forced.textArg = 1;
         *arm = 4;
@@ -219,13 +220,13 @@ std::string ScreenComposer::echoBarText(const UiWalk& walk,
     // a bracket `IAM\Sneak` does not contain. The box ships `+28 = -1`, so
     // its arm writes NOTHING and the bar goes blank while the examine page is
     // up - nothing found in this pass binds a string into that field.
-    if (sel->addr == 0x004DE2C0u) {
+    if (sel->addr == kItemSneakExamine) {
         UiItem forced = *sel;
         forced.textArg = 1;
         *arm = 5;
         return itemStringDefault(forced, text);
     }
-    if (sel->addr == 0x004DE710u) { *arm = 5; return itemStringDefault(*sel, text); }
+    if (sel->addr == kItemSneakExamineBox) { *arm = 5; return itemStringDefault(*sel, text); }
     // 3. ...and failing all six, the CURRENT TAB's own label - which is what
     // the bar shows for the whole time the selection sits in the row list.
     const UiList* tabs = w_->listAt(kListSneakTabs);
@@ -235,7 +236,7 @@ std::string ScreenComposer::echoBarText(const UiWalk& walk,
     const UiItem& tab = tabs->items[static_cast<std::size_t>(t)];
     *arm = 6;
     std::string s = itemStringDefault(tab, text);
-    if (tab.addr == 0x004DE040u) {          // the Inventaire tab, and only it
+    if (tab.addr == kIconSneakInventory) {          // the Inventaire tab, and only it
         char n[32];
         std::snprintf(n, sizeof n, "  (%d / 18)",
                       walk.boundCount(kListSneakRows));
@@ -506,7 +507,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
     // them; the engine's head cache would draw it after them. Recorded, not
     // resolved.
     const bool dimQuad = (p->flagsB & 0x1000u) != 0;
-    const int  dimLayer = screenId == 31 ? 12 : 2;
+    const int  dimLayer = screenId == screen::Pause ? 12 : 2;
     const int  dimAlpha = (p->flagsB & 0x800u) ? 0x64 : 0x28;
     bool dimDone = !dimQuad;
     if (dimQuad) layers.push_back(dimLayer);
@@ -927,8 +928,8 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // and the reader page `0x004DEFF0` is the same lists with the BOX
             // as the current list - which is why it needs no artwork of its own.
             if (examine_ && !examine_->empty() &&
-                (l.addr == kListSneakExamineContent || it.drawFn == 0x004780A0u ||
-                 it.drawFn == 0x00477F60u)) {
+                (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox ||
+                 it.drawFn == kDrawMemoBody)) {
                 TextBlock blk;
                 blk.left   = scaleX(it.x + q->offsetX);
                 blk.top    = scaleY(it.y + q->offsetY);
@@ -992,7 +993,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // it shows is whichever arm of `Game_HandleEvent` case 40 the
             // object's kind takes - a 3D model for kind 15, an
             // `IMAGES\<stem>.bmp` for kind 16, nothing otherwise.
-            if (models_ && (l.addr == kListSneakExamineContent || it.drawFn == 0x004780A0u)) {
+            if (models_ && (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox)) {
                 if (models_->drawExamine(fb,
                                          scaleX(it.x + q->offsetX),
                                          scaleY(it.y + q->offsetY),

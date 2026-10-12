@@ -942,10 +942,10 @@ int PlayState::modesShoot() {
             else
                 std::printf("frame %ld: HighScore_Insert - %d ms makes no row of table %d\n",
                             n, static_cast<int>(h.score), h.table);
-            const bool up = walk && openScreen == kScreenHighScore;
+            const bool up = walk && openScreen == omk::screen::HighScore;
             if (!up && hsOpenPage < 0) hsOpenPage = h.table;
         }
-        if (!walk && hsOpenPage >= 0 && playerScreen < 0) playerScreen = kScreenHighScore;
+        if (!walk && hsOpenPage >= 0 && playerScreen < 0) playerScreen = omk::screen::HighScore;
         // `OMK_POST_MESSAGE=M@F`: an INSTRUMENT - message M posted from the
         // player on frame F, as a hit posts message 0 to the hurt handler
         // (`verify.py: engine: close all`)
@@ -1020,7 +1020,7 @@ int PlayState::modesShoot() {
                 // bitmap - ANEKBAH, QALISAR, JAUNPUR, LAHOREH, one AREA each,
                 // the four cities' main streets - so on a rooftop, in the
                 // Impasse or inside any building the engine bounces too.
-                if (want == omk::kScreenSneak)
+                if (want == omk::screen::Sneak)
                     std::printf("sneak map: standing in set '%s' - %s\n", stem.c_str(),
                                 have ? "Images/" "<set>.bmp exists, `Lire plan` opens"
                                      : "no Images/<set>.bmp, `Lire plan` bounces "
@@ -1060,7 +1060,7 @@ int PlayState::modesShoot() {
                 // 0x0042B7E0 writes the screen's `+8 = 3`: it closes itself.
                 // Flag 0x20000008 has no reader in `UI_TestScreenFlag`'s nine
                 // callers nor any direct `+0x70` test - stored, not consumed.
-                if (want == kScreenHighScore) {
+                if (want == omk::screen::HighScore) {
                     const int page = hsOpenPage == -1 ? 0 : hsOpenPage;
                     hsOpenPage = -1;
                     walk->setHighScorePage(page);
@@ -1097,7 +1097,7 @@ int PlayState::modesShoot() {
                 // menu - destination or Manuelle - which is what the reader
                 // remembers. This port cleared it at the dismount instead,
                 // which the engine never does.
-                if (want == omk::kScreenSneak && calledDestination >= 0) {
+                if (want == omk::screen::Sneak && calledDestination >= 0) {
                     calledDestination = -1;
                     std::printf("slider: the sneak opens - Ui_OpenSneakFamily "
                                 "forgets the remembered destination (dword_6A17CC "
@@ -1136,7 +1136,7 @@ int PlayState::modesShoot() {
                 // screen. Without this the port waited for a person to close
                 // it and the call's own `dialog.start` never ran - the game
                 // showed an empty videophone.
-                if ((fromScript || callHarness) && openScreen == kScreenVideophone) {
+                if ((fromScript || callHarness) && openScreen == omk::screen::Videophone) {
                     std::printf("screen %d VIDEOPHONE answers itself (-1, "
                                 "`UI_SendAnswer` in its own open callback) - "
                                 "the script runs on with the call up\n",
@@ -1220,7 +1220,7 @@ int PlayState::modesShoot() {
             // OBJECT LIST 2 - the memo journal, the same list the sneak's
             // `Memoire` page binds. It cannot change while the screen is up,
             // so it is read straight out of the DB.
-            if (openScreen == 30) {
+            if (openScreen == omk::screen::SaveGame) {
                 static int hintTold = -1;
                 const int priceVar = omk::globalHintPriceVar(globalFile);
                 session.postMessage(25, -1);
@@ -1323,10 +1323,10 @@ int PlayState::modesShoot() {
             // ...and UNDER THE SNEAK (param 0, `todo/sneak.md` 5c): its open
             // loads 35 hidden; the Options tab's builder 0x0049D8F0 SHOWS it,
             // the tab's hook 0x0049D960 focuses it on LEFT / RIGHT.
-            const bool optHost = (openScreen == 29 || openScreen == omk::kScreenSneak) && w.valid();
+            const bool optHost = (openScreen == omk::screen::StartMenu || openScreen == omk::screen::Sneak) && w.valid();
             if (optHost && optWalkSeen != walk.get()) {
                 optWalkSeen = walk.get();
-                optMenu.open(openScreen == 29 ? 1 : 0, settings.v);
+                optMenu.open(openScreen == omk::screen::StartMenu ? 1 : 0, settings.v);
                 std::vector<std::string> modes;
                 const int cur = front.displayModes(dispW, dispH, modes);
                 optMenu.setDevices(2, modes, cur);
@@ -1344,7 +1344,7 @@ int PlayState::modesShoot() {
                     optSndBack    = loadSlot(35, omk::UiWidgets::kSoundBack);
                 }
             }
-            const bool optOnSneakTab = optHost && openScreen == omk::kScreenSneak &&
+            const bool optOnSneakTab = optHost && openScreen == omk::screen::Sneak &&
                 walk->panel() && walk->panel()->addr == omk::kPanelSneakOptions;
             if (uiBits && optOnSneakTab && !optMenu.focused() && (uiBits & (omk::kUiLeft | omk::kUiRight))) {
                 optMenu.focus();
@@ -1371,8 +1371,8 @@ int PlayState::modesShoot() {
                 // second BACK, which the reader played and called broken
                 // (2026-10-01). Their account of the game outranks a reading
                 // that has found no mechanism; the second BACK is sent here.
-                if (!optMenu.focused() && openScreen == 29 &&
-                    walk->panel() && walk->panel()->addr == 0x004CF420u) {
+                if (!optMenu.focused() && openScreen == omk::screen::StartMenu &&
+                    walk->panel() && walk->panel()->addr == omk::kPanelOptionsHost) {
                     walk->press(omk::kUiBack);
                     std::printf("frame %ld: options: the start menu back on its buttons "
                                 "(a second BACK - the reader's account, a reconstruction)\n", n);
@@ -1403,10 +1403,10 @@ int PlayState::modesShoot() {
                          walk->currentList() != wasList) blip(sndMove);
             }
             if (optHost) {
-                const bool onPanel = openScreen == 29 && walk->panel() &&
-                                     walk->panel()->addr == 0x004CF420u;
+                const bool onPanel = openScreen == omk::screen::StartMenu && walk->panel() &&
+                                     walk->panel()->addr == omk::kPanelOptionsHost;
                 // the sneak's tab LEFT: the leave hook 0x0049D940 hides 35
-                if (openScreen == omk::kScreenSneak && !optOnSneakTab && optMenu.focused())
+                if (openScreen == omk::screen::Sneak && !optOnSneakTab && optMenu.focused())
                     optMenu.unfocus();
                 if (onPanel && !optEntered) {
                     optEntered = true;
@@ -1846,7 +1846,7 @@ int PlayState::modesShoot() {
             }
             // The board's message oscillator, on the FRAME's milliseconds as
             // `sub_42B6D0` adds them: the line drops at 5000.
-            if (openScreen == kScreenHighScore && hsMessageLeftMs > 0.0)
+            if (openScreen == omk::screen::HighScore && hsMessageLeftMs > 0.0)
                 hsMessageLeftMs -= frameSec * 1000.0;
             // OSCILLATOR 5, the delayed close (`UiWalk::startCloseTimer`):
             // ticked on the same milliseconds, and its expiry is the screen's
@@ -1862,7 +1862,7 @@ int PlayState::modesShoot() {
             }
             if (walk->closing()) {
                 if (walk->tickClose(frameSec * 1000.0)) {
-                    if (openScreen == kScreenHighScore)
+                    if (openScreen == omk::screen::HighScore)
                         std::printf("frame %ld: screen 36 - oscillator 5 expired, "
                                     "screen +8 = 3: the board closes itself\n", n);
                     else
@@ -1904,13 +1904,13 @@ int PlayState::modesShoot() {
             // sneak's close event and shut a list that was never open.
             if (walk->closing()) {
                 // held by oscillator 5: nothing leaves this frame
-            } else if (leaving && openScreen == kScreenPause) {
+            } else if (leaving && openScreen == omk::screen::Pause) {
                 std::printf("screen %d PAUSE GAME closed - the world runs "
                             "again\n", openScreen);
                 walk.reset();
                 openScreen = -1;
                 screenFromScript = true;
-            } else if (leaving && openScreen == kScreenHighScore) {
+            } else if (leaving && openScreen == omk::screen::HighScore) {
                 // its close slot is the generic `Ui_CloseScreenDefault`: no
                 // event 26, no list - and `sub_466B60` again only if the
                 // player is still held, which a level page already undid
@@ -1956,8 +1956,8 @@ int PlayState::modesShoot() {
                 // MULTIPLAN's close `0x004B02D0` is the same two calls - and
                 // nothing on screen 2 writes `dword_930750`, so its thirteen
                 // answer-keeping sites always read back this -1.
-                if ((openScreen >= 20 && openScreen <= 28) || openScreen == 32 ||
-                    openScreen == 2) {
+                if ((openScreen >= 20 && openScreen <= 28) || openScreen == omk::screen::LibLahorey ||
+                    openScreen == omk::screen::Multiplan) {
                     const int was = inv.openedList();
                     inv.closeList();          // Game_RaiseEvent(26, 0)
                     std::printf("screen %d close: event 26, open list %d -> %d\n",
@@ -1981,7 +1981,7 @@ int PlayState::modesShoot() {
             // DELAY, not an animation: nothing draws from oscillator 5 on
             // this screen. (It is also the general delayed close - the high
             // score's 10000 ms above, Den's, Xachen's and the Gandhar door's.)
-            if (callCloseLeftMs > 0.0 && walk && openScreen == kScreenVideophone) {
+            if (callCloseLeftMs > 0.0 && walk && openScreen == omk::screen::Videophone) {
                 callCloseLeftMs -= frameSec * 1000.0;
                 if (callCloseLeftMs <= 0.0) {
                     std::printf("frame %ld: screen %d VIDEOPHONE - oscillator 5 expired, "
@@ -2254,7 +2254,7 @@ void PlayState::closeAllScreens(const char* who) {
         std::printf("frame %ld: UI_CloseAllScreens (%s) - no screen up\n", n, who);
         return;
     }
-    if (openScreen != kScreenVideophone) {
+    if (openScreen != omk::screen::Videophone) {
         std::printf("frame %ld: UI_CloseAllScreens - screen %d closes (%s)\n", n,
                     openScreen, who);
         walk->closeScreen();

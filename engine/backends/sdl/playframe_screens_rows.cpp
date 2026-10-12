@@ -30,7 +30,7 @@ void PlayState::screensSneakRows() {
     // The channel, in the order the interface asks it: case 29 for the
     // count and case 33 for each name, both refusing (result 3) while no
     // list is open - which is why the open raised event 25 first.
-    if (walk && openScreen == omk::kScreenSneak) {
+    if (walk && openScreen == omk::screen::Sneak) {
         // `sub_49BEA0` (Utiliser) writes the screen slot's state word to
         // **3** and returns 1 when `sub_42B470` returned 1 - and
         // docs/UI.md's state machine says 3 is CLOSING. So a successful
@@ -835,7 +835,7 @@ void PlayState::screensSneakRows() {
             {
                 for (const auto& l : pn->lists) {
                     for (const auto& e : l.items) {
-                        if (e.textFn == 0x0049E090u) {
+                        if (e.textFn == omk::kTextFnSneakClock) {
                             // The clock. Both halves are the engine's own
                             // formatters, already ported and checked
                             // (`sub_0041E690`'s integer division); the
@@ -1072,21 +1072,21 @@ void PlayState::screensShopRows() {
             const bool messageUp = shopNowMs - shopMessageMs < 5000;
             for (const auto& l : walk->panel()->lists) {
                 for (const auto& e : l.items) {
-                    if (e.textFn == 0x004AEE30u && messageUp) {
+                    if (e.textFn == omk::kTextFnShopButton && messageUp) {
                         sneakRows[e.addr] = shopMessage;     // `sub_478D60`
-                    } else if (e.textFn == 0x004AEE30u && buttons) {
+                    } else if (e.textFn == omk::kTextFnShopButton && buttons) {
                         const int b = walk->selectionOf(*buttons);
                         if (b >= 0 && b < static_cast<int>(buttons->items.size()))
                             sneakRows[e.addr] =
                                 str(buttons->items[static_cast<std::size_t>(b)].label());
-                    } else if (e.textFn == 0x004AEFD0u) {
+                    } else if (e.textFn == omk::kTextFnShopSellName) {
                         // the Vente confirm's second line: `sub_42AA00` on
                         // the selected stock row - case 33, its name
                         if (rowId > 0) sneakRows[e.addr] = inv.displayName(rowId, 0);
-                    } else if (e.textFn == 0x004AEF10u) {
+                    } else if (e.textFn == omk::kTextFnShopMoney) {
                         sneakRows[e.addr] = str(e.label()) + " " +
                                             std::to_string(state.money());
-                    } else if (e.textFn == 0x004AEF60u) {
+                    } else if (e.textFn == omk::kTextFnShopPrice) {
                         sneakRows[e.addr] = str(e.label()) + " " +
                                             std::to_string(price);
                     }
@@ -1250,7 +1250,7 @@ void PlayState::screensPuzzles() {
     // press write to the same cell (`UiListState::itemPlace`). Moving only
     // the position left the cursor's unlit sprite sampling the artwork at
     // (135, 61), pasted over whichever cell it stood on.
-    if (walk && openScreen == 12 && walk->panel()) {
+    if (walk && openScreen == omk::screen::GandharDoor && walk->panel()) {
         for (const auto& l : walk->panel()->lists) {
             if (l.hook != omk::kHookGandharGrid || l.items.empty()) continue;
             for (const auto& it : l.items)
@@ -1277,11 +1277,11 @@ void PlayState::screensPuzzles() {
     // `0x20000004`); the buttons are the one it can, and on the code all
     // four of THOSE take lit source (0, 23) with `0x40000008` set, which
     // is the lamp coming on.
-    if (walk && openScreen == 14 && walk->panel()) {
+    if (walk && openScreen == omk::screen::Xachen && walk->panel()) {
         const omk::UiList* syms = nullptr;
         const omk::UiList* btns = nullptr;
         for (const auto& l : walk->panel()->lists) {
-            if (l.hook == 0x0042A930u) btns = &l;
+            if (l.hook == omk::kMoveSelectionLR) btns = &l;
             else if (l.items.size() == 4) syms = &l;
         }
         if (syms)
@@ -1294,7 +1294,7 @@ void PlayState::screensPuzzles() {
         if (btns && walk->xachenSolved())
             for (const auto& e : btns->items) itemLitSource[e.addr] = {0, 23};
     }
-    if (walk && openScreen == 13 && walk->panel()) {
+    if (walk && openScreen == omk::screen::Den && walk->panel()) {
         for (const auto& l : walk->panel()->lists) {
             if (l.hook != omk::kHookDenDial) continue;
             for (std::size_t k = 0; k < 4 && k < l.items.size(); ++k) {
@@ -1303,7 +1303,7 @@ void PlayState::screensPuzzles() {
             }
         }
     }
-    liftHandled = walk && openScreen == 4;
+    liftHandled = walk && openScreen == omk::screen::Lift;
 }
 
 // The terminal family's display
@@ -1358,7 +1358,7 @@ void PlayState::screensTerminals() {
                 if (l.hook == omk::kHookTerminalPad) keypad = &l;
             int str = -1;
             const char* arm = "";
-            if (walk->bannerRunning() && onMain && (f.screen == 5 || f.screen == 11)) {
+            if (walk->bannerRunning() && onMain && (f.screen == omk::screen::Terminal || f.screen == omk::screen::FightSim)) {
                 str = f.screen == 5 ? 11 : 4;
                 arm = "oscillator 6, the banner";
             } else if (walk->closing() && f.screen == 11) {
@@ -1383,7 +1383,7 @@ void PlayState::screensTerminals() {
             if (str < 0 || str >= static_cast<int>(txt.size())) break;
             for (const auto& l : walk->panel()->lists)
                 for (const auto& e : l.items)
-                    if (e.textFn == 0x004AF5D0u)
+                    if (e.textFn == omk::kTextFnTerminalBody)
                         sneakRows[e.addr] = txt[static_cast<std::size_t>(str)];
             // the body box carries bank C `0x80000002`, the long-text scroll
             // (`Ui_ItemTextStyle`): the composer clamps the walk's own offset
@@ -1422,7 +1422,7 @@ void PlayState::screensTerminals() {
                 if (id >= 0 && id < static_cast<int>(txt.size()))
                     for (const auto& l : walk->panel()->lists)
                         for (const auto& e : l.items)
-                            if (e.textFn == 0x004AF5A0u)
+                            if (e.textFn == omk::kTextFnTerminalBar)
                                 sneakRows[e.addr] = txt[static_cast<std::size_t>(id)];
                 // printed from what the BAR will draw, and from the cell
                 // the WALK is on - not from the id, which is the value
@@ -1431,7 +1431,7 @@ void PlayState::screensTerminals() {
                 std::string bar;
                 for (const auto& l : walk->panel()->lists)
                     for (const auto& e : l.items)
-                        if (e.textFn == 0x004AF5A0u) {
+                        if (e.textFn == omk::kTextFnTerminalBar) {
                             const auto r = sneakRows.find(e.addr);
                             if (r != sneakRows.end()) bar = r->second;
                         }
@@ -1457,7 +1457,7 @@ void PlayState::screensTerminals() {
                 std::string shown;
                 for (const auto& l : walk->panel()->lists)
                     for (const auto& e : l.items)
-                        if (e.textFn == 0x004AF5D0u) {
+                        if (e.textFn == omk::kTextFnTerminalBody) {
                             const auto r = sneakRows.find(e.addr);
                             if (r != sneakRows.end()) shown = r->second;
                         }
@@ -1500,7 +1500,7 @@ void PlayState::screensLift() {
     // and a {slot, 7} block, then `sub_4767E0` into a buffer) and this
     // takes the file's string directly, which is what that produces for
     // every one of the seven shipped slots.
-    if (walk && openScreen == 4 && walk->panel()) {
+    if (walk && openScreen == omk::screen::Lift && walk->panel()) {
         sneakRows.clear();
         const auto liftText = omk::iamStrings(fs, "IAM/Lift");
         const omk::UiPanel* pn = walk->panel();
@@ -1509,7 +1509,7 @@ void PlayState::screensLift() {
             if (l.items.size() == 7) { slot = walk->selectionOf(l); break; }
         for (const auto& l : pn->lists)
             for (const auto& e : l.items)
-                if (e.textFn == 0x004B01C0u && slot >= 0 &&
+                if (e.textFn == omk::kTextFnLiftDescription && slot >= 0 &&
                     slot < static_cast<int>(liftText.size()))
                     sneakRows[e.addr] = liftText[static_cast<std::size_t>(slot)];
         static int liftTold = -2;
@@ -1688,7 +1688,7 @@ void PlayState::screensLift() {
                 const int id = buttons->items[static_cast<std::size_t>(b)].label();
                 if (const omk::UiList* head = w.listAt(omk::kListMultiplanHeader))
                     for (const auto& e : head->items) {
-                        if (e.textFn != 0x004B0B60u) continue;
+                        if (e.textFn != omk::kTextFnMultiplanButton) continue;
                         if (mpMessageUp)
                             sneakRows[e.addr] = mpMessage;
                         else if (id >= 0 && id < static_cast<int>(mpText.size()))

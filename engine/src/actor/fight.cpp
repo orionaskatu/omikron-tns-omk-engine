@@ -557,7 +557,7 @@ void Fight::faceOpponent(FightContext& c, const FightContext& other, bool ease) 
     if (!c.body || !other.body) return;
     // The guard: flag 0x2 forces it; otherwise a fighter who is reacting,
     // grounded, thrown or mid-special is left alone.
-    const bool forced = (c.flags & 2u) != 0;
+    const bool forced = (c.flags & fight_flag::FaceForced) != 0;
     if (!forced) {
         const int s = c.state;
         if (s == 1 || s == 2 || s == 21 || s == 6 || s == 7 || s == 9 ||
@@ -760,7 +760,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     const CtlState* defE = stateAt(def, def.entry);
     if (!atkE || !defE) return;
 
-    if (def.flags & 0x80u) return;                       // untouchable
+    if (def.flags & fight_flag::Untouchable) return;
     if (att.stateD != 8 && (def.flags & 0x200u)) return;
     if (decided_) return;                                // already settled
     if (att.entry == att.scoredEntry) return;            // scored once
@@ -827,7 +827,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     }
 
     // The BLOCK: the defender's guard eats it for a flat point of chip damage.
-    if (def.flags & 0x40u) {
+    if (def.flags & fight_flag::Guarding) {
         forceEntry(def, lineB ? def.hitLow : def.hitHigh);
         ++stats_.blocks;
         applyDamage(def, att, 1.0, false, FightEvent::Kind::Block, -1);
@@ -1024,7 +1024,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
     // fighters idle - state 1, or intent 2, on each side, as read - the three
     // latch bits 0x40/0x80/0x100 are cleared (`& 0xFFFFFE3F`), intent 105, and
     // a move is picked from family 1 when standing, 4 otherwise.
-    if ((c.flags & 0x100u) && (c.state == 1 || c.aiIntent == 2) &&
+    if ((c.flags & fight_flag::AiGuardLatch) && (c.state == 1 || c.aiIntent == 2) &&
         (other.state == 1 || other.aiIntent == 2)) {
         c.flags &= 0xFFFFFE3Fu;
         c.aiIntent = 105;
@@ -1047,12 +1047,12 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
         //   this fighter's OWN entry `+76`: bit 1 high, bit 2 low.
         // A line-A move with this fighter's low bit set ends the arm.
         // Both presses pass a literal 0 modifier.
-        if (c.aiIntent == 9 && separation_ <= kNearSwitch && !(c.flags & 0x100u)) {
-            c.flags |= 0x100u;
+        if (c.aiIntent == 9 && separation_ <= kNearSwitch && !(c.flags & fight_flag::AiGuardLatch)) {
+            c.flags |= fight_flag::AiGuardLatch;
             const CtlState* own = stateAt(c, c.entry);
             const int ownBits = own ? own->playBits : 0;
             injectWords(c, builtin_.m4CAD30, 0);
-            c.flags |= 0x40u;
+            c.flags |= fight_flag::Guarding;
             ++stats_.aiGuards;
             const bool s16 = other.state == 16, s32 = other.state == 32;
             const bool ownLow = (ownBits & 2) != 0, ownHigh = (ownBits & 1) != 0;

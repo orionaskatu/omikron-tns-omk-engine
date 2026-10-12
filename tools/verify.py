@@ -19942,7 +19942,11 @@ def c_engine_training_partner():
     r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--software",
                         "--res", "640x480", "--nofmv", "--no-crowd", "--save", save, "--slot", "0",
                         "--area", "237", "--address", "680",
-                        "--hold", "k*40,k28*2,k*90,k2*2,k*10,k28*2,k*600", "--frames", "700"],
+                        # 700 -> 900 frames on 2026-10-12: the simulator's choice
+                        # now holds the screen 4500 ms (oscillator 5, row 24 of
+                        # todo/scene-gameplay-audit.md) before the fight starts,
+                        # which left two paired seconds inside 700
+                        "--hold", "k*40,k28*2,k*90,k2*2,k*10,k28*2,k*800", "--frames", "900"],
                        capture_output=True, encoding="latin-1",
                        env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_BODYLOG="1"))
     began = re.search(r"frame (\d+): FIGHT BEGINS against CHARACTERS 331", r.stdout)

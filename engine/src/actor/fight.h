@@ -100,6 +100,18 @@ struct FightStats {
 // One fighter's combat context - the 140-byte block at `dword_906F60` (the
 // player) and `dword_907000` (the opponent). The engine's offsets are kept in
 // the comments because every cross-reference in `readable/` is by offset.
+// A FIGHTER'S STATUS FLAGS - `FightContext::flags`, the context's `+84`. Named
+// where the fight's own code establishes them; 0x20 (no facing, no
+// separation), 0x200 (suspends the camera unless both carry it; a hit skips it
+// unless the attacker's stateD is 8) and 0x400 (no facing) stay literal.
+namespace fight_flag {
+inline constexpr std::uint32_t Grounded     = 0x1;
+inline constexpr std::uint32_t FaceForced   = 0x2;    // `Fight_FaceOpponent` turns him whatever his state
+inline constexpr std::uint32_t Guarding     = 0x40;   // a hit is BLOCKED for a point of chip damage
+inline constexpr std::uint32_t Untouchable  = 0x80;   // no hit lands
+inline constexpr std::uint32_t AiGuardLatch = 0x100;  // the AI has raised its guard this approach
+}  // namespace fight_flag
+
 struct FightContext {
     FightBody* body = nullptr;        // +0   the actor record
     int  prevEntry = -1;              // +8   the entry before this one
@@ -126,9 +138,7 @@ struct FightContext {
     int stateB = 0;                   // +72  BYTE1 of the same word
     float stateF = 0.0f;              // +76  BYTE2, as a float
     int stateD = 0;                   // +80  HIBYTE - 8 lifts the 0x200 skip
-    std::uint32_t flags = 0;          // +84  status: 1 grounded, 2 facing
-                                      //      override, 0x80 untouchable,
-                                      //      0x100/0x200 AI latches, 0x40
+    std::uint32_t flags = 0;          // +84  `fight_flag` (0x20, 0x200, 0x400 unread)
     const CtlAiProfile* ai = nullptr;  // +88  the profile, by difficulty level
     int   aiIntent = 10;              // +92  what the AI last decided to do
     long  aiMoveStart = 0;            // +100 ms

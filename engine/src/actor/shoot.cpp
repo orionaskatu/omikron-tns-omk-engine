@@ -319,7 +319,7 @@ bool shootGridTurn(ShootRecord& r, int heading, float& eulerY, float dt,
     return true;
 }
 
-ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
+ShootActionOut shootActorAction(ShootRecord& r, int action, int routeArg,
                                 const std::function<bool(int)>& hasClip,
                                 const std::function<int()>& rnd,
                                 const std::function<ShootRouteChoice(int)>& acquire) {
@@ -328,7 +328,7 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
     if (r.flags & shoot_flag::HoldsActions) {
         r.pendingAction = action;
         r.flags |= shoot_flag::ActionWaiting;
-        r.pendingArg = a3;
+        r.pendingArg = routeArg;
         o.parked = true;
         return o;
     }
@@ -336,21 +336,21 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
     // back. The release itself is the caller's (it owns the map); this only
     // says so by forgetting the route.
     if (r.scriptStep == 1 && r.route >= 0) { o.releasedRoute = r.route; r.route = -1; }
-    int v9 = action;
-    if (a3) {
-        r.routeArg = a3;
+    int taken = action;
+    if (routeArg) {
+        r.routeArg = routeArg;
         r.hitAction = action;
-        if (a3 > 0) v9 = 1;
-        if (a3 == -1) v9 = 0;
+        if (routeArg > 0) taken = 1;
+        if (routeArg == -1) taken = 0;
     } else {
         r.hitAction = -1;
-        if (action == -1) v9 = 0;
+        if (action == -1) taken = 0;
     }
-    const std::uint32_t v10 = r.flags & 0xFFDFFFFFu;
-    r.flags = v10;
+    const std::uint32_t flagsNow = r.flags & 0xFFDFFFFFu;
+    r.flags = flagsNow;
     auto has = [&](int t) { return hasClip && hasClip(t); };
     auto walkClip = [&]() { return has(10) ? 10 : (has(9) ? 9 : -1); };
-    switch (v9) {
+    switch (taken) {
     case 0:
     case 5: {
         // `+88 - 1`, and at 0 (or below) a coin picks 11 or 25 and the count
@@ -361,7 +361,7 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
             if (rnd && (rnd() & 1) != 0) { t = 11; r.flags &= 0xFF9FFFFFu; }
             else                         { t = 25; r.flags |= 0x600000u; }
             r.actionCounter = 10;
-        } else if (v10 & 0x19u) {
+        } else if (flagsNow & 0x19u) {
             t = 25; r.flags |= 0x600000u;
         } else {
             t = 11; r.flags &= 0xFF9FFFFFu;
@@ -372,7 +372,7 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
             if (!has(t)) return o;              // "anim non existante dans le .ANI"
         }
         r.state = 3;
-        if (v9 == 0) { r.scriptStep = 0; r.flags &= 0xFFFFFFDDu; }
+        if (taken == 0) { r.scriptStep = 0; r.flags &= 0xFFFFFFDDu; }
         else         { r.scriptStep = 5; r.flags |= 2u; }
         o.clipType = t;
         return o;
@@ -387,7 +387,7 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
         // `sub_4354E0(+188, +136, +140, (uint8_t)a3)` then `sub_4356B0(route,
         // +188, 0, out)`. The engine reads `+188` TWICE, once for each call,
         // which matters not at all - nothing between them writes it.
-        const ShootRouteChoice c = acquire ? acquire(a3 & 0xFF) : ShootRouteChoice{};
+        const ShootRouteChoice c = acquire ? acquire(routeArg & 0xFF) : ShootRouteChoice{};
         r.route = c.route;
         r.repeats = 0;                          // `+100 = 0`, the point index
         if (c.route >= 0) { r.goalX = c.x; r.goalZ = c.z; }
@@ -402,7 +402,7 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
         if (t < 0) return o;
         r.state = 6;
         r.flags = (r.flags & 0xFFFFFFDDu) | 0x20u;
-        r.scriptStep = v9;
+        r.scriptStep = taken;
         o.clipType = t;
         o.timerProperty = 31;                   // `Game_RaiseEvent(44, {31, him})`
         return o;

@@ -48,7 +48,7 @@ CtlFile readCtl(std::span<const std::byte> d) {
         groups.push_back({g, n, off});
         off += 88u * n;
     }
-    std::size_t v5 = off;
+    std::size_t cursor = off;
 
     std::vector<std::size_t> ents;
     std::vector<int> groupOf;
@@ -62,11 +62,11 @@ CtlFile readCtl(std::span<const std::byte> d) {
     // the file's, and getting it wrong desynchronises everything after it.
     std::map<std::size_t, std::size_t> named, childOff, parentOff;
     for (auto e : ents)
-        if (!(u32(d, e + 8) & ctl_entry::NoClipName)) { named[e] = v5; v5 += 12; }
+        if (!(u32(d, e + 8) & ctl_entry::NoClipName)) { named[e] = cursor; cursor += 12; }
     for (auto e : ents)
-        if (u8(d, e + 87)) { childOff[e] = v5; v5 += 4u * u8(d, e + 87); }
+        if (u8(d, e + 87)) { childOff[e] = cursor; cursor += 4u * u8(d, e + 87); }
     for (auto e : ents)
-        if (u8(d, e + 86)) { parentOff[e] = v5; v5 += 4u * u8(d, e + 86); }
+        if (u8(d, e + 86)) { parentOff[e] = cursor; cursor += 4u * u8(d, e + 86); }
     // The turn, the root shift and the move name were stepped over here for
     // as long as nothing consumed them. The live channel does - `GoToMove`
     // applies a turn or a shift whole when it LEAVES a state carrying 0x100 /
@@ -75,23 +75,23 @@ CtlFile readCtl(std::span<const std::byte> d) {
     // what keeps the walk landing exactly on the file size.
     std::map<std::size_t, std::size_t> turnOff, shiftOff, moveOff;
     for (auto e : ents)
-        if (u32(d, e + 8) & ctl_entry::HasTurn)     { turnOff[e]  = v5; v5 += 24; }
+        if (u32(d, e + 8) & ctl_entry::HasTurn)     { turnOff[e]  = cursor; cursor += 24; }
     for (auto e : ents)
-        if (u32(d, e + 8) & ctl_entry::HasShift)     { shiftOff[e] = v5; v5 += 20; }
+        if (u32(d, e + 8) & ctl_entry::HasShift)     { shiftOff[e] = cursor; cursor += 20; }
     for (auto e : ents)
-        if (u8(d, e + 8) & ctl_entry::MoveName)       { moveOff[e]  = v5; v5 += 12; }
+        if (u8(d, e + 8) & ctl_entry::MoveName)       { moveOff[e]  = cursor; cursor += 12; }
     // the combat block, whose OFFSET the walk used only to step over
     std::map<std::size_t, std::size_t> combatOff;
     for (auto e : ents)
-        if (u32(d, e + 8) & ctl_entry::Combat) { combatOff[e] = v5; v5 += 40; }
+        if (u32(d, e + 8) & ctl_entry::Combat) { combatOff[e] = cursor; cursor += 40; }
 
     // the fight AI: 156 bytes a profile, twelve situation slots of {count,
     // ptr, _}, then each slot's items, then every item's input words
     const auto tableCount = u32(d, 76);
-    std::size_t pos = v5 + 156u * tableCount;
+    std::size_t pos = cursor + 156u * tableCount;
     std::vector<std::pair<std::uint32_t, std::size_t>> slots;
     for (std::uint32_t i = 0; i < tableCount; ++i) {
-        const auto rec = v5 + 156u * i;
+        const auto rec = cursor + 156u * i;
         CtlAiProfile p;
         p.id = u32(d, rec);
         for (int k = 0; k < 2; ++k) {
@@ -118,7 +118,7 @@ CtlFile readCtl(std::span<const std::byte> d) {
     // item records - the file is laid out level by level, not profile by
     // profile, so the words cannot be read while the slots are being counted.
     {
-        std::size_t ip = v5 + 156u * tableCount;
+        std::size_t ip = cursor + 156u * tableCount;
         for (const auto& [cnt, blk] : slots) (void)blk, ip += 16u * cnt;
         std::size_t si = 0;
         for (auto& p : f.ai)

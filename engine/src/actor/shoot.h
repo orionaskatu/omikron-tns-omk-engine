@@ -355,7 +355,7 @@ struct ShootActionOut {
     bool turnAround = false;  // action 9: +420 += 180
     int  releasedRoute = -1;  // a PATROL was replaced: give this route back
 };
-ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
+ShootActionOut shootActorAction(ShootRecord& r, int action, int routeArg,
                                 const std::function<bool(int)>& hasClip,
                                 const std::function<int()>& rnd,
                                 const std::function<ShootRouteChoice(int)>& acquire = {});

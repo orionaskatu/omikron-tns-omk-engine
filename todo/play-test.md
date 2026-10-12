@@ -495,6 +495,21 @@ Xachen `--area 58 --var 28=1,57=0 --stand -1471,150,133,290`; the door
 `--area 81 --address 263`. Watch for: the pause feeling like the original's,
 and keys pressed during it doing nothing.
 
+## 41. THE DOSSIER READER (2026-10-12, `todo/scene-gameplay-audit.md` 25)
+
+Kay'l's office terminal and the archives terminal now OPEN the file a cell
+names instead of closing. The terminal first shows its `Reseau multiplan`
+banner for 7 s, then the dossier list; the fight simulator shows `Attente
+d'autorisation` for 7 s, then `Bienvenue`, and `Merci` while its choice holds.
+In the reader UP/DOWN scroll a long file (8 px a press) and BACK returns to the
+cover page; the archives' `Meurtres` file sends the story on only when the
+screen is CLOSED. BACK on the terminal's cover page now closes it with the same
+answer TAB gives. Reach: the terminal `--save traces/save-appart.bin --area 179
+--stand 5468,336,-12118,120`; the archives `--area 180 --address 565`; the
+simulator `--area 237 --address 680`. Watch for: the banner's length, the
+scroll, and that the focused file box has NO outline yet (the original draws
+one - not ported).
+
 ## HEADLESS PASS over 19-29 (2026-10-05)
 
 Each item driven through the viewer with its check's own command, frames

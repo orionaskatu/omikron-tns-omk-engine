@@ -1942,6 +1942,7 @@ frame delta; the drawers read `+24`.
 | 2 | 1000 ms | **45..200** | the alpha the arrows, the ▶ marker and the pulsing fill throb with |
 | 3 | 500 ms | 230..235 | a small wobble |
 | 5 | set at start | the SCREEN at `+0x18` | **the delayed close** - below |
+| 6 | set at start | — | **the terminal family's banner**: a one-shot (expiry `sub_42B7B0`, which only clears bit 0), started at 7000 ms by the TERMINAL's open (0x004AF030) and the FIGHT SIM's (0x004AF130); the body's text hook reads its running bit |
 
 **Oscillator 5 is the engine's DELAYED CLOSE** (read 2026-10-12). Its record
 ships period 0 and its own expiry callback, `sub_42B7E0` where every other
@@ -1969,7 +1970,7 @@ the screen already wrote reaches the parked script only at the close
 | 36 HIGH-SCORE | 0x004ADA4E | 10000 | a level page |
 
 TERMINAL (5) and ARCHIVES (18) start none: their arm goes to panel
-0x004E4170. The port closed all of these on the answer's own frame - and the
+0x004E4170, the dossier reader (below). The port closed all of these on the answer's own frame - and the
 SURV NO KIT never - until 2026-10-12 (`UiWalk::startCloseTimer`,
 `verify.py: engine: delayed close`).
 
@@ -2923,8 +2924,13 @@ the raw image (none has a `proc` label):
   3 / 2 for the three SURV screens. The two query branches (strings 11 and 4 /
   6) sit behind `sub_42B5E0(6)`/`sub_42B5F0` - `Ui_Oscillator(6)` /
   `Ui_OscillatorFlags`, oscillator 6's running bit (this said "an object
-  lookup not read" until 2026-10-11; what STARTS oscillator 6 here is not read);
-  the default arm is what a first visit takes;
+  lookup not read" until 2026-10-11). The order, read 2026-10-12, is: oscillator
+  6 running on panel 0x004E4108 - TERMINAL 11 (`Reseau multiplan`), FIGHT SIM 4
+  (`Attente d'autorisation`), the start-up page both OPENS hold for 7000 ms;
+  then oscillator 5 running on the FIGHT SIM - 6 (`Merci. Preparation`), the
+  4500 ms its choice holds the screen; then the seven-case cover page on panel
+  0x004E4108; and otherwise - the dossier reader - the string the highlighted
+  keypad cell's TAG (`+0x3C`) names;
 * **the keypad**, list hook `sub_4AF300`: a 3x3 grid, a `0` cell (9) and the
   big button (10). UP from 10 goes to 9 and from 9 to 7, nothing from the top
   row, else -3; DOWN from the bottom row to 9, 9 to 10, else +3; LEFT/RIGHT
@@ -2938,6 +2944,39 @@ the raw image (none has a `proc` label):
   none). It is the lift's shape: a widget whose text belongs to another;
 * **the terminal's answer on the way OUT**, `sub_4AF0E0`:
   `dword_68A600 ? 2 + (dword_68A5FC != 0) : (dword_68A5FC != 0)`.
+  It is the screen's CLOSE slot, so TAB, BACK on the cover page and the big
+  button (`0x0042A990`, `screen+8 = 3`) all reach it; the port answered only on
+  TAB until 2026-10-12.
+
+#### ...and the DOSSIER READER, panel 0x004E4170 (2026-10-12)
+
+The activate callback's TERMINAL arm (cells 0..4) and ARCHIVES arm (0..3) do
+not answer and leave: both end `sub_42A370(screen, 0x004E4170)` and
+`dword_6A5090 = 0`. The terminal remembers cell 3 (`dword_68A600`) and cell 4
+(`dword_68A5FC`) for its close; the archives' cell 2 - the `Meurtres` file -
+writes `dword_930750 = 1` and starts NO oscillator, so the answer waits for the
+player to close the screen and AREA 180's script hears it then. Nothing in the
+tree points at the panel (`exetables.py` CODE_NAMED). Its record names the same
+three lists as 0x004E4108 and differs in five fields:
+
+| field | 0x004E4108 | 0x004E4170 | |
+|---|---|---|---|
+| `+0` | 0 | 0x004E4108 | BACK returns to the cover page |
+| `+4` | `sub_4AF2B0` | `sub_4AF2D0` | builders |
+| `+8` | 0 | `sub_4AF2F0` | leave hook |
+| `+24` | 0 | 1 | the BODY box is current, so UP/DOWN reach the scroller `sub_42A9A0` |
+| `+72` | 0x20000030 | 0x20000020 | no 0x10: BACK on the reader does not close |
+
+The builders toggle the body's bank-B `0x80` outline (on in the reader, off on
+the cover page) and write its `+30` to -1; the leave hook rewrites the input
+mask to its usual 0x203F. The body (430x320, bank C `0x80000202`) scrolls
+through `Ui_ItemTextStyle`'s generic `0x80000002` arm - measure, clamp
+`dword_6A5090` into `height - box` floored at 0, use it as the origin - which
+the port applied only to the examine boxes until this panel needed it: at
+640x480 the archives' `Meurtres` file is 48 px too tall and steps 8 a press.
+The TERMINAL's open writes cell 0's tag from a register (`xor edi, edi; mov
+[0x004E3CD4], edi`), which the lift's store scan does not take for a binding;
+the record's own `+0x3C` is 0 too. `verify.py: engine: dossier reader`.
 
 **What an entry unlocks.** AREA 179's script (Kay'l's office) branches on that
 answer: 1 sets `1-A-CS SecretFile` and, first time, plays *ZVO P251*, *DATA

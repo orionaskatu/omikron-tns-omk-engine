@@ -2215,10 +2215,12 @@ def c_engine_i2d():
              # and the hint shop added their panels) - 133 -> 136 constants,
              # 69 -> 70 round trips, 124/616/348 -> 136/639/367 flag words;
              # every constant still resolves and every round trip is correct,
-             # which are the two relations asserted beside this
+             # which are the two relations asserted beside this. 2026-10-12:
+             # 136/639/367 -> 138/654/369, the dossier reader 0x004E4170's
+             # copies of the terminal family's flag words
              136, 136, 28, 106, 2,
              70, 70,
-             136, 639, 367), True, True), \
+             138, 654, 369), True, True), \
            "the seven pools' total capacity, how many are live, how many are " \
            "UNREFERENCED, and whether the total equals the display list's own " \
            "node cap of 4862 - which is what makes that number derived rather " \
@@ -3133,8 +3135,12 @@ def c_ui_item_bindings():
     # NOT move is the pair that matters - 32 bindings resolve against a screen
     # that has a text file and 32 of them name a non-empty string, so every
     # resolvable binding still resolves and this is a census step, not a fault.
+    # ...and 2026-10-12: the terminal family's DOSSIER READER 0x004E4170,
+    # walked under the TERMINAL, carries copies of its keypad - six string
+    # bindings and four tags, all on a child panel (`nofile` 14 -> 20). The
+    # resolvable pair, 32 and 32, does not move.
     return (nstr, ntag, resolvable, ok, nofile, sorted(terminal)), \
-           (46, 26, 32, 32, 14, [5, 6, 7, 8, 9, 10]), \
+           (52, 30, 32, 32, 20, [5, 6, 7, 8, 9, 10]), \
            "items whose open callback binds a string id and items it binds a " \
            "tag on - neither is in the item record, which ships -1 and 0; " \
            "then how many of those bindings sit on a screen that HAS a text " \
@@ -23618,8 +23624,12 @@ def c_engine_ui():
     # which is why it read as a standing failure for four days. `disagree` is
     # again 0 once the terminal family joins the named cases below - and that
     # is a NAMING, not a tolerance: each of the seven asserts its exact pair.
+    # 2026-10-12: one more panel, the terminal family's dossier reader
+    # 0x004E4170 (todo/scene-gameplay-audit.md 25) - 60 -> 61 panels, 176 ->
+    # 179 lists, 728 -> 744 items, 651 -> 665 selectable, 63 -> 65 hooked
+    # lists, 113 -> 114 default-walk lists: its three lists are 0x004E4108's.
     return (head, len(ref), disagree, known), \
-           ((60, 176, 728, 651, 63, 113, 60, 0), 31, 0,
+           ((61, 179, 744, 665, 65, 114, 61, 0), 31, 0,
             ((5, 10, 0), (7, 0, 3), (9, 0, 4), (11, 10, 0), (15, 10, 0),
              (16, 10, 0), (17, 10, 0), (18, 10, 0), (19, 10, 0))), \
            "panels (31 screens + 15 children - 13 reached through an item +44 and TWO named only from CODE, the verb panel 0x004DEEB8 and the examine page 0x004DEF20, which `sub_42A370` installs from a callback so nothing in the tree points at them), " \
@@ -25047,7 +25057,9 @@ def c_ui_answers():
             0x004AF410,
             241, 1, 25, 15, 10,
             [-1, 19, 496], 16, 16, 0, [0, 2, 23],
-            80), \
+            # 80 -> 90 on 2026-10-12: the dossier reader 0x004E4170 carries
+            # the keypad again, ten more cells naming `0x004AF410`
+            90), \
            "the answer global; every write to it; the `-1` RESET " \
            "(exactly one - UI_LoadScreen's); the immediate writers and the " \
            "register ones; the distinct immediate answers (0, 1 and 6 - the " \
@@ -25396,9 +25408,13 @@ def c_ui_geometry():
     # the start menu's missing map and the LIFT's seven coordinates are
     # untouched. A census of a table that deliberately grew, re-derived rather
     # than accepted (`todo/sweep-log.md`'s fifth-census note).
+    # 2026-10-12: the terminal family's DOSSIER READER 0x004E4170 joins
+    # CODE_NAMED - one panel, the sixteen widgets of 0x004E4108 again, all
+    # inside 640x480, one of them (as on its parent) with no size; its tile
+    # map is the family's, so the map count moves by one too.
     return (len(items), inb, sized, len(r["panels"]), len(maps), lens, clean,
             menuMap, xy), \
-           (728, 728, 727, 60, 41, [80], 41,
+           (744, 744, 743, 61, 42, [80], 42,
             False,
             [(278, 194), (321, 194), (370, 194),
              (284, 241), (325, 242), (371, 242), (325, 288)]), \

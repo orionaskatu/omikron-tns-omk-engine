@@ -185,12 +185,19 @@ So reading a dossier OPENS A PLACE. Ops 87/88 write a 791-bit map that nothing
 announced, so the viewer now watches it and says each change - `ADDRESS 33
 ENABLED` is in the check, and any play log will show what a screen unlocked.
 
-**Still open here**: the header (`textFn` 0x004AF5A0) is
-`table_at_0x004E3FEC[word_4E3FE2]` - a runtime pointer array, so which label it
-shows per selection is unread; and the body does not yet switch to the chosen
-dossier (`IAM\Term` 0..4), which is the same index. The five "Consulter le
-dossier n°N" strings (5..9) and "Quitter le terminal" (10) belong to one of
-those two.
+~~**Still open here**: the header and the body's switch to the chosen
+dossier.~~ The header was closed in §3b. **The body switches since 2026-10-12**:
+cells 0..4 (the terminal) and 0..3 (the archives) install the DOSSIER READER,
+panel 0x004E4170, whose body shows the string the cell's tag names and scrolls
+(`docs/UI.md` "the dossier reader"; `verify.py: engine: dossier reader`). The
+TERMINAL and FIGHT SIM opens also start oscillator 6, a 7000 ms start-up page.
+
+**Not drawn, and it is wider than this family**: an item's bank-B `0x80`
+OUTLINE (`I2D_DrawRectOutline`, `docs/UI.md`'s decoration table). The composer
+draws the load panel's selection box by hand and no item outline at all, so
+the reader's builder turning the body's outline on (and the cover page's
+turning it off), Den's wheels and every other `0x40000080` item draw without
+one. The builders' writes are labelled in `UiWalk::buildPage` and not stored.
 
 ## 5. The special screens — surveyed, not yet built
 

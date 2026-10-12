@@ -131,11 +131,11 @@ int shootWallTest(ShootRecord& r, const Map2d& map, float x0, float z0, float dx
     }
     // LABEL_12: the landing is his cell now
     if (r.destX == cx && r.destZ == cz) {
-        r.flags &= ~0x20000u;
+        r.flags &= ~shoot_flag::NewDestination;
     } else {
         r.destX = cx;
         r.destZ = cz;
-        r.flags |= 0x20000u;
+        r.flags |= shoot_flag::NewDestination;
     }
     wallCentre(f, scale, cx, cz, snap);
     return 0;
@@ -325,9 +325,9 @@ ShootActionOut shootActorAction(ShootRecord& r, int action, int a3,
                                 const std::function<ShootRouteChoice(int)>& acquire) {
     ShootActionOut o;
     // a picked clip playing: the request is PARKED for when it ends
-    if (r.flags & 8u) {
+    if (r.flags & shoot_flag::HoldsActions) {
         r.pendingAction = action;
-        r.flags |= 0x8000000u;
+        r.flags |= shoot_flag::ActionWaiting;
         r.pendingArg = a3;
         o.parked = true;
         return o;
@@ -604,7 +604,7 @@ void ShootAi::tickGandhar(float dt) {
     // the ENTER handler: set +156, set or clear channel flag 0x800, and pick
     // an animation by TYPE from this character's own list
     rec_.state = a->code;
-    if (a->setsFlag) rec_.flags |= 0x800u; else rec_.flags &= ~0x800u;
+    if (a->setsFlag) rec_.flags |= shoot_flag::Immune; else rec_.flags &= ~shoot_flag::Immune;
     if (a->code == 16) {
         // the only action with no animation: it waits (rand() & 0x1F) + 30
         // frames. The replica takes the midpoint rather than a random draw,
@@ -720,7 +720,7 @@ void initShootRecord(ShootRecord& r, const ShootProperties& p, bool frozen) {
     r.flags = 64;                                  // `u32(rec,160) = 64`
     if (frozen) r.flags = 32832;                   // ...= 0x8040 under `dword_4E9760`
     if (p.behaviourBits & 0x10) r.flags |= 0x4000000u;
-    if (p.behaviourBits & 0x04) r.flags |= 0x0800000u;
+    if (p.behaviourBits & 0x04) r.flags |= shoot_flag::Watcher;
     if (p.behaviourBits & 0x08) r.flags |= 0x2000000u;
     if (p.behaviourBits & 0x02) r.flags |= 0x1000000u;
     if (p.behaviourBits & 0x20) r.flags |= 0x0100000u;
@@ -957,10 +957,10 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
         // THE HUB - where 1->2 and 4->5 both hand over. Three arms, and all
         // three turn WITH the snap and pick a turn clip from it; only the
         // first also fires.
-        if (r.flags & 0x8000u) {
+        if (r.flags & shoot_flag::Finishing) {
             // finishing: either drop flag 0x20, or ask for the default action
-            if (in.scriptStep == 8) r.flags &= ~0x20u;
-            else if (!(r.flags & 0x4000u)) out.actionRequest = 0;   // `Shoot_ActorAction(a2, 0, 0)`
+            if (in.scriptStep == 8) r.flags &= ~shoot_flag::Engaged;
+            else if (!(r.flags & shoot_flag::BatonOnly)) out.actionRequest = 0;   // `Shoot_ActorAction(a2, 0, 0)`
             break;                       // straight to the epilogue - no timer
         }
         bool turned = false;
@@ -1061,10 +1061,10 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
         // ACQUIRE. The cone and range test AND the grid line of sight must
         // both hold - or flag 0x20, the latch that keeps a gunman engaged
         // once he has seen you, must already be set.
-        if (r.flags & 0x8000u) break;
+        if (r.flags & shoot_flag::Finishing) break;
         const bool seen = acquired && in.gridLineOfSight;
-        if (!(seen || (r.flags & 0x20u)) || !in.targetAlive) break;
-        r.flags |= 0x20u;
+        if (!(seen || (r.flags & shoot_flag::Engaged)) || !in.targetAlive) break;
+        r.flags |= shoot_flag::Engaged;
         snapToClip(shootTurnToward(eulerY, a, true, in.dt));
         // and the FIRE test is the INNER range `+28`, not the acquisition
         // range `+32` - which is what the second of the three authored
@@ -1206,13 +1206,13 @@ int shootMoveDecision(const ShootRecord& r, const float self[4],
 // the `sub_421020` block do the same three writes.
 int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn& in) {
     if (r.node == -1) return 0;
-    if (!in.targetAlive || (r.flags & 0x8000u)) return 0;
+    if (!in.targetAlive || (r.flags & shoot_flag::Finishing)) return 0;
 
     // `+108` and the 10/11 pair: whatever `sub_421020` finds, it latches 0x20
     // and puts him in 10 - or leaves him in 11 if he is already there.
     const auto goPair = [&] {
         r.attackSlot = in.found421020;          // `u32(rec, 108) = v36`
-        r.flags |= 0x20u;
+        r.flags |= shoot_flag::Engaged;
         r.state = (r.state == 11) ? 11 : 10;
         return 0;
     };
@@ -1224,7 +1224,7 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
     if (r.type == 12) {
         if (!in.rayHits && inCone) {
             r.state = 3;
-            r.flags |= 0x20u;
+            r.flags |= shoot_flag::Engaged;
             return 1;
         }
         r.state = 4;
@@ -1235,13 +1235,13 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
     // above. Not seen: latched, state 3 and 2; unlatched, 0 and nothing
     // written. This arm comes BEFORE the stair search below, so a watcher
     // never goes looking for a staircase.
-    if (!in.sameNode && (r.flags & 0x800000u)) {
+    if (!in.sameNode && (r.flags & shoot_flag::Watcher)) {
         if (!in.rayHits && in.inWideCone) {
             r.state = 3;
-            r.flags |= 0x20u;
+            r.flags |= shoot_flag::Engaged;
             return 1;
         }
-        if (r.flags & 0x20u) {
+        if (r.flags & shoot_flag::Engaged) {
             r.state = 3;
             return 2;
         }
@@ -1260,7 +1260,7 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
         // stored at `+4`, and his goal set to that stair's NEAR end, then STATE
         // 1 to walk to it. No stair: `sub_421020` (unread), and failing that
         // `LABEL_24`, which is **state 4, back to patrolling**.
-        if (r.flags & 0x20u) {
+        if (r.flags & shoot_flag::Engaged) {
             r.link = in.link;                       // `u32(rec, 4) = v16`
             if (in.link >= 0) {
                 r.goalX = in.linkFrom[0];           // `+44 = link.from.x`
@@ -1288,7 +1288,7 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
 
     bool engaged = false;
     if (a.dist3d < r.rangeAcquire && los) {
-        r.flags |= 0x20u;
+        r.flags |= shoot_flag::Engaged;
         r.state = 6;
         engaged = true;
     }
@@ -1313,7 +1313,7 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
     // a coin flip sends him to 3 or back to patrolling in 4, and either way
     // the 0x20 latch is cleared - which is what lets him be re-acquired.
     if (a.dist3d >= r.rangeThird && r.state == 6) {
-        r.flags &= ~0x20u;
+        r.flags &= ~shoot_flag::Engaged;
         if (in.coinHeads) r.state = 3;
         else { r.state = 4; }
         return 0;
@@ -1346,7 +1346,7 @@ NoiseHearing shootHearNoise(ShootRecord& r, const float self[3], const float at[
                             int selfFloor) {
     NoiseHearing h;
     // `test cl, 40h` / `test cl, 20h` / `cmp [esi-4], 0Eh`
-    if (!(r.flags & 0x40u) || (r.flags & 0x20u) || r.state == 14) return h;
+    if (!(r.flags & shoot_flag::Entered) || (r.flags & shoot_flag::Engaged) || r.state == 14) return h;
     const float dx = self[0] - at[0], dy = self[1] - at[1], dz = self[2] - at[2];
     const double reach = static_cast<double>(hearingCells) * static_cast<double>(cellSize);
     if (double(dx) * dx + double(dy) * dy + double(dz) * dz >= reach * reach) return h;
@@ -1356,7 +1356,7 @@ NoiseHearing shootHearNoise(ShootRecord& r, const float self[3], const float at[
         h.action = r.hitAction;
         return h;
     }
-    r.flags |= 0x20u;
+    r.flags |= shoot_flag::Engaged;
     h.alerted = true;
     if (r.scriptStep != 8) {
         h.act = true;

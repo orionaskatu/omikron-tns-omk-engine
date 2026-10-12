@@ -109,6 +109,22 @@ struct ShootWeaponRow;   // actor/shootfire.h
 // The 192-byte shoot record, only the fields something below reads. Offsets
 // are kept in the comments because every cross-reference in `readable/` is by
 // offset, and several of these were established from more than one caller.
+// A GUNMAN'S FLAGS - `ShootRecord::flags`, the record's `+160`. Only the bits
+// something has ESTABLISHED are named (`docs/ASSETS.md` "the shoot AI", the
+// brain's own branches below); the rest stay literal where they are used,
+// with the original's instruction beside them, until a reading names them.
+namespace shoot_flag {
+inline constexpr std::uint32_t HoldsActions   = 0x8;        // an action asked for now is PARKED (`pendingAction`), not taken
+inline constexpr std::uint32_t Engaged        = 0x20;       // latched once he has seen you; keeps him engaged (`sub_4449E0`)
+inline constexpr std::uint32_t Entered        = 0x40;       // entered the shoot phase (`sub_423FC0` stands down every one with it)
+inline constexpr std::uint32_t Immune         = 0x800;      // refuses every hit (`sub_4240E0`'s first gate)
+inline constexpr std::uint32_t BatonOnly      = 0x4000;     // only damage 6, the baton, reaches him; no hurt reaction
+inline constexpr std::uint32_t Finishing      = 0x8000;     // finishing: no acquisition, no engagement, the default action next
+inline constexpr std::uint32_t NewDestination = 0x20000;    // the path search moved his destination cell this tick
+inline constexpr std::uint32_t Watcher        = 0x800000;   // property 37 bit 4: the wider, doubled cone (`sub_420D90`), no stair search
+inline constexpr std::uint32_t ActionWaiting  = 0x8000000;  // an action is parked in `pendingAction`
+}  // namespace shoot_flag
+
 struct ShootRecord {
     ShootBrain brain = ShootBrain::Generic;  // +0    the callback pointer
     int   clipList   = 0;                    // +20   sub_434530(type)

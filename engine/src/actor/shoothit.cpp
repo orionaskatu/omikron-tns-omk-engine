@@ -183,9 +183,9 @@ HitOut shootApplyHit(ShootRecord& r, const HitIn& in) {
     // `if (u32i(v9, 101) != 3) return -1;`
     if (!in.victimInShoot) return o;
     // `if ((v10 & 0x800) != 0) return -1;`
-    if (r.flags & 0x800u) return o;
+    if (r.flags & shoot_flag::Immune) return o;
     int dmg = in.damage;
-    if (!(r.flags & 0x4000u)) {
+    if (!(r.flags & shoot_flag::BatonOnly)) {
         // damage 6 from the player is refused unless the victim is type 11
         if (dmg == 6 && in.shooterIsPlayer && r.type != 11u) return o;
     } else {
@@ -218,7 +218,7 @@ HitOut shootApplyHit(ShootRecord& r, const HitIn& in) {
     }
     if (r.health > 0) {
         // `sub_423EF0`
-        if (r.scriptStep != 8 && !(r.flags & 2u) && !(r.flags & 0x4000u) && r.type != 12u) {
+        if (r.scriptStep != 8 && !(r.flags & 2u) && !(r.flags & shoot_flag::BatonOnly) && r.type != 12u) {
             if (r.health > in.reactAt) {
                 if (r.hitAction != -1) { r.scriptStep = r.hitAction; o.action = r.hitAction; }
             } else {
@@ -231,7 +231,7 @@ HitOut shootApplyHit(ShootRecord& r, const HitIn& in) {
     o.killed = true;
     if (!(r.flags & 2u)) o.enemyCountDrop = true;
     o.deathType = shootDeathClipType(o.band);
-    r.flags |= 8u;
+    r.flags |= shoot_flag::HoldsActions;
     return o;
 }
 
@@ -248,7 +248,7 @@ HitOut shootApplyStrike(ShootRecord& r, const StrikeIn& in) {
     // `if (u32i(v10, 101) != 3) return -1;`
     if (!in.victimInShoot) return o;
     // `if ((v11 & 0x800) != 0) return -1;`
-    if (r.flags & 0x800u) return o;
+    if (r.flags & shoot_flag::Immune) return o;
     o.refused = false;
     o.healthWas = o.health = r.health;
     if (r.health <= 0) return o;
@@ -271,7 +271,7 @@ HitOut shootApplyStrike(ShootRecord& r, const StrikeIn& in) {
     }
     if (r.health > 0) {
         // `sub_423EF0`, as `shootApplyHit` has it
-        if (r.scriptStep != 8 && !(r.flags & 2u) && !(r.flags & 0x4000u) && r.type != 12u) {
+        if (r.scriptStep != 8 && !(r.flags & 2u) && !(r.flags & shoot_flag::BatonOnly) && r.type != 12u) {
             if (r.health > in.reactAt) {
                 if (r.hitAction != -1) { r.scriptStep = r.hitAction; o.action = r.hitAction; }
             } else {
@@ -284,7 +284,7 @@ HitOut shootApplyStrike(ShootRecord& r, const StrikeIn& in) {
     o.killed = true;
     if (!(r.flags & 2u)) o.enemyCountDrop = true;
     o.deathType = shootDeathClipType(o.band);
-    r.flags |= 8u;
+    r.flags |= shoot_flag::HoldsActions;
     return o;
 }
 

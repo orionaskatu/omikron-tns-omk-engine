@@ -210,6 +210,7 @@ if(OMK_VITA_GAME)
     ${ENGINE}/backends/sdl/playframe_world_staged.cpp
     ${ENGINE}/backends/sdl/playframe_world_crowd.cpp
     ${ENGINE}/backends/sdl/playframe_world_draw.cpp
+    ${ENGINE}/backends/sdl/playframe_world_weather.cpp
     ${ENGINE}/backends/sdl/playframe_screens.cpp
     ${ENGINE}/backends/sdl/playframe_screens_rows.cpp
     ${ENGINE}/backends/sdl/playframe_screens_huds.cpp

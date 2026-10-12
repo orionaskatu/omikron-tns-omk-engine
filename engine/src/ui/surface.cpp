@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "ui/surface.h"
 #include "ui/overlay.h"
 
@@ -10,21 +11,9 @@
 namespace omk {
 namespace {
 
-std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::uint32_t>(d[o]) |
-           static_cast<std::uint32_t>(d[o + 1]) << 8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
-std::int32_t i32(std::span<const std::byte> d, std::size_t o) {
-    return static_cast<std::int32_t>(u32(d, o));
-}
-std::uint16_t u16(std::span<const std::byte> d, std::size_t o) {
-    if (o + 2 > d.size()) return 0;
-    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(d[o]) |
-           (static_cast<std::uint16_t>(d[o + 1]) << 8));
-}
+using omk::le::i32;
+using omk::le::u16;
+using omk::le::u32;
 
 }  // namespace
 

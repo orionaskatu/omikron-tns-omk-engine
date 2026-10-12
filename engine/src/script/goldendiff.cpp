@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/goldendiff.h"
 #include "platform/datafs.h"
 
@@ -12,19 +13,8 @@
 namespace omk {
 namespace {
 
-std::int16_t i16(std::span<const std::uint8_t> v, std::size_t o) {
-    if (o + 2 > v.size()) return 0;
-    return static_cast<std::int16_t>(static_cast<std::uint16_t>(v[o]) |
-                                     (static_cast<std::uint16_t>(v[o + 1]) << 8));
-}
-
-std::uint32_t u32b(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    std::uint32_t v = 0;
-    for (int k = 3; k >= 0; --k)
-        v = (v << 8) | static_cast<std::uint32_t>(d[o + static_cast<std::size_t>(k)]);
-    return v;
-}
+using omk::le::i16;
+using omk::le::u32;
 
 }  // namespace
 
@@ -115,7 +105,7 @@ std::vector<WorldSlot> worldSlots(std::span<const std::byte> areaFile,
             // the chunk's own startup script at +4, which is in no record
             // table - leaving it out is what made "no shipped script starts
             // the Impasse's beats" look true. Reported as `rec -1 +4`.
-            const auto at = u32b(b, 4);
+            const auto at = u32(b, 4);
             if (at > 0 && at < b.size()) {
                 std::snprintf(buf, sizeof buf, "%s %zu rec -1 +4 @%u",
                               names[a], c, at);

@@ -271,7 +271,10 @@ So the rule, and it has no exceptions in ported code or in tools:
 * **every raw read of a multi-byte value goes through `loadLE<T>`**
   (`src/formats/le.h`) - byte by byte, so alignment does not matter either;
   a reader that already assembles its values from bytes is neutral and may
-  stay as it is;
+  stay as it is - but a field at an offset is read with `le::u32(buf, off)`
+  and its siblings (`src/formats/bytes.h`, 2026-10-12), the one CHECKED
+  reader over `loadLE`: a read past the end returns 0. Twenty-nine files had
+  their own copies, with three rules for that case;
 * **every multi-byte write of a result file goes through `writeLE`**, one
   plain write on a little-endian host, swapped on a big-endian one.
 

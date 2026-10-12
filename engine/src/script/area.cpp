@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/area.h"
 #include "platform/profile.h"
 
@@ -21,19 +22,8 @@
 namespace omk {
 namespace {
 
-std::uint32_t u32at(std::span<const std::byte> b, std::size_t o) {
-    if (o + 4 > b.size()) return 0;
-    return static_cast<std::uint32_t>(b[o]) |
-           (static_cast<std::uint32_t>(b[o + 1]) << 8) |
-           (static_cast<std::uint32_t>(b[o + 2]) << 16) |
-           (static_cast<std::uint32_t>(b[o + 3]) << 24);
-}
-
-std::int16_t i16at(std::span<const std::byte> b, std::size_t o) {
-    if (o + 2 > b.size()) return 0;
-    return static_cast<std::int16_t>(static_cast<std::uint16_t>(b[o]) |
-                                     (static_cast<std::uint16_t>(b[o + 1]) << 8));
-}
+using omk::le::i16;
+using omk::le::u32;
 
 // Write bytes into the game DB through `GameState::rawMutable()` - the
 // writable view added for a whole-record copy the field setters do not name.
@@ -246,16 +236,16 @@ void Session::fillSlotTables(ResidentSlot& s) {
     // ...and `+133`, the sky model `Area_LoadMiscModel` loads out of
     // `MESHES\MISC\`. Empty in 242 of the 259 areas.
     s.sky = headerName(s.areaChunk, 133, 9);
-    s.music = i16at(s.areaChunk, 142);
+    s.music = i16(s.areaChunk, 142);
     // the street-life fields: the circuit at +115, the animation library at
     // +124, the crowd's model masks at +164/+168 (`sub_40E990`/`sub_40E950`)
     s.opt = headerName(s.areaChunk, 115, 9);
     s.ani = headerName(s.areaChunk, 124, 9);
-    s.menMask = s.areaChunk.size() >= 172 ? u32at(s.areaChunk, 164) : 0u;
-    s.womenMask = s.areaChunk.size() >= 172 ? u32at(s.areaChunk, 168) : 0u;
+    s.menMask = s.areaChunk.size() >= 172 ? u32(s.areaChunk, 164) : 0u;
+    s.womenMask = s.areaChunk.size() >= 172 ? u32(s.areaChunk, 168) : 0u;
     // ...and the road traffic's, `sub_40EA10` / `sub_40E9D0` (STREET_LIFE 2b)
-    s.sliderMask = s.areaChunk.size() >= 176 ? i16at(s.areaChunk, 172) : 0;
-    s.motoMask = s.areaChunk.size() >= 176 ? i16at(s.areaChunk, 174) : 0;
+    s.sliderMask = s.areaChunk.size() >= 176 ? i16(s.areaChunk, 172) : 0;
+    s.motoMask = s.areaChunk.size() >= 176 ? i16(s.areaChunk, 174) : 0;
     s.cams.clearChunk();
     if (!s.areaChunk.empty()) {
         s.cams.setArea(s.areaChunk);
@@ -2009,7 +1999,7 @@ void Session::becomePlayer(int actor) {
 
     // the two bios: strcpy, so the NUL is copied and the slot's tail is left
     for (int k = 0; k < 2; ++k) {
-        const auto p = u32at(chunk, off + 4u * static_cast<std::size_t>(k));
+        const auto p = u32(chunk, off + 4u * static_cast<std::size_t>(k));
         if (p == 0 || p >= chunk.size()) continue;          // `test ecx, ecx ; jz`
         std::size_t n = 0;
         while (p + n < chunk.size() && chunk[p + n] != std::byte{0}) ++n;
@@ -2027,7 +2017,7 @@ void Session::becomePlayer(int actor) {
 }
 
 int Session::playerActor() const {
-    return i16at(state_.raw(),
+    return i16(state_.raw(),
                  static_cast<std::size_t>(GameState::kPlayerRecord) + 272);
 }
 
@@ -2229,7 +2219,7 @@ void Session::spawnFromTables(int slot, bool area, bool scene) {
         if (chunk.empty()) return;
         const auto recs = readPlacements(chunk, kind);
         const std::size_t po = kind == ChunkKind::Area ? 40u : 8u;
-        const std::size_t base = recs.empty() ? 0u : u32at(chunk, po);
+        const std::size_t base = recs.empty() ? 0u : u32(chunk, po);
         for (std::size_t i = 0; i < recs.size(); ++i) {
             const Placement& r = recs[i];
             int k = -1;
@@ -2525,12 +2515,12 @@ bool Session::actorRecord(int actor, std::vector<std::byte>& chunk,
     const auto scan = [&](std::span<const std::byte> b, std::size_t ao,
                           std::size_t co) {
         if (found || b.size() < co + 2) return;
-        const std::size_t p = u32at(b, ao);
-        const int n = i16at(b, co);
+        const std::size_t p = u32(b, ao);
+        const int n = i16(b, co);
         if (n <= 0 || p + 276 * std::uint64_t(n) > b.size()) return;
         for (int i = 0; i < n; ++i) {
             const std::size_t o = p + 276u * static_cast<std::size_t>(i);
-            if (i16at(b, o + 272) != actor) continue;
+            if (i16(b, o + 272) != actor) continue;
             chunk.assign(b.begin(), b.end());
             off = o;
             found = true;
@@ -4098,12 +4088,12 @@ void Session::loadProps(int slot, bool area, bool scene) {
         const std::size_t co = kind == ChunkKind::Area ? 74 : 42;
         const std::span<const std::byte> b(chunk);
         if (b.size() < co + 2) return;
-        const std::size_t p = u32at(b, po);
-        const int n = i16at(b, co);
+        const std::size_t p = u32(b, po);
+        const int n = i16(b, co);
         if (n <= 0 || p + 24 * std::uint64_t(n) > b.size()) return;
         for (int i = 0; i < n; ++i) {
             const std::size_t o = p + 24u * static_cast<std::size_t>(i);
-            const int id = i16at(b, o + 2), idx = i16at(b, o + 22);
+            const int id = i16(b, o + 2), idx = i16(b, o + 22);
             if (!(state_.propState(idx) & 1)) continue;
             int k = -1;
             for (int q = 0; q < 50; ++q)
@@ -4129,14 +4119,14 @@ void Session::unloadProps(int slot, bool area, bool scene) {
         const std::size_t co = kind == ChunkKind::Area ? 74 : 42;
         const std::span<const std::byte> b(chunk);
         if (b.size() < co + 2) return;
-        const std::size_t p = u32at(b, po);
-        const int n = i16at(b, co);
+        const std::size_t p = u32(b, po);
+        const int n = i16(b, co);
         if (n <= 0 || p + 24 * std::uint64_t(n) > b.size()) return;
         for (int i = 0; i < n; ++i) {
             const std::size_t o = p + 24u * static_cast<std::size_t>(i);
-            const int idx = i16at(b, o + 22);
+            const int idx = i16(b, o + 22);
             if (!(state_.propState(idx) & 1)) continue;
-            const int k = i16at(b, o);
+            const int k = i16(b, o);
             if (k < 0 || k >= 50) continue;
             objectSlotIds_[static_cast<std::size_t>(k)] = -1;
             shownSlots_.erase(k);

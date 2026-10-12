@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/interp.h"
 #include "platform/profile.h"
 #include "script/props.h"
@@ -20,11 +21,8 @@ std::int32_t imm(const std::vector<std::uint8_t>& raw) {
     return 0;
 }
 
-std::int16_t i16at(const std::vector<std::uint8_t>& raw, std::size_t o) {
-    if (o + 2 > raw.size()) return 0;
-    return static_cast<std::int16_t>(
-        static_cast<std::uint16_t>(raw[o]) | static_cast<std::uint16_t>(raw[o + 1]) << 8);
-}
+using omk::le::i16;
+using omk::le::i32;
 
 // Integer division the way the ENGINE does it: `cdq; idiv` - the op 34
 // handler at 0x402750 pops the top into eax, the word under it into edi, and
@@ -40,15 +38,6 @@ std::int32_t divTrunc(std::int32_t a, std::int32_t b) {
     if (b == 0) return 0;                                       // engine: #DE
     if (b == -1) return static_cast<std::int32_t>(0u - static_cast<std::uint32_t>(a));
     return a / b;
-}
-
-std::int32_t i32at(std::span<const std::byte> code, std::size_t o) {
-    if (o + 4 > code.size()) return 0;
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(code[o])       |
-        static_cast<std::uint32_t>(code[o + 1]) <<  8 |
-        static_cast<std::uint32_t>(code[o + 2]) << 16 |
-        static_cast<std::uint32_t>(code[o + 3]) << 24);
 }
 
 }  // namespace
@@ -198,7 +187,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         if (recordAll_) {
             Call c; c.op = op;
             for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                c.fields.push_back(i16at(raw, k));
+                c.fields.push_back(i16(raw, k));
             r.calls.push_back(std::move(c));
         }
 
@@ -285,7 +274,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             std::int32_t x = 0;
             if (op == 14)      x = q < code.size() ? static_cast<std::int8_t>(code[q]) : 0;
             else if (op == 15) x = fetch16(code, q);
-            else               x = i32at(code, q);
+            else               x = i32(code, q);
             state_.setVar(v, x);
             continue;
         }
@@ -416,7 +405,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                    c.fields.push_back(i16at(raw, k));
+                    c.fields.push_back(i16(raw, k));
                 r.calls.push_back(std::move(c));
             }
             r.status = RunStatus::Dialog; r.pc = pc; return r;
@@ -431,13 +420,13 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                    c.fields.push_back(i16at(raw, k));
+                    c.fields.push_back(i16(raw, k));
                 r.calls.push_back(std::move(c));
             }
             if (raw.size() >= 6) {
-                r.uiScreen    = i16at(raw, 0);
-                r.uiParam     = i16at(raw, 2);
-                r.uiResultVar = i16at(raw, 4);
+                r.uiScreen    = i16(raw, 0);
+                r.uiParam     = i16(raw, 2);
+                r.uiResultVar = i16(raw, 4);
             }
             // `pc` already points PAST the instruction, so resuming from here
             // continues after the `ui.open` rather than re-running it.
@@ -452,7 +441,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             if (record_ && !recordAll_) {
                 Call c; c.op = op;
                 for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                    c.fields.push_back(i16at(raw, k));
+                    c.fields.push_back(i16(raw, k));
                 r.calls.push_back(std::move(c));
             }
             r.objectWaitOp = op;
@@ -469,7 +458,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         if (op == 96 && camWaitSuspends_) {
             Call c; c.op = op;
             for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                c.fields.push_back(i16at(raw, k));
+                c.fields.push_back(i16(raw, k));
             const int travel = c.fields.size() >= 2 ? c.fields[1] : 0;
             r.camId = c.fields.empty() ? -1 : c.fields[0];
             r.camTravel = travel > 0 ? travel : 0;
@@ -986,7 +975,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         if (record_ && !recordAll_) {
             Call c; c.op = op;
             for (std::size_t k = 0; k + 2 <= raw.size(); k += 2)
-                c.fields.push_back(i16at(raw, k));
+                c.fields.push_back(i16(raw, k));
             r.calls.push_back(std::move(c));
         }
     }

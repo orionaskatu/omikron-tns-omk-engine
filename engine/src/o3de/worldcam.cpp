@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The world camera table. See `worldcam.h` for where every offset comes from.
+#include "formats/bytes.h"
 #include "o3de/worldcam.h"
 
 #include <cmath>
@@ -7,17 +8,8 @@
 namespace omk {
 namespace {
 
-std::int32_t i32at(std::span<const std::byte> b, std::size_t o) {
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(b[o]) |
-        (static_cast<std::uint32_t>(b[o + 1]) << 8) |
-        (static_cast<std::uint32_t>(b[o + 2]) << 16) |
-        (static_cast<std::uint32_t>(b[o + 3]) << 24));
-}
-std::int16_t i16at(std::span<const std::byte> b, std::size_t o) {
-    return static_cast<std::int16_t>(static_cast<std::uint16_t>(b[o]) |
-                                     (static_cast<std::uint16_t>(b[o + 1]) << 8));
-}
+using omk::le::i16;
+using omk::le::i32;
 
 }  // namespace
 
@@ -65,26 +57,26 @@ void WorldCameras::read(std::span<const std::byte> b, std::size_t arrOff,
                         std::size_t cntOff, std::vector<WorldCamera>& out) {
     out.clear();
     if (b.size() < cntOff + 2 || b.size() < arrOff + 4) return;
-    const std::size_t p = static_cast<std::uint32_t>(i32at(b, arrOff));
-    const int n = i16at(b, cntOff);
+    const std::size_t p = static_cast<std::uint32_t>(i32(b, arrOff));
+    const int n = i16(b, cntOff);
     if (n <= 0 || p + 44 * std::uint64_t(n) > b.size()) return;
     out.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
         const std::size_t o = p + 44u * static_cast<std::size_t>(i);
         WorldCamera c;
         for (int k = 0; k < 3; ++k) {
-            c.eye[k] = rawToWorld(i32at(b, o + 4u * static_cast<std::size_t>(k)));
-            c.at[k]  = rawToWorld(i32at(b, o + 12u + 4u * static_cast<std::size_t>(k)));
+            c.eye[k] = rawToWorld(i32(b, o + 4u * static_cast<std::size_t>(k)));
+            c.at[k]  = rawToWorld(i32(b, o + 12u + 4u * static_cast<std::size_t>(k)));
         }
-        c.id   = i16at(b, o + 24);
-        c.mode = i16at(b, o + 26);
-        c.roll = angle4096(i16at(b, o + 28));
-        c.fov  = angle4096(i16at(b, o + 30));
+        c.id   = i16(b, o + 24);
+        c.mode = i16(b, o + 26);
+        c.roll = angle4096(i16(b, o + 28));
+        c.fov  = angle4096(i16(b, o + 30));
         // `Camera_LoadParams` reads these the other way round from their file
         // order: block +38 (record +34) guards the EYE, block +40 (record +32)
         // guards the TARGET.
-        c.atSubject  = i16at(b, o + 32);
-        c.eyeSubject = i16at(b, o + 34);
+        c.atSubject  = i16(b, o + 32);
+        c.eyeSubject = i16(b, o + 34);
         out.push_back(c);
     }
 }

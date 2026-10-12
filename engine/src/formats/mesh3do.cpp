@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "formats/mesh3do.h"
 #include "formats/le.h"
 
@@ -8,21 +9,13 @@
 namespace omk {
 namespace {
 
-// The file is little-endian; read explicitly rather than memcpy-ing a struct,
-// so the layout is stated here and does not depend on the host or on padding.
-std::int32_t i32(std::span<const std::byte> d, std::size_t o) {
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(d[o    ]) |
-        static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-        static_cast<std::uint32_t>(d[o + 2]) << 16 |
-        static_cast<std::uint32_t>(d[o + 3]) << 24);
-}
-
-std::int16_t i16(std::span<const std::byte> d, std::size_t o) {
-    return static_cast<std::int16_t>(
-        static_cast<std::uint16_t>(d[o]) |
-        static_cast<std::uint16_t>(d[o + 1]) << 8);
-}
+// The file is little-endian; every field is read explicitly (`formats/
+// bytes.h`) rather than by memcpy-ing a struct, so the layout is stated here
+// and does not depend on the host or on padding. A float's four bytes are
+// bit-cast, never converted, so nothing here can round them.
+using omk::le::f32;
+using omk::le::i16;
+using omk::le::i32;
 
 bool fits(std::span<const std::byte> d, std::size_t o, std::size_t n) {
     return o <= d.size() && n <= d.size() - o;
@@ -99,19 +92,6 @@ std::optional<Material> readMaterial(std::span<const std::byte> d,
 }
 
 namespace {
-
-float f32(std::span<const std::byte> d, std::size_t o) {
-    // bit-cast rather than reinterpret: the file's four bytes ARE the float,
-    // and nothing here is allowed to round them
-    const std::uint32_t bits =
-        static_cast<std::uint32_t>(d[o    ])       |
-        static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-        static_cast<std::uint32_t>(d[o + 2]) << 16 |
-        static_cast<std::uint32_t>(d[o + 3]) << 24;
-    float f;
-    std::memcpy(&f, &bits, sizeof f);
-    return f;
-}
 
 void name20(std::span<const std::byte> d, std::size_t o, char (&dst)[21]) {
     for (int k = 0; k < 20; ++k) {

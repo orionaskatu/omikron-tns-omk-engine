@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Posing a character. See `pose.h` for where each rule comes from.
+#include "formats/bytes.h"
 #include "actor/pose.h"
 
 #include "formats/morph.h"
@@ -14,29 +15,9 @@
 namespace omk {
 namespace {
 
-std::int32_t i32at(std::span<const std::byte> b, std::size_t o) {
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(b[o]) |
-        (static_cast<std::uint32_t>(b[o + 1]) << 8) |
-        (static_cast<std::uint32_t>(b[o + 2]) << 16) |
-        (static_cast<std::uint32_t>(b[o + 3]) << 24));
-}
-
-float f32at(std::span<const std::byte> b, std::size_t o) {
-    std::uint32_t v = static_cast<std::uint32_t>(b[o]) |
-                      (static_cast<std::uint32_t>(b[o + 1]) << 8) |
-                      (static_cast<std::uint32_t>(b[o + 2]) << 16) |
-                      (static_cast<std::uint32_t>(b[o + 3]) << 24);
-    float f;
-    std::memcpy(&f, &v, 4);
-    return f;
-}
-std::uint32_t u32at(std::span<const std::byte> b, std::size_t o) {
-    return static_cast<std::uint32_t>(b[o]) |
-           (static_cast<std::uint32_t>(b[o + 1]) << 8) |
-           (static_cast<std::uint32_t>(b[o + 2]) << 16) |
-           (static_cast<std::uint32_t>(b[o + 3]) << 24);
-}
+using omk::le::f32;
+using omk::le::i32;
+using omk::le::u32;
 
 }  // namespace
 
@@ -156,7 +137,7 @@ NodeTracks clipTracks(std::span<const std::byte> d) {
     NodeTracks t;
     if (d.size() < 8) return t;
     const auto i32 = [&](std::size_t o) {
-        return static_cast<std::int32_t>(u32at(d, o));
+        return static_cast<std::int32_t>(u32(d, o));
     };
     const std::int32_t frames = i32(0);
     const std::int32_t n = i32(4);
@@ -223,8 +204,8 @@ NodeTracks clipTracks(std::span<const std::byte> d) {
             const int key = std::min<std::int32_t>(f + 1, k.rotKeys - 1);
             const std::size_t o = static_cast<std::size_t>(k.rotOffset) +
                                   16u * static_cast<std::size_t>(key);
-            row[i] = {f32at(d, o), f32at(d, o + 4),
-                      f32at(d, o + 8), f32at(d, o + 12)};
+            row[i] = {f32(d, o), f32(d, o + 4),
+                      f32(d, o + 8), f32(d, o + 12)};
         }
     }
     return t;
@@ -233,13 +214,13 @@ NodeTracks clipTracks(std::span<const std::byte> d) {
 std::vector<std::array<float, 3>> clipRootMotion(std::span<const std::byte> d) {
     std::vector<std::array<float, 3>> out;
     if (d.size() < 8) return out;
-    const int frames = i32at(d, 0), n = i32at(d, 4);
+    const int frames = i32(d, 0), n = i32(d, 4);
     if (frames <= 0 || n <= 0 || 8u + 40 * std::uint64_t(n) > d.size())
         return out;
     out.assign(static_cast<std::size_t>(frames), {0.0f, 0.0f, 0.0f});
     for (int i = 0; i < n; ++i) {
         const std::size_t o = 8u + 40u * static_cast<std::size_t>(i);
-        const int pk = i32at(d, o + 24), po = i32at(d, o + 28);
+        const int pk = i32(d, o + 24), po = i32(d, o + 28);
         if (!po || pk <= 1) continue;
         if (static_cast<std::size_t>(po) + 12 * std::uint64_t(pk) > d.size())
             continue;
@@ -251,7 +232,7 @@ std::vector<std::array<float, 3>> clipRootMotion(std::span<const std::byte> d) {
                                       12u * static_cast<std::size_t>(key);
                 for (int c = 0; c < 3; ++c)
                     acc[static_cast<std::size_t>(c)] +=
-                        f32at(d, k + 4u * static_cast<std::size_t>(c));
+                        f32(d, k + 4u * static_cast<std::size_t>(c));
             }
             for (int c = 0; c < 3; ++c)
                 out[static_cast<std::size_t>(f)][static_cast<std::size_t>(c)] +=
@@ -263,15 +244,15 @@ std::vector<std::array<float, 3>> clipRootMotion(std::span<const std::byte> d) {
 
 bool clipRootStart(std::span<const std::byte> d, float out[3]) {
     if (d.size() < 8) return false;
-    const int n = i32at(d, 4);
+    const int n = i32(d, 4);
     if (n <= 0 || 8u + 40 * std::uint64_t(n) > d.size()) return false;
     for (int i = 0; i < n; ++i) {
         const std::size_t o = 8u + 40u * static_cast<std::size_t>(i);
-        const int pk = i32at(d, o + 24), po = i32at(d, o + 28);
+        const int pk = i32(d, o + 24), po = i32(d, o + 28);
         if (!po || pk <= 0) continue;
         if (static_cast<std::size_t>(po) + 12u > d.size()) continue;
         for (int c = 0; c < 3; ++c)
-            out[c] = f32at(d, static_cast<std::size_t>(po) +
+            out[c] = f32(d, static_cast<std::size_t>(po) +
                               4u * static_cast<std::size_t>(c));
         return true;
     }
@@ -299,7 +280,7 @@ NodeTracks nodeTracks(std::span<const std::byte> d, int rootTrack, std::size_t u
     if (16 + 4 * std::uint64_t{L.nodes} > d.size()) return t;
     t.ids.reserve(L.nodes);
     for (std::uint32_t i = 0; i < L.nodes; ++i)
-        t.ids.push_back(static_cast<std::int32_t>(u32at(d, 16u + 4u * i)));
+        t.ids.push_back(static_cast<std::int32_t>(u32(d, 16u + 4u * i)));
 
     t.quats.resize(L.frames);
     t.trans.resize(L.frames);
@@ -336,14 +317,14 @@ void extendNodeTracks(NodeTracks& t, std::span<const std::byte> d, std::size_t u
         for (std::uint32_t i = 0; i < L.nodes; ++i) {
             const std::size_t at = base + offs[i];
             if (at + 16 > d.size()) return;
-            row[i] = {f32at(d, at), f32at(d, at + 4),
-                      f32at(d, at + 8), f32at(d, at + 12)};
+            row[i] = {f32(d, at), f32(d, at + 4),
+                      f32(d, at + 8), f32(d, at + 12)};
         }
         if (rootTrack >= 0 && rootTrack < static_cast<int>(L.nodes)) {
             const std::size_t at = base + offs[static_cast<std::size_t>(rootTrack)] - 12;
             if (at + 12 <= d.size())
                 for (int k = 0; k < 3; ++k)
-                    acc[k] += f32at(d, at + 4u * static_cast<std::size_t>(k));
+                    acc[k] += f32(d, at + 4u * static_cast<std::size_t>(k));
         }
         t.trans[f] = {acc[0], acc[1], acc[2]};
         t.built = static_cast<int>(f) + 1;
@@ -567,7 +548,7 @@ std::vector<float> faceFrame(std::span<const std::byte> d, int frame) {
     out.reserve(3u * L.vertices);
     for (std::uint32_t i = 0; i < L.vertices; ++i)
         for (int k = 0; k < 3; ++k)
-            out.push_back(f32at(d, base + 24u * i + 4u * static_cast<std::size_t>(k)));
+            out.push_back(f32(d, base + 24u * i + 4u * static_cast<std::size_t>(k)));
     return out;
 }
 

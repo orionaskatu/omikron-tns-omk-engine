@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "audio/mixer.h"
 #include "platform/profile.h"
 
@@ -9,14 +10,9 @@
 namespace omk::audio {
 namespace {
 
-std::uint16_t rd16(std::span<const std::byte> b, std::size_t o) {
-    return std::uint16_t(std::uint8_t(b[o]) | (std::uint8_t(b[o + 1]) << 8));
-}
-std::uint32_t rd32(std::span<const std::byte> b, std::size_t o) {
-    return std::uint32_t(std::uint8_t(b[o])) | (std::uint32_t(std::uint8_t(b[o + 1])) << 8) |
-           (std::uint32_t(std::uint8_t(b[o + 2])) << 16) |
-           (std::uint32_t(std::uint8_t(b[o + 3])) << 24);
-}
+using omk::le::u16;
+using omk::le::u32;
+
 bool tag(std::span<const std::byte> b, std::size_t o, const char* s) {
     for (int i = 0; i < 4; ++i)
         if (char(b[o + i]) != s[i]) return false;
@@ -41,12 +37,12 @@ WavLoad loadWav(std::span<const std::byte> file) {
     // size field said. The size field at +16 is read as part of the header
     // above and never looked at.
     if (file.size() < 36) { r.reject = WavReject::PcmHeader; return r; }
-    r.fmt.tag        = rd16(file, 20);
-    r.fmt.channels   = rd16(file, 22);
-    r.fmt.rate       = rd32(file, 24);
-    r.fmt.avgBytes   = rd32(file, 28);
-    r.fmt.blockAlign = rd16(file, 32);
-    r.fmt.bits       = rd16(file, 34);
+    r.fmt.tag        = u16(file, 20);
+    r.fmt.channels   = u16(file, 22);
+    r.fmt.rate       = u32(file, 24);
+    r.fmt.avgBytes   = u32(file, 28);
+    r.fmt.blockAlign = u16(file, 32);
+    r.fmt.bits       = u16(file, 34);
     if (r.fmt.tag != 1) { r.reject = WavReject::NotPcm; return r; }
 
     // The two-byte peek. `fread(&dummy, 2, 1)`; if it is non-zero, seek back
@@ -56,7 +52,7 @@ WavLoad loadWav(std::span<const std::byte> file) {
     // cbSize == 0 would be the other arm; NO shipped file takes it.
     std::size_t off = 36;
     if (file.size() < off + 2) { r.reject = WavReject::DummyByte; return r; }
-    const std::uint16_t dummy = rd16(file, off);
+    const std::uint16_t dummy = u16(file, off);
     off += 2;
     if (dummy != 0) { r.rewoundDummy = true; off -= 2; }
 
@@ -64,7 +60,7 @@ WavLoad loadWav(std::span<const std::byte> file) {
     for (;;) {
         if (off + 8 > file.size()) { r.reject = WavReject::DataHeader; return r; }
         const bool isData = tag(file, off, "data");
-        const std::uint32_t sz = rd32(file, off + 4);
+        const std::uint32_t sz = u32(file, off + 4);
         if (isData) {
             r.dataBytes  = sz;
             r.dataOffset = off + 8;

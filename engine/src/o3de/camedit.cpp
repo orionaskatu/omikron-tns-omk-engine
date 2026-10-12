@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "o3de/camedit.h"
 
 #include <cstring>
@@ -6,21 +7,10 @@
 
 namespace omk {
 namespace {
-std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::uint32_t>(d[o])       |
-           static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
-std::uint16_t u16(std::span<const std::byte> d, std::size_t o) {
-    if (o + 2 > d.size()) return 0;
-    return static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(d[o]) | static_cast<std::uint16_t>(d[o + 1]) << 8);
-}
-float f32(std::span<const std::byte> d, std::size_t o) {
-    const auto b = u32(d, o); float f; std::memcpy(&f, &b, sizeof f); return f;
-}
+using omk::le::f32;
+using omk::le::u16;
+using omk::le::u32;
+
 std::string str(std::span<const std::byte> d, std::size_t o, std::size_t cap) {
     std::string s;
     for (std::size_t k = 0; k < cap && o + k < d.size(); ++k) {

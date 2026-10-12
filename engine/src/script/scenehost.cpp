@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/scenehost.h"
 
 #include "platform/datafs.h"
@@ -13,11 +14,7 @@ namespace {
 constexpr std::uint8_t kSceneLoad = 71;
 constexpr std::size_t  kAreaSetStem = 97, kAreaSetStemLen = 9;
 
-std::int16_t i16(const std::vector<std::uint8_t>& v, std::size_t o) {
-    if (o + 2 > v.size()) return 0;
-    return static_cast<std::int16_t>(static_cast<std::uint16_t>(v[o]) |
-                                     (static_cast<std::uint16_t>(v[o + 1]) << 8));
-}
+using omk::le::i16;
 
 void collect(std::span<const std::byte> file, ChunkKind kind,
              const OpcodeTable& table, std::map<int, int>& out) {

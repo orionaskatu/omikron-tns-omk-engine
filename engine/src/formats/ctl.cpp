@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "formats/ctl.h"
 
 #include "formats/anim.h"
@@ -11,30 +12,10 @@
 namespace omk {
 namespace {
 
-std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::uint32_t>(d[o])       |
-           static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
-
-float f32(std::span<const std::byte> d, std::size_t o) {
-    const auto u = u32(d, o);
-    float v;
-    std::memcpy(&v, &u, 4);
-    return v;
-}
-
-std::uint16_t u16(std::span<const std::byte> d, std::size_t o) {
-    if (o + 2 > d.size()) return 0;
-    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(d[o]) |
-                                      (static_cast<std::uint16_t>(d[o + 1]) << 8));
-}
-
-std::uint8_t u8(std::span<const std::byte> d, std::size_t o) {
-    return o < d.size() ? static_cast<std::uint8_t>(d[o]) : 0;
-}
+using omk::le::f32;
+using omk::le::u16;
+using omk::le::u32;
+using omk::le::u8;
 
 std::string name12(std::span<const std::byte> d, std::size_t o, bool upper) {
     std::string s;

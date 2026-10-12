@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/dialogue.h"
 
 #include "formats/adpcm.h"
@@ -27,19 +28,8 @@ void DialogPlayer::finishLine() {
 
 namespace {
 
-std::int16_t i16(std::span<const std::byte> d, std::size_t o) {
-    if (o + 2 > d.size()) return 0;
-    return static_cast<std::int16_t>(
-        static_cast<std::uint16_t>(d[o]) | static_cast<std::uint16_t>(d[o + 1]) << 8);
-}
-
-std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::uint32_t>(d[o])       |
-           static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
+using omk::le::i16;
+using omk::le::u32;
 
 }  // namespace
 

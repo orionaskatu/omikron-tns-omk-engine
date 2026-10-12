@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "ui/radar.h"
 
 #include "formats/le.h"
@@ -12,10 +13,7 @@ namespace omk {
 
 namespace {
 
-std::uint32_t u32le(std::span<const std::byte> d, std::size_t o) {
-    return static_cast<std::uint32_t>(d[o]) | static_cast<std::uint32_t>(d[o + 1]) << 8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 | static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
+using omk::le::u32;
 
 // `sub_442160` (0x00442160): a 3x3 from three angles, written in its own order
 void euler(float a1, float a2, float a3, float m[9]) {
@@ -119,7 +117,7 @@ bool clipRect(int a1, int a2, int a3, int a4, int a9, int a10, int a11, int a12,
 RadarWire readRadarWire(std::span<const std::byte> d) {
     RadarWire w;
     if (d.size() < 8) return w;
-    const std::uint32_t nv = u32le(d, 0), ne = u32le(d, 4);
+    const std::uint32_t nv = u32(d, 0), ne = u32(d, 4);
     if (8ull + 12ull * nv + 4ull * ne != d.size()) return w;
     std::vector<float> v(static_cast<std::size_t>(nv) * 3);
     for (std::size_t i = 0; i < v.size(); ++i) v[i] = loadLE<float>(d.data() + 8 + 4 * i);

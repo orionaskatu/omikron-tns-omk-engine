@@ -1,24 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "script/props.h"
 
 namespace omk {
 namespace {
 
-std::uint32_t u32(std::span<const std::byte> b, std::size_t o) {
-    if (o + 4 > b.size()) return 0;
-    return static_cast<std::uint32_t>(b[o])       |
-           static_cast<std::uint32_t>(b[o + 1]) <<  8 |
-           static_cast<std::uint32_t>(b[o + 2]) << 16 |
-           static_cast<std::uint32_t>(b[o + 3]) << 24;
-}
-std::uint16_t u16(std::span<const std::byte> b, std::size_t o) {
-    if (o + 2 > b.size()) return 0;
-    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(b[o]) |
-                                      static_cast<std::uint16_t>(b[o + 1]) << 8);
-}
-std::int16_t i16(std::span<const std::byte> b, std::size_t o) {
-    return static_cast<std::int16_t>(u16(b, o));
-}
+using omk::le::i16;
+using omk::le::u16;
+using omk::le::u32;
+
 void put16(std::span<std::byte> b, std::size_t o, std::uint16_t v) {
     if (o + 2 > b.size()) return;
     b[o]     = static_cast<std::byte>(v & 0xFF);

@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "formats/iam.h"
 
 namespace omk {
 namespace {
 
-std::uint32_t u32(std::span<const std::byte> d, std::size_t o) {
-    return static_cast<std::uint32_t>(d[o    ])       |
-           static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
+using omk::le::u32;
 
 }  // namespace
 

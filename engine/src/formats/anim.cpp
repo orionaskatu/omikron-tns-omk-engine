@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "formats/anim.h"
 
 #include <cstring>
@@ -6,21 +7,8 @@
 namespace omk {
 namespace {
 
-std::int32_t i32(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::int32_t>(
-        static_cast<std::uint32_t>(d[o    ])       |
-        static_cast<std::uint32_t>(d[o + 1]) <<  8 |
-        static_cast<std::uint32_t>(d[o + 2]) << 16 |
-        static_cast<std::uint32_t>(d[o + 3]) << 24);
-}
-
-float f32(std::span<const std::byte> d, std::size_t o) {
-    const std::uint32_t bits = static_cast<std::uint32_t>(i32(d, o));
-    float f;
-    std::memcpy(&f, &bits, sizeof f);
-    return f;
-}
+using omk::le::f32;
+using omk::le::i32;
 
 std::string cstr(std::span<const std::byte> d, std::size_t o, std::size_t cap) {
     std::string s;

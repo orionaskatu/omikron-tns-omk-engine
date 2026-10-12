@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "formats/bytes.h"
 #include "actor/player.h"
 #include "o3de/camobstruct.h"
 
@@ -12,17 +13,8 @@
 namespace omk {
 namespace {
 
-std::uint32_t u32at(std::span<const std::byte> d, std::size_t o) {
-    if (o + 4 > d.size()) return 0;
-    return static_cast<std::uint32_t>(d[o])       |
-           static_cast<std::uint32_t>(d[o + 1]) << 8 |
-           static_cast<std::uint32_t>(d[o + 2]) << 16 |
-           static_cast<std::uint32_t>(d[o + 3]) << 24;
-}
-float f32at(std::span<const std::byte> d, std::size_t o) {
-    const std::uint32_t b = u32at(d, o);
-    float f; std::memcpy(&f, &b, 4); return f;
-}
+using omk::le::f32;
+using omk::le::u32;
 
 // The tracks bind by KEY (`omk::meshOfTrack`, `actor/pose.h`), never by name.
 // Binding by name agreed with it everywhere both resolve (0 disagreements over
@@ -97,15 +89,15 @@ float headingFromClipRoot(std::span<const std::byte> clip, int frame) {
     // model - and its quaternion at key `frame + 1` is the node's own
     // rotation.
     if (clip.size() < 8) return 0.0f;
-    const int n = static_cast<int>(u32at(clip, 4));
-    const int frames = static_cast<int>(u32at(clip, 0));
+    const int n = static_cast<int>(u32(clip, 4));
+    const int frames = static_cast<int>(u32(clip, 0));
     if (n <= 0 || n >= 512 || frames <= 0) return 0.0f;
     for (int i = 0; i < n; ++i) {
         const std::size_t o = 8u + 40u * static_cast<std::size_t>(i);
-        const int pk = static_cast<int>(u32at(clip, o + 24));
-        const std::size_t po = u32at(clip, o + 28);
-        const int rk = static_cast<int>(u32at(clip, o + 32));
-        const std::size_t ro = u32at(clip, o + 36);
+        const int pk = static_cast<int>(u32(clip, o + 24));
+        const std::size_t po = u32(clip, o + 28);
+        const int rk = static_cast<int>(u32(clip, o + 32));
+        const std::size_t ro = u32(clip, o + 36);
         if (!po || pk <= 0 || !ro || rk <= 0) continue;
         int key = frame + 1;
         if (key < 0) key = 0;
@@ -113,8 +105,8 @@ float headingFromClipRoot(std::span<const std::byte> clip, int frame) {
         const std::size_t q = ro + 16u * static_cast<std::size_t>(key);
         if (q + 16 > clip.size()) return 0.0f;
         // stored as the conjugate of the rotation to apply (pose.h)
-        const Quatf rot{f32at(clip, q), -f32at(clip, q + 4),
-                        -f32at(clip, q + 8), -f32at(clip, q + 12)};
+        const Quatf rot{f32(clip, q), -f32(clip, q + 4),
+                        -f32(clip, q + 8), -f32(clip, q + 12)};
         const float fwd[3] = {0.0f, 0.0f, -1.0f};
         float v[3];
         qrot(rot, fwd, v);
@@ -768,7 +760,7 @@ void PlayerController::rootDelta(const RootTrack& t, float prev, float cur,
         if (k < 0) k = 0;
         if (k >= t.keys) k = t.keys - 1;
         const std::size_t o = t.offset + 12u * static_cast<std::size_t>(k);
-        for (int c = 0; c < 3; ++c) v[c] = f32at(data_, o + 4u * static_cast<std::size_t>(c));
+        for (int c = 0; c < 3; ++c) v[c] = f32(data_, o + 4u * static_cast<std::size_t>(c));
     };
     float acc[3] = {0, 0, 0}, kv[3];
     const float c0 = std::ceil(prev);
@@ -843,7 +835,7 @@ bool PlayerController::boardOffset(std::span<const std::byte> refClip, int group
     const RootTrack* t = rootTrackOf(clip);
     if (!t) return false;
     for (int k = 0; k < 3; ++k)
-        out[k] = f32at(data_, t->offset + 4u * static_cast<std::size_t>(k)) - ref[k];
+        out[k] = f32(data_, t->offset + 4u * static_cast<std::size_t>(k)) - ref[k];
     return true;
 }
 
@@ -1382,7 +1374,7 @@ const NodeTracks* PlayerController::clipTracks(int c) {
                 if (o + 12 > data_.size()) break;
                 for (int k = 0; k < 3; ++k)
                     acc[static_cast<std::size_t>(k)] +=
-                        f32at(data_, o + 4u * static_cast<std::size_t>(k));
+                        f32(data_, o + 4u * static_cast<std::size_t>(k));
                 for (int k = 0; k < 3; ++k)
                     t.trans[static_cast<std::size_t>(f)][static_cast<std::size_t>(k)] =
                         acc[static_cast<std::size_t>(k)];
@@ -1400,8 +1392,8 @@ const NodeTracks* PlayerController::clipTracks(int c) {
                 if (key >= tr.rotKeys) key = tr.rotKeys - 1;
                 const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(key);
                 if (o + 16 > data_.size()) continue;
-                row[i] = {f32at(data_, o), f32at(data_, o + 4),
-                          f32at(data_, o + 8), f32at(data_, o + 12)};
+                row[i] = {f32(data_, o), f32(data_, o + 4),
+                          f32(data_, o + 8), f32(data_, o + 12)};
             }
         }
     }

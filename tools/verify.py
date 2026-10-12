@@ -44560,9 +44560,14 @@ def c_licence_headers():
     # on 2026-10-10: + `engine/src/formats/morphstream.h` / `.cpp` (a line
     # streamed as it plays, `engine: line stream`); 601 on 2026-10-11: +
     # `engine/src/o3de/texscale.h` (the original's texture size rule, missed
-    # by its commit) and `engine/src/platform/cacheline.h` / `.cpp` (`dcbz`)
+    # by its commit) and `engine/src/platform/cacheline.h` / `.cpp` (`dcbz`);
+    # 604 on 2026-10-11: + `engine/src/o3de/weather.h` / `.cpp` and
+    # `engine/backends/sdl/playframe_world_weather.cpp` (the city weather,
+    # missed by its commit - red until 2026-10-12); 606 on 2026-10-12: +
+    # `tools/refactor_guard.py` and `engine/src/formats/bytes.h` (the
+    # readability audit's guard and its one byte reader)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (601, [], 1, []), \
+           (606, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

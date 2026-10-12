@@ -33,7 +33,12 @@ nineteen areas, the ambient light follow the time of day as the area's own
 colours say. The city's crowd and its traffic walk their circuit
 around you out to the clip distance, a slider brakes when it sees you in the
 road and runs you over when it does not, and every character is lit by the
-set's own lights and casts the engine's blob shadows.
+set's own lights and casts the engine's blob shadows. The city's **weather**
+turns to rain and snow on the original's own cycle; the first-person look,
+the full-screen pictures scripts show, the shooting gallery's high-score
+board, shoot mode's weapon change and jump, the terminals' dossiers and the
+puzzle screens' pauses before they close are all read out of the executable
+and ported (`todo/scene-gameplay-audit.md` is the list that drove them).
 
 What the original never did is there too, and **off unless asked for**:
 anti-aliasing, trilinear filtering, fitted and mapped shadows, per-pixel
@@ -59,8 +64,8 @@ build recipe and its traps:
 |---|---|---|
 | **PS Vita** (VitaSDK, GLES2 through vitaGL) | runs on a real console from the films to the city; Anekbah's street measured at ~27-31 ms a frame, inside 30 fps | [`todo/handoff-vita-port.md`](todo/handoff-vita-port.md) |
 | **Nintendo 3DS** (devkitARM, citro3d) | runs on a New 3DS into the city with its crowd, sound and touch; ~30-48 ms a frame of game, the dense street GPU-bound; optional stereoscopic 3D. In Azahar the boot reproduces the original's trace 42 of 42 and the menu is byte-identical | [`todo/handoff-3ds-port.md`](todo/handoff-3ds-port.md) |
-| **Classic Mac** — Mac OS 9 and Mac OS X Tiger on PowerPC (Retro68 / Carbon, a fixed-function OpenGL 1.x backend) | the engine boots byte-identical to the Mac on both; the viewer plays the street on Tiger at 6-10 fps; big-endian done. Run in emulators so far, not yet on real hardware | [`todo/handoff-classic-mac.md`](todo/handoff-classic-mac.md) |
-| **Meta Quest 2** (Android NDK, OpenXR) | runs immersive on a Quest 2 at 72 fps: each eye drawn at the runtime's resolution, first person on the Touch controllers, the interface as a transparent layer, screens as windows fixed in the world. A prototype; the keyboard and a first play pass are next | [`todo/handoff-quest-port.md`](todo/handoff-quest-port.md) |
+| **Classic Mac** — Mac OS 9 and Mac OS X 10.2-10.4 on PowerPC (Retro68 / Carbon, a fixed-function OpenGL 1.x backend) | plays on a real **iBook G3** (500 MHz, an 8 MB Rage 128, Mac OS X 10.2 and 10.3) through the Carbon build: Anekbah's street at ~100 ms a frame, a fight at ~135, with the original's own rule for fitting its textures in video memory; boots byte-identical to the Mac on Mac OS 9 and Tiger in emulators; big-endian done. Being made faster step by step | [`todo/handoff-classic-mac.md`](todo/handoff-classic-mac.md) |
+| **Meta Quest 2** (Android NDK, OpenXR) | runs immersive on a Quest 2 at 72 fps: each eye drawn at the runtime's resolution, first person on the Touch controllers, the interface as a transparent layer, screens as windows fixed in the world. A prototype; the system keyboard for the name field is built, and a first play pass is next | [`todo/handoff-quest-port.md`](todo/handoff-quest-port.md) |
 
 The name is not new — it is what the code has always called itself. The C++
 lives in `namespace omk`, the replica builds as `build/omk` and its viewer
@@ -264,9 +269,9 @@ cd engine && make && cd ..
 engine/build/omk gamedata --tables tables
 
 # 5. check that everything the docs claim is still true
-python3 tools/verify.py --list                 # all 577, and which doc quotes each
+python3 tools/verify.py --list                 # all 600, and which doc quotes each
 python3 tools/verify.py --only "engine: cull"  # one check, seconds
-python3 tools/verify.py                        # the fast list, 244 of them
+python3 tools/verify.py                        # the fast list, 245 of them
 python3 tools/verify.py --slow --jobs 6        # all of it, six at a time — about half an hour
 ```
 
@@ -359,8 +364,11 @@ can paste into a check.
 
 `omk-play` draws in software by default, the reference every other renderer is
 checked against. `--vulkan` presents through Vulkan, and `make play-gles`
-builds `build/omk-play-gles`, the OpenGL ES path the Vita and the Quest use.
-`make release` builds without the instruments and the profiler; with them,
+builds `build/omk-play-gles`, the OpenGL ES path the Vita and the Quest use;
+every GPU backend poses the bodies itself, from the rest corners and one
+matrix a mesh, where the software reference poses them on the CPU. `make release` builds
+without the instruments and the profiler, and `make hardened` with the
+standard library's bounds checks; with the instruments,
 `omk-play --profile run.prof` records a frame-by-frame profile and
 `tools/omkprof.py` reads it or serves it as a page (`todo/debug-tools.md`).
 
@@ -380,7 +388,7 @@ emitters. `/ui` drives the game's own menus with its own input words.
 ## What is established
 
 Solved and documented with evidence: the `IAM` archives and conversations, the
-script VM (153 opcodes, 129 named, 99.97% of executed instructions), textures
+script VM (153 opcodes, 133 named, 99.97% of executed instructions), textures
 (2534/2534 exact), meshes and sets, the animation libraries (243362/243362
 unit quaternions), the `.CTL` state machines (7/7 exact, all 2044 graph edges
 resolving), the scene scripts (220/220), morph animation and its ADPCM audio
@@ -390,7 +398,9 @@ interface screens and their widget tree, the effect sprites, the fight and
 shoot AI (the two bosses' brains among them), the cutscene camera editings
 (24112/24112 frames sampling), the street's traffic circuit, the graphical
 options and what each one sizes, the blob shadows, the `.3DO` light table
-that lights every moving body, the clock's day and night, and the shipped
+that lights every moving body, the clock's day and night, the city's weather
+cycle, the interface's timers (the oscillators behind every blink, pulse and
+delayed close), and the shipped
 render states — bilinear on a 3D card, a dither on both device arms, and a
 back-face cull done in software above a device set to cull nothing.
 

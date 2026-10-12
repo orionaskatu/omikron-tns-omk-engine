@@ -189,6 +189,16 @@ tree - so something in a conversation's picture is not deterministic under
 `n * 1000 / 30` there). The guard's Xachen run stops at 460 for now. Worth
 finding: a check that hashed a conversation frame would flicker.
 
+## 6c. Progress
+
+* step 0 - `tools/refactor_guard.py`, `af7f15f`;
+* step 1 - one byte reader, `formats/bytes.h`, `52e5cb1` (and the Vita
+  build's missing weather file and the licence census, red since 2026-10-11);
+* step 2a - the opcodes by name, `engine/src/script/opcodes.h` generated from
+  the table, `verify.py: opcode names` (shown to fail on a stale header and on
+  a bare `case 136:`). Follow-up: the table's 146/147 `ambience.on/off` are
+  the radar's switch - rename the row with the docs and the name counts.
+
 ## 7. For the tutorial
 
 The tutorial can be written on the code as it is - the seams it teaches

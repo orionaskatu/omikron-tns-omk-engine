@@ -314,6 +314,15 @@ automatically.
 where they differ (see above). `uses` counts occurrences across the 5785 world
 scripts — a blank means the shipped scripts never use that opcode.
 
+**In the C++ every opcode is spelled by its name**: `op::DialogStart`,
+`op::FadeToColor`, generated into `engine/src/script/opcodes.h` from
+`tables/vm_opcodes.json` by `tools/gen_opcodes.py` (`verify.py: opcode
+names` keeps the two in step and refuses an opcode compared by number). So
+"where is `dialog.start` handled" is `grep -rn 'op::DialogStart' engine/`.
+One name in the table is known wrong: 146/147 `ambience.on` / `.off` are the
+SHOOT RADAR's switch (`Session::onCall` says why); the rename waits on the
+table's row and the checks that count names.
+
 **Two handler blocks are not bounded correctly** and any
 per-handler analysis has to exclude them: opcode 77 (the splitter ran past its
 end) and **opcode 152**, which is the last entry in the table and so had no

@@ -3134,9 +3134,27 @@ by writing the facing Euler directly.
   outside shoot mode (unless `walk.ledges.ignore`): a 20 cm step down is
   banded as a short fall (`+1304 = 2`) and gravity takes him down. In shoot
   mode it runs unless the mover's flags 0x810 are up, which is the shoot JUMP
-  (`MDJP`, `engine/src/actor/shootmove.h`). `engine/` honours the shoot half
-  (`Walker::setNoAbsorb`); its adventure walker still absorbs, a divergence
-  labelled in `actor/walk.h` and not yet measured in play.
+  (`MDJP`, `engine/src/actor/shootmove.h`). **`engine/` honours both halves
+  since 2026-10-12** (`Walker::setNoAbsorb`, the adventure answer the
+  default): before, the adventure walker absorbed every drop under 20 cm and
+  glued his feet to every tread.
+
+  **And the short band asks for no bank group**, so the walk's clip plays on
+  and `Actor_ApplyMotion` hands its root motion to `Actor_Move` airborne or
+  not: a short fall KEEPS WALKING. Only a banded fall (59.055 and up, re-banded
+  every frame while `+1304` is 0 or 2) goes straight down, because `H_FALL`
+  is a held pose. The port went straight down in every fall and stood still
+  for the frames a riser took. And the frame's gravity (`a5`, 0.43 from rest:
+  the grounded branch zeroes `+220` on walkable ground) is spent in the frame
+  he steps off, so a drop within it is simply followed. Measured walking down
+  the seven straight flights the game ships (`stairs_probe --down`, 4 units a
+  frame): each riser is now a short fall of a few frames, he floats at most
+  11.5 units (29 cm) above the tread below, and stalls 0 frames - against 0
+  airborne frames with the absorb, and 4..63 stalled frames per flight, up to
+  twice the time, with the vertical fall (`verify.py: engine: stairs down`).
+  One part is this port's and labelled in `walk.cpp`: a SLIDE keeps the
+  absorb, because the port looks at the steep soup only while sliding and an
+  airborne slider would never find his ramp again.
 
   `7.8740158` is **20 cm** in inches, and it is the fourth cm→inch constant in
   the engine. It is not the step limit: 30 cm is what you may climb, 20 cm is

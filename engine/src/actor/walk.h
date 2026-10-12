@@ -25,10 +25,11 @@
 //     restores the last safe position and re-issues the SAME delta through
 //     `Actor_Move` in mode 4, the collide-and-slide.
 //   * BELOW - the airborne branch, and this is the one that matters here. A
-//     drop under 7.874 units is absorbed in the frame; anything more sets the
-//     fall byte at actor+1304 and enters ACTOR_STATE 18, tiered by the drop at
-//     59.055 (`dword_910350`), 118.11 and 196.85. There is no refusal in this
-//     branch at all.
+//     drop under 7.874 units is absorbed in the frame ONLY in shoot mode
+//     (`sub_47CF00`, `setNoAbsorb`); otherwise it sets the fall byte at
+//     actor+1304 - 2 under 59.055 (`dword_910350`), a short fall that keeps
+//     walking (`shortFall`), and past it ACTOR_STATE 18, tiered at 59.055,
+//     118.11 and 196.85. There is no refusal in this branch at all.
 //
 // So the port now falls. What it still does NOT have is the reason the engine
 // rarely needs to: `Actor_Move`'s swept sphere (`Sweep_ActorMove` 0x004AD360 ->

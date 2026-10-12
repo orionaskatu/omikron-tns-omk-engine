@@ -455,6 +455,19 @@ passer-by lines, the scripted random choices) and each city visit its own
 crowd, where before every boot replayed the same one. Neither shows in a
 headless run.
 
+## 38. GOING DOWN STAIRS AND KERBS (2026-10-12, `todo/scene-gameplay-audit.md` 22)
+
+The original never snaps the player down a small drop in adventure mode: each
+riser, kerb or stair nosing is a short fall under gravity, and he keeps
+walking through it. The port used to glue his feet to every tread, and on a
+riser over 20 cm it stopped him dead for about five frames. Walk down the
+bank's entrance stairs in Anekbah (`--save traces/save-appart.bin --area 0
+--stand 4620,-102,-2577,90`, then forward) and any kerb. Expect him to walk
+on without stopping, a few centimetres above the tread for a frame or two
+on each riser (at most 29 cm on a deep riser). Compare with the original
+if you can: what to judge is whether the descent "steps" the way the game's
+does.
+
 ## HEADLESS PASS over 19-29 (2026-10-05)
 
 Each item driven through the viewer with its check's own command, frames

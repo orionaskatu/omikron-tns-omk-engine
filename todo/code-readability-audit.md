@@ -169,6 +169,26 @@ how a rule was reached on top of the rule.
 * per-platform files for `datafs` / `threads` / `profile` instead of `#if`
   forks; the `.CTL` / `.SCX` walkers one function per section.
 
+## 6b. The refactor guard, and a nondeterminism it found (2026-10-12)
+
+`tools/refactor_guard.py` records the whole stdout of thirteen fixed runs -
+the boot, the menu, the street, both terminals, a melee fight, shoot mode, a
+slider boarding, Astaroth, the sneak's memos, Xachen, the Gandhar door, a set
+render - with each run's last-frame hash, and diffs two recordings. It is
+the proof for every behaviour-preserving step below: `record base` before,
+`record now` after, `diff base now` must print `0 of 13 runs differ`. Shown to
+work: the Gandhar door's 1500 ms close set to 1600 moved its close from frame
+208 to 211 and the guard named it. Two recordings of one tree agree 13 of 13
+once the timing lines (milliseconds, the music level) are dropped.
+
+**Found on the way, not yet explained**: a run that ENDS INSIDE A CONVERSATION
+(Xachen to frame 600, the Dakobah/Xendar conversation from frame 468) logs the
+same lines on every run but its LAST FRAME differs between two runs of the same
+tree - so something in a conversation's picture is not deterministic under
+`--frames` (the line stream reads no thread; the interface clock is
+`n * 1000 / 30` there). The guard's Xachen run stops at 460 for now. Worth
+finding: a check that hashed a conversation frame would flicker.
+
 ## 7. For the tutorial
 
 The tutorial can be written on the code as it is - the seams it teaches

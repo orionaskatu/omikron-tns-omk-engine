@@ -319,9 +319,10 @@ scripts — a blank means the shipped scripts never use that opcode.
 `tables/vm_opcodes.json` by `tools/gen_opcodes.py` (`verify.py: opcode
 names` keeps the two in step and refuses an opcode compared by number). So
 "where is `dialog.start` handled" is `grep -rn 'op::DialogStart' engine/`.
-One name in the table is known wrong: 146/147 `ambience.on` / `.off` are the
-SHOOT RADAR's switch (`Session::onCall` says why); the rename waits on the
-table's row and the checks that count names.
+Two names in the table are known wrong: 146/147 `ambience.on` / `.off` are
+the SHOOT RADAR's switch, and 132/133 `fade.to_black` / `.from_black` are the
+other way round - 132 fades IN from black (`Session::onCall` says why for
+both); the renames wait on the table's rows and the checks that count names.
 
 **Two handler blocks are not bounded correctly** and any
 per-handler analysis has to exclude them: opcode 77 (the splitter ran past its

@@ -409,8 +409,11 @@ struct UiItem {
     int           textArg = -1;          // `+30`, the printf argument
     // `+20`, the item's OWN DRAW HOOK. `Ui_DrawItem` runs it before the text
     // and before every decoration, and it is where a widget that draws what
-    // no flag can describe lives - 24 distinct hooks over 45 items. Only one
-    // is ported: `kDrawNameField`, the start menu's typed-name box.
+    // no flag can describe lives - 24 distinct hooks over 45 items. The
+    // composer ports the ones its `kDraw...` constants name (`screendraw.h`,
+    // `screendraw.cpp`, the map's two here: the name field, the load rows, the
+    // sneak's rows, map, character and viewport, the examine box and the memo
+    // text); any other draws nothing.
     std::uint32_t drawFn = 0;
     // The two SPRITE sources, `Ui_DrawItemSprite` (0x00476E60): the LIT
     // top-left and the UNLIT one, each `w x h` out of the screen's artwork.

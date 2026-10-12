@@ -1691,43 +1691,6 @@ bool UiWalk::confirm() {
         // that body (`verify.py: start cancel`), so it is named by address
         // and not pattern-matched at run time.
         if (it->callback == kCbStartCancel) return toParent();
-        // ---- THE TERMINAL FAMILY (`docs/UI.md` "a second `Ui_OpenShop`") --
-        //
-        // One callback, 0x004AF410, for seven screens - TERMINAL, FIGHT SIM,
-        // MORGUE, ARCHIVES and the three SURV - switching on the screen's own
-        // fixed parameter through the jump table at 0x004AF578. The parameters
-        // are 0..6 with no gap and no repeat over exactly those seven, so the
-        // case index IS the screen; the table is `docs/UI.md`'s, read there and
-        // transcribed here:
-        //
-        //     1 FIGHT SIM   row + 1 for rows 0..2 (and interface sound 26)
-        //     2 MORGUE      row + 1 for rows 0..4
-        //     3 ARCHIVES    the dossier reader on rows 0..3; 1, from row 2,
-        //                   HELD until the player closes it
-        //     4 SURV ERROR  falls THROUGH into case 6 - `loc_4AF52F` ends in a
-        //                   call with no jump, which a table read as seven
-        //                   independent arms would miss
-        //     6 SURV KIT    1, and only from row 0
-        //     5 SURV NO KIT no answer at all
-        //   ...and FIGHT SIM, MORGUE and the three SURV close themselves
-        //   through oscillator 5 (4500 / 2000 ms) - see the arm below
-        //     0 TERMINAL    the dossier reader on rows 0..4; its answer is
-        //                   written on CLOSE by 0x004AF0E0 (`closeNow`) off
-        //                   the two globals rows 3 and 4 set
-        // `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image.
-        // It counts the press (`byte_68A608`), stamps a marker widget taken
-        // from `off_4E4C80[count]` at the cell, and ORs one bit of
-        // `byte_68A60C` when the cell is one of FOUR:
-        //
-        //     +3C == 5       -> bit 1   (row 0, col 5)
-        //     +3C == 0x10003 -> bit 2   (row 1, col 3)
-        //     +3C == 0x40002 -> bit 4   (row 4, col 2)
-        //     +3C == 0x50004 -> bit 8   (row 5, col 4)
-        //
-        // At four presses it plays interface sound 0x26; when the mask reaches
-        // 0x0F it writes the ANSWER 1 - the door opens - and plays 0x27. The
-        // bits are ORed, so the symbols may be pressed in any order and the
-        // same one twice does not count twice. NOT ported: the two sounds.
         // ---- XACHEN'S CARTRIDGES (`sub_4AF9D0`), read from the image ----
         //
         // Screen 14 is Dakobah's puzzle in front of Xendar's door: four
@@ -1780,6 +1743,20 @@ bool UiWalk::confirm() {
             }
             return true;
         }
+        // `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image.
+        // It counts the press (`byte_68A608`), stamps a marker widget taken
+        // from `off_4E4C80[count]` at the cell, and ORs one bit of
+        // `byte_68A60C` when the cell is one of FOUR:
+        //
+        //     +3C == 5       -> bit 1   (row 0, col 5)
+        //     +3C == 0x10003 -> bit 2   (row 1, col 3)
+        //     +3C == 0x40002 -> bit 4   (row 4, col 2)
+        //     +3C == 0x50004 -> bit 8   (row 5, col 4)
+        //
+        // At four presses it plays interface sound 0x26; when the mask reaches
+        // 0x0F it writes the ANSWER 1 - the door opens - and plays 0x27. The
+        // bits are ORed, so the symbols may be pressed in any order and the
+        // same one twice does not count twice. NOT ported: the two sounds.
         if (it->callback == kCbGandharCell) {
             const unsigned cell = (unsigned(gandRow_) << 16) | unsigned(gandCol_);
             ++gandPresses_;
@@ -1821,6 +1798,29 @@ bool UiWalk::confirm() {
             }
             return true;
         }
+        // ---- THE TERMINAL FAMILY (`docs/UI.md` "a second `Ui_OpenShop`") --
+        //
+        // One callback, 0x004AF410, for seven screens - TERMINAL, FIGHT SIM,
+        // MORGUE, ARCHIVES and the three SURV - switching on the screen's own
+        // fixed parameter through the jump table at 0x004AF578. The parameters
+        // are 0..6 with no gap and no repeat over exactly those seven, so the
+        // case index IS the screen; the table is `docs/UI.md`'s, read there and
+        // transcribed here:
+        //
+        //     1 FIGHT SIM   row + 1 for rows 0..2 (and interface sound 26)
+        //     2 MORGUE      row + 1 for rows 0..4
+        //     3 ARCHIVES    the dossier reader on rows 0..3; 1, from row 2,
+        //                   HELD until the player closes it
+        //     4 SURV ERROR  falls THROUGH into case 6 - `loc_4AF52F` ends in a
+        //                   call with no jump, which a table read as seven
+        //                   independent arms would miss
+        //     6 SURV KIT    1, and only from row 0
+        //     5 SURV NO KIT no answer at all
+        //   ...and FIGHT SIM, MORGUE and the three SURV close themselves
+        //   through oscillator 5 (4500 / 2000 ms) - see the arm below
+        //     0 TERMINAL    the dossier reader on rows 0..4; its answer is
+        //                   written on CLOSE by 0x004AF0E0 (`closeNow`) off
+        //                   the two globals rows 3 and 4 set
         if (it->callback == kCbTerminalCell) {
             // the CELL's index in its own list - `Ui_ConfirmSelection` hands
             // the callback the item, and the engine's arms test the list's

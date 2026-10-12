@@ -15,13 +15,10 @@
 namespace omk {
 namespace {
 
-// `Ui_ItemTextStyle`: an unselected row is dimmed by HALVING all three colour
-// channels - one shift, and it is the dimming of every unselected row in the
-// game. The captures give white for the focused row and 0x7F7F7F for the
-// rest, which is that shift (`engine: text draw`).
-// The lit colour when bank C's `0x80000001` forces white. The DIM one is no
-// longer a constant: `Ui_ItemTextStyle` halves whatever colour the item
-// carries, so `0x7F` was only ever the halving of 255.
+// The lit colour when bank C's `0x80000001` forces white. There is no DIM
+// constant: `Ui_ItemTextStyle` dims an unselected row by HALVING whatever
+// colour the item carries - one shift, the dimming of every unselected row in
+// the game - so the captures' 0x7F7F7F is 255 halved (`engine: text draw`).
 constexpr std::uint8_t kLit = 255;
 
 // THE I2D COLOUR KEY, and it is a constant of the loader rather than a

@@ -1066,10 +1066,9 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
     // each end - one carrying the door pair, one carrying none - and the
     // doorless one is the outer, so it fires first. Whether the door's goto is
     // then REFUSED (a transition already in flight) is what decides the bug,
-    // and it can only be seen while walking. `OMK_TUNNEL=1` says what every
-    // goto carries and what happened to it.
-    const bool trLog = true;              // always, since 2026-09-05 (see the door resolve above)
-    if (trLog && mode == 0)
+    // and it can only be seen while walking - so every goto prints what it
+    // carries and what happened to it.
+    if (mode == 0)
         std::printf("[tr] frame %ld  area.goto %d  doors %d/%d  ctx %d  "
                     "transition state %d  deferred %d%s\n",
                     frameNo_, area, f1, f2, ctxIdx, tr_.state, deferred_,
@@ -2886,7 +2885,6 @@ void Session::onCall(int i, const Call& call) {
                         static_cast<float>(call.fields[2]));
         break;
     }
-    // 132 is the fade IN and 133 the fade OUT, whatever the table calls them
     case op::CameraShake:
         // `camera.shake duration, amp` (0x00405B10): two int16 operands,
         // either a variable under 0x4000 (no shipped site uses one), and
@@ -2908,6 +2906,9 @@ void Session::onCall(int i, const Call& call) {
         }
         break;
     }
+    // 132 FADES IN from black and 133 back out to it - whatever the table
+    // calls them (`fade.to_black` / `.from_black`); `startBlackFade`'s argument
+    // is what the handler does
     case op::FadeToBlack: startBlackFade(true);  break;
     case op::FadeFromBlack: startBlackFade(false); break;
     case op::MusicPlay:

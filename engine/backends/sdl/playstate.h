@@ -250,8 +250,10 @@ struct PlayState {
     int pendingLoadSlot{};   // `dword_4C09B4`
     bool quitRequested{};   // `dword_4E6C9C`, the pause screen's Oui
     bool exitProgram{};   // the start menu's Oui - WM_QUIT
-    bool videophoneCall{};
-    bool videophoneSpoke{};   // a line or a voice-over has played
+    bool videophoneCall{};   // `dword_670BF0`
+    double callCloseLeftMs{};   // oscillator 5 on the call, 0 = not running
+    bool callWorldBack{};   // `sub_466B60`'s `byte_90E155 = 1` under the closing call
+    bool dialogFromUi{};   // ACTOR_STATE 17: the conversation began under a world-hiding screen
     bool callHarness{};   // `--call` opened this one
     int callPending{};   // ...and the conversation it owes
     omk::UiCursor uiCursor{};   // Ui_DrawItemCursor's one pool (dword_6A4D20)
@@ -1032,6 +1034,7 @@ struct PlayState {
     void harnessSaveSlot();   // --save-slot: a save written when the run ends, without the panel
     void harnessHoldAndCall();   // --anim-hold and --call: a held player, the sneak call, fired once
     void harnessShootEnd();   // --shoot-end: shoot.end 1 at a frame
+    void closeAllScreens(const char* who);   // UI_CloseAllScreens 0x0042A340
     void harnessBoard(float (&at)[3], float (&door)[3]);   // --board: put at the called slider's door and the action pressed
     void harnessFight();   // --fight: op 62's entry by hand
     void harnessShootHealth(std::int32_t& hp);

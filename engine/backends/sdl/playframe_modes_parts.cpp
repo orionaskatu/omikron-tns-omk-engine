@@ -871,6 +871,32 @@ int PlayState::modesShoot() {
                                    : "LEAVE (Actor_LeaveDialogueMode)",
                         dialogMode ? 400 : 100,
                         player ? static_cast<int>(player->state()) : -1);
+            // ...AND A CONVERSATION HELD UNDER A SCREEN CLOSES IT.
+            //
+            // `Actor_LeaveDialogueMode` (0x00468E80):
+            //
+            //     if (actor[101] == 17) { actor[102] = 1; UI_CloseAllScreens(); }
+            //
+            // 17 is what `Actor_EnterDialogueMode` writes from 9, and 9 is
+            // what `UI_LoadScreen` writes for every screen whose record lacks
+            // `0x40000` - all but PAUSE GAME and the two SHOOT screens. So a
+            // conversation that began while such a screen was up closes every
+            // screen when it ends. This is what ends the sneak CALL: all ten
+            // `ui.open 0` sites run `dialog.start` over the device (the two
+            // `media.play 534` ones too, one instruction later).
+            //
+            // The port does not hold the player in state 9 under a screen
+            // (`ActorState::UiHeld` is modelled and nothing drives it -
+            // `engine/README.md`), so the 17 is read off the screen itself:
+            // a walk up, on a screen that hides the world, when the
+            // conversation began.
+            if (dialogMode) {
+                dialogFromUi = walk && !walk->closed() && openScreen >= 0 &&
+                               !w.worldBehind(openScreen);
+            } else if (dialogFromUi) {
+                dialogFromUi = false;
+                closeAllScreens("Actor_LeaveDialogueMode from ACTOR_STATE 17");
+            }
         }
 
         {
@@ -938,10 +964,7 @@ int PlayState::modesShoot() {
         }
         // op 137 `ui.close_all` - `UI_CloseAllScreens`: the open screen's own
         // close, which the walk's close below then takes by its screen
-        if (session.takeCloseAllScreens() > 0 && walk && !walk->closed()) {
-            std::printf("frame %ld: UI_CloseAllScreens - screen %d closes\n", n, openScreen);
-            walk->closeScreen();
-        }
+        if (session.takeCloseAllScreens() > 0) closeAllScreens("op 137 ui.close_all");
         // A script asked for a screen, or the PLAYER did. Which screen is the
         // SESSION's answer or the special move's, never this file's.
         if (!walk && (session.pendingUiScreen() >= 0 || playerScreen >= 0)) {
@@ -1925,40 +1948,33 @@ int PlayState::modesShoot() {
                 walk.reset();
                 openScreen = -1;
             }
-            // ...AND THE SNEAK CALL CLOSES WHEN THE CALL IS OVER.
+            // ...AND THE SNEAK CALL'S CLOSE, 100 ms after it was asked for.
             //
-            // What is READ: `Ui_CloseSneakFamily`'s param-2 arm refuses the
-            // first attempt - it clears `dword_670BF0`, resumes the player
-            // (`sub_466B60`) and starts oscillator 5 for 100 ms, a closing
-            // ANIMATION - and closes on the next one. What is NOT read is
-            // what makes the attempt: no VM opcode closes a screen, no other
-            // screen's open closes this one (only `UI_LoadScreen(34)`, SHOOT
-            // HUMAN, does), and the function has no direct caller because it
-            // is a dword in the screen table.
-            //
-            // So this is a RECONSTRUCTION, and it is labelled as one: the
-            // call closes when the conversation opened over it ends. It is
-            // what the script requires - SCENE 53 runs `dialog.start 386`
-            // over the device and then `dialog.start 388` in the world, and
-            // 388 cannot play through a videophone - and what a capture
-            // shows. The alternative, that the player presses a key to hang
-            // up, is not excluded by anything here.
-            //
-            // A CALL IS A CONVERSATION **OR** A VOICE-OVER. Two of the ten
-            // sites are `media.play 534` rather than `dialog.start`, and a
-            // close keyed on the dialogue alone would leave those two on
-            // screen for ever.
-            if (walk && openScreen == kScreenVideophone && videophoneCall) {
-                if (session.dialogOpen() || mediaTextFrames > 0)
-                    videophoneSpoke = true;
-                else if (videophoneSpoke) {
-                    std::printf("screen %d VIDEOPHONE: the call is over - "
-                                "closing (reconstruction: the engine's own "
-                                "trigger is not read)\n", openScreen);
+            // `closeAllScreens` made the first attempt and
+            // `Ui_CloseSneakFamily` refused it, starting oscillator 5 on the
+            // screen: `sub_42B6A0` zeroes the elapsed time, sets flag bit 0,
+            // stores the period 100 and the screen at `+0x18`;
+            // `UI_TickScreens` hands `sub_42B6D0` each tick's milliseconds,
+            // and at the period `sub_42B7E0` clears bit 0 and writes the
+            // screen's `+8 = 3`. State 3 calls the close again the same tick,
+            // and with `dword_670BF0` clear and the oscillator stopped it
+            // sets `byte_90E155 = 1`, raises event 26 and closes. It is a
+            // DELAY, not an animation: nothing draws from oscillator 5 on
+            // this screen. (It is also the general delayed close - the high
+            // score's 10000 ms above, Den's, Xachen's and the Gandhar door's.)
+            if (callCloseLeftMs > 0.0 && walk && openScreen == kScreenVideophone) {
+                callCloseLeftMs -= frameSec * 1000.0;
+                if (callCloseLeftMs <= 0.0) {
+                    std::printf("frame %ld: screen %d VIDEOPHONE - oscillator 5 expired, "
+                                "screen +8 = 3: Ui_CloseSneakFamily closes it (event %d, "
+                                "object list %d)\n", n, openScreen, omk::kEventSneakClose,
+                                inv.openedList());
+                    inv.closeList();          // Game_RaiseEvent(26, 0)
                     walk.reset();
                     openScreen = -1;
                     screenFromScript = true;
-                    videophoneCall = videophoneSpoke = false;
+                    callCloseLeftMs = 0.0;
+                    callWorldBack = false;
                 }
             }
         }
@@ -2184,4 +2200,67 @@ void PlayState::sliderForget(const char* why) {
                     "leaving %d camera %d held %d)\n", n, why, ride ? 1 : 0, boarding ? 1 : 0,
                     boarded ? 1 : 0, leaving ? 1 : 0, sliderCamMode,
                     session.playerAnimHeld() ? 1 : 0);
+}
+
+// `UI_CloseAllScreens` (0x0042A340): every slot whose state is not 0 has its
+// definition's close callback (`+20`) called ONCE - it does not set `+8 = 3`,
+// so a close that refuses leaves the screen up. Five callers: op 137,
+// `Actor_LeaveDialogueMode` out of ACTOR_STATE 17, the area unload
+// (`sub_4193E0`, behind `UI_CountOpenScreens`), `sub_456C70`'s event-43 arm
+// with the player in state 9, and `04_sys.c`'s cases 9/0x11. The port has
+// one screen up at most, in `walk`.
+//
+// The one close that refuses is `Ui_CloseSneakFamily`'s VIDEOPHONE arm
+// (0x0049B610, `screen+4 == 2`, no SHOOT HUMAN up - and SHOOT HUMAN cannot be
+// up beside it here, since the port holds one screen):
+//
+//     if (!dword_670BF0) {
+//         if (Ui_OscillatorFlags(Ui_Oscillator(5), 1) && !g_RestartRequest)
+//             return;                              // the delay still running
+//         byte_90E155 = 1; Game_RaiseEvent(26, 0); return Ui_CloseScreenDefault(s);
+//     }
+//     dword_670BF0 = 0;
+//     if (player && dword_90E0DC) sub_466B60(player);
+//     return Ui_StartOscillator(5, 100, s);
+//
+// `sub_466B60` puts the player back in ACTOR_STATE 1 (8 if `[102]` was 8),
+// sets `byte_90E155 = 1` - the world's full-screen view back on under the
+// device for its last 100 ms - and raises event 5 only if a script is still
+// parked (`dword_930744 != -1`), which it is not: the open's own
+// `UI_SendAnswer` already sent the answer and wrote -1 there. The player
+// state half has nothing to undo in the port (no state 9 under a screen).
+void PlayState::closeAllScreens(const char* who) {
+    auto& inv = *inv_;
+    if (!walk || walk->closed() || openScreen < 0) {
+        std::printf("frame %ld: UI_CloseAllScreens (%s) - no screen up\n", n, who);
+        return;
+    }
+    if (openScreen != kScreenVideophone) {
+        std::printf("frame %ld: UI_CloseAllScreens (%s) - screen %d closes\n", n, who,
+                    openScreen);
+        walk->closeScreen();
+        return;
+    }
+    if (videophoneCall) {
+        videophoneCall = false;
+        callWorldBack = true;
+        callCloseLeftMs = 100.0;
+        std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE REFUSES: "
+                    "dword_670BF0 cleared, sub_466B60 (the world view back on), oscillator "
+                    "5 started for 100 ms\n", n, who);
+        return;
+    }
+    if (callCloseLeftMs > 0.0) {
+        std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE refuses "
+                    "again: oscillator 5 still running (%.1f ms left)\n", n, who,
+                    callCloseLeftMs);
+        return;
+    }
+    std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE closes (event "
+                "%d, object list %d)\n", n, who, omk::kEventSneakClose, inv.openedList());
+    inv.closeList();                  // Game_RaiseEvent(26, 0)
+    walk.reset();
+    openScreen = -1;
+    screenFromScript = true;
+    callWorldBack = false;
 }

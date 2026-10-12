@@ -515,7 +515,9 @@ int PlayState::setupSession() {
     // `dword_670BF0`: a sneak CALL is up. Set by the videophone's open arm,
     // cleared by the first close attempt.
     videophoneCall = false;
-    videophoneSpoke = false;   // a line or a voice-over has played
+    callCloseLeftMs = 0.0;     // oscillator 5, the call's 100 ms
+    callWorldBack = false;
+    dialogFromUi = false;      // ACTOR_STATE 17
     callHarness = false;       // `--call` opened this one
     callPending = -1;          // ...and the conversation it owes
     // THE LOADING SEQUENCE IS NOT WIRED HERE, and a first version of it

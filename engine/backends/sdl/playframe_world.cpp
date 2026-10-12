@@ -905,8 +905,12 @@ int PlayState::phaseWorld() {
         // supposed to be opaque". The sneak's panels do not carry the bit.
         const bool panelShowsWorld =
             walk && walk->panel() && (walk->panel()->flagsB & 0x800u) != 0;
+        // A CLOSING CALL keeps it too: `Ui_CloseSneakFamily`'s refusal calls
+        // `sub_466B60`, whose `byte_90E155 = 1` puts the full-screen view
+        // back for the device's last 100 ms (`PlayState::closeAllScreens`).
         const bool screenKeepsWorld = !walk || openScreen < 0 ||
-                                      w.worldBehind(openScreen) || panelShowsWorld;
+                                      w.worldBehind(openScreen) || panelShowsWorld ||
+                                      callWorldBack;
         // ...UNLESS THE PANEL CARRIES A 3D VIEWPORT ITEM. `byte_90E155` only
         // guards `Game_Frame`'s full-screen submit; a UI item whose draw
         // callback is `sub_4782B0` submits the SAME world through the SAME

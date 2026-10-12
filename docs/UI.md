@@ -2782,8 +2782,9 @@ own open had loaded hidden underneath; both closing paths raise **event 26**
 and fall into the generic close. But **`VIDEOPHONE`**, with no `SHOOT HUMAN`
 up, calls `Ui_StartOscillator(5, 100)` **instead** of closing — oscillator 5
 ships with period 0 and gets 100 ms here, and while its flag bit 0 is set the
-close is refused. That interface has a closing animation; every other screen
-closes on the frame it is told to. `SLIDER` takes neither arm and goes
+close is refused. It is a 100 ms DELAY, not an animation: the oscillator's
+expiry writes the screen's `+8 = 3` and the close runs again (§3i). This said
+"a closing animation" until 2026-10-12. `SLIDER` takes neither arm and goes
 straight to the generic close.
 
 **This paragraph had `SNEAK` and `VIDEOPHONE` the wrong way round until
@@ -3119,14 +3120,44 @@ rectangle's aspect), and `attachView3D` hands the picture to the composer,
 which blits it at the item's layer. The screen's world-hiding gate is
 untouched, and `verify.py: sneak call` asserts the rectangle holds a picture.
 
-**Closing it is read only half-way.** `Ui_CloseSneakFamily`'s param-2 arm
-REFUSES the first attempt — it clears `dword_670BF0`, resumes the player
-(`sub_466B60`) and starts oscillator 5 for 100 ms, a closing animation — and
-closes on the next one. What *makes* the attempt is not established: no VM
-opcode closes a screen, the only other screen whose open closes this one is
-`SHOOT HUMAN` (`if (a1 == 34) UI_CloseScreen(0)` in `UI_LoadScreen`'s tail),
-and the function has no direct caller because it is a dword in the screen
-table.
+**Closing it: the conversation's end, refused once, 100 ms later** (read
+2026-10-12; until then this said "read only half-way" and the port closed the
+call on a guess). Nothing on the screen closes it and no VM opcode names it;
+`UI_CloseScreen`'s six direct callers close screens 0x1D, 0x23, 9 and the
+`0x100000` family, and the one `UI_CloseScreen(0)` is SHOOT HUMAN's open. What
+does is **`UI_CloseAllScreens`** (0x0042A340), which calls every open slot's
+close callback ONCE, from **`Actor_LeaveDialogueMode`** (0x00468E80):
+
+    if (actor[101] == 17) { actor[102] = 1; UI_CloseAllScreens(); }
+
+17 is what `Actor_EnterDialogueMode` writes from 9, and 9 is what
+`UI_LoadScreen` writes for every screen whose record lacks `0x40000` - screen 0
+among them. So a conversation started under the device closes it when it ends,
+and **all ten `ui.open 0` sites start one**: the eight with `dialog.start`
+next, and the two `media.play 534` sites one instruction later
+(`dialog.start 330` / `333`).
+
+`Ui_CloseSneakFamily`'s VIDEOPHONE arm (0x0049B610, `screen+4 == 2`) REFUSES
+that first call: it clears `dword_670BF0`, calls `sub_466B60` (player back to
+ACTOR_STATE 1, `byte_90E155 = 1` so the full-screen world draws again under
+the device, event 5 only if a script is still parked - it is not, the open's
+own `UI_SendAnswer` left `dword_930744 = -1`) and `Ui_StartOscillator(5, 100,
+screen)`. **Oscillator 5 is the engine's delayed close, not an animation**:
+its start `sub_42B6A0` stores the period and the SCREEN at `+0x18`, its tick
+`sub_42B6D0` adds `UI_TickScreens`' milliseconds, and its expiry
+**`sub_42B7E0` writes that screen's `+8 = 3`** - the oscillators tick before
+the slots in `UI_TickScreens`, so the state-3 close runs on the same tick, and
+with the flag clear and the oscillator stopped it sets `byte_90E155 = 1`,
+raises event 26 and closes. Nothing draws from oscillator 5 on this screen
+(the one other reader, `sub_4AF5D0`, is the terminal family's text). The same
+oscillator closes HIGH-SCORE after 10000 ms, and DEN, XACHEN and the GANDHAR
+DOOR 1500-4500 ms after they answer (`todo/scene-gameplay-audit.md` 24).
+
+Ported 2026-10-12 (`PlayState::closeAllScreens`, `verify.py: engine: call
+close`): the conversation that began under a world-hiding screen closes it at
+its end - read off the screen rather than ACTOR_STATE 17, since the port does
+not hold the player in 9 - and the call refuses, draws the world for 100 ms
+and goes. On `--call 386` the device closes 3 frames after the conversation.
 
 **A call takes no interface input at all.** `Ui_ScreenInput` (0x0042A0F0),
 the one input callback all 32 live screens share, dispatches only when the
@@ -3144,9 +3175,9 @@ reader met the port getting wrong ("the sneak continues to be interactable
 like it was opened normally").
 
 Ported into `omk-play` 2026-09-07: `ui.open 0` answers itself, the session
-keeps running under the screen, the panel takes no input, and the call closes
-when its conversation or voice-over ends — that last part **labelled a
-reconstruction** for the reason above. `verify.py: sneak call` asserts the
+keeps running under the screen and the panel takes no input. The close was
+then a labelled reconstruction (when the conversation or voice-over ended);
+since 2026-10-12 it is the engine's, above. `verify.py: sneak call` asserts the
 idiom, the arm's bytes and the speaker; `omk-play --call N` fires the whole
 idiom as a harness, which is the only way the path can be looked at without
 playing a beat that contains one.

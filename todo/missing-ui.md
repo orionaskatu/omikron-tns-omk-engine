@@ -205,11 +205,11 @@ survey, from `tables/ui_widgets.json`:
 | 12 `GANDHAR DOOR` | 0x4E4CB8 | 0x004AFE90 **PORTED** | 5 | 0x004AFF90 **PORTED** | done - see below |
 | 13 `DEN` | 0x4E4990 | 0x004AFBE0 **PORTED** | 6 | none | done - see 5c; four digit wheels and two lamps, the hook itself answers |
 | 14 `XACHEN` | 0x4E4620 | 0x0042A930 (`kMoveSelectionLR`, ported) + a 4-item list | 4 | 0x004AF9D0 **PORTED** | done - see 5d; Dakobah's four cartridges |
-| 0 `VIDEOPHONE` | 0x4DF128 | none | 8 | 0x0049DBF0, `textFn` 0x0049E090 | the SNEAK family's - 0x49E090 is already supplied by the viewer |
+| 0 `VIDEOPHONE` | 0x4DF128 | none | 8 | 0x0049DBF0, `textFn` 0x0049E090 | done - the call answers itself (2026-09-07), its 3D view (09-08), and its CLOSE (2026-10-12, `docs/UI.md` 3i) |
 | 36 `HIGH-SCORE` | 0x4E22F0 | 0x004ADA80 **PORTED** | 1 | 0x0042A990 (the family's generic button) | done - see 5e; the one item's DRAW hook 0x004ADAD0 is the screen |
 
-Four of the six are done (12, 13, 14 and 36, below). What is left is the
-VIDEOPHONE (0x0049DBF0, the SNEAK family's).
+All five are done (12, 13, 14 and 36 below; the VIDEOPHONE in `docs/UI.md`
+3i, its close last, 2026-10-12).
 
 ### 5b. GANDHAR'S DOOR — done 2026-09-18
 
@@ -494,7 +494,7 @@ the composer.
 | 0 | where every screen is opened from | **done 2026-09-17** - §1 |
 | 1 | the LIFT: why it never arrived | **done 2026-09-17** - §2, `verify.py: engine: lift` |
 | 2 | the terminal FAMILY: the display, the keypad and the answers - 7 screens | **done 2026-09-17** - §3, `verify.py: engine: terminal family` |
-| 3 | the SPECIAL screens: **12 GANDHAR DOOR** (§5b), **13 DEN'S LOCKER** (§5c), **14 XACHEN** (§5d), **36 HIGH-SCORE** (§5e) and the terminal's **header bar** (§3b) all done; 0 VIDEOPHONE left | §5 has each one's hooks |
+| 3 | the SPECIAL screens: **12 GANDHAR DOOR** (§5b), **13 DEN'S LOCKER** (§5c), **14 XACHEN** (§5d), **36 HIGH-SCORE** (§5e) the terminal's **header bar** (§3b) and **0 VIDEOPHONE** (`docs/UI.md` 3i, its close 2026-10-12) all done | §5 has each one's hooks |
 | 4 | play | |
 
 ## 6. The lift arrives and the level is not drawn — the SLOT reading REFUTED, and the real occluder

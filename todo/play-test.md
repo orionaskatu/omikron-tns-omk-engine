@@ -469,6 +469,18 @@ on each riser (at most 29 cm on a deep riser). Compare with the original
 if you can: what to judge is whether the descent "steps" the way the game's
 does.
 
+## 39. THE SNEAK CALL HANGS UP AS THE GAME DOES (2026-10-12, `todo/scene-gameplay-audit.md` 12)
+
+The videophone used to close when the port saw the conversation (or a
+voice-over) end. Now it closes the engine's way: the conversation's end closes
+every screen, the device refuses once, shows the world behind it for 100 ms
+(three frames) and goes. Reach: the restaurant lunch from `traces/games-resto.bin`
+slot 2, or `--save traces/games-resto.bin --slot 2 --call 386` and ENTER
+through the two lines. Watch for: the device staying up through both lines;
+going a moment after the last one, not on the same frame and not seconds
+later; and nothing left stuck on screen at the two "DATA MEMORIZED" calls
+(SCENE 46 and 47, Telis), which now close on their conversation too.
+
 ## HEADLESS PASS over 19-29 (2026-10-05)
 
 Each item driven through the viewer with its check's own command, frames

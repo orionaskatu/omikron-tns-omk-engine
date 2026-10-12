@@ -358,6 +358,17 @@ void pedRootDelta(const PedClip& c, float t0, float t1, const float* heading, fl
 float pedFacingOf(const float heading[3]);
 void  pedHeadingOf(float facingDeg, float heading[3]);
 
+// A WALKER'S OR VEHICLE'S FLAGS - the mover's `+180` (`sub_453B40`'s walk and
+// `Sliders_Tick`). Bits 0x8 and 0x200 are written and not yet named.
+namespace mover_flag {
+inline constexpr std::uint32_t Blocked         = 0x1;    // held behind another mover; not overtaken past
+inline constexpr std::uint32_t OnRoute         = 0x10;   // on a route connector, not a lane
+inline constexpr std::uint32_t Overtaking      = 0x20;   // side-stepping past a slower mover (`side`/`sideLen`)
+inline constexpr std::uint32_t InAction        = 0x80;   // at an action point; its carrot waits
+inline constexpr std::uint32_t Idling          = 0x100;  // standing: a walker on an idle clip, a vehicle stopped
+inline constexpr std::uint32_t ArrivalDeferred = 0x400;  // a vehicle reached its stop on a connector: it drives on to the lane
+}  // namespace mover_flag
+
 struct Pedestrian {
     bool         live = false;
     // -1 for a walker; otherwise the `Vehicle` this mover belongs to. The
@@ -380,8 +391,7 @@ struct Pedestrian {
     int          route = -1;                  // +76
     int          seg = 0;                     // +186: on a lane the 1-based key index being walked,
                                               //       on a route the 0-based step index
-    std::uint32_t flags = 0;                  // +180: 1 blocked, 0x10 on a route, 0x20 overtaking,
-                                              //       0x80 in an action, 0x100 idling
+    std::uint32_t flags = 0;                  // +180: `mover_flag` (0x8 and 0x200 unread)
     // ---- the body
     float        body[3] = {0, 0, 0};         // mover +36/+40/+44: where the model stands
     const PedClip* clip = nullptr;            // record +8

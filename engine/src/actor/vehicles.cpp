@@ -275,9 +275,9 @@ void Sliders::tickVehicles(float dt) {
                 // 0x400 and drives on, and the first tick back on a lane it
                 // stops wherever it is - so it never parks inside a
                 // junction's curve
-                if (d < RideMachine::kArrive || (m.flags & 0x400u)) {
-                    if (m.flags & 0x10u) { m.flags |= 0x400u; d = 1e9f; ++deferrals_; }
-                    else                 { m.flags &= ~0x400u; d = 0.0f; }
+                if (d < RideMachine::kArrive || (m.flags & mover_flag::ArrivalDeferred)) {
+                    if (m.flags & mover_flag::OnRoute) { m.flags |= mover_flag::ArrivalDeferred; d = 1e9f; ++deferrals_; }
+                    else                 { m.flags &= ~mover_flag::ArrivalDeferred; d = 0.0f; }
                 }
             }
             const int was = callRide_.state;
@@ -366,12 +366,12 @@ void Sliders::vehicleDrive(int vi, float dt) {
     const float dist = len3(to);
     const int g = gait(m, to, dist, kVehGaitNear, kVehGaitFar);   // `unk_4C8888`
     if (!g) {                                           // stopped
-        m.flags |= 0x100u;
+        m.flags |= mover_flag::Idling;
         ++v.stops;
         return;
     }
-    if (m.flags & 0x100u) {                             // ...and moving again
-        m.flags &= ~0x100u;
+    if (m.flags & mover_flag::Idling) {                             // ...and moving again
+        m.flags &= ~mover_flag::Idling;
         m.baseSpeed = kVehSpawnSpeed;
     }
 

@@ -1440,8 +1440,9 @@ bool UiWalk::move(const UiList& l, std::uint32_t bits,
 // blink. On the combination it sets `0x4` and clears `0x80` on ALL four, so
 // they all blink together, and paints them `+8 = 0`, `+9 = 255`.
 //
-// NOT ported, labelled: the two sounds (`sub_482D90(0x22)`) and the 2000 ms
-// oscillator 5 the success arm starts on the screen.
+// NOT ported, labelled: the two sounds (`sub_482D90(0x22)`). The 2000 ms
+// oscillator 5 the success arm starts is the screen's DELAYED CLOSE
+// (`startCloseTimer`), ported 2026-10-12.
 bool UiWalk::denDial(const UiList& l, std::uint32_t bits) {
     const int wasWheel = denWheel_, wasDigit = denDigit_[denWheel_ & 3];
     int& d = denDigit_[denWheel_ & 3];
@@ -1639,6 +1640,8 @@ bool UiWalk::confirm() {
         //                   independent arms would miss
         //     6 SURV KIT    1, and only from row 0
         //     5 SURV NO KIT no answer at all
+        //   ...and FIGHT SIM, MORGUE and the three SURV close themselves
+        //   through oscillator 5 (4500 / 2000 ms) - see the arm below
         //     0 TERMINAL    nothing here: its answer is written by 0x004AF0E0,
         //                   which is NOT ported - it answers a pair of booleans
         //                   (`2 + (dword_68A5FC != 0)` on one branch, the bare
@@ -1684,7 +1687,8 @@ bool UiWalk::confirm() {
         // what opens it, and on `Interface == 1` it opens the Xendar door and
         // plays the Dakobah/Xendar conversation (DIALOGS 227).
         //
-        // NOT ported, labelled: the sound and the 4000 ms timer.
+        // NOT ported, labelled: the sound. The 4000 ms oscillator 5 is the
+        // screen's delayed close (`startCloseTimer`), ported 2026-10-12.
         if (it->callback == kCbXachenCartridge) {
             const UiList* l = curList();
             int idx = -1;

@@ -1941,6 +1941,37 @@ frame delta; the drawers read `+24`.
 | 1 | 500 ms | — | the lit/unlit blink |
 | 2 | 1000 ms | **45..200** | the alpha the arrows, the ▶ marker and the pulsing fill throb with |
 | 3 | 500 ms | 230..235 | a small wobble |
+| 5 | set at start | the SCREEN at `+0x18` | **the delayed close** - below |
+
+**Oscillator 5 is the engine's DELAYED CLOSE** (read 2026-10-12). Its record
+ships period 0 and its own expiry callback, `sub_42B7E0` where every other
+record has `sub_42B7B0`. `Ui_StartOscillator(5, ms, screen)` reaches
+`sub_42B6A0`, which zeroes the elapsed time, sets flag bit 0, takes the period
+and stores the SCREEN at `+0x18`; `sub_42B6D0` adds each tick's milliseconds
+and at the period calls `sub_42B7E0`, which clears bit 0 and writes
+`screen+8 = 3`. The oscillators tick before the slots in `UI_TickScreens`, so
+the screen closes on that same tick. While bit 0 is set `Ui_ScreenInput`
+(`test byte_4C3F74, 1` - oscillator 5's flags) takes NO input, and an answer
+the screen already wrote reaches the parked script only at the close
+(`sub_466B60`'s event 5). Its eleven call sites (every `E8` to `Ui_StartOscillator` after a `push 5`):
+
+| screen | site | ms | when |
+|---|---|---|---|
+| 0 VIDEOPHONE | 0x0049B670 | 100 | the refused first close (§3i) |
+| 11 FIGHT SIM | 0x004AF4B7 | 4500 | rows 0..2, answer row + 1 |
+| 19 MORGUE | 0x004AF4EB | 2000 | rows 0..4, answer row + 1 |
+| 15 SURV ERROR, 17 SURV KIT | 0x004AF537, 0x004AF55B | 2000 | ANY row (answer 1 only from row 0); case 4 falls through into 6 and 6 into 5, so it restarts at 2000 up to three times |
+| 16 SURV NO KIT | 0x004AF56B | 2000 | any row, no answer: closes on -1 (4 and 6 end here too) |
+| 14 XACHEN | 0x004AFAFE | 4000 | the code 10 14 7 9, answer 1 |
+| 13 DEN | 0x004AFDDB | 2000 | the code 7 2 1 3, answer 1 |
+| 12 GANDHAR DOOR | 0x004B0067 | 1500 | the FOURTH press, right or wrong |
+| 12 GANDHAR DOOR | 0x004B0094 | 4000 | all four symbols: answer 1, the timer restarted |
+| 36 HIGH-SCORE | 0x004ADA4E | 10000 | a level page |
+
+TERMINAL (5) and ARCHIVES (18) start none: their arm goes to panel
+0x004E4170. The port closed all of these on the answer's own frame - and the
+SURV NO KIT never - until 2026-10-12 (`UiWalk::startCloseTimer`,
+`verify.py: engine: delayed close`).
 
 ### What is generic, and what is per-screen
 

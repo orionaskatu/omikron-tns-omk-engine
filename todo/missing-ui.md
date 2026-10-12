@@ -251,7 +251,10 @@ AUTHORED place, and this hook moves its cursor every step, so the mover has to
 say where it went. The four MARKER widgets are ported with it - the press
 records the cell, the viewer places the marker there, and `UiWalk::itemShown`
 is what clears the record's not-drawn bit the way `sub_428FF0(marker,
-0x40000001, 0)` does. NOT ported, labelled: the two interface sounds.
+0x40000001, 0)` does. NOT ported, labelled: the two interface sounds. The
+FOURTH press closes the door either way through oscillator 5 - 1500 ms on a
+wrong code (answer -1), 4000 ms on the right one - ported 2026-10-12
+(`docs/UI.md` "The oscillators"; until then a wrong fourth press left it up).
 
 **Two faults a reader saw on 2026-09-27, both fixed the same day.** (1) The
 hovered cell showed a RECTANGLE of other artwork around the cursor: the hook
@@ -316,9 +319,9 @@ what the viewer HANDED the composer, which is exactly the trap CLAUDE.md 1
 names. `ScreenFrame::spriteSrc` now reports the source rect each asked-about
 sprite was actually blitted from, and the line is printed from that.
 
-NOT ported, labelled: the two interface sounds and the 2000 ms oscillator 5 the
-success arm starts on the screen - in the engine the four wheels blink green
-for two seconds before it closes, and this port closes at once.
+NOT ported, labelled: the two interface sounds. The 2000 ms oscillator 5 the
+success arm starts is ported since 2026-10-12: the four wheels blink green for
+two seconds, the screen takes no input, and then it closes and answers.
 
 `verify.py: engine: den locker`, shown to fail twice: with the combination
 changed to 7 2 1 4 nothing answers and the cache stays shut, and with the hand
@@ -368,7 +371,8 @@ Den moves `+0x12`, the unlit y, on a wheel that draws UNLIT; XACHEN moves
 `+0x0C`/`+0x0E` on a symbol that draws LIT - and one map cannot serve both
 without guessing which field a caller meant.
 
-NOT ported, labelled: the sound and the 4000 ms timer.
+NOT ported, labelled: the sound. The 4000 ms timer is oscillator 5, the
+delayed close, ported 2026-10-12.
 
 `verify.py: engine: xachen`, shown to fail by putting the ring in numerical
 order: the same twenty-five presses walk to 8, 5, 13, 9 and nothing answers.

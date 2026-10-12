@@ -481,6 +481,20 @@ going a moment after the last one, not on the same frame and not seconds
 later; and nothing left stuck on screen at the two "DATA MEMORIZED" calls
 (SCENE 46 and 47, Telis), which now close on their conversation too.
 
+## 40. PUZZLE SCREENS HOLD THEIR SOLVED STATE (2026-10-12, `todo/scene-gameplay-audit.md` 24)
+
+Den's locker, Xachen's cartridges and the Gandhar door used to vanish the
+frame they were solved. Now each stays up, solved and deaf to keys, for the
+original's delay - the locker 2 s (all four wheels blinking green), Xachen 4 s,
+the door 4 s - and then closes and the story carries on. A WRONG Gandhar code
+now closes the door 1.5 s after the fourth press. The fight simulator waits
+4.5 s after its choice, the morgue and the three SURV screens 2 s (SURV NO KIT
+now closes by itself). Reach: Den `--save traces/save-appart.bin --area 146
+--scene-chunk 43 --var 482=1 --stand 522,-10,343,178 --zone-disable 2419`;
+Xachen `--area 58 --var 28=1,57=0 --stand -1471,150,133,290`; the door
+`--area 81 --address 263`. Watch for: the pause feeling like the original's,
+and keys pressed during it doing nothing.
+
 ## HEADLESS PASS over 19-29 (2026-10-05)
 
 Each item driven through the viewer with its check's own command, frames

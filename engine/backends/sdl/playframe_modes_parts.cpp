@@ -1853,6 +1853,13 @@ int PlayState::modesShoot() {
             // `+8 = 3`. Until then the screen is HELD - an answer already
             // written does not leave, because the parked script hears it only
             // at the close (`sub_466B60`'s event 5).
+            {
+                std::string who;
+                if (const double ms = walk->takeCloseStarted(who); ms > 0.0)
+                    std::printf("frame %ld: screen %d - oscillator 5 started, %.0f ms (%s); "
+                                "the screen takes no input until it closes\n", n, openScreen,
+                                ms, who.c_str());
+            }
             if (walk->closing()) {
                 if (walk->tickClose(frameSec * 1000.0)) {
                     if (openScreen == kScreenHighScore)

@@ -1313,7 +1313,7 @@ bool UiWalk::open(int screenId) {
     panel_ = w_->screen(screenId);
     approx_ = false;
     answer_ = -1;
-    closeMs_ = 0.0;
+    closeMs_ = closeStarted_ = 0.0;
     log_.clear();
     if (!panel_) { log_.push_back("no panel for this screen"); return false; }
     log_.push_back("open");

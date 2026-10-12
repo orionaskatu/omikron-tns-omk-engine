@@ -1008,16 +1008,29 @@ public:
     // closes (`sub_466B60`'s event 5), so the script waits the delay out too.
     void startCloseTimer(double ms, const char* who) {
         closeMs_ = ms;
+        closeStarted_ = ms;
+        closeWho_ = who;
         log_.push_back(std::string("oscillator 5: ") + who + " closes in " +
                        std::to_string(static_cast<int>(ms)) + " ms");
     }
     bool   closing() const { return panel_ != nullptr && closeMs_ > 0.0; }
+    // The last start since the caller asked, for its log line: -> the period,
+    // 0 when none. `who` names the arm that started it.
+    double takeCloseStarted(std::string& who) {
+        const double v = closeStarted_;
+        closeStarted_ = 0.0;
+        who = closeWho_;
+        return v;
+    }
     double closeLeftMs() const { return closeMs_; }
     // One tick of it. -> true on the tick it expires, the screen then closed.
     bool tickClose(double ms) {
         if (!closing()) return false;
         closeMs_ -= ms;
-        if (closeMs_ > 0.0) return false;
+        // `sub_42B6D0` adds whole milliseconds and tests `>=`; forty-five
+        // frames of 1000/30 sum to a hair under 1500 in a double, so the
+        // rounding is absorbed rather than costing a frame
+        if (closeMs_ > 1e-6) return false;
         closeMs_ = 0.0;
         panel_ = nullptr;
         return true;
@@ -1376,6 +1389,8 @@ private:
     bool approx_ = false;
     int  answer_ = -1;
     double closeMs_ = 0.0;   // oscillator 5 (`startCloseTimer`)
+    double closeStarted_ = 0.0;
+    std::string closeWho_;
     std::string name_;
     int         nameCursor_ = 0;
     // The load panel's directory state, when a caller has attached one. It

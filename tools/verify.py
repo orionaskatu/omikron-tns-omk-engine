@@ -14518,6 +14518,72 @@ def c_engine_gandhar_door():
             "counts are the last the CURSOR printed, so three of four and three presses")
 
 
+def c_engine_delayed_close():
+    r"""OSCILLATOR 5, THE DELAYED CLOSE (`todo/scene-gameplay-audit.md` 24).
+
+    `Ui_StartOscillator(5, ms, screen)`: `sub_42B6A0` stores the period and
+    the screen, `UI_TickScreens` adds each tick's milliseconds through
+    `sub_42B6D0`, and at the period `sub_42B7E0` writes the screen's `+8 = 3`
+    - it closes on that tick. While it runs `Ui_ScreenInput` tests oscillator
+    5's flag (`byte_4C3F74 & 1`) and takes no input, and the answer the screen
+    wrote reaches the parked script only at the close (`sub_466B60`'s event 5).
+    The port closed every one of these screens on its answer's own frame.
+
+    * XACHEN, the code: 4000 ms (0x004AFAFE), answer 1, then Dakobah talks.
+    * the GANDHAR DOOR, four wrong presses on one cell: the fourth press starts
+      1500 ms (`cmp byte_68A608, 4`, 0x004B0067) and the door closes on -1;
+      a RIGHT pressed inside the delay does not move the cursor.
+
+    Asserted per run: the period, the frames from the start to the close
+    (at 30 fps, period / 33.3), and the answer the script hears.
+
+    Shown to fail: the timer ignored (the answer leaves at once, no close
+    line); the fourth-press start removed (the door never closes); the input
+    gate removed (the cursor moves inside the delay).
+    """
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "SCPTDATA"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    def run(extra, hold, frames):
+        return subprocess.run(
+            [play, fr, os.path.join(ROOT, "tables"),
+             "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--frames", str(frames), "--nofmv", "--nodelay", "--no-crowd",
+             "--hold", hold] + extra,
+            capture_output=True, text=True, errors="replace",
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    def measure(out, scr):
+        st = re.search(r"frame (\d+): screen %d - oscillator 5 started, (\d+) ms" % scr, out)
+        ex = re.search(r"frame (\d+): screen %d - oscillator 5 expired, screen \+8 = 3: it "
+                       r"closes itself, answer (-?\d+)" % scr, out)
+        heard = re.search(r"screen %d (?:answered (\d+)|closed without an answer -> (-1))" % scr, out)
+        early = heard is not None and ex is not None and heard.start() < ex.start()
+        return (int(st.group(2)) if st else None,
+                (int(ex.group(1)) - int(st.group(1)) + 1) if (st and ex) else None,
+                int(heard.group(1) or heard.group(2)) if heard else None, early)
+    press, right = "k28*2,k*5", "k205*2,k*5"
+    xh = ",".join(["k*60", "k28*8", "k*60"] + [press] * 7 + [right] + [press] * 3 + [right] +
+                  [press] * 10 + [right] + [press] * 5 + ["k*80"])
+    xa = run(["--area", "58", "--var", "28=1,57=0", "--stand", "-1471,150,133,290"], xh, 600)
+    # four presses on the cell the cursor opens on, then RIGHT inside the delay:
+    # taken, it would move the cursor and print a cursor line on column 1
+    gh = "k*50,k28*3,k*40" + ",k28*3,k*20" * 4 + ",k205*3,k*100"
+    gd = run(["--area", "81", "--address", "263"], gh, 400)
+    st = re.search(r"frame \d+: screen 12 - oscillator 5 started", gd)
+    moved = bool(st) and bool(re.search(r"gandhar door: the cursor is on row \d+ col [1-5];",
+                                        gd[st.end():]))
+    got = (measure(xa, 14), "dialogue mode ENTER" in xa, measure(gd, 12), moved)
+    return got, ((4000, 120, 1, False), True, (1500, 45, -1, False), False), \
+           "Xachen holds its solved screen 4000 ms (120 frames) and then answers 1; four " \
+           "wrong presses close the Gandhar door 1500 ms (45 frames) later on -1, and a " \
+           "RIGHT inside the delay moves nothing"
+
+
 def c_engine_den_locker():
     r"""`omk-play`: DEN'S LOCKER - four wheels, 7 2 1 3, and the cache opens.
 
@@ -14599,8 +14665,16 @@ def c_engine_den_locker():
     # the oscillator's 500 ms. What is asserted is blink-independent - that a
     # blank was drawn at all, and that no blank was ever drawn anywhere but
     # under the hand.
+    # THE SOLVED DISPLAY. On the code the hook sets `0x40000004` on ALL FOUR
+    # wheels, so they blink together, and oscillator 5 holds the screen for
+    # 2000 ms (`UiWalk::startCloseTimer`). The first reading with all four
+    # blank is that blink; the hand invariant below holds up to it, and after
+    # it the display must read 7 2 1 3.
+    solvedAt = next((k for k, (r, _h) in enumerate(rows) if r.split() == ["-"] * 4), len(rows))
+    after = [r.split() for r, _h in rows[solvedAt:]]
+    solved = next((" ".join(r) for r in after if "-" not in r), "")
     blanks, off = 0, 0
-    for r, h in rows:
+    for r, h in rows[:solvedAt]:
         for i, c in enumerate(r.split()):
             if c != "-":
                 continue
@@ -14617,13 +14691,15 @@ def c_engine_den_locker():
     return ("screen 13 is asking" in out, len(rows) > 0, "".join(cols[:3]),
             max((int(h) for _r, h in rows), default=-1), blanks > 0, off,
             int(ans.group(1)) if ans else -1, int(ans.group(2)) if ans else -1,
-            "prop 13 SHOWN" in out, "prop 104 SHOWN" in out, "prop 103 SHOWN" in out), \
-           (True, True, "721", 3, True, 0, 1, 19, True, True, True), \
+            "prop 13 SHOWN" in out, "prop 104 SHOWN" in out, "prop 103 SHOWN" in out,
+            solved), \
+           (True, True, "721", 3, True, 0, 1, 19, True, True, True, "7 2 1 3"), \
            ("the locker's wheels draw their figures, the wheel drawn blank is always "
             "the one the hand is on (and it is not always the first), the hand walks "
             "all four, 7 2 1 3 answers 1 and the cache gives up the cassette, the pass "
-            "and the plan - the display's last reading is 7 2 1 2 because the fourth "
-            "wheel's landing on 3 answers in the same frame")
+            "and the plan - and the solved display reads 7 2 1 3, all four blinking, "
+            "for the 2000 ms oscillator 5 holds it (the port closed on the answer's "
+            "frame until 2026-10-12, so the last reading was 7 2 1 2)")
 
 
 def c_engine_xachen():
@@ -14693,11 +14769,12 @@ def c_engine_xachen():
             len(rows), int(ans.group(1)) if ans else -1,
             int(ans.group(2)) if ans else -1,
             "DIALOGS 227" in out or "dialog 227" in out or "dialogue mode ENTER" in out), \
-           (True, ["1", "2", "3", "4"], ["10", "14", "7", "6"], 25, 1, 19, True), \
+           (True, ["1", "2", "3", "4"], ["10", "14", "7", "9"], 26, 1, 19, True), \
            ("the cartridges open on 1 2 3 4 as the screen's own open callback sets "
             "them, twenty-five presses walk the ring to 10 14 7 9, the screen answers "
-            "1 and Dakobah talks to Xendar - the last READING is 10 14 7 6 because "
-            "the fourth cartridge's landing on 9 answers in the same frame")
+            "1 and Dakobah talks to Xendar - the last READING is 10 14 7 9: oscillator "
+            "5 holds the solved screen for 4000 ms before it closes (it read 10 14 7 6, "
+            "25 readings, while the port closed on the answer's own frame)")
 
 
 def c_engine_high_score():
@@ -46979,6 +47056,7 @@ SLOW = [
     ("engine: stairs", c_engine_stairs, "docs/ASSETS.md; todo/next-tasks 20"),
     ("engine: stairs down", c_engine_stairs_down, "todo/scene-gameplay-audit.md 22; actor/walk.h"),
     ("engine: call close", c_engine_call_close, "todo/scene-gameplay-audit.md 12; docs/UI.md 3i"),
+    ("engine: delayed close", c_engine_delayed_close, "todo/scene-gameplay-audit.md 24; ui/widgets.h"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

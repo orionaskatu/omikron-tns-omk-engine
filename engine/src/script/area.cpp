@@ -13,6 +13,7 @@
 #include "script/inventory.h"
 #include "script/objects.h"
 #include "script/opcodes.h"
+#include "script/ctxstatus.h"
 
 #include <chrono>
 #include <cmath>
@@ -742,7 +743,7 @@ bool Session::queueAction(int idx, int action) {
         if (action == c->current && action == 2) return false;
         c->actions.push_back(action);
     }
-    if (action == 3 && (c->status == 10 || c->status == 9))
+    if (action == 3 && (c->status == ctx_status::InTransition || c->status == ctx_status::RetryTransition))
         areaTransition(2, idx, c->slot, -1, -1, -1);
     return true;
 }
@@ -790,7 +791,7 @@ int Session::contextZone(int idx) const {
 std::size_t Session::liveContexts() const {
     std::size_t n = 0;
     for (const auto& c : ctxs_)
-        if (c && (c->status != 0 || !c->actions.empty())) ++n;
+        if (c && (c->status != ctx_status::Idle || !c->actions.empty())) ++n;
     return n;
 }
 
@@ -903,9 +904,9 @@ void Session::playerMoveEnded(int ctx) {
     if (ctx < 0 || ctx >= kContextSlots) return;
     Ctx* c = ctxs_[static_cast<std::size_t>(ctx)].get();
     if (!c) return;                                  // `if (!v2) return 1;`
-    if (c->status != 4) return;                      // case 3's own test
+    if (c->status != ctx_status::WaitObject) return;                      // case 3's own test
     c->waitingForMove = -1;
-    c->status = 1;                                   // runs again this pump
+    c->status = ctx_status::Running;                                   // runs again this pump
 }
 
 // `Game_HandleEvent` case 2. The FIRST context at 3, and the bank reload
@@ -914,16 +915,16 @@ void Session::playerMoveEnded(int ctx) {
 void Session::fightEnded() {
     for (int i = 0; i < kContextSlots; ++i) {
         Ctx* c = ctxs_[static_cast<std::size_t>(i)].get();
-        if (!c || c->status != 3) continue;
+        if (!c || c->status != ctx_status::InFight) continue;
         c->fightOpponent = -1;
-        c->status = 1;
+        c->status = ctx_status::Running;
         break;                                       // the FIRST one only
     }
 }
 
 int Session::fightingWith() const {
     for (const auto& c : ctxs_)
-        if (c && c->status == 3) return c->fightOpponent;
+        if (c && c->status == ctx_status::InFight) return c->fightOpponent;
     return -1;
 }
 
@@ -990,14 +991,14 @@ void Session::transitionObjectEnded() {
     Ctx* c = (ctxIdx >= 0 && ctxIdx < kContextSlots)
                  ? ctxs_[static_cast<std::size_t>(ctxIdx)].get() : nullptr;
     if (!c) return;                                       // `if (!v2) return 1`
-    if (c->status == 4) { c->status = 1; return; }
-    if (c->status == 10 || c->status != 11) {
+    if (c->status == ctx_status::WaitObject) { c->status = ctx_status::Running; return; }
+    if (c->status == ctx_status::InTransition || c->status != ctx_status::TransitionDone) {
         areaTransition(4, ctxIdx, active_, -1, -1, -1);
         return;
     }
     // status 11 - the watchdog's last step: link the decor, resume
     hideSet(slots_[1 - active_].area);
-    c->status = 1;
+    c->status = ctx_status::Running;
 }
 
 // ops 80/81, and the weapon table behind them. `IAM\GLOBAL +42` is ten
@@ -1086,12 +1087,12 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
             tr_.outArea = slots_[slot].area;
             tr_.dest = area;
             loadIntoSlot(1 - slot, area);
-            setStatus(ctxIdx, 10);
+            setStatus(ctxIdx, ctx_status::InTransition);
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             deferred_ = ctxIdx;                           // dword_4C0130 = ctx index
             return 1;
         case 1:
-            setStatus(ctxIdx, 9);                         // retry next frame
+            setStatus(ctxIdx, ctx_status::RetryTransition);                         // retry next frame
             return 0;
         case 3:
             return 1;                                     // accepted, nothing done
@@ -1099,25 +1100,25 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
             if (area == tr_.dest) return 0;
             // a second `area.goto` supersedes the first: its caller is left
             // at status 5, which nothing in the image resumes
-            setStatus(tr_.ctx, 5);
+            setStatus(tr_.ctx, ctx_status::Superseded);
             tr_.ctx = ctxIdx;
             tr_.dest = area;
             tr_.f1 = -1;
             tr_.outArea = slots_[slot].area;
             tr_.f2 = -1;
             loadIntoSlot(1 - slot, area);
-            setStatus(ctxIdx, 10);
+            setStatus(ctxIdx, ctx_status::InTransition);
             tr_.state = 3;
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             deferred_ = ctxIdx;
             return 1;
         case 8:
             if (f1 == -1) return 1;
-            setStatus(ctxIdx, 9);
+            setStatus(ctxIdx, ctx_status::RetryTransition);
             return 0;
         default:
             if (sameCaller()) return 1;
-            setStatus(ctxIdx, 9);
+            setStatus(ctxIdx, ctx_status::RetryTransition);
             return 0;
         }
     case 1:                                               // op 48 `area.arrive`
@@ -1156,16 +1157,16 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
             // the retry is cancelled: status 1 and the pc pushed PAST the
             // `area.goto` it was rewound onto
             Ctx* c = ctxs_[static_cast<std::size_t>(ctxIdx)].get();
-            c->status = 1;
+            c->status = ctx_status::Running;
             c->pc += 7;
             return 1;
         }
         switch (tr_.state) {
-        case 1: tr_.state = 2; setStatus(ctxIdx, 10); tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_; return 1;
-        case 5: tr_.state = 6; setStatus(ctxIdx, 10); tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_; return 1;
+        case 1: tr_.state = 2; setStatus(ctxIdx, ctx_status::InTransition); tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_; return 1;
+        case 5: tr_.state = 6; setStatus(ctxIdx, ctx_status::InTransition); tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_; return 1;
         case 7:
             startTransitionObject(tr_.f2);
-            setStatus(ctxIdx, 10);
+            setStatus(ctxIdx, ctx_status::InTransition);
             tr_.state = 9;
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             return 1;
@@ -1180,7 +1181,7 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
             ++entered_;
             startTransitionObject(tr_.f1);
             tr_.state = 5;
-            setStatus(tr_.ctx, 10);
+            setStatus(tr_.ctx, ctx_status::InTransition);
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             return 0;
         case 2:
@@ -1191,7 +1192,7 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
             showSet(tr_.dest);
             ++entered_;
             tr_.state = 8;
-            setStatus(tr_.ctx, 1);                        // the caller resumes
+            setStatus(tr_.ctx, ctx_status::Running);                        // the caller resumes
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             finishScene();
             return 0;
@@ -1207,7 +1208,7 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
         switch (tr_.state) {
         case 5:
             tr_.state = 7;
-            setStatus(ctxIdx, 10);
+            setStatus(ctxIdx, ctx_status::InTransition);
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             // **RECONSTRUCTION** (area.h `queueLeave`), narrowed: a caller
             // whose zone the scan ARMED gets its leave from the scan when the
@@ -1225,13 +1226,13 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
         case 6:
             startTransitionObject(tr_.f2);
             tr_.state = 9;
-            setStatus(ctxIdx, 10);
+            setStatus(ctxIdx, ctx_status::InTransition);
             tr_.startedFrame = frameNo_; tr_.startedMs = wallMs_;
             return 0;
         case 9:
             hideOutgoing();
             clearTransition();
-            setStatus(ctxIdx, 1);                         // the caller resumes
+            setStatus(ctxIdx, ctx_status::Running);                         // the caller resumes
             finishScene();
             return 0;
         default:
@@ -1256,8 +1257,8 @@ void Session::pumpTail() {
         areaTransition(3, kNoContext, active_, -1, -1, -1);
     } else {
         Ctx* c = ctxs_[static_cast<std::size_t>(deferred_)].get();
-        if (c && c->status == 10) areaTransition(3, deferred_, active_, -1, -1, -1);
-        else if (c) c->status = 1;
+        if (c && c->status == ctx_status::InTransition) areaTransition(3, deferred_, active_, -1, -1, -1);
+        else if (c) c->status = ctx_status::Running;
     }
     deferred_ = -1;
 }
@@ -1926,7 +1927,7 @@ bool Session::postMessage(int message, int sender) {
     if (message == 25) {
         // `ctx[3] = script; status = 1; Script_Execute(ctx);
         // Script_FreeContext(ctx)` - inline, this frame, and gone.
-        c->status = 1;
+        c->status = ctx_status::Running;
         c->current = 1;
         execute(idx);
         freeContext(idx);
@@ -2438,7 +2439,7 @@ void Session::uiAnswered(int ctxIdx, int value) {
     if (ctxIdx < 0 || ctxIdx >= kContextSlots) return;
     Ctx* c = ctxs_[static_cast<std::size_t>(ctxIdx)].get();
     if (!c) return;
-    if (c->status == 6) c->status = 1;
+    if (c->status == ctx_status::WaitScreen) c->status = ctx_status::Running;
     if (bootCtx_ == ctxIdx && value != 0) bootCtx_ = -1;
 }
 
@@ -2488,7 +2489,7 @@ void Session::runReplyAction(std::span<const std::byte> code, std::size_t pc) {
     }
     Ctx* c = ctxs_[static_cast<std::size_t>(idx)].get();
     c->pc = pc;
-    c->status = 1;
+    c->status = ctx_status::Running;
     ++replyActions_;
     execute(idx);
     freeContext(idx);
@@ -2761,18 +2762,18 @@ void Session::processActions(int i) {
     const bool watchdog = wallMsSet_ ? wallMs_ - tr_.startedMs > 60000
                                      : frameNo_ - tr_.startedFrame > kWatchdogFrames;
     if (tr_.ctx == i && tr_.state != 0 && watchdog) {
-        if (c->status == 10) c->status = 1;
+        if (c->status == ctx_status::InTransition) c->status = ctx_status::Running;
         if (tr_.f2 != -1 && tr_.state != 5 && tr_.state != 6 && tr_.state != 9) {
             startTransitionObject(tr_.f2);
-            c->status = 11;
+            c->status = ctx_status::TransitionDone;
         } else if (tr_.state == 5 || tr_.state == 6 || tr_.state == 9) {
-            c->status = 11;
+            c->status = ctx_status::TransitionDone;
         }
         clearTransition();
         return;
     }
     // `if (g_DialogState == 3) return` is the frame-level gate above
-    if (c->status == 9) c->status = 1;                    // the refused area.goto retries
+    if (c->status == ctx_status::RetryTransition) c->status = ctx_status::Running;                    // the refused area.goto retries
     if (c->status) return;                                // still running something
     if (c->actions.empty()) return;
     const int act = c->actions.front();
@@ -2784,7 +2785,7 @@ void Session::processActions(int i) {
             c->pc = static_cast<std::size_t>(at);
             c->started = false;
             c->vm.resetStack();
-            c->status = 1;
+            c->status = ctx_status::Running;
         }
         break;
     }
@@ -3300,30 +3301,30 @@ void Session::onCall(int i, const Call& call) {
 // tens of instructions a frame.
 void Session::execute(int i) {
     Ctx* c = ctxs_[static_cast<std::size_t>(i)].get();
-    if (c->status == 7) {
+    if (c->status == ctx_status::WaitCamera) {
         // `camera.set.wait` wrote 7: held until the move it started ends
         // (`Game_HandleEvent` case 4) - ends on the camera's clock, which
         // advances by the frame delta. Counting a tick a frame held the Bowie
         // sequence's script twice its music's length at ~15 fps, the camera
         // parked on each move's last frame (2026-09-30).
         if (c->waitingForCamera > 0.0) c->waitingForCamera -= frameDelta();
-        if (c->waitingForCamera <= 0.0) c->status = 1;      // runs next frame
+        if (c->waitingForCamera <= 0.0) c->status = ctx_status::Running;      // runs next frame
         return;
     }
-    if (c->status == 3) return;      // the fight: only `fightEnded` releases it
-    if (c->status == 4 && c->waitingForMove >= 0) return;  // ...and the walk
-    if (c->status == 4) {
+    if (c->status == ctx_status::InFight) return;      // the fight: only `fightEnded` releases it
+    if (c->status == ctx_status::WaitObject && c->waitingForMove >= 0) return;  // ...and the walk
+    if (c->status == ctx_status::WaitObject) {
         // parked on a scene object's program until it ends (event 3)
         if (c->waitingForProgram >= 0 &&
             waitPool(*c).programRunning(c->waitingForProgram)) return;
         c->waitingForProgram = -1;
         c->waitingInOut = false;
-        c->status = 1;
+        c->status = ctx_status::Running;
     }
-    if (c->status != 1) {
+    if (c->status != ctx_status::Running) {
         // `Script_Execute`'s else arm: LABEL_8 runs for any status but 1 -
         // and does something only for an activate whose status is 0
-        if (c->status == 0) finishRun(c);
+        if (c->status == ctx_status::Idle) finishRun(c);
         return;
     }
     if (c->message >= 0 && !c->started &&
@@ -3334,12 +3335,12 @@ void Session::execute(int i) {
     Interpreter& vm = c->vm;
     vm.setRecordAll(true);
     std::size_t steps = 0;
-    while (c->status == 1) {
-        if (c->pc >= c->code.size()) { c->status = 0; finishRun(c); return; }
+    while (c->status == ctx_status::Running) {
+        if (c->pc >= c->code.size()) { c->status = ctx_status::Idle; finishRun(c); return; }
         const auto op = static_cast<std::uint8_t>(c->code[c->pc]);
         // the pre-dispatch refusal: one staged load at a time
         if ((op == op::AreaPreload || op == op::AreaGoto) && deferred_ != -1) {
-            if (op == op::AreaGoto) c->status = 9;
+            if (op == op::AreaGoto) c->status = ctx_status::RetryTransition;
             // omk-play 70: this is the refusal that loses the tunnel's far
             // door - the doorless zone's transition is still in flight, so the
             // door-carrying goto never dispatches.
@@ -3355,7 +3356,7 @@ void Session::execute(int i) {
         }
         const int n = table_.operandLength(op);
         if (n < 0 || c->pc + 1 + static_cast<std::size_t>(n) > c->code.size()) {
-            c->status = 0;                                // an invalid instruction
+            c->status = ctx_status::Idle;                                // an invalid instruction
             finishRun(c);
             return;
         }
@@ -3415,7 +3416,7 @@ void Session::execute(int i) {
                 const int target = slots_[active_].area == -1 ? active_ : 1 - active_;
                 if (slots_[target].area == area) { showSet(area); continue; }
                 loadIntoSlot(target, area);
-                c->status = 8;
+                c->status = ctx_status::WaitPreload;
                 deferred_ = i;
             } else if (call.op == op::AreaArrive && !call.fields.empty()) {
                 areaTransition(1, i, active_, call.fields[0], -1, -1);
@@ -3427,7 +3428,7 @@ void Session::execute(int i) {
             // (steps 2: the fetch that ran it and the one that fell off).
             // steps 1 is the chunk ending inside the instruction.
             if (r.steps >= 2) break;
-            c->status = 0;
+            c->status = ctx_status::Idle;
             finishRun(c);
             return;
         case RunStatus::End: {
@@ -3459,7 +3460,7 @@ void Session::execute(int i) {
             // modelled - there is no held object in the Session's 3D -
             // and is labelled here rather than pretended.
             message0Ctx_ = -1;
-            c->status = 0;
+            c->status = ctx_status::Idle;
             if (c->flags40 & 8) {
                 ResidentSlot& sl = slots_[c->slot & 1];
                 if (!sl.sceneChunk.empty()) {
@@ -3488,7 +3489,7 @@ void Session::execute(int i) {
                 if (call.op == op::DialogStart && !call.fields.empty()) openDialog(call.fields[0]);
             return;
         case RunStatus::UiOpen:
-            c->status = 6;
+            c->status = ctx_status::WaitScreen;
             if (personAnswers_) {
                 // A PERSON is going to answer this one: park the context and
                 // say which screen is waiting. Nothing resumes it until
@@ -3512,7 +3513,7 @@ void Session::execute(int i) {
                 const int v = answerScreen(r.uiScreen, r.uiParam);
                 uiAnswers_.push_back({r.uiScreen, r.uiResultVar, v, v >= 0});
                 if (r.uiResultVar >= 0) state_.setVar(r.uiResultVar, v >= 0 ? v : -1);
-                c->status = 6;
+                c->status = ctx_status::WaitScreen;
                 uiAnswered(i, v >= 0 ? v : -1);
             }
             return;
@@ -3529,7 +3530,7 @@ void Session::execute(int i) {
             // game runs on. That is the difference between modelling the wait
             // and inventing a deadlock. Either way this frame's run ends.
             if (waitOn >= 0) {
-                c->status = 4;
+                c->status = ctx_status::WaitObject;
                 c->waitingForProgram = waitOn;
                 c->waitingInOut = inOut;
             }
@@ -3540,7 +3541,7 @@ void Session::execute(int i) {
             // No hook: nothing could raise case 3 either, so the script runs
             // on rather than parking for ever (the `ObjectWait` rule).
             if (!startPlayerMove(r.moveGroup, i)) break;
-            c->status = 4;
+            c->status = ctx_status::WaitObject;
             c->waitingForMove = r.moveGroup;
             return;
         case RunStatus::FightWait:
@@ -3564,7 +3565,7 @@ void Session::execute(int i) {
                 std::printf("fight.begin %d: the frontend could not start it - the script "
                             "waits for event 2 all the same, as op 62 does\n", r.fightOpponent);
             fightCamTravel_ = r.fightCamTravel;
-            c->status = 3;
+            c->status = ctx_status::InFight;
             c->fightOpponent = r.fightOpponent;
             c->fightLevel = r.fightLevel;
             return;
@@ -3585,7 +3586,7 @@ void Session::execute(int i) {
             // `Address_Find(field 1)` in both pointers, so a camera whose
             // points are OFFSETS frames that address instead of the player.
             camSubjectAddress_ = (r.camWaitOp == 126) ? r.camAddress : -1;
-            c->status = 7;
+            c->status = ctx_status::WaitCamera;
             c->waitingForCamera = travel;
             // 126 has NO travel guard: a 0-frame cut still parks, and the
             // countdown at the head of this function releases it next frame -
@@ -3595,11 +3596,11 @@ void Session::execute(int i) {
         }
         default:
             // Runaway, UnknownOpcode, StackUnderflow: the script is over
-            c->status = 0;
+            c->status = ctx_status::Idle;
             finishRun(c);
             return;
         }
-        if (++steps > kRunaway) { c->status = 0; finishRun(c); return; }
+        if (++steps > kRunaway) { c->status = ctx_status::Idle; finishRun(c); return; }
     }
 }
 
@@ -3611,7 +3612,7 @@ void Session::execute(int i) {
 // `end` has already done this for itself (it writes +32 = 0 first), so this
 // is the arm for a status that reached 0 some OTHER way.
 void Session::finishRun(Ctx* c) {
-    if (!c || c->status != 0 || c->current != 2) return;
+    if (!c || c->status != ctx_status::Idle || c->current != 2) return;
     --activatesPending_;
     c->current = 0;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "formats/bytes.h"
 #include "script/world.h"
+#include "script/ctxstatus.h"
 
 #include <algorithm>
 #include <cmath>
@@ -201,7 +202,7 @@ void World::process(Context& c) {
         c.started = false;
         c.vm.reset();
         c.park = RunStatus::End;
-        c.status = 1;
+        c.status = ctx_status::Running;
     }
 }
 
@@ -226,7 +227,7 @@ void World::pump() {
             c.vm->setCameraWaitSuspends(camWait_);
             c.vm->setObjectWaitSuspends(objWait_);
         }
-        if (c.pc == 0 || c.pc >= code_.size()) { c.status = 0; continue; }
+        if (c.pc == 0 || c.pc >= code_.size()) { c.status = ctx_status::Idle; continue; }
         const auto r = c.started ? c.vm->resume(code_, c.pc)
                                  : c.vm->run(code_, c.pc);
         c.started = true;
@@ -257,7 +258,7 @@ void World::pump() {
             break;                                     // the scheduler resumes it
         default:
             // `end`, and the error statuses. ONLY these finish the action.
-            c.status = 0;
+            c.status = ctx_status::Idle;
             c.started = false;
             c.vm.reset();
             if (c.act == ActActivate) c.act = 0;       // Script_Execute's tail

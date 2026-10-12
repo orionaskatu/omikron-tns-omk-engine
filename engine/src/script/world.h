@@ -35,6 +35,7 @@
 #include "script/gamestate.h"
 #include "script/interp.h"
 #include "script/script.h"
+#include "script/ctxstatus.h"
 
 #include <cstdint>
 #include <deque>
@@ -112,7 +113,7 @@ struct Context {
     // still 1 (or 4/6/7, which this reduces to "not idle" plus the specific
     // wait below), which is what stops Script_ProcessActions arming the next
     // action underneath a script that has not finished.
-    int  status = 0;
+    int  status = ctx_status::Idle;
     bool freed  = false;
     // The engine's +32, the CURRENT action - written by Script_ProcessActions
     // when it dequeues one and cleared by Script_Execute's tail (LABEL_8:

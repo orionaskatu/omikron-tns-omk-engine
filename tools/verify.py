@@ -44607,9 +44607,11 @@ def c_licence_headers():
     # `engine/backends/sdl/playframe_world_weather.cpp` (the city weather,
     # missed by its commit - red until 2026-10-12); 606 on 2026-10-12: +
     # `tools/refactor_guard.py` and `engine/src/formats/bytes.h` (the
-    # readability audit's guard and its one byte reader)
+    # readability audit's guard and its one byte reader); 609 the same day: +
+    # `tools/gen_opcodes.py`, `engine/src/script/opcodes.h` and
+    # `engine/src/script/ctxstatus.h` (the opcodes and the status word by name)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (606, [], 1, []), \
+           (609, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

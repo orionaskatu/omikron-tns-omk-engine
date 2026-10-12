@@ -49,6 +49,7 @@
 #include "script/props.h"
 #include "script/script.h"
 #include "script/zones.h"
+#include "script/ctxstatus.h"
 
 #include <array>
 #include <cstdint>
@@ -264,7 +265,7 @@ public:
     // `engine: player program` and `line facing` are what caught it.
     bool parkedOnProgram() const {
         for (const auto& c : ctxs_)
-            if (c && c->status == 4 &&
+            if (c && c->status == ctx_status::WaitObject &&
                 waitPool(*c).programDrivesBody(c->waitingForProgram))
                 return true;
         return false;
@@ -282,7 +283,7 @@ public:
     // body, and that one moves him into ACTOR_STATE 4 besides.
     bool parkedOnPlayerProgram() const {
         for (const auto& c : ctxs_)
-            if (c && c->status == 4 &&
+            if (c && c->status == ctx_status::WaitObject &&
                 waitPool(*c).programDrivesPlayer(c->waitingForProgram))
                 return true;
         return false;
@@ -1601,7 +1602,7 @@ private:
         // retry the transition next frame, 10 the transition, 11 its last
         // step done. `Script_Execute` runs `while (status == 1)`, so anything
         // else is a park with the pc and the stack intact.
-        int         status = 0;
+        int         status = ctx_status::Idle;
         std::int32_t scripts[3] = {0, 0, 0};
         std::deque<int> actions;             // the 4-deep FIFO
         int         current = 0;             // +32

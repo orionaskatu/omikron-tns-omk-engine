@@ -462,7 +462,8 @@ riser, kerb or stair nosing is a short fall under gravity, and he keeps
 walking through it. The port used to glue his feet to every tread, and on a
 riser over 20 cm it stopped him dead for about five frames. Walk down the
 bank's entrance stairs in Anekbah (`--save traces/save-appart.bin --area 0
---stand 4620,-102,-2577,90`, then forward) and any kerb. Expect him to walk
+--stand 4620,-102,-2577,90`, the top landing; turn to face down the flight,
+toward +x, the foot at 4870) and any kerb. Expect him to walk
 on without stopping, a few centimetres above the tread for a frame or two
 on each riser (at most 29 cm on a deep riser). Compare with the original
 if you can: what to judge is whether the descent "steps" the way the game's

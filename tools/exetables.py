@@ -883,7 +883,16 @@ def t_ui_widgets(e):
                   # the shop's OWN, re-used at a different Y. Its two new ones
                   # are 0x004E2C18, where `Acheter` and `Annuler` live, and
                   # 0x004E2C88, the "Cet indice te coutera :" line.
-                  0x004E3018: [0x004E3080]}
+                  0x004E3018: [0x004E3080],
+                  # THE TERMINAL FAMILY'S DOSSIER READER, added 2026-10-12.
+                  # The keypad's activate callback `0x004AF410` ends its
+                  # TERMINAL arm (cells 0..4) and its ARCHIVES arm (0..3) in
+                  # `sub_42A370(screen, 0x004E4170)`, and nothing in the tree
+                  # points at the panel. Its record names the SAME three lists
+                  # as 0x004E4108 and differs in parent (0x004E4108), builder,
+                  # leave hook, `+24 = 1` (the body box, scroller-hooked) and
+                  # `+72` without 0x10 - `docs/UI.md` "the dossier reader".
+                  0x004E4108: [0x004E4170]}
     out, skipped, seen = [], [], set()   # `seen` tracks CHILD panels only
     for sid in sorted(u.screens):
         try:
@@ -1105,9 +1114,13 @@ def c_ui_widgets(rows, e):
             # MERGED 2026-09-18: both of the above landed, so the counts are
             # neither branch's - they are re-derived from the regenerated
             # table with both panels in it.
-            ("child panels", len(kids), 29),
-            ("lists", len(lists), 176),
-            ("items", len(items), 728),
+            # 29/176/728 -> 30/179/744 on 2026-10-12: the terminal family's
+            # DOSSIER READER 0x004E4170, CODE_NAMED under 0x004E4108, with
+            # the same three lists as that panel (11 + 3 + 2 = 16 items).
+            # Like the memo reader it adds no DISTINCT record.
+            ("child panels", len(kids), 30),
+            ("lists", len(lists), 179),
+            ("items", len(items), 744),
             ("item records inside the image",
              sum(1 for i in items if mapped(i["addr"])), len(items)),
             # 75 across the whole tree but only 16 distinct item RECORDS
@@ -1125,7 +1138,10 @@ def c_ui_widgets(rows, e):
             # back to its row list.
             ("items naming a child panel",
              # MERGED: both of the above, so 103 + 2
-             sum(1 for i in items if i["child"]), 105),
+             # 105 -> 106 on 2026-10-12: the dossier reader's copy of the
+             # body box 0x004E4000, whose `+44` is 0x004E4108 - confirming
+             # the file goes back to the keypad.
+             sum(1 for i in items if i["child"]), 106),
             ("...of which distinct item records",
              # MERGED 2026-09-18: 23 + the city map's bitmap 0x004DEC78 and
              # the hint confirm's `Annuler` 0x004E2BC8, which are distinct
@@ -1139,7 +1155,9 @@ def c_ui_widgets(rows, e):
             # 0x004E2C18, whose `+4` is `0x0042A930` - `Ui_MoveSelection` with
             # LEFT and RIGHT in place of UP and DOWN, which is what `Acheter`
             # and `Annuler` sitting side by side at y=380 need.
-            ("lists with a non-default input hook", len(hooks), 63),
+            # 63 -> 65 on 2026-10-12: the dossier reader's keypad
+            # (0x004AF300) and body box (the scroller 0x0042A9A0).
+            ("lists with a non-default input hook", len(hooks), 65),
             # The two RUNTIME fields, and only where the open callback writes
             # them. Neither was in this table before 2026-09-04, because the
             # scan had no reason to look: `panel+24` is the CURRENT LIST and
@@ -1198,11 +1216,15 @@ def c_ui_widgets(rows, e):
              # `sub_4AE3A0` writes `word_4E2D0C = 6` over the footer item
              # 0x004E2CF0, the same bind the shop's own builder makes -
              # counted once per panel that carries the record.
-             sum(1 for i in items if "string" in (i.get("bind") or {})), 46),
+             # 46 -> 52 and tags 26 -> 30 on 2026-10-12: the dossier reader
+             # is walked under the TERMINAL, first of its seven screens, so
+             # its keypad copies carry that open's six strings and four tags
+             # (the viewer merges each screen's own over a shared list).
+             sum(1 for i in items if "string" in (i.get("bind") or {})), 52),
             ("items with a bound tag",
              # 25 -> 26 on 2026-09-18: the hint confirm's copy of the body
              # box 0x004E2B10, whose `dword_4E2B4C` its builder writes.
-             sum(1 for i in items if "tag" in (i.get("bind") or {})), 26),
+             sum(1 for i in items if "tag" in (i.get("bind") or {})), 30),
             ("TERMINAL's bound strings",
              sorted(i["bind"]["string"] for p in ps if p["screen"] == 5
                     for l in p["lists"] for i in l["items"]
@@ -1231,7 +1253,9 @@ def c_ui_widgets(rows, e):
              # `+76 = 0x40001800` with no tile array at all, exactly as the
              # shop panel it sits on does.
              # MERGED 2026-09-18: both landed, so 8 + 2 = 10.
-             [21, 1, 28, 10]),
+             # tiles 28 -> 29 on 2026-10-12: the dossier reader's `+20` is
+             # the terminal family's tile array 0x004E3B90, as its parent's.
+             [21, 1, 29, 10]),
             ("the one panel that blits its sheet whole",
              [p["screen"] for p in ps
               if not p["flagsB"] & 0x2000 and p["flagsB"] & 0x4000], [36]),
@@ -1244,7 +1268,8 @@ def c_ui_widgets(rows, e):
 
              # 108 -> 112 on 2026-09-18: four of the hint confirm's five
              # lists carry no `+4` - only its button list does.
-             sum(1 for l in lists if not l["hook"]), 113),
+             # 113 -> 114 on 2026-10-12: the dossier reader's footer list.
+             sum(1 for l in lists if not l["hook"]), 114),
             ("the LIFT grid hook is present", rows["gridHook"] in hooks, True),
             # It is here only because the walk follows `+44`: the name field
             # is in the start menu's confirm dialog, a CHILD panel. A lift

@@ -887,6 +887,23 @@ void PlayState::screensHuds() {
                     std::printf("sneak: memo reader - %s\n", said.c_str());
                 }
             }
+            // ...and the TERMINAL FAMILY's dossier reader (0x004E4170), the
+            // same shape: the list it stands in, the offset after the
+            // composer's clamp, and what the body box laid out
+            if (const omk::UiPanel* dp = walk->panel();
+                dp && dp->addr == omk::kPanelTerminalDossier) {
+                static std::string dossierTold;
+                const std::string said =
+                    "list " + std::to_string(walk->currentList()) +
+                    ", scroll " + std::to_string(walk->textScroll()) +
+                    " of " + std::to_string(sf.textOverflow) + ", " +
+                    std::to_string(sf.textChars) + " chars, " +
+                    std::to_string(sf.textLines) + " lines drawn";
+                if (said != dossierTold) {
+                    dossierTold = said;
+                    std::printf("terminal family: dossier reader - %s\n", said.c_str());
+                }
+            }
         }
     }
 

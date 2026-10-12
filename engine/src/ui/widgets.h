@@ -145,6 +145,26 @@ inline constexpr std::uint32_t kCbTerminalCell       = 0x004AF410u;
 // ...and its KEYPAD's list hook, `sub_4AF300` - the 3x3 pad, the `0` cell
 // below it (9) and the big button (10).
 inline constexpr std::uint32_t kHookTerminalPad      = 0x004AF300u;
+// ...and its two PANELS. 0x004E4108 is what every one of the seven opens;
+// 0x004E4170 is the DOSSIER READER, which the TERMINAL's cells 0..4 and the
+// ARCHIVES' 0..3 install (`sub_42A370(screen, 0x004E4170)`, 0x004AF43C and
+// 0x004AF507). The two records name the SAME three lists - keypad, body,
+// footer - and differ in five fields only:
+//
+//            0x004E4108       0x004E4170
+//     +0     0                0x004E4108   the parent: BACK returns, not closes
+//     +4     0x004AF2B0       0x004AF2D0   the builder
+//     +8     0                0x004AF2F0   the leave hook
+//     +24    0                1            the current list: the BODY
+//     +72    0x20000030       0x20000020   no 0x10: BACK does not close it
+//
+// so the reader is the same screen with the focus moved into the body, whose
+// list hook is the long-text scroller `sub_42A9A0`, and whose text hook
+// (0x004AF5D0) - off panel 0x004E4108 - draws the string the highlighted
+// keypad cell's TAG (`+0x3C`) names: Kay'l's five dossiers on the terminal
+// (tags 0..4), the four police files on the archives (6..9).
+inline constexpr std::uint32_t kPanelTerminal        = 0x004E4108u;
+inline constexpr std::uint32_t kPanelTerminalDossier = 0x004E4170u;
 // THE GANDHAR DOOR (screen 12), a 6x6 combination grid: `sub_4AFE90` walks a
 // cursor over it and `sub_4AFF90` stamps the cell it is on.
 // DEN'S LOCKER (screen 13): four digit wheels on one hook, which both moves
@@ -1023,6 +1043,26 @@ public:
         return v;
     }
     double closeLeftMs() const { return closeMs_; }
+    // OSCILLATOR 6, the terminal family's BANNER. The same start and tick as
+    // 5 (`sub_42B6A0` / `sub_42B6D0`), but its expiry is the generic
+    // `sub_42B7B0`, which only clears bit 0: a one-shot timer that closes
+    // nothing and blocks no input. The TERMINAL's open (0x004AF030) and the
+    // FIGHT SIM's (0x004AF130) both start it at 7000 ms, and the body's text
+    // hook reads its running bit (`sub_42B5E0(6)` / `sub_42B5F0(.., 1)`) to
+    // show the machine's start-up page - `Reseau multiplan` on the terminal,
+    // the simulator's `Attente d'autorisation` - before the real one.
+    bool   bannerRunning() const { return bannerMs_ > 0.0; }
+    double bannerLeftMs() const { return bannerMs_; }
+    // -> true on the tick it expires
+    bool tickBanner(double ms) {
+        if (bannerMs_ <= 0.0) return false;
+        bannerMs_ -= ms;
+        if (bannerMs_ > 1e-6) return false;      // the rounding, as `tickClose`
+        bannerMs_ = 0.0;
+        return true;
+    }
+    // An ANSWER WRITTEN WITHOUT A CLOSE, still waiting for one: -1 none.
+    int heldAnswer() const { return answer_ < 0 ? closeAnswer_ : -1; }
     // One tick of it. -> true on the tick it expires, the screen then closed.
     bool tickClose(double ms) {
         if (!closing()) return false;
@@ -1149,6 +1189,17 @@ public:
     // the pop `Annuler` takes through its callback. Closes the screen when
     // the panel has no parent, which is what the back bit does at the top.
     bool toParent();
+    // `screen+8 = 3`: the screen's CLOSE CALLBACK runs on the next tick - the
+    // same callback whichever way the 3 was written (TAB, BACK on a top panel
+    // carrying 0x10, `0x0042A990`'s button). For the TERMINAL that is
+    // `sub_4AF0E0`, which writes its answer here; every other screen of the
+    // family has the generic close, which posts whatever `dword_930750`
+    // already holds - so an answer written earlier and held (`closeAnswer_`)
+    // reaches the script now. `how` goes into the log.
+    void closeNow(const char* how);
+    // The terminal family's dossier reader: `sub_42A370(screen, 0x004E4170)`
+    // and `dword_6A5090 = 0`, the arm 0x004AF410's cases 0 and 3 share.
+    bool openDossier(int cell);
 
     // True once the walk has passed through something it does not model - an
     // unread hook or callback. A caller must not trust an answer after this,
@@ -1389,6 +1440,12 @@ private:
     bool approx_ = false;
     int  answer_ = -1;
     double closeMs_ = 0.0;   // oscillator 5 (`startCloseTimer`)
+    double bannerMs_ = 0.0;  // oscillator 6 (`bannerRunning`)
+    // `dword_930750` WRITTEN BY A CALLBACK THAT LEAVES THE SCREEN UP - the
+    // ARCHIVES' row 2. The parked script hears it only when the screen
+    // closes, whichever way, so it is held here and handed to `answer_` by
+    // `closeNow`. -1 none.
+    int    closeAnswer_ = -1;
     double closeStarted_ = 0.0;
     std::string closeWho_;
     std::string name_;

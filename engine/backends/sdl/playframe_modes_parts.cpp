@@ -1871,6 +1871,12 @@ int PlayState::modesShoot() {
                                     walk->answer());
                 }
             }
+            // OSCILLATOR 6, the terminal family's banner (`bannerRunning`):
+            // the same clock, and its expiry only stops it - the body's text
+            // hook then takes its next arm
+            if (walk->tickBanner(frameSec * 1000.0))
+                std::printf("frame %ld: screen %d - oscillator 6 expired: the banner "
+                            "gives way\n", n, openScreen);
             const bool leaving = !walk->closing() && (walk->answer() >= 0 || walk->closed());
             // THE KEY THAT CLOSED THE SCREEN IS NOT THE WORLD'S ACTION.
             //

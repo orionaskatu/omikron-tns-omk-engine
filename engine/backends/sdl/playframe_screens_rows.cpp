@@ -1318,21 +1318,29 @@ void PlayState::screensTerminals() {
     // found Kay'l's terminal blank - the artwork's keypad and screen with no
     // dossiers on it.
     //
-    // `sub_4AF5D0` read from the image: two state queries first
-    // (`sub_42B5E0(6)` then `sub_42B5F0`, and the same pair on 5), and
-    // failing both a SEVEN-CASE jump table on the screen's fixed parameter,
-    // each arm calling `sub_4767E0(panel, out, <string>, -1)`:
+    // `sub_4AF5D0` read from the image, in its own order - the first arm
+    // that holds draws:
+    //
+    //   1. OSCILLATOR 6 running (`sub_42B5E0(6)` is the record, `sub_42B5F0(
+    //      rec, 1)` its bit 0) and the panel is 0x004E4108: TERMINAL string
+    //      11 (`Reseau multiplan`), FIGHT SIM string 4 (`Attente
+    //      d'autorisation`) - the start-up page both opens hold for 7000 ms;
+    //   2. OSCILLATOR 5 running and the FIGHT SIM: string 6 (`Merci.
+    //      Preparation...`), for the 4500 ms its choice holds the screen;
+    //   3. the panel is 0x004E4108: a SEVEN-CASE jump table on the screen's
+    //      fixed parameter, each arm `sub_4767E0(panel, out, <string>, -1)`:
     //
     //     case 0 TERMINAL   string 12     case 4 SURV ERROR  string 1
     //     case 1 FIGHT SIM  string 5      case 5 SURV NO KIT string 3
     //     case 2 MORGUE     string 6      case 6 SURV KIT    string 2
     //     case 3 ARCHIVES   string 5
     //
-    // The two query branches - string 11 for the TERMINAL and 4 for the
-    // FIGHT SIM when the first is true, 6 for the FIGHT SIM when the second
-    // is - are NOT ported: `sub_42B5E0`/`sub_42B5F0` are an object lookup
-    // this has not read, so the default arm is what draws. Labelled, and it
-    // is the arm the shipped state takes on a first visit.
+    //   4. otherwise - the DOSSIER READER, 0x004E4170 - the string the
+    //      highlighted keypad cell's TAG names: `sub_428EF0(0x004E3FE0)`, the
+    //      keypad's selected item, and its `+0x3C`.
+    //
+    // The two queries read "an object lookup not read" until 2026-10-11 and
+    // were not ported until oscillators 5 and 6 were (2026-10-12).
     if (walk && walk->panel() && !liftHandled) {
         struct Fam { int screen; const char* file; int str; };
         static constexpr Fam kFam[] = {
@@ -1344,11 +1352,42 @@ void PlayState::screensTerminals() {
             if (openScreen != f.screen) continue;
             sneakRows.clear();
             const auto txt = omk::iamStrings(fs, f.file);
-            if (f.str >= static_cast<int>(txt.size())) break;
+            const bool onMain = walk->panel()->addr == omk::kPanelTerminal;
+            const omk::UiList* keypad = nullptr;
+            for (const auto& l : walk->panel()->lists)
+                if (l.hook == omk::kHookTerminalPad) keypad = &l;
+            int str = -1;
+            const char* arm = "";
+            if (walk->bannerRunning() && onMain && (f.screen == 5 || f.screen == 11)) {
+                str = f.screen == 5 ? 11 : 4;
+                arm = "oscillator 6, the banner";
+            } else if (walk->closing() && f.screen == 11) {
+                str = 6;
+                arm = "oscillator 5, the delayed close";
+            } else if (onMain) {
+                str = f.str;
+                arm = "the cover page";
+            } else if (keypad) {
+                // The TAG the screen's open wrote into the cell (`bind.tag`).
+                // The TERMINAL's open writes cell 0's from a register -
+                // `xor edi, edi; mov [0x004E3CD4], edi` - which the lift's
+                // store scan does not take for a binding; the record's own
+                // `+0x3C` is 0 too, so 0 is what both say.
+                const int cell = walk->selectionOf(*keypad);
+                if (cell >= 0 && cell < static_cast<int>(keypad->items.size())) {
+                    const int tag = keypad->items[static_cast<std::size_t>(cell)].bindTag;
+                    str = tag >= 0 ? tag : 0;
+                }
+                arm = "the dossier reader, the cell's tag";
+            }
+            if (str < 0 || str >= static_cast<int>(txt.size())) break;
             for (const auto& l : walk->panel()->lists)
                 for (const auto& e : l.items)
                     if (e.textFn == 0x004AF5D0u)
-                        sneakRows[e.addr] = txt[static_cast<std::size_t>(f.str)];
+                        sneakRows[e.addr] = txt[static_cast<std::size_t>(str)];
+            // the body box carries bank C `0x80000002`, the long-text scroll
+            // (`Ui_ItemTextStyle`): the composer clamps the walk's own offset
+            comp_->setTextScroll(&walk->textScroll());
             // ---- AND THE HEADER BAR, `textFn` 0x004AF5A0 -------------
             //
             // Eleven bytes of code, and the whole of what was left of this
@@ -1406,9 +1445,13 @@ void PlayState::screensTerminals() {
                                 "'%s'\n", openScreen, cell, one.c_str());
                 }
             }
-            static int famTold = -1;
-            if (famTold != openScreen) {
-                famTold = openScreen;
+            // printed when the SCREEN or the STRING changes - the banner gives
+            // way to the cover page, a file replaces it - from what the body
+            // item will draw
+            static std::string famTold;
+            const std::string famKey = std::to_string(openScreen) + "/" + std::to_string(str);
+            if (famTold != famKey) {
+                famTold = famKey;
                 // the BODY item's own row, named rather than "the last
                 // thing in the map" - the map gained the header bar above
                 std::string shown;
@@ -1420,8 +1463,8 @@ void PlayState::screensTerminals() {
                         }
                 std::string one;
                 for (char c : shown.substr(0, 80)) one += (c == '\r' || c == '\n') ? ' ' : c;
-                std::printf("terminal family: screen %d - the display says '%s'\n",
-                            openScreen, one.c_str());
+                std::printf("terminal family: screen %d - the display says '%s' "
+                            "(string %d, %s)\n", openScreen, one.c_str(), str, arm);
             }
             break;
         }

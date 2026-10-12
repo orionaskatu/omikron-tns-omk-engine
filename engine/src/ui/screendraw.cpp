@@ -1756,9 +1756,36 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             row.blinkOn = blink;
             row.screenW = fb.w;
             row.screenH = fb.h;
+            // THE LONG-TEXT SCROLL, `Ui_ItemTextStyle`'s bank C `0x80000002`
+            // arm - which is generic, not the examine page's: it measures the
+            // block (`Text_DrawBlock` with only TEXTP_ORIGIN), floors
+            // `height - boxHeight` at 0, clamps `dword_6A5090` into it, writes
+            // it back and hands it over as the block's origin. Five items
+            // carry the bit; the terminal family's body (0x004E4000), the
+            // dossier reader's text, is the one whose text arrives here.
+            const bool scrolls = (eff[2] & 0x2u) != 0;
+            if (scrolls) {
+                TextBlock probe = row;
+                probe.measureOnly = true;
+                const int total = lay_->layOutBlock(nullptr, s, probe);
+                const int overflow = std::max(0, total - (row.bottom - row.top));
+                if (scroll_) {
+                    if (*scroll_ > overflow) *scroll_ = overflow;
+                    else if (*scroll_ < 0)   *scroll_ = 0;
+                }
+                out.textOverflow = overflow;
+                row.originY = scroll_ ? *scroll_ : 0;
+                row.clipTop = row.top;
+                row.clipBottom = row.bottom;
+            }
             if (reportText_ && reportText_->count(it.addr)) out.itemText[it.addr] = s;
             BlockResult rr;
             lay_->layOutBlock(&fb, s, row, &rr);
+            // a scrolled box counts what it LAID OUT, as the examine text does
+            if (scrolls) {
+                out.textLines += rr.lines;
+                out.textChars += static_cast<int>(s.size());
+            }
             // `drawRun` returned the pen ADVANCE, not a pixel count - the
             // width the row occupies - and `BlockResult::advance` is the same
             // number summed over the lines a block wrapped to.

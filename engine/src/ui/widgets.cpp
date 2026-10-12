@@ -532,8 +532,7 @@ bool UiWalk::installPanel(std::uint32_t addr) {
 bool UiWalk::toParent() {
     if (!panel_) return false;
     if (!panel_->parent) {                 // the top panel: the screen closes
-        panel_ = nullptr;
-        log_.push_back("close");
+        closeNow("close");
         return true;
     }
     const auto* up = w_->at(panel_->parent, screen_);
@@ -547,6 +546,43 @@ bool UiWalk::toParent() {
     buildPage(*panel_);
     settle();
     log_.push_back("back");
+    return true;
+}
+
+void UiWalk::closeNow(const char* how) {
+    if (screen_ == 5) {
+        // THE TERMINAL ANSWERS ON THE WAY OUT, and it is the only screen of
+        // the family that does. `sub_4AF0E0` (read from the image):
+        //
+        //     if (dword_68A600) answer = 2 + (dword_68A5FC != 0);
+        //     else              answer =     (dword_68A5FC != 0);
+        //     dword_930750 = answer; Ui_CloseScreenDefault(screen);
+        //
+        // so it reports WHICH of the two protected dossiers were opened - 0
+        // neither, 1 the fifth, 2 the fourth, 3 both. AREA 179's script wants
+        // 1 for `1-A-CS SecretFile` (the voice-over, `DATA MEMORIZED` and memo
+        // 003) and branches again on 2. It is the screen's close slot
+        // (`tables/ui.json` screen 5, `cb[2]`), so BACK and `Quitter le
+        // terminal` reach it as TAB does - this answered only on TAB, and the
+        // other two closed on -1, until 2026-10-12.
+        answer_ = (termRow3_ ? 2 : 0) + (termRow4_ ? 1 : 0);
+        log_.push_back("terminal close: answer " + std::to_string(answer_));
+    } else if (answer_ < 0 && closeAnswer_ >= 0) {
+        answer_ = closeAnswer_;
+        log_.push_back("close: the answer written earlier, " + std::to_string(answer_));
+    }
+    panel_ = nullptr;
+    log_.push_back(how);
+}
+
+bool UiWalk::openDossier(int cell) {
+    if (!installPanel(kPanelTerminalDossier)) {
+        approx_ = true;
+        log_.push_back("dossier panel not in the table");
+        return false;
+    }
+    state_->textScroll = 0;                   // `mov dword_6A5090, 0`
+    log_.push_back("dossier: cell " + std::to_string(cell) + " - panel 0x004E4170");
     return true;
 }
 
@@ -1192,6 +1228,25 @@ void UiWalk::buildPage(const UiPanel& p) {
         curFromBuilder_ = 1;
         return;
     }
+    // THE TERMINAL FAMILY'S DOSSIER READER, 0x004E4170, the same: the
+    // installer leaves its shipped `+24 = 1` standing, so the BODY is current
+    // and UP / DOWN reach the scroller. Its builder `sub_4AF2D0` and the main
+    // panel's `sub_4AF2B0` / the reader's leave hook `sub_4AF2F0`, read from
+    // the image, write three things this does not model, labelled:
+    //
+    //     sub_4AF2B0  sub_428FF0(0x004E4000, 0x40000080, 0); sub_42B5C0(1)
+    //     sub_4AF2D0  sub_428FF0(0x004E4000, 0x40000080, 1); word_4E401E = -1
+    //     sub_4AF2F0  sub_42B5C0(1)
+    //
+    // - the body's bank-B `0x80` OUTLINE on in the reader and off on the main
+    // panel (this composer draws no `I2D_DrawRectOutline` for an item at all,
+    // `todo/missing-ui.md`); `sub_42B5C0(1)`, which writes the input mask
+    // `dword_4E9720 = 0x203F` that is already its value; and the body's `+30`
+    // printf argument, which no string of the family uses.
+    if (p.addr == kPanelTerminalDossier) {
+        curFromBuilder_ = 1;
+        return;
+    }
     // ---- THE HINT SHOP's two builders, transcribed ------------------------
     //
     // `sub_4AE120` (0x004E3018's `+4`) and `sub_4AE3A0` (0x004E3080's) are
@@ -1313,13 +1368,25 @@ bool UiWalk::open(int screenId) {
     panel_ = w_->screen(screenId);
     approx_ = false;
     answer_ = -1;
+    closeAnswer_ = -1;
     closeMs_ = closeStarted_ = 0.0;
+    bannerMs_ = 0.0;
     log_.clear();
     if (!panel_) { log_.push_back("no panel for this screen"); return false; }
     log_.push_back("open");
     // MULTIPLAN's open (`sub_4B01F0`) writes the source list, `dword_68A610 =
     // 0`, before it binds the rows: every visit starts on the sneak.
     if (panel_->addr == kPanelMultiplan) state_->multiplanSource = 0;
+    // THE TERMINAL's open (0x004AF030) and the FIGHT SIM's (0x004AF130), read
+    // from the image: both `Ui_StartOscillator(6, 7000, screen)` - the banner
+    // (`bannerRunning`) - and the terminal also clears its two dossier
+    // globals, `dword_68A600` and `dword_68A5FC`, so the answer on the way
+    // out counts THIS visit's dossiers only.
+    if (screenId == 5 || screenId == 11) {
+        bannerMs_ = 7000.0;
+        log_.push_back("oscillator 6: the banner, 7000 ms");
+    }
+    if (screenId == 5) termRow3_ = termRow4_ = false;
     // GANDHAR'S DOOR's open (0x004AFDF0, read from the image): the count
     // `byte_68A608` and the mask `byte_68A60C` go to 0, the cursor's `+3C` to
     // cell 0, and `sub_428FF0(marker, 0x40000001, 1)` hides all four markers
@@ -1634,7 +1701,8 @@ bool UiWalk::confirm() {
         //
         //     1 FIGHT SIM   row + 1 for rows 0..2 (and interface sound 26)
         //     2 MORGUE      row + 1 for rows 0..4
-        //     3 ARCHIVES    1, and only from row 2
+        //     3 ARCHIVES    the dossier reader on rows 0..3; 1, from row 2,
+        //                   HELD until the player closes it
         //     4 SURV ERROR  falls THROUGH into case 6 - `loc_4AF52F` ends in a
         //                   call with no jump, which a table read as seven
         //                   independent arms would miss
@@ -1642,13 +1710,9 @@ bool UiWalk::confirm() {
         //     5 SURV NO KIT no answer at all
         //   ...and FIGHT SIM, MORGUE and the three SURV close themselves
         //   through oscillator 5 (4500 / 2000 ms) - see the arm below
-        //     0 TERMINAL    nothing here: its answer is written by 0x004AF0E0,
-        //                   which is NOT ported - it answers a pair of booleans
-        //                   (`2 + (dword_68A5FC != 0)` on one branch, the bare
-        //                   test on the other, so 0..3) off a global this case
-        //                   sets when row 3 or 4 is chosen. Left unported and
-        //                   labelled rather than guessed, so the terminal shows
-        //                   its dossiers and does not yet answer its script.
+        //     0 TERMINAL    the dossier reader on rows 0..4; its answer is
+        //                   written on CLOSE by 0x004AF0E0 (`closeNow`) off
+        //                   the two globals rows 3 and 4 set
         // `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image.
         // It counts the press (`byte_68A608`), stamps a marker widget taken
         // from `off_4E4C80[count]` at the cell, and ORs one bit of
@@ -1762,26 +1826,44 @@ bool UiWalk::confirm() {
             // selection word, not a row tag
             const int row = selection();
             int a = -1;
-            // case 0, the TERMINAL: no answer here - it REMEMBERS which
-            // protected dossier was opened and reports it on close (above)
+            // case 0, the TERMINAL (0x004AF428): cells 0..4 open the dossier
+            // reader and answer nothing - it REMEMBERS which protected dossier
+            // was opened, `dword_68A5FC` for cell 4 and `dword_68A600` for 3,
+            // and reports them on close (`closeNow`). Cells 5..9 `return 0`.
             if (screen_ == 5) {
-                if (row == 3) termRow3_ = true;
+                if (row < 0 || row >= 5) return false;
                 if (row == 4) termRow4_ = true;
+                if (row == 3) termRow3_ = true;
                 if (row == 3 || row == 4)
                     log_.push_back("terminal: dossier " + std::to_string(row + 1) + " opened");
-                return row == 3 || row == 4;
+                openDossier(row);
+                return true;
+            }
+            // case 3, the ARCHIVES (0x004AF4F7): the same reader for cells
+            // 0..3, and cell 2 - the `Meurtres` file - writes `dword_930750 =
+            // 1`. No oscillator and no close, so the answer WAITS: the screen
+            // stays on the file and the parked script hears 1 when the player
+            // closes it (`closeAnswer_`). The port answered and left on the
+            // frame the cell was confirmed until 2026-10-12.
+            if (screen_ == 18) {
+                if (row < 0 || row >= 4) return false;
+                if (row == 2) {
+                    closeAnswer_ = 1;
+                    log_.push_back("archives: cell 2 - answer 1, held until the close");
+                }
+                openDossier(row);
+                return true;
             }
             // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms,
             // read 2026-10-12): FIGHT SIM 4500 ms after its answer, MORGUE
             // 2000, and the three SURV screens 2000 - SURV ERROR and SURV KIT
             // on ANY cell (no row limit; the answer is written only for row
             // 0), SURV NO KIT with no answer at all, so it closes on -1.
-            // ARCHIVES starts none (it goes to panel 0x004E4170).
+            // ARCHIVES starts none (it goes to panel 0x004E4170, above).
             double closeMs = 0.0;
             switch (screen_) {
                 case 11: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
                 case 19: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
-                case 18: if (row == 2) a = 1; break;
                 case 15: case 17: if (row == 0) a = 1; closeMs = 2000.0; break;
                 case 16: closeMs = 2000.0; break;
                 default: break;
@@ -2058,9 +2140,12 @@ bool UiWalk::confirm() {
             return true;
         }
         // `Annuler` on the save screen (0x0042A990): it closes.
+        // Its whole body is `screen+8 = 3` - so it is also the terminal
+        // family's big button, `Quitter le terminal`, and takes the screen's
+        // close callback like any other close (`closeNow`).
         if (it->callback == kCbSaveAnnuler) {
             log_.push_back("annuler: the screen closes");
-            panel_ = nullptr;
+            closeNow("close (0x0042A990)");
             return true;
         }
         // `Detruire` (0x0047AE90): it refuses a row outside 0..count and
@@ -2564,26 +2649,7 @@ bool UiWalk::press(std::uint32_t bits) {
     // closes on it only with 0x10. This took BACK unconditionally, and TAB
     // not at all, until 2026-09-14, when a shop would not close on TAB.
     if ((bits & kUiClose) && (panel_->flags & 0x20u)) {
-        // THE TERMINAL ANSWERS ON THE WAY OUT, and it is the only screen of
-        // the family that does. `sub_4AF0E0` (read from the image):
-        //
-        //     if (dword_68A600) answer = 2 + (dword_68A5FC != 0);
-        //     else              answer =     (dword_68A5FC != 0);
-        //     dword_930750 = answer; Ui_CloseScreenDefault(screen);
-        //
-        // so it reports WHICH of the two protected dossiers were opened - 0
-        // neither, 1 the fifth, 2 the fourth, 3 both. AREA 179's script wants
-        // 1 for `1-A-CS SecretFile` (the voice-over, `DATA MEMORIZED` and memo
-        // 003) and branches again on 2. Which row sets which global is
-        // `docs/UI.md`'s reading of case 0, not a fresh transcription - its
-        // own `asmfn` snaps to the neighbour here (CLAUDE.md 1's trap) - and
-        // is labelled as resting on it.
-        if (screen_ == 5) {
-            answer_ = (termRow3_ ? 2 : 0) + (termRow4_ ? 1 : 0);
-            log_.push_back("terminal close: answer " + std::to_string(answer_));
-        }
-        panel_ = nullptr;
-        log_.push_back("close (TAB)");
+        closeNow("close (TAB)");                 // the terminal answers here
         return true;
     }
     if (bits & kUiBack) {

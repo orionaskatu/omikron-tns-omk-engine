@@ -514,7 +514,7 @@ struct PlayState {
     // (`sub_466B60`, run AFTER the state-9 hold, so he walks while it shows).
     int hsOpenPage = -1;
     std::string hsMessage;
-    double hsMessageLeftMs = 0.0, hsCloseLeftMs = 0.0;
+    double hsMessageLeftMs = 0.0;   // oscillator 0; its close is the walk's oscillator 5
     bool hsReleased = false;
     long posSyncsSeen{};   // op 127's count, applied once each
     bool lookCam{};

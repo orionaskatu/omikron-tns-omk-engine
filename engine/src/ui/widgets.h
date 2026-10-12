@@ -993,6 +993,35 @@ public:
     // refusal the page stays up and flashes screen string 42 - so the walk
     // leaves the close to the caller, who knows the answer.
     void closeScreen() { panel_ = nullptr; }
+    // OSCILLATOR 5, THE DELAYED CLOSE. `Ui_StartOscillator(5, ms, screen)`
+    // (0x0042B820 -> `sub_42B6A0`) zeroes the oscillator's elapsed time, sets
+    // its flag bit 0, stores the period and the SCREEN at `+0x18`;
+    // `UI_TickScreens` hands `sub_42B6D0` each tick's milliseconds, and at the
+    // period `sub_42B7E0` clears bit 0 and writes that screen's `+8 = 3` - the
+    // screen closes on that tick. While it runs `Ui_ScreenInput` (0x0042A0F0)
+    // tests `byte_4C3F74 & 1` - oscillator 5's flag - and takes NO input. A
+    // second start restarts it with the new period (the Gandhar door's 1500
+    // then 4000 on one press). Started by Den's locker (2000), Xachen (4000),
+    // the Gandhar door (1500 on the fourth press, 4000 on the code), FIGHT SIM
+    // (4500), MORGUE and the three SURV screens (2000), and HIGH-SCORE (10000).
+    // The answer the screen wrote reaches the parked script only when it
+    // closes (`sub_466B60`'s event 5), so the script waits the delay out too.
+    void startCloseTimer(double ms, const char* who) {
+        closeMs_ = ms;
+        log_.push_back(std::string("oscillator 5: ") + who + " closes in " +
+                       std::to_string(static_cast<int>(ms)) + " ms");
+    }
+    bool   closing() const { return panel_ != nullptr && closeMs_ > 0.0; }
+    double closeLeftMs() const { return closeMs_; }
+    // One tick of it. -> true on the tick it expires, the screen then closed.
+    bool tickClose(double ms) {
+        if (!closing()) return false;
+        closeMs_ -= ms;
+        if (closeMs_ > 0.0) return false;
+        closeMs_ = 0.0;
+        panel_ = nullptr;
+        return true;
+    }
     // The shop's pending purchase or sale - kind 0 buy, 1 sell - and the row
     // it names. Reading it CLEARS it, as `takeVerb` does. -> false when none.
     // Put the focus on the list at `addr` in the installed panel - a callback
@@ -1346,6 +1375,7 @@ private:
     const std::map<std::uint32_t, int>& selMap() const { return state_->sel; }
     bool approx_ = false;
     int  answer_ = -1;
+    double closeMs_ = 0.0;   // oscillator 5 (`startCloseTimer`)
     std::string name_;
     int         nameCursor_ = 0;
     // The load panel's directory state, when a caller has attached one. It

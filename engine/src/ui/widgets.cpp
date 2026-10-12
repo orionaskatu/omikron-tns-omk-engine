@@ -1313,6 +1313,7 @@ bool UiWalk::open(int screenId) {
     panel_ = w_->screen(screenId);
     approx_ = false;
     answer_ = -1;
+    closeMs_ = 0.0;
     log_.clear();
     if (!panel_) { log_.push_back("no panel for this screen"); return false; }
     log_.push_back("open");
@@ -1471,6 +1472,9 @@ bool UiWalk::denDial(const UiList& l, std::uint32_t bits) {
             state_->colour[l.items[k].addr] = {0, 255, l.items[k].rgb[2]};
         }
         answer_ = 1;
+        // ...and `Ui_StartOscillator(5, 2000, screen)` (0x004AFDDB): the
+        // locker stays up, lit, for two seconds and then closes
+        if (!closing()) startCloseTimer(2000.0, "den locker");
     }
     return moved;
 }
@@ -1702,6 +1706,8 @@ bool UiWalk::confirm() {
             if (xachenSolved()) {
                 answer_ = 1;
                 log_.push_back("xachen: 10 14 7 9 - the door opens");
+                // `Ui_StartOscillator(5, 4000, screen)` (0x004AFAFE)
+                startCloseTimer(4000.0, "xachen");
             }
             return true;
         }
@@ -1732,9 +1738,17 @@ bool UiWalk::confirm() {
             }
             log_.push_back("gandhar: press " + std::to_string(gandPresses_) +
                            (bit ? " - one of the four" : " - not in the code"));
+            // THE FOURTH PRESS ENDS IT EITHER WAY. `cmp byte_68A608, cl` with
+            // `cl = 4`: on the fourth press `Ui_StartOscillator(5, 1500,
+            // screen)` and sound 0x26 - a wrong code closes 1.5 s later and
+            // answers nothing - then, all four bits set, the answer 1, a
+            // RESTART at 4000 ms and sound 0x27 (0x004B0067, 0x004B0094). The
+            // sounds are not ported.
+            if (gandPresses_ == 4) startCloseTimer(1500.0, "gandhar door, the fourth press");
             if (gandMask_ == 0x0Fu) {
                 answer_ = 1;
                 log_.push_back("gandhar: the door opens");
+                startCloseTimer(4000.0, "gandhar door, the code");
             }
             return true;
         }
@@ -1753,16 +1767,25 @@ bool UiWalk::confirm() {
                     log_.push_back("terminal: dossier " + std::to_string(row + 1) + " opened");
                 return row == 3 || row == 4;
             }
+            // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms,
+            // read 2026-10-12): FIGHT SIM 4500 ms after its answer, MORGUE
+            // 2000, and the three SURV screens 2000 - SURV ERROR and SURV KIT
+            // on ANY cell (no row limit; the answer is written only for row
+            // 0), SURV NO KIT with no answer at all, so it closes on -1.
+            // ARCHIVES starts none (it goes to panel 0x004E4170).
+            double closeMs = 0.0;
             switch (screen_) {
-                case 11: if (row >= 0 && row <= 2) a = row + 1; break;
-                case 19: if (row >= 0 && row <= 4) a = row + 1; break;
+                case 11: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
+                case 19: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
                 case 18: if (row == 2) a = 1; break;
-                case 15: case 17: if (row == 0) a = 1; break;
+                case 15: case 17: if (row == 0) a = 1; closeMs = 2000.0; break;
+                case 16: closeMs = 2000.0; break;
                 default: break;
             }
-            if (a < 0) { log_.push_back("terminal cell: no answer"); return false; }
-            answer_ = a;
-            log_.push_back("terminal cell: answer");
+            if (closeMs > 0.0) startCloseTimer(closeMs, "terminal cell");
+            if (a < 0 && closeMs <= 0.0) { log_.push_back("terminal cell: no answer"); return false; }
+            if (a >= 0) answer_ = a;
+            log_.push_back(a >= 0 ? "terminal cell: answer" : "terminal cell: no answer, closing");
             return true;
         }
         // THE SHOP'S THREE BUTTONS - Acheter, Vente, Examiner (0x004AED00,
@@ -2517,6 +2540,9 @@ bool UiWalk::confirm() {
 
 bool UiWalk::press(std::uint32_t bits) {
     if (!panel_) return false;
+    // `Ui_ScreenInput`: `test byte_4C3F74, 1 / jnz` - oscillator 5 running,
+    // the screen takes nothing (`startCloseTimer`)
+    if (closing()) return false;
     // `Ui_DispatchInput` (0x0042A430), its head, on the latched word:
     //
     //     if (panel+24 == -1) return 0;

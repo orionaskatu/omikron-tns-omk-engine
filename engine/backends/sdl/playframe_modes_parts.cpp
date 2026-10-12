@@ -1069,7 +1069,7 @@ int PlayState::modesShoot() {
                         const auto txt = omk::iamStrings(fs, "IAM/" + w.textFile(want));
                         hsMessage = txt.empty() ? std::string() : txt[0];
                         hsMessageLeftMs = 5000.0;
-                        hsCloseLeftMs = 10000.0;
+                        walk->startCloseTimer(10000.0, "high score");
                         hsReleased = true;
                     }
                     std::printf("frame %ld: screen 36 HIGH-SCORE at page %d%s\n", n, page,
@@ -1844,22 +1844,27 @@ int PlayState::modesShoot() {
                 else
                     std::fprintf(stderr, "save: slot %d could not be written\n", slot);
             }
-            // The board's two oscillators, on the FRAME's milliseconds as
-            // `sub_42B6D0` adds them: the message line drops at 5000 and at
-            // 10000 oscillator 5's expiry closes the screen.
-            if (openScreen == kScreenHighScore) {
-                const double ms = frameSec * 1000.0;
-                if (hsMessageLeftMs > 0.0) hsMessageLeftMs -= ms;
-                if (hsCloseLeftMs > 0.0) {
-                    hsCloseLeftMs -= ms;
-                    if (hsCloseLeftMs <= 0.0 && !walk->closed()) {
-                        walk->closeScreen();
+            // The board's message oscillator, on the FRAME's milliseconds as
+            // `sub_42B6D0` adds them: the line drops at 5000.
+            if (openScreen == kScreenHighScore && hsMessageLeftMs > 0.0)
+                hsMessageLeftMs -= frameSec * 1000.0;
+            // OSCILLATOR 5, the delayed close (`UiWalk::startCloseTimer`):
+            // ticked on the same milliseconds, and its expiry is the screen's
+            // `+8 = 3`. Until then the screen is HELD - an answer already
+            // written does not leave, because the parked script hears it only
+            // at the close (`sub_466B60`'s event 5).
+            if (walk->closing()) {
+                if (walk->tickClose(frameSec * 1000.0)) {
+                    if (openScreen == kScreenHighScore)
                         std::printf("frame %ld: screen 36 - oscillator 5 expired, "
                                     "screen +8 = 3: the board closes itself\n", n);
-                    }
+                    else
+                        std::printf("frame %ld: screen %d - oscillator 5 expired, screen "
+                                    "+8 = 3: it closes itself, answer %d\n", n, openScreen,
+                                    walk->answer());
                 }
             }
-            const bool leaving = walk->answer() >= 0 || walk->closed();
+            const bool leaving = !walk->closing() && (walk->answer() >= 0 || walk->closed());
             // THE KEY THAT CLOSED THE SCREEN IS NOT THE WORLD'S ACTION.
             //
             // The mirror of the gate at the open. The world's action button
@@ -1884,7 +1889,9 @@ int PlayState::modesShoot() {
             // event 26 and frees no object list, because nothing was opened.
             // Sending it through the branch below would have raised the
             // sneak's close event and shut a list that was never open.
-            if (leaving && openScreen == kScreenPause) {
+            if (walk->closing()) {
+                // held by oscillator 5: nothing leaves this frame
+            } else if (leaving && openScreen == kScreenPause) {
                 std::printf("screen %d PAUSE GAME closed - the world runs "
                             "again\n", openScreen);
                 walk.reset();
@@ -1899,7 +1906,6 @@ int PlayState::modesShoot() {
                 openScreen = -1;
                 screenFromScript = true;
                 hsReleased = false;
-                hsCloseLeftMs = 0.0;
             } else if (leaving && !screenFromScript) {
                 std::printf("screen %d closed by the player - event %d, object "
                             "list %d\n", openScreen, omk::kEventSneakClose,

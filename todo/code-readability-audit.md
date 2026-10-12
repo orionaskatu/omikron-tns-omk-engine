@@ -198,6 +198,16 @@ finding: a check that hashed a conversation frame would flicker.
   the table, `verify.py: opcode names` (shown to fail on a stale header and on
   a bare `case 136:`). Follow-up: the table's 146/147 `ambience.on/off` are
   the radar's switch - rename the row with the docs and the name counts.
+* step 2b - the context status word, `script/ctxstatus.h`, `4bb555a`;
+* step 2c - the `.CTL` entry flags (`ctl_entry::`, in `formats/ctl.h`) and
+  the channel's own (`channel_flag::`), `eca6446`. **A trap it found, for the
+  tutorial's lesson on traps**: replacing `flags_ & 0x12` by a NAMED COMBINED
+  MASK wrote `flags_ & Blending | ClipRanOut`, which `&`-before-`|` reads as
+  `(flags_ & Blending) | ClipRanOut` - always true - and one blended path went
+  dead. The guard's thirteen viewer runs were IDENTICAL; `engine: actor
+  states`' 395352-tick sweep moved by 8. So a guard is only as wide as what it
+  runs: it now records engine PROBES too (`run_actor_states` first), and a
+  name that stands for several bits is always written in parentheses.
 
 ## 7. For the tutorial
 

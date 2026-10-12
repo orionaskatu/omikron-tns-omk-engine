@@ -184,8 +184,7 @@ public:
     // those whose `ObjectShown` bit is set, so the alley has its four
     // passers-by and its Demon before any script runs. `fromTable` marks
     // those; a character shown by a script that no table places (or the body
-    // `player.become` takes) is pushed with `fromTable` false, which is what
-    // this list held on its own until 2026-09-03.
+    // `player.become` takes) is pushed with `fromTable` false.
     struct Shown {
         int         actor = -1;
         std::string model;      // the actor record's +144
@@ -245,11 +244,11 @@ public:
     // zone scripts are a pair of them per door, `scx.play.wait obj 0x008b, 0,
     // 0` on the way in and its shutting twin on the way out, and the WAITING
     // variants park their caller exactly as a beat chain does (the handler
-    // ends `mov [esi+16h], 4`). So "some context is parked on a program" was
-    // true for as long as a door slid, and the frontend read that as a
-    // cutscene in flight: the adventure gate went false, the letterbox bands
-    // came on and `drawPlayer` dropped him. A reader walking into the flat's
-    // kitchen got *black stripes and the player disappearing* (2026-09-09).
+    // ends `mov [esi+16h], 4`). So "some context is parked on a program" is
+    // true for as long as a door slides, and a frontend that reads that as a
+    // cutscene in flight turns the adventure gate false, brings the letterbox
+    // bands on and has `drawPlayer` drop him - walking into the flat's
+    // kitchen shows black stripes and the player disappearing.
     //
     // A BEAT OWNS A BODY AND A DOOR DOES NOT, and that is the whole of the
     // difference - read off the OPCODE that started the program, since 57/58
@@ -273,12 +272,10 @@ public:
     // THE SAME, NARROWED TO THE PLAYER'S BODY - what shoot mode asks. An
     // enemy's entrance in a shoot phase is `scx.play.actor.wait N` then
     // `shoot.actor.enter N` (SCENE 56, fourteen of them): its script parks on a
-    // program that poses the ENEMY, and `parkedOnProgram` read that as a
-    // cutscene in flight - the player froze for the length of the entrance
-    // and the shoot camera went with him (a reader, 2026-09-10: *"some events
-    // (like some ennemie appearing with a special animation) are considered as
-    // cutscenes, stops move and change camera, even though they are just
-    // gameplay events"*). `Actor_TickShoot` ticks the player every frame
+    // program that poses the ENEMY, and `parkedOnProgram` reads that as a
+    // cutscene in flight - asked instead, the player freezes for the length
+    // of the entrance and the shoot camera goes with him, turning a gameplay
+    // event into a cutscene. `Actor_TickShoot` ticks the player every frame
     // whatever any script is parked on; only a program bound to HIM takes his
     // body, and that one moves him into ACTOR_STATE 4 besides.
     bool parkedOnPlayerProgram() const {
@@ -398,8 +395,8 @@ public:
         if (s < 0 || static_cast<std::size_t>(s) >= spatial_.entries().size()) return nullptr;
         return &spatial_.entries()[static_cast<std::size_t>(s)];
     }
-    // THE SHOOT GUNMEN'S BODIES in the same index (2026-09-11, a reader:
-    // robbers walked into the player's own spot "like I had no collider").
+    // THE SHOOT GUNMEN'S BODIES in the same index - without them, robbers
+    // walk into the player's own spot as if he had no collider.
     // `Actor_Attach` (0x0041CCA0) registers EVERY actor, and in shoot mode
     // `Actor_TickShoot` (0x00466840) ends a gunman's tick in
     // `SpatialIndex_Update` and the player's in `Actor_TickNpc`, whose
@@ -650,9 +647,8 @@ public:
     // names - `Cef_FindGroupById`, then `SetPersoBankGroup`: the queue cleared,
     // the machine on the group's default entry AT ONCE - and, with a context
     // (89), reports to it when the channel leaves that group; with -1 (63) it
-    // is the same switch and no report. This was described here as walking
-    // him to an ADDRESSES record until 2026-09-08, and it is not: a move is a
-    // group in the `.CTL`. `Fight_Begin` (sub_41A3B0) enters the fight.
+    // is the same switch and no report. It does not walk him to an ADDRESSES
+    // record: a move is a group in the `.CTL`. `Fight_Begin` (sub_41A3B0) enters the fight.
     // With no hook installed the opcode RUNS ON instead of parking: nothing
     // could ever release the park, and modelling the wait must never invent
     // a deadlock (the `ObjectWait` rule). Installing a hook arms the park.
@@ -781,7 +777,7 @@ public:
     // ------------------------------------------------------- THE ZONES
     //
     // `Zones_RegisterAll` (0x00406560) and `Actor_ScanZones` (0x00467770) LIVE
-    // in the Session (2026-09-02, wave B; issue 10). `ZoneRegistry`
+    // in the Session (issue 10). `ZoneRegistry`
     // (script/zones.h) DECIDES - the four-table walk over both slots, the 16
     // prompt slots as the engine's own state machine, the per-frame touch and
     // arm - and this turns what it decided into `Script_NewContext` /
@@ -1017,10 +1013,10 @@ public:
     // The zone's LEAVE action on a transition caller: `Script_QueueAction(ctx,
     // 3)` from `Script_Pump` slot state 3/5. With objects in flight this is
     // what starts the arrival object (mode 2, state 7 -> 9). The scan queues
-    // it when the player's feet leave the quad - which is now what happens
-    // for a zone the scan ARMED.
+    // it when the player's feet leave the quad - which is what happens for
+    // a zone the scan ARMED.
     //
-    // **RECONSTRUCTION, narrowed 2026-09-02**: a transition caller whose zone
+    // **RECONSTRUCTION**: a transition caller whose zone
     // is in NO prompt slot - a probe that queued the enter action itself, or
     // a startup script's own `area.goto` - can never receive a leave from the
     // scan, and the Session issues it the frame the departure object ends,
@@ -1362,8 +1358,8 @@ public:
     // compares it with what it has going. -1 is "nothing asked yet".
     int  musicTrack() const { return musicTrack_; }
     bool musicLoops() const { return musicLoop_; }
-    // THE MUSIC'S LEVEL (2026-09-05, from a reader hearing the effects "very
-    // low"). The engine's per-frame music update (05_sys.c ~995) hands
+    // THE MUSIC'S LEVEL (without it the effects sound very low under the
+    // music). The engine's per-frame music update (05_sys.c ~995) hands
     // `Music_SetVolume` a SUM of attenuations, each 0 full .. 100 silent and
     // converted as `-10000 * v / 100` hundredths of a dB - one point per dB:
     //     dword_90EF90   the BASE: 10 while `Actor_EnterDialogueMode`, else 0
@@ -1432,10 +1428,9 @@ public:
     // with them: AREA 222's airlock beat holds at pc 2360 and releases at
     // 2414, after its last `camera.set`.
     //
-    // Corrected 2026-09-03: this said the tick "skips its whole input pass" and
-    // that the update "pins the transform to rest". It does neither - it re-pins
-    // the blend and carries on, and the port's literal reading of "rest" drew a
-    // T-pose (todo/omk-play.md 43). A held channel is also what tells the
+    // The tick does NOT skip its whole input pass, and the update does NOT pin
+    // the transform to rest - it re-pins the blend and carries on; a literal
+    // reading of "rest" draws a T-pose (todo/omk-play.md 43). A held channel is also what tells the
     // FOLLOW CAMERA to stand down (`sub_415D10`), which is omk-play 42.
     bool playerAnimHeld() const { return playerAnimHeld_; }
     // A HARNESS, like `harnessStartDialogue`: hold the player the way
@@ -1670,16 +1665,15 @@ private:
     // `Area_LoadScx` (0x0041B4E0) fills THE SLOT's object container (`slot+8`)
     // and there are TWO resident slots, so the engine keeps two pools and a
     // departure object resolves "against the scene the player is still
-    // standing in". This port kept ONE, keyed on `sceneArea_`, and
-    // `reloadScene` discarded the outgoing pool the moment the active area
-    // changed - so a door named by a transition that completed first could no
-    // longer be found, and `startTransitionObject` answered the miss with
-    // `-2`, "ends next frame", silently. That is the tunnel's four doors,
-    // none of which ever played.
+    // standing in". With ONE, keyed on `sceneArea_`, `reloadScene` discards
+    // the outgoing pool the moment the active area changes - so a door named
+    // by a transition that completed first can no longer be found, and
+    // `startTransitionObject` answers the miss with `-2`, "ends next frame",
+    // silently: the tunnel's four doors never play.
     //
-    // It is the same collapse, one layer down, as the two decor STATES that
-    // `ResidentSlot::shown` fixed on 2026-09-03: give the slot what belongs to
-    // the slot.
+    // It is the same rule, one layer down, as the two decor STATES that
+    // `ResidentSlot::shown` keeps apart: give the slot what belongs to the
+    // slot.
     SceneRunner sceneOut_;                   // the outgoing pool, kept resident
     int         sceneOutArea_ = -1;          // whose it is, -1 when empty
     Sliders sliders_;                       // empty unless loadTraffic ran
@@ -1728,8 +1722,7 @@ public:
     // The engine's music update runs whatever is on screen; `frame()` calls
     // this, and a caller that skips `frame()` while a SCREEN has the world
     // (the viewer, for the start menu) must call it itself - or the fade-in
-    // seeded by `music.play` never decays and the menu's track stays silent,
-    // which is what happened on 2026-09-05.
+    // seeded by `music.play` never decays and the menu's track stays silent.
     void tickMusicLevel();
 private:
     int  pendingUiScreen_ = -1, pendingUiParam_ = -1, pendingUiVar_ = -1;
@@ -1941,10 +1934,10 @@ private:
     int          camTravel_ = 0;
     // THE TRAVEL CLOCK, in frames at 30 Hz and advanced by the FRAME DELTA:
     // the engine's `dword_4E7B34 += flt_4C30D8` (04_sys.c:4168), `30 / fps`
-    // capped at 3. Counting ticks instead ran every camera move at the
+    // capped at 3. Counting ticks instead runs every camera move at the
     // console's frame rate - the Bowie sequence, whose moves are timed to the
-    // music, fell behind it at ~15 fps (2026-09-30). A frame-bounded run's
-    // delta is exactly 1, so a headless run counts as it did.
+    // music, falls behind it at ~15 fps. A frame-bounded run's delta is
+    // exactly 1, so a headless run counts whole frames.
     double       camElapsed_ = 0.0;
     unsigned long camRequests_ = 0;   // every resolved `Camera_Request`
     long         frameNo_ = 0;

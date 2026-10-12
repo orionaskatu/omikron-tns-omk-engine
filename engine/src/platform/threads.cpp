@@ -45,8 +45,8 @@ namespace {
 // instead, which is what `threads.h` promises and what `thread_probe` checks.
 #if defined(__vita__)
 // ON THE VITA `thread_local` IS NOT PER THREAD for the kernel threads made
-// below (2026-09-26: the crowd's `composePose` scratch, shared by main and a
-// worker, died on a garbage index), so a shared counter here would be raced
+// below (the crowd's `composePose` scratch, shared by main and a worker,
+// dies on a garbage index), so a shared counter here would be raced
 // by every worker and could be left non-zero - silently running every later
 // call inline. Instead: a WORKER is recognised by its thread id (`isWorker`)
 // and runs a nested call inline, and the one outside caller keeps this plain
@@ -105,14 +105,14 @@ struct Threads::Impl {
     const std::function<void(std::size_t, std::size_t)>* body = nullptr;
     int chunks = 0;
     // THE NEXT CHUNK TO TAKE, claimed by each woken worker. Taking
-    // `slice(w->index)` instead - the chunk of the worker's own SLOT - was
-    // wrong whenever fewer chunks than workers were handed out: the semaphore
+    // `slice(w->index)` instead - the chunk of the worker's own SLOT - is
+    // wrong whenever fewer chunks than workers are handed out: the semaphore
     // wakes ANY waiting worker, so with two workers and two chunks the one
-    // woken could be worker 1, which then ran chunk 1 - the CALLER's own -
-    // while chunk 0 ran nowhere. Two threads posing the same walkers,
-    // reallocating the same vectors: the Bowie sequence's heap corruption on
-    // the console (2026-09-30), exposed once the side-plane cull left one or
-    // two walkers to pose. The `std::thread` pool always took `taken++`.
+    // woken can be worker 1, which then runs chunk 1 - the CALLER's own -
+    // while chunk 0 runs nowhere. Two threads posing the same walkers,
+    // reallocating the same vectors: a heap corruption on the console (seen
+    // in the Bowie sequence, with only one or two walkers left to pose). The
+    // `std::thread` pool takes `taken++` too.
     std::atomic<int> taken{0};
     SceUID work = -1;      // signalled once per worker that has a chunk
     SceUID done = -1;      // signalled by each worker when its chunk is done
@@ -137,9 +137,8 @@ struct Threads::Impl {
     }
 
     // The worker's entry point. A MEMBER, because `Impl` is private to
-    // `Threads`: the first version was a free function in an anonymous
-    // namespace, which cannot name it - and nobody knew, because this half had
-    // never been compiled until the first VitaSDK build (2026-09-18).
+    // `Threads`: a free function in an anonymous namespace cannot name it.
+    // Only a VitaSDK build compiles this half, so nothing else would say so.
     static int workerMain(SceSize, void* argp);
 };
 

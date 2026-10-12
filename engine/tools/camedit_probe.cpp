@@ -17,9 +17,6 @@
 // carries a chunk 10 - the whole 24112 - as text, one row a frame, for the
 // Python side to difference. That is the corpus test; the three frames above
 // are what a person reads.
-//
-// Before 2026-09-02 there was nothing to print: `SceneRunner` did not read
-// chunk 10 and `o3de/camedit.h` had a parser and no sampler.
 #include "formats/scx.h"
 #include "o3de/camedit.h"
 #include "platform/datafs.h"

@@ -35,14 +35,14 @@ struct OverlayPlanes {
     // 32b..32b+31; past 2048 pixels the last bit): a reader may leave the
     // rest of a touched row alone - an untouched pixel is the key there, and
     // the planes' c = 0, m = 255 says the same thing (`playgpu_gl1.cpp`; the
-    // iBook's fight HUD, two gauges at the screen's two edges, touched ~300
-    // rows a few blocks wide each, and the glue walked all 640 of each)
+    // iBook's fight HUD, two gauges at the screen's two edges, touches ~300
+    // rows a few blocks wide each, which spares the glue all 640 of each)
     std::vector<std::uint64_t> rowBlocks;
     std::size_t curY = 0;
     // the row the last `row` call landed in, [lo, hi) as pixel indices: every
     // pass walks the frame row by row, so this spares the DIVIDE per pixel -
     // which the Vita's Cortex-A9 has no instruction for (a library call; the
-    // black fade's bands alone cost 46-57 ms a frame on a console, 2026-09-29)
+    // black fade's bands alone cost 46-57 ms a frame on a console that way)
     std::size_t lo = 1, hi = 0;
     void begin(int width, int height) {
         on = true;
@@ -78,7 +78,7 @@ struct OverlayPlanes {
 // At NAMESPACE scope, not a function-local static: the passes call this per
 // PIXEL, and a local static with a constructor is a thread-safe guard on every
 // call - five `dmb ish` barriers in the subtitle box's pixel loop on the Vita
-// (read in its object, 2026-09-29). Nothing touches it before `main`.
+// (read in its object). Nothing touches it before `main`.
 // ONE strong definition in the .cpp, not an `inline` variable: an inline
 // variable with a constructor is a WEAK object, and Retro68's XCOFF linker
 // gives a weak .bss object NO STORAGE - its constructor then writes over
@@ -92,10 +92,10 @@ inline OverlayPlanes& overlayPlanes() { return g_overlayPlanes; }
 // an untouched pixel stays the key, which every backend sends as "the world":
 // the same as the planes' c = 0, m = 255), `maskRow` 1 on a row whose mask may
 // be nonzero, and a block's mask zeroed ONCE when it stops being touched
-// (`maskBlocks` remembers which may be nonzero). It walked every pixel of a
-// touched row, and on the 3DS zero-filled every untouched row every frame -
-// the fight HUD's gauges touch ~300 rows a few blocks wide (the iBook,
-// 2026-10-11, `todo/handoff-classic-mac.md` 3f step 3g).
+// (`maskBlocks` remembers which may be nonzero). Without the blocks it walks
+// every pixel of a touched row, and on the 3DS zero-fills every untouched row
+// every frame - the fight HUD's gauges touch ~300 rows a few blocks wide (the
+// iBook, `todo/handoff-classic-mac.md` 3f step 3g).
 inline void resolveOverlayPlanes(std::uint16_t* px, int w, int h, const OverlayPlanes& ov,
                                  std::vector<std::uint8_t>& mask, std::vector<std::uint8_t>& maskRow,
                                  std::vector<std::uint64_t>& maskBlocks) {

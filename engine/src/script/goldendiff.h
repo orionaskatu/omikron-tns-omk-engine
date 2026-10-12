@@ -50,8 +50,9 @@ struct TagEvent {
     }
 };
 
-// Which operand each handler narrates, from tables/vm_announce.json - DATA,
-// because a hand-written map was wrong three ways within an hour.
+// Which operand each handler narrates, from tables/vm_announce.json - DATA
+// derived from the assembly, because a hand-written map goes wrong easily
+// (CLAUDE.md 2, `vm_announce`).
 class AnnounceMap {
 public:
     static AnnounceMap loadJson(const std::string& path);

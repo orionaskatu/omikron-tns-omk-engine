@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE INSTRUMENT PANEL on the 3DS's BOTTOM screen (`todo/3ds-port.md` step
-// 2b, the reader's ask of 2026-10-05: "use the bottom screen to show
-// available stats (like fps, used ram, cpu usage, ...), some debugging
-// options (button to capture a frame for the debugger for example)").
+// 2b): the run's stats (fps, RAM in use, CPU time, ...) and debugging
+// controls (a button to capture a frame for the profiler, for example).
 //
 // An INSTRUMENT, not the game: the original had one screen, and nothing the
 // game draws goes here (the interface stays on the top screen until the
-// per-screen survey, step 10). Drawn on the CPU into a 320x240 RGB565
+// per-screen survey, `todo/3ds-port.md` step 10). Drawn on the CPU into a 320x240 RGB565
 // surface with the ENGINE'S OWN text renderer and the game's SMALL face
 // (`FONTS/SMALL.FNT`, 12 px - the smallest of the 13), so the frontend still
 // draws no text of its own (A8 rule 3), and redrawn a few times a second -

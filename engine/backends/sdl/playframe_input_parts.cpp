@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE INPUT PHASE: the pump, the pause, the game's tick, scripted motion, the sound effects.
-// Parts of `PlayState::phaseInput`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseInput`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
@@ -70,9 +70,9 @@ int PlayState::inputPump() {
         // Placed HERE, before any gate, so it can tell the three links apart:
         // whether the frontend reports motion at all, whether the shoot
         // camera is still live, and whether the aim's own block is reached.
-        // The first version of this sat inside `if (adventure)` and could not
-        // distinguish "no motion" from "never got there", which is exactly
-        // the ambiguity that makes a diagnostic worthless.
+        // Inside `if (adventure)` it could not distinguish "no motion" from
+        // "never got there", which is exactly the ambiguity that makes a
+        // diagnostic worthless.
         if (shootMode && (host.mouseDX != 0.0f || host.mouseDY != 0.0f)) {
             static long mouseTold = -1;
             if (mouseTold < 0 || n - mouseTold > 120) {
@@ -143,9 +143,8 @@ void PlayState::inputPause() {
     // limitation of this frontend for the rest. Nothing here models the
     // three slots.
     //
-    // This used to `break`, ending the run: the viewer quit on the one
-    // key everybody presses, so a reader could not stop to look at
-    // anything. Quitting is now what the screen's own `Quitter le jeu`
+    // ESC does not end the run - it is the one key everybody presses to
+    // stop and look. Quitting is what the screen's own `Quitter le jeu`
     // does, behind its Oui/Non confirm, exactly as in the game.
     // A scripted key is fed on its own frame and then RELEASED, which is
     // the only way it produces an edge - `Game_Frame`'s filter is why
@@ -172,14 +171,14 @@ void PlayState::inputPause() {
     }
     // the `--hold` stream: held, not tapped, and only once he can walk
     // ...and it keeps feeding while a SCREEN is up. Gated on `adventure`
-    // alone it stopped the moment the sneak opened - opening a screen is
+    // alone it would stop the moment the sneak opens - opening a screen is
     // exactly what takes `adventure` false - so a stream could press TAB
     // and then never press anything again, and the screen could not be
     // driven headless at all.
     // ...and a CONVERSATION, which is neither `adventure` nor `walk` and
-    // so used to swallow the whole stream: every scripted press after the
-    // one that opened a dialogue was dropped, and a headless run could
-    // never reach the end of one. `--hold` is a harness, and a harness
+    // so would otherwise swallow the whole stream: every scripted press
+    // after the one that opened a dialogue dropped, and a headless run
+    // never reaching the end of one. `--hold` is a harness, and a harness
     // that cannot press ENTER through a conversation cannot test what
     // happens when the conversation ends.
     if ((adventure || walk || session.dialogOpen()) && !holds.empty()) {
@@ -221,7 +220,7 @@ void PlayState::inputPause() {
     // A RECONSTRUCTION of the effect, labelled: `Input_Poll` reads the
     // keyboard as a STATE array (`GetDeviceState`, vtable +36), which a
     // buffer flush does not touch, so the reading alone does not show what
-    // keeps a key still held from counting. What the reader sees in the
+    // keeps a key still held from counting. What a player sees in the
     // game - nothing leaks - is ported as its plainest form: every key,
     // button and pad button held through the close is ignored until it is
     // released. ESC is left out, as the engine does: it is polled with
@@ -257,14 +256,13 @@ void PlayState::inputPause() {
     // rather than a step per press. A screen over the world restores
     // `Ui_BeginScreen`'s 0x203F.
     // Keyed on the SCREEN, not on adventure mode. `Ui_BeginScreen` sets
-    // 0x203F when a screen opens and the last close puts it back to 0, and
-    // this used to do that only while `adventure` was true - which is
-    // exactly when it is NOT: a screen over the world takes `adventure`
-    // false in the same breath, so the mask stayed at the world's 0 and
-    // every held key repeated every frame. Harmless while the only
-    // screens came from `ui.open` during the boot, where `adventure` is
-    // false and the mask is still the 0x203F set at start-up; the sneak
-    // is the first screen opened from inside the world.
+    // 0x203F when a screen opens and the last close puts it back to 0.
+    // Keyed on `adventure` it would apply exactly when it should NOT: a
+    // screen over the world takes `adventure` false in the same breath,
+    // so the mask would stay at the world's 0 and every held key repeat
+    // every frame. Screens from `ui.open` during the boot do not show it
+    // (`adventure` is false and the mask is still the 0x203F set at
+    // start-up); the sneak, opened from inside the world, does.
     // THE REPEAT MASK IS EXPRESSED IN *AVENTURE*'S SLOTS, and that is a
     // second place the per-group slot numbering bites (`todo/omk-play.md`
     // 97f). `Ui_BeginScreen` sets 0x203F - slots 0..5 and 13 - which in
@@ -273,11 +271,10 @@ void PlayState::inputPause() {
     // slot 8, which 0x203F does NOT contain - so it is never
     // edge-filtered and arrives as a LEVEL, every frame it is held.
     //
-    // On its own that was harmless, because nothing read slot 8. Once the
-    // confirm was re-mapped onto it, holding ENTER confirmed on every
-    // frame: a reader pressed it on `Quitter le jeu` and came straight
-    // back to the menu, and said exactly what it was - "maybe the input
-    // is counted twice". So the mask has to follow the group too.
+    // With the confirm mapped onto slot 8, an unfiltered slot 8 confirms on
+    // every frame ENTER is held: pressed on `Quitter le jeu`, it comes
+    // straight back to the menu, the input counted twice. So the mask has
+    // to follow the group too.
     if (walk) in.setRepeatMask(omk::kUiRepeatMask | (shootMode ? 0x100u : 0u));
     else if (adventure) in.setRepeatMask(0);
     bits = in.frame(st);
@@ -300,9 +297,9 @@ void PlayState::inputPause() {
     // THE WORLD'S ACTION BUTTON IS NOT READ HERE. `Game_RaiseEvent(6, 4)`
     // is raised from the ACTOR tick (21_d3d.c:3460, :3513, :3962 - the
     // `.CTL` state handlers), so what stands for it in this loop is
-    // `MDACTION` firing; see `actionFromMove` below. Reading it off this
-    // edge instead was wrong twice over - it fired while a SCREEN had the
-    // input, and it was spent by the time the sneak's own confirm let go.
+    // `MDACTION` firing; see `actionFromMove` below. Read off this edge
+    // instead, it would fire while a SCREEN had the input, and be spent by
+    // the time the sneak's own confirm let go.
 
     // THE DIALOGUE CLOCK IS REAL TIME, not a frame count.
     //
@@ -310,8 +307,8 @@ void PlayState::inputPause() {
     // plays at its own rate whatever this loop does. Advancing the line by
     // 1/30 s per FRAME assumes the loop runs at exactly 30 - and it does
     // not, because a software-rasterised character costs more than the
-    // 33 ms budget - so the pose and the voice drift apart, which is what
-    // a reader saw. The web viewer makes the same choice for the camera
+    // 33 ms budget - so the pose and the voice would drift apart. The web
+    // viewer makes the same choice for the camera
     // move and says why: wall clock, so losing or pausing the audio cannot
     // rewind it.
     //
@@ -332,10 +329,10 @@ void PlayState::inputPause() {
         lastMs = nowMs;
         // THE ENGINE'S OWN CLAMP (docs/BOOT.md 4): `flt_4C30D8 = 30 / fps`,
         // capped at 3.0 - three frames, 0.1 s - so below 10 fps the game
-        // SLOWS DOWN. The port used to fall back to 1/30 above 0.25 s,
-        // and a console at 200-300 ms a frame (2026-09-22) then alternated
-        // six frames of motion with one, which a reader saw as the camera
-        // "shaking". Every frame is now a delta the engine could produce.
+        // SLOWS DOWN. A fall-back to 1/30 above 0.25 s instead makes a
+        // console at 200-300 ms a frame alternate six frames of motion with
+        // one, which shows as the camera "shaking". Every frame is a delta
+        // the engine could produce.
         if (dt < 0.0) dt = 1.0 / 30.0;
         if (dt > 3.0 / 30.0) dt = 3.0 / 30.0;
         dt *= speed;                     // --speed, the engine's own trick
@@ -388,13 +385,12 @@ void PlayState::inputTick() {
     // the frame delta to 0.0. That is why `Slider_TickRide` sits behind
     // `flt_4C30D8 != 0.0` two lines down in `Game_Tick`, and why
     // `Game_Tick` needs no test for an open screen anywhere in it
-    // (docs/UI.md 2a: it has none - that reading was corrected once
-    // already, when the sneak froze the city).
+    // (docs/UI.md 2a: it has none).
     //
     // So the pause is not "skip the tick": every subsystem still runs,
-    // on a delta of zero. Modelled here for the same reason - the port
-    // used to express it as `adventure = false`, which stops the PLAYER
-    // and leaves the crowd walking behind the menu.
+    // on a delta of zero. Modelled here the same way - `adventure =
+    // false` would stop the PLAYER and leave the crowd walking behind
+    // the menu.
     uiPause = walk && openScreen == omk::screen::Pause;
     if (uiPause) { frameSec = 0.0; session.setFrameSeconds(0.0); }
     gameClock += session.frameDelta();   // 1.0 exactly at 30 and under --frames
@@ -465,8 +461,7 @@ void PlayState::inputMotion() {
     // `Script_MoveObjectOnPath` ends in `o3de_SetNodePos(node, x, y, z)`
     // with the path sample OUTRIGHT, so a moving object is a set MESH
     // placed at a world position, named through the object's own first
-    // string table. 4841 sites - the most-used script function there is -
-    // and nothing moved until 2026-09-03.
+    // string table. 4841 sites - the most-used script function there is.
     //
     // The mesh's corners are offset by (target - the mesh's authored
     // position), which is what moving its origin means; `cornerMesh` says
@@ -636,15 +631,15 @@ void PlayState::inputMotion() {
                                 mo.hasFrom ? "param 5 set: a displacement"
                                            : "param 5 zero: the sample OUTRIGHT");
                 }
-                // THE CONJUGATE, the engine's sense (2026-10-02). `Path_Sample`
+                // THE CONJUGATE, the engine's sense. `Path_Sample`
                 // hands `sub_437160` `Matrix3x3_FromQuaternion(q)` - the
                 // standard R(q), row-major - and every vertex the node
                 // carries is turned by its TRANSPOSE: `sub_4947F0` computes
                 // `m[0]x + m[3]y + m[6]z`, as `Matrix3x3_RotateVector` does.
                 // So a path's key turns the mesh by conj(q). Taking q as it
-                // stands turned Kay'l's chest's two lid pieces the wrong
-                // way about their centres, so they crossed in a V instead
-                // of opening on the hinge (a reader, 2026-10-01). The same
+                // stands turns Kay'l's chest's two lid pieces the wrong
+                // way about their centres, so they cross in a V instead
+                // of opening on the hinge. The same
                 // rule a scene clip's root obeys (CLAUDE.md 6).
                 p.q = omk::Quatf{mo.quat[0], -mo.quat[1], -mo.quat[2], -mo.quat[3]};
                 p.rotated = mo.rotated;
@@ -1285,9 +1280,9 @@ void PlayState::inputSounds() {
         // BOTH FIGHTERS, not just the player. `Cef_TickEffects` runs on
         // every channel the engine ticks, and
         // `Actor_TickPlayerAndOpponent` ticks two - so the opponent's hit
-        // reactions carry their own cries and impacts. This drained only
-        // the player's, which is why a reader heard and saw a blow *"only
-        // when the player is touched"* (`todo/fight-mode.md` 15.10).
+        // reactions carry their own cries and impacts. Draining only the
+        // player's, a blow would be heard and seen only when the player is
+        // touched (`todo/fight-mode.md` 15.10).
         std::vector<omk::CefChannel::EffectSound> chanSounds = player->sounds();
         if (fightRun.active && fightRun.foeChannel)
             for (const auto& es : fightRun.foeChannel->sounds())
@@ -1374,8 +1369,8 @@ void PlayState::inputSounds() {
             // `Sound_Play3D` (0x0046CDC0), so a scene sound is placed and
             // attenuated by distance from the listener. Played flat, an
             // ambience is as loud across the city as beside it and goes on
-            // through a cutscene whose camera is nowhere near it - which
-            // is exactly what a reader reported (omk-play 73).
+            // through a cutscene whose camera is nowhere near it
+            // (omk-play 73).
             //
             // **RECONSTRUCTION, and labelled in three places** (this, the
             // frontend, and the entry): WHERE the sound is comes from the
@@ -1506,9 +1501,9 @@ void PlayState::vehicleSounds() {
 
 // ---- THE MOVING COLLISION, PLACED ON DEMAND (todo/cpu-vs-original.md tier C)
 //
-// A moving mesh's collision triangles used to be re-placed every frame it
-// moved - ~2730 in Anekbah, most of them far from anything that probes. Now
-// the frame RECORDS the placement (`lazyMeshes`) and the triangles are placed
+// Re-placing a moving mesh's collision triangles every frame it moves is
+// ~2730 in Anekbah, most of them far from anything that probes. So the
+// frame RECORDS the placement (`lazyMeshes`) and the triangles are placed
 // the first time a query reaches the mesh: a grid query through its part
 // (`SplitSoupGrid::place`), a linear one through `omk::ensurePlaced`, which
 // places all. The same rest, the same `placePoints`, the same placement - so

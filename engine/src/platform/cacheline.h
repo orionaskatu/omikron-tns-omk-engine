@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // WHOLE CACHE LINES WRITTEN WITHOUT BEING READ FIRST - PowerPC's `dcbz`
-// (`todo/handoff-classic-mac.md` 3f step 3o, 2026-10-11, for the iBook G3).
+// (`todo/handoff-classic-mac.md` 3f step 3o, for the iBook G3).
 //
 // A store to a line that is not in the cache makes a G3 READ the line from
 // memory before it can write into it, so a pass that writes a frame whole -

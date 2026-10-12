@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE VIEWER'S COMMAND LINE - every flag `omk-play` takes, and the parse.
 //
-// Moved out of `play.cpp`'s `main` by `todo/play-split.md` S2 (2026-10-02)
-// without a change: the declarations, their defaults and their comments are
+// Split out of `play.cpp`'s `main` by `todo/play-split.md` S2: the
+// declarations, their defaults and their comments are
 // the struct's fields, and `parse` is the usage text, the `--help` scan, the
 // tables lookup and the argument loop, verbatim. Nothing here includes SDL, so
 // a platform with no command line (the Vita) can fill one directly.
@@ -35,7 +35,7 @@ struct PlayOptions {
     // THE DISPLAY. The interface is authored at 640x480 and its coordinates
     // are scaled by `I2D_ScaleX/Y` (`v * w / 640`, `v * h / 480`), so a bigger
     // display spreads the same layout without enlarging the glyphs. 800x600 is
-    // the mode a reader's own screenshot of the original is in.
+    // the mode of a screenshot of the original taken in play.
     int dispW = 800, dispH = 600;
     bool resFlag = false;      // --res given: it beats the ini's screen_x/screen_y
     int fullscreenFlag = -1;   // --fullscreen 1 / --window 0; -1 = the settings'
@@ -138,24 +138,20 @@ struct PlayOptions {
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.
     bool dither = true;
-    // WHICH WAY THE MOUSE TURNS HIM. A reader played the shoot phase and said
-    // both axes were inverted, so the defaults are THEIR sense (`todo/
-    // omk-play.md` 97b). `--invert-x` / `--invert-y` put each one back.
+    // WHICH WAY THE MOUSE TURNS HIM. The defaults are the sense the shoot
+    // phase was played and confirmed in, on both axes (`todo/omk-play.md`
+    // 97b). `--invert-x` / `--invert-y` put each one back.
     //
-    // This used to say nothing in the data fixes the sign because "the engine
-    // reads mouse motion nowhere in the binding path". The binding path, no -
-    // but it READS it: `sub_47D370` (one caller) turns `+420` by
-    // `-word_90E1AC * 0.01 * dx` and the pitch by `word_90E1AE * 0.01 * dy`,
-    // its sign from the invert byte at 0x90E1B0, clamped at +-45 degrees -
-    // all three in the options header. So the senses, the sensitivities
-    // below and the +-70 clamp are this port's and the original's are
-    // readable (`todo/shoot-mode.md` 7h). Found 2026-09-10 and PORTED the same
-    // day (`todo/shoot-mode.md` 8.5): the sensitivities, row 25's invert and
-    // the +-45 clamp are the engine's now; the pitch's absolute sign and
-    // `--invert-x` stay this port's.
+    // The binding path reads no mouse motion, but the engine READS it:
+    // `sub_47D370` (one caller) turns `+420` by `-word_90E1AC * 0.01 * dx`
+    // and the pitch by `word_90E1AE * 0.01 * dy`, its sign from the invert
+    // byte at 0x90E1B0, clamped at +-45 degrees - all three in the options
+    // header (`todo/shoot-mode.md` 7h). PORTED (`todo/shoot-mode.md` 8.5):
+    // the sensitivities, row 25's invert and the +-45 clamp are the
+    // engine's; the pitch's absolute sign and `--invert-x` stay this port's.
     bool mouseInvertX = false, mouseInvertY = false;
     // The shoot camera's EYE LIFT, in inches. THE DEFAULT IS THE ENGINE'S OWN
-    // RULE, found where a reader told me to look: `Camera_Request` stores the
+    // RULE: `Camera_Request` stores the
     // subject and calls `sub_414520`, whose case 4 - the mode `Shoot_Enter`
     // asks for - sets the camera's `+180`/`+128` to `0.7 * actor[+276]`, and
     // `+276` is the model's own lowest sphere extent below its origin

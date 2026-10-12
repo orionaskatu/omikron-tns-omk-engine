@@ -347,7 +347,7 @@ int poseMode(int argc, char** argv) {
             }
         }
     }
-    // THE LIGHT (step 2): three lights around the body - one strong enough
+    // THE LIGHT (todo/gpu-skinning.md step 2): three lights around the body - one strong enough
     // to reach `lightRamp`'s 255 clamp - lit on the CPU by `applyLights` on
     // the posed normals, and on the GPU from `lightReach`'s list. From BLACK
     // (the crowd's rule) and on top of the baked colour. The largest channel

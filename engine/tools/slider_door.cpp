@@ -49,8 +49,8 @@ int main(int argc, char** argv) {
     // loads `anims\\slf_112.3da` into `dword_90EF28` and `anims\\slf_113.3da`
     // into `dword_9103D8` (05_sys.c 1842-1844), the ENTRY (`MDACTION`) reads
     // the first and the EXIT (`sub_468FA0`) reads the second. Measuring group
-    // 61 against 112, as this did until 2026-09-08, gives an offset that is
-    // wrong by the difference between the two references.
+    // 61 against 112 gives an offset that is wrong by the difference between
+    // the two references.
     int fails = 0;
     float r112[3] = {0, 0, 0}, r113[3] = {0, 0, 0};
     const auto ref112 = fs.read("ANIMS/slf_112.3da");
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
     }
     return fails ? 1 : 0;
 }
-// ---- appended 2026-09-08: the clips' own ROOT TRAVEL ---------------------
+// ---- the clips' own ROOT TRAVEL ------------------------------------------
 // `Anim_RootDelta` sums position keys 1..N (key 0 is the rest). Printed at a
 // few frames so the carry-in can be checked against the door offset: from
 // the door, the entry clip should bring the root back onto the slider.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE WORLD'S SCENE: the camera, the texture pool, the props, the guns, the bolts.
-// Parts of `PlayState::phaseWorld`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // The letterbox, the camera, the instrument override
@@ -12,8 +12,8 @@ void PlayState::worldCamera() {
     view = dlgView;
     feedCameraHead();
     // THE LETTERBOX. Camera mode - conversations and cutscenes - is
-    // 1.818:1, which the dialogue captures measure and which a reader
-    // confirmed does NOT belong to free roaming. Everything the
+    // 1.818:1, which the dialogue captures measure and which, watching
+    // the original, does NOT belong to free roaming. Everything the
     // replica draws in 3D so far is camera mode: a scripted world
     // camera or a dialogue camera, never a player-controlled one. The
     // strip's height follows from the display's WIDTH, so no
@@ -21,9 +21,8 @@ void PlayState::worldCamera() {
     // framebuffer was cleared to.
     view.vw = dispW;
     view.vh = static_cast<int>(dispW / 1.8181818 + 0.5);
-    // ...and adventure mode is NOT camera mode: a reader confirmed
-    // the strip belongs to conversations and cutscenes, so the
-    // walk is drawn full-frame.
+    // ...and adventure mode is NOT camera mode: the strip belongs to
+    // conversations and cutscenes, so the walk is drawn full-frame.
     // (`|| uiPause`: a pause does not change the camera mode, so it
     // does not put bars on a walk either.)
     //
@@ -192,8 +191,7 @@ void PlayState::worldCamera() {
             if (!dirty.empty()) {
                 // `OMK_NO_DIRTY=1` leaves the list unset here too, as the motion
                 // patch does - the comparison run re-does everything (`engine:
-                // dirty corners`, whose list-less run walked once from this
-                // site until 2026-10-11)
+                // dirty corners`)
                 static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
                 if (!noDirty) w.geo.dirtyFrom = w.geo.revision;
                 w.geo.revision = ++worldGeoRev;
@@ -211,12 +209,11 @@ void PlayState::worldCamera() {
     //
     // `fight.begin` ends with `Camera_Request(0Eh, …)`, and a mode
     // request REPLACES the installed mode - so a fight supersedes the
-    // mode-13 editing the scripted approach was using. This arm sat
-    // after the editing arms until 2026-09-16 and a reader watched the
-    // consequence: AREA 245's approach ends with "editing over - the
-    // camera HOLDS its last frame", that hold then won every frame of
-    // the fight, and the view never moved again. The fight camera was
-    // being computed correctly and thrown away.
+    // mode-13 editing the scripted approach was using. Placed after the
+    // editing arms, this arm would lose to the hold: AREA 245's approach
+    // ends with "editing over - the camera HOLDS its last frame", that
+    // hold would win every frame of the fight, and the view would never
+    // move again, the fight camera computed and thrown away.
     if (!haveDlgCam && fightRun.active && fightRun.fight) {
         const omk::FightCamera& fc = fightRun.fight->camera();
         for (int k = 0; k < 3; ++k) {
@@ -265,10 +262,9 @@ void PlayState::worldCamera() {
         view.cam.rollDeg = editFromKnown
             ? editFromRoll + shortArc(editCam.roll - editFromRoll) * u
             : editCam.roll;
-        // A rolled shot is worth one line, once: the roll was DROPPED
-        // by the renderer until 2026-09-03 and a still frame cannot
-        // show it, so seeing the number is how a reader knows it is
-        // being applied at all.
+        // A rolled shot is worth one line, once: a dropped roll is
+        // easy to miss and a still frame cannot show it, so seeing the
+        // number is how a log says it is being applied at all.
         if (std::fabs(view.cam.rollDeg) > 0.5f && !rollTold) {
             rollTold = true;
             std::printf("  camera ROLL %.1f degrees is being applied "
@@ -331,10 +327,9 @@ void PlayState::worldCamera() {
         // (snapping inside 0.1 degrees), the preset resolved on THAT, then
         // the target chasing at dt/f42 and the eye at dt/f44 (1 reads as 2).
         // Rows 8 and 10 lag 0/8/8 and 0/8/16; row 9 is rigid. Without it the
-        // eye 276 behind swung with every change of the slider's heading -
+        // eye 276 behind swings with every change of the slider's heading -
         // 112, 118, 194 units in ONE frame at a lane change, against 10 a
-        // frame between: a reader's "the camera stutters sometimes when
-        // following the slider".
+        // frame between: the camera stutters following the slider.
         const auto lagged = [&](const float eyeOff[3], const float atOff[3], int f42, int f44, int f46) {
             sliderCamLag(at, -rz2[0], -rz2[2], eyeOff, atOff, f42, f44, f46, tEye, tAt);
         };
@@ -499,9 +494,8 @@ void PlayState::worldCamera() {
         // at to where it would stand, through the shown set's `shotSoup`
         // - the fight camera's own test (`sub_416570` -> `sub_444810`,
         // CollisionOnly skipped, 0x41 untested) - and the eye is brought
-        // in to nine tenths of the way to the wall. A reader, 2026-09-17:
-        // *"the camera does not respect collision and often goes outside
-        // the environment"*. RECONSTRUCTION, labelled: the engine's swim
+        // in to nine tenths of the way to the wall, so the camera does not
+        // go outside the environment. RECONSTRUCTION, labelled: the engine's swim
         // variant (`sub_413CD0`) sets camera flags 4 | 0x4800 and NOT the
         // land camera's flag 8, whose pass is the wall rule `sub_417070`;
         // what 0x4000 and 0x800 run is unread, so which rule keeps the
@@ -559,8 +553,8 @@ void PlayState::worldCamera() {
         // the camera mode, and `Game_Frame` renders with whatever is
         // installed, so the view behind the menu is the view that was
         // on screen. `adventure` alone is a per-frame mode that any
-        // screen takes false, so pausing used to swap the follow
-        // camera for the area's own camera 0 - the shot jumped the
+        // screen takes false, so on it pausing would swap the follow
+        // camera for the area's own camera 0 - the shot jumping the
         // moment the menu came up.
         // THE CAMERA THROUGH A WALL, measured: the one invariant
         // `sub_417070` exists to keep is that nothing solid lies
@@ -609,8 +603,7 @@ void PlayState::worldCamera() {
         // `camera_presets.json` row 4's three smoothing divisors are
         // ZERO. `followCamera()` is `cam_`, the SMOOTHED one - the
         // mode-0 preset's 3/8/8 - so aiming through it drags the view
-        // behind the mouse, which is what a reader described as
-        // turning "but not correctly". `resolveOffsets` is the same
+        // behind the mouse - turning, but not correctly. `resolveOffsets` is the same
         // resolve with NO lag, and the header says exactly what it is
         // for: "what `Camera_Request(mode)` gives a preset whose
         // three smoothing divisors are 0". The TAKE camera (mode 1)
@@ -632,10 +625,8 @@ void PlayState::worldCamera() {
             // way `camLift_` is subtracted from `pos` to lift the
             // subject off the feet in the first place.
             //
-            // Written as `-lift` this put the eye 29.8 BELOW the
-            // pelvis, which is 6.6 above the feet: ankle height, and
-            // exactly what a reader photographed when the view still
-            // looked low after the height itself was read correctly.
+            // Written as `-lift` this would put the eye 29.8 BELOW the
+            // pelvis, which is 6.6 above the feet: ankle height.
             const float lift = shootEyeSet ? shootEyeLift : player->headLift();
             const float eye[3] = {0.0f, lift, 0.0f};
             const float at[3]  = {0.0f, lift + 787.4016f * std::sin(rad),
@@ -889,18 +880,16 @@ void PlayState::worldTexturePool() {
     // ...AND IN A CONVERSATION. `Actor_EnterDialogueMode` puts the
     // player's channel on group 400, the dialogue stance, and he goes
     // on being drawn like any actor - the reverse shots of 402 frame
-    // him across the room. This viewer drew him only in adventure
-    // mode, so every cut to Kay'l during a conversation showed an
-    // empty floor. A reader: *Kay'l is not visible when the camera
-    // changes*. The controller ticks through the conversation, so
-    // its pose is the stance.
-    // ...and the THIRD time this mode test has been too narrow: a
-    // PAUSE also takes `adventure` false, and the pause screen draws
-    // over the live scene, so without `uiPause` the menu came up on
-    // a street with the player deleted from it. Same shape as the
+    // him across the room. Drawn only in adventure mode, every cut to
+    // Kay'l during a conversation would show an empty floor. The
+    // controller ticks through the conversation, so its pose is the
+    // stance.
+    // ...and a PAUSE also takes `adventure` false, and the pause
+    // screen draws over the live scene, so without `uiPause` the menu
+    // would come up on a street with the player deleted from it. Same shape as the
     // conversation above.
     // SHOOT MODE IS FIRST PERSON, so the player's own body is not
-    // drawn - the reader's word, 2026-09-09, and the engine agrees:
+    // drawn - testimony of the original, and the engine agrees:
     // `Shoot_Enter` (0x004222D0) calls `sub_436CE0` on the player's
     // node, which is `o3de_Traverse` setting flag bit 2 on every node
     // that does not carry 0x200000, and bit 2 is inside the
@@ -944,14 +933,14 @@ void PlayState::worldTexturePool() {
                                       : "SHOWN again - sub_468FA0's o3de_EnableObject(node, 8); drawn: no"));
         }
     }
-    // ...AND THE EXEMPTION, ported 2026-09-10 (`todo/shoot-mode.md`
+    // ...AND THE EXEMPTION (`todo/shoot-mode.md`
     // 8.0). `Shoot_Enter` hides the player's tree with `sub_436CE0`,
     // which sets the hidden bit on every node WITHOUT 0x200000 - and in
     // HO1_FN exactly three carry it: `UAvantg`, `UBrasg`, `UMaing`, the
     // LEFT forearm, upper arm and hand, the arm the gun hangs on. So in
     // first person the engine draws that arm and nothing else of him;
-    // `Shoot_Leave` (`sub_436D20`) clears the bit. A reader's frames of
-    // the original show it: the arm and the gun, low at the right.
+    // `Shoot_Leave` (`sub_436D20`) clears the bit. Frames of the
+    // original show it: the arm and the gun, low at the right.
     drawArm = playerReady && player && !drawPlayer &&
                          session.shootMode().active() && shootCameraLive;
     mark("world begin, set");
@@ -1012,7 +1001,7 @@ void PlayState::worldProps() {
     };
     // OP 98, `object.place_at character, prop` (0x404DB0): the prop moved
     // under the character - every shipped site is the ring a beaten character
-    // drops. The handler, read 2026-10-06:
+    // drops. The handler:
     //
     //     Actor_GetPosAndFacing(actor, p)        his position (actor +0xF4)
     //     p.y += actor[+0x114]                   `+276`, origin to lowest point
@@ -1112,7 +1101,7 @@ void PlayState::worldProps() {
                 // header +12 is -1). Until it is, the object is
                 // carried at the hand mesh's own centre, which is the
                 // palm.
-                // THE ENGINE'S RULE, read 2026-09-05. The transform pass
+                // THE ENGINE'S RULE. The transform pass
                 // (`sub_4942A0`, 26_ole.c) composes a child as
                 // `world = parent.world + parent.worldMatrix * local`,
                 // `local` being the mesh record's +128..+136 - which
@@ -1214,13 +1203,11 @@ void PlayState::worldProps() {
             // TRANSCRIBED term for term - `Object_SetPlacement` builds a
             // prop's facing matrix with it, the transform pass composes
             // it under the scene root, and the vertex pass applies it
-            // row-vector (`v . M`, as `Matrix3x3_RotateVector`). The
-            // block this replaces claimed to be that function and was
-            // its INVERSE: numerically it equals the engine's with all
-            // three angles negated, so every prop on the floor was
-            // turned the wrong way - unnoticed on symmetric props until
-            // the rings came back from a correctly turned hand
-            // (2026-09-05).
+            // row-vector (`v . M`, as `Matrix3x3_RotateVector`). Its
+            // INVERSE equals the engine's with all three angles negated
+            // and turns every prop on the floor the wrong way - which
+            // symmetric props hide, and the rings from a correctly
+            // turned hand show.
             const double m00 = cz * cy,                 m01 = -(sz * cy),               m02 = sy;
             const double m10 = sy * sx * cz + sz * cx,  m11 = cz * cx - sx * sz * sy,   m12 = -(sx * cy);
             const double m20 = sz * sx - sy * cz * cx,  m21 = cx * sz * sy + sx * cz,   m22 = cy * cx;
@@ -1284,20 +1271,17 @@ void PlayState::worldProps() {
     }
     // THE PROPS' GEOMETRY CHANGES, AND THE GPU MUST HEAR OF IT. The Vulkan
     // backend keys a vertex buffer on the Geometry's pointer and
-    // `revision` and returns the cached buffer while they match - and
-    // `propGeo`'s revision was never bumped, so the props uploaded on the
-    // first frame were drawn for ever: the rings stayed on the floor and
-    // never appeared in the hand however right the CPU-side placement
-    // was (the log showed it exactly on the hand node for three days of
-    // reports). Every other per-frame geometry here bumps its revision;
-    // this one does now, whenever a prop is held or the set of shown
-    // props changes size.
-    // ...and on EVERY rebuild, not "while held or when the count changes":
-    // that rule missed the first frame after a release, so the GPU kept
-    // the last held frame's buffer - the rings standing where the hand
-    // let them go - while the CPU had them back on the floor (a reader's
-    // before/after screenshots, 2026-09-05). A few hundred corners a
-    // frame is nothing.
+    // `revision` and returns the cached buffer while they match - so with
+    // `propGeo`'s revision never bumped, the props uploaded on the first
+    // frame would be drawn for ever: the rings staying on the floor and
+    // never appearing in the hand however right the CPU-side placement
+    // (the log shows it exactly on the hand node). Every other per-frame
+    // geometry here bumps its revision, and so does this one, on EVERY
+    // rebuild - not "while held or when the count changes", which misses
+    // the first frame after a release, so the GPU would keep the last
+    // held frame's buffer - the rings standing where the hand let them
+    // go - while the CPU had them back on the floor. A few hundred
+    // corners a frame is nothing.
 }
 
 // The gun in his hand, each gunman's gun
@@ -1362,8 +1346,7 @@ void PlayState::worldGuns() {
             }
         }
     }
-    // ---- EACH GUNMAN'S GUN (a reader, 2026-09-11: *"they don't have
-    // any weapons in their hands"*). The same `sub_41C490` link as the
+    // ---- EACH GUNMAN'S GUN, in his hand. The same `sub_41C490` link as the
     // player's: the object in HIS hand (actor +164, his held slot), its
     // node under his `Maing` (actor +44), `tir` left out. Placed from
     // his hand as it was DRAWN last frame (`meshAt` / `meshRot`, which
@@ -1509,7 +1492,7 @@ void PlayState::worldBolts() {
         // `OMK_POOL_PAD=N` (a TEST instrument, `verify.py: engine: pool past
         // 64`): N spare copies of slot 0 here, so the shadow, the player and
         // the sprites land past the 64 a six-bit slot reaches - the shape a
-        // long session on the Quest reached by itself (2026-10-07, 72 slots).
+        // long session on the Quest reaches by itself (72 slots).
         // A padded frame must be the unpadded one, pixel for pixel.
         {
             static const int poolPad = [] {
@@ -1530,24 +1513,24 @@ void PlayState::worldBolts() {
         // `spriteTex` is indexed BY SPRITE ID, because an effect names
         // its sprite by id (`sub_4A5800`) - so 24 decoded sprites
         // spread over ids 0..137 make a 138-entry array of which 114
-        // are EMPTY. Inserting it whole put the pool at 154 slots
+        // are EMPTY. Inserted whole, it would put the pool at 154 slots
         // against the **64** a bucket key's low six bits can address,
-        // and every slot above 63 wrapped onto another texture: a
+        // and every slot above 63 would wrap onto another texture: a
         // particle drawing at the right size, in the right blend, with
-        // the wrong picture. That is the shape a reader reported as
-        // "visible but does not render correctly", and only some of
-        // them wrong, because which wrap depends on the id mod 64.
+        // the wrong picture - visible but not rendered correctly, and
+        // only some of them wrong, because which wrap depends on the id
+        // mod 64.
         //
         // So only the sprites that HAVE a texture go in, and
         // `spriteSlot` maps an id to its place. The id-keyed arrays
         // stay as they are - `particleGeometry` needs them for the
         // frame walk and the quad extent.
         //
-        // ...and only the ones this SCENE can ask for. Every decoded
-        // sprite used to go in - 24 of them, the global library's 20
-        // plus the scene's - and with ANEKBAH's 20 set textures, a
-        // second resident set, the staged characters and the player
-        // ahead of them the pool ran past **64**, which is all a
+        // ...and only the ones this SCENE can ask for. With every
+        // decoded sprite in - 24 of them, the global library's 20 plus
+        // the scene's - and ANEKBAH's 20 set textures, a second
+        // resident set, the staged characters and the player ahead of
+        // them, the pool runs past **64**, which is all a
         // bucket key's low six bits can address (`slot & 0x3F`). Past
         // that a sprite aliases onto another slot and draws someone
         // else's picture, which is a street light and a fire both

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// One frame out of an intro movie, as raw RGB - so a reader can LOOK at what
+// One frame out of an intro movie, as raw RGB - so a person can LOOK at what
 // the FLIS films actually contain. The Bowie opening with its credits is the
 // question: whether that sequence is pre-rendered video or in-engine text.
 //

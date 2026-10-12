@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE SDL FRONTEND's bodies - `sdlfront.h` has the class. Moved out of
-// `play.cpp` by `todo/play-split.md` S1c (2026-10-02) without a change.
+// THE SDL FRONTEND's bodies - `sdlfront.h` has the class. Split out of
+// `play.cpp` by `todo/play-split.md` S1c.
 #include "sdlfront.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
@@ -53,13 +53,12 @@ const std::map<int, int>& keymap() {
         {SDL_SCANCODE_RSHIFT, 0x36}, {SDL_SCANCODE_RCTRL, 0x9D},
         // ...and the LEFT control sends its OWN code, DIK_LCONTROL, because
         // the ENGINE maps it: `Input_Poll` sets state[157] whenever state[29]
-        // is down (and mirrors the two shifts), now ported as
+        // is down (and mirrors the two shifts), ported as
         // `keyboardAsPolled` (input/bindings.h). DIK_RCONTROL is the binding
         // for "Plonger" (group 1 slot 5, the key that SWIMS) and the adventure
-        // sidestep, and a Mac laptop keyboard HAS NO RIGHT CONTROL - a reader
-        // could not swim for that reason alone. This row used to send 0x9D
-        // and called that the viewer's choice; it was the game's all along
-        // (read 2026-09-18), and left SHIFT, which reached no binding, runs.
+        // sidestep, and a Mac laptop keyboard HAS NO RIGHT CONTROL - without
+        // the engine's mapping such a player cannot swim at all. Left SHIFT,
+        // which reaches no binding, runs.
         {SDL_SCANCODE_LCTRL, 0x1D},
     };
     return m;
@@ -165,10 +164,9 @@ int optionDisplayModes(int curW, int curH, std::vector<std::string>& names) {
 
 // ---- THE GATEWAY'S CLOCKS AND WINDOW (platform/frontend.h) -----------
 //
-// Each is the SDL call the viewer's game code used to make itself, moved here
-// unchanged (`todo/classic-mac-port-1999.md` step 5): the tick truncated to 32
-// bits as the old `Uint32` locals truncated it, the counter and its rate as
-// they were.
+// Each is the plain SDL call, behind the gateway
+// (`todo/classic-mac-port-1999.md` step 5): the tick truncated to 32 bits as
+// a `Uint32` truncates it, the counter and its rate as SDL gives them.
 std::uint32_t SdlFrontend::ticksMs() { return static_cast<std::uint32_t>(SDL_GetTicks()); }
 std::uint64_t SdlFrontend::perfCounter() { return SDL_GetPerformanceCounter(); }
 std::uint64_t SdlFrontend::perfFrequency() { return SDL_GetPerformanceFrequency(); }
@@ -184,8 +182,8 @@ void SdlFrontend::setWindowTitle(const std::string& t) {
 // The name field is real typing, so ask the host for characters. Not on
 // the Vita: there SDL answers with the system's on-screen keyboard, which
 // would cover the game from the first frame (`todo/vita-port.md` F4). Nor
-// on Android - the Quest opened its keyboard under the panel at boot
-// (2026-10-07); the name field's keyboard is `todo/quest-port.md` step 6.
+// on Android - the Quest opens its keyboard under the panel at boot;
+// the name field's keyboard is `todo/quest-port.md` step 6.
 void SdlFrontend::startTextInput() {
 #if !defined(__vita__) && !defined(__ANDROID__)
     SDL_StartTextInput();
@@ -351,8 +349,7 @@ bool SdlFrontend::pump(omk::HostInput& out) {
     // MOTION IS NOT A BINDING. That function maps motion to codes 0 and 4
     // only on the JOYSTICK arm; the mouse arm reads buttons alone. So
     // mouse look is not part of the 14-slot word at all - it aims the
-    // camera directly, which is what a reader who played these phases
-    // with a mouse describes.
+    // camera directly, which is how these phases play with a mouse.
     out.mouse.clear();
     out.mouseDX = 0; out.mouseDY = 0;
 #if defined(OMK_SDL3)
@@ -504,10 +501,9 @@ void SdlFrontend::present(const omk::Surface& fb) {
 // ---- THE MIXER -------------------------------------------------
 //
 // SDL's queue is a FIFO with no mixing, so a queued blip plays AFTER
-// whatever is already there - which is why the first version flushed the
-// device before each one. That is fine while a blip is the only sound and
-// wrong the moment music plays underneath: the first keypress would cut
-// the track. So the device is driven by a CALLBACK that sums two things:
+// whatever is already there. Flushing the device before each one is fine
+// while a blip is the only sound and wrong the moment music plays
+// underneath: the first keypress would cut the track. So the device is driven by a CALLBACK that sums two things:
 //
 //   * the STREAM - the movie soundtrack, or the music - a ring buffer fed
 //     as it is decoded;

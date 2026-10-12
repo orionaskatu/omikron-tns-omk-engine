@@ -8,10 +8,9 @@
 //
 // The table is the engine's own 66 entries; the banks name a subset. A name in
 // a bank that resolves to NOTHING would be a move the engine can fire and the
-// port cannot attribute - which is what the port did until 2026-09-04, when
-// nothing consumed `ChannelEvent::Kind::Move` at all (omk-play 66).
+// port cannot attribute (omk-play 66).
 //
-// It also prints the five rows the port now consumes, so a reader can see
+// It also prints the five rows the port consumes, so a person can see
 // which handlers are wired: 0 MDSNEAK0 (the sneak) and 3..6 MDACTION,
 // MDGETOBJ, MDLETOBJ, MDPUTSNK (the world take).
 #include "actor/moves.h"

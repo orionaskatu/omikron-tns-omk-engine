@@ -241,8 +241,8 @@ public:
     // `Script_Run` in pump case 2. See `pumpSlots`.
     void setHeldObject(bool held) { heldObject_ = held; }
 
-    // ...and what the pump then ASKS, which is the other half of it and was
-    // missing until 2026-09-04. `sub_406180`'s held-object arm does not queue
+    // ...and what the pump then ASKS, which is the other half of it.
+    // `sub_406180`'s held-object arm does not queue
     // blind: it runs the ACTIVATE script from its start with
     // `Script_RunToOpcode75` and queues only if the script reaches opcode 75
     // (`var.set.used_object`) - i.e. only if this zone asks what is in the

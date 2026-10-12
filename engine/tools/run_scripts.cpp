@@ -84,14 +84,13 @@ int main(int argc, char** argv) {
                 // ...and the same for `var.set.random` (120): the sweep's
                 // reference, `tools/sim`, stubs it, and a drawn value would
                 // make 197 slots diverge on the number rather than on the
-                // model. The live session draws (T1, 2026-09-02).
+                // model. The live session draws (T1).
                 vm.setRandomWrites(false);
                 // ...and for the WORLD opcodes - the object lists, the prop
-                // state, the timer, the stat block, the held object (T12,
-                // 2026-09-02): `tools/sim` stubs all twenty, and 975
-                // inventory sites alone would otherwise move the final DB
-                // that this sweep compares byte for byte. Off, the opcodes
-                // are recorded and inert, exactly as before.
+                // state, the timer, the stat block, the held object (T12):
+                // `tools/sim` stubs all twenty, and 975 inventory sites alone
+                // would otherwise move the final DB that this sweep compares
+                // byte for byte. Off, the opcodes are recorded and inert.
                 vm.setWorldWrites(false);
                 const auto r = vm.run(b, s.offset);
                 ++nslots;

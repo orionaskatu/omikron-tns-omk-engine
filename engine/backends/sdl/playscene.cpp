@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SET VIEWER (`--scene`): one decor set and its own cameras, flown with
-// WASD - no boot chain, no widget tree, no movies. Moved out of `play.cpp`
-// unchanged by `todo/play-split.md` (2026-10-02).
+// WASD - no boot chain, no widget tree, no movies. Split out of `play.cpp`
+// by `todo/play-split.md`.
 #include "playshared.h"
 #include "sdlfront.h"   // an SDL-side instrument: its own window and events
 using omk::SdlFrontend;
@@ -381,7 +381,7 @@ int sceneViewer(const std::string& fr, const std::string& setName,
             const char b2[2] = {static_cast<char>(v & 0xFF), static_cast<char>(v >> 8)};
             o.write(b2, 2);
         }
-        // the SIZE, not a literal: this said "640x480" whatever it wrote.
+        // the SIZE, not a literal: the dump is whatever size the window is.
         std::printf("wrote %s (%dx%d RGB565)\n", dump.c_str(), fb.w, fb.h);
     }
     if (!direct) front.close();

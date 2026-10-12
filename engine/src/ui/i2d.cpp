@@ -11,7 +11,7 @@ namespace {
 // interference effect `sub_432940`, `ui/interference.h`). The node cap only
 // adds up with that pool - 4096+200+100+220+220+16+10 = 4862.
 //
-// **Both have callers, and this said they had none until 2026-09-15.** Each
+// **Both have callers.** Each
 // has exactly one, inside a widget DRAW HOOK - `0x00477EB9` in `0x00477E00`
 // (the load panel's picture item) and `0x00477F44` in `0x00477ED0` (three
 // "monitor" boxes: the sneak, the terminal pages, MULTIPLAN) - and those hooks

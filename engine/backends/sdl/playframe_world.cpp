@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME'S WORLD PHASE - whoever is on screen, and the world when no screen is over it.
-// Part of `main`'s loop body, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); see `playframe.h` for what the names below refer to.
+// Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
 
 // A world-less frame the menu's cloud will cover (`fbCloudOwed`): a screen
@@ -29,9 +28,9 @@ int PlayState::phaseWorld() {
         // frame's sets are in - so a load that brings the set and its `.SCX`
         // in the SAME frame (the boot, a save) binds on that frame, as
         // `Area_LoadScx` does, and not one frame late. Bound from here alone,
-        // a save's street started its neon and steam a frame behind: 918
+        // a save's street starts its neon and steam a frame behind: 918
         // particles at frame 20 for 952, and no sprite in frame 1's pool
-        // (`engine: sprite table`, red from 2026-09-30 to 2026-10-01).
+        // (`engine: sprite table` sees it).
         const auto bindSetEmittersNow = [&]() {
             if (!session.scene().loaded() || session.scene().setEmittersBound()) return;
             for (const WorldSlot& ws : worldSlots) {
@@ -212,30 +211,29 @@ int PlayState::phaseWorld() {
                 // show carries none (`Session::showCharacter` pushes a bare
                 // record), so such a body waits for a program or a camera
                 // solve to say where he is.
-                // ...BUT NOT ONCE A PROGRAM HAS MOVED HIM. This ran every
-                // frame and overwrote both the position and the FACING from
+                // ...BUT NOT ONCE A PROGRAM HAS MOVED HIM. Run every frame,
+                // this would overwrite both the position and the FACING from
                 // the 20-byte record. While a program drives, the placement
                 // below puts its own back (`progPlaced && sceneClip >= 0`),
-                // so the clobber was invisible; the frame the program ENDS,
-                // `progPlaced` goes false and this wins - the body snaps back
-                // to where the chunk parked him, which for Kay'l's flat is
-                // 3635/1278/-656 against a floor at 1040, and vanishes.
+                // so the clobber is invisible; the frame the program ENDS,
+                // `progPlaced` goes false and this would win - the body
+                // snapping back to where the chunk parked him, which for
+                // Kay'l's flat is 3635/1278/-656 against a floor at 1040,
+                // and vanishing.
                 //
                 // `Script_SelectBodyAnimation` never resets the node
                 // (CLAUDE.md 6), so the accumulated placement STANDS; the
                 // branch that carries `drawAt` over on the clip-change frame
-                // is already written for exactly that and was being undone
-                // one frame later. The facing half is the same bug seen from
-                // the side: a reader watched Telis "look the wrong way, then
-                // go back to the right one for the idle" - the record's
-                // facing and the program's Euler alternating.
+                // is written for exactly that. The facing half is the same
+                // fault seen from the side: Telis looking the wrong way, then
+                // back to the right one for the idle - the record's facing
+                // and the program's Euler alternating.
                 // ...NOR ONCE THE FIGHT OWNS HIM. A melee opponent no program
                 // ever moved - the flat's training partner, CHARACTERS 331 -
-                // was put back here every frame after the fight had moved
-                // him: drawn standing at his record (7957, -852) while his
-                // walker, his blows and the AI fought the player 200 units
-                // away (a reader, 2026-10-02: "hit by nothing visible next to
-                // me, the partner moving in the background"). `Fight_Begin`
+                // would be put back here every frame after the fight had
+                // moved him: drawn standing at his record (7957, -852) while
+                // his walker, his blows and the AI fought the player 200
+                // units away, the player hit by nothing visible. `Fight_Begin`
                 // keeps one actor record; its position is the fight's.
                 // ...and not AFTER it either: `sub_445AC0` leaves the loser's
                 // actor record where he fell, so the record must not take
@@ -261,10 +259,10 @@ int PlayState::phaseWorld() {
                 const int sp = session.dialogue().conversation().speaker;
                 // HIS body and no other: `Dialog_Load` resolves the speaker by
                 // his id and `Dialog_SetSubjectActor` flags that actor's own
-                // node - it never borrows another body wearing his model, which
-                // this did until 2026-10-06 (`todo/drift-audit.md` M3), so a
-                // stranger in the crowd model was taken as the speaker, moved
-                // to the solve and given his lines.
+                // node - it never borrows another body wearing his model
+                // (`todo/drift-audit.md` M3), which would take a stranger in
+                // the crowd model as the speaker, move him to the solve and
+                // give him the lines.
                 Staged* s = nullptr;
                 for (auto& up : staged) if (up->actor == sp) { s = up.get(); break; }
                 if (!s) {
@@ -389,14 +387,13 @@ int PlayState::phaseWorld() {
                 for (const auto& up : staged) if (up->model == it->first) used = true;
                 // ...AND the models the traffic circuit's own bodies wear.
                 // The crowd's walkers and the road traffic's two vehicles are
-                // not `staged` actors, so this loop was erasing their models
-                // every frame while `PedStaged::mo` and `VehStaged::mo` went
-                // on pointing at the freed node. The crowd never showed it
-                // because a city's authored extras wear the SAME PERSOS
-                // models and kept them resident by accident; `sli_fn` and
-                // `moto` are worn by nothing else, so the traffic staged
-                // itself once and then vanished - which is how this was
-                // found (2026-09-04).
+                // not `staged` actors, so without this the loop would erase
+                // their models every frame while `PedStaged::mo` and
+                // `VehStaged::mo` go on pointing at the freed node. The crowd
+                // would hide it, because a city's authored extras wear the
+                // SAME PERSOS models and keep them resident by accident;
+                // `sli_fn` and `moto` are worn by nothing else, so the
+                // traffic would stage itself once and then vanish.
                 if (!used) {
                     const auto& circuit = session.sliders();
                     for (const auto& w : circuit.movers())
@@ -426,12 +423,11 @@ int PlayState::phaseWorld() {
                 const auto& rs = session.residentSlot(slot);
                 const bool shown = session.slotShown(slot) && rs.area != -1;
                 // THE SET STAYS WHILE THE SLOT HOLDS ITS AREA - hidden or not.
-                // This used to load only a SHOWN slot, so hiding a set dropped
-                // its floor and walls along with its picture. A reader,
-                // 2026-09-18: *"many times I went through the security center
-                // barriers and fall (not possible in the original game)"* -
-                // `area.arrive -1` hides the level the lift has just brought in
-                // (`ACSLEV-N`), and every railing, wall and floor of it went.
+                // Loading only a SHOWN slot would drop a hidden set's floor and
+                // walls along with its picture, and the player would fall
+                // through the security centre's barriers: `area.arrive -1`
+                // hides the level the lift has just brought in (`ACSLEV-N`),
+                // and every railing, wall and floor of it would go.
                 const std::string want = rs.area != -1 ? rs.set : std::string();
                 const int wantArea = rs.area;
                 WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
@@ -467,15 +463,14 @@ int PlayState::phaseWorld() {
                 // standing rather than clearing it. Loaded here so it arrives
                 // with the set.
                 //
-                // **This asked slot 0 only, and that is a fault a reader
-                // met**: *it happens when I load a save located in a
-                // building*. A load puts its own area in slot 0, so walking
-                // out of it lands the city in SLOT 1 - their own session log
-                // has `SHOW area 217 in slot 0` and then `SHOW area 0 in slot
-                // 1` - and Anekbah's `ASKY` was never asked for. Load in the
-                // street instead and the same area arrives in slot 0 and the
-                // sky is there, which is why it looked like a black sky "in
-                // some cases".
+                // **Every slot asks, not slot 0 only.** A load puts its own
+                // area in slot 0, so walking out of a building a save was made
+                // in lands the city in SLOT 1 - a session log has `SHOW area
+                // 217 in slot 0` and then `SHOW area 0 in slot 1` - and with
+                // slot 0 alone Anekbah's `ASKY` is never asked for. Loaded in
+                // the street, the same area arrives in slot 0 and the sky is
+                // there, which is why it shows as a black sky only "in some
+                // cases".
                 {
                     const std::string wantSky = shown ? rs.sky : std::string();
                     if (!wantSky.empty() && wantSky != sky.stem) {
@@ -515,9 +510,9 @@ int PlayState::phaseWorld() {
                 }
             }
             // A NEW SKY is a new section of the texture pool and nothing else:
-            // it used to take the whole rebuild below - both sets' soups and
-            // grids again, and a new `worldGen`, which bakes the depth tie
-            // again - one frame after the set that names it had just done so.
+            // not the whole rebuild below - both sets' soups and grids again,
+            // and a new `worldGen`, which bakes the depth tie again - one frame
+            // after the set that names it has just done so.
             if (skyChanged && !changed) ++poolComposition;
             if (changed) {
                 ++poolComposition;      // the sky section of the pool changed
@@ -536,9 +531,9 @@ int PlayState::phaseWorld() {
             if (changed) bindSetEmittersNow();
         }
 
-        // THE FRAME'S CLEAR, DEFERRED (2026-10-11, the iBook): it was a fill
-        // of all of `fb` here, every frame - 614 KB at 640x480, milliseconds
-        // on a G3's bus - before the frame knew how it would leave. A frame
+        // THE FRAME'S CLEAR, DEFERRED (for the iBook): a fill of all of `fb`
+        // here, every frame, is 614 KB at 640x480, milliseconds on a G3's
+        // bus, before the frame knows how it will leave. A frame
         // with no world clears it whole below; a frame with one clears in
         // `worldMirror`'s present decision only what it does not overwrite
         // (the overlay's key, the readback's rows), and a STRAIGHT frame,
@@ -642,8 +637,8 @@ int PlayState::phaseWorld() {
                         y = sb->drawnYawKnown ? sb->drawnYaw : sb->facing;
                         return true;
                     };
-                    // KIND 3 IS NOT THE ANIMATED HEAD (corrected 2026-10-05,
-                    // todo/drift-audit.md): `sub_415320` reads `*(Tete)+36`,
+                    // KIND 3 IS NOT THE ANIMATED HEAD (todo/drift-audit.md):
+                    // `sub_415320` reads `*(Tete)+36`,
                     // which `sub_4942A0` accumulates as the root's world
                     // point plus the chain's locals UNROTATED - the head's
                     // REST offset over the body origin, untouched by the
@@ -710,14 +705,13 @@ int PlayState::phaseWorld() {
                 // and `+48` the fov. `angle4096` already wraps on load here,
                 // so a plain lerp of each is the engine's own arithmetic.
                 //
-                // This viewer SNAPPED the fov at the halfway point and dropped
-                // the roll entirely. Six of 402's sixteen pairs change fov
-                // across the move and one changes it by 15 degrees
-                // (4572 -> 4574, 84 -> 99): a 15-degree widening in one frame
-                // in the middle of a travel reads exactly as a reader
-                // described it - *the camera suddenly returns to a previous
-                // position while continuing the interpolation*. Eleven pairs
-                // are rolled, up to 12 degrees, and were drawn upright.
+                // Both are lerped, neither snapped nor dropped. Six of 402's
+                // sixteen pairs change fov across the move and one changes it
+                // by 15 degrees (4572 -> 4574, 84 -> 99): a 15-degree widening
+                // in one frame in the middle of a travel reads as the camera
+                // suddenly returning to a previous position while continuing
+                // the interpolation. Eleven pairs are rolled, up to 12
+                // degrees.
                 dlgView.cam.hfovDeg = ca->fov  + (cbb->fov  - ca->fov)  * u;
                 dlgView.cam.rollDeg = ca->roll + (cbb->roll - ca->roll) * u;
                 dlgView.cam.w = dispW; dlgView.cam.h = dispH;
@@ -733,8 +727,8 @@ int PlayState::phaseWorld() {
                                            : "  [unresolvable subject - not drawn]");
                     // ...AND WHERE IT ENDED UP. A dialogue camera is resolved
                     // against the two speakers, so the id says nothing about
-                    // the place: a reader reporting a camera inside the scenery
-                    // had nothing in the log to name it by, while every world
+                    // the place: a camera seen inside the scenery would have
+                    // nothing in the log to name it by, while every world
                     // camera prints its eye and target two blocks below.
                     // Printed from the view the frame will be drawn with.
                     std::printf("    ...resolved: eye %.0f %.0f %.0f  at %.0f %.0f %.0f"
@@ -771,9 +765,9 @@ int PlayState::phaseWorld() {
             }
         }
         // A camera whose eye or target is an OFFSET from an actor needs to
-        // know where that actor IS, and until 2026-09-02 nothing here did -
-        // so 1443 of the 5384 world cameras were skipped and the screen went
-        // black. `actor.goto_address` now places the player (see
+        // know where that actor IS - 1443 of the 5384 world cameras are
+        // relative, and skipped they leave the screen black.
+        // `actor.goto_address` places the player (see
         // `formats/addresses.h`), so a relative camera resolves as long as he
         // has been placed. He still does not MOVE - the actor runtime is not
         // driven by this loop - so what this buys is a correct static camera,
@@ -819,13 +813,12 @@ int PlayState::phaseWorld() {
         // a `camera.set`'s mode 12 arriving under an editing always takes the
         // camera - even when it names the id that is already installed.
         //
-        // This used to compare `session.cameraId()` against the id the hold
-        // began under, which cannot see that case, and AREA 245's supermarket
-        // fight is exactly it: the fight's aftermath asks for camera 0
-        // ('Camera Player') three times over, the medical editing had already
-        // been entered under camera 0 from the same script, so the id never
-        // moved and the held last frame stayed on screen for the rest of the
-        // game. Counting the REQUEST subsumes the id test - `cameraId()` is
+        // Comparing `session.cameraId()` against the id the hold began under
+        // cannot see that case, and AREA 245's supermarket fight is exactly
+        // it: the fight's aftermath asks for camera 0 ('Camera Player') three
+        // times over, the medical editing having been entered under camera 0
+        // from the same script, so the id never moves and the held last frame
+        // would stay on screen for the rest of the game. Counting the REQUEST subsumes the id test - `cameraId()` is
         // `camTo_.id` and only `applyCamera` writes it - and it costs no new
         // special case (`todo/fight-mode.md` §13).
         if (holdEditCam && session.cameraRequests() != heldUnderRequests)
@@ -835,12 +828,11 @@ int PlayState::phaseWorld() {
         // the take is mode 1 out of `MDGETOBJ`. Either installs a mode that is
         // not 13, so the hold is over.
         if (holdEditCam && (haveDlgCam || takeCam)) holdEditCam = false;
-        // ...AND SO IS ENTERING SHOOT MODE, which is the one this list was
-        // missing. `Shoot_Enter` ends with `Camera_Request(4, ...)`, a real
-        // request like any other, so mode 13's hold is over the moment the
-        // mode begins. Without this the port installed the first-person
-        // camera and then drew the cutscene's held last frame over the top of
-        // it, which is what a reader saw at the supermarket: the mode on, the
+        // ...AND SO IS ENTERING SHOOT MODE. `Shoot_Enter` ends with
+        // `Camera_Request(4, ...)`, a real request like any other, so mode
+        // 13's hold is over the moment the mode begins. Without this the
+        // first-person camera is installed and the cutscene's held last frame
+        // drawn over the top of it, as at the supermarket: the mode on, the
         // pointer captured, and the view refusing to move
         // (`todo/omk-play.md` 97e).
         if (holdEditCam && shootMode) holdEditCam = false;
@@ -861,21 +853,18 @@ int PlayState::phaseWorld() {
         const bool anyWorld = !worldSlots[0].geo.corners.empty() ||
                               !worldSlots[1].geo.corners.empty();
         // ...and the same for DRAWING it: the screen composes over the
-        // world afterwards, and every sneak page's background is an opaque
-        // tile map, so nothing shows through that should not.
+        // world afterwards.
         //
-        // THE PAUSE SCREEN IS THE EXCEPTION, and it was excluded here on an
-        // assumption that nothing had tested, because nothing had ever
-        // opened screen 31. Its panel 0x004E26C8 takes the FOURTH background
+        // THE PAUSE SCREEN IS THE EXCEPTION. Its panel 0x004E26C8 takes the FOURTH background
         // arm - `+76` is 0x40001800, so neither 0x2000 nor 0x4000, and
         // `+20`, the 80-tile array, is null - which is the arm that paints
         // nothing at all (`exetables.py: panels by background arm`). All it
         // draws is one fill item and three lines of text. So the world has
         // to be behind it, frozen: `uiPause` above already stops it
-        // advancing, and stopping the DRAW as well left a pause menu on
-        // black.
+        // advancing, and stopping the DRAW as well would leave a pause menu
+        // on black.
         //
-        // **AND THE RULE IS THE SCREEN'S OWN FLAG** (2026-09-07), which
+        // **AND THE RULE IS THE SCREEN'S OWN FLAG**, which
         // subsumes that: `UI_LoadScreen` (0x00429BB0) reads the screen
         // record's `+112` and, if bit `0x40000` is CLEAR, calls `sub_466B30`
         // - `byte_90E155 = 0`, so `Game_Frame` stops submitting the
@@ -886,23 +875,22 @@ int PlayState::phaseWorld() {
         // carry the bit - PAUSE GAME, SHOOT MECA and SHOOT HUMAN - the three
         // that must show the live world.
         //
-        // Every other screen turns it off, and the sneak is one of them: the
-        // sentence above ("every sneak page's background is an opaque tile
-        // map") is not true of the shipped data. `sneak.bmp` is a SHEET the
+        // Every other screen turns it off, and the sneak is one of them,
+        // though its background is NOT an opaque tile map in the shipped
+        // data. `sneak.bmp` is a SHEET the
         // page tiles 1:1, 31.8% of it is the colour key, and 21 of the 80
         // cells are more than 90% key - the middle of the device. That hole
         // is deliberate, and what belongs behind it is the device's own 3D
         // view, which the UI submits itself through `I2D_Submit3DView` (seven
-        // call sites, all in the `Ui_*` range). Drawing the street there is
-        // what a reader saw as *the sneak background is transparent*
-        // (todo/omk-play.md 82).
+        // call sites, all in the `Ui_*` range). Drawing the street there makes
+        // the sneak's background look transparent (todo/omk-play.md 82).
         // ...AND A PANEL CAN TURN IT BACK ON. `Ui_DrawPanelDim` (0x00476290),
         // run every frame for the current panel, sets `byte_90E155 = 1` when
         // the panel carries bank B `0x800` - the ten shops, SAVE GAME, PAUSE
         // GAME, SHOOT HUMAN, HIGH-SCORE - and the composer then dims it. So
         // the world shows behind a shop even though its screen record says
-        // hide, which is what a reader expected: "the background is not
-        // supposed to be opaque". The sneak's panels do not carry the bit.
+        // hide: the background is not supposed to be opaque. The sneak's
+        // panels do not carry the bit.
         const bool panelShowsWorld =
             walk && walk->panel() && (walk->panel()->flagsB & 0x800u) != 0;
         // A CLOSING CALL keeps it too: `Ui_CloseSneakFamily`'s refusal calls

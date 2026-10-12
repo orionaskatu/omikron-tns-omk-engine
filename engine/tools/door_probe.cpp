@@ -71,8 +71,8 @@ int main(int argc, char** argv) {
     }
 
     // Tick, and print every motion sample the scene pools produce. At frame
-    // 40 the player is taken OUT of the zone, which is what a reader does by
-    // walking away: the zone's LEAVE script (@9601) should shut the door.
+    // 40 the player is taken OUT of the zone, as a player does by walking
+    // away: the zone's LEAVE script (@9601) should shut the door.
     for (int f = 0; f < 140; ++f) {
         if (f == 40) {
             const float away[3] = {p[0] + 400.0f, p[1], p[2]};

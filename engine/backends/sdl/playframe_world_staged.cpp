@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // EVERY STAGED BODY, posed by whatever drives it.
-// Parts of `PlayState::phaseWorld`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // THE MORPH ROOT TURNED BY A WORLD YAW, the engine's own composition.
@@ -34,9 +34,9 @@ void PlayState::worldStaged() {
     // Three sources in the engine's own precedence - the program that
     // names HIM, then the conversation line, then the bank's idle -
     // and the whole point of issue 41 is that the first is resolved
-    // PER ACTOR. The file used to take the last running actor program
-    // for its one body, so while `A_2_DemonLook` ran that body wore
-    // the Demon's clip whoever it was.
+    // PER ACTOR. Taking the last running actor program for one body
+    // would have that body wear the Demon's clip while `A_2_DemonLook`
+    // runs, whoever it is.
     const omk::SceneRunner& sc = session.scene();
     const int convSpeaker = session.dialogOpen()
         ? session.dialogue().conversation().speaker : -1;
@@ -233,19 +233,17 @@ void PlayState::worldStaged() {
         }
         // ...AND THE FALLBACK IS THE PLAYER'S ALONE.
         //
-        // It used to fire for whoever the frame's one body was, on the
-        // reasoning quoted above that it "can never mis-assign once
-        // there is more than one". A reader dying in the supermarket
-        // found the case that reasoning misses: the loss branch hides
-        // twenty-five characters (`todo/shoot-phase-end.md`), so ONE
-        // is exactly what is left - actor 65, the cashier the intro
+        // Not for whoever the frame's one body is: the reasoning
+        // quoted above, that it "can never mis-assign once there is
+        // more than one", misses the supermarket death. The loss branch
+        // hides twenty-five characters (`todo/shoot-phase-end.md`), so
+        // ONE is exactly what is left - actor 65, the cashier the intro
         // cutscene stages - and the frame's one running program, clip
-        // 18 `BOIPATH2.3DA`, which names somebody else entirely, was
-        // handed to him. It teleported him from 13283 -92 996 to
-        // 13046 -140 1149 and posed him from a stranger's clip, and
-        // since V5H_FNM carries no bank he fell to the model's REST
-        // pose - a T-posed body standing in a corridor nothing put
-        // him in. It is in the reader's own session log three times.
+        // 18 `BOIPATH2.3DA`, names somebody else entirely. Handed to
+        // him, it teleports him from 13283 -92 996 to 13046 -140 1149
+        // and poses him from a stranger's clip, and since V5H_FNM
+        // carries no bank he falls to the model's REST pose - a T-posed
+        // body standing in a corridor nothing put him in.
         //
         // It is kept for the PLAYER alone, because that is the case
         // it was written for and the one where an id mismatch is
@@ -327,8 +325,8 @@ void PlayState::worldStaged() {
             // left the body, so a correct run re-places him on the
             // spot he already occupies and nothing visibly moves.
             // Where the accumulated root motion is wrong the two
-            // disagree and the next step YANKS him - "he is teleported
-            // sometimes" (a reader, 2026-09-05). The gap is therefore
+            // disagree and the next step YANKS him - a teleport. The gap
+            // is therefore
             // a measure of the root motion, independent of the walk
             // mesh: two chains that must agree.
             const float wasAt[3] = {s.drawAt[0], s.drawAt[1], s.drawAt[2]};
@@ -370,7 +368,7 @@ void PlayState::worldStaged() {
                     // node every tick; the clip's root quaternion sits under
                     // it. Anekbah's Kiss couples say -70, the walkers 180 -
                     // without it a couple placed right still stood turned
-                    // away and intersecting (a reader's frame, 2026-09-03).
+                    // away and intersecting.
                     // Pitch and roll (params 4 and 6) are rarely non-zero
                     // (three beggars carry -7 of pitch) and are not applied.
                     for (int k = 0; k < 3; ++k) s.progBase[k] = s.at[k];
@@ -389,11 +387,11 @@ void PlayState::worldStaged() {
                 // - the authored placement, a PELVIS point whose
                 // height is kept - and `Anim_RootDelta` sums the keys
                 // after it (CLAUDE.md 6; `Session::trackPlayer` is the
-                // same rule for the player). Until 2026-09-03 the body
-                // stayed on its 20-byte placement record instead, and
-                // the Impasse's beat cameras, which frame the clip
-                // roots, framed nobody: Kay'l's arrival clip starts at
-                // 6462 -121 3215 while his record puts him at 7217.
+                // same rule for the player). Left on its 20-byte
+                // placement record instead, the body would be framed by
+                // none of the Impasse's beat cameras, which frame the
+                // clip roots: Kay'l's arrival clip starts at 6462 -121
+                // 3215 while his record puts him at 7217.
                 float base[3] = {0, 0, 0};
                 if (omk::clipRootStart(run->scene().clipData(sceneClip), base)) {
                     // ...plus the call's own offset, params 7/8/9 in
@@ -471,8 +469,8 @@ void PlayState::worldStaged() {
         }
         // (b) THE CONVERSATION'S LINE, for its speaker only - the body
         // whose actor id is the DIALOG chunk's word 0. The model name
-        // was a fallback here until 2026-10-06, and it made EVERY body
-        // wearing the speaker's model mouth the line; the engine plays
+        // is no fallback: it would make EVERY body wearing the
+        // speaker's model mouth the line; the engine plays
         // the line on one actor (`Morph_Play`), and with no speaker (-1)
         // on the street's stand-in, which nothing draws
         // (`todo/drift-audit.md` M3).
@@ -505,7 +503,7 @@ void PlayState::worldStaged() {
         {
             const int act = session.shootAction(s.actor);
             // IN SHOOT MODE, whatever his action - an enter with none yet is
-            // `kEnteredOnly` (-2), which `act >= 0` used to read as "not in"
+            // `kEnteredOnly` (-2), which `act >= 0` would read as "not in"
             // (todo/drift-audit.md S13)
             const bool inShoot = session.shootIn(s.actor);
             // ---- THE GENERIC BRAIN, ticked (todo/shoot-mode.md 7d)
@@ -534,8 +532,8 @@ void PlayState::worldStaged() {
             // THE WEAPON SLOT TIMERS (`actor+148..+160`, what `sub_44CDF0`
             // refuses a shot on while above 0): `Actors_TickAll` (0x4681C0,
             // the loop at 0x468221) takes the frame delta off all four for
-            // every actor it ticks, every frame. Not counted down here until
-            // 2026-10-05 - harmless for Astaroth, whose reload reads 0
+            // every actor it ticks, every frame (without it, harmless for
+            // Astaroth, whose reload reads 0)
             if (auto st = actorSlotTimer.find(s.actor); st != actorSlotTimer.end())
                 for (float& t : st->second) t -= static_cast<float>(frameSec * 30.0);
             const auto deadIt = shootBrains.find(s.actor);
@@ -561,7 +559,7 @@ void PlayState::worldStaged() {
                                  sr.cellSaved);
                 sr.cellStamped = false;
             }
-            // SHOOT_ACTORACTION (05_sys.c 3938, read 2026-09-11): an action -
+            // SHOOT_ACTORACTION (05_sys.c 3938): an action -
             // his scene action at birth, what the brain asks for, or a
             // request parked under flag 8 - becomes his CURRENT clip's type,
             // a state, flags and a timer (`omk::shootActorAction`)
@@ -645,11 +643,10 @@ void PlayState::worldStaged() {
             // by a later script, a hit's reaction (`sub_423EF0`) or a noise
             // heard (`sub_4246E0`) - each `Shoot_ActorAction` called AT ONCE in
             // the engine, here on his next tick, before his brain, through the
-            // same `applyAction` (which PARKS it under flag 8). Until
-            // 2026-10-05 only the action standing at his entry was ever
-            // applied: a later op 84 (8 shipped sites, 4 of them after a wait
-            // in the entering script), every hit reaction and every noise
-            // alert were recorded and dropped. Not Astaroth's: his record is
+            // same `applyAction` (which PARKS it under flag 8). Applying
+            // only the action standing at his entry would drop a later op
+            // 84 (8 shipped sites, 4 of them after a wait in the entering
+            // script), every hit reaction and every noise alert. Not Astaroth's: his record is
             // driven by his own tick, and nothing shipped asks him for one.
             if (deadIt != shootBrains.end() && !astarothRec && !gandharRec && inShoot && act >= 0) {
                 const int ser = session.shootActionSerial(s.actor);
@@ -715,9 +712,8 @@ void PlayState::worldStaged() {
                 GunClip& gc = gunClips[s.actor];
                 // THE FRAME DELTA, `flt_4C30D8` - which the pause screen
                 // forces to 0.0 (screen 31's open callback, `dword_4E9728`).
-                // This was a literal 1.0, so a turn clip went on playing
-                // and turning behind the pause menu (a reader, 2026-09-12:
-                // "the ennemies continue moving in the pause menu").
+                // A literal 1.0 would keep a turn clip playing and turning
+                // behind the pause menu.
                 const float gunDt = astarothRec ? astBand.rate
                                                 : static_cast<float>(frameSec * 30.0);
                 const float pickedPrev = gc.frame;     // actor+192 = +188
@@ -933,7 +929,7 @@ void PlayState::worldStaged() {
                         // HIS NODE IS HIS PELVIS (the root mesh's world point),
                         // as Gandhar's is (`todo/gandhar.md` 3b): drawn
                         // pelvis-on-node, not seated by his lowest posed corner
-                        // - a reader saw him FLOAT (`todo/astaroth.md` 4)
+                        // - which floats him (`todo/astaroth.md` 4)
                         s.pelvis = true;
                         // (the TEST HARNESS `--astaroth-health N`, an instrument)
                         if (astarothHealth >= 0) {
@@ -1074,8 +1070,7 @@ void PlayState::worldStaged() {
                 // +189; sub_47C230(floor, saved); sub_435970(floor,
                 // +136, +140, saved); }`. Without it a walker's 0x80
                 // stays on the cell he left and blocks it for ever -
-                // which is what this port did until 2026-09-12, and it
-                // was invisible while no gunman moved. (`sub_47C230`,
+                // invisible while no gunman moves. (`sub_47C230`,
                 // the door arm, is still not ported.)
                 if (shootMap.valid() && rec.cellStamped &&
                     (rec.state != 2 || rec.health < 0)) {
@@ -1086,9 +1081,9 @@ void PlayState::worldStaged() {
                 // ---- `Shoot_Think` (`actor/shoot.h`) ---------------
                 // His FLOOR at +188 and, unless he is traversing or
                 // standing on a blocked cell, his CELL at +136/+140.
-                // The floor was the memset's 0 until 2026-09-12, which
-                // is right by luck on the two one-floor arenas this
-                // port can reach and wrong on the other eleven.
+                // The memset's 0 would be right by luck on the two
+                // one-floor arenas this port can reach and wrong on the
+                // other eleven.
                 //
                 // HIS POSITION IS `s.drawAt`, the same point the brain
                 // below thinks from, and that is a LABELLED LIMIT OF
@@ -1100,8 +1095,8 @@ void PlayState::worldStaged() {
                 // the player - has no position, gets floor -1 from
                 // `Shoot_Think`, and `sub_426E00`'s own first line
                 // (`if (+188 == -1) return 0`) then keeps him from
-                // engaging. Feeding him his PLACEMENT instead was tried
-                // on 2026-09-12 and makes it worse, not better: he
+                // engaging. Feeding him his PLACEMENT instead makes it
+                // worse, not better: he
                 // engages and FIRES from a body that has no pose, so
                 // the muzzle - the posed `tir` node - is the world
                 // origin. The two have to agree, and agreeing on the
@@ -1135,12 +1130,11 @@ void PlayState::worldStaged() {
                     // pass {dx, 0, dz}, and the one that does move y
                     // needs `a1+460`).
                     //
-                    // The port had fed `Shoot_Think` the DRAWN y, which
-                    // drifts with the ground probe: two of the
-                    // catacombs' nine spectres sank three quarters of a
-                    // metre through their own floor by frame 72, lost
-                    // it, and with it the wall test - one walked out
-                    // through a wall, which a reader saw.
+                    // The DRAWN y drifts with the ground probe: fed it,
+                    // two of the catacombs' nine spectres sink three
+                    // quarters of a metre through their own floor by
+                    // frame 72, lose it, and with it the wall test -
+                    // one walks out through a wall.
                     //
                     // It is done HERE and not at his entry because the
                     // entry has no floor to subtract from: a body staged
@@ -1285,11 +1279,11 @@ void PlayState::worldStaged() {
                 // the engine's `flt_4C30D8`, as every other tick in this
                 // file reads it - and 0 under the pause, which is the
                 // whole of how the game freezes a gunfight (see
-                // `uiPause` above). A literal 1.0 here kept every brain,
-                // clip and walk step running behind the menu.
+                // `uiPause` above). A literal 1.0 here would keep every
+                // brain, clip and walk step running behind the menu.
                 fin.dt = static_cast<float>(frameSec * 30.0);
                 fin.defaultClipType = act < 0 ? 0 : act;   // (no action yet: 0)
-                // THE STEERING (`sub_421CD0`, read 2026-09-11): the hub's
+                // THE STEERING (`sub_421CD0`): the hub's
                 // middle arm turns him down the path field toward the
                 // player. The heading, and the CRT draws the brain makes
                 // itself, are handed in LAZILY - the engine reaches them
@@ -1320,8 +1314,7 @@ void PlayState::worldStaged() {
                 fin.targetAlive = true;
                 // THE GRID SIGHT, `sub_4359A0(floor, targetCell, ownCell, 1)`
                 // - what `sub_426E00`'s GENERAL arm acquires on
-                // (`todo/shoot-sight.md` 1; the 2026-09-12 note that called
-                // the ray this arm's sight was wrong). His floor `+188`, -1
+                // (`todo/shoot-sight.md` 1; not the ray). His floor `+188`, -1
                 // seeing nothing; from the PLAYER RECORD's cell - kept by
                 // `Shoot_TickPlayer` since step 2 - to his own. LABELLED:
                 // every door counts as open, because the engine's
@@ -1379,7 +1372,7 @@ void PlayState::worldStaged() {
                 // is seeded from: at his feet the supermarket's player
                 // stands on his grid's upper bound and `floorAt` finds
                 // nothing (`todo/shoot-mode.md` 8 B3).
-                // ...and since 2026-09-13 it is the PLAYER'S RECORD's `+188`,
+                // ...and it is the PLAYER'S RECORD's `+188`,
                 // which the player's tick has just written with his own
                 // `Shoot_Think`, the engine's own comparison - not a
                 // `floorAt` taken here from a second point.
@@ -1441,8 +1434,8 @@ void PlayState::worldStaged() {
                 // neither end's own body can stop the ray. Here the active
                 // set's shot soup, the bolts' world - still without
                 // `sub_444460`'s 0x41 skip (`todo/shoot-sight.md` step 6).
-                // Until 2026-09-13 this was forced TRUE, which kept every
-                // close gunman in state 6 and never let him close to 13/8.
+                // Forced TRUE, it would keep every close gunman in state 6
+                // and never let him close to 13/8.
                 ein.rayHits = false;
                 ein.inWideCone = wideCone;
                 // THE TWO OTHER SIGHTS (`todo/shoot-sight.md` step 5): a
@@ -1559,9 +1552,9 @@ void PlayState::worldStaged() {
                 // state 10 until the NEXT tick - by which `sub_4272B0` has
                 // started his attack clip. This viewer runs the engage BEFORE
                 // the step (the hoist `todo/handoff-shoot-mode.md` §4 item 6
-                // labels), and running state 10 on the same tick read the OLD
-                // clip's frames as spent and sent him on to 11 at once - robber
-                // 77 and dog 598 both did (2026-09-13). So the tick the pair is
+                // labels), and running state 10 on the same tick would read the
+                // OLD clip's frames as spent and send him on to 11 at once (as
+                // robber 77 and dog 598 show). So the tick the pair is
                 // entered has no step: outcome None, and nothing else.
                 const bool pairEntered = (rec.state == 10 || rec.state == 11) &&
                                          preEngageState != rec.state;
@@ -1656,9 +1649,8 @@ void PlayState::worldStaged() {
                 }
                 // ...and the clip clock, which state 5 reads - and the 10/11
                 // pair (the attack clip's first half is outcome 3, its end
-                // hands 10 to 11; 11 goes back to 10 past five frames). Until
-                // 2026-09-13 only state 5 had it, and state 10 read 0 of 0 as
-                // a clip already spent.
+                // hands 10 to 11; 11 goes back to 10 past five frames). Without
+                // it state 10 reads 0 of 0 as a clip already spent.
                 if (rec.state == 5 || rec.state == 10 || rec.state == 11) {
                     if (const auto ga = gunAnims.find(s.actor);
                         ga != gunAnims.end() && ga->second.clip) {
@@ -1674,12 +1666,12 @@ void PlayState::worldStaged() {
                 // failing those returns without entering him at all. So
                 // the engine never runs a brain between an entry and its
                 // action. The port holds the action for a body it has not
-                // drawn yet (`gunEntryPending`), and used to let the brain
-                // tick anyway: at the gallery's frame 3 each gunman asked
-                // for ACTION 0, a 30-frame clip under flag 8, which parks
-                // the whole brain - so the tick that would have found him
-                // on the grid came at frame 33, and every gunman stood a
-                // second before acting instead of one frame. The step is
+                // drawn yet (`gunEntryPending`), and must not let the brain
+                // tick meanwhile: at the gallery's frame 3 each gunman would
+                // ask for ACTION 0, a 30-frame clip under flag 8, which parks
+                // the whole brain - so the tick that would find him on the
+                // grid would come at frame 33, and every gunman would stand
+                // a second before acting instead of one frame. The step is
                 // empty for him - and `ShootStep::outcome` defaults to
                 // FireIfReady, so the fire arm below tests this too.
                 const bool entryPending = gunEntryPending.count(s.actor) != 0;
@@ -1783,8 +1775,7 @@ void PlayState::worldStaged() {
                 // makes); a change of clip restarts it at 1.0, which is
                 // `sub_421A20`'s start.
                 //
-                // ...AND IT MOVES HIM (2026-09-11, a reader: "continue with
-                // robbers walking and the wall detection"). After the frame
+                // ...AND IT MOVES HIM, through the wall detection. After the frame
                 // step `sub_421370` takes the clip's root delta between the
                 // old frame and the new (`sub_434D30` -> `Anim_RootDelta(clip,
                 // node matrix, +192, +188)`, turned by his facing), and puts
@@ -1814,10 +1805,9 @@ void PlayState::worldStaged() {
                 // both its arms in `o3de_SetNodePos(node, +244, rec+60 +
                 // d(0->1).y, +252)` - the turn clip's start, the walk put
                 // back when it ends (`sub_421A20(+12, 0)`), the death.
-                // Without it a robber whose walk a turn kept interrupting
-                // before the wrap kept each cycle's 0.38-a-frame rise and
-                // climbed to the CEILING (a reader's screenshots,
-                // 2026-09-11: "going higher each time the loop restart").
+                // Without it a robber whose walk a turn keeps interrupting
+                // before the wrap keeps each cycle's 0.38-a-frame rise and
+                // climbs to the CEILING, higher each time the loop restarts.
                 //
                 // NOT PORTED, labelled: the 0x400 grid arm (`sub_47C1B0` on
                 // a cell byte with bit 0x10, which FREEZES the clip); the
@@ -2224,8 +2214,8 @@ void PlayState::worldStaged() {
                             jit[k] = static_cast<int>((gunRandSeed >> 16) & 0x7FFFu) % 100;
                         }
                         const omk::GunmanAim aim = omk::shootGunmanAim(pp, rs.muzzle, r, jit);
-                        // WHERE HIS GUN POINTS (a reader, 2026-09-11: *"their
-                        // weapon is not aiming at me"*): the barrel - his
+                        // WHERE HIS GUN POINTS, so a gun that seems not to aim
+                        // at the player can be judged: the barrel - his
                         // hand to the `tir` node, flat - against the line
                         // from the muzzle to the player, once per gunman at
                         // his SECOND shot. Measured over three gunmen at
@@ -2429,7 +2419,7 @@ void PlayState::worldStaged() {
                 // score: `Braqueur N Dead` per robber, and for actor 84
                 // `zone.enable 3931` - the zone whose script runs
                 // `shoot.end` and the end cutscene. Without this the
-                // phase could not be finished (a reader, 2026-09-10).
+                // phase cannot be finished.
                 // ONCE, as the engine does: the frame the clip plays out,
                 // `sub_421770` clears flag 8 as it returns 0, so the next
                 // tick takes the other dead arm instead - the tidy one
@@ -2538,10 +2528,10 @@ void PlayState::worldStaged() {
             // a line on its tick and the frontend rebuilds
             // `speakerTracks` on the next frame's `lineChanged`, so
             // the first `useLine` frame still holds the PREVIOUS
-            // line's. Latched then, a 451-frame line ran on a
-            // 135-frame copy and `composePose` clamped at 135: Telis
+            // line's. Latched then, a 451-frame line runs on a
+            // 135-frame copy and `composePose` clamps at 135: Telis
             // frozen but for her mouth for the last two thirds of
-            // "Il y a quatre jours..." - a reader's report. The latch
+            // "Il y a quatre jours...". The latch
             // is re-taken when the tracks' line changes under it.
             if (s.lineYawLatched && s.lineVoice != speakerVoice) s.lineYawLatched = false;
             if (!s.lineYawLatched) {
@@ -2619,16 +2609,13 @@ void PlayState::worldStaged() {
             // stands, and the scene clip's own root motion is still
             // under it.
             //
-            // This weighted it by the blend (`rootW = 1 - w`), so a
-            // speaking body drifted back to its bare staged placement
-            // and the fade lerped it there and back: a reader watching
-            // Telis in the restaurant saw her FLY between the line and
-            // the idle, and said which end was right - the idle's,
-            // because her face leaves the (correct) camera while she
-            // speaks. The 2026-09-02 reading that put the weight here
-            // had the same report ("alternate between flying and
-            // landing") and treated the position as something the fade
-            // owns; it is not (`todo/omk-play.md` 81).
+            // NOT weighted by the blend (`rootW = 1 - w`): weighted, a
+            // speaking body drifts back to its bare staged placement and
+            // the fade lerps it there and back - Telis in the restaurant
+            // FLYING between the line and the idle, the idle's end being
+            // the right one, because her face leaves the (correct)
+            // camera while she speaks. The position is not something the
+            // fade owns (`todo/omk-play.md` 81).
             rootW = 1.0f;
             rootFrame = static_cast<int>(sceneFrame);
             // The FACE has no bone track: its vertices come straight
@@ -2659,10 +2646,10 @@ void PlayState::worldStaged() {
             // animation and nothing clears it when the program ends -
             // and the chain is still in flight, so the next beat is
             // about to pose him again. Falling back to the bank's idle
-            // here put Kay'l in his standing stance for the one frame
-            // between every pair of the Impasse's beats, which is what
-            // a reader saw once the camera stopped cutting away at the
-            // same moment (todo/omk-play.md 78).
+            // here would put Kay'l in his standing stance for the one
+            // frame between every pair of the Impasse's beats, visible
+            // whenever the camera does not cut away at the same moment
+            // (todo/omk-play.md 78).
             //
             // Scoped to the gap deliberately: with NOTHING coming the
             // PLAYER is driven by his channel (`Cef_TickChannel`) and
@@ -2700,8 +2687,7 @@ void PlayState::worldStaged() {
             // 0, which does not tick, and neither the spawn nor the load
             // applies one - so he holds the last pose he was given, or the
             // model's REST pose when he was never given one: the branches
-            // below. Until 2026-10-06 every NPC with a bank stood on frame
-            // 0 of its default entry here.
+            // below - not on frame 0 of a bank's default entry.
             if (s.idlePoseFor != s.mo || s.idlePoseModel != s.model) {
                 omk::composePose(s.mo->meshes, s.idle, 0, false, s.idlePose);
                 s.idlePoseFor = s.mo;
@@ -2731,8 +2717,8 @@ void PlayState::worldStaged() {
                 const float* pp = (adventure && player) ? player->pos() : session.playerPos();
                 // THE TARGET'S HEAD NODE, as the engine reads it: `th =
                 // *(tgt + 16)`, the player's cached `Tete`, its world
-                // position at node +44..+52 (`Actors_TickAll`, read
-                // 2026-10-02). `playerHeadAt` is that node as the
+                // position at node +44..+52 (`Actors_TickAll`).
+                // `playerHeadAt` is that node as the
                 // player was last drawn - one frame old here, since
                 // the player is posed later in the frame. Until he has
                 // been drawn once, his feet less a standing head height.
@@ -2766,21 +2752,19 @@ void PlayState::worldStaged() {
                 // ...IN THE FRAME THE BODY WILL ACTUALLY BE DRAWN IN.
                 // A body a scene program drives is turned by the
                 // call's Euler (`progYaw`), not by its placement
-                // record's facing, and the aim was always backed out
-                // through `s.facing` - 0 for every one of the
-                // restaurant's diners while their Euler is 90. So the
-                // target sat 90 degrees off, the yaw pinned at
-                // `Actor_SetHeadLook`'s own +-70 clamp, and a diner
-                // the player is standing almost in front of stared
-                // sideways for as long as his zone held (a reader's
-                // frames, 2026-09-05: "head at 90 when I think they
-                // should be at 0"). Diner 71 wants -13 degrees.
+                // record's facing. Backed out through `s.facing` - 0
+                // for every one of the restaurant's diners while their
+                // Euler is 90 - the target would sit 90 degrees off,
+                // the yaw pinned at `Actor_SetHeadLook`'s own +-70
+                // clamp, and a diner the player is standing almost in
+                // front of would stare sideways for as long as his
+                // zone held. Diner 71 wants -13 degrees.
                 // ...AND WHILE A LINE PLAYS: the body is drawn turned by
                 // the Euler latched with the line (`s.lineYaw`, the body
                 // yaw below - the clip's root heading is inside the
                 // morph's root, already in `pose`), so the aim is backed
-                // out through the same yaw. `s.facing` here was the same
-                // 90-degree trap for a program-turned speaker. (Telis at
+                // out through the same yaw. `s.facing` here would be the
+                // same 90-degree trap for a program-turned speaker. (Telis at
                 // lunch has an Euler of 0, so it changes nothing for her.)
                 const bool progTurned = s.sceneTracks.valid() && !useLine &&
                                         s.progYawKnown;
@@ -2843,12 +2827,12 @@ void PlayState::worldStaged() {
                                          !hasSeveralSkeletons(*s.mo)
                                          ? s.mo->rest : lodRestFor(s.model, *s.mo, skel);
         s.shadowRoot = skel;
-        // A BODY BEYOND THE CLIP DISTANCE IS NOT SKINNED (2026-09-22).
+        // A BODY BEYOND THE CLIP DISTANCE IS NOT SKINNED.
         // The engine's visible set is the clip distance (row 3) around
-        // the camera and it skins only what it draws; this loop posed
-        // every staged body every frame - Anekbah's 26 extras, most of
-        // them hundreds of metres from the player - which was 46 ms of
-        // a console's frame. His program, his placement, his facing and
+        // the camera and it skins only what it draws; posing every
+        // staged body every frame - Anekbah's 26 extras, most of them
+        // hundreds of metres from the player - is 46 ms of a console's
+        // frame. His program, his placement, his facing and
         // his nodes (`pose`) are all still computed above; what is
         // skipped is the skinning, the corner transform, the lights and
         // the upload, none of which anything reads for a body that is
@@ -2870,10 +2854,9 @@ void PlayState::worldStaged() {
             // staging probe's head twists, hand-over gaps and floor,
             // and `OMK_BODYLOG`'s per-frame body line - which are about
             // every body and not only the ones in view: culled, the
-            // restaurant's diners went silent after frame 0 and the
-            // Impasse's Kay'l lost frames from his body line, and
-            // `engine: scene facing` and `beat handover` read short,
-            // 2026-09-30..10-01)
+            // restaurant's diners go silent after frame 0 and the
+            // Impasse's Kay'l loses frames from his body line, and
+            // `engine: scene facing` and `beat handover` read short)
             static const bool skinAll = std::getenv("OMK_SKIN_FAR") != nullptr ||
                                         stagedProbe || omk::envSet("OMK_BODYLOG");
             if (!skinAll && seatHeld && std::isfinite(reach) &&
@@ -2953,9 +2936,9 @@ void PlayState::worldStaged() {
             //
             // so for a yaw-only Euler it is the same `rotateYaw` the
             // body is turned by. Without it the restaurant's waiter -
-            // `Serveur00`, Euler y 145 - played a walk cycle facing one
-            // way and travelled the other: a reader's report, "animation
-            // of walking forward, character moving backward".
+            // `Serveur00`, Euler y 145 - plays a walk cycle facing one
+            // way and travels the other: walking forward, moving
+            // backward.
             // Note the Euler is STICKY, as it is in the engine: only
             // the relative call writes it, `Script_SelectBodyAnimation`
             // never does, and the actor record keeps the last one - so
@@ -2975,14 +2958,14 @@ void PlayState::worldStaged() {
                 for (int k = 0; k < 3; ++k) rootMove[k] = r[k];
             }
         }
-        // A DEATH CLIP'S ROOT MOTION (a reader, 2026-09-11: the dead
-        // *"float in the air"*). `sub_421770` moves the node by the picked
+        // A DEATH CLIP'S ROOT MOTION, without which the dead float in
+        // the air. `sub_421770` moves the node by the picked
         // clip's root delta every tick - `o3de_MoveNodeBy(node, dx, dy,
         // dz)`, the vertical included - and the robbers' death clips carry
         // the FALL there: braqueur.ani's root keys sum 32.9 to 39.9 DOWN
         // (a standing pelvis is ~42 above the feet) and slide 28 to 110
-        // across. The seat latched on the upright first frame and nothing
-        // added the drop, so the body lay flat at waist height. Summed from
+        // across. The seat latches on the upright first frame, so without
+        // the drop the body lies flat at waist height. Summed from
         // frame 1 as the clip starts there (`sub_421A20`), the horizontal
         // part turned by his heading - the one he is drawn at - and held
         // once it has played out. ONE CLIP FRAME A TICK, as the engine
@@ -3111,7 +3094,7 @@ void PlayState::worldStaged() {
         s.pelvisDrawnKnown = true;
         // ...and WHERE THE FALL LEFT HIM: his pelvis over the floor under
         // his placement, once the death clip has played out (a standing
-        // pelvis is ~42 above it; the reader's floating corpses were there)
+        // pelvis is ~42 above it, where a floating corpse would be)
         if (s.deathFallTold && !s.deathFloorTold) {
             s.deathFloorTold = true;
             // a PELVIS-anchored body (a program's path placed him) has
@@ -3206,10 +3189,9 @@ void PlayState::worldStaged() {
         else if (s.sceneTracks.valid())   bodyYaw = progSpin ? progYawSign * s.progYaw : 0.0f;
         // A GUNMAN WHOSE SHOOT BRAIN RUNS is drawn at ITS heading, the
         // +420 the brain and its turn clips write every tick - not at the
-        // rest heading his entrance program left, which is what this took
-        // until 2026-09-11 (a reader: robbers *"not always turned to the
-        // correct position"* - their brains faced and aimed at him while
-        // the body stayed where the program had parked it)
+        // rest heading his entrance program left, which would leave the
+        // body where the program parked it while the brain faces and aims
+        // at the player
         // A FIGHTER is drawn at the heading the fight writes him -
         // `Fight_FaceOpponent` writes `+420` every frame, and the
         // frontend copies it onto the staged body - for the same
@@ -3230,18 +3212,16 @@ void PlayState::worldStaged() {
         }
         else if (s.restYawKnown)          bodyYaw = s.restYaw;
         // A PLACEMENT-ONLY BODY TURNS ABOUT ITS PELVIS, not its model
-        // origin (corrected 2026-09-10). `0139205` wrote "spins by its
-        // record about the origin" with no function behind it, and the
-        // engine places a body the other way: the NODE - the hierarchy
+        // origin: the engine places a body by the NODE - the hierarchy
         // root, the pelvis - is put at the placement and every child
         // hangs off it, so the facing turns the body about that point.
         // For a model authored near the origin (HO1_FN's pelvis at x
         // 2.9) the two differ by a few units; VIR_FN is authored at x
-        // 546, and turned about the origin its pelvis was drawn 770
+        // 546, and turned about the origin its pelvis would be drawn 770
         // units from its placement at a facing of 89 - where its own
-        // shoot brain, which uses the placement, did not think it was,
-        // and where the projectile sweep, matching the drawing, could
-        // not be hit from the placement's side.
+        // shoot brain, which uses the placement, does not think it is,
+        // and where the projectile sweep, matching the drawing, cannot
+        // be hit from the placement's side.
         else if (spin)                  { bodyYaw = s.facing; aboutPelvis = true; }
         // ...and the WORLD heading the body ends up drawn with, which
         // is what a camera hanging off him reads back.
@@ -3291,13 +3271,13 @@ void PlayState::worldStaged() {
             if (spins && !aboutPelvis) {
                 // ...ON THE CORNERS' OWN TRANSFORM: a body turned
                 // about its MODEL origin is `R * pos + off` (the loop
-                // below). This used to add `off` first and turn the
-                // sum about the WORLD origin, which put every mesh of
-                // such a body - a gunman facing by his record - its
-                // own distance from the world origin away, rotated by
-                // his facing: the projectile sweep found actor 240's
-                // pelvis at (2875, 4466) with him drawn at (4516,
-                // -2797), and his shadow's bones were there too.
+                // below). Adding `off` first and turning the sum about
+                // the WORLD origin would put every mesh of such a body -
+                // a gunman facing by his record - its own distance from
+                // the world origin away, rotated by his facing: the
+                // projectile sweep finding actor 240's pelvis at (2875,
+                // 4466) with him drawn at (4516, -2797), his shadow's
+                // bones there too.
                 omk::rotateYawCS(bcs, bsn, pose[mi].pos, r);
                 for (int k = 0; k < 3; ++k) r[k] += off[k];
             } else {
@@ -3333,9 +3313,8 @@ void PlayState::worldStaged() {
         // and `+88` radius, and `sub_493E40` adds each per vertex. So a
         // CHARACTER is lit exactly as a walker is: from the set's ambient
         // grey, by the set's lights - his model's baked colour is not kept
-        // (characters ship a flat white). The port lit the crowd alone until 2026-10-06 (a
-        // reader's frame of the cave: Gandhar tinted the lava's red, the
-        // port's white). Same declared deviation as the crowd: reach and
+        // (characters ship a flat white) - in the cave Gandhar is tinted
+        // the lava's red, not white. Same declared deviation as the crowd: reach and
         // falloff per BODY, from his root's world point, where the engine
         // tests per mesh. A body the GPU cannot light (more lights reach
         // than its program takes) goes the CPU way, as a walker does.
@@ -3437,11 +3416,11 @@ void PlayState::worldStaged() {
         // (`player->pos()`): his FEET, `off[1] + feet` - the lowest
         // point of his standing pose carried where the vertices went,
         // right for a pelvis-anchored robber and a floor-anchored one
-        // alike. At the model's origin (`off`) the entry sat ~40 above
-        // the floor and the reach box, `max(|dx|,|dy|,|dz|) <= the two
-        // root radii` (~28), refused every gunman on the height alone.
-        // And EVERY OTHER ACTOR (2026-10-07, a reader: "the Mecaguards
-        // and the Sham have no collider"): `Actor_Attach` (0x0041CCA0)
+        // alike. At the model's origin (`off`) the entry would sit ~40
+        // above the floor and the reach box, `max(|dx|,|dy|,|dz|) <= the
+        // two root radii` (~28), refuse every gunman on the height alone.
+        // And EVERY OTHER ACTOR - the Mecaguards and the Sham included:
+        // `Actor_Attach` (0x0041CCA0)
         // registers every attached actor, `sub_45DFF0(node, x, y, z)`,
         // and `Actor_Detach` removes it (`dropActorBody`, where the
         // viewer parks or drops a body). Not the player's own body - a
@@ -3527,7 +3506,7 @@ void PlayState::worldStaged() {
                         s.drawAt[2], g ? "on the walk mesh" : "OFF the walk mesh");
         }
         // THE HEAD'S TWIST against the shoulders, in degrees - a
-        // number for the reader's "head at 90 degrees". The engine
+        // number for a "head at 90 degrees" seen in play. The engine
         // clamps its own head look to +-70 of yaw and +-40 of pitch
         // (`Actor_SetHeadLook`, 0x00468B50, and the player's free look
         // in `Actors_TickAll` uses the same two), so anything past 70

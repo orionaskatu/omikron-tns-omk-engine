@@ -195,9 +195,8 @@ public:
     void shadowPass(const omk::View& v, std::span<const omk::Draw> casters) override;
     bool drawsPixelLights() const override { return true; }
     bool drawsShadowMap() const override { return true; }
-    // BODIES POSED BY THE RENDERER (`renderer.h` `Draw::meshPose`; the
-    // reader, 2026-10-11: "Port it on vulkan too for consistency"), as GLES,
-    // GL1 and the 3DS do: a posed draw's rest corners, one affine a mesh and
+    // BODIES POSED BY THE RENDERER (`renderer.h` `Draw::meshPose`), as GLES,
+    // GL1 and the 3DS do, for consistency across the backends: a posed draw's rest corners, one affine a mesh and
     // the lights that reach the body go to set 2, and `scene.vert` places,
     // turns and lights each corner by the GLES shader's rule. A draw that will
     // not fit the frame's pose buffer, and every caster of the shadow map, is
@@ -397,17 +396,16 @@ private:
     // ...and how many corners its buffer HOLDS, which a geometry that changes
     // size every frame (the particles) keeps above what it uses, so it refills
     // in place instead of freeing and allocating device memory every frame
-    // (2026-09-30, the same fault the GLES ring answers on the Vita)
+    // (the same cost the GLES ring answers on the Vita)
     std::map<const omk::Geometry*, std::size_t> vboCap_;
     std::map<const omk::Geometry*, std::uint64_t> vboRev_;
     // THE DEPTH TIE, resolved at SUBMIT (raster.cpp `kDepthTie` has the
     // reading). Two faces on the same four vertices in opposite winding - the
-    // two SIDES of a shop sign, 18 pairs in Anekbah - were read as both
-    // submitted (CULLMODE = NONE), and the engine's strict test on a quantised
-    // z-buffer keeps the FIRST drawn on every pixel. (2026-10-01: the engine's
-    // software back-face cull keeps only one side of such a pair, and the
-    // tie's key now carries the face's side - `depthtie.cpp` faceClass - so
-    // what is left here is coincident faces of ONE winding.) The software rasterizer rejects a
+    // two SIDES of a shop sign, 18 pairs in Anekbah - and the engine's strict
+    // test on a quantised z-buffer keeps the FIRST drawn on every pixel. The
+    // engine's software back-face cull keeps only one side of such a pair,
+    // and the tie's key carries the face's side - `depthtie.cpp` faceClass -
+    // so what is left here is coincident faces of ONE winding. The software rasterizer rejects a
     // depth within 2^-16 of the buffer's; a GPU compare cannot read the
     // buffer, a quantised `gl_FragDepth` still straddles its grid on ~1% of
     // pixels, and a per-draw depth bias through the non-linear projection is
@@ -418,7 +416,7 @@ private:
     // vertices collapsed to one) so it rasterises nothing. Faces are walked in
     // the order the draws arrive, once per geometry revision; a quad is the
     // consecutive pair `buildGeometry` emits, (0,1,2)(0,2,3).
-    // The DECISION lives in `o3de/depthtie.h` (2026-09-13, todo/optimization.md
+    // The DECISION lives in `o3de/depthtie.h` (todo/optimization.md
     // step 3), so it can be tested without a GPU; this backend keeps the vertex
     // buffer half below.
     std::map<const omk::Geometry*, omk::DepthTie> tie_;
@@ -1055,7 +1053,7 @@ bool VulkanRenderer::makePipelines() {
             // multiply: 0x1000|0x4000, 6 meshes and the mode-6 sprites.
             // SRCBLEND=ZERO / DESTBLEND=INVSRCCOLOR - `dst * (1 - src)`, the
             // same arithmetic `raster.cpp` does, darkening where the source
-            // is bright. DST_COLOR / ZERO (until 2026-09-02) was `dst * src`.
+            // is bright. DST_COLOR / ZERO would be `dst * src`, the wrong law.
             cba.blendEnable = VK_TRUE;
             cba.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
             cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
@@ -1213,8 +1211,7 @@ bool VulkanRenderer::makePipelines() {
     si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     // Trilinear: the mip chain `upload` generates, blended between levels.
-    // With one level (every mode below 2) maxLod 0 samples level 0 exactly
-    // as before.
+    // With one level (every mode below 2) maxLod 0 samples level 0 exactly.
     if (filter_ >= 2) { si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE; }
     if (anisoOn_) {
         si.anisotropyEnable = VK_TRUE;
@@ -1234,7 +1231,7 @@ bool VulkanRenderer::makePipelines() {
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
 
     // ---- the POSE BUFFER and its set (set 2) ------------------------------
-    // Without it every body is posed on the CPU, as before (`posesBodies` no).
+    // Without it every body is posed on the CPU (`posesBodies` no).
     poseAlign_ = std::max<VkDeviceSize>(16, props_.limits.minStorageBufferOffsetAlignment);
     if (makeBuffer(kPoseBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -2007,18 +2004,18 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
     };
 
-    // THE POOL, UPLOADED ONLY WHERE IT IS NEW (2026-10-10), as the GLES, 3DS
-    // and GL1 backends keep it. The frame hands the pool over again whenever
-    // it changes - a particle's sprite, a character coming into view - and
-    // this waited for the device to go idle, destroyed EVERY image and sent
-    // them all again. A texture already on the device from an earlier pool -
+    // THE POOL, UPLOADED ONLY WHERE IT IS NEW, as the GLES, 3DS and GL1
+    // backends keep it. The frame hands the pool over again whenever it
+    // changes - a particle's sprite, a character coming into view - and
+    // re-sending would mean waiting for the device to go idle, destroying
+    // EVERY image and sending them all again. A texture already on the device from an earlier pool -
     // the same pixel storage, palette and size - is kept with its image and
     // its descriptor set, and the entry holds that storage, so its address
     // cannot come back as another texture's while cached; what no slot of the
     // new pool uses is destroyed, after a wait for the device only then.
-    // (This was also where a per-frame call had exhausted the descriptor pool
-    // and crashed: a set is now freed on its own, and only the new ones are
-    // allocated.)
+    // A set is freed on its own and only the new ones are allocated -
+    // reallocating them all on a per-frame call exhausts the descriptor pool
+    // and crashes.
     if (white_.img == VK_NULL_HANDLE)
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
     const auto keyOf = [](const omk::Texture& x) {
@@ -2620,16 +2617,14 @@ bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
                                      std::span<const omk::Draw> scene,
                                      std::span<const omk::Draw> sceneClipped,
                                      std::span<const omk::Draw> mirror) {
-    // THE ORIGINAL'S TWO PASSES (`sub_440D90`, 0x00440D90, read 2026-09-30):
+    // THE ORIGINAL'S TWO PASSES (`sub_440D90`, 0x00440D90):
     // the scene through the camera reflected in the mirror's plane FIRST, then
     // through the real camera over it - `Render_Frame(reflected, 1)` then
     // `Render_Frame(camera, 0)`, and `Render_FlushBuckets` begins its scene
     // with ZENABLE on and clears nothing between them. The reflected pass
     // leaves the depths of a virtual room behind the plane, so the real room's
     // walls, nearer, cover it everywhere but the mirror's opening, and the
-    // mirror's own faces blend over what shows through. It replaces a stencil
-    // mark and depth reset written before that was read (a reconstruction:
-    // `CLAUDE.md` 6 had the confinement "not traced"); the GLES backend does
+    // mirror's own faces blend over what shows through. The GLES backend does
     // the same, so the two draw a mirror alike. The draws in FRONT of the plane
     // only, as the CPU fallback takes them.
     if (mirror.empty()) return false;
@@ -2680,8 +2675,8 @@ void VulkanRenderer::end() {
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
-    // so). The READBACK COPY is no longer recorded here: a frame the GPU
-    // presents (`presentWorld`) never reads it, and it was copied every frame
+    // so). The READBACK COPY is not recorded here: a frame the GPU presents
+    // (`presentWorld`) never reads it, so copying every frame is waste
     // (todo/cpu-vs-original.md tier A). `readback()` records it when a frame
     // is read - the image is in TRANSFER_SRC_OPTIMAL then too, the present
     // pass handing it back so.
@@ -2710,7 +2705,7 @@ const omk::Surface& VulkanRenderer::readback() {
     // is converted once, when `end()` says there is a new one.
     if (!dirty_) return fb_;
     dirty_ = false;
-    if (copyOwed_) {                 // the copy `end()` no longer records
+    if (copyOwed_) {                 // the copy `end()` does not record
         copyOwed_ = false;
         VkCommandBuffer cb = oneShotBegin();
         VkBufferImageCopy cp{};

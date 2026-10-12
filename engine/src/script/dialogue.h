@@ -51,11 +51,9 @@ struct DialogNode {
     // and conversation 272 - the one a new game opens with - is three nodes of
     // 30.7 + 36.2 + 32.3 seconds.
     //
-    // Those were first written down as 61.5 / 72.5 / 64.6, twice as long,
-    // because `tools/morph3dm.read` returns BYTES and they were divided by the
-    // channel count instead of by two. The port had it right and the
-    // measurement checking it was wrong - the direction that is easy to miss,
-    // because the disagreement looks like a port bug.
+    // `tools/morph3dm.read` returns BYTES: divided by the channel count
+    // instead of by two, they come out twice as long (61.5 / 72.5 / 64.6) -
+    // a disagreement in the measurement that looks like a port bug.
     char          name[11] = {};
     // The node's four camera ids, and they are NOT in field order: the REPLY
     // pair comes first. `sub_4013B0` issues camera command 12 twice per phase -
@@ -146,18 +144,16 @@ DialogRun runConversation(const Conversation& c, std::span<const std::byte> chun
 //     choose(k)  execute branch k's ACTION (event 59, fired when a reply is
 //                chosen) and enter `param[k]`. -> Speaking, or Finished.
 //
-// **A timer here was wrong and was corrected.** The first version ended each
-// line when its audio ran out and walked on by itself, which made the intro
-// take about the right total time and was still not a conversation: *this is a
-// dialog, you are not supposed to do anything until the user does something.*
-// That is the same correction `ui.open` needed - a screen belongs to whoever
-// is holding the keyboard, and `Session::answerUi` is the only thing that
+// **No timer walks the conversation on.** A line does not end when its audio
+// runs out and move on by itself - that gives the intro about the right total
+// time and is still not a conversation, which waits until the player does
+// something. It is the same rule as `ui.open`: a screen belongs to whoever is
+// holding the keyboard, and `Session::answerUi` is the only thing that
 // releases it. `choose` is that for a conversation.
 //
-// **And the correction has an exception, which is `LineEnd`.** Removing the
-// timer went one step too far: it made EVERY line wait, and the engine has
-// one that does not. The rule is per-ASSET and is transcribed below; the
-// general statement stands for 1172 of the 1174 shipped lines.
+// **The exception is `LineEnd`.** Not EVERY line waits: the engine has one
+// that does not. The rule is per-ASSET and is transcribed below; the general
+// statement stands for 1172 of the 1174 shipped lines.
 //
 // **What the duration is for.** The node's `+46` stem names `MORPH/<stem>.3DM`
 // and that file's audio block is the line, so `lineSeconds` is the decoded
@@ -312,7 +308,7 @@ public:
     // read it again
     const std::vector<std::byte>& morph() const;
     // ...SHARED, so a frontend keeps the 3-4 MB for the face without copying
-    // them on the frame the line starts (a console, 2026-09-30)
+    // them on the frame the line starts (measured on a console)
     std::shared_ptr<const std::vector<std::byte>> morphShared() const { return stream_.bytes(); }
     // WHO RUNS A REPLY'S ACTION (event 59). `Game_HandleEvent` case 59 runs
     // it as a REAL context - `Script_NewContext` in the active slot, one
@@ -326,7 +322,7 @@ public:
     void setActionRunner(ActionRunner f, void* self) { runner_ = f; runnerSelf_ = self; }
     // what the line's start cost here, in ms: the file's opening read (the
     // header and its first second) and that second's decode - a console's wait
-    // on a line (2026-09-23) is apportioned by these
+    // on a line is apportioned by these
     double loadReadMs() const { return loadMs_[0]; }
     double loadDecodeMs() const { return loadMs_[1]; }
     int    channels() const { return channels_; }
@@ -362,10 +358,10 @@ public:
     //     t = 2 u^2              while elapsed <= d/2
     //     t = -1 + 4u - 2 u^2    after, reaching 1 at d
     //
-    // and `sub_418410` blends eye, target, roll and fov by t. This was linear
-    // in u until 2026-10-01: both start and end where the engine's do, but
-    // in between the port's camera led the engine's - a quarter of the way
-    // through it had covered 25% of the move where the engine covers 12.5%.
+    // and `sub_418410` blends eye, target, roll and fov by t. A blend linear
+    // in u starts and ends where the engine's does but leads it in between -
+    // a quarter of the way through it covers 25% of the move where the
+    // engine covers 12.5%.
     float cameraProgress() const {
         if (camFrames_ >= kCameraMoveFrames) return 1.0f;
         const double u = camFrames_ / kCameraMoveFrames;
@@ -394,14 +390,13 @@ private:
     ActionRunner runner_ = nullptr;
     void* runnerSelf_ = nullptr;
     double loadMs_[2] = {0.0, 0.0};
-    // THE LINE PLAYING, OPEN (`formats/morphstream.h`). It replaced a
-    // read-ahead (2026-09-23/30) that read the WHOLE `.3DM` of every branch
-    // target of the line playing on a thread - up to four files of 3-4 MB
-    // held at once, for one to be used - which the threadless classic build
-    // could not have at all, and which paid a whole line on the frame it
-    // started whenever the line had not been guessed (an iBook G3: 0.2 to
-    // 1.1 s, `todo/handoff-classic-mac.md` 3f). The original reads only the
-    // line it plays, as it plays.
+    // THE LINE PLAYING, OPEN (`formats/morphstream.h`), not a read-ahead.
+    // Reading the WHOLE `.3DM` of every branch target of the line playing on
+    // a thread holds up to four files of 3-4 MB at once, for one to be used,
+    // which the threadless classic build cannot have at all, and pays a whole
+    // line on the frame it starts whenever the line was not guessed (an iBook
+    // G3: 0.2 to 1.1 s, `todo/handoff-classic-mac.md` 3f). The original reads
+    // only the line it plays, as it plays.
     MorphStream stream_;
     // the first second of a line is read where it starts; `tick` keeps
     // `kAheadSeconds` read past the clock

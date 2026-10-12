@@ -2,8 +2,7 @@
 //
 // MOVING IN FIRST PERSON - shoot mode's own mover (`todo/shoot-mode.md` 8.5b).
 //
-// Asked for 2026-09-10 (*"don't forget the integration of moving while in fps
-// mode"*): in ACTOR_STATE 3 the port never moved the player, and the reason is
+// In ACTOR_STATE 3 the player is not moved by a walk clip, and the reason is
 // in the data. `H1Avnt` group 200 - the shoot stance - has NO walk clip. Its
 // movement entries are all `clip -1`, and each queues a SPECIAL MOVE:
 //
@@ -38,7 +37,7 @@
 // The speeds come from `sub_47CC70`, the mode's init (`Shoot_Enter`): property
 // 3 - SPEED, record +158 - picks a row of the table at 0x004CF7D0.
 //
-// THE SHOVE, `sub_47D1F0` - the HURT REACTION, ported 2026-09-12 - is the one
+// THE SHOVE, `sub_47D1F0` - the HURT REACTION - is the one
 // thing in this block that is not the player's own doing. `sub_4240E0` calls
 // it on every bolt he SURVIVES (the death returns before it), and on the
 // explosion arm with a fixed band 2; it plays a sound, points the shove by the
@@ -215,8 +214,7 @@ float shootTurnDegrees(int a1, int sensitivity);
 // (0x4BCB34 / 0x4BCB38). The result is what `sub_47C260` hands the camera,
 // times pi/180, and it is in the ENGINE's sign - the caller owns how its own
 // camera reads it. **The arm that zeroes it instead is flag 0x1000, and its
-// writer is `sub_47CC70`** (found 2026-09-12, where this said "no traced
-// writer"): `BYTE1 |= 0x10` is bit TWELVE, not bit four, and it goes up for
+// writer is `sub_47CC70`**: `BYTE1 |= 0x10` is bit TWELVE, not bit four, and it goes up for
 // exactly the character type that takes the mechanical sounds. So a Mecagarde
 // in shoot mode cannot look up or down at all - his pitch is pinned at 0 and
 // `sub_47C260` is not even called, so the aim keeps its last value - while his

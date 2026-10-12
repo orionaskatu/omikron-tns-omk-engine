@@ -172,13 +172,13 @@ int main(int argc, char** argv) {
         // The objects are found in a started list the frame they appear -
         // and it has to be BOTH resident lists, not just the active one.
         // `Area_TickLoad` case 2 loads the destination's `.SCX` at the START
-        // of the load (2026-09-05), so by the time a door starts, the
+        // of the load, so by the time a door starts, the
         // outgoing scene it belongs to has already moved to `sceneOut()` -
         // which is where `transitionPool` finds it and reports `pool
-        // OUTGOING`. Reading `scene()` alone left both names blank while the
-        // objects themselves started, on time and with 0 missed: an
-        // observation bug, not a behaviour one, and exactly the shape of the
-        // motion and pose lookups that had to learn the same thing.
+        // OUTGOING`. Reading `scene()` alone leaves both names blank while
+        // the objects themselves start, on time and with 0 missed: an
+        // observation bug, not a behaviour one - the motion and pose lookups
+        // need both lists for the same reason.
         for (int f = 0; f < 3000 && endF < 0; ++f) {
             s.frame();
             const auto& tr = s.transition();

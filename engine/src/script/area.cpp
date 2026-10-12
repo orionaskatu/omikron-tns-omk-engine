@@ -39,7 +39,7 @@ void dbWrite(GameState& s, std::size_t off, const void* src, std::size_t n) {
 std::vector<std::byte> readFile(const std::string& p) {
     // SAID, not silent: an unreadable IAM\AREA leaves every area EMPTY - no
     // startup script, no set, no scene - and a run that just never starts
-    // (a console, 2026-09-18). One line names the file; `readWholeFile` names
+    // (seen on a console). One line names the file; `readWholeFile` names
     // a short read itself.
     auto d = readWholeFile(p);
     if (d.empty()) { std::fprintf(stderr, "session: cannot read %s\n", p.c_str());
@@ -75,10 +75,10 @@ std::string headerName(std::span<const std::byte> b, std::size_t off,
 
 // A CHUNK, READ ALONE - as `Archive_ReadChunk` (0x0040FF90) reads it: the
 // directory, then one seek and one read of the chunk (todo/ram-vs-original.md
-// tier C). Until 2026-10-05 the three archives were KEPT WHOLE once read
-// (`IAM\AREA` 1.2 MB, `SCENE` 0.3, `DIALOG` 1 MB) after a console's card took
-// most of a 270 ms frame re-reading them whole for every chunk (2026-09-30);
-// this reads neither whole. The directory alone is kept - 8 bytes an entry,
+// tier C). The three archives are not kept whole (`IAM\AREA` 1.2 MB, `SCENE`
+// 0.3, `DIALOG` 1 MB), and not re-read whole for every chunk either, which
+// on a console's card takes most of a 270 ms frame. The directory alone is
+// kept - 8 bytes an entry,
 // a few KB - where the engine re-reads its 2 KB group for every chunk.
 std::vector<std::byte> archiveChunk(const std::string& path, int id) {
     if (id < 0) return {};
@@ -313,7 +313,7 @@ void Session::areaLoad(int area, int slot) {
     s.area = area;
     s.areaChunk = readChunk(iam_, "AREA", area);
     // An area with NO chunk still "loads" - no script, no set, no scene, and
-    // a run that never starts (a console, 2026-09-18, `set ''`). Say what the
+    // a run that never starts (seen on a console, `set ''`). Say what the
     // file gave: its size and its chunk count, which the Mac knows are
     // 1253376 bytes and 259 for the shipped IAM\AREA.
     if (s.areaChunk.empty()) {
@@ -324,7 +324,7 @@ void Session::areaLoad(int area, int slot) {
                     arch.populated());
     } else if (headerName(s.areaChunk, 88, 9).empty() && startupScript(s.areaChunk) == 0) {
         // A chunk with neither a set nor a startup script is what a ZEROED
-        // read looks like (area 118 on a console, 2026-09-18). Its size, how
+        // read looks like (area 118 on a console). Its size, how
         // many of its bytes are nonzero, and the whole file's FNV-1a, which
         // the shipped IAM\AREA (1253376 bytes) gives as 0x2e637003.
         const auto file = readFile(iam_ + "/AREA");
@@ -435,19 +435,19 @@ void Session::completeLoad(int slot) {
     // own `.SCX` - and case 9 is the startup contexts, so the object pool the
     // startup script addresses is ALWAYS the destination's.
     //
-    // This port loaded it from `finishScene()` instead, at the far end of the
-    // transition state machine. Measured 2026-09-05 walking from Anekbah into
-    // the restaurant (AREA 0 -> 46, zone 10 "Porte 26"): the area loaded at
+    // Loaded from `finishScene()` instead, at the far end of the transition
+    // state machine, it arrives too late - measured walking from Anekbah into
+    // the restaurant (AREA 0 -> 46, zone 10 "Porte 26"): the area loads at
     // frame 65 and its startup script - seven `scx.play.actor` calls that put
-    // the diners on their paths - ran against `anekbah.SCX`, still resident;
-    // `resto.SCX` only arrived at frame 145. Every handle missed, no program
-    // started, and all eight bodies stood on their 20-byte placement records
+    // the diners on their paths - runs against `anekbah.SCX`, still resident;
+    // `resto.SCX` only arrives at frame 145. Every handle misses, no program
+    // starts, and all eight bodies stand on their 20-byte placement records
     // in the REST pose, which for the crowd models is a T-pose. Jumping
-    // straight to the area hid it, because `omk-play` makes the `.SCX`
-    // resident itself before the first frame.
+    // straight to the area cannot show it, because `omk-play` makes the
+    // `.SCX` resident itself before the first frame.
     // WHAT THE TICK COSTS, by case: the engine does cases 2..9 in one tick and
-    // so does this, and a console spent 1.5 s in it arriving in Anekbah
-    // (2026-09-30) with nothing saying on what.
+    // so does this, and a console can spend 1.5 s in it arriving in Anekbah
+    // - this says on what.
     using LoadClock = std::chrono::steady_clock;
     const auto loadMs = [](LoadClock::time_point a) {
         return std::chrono::duration<double, std::milli>(LoadClock::now() - a).count();
@@ -875,9 +875,9 @@ void Session::startTransitionObject(int obj) {
     // object cannot resolve - which is a door asked for and never played, with
     // no error anywhere.
     {
-        // Printed ALWAYS since 2026-09-05: a transition's door resolve is a
-        // handful of lines a session, and a reader walking into the void
-        // needs it in the log they hand over.
+        // Printed ALWAYS: a transition's door resolve is a handful of lines
+        // a session, and a play report of walking into the void needs it in
+        // the log that comes with it.
         if (true)
             std::printf("[tr] frame %ld  door object %d -> program %d%s   "
                         "(pool %s, area %d; resident scene %d over area %d; "
@@ -931,7 +931,7 @@ int Session::fightingWith() const {
 // THE RUN-OVER (`todo/falls.md` 4). `Sliders_Tick` raises event 43 with game
 // message 17 for a vehicle above 1706.67 whose spatial entry touches the
 // player, latched 90 frames (`Sliders::tickVehicles` records it in `bumped()`,
-// which nothing read until 2026-09-17). The cost is the area's: Anekbah's and
+// read here). The cost is the area's: Anekbah's and
 // Jaunpur's handler flashes red, shakes, takes 15 of `Vie` (or leaves 5 below
 // 16) and `player.move.wait 118` - `H_IMPACT`, knocked flat. IAM\GLOBAL does
 // not subscribe to 17, so where no area does, a run-over costs nothing.
@@ -1047,11 +1047,11 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
     // loading (state 3 -> 4). The player is then still on the ORIGIN when
     // the load completes, the engine hides the non-active slot - the
     // freshly loaded destination, to be re-shown when he walks into it -
-    // and this port instead flipped the row to the destination and hid the
-    // origin under his feet. Measured 2026-09-05 in the Impasse airlock:
-    // "event 9: feet on area 0" with Anekbah not yet shown, then "HIDE area
-    // 142 ... THE ACTIVE ROW'S OWN SET", both slots hidden, 0 triangles
-    // under the walker, and a reader standing in the void.
+    // and forcing the row here flips it to the destination and hides the
+    // origin under his feet. Measured in the Impasse airlock: "event 9: feet
+    // on area 0" with Anekbah not yet shown, then "HIDE area 142 ... THE
+    // ACTIVE ROW'S OWN SET", both slots hidden, 0 triangles under the
+    // walker, and the player standing in the void.
     const auto hideOutgoing = [&]() {
         if (!playerWalks_ && tr_.dest >= 0 && slots_[active_].area != tr_.dest &&
             slots_[1 - active_].area == tr_.dest)
@@ -1132,14 +1132,12 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
         // `area.arrive -1` hides the row that is NOT active, which is the
         // engine's own line: `if (dword_69BC60) hide(slot0) else hide(slot1)`.
         //
-        // **A 2026-09-17 CHANGE HERE WAS A REGRESSION AND IS REVERTED.** It hid
-        // `Transition::outArea` (the engine's `a1[3]`) instead, reasoning that a
-        // lift arrives before the feet ever cross and so "not active" names the
-        // destination. The frame that produced is worse, and a reader caught it
-        // in one sentence - *"the issue doesn't happen when I tested before ...
-        // this is a very recent regression"*: hiding the OUTGOING area takes
-        // away the lift shaft the player is standing in, floor included, so he
-        // arrives somewhere he cannot walk. The engine keeps the set he is on
+        // **NOT `Transition::outArea`** (the engine's `a1[3]`), on the
+        // reasoning that a lift arrives before the feet ever cross and so "not
+        // active" names the destination: hiding the OUTGOING area takes away
+        // the lift shaft the player is standing in, floor included, so he
+        // arrives somewhere he cannot walk (a regression seen in play when
+        // tried). The engine keeps the set he is on
         // and shows the destination when his feet reach it, which is what this
         // line does. The black arrival has another cause - see
         // `todo/missing-ui.md` 6.
@@ -1456,9 +1454,9 @@ void Session::tickCamera() {
         // ...at the PELVIS, which is what `sub_414F30` reads out of the
         // actor record (+244/+248/+252); `playerPos_` is the feet. The
         // frontend solves a standing relative camera at exactly this point
-        // (`player->cameraLift()`), and a travel solved here at the feet sat
-        // a whole lift too low - a reader's screenshot of the Impasse
-        // tutorial framing Kay'l's legs.
+        // (`player->cameraLift()`), and a travel solved here at the feet sits
+        // a whole lift too low - the Impasse tutorial then frames Kay'l's
+        // legs.
         // EACH POINT BY ITS OWN SUBJECT KIND (`solveCamera`): a travel into
         // the rooftops' ladder camera (kind 9) or a close-up on the head
         // (kinds 1 and 3) lerps toward that point, not the pelvis.
@@ -1632,12 +1630,10 @@ bool Session::placeActorAt(int addressId) {
             return true;
         }
     }
-    // Not in either resident chunk. Before 2026-09-02 this was the normal
-    // case for a transition's tail - `area.goto` ran through and the address
-    // arrived a step early - and the hold-and-retry below covered it. The
-    // caller now parks at status 10 the way the handler parks it, so a
-    // resident address resolves at once; the hold stays as the fallback for
-    // an address no resident chunk owns.
+    // Not in either resident chunk. The caller parks at status 10 the way
+    // the handler parks it, so a resident address resolves at once; the
+    // hold-and-retry below is the fallback for an address no resident chunk
+    // owns.
     pendingAddress_ = addressId;
     return false;
 }
@@ -1668,14 +1664,13 @@ void Session::reloadScene(int area, int scene) {
     // own `.SCX`, and the ones it never names go on running - which is why
     // the environment keeps animating through a cutscene in the original.
     //
-    // This function used to rebuild unconditionally, on the reasoning that
     // "`Scene_LoadSCX` rebuilds the object pool, so no program survives the
-    // transition". That is true of the function and false of the transition,
-    // because the transition does not call it - the premise was never checked
-    // against the call sites. And since `resolveScx` reads the stem from the
-    // AREA chunk either way, the rebuild was re-loading THE SAME FILE and
-    // resetting every program counter, clock and run count for nothing
-    // (`todo/omk-play.md` 52).
+    // transition" is true of the function and false of the transition,
+    // because the transition does not call it (read the call sites). And
+    // since `resolveScx` reads the stem from the AREA chunk either way, an
+    // unconditional rebuild would re-load THE SAME FILE and reset every
+    // program counter, clock and run count for nothing (`todo/omk-play.md`
+    // 52).
     if (area == sceneArea_ && scene_.loaded()) return;
     // COMING BACK IS A SWAP, NEVER A LOAD - the pool belongs to the SLOT.
     // `Area_LoadScx` (0x0041B4E0) walks the decor slots for the one holding
@@ -1824,7 +1819,7 @@ void Session::sceneLoad(int area, int scene) {
 //   next: ...
 //     Area_SetLoadedScene(area, -1); Zones_RegisterAll()
 //
-// Bit 8 (issue 38, 2026-09-02): the caller is RUNNING OUT OF that block -
+// Bit 8 (issue 38): the caller is RUNNING OUT OF that block -
 // its code pointer is inside the SCENE chunk - so the handler cannot free it
 // here; `end` (0x401B90) does, `if ((+40 & 8) && dword_69BC44[slot]) {
 // Mem_Free; dword_69BC44[slot] = 0; }`. The port keeps the slot's chunk bytes
@@ -1967,11 +1962,10 @@ bool Session::postMessage(int message, int sender) {
 // travels in the save. The live-actor half: `Actor_GetPosAndFacing(esi)`
 // reads the NEW body's node (+244..+252, facing +420) and `Actor_SetPlacement`
 // puts it back there - so the player is now wherever that body stands, and
-// the soul moves while the bodies stay. (This said "the position the Session
-// tracks stays where it is, which is the transfer's own rule" until
-// 2026-10-07; the two reads of the new slot say the opposite, and every
-// reincarnation began at the old body's spot - the Sham mounted from Fodo's
-// place, AREA 137.) The Session knows a body's node only as its `Shown`
+// the soul moves while the bodies stay. (The position does NOT stay where it
+// is: the two reads of the new slot say so, and keeping it starts every
+// reincarnation at the old body's spot - the Sham mounted from Fodo's place,
+// AREA 137.) The Session knows a body's node only as its `Shown`
 // placement, so that is what it moves the player to; a frontend that draws
 // the body has its live node and puts the player there instead
 // (`playframe_world.cpp`). The new body joins `shown_`.
@@ -2031,9 +2025,9 @@ int Session::shownBitOf(int actor) const {
     // `Actors_SpawnFromTables` reads the same +18 back on every area load,
     // which is what makes it a save bit. The shown slot is searched first,
     // then the other resident one.
-    // The ad-hoc scan this used to do IS `readPlacements`, which the spawn
-    // needs anyway - so it is one reader now (`formats/placements.h`), and
-    // the same records answer both questions.
+    // The scan IS `readPlacements`, which the spawn needs anyway - one
+    // reader (`formats/placements.h`), and the same records answer both
+    // questions.
     if (actor == -1) return -1;
     int out = -1;
     const auto scan = [&](std::span<const std::byte> b, ChunkKind kind) {
@@ -2469,10 +2463,9 @@ void Session::openDialog(int id) {
 //
 // One `Script_Execute` through the SAME handlers a world script reaches, so
 // `zone.enable`/`disable` re-register the live zones, `object.show` reaches
-// its prop, `media.play` is heard. Until 2026-10-05 the port ran it in a bare
-// `Interpreter` with no hooks and dropped everything but the DB writes: a
-// conversation that retired its own zone could be started again from where
-// the player stood. Anything that would PARK (a wait, a screen) just stops,
+// its prop, `media.play` is heard. Run in a bare `Interpreter` with no hooks
+// it would drop everything but the DB writes: a conversation that retires its
+// own zone could be started again from where the player stands. Anything that would PARK (a wait, a screen) just stops,
 // because the context is freed after the one call - as in the engine.
 //
 // A FULL table is the one difference: `Script_NewContext` then returns the
@@ -2530,9 +2523,9 @@ bool Session::actorRecord(int actor, std::vector<std::byte>& chunk,
     };
     // `v2 = &dword_69BC40; ... v2 += 4`: row 0 then row 1, whatever is shown
     // or active - and each table only when its ID is not negative (`v2[2] <
-    // 0` skips the AREA's, `v2[3] >= 0` admits the SCENE's). Until 2026-09-02
-    // this walked the shown slot first, which differs only when both rows
-    // carry the same actor id.
+    // 0` skips the AREA's, `v2[3] >= 0` admits the SCENE's). Walking the
+    // shown slot first instead differs only when both rows carry the same
+    // actor id.
     for (int k = 0; k < 2 && !found; ++k) {
         const ResidentSlot& s = slots_[k];
         if (s.area < 0) continue;
@@ -2600,9 +2593,9 @@ void Session::frame() {
         // at all: `Script_PlayAllScripts` per resident slot, then
         // `sub_451600(); Sfx_TickAmbient();` run on every frame, conversation
         // or not - it is `Script_Pump`, the world-script step, that the
-        // dialogue displaces. Until 2026-09-02 this returned before the scene
-        // ticked and the intro's portal FROZE the moment the conversation
-        // opened; a reader watching it said so. The same delta as below.
+        // dialogue displaces. Returning before the scene ticks would FREEZE
+        // the intro's portal the moment the conversation opens. The same
+        // delta as below.
         scene_.tick(static_cast<float>(frameSeconds_ * 30.0));
         // the OUTGOING pool ticks too: its programs are still running and a
         // transition may be waiting on one of them (omk-play 70)
@@ -2679,12 +2672,11 @@ void Session::frame() {
     // OF A SECOND this frame took (docs/BOOT.md 4). Every clock in the engine
     // is in that unit, so this is the one place the real elapsed time enters.
     //
-    // It used to be a flat 1.0 - one clip frame per RENDERED frame - which
-    // silently ties the animation to the frame rate: a software-rasterised
-    // character with 194 particles does not reach 30 fps, so a clip authored
-    // at 30 played back at whatever the CPU managed and everything ran SLOW.
-    // A reader saw it as "it looks like it has been slowed down". A frame-
-    // bounded run leaves `frameSeconds_` at its 1/30 default, so this is
+    // A flat 1.0 - one clip frame per RENDERED frame - would silently tie
+    // the animation to the frame rate: a software-rasterised character with
+    // 194 particles does not reach 30 fps, so a clip authored at 30 would
+    // play back at whatever the CPU manages and everything would look slowed
+    // down. A frame-bounded run leaves `frameSeconds_` at its 1/30 default, so this is
     // exactly 1.0 there and the headless checks stay deterministic.
     scene_.tick(static_cast<float>(frameSeconds_ * 30.0));
     // the OUTGOING pool ticks too: its programs are still running and a
@@ -3305,9 +3297,9 @@ void Session::execute(int i) {
     if (c->status == ctx_status::WaitCamera) {
         // `camera.set.wait` wrote 7: held until the move it started ends
         // (`Game_HandleEvent` case 4) - ends on the camera's clock, which
-        // advances by the frame delta. Counting a tick a frame held the Bowie
+        // advances by the frame delta. Counting a tick a frame holds the Bowie
         // sequence's script twice its music's length at ~15 fps, the camera
-        // parked on each move's last frame (2026-09-30).
+        // parked on each move's last frame.
         if (c->waitingForCamera > 0.0) c->waitingForCamera -= frameDelta();
         if (c->waitingForCamera <= 0.0) c->status = ctx_status::Running;      // runs next frame
         return;
@@ -3555,10 +3547,10 @@ void Session::execute(int i) {
             // handler does `Fight_Engage(opponent, level)` and then
             // `mov word ptr [esi+16h], 3` with no test between - the engine
             // has no way for a fight to fail to begin - so the script waits
-            // for event 2 whatever the frontend could do. Until 2026-10-06 a
-            // fight the frontend could not stage ran the script on, as if it
-            // had been WON (AREA 5 then counts no life lost, raises the
-            // adaptive difficulty and opens the next zone). With no hook at
+            // for event 2 whatever the frontend could do. Running the script
+            // on when the frontend cannot stage the fight would count it as
+            // WON (AREA 5 then counts no life lost, raises the adaptive
+            // difficulty and opens the next zone). With no hook at
             // all - a headless tool, where nothing could ever raise event 2 -
             // it still runs on, as the `ObjectWait` rule does.
             if (!fightHook_) break;
@@ -3700,14 +3692,13 @@ void Session::pumpZoneSlots() {
             // doorless one - so the order they arm in is what the fix turns on.
             //
             // The ARM line itself is the SHARED one at the bottom of this
-            // loop, which prints all four lifecycle events alike.  There used
-            // to be a second one here, unconditional and on stdout, while
-            // ACTIVATE, LEAVE and FREE printed only under `OMK_CAMLOG=1` and
-            // on stderr - so a default run showed a zone arm and then never
-            // showed it activate, which reads exactly like an activate script
-            // that never runs.  That cost a wrong diagnosis on 2026-09-06
-            // (the drawer in Kay'l's apartment, which works).  A lifecycle is
-            // only legible whole: all four events on, or none.
+            // loop, which prints all four lifecycle events alike.  No second,
+            // unconditional ARM line here: with ACTIVATE, LEAVE and FREE
+            // printed only under `OMK_CAMLOG=1`, a default run would show a
+            // zone arm and never show it activate, which reads exactly like
+            // an activate script that never runs (the drawer in Kay'l's
+            // apartment, which works).  A lifecycle is only legible whole:
+            // all four events on, or none.
             // case 1: `ctx = u32(slot,0); if (ctx && u16(ctx,42) == zoneId &&
             // u8(ctx,24) == 4) { u8(ctx,24) = 0; --u16(ctx,28); }` - the zone
             // re-armed while its FREE was still at the head of the FIFO:
@@ -3842,16 +3833,13 @@ int Session::scanTakeable(const float pos[3], float /*facing*/, float* dyOut) co
         // HORIZONTAL radius: a thing on a shelf is in reach if you are
         // standing under it.
         //
-        // Including `dy` - which this did - is a quiet, height-dependent
-        // shrink of that radius, and the taller the shelf the smaller it
+        // Including `dy` is a quiet, height-dependent shrink of that radius, and the taller the shelf the smaller it
         // gets. Kay'l's kitchen cupboard is where it shows: opening it shows
         // `Purée` (31) and `Nourriture Bière` (457) at y 1027.7 and 1025.7
         // over a player standing at 1081.0, so they sit 53 units up. Flat,
         // they are 35.7 away and well inside the reach; with `dy` in the sum
         // they are 64.1 and the scan returns -1, which is a cupboard that
-        // opens onto objects that cannot be taken (a reader, 2026-09-09:
-        // *it is possible to open the cupboard, but not to take the objects
-        // inside - the engine acts like there was no objects*).
+        // opens onto objects that cannot be taken, as if there were none.
         //
         // The height is still WANTED, just not here: `sub_465D30` picks the
         // take group from it (the 70 cm split between the low and the high
@@ -3959,8 +3947,7 @@ Session::Banked Session::bankHeldObject(int objectId) {
     const Banked arm = insertArm(objectId);
     // The kind-12/13 path of `Inventory_Insert` (01_file.c 3570):
     // `Object_ApplyEffect(a1, a3); return 0` - applied, then consumed. So the
-    // rings ARE taken in the original: not as a row, as a COUNT. A reader,
-    // 2026-09-04: "normal behaviour for the rings are to be taken".
+    // rings ARE taken in the original: not as a row, as a COUNT.
     if (arm == Banked::Consumed) applyObjectEffect(objectId);
     // `ObjectList_InsertFront` - `listAdd` IS that function, shifting the list
     // up and writing slot 0, refusing when it is full. A refusal is case 10's
@@ -3974,7 +3961,7 @@ Session::Banked Session::bankHeldObject(int objectId) {
     // `sub_41C540(player, 1)` frees the slot and unlinks the node...
     hooks_.releaseObject(-1, true);
     // ...and `ObjectState_Set(record[11], state & 0xFE)` clears prop state
-    // bit **0**, the bit `Scene_LoadProps` tests. Clearing bit 1 instead let
+    // bit **0**, the bit `Scene_LoadProps` tests. Clearing bit 1 instead lets
     // the prop come back on the next area load.
     PropRef pr;
     if (hooks_.propById(objectId, pr) && pr.stateIndex >= 0)
@@ -4011,8 +3998,8 @@ void Session::applyObjectEffect(int objectId) {
     }
     // The PLAYER's record is the DB's, at +60 - the interpreter reads it
     // there too (`Interpreter::getProperty`); the hook is for the world's
-    // actors and answered "unreadable" for -1, which is how a reader found
-    // the rings never counted.
+    // actors and answers "unreadable" for -1, so through it the rings would
+    // never count.
     std::int32_t v = 0;
     const std::span<const std::byte> prec = state_.raw().subspan(
         static_cast<std::size_t>(GameState::kPlayerRecord), kActorRecordSize);
@@ -4359,10 +4346,9 @@ void Session::loadTrafficFor(int slot) {
     // before - so the pool holds the LAST such area's, and an area without
     // one leaves the previous standing until its slot is evicted.
     // ...and only when the frontend ASKED for the street (`loadTraffic`). A set
-    // data root alone is not that: `df32519` (2026-09-15) set it for every run
-    // so IAM\OBJECT is found, and from then `--no-crowd` loaded the crowd and
-    // the traffic anyway - `engine: street frame` and `engine: traffic frame`
-    // red since, found by running them on 2026-09-17.
+    // data root alone is not that: one is set for every run so IAM\OBJECT is
+    // found, and keyed on it `--no-crowd` would load the crowd and the
+    // traffic anyway (`engine: street frame`, `engine: traffic frame`).
     if (dataRoot_.empty() || !trafficWanted_) return;
     const ResidentSlot& s = slots_[slot & 1];
     if (s.opt.empty()) return;
@@ -4402,13 +4388,13 @@ void Session::refreshCrowdIndex() {
     static int nanTold = 0;
     // EVERY MOVER HAS ITS ENTRY, kept to its model. `sub_4544B0` registers a
     // vehicle with `sub_45E040` when it spawns and `sub_452CC0`'s swap
-    // re-registers both nodes after rebinding their models. This index was
-    // filled once at the load, so a vehicle spawned LATER - the player's own
-    // slider, whenever the pool had room for the call - had no entry and he
-    // walked straight through it; one taken over and rebound from a moto kept
+    // re-registers both nodes after rebinding their models. Filled once at
+    // the load, the index would miss a vehicle spawned LATER - the player's
+    // own slider, whenever the pool has room for the call - and he would walk
+    // straight through it; one taken over and rebound from a moto would keep
     // the moto's three 13-18 spheres, an ellipse a third the size, so only its
-    // centre pushed; and a vehicle `takeOverAt` killed left its entry standing
-    // where it died (a reader, 2026-10-06: "I just walk through it").
+    // centre pushes; and a vehicle `takeOverAt` killed would leave its entry
+    // standing where it died.
     if (pedSlots_.size() < sliders_.movers().size()) {
         pedSlots_.resize(sliders_.movers().size(), -1);
         pedSlotModel_.resize(sliders_.movers().size());
@@ -4553,8 +4539,8 @@ bool Session::crowdPush(const std::vector<CollisionSphere>& mine, float myReach,
             // A WALKER only: `Sliders_Tick`'s bump walks `dword_8F5E94`, the
             // 200 walker records, and the vehicles' 40 (`dword_8F5E3C`) are
             // never in it - a slider or a moto shoves him and says nothing.
-            // Every touched mover posted here, so walking into the parked
-            // slider played the "bumped a man" line (a reader, 2026-10-06).
+            // Posting for every touched mover would make walking into the
+            // parked slider play the "bumped a man" line.
             if (walker.vehicle >= 0) {
                 static bool vehTold = false;
                 if (!vehTold) {

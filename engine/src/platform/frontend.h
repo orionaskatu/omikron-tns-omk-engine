@@ -24,8 +24,8 @@
 // So the frontend's whole job is: show these pixels, and tell me which keys
 // are down. Everything else is the engine's.
 //
-// **And it is the GATEWAY** (`todo/classic-mac-port-1999.md` step 5,
-// 2026-10-03): the viewer's game code - every `backends/sdl/play*.cpp` but
+// **And it is the GATEWAY** (`todo/classic-mac-port-1999.md` step 5): the
+// viewer's game code - every `backends/sdl/play*.cpp` but
 // the frontend's own files, the per-backend GPU glue (`playgpu_*.cpp`) and
 // the `--scene` instrument - reaches the host through this class and nothing
 // else, and compiles without an SDL header (`verify.py: engine: frontend
@@ -151,8 +151,8 @@ public:
     virtual int  playSound(std::span<const float>, bool loop = false,
                            float gain = 1.0f) { return -1; }
     // The same, TAKING the samples: a conversation line's voice is ~11 MB of
-    // device-rate floats, and copying it on the frame it starts was one more
-    // pass over it on a console's memory bus (2026-09-23).
+    // device-rate floats, and copying it on the frame it starts is one more
+    // pass over it on a console's memory bus.
     virtual int  playSound(std::vector<float>&& s, bool loop = false, float gain = 1.0f) {
         return playSound(std::span<const float>(s), loop, gain);
     }
@@ -200,8 +200,8 @@ public:
     virtual double soundPlayedSeconds(int /*handle*/) { return -1.0; }
     // Drop whatever is still queued. Skipping a movie has to silence it: the
     // device holds seconds of audio the decoder ran ahead into, and without
-    // this the soundtrack of a skipped movie plays on over the menu - which
-    // is what a player reported.
+    // this the soundtrack of a skipped movie plays on over the menu (seen in
+    // play).
     virtual void flushAudio() {}
     // How many SECONDS are still queued. The movie loop paces its video by
     // this, because the audio device is the only clock in the room that runs
@@ -252,8 +252,8 @@ public:
     virtual void setWindowTitle(const std::string&) {}
     // Whether retitling the window costs a frame nothing worth counting. The
     // fps counter retitles it once a second; on Mac OS X a Carbon window's
-    // title is redrawn by the window server, which the reader's iBook G3 paid
-    // ~20 ms for (`screens: fps` 3.8 ms a frame in a 5 fps fight) - so there
+    // title is redrawn by the window server, which costs the iBook G3 test
+    // machine ~20 ms (`screens: fps` 3.8 ms a frame in a 5 fps fight) - so there
     // the title carries the rate only under `--fps`.
     virtual bool cheapWindowTitle() const { return true; }
     // Ask the host for typed characters (`HostInput::text`).

@@ -39,7 +39,7 @@
 //     which is collision-free in all seven files;
 //   * every input word the machine ever consumes is inside the fight AI's own
 //     bit union, 0xCFF, or the 0x40000000 idle sentinel;
-//   * and, since 2026-09-02, the two QUEUE rules of the commit below, which
+//   * and the two QUEUE rules of the commit below, which
 //     that sweep could not see because it injects whole queues: over 53 banks
 //     seeded the way `SetPersoBankGroup` seeds them - one word, the idle one -
 //     a press is acted on THIS tick in 53 and parked behind the idle word in

@@ -14,7 +14,7 @@
 //     `readTextFile`) or in the tool: a stream initialises libstdc++'s locale,
 //     and Retro68's linker lays `num_get<char>::id` over `timepunct_cache_w`,
 //     so the locale's own set-up corrupts it and the first stream crashes
-//     (found 2026-10-03 on Tiger; it showed only once the program was large).
+//     (seen on Tiger; it shows only once the program is large).
 //
 // The program's own `main` is compiled under another name (-Dmain=...), as
 // the Vita build does with `play.cpp`, and `OMK_CLASSIC_ENTRY` names it:

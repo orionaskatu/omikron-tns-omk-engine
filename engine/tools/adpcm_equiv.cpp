@@ -3,11 +3,12 @@
 //
 //     adpcm_equiv <gamedata> <tables>
 //
-// `adpcmDecode` and `AdpcmStereoStream` used to compute each nibble's delta
-// with three branches and a shift, and its next index with an add and a
-// clamp; they now look both up in `AdpcmTables::nibble` (todo/optimization.md
+// `adpcmDecode` and `AdpcmStereoStream` look each nibble's delta and next
+// index up in `AdpcmTables::nibble` instead of computing them with three
+// branches and a shift, and an add and a clamp (todo/optimization.md
 // step 16). The music streams through `AdpcmStereoStream` on the frame
-// thread, and a console spent 25-34 ms decoding one second of it.
+// thread, and the branching law costs a console 25-34 ms to decode one
+// second of it.
 //
 // This keeps the branching law VERBATIM (`RefChannel`, from `adpcm.cpp` as it
 // stood before 2026-09-29) and compares it with the table three ways:

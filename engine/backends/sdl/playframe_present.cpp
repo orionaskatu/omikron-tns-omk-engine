@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME'S PRESENT PHASE - the fps counter, the fades, the flicker catcher and the present.
-// Part of `main`'s loop body, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); see `playframe.h` for what the names below refer to.
+// Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
 
 bool omkInstrumentsBuilt();   // playharness.cpp / playharness_off.cpp
@@ -99,11 +98,11 @@ int PlayState::phasePresent() {
                 return static_cast<double>(front.perfCounter()) / perfHz;
             };
             double now = nowSec();
-            // A SLOW FRAME, SAID - an instrument. A reader reported "small freezes
-            // on the streets" (2026-09-17) and the log held nothing to attribute
-            // them with: the work of a frame is the time from the last pacer exit
-            // to this entry, and one over two periods is written down with where
-            // he was, so a hitch can be laid beside what else the log says then.
+            // A SLOW FRAME, SAID - an instrument, so that a hitch on the streets
+            // can be attributed from the log: the work of a frame is the time
+            // from the last pacer exit to this entry, and one over two periods is
+            // written down with where he was, so a hitch can be laid beside what
+            // else the log says then.
             static double paceLeft = 0.0;
             if (paceLeft > 0.0 && now - paceLeft > 2.0 * kPeriod)
                 std::printf("frame %ld: SLOW FRAME - %.0f ms of work (the budget is 33)%s\n", n,

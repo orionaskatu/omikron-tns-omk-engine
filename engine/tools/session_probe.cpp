@@ -190,8 +190,8 @@ int main(int argc, char** argv) {
     // death clip playing out posts message 3 with HIM as the sender
     // (`sub_424DE0`'s dead arm); SCENE 56's subscription for it sets
     // `Braqueur N Dead` per robber and, for actor 84, enables zone 3931, whose
-    // enter script runs `shoot.end` and the end cutscene. Nothing posted it
-    // until 2026-09-10, so the phase could not be finished.
+    // enter script runs `shoot.end` and the end cutscene. Without the post
+    // the phase cannot be finished.
     {
         auto state = omk::GameState::fromFile(iam + "/START");
         omk::Session s(iam, state, table);

@@ -208,6 +208,26 @@ finding: a check that hashed a conversation frame would flicker.
   states`' 395352-tick sweep moved by 8. So a guard is only as wide as what it
   runs: it now records engine PROBES too (`run_actor_states` first), and a
   name that stands for several bits is always written in parentheses.
+* steps 2d-2h - the shoot record's, the mover's and the fighter's flags
+  (named only where something established them), the 37 screens
+  (`ui/screens.h`), the interface's inline addresses, the decompiler names
+  (`v5`, `a3`/`v9`/`v10`); the fight's `m4CAD..` tables keep their address
+  names by rule. Found on the way: `engine: training partner`, red since row
+  24's 4500 ms simulator close (a 700-frame run left two paired seconds).
+* step 3a - the confirmed stale and misplaced comments, `cf2b9a5`, and
+  `tools/comments_only.py`, which proves a change touched comments only.
+* step 3b - the HISTORY NARRATIVE out of the code: 217 files, ~900 passages
+  rewritten into the present-tense rule with its evidence, by six agents under
+  one rulebook. Measured over the comments before and after: addresses
+  3632 -> 3632, backtick quotes 16775 -> 16776, check names 148 -> 148, dates
+  602 -> 14 (the rest are provenance kept by rule), "a/the reader" 256 -> 24
+  (the rest mean a file reader), 386 comment lines shorter; `comments_only`
+  0 code changes, the guard 0 of 14 differ. Four stale CLAIMS corrected on the
+  way: `walk.h` (the capsule sweep is in, the drop refusal retired),
+  `player.cpp` (the swim probe is the head, not the pelvis), `renderer.h` (the
+  mirror's confinement IS traced - draw order and depth; only the CPU
+  fallback's mask is a reconstruction), `interp.cpp` (op 62's AI level is
+  carried).
 
 ## 7. For the tutorial
 

@@ -147,10 +147,10 @@ LanePoint nearestVehicleLane(const OptTrack& t, const float target[3]);
 //
 //   * the mover's CARROT (`+0`, and `+12`) goes to the chosen lane's ORIGIN
 //     and its BODY (`+36`) **39 units** behind it along the lane's own
-//     direction in x and z - the y is the origin's, untouched. (Until
-//     2026-10-06 this port put the carrot at the 39 and the body a further
-//     117 behind, the ambient spawn's `sub_453B40` set-back copied in: 156
-//     back. Drift audit B2);
+//     direction in x and z - the y is the origin's, untouched. Not the
+//     carrot at the 39 and the body a further 117 behind - that is the
+//     ambient spawn's `sub_453B40` set-back, 156 back in all (drift audit
+//     B2);
 //   * the direction is the lane's FIRST key delta, normalised in 3D - but the
 //     HEADING is built flat, `sub_453330(+140, {dx, 0, dz, 0, len})`;
 //   * `mover+52 = 0` and `mover+56 = 256.0` (the body's speed and the
@@ -187,13 +187,12 @@ SliderCall planSliderCall(const OptTrack& t, const float target[3],
 //
 // One switch, eight states, and every arm of it re-arms `flt_536C28 = 90.0`.
 //
-// **That is a ninety-FRAME latch, not a field of view**, and this port had
-// already read it as one before the slider work began (`tickVehicles`: "the
-// 90-frame latch that lets one bump be reported at a time"). The listing is
-// unambiguous - `fld flt_536C28 / fsub flt_4C30D8 / fst flt_536C28`, and at
-// zero it clears itself and `dword_538E20` with it. Reading `= 90.0` in these
-// arms as a camera fov was a wrong turn on 2026-09-08, caught by looking at
-// what DECREMENTS it. What the states are:
+// **That is a ninety-FRAME latch, not a field of view**, as `tickVehicles`
+// reads it too ("the 90-frame latch that lets one bump be reported at a
+// time"). The listing is unambiguous - `fld flt_536C28 / fsub flt_4C30D8 /
+// fst flt_536C28`, and at zero it clears itself and `dword_538E20` with it.
+// `= 90.0` in these arms reads plausibly as a camera fov; what DECREMENTS it
+// says otherwise. What the states are:
 //
 //   0  AMBIENT   not in the switch at all; the default arm falls through to
 //                the ordinary drive, which is what the traffic already does
@@ -205,8 +204,7 @@ SliderCall planSliderCall(const OptTrack& t, const float target[3],
 //                drives to the pickup point; within **117 units** of it
 //                (2.97 m, so three metres) the camera hands back to mode 0 on
 //                the PLAYER over 60 frames (`dword_930818` = 0x42700000 =
-//                60.0, a BLEND DURATION - it was written "56" here until
-//                2026-10-06), `Screen_Fade(0)` fades in and
+//                60.0, a BLEND DURATION, not 56), `Screen_Fade(0)` fades in and
 //                `Actor_HoldAnimation(player, 0)` releases the hold that
 //                `sub_452570` put on. The slot then goes to 1 with the 600
 //                on its clock
@@ -467,9 +465,9 @@ public:
     // conversation over - the target is let go, its countdown ZEROED and the
     // phase step `sub_456250` takes at a clip's end run at once: enter goes to
     // main, main to its exit (or back to walking), exit to walking. The
-    // caller passes whether a conversation holds the player. Before
-    // 2026-10-06 the port never released it, and a walker spoken to stood
-    // at his action point for good (`todo/drift-audit.md` M3).
+    // caller passes whether a conversation holds the player. Without the
+    // release a walker spoken to stands at his action point for good
+    // (`todo/drift-audit.md` M3).
     // -> whether a target was released.
     bool releaseTalk(bool playerInDialogue);
     // the action phase of walker `w`: 0 walking to the point, 1 enter, 2 main
@@ -519,8 +517,8 @@ public:
     // `Screen_Fade(0)` and the hold's release belong to it. An EVENT, not a
     // state the caller compares between frames: a call can spawn within the
     // 117 of its pickup and arrive on its very first tick, which a frame-to-
-    // frame comparison never sees - and then the hold and the bands stayed on
-    // for good (a reader: "a cutscene without any slider on it")
+    // frame comparison never sees - and then the hold and the bands stay on
+    // for good: a cutscene without any slider in it
     bool takeCameNotice() { const bool r = cameNotice_; cameNotice_ = false; return r; }
     // Its state machine, for a caller that wants the camera or the mount gate.
     const RideMachine& callMachine() const { return callRide_; }
@@ -624,10 +622,9 @@ public:
     // ...and his FACING, which `sub_456530` case 7 needs: the release tests
     // that he is not merely 300 clear but IN FRONT of the slider, against his
     // own Euler at +420. Defaulted rather than required, so a caller that
-    // never sets it simply never releases - which is what happened.
-    // (`setPlayer` above had no caller when the release was wired, so the
-    // release took its own input; the viewer has fed `setPlayer` since
-    // 2026-09-17, `todo/falls.md` 4.)
+    // never sets it simply never releases. (The release takes its own input,
+    // separate from `setPlayer` above, which the viewer also feeds -
+    // `todo/falls.md` 4.)
     //
     // `sub_456530` case 7 needs the rider AFTER he is out: it releases the
     // slider back to the traffic only once he is 300 clear AND in front of

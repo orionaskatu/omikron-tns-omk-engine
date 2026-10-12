@@ -21,12 +21,12 @@
 //   submit()          the frame ended in place of `SDL_GL_SwapWindow`
 //   readControllers() the Touch controllers into the pad (`sdlfront.cpp`'s
 //                     pump) - the only way they reach the game: a 2D panel
-//                     receives the laser alone (step 4, measured)
+//                     receives the laser alone (measured; `todo/quest-port.md`
+//                     §5 step 4)
 //
-// STEP 5a: the composed frame on ONE quad layer, a screen 2 m ahead in the
-// LOCAL space - still what a frame without eyes shows (films, menus).
-// STEP 5b: a frame whose world was drawn per eye submits the eyes instead.
-// The interface over the eyes is step 6.
+// A frame without eyes (films, menus) is the composed frame on ONE quad
+// layer, a screen ahead in the LOCAL space; a frame whose world was drawn per
+// eye submits the eyes, with the interface as a transparent quad over them.
 #include <string>
 #include <vector>
 
@@ -44,8 +44,7 @@ bool start(int screenW, int screenH, float scale = 1.0f);
 // target must hold (`playgpu_gles.cpp`) and the eyes are composed at
 // (`HeadPose::eyeW/eyeH`, read by `playvr_camera.cpp`).
 void eyeSize(int& w, int& h);
-// OPTIONS ROW 2 IN A HEADSET (the reader, 2026-10-07: "use the resolution set
-// in the sneak options"): the row lists EYE sizes - the runtime's recommended
+// OPTIONS ROW 2 IN A HEADSET: the row lists EYE sizes - the runtime's recommended
 // times 0.8 .. 1.5, capped at its maximum - and choosing one remakes the eyes'
 // swapchains between frames; the interface frame keeps its size. -> the index
 // of the current size in `names` ("W x H", the row's own parse).
@@ -64,14 +63,14 @@ bool headPose(vr::HeadPose& out);
 // to be drawn. `eyeDone(e)` releases it; both done -> a projection layer.
 bool eyeTarget(int e, unsigned& fbo, int& w, int& h);
 void eyeDone(int e);
-// A SCREEN IS OPEN (the sneak, a shop...): the composed frame goes on the quad
-// OVER the eyes this frame, opaque - until step 6 puts the interface there
-// with the world showing through. Set by `playvr_draw.cpp` each world frame.
+// A SCREEN IS OPEN (the sneak, a shop...): recorded for this frame, the
+// composed frame going on the quad over the eyes. Set by `playvr_draw.cpp`
+// each world frame.
 void setQuadOverEyes(bool on);
 // Both eyes went to the headset this frame: a flat present is then the
-// INTERFACE as a transparent layer over them (step 6a).
+// INTERFACE as a transparent layer over them.
 bool eyesDrawn();
-// THE PANEL PLACED WHERE THE HEAD LOOKS (step 6b): level, `kScreenDistance`
+// THE PANEL PLACED WHERE THE HEAD LOOKS: level, `kScreenDistance`
 // ahead along the head's heading, facing it - and FIXED there in the world
 // until the next call. Called when a screen opens or a conversation starts.
 void anchorQuad();

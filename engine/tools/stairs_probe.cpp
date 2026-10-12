@@ -151,14 +151,13 @@ int main(int argc, char** argv) {
                 // unit is one surface the level split in two (Anekbah's top
                 // platform is 5.9, 5.0 and 4.9); over twenty is a distant
                 // LANDING the same mesh happens to carry, not a step. Both
-                // produced "failures" in earlier versions of this probe that
-                // were about the probe.
+                // would report "failures" about the probe, not the rule.
                 if (rise < 1.0 || rise > 20.0) continue;
                 worstRise = std::max(worstRise, rise);
                 const double lx = (lo.xlo + lo.xhi) / 2, lz = (lo.zlo + lo.zhi) / 2;
-                // A FAN, not an aim. The first two versions of this probe
-                // walked bbox centre to bbox centre and reported failures that
-                // were only their own direction - these treads are diagonal
+                // A FAN, not an aim. Walking bbox centre to bbox centre
+                // reports failures that are only its own direction - these
+                // treads are diagonal
                 // parallelograms and a centre-to-centre line need not cross
                 // the riser at all. The question is whether the RULE lets the
                 // step be climbed, so try sixteen headings and let any of them

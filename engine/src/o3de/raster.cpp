@@ -237,26 +237,23 @@ RasterStats drawGeometry(Surface& fb, std::vector<float>& depth,
             ++st.triangles;
             const Corner* src[3] = {&g.corners[i], &g.corners[i + 1], &g.corners[i + 2]};
             // Single-sided unless the geometry says otherwise; see `cornerCull`.
-            // `OMK_NO_CULL=1` draws both sides - the reading this file held
-            // until 2026-10-01 - for laying the two beside each other, the way
+            // `OMK_NO_CULL=1` draws both sides - the device-state reading
+            // (CULL_NONE) - for laying the two beside each other, the way
             // `--no-dither` does; `engine: back-face cull` renders both.
             static const bool noCull = std::getenv("OMK_NO_CULL") != nullptr;
             const bool oneSided = !noCull && g.cornerCull.size() == g.corners.size() &&
                                   g.cornerCull[i] != 0;
 
             // NEAR-PLANE CLIP, and it is the difference between a renderer and
-            // a demo. This used to reject the whole triangle when ANY vertex
-            // was behind the cut, which from a camera standing inside a room
-            // threw away 2498 of Aapkayl's 3419 triangles - 73% - because a
-            // floor, a ceiling or a long wall almost always has one corner
-            // behind you. The symptom is faces vanishing whole while plainly
-            // still in shot, which is what a player reported the first time
-            // this was put on a screen; every number in the tree agreed with
-            // itself while it was happening, which is CLAUDE.md 1's rule
-            // exactly.
+            // a demo. Rejecting the whole triangle when ANY vertex is behind
+            // the cut throws away, from a camera standing inside a room, 2498
+            // of Aapkayl's 3419 triangles - 73% - because a floor, a ceiling
+            // or a long wall almost always has one corner behind you. The
+            // symptom is faces vanishing whole while plainly still in shot,
+            // visible on screen at once while every number in the tree agrees
+            // with itself, which is CLAUDE.md 1's rule exactly.
             //
-            // D3D clipped, so dropping is not a reading of anything - it was a
-            // gap in this reference implementation. Sutherland-Hodgman against
+            // D3D clipped, so dropping is not a reading of anything. Sutherland-Hodgman against
             // the single plane z > kNear: a triangle comes back as 0, 3 or 4
             // vertices, and 4 is fanned into two triangles.
             ClipVert poly[4];
@@ -438,9 +435,9 @@ RasterStats drawGeometry(Surface& fb, std::vector<float>& depth,
                         // (D3DBLEND 1) and DESTBLEND=INVSRCCOLOR (4), so the
                         // pass is `dst * (1 - src)`: it DARKENS where the
                         // source is bright and leaves the frame alone where
-                        // it is black. `dst * src` - what this did until
-                        // 2026-09-02 - is the complementary picture, and the
-                        // intro's dark starburst is what told them apart.
+                        // it is black. `dst * src` is the complementary
+                        // picture, and the intro's dark starburst is what
+                        // tells them apart.
                         const int dr = ((dst >> 11) & 0x1F) * 255 / 31;
                         const int dg = ((dst >> 5) & 0x3F) * 255 / 63;
                         const int db = (dst & 0x1F) * 255 / 31;

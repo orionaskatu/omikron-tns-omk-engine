@@ -5,9 +5,8 @@
 // Every file format, script chunk and save record the game ships is
 // little-endian, and every read of one goes through here (or through
 // `loadLE` directly, which this is built on - PORTING A9, the byte order
-// done once). Until 2026-10-12 twenty-nine files carried their own copies,
-// with three different rules for a read past the end (`todo/code-readability-
-// audit.md`); this is the one rule:
+// done once), and there is one rule for a read past the end
+// (`todo/code-readability-audit.md`):
 //
 //     a read that would run past the end of the buffer returns 0.
 //

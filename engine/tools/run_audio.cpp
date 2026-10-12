@@ -40,9 +40,9 @@ using namespace omk::audio;
 
 namespace {
 
-// FNV-1a over 16-bit samples taken LITTLE-ENDIAN, low byte first. It hashed
-// their in-memory bytes until 2026-10-02, which made the same audio hash
-// differently on PowerPC; on a little-endian host the value is unchanged.
+// FNV-1a over 16-bit samples taken LITTLE-ENDIAN, low byte first. Hashing
+// their in-memory bytes would make the same audio hash differently on
+// PowerPC; on a little-endian host the two agree.
 std::uint32_t fnv16(const std::vector<std::int16_t>& v) {
     std::uint32_t h = 2166136261u;
     for (const std::int16_t s : v) {

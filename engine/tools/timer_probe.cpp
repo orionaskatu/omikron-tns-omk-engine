@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE CLOCK AND THE SCRIPT TIMER, run by the Session's own frame
 // (`todo/drift-audit.md` S1): `Game_Tick` (0x004200F0) ends
-// `sub_41E480(); sub_41E7A0(); Clock_Tick();`, and until 2026-10-05 the port
-// had both halves and no caller.
+// `sub_41E480(); sub_41E7A0(); Clock_Tick();` - both halves, called every
+// frame.
 //
 //     timer_probe <gamedata> <tables>
 //

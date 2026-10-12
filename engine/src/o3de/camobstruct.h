@@ -11,8 +11,8 @@
 //                 same function's other arm, which CLEARS flag 4; mode 9 none
 //
 // and both load +300 = 1.2, +320 = 8, +324 = 4. One transcription serves
-// both: this was `PlayerController::cameraCollide` until 2026-10-07, moved
-// here unchanged so the slider's mode 8 can run it (drift audit B12).
+// both: the player's follow camera and the slider's mode 8 run it (drift
+// audit B12).
 #pragma once
 
 #include <functional>

@@ -65,12 +65,11 @@ void PlayState::gpuOpenWorldHarness() {
 bool PlayState::gpuPresentSurface(const omk::Surface&) { return false; }
 void PlayState::gpuPresentVerify(bool&) {}
 #if defined(OMK_GL1_AGL)
-// THE WHITE-SCREEN PROBE (2026-10-10, `todo/handoff-classic-mac.md` 3f
-// steps 2j/2k): the first frame of every present path and every media line,
-// and the 15th after it, log what the card drew (`gl1PresentOverlay`). Step
-// 2j's four drawing variants found the cause - the fog's colour sum left on
-// (`Gl1Renderer::end`) - and are gone; the probe stays until the iBook
-// confirms the fix.
+// THE WHITE-SCREEN PROBE (`todo/handoff-classic-mac.md` 3f steps 2j/2k):
+// the first frame of every present path and every media line, and the 15th
+// after it, log what the card drew (`gl1PresentOverlay`). The cause was the
+// fog's colour sum left on (`Gl1Renderer::end`); the probe stays until the
+// iBook confirms the fix.
 namespace {
 bool g_ovProbe = false;
 }  // namespace
@@ -124,10 +123,10 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
         keep = overlayWhy.c_str();
     }
     // THE PATH, logged where it CHANGES: straight, the overlay, or the CPU
-    // composite (a readback) and why. A reader saw white screens in
-    // cutscenes and never in adventure mode on a real iBook G3 (Rage 128,
-    // Mac OS X 10.2, 2026-10-09), and a log is all that machine gives back;
-    // a build without the instruments has no other per-frame count.
+    // composite (a readback) and why. White screens were seen in cutscenes
+    // and never in adventure mode on a real iBook G3 (Rage 128, Mac OS X
+    // 10.2), and a log is all that machine gives back; a build without the
+    // instruments has no other per-frame count.
     static std::string lastPath;
     const std::string path = keep ? keep : "straight";
     // the white-screen probe: the first frame of every path and of every

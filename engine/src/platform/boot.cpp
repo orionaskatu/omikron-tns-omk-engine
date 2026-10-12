@@ -56,10 +56,8 @@ BootReport boot(const BootOptions& o) {
 
     // --- Game_Start("aventure.scx") --------------------------------------
     //
-    // **This is not the menu, and not a location.** An earlier reading here
-    // said "the main menu is a scene like any other, started by the same call
-    // that starts a location" - inferred from the call without opening the
-    // file. `aventure.scx` holds **20 effect sprites and 53 sound
+    // **This is not the menu, and not a location**, whatever the call that
+    // also starts a location suggests: `aventure.scx` holds **20 effect sprites and 53 sound
     // registrations** and no menu logic whatever: the smoke, glows, impacts
     // and stars, plus the player's own footsteps, breathing, jumps and
     // eat/drink. It is the GLOBAL library, loaded once so every scene can
@@ -87,12 +85,11 @@ BootReport boot(const BootOptions& o) {
     Session s(o.root + "/IAM", state, table);
     // **The SCRIPT opens the menu, not this function.** AREA 118's startup
     // script reaches `ui.open(29, -1, -> variable 19)` at pc 1078, parks
-    // there, and resumes into `dialog.start 272`. An earlier version of this
-    // walked screen 29 HERE and seeded variable 19 before the script ran -
-    // which produced the right number by doing the right thing in the wrong
-    // place, and would have gone on producing it if the script had asked for
-    // a different screen. Attaching the widget tree lets the Session answer
-    // the `ui.open` the script actually reaches.
+    // there, and resumes into `dialog.start 272`. Walking screen 29 HERE and
+    // seeding variable 19 before the script ran would produce the right number
+    // by doing the right thing in the wrong place, and would go on producing
+    // it if the script asked for a different screen. Attaching the widget tree
+    // lets the Session answer the `ui.open` the script actually reaches.
     UiWidgets widgets;
     if (o.deriveUi) {
         widgets = UiWidgets::loadJson(o.tables + "/ui_widgets.json");
@@ -106,8 +103,7 @@ BootReport boot(const BootOptions& o) {
     // `IAM\START` over a zeroed game database and applies it, and the block's
     // `+1414` is where the player is - 118, "Introduction Kay'l". Reading it
     // rather than naming it is the difference between booting the game and
-    // booting a hard-coded level: an earlier version of this had the 118 as a
-    // literal here while claiming nothing was hand-wired.
+    // booting a hard-coded level.
     r.startArea = state.currentArea();
     if (r.startArea < 0) { r.why = "IAM/START names no area"; return r; }
     if (o.scenes)

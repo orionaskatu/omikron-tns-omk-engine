@@ -114,8 +114,8 @@ struct GroundHit {
 // which the sphere's surface reaches the plane, contact point inside the
 // triangle), edges and vertices by the static test at t = 0 - so the two can
 // be held to the same number (`verify.py: engine: narrow phase` against
-// `sim: narrow phase`). What Actor_Move does beyond that shape was read on
-// 2026-09-04 and ported on 2026-09-05 (step 1b) in actor/walk.cpp: the swept
+// `sim: narrow phase`). What Actor_Move does beyond that shape is read and
+// ported (step 1b) in actor/walk.cpp: the swept
 // body is the model's own sphere list (descriptor +244/+248: HO1_FN's four of
 // radius 10.9 from the feet to the head), swept sphere by sphere for the
 // earliest hit; the move stops ONE unit short of the contact; a contact

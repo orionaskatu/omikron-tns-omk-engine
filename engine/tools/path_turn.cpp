@@ -5,10 +5,9 @@
 //
 // One lift is authored once and every hall installs it at its own angle, so
 // the handler carries three degrees and turns the path about its own first key
-// before either of its two arms places anything. The port dropped them, and
-// every lift door in the game then slid along the UNTURNED axis - out of its
-// wall and into the room. A reader, 2026-09-09: *some doors do not open
-// correctly*, with Hall 27 in the shot.
+// before either of its two arms places anything. Without them every lift
+// door in the game slides along the UNTURNED axis - out of its wall and into
+// the room (Hall 27 shows it).
 //
 // Hall 27's `levDOORopen` is `euler 0 230 0`, and its two leaves stand in one
 // wall at x 4512, z -765 and -741. So the test is a shape and not a

@@ -49,8 +49,8 @@
 //   * **X-Tech is ported exactly** - it does nothing;
 //   * **Astaroth is HERE only as his state graph**, for `run_shoot_ai`'s
 //     census. His real tick is `actor/astaroth.h` (`astarothTick`, step 3 of
-//     `todo/astaroth.md`), which the viewer runs; the labels below were
-//     corrected from it on 2026-10-05 - the 3700 / 2300 / 1200 are DAMAGE
+//     `todo/astaroth.md`), which the viewer runs; the labels below follow
+//     it - the 3700 / 2300 / 1200 are DAMAGE
 //     (the slam, `sub_423B10`), the 1.0 / 1.5 / 2.0 his ANIMATION RATE and
 //     the 60 / 40 / 30 slot 1's muzzle WAIT, not a speed and a turn;
 //   * **the generic shooter is ported as its state graph** - 16 states and the
@@ -148,10 +148,9 @@ struct ShootRecord {
     int   destX = 0, destZ = 0;              // +136/+140  Shoot_Think's spot
     // ...and the WORLD point he is steering at, which is NOT the cell above:
     // `sub_426C20` reads `f32(rec, 44)` and `f32(rec, 48)`, and the patrol
-    // writes them from `sub_4356B0`. They were folded into `destX`/`destZ`
-    // until 2026-09-12, which nothing caught because the two consumers never
-    // ran together - the cell's readers are the wall test and the steering,
-    // and the move decision had no live caller at all.
+    // writes them from `sub_4356B0`. Folded into `destX`/`destZ` they would
+    // collide only when both consumers run together - the cell's readers are
+    // the wall test and the steering, the goal's is the move decision.
     float goalX = 0.0f, goalZ = 0.0f;        // +44/+48   sub_426C20's target
     // +24, the patrol ROUTE: an index into his floor's `Map2d` waypoints, or
     // -1 for none. The engine keeps the pointer itself and tests it for null.
@@ -252,8 +251,7 @@ class Map2d;   // formats/map2d.h
 //     **not in state 2** - the traverse keeps the cell it started with - and
 //     the cell is not blocked. Returns whether it was written.
 //
-// It belongs to a THREE-STEP CYCLE, and the port ran only the last step until
-// 2026-09-12, which was harmless while no gunman moved: the brain's prologue
+// It belongs to a THREE-STEP CYCLE, all three steps run: the brain's prologue
 // puts the saved byte `+189` back where he stood (`sub_424DE0` 5456), this
 // recomputes his cell, and `sub_420B80` saves the new cell's byte and stamps
 // 0x80 over it. Stamping without restoring leaves a walker's old cell blocked
@@ -265,8 +263,7 @@ bool shootThink(ShootRecord& r, const Map2d& map, const float pos[3],
 int shootWallTest(ShootRecord& r, const Map2d& map, float x0, float z0, float dx, float dz,
                   int steps, float snap[2]);
 
-// ---- THE PATH FIELD (2026-09-11, a reader: "continue to the robbers'
-// steering") -------------------------------------------------------------
+// ---- THE PATH FIELD -----------------------------------------------------
 // `sub_436260` / `sub_436350` / `sub_435C40` (readable 10_dsound.c 1202 /
 // 1242 / 883): a breadth-first DISTANCE field over one floor's grid, seeded
 // at the PLAYER's cell by `Shoot_TickPlayer` (05_sys.c 7519) whenever his
@@ -388,9 +385,8 @@ struct AcquireOut {
 // FROM the target TO the shooter and comparing against +Z is the same test as
 // pointing from the shooter to the target and comparing against his real
 // facing. Both signs cancel, and getting either one alone wrong gives a
-// machine that shoots at whatever is behind it - which is what the first
-// transcription of this did, caught by `shoot_range`'s own assertion rather
-// than by reading it again.
+// machine that shoots at whatever is behind it - which `shoot_range`'s own
+// assertion catches, where re-reading the code does not.
 //
 // `sub_420D90` is the same test with the range DOUBLED, the arm used where
 // property 37's bit 4 is set; `doubleRange` selects it.
@@ -518,8 +514,8 @@ struct ShootFrameIn {
     int   targetPredicateBits = 0;    // its bitfield, for the arms that test it
     // The clip TYPE the snap arms' default case picks - LABEL_177's
     // `List_PickRandomByType(+20, a2)` - read as the decompiler gives it.
-    // CORRECTED 2026-09-11: this was documented as "`a2`, the action the caller
-    // asked for", and it is not - `sub_424DE0`'s a2 is the ACTOR's index (it
+    // `a2` here is NOT "the action the caller asked for" - `sub_424DE0`'s a2
+    // is the ACTOR's index (it
     // is what `Shoot_ActorAction(a2, 0, 0)` and `Actor_GetPosAndFacing(a2)`
     // take). The ACTIONS the brain asks for are `ShootStep::actionRequest`, and
     // every one of them in `sub_424DE0` is the literal 0.
@@ -542,10 +538,9 @@ struct ShootFrameIn {
     int   stepCellValue = 1;
     bool  hasRoute = false;           // `u32(rec, 24)` - state 4 needs one
     // `sub_4356B0`'s RETURN at the point he has just advanced to: the point's
-    // own `clipId`, and a nonzero one sends him to state 5 to play it. The
-    // field was documented as "found the next point" until 2026-09-12, which
-    // would have put him in state 5 at EVERY waypoint; the engine tests the
-    // clip. It is false on every shipped route, all 53 of which carry 0 at
+    // own `clipId`, and a nonzero one sends him to state 5 to play it. It is
+    // not "found the next point", which would put him in state 5 at EVERY
+    // waypoint; the engine tests the clip. It is false on every shipped route, all 53 of which carry 0 at
     // every point (`todo/shoot-patrol.md` 1).
     bool  routePointHasClip = false;
     float movedThisFrame = 0.0f;      // state 2: how far the body actually went
@@ -554,7 +549,7 @@ struct ShootFrameIn {
     // decides whether its middle arm does anything at all.
     bool  canFire = false;
     bool  holdStill = false;          // `sub_421CD0(actor, rec, 1)` was true
-    // ...and now READ (2026-09-11): when this is set the hub's middle arm
+    // ...and READ: when this is set the hub's middle arm
     // calls it for real, LAZILY, as the engine does - so the heading's
     // tie-break `rand()` is drawn only on the ticks that reach the arm - and
     // `holdStill` is ignored. It is `sub_435C40` over the path field at his
@@ -641,13 +636,12 @@ public:
     // of the arm that ran, so a caller can see the dispatch happen.
     const char* tick(float dt);
 
-    // A pulse that steps Gandhar's script, for this CENSUS. It was read as
-    // `dword_657A28`, "the current action has finished"; that is wrong - the
-    // engine steps his script when an action's TICK returns non-zero, and
-    // `dword_657A28` is the GRAB's restart (`sub_47F340` raises it on a
-    // touch). The real machine is `actor/gandhar.h` (2026-10-05,
-    // `todo/gandhar.md`); this walk stays the script census `run_shoot_ai`
-    // asserts.
+    // A pulse that steps Gandhar's script, for this CENSUS. It is not
+    // `dword_657A28`, "the current action has finished" - the engine steps his
+    // script when an action's TICK returns non-zero, and `dword_657A28` is the
+    // GRAB's restart (`sub_47F340` raises it on a touch). The real machine is
+    // `actor/gandhar.h` (`todo/gandhar.md`); this walk stays the script census
+    // `run_shoot_ai` asserts.
     void signalActionComplete() { actionDone_ = true; }
 
     ShootRecord& rec() { return rec_; }
@@ -711,7 +705,7 @@ const std::vector<ShootEdge>& genericEdges();
 // This is ONE record's test; the maker, the player and the floor -1 exit are
 // the caller's. (The first call of a phase also clears 0x8000 on every record
 // when `dword_4E9760` is set, a bit `sub_422540` gives records made while it
-// is. Modelled since 2026-10-05 by the frontend: `PlayState::shootWake` at the
+// is. Modelled by the frontend: `PlayState::shootWake` at the
 // head of the noise, the hit and the strike, `ShootMode::frozen` the flag -
 // todo/drift-audit.md S7.)
 struct NoiseHearing {

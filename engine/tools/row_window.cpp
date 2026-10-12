@@ -8,10 +8,10 @@
 // selection AND the window: a centred rule, where the cursor moves until it
 // reaches the middle widget and then the window moves under it instead.
 //
-// Until 2026-09-04 the window was hardcoded 0, so a list longer than nine was
-// truncated - carry ten things and the tenth could not be reached at all.
-// This drives DOWN until nothing moves and reports the furthest row reached,
-// which is the number that was wrong.
+// With the window held at 0 a list longer than nine is truncated - carry ten
+// things and the tenth cannot be reached at all. This drives DOWN until
+// nothing moves and reports the furthest row reached, the number that shows
+// it.
 //
 // One line per fact, `key ...`:
 //   widgets   how many row widgets the list has, and the window's start
@@ -54,11 +54,11 @@ int main(int argc, char** argv) {
         const int row = sel ? walk.rowOf(sel->addr) : -1;
         if (row > best) best = row;
     }
-    // ...and THE VERB'S OWN READ, which is the fault of 2026-09-07. All three
-    // sneak verbs take `selected_widget[+0x3C]` - the row TAG - and the port
-    // took the SELECTION, which is the widget 0..8. Scrolled to the end of a
-    // twelve-row list the two are 8 and 11, so "Utiliser" used the object
-    // three rows above the one the player was looking at.
+    // ...and THE VERB'S OWN READ. All three sneak verbs take
+    // `selected_widget[+0x3C]` - the row TAG - not the SELECTION, which is
+    // the widget 0..8. Scrolled to the end of a twelve-row list the two are 8
+    // and 11, so a verb reading the selection would use the object three rows
+    // above the one the player is looking at.
     std::printf("verb reads row %d, selection is %d\n",
                 walk.selectedRow(omk::kListSneakRows),
                 walk.selectionOf(omk::kListSneakRows));

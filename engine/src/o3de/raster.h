@@ -65,7 +65,7 @@ namespace omk {
 // reference for every line of this: forward = normalize(at - eye), world up is
 // **(0, -1, 0)** because the game's Y points DOWN, right = f x up, up = r x f.
 //
-// `mirror` negates the right vector - the reading that was wrong for months,
+// `mirror` negates the right vector - the wrong reading of the convention,
 // kept because a convention that is wrong everywhere at once looks right from
 // inside, and the only way to pin it is to show the wrong one differs.
 struct RCamera {
@@ -74,8 +74,8 @@ struct RCamera {
     // ROLL, in degrees - the rotation about the forward axis. A camera record
     // carries one (`Cam_PlayEditing` keyframes position/target/roll/fov; a
     // world camera's is `Global_Load`'s 4096ths converted by 360/4096) and
-    // dropping it is invisible in any single still frame, which is how it
-    // survived here until 2026-09-03 while the web viewer had been fixed.
+    // dropping it is invisible in any single still frame - it shows only
+    // once the camera moves.
     //
     // The SENSE is the engine's own, derived rather than chosen: `sub_442400`
     // turns a direction and a roll into `sub_441FF0(pitch, yaw, roll)`, which
@@ -88,13 +88,13 @@ struct RCamera {
     float rollDeg = 0.0f;
     int   w = 640, h = 480;
     bool  mirror = false;
-    // `noClip` restores the pre-2026-09-01 rule: DROP a triangle when any
-    // vertex is behind the near cut, instead of clipping it. Kept for the same
-    // reason `mirror` is - a wrong rule that is wrong everywhere at once looks
-    // right from inside, and the only way to pin the right one is to render
-    // both and show they differ. It was a real bug, reported by a player
-    // flying the viewer: a floor or a wall with one corner behind the camera
-    // vanished whole while plainly still in shot.
+    // `noClip` selects the wrong rule: DROP a triangle when any vertex is
+    // behind the near cut, instead of clipping it. Kept for the same reason
+    // `mirror` is - a wrong rule that is wrong everywhere at once looks right
+    // from inside, and the only way to pin the right one is to render both and
+    // show they differ. Under it a floor or a wall with one corner behind the
+    // camera vanishes whole while plainly still in shot (seen flying the
+    // viewer).
     bool  noClip = false;
     // A TRUE screen-X flip, and it is NOT `mirror`. `mirror` negates the right
     // vector BEFORE `u = s x f` is taken, so `u` flips with it and the result
@@ -146,12 +146,11 @@ void cameraBasis(const RCamera& c, float s[3], float u[3], float f[3],
 
 // The near cut, shared for the same reason: `camshot.py` cuts at the same z and
 // a GPU projection matrix has to put its near plane in the same place or the
-// two renderers disagree about what is in shot. It is the ENGINE's 2.0, read
-// 2026-10-01: the 3D view node `sub_4812E0` (25_sys.c 182) sets it with
+// two renderers disagree about what is in shot. It is the ENGINE's 2.0: the
+// 3D view node `sub_4812E0` (25_sys.c 182) sets it with
 // `sub_440BB0(scene, 2.0)` - scene +324, the near plane the clip tests read -
-// on every view, the main one included. It was 1.0 until then, one unit
-// nearer than the engine, so geometry the engine clips away a lens's width
-// from the eye was still drawn.
+// on every view, the main one included. A cut at 1.0, one unit nearer, would
+// draw geometry the engine clips away a lens's width from the eye.
 inline constexpr float kNearCut = 2.0f;
 
 struct RasterStats {

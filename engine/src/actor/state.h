@@ -20,7 +20,7 @@
 // (56) announces to CHARACTERS, one of the three domains the logger drops
 // itself. `Fight_TickAI`, `Fight_ResolveHit`, the eighteen states below and
 // the `.CTL` transition matching are native code on the far side of that line.
-// `traces/fight.log` was captured on 2026-08-31 to test this and settled it:
+// `traces/fight.log` was captured to test this and settled it:
 // the capture reached combat - 32 of the scripts its events anchor carry
 // `fight.begin` - and says nothing about any of it.
 //

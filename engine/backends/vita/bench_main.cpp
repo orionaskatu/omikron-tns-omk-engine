@@ -318,10 +318,10 @@ int main(int argc, char** argv) {
         static_cast<unsigned long long>(hThreads),
         hInline == hThreads ? "EXACT" : "DIFFERENT");
     // THE POOL'S TILING at the job counts a culled street hands it: one or
-    // two walkers. Every item must be visited EXACTLY ONCE per call. The first
-    // Vita pool took the chunk of the worker's own slot, so with fewer chunks
-    // than workers a woken worker 1 ran the caller's chunk twice over and
-    // chunk 0 not at all - the Bowie sequence's heap corruption (2026-09-30).
+    // two walkers. Every item must be visited EXACTLY ONCE per call. A pool
+    // that takes the chunk of the worker's own slot fails this: with fewer
+    // chunks than workers a woken worker 1 runs the caller's chunk twice over
+    // and chunk 0 not at all - a heap corruption (the Bowie sequence's).
     {
         long badCalls = 0, calls = 0;
         for (std::size_t n = 1; n <= 6; ++n)

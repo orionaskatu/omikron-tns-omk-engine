@@ -75,9 +75,9 @@ struct View {
     // painted over a full frame.
     //
     // The game's camera mode is letterboxed - 640x352 of picture inside 480,
-    // 1.818:1, which `traces/frames/dlg402-*.png` show and which a reader
-    // confirmed belongs to conversations and cutscenes and not to free
-    // roaming. What makes it a viewport and not a crop is the vertical fov:
+    // 1.818:1, which `traces/frames/dlg402-*.png` show and which belongs to
+    // conversations and cutscenes and not to free roaming (confirmed in
+    // play). What makes it a viewport and not a crop is the vertical fov:
     // the tier-4 silhouette result and `engine: raster`'s 106/106 projection
     // differential are both built on a render at 640x352 (and 800x440), where
     // `tanv = tanh / (W/H)` uses the STRIP's height. Painting bars over a
@@ -100,9 +100,9 @@ struct View {
     // menu's clip distance times 0.25 and times 1 (`platform/settings.h`).
     // `FOGCOLOR` comes from the scene's `+336`.
     //
-    // **That colour is NOT always black** - corrected 2026-10-06. The load
-    // zeroes it (`memset`, then `sub_44E830`'s `a1[84] = 0`), and this said no
-    // other writer exists; `sub_41E7A0` is one, every frame, as `v5[84]` on
+    // **That colour is NOT always black.** The load zeroes it (`memset`,
+    // then `sub_44E830`'s `a1[84] = 0`), and `sub_41E7A0` writes it again
+    // every frame, as `v5[84]` on
     // the decor slot's scene: the AREA's four colours at `+144` lerped by the
     // game clock (`o3de/daynight.h`) - black only where the chunk is (Kay'l's
     // flat), lava red in the cave, a dawn-to-night ramp in the cities. The
@@ -237,15 +237,14 @@ struct Draw {
     // Row 7: this batch is LIT per pixel, so its baked vertex colour is not
     // its shading. A lit instance starts from the SCENE's `+416` -
     // `sub_494E80` writes it into every runtime vertex's colour, and
-    // `Read3DO_Init` sets it to the set's ambient grey (`Draw::lightBase`;
-    // read as 0 until 2026-10-06) - and the crowd models ship pure white, so
+    // `Read3DO_Init` sets it to the set's ambient grey (`Draw::lightBase`)
+    // - and the crowd models ship pure white, so
     // there is no baked light in them to keep.
     // 0 not lit; 1 lit from the scene's `+416` (`View::litBase` - the
     // engine's own rule, for every body it lights: the crowd, the characters
     // and the props, all through `sub_494E80`); 2 lit ADDED to the baked
-    // colour - kept in the shaders, used by nothing since 2026-10-06, when
-    // the characters it was for turned out to be lit by the engine too
-    // (todo/drift-audit.md L1).
+    // colour - kept in the shaders and used by nothing: the characters it
+    // was for are lit by the engine's own rule too (todo/drift-audit.md L1).
     int             lit         = 0;
     // Row 6 again: whether this batch goes into the shadow map's depth pass.
     // Only characters do, and that is a constraint rather than a saving - a
@@ -287,7 +286,7 @@ struct Draw {
 // (`SetMaterialsMemory(58, 0)`), so in the original those six bits never
 // wrap. This port's pool is its OWN composition - both resident sets, every
 // character model staged, the props, the sprites - and runs past 64 in a
-// city after an interior (the Quest, 2026-10-07: 72 slots, the three effect
+// city after an interior (measured on the Quest: 72 slots, the three effect
 // sprites wrapping onto set textures 5..7 - a street light's glow drawn in
 // stone). So the full pool index rides ABOVE the 14-bit key, as `slot + 1`
 // in bits 16..31 (`kKeySlotShift`), and a backend binds that when it is
@@ -448,7 +447,7 @@ private:
 
 // ------------------------------------------------------------ THE MIRROR PASS
 //
-// `docs/ASSETS.md` 4c, corrected 2026-09-01: the game HAS mirrors. Mesh flag
+// `docs/ASSETS.md` 4c: the game HAS mirrors. Mesh flag
 // `0x100000`, 6 meshes of 12203, at most one live at a time (the engine keeps
 // a single global, `dword_534F48`), and `sub_440D90` - called once a frame
 // from the camera setup path - reflects the camera through the mirror's plane
@@ -463,26 +462,29 @@ private:
 //   * the reflected pass draws with screen X FLIPPED. `Raster_DrawTriangles`
 //     computes `v143 - x` instead of `v140 + x` while the pass flag is set,
 //     which compensates the handedness flip a reflection introduces. That is
-//     exactly what `RCamera::mirror` does - the control that exists because
-//     the flipped reading was this repo's own months-long bug is the operation
-//     the mirror pass genuinely needs;
+//     exactly what `RCamera::mirror` does - the control kept to show the
+//     flipped camera reading differs is the operation the mirror pass
+//     genuinely needs;
 //   * the mirror mesh itself is BLENDED over the result, which is why one
 //     shipped mirror is additive and another multiply without either being an
 //     anomaly - the blend is the compositing operator, not a substitute for a
 //     reflection.
 //
-// **What is NOT traced, and is this function's own reconstruction.** How the
-// engine confines the reflected frame to the mirror's area is not established
-// - the X flip in the bucket walk is global, and no clip or stencil step was
-// followed. This composites through a MASK: the mirror's own corners are drawn
-// alone to find which pixels it covers, and the reflection is taken there and
-// nowhere else. That is a reasonable reading of a planar mirror and it is not
-// evidence about the original. Anything downstream must say so.
+// **How the engine confines the reflection is DRAW ORDER AND DEPTH** (read,
+// `docs/ASSETS.md` 4c): `sub_440D90` draws the reflected frame, then the real
+// one with nothing cleared between, so the real pass's nearer surfaces cover
+// the virtual room everywhere but the mirror's opening. The GLES and Vulkan
+// backends draw it exactly so (`drawMirrorScene`). THIS function - the CPU
+// fallback, the software reference's path - composites through a MASK
+// instead: the mirror's own corners are drawn alone to find which pixels it
+// covers, and the reflection is taken there and nowhere else. The mask is a
+// RECONSTRUCTION, kept because it runs on any backend; it differs from the
+// engine's way by its read-back's dither and by a far object the mask lets
+// through where the depths would not.
 //
 // It runs on ANY backend, because it only uses the boundary: three
-// `begin`/`submit`/`end`/`readback` cycles. That costs two extra readbacks a
-// frame and is not how a GPU would want to do it - a stencil would - but it
-// keeps the pass a DECISION rather than something a backend implements
+// `begin`/`submit`/`end`/`readback` cycles, two extra readbacks a frame, while
+// keeping the pass a DECISION rather than something a backend implements
 // privately, which is A2's whole point.
 struct MirrorStats {
     bool active = false;      // a mirror exists AND the camera is in front
@@ -507,11 +509,10 @@ MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
 // carry `cornerMirror`, and each draw is run-split by it, so nothing else has
 // to know a mirror exists.
 //
-// Until 2026-09-06 the pass had only the `Geometry` form and only the scene
-// viewer called it, so a mirror reflected under `--scene` and was a flat
-// blended pane everywhere a player would actually meet one. A reader: *the
-// mirror in the chamber is displayed with transparency instead of
-// reflecting.*
+// Without this form only the scene viewer's `Geometry` path reflects: a
+// mirror reflects under `--scene` and is a flat blended pane everywhere a
+// player actually meets one (seen in play: the chamber's mirror drawn with
+// transparency instead of reflecting).
 MirrorStats drawWithMirror(Renderer& r, std::span<const Draw> draws,
                            const View& v, const MirrorPlane& mp);
 

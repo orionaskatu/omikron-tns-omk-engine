@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     const auto chunk = areas.chunk(224);
     const auto zones = omk::zonesOf(chunk, omk::ChunkKind::Area);
     // record 3 is the DOORLESS route to Qalisar, record 1 the one carrying
-    // doors 5 and 6 - the pair the reader watches for and never sees.
+    // doors 5 and 6 - the pair a player on the doorless route never sees.
     if (zones.size() < 4) {
         std::fprintf(stderr, "AREA 224: %zu zones, chunk %zu bytes\n",
                      zones.size(), chunk.size());

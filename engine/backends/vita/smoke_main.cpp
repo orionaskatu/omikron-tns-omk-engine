@@ -186,9 +186,9 @@ int main() {
                 }
             // A BLACK FRAME ANSWERS "EXACT" FOR NOTHING. In Vita3K the rendered
             // target never reaches emulated memory, so glReadPixels returns
-            // zeros and both sides agree trivially - which is exactly how this
-            // test first reported EXACT (2026-09-18). An empty input is its
-            // own verdict, never a pass.
+            // zeros and both sides agree trivially, so without this the test
+            // reports EXACT for nothing. An empty input is its own verdict,
+            // never a pass.
             long lit = 0;
             for (const auto px : rb.px) lit += px != 0;
             const char* verdict = lit == 0 ? "INPUT EMPTY (no lit pixel read back - not a result)"

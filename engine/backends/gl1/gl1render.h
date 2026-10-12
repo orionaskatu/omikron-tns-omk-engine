@@ -29,7 +29,7 @@ void gl1SetFullTextures(Renderer* r, bool full);
 // The world presented straight from the window's back buffer, and the same
 // with the composed interface over it (`gl1render.cpp`, tier B of
 // todo/cpu-vs-original.md). -> false where the window is not the frame's
-// size, and the caller presents the composed frame as before.
+// size, and the caller presents the composed frame itself.
 bool gl1PresentWorld(Renderer* r, int ww, int wh);
 // `probe` logs what the overlay frame held and three back-buffer pixels
 // before the swap (the white-screen probe, `todo/handoff-classic-mac.md` 3f

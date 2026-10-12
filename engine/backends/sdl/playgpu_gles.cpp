@@ -81,8 +81,8 @@ void PlayState::gpuOpenWindow() {
             // context, so `SDL_VIDEODRIVER=dummy` cannot keep this viewer off
             // the screen as it does the software one; a run that never
             // presents (`OMK_NO_GPU_PRESENT`) has no use for it being seen,
-            // and on 2026-09-25 a batch of such runs put windows - one of them
-            // playing the boot films - in front of the reader (CLAUDE.md 5).
+            // and a shown one takes the screen and the keyboard - the boot
+            // films included - from whoever is at the machine (CLAUDE.md 5).
             // `OMK_HIDDEN_WINDOW=1` hides it WITHOUT turning the GPU present
             // off: what a profile of the path a player takes needs
             // (todo/cpu-vs-original.md) - the readback path is not that path.

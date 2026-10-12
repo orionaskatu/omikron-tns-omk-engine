@@ -33,24 +33,22 @@ void* memAlloc(void*, uint32_t alignment, uint32_t size) {
 }
 void memFree(void*, void* p) { std::free(p); }
 
-// THE DECODER'S FRAME BUFFERS. First from vitaGL's own pools, which are
-// already GPU-mapped: vitaGL takes most of CDRAM at `vglInit`, so a fresh
-// CDRAM block - the only path until 2026-09-18 - can fail on a console while
-// the emulator, with room to spare, grants it. The console played all three
-// films as "0 frames shown, sound at 0 Hz", the player starting and stopping
-// with nothing decoded, which is what a refused frame buffer does. Every
-// allocation is logged, so the next log says which path served it.
+// THE DECODER'S FRAME BUFFERS. vitaGL's own pools are already GPU-mapped;
+// vitaGL takes most of CDRAM at `vglInit`, so a fresh CDRAM block can fail on
+// a console while the emulator, with room to spare, grants it. A refused
+// frame buffer shows as "0 frames shown, sound at 0 Hz": the player starting
+// and stopping with nothing decoded. Every allocation is logged, so a log
+// says which path served it.
 std::set<void*> g_blockFrames;   // the ones from sceKernelAllocMemBlock
 std::map<void*, void*> g_poolFrames;   // aligned -> what vglAlloc returned
-// THE EXPERIMENT (2026-09-23). Every strategy so far ended "0 frames shown"
-// on a console - a fresh CDRAM block, vitaGL's RAM pool, vitaGL's CDRAM pool -
-// and the player never reported READY: it STOPS during set-up. What the three
-// share is that none gave the decoder a block whose alignment the KERNEL
-// guarantees; the common pattern elsewhere is a dedicated memblock with
-// `SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT`. So each film tries one
-// strategy and the log says which produced frames - one console run answers
-// it. `ux0:data/omk/film-alloc` holding one digit forces it for all three.
-//   0  vitaGL's CDRAM pool, aligned by hand (what the game has done so far)
+// THE ALLOCATION STRATEGY. A fresh CDRAM block, vitaGL's RAM pool and
+// vitaGL's CDRAM pool all leave the player never reporting READY on a console
+// (it STOPS during set-up, "0 frames shown"): none gives the decoder a block
+// whose alignment the KERNEL guarantees. The working pattern is a dedicated
+// memblock with `SCE_KERNEL_ALLOC_MEMBLOCK_ATTR_HAS_ALIGNMENT` (1, the
+// default - see `play`). `ux0:data/omk/film-alloc` holding one digit forces
+// a strategy for all three films, and the log says which produced frames.
+//   0  vitaGL's CDRAM pool, aligned by hand
 //   1  a dedicated CDRAM memblock, the kernel aligning it
 //   2  a dedicated PHYCONT memblock (main RAM, physically contiguous), ditto
 int g_filmStrategy = 0;
@@ -199,10 +197,9 @@ AvFilm* avOpen(const std::string& path) {
     {
         std::string low = path;
         for (auto& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        // THE ANSWER (2026-09-23): once vitaGL leaves the decoder memory of
-        // its own (scripts/vita-vitagl-patch.py), strategy 1 PLAYED - GAME -
-        // and 0 and 2 still stopped at once (EIDOS, QUANTIC). So 1 for all;
-        // the file still overrides it.
+        // Strategy 1 for all: with vitaGL leaving the decoder memory of its
+        // own (scripts/vita-vitagl-patch.py), 1 plays on a console and 0 and 2
+        // stop at once. The file still overrides it.
         g_filmStrategy = 1;
         (void)low;
         SceIoStat fs;
@@ -259,11 +256,10 @@ bool avVideo(AvFilm* f, Surface& out) {
     if (w <= 0 || h <= 0) return false;
     if (out.w != w || out.h != h) out = Surface(w, h, 0);
     // TWO PLANES: luma, then chroma interleaved at half resolution in both
-    // axes, U FIRST in each pair (NV12). Settled by LOOKING, 2026-09-18: read
-    // V-first, as ports commonly treat it, GAME.MPG's advert came out with its
-    // red cap blue, its orange background cyan and its yellow can green - red
-    // and blue exchanged, in Vita3K's SceAvPlayer. BT.601, limited range, in
-    // integers.
+    // axes, U FIRST in each pair (NV12). Read V-first, as ports commonly
+    // treat it, red and blue exchange - GAME.MPG's advert shows its red cap
+    // blue, its orange background cyan and its yellow can green in Vita3K's
+    // SceAvPlayer. BT.601, limited range, in integers.
     const std::uint8_t* Y = fr.pData;
     const std::uint8_t* C = fr.pData + static_cast<std::size_t>(w) * h;
     for (int y = 0; y < h; ++y) {

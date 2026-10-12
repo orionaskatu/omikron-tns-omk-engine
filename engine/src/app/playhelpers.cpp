@@ -65,11 +65,11 @@ std::vector<float> wavToDevice(std::span<const std::byte> file, int deviceRate) 
         pcm = native.data();
     }
     const std::size_t frames = w.dataBytes / (2u * (w.fmt.channels ? w.fmt.channels : 1));
-    // AN EXACT MULTIPLE (2026-09-27): a device rate 1, 2, 4 or 8 times the
+    // AN EXACT MULTIPLE: a device rate 1, 2, 4 or 8 times the
     // sound's makes `i * step` exact in double, so the loop below takes source
     // frame `i / k` - written out here without its double multiply and
-    // push_back per sample, the same floats (the voices' resample got the same
-    // treatment; on a console each play converted its sound again)
+    // push_back per sample, the same floats (the voices' resample does the
+    // same; on a console each play converts its sound again)
     if (w.fmt.rate > 0 && deviceRate % static_cast<int>(w.fmt.rate) == 0) {
         const int k = deviceRate / static_cast<int>(w.fmt.rate);
         if (k == 1 || k == 2 || k == 4 || k == 8) {
@@ -209,7 +209,7 @@ std::vector<float> resampleToDevice(const std::vector<std::int16_t>& pcm,
     // then takes source frame `i * 0.5` = `i / 2`, so every frame twice, and
     // this writes the same floats without its double multiply and push_back
     // per sample - a 27 s line is 2.4 million of them, which a console's A9
-    // spends a visible part of a line's start on (2026-09-23)
+    // spends a visible part of a line's start on
     // ...and THE SAME RATE, the device's since it runs at the primary's
     // 22050: a conversion to float and nothing else
     if (deviceRate == rate && (channels == 1 || channels == 2)) {

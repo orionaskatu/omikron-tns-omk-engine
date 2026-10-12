@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE SCREEN FADES - two independent state machines, neither of them ported
-// until 2026-09-03.
+// THE SCREEN FADES - two independent state machines.
 //
 //     fade_probe <gamedata/IAM> <vm_opcodes.json> <START> <out.bin>
 //

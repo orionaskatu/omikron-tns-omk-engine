@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE CAMERA ROLL - the rotation about the forward axis, which the renderer
-// dropped until 2026-09-03.
+// THE CAMERA ROLL - the rotation about the forward axis.
 //
 //     camera_roll <gamedata> <out.bin>
 //
-// A camera record carries a roll and `RCamera` had no field for it, so every
-// rolled shot in the game drew upright. It is invisible in any single still
-// frame - which is exactly why it survived here for months after the web
-// viewer was fixed (CLAUDE.md 1, "some errors are invisible at rest").
+// A camera record carries a roll, and `RCamera` must carry it too: without
+// it every rolled shot in the game draws upright. That is invisible in any
+// single still frame (CLAUDE.md 1, "some errors are invisible at rest").
 //
 // The SENSE is derived, not chosen. `sub_442400` turns a direction and a roll
 // into `sub_441FF0(pitch, yaw, roll)`, which `o3de/setpiece.cpp`'s

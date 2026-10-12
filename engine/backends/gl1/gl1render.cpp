@@ -27,10 +27,10 @@
 //   * the fog is computed PER VERTEX on the CPU - the original's own path for
 //     a card without table fog - with the bucket key's two exclusions
 //     (`renderer.h`, View::fog).
-// Both of the last two were forced as well as faithful: on Tiger's emulated
-// Radeon 9700 the GPU's own transform let near-plane-crossing triangles
-// through as huge garbage, and its fog darkened the near scene; done on the
-// CPU, the frame matches the reference (2026-10-02).
+// Both of the last two are forced as well as faithful: on Tiger's emulated
+// Radeon 9700 the GPU's own transform lets near-plane-crossing triangles
+// through as huge garbage, and its fog darkens the near scene; done on the
+// CPU, the frame matches the reference.
 //
 // WHAT IT TAKES FROM THE SOFTWARE REFERENCE (`o3de/raster.cpp`), because a
 // GPU frame is checked against it: the colour law (texel * colour,
@@ -48,7 +48,7 @@
 // context current and gives the caller's back - SDL keeps a GL context of its
 // own for its window, and drawing into it is exactly the bug that guard is.
 //
-// ON CLASSIC MAC OS (`OMK_GL1_AGL`, the Carbon build, 2026-10-04) the context
+// ON CLASSIC MAC OS (`OMK_GL1_AGL`, the Carbon build) the context
 // is AGL's and the WINDOW's: Mac OS 9's OpenGL 1.2.1 has neither pbuffers nor
 // framebuffer objects, so the world is drawn into the window context's BACK
 // buffer, read back from there before the frontend presents (`gl1host.h`),
@@ -236,25 +236,23 @@ public:
         return true;
     }
 
-    // THE TEXTURE POOL, UPLOADED ONLY WHERE IT IS NEW (2026-10-10). The frame
-    // hands the pool over again whenever it changes - a particle's sprite
-    // arriving or leaving, a character coming into view - and this deleted
-    // EVERY texture on the card and sent them all again, set and bodies, each
-    // texel through a call: on the reader's iBook G3 that is the likeliest
-    // owner of `props, guns` at 12-65 ms a frame (`todo/handoff-classic-mac.md`
-    // 3f). The original binds a texture into its 58-slot cache once
+    // THE TEXTURE POOL, UPLOADED ONLY WHERE IT IS NEW. The frame hands the
+    // pool over again whenever it changes - a particle's sprite arriving or
+    // leaving, a character coming into view - and re-sending EVERY texture on
+    // the card, set and bodies, each texel through a call, costs the iBook G3
+    // the likeliest part of `props, guns` at 12-65 ms a frame
+    // (`todo/handoff-classic-mac.md` 3f). The original binds a texture into its 58-slot cache once
     // (`Tex3DT_BindMaterials`) and keeps it. As the GLES and 3DS backends do:
     // a texture already on the card from an earlier pool - the same pixel
     // storage, palette and size - is kept, and the entry holds that storage,
     // so its address cannot come back as another texture's while cached;
     // what no slot of the new pool uses leaves the card.
     //
-    // A new one goes up as 16-bit ARGB 1555 words - the internal format it
-    // always had (`GL_RGB5_A1`) - built through the palette (256 entries,
-    // made once a texture) instead of RGBA bytes the driver converted: the
-    // channels TRUNCATED to five bits, as the engine's own 16-bit conversion
-    // does (`rgb565`), and the colour key (alpha 0) on a black palette entry
-    // as before.
+    // A new one goes up as 16-bit ARGB 1555 words - its internal format
+    // (`GL_RGB5_A1`) - built through the palette (256 entries, made once a
+    // texture) instead of RGBA bytes for the driver to convert: the channels
+    // TRUNCATED to five bits, as the engine's own 16-bit conversion does
+    // (`rgb565`), and the colour key (alpha 0) on a black palette entry.
     void setTextures(std::span<const Texture> t) override {
         Current c(ctx_);
         flush();
@@ -359,7 +357,7 @@ public:
 
     void begin(const View& v) override {
         OMK_ZONE("gl1: begin");   // the profiler; `begin`, `submit`, `end` split the frame's
-                                  // CPU share from the driver's (step 3n, the eighth iBook run)
+                                  // CPU share from the driver's (`todo/handoff-classic-mac.md` 3f)
         Current c(ctx_);
         flush();
         setCamera(v);
@@ -376,7 +374,7 @@ public:
         {
             // the frame's first call that needs the back buffer: where the
             // CPU WAITS for the card to finish the last frame, if it does -
-            // the iBook's fixed 7 ms in `world begin, set` (step 3a)
+            // the iBook's fixed 7 ms in `world begin, set` (`todo/handoff-classic-mac.md`)
             OMK_ZONE("gl1: clear");
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
@@ -384,10 +382,10 @@ public:
         // THE LETTERBOX BARS BLACK. On AGL the picture is drawn at its
         // letterbox place in the window's own back buffer and presented as it
         // stands, so the rows above and below it are the window's - and the
-        // clear above left them the FOG colour: on the reader's iBook the bars
-        // of every cutscene "blue-ish, a bit like the sky" (2026-10-09). The
-        // composed frame's bars are black, as the original's are; only the
-        // two bands are cleared again, scissored.
+        // clear above leaves them the FOG colour, so without this a
+        // cutscene's bars come out sky-tinted. The composed frame's bars are
+        // black, as the original's are; only the two bands are cleared again,
+        // scissored.
         if (v.letterboxed()) {
             const int top = std::max(0, std::min(v.vy, h_ - cam.h));
             const int below = h_ - top - cam.h;
@@ -490,7 +488,7 @@ public:
         // the texturing perspective-correct the way `rhw` did for D3D.
         //
         // THE TRIANGLE WHOLLY INSIDE - most of a frame's - TAKES NO CLIP
-        // (2026-10-09, for the iBook G3): each corner's OUTCODE against the
+        // (for the iBook G3): each corner's OUTCODE against the
         // five planes is the clip's own test (`z > kNearCut`, then each
         // edge's `dist >= 0` with the same expression), so a triangle with
         // all corners inside comes out of the clips exactly as it went in,
@@ -546,7 +544,7 @@ public:
             return P;
         };
 
-        // A VERTEX ONCE, NOT ONCE A CORNER (step 3d): `indexFor` says which
+        // A VERTEX ONCE, NOT ONCE A CORNER: `indexFor` says which
         // corners of the geometry are one vertex (equal bytes, one mesh), and
         // within this draw a corner whose vertex was already transformed takes
         // its view position and outcode - and, once sent in this batch, its
@@ -592,9 +590,9 @@ public:
             }
             ++st_.triangles;
             if (pending() >= kBatchMax) flush();        // a bounded pool, as the original's
-            // THE TRIANGLE TWO AHEAD, ASKED FOR NOW (step 3o): the G3 has no
-            // hardware prefetch, so each corner's 48 bytes were a miss the
-            // loop waited on (~170 MB/s, a street frame reads ~1 MB of them).
+            // THE TRIANGLE TWO AHEAD, ASKED FOR NOW: the G3 has no hardware
+            // prefetch, so without it each corner's 48 bytes are a miss the
+            // loop waits on (~170 MB/s, a street frame reads ~1 MB of them).
             // A hint - `dcbt` on a PowerPC - over its 144 bytes, a 32-byte
             // line at a time; it changes no value read.
             if (t + 9 <= nCorner) {
@@ -800,24 +798,23 @@ public:
         flush();
         // THE FOG'S COLOUR SUM ENDS WITH THE WORLD. Left on, everything drawn
         // after it in the frame - the interface overlay, the fade quad, the
-        // frontend's menus and films - had the CURRENT secondary colour added
+        // frontend's menus and films - gets the CURRENT secondary colour added
         // after texturing, and after a vertex array that value is undefined:
-        // the iBook's Rage 128 kept the last fog colour, so with a coloured
+        // the iBook's Rage 128 keeps the last fog colour, so with a coloured
         // fog (the Impasse, the tutorial, the streets - not Kay'l's
-        // black-fogged room) the overlay's transparent texels came out as
-        // that colour over the world and the blend saturated the window
-        // WHITE. The reader's white screens of 2026-10-09/10, measured by
-        // the fourth run's probe (`todo/handoff-classic-mac.md` 3f step 2k);
-        // the emulated Tiger's Radeon left it zero, so never there.
+        // black-fogged room) the overlay's transparent texels come out as
+        // that colour over the world and the blend saturates the window
+        // WHITE (`todo/handoff-classic-mac.md` 3f step 2k); the emulated
+        // Tiger's Radeon leaves it zero, so it never shows there.
         // `begin` sets it again for the next frame.
         if (hasColourSum_) { glDisable(OMK_GL_COLOR_SUM); glDisableClientState(OMK_GL_SECONDARY_ARRAY); }
         stateValid_ = false;
         glFlush();
         // what the batching saved: passes 61-120 summed (a street frame is
         // past its setup by then; a frame may be several passes), and then
-        // the last 60 of every 600 (2026-10-11: one line said nothing about
-        // the street an iBook run reaches minutes later) - the draws handed
-        // over, the draw calls they became, the triangles
+        // the last 60 of every 600 (so a run that reaches the street minutes
+        // later reports it too) - the draws handed over, the draw calls they
+        // became, the triangles
         sum_[0] += submits_; sum_[1] += batches_; sum_[2] += st_.triangles;
         sum_[3] += st_.drawn; sum_[4] += st_.culled;
         ++passes_;
@@ -835,13 +832,13 @@ public:
                         statTrusted_, passes_);
     }
 
-    // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c,
-    // read 2026-09-30) and as the GLES backend does: the reflected scene
-    // first, then the room and the mirror over it with NO clear between -
-    // draw order and depth confine the reflection. Without this the frame
-    // took `drawWithMirror`'s CPU fallback: three passes, three readbacks and
-    // a composite, and the frame then went to the CPU present ("cpu mirror")
-    // - on the iBook, every frame Kay'l's bathroom mirror is in view.
+    // THE MIRROR ON THE CARD, as the original draws it (`docs/ASSETS.md` 4c)
+    // and as the GLES backend does: the reflected scene first, then the room
+    // and the mirror over it with NO clear between - draw order and depth
+    // confine the reflection. Without this the frame takes `drawWithMirror`'s
+    // CPU fallback: three passes, three readbacks and a composite, and the
+    // frame then goes to the CPU present ("cpu mirror") - on the iBook, every
+    // frame Kay'l's bathroom mirror is in view.
     // `OMK_CPU_MIRROR=1` keeps the fallback, as on GLES.
     bool drawMirrorScene(const View& v, const View& refl, std::span<const Draw> scene,
                          std::span<const Draw> sceneClipped, std::span<const Draw> mirror) override {
@@ -909,8 +906,8 @@ public:
     // no composite and no `glDrawPixels` - it is swapped as it stands, at the
     // drawable's own depth with the DRIVER's dither (GL_DITHER, on by
     // default), as the original's 16-bit D3D device dithered (`DITHERENABLE`,
-    // ASSETS 4) - the reader's choice of 2026-10-05. ~5 -> 17 fps on emulated
-    // Tiger (`handoff-classic-mac.md`). Only where the window is the frame's
+    // ASSETS 4). ~5 -> 17 fps on emulated Tiger against the composite
+    // (`handoff-classic-mac.md`). Only where the window is the frame's
     // own size; anything else stays on the composite.
     bool presentWorld(int ww, int wh) {
         if (ww != w_ || wh != h_) return false;
@@ -927,24 +924,23 @@ public:
     // weight). Fixed function: the CPU folds key and mask into one RGBA
     // texture, a quad blends it with (GL_ONE, GL_SRC_ALPHA); only the band of
     // rows the overlay touches is uploaded and drawn. THE FADE IS A SECOND
-    // QUAD (2026-10-05): untextured over the whole window, its colour at its
-    // weight, blended (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA) - `dst*(1-f) +
-    // fade*f`, the GLES shader's `rgb*(1-f) + fade*f` done by the blender.
-    // Folded into the texture it changed every row every frame of a fade, and
-    // the emulated Tiger re-sent the whole frame for 26-31 ms each.
+    // QUAD: untextured over the whole window, its colour at its weight,
+    // blended (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA) - `dst*(1-f) + fade*f`,
+    // the GLES shader's `rgb*(1-f) + fade*f` done by the blender. Folded into
+    // the texture it would change every row every frame of a fade, and the
+    // emulated Tiger re-sends the whole frame for 26-31 ms each.
     bool presentOverlay(const Surface& fb, const std::uint8_t* mask, const std::uint8_t* maskRow,
                         const float fade[4], int ww, int wh, bool probe = false) {
         if (ww != w_ || wh != h_ || fb.w != w_ || fb.h != h_) return false;
         int lo = fb.h, hi = -1;
         const bool fading = fade[3] > 0.0f;
-        // EACH ROW AGAINST THE COPY LAST SEEN (step 3b, 2026-10-11): a row
-        // whose 565 pixels and mask are word for word what they were costs
-        // one compare - its band flag and its texture row stand - where every
-        // row of the band used to be HASHED every frame, and scanned for the
-        // key once more before that: ~14 ms an overlay frame on the iBook
-        // with nothing on the interface changing (a subtitle, a dialogue
-        // line), the fourth run's median. Exact where the hash was only
-        // nearly so. `maskRow` (the glue's, as GLES's): a row no blended
+        // EACH ROW AGAINST THE COPY LAST SEEN: a row whose 565 pixels and
+        // mask are word for word what they were costs one compare - its band
+        // flag and its texture row stand. Hashing every row of the band each
+        // frame, and scanning it for the key once more, costs ~14 ms an
+        // overlay frame on the iBook with nothing on the interface changing
+        // (a subtitle, a dialogue line; median, `todo/handoff-classic-mac.md`
+        // 3f), and a hash is only nearly exact where the compare is exact. `maskRow` (the glue's, as GLES's): a row no blended
         // pass touched has an all-zero mask, which is then never read.
         {
             OMK_ZONE("gl1: overlay compare");
@@ -955,7 +951,7 @@ public:
                 ovRowAny_.assign(static_cast<std::size_t>(fb.h), 0);
                 ovRowBlack_.assign(static_cast<std::size_t>(fb.h), 0);
                 ovRowDraw_.assign(static_cast<std::size_t>(fb.h), 0);
-                // the column BLOCKS a row's changes are tracked in (step 3c):
+                // the column BLOCKS a row's changes are tracked in:
                 // at most 32 a row, 32 pixels or wider
                 ovBlockW_ = std::max<int>(32, (fb.w + 31) / 32);
                 ovBlocks_ = (fb.w + ovBlockW_ - 1) / ovBlockW_;
@@ -1030,15 +1026,15 @@ public:
             boundTex_ = ~0u;
         }
         if (hi >= lo) {
-            // IN TILES (step 3i, 2026-10-11): the overlay is 64-row tiles two
-            // blocks wide (64 pixels at 640), each a texture of its own, made
-            // the first time a tile holds something. It was ONE 1024x512 RGBA8
-            // texture, and on the iBook a draw of it after any change cost
-            // ~43 ms - the driver sending the whole 2 MB again - every frame of
-            // a fight, whose gauges' sparks change it each frame (the seventh
-            // run: `gl1: overlay draw` 42.9 ms there, 0.75 in the street where
-            // it rarely changes). Now a change re-sends only the tiles it
-            // touches, and a tile with nothing drawn is neither sent nor drawn.
+            // IN TILES: the overlay is 64-row tiles two blocks wide (64
+            // pixels at 640), each a texture of its own, made the first time a
+            // tile holds something. As ONE 1024x512 RGBA8 texture, a draw of it
+            // after any change costs the iBook ~43 ms - the driver sending the
+            // whole 2 MB again - every frame of a fight, whose gauges' sparks
+            // change it each frame (`gl1: overlay draw` 42.9 ms there, 0.75 in
+            // the street where it rarely changes; `todo/handoff-classic-mac.md`
+            // 3f). In tiles a change re-sends only the tiles it touches, and a
+            // tile with nothing drawn is neither sent nor drawn.
             // The probe's path (`gl1OverlayPath`): client storage stores ARGB
             // 8888 words, which is what it was timed with.
             const Gl1UploadPath path = gl1OverlayPath();
@@ -1154,7 +1150,7 @@ public:
             // not have (the white screens were the fog's colour sum, `end`).
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             glColor4f(1, 1, 1, 1);
-            // ...ONE QUAD A RUN OF DRAWN ROWS of each tile (step 3b): the rows
+            // ...ONE QUAD A RUN OF DRAWN ROWS of each tile: the rows
             // holding only the key (the world through) and the letterbox's
             // black are not drawn
             const float invW = 1.0f / static_cast<float>(texW), invH = 1.0f / static_cast<float>(tileH);
@@ -1204,8 +1200,8 @@ public:
         if (probe) probeOverlay(fb, mask, lo, hi, ww, wh);
         // WHAT THE OVERLAY COSTS IN ROWS, every 300 overlay frames: how many
         // are drawn and how many had to be SENT again (changed), a frame -
-        // the iBook's fight HUD spent 74 ms a frame in `gl1: overlay rows`
-        // (step 3c)
+        // sent row by row, the iBook's fight HUD costs 74 ms a frame in
+        // `gl1: overlay rows` (`todo/handoff-classic-mac.md` 3f)
         {
             ++ovStatFrames_;
             for (int y = lo; y <= hi; ++y) ovStatDrawn_ += ovRowDraw_[static_cast<std::size_t>(y)];
@@ -1308,20 +1304,18 @@ public:
     // `todo/handoff-classic-mac.md` 3f step 3a): a posed draw's corners are
     // its REST corners and one affine a mesh, and `submit` folds the camera
     // into each mesh's affine once a draw - so a corner is transformed ONCE,
-    // rest to view, where the frontend's CPU path placed it into the world
-    // (and the moving set meshes' were patched into the set's buffer) and
-    // `submit` transformed it again. The iBook's street spent ~20 ms a frame
-    // on the moving meshes' placement and patch alone. The lights that reach
+    // rest to view, instead of the frontend's CPU path placing it into the
+    // world (and patching the moving set meshes into the set's buffer) for
+    // `submit` to transform again. That placement and patch alone cost the
+    // iBook's street ~20 ms a frame. The lights that reach
     // a body come as `Draw::vertexLights` and are applied per corner here by
     // `vertexlight.cpp`'s law, as the GLES shader applies them.
     bool posesBodies() const override { return true; }
     // THE DEPTH TIE, SETTLED ONCE (`renderer.h` bakeDepthTie, todo/optimization.md
-    // step 29), as Vulkan and GLES have had since 2026-09-30: of two coincident
-    // faces the engine's strict test on its quantised depth shows the one
-    // drawn FIRST, and the loser is drawn a hair back - GL1 had no tie at all,
-    // so the street's coincident ground faces fought in its depth buffer and
-    // flickered as the camera moved (the reader, 2026-10-11, running in
-    // Anekbah through the host GL1 window).
+    // step 29), as Vulkan and GLES do: of two coincident faces the engine's
+    // strict test on its quantised depth shows the one drawn FIRST, and the
+    // loser is drawn a hair back. Without a tie the street's coincident ground
+    // faces fight in the depth buffer and flicker as the camera moves.
     bool bakeDepthTie(const Geometry* g, std::span<const Draw> order) override {
         static const bool off = std::getenv("OMK_NO_TIE") != nullptr || std::getenv("OMK_NO_TIE_BAKE") != nullptr;
         if (off || !g) return false;
@@ -1399,7 +1393,7 @@ private:
     GLuint readTex_ = 0;
     GLsizei readTexW_ = 0, readTexH_ = 0;
     std::vector<unsigned char> readBig_;
-    // the overlay's TILES (`presentOverlay`, step 3i): a texture each, made on
+    // the overlay's TILES (`presentOverlay`): a texture each, made on
     // first use, and with client storage its own memory
     struct OvTile { GLuint tex = 0; std::vector<std::uint32_t> store; };
     std::vector<OvTile> ovTiles_;
@@ -1441,13 +1435,13 @@ private:
     std::vector<std::uint32_t> poseGen_;
     std::uint32_t poseDraw_ = 0;
 #if defined(OMK_GL1_AGL)
-    // step 3b: each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
+    // each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
     // without / with a mask), whether it holds anything but the key, and
     // whether the texture row holds it
     std::vector<std::uint8_t> ovSeenRow_, ovRowAny_;
-    std::vector<std::uint32_t> ovSum_;   // two checksums a block of a row (step 3e)
+    std::vector<std::uint32_t> ovSum_;   // two checksums a block of a row
     int ovSumW_ = 0;
-    std::vector<std::uint32_t> ovRowStale_;   // a row's blocks the texture does not hold yet (step 3c)
+    std::vector<std::uint32_t> ovRowStale_;   // a row's blocks the texture does not hold yet
     int ovBlockW_ = 32, ovBlocks_ = 1;
     std::uint32_t ovAllBlocks_ = 1;
     std::vector<std::uint8_t> ovRowBlack_, ovRowDraw_;   // all 0x0000; drawn this frame
@@ -1493,7 +1487,7 @@ private:
     // software renderer alike (probed 2026-10-02: the read-back bytes stayed
     // as the probe left them). A current Mac renders into the FBO without
     // one. So a small PBUFFER is attached - the period's offscreen drawable,
-    // 10.3 onwards - and the FBO is drawn into as before; where pbuffers are
+    // 10.3 onwards - and the FBO is drawn into all the same; where pbuffers are
     // gone or refused (deprecated since 10.7) the context goes on without.
     bool makeContext() {
         for (int withPBuffer = 1; withPBuffer >= 0 && !ctx_; --withPBuffer) {
@@ -1649,12 +1643,12 @@ private:
     static unsigned char toByte(float v) {
         // the corner colour is 0..1; the reference clamps after the multiply,
         // fixed function clamps the vertex colour first - equal for 0..1.
-        // Converted FIRST and clamped as an integer (2026-10-10, for the G3,
+        // Converted FIRST and clamped as an integer (for the G3,
         // whose float compares and int compares are separate units): the
         // same byte, since truncation toward zero sends (-1, 0] to 0 as the
         // float clamp did and the rest clamps the same on either side
         const float x = v * 255.0f + 0.5f;
-        if (!(x > -1.0f)) return 0;                    // (and a NaN, as before: 0)
+        if (!(x > -1.0f)) return 0;                    // (and a NaN: 0)
         if (x >= 255.0f) return 255;
         const int i = static_cast<int>(x);
         return static_cast<unsigned char>(i < 0 ? 0 : i);
@@ -1738,26 +1732,26 @@ private:
     // THE PENDING BATCH, interleaved, kept between frames for its capacity
     // (no allocation per frame); `f` is the fog's secondary colour, read only
     // when `fogSum_`. Bounded so a frame's largest run stays a few MB.
-    // THE VERTEX INDEX (step 3d): a geometry's corner -> its vertex, built
+    // THE VERTEX INDEX: a geometry's corner -> its vertex, built
     // once per geometry and size (equal bytes within one mesh, as the 3DS
     // backend's `VertexIndex`); the per-vertex cache below is the current
     // draw's (`drawStamp_`) and, for the sent index, the current batch's
-    // ...and WHICH CORNERS MAY HAVE CHANGED since it was built (step 3n): a
+    // ...and WHICH CORNERS MAY HAVE CHANGED since it was built: a
     // byte a corner, set from the geometry's dirty lists as its revisions
     // pass (`Geometry::dirtyCorners`), or `allDoubt` when a revision came
     // without one. Two corners of one vertex that are both still as built
     // are equal by construction, so `submit` compares their 48 bytes only
-    // when one of them is in doubt - on the G3 that compare read every
-    // shared corner's bytes, ~11k a street frame, for a word the index
-    // already gave.
+    // when one of them is in doubt - comparing always would read every
+    // shared corner's bytes on the G3, ~11k a street frame, for a word the
+    // index already gives.
     struct VIndex {
         std::size_t n = 0; std::vector<std::uint32_t> vert; std::uint32_t nv = 0;
         std::uint64_t rev = 0; std::vector<std::uint8_t> doubt; bool allDoubt = false;
     };
     std::map<const Geometry*, VIndex> vindex_;
-    // ONE RECORD A VERTEX (step 3e): the six fields a lookup reads, in one
-    // 32-byte line - they were six arrays, six cache misses a corner on the
-    // G3 (the sixth run: the cache cost what the transforms saved)
+    // ONE RECORD A VERTEX: the six fields a lookup reads, in one 32-byte
+    // line - as six arrays they are six cache misses a corner on the G3,
+    // and the cache then costs what the transforms save
     struct VSlot {
         std::uint32_t stamp, rep, outStamp;
         float x, y, z;
@@ -1768,8 +1762,8 @@ private:
     std::vector<std::uint16_t> idx_;
     std::uint32_t drawStamp_ = 0, batchStamp_ = 1;
     long statCorners_ = 0, statTransformed_ = 0, statSent_ = 0, statSkipped_ = 0, statTieBack_ = 0;
-    long statTrusted_ = 0;   // shared corners taken on the index's word, no compare (step 3n)
-    // THE RUNS' BOUNDING SPHERES (step 3h): a geometry's corners in runs of
+    long statTrusted_ = 0;   // shared corners taken on the index's word, no compare
+    // THE RUNS' BOUNDING SPHERES: a geometry's corners in runs of
     // `kClusterCorners` from corner 0 (4 triangles; a draw starts on a
     // triangle, so a run boundary is one too), a sphere (x, y, z, r) each,
     // kept per geometry and REVISION - the corners `dirtyCorners` lists

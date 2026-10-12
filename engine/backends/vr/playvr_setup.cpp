@@ -62,7 +62,7 @@ void PlayState::vrSetup(int argc, char** argv) {
 #if OMK_OPENXR
     // A HEADSET BUILD (the Quest, `todo/quest-port.md` §5 step 5b) is in VR
     // unless told otherwise: the frontend's head pose drives the eyes, and
-    // `--vr-flat` keeps the game on step 5a's screen
+    // `--vr-flat` keeps the game on one flat screen (a quad layer)
     vr.on = true;
 #endif
     for (int i = 1; i < argc; ++i) {

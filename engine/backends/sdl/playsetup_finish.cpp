@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // AFTER THE LOOP: the run's report, a save written when one was asked for,
-// the window closed. Moved byte for byte out of `main`'s body by
-// `todo/play-split.md` (2026-10-02); returns `main`'s exit code.
+// the window closed. Split out of `main`'s body by `todo/play-split.md`;
+// returns `main`'s exit code.
 #include "playstate.h"
 
 int PlayState::finish() {
@@ -20,10 +20,10 @@ int PlayState::finish() {
             le[2 * i + 1] = static_cast<unsigned char>(fb.px[i] >> 8);
         }
         omk::writeWholeFile(dump, le.data(), le.size());
-        // SAY THE SIZE. This wrote the bytes and no dimensions, and a reader
-        // of the file has nothing to go on but its length - 960000 bytes is
-        // 800x600, not the 640x480 that a `.bin` from this viewer is assumed
-        // to be, and one shot was decoded at the wrong stride and read as a
+        // SAY THE SIZE. The file holds the bytes and no dimensions, so
+        // whoever reads it has nothing to go on but its length - 960000 bytes
+        // is 800x600, not the 640x480 that a `.bin` from this viewer is
+        // assumed to be, and a shot decoded at the wrong stride reads as a
         // broken renderer.
         std::printf("wrote %s (%dx%d RGB565, %zu bytes)\n", dump.c_str(),
                     fb.w, fb.h, fb.px.size() * 2);

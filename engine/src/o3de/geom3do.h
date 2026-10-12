@@ -79,9 +79,8 @@ inline constexpr std::uint32_t kMirror       = 0x100000u;
 // (y0-y1) - (y0-y2) * (x0-x1) < 0` - unless its mesh carries this bit, in
 // which case it swaps two corners and draws it. The near-clip path
 // (`sub_496740`) and the second submit (`sub_496FC0`) test the same way. The
-// device's own CULLMODE is NONE (`SetRenderState(22, 1)`), which is what this
-// repo read as "the engine never culls" until 2026-10-01: the cull is in
-// software, one level above the device. 93 of 16188 shipped meshes carry the
+// device's own CULLMODE is NONE (`SetRenderState(22, 1)`), which does NOT mean
+// the engine never culls: the cull is in software, one level above the device. 93 of 16188 shipped meshes carry the
 // bit, nearly all of them WATER - a surface seen from both sides.
 inline constexpr std::uint32_t kTwoSided     = 0x20000000u;
 
@@ -183,9 +182,9 @@ struct Geometry {
     // WHICH CORNERS CAN EVER COINCIDE - the depth tie's key, one level up.
     //
     // The tie (`o3de/depthtie.h`) keys a face by its corners' positions, and a
-    // posed body gets a new revision every frame, so every body was re-walked
-    // whole every frame - the largest single cost of a street frame on the
-    // Vita (2026-09-22). But a body is skinned RIGIDLY: `applyPose` moves each
+    // posed body gets a new revision every frame, so a plain walk re-walks
+    // every body whole every frame - the largest single cost of a street frame
+    // on the Vita. But a body is skinned RIGIDLY: `applyPose` moves each
     // corner by its mesh's one transform, the same arithmetic for every corner
     // of a mesh. So two corners of ONE mesh at the same position in one pose
     // are at the same position in every pose (the transform is injective and

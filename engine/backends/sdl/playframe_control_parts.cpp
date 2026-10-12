@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE CONTROLLER'S FRAME: the binding, the bolts' flight, adventure mode.
-// Parts of `PlayState::phaseControl`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseControl`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // Who is bound to him and who poses him, the shoot camera, the player made, the screens that stop the world, a teleport
@@ -22,15 +22,14 @@ void PlayState::controlBinding() {
     //
     // A CUTSCENE BEAT starts that way, and the flat's DOORS do not:
     // they are `scx.play.wait` (op 58), which is `how` "scene". So
-    // this loop never saw them, and the door report of 2026-09-09
-    // reaches the frontend through `parkedOnProgram` alone (see
-    // `script/area.h`). A `clip >= 0` guard was added here in the same
-    // breath as that fix, defensively, and it was WRONG: a beat's clip
-    // is its FIRST body animation, so a chain on a step that animates
-    // nothing stopped counting and the walker took the body back for a
-    // frame. `engine: player program` and `line facing` caught it, one
-    // frame out each. The binding is the test, and the clip is only
-    // read for the facing below.
+    // this loop never sees them, and a door reaches the frontend
+    // through `parkedOnProgram` alone (see `script/area.h`). There is
+    // NO `clip >= 0` guard: a beat's clip is its FIRST body animation,
+    // so with one a chain on a step that animates nothing stops
+    // counting and the walker takes the body back for a frame
+    // (`engine: player program` and `line facing` each see it, one
+    // frame out). The binding is the test, and the clip is only read
+    // for the facing below.
     bool playerDriven = false;      // a program is bound to him
     if (sc.loaded()) {
         const auto& started = sc.started();
@@ -60,10 +59,10 @@ void PlayState::controlBinding() {
             // He IS at the keys. The engine's actor is one record
             // that walks from one decor onto the other; the walker's
             // soup follows the shown slots (`rebuildWorld`) and
-            // nothing here rebuilds him. Until 2026-09-03 this reset
-            // the controller, and the gate below never rebuilt it -
-            // SCENE 55 stayed resident with its programs - so the
-            // walk into the airlock froze him in the alley.
+            // nothing here rebuilds him. Resetting the controller here
+            // would leave it unbuilt - the gate below never rebuilds it
+            // while SCENE 55 stays resident with its programs - and the
+            // walk into the airlock would freeze him in the alley.
             std::printf("frame %ld: area transition %d with the player at the keys - "
                         "he keeps walking\n", n, playerDrivenArea);
         }
@@ -103,14 +102,13 @@ void PlayState::controlBinding() {
     hc = session.cameraTarget();
     // A HELD PLAYER MEANS THE SCRIPT OWNS THE CAMERA.
     //
-    // `followCam` used to be a test on the camera's SHAPE alone, and
-    // that cannot tell the area's follow camera from a scripted shot:
-    // AREA 222's tutorial names 4290/4291/4292, and all three are
-    // eyeSubject 0 / atSubject 0 exactly like camera 0. So each shot
-    // was fed to `setCameraOffsets` and RE-AIMED THE FOLLOW CAMERA -
-    // it kept trailing the player with the follow lag instead of
-    // standing as a staged shot, which reads as "the camera never
-    // left adventure mode".
+    // A test on the camera's SHAPE alone cannot tell the area's
+    // follow camera from a scripted shot: AREA 222's tutorial names
+    // 4290/4291/4292, and all three are eyeSubject 0 / atSubject 0
+    // exactly like camera 0. Fed to `setCameraOffsets`, each shot
+    // would RE-AIM THE FOLLOW CAMERA - trailing the player with the
+    // follow lag instead of standing as a staged shot, which reads as
+    // "the camera never left adventure mode".
     //
     // The engine's own discriminator is the hold: `sub_415D10` (the
     // follow camera) opens `if ((u32(a1,356) & 0x81) != 0) { v2 = 0;
@@ -327,10 +325,9 @@ void PlayState::controlBinding() {
     }
     // WHICH SCREENS STOP THE WORLD, and it is not "any screen".
     //
-    // This used to read `!walk` - a screen open, of any kind - and a
-    // player found it by opening the sneak in Anekbah and watching
-    // the city freeze: 19 world frames in 1924. The engine does not
-    // do that. `Game_Tick` (0x004200F0) runs `Script_SetFrameTime`,
+    // Not `!walk` - a screen open, of any kind - which freezes the
+    // city when the sneak is opened in Anekbah: 19 world frames in
+    // 1924. The engine does not do that. `Game_Tick` (0x004200F0) runs `Script_SetFrameTime`,
     // the per-slot `Script_PlayAllScripts` loop, `Projectiles_Tick`,
     // `Sliders_Tick` and `Slider_TickRide` with NO test for an open
     // screen anywhere in it - the block at its head that looks like
@@ -369,14 +366,13 @@ void PlayState::controlBinding() {
                                   : session.parkedOnProgram();
     adventure = player && !playerDriven && !session.dialogOpen() &&
                 !uiPause && !sc.activeEditing() && !parked;
-    // GAMEPLAY EVENTS ARE NOT CUTSCENES (the reader, 2026-09-10: *"some
-    // events (like some ennemie appearing with a special animation) are
-    // considered as cutscenes, stops move and change camera, even
-    // though they are just gameplay events"*). In the engine only
+    // GAMEPLAY EVENTS ARE NOT CUTSCENES: an enemy appearing with a
+    // special animation must not stop the player's move or take the
+    // camera as a cutscene would. In the engine only
     // `player.anim.hold` blocks the player's input, and a script
     // camera does not stop the shoot mover. So in shoot mode, say
-    // whenever this gate flips and which term flipped it - a freeze a
-    // reader meets in play then names its cause in the log.
+    // whenever this gate flips and which term flipped it - a freeze met
+    // in play then names its cause in the log.
     if (shootLive) {
         static bool advTold = true;
         if (adventure != advTold) {
@@ -418,21 +414,19 @@ void PlayState::controlBinding() {
     // what carries the gait he arrived on into the group-400 stance
     // `Actor_EnterDialogueMode` selected.
     //
-    // This viewer ticked him only in adventure mode, which a
-    // conversation turns off, so he froze on whatever frame the walk
-    // left him - a reader's shot of Kay'l standing mid-stride beside
-    // Telis for the length of the conversation, arms out, one leg
-    // lifted. It only became visible once he was drawn in
-    // conversations at all. Nothing pressed, exactly as the `walk`
-    // case below and `player.anim.hold` do it.
+    // Ticked only in adventure mode, which a conversation turns off,
+    // he would freeze on whatever frame the walk left him - Kay'l
+    // standing mid-stride beside Telis for the length of the
+    // conversation, arms out, one leg lifted. Nothing pressed, exactly
+    // as the `walk` case below and `player.anim.hold` do it.
     // ...and WHETHER HE TICKED, because `specialMoves()` is the list
     // this tick produced and `PlayerController::tick` is the only
     // thing that clears it. A frame that skips the tick - which
     // riding and boarding both do, ACTOR_STATE 7 and 8 not being
-    // walkers - therefore re-reads the PREVIOUS tick's list, and on
-    // 2026-09-08 that fired `MDSLIDIN` a second time one frame after
-    // boarding: he was put aboard, then put aboard again, and the
-    // journey's arrival landed on a body that had just been re-seated.
+    // walkers - would therefore re-read the PREVIOUS tick's list, which
+    // fires `MDSLIDIN` a second time one frame after boarding: he is put
+    // aboard, then put aboard again, and the journey's arrival lands on a
+    // body that has just been re-seated.
     // Every handler in those two loops is edge-shaped, so the guard
     // belongs on the read and not on each of them.
 }
@@ -454,10 +448,9 @@ void PlayState::controlFlight() {
     // 256 x 60 projectile pool - so no bolt outlives the mode. The
     // script pass that ran `shoot.end` comes BEFORE this flight, while
     // the frame's `shootMode` copy is refreshed only further down, so
-    // the mode's end is seen here as "was on, is off". Until 2026-09-13
-    // the pool was never emptied, and in the gallery a gunman's bolt
-    // still in the air killed the player a SECOND time on the restart
-    // frame. LABELLED: a player shot fired later on the leaving frame
+    // the mode's end is seen here as "was on, is off". Without emptying
+    // the pool, in the gallery a gunman's bolt still in the air kills the
+    // player a SECOND time on the restart frame. LABELLED: a player shot fired later on the leaving frame
     // is not caught by this.
     if (projectiles.live() && shootMode && !session.shootMode().active()) {
         std::printf("frame %ld: the projectile pool emptied (Shoot_Leave's "

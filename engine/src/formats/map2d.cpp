@@ -57,7 +57,7 @@ bool Map2d::load(std::span<const std::byte> b) {
         o += 4;
         // a waypoint is at least 12 bytes (its length word and two more): a
         // count the rest of the file cannot hold is refused BEFORE the resize,
-        // which would otherwise allocate it (the code audit's sweep, 2026-10-08)
+        // which would otherwise allocate it
         if (std::uint64_t{k} * 12 > b.size() - std::min(o, b.size())) return false;
         f.waypoints.resize(k);
         for (auto& w : f.waypoints) {

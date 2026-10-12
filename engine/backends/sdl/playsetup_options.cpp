@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the command line, the game's state, the slider's door clips.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -27,8 +27,8 @@ int PlayState::setupOptions(int argc, char** argv) {
     if (!opt.profilePath.empty())
         std::printf("profile: this is a RELEASE build - no profiler (OMK_PROFILE=0)\n");
 #endif
-    // THE GAME'S STATE (`todo/play-split.md` S3), one group at a time; each
-    // old local below is a REFERENCE to its field where it used to be declared.
+    // THE GAME'S STATE (`todo/play-split.md` S3), one group at a time, each
+    // member initialised below.
     boardPress = false;
     mountSpent = false;    // the action button is edged, not held
     calledOpenTold = false;

@@ -6,9 +6,9 @@
 // Composes the character's pose from the line's .3DM, from the scene clip,
 // and from `blendTracks` between them, and prints for each the root's
 // position, the lowest point (the head top, Y down), the highest (the feet)
-// and the pitch of pelvis->head from vertical. Written 2026-09-02 when a
-// reader saw the fade "alternate between flying and landing" and the torso
-// not bowing where the game's does.
+// and the pitch of pelvis->head from vertical: the numbers that show a fade
+// alternating between flying and landing, or a torso not bowing where the
+// game's does.
 #include "platform/datafs.h"
 #include "actor/pose.h"
 #include "formats/mesh3do.h"

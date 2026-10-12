@@ -42,8 +42,8 @@
 // which is the morph half and is NOT done here.
 //
 // TIER: this is a transcription of `tools/omkdata.pose` / `_compose`, which
-// the `/dialog` viewer has posed characters with since 2026-08-27 and which a
-// reader has watched. `verify.py: engine pose` differences the two.
+// the `/dialog` viewer poses characters with, checked by eye in play.
+// `verify.py: engine pose` differences the two.
 #pragma once
 
 #include "formats/anim.h"
@@ -164,7 +164,7 @@ struct MeshPose {
 // noise - keeps the cancellation, and a `.3DA` SCENE CLIP must not: its root
 // rotation is the character's real orientation. Cancelled, GRID's INTRO1
 // forces a man crawling on the floor upright and he appears to float through
-// the scene, which is what a reader saw. The tell is only in the TRANSITION:
+// the scene (seen in play). The tell is only in the TRANSITION:
 // kept, his posture goes from 19.5 high by 37.4 wide at frame 30 to 57.9 by
 // 26.4 at 184; cancelled, he measures "standing" at every frame.
 // `verify.py: engine clip root`.
@@ -206,9 +206,8 @@ void composePose(const std::vector<Mesh>& meshes, const NodeTracks& t, float fra
 
 // ------------------------------------------------- BLENDING TWO POSES
 //
-// THE FADE AT A LINE'S TWO ENDS, read out of the morph player 2026-09-02
-// after a reader said the character "should fade to an idle animation" where
-// the port froze on the line's last frame.
+// THE FADE AT A LINE'S TWO ENDS, read out of the morph player: the character
+// fades to an idle animation rather than freezing on the line's last frame.
 //
 // `sub_42D120`, the per-frame morph applier, blends the skeleton in and out
 // of the line itself, node by node, through the same `sub_471710` ->
@@ -244,13 +243,13 @@ void composePose(const std::vector<Mesh>& meshes, const NodeTracks& t, float fra
 // blends against identity; the engine's `sub_471820` falls back to its pose
 // snapshot there, which this does not carry.
 //
-// **AND THE LINE'S ROOT IS KEPT, not cancelled** (2026-09-02, from a
-// screenshot pair). `sub_42D120` points the root track at the keys
+// **AND THE LINE'S ROOT IS KEPT, not cancelled** (from a screenshot pair).
+// `sub_42D120` points the root track at the keys
 // `[identity, root x yaw]` and plays key 1, so every recorded rotation
 // reaches the skeleton, the pelvis's turned by the scene clip's heading
-// (`turnRootBy` in the viewer). Corrected 2026-10-02: this said
-// `g_MorphRootTrack` (dword_4EB12C) is only ever -2 and the write misses;
-// the demuxer `sub_42D960` writes it per line through its context pointer. The `.3DM` records the root RELATIVE to the actor's own
+// (`turnRootBy` in the viewer). `g_MorphRootTrack` (dword_4EB12C) is not
+// only ever -2, so the write does not miss: the demuxer `sub_42D960` writes
+// it per line through its context pointer. The `.3DM` records the root RELATIVE to the actor's own
 // frame (node +92, the authored facing), which is why the game keeps a seated
 // speaker's orientation while she talks AND bows Kay'l's whole body toward
 // the camera on 125339 (pelvis->head 47 degrees at frame 420, 3 with the
@@ -280,8 +279,8 @@ Quatf qslerpK(const Quatf& a, const Quatf& b, unsigned k);
 // (0x00468B50): pitch clamped to +-40, yaw to +-70, each eased an EIGHTH of
 // the way per frame (`(target - current) * 0.125 * dt`), and the euler baked
 // into the head node's matrix at +324. Positive pitch tilts the head UP
-// (Y points down), and positive yaw turns -Z toward +X - both SETTLED
-// 2026-10-02: `Matrix3x3_FromEulerAngles(pitch, yaw, roll)` is R_x(pitch) /
+// (Y points down), and positive yaw turns -Z toward +X - both SETTLED:
+// `Matrix3x3_FromEulerAngles(pitch, yaw, roll)` is R_x(pitch) /
 // R_y(yaw) for one angle alone, applied as its transpose, which sends the
 // forward (0,0,-1) to y = -sin(pitch) and x = sin(yaw); and the caller's
 // pitch and yaw formulas are this function's, term for term.

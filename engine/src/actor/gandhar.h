@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // GANDHAR - shoot type 10, the lava cave's boss (AREA 2, character 187).
 // `todo/gandhar.md` is the plan and the reading; this is the transcription of
-// his arm of the shoot AI, which the port had only as a census
-// (`ShootAi::tickGandhar` walks his behaviour scripts and moves nothing), so
-// in the viewer he fought as the generic gunman.
+// his arm of the shoot AI, beside the census (`ShootAi::tickGandhar` walks
+// his behaviour scripts and moves nothing), without which in the viewer he
+// would fight as the generic gunman.
 //
 //   `sub_47DFD0`'s type-10 arm   his ENTRY (`gandharEnter`)
 //   `sub_47F6F0`                 his BRAIN, once a frame (`gandharTick`)

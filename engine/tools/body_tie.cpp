@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE RIGID BODY TIE, held to the per-frame walk (`Geometry::tieClass`).
 //
-// A posed body used to be re-walked whole by the depth tie every frame. With
+// A posed body is not re-walked whole by the depth tie every frame: with
 // a tie CLASS on each corner (its mesh; its own vertex where the face is
 // morphed) the walk's answer is invariant under the pose and the next
 // revision replays it. This tool poses each model through 240 rigid poses -
@@ -41,7 +41,7 @@ namespace {
 
 struct Reference {
     std::uint64_t revision = 0;
-    // The key's LAST element is the face's SIDE (2026-10-01), as in
+    // The key's LAST element is the face's SIDE, as in
     // `tie_equiv.cpp`'s reference: a single-sided face and its reversed twin
     // never meet, because the engine's back-face cull keeps only one of them.
     std::set<std::array<std::uint32_t, 13>> quads;
@@ -168,8 +168,8 @@ int main(int argc, char** argv) {
         long framesBad = 0, restCross = 0;
         double msRef = 0, msNew = 0, msPos = 0;
         std::vector<std::size_t> lr, ln, lp, restore;
-        // THE BACKEND'S BUFFER under the DELTA strategy (`glesrender.cpp`,
-        // 2026-09-22), on a tie of its own: a same-size full rewrite FOLDS the
+        // THE BACKEND'S BUFFER under the DELTA strategy (`glesrender.cpp`),
+        // on a tie of its own: a same-size full rewrite FOLDS the
         // applied losers in and keeps the tie's state, and a draw writes only
         // what the tie NEWLY marks. A posed body is the case that needs the
         // fold - its coincident pairs move rigidly and stay tied, so they are

@@ -206,7 +206,7 @@ struct SfxFile {
         return nullptr;
     }
     // `sub_44EEB0`: section A by name - and it compares FOUR bytes, not eight
-    // (corrected 2026-10-05, `todo/astaroth.md`). The loop is an inlined
+    // (`todo/astaroth.md`). The loop is an inlined
     // two-dword compare whose second half reads `*i + 1 != v2 + 1` - the
     // first dword plus one against itself - so only the first dword decides
     // (0x44EECF..0x44EEDB). Every shipped row name is seven characters and a

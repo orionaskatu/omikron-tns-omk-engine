@@ -143,8 +143,7 @@ int CefChannel::findTransition(int from, std::uint32_t code,
 // between actors, so the write is carried per channel in `dynamicReturn_` and
 // every read goes through this.
 //
-// It was written and never read until 2026-09-02, which cost nothing while the
-// queue rules were missing and 956 bad landings the moment they landed: Sham's
+// Without this read the queue rules make 956 bad landings: Sham's
 // `SH_STAND` reaches two nameless flag-0x800 aliases (flags 0xC0084813) whose
 // AUTHORED GoTo is 0. Read statically they are a landing on nothing - which is
 // a null deref in the engine, so it cannot be what the engine does; read
@@ -475,9 +474,8 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
             // `Cef_ApplyTurn` of `gotoMove` above: the block read is the
             // CANDIDATE's (`u32(v15, 44) + 8`) and it is a RATE, scaled by the
             // frame dt. Emitted as the Rate kinds so the controller cannot
-            // apply the wrong record - which is what it did until 2026-09-03,
-            // reading `from`'s turn (zero, in H_WALK) and so turning by
-            // nothing. This loop IS the diagonal walk.
+            // apply the wrong record - `from`'s turn, which is zero in H_WALK
+            // and turns by nothing. This loop IS the diagonal walk.
             if (e.flags & ctl_entry::TurnOnLeave) { if (!(flags_ & channel_flag::NoPlayback) && e.hasTurn)
                                         events_.push_back({ChannelEvent::Kind::TurnRate,
                                                            from, t, 0, 0, word, {}});
@@ -501,8 +499,8 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
         }
         // ---- the commit, transcribed whole ------------------------------
         //
-        // `Cef_TickChannel` 0x004A853A..0x004A85B3, and the two rules the
-        // first port of this block dropped are the middle of it:
+        // `Cef_TickChannel` 0x004A853A..0x004A85B3, and the two rules easiest
+        // to drop from this block are the middle of it:
         //
         //     loc_4A853A: mov  ecx, [esp+40h+var_30]   ; the word
         //                 test ecx, ecx

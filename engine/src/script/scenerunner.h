@@ -307,8 +307,8 @@ public:
         // wherever the world put him for that long. Impasse's
         // `A_1_KaylArrives` waits 60 frames while Kay'l sits at address 654,
         // 500 units under the alley - snapping him to the clip's root key 0
-        // at frame 0 showed him floating in the portal before his jump (a
-        // reader's report, 2026-09-05).
+        // at frame 0 shows him floating in the portal before his jump (seen
+        // in play).
         bool        animReached = false;
         // ---- ONE ENTRY PER NODE THE OBJECT ANIMATES (todo/drift-audit.md M2b)
         //

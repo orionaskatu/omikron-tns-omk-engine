@@ -19,8 +19,7 @@
 //                               how a device run is given `--area`, `--save`,
 //                               `--fps` or `--nofmv` without a rebuild
 //
-// The frame is the Vita's own 960x544, drawn 1:1 (the reader's choice,
-// 2026-09-18). The 3D keeps its proportions - the camera's field of view is
+// The frame is the Vita's own 960x544, drawn 1:1. The 3D keeps its proportions - the camera's field of view is
 // horizontal and the vertical follows the frame - but the INTERFACE is
 // authored at 640x480 and the engine's own I2D scaling (`v * w / 640`,
 // `v * h / 480`) stretches it to 16:9. `--res 640x480` in args.txt gives the
@@ -41,9 +40,9 @@
 // The newlib heap. The SDK's start-up reserves this whole block with
 // `sceKernelAllocMemBlock` BEFORE `main` - and if the system refuses it, there
 // is no heap at all: every `new` throws, starting with the first static
-// initialiser. 300 MB did exactly that on a real Vita (2026-09-18: a crash
-// dump, `std::map` built before `main` -> `operator new` -> `bad_alloc` ->
-// `abort`), while Vita3K, which hands out more, ran it. 192 MB is what the
+// initialiser. 300 MB is refused on a real Vita (a crash dump: `std::map`
+// built before `main` -> `operator new` -> `bad_alloc` -> `abort`), while
+// Vita3K, which hands out more, grants it. 192 MB is what the
 // bench runs with; the M1 measured a 137 MB live heap on a busy street with
 // 64-bit pointers, and vitaGL takes its own memory OUTSIDE this block.
 extern "C" {
@@ -109,8 +108,8 @@ int main(int, char**) {
     // crash cannot take the last lines with it.
     //
     // ONE PAIR A RUN, DATED: `omk-play-YYYYMMDD-HHMMSS.log` / `.err`, so the
-    // runs sort by name and a report never overwrites the one before it
-    // (the reader's request, 2026-09-18). The console's local clock.
+    // runs sort by name and a report never overwrites the one before it.
+    // The console's local clock.
     char stamp[32] = "undated";
     {
         SceDateTime t{};
@@ -142,7 +141,7 @@ int main(int, char**) {
     std::printf("\n");
     std::fflush(stdout);
 
-    // THE SHADERS, PRECOMPILED (2026-09-21). vitaGL compiles GLSL at run time
+    // THE SHADERS, PRECOMPILED. vitaGL compiles GLSL at run time
     // with Sony's `libshacccg.suprx`, which only comes extracted from a
     // console. Our vitaGL is built with its shader CACHE and one patch
     // (`scripts/vita-vitagl-patch.py`): a shader found in the cache as
@@ -181,13 +180,13 @@ int main(int, char**) {
 }
 
 
-// A REFUSED ALLOCATION SAYS ITS SIZE. The city's load died of `bad_alloc` with
-// 86 MB in use of 192 (console log 2026-09-18) - so one request, not the sum,
-// and nothing said which. Global `operator new` on the Vita build only -
+// A REFUSED ALLOCATION SAYS ITS SIZE. A `bad_alloc` can come with 86 MB in use
+// of 192 (a console log of the city's load) - one request, not the sum - and
+// without this nothing says which. Global `operator new` on the Vita build only -
 // and only in a RELEASE build (`OMK_PROFILE=0`): a profiling build has the
 // profiler's own (`platform/profile.cpp`), which counts every block by
 // category and says the same of a refused one, and two definitions would not
-// link (2026-10-04).
+// link.
 #include "platform/profile.h"
 #include <new>
 #if !OMK_PROFILE

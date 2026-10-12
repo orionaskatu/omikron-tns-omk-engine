@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
     // the handler's `jge` clamp at all.
     {
         // three fetches at 0x004035D0: opponent, camera travel, Fight_Begin's
-        // second argument - the table said 4 bytes until 2026-09-02
+        // second argument - a table giving op 62 only 4 operand bytes misses it
         Code c; i8(c, 62); i16(c, 25); i16(c, 0); i16(c, 0); i8(c, 3);
         const std::size_t endPc = 1 + static_cast<std::size_t>(t.operandLength(62));
         omk::RunResult r;

@@ -5,11 +5,9 @@
 //
 //     particle_probe <gamedata> <out.txt>
 //
-// Written 2026-09-02 against the code as it stood, and its first run FAILED
-// six of six - which is the point. `traces/frames/intro-75.png` is a
-// saturated cyan disc with a white core and a DARK STARBURST inside it; the
-// port drew a dim uniform haze. Every difference came from a rule that had
-// been read and then transcribed one step wrong:
+// `traces/frames/intro-75.png` is a saturated cyan disc with a white core
+// and a DARK STARBURST inside it; a port that transcribes any of these rules
+// one step wrong draws a dim uniform haze instead. Each line is one rule:
 //
 //   alive     a particle is integrated and drawn while `age <= life` (the
 //             tick's own test, `f32(v41,4) <= f32(v41,0)`), so an emitter
@@ -17,35 +15,35 @@
 //             hold 37*5 + 10 + 4 + 11 = 210, not 194.
 //   frame     `(frames-1) * age / life` is computed from the age BEFORE the
 //             tick increments it, so a newborn is drawn on frame 0 and the
-//             last draw lands on frame `frames-1`. Computing it after put the
-//             port one frame ahead: IMPACT2's bright starburst (frame 0) was
-//             never drawn for `burnv`, whose life is 3.
+//             last draw lands on frame `frames-1`. Computing it after puts
+//             the port one frame ahead: IMPACT2's bright starburst (frame 0)
+//             is then never drawn for `burnv`, whose life is 3.
 //   colour    the additive blend is SRCBLEND=ONE / DESTBLEND=ONE and the
 //             multiply ZERO / INVSRCCOLOR - NEITHER reads the alpha. The
 //             instance's 0.5 goes into the diffuse dword's high byte
 //             (`u32(v6,108) << 24` in the bucket walk) and only the plain
 //             transparent modes (SRCALPHA / INVSRCALPHA) consume it, which no
-//             shipped effect uses. Scaling the colour by it halved every
+//             shipped effect uses. Scaling the colour by it halves every
 //             particle in the game.
 //   order     `Render_FlushBuckets` walks keys ASCENDING, and the sprite's
 //             mode ORs 0x2100 (additive) or 0x2200 (multiply) into the key -
 //             so every additive particle draws before every multiply one,
 //             whatever their textures. Grouped by sprite first, `ttt`'s
-//             multiply starburst (sprite 10) drew before `burn`'s puffs
-//             (sprite 12) and darkened only black.
+//             multiply starburst (sprite 10) draws before `burn`'s puffs
+//             (sprite 12) and darkens only black.
 //   mul       DESTBLEND=INVSRCCOLOR (D3DBLEND 4) is `dst * (1 - src)`: the
 //             pass darkens where the SPRITE IS BRIGHT and leaves the frame
 //             alone where it is black. `dst * src` is the opposite quad.
 //   drift     `+28` enters the Y velocity NEGATED unless bits 0x600 read
 //             exactly 0x200 (`fld [ebx+1Ch]; fchs` at 0x46DD9D). Y points
 //             down, so a positive drift climbs. 104 shipped rows carry a
-//             non-zero drift with the bit clear; the port sank all of them.
+//             non-zero drift with the bit clear; read unnegated, all of
+//             them sink.
 //   revision  `particleGeometry` REBUILDS its output every frame, and a
 //             backend that caches a vertex buffer by pointer and revision
 //             must see the revision move. A fresh Geometry's is always 1.
 //
-// And the SET PIECES (`setpiece.h`), which the capture's dark ring turned out
-// to need: `ttt`'s row is linked to row 0 and walks a 27-waypoint circle of
+// And the SET PIECES (`setpiece.h`), which the capture's dark ring needs: `ttt`'s row is linked to row 0 and walks a 27-waypoint circle of
 // radius 39.4 in ten frames, so the probe prints the orbit's radius and its
 // period; the arrival piece (`1KaylArrives`, the indirect form linked to
 // actor 'HO1') waits 6 frames, plays `kaylarr` then `kay arr`, ping-pongs,

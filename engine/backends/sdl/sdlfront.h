@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SDL FRONTEND - the window, the keyboard, the pad, the audio device.
 //
-// Moved out of `play.cpp` by `todo/play-split.md` S1c (2026-10-02) without a
-// change: the class's declarations stay here, every body of more than one line
+// Split out of `play.cpp` by `todo/play-split.md` S1c: the class's declarations stay here, every body of more than one line
 // is in `sdlfront.cpp`, beside the comment that explains it. `backends/sdl/`
 // is the only place in the tree that includes an SDL header (PORTING A8
 // rule 2, one dependency per backend).

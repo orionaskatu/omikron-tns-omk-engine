@@ -86,8 +86,8 @@ int main(int argc, char** argv) {
     }
 
     // --- the sync chain ---------------------------------------------------
-    // How long A_2_DemonLook's program runs, in its own frames - which since
-    // 2026-09-03 is simply the sum of its steps, because the tick that reports
+    // How long A_2_DemonLook's program runs, in its own frames - which is
+    // simply the sum of its steps, because the tick that reports
     // a function done is the tick that drew its last frame.
     // `C_2_MecaSpeaks` rides along because it is the only case either side
     // runs with a repeat count above 1: one 31-frame clip authored 18 times is

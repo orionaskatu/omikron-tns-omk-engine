@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // `%zu` ON THE VITA - the format rewrite `printf_c99.cpp` applies.
 //
-// **Found by running the bench in Vita3K (2026-09-18)**: the VitaSDK's newlib
-// is built without C99 printf formats, so `%zu` prints a literal "zu" and
-// CONSUMES NO ARGUMENT - every argument after it shifts by one. The bench's
-// `lights %zu from %s` handed the light COUNT (155) to `%s` as a string
-// pointer; the emulator logged an invalid read at 0x98 and carried on, and a
-// real Vita would have faulted there. The engine logs with `%zu` in 125
+// The VitaSDK's newlib is built without C99 printf formats, so `%zu` prints
+// a literal "zu" and CONSUMES NO ARGUMENT - every argument after it shifts by
+// one. Unfixed, the bench's `lights %zu from %s` hands the light COUNT (155)
+// to `%s` as a string pointer: an invalid read at 0x98, which Vita3K logs and
+// a real Vita faults on. The engine logs with `%zu` in 125
 // places (`play.cpp` 66 of them), and `%llx` works - the library has `ll`
 // but not `z`.
 //

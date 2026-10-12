@@ -36,8 +36,8 @@ Surface surfaceFromBmp(std::span<const std::byte> d) {
     // ...AND ONE SHEET IS 24-BIT. Ten of the eleven `I2D\bitmaps` are 8-bit
     // palettes; `boutiq.BMP`, the ten shops' button atlas, is BGR at 24 bits,
     // and `I2D_CreateSurfaceFromBmp` hands both to DirectDraw alike. Taking
-    // only 8 left the shops' sheet invalid, so every one of their button
-    // sprites was skipped - a reader: "icons on the right are missing". The
+    // only 8 leaves the shops' sheet invalid, and every one of their button
+    // sprites is skipped (the icons on the right go missing). The
     // key stays pure black (`SetColorKey {0,0}`), which is 0 in 565 too.
     if (bpp == 24) {
         const std::size_t stride24 = (static_cast<std::size_t>(w) * 3u + 3u) / 4u * 4u;
@@ -108,11 +108,11 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
     // the key ones LEFT OUT and the weights renormalised over the rest. The
     // set of pixels written is therefore identical to nearest, texel for
     // texel, and only their colours move.
-    // THE COLUMN TABLES, built once per blit (2026-09-18). Every per-pixel
-    // `x * sw / dw` and `(x + 0.5) * sw / dw - 0.5` below was a division, and
+    // THE COLUMN TABLES, built once per blit. Every per-pixel
+    // `x * sw / dw` and `(x + 0.5) * sw / dw - 0.5` below is a division, and
     // the Vita's Cortex-A9 has NO integer divide instruction: each one is a
-    // library call. The start menu scaled to 960x544 spent ~360 ms a frame in
-    // them on the console. The same expressions, evaluated once per column
+    // library call. Per pixel, the start menu scaled to 960x544 spends ~360 ms
+    // a frame in them on the console. The same expressions, evaluated once per column
     // instead of once per pixel, so the output is byte-identical.
     thread_local std::vector<int> colNear, colX0, colX1;
     thread_local std::vector<double> colWx;

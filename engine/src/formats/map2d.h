@@ -67,9 +67,8 @@
 namespace omk {
 
 // ONE INTER-FLOOR LINK - a staircase, a ramp, a ladder (`todo/shoot-navedge.md`).
-// The loader reads these per floor and this file called them "wall segments"
-// with every field but the count unread until 2026-09-12; `sub_436BB0` and
-// `sub_424DE0`'s state 2 between them name all seven dwords:
+// The loader reads these per floor (they are not "wall segments"); `sub_436BB0`
+// and `sub_424DE0`'s state 2 between them name all seven dwords:
 //
 //     u32 destFloor    +0    the floor this link ARRIVES on
 //     f32 from[3]      +4    where you step ON, on this floor

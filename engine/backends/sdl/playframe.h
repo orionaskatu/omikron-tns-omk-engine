@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME - one turn of the viewer's loop: `PlayState::step` and its six
-// phases, `playframe_<phase>.cpp` (`todo/play-split.md`, 2026-10-02). They
+// phases, `playframe_<phase>.cpp` (`todo/play-split.md`). They
 // are methods of `PlayState`, so the names in them are its members.
 #pragma once
 

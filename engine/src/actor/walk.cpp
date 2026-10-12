@@ -122,12 +122,12 @@ std::optional<double> Walker::floorThroughWater(double x, double from, double z)
 void Walker::land(double y) {
     pos_[1] = y;
     // THE LANDING'S RECORD IS KEPT FROM A LANDING. `step` also calls this for
-    // every ordinary snap onto the floor, and until 2026-09-17 each of those
-    // rewrote the record with a fall of 0 - so a landing whose frame also ran
-    // a walking step (a slide off the catacombs' ramp into a 5 m fall) read
-    // back tier 1 and fall 0, and the viewer posted no message and chose no
-    // reaction (`todo/falls.md`). A grounded snap still clears the
-    // accumulators below, as LABEL_83 does.
+    // every ordinary snap onto the floor; if each of those rewrote the record
+    // with a fall of 0, a landing whose frame also ran a walking step (a slide
+    // off the catacombs' ramp into a 5 m fall) would read back tier 1 and
+    // fall 0, and the viewer would post no message and choose no reaction
+    // (`todo/falls.md`). A grounded snap still clears the accumulators below,
+    // as LABEL_83 does.
     if (airborne_ || sliding_) {
         tier_ = fall_ < kSnapDrop  ? 1
               : fall_ < kFallShort ? 2
@@ -167,13 +167,11 @@ StepResult Walker::step(double dx, double dz, double dt) {
             // +216/+224 x dt, his own horizontal velocity fields, and in the
             // fall state nothing writes them: the walk's root motion reaches
             // the position through the channel's clip, and the fall state's
-            // clip is a held pose. A reader watching the original (issue 68):
-            // "falling mainly on a single axis (just Y)". This port carried
-            // the walk's delta through the air - "continuing walking in the
-            // air" - and on 2026-09-05 that walked a reader diagonally off
-            // the restaurant's sunken ledge into a hole in the geometry and
-            // down for ever. A SLIDE keeps its own +216/+224, which `tick`
-            // applies.
+            // clip is a held pose. The original falls "mainly on a single axis
+            // (just Y)" (issue 68). Carrying the walk's delta through the air
+            // walks him diagonally off the restaurant's sunken ledge into a
+            // hole in the geometry and down for ever. A SLIDE keeps its own
+            // +216/+224, which `tick` applies.
             return sliding_ ? StepResult::Slid : StepResult::Fell;
         }
         // he landed this frame: fall through and let the ground answer the
@@ -206,15 +204,15 @@ StepResult Walker::step(double dx, double dz, double dt) {
         floorKnown = floorUnder(soup_, *grid_, nx, y - kStepUp - 1.0, nz, floorTri).has_value() &&
                      floorTri < floorFlags_->size();
     std::uint32_t floorFl = floorKnown ? (*floorFlags_)[floorTri] : 0u;
-    // A WATER SURFACE IS NOT A FLOOR, AND NOT A WALL EITHER (corrected
-    // 2026-09-17). This was first ported as "a mesh flagged 0x20000000 refuses
-    // the step whatever its height", from `21_d3d.c` 2644's
-    // `|| (**mesh & 0x20000000)` - but that arm runs only for ground-probe hit
-    // kind 2 and answers with a VELOCITY, an eighth of the offset from the probe
-    // point, not with a refusal. As a hard block it fenced every quay: a reader
-    // could get into the water by JUMPING - airborne, where the fall already
-    // passes through the surface - and in many places not by walking. So the
-    // step now looks THROUGH the water, as the fall does: the floor is whatever
+    // A WATER SURFACE IS NOT A FLOOR, AND NOT A WALL EITHER. `21_d3d.c` 2644's
+    // `|| (**mesh & 0x20000000)` does not mean "a mesh flagged 0x20000000
+    // refuses the step whatever its height": that arm runs only for
+    // ground-probe hit kind 2 and answers with a VELOCITY, an eighth of the
+    // offset from the probe point, not with a refusal. As a hard block it would
+    // fence every quay: he could get into the water by JUMPING - airborne,
+    // where the fall already passes through the surface - and in many places
+    // not by walking. So the step looks THROUGH the water, as the fall does:
+    // the floor is whatever
     // lies under it, and if that is a long way down he steps off the edge and
     // falls in. LABELLED: the engine's nudge itself is not ported, and the
     // floor's own flags are not re-read here (the viewer's water entry probes
@@ -228,8 +226,8 @@ StepResult Walker::step(double dx, double dz, double dt) {
         // hole. `Walk_GroundResponse` puts the actor on it and slides him:
         // the face normal is added to the horizontal velocity and 11.811 is
         // written into the vertical one. A walker that cannot see steep faces
-        // has nowhere to put him, which is why standing on one used to revert
-        // in every direction at once.
+        // has nowhere to put him, and standing on one then reverts in every
+        // direction at once.
         if (steep_) {
             if (const auto s = surfaceUnder(*steep_, nx, y - kStepUp - 1.0, nz)) {
                 pos_[0] = nx; pos_[1] = s->y; pos_[2] = nz;
@@ -319,7 +317,7 @@ void Walker::slide(double& dx, double& dz, double push[2]) {
     // above. Measured on Anekbah's bank entrance (`todo/next-tasks.md` 20):
     // ten steps, nine of 10.25 units that squeak through and a last one of
     // 10.8 that does not, leaving him stuck at x 4605 with the door 10 units
-    // away - which is exactly the reader's report.
+    // away - which is exactly what play showed.
     //
     // Starting the sweep a step-height up makes the two halves agree:
     // `Walk_ProbeGround` already casts from `feet - kStepUp - 1`, so anything
@@ -328,15 +326,15 @@ void Walker::slide(double& dx, double& dz, double push[2]) {
     // blocks - the spheres above the raise still meet it - and
     // `verify.py: engine: narrow phase` still stops him 13.0 in front of one.
     //
-    // READ 2026-10-01 - and it is the BOTTOM that rises, not the body.
+    // And it is the BOTTOM that rises, not the body.
     // `Actor_Move` (0x00469580) folds the model's sphere list into ONE
     // capsule before `Sweep_ActorMove`: radius the largest sphere's (times
     // `collidescale`, 1.0), top the smallest y - r, bottom the largest y + r,
     // and with its flag bit 1 the bottom MINUS `dword_910340`, the 30 cm step
-    // - the top is left alone. This used to raise the whole stack by the
-    // step, which put Kay'l's head 82.7 units above his feet instead of the
-    // 70.8 the list gives (1.80 m), and the lintel of his own flat's lift, 82
-    // up, stopped him in the doorway until he jumped (a reader, 2026-10-01).
+    // - the top is left alone. Raising the whole stack by the step would put
+    // Kay'l's head 82.7 units above his feet instead of the 70.8 the list
+    // gives (1.80 m), and the lintel of his own flat's lift, 82 up, would stop
+    // him in the doorway until he jumped.
     // So the sweep is anchored at the feet and only the spheres that reach
     // into the step window are lifted out of it (`bodyHit`): the bottom is a
     // step up, as before, and the head is where the model puts it.
@@ -461,13 +459,12 @@ StepResult Walker::tick(double dt) {
     // Actor_ApplyMotion applies +216/+224 unconditionally - it does not ask
     // whether the actor is sliding or falling.
     //
-    // This used to be gated on `sliding_`, and that was right for the only two
-    // cases the port then had: a SLIDE writes +216/+224 every frame from the
-    // ground response, and a FALL leaves them zero, which is the reader's
-    // "falling mainly on a single axis (just Y)" and the reason the walk's
-    // delta must not be carried through the air. A JUMP is the third case and
-    // it breaks the gate: `MDJUMP01` WRITES +216/+224 at take-off, so the leap
-    // travels while airborne. Driving the horizontal off the velocity covers
+    // A gate on `sliding_` would be right for two of the cases: a SLIDE writes
+    // +216/+224 every frame from the ground response, and a FALL leaves them
+    // zero, which is the original's "falling mainly on a single axis (just Y)"
+    // and the reason the walk's delta must not be carried through the air. A
+    // JUMP is the third case and it breaks such a gate: `MDJUMP01` WRITES
+    // +216/+224 at take-off, so the leap travels while airborne. Driving the horizontal off the velocity covers
     // all three without a flag - a fall still moves on Y alone because its
     // velocity really is zero.
     //
@@ -512,12 +509,12 @@ StepResult Walker::tick(double dt) {
     //
     // Splitting the soup in two and asking only the walkable half means every
     // frame of a slide answers "nothing under him", and `fc34909` - which
-    // ends a slide when the ground runs out, and was right for its own case -
-    // then turned the slide into a free fall one frame in. Measured in the
+    // ends a slide when the ground runs out, and is right for its own case -
+    // then turns the slide into a free fall one frame in. Measured in the
     // catacombs: HApyramb01's flank rises 157 units over 118 (53 degrees, in
-    // the steep soup), and the walker sank THROUGH it - on the face at y 914
-    // at frame 80, 41 units under it by frame 90 and 3900 under it by 270.
-    // That is a reader's *"then I just went through the ground"*.
+    // the steep soup), and the walker sinks THROUGH it - on the face at y 914
+    // at frame 80, 41 units under it by frame 90 and 3900 under it by 270:
+    // he goes through the ground.
     //
     // Probed from a step-height above the feet, exactly as `ground` and as
     // `step`'s own steep arm are: `surfaceUnder` wants a surface strictly
@@ -552,19 +549,18 @@ StepResult Walker::tick(double dt) {
         apex_ = pos_[1];            // the descent is measured from here
     }
     if (!g && !sf) {
-        // NOTHING UNDER HIM AT ALL - and a SLIDE ends here, which it did not
-        // until 2026-09-12. The slide speed is not a velocity he carries: the
+        // NOTHING UNDER HIM AT ALL - and a SLIDE ends here. The slide speed is not a velocity he carries: the
         // ground response WRITES `+220 = dword_910340` every frame it finds a
         // face past the slope limit under him (see `kSlideSpeed` in the
         // header). With no face there is nothing to write it, so
         // `Actor_ApplyMotion`'s gravity is all that is left and he is falling.
         //
-        // Left sliding instead, he glided at a dead-constant 11.8 a frame -
-        // 0.4 units, 0.3 m/s - for as long as the air lasted, because `tick`
-        // only integrates gravity `if (airborne_)`. A reader walking the
-        // catacombs: *"the character fall very slowly, in an not natural
-        // way"*, from "the ground then a small slope then in the air" - the
-        // small slope is what latched the slide and the air never cleared it.
+        // Left sliding instead, he glides at a dead-constant 11.8 a frame -
+        // 0.4 units, 0.3 m/s - for as long as the air lasts, because `tick`
+        // only integrates gravity `if (airborne_)`: in the catacombs, from the
+        // ground onto a small slope and then into the air, he falls very slowly
+        // and unnaturally - the small slope latches the slide and the air
+        // never clears it.
         //
         // His horizontal keeps going, as it should: the face normal went into
         // `vx_`/`vz_` when the slide started and `Actor_ApplyMotion` applies
@@ -588,13 +584,12 @@ StepResult Walker::tick(double dt) {
     // asks `ny >= surf` alone never fires - he descends beside the face for
     // ever instead of on it. Absorbing is what keeps him ON the ramp.
     // ...and the absorb is gated by the JUMP FLAG, `if (!dword_6A52CC)`
-    // (21_d3d.c 2729), which is the whole above-the-surface arm. It was gated
-    // on `vy_ >= 0` until 2026-09-14, which was a misreading: `+220 >= 0` gates
-    // the OTHER arm, the one for a body that has passed through the surface
-    // (`v68 <= 0`, 21_d3d.c 2587). A velocity gate keeps a RISING leap up but
-    // snaps a DESCENDING one onto the floor as soon as it is within 7.874 -
-    // and the jump's apex is only 9 units up, so it landed after 9 airborne
-    // frames of its 13 (`engine: player jump`, red since `d589d30`). The flag
+    // (21_d3d.c 2729), which is the whole above-the-surface arm - not on
+    // `vy_ >= 0`: `+220 >= 0` gates the OTHER arm, the one for a body that has
+    // passed through the surface (`v68 <= 0`, 21_d3d.c 2587). A velocity gate
+    // keeps a RISING leap up but snaps a DESCENDING one onto the floor as soon
+    // as it is within 7.874 - and the jump's apex is only 9 units up, so it
+    // lands after 9 airborne frames of its 13 (`engine: player jump`). The flag
     // holds for the whole flight, as `MDJUMP0A` sets it and only the landing
     // clears it. NOT ported from the same arm: its `+1304` fall-tier test.
     // ...and `!sub_47CF00()` beside it (`setNoAbsorb`), which is 0 only for

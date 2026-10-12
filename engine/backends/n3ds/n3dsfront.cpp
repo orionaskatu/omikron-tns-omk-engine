@@ -183,7 +183,7 @@ bool N3dsFrontend::open(int, int, const std::string&) {
     winStart_ = lastPresent_ = svcGetSystemTick();
     opened_ = true;
     live_ = this;
-    // STEREOSCOPIC 3D (step 8): the top screen's two framebuffers, only when
+    // STEREOSCOPIC 3D (`c3dstereo.h`): the top screen's two framebuffers, only when
     // the card asks for it - the renderer reads the same file
     if (std::FILE* f = std::fopen("sdmc:/omk/stereo3d", "r")) {
         std::fclose(f);
@@ -303,13 +303,12 @@ void N3dsFrontend::present(const Surface& fb) {
     const int ox = (kW - ow) / 2, oy = (kH - oh) / 2;
     const bool half = fb.w == ow * 2 && fb.h == oh * 2;
     const std::uint16_t* src = fb.px.data();
-    // NO DIVISION PER PIXEL: the ARM11 has no divide instruction, and the
-    // first version's nearest path (`v * fb.h / oh`, `u * fb.w / ow` for
-    // every pixel) cost ~190 000 software divisions a frame - 22-36 ms of a
-    // console frame once 3c handed it a 400x240 picture every frame (the
-    // reader's third run, 2026-10-06). A frame the screen's own size is a
-    // straight copy; anything else samples through row and column tables
-    // made once per size.
+    // NO DIVISION PER PIXEL: the ARM11 has no divide instruction, and a
+    // nearest path dividing per pixel (`v * fb.h / oh`, `u * fb.w / ow`)
+    // costs ~190 000 software divisions a frame - 22-36 ms of a console
+    // frame for a 400x240 picture every frame (`todo/handoff-3ds-port.md`).
+    // A frame the screen's own size is a straight copy; anything else
+    // samples through row and column tables made once per size.
     const bool exact = fb.w == ow && fb.h == oh;
     if (!half && !exact && (mapW_ != fb.w || mapH_ != fb.h)) {
         colMap_.resize(static_cast<std::size_t>(ow));
@@ -342,15 +341,15 @@ void N3dsFrontend::present(const Surface& fb) {
     // A FRAME THE SCREEN'S OWN SIZE, IN 8x8 TILES. The framebuffer runs in
     // columns and the frame in rows, so a column-by-column copy reads one
     // pixel per 800-byte row - a new cache line every read: 6-7.6 ms a frame
-    // on the console (the reader's sixth run, 2026-10-06) where Azahar showed
-    // 1.5. A tile reads eight short rows and writes eight short columns, each
+    // on the console where Azahar shows 1.5 (`todo/handoff-3ds-port.md`). A
+    // tile reads eight short rows and writes eight short columns, each
     // within a line or two.
     //
     // A FRAME TWICE THE SCREEN'S SIZE (the films, the menu, every frame the
-    // interface is composited into at 800x448) had the same fault in its
-    // 2x2 average: 7.7 ms a frame on the console against 1.5-2.9 for the
-    // tiled exact copy (the seventh run, 2026-10-06). Tiled the same way,
-    // a tile reading sixteen short rows.
+    // interface is composited into at 800x448) has the same fault in an
+    // untiled 2x2 average: 7.7 ms a frame on the console against 1.5-2.9 for
+    // the tiled exact copy. Tiled the same way, a tile reading sixteen short
+    // rows.
     if (exact || half) {
         const std::size_t step = static_cast<std::size_t>(fb.w) * (half ? 2 : 1);
         for (int tx = 0; tx < ow; tx += 8)

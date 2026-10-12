@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// `PlayOptions::parse` - see `playoptions.h`. Moved out of `play.cpp`'s
-// `main` by `todo/play-split.md` S2 (2026-10-02) without a change.
+// `PlayOptions::parse` - see `playoptions.h`. Split out of `play.cpp`'s
+// `main` by `todo/play-split.md` S2.
 #include "app/playoptions.h"
 #include "platform/datafs.h"
 

@@ -249,8 +249,7 @@ float Program::busySpan(int k) const {
     if (f.id == kFnWait && !f.params.empty())
         return std::max(0.0f, asFloat(f.params[0]));
     // `Script_MoveObjectOnPath` is busy for **param 6**, its playback length
-    // in frames - NOT the path's own duration, which was the first reading and
-    // was wrong. The handler advances `t` by
+    // in frames - NOT the path's own duration. The handler advances `t` by
     //
     //     v79 = Script_GetFrameTime();  v79 = duration * v79;
     //     if (param6 != 0) v79 /= param6;      // t += that
@@ -263,9 +262,9 @@ float Program::busySpan(int k) const {
     // The four zeros divide nothing, so their step is the whole duration and
     // they finish in one tick.
     //
-    // Returning 0 here (which this did until 2026-09-03) makes every scripted
-    // object motion instantaneous: the Impasse's crates ran 40 frames against
-    // the 185 their editing `boxblow` declares, so the shot cut away before
+    // Returning 0 here would make every scripted object motion
+    // instantaneous: the Impasse's crates would run 40 frames against
+    // the 185 their editing `boxblow` declares, and the shot cut away before
     // they moved. 4841 uses - the most-used script function in the game.
     if (f.id == kFnMoveObjectOnPath && f.params.size() > 6) {
         const float over = asFloat(f.params[6]);
@@ -375,8 +374,8 @@ bool Program::tick(float dt) {
                 // 81 shipped calls over 11 scenes carry a param 1 outside
                 // 0..65535 - -65536, -65535 and -65531, which the cast turns
                 // into files 0, 1 and 5 - and every one of them is a DOOR or
-                // a shutter in an interior: Apharma's shopfront (the reader's
-                // "I enter the drugstore and cannot go outside"), QTemple's,
+                // a shutter in an interior: Apharma's shopfront (without the
+                // cast, the drugstore cannot be left once entered), QTemple's,
                 // LBank's, the two shops' and Shall09b's 34. Passed whole the
                 // lookup matches nothing, the mesh never moves, and its
                 // closed leaves keep their collision across the doorway.
@@ -456,12 +455,12 @@ bool Program::tick(float dt) {
                     // be the end the move starts from, or the two directions
                     // do not retrace each other).
                     //
-                    // The port dropped all three, so every one of these slid
-                    // its object along the UNTURNED axis: 854 of the corpus's
-                    // 4841 calls carry an angle, across 40 files, and they are
-                    // the HALLS - `Hall03` through `Hall65`, `Shall*b`, the
-                    // lifts and their doors. A reader, 2026-09-09: *some doors
-                    // do not open correctly*, with Hall 27 in the shot.
+                    // Without the three, every one of these slides its object
+                    // along the UNTURNED axis and the doors open wrongly
+                    // (seen in play in Hall 27): 854 of the corpus's 4841
+                    // calls carry an angle, across 40 files, and they are the
+                    // HALLS - `Hall03` through `Hall65`, `Shall*b`, the lifts
+                    // and their doors.
                     //
                     // **851 of the 854 turn about Y alone** (the other 3 have
                     // Y zero and a nonzero X or Z). Y is the axis this port has
@@ -526,11 +525,11 @@ bool Program::tick(float dt) {
                 //
                 // and `Script_PlayScript` does `++obj->pc; busy = 1` inside
                 // that same tick, so the next step begins on the very next
-                // one. Ending the window a tick later - which this did until
-                // 2026-09-03 - spends a whole frame per step on nothing: the
-                // Impasse demon's 132-frame beat ran 134, starting its second
-                // step a frame late and outliving `sautdemon`'s 132 frames by
-                // two, which is where the gap between beats came from.
+                // one. Ending the window a tick later spends a whole frame
+                // per step on nothing: the Impasse demon's 132-frame beat
+                // runs 134, starting its second step a frame late and
+                // outliving `sautdemon`'s 132 frames by two - a visible gap
+                // between beats.
                 const float span = busySpan(k);
                 it = busyUntil_.emplace(k, clock_ + std::max(0.0f, span - 1.0f)).first;
                 entryAt_[k] = clock_;
@@ -619,11 +618,11 @@ bool Program::tick(float dt) {
                 // otherwise it WRAPS the frame (`v26 -= frames` until it
                 // fits) and returns 1, busy: the clip plays again from the
                 // leftover, and the function is done only when its `+16`
-                // count is spent. A first port ended after one run, so the
+                // count is spent. Ending after one run would make the
                 // Impasse's `C_2_MecaSpeaks` (31-frame clip, repeat 18 =
-                // the editing's 558 frames) released its camera editing at
-                // frame 31 - a reader saw the cutscene's last cameras go
-                // wrong. -1 repeats for ever (the object's loop ends it).
+                // the editing's 558 frames) release its camera editing at
+                // frame 31, and the cutscene's last cameras go wrong.
+                // -1 repeats for ever (the object's loop ends it).
                 const int n = ++runs_[static_cast<std::size_t>(k)];
                 if (f.repeat != -1 && n >= f.repeat) {
                     // Remember where a body animation left the node before

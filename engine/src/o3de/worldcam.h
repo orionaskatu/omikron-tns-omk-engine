@@ -44,8 +44,8 @@
 //                    (0 an actor, 1 its POSED head, 3 its head's REST point,
 //                    9 an ADDRESS - `sub_415A10`'s switch; the subject
 //                    itself is the request's, and `Session::solveCamera`
-//                    resolves each point by its own kind. Corrected
-//                    2026-10-05, `todo/drift-audit.md` S14 and after;
+//                    resolves each point by its own kind.
+//                    `todo/drift-audit.md` S14 and after;
 //                    docs/FILE_FORMATS.md 5c)
 //     +36  int16[3]  three further fields mode 12 carries, unread here
 //
@@ -128,8 +128,7 @@ struct WorldCamera {
 // which is above the floor (the set bottoms out at 399 and Y points DOWN),
 // while adding puts it at 423 - twenty-six units underground.
 //
-// **The rotation is the subject's WHOLE Euler** - found 2026-09-12, where this
-// said "written by something this read did not find". The writer is
+// **The rotation is the subject's WHOLE Euler.** The writer is
 // `sub_415A10`, the subject resolver both functions call FIRST: its five arms
 // (`sub_414F30`..`sub_415460`, one per subject kind) copy the actor's
 // `+416`/`+420`/`+424` into the camera block's `+112`/`+116`/`+120` for the

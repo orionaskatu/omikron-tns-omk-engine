@@ -66,13 +66,10 @@ struct StyledChar {
     //
     // `Text_LayOutBlock`'s run-emit: when the blink bit is set and
     // oscillator 1 is high it writes `run[2] = 0xFF, run[3] = 0, run[4] = 0`
-    // and otherwise the current colour. `docs/UI.md`'s markup table said
-    // "white", and that was wrong - two captures of the original two seconds
-    // apart show the MK400 notice's Khonsu line (`{fSI226198101B}`: font S,
-    // colour (226, 198, 101), blink) gold in one and RED in the other.
-    //
-    // Parsed and then DROPPED until 2026-09-04, so a string that asked to
-    // flash simply did not.
+    // and otherwise the current colour - not white: two captures of the
+    // original two seconds apart show the MK400 notice's Khonsu line
+    // (`{fSI226198101B}`: font S, colour (226, 198, 101), blink) gold in one
+    // and RED in the other.
     bool         blink = false;
 };
 

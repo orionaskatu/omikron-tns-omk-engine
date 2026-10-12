@@ -17,7 +17,7 @@
 // D3D surfaces were, and its 1-bit alpha IS the colour key - tiled into the
 // GPU's 8x8 Morton order at upload, from the kept palette indices (2534 of
 // 2534 shipped textures are 256x256 or 64x64, inside the PICA's power-of-two
-// 8..1024, measured 2026-10-06).
+// 8..1024).
 //
 // THE FRAME: drawn offscreen at the frame's size. A frame with the interface
 // over it is read back as RGB565 and composited and presented on the CPU
@@ -58,7 +58,7 @@ bool c3dPresentHalf(Renderer* r, int vy, int vh, Surface& screen);
 // black bands. -> false, having done nothing, when it cannot go that way
 // (`sdmc:/omk/c3d-surface` asks for the two passes, or the tables failed
 // their check) - and then `c3dPresentHalf` as before.
-// `dstR`: the right eye's framebuffer on a 3D screen (step 8), or null.
+// `dstR`: the right eye's framebuffer on a 3D screen (`c3dstereo.h`), or null.
 bool c3dPresentHalfDirect(Renderer* r, int vy, int vh, std::uint16_t* dst, std::uint16_t* dstR = nullptr);
 // THE INTERFACE OVER THE WORLD ON THE GPU (`todo/3ds-port.md` 6.7) - the GLES
 // window's overlay (`ui/overlay.h`) in fixed function, as GL1 does it: `fb` is
@@ -84,6 +84,6 @@ bool c3dPresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
 // the GPU at a transfer, the fullest the command buffer got and citro3d's GPU
 // times - as one log line, then reset. The frame's "world submit" section
 // holds all of the first three and can hold a GPU wait, which only these
-// separate (the reader's fourth console run, 2026-10-06).
+// separate.
 void c3dReport(Renderer* r, long frame);
 }  // namespace omk

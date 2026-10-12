@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the live Session, the settings, the save, the sneak call.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -119,8 +119,8 @@ int PlayState::setupSession() {
     clipReport = true;
     // THE FLICKER CATCHER (--flicker <dir>). A fault a player sees for one to
     // five frames cannot be screenshotted and cannot be found by choosing a
-    // frame to render: a reader reported "a Kay'l with a black background" and
-    // could not say where. So the viewer watches its own output - a frame far
+    // frame to render (a Kay'l on a black background, for one, whose place
+    // nobody can name). So the viewer watches its own output - a frame far
     // darker than its neighbours is a body drawn on a set that is not there -
     // and writes the frames AROUND the dip, with a line of context each, so
     // the event arrives on disk instead of in a description.
@@ -132,13 +132,13 @@ int PlayState::setupSession() {
     drawSky = skyFlag >= 0 ? skyFlag != 0 : settings.v.sky;
     // Options rows 5 and 7, with a flag beating the save the way --sky does.
     drawShadows = shadowFlag >= 0 ? shadowFlag != 0 : settings.v.shadows;
-    // THREADED BODIES (`todo/vita-port.md` P4). ON by default since 2026-09-23:
-    // the posing is bit-identical either way (`omk::Threads`' chunks are
-    // disjoint and the merge is in index order), so this is not an enhancement
-    // in the off-by-default sense - nothing the player sees changes - and the
-    // one reason it started off, a Vita half that had never run on a device,
-    // is gone: `omk_bench` on a real console said `threads: EXACT` with the
-    // inline pass's own hash, 2.71x on three runners. `--no-thread-bodies`
+    // THREADED BODIES (`todo/vita-port.md` P4). ON by default: the posing is
+    // bit-identical either way (`omk::Threads`' chunks are disjoint and the
+    // merge is in index order), so this is not an enhancement in the
+    // off-by-default sense - nothing the player sees changes - and the Vita
+    // half has run on a device: `omk_bench` on a real console said
+    // `threads: EXACT` with the inline pass's own hash, 2.71x on three
+    // runners. `--no-thread-bodies`
     // puts it back on one core, for an A/B.
     threadBodies = threadFlag > 0;
     if (threadBodies)
@@ -420,7 +420,7 @@ int PlayState::setupSession() {
     session.loadArea(startArea);
     // ...with the SET it names, because an area whose chunk did not arrive
     // (an unreadable IAM\AREA) still "loads" - with no script, no set and no
-    // scene, and a run that never starts (a console, 2026-09-18)
+    // scene, and a run that never starts (seen on a console)
     std::printf("session: area %d loaded, set '%s', waiting for its script\n",
                 startArea, session.setName().c_str());
     harnessScriptForcing();
@@ -434,11 +434,11 @@ int PlayState::setupSession() {
         const auto& rs = session.residentSlot(session.activeSlot());
         for (const auto& ad : rs.addresses)
             std::printf("address %d at %.0f %.0f %.0f yaw %.0f\n", ad.id, ad.pos[0], ad.pos[1], ad.pos[2], ad.yaw);
-        // THE PRECEDENCE, and the save's own placement is now in it: an
-        // explicit `--stand` or `--address` is the reader's word and wins;
+        // THE PRECEDENCE, the save's own placement in it: an explicit
+        // `--stand` or `--address` is the command line's word and wins;
         // otherwise a save that was made IN THIS AREA says where he stood;
         // otherwise the area's first ADDRESSES record, which is the harness
-        // default and was previously the only one.  The area test matters -
+        // default.  The area test matters -
         // `--save X --area 0` deliberately drops a save's player record into
         // a city he was never in, and his apartment coordinates mean nothing
         // there.
@@ -520,8 +520,7 @@ int PlayState::setupSession() {
     dialogFromUi = false;      // ACTOR_STATE 17
     callHarness = false;       // `--call` opened this one
     callPending = -1;          // ...and the conversation it owes
-    // THE LOADING SEQUENCE IS NOT WIRED HERE, and a first version of it
-    // was. `Charger` answers **0**, and AREA 118's parked startup script
+    // THE LOADING SEQUENCE IS NOT WIRED HERE. `Charger` answers **0**, and AREA 118's parked startup script
     // has an arm for exactly that: the Grid fly-through - cameras
     // 2152/2153/2154/2158 over `scx.play 20` with a `media.play 753` - after
     // which the script ends. So the engine covers a load with its own
@@ -556,8 +555,8 @@ int PlayState::setupSession() {
     // because their text is the carried object list read through the channel
     // (`Game_HandleEvent` 29 and 33), not a string in `IAM\Sneak`.
     // THE ADDRESS MAP, watched. A screen whose script OPENS A PLACE is the whole
-    // point of reading it - a reader: *"some scenes can be triggered only if an
-    // entry on a terminal has been read"* - and ops 87/88 write a 791-bit map
+    // point of reading it - some scenes can be triggered only once an entry on
+    // a terminal has been read - and ops 87/88 write a 791-bit map
     // that nothing announced. Kay'l's terminal enables ADDRESSES 33, 'Anekbah -
     // Bar Zone 52', when his fourth dossier has been read, and the memo that
     // goes with it names the mission. Watched per frame and said once per
@@ -662,7 +661,7 @@ int PlayState::setupSession() {
     fallCamMode = 0;
     fallBanded = false;   // `+1304` set this fall (1, 3 or 4) - once per fall
     lastRoll = 0.0f;              // the camera ROLL, blended like the fov
-    // THE CAMERA HOLDS WHEN AN EDITING ENDS, and the fall-back this used to do
+    // THE CAMERA HOLDS WHEN AN EDITING ENDS, and the fall-back to the player
     // is a PREFERENCE that ships off. `Game_Frame` (05_sys.c 2144) requests
     // mode 0 on the player only under
     //
@@ -677,11 +676,10 @@ int PlayState::setupSession() {
     // the values it had. The view therefore FREEZES on the editing's last
     // frame until something else requests a camera.
     //
-    // Measured before this landed, on the intro path: the Impasse's eight
-    // gaps were 0 of 480000 pixels lit - a black frame after every beat and a
-    // 73-frame black stretch mid-cutscene - because the Session still held
-    // camera 2158, AREA 118's, from the area the player had just left
-    // (next-tasks 5).
+    // Without the hold, on the intro path, the Impasse's eight gaps are 0 of
+    // 480000 pixels lit - a black frame after every beat and a 73-frame black
+    // stretch mid-cutscene - because the Session still holds camera 2158,
+    // AREA 118's, from the area the player has just left (next-tasks 5).
     musicPaused = false;          // the pause screen suspends the sound
     holdEditCam = false;          // mode 13 with no active camera: hold
     heldUnderRequests = 0;  // the Session's request count when the hold began

@@ -2,7 +2,7 @@
 // THE 3DS FRONTEND - the screens, the buttons, the sound and the clocks of a
 // Nintendo 3DS, behind the gateway (`platform/frontend.h`), written on libctru
 // as `carbonfront.cpp` is on the Toolbox: no SDL (`todo/3ds-port.md` 3 - the
-// stereoscopic 3D of step 8 needs libctru's own calls, and SDL's 3DS port
+// stereoscopic 3D (`c3dstereo.h`) needs libctru's own calls, and SDL's 3DS port
 // would bring a 2D renderer this port does not use).
 //
 // What it does, and no more (A8 rule 3: the frontend shows pixels and reports
@@ -11,9 +11,9 @@
 //   * PRESENT: the composited RGB565 frame onto the TOP screen. The frame is
 //     640x480 (A3) and the screen 400x240, so it is FITTED: halved by a 2x2
 //     box filter into 320x240 and centred, black either side - 4:3 onto the
-//     4:3 middle of a 5:3 screen (the reader's decision of 2026-10-05: the
-//     interface stays on the top screen until the per-screen survey, step
-//     10). A frame of another size is fitted by nearest sampling. This is
+//     4:3 middle of a 5:3 screen (the interface stays on the top screen
+//     until the per-screen survey, `todo/3ds-port.md` step 10). A frame of
+//     another size is fitted by nearest sampling. This is
 //     presentation, as SDL's stretch of the frame to a window is; it touches
 //     no pixel the engine composed beyond that.
 //   * the BUTTONS as the engine's own joystick (`input/pad.h`), the circle pad
@@ -26,7 +26,7 @@
 //   * the CLOCKS from the system tick (`svcGetSystemTick`, 268 MHz on both
 //     models - the New 3DS's faster CPU does not change it).
 //
-//   * the BOTTOM screen: the instrument panel (`n3dspanel.h`, step 2b) -
+//   * the BOTTOM screen: the instrument panel (`n3dspanel.h`) -
 //     its numbers measured here, where the frames are presented and the
 //     pacer sleeps, and its buttons read from the touch screen.
 #pragma once
@@ -56,7 +56,7 @@ public:
     // or null; and `presentWritten` once it has: `present` less its copy
     // (the capture, the frame's stats, the panel, the swap).
     std::uint16_t* topFramebuffer();
-    // ...and the RIGHT eye's, when the top screen is in 3D (step 8), else null
+    // ...and the RIGHT eye's, when the top screen is in 3D (`c3dstereo.h`), else null
     std::uint16_t* topFramebufferRight();
     void presentWritten();
 
@@ -109,7 +109,7 @@ private:
     std::string lastError_;
     bool quit_ = false;
     bool opened_ = false;
-    // ---- the instrument panel (step 2b)
+    // ---- the instrument panel (`n3dspanel.h`)
     void act(n3ds::Panel::Action a);
     void writeControl(const char* cmd);   // `<capture>.ctl`, as omkprof.py --ctl writes it
     void writeCapture(const Surface& fb);
@@ -126,7 +126,7 @@ private:
     long winCopies_ = 0, reports_ = 0;
     int mapW_ = 0, mapH_ = 0;              // `sdmc:/omk/panel-dump` exists: each redraw also to panel.bin
     bool captureOwed_ = false;
-    bool stereo3d_ = false;               // `sdmc:/omk/stereo3d`: the top screen in 3D (step 8)
+    bool stereo3d_ = false;               // `sdmc:/omk/stereo3d`: the top screen in 3D (`c3dstereo.h`)
     bool screenDumpOwed_ = false;         // with a capture: the top screen as written, too
     std::uint64_t lastPresent_ = 0;       // system ticks
     std::uint64_t winStart_ = 0, winSleep_ = 0, winWorst_ = 0;

@@ -8,9 +8,9 @@
 // an index means something different in every `.CTL` bank: clip 0 of
 // `H1AVNT` is Kay'l's idle, clip 0 of `H1CMBT` is his guard. `setBank` swaps
 // `ctl_` and `data_`, so without clearing those caches the channel moves to
-// the new bank while the POSE keeps coming out of the old one - which is what
-// a reader saw after winning the supermarket fight: Kay'l walking around
-// still holding his fists up (`todo/fight-mode.md` 15.6).
+// the new bank while the POSE keeps coming out of the old one - after the
+// supermarket fight, Kay'l walking around still holding his fists up
+// (`todo/fight-mode.md` 15.6).
 //
 // Prints the default clip index and a checksum of the tracks actually handed
 // to the poser, for AVNT -> CMBT -> AVNT. The middle one must DIFFER (the

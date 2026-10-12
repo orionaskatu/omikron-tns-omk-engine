@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE AIRLOCK WALK - walking from one area into the next without the frame
-// going black (todo/pending, "OPEN 1"; the fix of 2026-09-03).
+// going black (todo/pending, "OPEN 1").
 //
 //     airlock_probe <gamedata> <tables>
 //
@@ -9,8 +9,8 @@
 // `area.goto 142 -1 -1` - the airlock "Anekbah Impasse Sas", AIMPASAS. The
 // engine keeps BOTH decors in state 2 across the transition and moves the
 // ACTIVE row only when the player's feet cross onto the new one (event 9,
-// `Walk_ProbeGround`); the port used to draw one set and rebuild the player
-// on the area change, so the frame was black afterwards. This drives the
+// `Walk_ProbeGround`); drawing one set and rebuilding the player on the
+// area change leaves the frame black afterwards. This drives the
 // Session-side of that headlessly and asserts each step.
 //
 // One line per fact, `key name value ...`:

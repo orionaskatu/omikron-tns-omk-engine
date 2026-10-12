@@ -4,10 +4,9 @@
 // The start menu's own sheet, `I2D/bitmaps/gfxint.bmp`, is the title on a
 // uniform fill: every pixel of the area below it is palette index **255**,
 // which is rgb(4,4,4). Something on a lower layer shows through there, and
-// this is that something - until it was found the replica drew the menu on
-// black.
+// this is that something.
 //
-// **Why it shows through was read wrong, and corrected 2026-09-06.** It is
+// **Why it shows through.** It is
 // not that rgb(4,4,4) is the I2D colour key: the key is a flat **0**, set by
 // `I2D_CreateSurfaceFromBmp`'s `SetColorKey(DDCKEY_SRCBLT, {0, 0})`, so
 // rgb(4,4,4) is PAINTED. The cloud shows because screen 29's panels draw no
@@ -28,7 +27,7 @@
 //       CreateSurface(0x280 x 0x1E0)     a 640x480 offscreen surface
 //
 // and then, per frame, `sub_4B1B00` runs TWO PASSES - and folding them into
-// one is what went wrong three times over:
+// one does not reproduce the original:
 //
 //   1. **Emboss the cloud at 256x256** into the work buffer (which is what the
 //      0x20000 malloc is: 256*256*2). A light at
@@ -107,7 +106,7 @@ public:
     // pixel reads the work buffer at the source pixel the blit's column and
     // row rule (`x * 640 / w`, `y * 480 / h`) picks. The original computes the
     // effect at 640x480 and blits it; this skips the intermediate surface and
-    // its second pass (the Vita's start menu, 2026-09-29). -> false if the
+    // its second pass (for the Vita's start menu). -> false if the
     // cloud is not loaded.
     bool drawScaled(Surface& fb, long frame) const;
 

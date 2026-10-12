@@ -270,20 +270,20 @@ void Fight::camShake(float dt, FightContext& c) {
     //     Game_RaiseEvent(45, ...);    /* the life back onto the record */
     //     u32(a1, 128) = 0;            /* the knockdown latch           */
     //
-    // The port had the shake and neither of those, so `knockdown` - set by any
-    // reaction whose `+12` carries `0x10000000` - was a latch that never
-    // cleared. `Fight_ResolveHit`'s three arms for a killing blow are
+    // Without the clear, `knockdown` - set by any reaction whose `+12`
+    // carries `0x10000000` - is a latch that never clears.
+    // `Fight_ResolveHit`'s three arms for a killing blow are
     // `crouched` / `reaction` / `koEntry`, chosen on `u32(def, 128)`, so once
-    // ANY knock-down landed, every later killing blow took the `reaction` arm.
-    // That is right when the final reaction is itself a knock-down
-    // (`KOH_FRONT`, `KOL_LEFT` - they lead to the ground and role state 6/7)
-    // and wrong when it is an ordinary flinch: a reader's fight ended with
-    // `want entry 132 -> clipOwner 133 'IH_RIGH'`, state 0, which played out
-    // over 85 frames and fell back to `HGUARD`. The loser never reached state
-    // 6 or 7, the KO never fired, and the fight ran on for 46 seconds with the
-    // opponent on 0 hit points (`todo/fight-mode.md` 15.1). Cleared here, that
-    // blow takes the `koEntry` arm instead - role 5, `I_DEATH`,
-    // `I_DEATHLOOP`, state 7 - and the fight ends.
+    // ANY knock-down landed, every later killing blow would take the
+    // `reaction` arm. That is right when the final reaction is itself a
+    // knock-down (`KOH_FRONT`, `KOL_LEFT` - they lead to the ground and role
+    // state 6/7) and wrong when it is an ordinary flinch: a fight then ends
+    // with `want entry 132 -> clipOwner 133 'IH_RIGH'`, state 0, which plays
+    // out over 85 frames and falls back to `HGUARD`. The loser never reaches
+    // state 6 or 7, the KO never fires, and the fight runs on (46 seconds in
+    // play) with the opponent on 0 hit points (`todo/fight-mode.md` 15.1).
+    // Cleared here, that blow takes the `koEntry` arm instead - role 5,
+    // `I_DEATH`, `I_DEATHLOOP`, state 7 - and the fight ends.
     //
     // Event 45 is still the caller's: the life goes onto the record in
     // `play.cpp`'s teardown, which owns the DB span.
@@ -396,13 +396,12 @@ void Fight::tickCamera(float dt) {
     }
     if (cam_.rayHit) {
         // The height clamp, and the engine runs it ONLY when the solve
-        // returned a point (`if (v8)`). Until 2026-09-17 this tree had no
-        // solve and applied it every frame, labelled as such. The distance is
-        // from the eye as it now stands to the midpoint, the drop applies only
-        // inside 3 m, and the limit is 2.5 m under "Vue de côté" against
-        // 1.5 m under "Vue de dos". (Computing `d` against a stale midpoint,
-        // as the first version did, dropped the eye 127 units BELOW the
-        // fighters - with Y down, the clamp pushing the wrong way.)
+        // returned a point (`if (v8)`). The distance is from the eye as it
+        // now stands to the midpoint, the drop applies only inside 3 m, and
+        // the limit is 2.5 m under "Vue de côté" against 1.5 m under "Vue de
+        // dos". (Computing `d` against a stale midpoint drops the eye 127
+        // units BELOW the fighters - with Y down, the clamp pushing the wrong
+        // way.)
         const float dx = mid[0] - cam_.eye[0], dy = mid[1] - cam_.eye[1],
                     dz = mid[2] - cam_.eye[2];
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -471,17 +470,15 @@ bool Fight::begin(FightBody& player, const FightStats& ps,
         }
     }
 
-    // THE CHANNEL WRITES `Fight_Begin` MAKES, which the first version of this
-    // port skipped - and the harness showed it: the AI-driven fighter reached
-    // one entry and stayed there while the AI pressed 674 moves into a queue
-    // nothing consumed.
+    // THE CHANNEL WRITES `Fight_Begin` MAKES. Without them the AI-driven
+    // fighter reaches one entry and stays there while the AI presses 674
+    // moves into a queue nothing consumes (seen in the harness).
     //
     // `sub_45A870(chan, 1)` clears the channel's bit 0 and reseeds the queue
     // with the idle word. That is all: **neither fighter's input is blocked**.
     //
-    // A first version of this also set flag 0x80 on the opponent, reasoning
-    // that an AI-driven channel is queue-driven. That was an invention and the
-    // binary refutes it twice over: `Perso_SetInputEnabled` (0x0045A3E0) has
+    // Flag 0x80 is NOT set on the opponent, though an AI-driven channel may
+    // look queue-driven; the binary refutes that twice over: `Perso_SetInputEnabled` (0x0045A3E0) has
     // exactly three call sites, all in the dialogue enter/leave family and
     // none in the fight code; and `Cef_TickChannel` opens by RESETTING THE
     // QUEUE to a lone idle word whenever `flags & 0x81`, so blocking the
@@ -534,8 +531,7 @@ bool Fight::begin(FightBody& player, const FightStats& ps,
     b_.aiMoveDeadline = b_.aiMoveStart + jitter +
                         (b_.ai ? b_.ai->enterDelay[0] : 0);
 
-    // AND THE CAMERA IS SEEDED HERE, which the first version of this missed:
-    // `Fight_Begin`'s own tail calls `sub_446000(0.0, 0, 0.0, 0)` - the
+    // AND THE CAMERA IS SEEDED HERE: `Fight_Begin`'s own tail calls `sub_446000(0.0, 0, 0.0, 0)` - the
     // UNEASED variant, which places the eye and the target outright. Without
     // it the first eased frame blends from a zero camera and the eye starts
     // two thousand units from the fighters, walking in over the next second.

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// DAMAGED GAME FILES against the format readers (the code audit of 2026-10-07).
+// DAMAGED GAME FILES against the format readers.
 //
 //     hostile_files [case]     (morph fnt ani map2d map2d.waypoints opt scx; default all)
 //
 // Each case is a buffer built here whose counts or sizes were chosen to WRAP
-// the reader's old 32-bit arithmetic, or to be a negative int16 dimension,
-// so that a guard written as `offset + n * stride > size` passed it. None of
+// a reader's 32-bit arithmetic, or to be a negative int16 dimension, so
+// that a guard written as `offset + n * stride > size` would pass it. None of
 // these shapes ships: the original's loaders trust every count and a file
 // like these would crash it too, so what is asserted is only that the port
 // refuses them - small allocations, no read outside the buffer - while the

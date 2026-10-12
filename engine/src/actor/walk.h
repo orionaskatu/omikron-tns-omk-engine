@@ -5,15 +5,14 @@
 // ground decide.
 //
 // ---------------------------------------------------------------------------
-// A DROP IS A FALL, NOT A REFUSAL (2026-09-04)
+// A DROP IS A FALL, NOT A REFUSAL
 //
-// This file used to answer a drop past the step limit with `Refused` and leave
-// the actor where he was, on the reading that "ledges are obeyed". That is not
-// what the engine does, and it is why a player who got onto a bench could
-// never get off one: measured over three shipped sets, the old walker could
-// not take a single downward step anywhere (`engine/tools/stuck_probe.cpp`:
-// 0 descents from 671 / 36 / 342 spots standing beside a drop in Aapkayl,
-// AImpasse and Anekbah).
+// Answering a drop past the step limit with `Refused` and leaving the actor
+// where he was ("ledges are obeyed") is not what the engine does, and with it
+// a player who gets onto a bench can never get off one: measured over three
+// shipped sets, such a walker cannot take a single downward step anywhere
+// (`engine/tools/stuck_probe.cpp`: 0 descents from 671 / 36 / 342 spots
+// standing beside a drop in Aapkayl, AImpasse and Anekbah).
 //
 // `Walk_GroundResponse` (0x00465460) branches on whether the ground is above
 // the feet after the frame's gravity or below them:
@@ -31,12 +30,12 @@
 //     walking (`shortFall`), and past it ACTOR_STATE 18, tiered at 59.055,
 //     118.11 and 196.85. There is no refusal in this branch at all.
 //
-// So the port now falls. What it still does NOT have is the reason the engine
-// rarely needs to: `Actor_Move`'s swept sphere (`Sweep_ActorMove` 0x004AD360 ->
-// `Sweep_PolygonKernel` 0x004A9D30, 930 lines) stops the player at a wall long
-// before he reaches a balcony edge. Until that is ported, `kMaxUnsweptDrop`
-// below keeps the old refusal for drops past the engine's own no-damage tier -
-// a LABELLED stand-in for the missing wall, not a rule of the game.
+// So the port falls. The reason the engine rarely needs to is
+// `Actor_Move`'s swept sphere (`Sweep_ActorMove` 0x004AD360 ->
+// `Sweep_PolygonKernel` 0x004A9D30, 930 lines), which stops the player at a
+// wall long before he reaches a balcony edge; the capsule sweep
+// (`setBlockers`, `slide`) stands for it here, and `kMaxUnsweptDrop` below,
+// the LABELLED refusal that stood in for the missing wall, is retired.
 // ---------------------------------------------------------------------------
 #pragma once
 
@@ -79,25 +78,19 @@ inline constexpr double kGravity = 12.860892;
 // the same global - `f32(a1, 220) = dword_910340`.
 inline constexpr double kSlideSpeed = 11.811023622;
 
-// **RECONSTRUCTION, and the only number here that is not the engine's.**
+// **A RECONSTRUCTION, RETIRED: this port's bound, never the game's.**
 //
 // The engine stops the player at a wall with a swept sphere (`Actor_Move` ->
-// `Sweep_ActorMove` 0x004AD360), which is not ported. Without it the walker's
-// only reason to stay out of a stairwell or off a balcony is the ledge rule
-// this file used to apply to every drop - so removing that rule outright does
-// not restore the engine's behaviour, it removes a wall the port was leaning
-// on. Until the sweep is ported the refusal is kept for drops past the
-// engine's own no-damage tier: below 3 m the engine falls and the actor is
-// unhurt, so a bench, a kerb, a crate and a flight of stairs all descend,
-// while a drop deep enough that the engine would have stopped him at a
-// railing still refuses. This bound is this port's, not the game's, and it
-// goes away when the sweep arrives.
-// 2026-09-05: THE CAPSULE HAS LANDED (`setBlockers` with the model's sphere
-// list, `slide` with the engine's stand-off and push-out), so a railing or a
-// bench edge stops the body the way `Actor_Move` stops it, and the guard this
-// bound was is RETIRED: `Walk_GroundResponse` has no refusal in its
-// below-the-feet branch, a drop is a fall, and this now says so. Kept as a
-// name so the callers that quote it still compile; it no longer refuses.
+// `Sweep_ActorMove` 0x004AD360). Without a sweep, a ledge refusal on every
+// drop is the walker's only reason to stay out of a stairwell or off a
+// balcony; this bound limited that refusal to drops past the engine's own
+// no-damage tier (below 3 m the engine falls and the actor is unhurt). The
+// capsule (`setBlockers` with the model's sphere list, `slide` with the
+// engine's stand-off and push-out) stops a railing or a bench edge the way
+// `Actor_Move` stops it, so the guard is RETIRED: `Walk_GroundResponse` has
+// no refusal in its below-the-feet branch, a drop is a fall, and this says
+// so. Kept as a name so the callers that quote it still compile; it no
+// longer refuses.
 inline constexpr double kMaxUnsweptDrop = 1.0e9;
 
 enum class StepResult {
@@ -161,12 +154,11 @@ public:
     // The controller should call this EVERY frame, not only when the actor is
     // moving horizontally: an actor who steps off a ledge and then lets go of
     // the stick is still falling, and `step` is not called when the walk clip
-    // stops producing a root delta. It is cheap and a no-op on the ground.
-    // Without it he hangs in the air until he asks to move again, which is
+    // stops producing a root delta. It is cheap. Without it he hangs in the air until he asks to move again, which is
     // what `step`'s own `dt` is a floor under rather than a substitute for.
     //
-    // ...and NOT a no-op on the ground (corrected 2026-10-05,
-    // todo/drift-audit.md M9): `Walk_GroundResponse` answers the floor every
+    // ...and NOT a no-op on the ground (todo/drift-audit.md M9):
+    // `Walk_GroundResponse` answers the floor every
     // frame, so a grounded actor who does not move is still put on it -
     // snapped UP onto a floor that rose, absorbed DOWN onto one that sank.
     // That is what keeps the player on a lift; see `settle`.
@@ -260,7 +252,7 @@ public:
     // `Shoot_Enter` and `Shoot_TickPlayer` (`sub_47CC70`) and cleared by
     // `sub_47CE70`, so OUTSIDE SHOOT MODE IT RETURNS 1 AND NOTHING IS EVER
     // ABSORBED: a drop is banded a short fall (`+1304 = 2`) and gravity takes
-    // him down (`todo/scene-gameplay-audit.md` 22, 2026-10-12). In shoot mode
+    // him down (`todo/scene-gameplay-audit.md` 22). In shoot mode
     // the absorb is on except while the mover's jump flags hold, so a shoot
     // jump is not snapped back onto the floor it has just left
     // (`shootMoveNoAbsorb`). The default is the adventure answer.

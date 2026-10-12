@@ -4,9 +4,8 @@
 //     run_movies <gamedata> <out.bin>
 //
 // `docs/BOOT.md`: the launch chain is the three FLIS movies, then
-// `Game_Start("aventure.scx")`. The port has always FOUND and stepped them;
-// nothing decoded one until pl_mpeg was vendored (2026-09-01), so the first
-// thing a player sees was missing from the replica.
+// `Game_Start("aventure.scx")`. The port finds and steps them, and decodes
+// them through the vendored pl_mpeg - the first thing a player sees.
 //
 // What is asserted is what the shipped files could fail: the pack header that
 // makes them MPEG-1 program streams, the geometry every one of them agrees on,

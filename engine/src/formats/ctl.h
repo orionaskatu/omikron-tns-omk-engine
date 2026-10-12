@@ -220,7 +220,7 @@ struct CtlGroup {
     int defaultEntry = -1;   // the flag-0x20 entry Cef_DefaultEntry returns
 };
 
-// The FIGHT AI, out of the `+76`/`+80` table the walk used to only step over.
+// The FIGHT AI, out of the `+76`/`+80` table.
 //
 // One 156-byte profile per difficulty level, `+0` being the level plus one -
 // which is how `sub_45DCB0` picks one.  A "move" is not a single button: it is
@@ -259,8 +259,7 @@ struct CtlGroup {
 struct CtlAiSlot {
     // The slot's own PERCENTAGE, the low byte of its first dword: every choice
     // `Fight_TickAI` makes is `rand() % 100` against these, cumulatively
-    // within a family. Read since 2026-09-16 because `actor/fight.cpp` needs
-    // it; the walk used to skip the whole slot header.
+    // within a family. Read because `actor/fight.cpp` needs it.
     std::uint32_t weight = 0;
     std::vector<std::vector<std::uint32_t>> moves;  // each move a word sequence
 };

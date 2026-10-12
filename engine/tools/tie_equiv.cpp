@@ -3,8 +3,8 @@
 //
 //     tie_equiv <model.3DO>...
 //
-// `DepthTie` (o3de/depthtie.h) replaced the Vulkan backend's in-place tie pass
-// to make it cheaper, and is held to deciding exactly what that pass decided.
+// `DepthTie` (o3de/depthtie.h) is a cheaper form of the Vulkan backend's
+// in-place tie pass, and is held to deciding exactly what that pass decides.
 // This keeps the pass as it stood on 2026-09-13 - ordered sets, rebuilt from
 // nothing each revision - as `Reference`, and runs both over the same draws,
 // comparing the LOSERS of every draw in content and order:
@@ -18,7 +18,7 @@
 //     Each says which corners it changed, but the shuffled draws rarely let a
 //     replay survive, so these exercise the fallback;
 //   * 60 frames of a FIXED draw sequence - what a still camera submits - each a
-//     new revision that says which corners changed (step 8's replay): three
+//     new revision that says which corners changed (the replay): three
 //     "cargo" meshes moving every frame, a triangle snapped onto a cargo face or
 //     a cargo face onto another every few frames, a frame whose list is invalid,
 //     a frame missing one draw, a frame drawn twice, and a frame where nothing
@@ -53,7 +53,7 @@ namespace {
 // GPU half (the vertex buffer write) and the unused face count.
 struct Reference {
     std::uint64_t revision = 0;
-    // The key is the sorted positions plus, LAST, the face's SIDE (2026-10-01):
+    // The key is the sorted positions plus, LAST, the face's SIDE:
     // 0 for a two-sided face, else 1 or 2 by its normal against a fixed
     // direction - so the two windings of a single-sided pair never meet, as the
     // engine's back-face cull never lets them. An extra key element here, the
@@ -177,12 +177,12 @@ int main(int argc, char** argv) {
             }
             vboRev = g.revision;
         };
-        // THE DELTA STRATEGY (`backends/gles/glesrender.cpp` since 2026-09-22),
+        // THE DELTA STRATEGY (`backends/gles/glesrender.cpp`),
         // on its own tie and its own buffer, fed the identical sequence. Every
         // upload keeps the buffer equal to the tie's applied set - a dirty
         // upload widened to whole triangles and folded, a same-size full one
         // folded with NO `vboReplaced()` - so a draw writes only the triangles
-        // the tie NEWLY marks (`newlyApplied`), plus the restores. The old
+        // the tie NEWLY marks (`newlyApplied`), plus the restores. The full
         // strategy above writes every loser every draw. Both buffers are held
         // to the same reference expectation.
         omk::DepthTie now2;

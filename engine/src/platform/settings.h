@@ -87,7 +87,7 @@ struct Settings {
     Source antiAliasingSource = Source::Default;
     // `texturefiltering = nearest|bilinear|trilinear` (or 0|1|2). NOT an
     // enhancement at 1, and the one key of this section that is on by
-    // default (decided 2026-10-03): the original's device set-up has two
+    // default, because the default is what the original does: the original's device set-up has two
     // arms (`sub_4638C0`, docs/ASSETS.md 4), and the HARDWARE one - a 3D
     // card, the boot default - sets MAG/MIN LINEAR with MIP NONE, while the
     // SOFTWARE devices sample POINT. So 1 is the default, the GPU backends
@@ -336,8 +336,7 @@ inline constexpr int kMaxAnisotropy    = 16;
 inline constexpr int kMaxShadowQuality = 2;   // mapped
 inline constexpr int kMaxLighting      = 1;   // per pixel
 // 4 means SIXTEEN times the fill. It is the top the parser accepts - and it is
-// NOT part of `all = max` (2026-10-01, the reader): at 4K it cost 120 -> 21.5
-// fps on an M3 for an edge that 4K pixels and MSAA already smooth, while every
+// NOT part of `all = max`: at 4K it costs 120 -> 21.5 fps on an M3 for an edge that 4K pixels and MSAA already smooth, while every
 // other enhancement together held 120. So it is asked for by name only,
 // `supersampling = N` or `--ssaa N`.
 inline constexpr int kMaxSupersample   = 4;

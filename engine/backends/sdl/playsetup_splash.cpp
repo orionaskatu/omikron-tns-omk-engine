@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the splash screen, the player's damage, the frame's instruments.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -73,8 +73,8 @@ int PlayState::setupSplash() {
     // The 30 Hz pacer's next deadline, in seconds on the performance counter
     // (see the cap at the bottom of this loop).
     paceNext = 0.0;
-    // THE FRAME'S PHASES, timed - an instrument for the Vita (2026-09-18: the
-    // city "unplayable", and the SLOW FRAME line below gives only the total).
+    // THE FRAME'S PHASES, timed - an instrument for the Vita, where the city
+    // runs slowly and the SLOW FRAME line below gives only the total.
     // Four spans on the performance counter: the simulation and the draw
     // submission up to the readback, the readback itself (on GLES the wait for
     // the GPU), the CPU compose after it, and the present with its swap.

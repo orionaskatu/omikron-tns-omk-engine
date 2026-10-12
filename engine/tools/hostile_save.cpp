@@ -6,8 +6,8 @@
 // The six array offsets at DB +8 come out of the save file as they are, and
 // the original relocates them without a look (`Var_Set`, 0x0040E510, is
 // `[db+8][i*4] = v`). Here IAM\START's image is given offsets and indices
-// whose 32-bit sum WRAPS back into the image - the shape of the audit's
-// finding of 2026-10-07 - and every write must change nothing, every read
+// whose 32-bit sum WRAPS back into the image - the shape a code audit found
+// - and every write must change nothing, every read
 // answer 0; then the same accessors on the untouched image must still do what
 // they did. And a negative day, which only such a save carries, must format
 // without reading outside the month table (`Clock_FormatDate`, 0x0041E690).

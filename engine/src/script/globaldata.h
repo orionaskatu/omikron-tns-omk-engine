@@ -62,8 +62,7 @@ std::int32_t globalSpellItem(std::span<const std::byte> d);
 // everywhere in the shipped game.**
 std::int32_t globalHintPriceVar(std::span<const std::byte> d);
 
-// THE SLIDER'S DESTINATIONS - `GLOBAL +16`, count `+28`, 36 bytes each, and
-// neither field was in this header until 2026-09-04.
+// THE SLIDER'S DESTINATIONS - `GLOBAL +16`, count `+28`, 36 bytes each.
 //
 // The sneak's slider page shares the device's nine row widgets with the
 // inventory and memory pages, and which SOURCE fills them is one global,

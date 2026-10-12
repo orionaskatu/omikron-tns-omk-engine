@@ -311,9 +311,8 @@ MirrorStats drawWithMirror(Renderer& r, std::span<const Draw> draws,
     // alone is not DEPTH-TESTED against the room: the plane is large and
     // mostly hidden behind the wall it is set into, so a lone render marks
     // every pixel the plane covers and the reflection then replaces the whole
-    // wall. That is exactly what the first version did - the wall vanished and
-    // a corridor appeared through it - and it was one look at one frame that
-    // said so.
+    // wall: the wall vanishes and a corridor appears through it, which one
+    // look at one frame shows.
     //
     // Differencing the two passes gives the mirror's visible pixels with the
     // room's own depth already applied, using nothing but the boundary.

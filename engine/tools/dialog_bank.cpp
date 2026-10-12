@@ -72,8 +72,7 @@ int main(int argc, char** argv) {
 
     // ---- the machine, run ------------------------------------------------
     //
-    // Three properties, each of which was FALSE in this port until 2026-09-06
-    // and each of which fails loudly if it comes back.
+    // Three properties, each of which fails loudly if it stops holding.
     const auto fires = [&](omk::ActorRuntime& a, std::uint32_t word, int ticks) {
         int n = 0;
         for (int t = 0; t < ticks; ++t) {

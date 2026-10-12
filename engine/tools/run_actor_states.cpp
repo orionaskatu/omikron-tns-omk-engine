@@ -138,11 +138,10 @@ bool priorityWasMaximal(const CtlFile& f, const omk::EdgeTaken& e,
         // The rest of `Cef_FindTransition`'s candidate test, written from the
         // documentation like `matches` above and given the decision's own
         // inputs off `EdgeTaken`. Without the CANCEL WINDOW this over-counts:
-        // it beat `H1Cmbt`'s `HRSTEP` with entry 28 (priority 2, window frames
-        // 10..13) on eight decisions the runtime was right to refuse, which is
-        // what an approximate second transcription looks like when the corpus
-        // grows - the queue rules of 2026-09-02 more than doubled the edges
-        // and the eight appeared with them.
+        // it beats `H1Cmbt`'s `HRSTEP` with entry 28 (priority 2, window frames
+        // 10..13) on eight decisions the runtime is right to refuse - what an
+        // approximate second transcription looks like once the corpus of
+        // edges grows.
         if (e.mustHave != -1 &&
             !(c.flags & static_cast<std::uint32_t>(e.mustHave))) continue;
         if (e.mustAlso != -1 &&

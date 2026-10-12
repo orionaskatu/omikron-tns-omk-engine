@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE MODES: the pause's sound, dialogue mode, shoot mode, the quit and the pending load.
-// Parts of `PlayState::phaseModes`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseModes`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // The pause screen stops the sound; the voices
@@ -38,8 +38,8 @@ void PlayState::modesSound() {
                         music.seconds(), music.looping() ? ", looping" : "");
     }
     mark("controller");
-    // the `audio` section's own parts (2026-09-24: 14 ms a city frame on a
-    // console, and nothing in it looked like 14 ms)
+    // the `audio` section's own parts (14 ms a city frame on a console,
+    // and nothing in it looked like 14 ms)
     const double auA = phaseNow();
     // ---- AND THE PAUSE SCREEN STOPS THE SOUND ------------------------
     //
@@ -78,9 +78,9 @@ void PlayState::modesSound() {
     // Keep about a second of it in the device. The player decides what
     // comes next - including whether the track wraps - so all this does
     // is ask for more and hand it over.
-    // IN QUARTER SECONDS (2026-09-27): a whole second decoded at once cost a
-    // console 25-34 ms on the frame it happened - the city's "audio"
-    // section, one frame in seven. The same work in smaller pulls, a whole
+    // IN QUARTER SECONDS: a whole second decoded at once costs a console
+    // 25-34 ms on the frame it happens - the city's "audio" section, one
+    // frame in seven. The same work in smaller pulls, a whole
     // refill only when the queue is close to running dry.
     const double musicQueued = !musicPaused && music.playing() ? front.queuedSeconds() : 9.0;
     if (musicQueued < 1.0) {
@@ -255,8 +255,8 @@ void PlayState::modesSound() {
                 if (const auto ma = fs.resolve("MORPH/" + speakerVoice + ".3DM")) {
                     // THE BYTES THE CONVERSATION ALREADY READ for the
                     // voice: a line's .3DM runs to 3.5 MB, and reading it
-                    // a second time here cost a console ~700 ms on the
-                    // frame the line started (2026-09-23)
+                    // a second time here costs a console ~700 ms on the
+                    // frame the line starts
                     // ...and STREAMED (`formats/morphstream.h`): the file's
                     // size, read so far up to `streamedFrames()`; the tracks
                     // grow with it below, every frame
@@ -291,8 +291,8 @@ void PlayState::modesSound() {
             voiceShot = dlg.voiceFrames() == 0 ? -1
                       : front.openSound(dlg.channels(), 22050, dlg.voiceFrames(), dialogueGain());
             voiceFed = 0;
-            // WHERE A LINE'S START GOES (2026-09-23: "it is a bit long to
-            // load the dialog" on a console) - the conversation's read and
+            // WHERE A LINE'S START GOES (a line is slow to start on a
+            // console) - the conversation's read and
             // decode, then this frontend's face tracks, resample, hand-over
             std::printf("line load: %s - opened and read %.0f ms (the first %zu of %d frames, "
                         "a %zu KB file), voice decode %.0f ms, face tracks %.0f ms, "
@@ -332,11 +332,10 @@ void PlayState::modesSound() {
         // drives it in `Actors_TickAll`; the per-screen move/confirm/open
         // slots belong to the interface SCREENS (UI 3), and a conversation
         // is not one. Whatever a reply plays is its branch ACTION's own
-        // script. A first version borrowed the open screen's blips here,
-        // which a reader heard as wrong.
+        // script. The open screen's blips do not belong here.
         // THE MENU COUNTS PRESSES, so it reads the EDGES (omk-play 74).
-        // A reader on a bench: one press of Enter answered several times
-        // over and one tap of a direction ran the selection round the
+        // On the level, one press of Enter would answer several times
+        // over and one tap of a direction run the selection round the
         // list. `Game_Frame` hands the dialogue `dword_90E0E0` - a word
         // ZEROED EVERY FRAME and rebuilt by the per-action callbacks (the
         // label-less `or al, N` family at 0x42B8F0, table entries nothing
@@ -410,10 +409,9 @@ void PlayState::modesDialogue() {
     //
     // That is what stops the ENTER which dismisses a conversation's last
     // line from falling straight through into the take. `ActorRuntime`
-    // has carried both functions since the ACTOR_STATE machine was
-    // ported, but NOTHING here called them - so the viewer never entered
-    // dialogue mode, never left it, and a reader who finished a shop
-    // seller's dialogue with Enter still held watched the take graph run
+    // carries both functions, and without these calls the viewer never
+    // enters dialogue mode, never leaves it, and a shop seller's dialogue
+    // finished with Enter still held runs the take graph
     // (MDACTION -> MDGETOBJ -> H_WAITOB -> MDPUTSNK) on the next frame.
     //
     // The transition is tested HERE, after the block that may have ended
@@ -455,16 +453,15 @@ int PlayState::modesShoot() {
             // installs the first-person camera full stop - it is not
             // something the `--shoot` harness does.
             //
-            // It used to live in that harness alone, and a reader found what
-            // that costs. Reaching the supermarket phase through the game's
-            // own script, the log read:
+            // In that harness alone, reaching the supermarket phase through
+            // the game's own script would log:
             //
             //   frame 3219: editing over - the camera HOLDS its last frame
             //               (mode 13, no active camera, autocameraplayer 0)
             //   frame 3221: SHOOT MODE ENTER - ACTOR_STATE 3, scheme 2
             //
             // - the mode on, the scheme installed, and the camera never asked
-            // for, so the view stayed on the cutscene's last framing with the
+            // for, so the view stays on the cutscene's last framing with the
             // player standing in it (`todo/omk-play.md` 97d).
             //
             // `camera_presets.json` row 4: eye (0,0,0) - ON the player - and
@@ -484,13 +481,13 @@ int PlayState::modesShoot() {
                 // and still "differ": the supermarket's airlock cutscene
                 // (AREA 231 record 1) ends on camera 4380, a fixed shot OUTSIDE
                 // the building, `playerCamId` still holds its 4379, and forcing
-                // `followCam` for the first-person camera made the next frame
-                // read 4380 as newly named - it cleared this flag and loaded
-                // 4380's absolute eye as offsets. A reader, from a real save:
-                // "the camera was still and outside the supermarket", the
-                // log's `AIM reached - cameraLive 0`. The harness never showed
-                // it: it names only camera 0, already applied. Only a camera a
-                // script names AFTER `shoot.begin` may take the view now.
+                // `followCam` for the first-person camera would make the next
+                // frame read 4380 as newly named - clearing this flag and
+                // loading 4380's absolute eye as offsets: the camera still and
+                // outside the supermarket, the log's `AIM reached - cameraLive
+                // 0`. The harness cannot show it: it names only camera 0,
+                // already applied. Only a camera a script names AFTER
+                // `shoot.begin` may take the view.
                 if (const omk::WorldCamera* rc = session.cameraTarget())
                     playerCamId = rc->id;
                 front.setRelativeMouse(true);
@@ -511,8 +508,8 @@ int PlayState::modesShoot() {
                 // follow camera re-applies a world camera's offsets only when
                 // the script names a DIFFERENT one - and the supermarket's
                 // ending names camera 0, the one already applied before the
-                // phase, so the eye stayed inside him: a weird camera and a
-                // body that looked gone (a reader, 2026-09-10). `Shoot_Leave`
+                // phase, so the eye would stay inside him: a weird camera and
+                // a body that looks gone. `Shoot_Leave`
                 // requests no camera; the script's next `camera.set` is what
                 // brings the view back, and forgetting which one was applied
                 // is what lets it.
@@ -530,12 +527,11 @@ int PlayState::modesShoot() {
                 astaroth.callbackArmed = false;
                 // ...and THE 100 RECORDS ZEROED (`Shoot_Enter`): every gunman's
                 // record goes, so the script's `shoot.actor.enter` builds each
-                // afresh - his entry, his action, a boss's setup. The viewer
-                // kept them until 2026-10-06, so a shoot phase RESTARTED after
-                // the player's death ran on the old records: Astaroth was never
-                // set up again, his souls' callback stayed disarmed by the line
-                // above, and shooting them did nothing (a reader's play of
-                // 2026-10-05). The actor-side clip state goes with them.
+                // afresh - his entry, his action, a boss's setup. Kept, a shoot
+                // phase RESTARTED after the player's death would run on the old
+                // records: Astaroth never set up again, his souls' callback
+                // left disarmed by the line above, and shooting them doing
+                // nothing. The actor-side clip state goes with them.
                 shootBrains.clear();
                 astarothActors.clear();
                 gandharActors.clear();
@@ -553,9 +549,8 @@ int PlayState::modesShoot() {
                 // `Shoot_Enter` step 6's own read: event 44 property 7, the
                 // player's CHARACTER TYPE. It picks the HUD screen (33 for the
                 // Mecagarde, 34 for anyone else) and, in `sub_47CC70` below,
-                // the mover's three sounds and its pitch flag. The port left it
-                // at -1 until 2026-09-12, which gave the right screen for the
-                // wrong reason - every value but 5 gives 34.
+                // the mover's three sounds and its pitch flag. Every value but 5
+                // gives 34, so a wrong type can still show the right screen.
                 {
                     std::int32_t ctype = 0;
                     omk::readActorProperty(
@@ -1094,9 +1089,8 @@ int PlayState::modesShoot() {
                 // `UI_LoadScreen(35)`. So a destination is remembered only
                 // from its row to the boarding: "Appel du slider" (which
                 // never writes it) always finds -1, and boarding opens the
-                // menu - destination or Manuelle - which is what the reader
-                // remembers. This port cleared it at the dismount instead,
-                // which the engine never does.
+                // menu - destination or Manuelle - as the original does. The
+                // engine never clears it at the dismount.
                 if (want == omk::screen::Sneak && calledDestination >= 0) {
                     calledDestination = -1;
                     std::printf("slider: the sneak opens - Ui_OpenSneakFamily "
@@ -1115,8 +1109,8 @@ int PlayState::modesShoot() {
                 // The screen's own sounds, by slot. Which slot is which is
                 // `sub_482FE0`'s answer - it dispatches on the INPUT BIT - not
                 // a guess from the file names. Nothing plays when a screen
-                // opens: the engine has no such slot, and the one this used to
-                // play was the MOVE sound fired at the wrong moment.
+                // opens: the engine has no such slot (the MOVE sound there
+                // would be fired at the wrong moment).
                 sndMove    = loadSlot(openScreen, omk::UiWidgets::kSoundMove);
                 sndConfirm = loadSlot(openScreen, omk::UiWidgets::kSoundConfirm);
                 sndBack    = loadSlot(openScreen, omk::UiWidgets::kSoundBack);
@@ -1199,10 +1193,8 @@ int PlayState::modesShoot() {
             // EDGES. The action button that activates a save point is still
             // held on the frame `ui.open 30` puts the screen up, and without
             // this it is read again as that screen's confirm - so the save
-            // menu opened and descended into the slot list in one press,
-            // which is what a reader met ("when I interact with the save
-            // point I have directly this"). The bits are swallowed until they
-            // are RELEASED.
+            // menu would open and descend into the slot list in one press.
+            // The bits are swallowed until they are RELEASED.
             // ---- THE HINT SHOP'S TWO INPUTS, before anything is pressed ----
             //
             // `sub_4AE120` reads both at BUILD time, and a build happens
@@ -1243,8 +1235,8 @@ int PlayState::modesShoot() {
             // **`Tir`**, and `Action / Utiliser` has moved to slot 8 (0x100).
             // So while the shoot scheme is installed the raw word confirms a
             // menu when you pull the TRIGGER and does nothing when you press
-            // ENTER - which is what a reader hit in the pause screen after
-            // the supermarket cutscene (`todo/omk-play.md` 97f).
+            // ENTER - as in the pause screen after the supermarket cutscene
+            // (`todo/omk-play.md` 97f).
             //
             // Normalised here, at the one boundary the interface reads,
             // rather than in eleven call sites: the group's own
@@ -1278,7 +1270,7 @@ int PlayState::modesShoot() {
             //
             // A RECONSTRUCTION and labelled as one, on the same footing as
             // the shoot arm below: nothing traced says the engine re-maps
-            // anything, and the reader's testimony that ENTER validates
+            // anything, and testimony of the original that ENTER validates
             // outranks a reading that only shows nobody has found the
             // mechanism (`todo/fight-mode.md` 15.9).
             if (fightRun.active) {
@@ -1290,11 +1282,11 @@ int PlayState::modesShoot() {
                 advConfirmWasDown = down;
             }
             if (shootMode) {
-                // ORDER MATTERS, and the first version of this got it wrong:
-                // it OR-ed the confirm in and then AND-ed the same bit back
-                // out on the next line, so `0100` came through as `0100` and
-                // NEITHER the click nor ENTER did anything. Read the action
-                // first, clear the trigger, then set the confirm.
+                // ORDER MATTERS: OR-ing the confirm in and then AND-ing the
+                // same bit back out on the next line lets `0100` come through
+                // as `0100`, and NEITHER the click nor ENTER does anything.
+                // Read the action first, clear the trigger, then set the
+                // confirm.
                 const bool action = (uiBits & 0x100u) != 0;   // slot 8
                 uiBits &= ~0x10u;                             // slot 4: Tir
                 if (action) uiBits |= omk::kUiConfirm;
@@ -1368,9 +1360,9 @@ int PlayState::modesShoot() {
                 // 0x00492AD0), and `UI_TickScreens` visits slot 0 - screen 29 -
                 // before slot 1, so 29 cannot take the same key that frame.
                 // That leaves the menu on the bare `Options` heading until a
-                // second BACK, which the reader played and called broken
-                // (2026-10-01). Their account of the game outranks a reading
-                // that has found no mechanism; the second BACK is sent here.
+                // second BACK, which the original does not need. An account
+                // of the game outranks a reading that has found no
+                // mechanism; the second BACK is sent here.
                 if (!optMenu.focused() && openScreen == omk::screen::StartMenu &&
                     walk->panel() && walk->panel()->addr == omk::kPanelOptionsHost) {
                     walk->press(omk::kUiBack);
@@ -1766,9 +1758,9 @@ int PlayState::modesShoot() {
                     session.requestCamera(0, 0);
                     // `Screen_Fade(0)` is `fade.from_black` - it CLEARS the
                     // load's black at the exit (case 8 calls it every tick of
-                    // H_SLDOUT), not a sixty-frame dip. The dip was the old
-                    // bare placement's, and a reader saw it on the aboard
-                    // path: "a fade effect that shouldn't be here".
+                    // H_SLDOUT), not a sixty-frame dip: the dip belongs only
+                    // to the bare placement, and on the aboard path it is a
+                    // fade that should not be there.
                     if (!arrived) session.startColourFade(4, 0u, 60.0f);
                     // ONLY WHEN THE AREA ACTUALLY CHANGED. Dropping
                     // `playerReady` asks the hand-over gate to build the
@@ -1945,9 +1937,8 @@ int PlayState::modesShoot() {
                 // with whatever it holds, and `Game_HandleEvent` case 5 does
                 // `Var_Set(var, answer)` and writes status 1 regardless. So
                 // leaving IS an answer, -1, and the script resumes with it -
-                // AREA 118's takes that branch as the unseeded opening. This
-                // used to `break` out of the loop, a quit the engine has no
-                // counterpart for.
+                // AREA 118's takes that branch as the unseeded opening. No
+                // `break` out of the loop: the engine has no quit here.
                 std::printf("screen %d closed without an answer -> -1, "
                             "the script resumes\n", openScreen);
                 // A SHOP's close callback is `Ui_CloseShop` (0x004AE7E0):
@@ -2026,10 +2017,9 @@ int PlayState::modesQuitLoad() {
         // the PROGRAM is the start menu's own `Quitter`, a different item on
         // a different screen.
         //
-        // **And so does the port, since 2026-10-05** (`todo/drift-audit.md`
-        // S3 and T1). It ended the run here, because `omk-play`'s boot was not
-        // something that could run twice; `game.restart` (op 152) needed the
-        // same restart and `Session::restart` now serves it - both pools freed,
+        // **And so does the port** (`todo/drift-audit.md` S3 and T1).
+        // `game.restart` (op 152) needs the same restart and
+        // `Session::restart` serves it - both pools freed,
         // `IAM\START`, AREA 118 - while the frontend drops the old world
         // (`Session::restarts()`). This is the SAME flag op 152 writes, so the
         // pause screen's `Oui` and the sneak's quit tab are `requestRestart()`
@@ -2069,8 +2059,7 @@ int PlayState::modesQuitLoad() {
         // gives the Grid sequence time to play: `Charger` answers 0, the
         // script's `var19 == 0` arm flies the cameras and ends, the context
         // frees, and only then does the save land. Serve it any earlier and
-        // the fly-through is replaced by the apartment a frame later, which
-        // is what a first version did.
+        // the fly-through is replaced by the apartment a frame later.
         if (pendingLoadSlot >= 0 && session.bootContext() < 0) {
             const int slotNo = pendingLoadSlot;
             pendingLoadSlot = -1;

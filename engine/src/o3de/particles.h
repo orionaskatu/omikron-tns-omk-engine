@@ -45,18 +45,16 @@
 // emits a STATIONARY particle, which is the engine's own `if (v60 == 0.0)`
 // arm.
 //
-// An earlier version jittered each component of the axis instead. That was
-// wrong about the distribution, and the suspicion that went with it - that
-// `+16` was not really a velocity - was ALSO wrong: it is, and the engine
-// throws `part01` just as far.
+// Jittering each component of the axis instead gets the distribution wrong.
+// And `+16` really is a velocity: the engine throws `part01` just as far.
 //
 // **THE SPRITE IS AN ID, NOT AN INDEX.** `Sfx_TickAmbient` resolves an
 // effect's `+8` through the SCENE - `sub_4A5800(scene + 8, sprite)` then
 // `sub_4A5B60` - against the 36-byte registry rows whose `+32` carries the id.
 // GRID registers ids 9..12 and its effects name exactly those; indexing the
-// twenty `aventure.scx` holds instead swapped IMPACT1 with IMPACT2 and turned
-// `burn`'s blue smoke into a muzzle flash, which is what made the portal come
-// out fire-orange.
+// twenty `aventure.scx` holds instead swaps IMPACT1 with IMPACT2 and turns
+// `burn`'s blue smoke into a muzzle flash, and the portal comes out
+// fire-orange.
 //
 // **AND A PARTICLE HAS A COLOUR.** Section C `+48` is its colour at birth and
 // `+52` its colour at death, packed `0x00RRGGBB`; `Sfx_TickAmbient` compares
@@ -65,7 +63,7 @@
 // impact sprite modulated by `0x2125AF`, and no reading of the texture alone
 // could have got there.
 //
-// The same block settles two more numbers this file used to guess:
+// The same block settles two more numbers:
 //
 //   * the instance's scale starts at the effect's `+56` (`u32i(v17, 6)` and
 //     `+28`), NOT at 1.0, and the `+-scale/life` ramp is applied only under
@@ -239,8 +237,7 @@ struct SpriteFrames {
     // starts those at 1.0. The shipped sprites are 24.61, 34.45, 196.85 or
     // 275.59 - which are 62.5, 87.5, 500 and 700 cm in the inch unit - so a
     // particle is metres across, not units. Taking the effect's `scale` field
-    // as the half-extent instead makes every particle ~75x too small, which is
-    // what a first version did.
+    // as the half-extent instead makes every particle ~75x too small.
     std::vector<float> extent;
     int material = 0;
 };
@@ -285,8 +282,8 @@ using SpriteLookup = std::function<const SpriteFrames*(int)>;
 // space and submits it only when `depth > near && depth < far` - the
 // camera's near plane (`flt_6A2BBC`, camera `+0x144`) and the clip distance
 // (`dword_6A2B9C`, the visible-set radius and the fog's end). No side
-// planes. Every particle used to become a quad here whatever its depth -
-// work and overdraw the original never did. `nearZ` / `farZ` default to no
+// planes. Without it every particle becomes a quad whatever its depth -
+// work and overdraw the original never does. `nearZ` / `farZ` default to no
 // gate.
 void particleGeometry(Geometry& g, const ParticleField& f, const float eye[3],
                       const float at[3], const SpriteLookup& sprites,

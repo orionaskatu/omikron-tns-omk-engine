@@ -105,7 +105,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// ONE FILE READ IN THE BACKGROUND (2026-09-23). A caller that knows it will
+// ONE FILE READ IN THE BACKGROUND. A caller that knows it will
 // soon need a file starts its read here and carries on; `take` hands the bytes
 // over, waiting for the rest of the read if it is still going. The bytes are
 // `DataFs::readPath`'s, so what is read never differs - only WHEN.
@@ -138,7 +138,7 @@ private:
     std::shared_ptr<State> state_;
 };
 
-// ONE PIECE OF WORK IN THE BACKGROUND (2026-09-30) - `FileFetch`'s shape for
+// ONE PIECE OF WORK IN THE BACKGROUND - `FileFetch`'s shape for
 // work that is more than a read: `work` starts at once on a thread of its own
 // and `wait` returns when it has finished. It is for a LOAD the frame can run
 // on without - a set's file read and built while the game's own load state

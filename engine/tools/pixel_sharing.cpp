@@ -3,10 +3,10 @@
 //
 //     pixel_sharing <set.3DO> <set.3DT>
 //
-// `Texture::rgb` became a `PixelBuffer` (formats/tex3dt.h, todo/optimization.md
-// step 6) so that the several lists holding a texture stop holding its pixels
-// several times. It is held to behaving as the `std::vector` it replaced did,
-// as a VALUE: a copy reads the same bytes, and writing into one copy changes no
+// `Texture::rgb` is a `PixelBuffer` (formats/tex3dt.h, todo/optimization.md
+// step 6) so that the several lists holding a texture do not hold its pixels
+// several times. It is held to behaving as a `std::vector` would, as a
+// VALUE: a copy reads the same bytes, and writing into one copy changes no
 // other. This pins both halves, on synthetic buffers and on a real decoded set:
 //
 //   * a copy shares the storage (the memory saving) and reads identical bytes;

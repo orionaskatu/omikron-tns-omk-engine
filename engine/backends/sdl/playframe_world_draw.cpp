@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE WORLD DRAWN: the particles, the visible set, the lights, the shadows, the mirror and the present pass.
-// Parts of `PlayState::phaseWorld`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // -> true when the sphere is wholly outside one side plane
@@ -293,10 +293,9 @@ void PlayState::worldDrawLists() {
     // ends a few buildings away.
     //
     // ...and then the four SIDE planes, built from the same global at
-    // `25_sys.c` 11598 (`outsideView`, above the staged bodies). They
-    // were left out until 2026-09-30 because a wrong plane sign
-    // deletes the world silently; what guards that now is the test
-    // that a correct cull leaves the frame byte-identical
+    // `25_sys.c` 11598 (`outsideView`, above the staged bodies). A
+    // wrong plane sign deletes the world silently; what guards that
+    // is the test that a correct cull leaves the frame byte-identical
     // (`OMK_NO_SIDECULL=1` for the other side of it).
     const float clipReach = static_cast<float>(clipInches);
     std::size_t runsDrawn = 0, runsCulled = 0, movingDrawn = 0, movingCulled = 0;
@@ -453,7 +452,7 @@ void PlayState::worldDrawLists() {
         clipReport = false;
     }
     // A FRAME WHERE THE SET IS CULLED AND THE BODIES ARE NOT draws a
-    // character on black, which is what a reader sees as a flicker:
+    // character on black, which is what a player sees as a flicker:
     // the visible-set walk above tests every mesh against the clip
     // distance FROM THE CAMERA EYE, and a staged body is added below
     // with no such test. One line a frame, so a run can be read for
@@ -495,13 +494,11 @@ void PlayState::worldDrawLists() {
     // PSH_FN's vertices are 255,255,255), so there is no baked light
     // in them to lose.
     //
-    // `2` ADDED to the baked colour, and that WAS this port's decision for
-    // the bodies it believed the engine never lights - HO1_FN carries real
-    // baked shading, and black-plus-lamps threw it away. Corrected
-    // 2026-10-06 (todo/drift-audit.md L1): `Actor_LoadModel` calls
+    // `2` ADDS to the baked colour, for bodies the engine does not light;
+    // it is not used here (todo/drift-audit.md L1): `Actor_LoadModel` calls
     // `LightObject` and `sub_440CA0` lights every character exactly as it
     // lights a walker, from the scene's `+416`, so a character takes `1`
-    // like the crowd, and `1` now starts from that grey (`View::litBase`)
+    // like the crowd, and `1` starts from that grey (`View::litBase`)
     // rather than from black. Mode `2` stays in the shaders, unused here.
     const int litCrowd  = litPerPixel ? 1 : 0;
     const int litStaged = litPerPixel ? 1 : 0;
@@ -1107,16 +1104,12 @@ void PlayState::worldMirror() {
     auto& comp = *comp_;
     auto& session = *session_;
     omk::Renderer& world = *world_;
-    // ---- AND THE MIRROR, which until now only `--scene` ever got.
+    // ---- AND THE MIRROR, in adventure mode and every cutscene as in
+    // `--scene` - which is where a player meets one.
     //
-    // `drawWithMirror` has been on the renderer boundary since
-    // 2026-09-01 and the free-fly viewer was its only caller, so a
-    // mirror reflected there and was a flat blended pane in adventure
-    // mode and in every cutscene - which is where a player meets one.
-    // A reader: *the mirror in the chamber is displayed with
-    // transparency instead of reflecting.* The plane was already
-    // being read per set (`w.mirror`) and used for nothing but a word
-    // in a log line.
+    // `drawWithMirror` is on the renderer boundary; without this call a
+    // mirror draws as a flat blended pane instead of reflecting. The
+    // plane is read per set (`w.mirror`).
     //
     // The engine keeps a SINGLE global (`dword_534F48`), so at most
     // one mirror is live at a time; the shown slot's is the one.
@@ -1186,7 +1179,7 @@ void PlayState::worldMirror() {
         static const bool noGpuPresent = std::getenv("OMK_NO_GPU_PRESENT") != nullptr;
         const bool lastDumped = !dump.empty() && frames && n + 1 >= frames;
         // THE GLES WINDOW TAKES THE SAME PATH (`todo/vita-port.md` G6
-        // step 1, 2026-09-18). A console log put 90 of a cutscene
+        // step 1). A console log put 90 of a cutscene
         // frame's 106 ms in exactly the round trip this skips -
         // glReadPixels 36, the 888 -> 565 dither 35, the upload 16 -
         // against 9 ms for the game itself. `GlesRenderer::presentWorld`
@@ -1227,11 +1220,10 @@ void PlayState::worldMirror() {
         // run on the overlay's planes. SOFT, and therefore after every
         // hard gate: a soft gate that answered first would hide a dump.
         // ...and the FIGHT HUD, under the same test that draws it: the
-        // gauges go into `fb` every melee frame outside a KO replay. It
-        // was missing from this list, so on the Vulkan window the gauges
-        // showed only while another gate (the fight's opening fade) held
-        // the frame on the CPU - a reader: *"The health disappear after
-        // some time (only the stats should disappear)"*.
+        // gauges go into `fb` every melee frame outside a KO replay.
+        // Without it in this list, the Vulkan window shows the gauges only
+        // while another gate (the fight's opening fade) holds the frame on
+        // the CPU, and the health disappears after a while.
         // ...and the CITY WEATHER: its streaks and flakes go into `fb` over the
         // picture, opaque, without reading it
         else if (!weatherLines.empty() || !weatherFlakes.empty()) { keep = "weather"; softGate = true; }

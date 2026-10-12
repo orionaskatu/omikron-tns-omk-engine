@@ -65,12 +65,12 @@
 // row's +36 countdown) is not played. And a link the caller cannot resolve
 // leaves the record ABSOLUTE - a labelled fallback, not the engine's answer.
 //
-// **A type-1 link to a ONE-RECORD row is undefined in the engine** (2026-09-05):
+// **A type-1 link to a ONE-RECORD row is undefined in the engine**:
 // `sub_450940` zeroes such a row's heading and then falls through (`cmp
 // [eax+8], 1 / jg`, no return) to compute it from the record past its only
 // one - the next block's header - so the frame the linked records land in is
 // stack garbage. Impasse's two `ttt` star rings hang on row 2 that way, and
-// the reader's frames of the original show none of them; GRID's ring hangs
+// frames of the original taken in play show none of them; GRID's ring hangs
 // on a two-record row and the capture shows it. `tick` draws no ring on an
 // undefined anchor - a reconstruction settled by the capture (`verify.py:
 // engine linked rings`). `OMK_SKIP_EFFECT=n` is a diagnostic that leaves

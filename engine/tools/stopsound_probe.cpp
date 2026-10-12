@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // `Script_StopSound` (0x004A16D0) - the counterpart `Script_PlaySound` never
-// had. 86 sites across 61 scenes started audio the port could not silence,
-// which is a reader's "audio not stopping" (omk-play 71).
+// had. 86 sites across 61 scenes start audio that nothing else silences
+// (omk-play 71).
 //
 // The tunnel between Anekbah and Qalisar carries the shipped pair and is the
 // clearest example in the game: `Tunnel01.SCX` object 10 is `AmbianceSound`

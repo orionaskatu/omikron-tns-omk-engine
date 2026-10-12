@@ -144,12 +144,11 @@ void PlayState::vrAfterWorldCamera() {
     if (!vr.on) return;
     // A PANEL WITH A 3D VIEWPORT ITEM - the videophone's caller - renders the
     // world into its rectangle through the GAME's camera, read back and
-    // composed into the panel (`playframe_world_draw.cpp`). The eyes took that
-    // frame over and the rectangle stayed black (the Quest, Telis's call in
-    // the restaurant, 2026-10-07). So the game's view is KEPT here, before
-    // the eyes rewrite it, and `vrWorldDraw` draws it once more after them -
-    // a flat MONITOR, as a videophone is ("this is a visio so it is correct
-    // if the image is flat. But I'd rather keep the shaded world").
+    // composed into the panel (`playframe_world_draw.cpp`). The eyes take that
+    // frame over, so without this the rectangle stays black (Telis's call in
+    // the restaurant shows it). So the game's view is KEPT here, before the
+    // eyes rewrite it, and `vrWorldDraw` draws it once more after them - a
+    // flat MONITOR, as a videophone is, with the shaded world around it.
     vr.monitor = vpItem != nullptr;
     if (vr.monitor) vr.monitorView = view;
     omk::vr::HeadPose raw;
@@ -184,7 +183,7 @@ void PlayState::vrAfterWorldCamera() {
     }
     if (!raw.valid) return;
 #if OMK_OPENXR
-    // THE PANEL PLACED WHERE THE HEAD LOOKS (step 6b): when a screen opens
+    // THE PANEL PLACED WHERE THE HEAD LOOKS: when a screen opens
     // and when a conversation starts - fixed in the world until the next
     {
         const bool dlg = session_->dialogOpen();
@@ -208,7 +207,7 @@ void PlayState::vrAfterWorldCamera() {
     else if (vr.adventureFirst && adventure && player && playerReady && !playerProgram &&
              !boarded && !leaving && !session_->dialogOpen())
         kind = VrKind::FirstPerson;
-    // UNDER A SCREEN the kind is the one it opened over (step 6b): the world
+    // UNDER A SCREEN the kind is the one it opened over: the world
     // drawn behind the sneak must not switch first person to the authored
     // camera, and recentre, because the screen took `adventure` away
     if (openScreen >= 0 && vr.haveKind) kind = vr.kind;
@@ -237,7 +236,7 @@ void PlayState::vrAfterWorldCamera() {
             for (int k : st.keyboard) if (k == dik) return true;
             return false;
         };
-        // ...and the RIGHT STICK pushed sideways past 600 (the Quest, 2026-10-07)
+        // ...and the RIGHT STICK pushed sideways past 600 (a Touch controller)
         const bool l = down(0x4F) || host.pad.rx < -600, r = down(0x51) || host.pad.rx > 600;
         if ((l || r) && !vr.snapHeld) {
             const float a = (r ? 30.0f : -30.0f) * kDegToRad;
@@ -374,9 +373,8 @@ void PlayState::vrAfterWorldCamera() {
 
 bool PlayState::vrHidesPlayer() const { return vr.on && vr.hidePlayer; }
 
-// THE WORLD BEHIND A SCREEN THAT HIDES IT (step 6b, the reader's request,
-// 2026-10-07: "a small shade filter on the background when a ui is open").
-// The original turns the 3D view off behind every screen but three
+// THE WORLD BEHIND A SCREEN THAT HIDES IT, drawn SHADED - a choice for the
+// headset, not the original's behaviour. The original turns the 3D view off behind every screen but three
 // (`UI_LoadScreen`'s `sub_466B30`, `playframe_world.cpp`); in a headset
 // that leaves the window in a void. A HEADSET build - the frontend pacing,
 // not the desktop's fake one - draws it on, darkened to `--vr-shade`. Only
@@ -404,9 +402,8 @@ bool PlayState::vrDrawsBehindScreen(bool screenKeepsWorld) {
 void PlayState::vrAdventureInput(std::uint32_t& word) {
     // NOT WHILE A SCREEN IS UP: `vr.kind` is the last WORLD frame's, and the
     // world camera does not run under a screen, so the sneak opened from first
-    // person still read as first person - and every stick push reached its
-    // rows as `Avancer`, "up", while turning him (the Quest, 2026-10-07: "stick
-    // input was not recognized" in the sneak, confirm was)
+    // person would still read as first person - and every stick push would
+    // reach its rows as `Avancer`, "up", while turning him
     if (openScreen >= 0) return;
     if (vr.on && vr.kind == VrKind::Shoot && player) { vrShootAim(word); return; }
     if (!vr.on || !adventure || vr.kind != VrKind::FirstPerson || !vr.haveHeadFwd || !player) return;
@@ -435,12 +432,11 @@ void PlayState::vrAdventureInput(std::uint32_t& word) {
         return;
     }
     // HE FACES WHERE THE STICK POINTS AND WALKS: the facing set outright, as
-    // the controller sets it in shoot mode (`vrShootAim`), and `Avancer`. It
-    // replaced turning his body toward the direction with the tank controls'
-    // own `Tourner` bits and walking only within 70 degrees of it (step 2),
-    // which on the Quest (2026-10-07) walked forward, turned on the spot
-    // before any sideways step, and never went backward: at 180 degrees the
-    // turn's sign flipped from frame to frame.
+    // the controller sets it in shoot mode (`vrShootAim`), and `Avancer`. Not
+    // the tank controls' own `Tourner` bits with a walk only within 70 degrees
+    // of the direction: that turns on the spot before any sideways step and
+    // never goes backward, since at 180 degrees the turn's sign flips from
+    // frame to frame.
     float hr[3];
     rightOf(vr.headFwd, hr);
     float want[3] = {vr.headFwd[0] * y + hr[0] * x, 0.0f, vr.headFwd[2] * y + hr[2] * x};
@@ -457,7 +453,7 @@ void PlayState::vrAdventureInput(std::uint32_t& word) {
 #endif  // OMK_VR
 
 #if OMK_VR
-// SHOOT MODE AIMS WITH THE CONTROLLER (§3b 8, step 3). The engine aims the
+// SHOOT MODE AIMS WITH THE CONTROLLER (`todo/quest-port.md` §3b 8). The engine aims the
 // player's shot along his FACING and the look PITCH (`rs.yawDeg = facing`,
 // `rs.pitchDeg = shootPitch` where `Actor_TickProjectiles` fires), and the arm
 // follows the same two (`shootAimSlew`: yaw toward 0 - the body turns with the
@@ -471,10 +467,9 @@ void PlayState::vrAdventureInput(std::uint32_t& word) {
 // (the snap turn) and the head looks freely. Pitch is held to the mouse's own
 // +-45 (`actor/shootmove.h`), the range the arm's keys are authored over.
 void PlayState::vrShootAim(std::uint32_t& word) {
-    // THE STICK'S SIDEWAYS PUSH STRAFES (the reader, 2026-10-07: "the stick
-    // should also make lateral steps, not just going forward"). `Input_Poll`
-    // hardwires the stick's x to *Tirer*'s `Tourner` bits 1 / 2, and the
-    // controller already aims, so they were simply dropped; they become the
+    // THE STICK'S SIDEWAYS PUSH STRAFES. `Input_Poll` hardwires the stick's x
+    // to *Tirer*'s `Tourner` bits 1 / 2, and the controller already aims, so
+    // the turn has no use here; they become the
     // group's own `Glisser a gauche / droite`, bits 0x400 / 0x800, which the
     // `.CTL` channel queues as MDDG / MDDD - the side steps the arrows give a
     // keyboard player (actor/shootmove.h)

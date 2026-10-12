@@ -78,7 +78,7 @@ void redirect(int fd, std::FILE* stream, const std::string& path, int prio) {
     pthread_detach(t);
 }
 
-// THE RAW INPUT LOG (step 4's controller question, 2026-10-07): every input
+// THE RAW INPUT LOG: every input
 // event SDL delivers, one line each, before the game reads any of it - what a
 // Quest controller arrives as in a 2D panel is a measurement, not a guess.
 // The first 600 events of a run; `[in]` in the log.
@@ -164,17 +164,16 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int, char**) {
     Run run;
     run.args = {"omk-play", home + "/gamedata", home + "/tables",
                 "--saves", home + "/saves/GAMES", "--res", "1280x720",
-                // THE HEADSET'S ENHANCEMENTS (the reader, 2026-10-07: "choose
-                // only enhancement you find useful on VR"): what fights the
+                // THE HEADSET'S ENHANCEMENTS, chosen for VR: what fights the
                 // aliasing that CRAWLS as the head moves - 4x MSAA, trilinear
                 // with 16x anisotropy - and a smooth interface on the quad.
                 // Not the costly ones: per-pixel light, mapped shadows and the
                 // unlimited draw distance took the game thread from ~6 to
                 // ~13.6 ms of a 13.9 ms frame on a Quest 2. args.txt still wins.
                 // NOT `--ui-scaling linear`: over the eyes the interface is
-                // drawn over the KEY (step 6a), and a filtered edge mixed the
-                // text with it - "texts have pink border" (the reader,
-                // 2026-10-07). Unfiltered, an edge pixel is the text or the key.
+                // drawn over the KEY, and a filtered edge mixes the text with
+                // it - a pink border round the letters. Unfiltered, an edge
+                // pixel is the text or the key.
                 "--aa", "4", "--filter", "trilinear", "--anisotropy", "16",
                 "--text-scaling", "fit"};
     const std::string ini = home + "/omk.ini";

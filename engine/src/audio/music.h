@@ -10,15 +10,14 @@
 // So WHICH track and WHETHER it loops are the script's decisions, and the
 // streaming that honours them is the engine's. `PORTING` A2 puts that split
 // here rather than in a backend: the frontend is a device and must not be
-// deciding when a track restarts. An earlier version had the SDL file topping
-// the queue up when it ran low, which produced the right sound and put a
-// script's decision in the one place nothing can check it.
+// deciding when a track restarts. A frontend topping the queue up when it
+// ran low would produce the right sound and put a script's decision in the
+// one place nothing can check it.
 //
-// **The decode is streamed** (since 2026-09-21/23; this paragraph said the
-// opposite until 2026-10-10): `Audio_SetStreamMode` selects a buffer size
+// **The decode is streamed**: `Audio_SetStreamMode` selects a buffer size
 // through `music.play`'s field 2 and the original reads the file as it goes,
 // and so does this - the file kept open, read a window at a time and decoded
-// forward as `pull` asks (the members below have the history).
+// forward as `pull` asks (the members below say why).
 #pragma once
 
 #include "formats/adpcm.h"
@@ -60,21 +59,19 @@ private:
     int    rate_;
     int    track_ = -1;
     bool   loop_ = false;
-    // THE TRACK AS THE FILE'S OWN BYTES, decoded as it plays (2026-09-21). It
-    // was first resampled whole to the device's rate as floats (64 MB for a
-    // three-minute track), then kept as the decoder's 16-bit stereo (16 MB,
-    // todo/optimization.md step 5) - and that 16 MB, asked for in ONE piece
-    // while a city loads, is what a Vita's heap refused with 106 MB free. A
-    // stereo stream is a byte a frame with no header, so the 4 MB of ADPCM is
+    // THE TRACK AS THE FILE'S OWN BYTES, decoded as it plays. Resampled whole
+    // to the device's rate as floats a three-minute track is 64 MB, and as
+    // the decoder's 16-bit stereo 16 MB (todo/optimization.md step 5) - and
+    // 16 MB asked for in ONE piece while a city loads is what a Vita's heap
+    // refuses with 106 MB free. A stereo stream is a byte a frame with no header, so the 4 MB of ADPCM is
     // kept instead and `pull` decodes forward to the frame the same nearest
     // index (`size_t(i * step)`) names; a loop restarts the decoder. The
     // samples that leave are the ones that left before
     // (`verify.py: engine: music storage`).
     //
-    // AND READ AS IT PLAYS (2026-09-23): the 4 MB were still read in ONE call
-    // when the script switched tracks, and a console's memory card took 700 to
-    // 870 ms over it - a single frame, twice on the walk into Anekbah. The file
-    // stays open and `pull` reads the WINDOW holding the byte it needs next,
+    // AND READ AS IT PLAYS: read in ONE call when the script switches tracks,
+    // the 4 MB take a console's memory card 700 to 870 ms - a single frame,
+    // twice on the walk into Anekbah. So the file stays open and `pull` reads the WINDOW holding the byte it needs next,
     // `kWindow` bytes (1.5 s of music) at a time; the bytes are the same.
     struct FileClose { void operator()(std::FILE* f) const { if (f) std::fclose(f); } };
     static constexpr std::size_t kWindow = 32 * 1024;

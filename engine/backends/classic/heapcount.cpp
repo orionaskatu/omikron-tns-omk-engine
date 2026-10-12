@@ -2,10 +2,9 @@
 // The memory budget's counters - see heapcount.h.
 //
 // The C++ blocks are counted by the PROFILER's own `operator new` / `delete`
-// (`platform/profile.cpp`, todo/debug-tools.md step 4), which this file had
-// first (2026-10-04) and gave up when the profiler took them for every build:
-// one counter, with categories, instead of two. This keeps what is Mac OS 9's
-// own - the partition, FreeMem and MaxBlock. A release build
+// (`platform/profile.cpp`, todo/debug-tools.md step 4), which hold them for
+// every build: one counter, with categories, not two. This keeps what is Mac
+// OS 9's own - the partition, FreeMem and MaxBlock. A release build
 // (`OMK_PROFILE=0`) counts nothing, and says so.
 #include "heapcount.h"
 

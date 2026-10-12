@@ -4,7 +4,7 @@
 //
 // A `DialogCamera` names an eye and an aim, and every camera of a line aims at
 // the speaker. So the speaker is where those rays CONVERGE, and the repo's own
-// `/dialog` viewer has staged conversations that way since 2026-08-27
+// `/dialog` viewer stages conversations that way
 // (`tools/omkdata.speaker_positions`): a least-squares closest point to the
 // line cameras' rays, then dropped onto the walkable floor beneath it.
 //

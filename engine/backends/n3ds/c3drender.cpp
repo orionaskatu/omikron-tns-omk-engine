@@ -65,7 +65,7 @@ inline GpuVert gpuVert(const Corner& c) {
 // draw is recorded - so its corners go through this ring, one pass's worth.
 constexpr std::size_t kRingCorners = 96 * 1024;        // 2.6 MB
 
-// THE VERTEX INDEX (3ds-port.md step 6, 2026-10-07) - the original's own
+// THE VERTEX INDEX (`todo/3ds-port.md` step 6) - the original's own
 // arrangement: `Scene_Load3DO` keeps the file's vertices and its faces INDEX
 // them, and `sub_4947F0` transforms each unique vertex ONCE into a shared
 // pool (todo/ram-vs-original.md, cpu-vs-original.md). The port's geometry is
@@ -248,7 +248,7 @@ public:
         // `sdmc:/omk/c3d-sync` is on the card - an instrument, to lay the
         // synchronous present beside the pipelined one on the console
         if (std::FILE* f = std::fopen("sdmc:/omk/c3d-sync", "r")) { std::fclose(f); syncPresent_ = true; }
-        // THE VERTEX INDEX (step 6), unless `sdmc:/omk/c3d-arrays` is on the
+        // THE VERTEX INDEX (`todo/3ds-port.md` step 6), unless `sdmc:/omk/c3d-arrays` is on the
         // card - an instrument, every draw from the corners as before
         if (std::FILE* f = std::fopen("sdmc:/omk/c3d-arrays", "r")) { std::fclose(f); noIndex_ = true; }
         // THE TEXTURES IN VRAM (step 6.3) unless `sdmc:/omk/c3d-texlinear`;
@@ -283,7 +283,7 @@ public:
             std::printf("c3d: no %dx%d render target (VRAM)\n", w, h);
             return false;
         }
-        // STEREOSCOPIC 3D (step 8, `c3dstereo.h`): both eyes stacked in a
+        // STEREOSCOPIC 3D (`c3dstereo.h`): both eyes stacked in a
         // target half the frame's width - made here, before the textures
         // fill the VRAM - only when the card asks for it
         if (stTarget_) { C3D_RenderTargetDelete(stTarget_); stTarget_ = nullptr; }
@@ -405,7 +405,7 @@ public:
 
         // WAITS FOR THE GPU'S LAST PASS (the whole queue: its draws and the
         // transfer that ended it), not for a VBlank - so THIS is where a GPU
-        // slower than the CPU shows, and nowhere else (2026-10-06)
+        // slower than the CPU shows, and nowhere else
         const u64 fb0 = svcGetSystemTick();
         C3D_FrameBegin(0);
         rep_.frameWaitTicks += svcGetSystemTick() - fb0;
@@ -421,8 +421,8 @@ public:
         // the clip distance is what the fog fades into (View::clearColour) -
         // in the TARGET's format: citro3d hands the value to GX_MemoryFill
         // unconverted and a 16-bit fill keeps the low half, so 0x000000FF on
-        // the RGB565 target was 0x00FF, a saturated blue in every pixel
-        // nothing draws (the reader's run E, 2026-10-07)
+        // the RGB565 target would be 0x00FF, a saturated blue in every pixel
+        // nothing draws
         const unsigned cr = v.clearColour[0], cg = v.clearColour[1], cb = v.clearColour[2];
         // the eyes this pass, or none: the slider at 0 draws mono
         const float depth = stTarget_ ? stereoCard_.depth() : 0.0f;
@@ -617,10 +617,10 @@ public:
             // this picture and the mirror differences two passes of ONE
             // frame (`drawWithMirror`). OUT of the frame, because INSIDE it
             // `C3D_SyncDisplayTransfer` only QUEUES the transfer and returns
-            // (citro3d 1.7.1, renderqueue.c) - this read the buffer before
-            // the GPU had written it, which Azahar, finishing every command
-            // as it is queued, never showed (the seventh console run,
-            // 2026-10-06). Out of it, the call waits for the queue - the
+            // (citro3d 1.7.1, renderqueue.c) - a read inside it would see
+            // the buffer before the GPU had written it, which Azahar,
+            // finishing every command as it is queued, never shows; only the
+            // console does. Out of it, the call waits for the queue - the
             // pass's draws - then for the transfer itself.
             closeFrame();
             const u64 w0 = svcGetSystemTick();
@@ -661,9 +661,9 @@ public:
         }
         GSPGPU_InvalidateDataCache(read_, static_cast<u32>(tw_) * th_ * 4);
         // A pixel is a word 0xRRGGBBAA, and the transfer hands the rows
-        // TOP-DOWN already (the first Azahar frame, 2026-10-06, read them
-        // bottom-up and came out upside down, everything else right). Into
-        // the frame dithered as the reference is.
+        // TOP-DOWN already (read bottom-up, the picture comes out upside
+        // down, everything else right). Into the frame dithered as the
+        // reference is.
         if (rgb565_) {
             const auto* in = reinterpret_cast<const std::uint16_t*>(read_);
             for (int y = 0; y < h_; ++y)
@@ -691,8 +691,8 @@ public:
     bool presentHalf(int vy, int vh, Surface* screen, std::uint16_t* dst, std::uint16_t* dstR = nullptr) {
         if (dst && !direct_) return false;             // before any work: the caller goes the other way
         if (stereo_) return presentStereo(vy, vh, screen, dst, dstR);
-        // A FRAME THE SCREEN'S OWN SIZE (`--res 400x224` in args.txt, the
-        // GPU-fill experiment of 2026-10-06: a quarter of the pixels to fill,
+        // A FRAME THE SCREEN'S OWN SIZE (`--res 400x224` in args.txt, a
+        // GPU-fill instrument: a quarter of the pixels to fill,
         // and no 2x2 average - so no anti-aliasing either) goes over 1:1;
         // anything larger is halved by the transfer, as the default 800x448.
         const bool one = w_ <= 400 && h_ <= 240;
@@ -705,8 +705,8 @@ public:
                 if (!b) return false;
             }
         noteCmdBuf();
-        // ONE FRAME BEHIND (the reader's decision, 2026-10-06: "a 1 frame
-        // delay is acceptable for this kind of game"). This pass's transfer
+        // ONE FRAME BEHIND (a one-frame delay accepted for this game,
+        // `todo/handoff-3ds-port.md`). This pass's transfer
         // is QUEUED into one buffer and the CPU shows the OTHER, which the
         // last pass's transfer filled - finished, since this pass's
         // `C3D_FrameBegin` waited for the whole queue. So the GPU draws frame
@@ -720,8 +720,8 @@ public:
         const int wr = halfCur_;
         const bool piped = !syncPresent_ && lastHalfPass_ == pass_ - 1 && !lastHalfStereo_;
         // the OUTPUT dimensions are given as the input's: with SCALE_XY the
-        // transfer halves what it is told (Azahar, 2026-10-06 - told the
-        // halved size, it wrote a quarter-size picture, 200x112)
+        // transfer halves what it is told (told the halved size, it writes
+        // a quarter-size picture, 200x112 - measured in Azahar)
         const u32 flags = GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                           transferFormats() | GX_TRANSFER_SCALING(one ? GX_TRANSFER_SCALE_NO : GX_TRANSFER_SCALE_XY);
         if (piped) {
@@ -820,7 +820,7 @@ public:
         return true;
     }
 
-    // THE STEREO PRESENT (step 8): the eyes' target transferred whole and
+    // THE STEREO PRESENT (`c3dstereo.h`): the eyes' target transferred whole and
     // unscaled (each eye is the screen's own size already), one frame behind
     // as the mono present is, then each eye dithered straight into its own
     // framebuffer (`presentDirect`, 6.4). Without a right framebuffer, or on
@@ -956,7 +956,7 @@ private:
                        : (GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
     }
 
-    // ---- THE EYES (step 8) ----------------------------------------------------
+    // ---- THE EYES (`c3dstereo.h`) ---------------------------------------------
     // An eye's view-projection (row 0 off-axis, `c3dstereo.h`) and viewport:
     // the left eye in the target's top half, the right in its bottom half,
     // each picture at the top-left of its half as the mono one is.
@@ -1289,7 +1289,7 @@ private:
     // `quantise888Dither` (`verify.py: engine: pixel tables`), and NOT that
     // function a pixel: `quantise888` divides by 255 per channel, and with no
     // divide instruction three per pixel cost the straight present ~15 ms a
-    // frame (Azahar, 2026-10-06). The word byte-swapped is the RGBA byte
+    // frame (measured in Azahar). The word byte-swapped is the RGBA byte
     // order the row function reads (`REV`, one instruction). `x0` is the
     // row's first pixel's column on the output, where the dither cell is.
     void toRgb565Row(const std::uint32_t* in, int n, int x0, int y, std::uint16_t* out) {
@@ -1377,9 +1377,9 @@ private:
     // false) or every corner (`all`: a revision that names none) - and
     // refused (false: re-index whole) when two corners on one vertex would
     // disagree - two changed ones with different values, or a changed one
-    // moving a vertex an unchanged corner still reads. A whole rewrite used
-    // to re-index from scratch, 172 ms on the console a time (the reader's
-    // run of 2026-10-07): the index holds as long as the corners agree.
+    // moving a vertex an unchanged corner still reads. Re-indexing a whole
+    // rewrite from scratch costs 172 ms on the console a time; this way the
+    // index holds as long as the corners agree.
     bool patchIndexed(const Geometry& g, Res& r, bool all) {
         const auto& dc = g.dirtyCorners;
         if (markC_.size() < r.n) markC_.resize(r.n, 0);
@@ -1543,7 +1543,7 @@ private:
         long gpu0 = 0, cpu0 = 0;
         long calls = 0, indexed = 0;    // GPU draw calls, and of them indexed
         long overlays = 0, overlayRows = 0;   // interface frames by the GPU (6.7), rows sent
-        long stereoPasses = 0;                // passes drawn for two eyes (step 8)
+        long stereoPasses = 0;                // passes drawn for two eyes (stereo 3D)
         u64 overlayTicks = 0;
     };
     void noteCmdBuf() { rep_.cmdMax = std::max(rep_.cmdMax, C3D_GetCmdBufUsage()); }
@@ -1745,9 +1745,9 @@ private:
                    bool tryVram, bool& onVram) {
         // what `C3D_TexInit` accepts - a power of two from 8 to 1024 a side -
         // refused BEFORE `tile()`, whose 8x8 layout writes past a buffer of
-        // `w * h` for any side that is not a multiple of 8 (the code audit of
-        // 2026-10-07). Every shipped texture is such a size; another one was
-        // refused by the init after the overflow, so nothing drawn changes.
+        // `w * h` for any side that is not a multiple of 8. Every shipped
+        // texture is such a size; another one would be refused by the init
+        // anyway, so refusing it first changes nothing drawn.
         const auto pow2 = [](int v) { return v >= 8 && v <= 1024 && !(v & (v - 1)); };
         if (!pow2(w) || !pow2(h)) return false;
         std::uint16_t pal[256];
@@ -1951,7 +1951,7 @@ private:
     std::vector<int> bandRows_, bandRowsFor_[2];
     int bandsCur_ = 0;
     long bandsPass_ = -10;
-    // stereoscopic 3D (step 8)
+    // stereoscopic 3D (`c3dstereo.h`)
     n3ds::StereoCard stereoCard_;
     C3D_RenderTarget* stTarget_ = nullptr;
     bool stereo_ = false;                 // this pass draws two eyes
@@ -1963,8 +1963,8 @@ private:
     std::uint8_t q5_[17][256] = {}, q6_[17][256] = {};   // its tables: cells 0..15, 16 undithered
     std::vector<std::uint16_t> tiled_;  // a texture's tiled texels, staged
     std::vector<std::uint8_t> scaledIdx_;   // a texture's indices at the card's size
-    // THE ORIGINAL'S TEXTURE SIZE RULE (`o3de/texscale.h`; the reader, 2026-10-11:
-    // "3DS has 6MB VRam and the New3DS has 10MB VRam"), decided once at the
+    // THE ORIGINAL'S TEXTURE SIZE RULE (`o3de/texscale.h`; the 3DS has 6 MB
+    // of VRAM and the New 3DS 10 MB), decided once at the
     // first pool from the VRAM the render targets left (`vramSpaceFree`): the
     // need is 63 x 128 KB of 16-bit textures, as on the 4 MB card the game
     // was specified for. Textures past what VRAM holds go to linear memory,

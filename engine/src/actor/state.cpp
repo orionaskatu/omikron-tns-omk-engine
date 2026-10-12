@@ -206,7 +206,7 @@ bool ActorRuntime::fightEnd(bool winner) {
     // which ends `dword_910834[328*i] = 1`. So the PLAYER leaves every fight in
     // 1: the loser's 0 does not survive the call that wrote it
     // (`todo/fight-mode.md` 15.12). The opponent gets no bank reload and keeps
-    // his 0. Until 2026-09-17 this stopped after the first write.
+    // his 0.
     const bool ok = setState(winner ? ActorState::Normal : ActorState::Inert,
                              "sub_445AC0");
     if (ok && isPlayer_) setState(ActorState::Normal, "Actor_LoadBankList");

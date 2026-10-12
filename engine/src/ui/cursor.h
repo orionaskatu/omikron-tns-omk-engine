@@ -3,9 +3,8 @@
 // they are.
 //
 // Item flag `0x40000200`, bank B - by far the commonest decoration in the
-// tree, and unported until 2026-09-04, when a player said of the sneak that
-// "the hovering effect is absent so it is very difficult to know where I am".
-// It is not a box and not a fill: `sub_479920` drives a pool of SIXTEEN
+// tree; without it a player cannot tell which item has focus (seen in play on
+// the sneak). It is not a box and not a fill: `sub_479920` drives a pool of SIXTEEN
 // elements that chase the focused item and orbit it.
 //
 // THE POOL is one global (`dword_6A4D20`), so exactly one cursor is on screen

@@ -138,14 +138,12 @@ int main() {
     const int wantCentre = static_cast<int>(expect(0.0f, 0.0f) * 63.0f + 0.5f);
 
     // OVER THE QUAD ONLY: the pixels of the middle scanline the per-vertex
-    // quad covers, four in from its edges. This measured x 24..232 until
-    // 2026-10-01 - wider than the quad, which spans about 43..213 at this
-    // framing - and passed only while the per-vertex draw came out BLACK: a
-    // destroyed geometry's buffer was reused for the next one at the same
-    // address, so the second quad drew the first's black corners and its
-    // spread read 0. Releasing a destroyed geometry (optimization step 26,
-    // `1ff5119`) drew it lit, the background came into the window, and the
-    // check went red on a measurement that had never measured the quad.
+    // quad covers, four in from its edges, found from the frame rather than
+    // fixed: the quad spans about 43..213 at this framing, and a fixed window
+    // wider than it (x 24..232) takes in the background and measures nothing
+    // of the quad - it can pass only while the per-vertex draw comes out
+    // black (a destroyed geometry's buffer reused at the same address;
+    // optimization step 26, `1ff5119`).
     int x0 = -1, x1 = -1;
     for (int x = 0; x < W; ++x)
         if (green(vert, x, cy) > 0) { if (x0 < 0) x0 = x; x1 = x; }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the scripted objects start to play.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -46,10 +46,10 @@ int PlayState::setupPlay() {
                     long shownAv = 0;
                     // NOT ACTIVE YET is not FINISHED: on a console the player
                     // buffers after `sceAvPlayerAddSource` and only then
-                    // reports active, so testing `avActive` first ended every
+                    // reports active, so testing `avActive` first ends every
                     // film at once - "0 frames shown, sound at 0 Hz" for all
-                    // three (console log 2026-09-18). Vita3K is active at once,
-                    // which is why it played there. Wait up to 3 s for the
+                    // three (a console log). Vita3K is active at once, which
+                    // hides it there. Wait up to 3 s for the
                     // start; after that, inactive means the end.
                     const std::uint32_t avStart = front.ticksMs();
                     bool avStarted = false;
@@ -68,15 +68,13 @@ int PlayState::setupPlay() {
                             break;
                         }
                         // THE SOUND IS THE PLAYER'S CLOCK. SceAvPlayer times
-                        // its pictures by the sound taken from it, and this
-                        // took up to sixteen chunks a pass as fast as they
-                        // came - so the clock ran ahead, the picture with it,
-                        // and the sound queued here and played at its own
-                        // speed: "the video is played accelerated while the
-                        // audio is played at normal speed" (the reader,
-                        // 2026-09-23, on the first console run that played a
-                        // film). Taken only while less than a quarter second
-                        // waits in the device, it is taken as fast as it plays.
+                        // its pictures by the sound taken from it, so taking
+                        // chunks as fast as they come runs the clock ahead,
+                        // the picture with it, while the sound queued here
+                        // plays at its own speed - the film accelerated over
+                        // normal-speed audio, seen on a console. Taken only
+                        // while less than a quarter second waits in the
+                        // device, it is taken as fast as it plays.
                         pcm.clear();
                         if (front.queuedSeconds() < 0.25 &&
                             omk::vita::avAudio(av, pcm, rate) && !pcm.empty())
@@ -107,9 +105,8 @@ int PlayState::setupPlay() {
             const auto real = fs.resolve(name);
             // THE HOST'S PLAYER first (`Frontend::filmOpen`): on the classic
             // Mac, QuickTime - the picture and the sound decoded by the
-            // system, the software decoder below too slow for a G3 (the
-            // reader's iBook, 2026-10-09: ~0.5 fps, `GAME.mpg: 82 of 115
-            // frames dropped`). Same skip rules as the decoder's loop.
+            // system, the software decoder below too slow for a G3 (an
+            // iBook: ~0.5 fps, `GAME.mpg: 82 of 115 frames dropped`). Same skip rules as the decoder's loop.
             if (real && front.filmOpen(*real)) {
                 const std::uint32_t t0 = front.ticksMs();
                 long steps = 0;
@@ -170,9 +167,9 @@ int PlayState::setupPlay() {
             omk::Surface film(mov.info().width, mov.info().height, 0);
             omk::Surface& target = glRen ? film : mv;
             // A FRAME THAT IS LATE IS DECODED AND DROPPED. The sound runs at
-            // its own rate on the audio device; the loop used to wait when the
-            // picture was early and never catch up when it was late, so on a
-            // slow CPU the picture crawled behind a sound at normal speed.
+            // its own rate on the audio device; a loop that only waits when the
+            // picture is early and never catches up when it is late leaves the
+            // picture crawling behind the sound on a slow CPU.
             const auto late = [&] {
                 if (frames) return false;
                 return heardSeconds() - (shown + 1) / fps > 1.0 / fps;
@@ -202,14 +199,14 @@ int PlayState::setupPlay() {
                     break;
                 }
                 // THE SOUND IS DECODED HALF A SECOND AHEAD OF THE PICTURE, not
-                // to the end of the film (2026-09-23). This drained
-                // `nextAudio` until it came back empty, and pl_mpeg's audio
-                // decoder reads on through the whole stream - so the FIRST
-                // frame decoded all 107 s of `GAME.mpg`'s sound into the
-                // device queue, and the demuxer buffered every video packet it
-                // stepped over on the way. A desktop has the memory to hide
-                // that; the Vita, on its MPEG-1 fallback (no H.264 copy), asked
-                // for 72 MB in one piece and died of `bad_alloc` in Vita3K.
+                // to the end of the film. pl_mpeg's audio decoder reads on
+                // through the whole stream, so draining `nextAudio` until it
+                // comes back empty decodes all 107 s of `GAME.mpg`'s sound
+                // into the device queue on the FIRST frame, and the demuxer
+                // buffers every video packet it steps over on the way. A
+                // desktop has the memory to hide that; the Vita, on its MPEG-1
+                // fallback (no H.264 copy), asks for 72 MB in one piece and
+                // dies of `bad_alloc` in Vita3K.
                 // `heardSeconds` is decoded minus still queued, so the pacing
                 // reads the same clock either way.
                 constexpr double kAudioAhead = 0.5;
@@ -260,12 +257,11 @@ int PlayState::setupPlay() {
                     : bounded       ? "cut short by --frames"
                                     : "skipped (ALT)");
     }
-    // THE AUDIO DEVICE IS THE WORLD'S TOO. `openAudio` was called in one
-    // place - the movie player, at the movie's own rate - so a run with
-    // `--nofmv` (or a street start, which skips the movies) never opened it
-    // and every world sound was dropped without a word: no music, no
-    // effects, no voices. A reader on 2026-09-04: "there is absolutely no
-    // sound at all". The world plays at the primary's 22050 (`kDeviceRate`),
+    // THE AUDIO DEVICE IS THE WORLD'S TOO. Opened only by the movie player,
+    // at the movie's own rate, a run with `--nofmv` (or a street start,
+    // which skips the movies) would never open it and every world sound
+    // would be dropped without a word: no music, no effects, no voices.
+    // The world plays at the primary's 22050 (`kDeviceRate`),
     // and a device the films opened at their 44100 is REOPENED at it.
     if (!frames) {
         if (front.reopenAudio(kDeviceRate, 2))

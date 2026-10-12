@@ -21,9 +21,8 @@
 //
 //   * the projection is differenced against `tools/camshot.py`, which projects
 //     the same records independently and has been laid over a real screenshot;
-//   * the MIRRORED reading - the one that was wrong for months, because a
-//     convention wrong everywhere at once looks right from inside - is
-//     rendered too, and must differ;
+//   * the MIRRORED reading is rendered too, and must differ - a convention
+//     wrong everywhere at once looks right from inside;
 //   * the batch order is the engine's own (opaque, additive, multiply), so
 //     what overlaps what is the engine's decision and not this file's.
 #include "formats/tex3dt.h"

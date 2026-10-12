@@ -8,7 +8,7 @@
 // (`glDrawPixels` and `aglSwapBuffers`) rather than by CopyBits, which an AGL
 // surface over the window would hide on Mac OS X. So the frontend makes and
 // owns the context, on first ask - a run that never asks (`OMK_GL1=0`, or no
-// OpenGL installed) keeps the window plain and presents by CopyBits as before.
+// OpenGL installed) keeps the window plain and presents by CopyBits.
 #pragma once
 
 namespace omk {
@@ -23,11 +23,11 @@ void gl1AglWindowSize(int& w, int& h);
 // 32-bit ARGB that Mac OS X's drivers take without converting - false for
 // RGBA bytes.
 bool gl1OverlayArgb();
-// ...and HOW it is sent (2026-10-10), the probe's pick as well: through Apple's
+// ...and HOW it is sent, the probe's pick as well: through Apple's
 // CLIENT STORAGE (the card reads the texture from our memory, no copy into
 // the driver), as a RECTANGLE texture (the frame's own size), with the SHARED
 // storage hint - each only where the driver names the extension and the
-// probe timed it faster. All false: the copy, as before.
+// probe timed it faster. All false: a plain copy into the driver.
 struct Gl1UploadPath { bool client = false, rect = false, hint = false; };
 Gl1UploadPath gl1OverlayPath();
 // The card's FREE TEXTURE MEMORY in bytes - what the original's

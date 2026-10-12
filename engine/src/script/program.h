@@ -57,9 +57,9 @@ constexpr std::uint32_t kFnWait                = 0x06000017;
 constexpr std::uint32_t kFnPlaySound           = 0x05000014;
 constexpr std::uint32_t kFnPlaySyncSound       = 0x05000015;
 constexpr std::uint32_t kFnMoveObjectOnPath    = 0x03000008;
-// `Script_StopSound` (0x004A16D0), the counterpart `Script_PlaySound` never
-// had: 86 sites across 61 scenes started audio this port could not silence,
-// which is a reader's "audio not stopping" (omk-play 71). The handler, read:
+// `Script_StopSound` (0x004A16D0), the counterpart of `Script_PlaySound`:
+// without it, 86 sites across 61 scenes start audio that never stops
+// (omk-play 71). The handler, read:
 //
 //     edi = the sound index for param 0        ; 0xFFFF -> nothing to do
 //     ebx = param 1, the NODE, -1 for none
@@ -289,8 +289,8 @@ public:
     const std::vector<SoundCue>& sounds() const { return sounds_; }
 
     // THE OBJECT MOTIONS running this tick - `Script_MoveObjectOnPath`, which
-    // is the most-used script function in the game (4841 sites) and moved
-    // nothing here until 2026-09-03. The handler ends in
+    // is the most-used script function in the game (4841 sites). The
+    // handler ends in
     // `o3de_SetNodePos(node, x, y, z)` with the path sample OUTRIGHT, so the
     // position is absolute world and not a delta; `name` is param 0 resolved
     // through the object's own first string table, which is how a scene names
@@ -321,15 +321,15 @@ public:
         // sample. `from` is that first sample, and a consumer places the
         // object at `anchor + (pos - from)`.
         //
-        // Two sets hid this from each other. `AHALL40`'s paths are authored
-        // with `sample(t0)` already ON the mesh (within 7 units of its
-        // authored 3947.6/-58.6/-1206.0), so `pos` and the corrected form
-        // agree and the lift doors looked right. `AAPKAYL`'s are authored
-        // about a different origin - `sample(t0)` is 632/-43.2/33.8 against a
-        // door authored at 3759.9/1037.3/-815.8 - so reading `pos` outright
-        // threw that door 3400 units out of the flat. It vanished on the
-        // trigger and never came back, which a reader saw as "the doors have
-        // no animation" AND "the doors don't close any more": one fault.
+        // One set alone cannot tell the two forms apart. `AHALL40`'s paths are
+        // authored with `sample(t0)` already ON the mesh (within 7 units of
+        // its authored 3947.6/-58.6/-1206.0), so `pos` and the corrected form
+        // agree and the lift doors look right either way. `AAPKAYL`'s are
+        // authored about a different origin - `sample(t0)` is 632/-43.2/33.8
+        // against a door authored at 3759.9/1037.3/-815.8 - so reading `pos`
+        // outright throws that door 3400 units out of the flat: it vanishes
+        // on the trigger and never comes back, which looks both like "no
+        // door animation" and like "the doors never close" - one fault.
         float from[3] = {0, 0, 0};   // the path's sample at t0
         bool  hasFrom = false;
         // Where this sample puts the object, given the node's position when
@@ -386,10 +386,10 @@ public:
     // A program is a SEQUENCE of steps and the pc walks it, so "the object's
     // clip" is not a property of the object: `Impasse.SCX`'s `A_2_DemonLook`
     // is clip 15 (the demon perched, 91 frames) and THEN clip 17 (his jump
-    // off the wall, 41). Reading only the first - which `SceneRunner` did
-    // until 2026-09-03 - poses the whole 132-frame shot with the perch clip,
-    // which clamps at its last frame: the demon hangs 267 units up the wall
-    // for the whole shot and his descent never happens.
+    // off the wall, 41). Reading only the first poses the whole 132-frame
+    // shot with the perch clip, which clamps at its last frame: the demon
+    // hangs 267 units up the wall for the whole shot and his descent never
+    // happens.
     int animFn() const;
     // That function itself, or nullptr - what a caller needs to read its clip,
     // path and placement parameters.

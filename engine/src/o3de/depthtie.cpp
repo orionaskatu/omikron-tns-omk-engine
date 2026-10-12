@@ -23,7 +23,7 @@ inline std::uint32_t bits(float f) {
 // is injective mod 2^32, so two corners at one position compare equal exactly
 // when their classes do too. (`samePos`, the quad PAIRING, stays positional:
 // a quad's two triangles are consecutive faces of one mesh.)
-// THE FACE'S SIDE, folded into the y bits the same way (2026-10-01). Two
+// THE FACE'S SIDE, folded into the y bits the same way. Two
 // SINGLE-SIDED faces on one position set with OPPOSITE windings - the two
 // sides of a shop sign - never compete: the engine's back-face cull
 // (`Render_SubmitMesh`, `geom3do.h` kTwoSided) keeps exactly one of them from

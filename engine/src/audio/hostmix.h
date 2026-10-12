@@ -2,15 +2,15 @@
 // THE HOST'S MIX - what a frontend sums into its audio device: the STREAM
 // (the films' soundtrack, the game's music) at the music gain, and up to
 // eight ONE-SHOTS (interface blips, scene sounds, a line's voice) each at its
-// own gain, looping or not. Moved out of `backends/sdl/sdlfront.cpp`
-// unchanged (2026-10-03) so the Carbon frontend sums the same way.
+// own gain, looping or not. Shared by the SDL and the Carbon frontends so
+// both sum the same way.
 //
-// THE STREAM IS A RING (2026-10-04), as the original's is: `Morph_Open`
-// plays the music through a DirectSound buffer of a FIXED eight seconds
-// (bytes/s x 8.0, `dbl_4BC298`), refilled every 15 ms. This kept every
-// played sample until 2^20 floats had gone by and only then compacted -
-// 5.4 MB held for a one-second queue, which the profiler showed doubling
-// (`todo/debug-tools.md`, the first full capture). Now nothing played is
+// THE STREAM IS A RING, as the original's is: `Morph_Open` plays the music
+// through a DirectSound buffer of a FIXED eight seconds (bytes/s x 8.0,
+// `dbl_4BC298`), refilled every 15 ms. Keeping every played sample until
+// 2^20 floats have gone by and only then compacting holds 5.4 MB for a
+// one-second queue, which the profiler shows doubling
+// (`todo/debug-tools.md`, the first full capture). So nothing played is
 // kept: the ring holds what is queued, grows only to the most ever queued
 // at once, and `clear()` gives it back (the films queue more than the world).
 //

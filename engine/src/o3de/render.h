@@ -85,7 +85,7 @@ inline constexpr int kBuckets = 0x4000;
 // ------------------------------------------------------------- transparency
 //
 // Two blend modes, not one flat 50%. No mesh asks for either without 0x1000,
-// and the `SetRenderState(27, 1)` an earlier reading pointed at is the CUTOUT
+// and the `SetRenderState(27, 1)` near them is the CUTOUT
 // path from flag 0x800 - a different thing again.
 enum class BlendMode { Opaque, Cutout, Additive, Multiply };
 

@@ -16,7 +16,7 @@
 //                            WITHOUT the slash, because the engine joins
 //                            "<tables>/vm_opcodes.json" and libctru's romfs
 //                            refuses the "romfs://..." a trailing slash makes
-//                            ("no VM opcode table", Azahar, 2026-10-06)
+//                            (the boot then fails "no VM opcode table")
 //   sdmc:/omk/saves/GAMES    where saves go (never into the data tree -
 //                            CLAUDE.md 1)
 //   sdmc:/omk/omk.ini        the game's own config file, when present
@@ -33,7 +33,7 @@
 // Every line written to stdout or stderr goes to the file and to the LOG
 // RING (`n3dshost.h`) the instrument panel shows (`tee` below). `omk_boot`
 // also shows it live on the bottom screen through libctru's console;
-// `omk_play`'s bottom screen is the panel (step 2b), and the console comes
+// `omk_play`'s bottom screen is the panel (`n3dspanel.h`), and the console comes
 // back only when the game has returned, with the log's last lines.
 #include "n3dshost.h"
 
@@ -60,8 +60,8 @@ int OMK_3DS_ENTRY(int argc, char** argv);
 
 // The main thread's stack. libctru's default is 32 KB, which the engine's
 // load paths would overrun at once; `PlayState` itself is on the heap
-// (`play.cpp`), so 1 MB is a first figure, to be measured (step 4) rather
-// than trusted.
+// (`play.cpp`), so 1 MB is a first figure, to be measured
+// (`todo/3ds-port.md` step 4) rather than trusted.
 extern "C" {
 u32 __stacksize__ = 1024 * 1024;
 // what libctru's start-up gave the two heaps (the newlib heap `new` draws
@@ -201,9 +201,8 @@ int main(int, char**) {
 #if defined(OMK_3DS_TOOL)
     std::vector<std::string> args = {"omk", kRoot, "--tables", kTables};
 #else
-    // THE FRAME IS 16:9 BY DEFAULT - the reader's decision of 2026-10-06
-    // ("use 16:9 resolution by default on 3ds since it is already
-    // supported"). 800x448 rather than 800x450: the PICA tiles its sides
+    // THE FRAME IS 16:9 BY DEFAULT (`todo/3ds-port.md`). 800x448 rather
+    // than 800x450: the PICA tiles its sides
     // exactly (multiples of 8), and 800x450 asked a 135 MB allocation of the
     // 32-bit build at the first world frame (Azahar, unexplained - the
     // desktop draws it; `todo/3ds-port.md`). Halved it is 400x224 on the
@@ -211,17 +210,16 @@ int main(int, char**) {
     // frame (`I2D_ScaleX/Y`), as the Vita's 16:9 does, and keeps the 3D's
     // horizontal fov. The frontend fits whatever the frame is to the top
     // screen. Added only when args.txt names no `--res` of its own: the
-    // viewer takes the FIRST `--res` it is given (measured in Azahar,
-    // 2026-10-06 - an args.txt `--res 800x448` after this default was
-    // ignored), so a default put first would always win.
+    // viewer takes the FIRST `--res` it is given (an args.txt `--res`
+    // after this default is ignored, measured in Azahar), so a default put
+    // first would always win.
     std::vector<std::string> args = {"omk-play", kRoot, kTables, "--saves", kSaves};
     if (exists(kIni)) { args.push_back("--config"); args.push_back(kIni); }
 #endif
     // args.txt: one argument a line as on the Vita, and a line may also hold
     // several separated by spaces - `--profile sdmc:/omk/run.prof` is how a
-    // person types it (the reader's third run put `--profile` alone, which
-    // then took the next argument, the default `--res`, for its path). `#`
-    // starts a comment.
+    // person types it (a `--profile` alone on its line takes the next
+    // argument, the default `--res`, for its path). `#` starts a comment.
     if (std::FILE* f = std::fopen(kExtra, "r")) {
         char line[1024];
         while (std::fgets(line, sizeof line, f)) {

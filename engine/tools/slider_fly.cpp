@@ -4,7 +4,7 @@
 //     slider_fly
 //
 // No game data: the model is the engine's arithmetic and nothing else, so
-// this drives it over a FLAT floor and reports the numbers a reader can hold
+// this drives it over a FLAT floor and reports the numbers a person can hold
 // against the listing. What it exercises is the shape of the model, which is
 // the part a transcription can get wrong silently: the thrust ladder's six
 // values, the bank's rate and its 11-degree limit, the steer, the dead band

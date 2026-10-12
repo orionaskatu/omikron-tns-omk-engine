@@ -138,10 +138,9 @@ public:
     //
     // `Shoot_ActorEnter` (0x00422C10) runs NO action: it hands the type to
     // `sub_47DFD0`, whose default arm starts a type-11 clip and leaves `+156`
-    // at 0 (todo/drift-audit.md S13). Until 2026-10-05 the enter recorded
-    // action 1, the patrol, which no shipped enter asks for. An entered actor
-    // with no action yet now reads `kEnteredOnly`; `actorIn` is "in shoot
-    // mode" whatever the action.
+    // at 0 (todo/drift-audit.md S13) - not action 1, the patrol, which no
+    // shipped enter asks for. An entered actor with no action yet reads
+    // `kEnteredOnly`; `actorIn` is "in shoot mode" whatever the action.
     static constexpr int kEnteredOnly = -2;
     void actorEnter(int actor) { actors_[actor] = kEnteredOnly; actorArgs_[actor] = 0; }
     bool actorIn(int actor) const { return actors_.count(actor) != 0; }
@@ -154,9 +153,9 @@ public:
         return it == serial_.end() ? 0 : it->second;
     }
     // `a3`, the opcode's THIRD operand, is kept beside the action: for the
-    // patrol (action 1) it names the ROUTE, and dropping it - which this did
-    // until 2026-09-12 - sent every patrolling gunman to the nearest free one
-    // whatever the designer asked for (`todo/shoot-patrol.md` 2).
+    // patrol (action 1) it names the ROUTE, and dropping it would send every
+    // patrolling gunman to the nearest free one whatever the designer asked
+    // for (`todo/shoot-patrol.md` 2).
     void actorAction(int actor, int action, int a3 = 0) {
         actors_[actor] = action;
         actorArgs_[actor] = a3;

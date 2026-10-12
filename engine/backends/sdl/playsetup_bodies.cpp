@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the speaker, every staged body, melee, the effect sprites.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -76,10 +76,10 @@ int PlayState::setupBodies() {
     // one shoot record per gunman, built from his own properties the first
     // frame he is staged and kept for the run (`todo/shoot-mode.md` 7d)
     // Is the FIRST-PERSON shoot camera actually the one in force? Hiding the
-    // player is right only while it is: a reader found Kay'l missing at the
-    // end of the supermarket cutscene because the port hid him for "shoot
-    // mode" while a script's own camera had taken the view back to third
-    // person, leaving an empty room (`todo/omk-play.md` 97).
+    // player is right only while it is: hiding him for "shoot mode" while a
+    // script's own camera has taken the view back to third person leaves an
+    // empty room, as at the end of the supermarket cutscene
+    // (`todo/omk-play.md` 97).
     // (the mouse's sensitivities are the engine's own now - `mouseSensX` below)
 
     shootCameraLive = false;
@@ -160,10 +160,10 @@ int PlayState::setupBodies() {
     OMK_HEAPCHECK("before effect sprites");
     // (struct SpriteTable: `backends/sdl/playtypes.h`, todo/play-split.md)
     spriteLookup = [this](int id) { return spriteTab.framesOf(id); };
-    // THE TWO LIBRARIES' SPRITES, decoded ONCE (2026-09-23). They never change,
-    // and every scene change read `aventure.SCX` and `fight.SCX` again - 4 MB,
-    // which a console's memory card takes most of a second over, on the frame
-    // of the hand-over. The table a scene change starts from is this one; the
+    // THE TWO LIBRARIES' SPRITES, decoded ONCE. They never change, and
+    // reading `aventure.SCX` and `fight.SCX` again on every scene change is
+    // 4 MB, which a console's memory card takes most of a second over, on the
+    // frame of the hand-over. The table a scene change starts from is this one; the
     // order global, fight, scene - and so every collision - is unchanged.
     spriteBaseGlobal = 0, spriteBaseFight = 0;
     // WHICH scene's sprites `spriteTex` currently holds. An effect names its
@@ -184,11 +184,10 @@ int PlayState::setupBodies() {
     // `sub_4A5800`. Not the resident scene: the Impasse's 20 sounds have no
     // 194 (the grab, POBJ01.WAV), 199/203 (the footsteps STPR/STPL) or 180,
     // and its 187 is a DEMON footstep where the library's 187 is SNEAKIN.WAV.
-    // Searching the resident scene - what this did until 2026-09-05 - made
-    // the grab silent and played a demon's step on the confirm.
-    // READ ONCE: the same bytes make the runtime and, below, the sprites - it
-    // was read twice here, and a third time by a headless boot before the
-    // window (3 MB each; `setupBoot`)
+    // Searching the resident scene makes the grab silent and plays a demon's
+    // step on the confirm.
+    // READ ONCE: the same bytes make the runtime and, below, the sprites
+    // (3 MB; no headless boot reads it before the window - `setupBoot`)
     std::vector<std::byte> globalBytes;
     if (const auto gp = fs.resolve("SCPTDATA/aventure.SCX")) {
         globalBytes = omk::DataFs::readPath(*gp);
@@ -256,9 +255,9 @@ int PlayState::setupBodies() {
                                    : static_cast<omk::Renderer&>(worldSw)));
     // THE ENHANCEMENTS THIS RENDERER CANNOT DRAW, refused here rather than
     // prepared every frame for nothing: each one also turns off what it
-    // replaces, so an undrawn per-pixel light left the crowd UNLIT and an
-    // undrawn shadow map left every body SHADOWLESS - the Vita, 2026-09-29,
-    // whose shared config asked for both. Mapped falls back to fitted, the
+    // replaces, so an undrawn per-pixel light would leave the crowd UNLIT and
+    // an undrawn shadow map every body SHADOWLESS (a Vita on a shared config
+    // that asks for both). Mapped falls back to fitted, the
     // best of the shadows every backend draws (they are geometry).
     if (lighting > 0 && !world.drawsPixelLights()) {
         std::printf("lighting: per pixel REFUSED - the %s renderer does not draw it; "
@@ -300,11 +299,11 @@ int PlayState::setupBodies() {
     // A set's geometry is REBUILT on every area change, and a fresh
     // Geometry's revision is 0 - the same value the previous set was cached
     // under by the Vulkan backend, which keys its vertex buffer on the
-    // POINTER and the revision. So the Impasse drew GRID's tunnel through the
-    // Impasse's batch ranges: black with a few stray triangles where the
-    // software renderer, which reads the Geometry directly, drew the alley.
-    // The particle geometry hit the identical fault on 2026-09-02; the cure
-    // is the same - a revision that only ever climbs.
+    // POINTER and the revision. Restarting at 0, the Impasse draws GRID's
+    // tunnel through the Impasse's batch ranges: black with a few stray
+    // triangles where the software renderer, which reads the Geometry
+    // directly, draws the alley. The particle geometry has the identical
+    // fault; the cure is the same - a revision that only ever climbs.
     worldGeoRev = 0;
     worldFrames = 0;
     // The particles' quads, REBUILT every frame into this one object. It lives
@@ -340,9 +339,8 @@ int PlayState::setupBodies() {
                 }
                 return true;
             };
-            // EVERY body on screen is a candidate now, not just the one this
-            // file used to draw - the piece is linked to the actor whose model
-            // carries the tag.
+            // EVERY body on screen is a candidate - the piece is linked to the
+            // actor whose model carries the tag.
             for (const auto& up : staged)
                 if (up->drawn && tagged(up->model)) {
                     for (int k = 0; k < 3; ++k) L.pos[k] = up->drawAt[k];
@@ -361,7 +359,7 @@ int PlayState::setupBodies() {
     syncSets = omk::envSet("OMK_SYNC_SETS");   // A/B only
     // THE LOAD HELD FOR THE SET (`Session::setLoadGate`). A console's card and
     // A9 took 1.3 s over Anekbah where the slices give 0.57, and the frame
-    // that brought the set in waited 727 ms for the rest (2026-09-30). With
+    // that brought the set in waited 727 ms for the rest. With
     // the gate the Session's load waits instead, as `Area_TickLoad` waits on
     // its reader, and the game draws on. The frame the set arrives on is then
     // the machine's, so it is ON only where that is wanted: a Vita, or

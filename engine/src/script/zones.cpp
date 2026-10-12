@@ -188,8 +188,7 @@ void ZoneRegistry::pumpSlots(bool actionPressed, std::vector<ZoneEvent>& out) {
                 // with a held object it is `Script_RunToOpcode75`'s answer -
                 // 1 only if the script reaches opcode 75 and asks what is in
                 // the hand. `setUsedObjectProbe` supplies that run; with no
-                // probe installed the answer is 0, which is what this line
-                // returned unconditionally before 2026-09-04.
+                // probe installed the answer is 0.
                 const bool ran = !heldObject_ ? true
                     : (usedObjectProbe_ &&
                        usedObjectProbe_(z->code,
@@ -281,21 +280,19 @@ void ZoneRegistry::scanZones(const double pos[3], double facingDegrees,
         // in the engine, not the containment's. `Actor_ScanZones` does not walk
         // every zone: it seeds `sub_431D40` with the actor's (x, y, z) and that
         // builds a BOX of `+88` in all three axes - `a3 - v15 .. a3 + v15` for y
-        // - so the zones it yields are already the ones near him. This port had
-        // no such index and scanned every live zone by the quad alone.
+        // - so the zones it yields are already the ones near him.
         //
-        // What that cost, measured in play 2026-09-17: the security centre's
-        // lift zones STACK - ids 2510/2511 at y -18 and 2512/2513 at y 207 over
-        // the same footprint, one pair per level - so one press of the action
-        // button activated FIVE lift scripts at once. Each parked on its own
-        // `ui.open 4`, the Session holds one pending screen, and the answer went
-        // to the last of them: the lift the player was standing in stayed parked
-        // for ever and the screen simply reopened. The engine activates every
-        // ARMED slot too (`Script_Pump` case 2, all 16) - it is the arming that
-        // differs.
+        // Scanning every live zone by the quad alone fails where zones STACK
+        // (measured in play): the security centre's lift zones are ids
+        // 2510/2511 at y -18 and 2512/2513 at y 207 over the same footprint,
+        // one pair per level, so one press of the action button activates FIVE
+        // lift scripts at once. Each parks on its own `ui.open 4`, the Session
+        // holds one pending screen, and the answer goes to the last of them:
+        // the lift the player is standing in stays parked for ever and the
+        // screen simply reopens. The engine activates every ARMED slot too
+        // (`Script_Pump` case 2, all 16) - it is the arming that differs.
         //
-        // READ 2026-10-05 (todo/drift-audit.md S10), replacing a labelled
-        // reconstruction - a band of one metre around the quad. The index is a
+        // READ (todo/drift-audit.md S10), not a reconstruction. The index is a
         // sweep-and-prune over all three axes (`sub_431D40` toggles a bit per
         // axis and lists a zone at `== 7`), so a zone is yielded when two BOXES
         // overlap in y as well as in x and z:

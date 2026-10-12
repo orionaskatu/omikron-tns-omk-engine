@@ -35,10 +35,9 @@ constexpr std::int64_t kSrgb8Alpha8 = 0x8C43, kRgba8 = 0x8058;
 
 // The screen: 1.2 m ahead, its centre at the head's height when the session
 // began (LOCAL space), 1.2 m wide (~53 degrees) at the frame's own aspect.
-// It was 2 m and 2.4 m (5a); over the eyes (6a) the scene is often NEARER
-// than 2 m - a speaker at a table - and text read at 2 m over a face at 1 m
-// "hurts to read (stereoscopic issue)" (the reader, 2026-10-07): the panel
-// comes in front of most of what is around.
+// Over the eyes the scene is often NEARER than 2 m - a speaker at a table -
+// and text placed at 2 m over a face at 1 m is a stereoscopic conflict that
+// hurts to read: at 1.2 m the panel comes in front of most of what is around.
 constexpr float kScreenDistance = 1.2f, kScreenWidth = 1.2f;
 
 // One swapchain and an FBO per image: the quad's, or an eye's.
@@ -74,7 +73,7 @@ struct Host {
     XrPosef head{{0, 0, 0, 1}, {0, 0, 0}};   // the head this frame (LOCAL), for `anchorQuad`
     bool headValid = false;
     // WHERE THE PANEL STANDS (LOCAL): 1.2 m ahead of the session's start until
-    // `anchorQuad` places it where the head looks (step 6b)
+    // `anchorQuad` places it where the head looks
     XrPosef quadPose{{0, 0, 0, 1}, {0, 0, -1.2f}};
     XrFrameState frame{XR_TYPE_FRAME_STATE};
     XrView views[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
@@ -231,9 +230,8 @@ void release(Chain& c) {
     c.drawn = true;
 }
 
-// THE CLOCKS (the reader, 2026-10-07: "can a perf request be sent at run
-// time, when the scale is modified?"). At 1.3x with 4x MSAA a Quest 2 ran
-// 62-65 of 72 fps, GPU-bound, while the runtime held the GPU at level 2 of 4.
+// THE CLOCKS, asked again whenever the eye scale changes. At 1.3x with 4x
+// MSAA a Quest 2 ran 62-65 of 72 fps, GPU-bound, while the runtime held the GPU at level 2 of 4.
 // The CPU asks SUSTAINED_HIGH always (the game thread is the nearer budget
 // with the costly enhancements); the GPU asks SUSTAINED_HIGH above 1.0x the
 // recommended eye, and is left at SUSTAINED_LOW - the runtime's own range -
@@ -411,18 +409,18 @@ bool start(int screenW, int screenH, float scale) {
     xrEnumerateViewConfigurationViews(g.instance, g.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &nv, nullptr);
     std::vector<XrViewConfigurationView> vcv(nv, {XR_TYPE_VIEW_CONFIGURATION_VIEW});
     xrEnumerateViewConfigurationViews(g.instance, g.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, nv, &nv, vcv.data());
-    // THE EYE'S SIZE, the runtime's recommendation (2026-10-07: half the
-    // 1280x720 frame, 640x720, was "too low" in the street on a Quest 2,
-    // which recommends 1440x1584 - and the GPU had the time, ~5 ms a frame)
+    // THE EYE'S SIZE, the runtime's recommendation: half the 1280x720 frame,
+    // 640x720, is visibly too low in the street on a Quest 2, which
+    // recommends 1440x1584 - and the GPU has the time (~5 ms a frame there)
     int eyeW = screenW / 2, eyeH = screenH;
     if (nv) {
         g.recW = static_cast<int>(vcv[0].recommendedImageRectWidth);
         g.recH = static_cast<int>(vcv[0].recommendedImageRectHeight);
         g.maxW = static_cast<int>(vcv[0].maxImageRectWidth);
         g.maxH = static_cast<int>(vcv[0].maxImageRectHeight);
-        // ...times `--vr-scale` (the reader, the same day: "maybe a little
-        // higher, it is an old game"; at 1.0 the GPU took 6.7 of 13.9 ms),
-        // capped at the runtime's own maximum
+        // ...times `--vr-scale` (at 1.0 the GPU takes 6.7 of 13.9 ms on a
+        // Quest 2, so there is room above it), capped at the runtime's own
+        // maximum
         const float s = std::max(0.25f, scale);
         eyeW = std::min(static_cast<int>(std::lround(vcv[0].recommendedImageRectWidth * s)),
                         static_cast<int>(vcv[0].maxImageRectWidth));
@@ -509,8 +507,8 @@ int eyeModes(std::vector<std::string>& names) {
         lastW = w;
         lastH = h;
         if (w == g.eye[0].w && h == g.eye[0].h) cur = static_cast<int>(names.size());
-        // the SCALE beside the size (the reader: "use the resolution line for
-        // the scale"); the row parses only the leading "W x H"
+        // the SCALE beside the size, so the row doubles as the scale choice;
+        // the row parses only the leading "W x H"
         char n[48];
         std::snprintf(n, sizeof n, "%d x %d (%.1fx)", w, h, static_cast<double>(s));
         names.push_back(n);
@@ -645,7 +643,7 @@ void submit() {
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     if (g.quad.drawn) {
         // over the eyes the quad is the interface with the world showing
-        // through it (step 6a): its alpha, premultiplied
+        // through it: its alpha, premultiplied
         if (nLayers) quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
         quad.space = g.local;
         quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -667,8 +665,8 @@ void submit() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-// THE TOUCH CONTROLLERS AS A PAD (step 5a's mapping, a CHOICE for the play
-// pass to judge). The pad's slots are the four control schemes' joystick
+// THE TOUCH CONTROLLERS AS A PAD (a mapping CHOSEN for this port, not the
+// original's). The pad's slots are the four control schemes' joystick
 // buttons (`input/pad.h`):
 //   A South (Action / the UI's confirm)      B East (Cancel / Jump; the UI's back)
 //   X West                                   Y North (first-person view)
@@ -689,9 +687,9 @@ void readControllers(HostInput& out) {
         for (int k : out.held) std::printf(" 0x%x", k);
         std::printf("\n");
     }
-    // VISIBLE as well as FOCUSED: on 2026-10-07 the reader walked the menus
-    // while the log had the session at VISIBLE only. A runtime that does not
-    // give the app input there reports the actions inactive.
+    // VISIBLE as well as FOCUSED: the menus can be walked while the session
+    // is at VISIBLE only. A runtime that does not give the app input there
+    // reports the actions inactive.
     if (!g.session || !g.actionsAttached ||
         (g.state != XR_SESSION_STATE_FOCUSED && g.state != XR_SESSION_STATE_VISIBLE)) return;
     XrActiveActionSet active{g.set, XR_NULL_PATH};
@@ -744,7 +742,7 @@ void readControllers(HostInput& out) {
     if (value(g.trigger, 0) > 0.5f || boolean(g.thumbClick, 0) || boolean(g.thumbClick, 1)) b |= pad::Back;
     if (boolean(g.menu, 0)) b |= pad::Start;
     // the controllers' own buttons, logged the first times they are pressed:
-    // which path a press took is a measurement (the 2026-10-07 question)
+    // which path a press took is a measurement
     static int pressed = 0;
     if (b && pressed < 20) { ++pressed; std::printf("[in] openxr: pad buttons 0x%x (state %d)\n", b,
                                                     static_cast<int>(g.state)); }

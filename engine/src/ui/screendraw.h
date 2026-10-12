@@ -2,10 +2,10 @@
 // COMPOSE A SCREEN - the shipped assets through the ported drawers into one
 // RGB565 framebuffer.
 //
-// Everything here already existed in pieces and had never been put together:
+// It puts together pieces that each stand on their own:
 // `surfaceFromBmp` + `blt` (tier 4, the menu title 66560/66560), `drawRun`
-// (tier 4, 6132/6132 glyph pixels), the widget tree's walk, and - new on
-// 2026-09-01 - the item COORDINATES and the panel tile map, without which
+// (tier 4, 6132/6132 glyph pixels), the widget tree's walk, and the item
+// COORDINATES and the panel tile map, without which
 // nothing could be placed at all.
 //
 // It is deliberately on THIS side of the frontend boundary: composing a frame
@@ -82,8 +82,8 @@ struct ScreenFrame {
     bool fullSheet = false;   // the 0x40004000 path instead
     int  itemsDrawn = 0;      // rows whose text was rasterised
     // Sprite items blitted - `Ui_DrawItemSprite`, bank B `0x100`. 233 items
-    // in the tree carry it and none of them was drawn before 2026-09-04;
-    // the sneak's five left-hand icons are five of them.
+    // in the tree carry it; the sneak's five left-hand icons are five of
+    // them.
     int  spritesDrawn = 0;
     // `Ui_DrawItemFill` quads, bank B `0x10`. 222 items in the tree carry it.
     int  fillsDrawn = 0;
@@ -434,7 +434,8 @@ public:
     // AUTHORED at 640x480 and its coordinates are scaled to whatever the
     // display is, while the glyphs are drawn at their native size. So a
     // higher resolution spreads the same layout over more pixels and does not
-    // enlarge the text - which is what a reader's 800x600 screenshot shows.
+    // enlarge the text - which is what an 800x600 screenshot taken in play
+    // shows.
     //
     // Full-screen artwork is STRETCHED rather than scaled in coordinates: the
     // sheets are 640x480 files and `Blt` stretches, and the cloud's own
@@ -513,9 +514,9 @@ private:
     mutable UiInterference noise_;
     // THE SCREEN'S SHEET AND STRINGS, loaded once per screen rather than per
     // frame. `UI_LoadScreen` puts the bitmap in `screen+56` when the screen
-    // OPENS and every draw blits from that surface; the port re-read and
-    // re-decoded the file each frame, which a desktop disk hides and a Vita
-    // memory card does not (the start menu under 1 fps, 2026-09-18). One entry
+    // OPENS and every draw blits from that surface. Re-reading and
+    // re-decoding the file each frame is a cost a desktop disk hides and a
+    // Vita memory card does not (the start menu falls under 1 fps). One entry
     // each, keyed by name: a screen change reloads, nothing else does.
     mutable std::string artName_, textName_;
     mutable Surface artCache_;

@@ -105,9 +105,8 @@ std::string itemStringDefault(const UiItem& it,
 // **Confirmed against the original.** The LIFT's description panel is a fill
 // at (15, 360) 475x105 whose record colour is (80, 122, 118), over artwork
 // that is black there. This predicts (17.3, 26.3, 25.5); a player's
-// screenshot of the running game measures **(15, 25, 25)**. That is the rule
-// checked against the game rather than against this repo, and it is what
-// took the fill from refused to ported.
+// screenshot of the running game measures **(15, 25, 25)**: the rule
+// checked against the game rather than against this repo.
 void fillQuad(Surface& fb, int x0, int y0, int x1, int y1,
               int r, int g, int b, int alpha) {
     if (!fb.valid()) return;
@@ -316,15 +315,15 @@ int ScreenComposer::background(Surface& fb, const UiPanel& p,
         //
         // and that third argument is what turns DDBLT_KEYSRC on against the
         // flat **0** key `I2D_CreateSurfaceFromBmp` sets on every bitmap it
-        // loads. This passed `false, 0` and painted the black cells solid.
+        // loads. Passing `false, 0` paints the black cells solid.
         //
-        // Invisible on every page that has no hole in it - the sneak's and
-        // the slider's are opaque - and fatal on the one that does: the
-        // VIDEOPHONE's viewport is a black rectangle in `sneak.bmp` meant to
-        // be keyed out so the 3D view shows through. Painted solid it made
-        // the caller's picture a flat grey (the item's own 21.6% white fill
-        // over black, which is exactly the (48,52,48) a reader photographed),
-        // and the world was rendering correctly the whole time.
+        // That is invisible on every page that has no hole in it - the
+        // sneak's and the slider's are opaque - and fatal on the one that
+        // does: the VIDEOPHONE's viewport is a black rectangle in `sneak.bmp`
+        // meant to be keyed out so the 3D view shows through. Painted solid
+        // it makes the caller's picture a flat grey (the item's own 21.6%
+        // white fill over black, exactly the (48,52,48) photographed in
+        // play) while the world renders correctly beneath.
         blt(fb, {dx0, dy0, dx1, dy1},
             sheet, {sx, sy0, sx + 64, sy0 + sh}, kBltWait | kBltKeySrc,
             kI2dColourKey, /*dstKey*/ 0, filter_);
@@ -497,8 +496,8 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
     //
     // Mode 4 is the fill's inverse blend (`src*(1-a) + dst*a`), so a black
     // quad at alpha 100 leaves what is behind at 100/255. The ten shops,
-    // SAVE GAME, PAUSE GAME and HIGH-SCORE carry it; a reader saw the shop
-    // over black and said the background is not supposed to be opaque.
+    // SAVE GAME, PAUSE GAME and HIGH-SCORE carry it; without it a shop sits
+    // over opaque black, where the original lets the world show through.
     // Within one layer the composer keeps submission order (above), so on
     // PAUSE - whose items share layer 12 with the quad - the dim lands under
     // them; the engine's head cache would draw it after them. Recorded, not
@@ -539,9 +538,9 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
         // string 13 - "Entrez votre nom", "Enter Name" in English - then
         // " : ", then what the player typed, then a caret that blinks on the
         // same square wave as everything else and sits after the CURSOR, not
-        // after the last character. This drew the bare buffer in the menu's
-        // face, so the dialog came up with a name and no label and no caret;
-        // the capture the user supplied has all three.
+        // after the last character. A capture of the original has all three;
+        // drawing the bare buffer in the menu's face leaves a name with no
+        // label and no caret.
         //
         // The face is the item's own, `+36 = 74` ('J', JOURNAL) - which is
         // why the label reads in Latin letters while the title and the two
@@ -552,7 +551,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
         // into **nine** slots - the hook's `dword_657960` (the row count plus
         // one) is compared against 9, and its height arithmetic is a divide
         // by the same - with the `Joueur :` heading in slot 0 and the rows
-        // from slot 1.  Against a reader's screen grab of the original at
+        // from slot 1.  Against a screen grab of the original at
         // 640x480 that puts the heading at y=140 and the rows at 173, 206 and
         // 240; the grab measures 143, 175, 206 and 239.
         //
@@ -845,15 +844,15 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // plain `0x40000010`, 100 for `0x44000000`, `+9` otherwise.
             // `fillQuad` carries the blend and the evidence for it.
             //
-            // **Two things about it were wrong for three attempts.** The
+            // **Two things about it are easy to get wrong.** The
             // blend is the INVERSE of source-over, so a big alpha makes the
             // quad faint, not solid - drawn the usual way round the sneak's
-            // rows came out bright red. And the per-row gate is real:
+            // rows come out bright red. And the per-row gate is real:
             // `sub_42AAE0` sets `0x40000001` on every widget past the object
             // count, so the engine fills only the rows that hold something,
             // which is why a capture shows two bars of nine.
             //
-            // AND THE PLACEHOLDER IS ANSWERED, 2026-09-04. 209 of the
+            // AND THE PLACEHOLDER IS ANSWERED. 209 of the
             // 222 fill items ship (255, 0, 0) because a page BUILDER writes
             // the real colour at run time - `sub_4296D0` over a whole list,
             // handed the page's own tab-icon colour. `rgb` above is what it
@@ -889,10 +888,9 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             //
             // The description, laid into the item's own box by
             // `TextLayout::layOutBlock` - `Text_LayOutBlock` (0x0043F3E0)
-            // itself, since 2026-09-07. It replaced this port's own greedy
-            // wrap, whose line advance was `height + 2` and whose blank line
-            // was a flat 12; the engine's pitch is 120% of the current font's
-            // `+12` and a blank line takes the same.
+            // itself. The engine's pitch is 120% of the current font's
+            // `+12` and a blank line takes the same - not a greedy wrap's
+            // `height + 2` with a flat 12 for a blank line.
             //
             // AND IT SCROLLS. Bank C `0x2` on the item, four of which the
             // tree carries. `Ui_ItemTextStyle` lays the block out, takes
@@ -1480,16 +1478,14 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // bank B `0x40000200` on the item, then bank A `0x20000001` -
             // FOCUSED - on the item AND on its list. That is the one row
             // which is both its list's selection and in the focused list,
-            // which is the row the player is standing on. A player reported
-            // "the hovering effect is absent so it is very difficult to know
-            // where I am"; this is that effect.
+            // which is the row the player is standing on: the hover effect
+            // that tells a player where they are.
             // DEFERRED, because the I2D display list is sorted by LAYER
             // and the cursor's is 8 while a sprite's is the item's own 6 and
-            // a fill's is `+11 - 2` = 4. Submitting it here drew it UNDER the
-            // icon, and a player saw exactly that: "you put the effect
-            // between the background and the selected image so we can
-            // clearly see that a cut image of the icon is there". Collected
-            // now and drawn after the whole walk, which is what a sort by
+            // a fill's is `+11 - 2` = 4. Submitting it here draws it UNDER the
+            // icon, between the background and the selected image, so a cut
+            // image of the icon shows through. Collected now and drawn after
+            // the whole walk, which is what a sort by
             // layer does with one cursor on screen.
             if (cursor_ && (eff0[1] & 0x200) && isSel && isFocus) {
                 const int cx = scaleX(it.x + q->offsetX + it.w / 2);
@@ -1726,13 +1722,11 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // scaling the result instead pulls every centred row left of
             // centre as the display grows.
             //
-            // ...and since 2026-09-07 the row goes through `layOutBlock` -
+            // ...and the row goes through `layOutBlock` -
             // `Text_LayOutBlock` itself - rather than through one unwrapped
             // `drawRun`, because that call above IS a `Text_DrawBlock` with
             // the item's box: the engine WRAPS inside it, aligns inside it and
-            // steps 120% of the font's height between lines. `docs/UI.md`
-            // named the missing wrap as a gap ("this composer draws one
-            // unwrapped line") from the day the composer was written.
+            // steps 120% of the font's height between lines.
             //
             // The alignment goes in as the STYLE word the ladder above
             // produces, which is the same 2/4/8/0x10 `Ui_ItemTextStyle` hands

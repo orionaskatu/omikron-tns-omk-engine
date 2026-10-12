@@ -11,7 +11,7 @@
 #include "o3de/renderer.h"
 #include "vr/xrspace.h"
 
-// WHICH CAMERA THE FRAME HAS, as the headset sees it (step 2): what the
+// WHICH CAMERA THE FRAME HAS, as the headset sees it: what the
 // headset's origin is, and when it recentres.
 enum class VrKind {
     World,         // an authored camera: a script's world camera, the follow camera
@@ -20,7 +20,7 @@ enum class VrKind {
     Editing,       // a cutscene's camera editing (mode 13)
     Fight,         // melee's camera (mode 14), calmed
     Ride,          // a slider ride's camera (mode 8)
-    Shoot,         // shoot mode's first-person camera (step 3 aims it)
+    Shoot,         // shoot mode's first-person camera (aimed by the controller)
 };
 const char* vrKindName(VrKind k);
 
@@ -46,7 +46,7 @@ struct VrState {
     // recentre a new camera kind makes (which zeroes a head turned from the start)
     long headAfterFrame = -1;
     float headAfter[3]{0.0f, 0.0f, 0.0f};
-    // ---- step 2's choices, each a second path beside the authored one
+    // ---- the camera choices, each a second path beside the authored one
     bool adventureFirst = true;   // --vr-adventure=first|authored
     bool fightCalm = true;        // --vr-fight=calm|authored
     float fightTurnDeg = 1.0f;    // --vr-fight-turn=DEG: the calm camera's turn a frame, at 30 fps

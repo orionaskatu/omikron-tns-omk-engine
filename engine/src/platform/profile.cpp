@@ -189,9 +189,9 @@ int workersTag();
 // or `BLX`, or Thumb's - just before it. Stale ones from calls already
 // returned come too, so read them as candidates, nearest first; the line
 // before carries the SITE, which `arm-none-eabi-addr2line -i -f -C -e
-// omk_play.elf` resolves through its inline chain (proved 2026-10-06 in
-// Azahar with a forced refusal: the site gave `main` at the very line).
-// For a fault that came once in seventeen runs and never again (2026-10-06).
+// omk_play.elf` resolves through its inline chain (proved in Azahar with a
+// forced refusal: the site gave `main` at the very line).
+// For a fault too rare to reproduce on demand (once in seventeen runs).
 extern "C" char __start__[], __exidx_start[];
 __attribute__((noinline)) void printStackCode() {
     volatile int probe = 0;
@@ -690,8 +690,8 @@ Run control(long frame) {
     State& s = st();
     // The control file is looked for every frame while PAUSED (a step must
     // answer at once) and every 30th while running - an open that fails is
-    // a File Manager call a frame on a classic Mac, on the reader's iBook
-    // from a FAT32 stick, and it was inside the frame being measured.
+    // a File Manager call a frame on a classic Mac (the iBook test machine,
+    // from a FAT32 stick), and it would be inside the frame being measured.
     const bool look = s.paused || frame - s.ctlFrame >= 30 || frame < s.ctlFrame;
     if (look) s.ctlFrame = frame;
     if (std::FILE* c = look ? std::fopen(hostPath(s.base + ".ctl").c_str(), "r") : nullptr) {

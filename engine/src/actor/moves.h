@@ -15,18 +15,17 @@
 //
 // **This file resolves a name to a row. It does not decide what a row DOES.**
 // The handlers are the engine's; a caller runs the ones it has read and says
-// so for the ones it has not. Two consumers so far, and they arrived from
-// opposite ends of the same table within hours of each other:
+// so for the ones it has not. Two consumers so far, from opposite ends of the
+// same table:
 //
 //   rows 3..7   MDACTION, MDGETOBJ, MDLETOBJ, MDPUTSNK, MDNOTAKE - the world
 //               TAKE (`todo/omk-play.md` 66): scan within 150 cm, link the
 //               object to the hand, bank it, or put it back.
 //   row 0       MDSNEAK0 -> `sub_0046ADF0`, which opens the sneak.
 //
-// Both were reached through `PlayerController::specialMoves()`, and the whole
-// gap they closed was one unconsumed event: `channel.cpp` has emitted
-// `ChannelEvent::Kind::Move` carrying the name since it was written and
-// nothing read it, so all 66 callbacks were inert.
+// Both are reached through `PlayerController::specialMoves()`, which consumes
+// the event `channel.cpp` emits - `ChannelEvent::Kind::Move` carrying the
+// name. Left unread, all 66 callbacks are inert.
 //
 // **Why a table rather than a string compare.** A dispatch that tests
 // `name == "MDACTION"` works and says nothing; resolving through the row

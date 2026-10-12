@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME'S INPUT PHASE - input, the pause screen, the game tick, scripted object motion, the sound effects.
-// Part of `main`'s loop body, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); see `playframe.h` for what the names below refer to.
+// Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
 
 int PlayState::phaseInput() {

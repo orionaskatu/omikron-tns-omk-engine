@@ -295,7 +295,7 @@ inline constexpr std::uint32_t kCbSneakUseOn     = 0x0049BF30u;
 // show is `sub_49D170`'s two-state arm on the live slot's `+4` (the screen's
 // own `param`): from the SNEAK (screen 9, param 0) the bar reads "Appel du
 // slider"; from INSIDE the vehicle (screen 7, param 1) it reads "Automatique"
-// beside "Manuelle". Their callbacks, read 2026-09-08:
+// beside "Manuelle". Their callbacks:
 //
 //   0x0049D400  Appel du slider  `sub_452570(player's position)`, close - a
 //                                plain call, and `dword_6A17CC` untouched, so
@@ -377,8 +377,7 @@ struct UiItem {
     int           string = -1;       // index into the screen's own IAM text file
     // ...and what the screen's OPEN callback WRITES into `+28`/`+60`. The
     // record ships `string = -1` and `tag = 0` for most rows, so a reader
-    // that trusts it finds a screen with no labels - which is exactly what
-    // this composer drew until the bindings were wired in: 0 rows on both
+    // that trusts it finds a screen with no labels - 0 rows on both
     // screens. `docs/UI.md` 3d; lifted as each item's `bind`.
     int           bindString = -1, bindTag = -1;
     // The id to draw with: the binding when the callback wrote one, else the
@@ -399,8 +398,8 @@ struct UiItem {
     int           layer = 0;
     // `+36` - the item's FONT, an ASCII id into the 13-record font table
     // (74 'J' JOURNAL, 83 'S' SNEAK, 73 'I' MENUINTR, 67 'C'), 255 unset.
-    // `Text_DrawBlock`'s own default is 74. Never lifted until 2026-09-04,
-    // so every screen drew in one hard-coded face.
+    // `Text_DrawBlock`'s own default is 74. Without it every screen draws
+    // in one hard-coded face.
     int           font = 255;
     char          face(char dflt = 'J') const {
         return font == 255 ? dflt : static_cast<char>(font);
@@ -462,8 +461,7 @@ struct UiPanel {
     int           screen = -1;
     std::uint32_t addr = 0, parent = 0, hook = 0;
     // `Ui_ItemScreenX/Y` add this to every row's own coordinate: the panel
-    // slides, the items do not. Lifted 2026-09-01 - the tree modelled the
-    // WALK, which needs no geometry, so nothing here could place a row.
+    // slides, the items do not.
     int           offsetX = 0, offsetY = 0;
     // `Ui_DrawPanelBack`'s 80 tile ids, or empty for the full-sheet path.
     // `panel + 20` is a POINTER to them and they are read SIGNED; reading
@@ -515,9 +513,9 @@ struct UiPanel {
     // One panel in the tree sets it: **0x004DF128, the VIDEOPHONE's**, which
     // ships `+72 = 0x20000008` where the sneak's and the slider's ship
     // 0x20000030. So a sneak CALL takes no interface input at all, and every
-    // press goes to the conversation running over it - which is what a reader
-    // reported the port getting wrong ("the sneak continues to be
-    // interactable like it was opened normally").
+    // press goes to the conversation running over it. Without this test the
+    // sneak stays interactable during a call as if it were opened normally
+    // (reported in play).
     bool takesInput() const { return (flags & 8) == 0; }
     bool backNone()  const { return (flagsB & 0x2000) != 0; }
     bool backSheet() const { return (flagsB & 0x4000) != 0; }
@@ -595,12 +593,11 @@ public:
     // and picks the slot by BIT: `0x10` (confirm) plays slot 0, `0x20` (back)
     // slot 1, `0xF` (the four directions) slot 2, and `0x2000` (close) slot 3.
     //
-    // `docs/UI.md` said slot 0 was the selection move, 1 the confirm and 2 the
-    // screen opening. Its evidence established only that slots 0/1/2 always
-    // hold the 002/003/001 of one family - the MEANINGS were an inference the
-    // evidence did not support, and all three were wrong. There is no screen-
-    // opening sound at all. Corrected 2026-09-01 after a player said the menu
-    // played its validation sound when the selection MOVED.
+    // Slots 0/1/2 always hold the 002/003/001 of one family, but that does
+    // not make 0 the selection move, 1 the confirm and 2 the screen opening:
+    // the meanings are the input bits above. There is no screen-opening
+    // sound at all, and the family reading plays the validation sound when
+    // the selection MOVES (seen in play).
     const std::string& soundName(int screenId, int slot) const;
     // One of the 45 by its GLOBAL id - what `Ui_PlaySound` (0x00482D90) takes
     // when a callback names a sound directly rather than through a screen
@@ -611,8 +608,8 @@ public:
     // Slot 4 is the SCREEN'S OWN sound, and only two screens carry one:
     // `SAVE GAME` (sound 4, `savgrd`) and `PAUSE GAME` (sound 3, `pause`).
     // `sub_482FE0` picks 0..3 by input bit and never reaches this one, so it
-    // is played by the screen rather than by a key - which is what a reader
-    // describes, a sound when the save/clue menu comes up. The exact call
+    // is played by the screen rather than by a key - which matches the sound
+    // heard in play when the save/clue menu comes up. The exact call
     // site is not traced; the slot's exclusivity to the two screens that
     // announce themselves is the evidence.
     static constexpr int kSoundScreen = 4;
@@ -946,7 +943,7 @@ public:
     // with a `child` descends into one, and that is how the start menu's
     // confirm dialog and its name field appear. A drawer that only ever draws
     // `screen(id)` shows the menu and nothing else, so pressing confirm
-    // changes NOTHING on screen - which is exactly what a player reported.
+    // changes NOTHING on screen.
     const UiPanel* panel() const { return panel_; }
 
     int  currentList() const { return cur_; }
@@ -978,10 +975,8 @@ public:
     // flag tracks the current list continuously, and the box is lit for as
     // long as the selection is in the memo list.
     //
-    // Storing it on a press instead made the preview appear one press LATE,
-    // which a reader caught against the original: "when selecting a line
-    // (going to the right when on the memo item in the left sidebar): a
-    // preview text is displayed below". Selecting the line is enough.
+    // Storing it on a press instead makes the preview appear one press LATE;
+    // in the original, selecting the line is enough.
     bool memoBodyShown() const {
         if (!panel_) return false;
         // The READER page shows it unconditionally: its builder `sub_49D870`
@@ -1168,9 +1163,9 @@ public:
     // (`sub_49BEA0` Utiliser, `sub_49BF30` Utiliser sur, `sub_49BFF0`
     // Examiner, which also latches it into `dword_4DE74C`.) The selection is
     // the widget 0..8; the TAG is `widget + window`, so the two agree only
-    // while the list is unscrolled. Reading the selection instead applied
-    // every verb to the object that had been under the cursor before the
-    // scroll - reported in play 2026-09-07.
+    // while the list is unscrolled. Reading the selection instead applies
+    // every verb to the object that was under the cursor before the
+    // scroll (reported in play).
     int  selectedRow(std::uint32_t listAddr) const;
     // `dword_6A5090`, the long-text scroll offset in pixels. The hook moves
     // it and the DRAW clamps it, which is why the composer takes a reference
@@ -1540,8 +1535,8 @@ struct SaveEntry {
     // +40 of the directory record, lifted from slot **+108** - the player
     // record's `+8`, the CHARACTER'S name.  This is the row's label, and the
     // panel draws `<character> - <date> - <time>` under `Joueur : <profile>`
-    // (GAME_STATE 8).  The offset read +76 until 2026-09-06, which is inside
-    // the DB's array counts and is why it was recorded as "not a string".
+    // (GAME_STATE 8).  Not +76, which is inside the DB's array counts and
+    // reads as "not a string".
     std::string character;
 };
 
@@ -1645,8 +1640,8 @@ LoadPanel buildLoadPanel(const std::vector<SaveEntry>& dir);
 //     word_4CE9B2 = 266     Nouvelle partie, on screen 30 instead of Charger
 //
 // - and hides the one that does not belong to the screen.  Without this the
-// three draw on top of each other and the panel shows a single line of text,
-// which is exactly what a reader saw.  The engine does it in the OPEN
+// three draw on top of each other and the panel shows a single line of text.
+// The engine does it in the OPEN
 // callback, so it is per-open; `screen` selects which of the two layouts.
 void applyLoadPanelLayout(UiWidgets& w, int screen);
 

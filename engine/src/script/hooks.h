@@ -12,9 +12,8 @@
 // interpreter asks through this interface, ONE VIRTUAL PER ENGINE FUNCTION
 // the handler would have called, named beside it.
 //
-// A NULL hook means STUB, AS BEFORE: the opcode is recorded and changes
-// nothing, which is what every one of them did until 2026-09-02 and what
-// `tools/sim` - the corpus sweep's reference - still does. The defaults below
+// A NULL hook means STUB: the opcode is recorded and changes nothing, which
+// is what `tools/sim` - the corpus sweep's reference - does. The defaults below
 // are the same answer for a hook that is installed but does not model a part
 // (a probe overrides what it tests; a Session without a scene answers "no
 // record" and the handler's own not-found path runs).
@@ -90,13 +89,13 @@ public:
     virtual bool propById(int /*id*/, PropRef& /*out*/) { return false; }
 
     // ---- `object.place_at` (98) ----------------------------------------
-    // `object.place_at character, prop` (0x404DB0, read 2026-10-06): field 0
+    // `object.place_at character, prop` (0x404DB0): field 0
     // is a CHARACTER - `sub_40AF00` finds his slot in the actor id table and
     // `Actor_GetPosAndFacing` reads his position - and field 1 a prop's STATE
     // INDEX, which `sub_40A2C0` matches against the record's `+22` in the
     // context's AREA and then its SCENE. `Object_SetPlacement` (0x0041CF50)
     // then moves the prop's node under him. World positioning, no DB write:
-    // output-class. (Read until 2026-10-06 as "object, address".)
+    // output-class. (Field 1 is not an address.)
     virtual void placeObjectAt(int /*character*/, int /*stateIndex*/) {}
 
     // ---- `sub_423A40` (0x00423A40), the TAIL of `Actor_SetProperty` ------

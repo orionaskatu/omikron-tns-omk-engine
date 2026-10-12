@@ -6,10 +6,9 @@
 //
 //     worldops_probe <gamedata> <tables/vm_opcodes.json>
 //
-// Written 2026-09-02 against the interpreter as it stood - every one of these
-// opcodes a stub - and its first run FAILED every line but the `off.*` and
-// `*.untouched` ones, which is the point (todo/pending/T12.md carries that
-// output). Each rule is read from the handler named beside it:
+// Against stubbed opcodes every line but the `off.*` and `*.untouched` ones
+// fails (todo/pending/T12.md carries that output). Each rule is read from
+// the handler named beside it:
 //
 //   lists     49 (0x40A440) scans list field0 for field1 -> 1/0; 50 (0x40A4D0)
 //             refuses a held id on lists 2 and 3 ONLY (`cmp edi,3 / cmp edi,2`)

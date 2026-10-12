@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE CROWD: the pedestrians, the vehicles, the player.
-// Parts of `PlayState::phaseWorld`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // The pedestrians, the vehicles, the player
@@ -47,9 +47,8 @@ void PlayState::worldCrowd() {
         // `dword_6A2B9C` plus its model root's `+88` radius, or outside
         // the four side planes, and the LOD chain's LAST level holds past
         // its distance (40 m) - nothing in `Sliders_Tick` hides a far
-        // walker (read 2026-10-07). Until then this drew no walker past
-        // `kLodDistances[3]`, and a reader saw the crowd end at 40 m while
-        // the street went on behind it.
+        // walker. Cut at `kLodDistances[3]` instead, the crowd would end at
+        // 40 m while the street went on behind it.
         const float reach = static_cast<float>(clipInches);
         int pedPastLod = 0;
         // the view axis, for the LOD's depth (`sub_48D7F0`'s is the
@@ -71,15 +70,14 @@ void PlayState::worldCrowd() {
         pedFootOffMax = 0.0f;
         pedJobs.clear();
         const double pedSerial0 = phaseNow();
-        // THE CROWD IS DRAWN WITH ITS STREET (docs/STREET_LIFE.md, read
-        // 2026-10-07). Every instance of the circuit is linked into the
+        // THE CROWD IS DRAWN WITH ITS STREET (docs/STREET_LIFE.md). Every instance of the circuit is linked into the
         // street decor's own scene (`Slider_Init`'s `dword_8F5E34`, the slot's
         // +4), `sub_48D7F0` draws the list of the scene it is handed, and
         // `sub_479C20` hands it only the scenes in the render chain - which a
         // hidden decor (state 1, `sub_419A90`) is not. `Sliders_Tick` has no
         // such test: the crowd goes on WALKING indoors, and only its drawing
-        // stops. The port drew it whatever the slot (the Quest: 44 walkers
-        // inside Qalisar's temple, seen through a door's gap).
+        // stops. Drawn whatever the slot, 44 walkers would show inside
+        // Qalisar's temple, seen through a door's gap.
         const bool circuitShown = session.trafficSlot() >= 0 &&
                                   session.slotShown(session.trafficSlot());
         {
@@ -107,15 +105,15 @@ void PlayState::worldCrowd() {
             const float d2 = dx * dx + dy * dy + dz * dz;
             if (d2 > reach * reach * 4.0f) continue;   // far past any root radius: skip the model
             // THE WALKER'S OWN MODEL, looked up every frame - a map lookup when
-            // it is resident. It was taken ONCE (`if (!p.mo)`), and this list
-            // is rebuilt only when the number of movers changes: a city
-            // reloads its circuit on every entry and refills to the same cap
-            // (Anekbah's 200), so after any interior each slot kept its LAST
-            // occupant's model - the wrong body on a new walker - and, once
-            // the per-frame eviction let that model go because no live
-            // walker wore it any more, a pointer to a freed one (the Quest,
-            // 2026-10-07: T-posed npcs beside animated ones after an
-            // interior). The caches below follow `p.mo` (`cacheMo`).
+            // it is resident. Taken ONCE (`if (!p.mo)`), it would go stale:
+            // this list is rebuilt only when the number of movers changes, a
+            // city reloads its circuit on every entry and refills to the same
+            // cap (Anekbah's 200), so after any interior each slot would keep
+            // its LAST occupant's model - the wrong body on a new walker -
+            // and, once the per-frame eviction let that model go because no
+            // live walker wore it any more, a pointer to a freed one (T-posed
+            // npcs beside animated ones after an interior). The caches below
+            // follow `p.mo` (`cacheMo`).
             {
                 CharModel* const was = p.mo;
                 p.mo = charModelFor(w.model);
@@ -137,10 +135,9 @@ void PlayState::worldCrowd() {
             // REBOUND WHEN THE LIBRARY CHANGES, not only when the clip
             // pointer does. `p.tracks` points INTO `pedTracks`, which a new
             // library clears; the walkers' clips are rebuilt at the same
-            // time, and a new clip at the freed one's address left the
-            // pointer test equal - the walker drawn from freed tracks. The
-            // Quest, 2026-10-07: back in Anekbah from an interior, "all npc
-            // in the streets are T-posed".
+            // time, and a new clip at the freed one's address leaves the
+            // pointer test equal - the walker drawn from freed tracks, and
+            // every npc in the street T-posed back from an interior.
             if (w.clip != p.clipWas || p.cacheGen != pedCacheGen || p.cacheMo != p.mo) {
                 if (w.clip == p.clipWas && p.cacheGen != pedCacheGen) ++pedRebound;
                 p.clipWas = w.clip;
@@ -238,8 +235,7 @@ void PlayState::worldCrowd() {
         const int gpuMaxLights = world.maxVertexLights();
         // THE GREY A LIT WALKER STARTS FROM: the scene's `+416`, which
         // `Read3DO_Init` sets from the set's ambient (desc+184 x 255) - not
-        // 0, which is what this file read until 2026-10-06 (todo/drift-audit.md
-        // L1). The active slot's scene, the one the walkers are linked to.
+        // 0 (todo/drift-audit.md L1). The active slot's scene, the one the walkers are linked to.
         const float crowdBase = static_cast<float>(std::clamp(
             activeAmbientGrey, 0, 255)) / 255.0f;
         {
@@ -304,8 +300,8 @@ void PlayState::worldCrowd() {
                 // that summed y, which is the same constant for a model
                 // whose radius is its height - and NOT the feet of the clip's
                 // first frame, which for the seated clip are the folded legs
-                // at pelvis level and sank every sitter into the street (a
-                // reader's frame, 2026-09-03). The sit's root drops 20.7 over
+                // at pelvis level and would sink every sitter into the
+                // street. The sit's root drops 20.7 over
                 // its enter clip; that is what puts him on the ground.
                 // ...per LOD level: each skeleton is its own rest
                 if (j.level == 0 ? !p.feetKnown : !p.lodFeetKnown[j.level]) {
@@ -407,15 +403,13 @@ void PlayState::worldCrowd() {
                     // colour. That argument is the SCENE (`sub_48D3B0`'s,
                     // and `sub_440CA0`'s for a character), and
                     // `Read3DO_Init` sets the scene's `+416` to the set's
-                    // ambient grey (`.3DO` desc+184 x 255). This read
-                    // "every site that sets +416 sets it to 0" until
-                    // 2026-10-06 - those are actor records, a different
-                    // `+416` (todo/drift-audit.md L1). The crowd models ship pure white
+                    // ambient grey (`.3DO` desc+184 x 255). The sites that
+                    // set +416 to 0 are actor records, a different `+416`
+                    // (todo/drift-audit.md L1). The crowd models ship pure white
                     // (all 446 of PSH_FN's vertices are 255,255,255), so
                     // there is no baked light in them to keep - the .3DO
-                    // lights ARE their lighting, and adding to white is
-                    // what made this port's first attempt change exactly
-                    // zero pixels.
+                    // lights ARE their lighting, and adding to white
+                    // changes exactly zero pixels.
                     for (auto& c : p.posed.corners) c.r = c.g = c.b = crowdBase;
                     const float at[3] = {w.body[0], w.body[1], w.body[2]};
                     for (const WorldSlot& ws2 : worldSlots)
@@ -478,7 +472,7 @@ void PlayState::worldCrowd() {
         // drawn a good way past the last walker.
         // ...and the vehicles' reach is the CLIP DISTANCE too, by the same
         // walk (`sub_48D7F0`); `dword_4C8860[3]`, 50 m, only ends their
-        // LOD chain. Until 2026-10-07 this drew no vehicle past it.
+        // LOD chain.
         const float vreach = static_cast<float>(clipInches);
         int vehPastLod = 0;
         const double veh0 = phaseNow();
@@ -517,10 +511,10 @@ void PlayState::worldCrowd() {
             // the first dead slot, in a full
             // pool takes an ambient vehicle and rebinds its model to the
             // slider row (`sub_452CC0`'s take-over) - so a slot that drew a
-            // MOTO can hold the player's slider next. `sv.mo` was taken once
-            // and never compared, so the called slider was drawn as the moto
-            // the slot had held: a reader's call after a journey brought "a
-            // cutscene without any slider on it"
+            // MOTO can hold the player's slider next. `sv.mo` taken once and
+            // never compared would draw the called slider as the moto the
+            // slot had held: a call after a journey bringing a cutscene
+            // without any slider in it
             if (sv.mo && sv.model != v.model) {
                 std::printf("frame %ld: vehicle slot %zu restaged - '%s' -> '%s'\n",
                             n, i, sv.model.c_str(), v.model.c_str());
@@ -814,14 +808,12 @@ void PlayState::worldCrowd() {
         }
         // THE ANCHOR IS THE FLOOR, NOT THE HIPS (omk-play 69).
         //
-        // `playerFeet` used to be latched from the FIRST pose - the
-        // standing one - and subtracted for ever after. Every later
-        // pose was then placed by where the STANDING feet were, so a
-        // pose that lowers the body relative to its feet is drawn with
-        // the hips pinned and the legs coming up instead: a reader,
-        // watching a take, "the character anchor is their hips and not
-        // the floor... their legs go up, like the character is
-        // floating".
+        // `playerFeet` latched from the FIRST pose - the standing one -
+        // and subtracted for ever after would place every later pose by
+        // where the STANDING feet were, so a pose that lowers the body
+        // relative to its feet would be drawn with the hips pinned and
+        // the legs coming up instead: in a take, the character anchored
+        // at the hips, floating.
         //
         // The crouch itself is a root TRANSLATION, and this port has no
         // path for one: `poseTracks` assigns `t.trans` all zeroes and
@@ -839,26 +831,23 @@ void PlayState::worldCrowd() {
         // today can tell them apart; when one arrives, this is the
         // line that has to become the real root-motion path.
         // THE ANCHOR AND THE DROP MUST SHARE ONE ORIGIN
-        // (`todo/player-vertical.md` step 1, 2026-09-09).
+        // (`todo/player-vertical.md` step 1).
         //
-        // The reader: *"walking or running seems to rise its y
-        // position and stopping (and so returning to the idle
-        // position) reset the y position to a normal one"*. It is not
-        // the clips: measured with `tools/vertical_probe`, `H_WALK`
+        // Otherwise walking or running rises the body and returning to
+        // the idle resets it. It is not the clips: measured with `tools/vertical_probe`, `H_WALK`
         // f0 lifts the body's lowest corner 2.06 above the standing
         // one while its pelvis track drops 2.09, so the authored pair
         // CANCELS to 0.03 - the planted foot stays planted, which is
         // the "authored motion netting out" the engine relies on.
         //
-        // What floated was this port's bookkeeping. `playerFeet` is a
-        // POSE's lowest corner, latched from `H_STAND` - whose pelvis
-        // trans is +0.68, not zero - while `rootAccum` below re-bases
-        // to the ENTERED clip's first frame: +2.09 for `H_WALK`,
-        // +3.68 for `H_RUN`. The two halves therefore measured from
-        // different origins, and the body was drawn a CONSTANT
-        // 2.09-0.68 = 1.41 too high walking and 3.68-0.68 = 3.00 too
-        // high running, snapping back the moment `H_STAND` released
-        // the sum. That is the report exactly, running rising more.
+        // What floats is the bookkeeping. `playerFeet` is a POSE's
+        // lowest corner, latched from `H_STAND` - whose pelvis trans
+        // is +0.68, not zero - while `rootAccum` below re-bases to the
+        // ENTERED clip's first frame: +2.09 for `H_WALK`, +3.68 for
+        // `H_RUN`. Measured from those different origins, the body
+        // would be drawn a CONSTANT 2.09-0.68 = 1.41 too high walking
+        // and 3.68-0.68 = 3.00 too high running, snapping back the
+        // moment `H_STAND` released the sum - running rising more.
         //
         // So the anchor records the pelvis trans it was taken at
         // (`playerRootRef`) and the drop is measured from it.
@@ -975,8 +964,8 @@ void PlayState::worldCrowd() {
             // ...and NOT while the slider clips carry him: in ACTOR_STATE
             // 6 and 8 the clip's root y is the NODE's (`sub_45C680` cases
             // 6/8), carried by `PlayerController::nodeDrop()` below - adding
-            // this sum as well put him one clip's descent (12.5) too low in
-            // the seat (the reader: *"he is just a bit too low"*).
+            // this sum as well would put him one clip's descent (12.5) too
+            // low in the seat.
             if (boarding || leaving) rootAccum = 0.0f;
             rootDrop = rootAccum;
             // ...EXCEPT WHERE THE BODY IS ON THE GROUND BY DEFINITION,
@@ -1002,8 +991,8 @@ void PlayState::worldCrowd() {
             // trace below is gated on). Everything else loops.
             //
             // H_STAND lands on cur 0.68 - ref 0.68 = 0 by
-            // construction, which is why the explicit release below it
-            // was able to look correct while the walk was 1.41 out.
+            // construction, so the explicit release below it cannot
+            // tell a correct walk from one 1.41 out.
             if (player->variantCount() <= 1) rootDrop = cur - playerRootRef;
             // ...AND NOT IN THE WATER, for the slider's reason above. In
             // ACTOR_STATEs 11..14 the clip's root y reaches his POSITION
@@ -1011,30 +1000,26 @@ void PlayState::worldCrowd() {
             // included), and for a SWIM clip that y is not a bob at all:
             // the clips are authored upright and stroke along the body's
             // own axis, which his pitch then lays along the water. Drawn
-            // as a drop as well, the stroke's travel went onto the body a
-            // second time, in WORLD y and unturned - so on screen he
-            // climbed through every loop whatever way he pointed and
-            // snapped back at the wrap. A reader, 2026-09-17: *"the
-            // character always goes up, whatever is his actual direction
-            // ... each time the animation loop restarts, the character's
-            // position is reset"*.
+            // as a drop as well, the stroke's travel would go onto the body
+            // a second time, in WORLD y and unturned - so on screen he would
+            // climb through every loop whatever way he pointed and snap
+            // back at the wrap.
             {
                 const int ws = static_cast<int>(player->state());
                 if (ws >= 11 && ws <= 14) { rootDrop = 0.0f; rootAccum = 0.0f; }
             }
             // ...AND NOT WHILE THE SLIDER CLIPS CARRY HIM, AFTER the looping
-            // rule as well as before it. The guard above zeroed the
+            // rule as well as before it. The guard above zeroes the
             // accumulator, but `H_SLDIN` and `H_SLDOUT` are single-variant
-            // clips, so the looping rule then put `cur - ref` straight back:
+            // clips, so the looping rule puts `cur - ref` straight back:
             // +11.5..11.9 of descent drawn as a drop on top of the same
-            // descent moving his position (ACTOR_STATE 6/8, `Actor_MoveBy`).
-            // A reader, again (2026-10-06): *"Kay'l position is a bit low
-            // when he sits in the slider"*.
+            // descent moving his position (ACTOR_STATE 6/8, `Actor_MoveBy`),
+            // and Kay'l sits a little low in the slider.
             // ...and what IS drawn there is the NODE's own drop: in ACTOR_STATE
             // 6/8 the clip's root y moves the node and not his position
             // (`sub_45C680` cases 6/8, `PlayerController::nodeDrop`), so the
             // body steps into the seat and out of it on top of a position
-            // that stays where the arm put him (2026-10-06, the exit's fall).
+            // that stays where the arm put him (the exit's fall).
             if (boarding || leaving) rootDrop = player->nodeDrop();
             // MEASURING, not fixing: how far does the model's own
             // lowest point travel across a take? If the rotations
@@ -1201,11 +1186,11 @@ void PlayState::worldCrowd() {
             c.z = r[2] + pp[2];
             // THE NORMAL TURNS WITH HIM and does not move, as a walker's does
             // (`worldCrowd`'s pedestrians) and as the renderer's path turns it
-            // (`meshAffines` folds this rotation into the affine). Missing here
-            // since his lighting arrived (drift audit L1, 2026-10-06): the set's
-            // lights fell on him as if he faced the way his model is authored,
-            // on every backend that poses him on the CPU - found 2026-10-11 by
-            // laying GL1's posed player beside its CPU one (7800 pixels).
+            // (`meshAffines` folds this rotation into the affine; drift audit
+            // L1). Without it the set's lights fall on him as if he faced the
+            // way his model is authored, on every backend that poses him on
+            // the CPU - GL1's posed player beside its CPU one differs by 7800
+            // pixels.
             const float nrm[3] = {c.nx, c.ny, c.nz};
             float rn[3];
             omk::rotateEuler(drawEuler, nrm, rn);
@@ -1278,7 +1263,7 @@ void PlayState::worldCrowd() {
     }
 }
 
-// THE CROWD'S MEMORY, AS THE ORIGINAL KEEPS IT (2026-10-04). The engine poses
+// THE CROWD'S MEMORY, AS THE ORIGINAL KEEPS IT. The engine poses
 // every body each frame into ONE frame scratch pool and submits from it
 // (`sub_4947F0`, `classic-mac-port-1999.md` 3b-i) - nothing posed is kept per
 // body - and builds a model's LOD sub-objects ONCE, at area load

@@ -5,7 +5,7 @@
 //     omk-play <gamedata> <tables/> --scene Aapkayl        the SCENE VIEWER
 //
 // **`backends/sdl/` is the only place in the tree that includes an SDL header**
-// - and since the gateway (2026-10-03, `platform/frontend.h`) not this file:
+// - and, behind the gateway (`platform/frontend.h`), not this file:
 // only `sdlfront.{h,cpp}` (the window, keyboard, pad and audio device), the
 // GPU glue `playgpu_*.cpp` and the `--scene` instrument. This file and the
 // rest of the viewer reach the host through `omk::Frontend` - which is
@@ -33,7 +33,7 @@ bool omkInstrumentsBuilt();   // playharness.cpp / playharness_off.cpp
 int PlayState::run(int argc, char** argv) {
     // WHICH BUILD THIS IS, first: a console log is the only report a run
     // leaves, and a `--profile` that printed nothing at all could not say
-    // whether the release build was installed (2026-10-05)
+    // whether the release build was installed
     // RELEASE is the profiler's absence (`make release`, `vita-release`,
     // `classic-release`); the classic Mac's development build has no
     // instruments by design and is still a development build

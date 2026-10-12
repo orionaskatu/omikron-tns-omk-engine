@@ -143,9 +143,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    // ---- THE READER'S TWO FAULTS (2026-09-14): the icons and the dim -----
+    // ---- TWO FAULTS TO GUARD: the icons and the dim ---------------------
     //
-    // `boutiq.BMP` is the one 24-bit sheet, and a loader taking only 8 left
+    // `boutiq.BMP` is the one 24-bit sheet, and a loader taking only 8 leaves
     // every shop button sprite undrawn. And `Ui_DrawPanelDim`: bank B 0x1000
     // puts a full-screen mode-4 quad of 0x64000000 over what is behind (the
     // world, drawn again because of 0x800). Measured over a flat grey

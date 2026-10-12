@@ -16,8 +16,7 @@
 // answers over every screen the table names. The interesting rows are the
 // three that keep the world and the SNEAK (9), which does not - the sneak's
 // page art has a deliberate hole in the middle, and drawing the city street
-// through it is what a reader reported as a transparent background
-// (todo/omk-play.md 82).
+// through it reads as a transparent background (todo/omk-play.md 82).
 //
 // out.bin: int32 screens, keep, hide, sneakKeeps, pauseKeeps,
 //          shootMecaKeeps, shootHumanKeeps, unknownKeeps

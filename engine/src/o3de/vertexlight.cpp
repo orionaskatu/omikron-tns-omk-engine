@@ -83,10 +83,10 @@ int lightReach(const float bodyPos[3], std::span<const Light3do> lights,
 int applyLights(Geometry& g, std::size_t first, std::size_t count,
                 const float bodyPos[3], std::span<const Light3do> lights) {
     if (count == 0 || first + count > g.corners.size()) return 0;
-    // THE CORNERS ARE WALKED ONCE, NOT ONCE PER LIGHT (2026-09-22). This used
-    // to be a loop over lights each running the whole corner range - so a
-    // body's 21 KB of corners was read five times a frame on a street, which
-    // on a Vita is the cost rather than the arithmetic. The reaching lights
+    // THE CORNERS ARE WALKED ONCE, NOT ONCE PER LIGHT. A loop over lights
+    // each running the whole corner range reads a body's 21 KB of corners
+    // five times a frame on a street, which on a Vita is the cost rather than
+    // the arithmetic. The reaching lights
     // are gathered first, in their own order, and each corner then takes them
     // in that same order: every corner's colour is the SAME SEQUENCE of
     // additions and clamps on the same values, so the result is bit-identical
@@ -98,8 +98,8 @@ int applyLights(Geometry& g, std::size_t first, std::size_t count,
     // THE RAMP IS ONE TABLE FOR EVERY LIGHT (todo/optimization.md step 18).
     // `(t * c) >> 8 / 255` depends only on a colour byte and the 0..255
     // index, so `kRamp[c][t]` holds all 65536 of them, built once at load -
-    // where each call used to build 768 per reaching light, and three vectors
-    // to hold them, for every body every frame. Same values: the same
+    // rather than 768 per reaching light, and three vectors to hold them, for
+    // every body every frame. Same values: the same
     // `lightRamp` and the same division. Built by a namespace-scope
     // initialiser, not a function-local static, so the crowd's pool threads
     // on the Vita never meet an initialisation guard (see `composePose`).

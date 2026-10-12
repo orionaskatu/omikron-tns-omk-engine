@@ -3,10 +3,10 @@
 //
 //     ui_answer <tables/ui_widgets.json> <out.bin>
 //
-// `ui.open` suspends the calling script and the screen answers it. The
-// simulator used to supply that answer as a literal, which tested the
-// suspend/resume mechanism and nothing else; `tools/sim/ui.py` derives it by
-// pressing buttons, and this does the same in the port.
+// `ui.open` suspends the calling script and the screen answers it. An answer
+// supplied as a literal would test the suspend/resume mechanism and nothing
+// else; `tools/sim/ui.py` derives it by pressing buttons, and this does the
+// same in the port.
 //
 // Screen 29 is the start menu: confirm on "Nouvelle partie" enters the confirm
 // dialog through the item's `+44`, DOWN moves off the name field onto the

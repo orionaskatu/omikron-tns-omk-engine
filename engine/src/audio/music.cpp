@@ -37,9 +37,9 @@ bool MusicPlayer::play(const DataFs& fs, const AdpcmTables& tables,
     // The resampled length, counted the way the resampling loop counted it:
     // output frame i exists while `size_t(i * step)` is still inside the track.
     // Found from the closed form and settled on the SAME predicate, not
-    // counted up from 0: counting was 6.3M double multiplies for a 144 s
-    // track, 360 ms of one frame on the Vita (the Bowie sequence's start,
-    // 2026-09-29). `n * step` is monotonic in n, so the two nudges land on
+    // counted up from 0: counting is 6.3M double multiplies for a 144 s
+    // track, 360 ms of one frame on the Vita (the Bowie sequence's start).
+    // `n * step` is monotonic in n, so the two nudges land on
     // the first n the predicate refuses - the count the loop reached.
     std::size_t n = step > 0.0 ? static_cast<std::size_t>(std::ceil(static_cast<double>(frames) / step)) : 0;
     while (n > 0 && static_cast<std::size_t>((n - 1) * step) >= frames) --n;

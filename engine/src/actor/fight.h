@@ -24,8 +24,8 @@
 // rather than of the effort. The golden-trace logger only sees what a VM
 // handler narrates through `Dbg_LogTagged`, and combat is two opcodes:
 // `fight.begin` announces NOTHING and `player.become` announces to CHARACTERS,
-// which the logger filters out itself. `traces/fight.log` was captured on
-// 2026-08-31 to give this an oracle and settled it the other way round - the
+// which the logger filters out itself. `traces/fight.log` was captured to
+// give this an oracle and settled it the other way round - the
 // capture reached combat, 32 of its anchored scripts carry `fight.begin`, and
 // it is silent about all of it. So what holds this honest is what the shipped
 // data can falsify, and `tools/run_fight.cpp` asserts exactly that:

@@ -30,7 +30,7 @@
 // sequence triangle for triangle ("exact" - a rasterizer would give both the
 // same depth), the same triangles in another corner order, or another
 // diagonal; `--order` prints one line per group with its first mesh's name
-// and that class (2026-09-30, step 29). Prints only; writes nothing.
+// and that class (todo/optimization.md step 29). Prints only; writes nothing.
 #include "formats/mesh3do.h"
 #include "o3de/geom3do.h"
 #include "platform/datafs.h"

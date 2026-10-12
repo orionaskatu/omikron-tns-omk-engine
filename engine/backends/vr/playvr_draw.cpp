@@ -2,8 +2,8 @@
 // THE EYES, DRAWN (`todo/quest-port.md` §5 step 1). Called by
 // `PlayState::worldMirror()` where the frame would draw its one picture; true
 // means the eyes were drawn here and the flat draw, its GPU present and its
-// readback are skipped. The fake headset puts them side by side in `fb`; a
-// headset frontend (step 5) will take each eye into its own swapchain image.
+// readback are skipped. The fake headset puts them side by side in `fb`; the
+// OpenXR frontend takes each eye into its own swapchain image.
 //
 // Each eye is a whole pass through the SAME draw list - culled once, by the
 // camera `playvr_camera.cpp` left in `view` - and through `drawWithMirror`,
@@ -40,7 +40,7 @@ bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plan
         ev.vh = vr.eyeH;
         omk::drawWithMirror(world, draws, ev, plane);
 #if OMK_OPENXR
-        // THE HEADSET (step 5b): the eye's picture presented straight into its
+        // THE HEADSET: the eye's picture presented straight into its
         // swapchain image, no readback; the frame then submits the eyes
         {
             unsigned fbo = 0;
@@ -64,7 +64,7 @@ bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plan
                       fb.px.begin() + static_cast<long>(y) * fb.w + x0);
     }
 #if OMK_OPENXR
-    // THE MONITOR (step 6b): the panel's 3D viewport item through the GAME's
+    // THE MONITOR: the panel's 3D viewport item through the GAME's
     // view, once, read back and handed to the composer exactly as the flat
     // path does (`playframe_world_draw.cpp`, `vpItem`)
     if (vr.monitor && vpItem && omk::xr::eyesDrawn()) {
@@ -83,16 +83,15 @@ bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plan
                       view3dPic.px.begin() + static_cast<long>(y) * mv.vw);
         if (comp_) comp_->attachView3D(&view3dPic);
     }
-    // THE INTERFACE OVER THE EYES (step 6a): the frame is the flat GPU path's
+    // THE INTERFACE OVER THE EYES: the frame is the flat GPU path's
     // OVERLAY frame - every pixel the KEY, "the world shows here", the alpha
     // passes recorded in the planes - and the present lays it over the eyes
     // as a transparent layer (`glesSetOverlayAsLayer`)
     // ...BUT BEHIND A SCREEN THE ORIGINAL HIDES THE WORLD BEHIND, the frame
     // starts BLACK, as the flat game's does (the world off): the panel is
     // opaque and the world shows only AROUND it, shaded. The sneak's sheet has
-    // deliberate key holes - the device's own 3D view - which on the key let
-    // the world through the panel (the reader, 2026-10-07: "do not put
-    // transparency on the sneak main section's background").
+    // deliberate key holes - the device's own 3D view - which on the key
+    // would let the world through the panel's background.
     if (omk::xr::eyesDrawn()) {
         overlayFrame = true;
         g_ov.begin(fb.w, fb.h);

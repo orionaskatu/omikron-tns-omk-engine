@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE INSTRUMENTS - every harness the viewer carries, in one file
-// (`todo/play-split.md` S6, 2026-10-02): the writes into the DB a check
+// (`todo/play-split.md` S6): the writes into the DB a check
 // needs (`--money`, `--give`, `--var`...), the opcodes fired by hand
 // (`--zone-enable`, `--scene-load`, `--scx-play`), the entries the game
 // reaches through its scripts (`--fight`, `--board`, `--ride`, `--call`,

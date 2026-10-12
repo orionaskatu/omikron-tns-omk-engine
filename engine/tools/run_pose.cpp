@@ -127,8 +127,7 @@ int main(int argc, char** argv) {
     // A corner whose face index is negative is skinned to an ANCESTOR and is
     // built from that ancestor's vertex and offset, so the ancestor's
     // transform is what poses it. Posing it by the mesh that DECLARED the face
-    // instead tears the model open at the shoulders - visibly, and a reader
-    // saw it before any number here did. Both readings are computed so the
+    // instead tears the model open at the shoulders - visibly. Both readings are computed so the
     // difference is a number and not a memory.
     {
         omk::Geometry alt = posed;

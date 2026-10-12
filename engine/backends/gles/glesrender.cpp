@@ -30,7 +30,7 @@
 // usually do. GLSL ES 1.00 would have forced the per-vertex form anyway (no
 // integer ops, no guaranteed dynamic indexing in a fragment shader); here the
 // constraint and the reference agree. `todo/vita-port.md` records the Vulkan
-// side as a question for whoever owns that file.
+// side's per-fragment form as an open question.
 //
 // THE ENHANCEMENTS (`todo/enhancements.md`), all off by default:
 //   * the mapped shadow pass and the per-pixel lights (`View::lights`,
@@ -86,8 +86,8 @@
 // target this backend can resolve. So MSAA is built where the calls exist and
 // refused, and said, everywhere else; supersampling is the anti-aliasing a
 // Vita has.
-// ...and GLES 3 has them as core (Android, 2026-10-07: the Quest asked for
-// them as a VR enhancement - edges crawl when the head moves)
+// ...and GLES 3 has them as core (Android: on the Quest MSAA is a VR
+// enhancement - edges crawl when the head moves)
 #if defined(__APPLE__) || defined(__ANDROID__)
 #  define OMK_GLES_MSAA 1
 #else
@@ -829,8 +829,9 @@ constexpr bool kGlesCullBack = true;
 // does not carry the extension's names
 constexpr GLenum kGlTextureMaxAnisotropy = 0x84FE, kGlMaxAnisotropy = 0x84FF;
 
-// THE GL CALLS' OWN TIME, for the frame-phase line (`play.cpp`, 2026-09-18:
-// a Vita menu frame cost ~760 ms and nothing said where). Milliseconds summed
+// THE GL CALLS' OWN TIME, for the frame-phase line (`play.cpp`): without it a
+// slow frame - a Vita menu frame can cost ~760 ms - says nothing of where its
+// time went. Milliseconds summed
 // since the last `glesTakeTimings`: glReadPixels, the 888 -> 565 conversion,
 // the texture upload of a CPU frame, and the present draw.
 namespace {
@@ -842,8 +843,8 @@ long g_glesPatchesWindow = 0;
 long g_glesTiePatchWindow = 0;
 bool g_glesInTie = false;
 // ONE FRAME'S OWN COUNTS, reset at `begin` - what a SLOW FRAME line quotes
-// (`glesFrameReport`). A console's 8.4 s city frame (2026-09-21) had nothing
-// in the log to say which GL call it was.
+// (`glesFrameReport`). Without them a slow frame - a console city frame can
+// take 8.4 s - leaves nothing in the log to say which GL call it was.
 struct GlesFrameCounts {
     double uploadMs = 0, tieMs = 0, drawMs = 0, texMs = 0;
     long uploads = 0, uploadBytes = 0, patches = 0, patchedBuffers = 0, draws = 0, wholeUploads = 0,
@@ -851,14 +852,14 @@ struct GlesFrameCounts {
 } g_glesFrame;
 // ...and the same counts summed over the 60-frame window, so a console log at
 // 65 ms a frame says what the world submit spent without waiting for a frame
-// over half a second (2026-09-30)
+// over half a second
 GlesFrameCounts g_glesWindow;
 // THE PER-DRAW STATE, set and skipped, since the last `glesTakeStateCalls`
 // (todo/optimization.md step 17): what the draw-state cache saves.
 long g_glesStateSet = 0, g_glesStateSkipped = 0, g_glesDrawsWindow = 0;
 // `OMK_UPLOAD_LOG=1`: every WHOLE vertex upload, named by geometry and size -
 // which geometries a frame re-sends in full, the cost the console's `gles world`
-// line measures (2026-09-30)
+// line measures
 bool glesUploadLog() {
     static const bool on = std::getenv("OMK_UPLOAD_LOG") != nullptr;
     return on;
@@ -1011,7 +1012,7 @@ public:
     bool presentSurface(const Surface& s, int winW, int winH);
     // AN EYE (`todo/quest-port.md` §5 step 5b): the world target's top-left
     // `ew x eh` - where the eye's pass drew - over the whole window target
-    // `shade` < 1 darkens it (step 6b: the world behind an open screen),
+    // `shade` < 1 darkens it (the world behind an open screen, §5 step 6b),
     // through the blend - the picture times a constant - so no program changes
     bool presentEye(int ew, int eh, int winW, int winH, float shade = 1.0f) {
         notePresent();
@@ -1050,10 +1051,10 @@ public:
 private:
     struct Tex { GLuint id = 0; float w = 1, h = 1; };
     // THE UPLOADED TEXTURES, kept across pool changes and keyed by the pixel
-    // STORAGE (2026-09-23). A pool change - one character arriving or leaving,
-    // which every cutscene hand-over does - used to delete and re-upload EVERY
-    // texture, the city's unchanged ones included, converting each to RGBA on
-    // the CPU first. `PixelBuffer` is shared between copies of a `Texture` and
+    // STORAGE. A pool change - one character arriving or leaving, which every
+    // cutscene hand-over does - must not delete and re-upload EVERY texture,
+    // the city's unchanged ones included, converting each to RGBA on the CPU
+    // first. `PixelBuffer` is shared between copies of a `Texture` and
     // detaches before any write, so the same storage IS the same bytes; and
     // `keep` holds that storage alive, so its address cannot be reused for
     // other pixels while the GL texture exists. A NAME would not do: 182
@@ -1065,14 +1066,14 @@ private:
     std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
     struct Vbo {
         GLuint id = 0; std::size_t n = 0; std::uint64_t rev = 0;
-        // STREAMED (2026-09-30): this frame's corners live in the ring at
+        // STREAMED: this frame's corners live in the ring at
         // corner `base`, not in `id`; valid for the frame `streamFrame` only
         bool streamed = false;
         std::size_t base = 0;
         unsigned long streamFrame = 0;
         unsigned long lastWhole = 0;   // the last frame it was sent WHOLE (+1; 0 never)
     };
-    // THE STREAMING RING (todo/optimization.md step 28, 2026-09-30). A geometry
+    // THE STREAMING RING (todo/optimization.md step 28). A geometry
     // re-sent WHOLE frame after frame - the sky that follows the camera, the
     // particles, a body posed on the CPU, the shadow quads - cost the console
     // about 1 ms an upload whatever its size: vitaGL's `glBufferSubData` on a
@@ -1089,10 +1090,10 @@ private:
     int ringRegion_ = 0;
     std::size_t ringUsed_ = 0;
     // ONE COUNT A FRAME: the first `begin` after a present. Counting presents
-    // themselves (the first version) took two a frame wherever a fade or an
-    // overlay presents twice - no geometry then looked "sent last frame", so
-    // nothing streamed, and the ring's thirds rotated twice a frame, reused
-    // after one frame instead of two (the console, 2026-09-30).
+    // themselves would take two a frame wherever a fade or an overlay presents
+    // twice - no geometry would then look "sent last frame", so nothing would
+    // stream, and the ring's thirds would rotate twice a frame, reused after
+    // one frame instead of two.
     unsigned long presentSeq_ = 1, frameSeq_ = 1, frameFromPresent_ = 0, rotatedAt_ = 0;
     bool streamOn_ = false;
     bool streamToRing(const Geometry* g, Vbo& vb);
@@ -1150,9 +1151,9 @@ private:
           sDither_ = -1;
     GLuint overlay_ = 0;
     GLuint maskTex_ = 0;
-    // SCRATCH, kept between calls. `uploadGeometry` built a fresh vector every
-    // call - a posed body rewrites its whole buffer every frame, so that was an
-    // allocation and a free of ~16 KB per body per frame (2026-09-22).
+    // SCRATCH, kept between calls. A fresh vector every `uploadGeometry` call
+    // would be an allocation and a free of ~16 KB per body per frame, since a
+    // posed body rewrites its whole buffer every frame.
     std::vector<GpuVert> up_;
     std::vector<std::size_t> losers_, restore_;
     GLint oDst_ = -1, oPic_ = -1, oPicSize_ = -1, oMask_ = -1, oFade_ = -1;
@@ -1236,15 +1237,15 @@ private:
     bool shadowLive_ = false;              // a depth pass was made this frame
     float lightMvp_[16] = {};
     float shadowStrength_ = 0.0f;
-    // THE POSING PROGRAM CHECKED ON THE DEVICE (2026-09-26): see the body.
+    // THE POSING PROGRAM CHECKED ON THE DEVICE: see the body.
     bool poseSelfTest();
     bool usePosed(const Draw& d) const { return d.meshPose && d.meshPoses && posed_; }
     void useProgram(GLuint p) { if (curProg_ != p) { glUseProgram(p); curProg_ = p; } }
 
-    // THE DRAW-STATE CACHE (todo/optimization.md step 17). `submit` used to set
-    // every piece of state a draw needs on every draw - blend, depth mask,
-    // texture, seven uniforms, four to six attributes - and on vitaGL each is
-    // real work. What the last draw left is remembered here and a call that
+    // THE DRAW-STATE CACHE (todo/optimization.md step 17). Setting every piece
+    // of state a draw needs on every draw - blend, depth mask, texture, seven
+    // uniforms, four to six attributes - is real work on vitaGL for each. What
+    // the last draw left is remembered here and a call that
     // would set the same value is skipped. It is FORGOTTEN (`forgetState`) at
     // `begin` and wherever GL is touched outside the submit path, so the first
     // draw after either sets everything. Uniforms are per PROGRAM, so each of
@@ -1746,17 +1747,15 @@ gpuRenderbuffer("render targets", msDepth_, (df == GL_DEPTH_COMPONENT16 ? 2LL : 
     return false;
 }
 
-// THE POSING PROGRAM, CHECKED WHERE IT RUNS (2026-09-26). On the Mac a posed
-// body matches the CPU's to a few pixels (`engine: gles pose`); on the reader's
-// Vita the cutscene characters came out with "hands, feet and head placed way
-// too far from the body" - a GPU and a shader compiler this repo cannot run.
-// So the program proves itself at start-up, on the device: 32 thin bars, one
+// THE POSING PROGRAM, CHECKED WHERE IT RUNS. On the Mac a posed body matches
+// the CPU's to a few pixels (`engine: gles pose`); on a Vita the program can
+// place hands, feet and head far from the body - a GPU and a shader compiler
+// this repo cannot run. So the program proves itself at start-up, on the device: 32 thin bars, one
 // per SLOT, each coloured by its slot and each slot's affine moving its bar to
 // its own cell of an 8 x 4 grid - once as a pure translation, once turned 90
 // degrees. The read-back says, cell by cell, WHICH slot arrived there and
 // whether its bar was turned, and a program that gets any wrong is dropped:
-// the bodies are then posed on the CPU, as before any of this, and the log
-// says what the GPU did - the evidence the fix needs.
+// the bodies are then posed on the CPU, and the log says what the GPU did.
 bool GlesRenderer::poseSelfTest() {
     constexpr int kCols = 8, kRows = 4, kN = kCols * kRows;
     static_assert(kN == kPoseSlots, "one bar a slot");
@@ -1905,7 +1904,7 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         s.toRgbaKeyed(px.data());
         // REPEAT is the engine's addressing (the sampler Vulkan builds), and
         // GLES2 allows it only on power-of-two textures. All 2534 shipped under
-        // MESHES are (max 256x256, measured 2026-09-18); a texture that is not
+        // MESHES are (max 256x256); a texture that is not
         // - a set-piece model out of an SCX stream, say - is clamped and SAID.
         const auto pot = [](int v) { return v > 0 && !(v & (v - 1)); };
         const bool repeat = pot(s.width) && pot(s.height);
@@ -2038,19 +2037,19 @@ bool GlesRenderer::uploadGeometry(const Geometry* g, bool allowStream) {
     std::vector<GpuVert>& v = up_;
     v.clear();
     ++g_glesFrame.uploads;
-    // the bytes SENT, counted where they are sent: a partial upload used to be
-    // booked here at the whole geometry's size, so the set's 69-run patch read
-    // as a 5 MB upload every frame (2026-09-30)
+    // the bytes SENT, counted where they are sent: booked here at the whole
+    // geometry's size, a partial upload - the set's 69-run patch - would read
+    // as a 5 MB upload every frame
     if (it != vbo_.end() && it->second.n == g->corners.size()) {
         Vbo& vb = it->second;
         static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
         bool partial = !noDirty && g->dirtyTo != 0 && g->dirtyTo == g->revision &&
                              vb.rev == g->dirtyFrom;
 #if defined(__ANDROID__)
-        // TOO MANY RUNS GO WHOLE, AND ORPHANED (the Quest, 2026-10-07): the
+        // TOO MANY RUNS GO WHOLE, AND ORPHANED (the Quest): the
         // day/night re-floor rewrites ~55000 scattered corners of the set
         // (`reclampToAmbient`), thousands of runs, and each `glBufferSubData`
-        // into a buffer the GPU is still reading cost the eyes 135-180 ms on
+        // into a buffer the GPU is still reading costs the eyes 135-180 ms on
         // a Quest 2, every grey step. Past `kMaxRuns` the buffer is sent
         // whole through `glBufferData` - fresh storage, which the driver
         // hands over without waiting on the frames in flight.
@@ -2389,8 +2388,8 @@ void GlesRenderer::setView(const View& view) {
 // pass leaves exactly the depths of a virtual room behind the plane, so the
 // real room's walls, nearer, cover it everywhere but where the wall is open for
 // the mirror, and the mirror's own faces blend over what shows through. No
-// stencil, no read-back: the CPU fallback read the frame back and converted
-// it, 190 ms a frame in Kay'l's apartment on the console (2026-09-30). The
+// stencil, no read-back: the CPU fallback reads the frame back and converts
+// it, 190 ms a frame in Kay'l's apartment on the console. The
 // reflected pass takes the draws in FRONT of the plane, as the fallback does -
 // the port's own guard against what lies behind the mirror's wall.
 // `OMK_CPU_MIRROR=1` keeps the fallback, for laying the two side by side.
@@ -2409,8 +2408,8 @@ bool GlesRenderer::drawMirrorScene(const View& v, const View& refl, std::span<co
 }
 
 void GlesRenderer::begin(const View& view) {
-    // A PASS THAT SPENT OVER 20 ms UPLOADING says so (the Quest's slow frames,
-    // 2026-10-07): the CPU time around the uploads, which is where a driver
+    // A PASS THAT SPENT OVER 20 ms UPLOADING says so (the Quest's slow
+    // frames): the CPU time around the uploads, which is where a driver
     // stall inside `glBufferSubData` lands
     if (g_glesFrame.uploadMs > 20.0)
         std::printf("gles: heavy upload - %ld uploads (%ld whole), %ld patches, %ld KB, %.0f ms\n",
@@ -3363,15 +3362,15 @@ bool GlesRenderer::presentOverlay(const Surface& s, const unsigned char* mask, c
     // only on the rows `maskRows` flags - it is zero everywhere else.
     // FOUR LANES, not one (todo/cpu-vs-original.md, the overlay): one FNV
     // chain over a row is a multiply that waits on the last, 320 a row of
-    // the colour plane, 480 rows an overlay frame - the console's "texture
-    // upload" was 6.2 ms an overlay frame for 76 rows actually sent in 60
-    // frames. Four chains over interleaved words run side by side; the value
+    // the colour plane, 480 rows an overlay frame - with one chain the
+    // console's "texture upload" measures 6.2 ms an overlay frame for 76 rows
+    // actually sent in 60 frames. Four chains over interleaved words run side by side; the value
     // only ever meets its own last frame's, so the function is free to change.
-    // ...and since 2026-10-11 two checksums a 32-pixel BLOCK of a row
+    // ...and two checksums a 32-pixel BLOCK of a row
     // (`overlayBlockSums`, shared with GL1 and the 3DS): on the Vita only the
     // blocks that changed are copied into the texture - a fight HUD's sparks
     // change ~300 rows by a few pixels at each edge - and elsewhere a row
-    // with any changed block goes up whole, in runs, as before.
+    // with any changed block goes up whole, in runs.
     const int nb = (s.w + 31) / 32 > 64 ? 64 : (s.w + 31) / 32;
     const int bw = (s.w + nb - 1) / nb;
     const auto sync = [&](GLuint tex, const unsigned char* cur, std::vector<std::uint32_t>& last,
@@ -3412,10 +3411,9 @@ gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
 #endif
             // THE CHANGED ROWS GO UP IN RUNS, NOT ONE CALL A ROW. A shoot or
             // fight HUD changes ~350 rows of each plane every frame, and on
-            // the Quest 2 (Adreno 650) the ~700 `glTexSubImage2D`s into
-            // textures the eyes' draws still read cost 40-60 ms a frame
-            // (2026-10-07, the reader's "shoot and fight are very laggy" -
-            // `texture upload` 42 ms against 0.5 in adventure). Contiguous
+            // the Quest 2 (Adreno 650) ~700 `glTexSubImage2D`s into textures
+            // the eyes' draws still read cost 40-60 ms a frame (`texture
+            // upload` 42 ms against 0.5 in adventure). Contiguous
             // rows are one call everywhere; on Android the whole span from
             // the first changed row to the last is ONE call, since the
             // driver's cost there is per call into a busy texture, not per

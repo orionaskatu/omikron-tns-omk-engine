@@ -57,7 +57,7 @@
 // be in the water state in shoot mode. Mode 1 (the horizontal bar) is not
 // ported - nothing asks for it.
 //
-// **Mode 2 is mode 0 plus the STAT CARD** (`sub_447000`, 2026-09-17), which
+// **Mode 2 is mode 0 plus the STAT CARD** (`sub_447000`), which
 // melee asks for: `Fight_UpdateHealthBars` (0x00445160) draws
 // `Hud_DrawBar(player, 200, 0, 2)` and `(opponent, 200, 1, 0)` every fight
 // frame outside a KO replay, and mode 2 calls `sub_447000` first while
@@ -92,7 +92,7 @@
 // NEGATIVELY by the engine's `movsx`; no shipped label needs it, and such a byte
 // is simply dropped here.
 //
-// **Mode 1 is the BREATH gauge** (2026-09-17, `todo/swimming.md` step 4), and
+// **Mode 1 is the BREATH gauge** (`todo/swimming.md` step 4), and
 // what asks for it is the water: `sub_4A8F30`'s underwater arm calls
 // `Hud_DrawBar(1000 * (start + 40000 - now) / 40000, 1000, 0, 1)` every tick
 // until the 40 seconds are up, having called `Hud_Refresh` on the first. It is

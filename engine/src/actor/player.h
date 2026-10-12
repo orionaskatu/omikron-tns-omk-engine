@@ -307,12 +307,11 @@ public:
     //     SetPersoBankGroup(channel, g);
     //
     // and it is reached ONLY when MDACTION's object scan found something.
-    // There WAS an `enterActionBank()` here that installed group 41 on any
-    // successful press; it is gone, because a press that merely activates a
-    // zone never reaches `sub_465D30` and installing the take bank for one
-    // played a take of nothing - a reader finishing a shop seller's
-    // conversation watched the whole graph run (2026-09-06). The take's own
-    // switch lives where the scan does, in `play.cpp`, through the call below.
+    // Nothing here installs group 41 on any successful press: a press that
+    // merely activates a zone never reaches `sub_465D30`, and installing the
+    // take bank for one plays a take of nothing (at the end of a shop seller's
+    // conversation, the whole graph runs). The take's own switch lives where
+    // the scan does, in `play.cpp`, through the call below.
     //
     // 27.472441 units is 0.6978 m - the low/standing split. **The LOW arm is
     // still not ported**: choosing it needs the object's height, which
@@ -365,10 +364,10 @@ public:
     bool enterShootMode() { return rt_.shootEnter(); }
     // `Shoot_Leave` (0x00422730) puts the player in state 1 AND ends with
     // `SetPersoBankGroup(bank, Cef_DefaultGroup(+180))` - the machine back on
-    // the bank's default group, the locomotion one. Without it he stayed on
-    // group 200's shoot stance after a phase ended, whose movement entries
-    // queue the shoot mover's moves with no mover to answer them: he could
-    // not walk (a reader, 2026-09-10, after the supermarket's ending).
+    // the bank's default group, the locomotion one. Without it he stays on
+    // group 200's shoot stance after a phase ends, whose movement entries
+    // queue the shoot mover's moves with no mover to answer them: he cannot
+    // walk (seen after the supermarket's ending).
     // `shoot.player.suspend`'s half of `Shoot_Leave` (0x422950): the machine
     // back on the bank's default group - and NOT `ACTOR_STATE` 1, which only
     // `Shoot_Leave`'s actor loop writes; he stays in 3 (todo/drift-audit S7)
@@ -631,10 +630,10 @@ public:
     // which is the 41.8 the dialogue staging measured from the other side
     // (CLAUDE.md 6, "HO1_FNM's own standing pelvis->feet is 41.8").
     //
-    // Filed as issue 49 from a play report - *the camera on adventure mode is
-    // set too low* - and it is what `player.h` above records as unsettled:
-    // "whether the subject position +244..+252 is the FEET or the pelvis is
-    // not settled by this read". It is the pelvis.
+    // Issue 49 (the camera in adventure mode sits too low), and what
+    // `player.h` above records as unsettled: "whether the subject position
+    // +244..+252 is the FEET or the pelvis is not settled by this read". It
+    // is the pelvis.
     float cameraLift() const { return camLift_; }
     // THE SHOOT CAMERA'S EYE LIFT, and it is the ENGINE'S rule.
     //
@@ -729,8 +728,8 @@ public:
     // `flt_53AE50/54/58`; `MDJUMP01` copies those into the actor some frames
     // later. Measured in `H1AVNT`, 0A fires on `H_WKJUMPR` (whose `+12` is 14)
     // and 01 on `H_JUMPONR` (whose `+12` is 0), so reading N at the launch
-    // reads the wrong entry and gets nothing - which is exactly what a first
-    // version of this did, and the trace said `refused` on every jump.
+    // reads the wrong entry and gets nothing: the trace says `refused` on
+    // every jump.
     bool jumpPrepare();      // MDJUMP0A / MDJUMP0B
     bool jumpLaunch();       // MDJUMP01
     bool jumpArmed() const { return jumpArmed_; }
@@ -744,8 +743,8 @@ public:
     // the suite stands on flat ground, so asserting this through a jump would
     // exercise band 2 and nothing else; a check that instead grepped the
     // source for the three constants would go red the day somebody moved them,
-    // which is the failure shape a concurrent session hit three times over on
-    // 2026-09-09 with call-site scans of `play.cpp`.
+    // which is the failure shape call-site scans of `play.cpp` have shown
+    // repeatedly.
     //
     // 5.00 m -> 4, 3.00 m -> 3, 1.50 m -> 1, otherwise 2. The order is 2, 1,
     // 3, 4 with distance because `+1304` is a CODE, not a severity rank.
@@ -831,16 +830,13 @@ private:
     float frameAfter_  = 1.0f;         // window rule reads them
     int   stateBefore_ = -1;
     long  ticks_ = 0;
-    // **There is no queue shadow here any more.** This controller used to
-    // carry one, because `CefChannel::tick`'s commit was missing
-    // `Cef_TickChannel`'s LABEL_75 - a queue whose only word is the idle one
-    // is DROPPED before a pressed word is pushed - so a press queued behind
-    // the idle word `setBankGroup` seeds and the machine stalled until
-    // something popped it. The shadow re-injected the word to force the same
-    // effect. `channel.cpp` carries the rule itself since 2026-09-02
-    // (todo/pending/T17.md) and the shadow is gone; the measured walk is
-    // unchanged by its removal, which is what says the rule and the shadow
-    // were doing the same job.
+    // **There is no queue shadow here.** `channel.cpp` carries
+    // `Cef_TickChannel`'s LABEL_75 itself (todo/pending/T17.md): a queue whose
+    // only word is the idle one is DROPPED before a pressed word is pushed.
+    // Without that rule a press queues behind the idle word `setBankGroup`
+    // seeds and the machine stalls until something pops it; a controller-side
+    // shadow that re-injects the word gives the same measured walk, which is
+    // what says the rule and such a shadow do the same job.
     Frame last_;
 
     std::map<int, RootTrack>  roots_;

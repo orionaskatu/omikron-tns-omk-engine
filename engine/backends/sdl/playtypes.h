@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE TYPES `main` used to define for itself - the model caches, the staged
-// bodies, the world slots, the sky, the set load and the rest - moved to
-// namespace scope by `todo/play-split.md` (2026-10-02) without a change, so
-// that a second translation unit (the frame, `playframe.cpp`) can name them.
+// THE VIEWER'S TYPES - the model caches, the staged bodies, the world slots,
+// the sky, the set load and the rest - at namespace scope
+// (`todo/play-split.md`), so that a second translation unit (the frame,
+// `playframe.cpp`) can name them.
 // In a NAMED namespace, not an anonymous one: every unit must see the SAME
 // types. No SDL.
 #pragma once
@@ -109,7 +109,7 @@ namespace omk::play {
 // set), sets its frame to `(clock - from) / duration * frames`, and with
 // flag 1 moves it to the bone every tick. The confirm's H_GETOBJ carries
 // two - sprites 127 and 130 on the LEFT HAND (attach 10 -> actor+44,
-// "Maing"), which is the "particle effect on the arm" a reader saw.
+// "Maing"), which is the particle effect seen on the arm.
 // Attach codes map through Actor_AttachPoint's switch onto the loader's
 // bone table (04_sys.c 5497..5513), by NAME below.
 struct CtlSpriteInst { int sprite = 0; float duration = 0, from = 0, to = 0, scale = 1;
@@ -121,18 +121,18 @@ struct HoldRun { std::vector<int> keys; int frames = 0; };
 // ---- EVERY BODY THE SESSION SAYS IS ON SCREEN (issue 41) -----------
 //
 // `Actor_Attach` (0x0041CCA0) puts an actor in the o3de tree and
-// `Render_Scene` draws them ALL. This file used to keep exactly one
-// `speaker*` set - the model of `session.shown().front()`, posed by the
-// LAST running `"actor"` program whichever actor that program drives - so
-// the Impasse drew one passer-by performing Kay'l's arrival. What follows
-// is one `Staged` per shown actor, its pose resolved per actor, in the
+// `Render_Scene` draws them ALL. A single `speaker*` set - the model of
+// `session.shown().front()`, posed by the LAST running `"actor"` program
+// whichever actor that program drives - would have the Impasse draw one
+// passer-by performing Kay'l's arrival. What follows is one `Staged` per
+// shown actor, its pose resolved per actor, in the
 // engine's own precedence:
 //
 //   (a) a RUNNING scene program whose `Started.actor` is this actor -
 //       `ScriptObject_StartOnActor` (0x0041BA80) drives ITS actor - and
 //       then its clip on its authored `.3DP` path (`Path_Sample`);
 //   (b) else, this actor being the conversation's speaker, the line's own
-//       `.3DM` and its face, exactly as before;
+//       `.3DM` and its face;
 //   (c) else the IDLE. `Actor_LoadModel` -> `Actor_LoadBankList` leaves
 //       the channel on the default group's default entry
 //       (`Cef_DefaultGroup` = the group whose flags bit 0 is set,
@@ -150,8 +150,7 @@ struct CharModel {
     std::vector<omk::Texture> tex;
     omk::FaceMesh face;
     // Built once per model name, and the model is loaded once and shared
-    // (`o3de/shadow.h`; todo/pending/vita-meshidx-playcpp.md, applied
-    // 2026-09-22). It stores mesh INDICES, so it must be rebuilt if
+    // (`o3de/shadow.h`; todo/pending/vita-meshidx-playcpp.md). It stores mesh INDICES, so it must be rebuilt if
     // `meshes` is ever replaced; here it never is.
     omk::MeshNameIndex boneIdx;
     // The HIERARCHY ROOT - the pelvis in all 181 character models, the
@@ -381,10 +380,9 @@ struct Staged {
     // A body nothing drives keeps the pose it was last given. The engine
     // never resets a node - the last frame `Anim_ApplyNodeFrame` wrote
     // stays - so when a program and a line are both over and the model
-    // has no bank, this is what stands there; the REST pose was drawn
-    // instead, a T-pose in software and nothing at all in the Vulkan
-    // window (a reader: *Telis appears normally at the beginning before
-    // disappearing*).
+    // has no bank, this is what stands there; the REST pose instead would
+    // be a T-pose in software and nothing at all in the Vulkan window (a
+    // speaker who appears normally, then disappears).
     std::vector<omk::MeshPose> lastPose;
     // A MELEE LOSER the teardown left in ACTOR_STATE 0 (`sub_445AC0` writes
     // the opponent's +404 to 0, and state 0 is `nullsub_6` - no tick at
@@ -506,7 +504,7 @@ struct VehStaged {
     // PLACED BY THE RENDERER where it poses bodies: `atRest` as it is, one
     // affine a mesh (all the same - a vehicle is rigid) - the original's
     // node matrix (`o3de_SetNodePos` and the facing) instead of every
-    // corner rewritten and re-sent each frame (2026-09-30)
+    // corner rewritten and re-sent each frame
     bool  gpu = false;
     long  lastDrawn = -1;        // the last frame this slot was drawn (its buffers' release)
     std::vector<float> affine;
@@ -521,9 +519,8 @@ struct GunClip { int type = -1; int frames = 0; float frame = 0.0f, turn = 0.0f;
 
 // ...and his CURRENT clip, the one his action asked for (the record's `+8`,
 // `Shoot_ActorAction` -> `sub_421A20`), with the actor's frame `+188` that
-// `sub_421370` advances each tick no picked clip plays. Until 2026-09-11
-// this port held frame 0, and a reader saw every robber standing frozen
-// between his entrance and his death.
+// `sub_421370` advances each tick no picked clip plays. Held at frame 0,
+// every robber would stand frozen between his entrance and his death.
 struct GunAnim { const omk::PedClip* clip = nullptr; float frame = 1.0f; };
 
 // ...and his AIM: `dword_6A4720` / `dword_6A4724`, the angles `sub_47C2A0`'s
@@ -543,16 +540,15 @@ struct GunAim { bool live = false; float yaw = 0.0f, pitch = 0.0f; };
 // device's and has no reachable tier (PORTING B5): this takes its default
 // inverse-distance rolloff - full inside 78, 78/d out to 584, held there -
 // measured from the player. The sprite half of the effects is not drawn.
-// THE CONVERTED SOUNDS, KEPT (2026-09-27). Every play of an effect or
-// scene sound decoded its WAV and resampled it to the device's rate again
-// - a footstep every step, and a console's city frame showed `sounds`
-// sections of 66 ms. Kept by the bytes' address and size: the global,
+// THE CONVERTED SOUNDS, KEPT. Decoding a WAV and resampling it to the
+// device's rate on every play of an effect or scene sound costs a footstep
+// every step - a console's city frame showed `sounds` sections of 66 ms. Kept by the bytes' address and size: the global,
 // fight and shoot libraries stay resident for the run, and the scene's -
 // the one library that changes - clears the cache when the resident scene
 // does (`sfxSceneWas`, checked each frame in the sounds pass), so an
 // address reused by another scene's sound never answers from the cache.
 //
-// ...AND SHARED WITH THE MIXER (2026-09-30): a play hands over the cache's
+// ...AND SHARED WITH THE MIXER: a play hands over the cache's
 // own sample (`Frontend::playSound`'s shared form), as `Sound_Play3D`
 // duplicates the bank's buffer rather than its memory. A sample still
 // sounding when the scene's cache is cleared lives until its voice ends.
@@ -678,10 +674,10 @@ struct SpriteTable {
 // THE SHOWN DECORS - one per resident slot, because TWO are drawn while
 // the player walks between areas. `Area_Transition`'s completion arm puts
 // the destination in state 2 and nothing hides the origin until
-// `area.arrive` (area.h, `Session::slotShown`); until 2026-09-03 this
-// file drew `session.setName()` alone, so the frame after the airlock
-// transition was black: the airlock set at x 7415..8149 through a follow
-// camera on a player still standing in the alley at x 6705. Keyed by
+// `area.arrive` (area.h, `Session::slotShown`); drawing
+// `session.setName()` alone leaves the frame after the airlock transition
+// black: the airlock set at x 7415..8149 through a follow camera on a
+// player still standing in the alley at x 6705. Keyed by
 // SLOT at stable addresses, since the Vulkan backend caches a vertex
 // buffer by pointer and revision.
 struct WorldSlot {
@@ -783,9 +779,8 @@ struct WorldSlot {
     std::vector<MeshRun> runs;
     // ...and the collision soups the same way: the mesh each triangle
     // came from, and the soups as BUILT, so a moved crate's collision
-    // follows the crate (a reader, 2026-09-04: "some crates fall at a
-    // moment. It looks like their colliders stay at their initial
-    // position" - the sweep made rest-baked collision visible).
+    // follows the crate - with rest-baked collision, a crate that falls
+    // leaves its collider at its initial position.
     std::vector<int>  soupMesh, steepMesh;
     // THE PATCH'S INDEX (todo/optimization.md step 7). A set's moving meshes
     // are re-placed every frame - on the Anekbah street 30 of them move on
@@ -864,18 +859,17 @@ struct Sky {
 // whole `.3DO` (`sub_41EC20`), `sub_41F320` serves it `ElementSize` bytes
 // a frame from `Game_Tick` - 0x20000 after `Async_SetMode(1)` - and
 // `Area_TickLoad` waits on `sub_41EFA0` while the game draws on. The
-// Session has counted those frames since 2026-09-02 (`loadSlicesLeft`,
-// Anekbah's 17), but this file read, built, decoded and sorted the whole
-// set in the FIRST of them, so the port had the original's wait and the
-// stall beside it. Now the work - everything below that is a function of
-// the two files' bytes - runs on a thread of its own while the slices
-// count down, and the set comes into the world on the frame they reach
+// Session counts those frames (`loadSlicesLeft`, Anekbah's 17); reading,
+// building, decoding and sorting the whole set in the FIRST of them would
+// give the original's wait and a stall beside it. So the work - everything
+// below that is a function of the two files' bytes - runs on a thread of
+// its own while the slices count down, and the set comes into the world on the frame they reach
 // zero, which is one frame before `Area_TickLoad`'s cases 2..9 run.
 //
 // WHEN it comes in is the Session's count and never the thread's clock -
 // the frame waits for the job if it must - so a run is the same run
 // however fast the machine reads. A load the engine makes in mode 0 (the
-// boot, a save) has no slices and is done where it is asked for, as before.
+// boot, a save) has no slices and is done where it is asked for.
 // `OMK_SYNC_SETS=1` does every load that way: the comparison.
 struct SetLoad {
     int slot = 0;

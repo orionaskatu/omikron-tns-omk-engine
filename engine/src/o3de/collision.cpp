@@ -109,13 +109,12 @@ TriangleSoup collisionSoup(std::span<const std::byte> d, SoupKind kind,
         // meaningless normal and `slide` zeroes the move: the actor stops dead
         // with nothing in front of him.
         //
-        // That is what blocked the player on the LAST step of the bank's
+        // That is what blocks the player on the LAST step of the bank's
         // entrance stairs in Anekbah - a sliver at x 4566.9 whose three
         // vertices print identically to a decimal (`todo/next-tasks.md` 20).
         // 102 of the 143325 collision triangles over ten sets are like it.
         //
-        // **AND 102 IS THE MOTIVATING CASE, NOT THIS TEST'S REACH** - measured
-        // 2026-09-09, because the two were read as the same number. Those 102
+        // **AND 102 IS THE MOTIVATING CASE, NOT THIS TEST'S REACH.** Those 102
         // are the EXACTLY degenerate ones; the threshold below reaches every
         // face under half a square inch, which in `ARESTO14` alone is **60 of
         // 2875** render triangles and **40 of 1107** walkable ones, 2% and 4%.
@@ -151,7 +150,7 @@ TriangleSoup collisionSoup(std::span<const std::byte> d, SoupKind kind,
             (static_cast<std::uint32_t>(m.flags) & (0x800000u | 0x41u))) continue;
         if (kind == SoupKind::Sight && (static_cast<std::uint32_t>(m.flags) & 0x800u)) continue;
         // ...AND THE ENGINE'S OWN MESH EXCLUSIONS, which are two different
-        // tests read out of two different functions (2026-09-07):
+        // tests read out of two different functions:
         //
         //   the SWEEP   `Sweep_MeshTest` (0x004AD460) opens
         //               `if ((flags & 0x20000000) == 0 && (flags & 0x41) == 0)`
@@ -383,8 +382,8 @@ SoupGrid buildOver(const TriangleSoup& tris, double cell, ForEach forEach) {
     const std::size_t cells = static_cast<std::size_t>(g.nx) * static_cast<std::size_t>(g.nz);
     g.start.assign(cells + 1, 0);
     // EACH TRIANGLE'S CELL RANGE, WORKED OUT ONCE: the counting pass keeps it
-    // for the filling pass, which used to derive it again (the min/max of six
-    // floats as doubles and four divides). At most 513 cells an axis, so four
+    // for the filling pass, which need not derive it again (the min/max of
+    // six floats as doubles and four divides). At most 513 cells an axis, so four
     // 16-bit numbers a triangle.
     std::vector<std::uint16_t> kept(4 * included);
     std::size_t at = 0;
@@ -780,17 +779,17 @@ inline void sweepOne(const float* a, const float* b, const float* c, const doubl
     // a point (a quadratic in t), and against each edge as a cylinder of the
     // sphere's radius, the contact kept only where it falls on the segment.
     // ONLY A CONTACT MET FROM OUTSIDE COUNTS (t > 0). A body already
-    // overlapping an edge is left to move as the face-only sweep let it: the
-    // first version counted an overlap while the sphere was "closing", and a
-    // player stood among a bar stool's edges (AREA 46, 7100 450) read every
-    // sub-centimetre idle drift as closing on one of them, and the push-out
-    // loop threw him three units a frame - 25 units round the stool in two
-    // seconds, and `engine: camera collision` red. A body that approaches
+    // overlapping an edge is left to move as the face-only sweep lets it:
+    // counting an overlap while the sphere is "closing" makes a player standing
+    // among a bar stool's edges (AREA 46, 7100 450) read every sub-centimetre
+    // idle drift as closing on one of them, and the push-out loop throws him
+    // three units a frame - 25 units round the stool in two seconds, and
+    // `engine: camera collision` red. A body that approaches
     // from outside is stopped a unit short, so the rail case never starts
     // inside.
     // A RAY (radius 0 - the camera's, the shots', the lines of sight) has no
     // thickness to meet an edge with, so it keeps the face test alone and
-    // every ray caller answers exactly as it did.
+    // every ray caller keeps the face-only answer.
     if (radius <= 0.0) return;
     const double dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
     if (dd <= 0.0) return;

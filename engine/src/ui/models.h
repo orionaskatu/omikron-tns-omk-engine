@@ -23,9 +23,9 @@
 //     cam+0x30    the FOV, 0x42480000 = 50
 //     cam+0x2C    0
 //
-// and THE DISTANCE THE THREE PREVIEWS PASS IS ZERO. This paragraph said
-// `0x42EC3871` = 118.110 = 3.0 / 0.0254, three metres in the engine's inch
-// unit, and that was wrong: the three hooks push `6a 00` - `push 0` - right
+// and THE DISTANCE THE THREE PREVIEWS PASS IS ZERO, not `0x42EC3871` =
+// 118.110 = 3.0 / 0.0254 (three metres in the engine's inch unit): the
+// three hooks push `6a 00` - `push 0` - right
 // before the call. `0x42EC3871` is pushed at exactly ONE site in the whole
 // listing, `0x004779C0` on `dword_6A4748`, which `sub_4778E0("F1AVNT.CTL")`
 // loads: the IDENTITY page's character view, a different preview with a

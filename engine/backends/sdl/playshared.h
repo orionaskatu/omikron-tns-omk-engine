@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // WHAT EVERY UNIT OF THE VIEWER SEES - `play.cpp` and the frame
 // (`playframe.cpp`): the includes, the backends' entry points, the Vita's
-// heap checkpoint, and the names the code uses unqualified. Moved out of the
-// top of `play.cpp` by `todo/play-split.md` (2026-10-02) without a change.
+// heap checkpoint, and the names the code uses unqualified. Split out of the
+// top of `play.cpp` by `todo/play-split.md`.
 //
-// NO SDL HEADER, since the gateway (2026-10-03, `platform/frontend.h`): what
+// NO SDL HEADER, behind the gateway (`platform/frontend.h`): what
 // includes this is game code, and reaches the host through `omk::Frontend`.
 // The SDL-side files - `sdlfront.*`, the GPU glue `playgpu_*.cpp`, the
 // `--scene` instrument - include `sdlfront.h` themselves.
@@ -138,10 +138,9 @@ bool imeEdit(const char* title, const std::string& initial, int maxLen, std::str
 using omk::kTypeMarker;
 using omk::kCharMarker;
 using omk::kOverlayKey;
-// ...and the four file-level helpers that used to sit here are in
-// `src/app/playhelpers.h` since `todo/play-split.md` S1: `shortArc`,
-// `wavToDevice`, `SubBox` + `drawSubtitleBox` and `cp1252ToUtf8`. They are
-// named unqualified below exactly as before.
+// ...and the four file-level helpers are in `src/app/playhelpers.h`
+// (`todo/play-split.md` S1): `shortArc`, `wavToDevice`, `SubBox` +
+// `drawSubtitleBox` and `cp1252ToUtf8`. They are named unqualified below.
 using omk::cp1252ToUtf8;
 using omk::drawSubtitleBox;
 using omk::shortArc;

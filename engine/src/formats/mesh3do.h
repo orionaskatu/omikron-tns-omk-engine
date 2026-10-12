@@ -164,7 +164,7 @@ inline constexpr std::size_t kVertexRecord = 32;
 
 struct Vertex {
     float        p[3] = {0, 0, 0};
-    // THE NORMAL, at +12, and this port ignored it until 2026-09-05.
+    // THE NORMAL, at +12.
     //
     // `sub_493E40` - the per-vertex dynamic lighting - reads a float[3] at
     // +12 of each 32-byte vertex and dots it with the light direction, so the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ADVENTURE MODE'S CONTROLLER FRAME, in its parts.
-// Parts of `PlayState::controlAdventure`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::controlAdventure`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // The follow camera's offsets, first-person aim
@@ -85,8 +85,8 @@ void PlayState::adventureAim() {
         // no frame delta; PITCH `+= row24 * 0.01 * dy * delta`, dy
         // negated unless row 25 is set, clamped at +-45
         // (`actor/shootmove.h`). The pitch's absolute SIGN is this
-        // viewer's camera's, anchored on the reader's confirmed
-        // sense at the default (row 25 off) - so `shootPitch` is the
+        // viewer's camera's, anchored on the sense confirmed in play
+        // at the default (row 25 off) - so `shootPitch` is the
         // engine's pitch negated. `--invert-x` is this port's own:
         // the engine has no yaw invert.
         const int dx = static_cast<int>(std::lround(host.mouseDX));
@@ -148,10 +148,9 @@ void PlayState::adventurePathField() {
         // frame - his floor `+188` always, his cell `+136/+140` when
         // the cell is standable - and when it refuses, `sub_4368E0`
         // walks the point to the nearest standable cell and the cell
-        // is that point's. Until 2026-09-13 the viewer seeded the
-        // path field from a cell of its own and left the record at
-        // `node = -1`, so the engage's GRID sight - which walks from
-        // the TARGET record's cell - had no start (`todo/shoot-sight.md`).
+        // is that point's. A record left at `node = -1` gives the
+        // engage's GRID sight - which walks from the TARGET record's
+        // cell - no start (`todo/shoot-sight.md`).
         const int oldFloor = static_cast<signed char>(playerShootRec.node & 0xFF);
         const bool thought = omk::shootThink(playerShootRec, shootMap, pp, 0, -1);
         playerShootRec.flags &= ~0x1000u;          // `BYTE1(v11) &= ~0x10`
@@ -287,13 +286,13 @@ void PlayState::adventureCrowdPush() {
         float push[3];
         // ...and NOT while he boards or leaves. ACTOR_STATE 6 and
         // 8 tick through `Actor_TickChannelOnly`, and the push is
-        // `Actor_TickNpc`'s - it never runs for them. It ran here:
-        // `MDACTION` snaps him INSIDE the vehicle's own body
-        // sphere, so the pool shoved him out every frame faster
-        // than `H_SLDIN` walked him in - 25 units in the first
-        // five frames, before the clip had moved him at all - and
-        // he finished the clip beside the slider with the door
-        // open above him. Traced frame by frame 2026-09-08.
+        // `Actor_TickNpc`'s - it never runs for them. Run here,
+        // it would fight `MDACTION`, which snaps him INSIDE the
+        // vehicle's own body sphere: the pool would shove him out
+        // every frame faster than `H_SLDIN` walks him in - 25 units
+        // in the first five frames, before the clip has moved him
+        // at all - and he would finish the clip beside the slider
+        // with the door open above him (traced frame by frame).
         if (!boarding && !leaving && !playerSpheres.empty() &&
             session.crowdPush(playerSpheres, playerReach, player->pos(), player->facing(), push)) {
             const float was[3] = {player->pos()[0], player->pos()[1], player->pos()[2]};
@@ -597,10 +596,10 @@ void PlayState::adventureScreenInput() {
                 // A `.CTL` entry carrying 0x8002 is an alias or a
                 // pass-through: it plays nothing and hands the clip
                 // on through its GoTo. Reading `states[state()]`
-                // gives -1 on those frames, and the first version
-                // of this did - which made the opponent flicker
-                // between his move and the bank's default stance,
-                // and contributed no root motion on those frames.
+                // gives -1 on those frames, which would make the
+                // opponent flicker between his move and the bank's
+                // default stance, with no root motion on those
+                // frames.
                 const int fs = fightRun.foeChannel->clipOwner();
                 const int clip =
                     (fs >= 0 && fs < static_cast<int>(ctl.states.size()))
@@ -656,11 +655,10 @@ void PlayState::adventureScreenInput() {
                         // moved it, and this tree has that only
                         // for the player (his controller). Adding
                         // the clip's own `y` with no ground pass
-                        // let the opponent climb - a reader
-                        // watched him rise 34 units out of frame
-                        // and vanish (his y went -29 to -63 while
-                        // the player stood at +9.8, and Y points
-                        // DOWN). Until a non-player body has a
+                        // lets the opponent climb - 34 units out
+                        // of frame, vanishing (his y going -29 to
+                        // -63 while the player stands at +9.8, and
+                        // Y points DOWN). Until a non-player body has a
                         // ground response, he keeps the height
                         // his placement gave him.
                         fightRun.foe.x += world[0];
@@ -709,8 +707,8 @@ void PlayState::adventureScreenInput() {
             // BONE with them and leaves the actor's +248 alone, so
             // the body's placement is his fight position plus the
             // track's offset from the stance he opened in. Without
-            // it a knocked-down robber lay flat 36 units in the air
-            // - a reader's screenshot (`todo/fight-mode.md` 15.16).
+            // it a knocked-down robber lies flat 36 units in the air
+            // (`todo/fight-mode.md` 15.16).
             float foeDrop = 0.0f;
             if (fightRun.foePose.valid() && !fightRun.foePose.trans.empty() &&
                 fightRun.foeChannel) {
@@ -731,11 +729,10 @@ void PlayState::adventureScreenInput() {
                 // fight's y is (his walker less his lift). A body
                 // the placement record put down is anchored at the
                 // FLOOR, by a fixed feet offset, so the pelvis
-                // track above never reached it: the flat's
-                // training partner, knocked down, lay flat a
-                // metre in the air (a reader, 2026-10-02). The
-                // supermarket's robber had a program's pelvis
-                // anchor already.
+                // track above would never reach it: the flat's
+                // training partner, knocked down, would lie flat
+                // a metre in the air. The supermarket's robber
+                // has a program's pelvis anchor already.
                 fightRun.body->pelvis = true;
                 fightRun.body->fightPlaced = true;
                 fightRun.body->fightDrop = foeDrop;
@@ -787,12 +784,11 @@ void PlayState::adventureScreenInput() {
                 // intent no branch re-arms.
                 // WHERE THE TWO BODIES ACTUALLY ARE. The line
                 // above carries their separation, which is a
-                // scalar and hides the fault a reader reported as
-                // "the enemy disappears": his clip's root motion
-                // was moving him vertically with no ground pass,
-                // so he rose out of frame while the separation -
-                // measured in three dimensions - still read
-                // plausibly. A height that walks away from its
+                // scalar and hides "the enemy disappears": a clip's
+                // root motion moving him vertically with no ground
+                // pass makes him rise out of frame while the
+                // separation - measured in three dimensions - still
+                // reads plausibly. A height that walks away from its
                 // placement is the discriminator, so print both.
                 std::printf("    bodies: player %.0f %.0f %.0f facing %.0f, "
                             "opponent %.0f %.0f %.0f facing %.0f\n",
@@ -1013,9 +1009,8 @@ void PlayState::adventureScreenInput() {
             player->tick(static_cast<float>(frameSec * 30.0),
                          tickBits ? tickBits : omk::kIdleInput);
             playerTicked = true;
-            // THE FALL, said as it happens - a reader in shoot mode:
-            // "the character fall very slowly, in an not natural
-            // way". `Actor_ApplyMotion` accelerates `+220` by
+            // THE FALL, said as it happens, so a fall that looks too
+            // slow in shoot mode can be judged. `Actor_ApplyMotion` accelerates `+220` by
             // `kGravity` a frame and descends `+220/30 * dt`
             // (`actor/walk.h`); this prints the curve so a slow one
             // can be told from a wrong dt.
@@ -1102,20 +1097,19 @@ void PlayState::adventureScreenInput() {
             // for camera 21 on him over 50 frames.
             // THE ENGINE TAKES THIS ARM *OR* THE GROUND RESPONSE, NOT BOTH
             // (`21_d3d.c` 3830: `if (state == 1 && mesh & 0x8000000) { ...this... }
-            // else Walk_GroundResponse(...)`). The port ran both, and on the tick
-            // where the landing and the entry coincide - which is what real-time
-            // play produces, and what `--nodelay` happened to separate by one
-            // frame - the landing's group 4 overwrote group 300: he stood in the
-            // canal on the WALK bank, in ACTOR_STATE 11, laid flat by the swim
-            // pitch. A reader, 2026-09-17: *"The character is not swimming, he
-            // just walking at 90 degrees"*.
+            // else Walk_GroundResponse(...)`). Running both, on the tick where
+            // the landing and the entry coincide - which is what real-time play
+            // produces, and what `--nodelay` happens to separate by one frame -
+            // the landing's group 4 overwrites group 300: he stands in the canal
+            // on the WALK bank, in ACTOR_STATE 11, laid flat by the swim pitch,
+            // walking at 90 degrees instead of swimming.
             bool enteredWater = false;
             // AND THE MESH IS PROBED, not read off the walker's stand
             // flags, which only a STEP writes: after a fall onto the
             // canal bed he takes no step at all - the landing reaction
             // that would have put him back on a locomotion clip is the
-            // arm this one replaces - so the cached flags stayed the
-            // LEDGE's and he stood on the bed in `H_FALL` for ever.
+            // arm this one replaces - so the cached flags would stay the
+            // LEDGE's and he would stand on the bed in `H_FALL` for ever.
             // The engine reads `Walk_ProbeGround`'s own mesh every
             // frame and has no such dependency. Grounded only: a body
             // still falling has not reached the water.
@@ -1131,8 +1125,8 @@ void PlayState::adventureScreenInput() {
                 player->setActorState(omk::ActorState::WaterIn11, "Actor_ApplyMotion");
                 in.installScheme(1);
                 fallBanded = false;
-                // THE SWIM CAMERA IS THE CHASE CAMERA, NOT A FIXED OFFSET
-                // (2026-09-17, after a reader: *"it should be behind him"*).
+                // THE SWIM CAMERA IS THE CHASE CAMERA, NOT A FIXED OFFSET:
+                // it stays behind him.
                 // `sub_414520` gives mode 21 its own setup, `sub_413EF0`,
                 // and gives mode 0 - the ordinary follow camera - a SWIM
                 // VARIANT, `sub_413CD0`, whenever the player is in state 11,
@@ -1355,8 +1349,8 @@ void PlayState::adventureSeated() {
         session.sliders().setRider(me, player ? player->facing()
                                               : session.playerYaw());
     }
-    // WHERE THE SLIDER IS after he gets out - a reader lost it at
-    // Qalisar's kerb while the staging said "staged".
+    // WHERE THE SLIDER IS after he gets out - it can be lost at
+    // Qalisar's kerb while the staging says "staged".
     if (leaving || (session.sliders().calledVehicle() >= 0 && !boarded && !boarding)) {
         static long lastVehTold = -1000;
         if (n - lastVehTold >= 45) {
@@ -1371,7 +1365,7 @@ void PlayState::adventureSeated() {
         }
     }
     // ...and FOLLOW the released vehicle for ten seconds after,
-    // since a reader lost it at Qalisar's kerb: once it is
+    // since it can be lost at Qalisar's kerb: once it is
     // traffic again the ambient drive owns it, and where that
     // drive puts it on its first step is the question.
     // THE CALLED SLIDER'S CAMERA REQUESTS, as `sub_456530` makes them:
@@ -1439,8 +1433,8 @@ void PlayState::adventureSeated() {
             // above the road: a seat. `calledAt` is the body point
             // at ROAD level (the node is drawn 30.75 above it), and
             // this class takes FEET, so: road - 30.75 + 10 + lift.
-            // It read `at.y + 10` in feet-space until 2026-09-08,
-            // which sat him 11 units (28 cm) too high.
+            // `at.y + 10` in feet-space would sit him 11 units
+            // (28 cm) too high.
             const float seat[3] = {at[0],
                                    at[1] - static_cast<float>(omk::SliderRide::kHover)
                                          + static_cast<float>(omk::SliderRide::kNodeUp)
@@ -1456,10 +1450,9 @@ void PlayState::adventureSeated() {
         if (session.sliders().journeyArrived() && journeyTo >= 0) {
             // ---- HE GETS OUT WHERE THE SLIDER STOPPED --------
             //
-            // NOT at the destination's address, which is what this
-            // did and what a reader reported as being *"teleported
-            // instead of just leaving the slider where it
-            // arrives"*. `sub_4570F0` (the stop) writes only the
+            // NOT at the destination's address, which would read as
+            // being teleported instead of just leaving the slider
+            // where it arrives. `sub_4570F0` (the stop) writes only the
             // actor's Y - `sliderY - 33.149605` - and copies +244
             // and +252 through UNCHANGED, then hands over to
             // `sub_468FA0`, which does the real placement and is
@@ -1475,9 +1468,9 @@ void PlayState::adventureSeated() {
             // and back in `sub_4570F0`: `sub_438420(slider, 7)`,
             // the slider leaves, and `Camera_Request(17, ..., 60)`.
             // The reference clip is `slf_113.3da` and NOT the
-            // entry's `slf_112.3da` - two different globals, and
-            // measuring group 61 against 112 was wrong even though
-            // the two clips' root keys turn out to be identical.
+            // entry's `slf_112.3da` - two different globals, so
+            // group 61 is measured against 113, even though the two
+            // clips' root keys turn out to be identical.
             // The journey's end in `sub_456530` case 6: mode 4, then
             // `sub_468FA0` - the same exit a manual stop takes.
             const float journeyAddr = static_cast<float>(journeyTo);
@@ -1494,8 +1487,7 @@ void PlayState::adventureSeated() {
             // its heading: `b - h > 0` with `b = atan2(dz, dx) + 90` toward
             // the address and `h = atan2(dir.z, dir.x) + 90` the mover's
             // direction (`sub_438390`), wrapped to (-180, 180].
-            // This said camera 17 until 2026-10-06 - `sub_4570F0`'s, the
-            // MANUAL stop's - and mode 10 was computed and never drawn.
+            // Not camera 17, which is `sub_4570F0`'s, the MANUAL stop's.
             {
                 const omk::Address* ad = nullptr;
                 for (const auto& x : session.residentSlot(session.activeSlot()).addresses)
@@ -1736,8 +1728,8 @@ void PlayState::adventureRide() {
 void PlayState::adventureWalls() {
     // STUCK BETWEEN WALLS. A move blocked for a whole second while a
     // direction is being asked for is the sweep's own failure to
-    // slide out of a corner - a reader was held between the alley's
-    // wall and the crates (2026-09-05). Printed with the position,
+    // slide out of a corner - as between the alley's wall and the
+    // crates. Printed with the position,
     // the heading and the move asked, so the corner can be probed.
     {
         static int blockedRun = 0; static long stuckTold = -1000;
@@ -1756,8 +1748,8 @@ void PlayState::adventureWalls() {
     }
     // WHERE THE FLOOR ENDS. A step that finds no floor under its
     // destination (`Reverted`), or a fall that begins, is the moment
-    // the walker leaves the geometry - which a reader did through the
-    // Impasse alley's wall on 2026-09-05. Printed with the position,
+    // the walker leaves the geometry - as through the Impasse alley's
+    // wall. Printed with the position,
     // the heading and the sweep's verdict, once a second at most.
     {
         static long voidTold = -1000;
@@ -1782,10 +1774,9 @@ void PlayState::adventureWalls() {
     // omk-play 69: WATCH THE WHOLE TAKE, INCLUDING THE WAIT.
     //
     // The take is not one animation, it is a CONVERSATION with the
-    // player - the reader's own account: "grabbing an object means
-    // taking it in the hand, waiting for the user confirmation or
-    // cancellation, and triggering the right anim for each case".
-    // H1Avnt says the same thing:
+    // player: grabbing an object means taking it in the hand, waiting
+    // for the player's confirmation or cancellation, and triggering
+    // the right anim for each case. H1Avnt says so:
     //
     //   group 41   H_TAKL12 -> MDGETOBJ -> H_TAKL22 -> goto ...
     //   group 4    H_WAITOB   (the group's DEFAULT entry - the hold)
@@ -1885,7 +1876,7 @@ void PlayState::adventureTake() {
     //             bit): `sub_41C540(player, 0)` - released with
     //             remove=0, so the prop returns to its placement
     //
-    // The three-press shape a reader described - take and see the
+    // The three-press shape of the take - take and see the
     harnessHoldAndCall();
     if (startShoot && !walk && player) {
         // The harness way in. The engine's own is a script's
@@ -1898,10 +1889,9 @@ void PlayState::adventureTake() {
         session.shootBegin(-1);
         // The camera is NOT installed here: entering shoot mode
         // installs it, wherever the entry came from. Having it
-        // here as well is what let a script-driven entry go
-        // without one for a whole session (`todo/omk-play.md`
-        // 97d), because the harness was the only thing ever
-        // tested.
+        // here as well would let a script-driven entry go
+        // without one unnoticed (`todo/omk-play.md` 97d), the
+        // harness being the easy thing to test.
         std::printf("--shoot: shoot.begin -1\n");
     }
     harnessShootEnd();
@@ -1914,19 +1904,19 @@ void PlayState::adventureTake() {
                     "screen %d\n", omk::kEventSneakOpen,
                     omk::screen::Sneak);
     }
-    // WHERE THE ACTION RAISE COMES FROM, corrected 2026-09-04.
+    // WHERE THE ACTION RAISE COMES FROM.
     //
     // `Game_RaiseEvent(6, 4)` has three sites in the image
     // (21_d3d.c:3460, :3513, :3962) and every one of them is an
     // ACTOR STATE HANDLER - the `.CTL` machine reaching the action
     // state, which is `MDACTION`. It is not read off the input
-    // word at all. Taking it from the input EDGE instead put the
-    // press one release out of step with the game: the ENTER that
-    // confirms `Utiliser` is still held when the sneak closes, so
-    // the .CTL enters the action state and fires MDACTION while
-    // the edge has already been spent - the player pressed at the
-    // lift with the key in his hand and the world never heard it.
-    // A player hit exactly that and had to use a SECOND key.
+    // word at all. Taken from the input EDGE instead, the press
+    // would be one release out of step with the game: the ENTER
+    // that confirms `Utiliser` is still held when the sneak closes,
+    // so the .CTL enters the action state and fires MDACTION while
+    // the edge has already been spent - the player pressing at the
+    // lift with the key in his hand, the world never hearing it,
+    // and a SECOND key needed.
     //
     // Entering a state is once per press by construction (the
     // state persists while the button is held), which is also why
@@ -2172,12 +2162,10 @@ void PlayState::adventureShot() {
         // THE JUMP'S IMPULSE (`todo/player-vertical.md` step 2).
         // `MDJUMP01` is the one that writes the three velocity
         // fields; `MDJUMP0A`/`0B` only prepare them, and the
-        // controller does that arithmetic (`player.cpp`). Before
-        // this the walker's `vy_`/`airborne_` existed for FALLING
-        // and nothing ever pushed into them, which is the reader's
-        // *"jump is broken (animation play, but y position is too
-        // low so the jump become useless)"* - the clip played and
-        // the body never left the floor.
+        // controller does that arithmetic (`player.cpp`). Without
+        // it the walker's `vy_`/`airborne_` serve only FALLING and
+        // nothing pushes into them: the jump clip plays and the
+        // body never leaves the floor.
         if (mv == "MDJUMP0A" || mv == "MDJUMP0B") {
             if (player->jumpPrepare())
                 std::printf("jump: armed on '%s'\n",
@@ -2250,9 +2238,8 @@ void PlayState::adventureShot() {
             !(player && player->state() == omk::ActorState::Shoot)) {
             // ---- `sub_465D30(actor, obj, fromAdjust)` ----------
             //
-            // ONE function decides both stages of the take, and
-            // until 2026-09-04 this ported only its last twenty
-            // lines (which group) and guessed the rest. Read whole:
+            // ONE function decides both stages of the take. Read
+            // whole:
             //
             //   dx, dy, dz  = object node pos - actor node pos.
             //                 The actor's node is the PELVIS (the
@@ -2291,10 +2278,9 @@ void PlayState::adventureShot() {
             //   angle stored  flipped by 180 when D < target and a
             //                 step is coming: he steps BACK.
             //
-            // The step's DIRECTION and DISTANCE were the two
-            // faults a reader saw across 16 presses: he stepped
-            // 50 cm whatever the distance and walked through the
-            // rings twice. Both are this function.
+            // The step's DIRECTION and DISTANCE are both this
+            // function: without it he steps 50 cm whatever the
+            // distance and walks through the rings.
             const bool fromAdjust = mv == "MDADJSTP";
             constexpr float kTakeHigh  = 27.472441f;   // flt_4BC7E0, 70 cm
             constexpr float kReachLow  = 15.748032f;   // 40 cm
@@ -2341,12 +2327,11 @@ void PlayState::adventureShot() {
                     // so f = (sin F, -cos F)) that cross product is
                     // sin(bearing - facing) = sin(rel). Positive
                     // rel is a NEGATIVE engine angle. Measured
-                    // before the flip (2026-09-04, run 4): the
-                    // step's side cell pushed him AWAY from the
-                    // object line - lateral offset 15.4 -> 26.8
-                    // and 17.7 -> 20.5 across two steps - because
-                    // the quadrant table was fed the mirrored
-                    // sign.
+                    // with the sign unflipped: the step's side
+                    // cell pushes him AWAY from the object line -
+                    // lateral offset 15.4 -> 26.8 and 17.7 -> 20.5
+                    // across two steps - because the quadrant
+                    // table is fed the mirrored sign.
                     angle = -rel;
                     const float cosA = std::cos(rel * 0.017453292f);
                     low = dyP > kTakeHigh;
@@ -2433,8 +2418,8 @@ void PlayState::adventureShot() {
             if (takeCandidate >= 0 && session.takeObject(takeCandidate)) {
                 // `sub_4083F0(46, ...)` then `Subtitle_Show`
                 // (0x0041E040): the object's NAME at the bottom of
-                // the screen, which is what a reader described
-                // seeing on the take. It rides the same subtitle
+                // the screen, as seen on the take. It rides the
+                // same subtitle
                 // the voice-overs use.
                 mediaText = session.objectName(takeCandidate);
                 mediaTextFrames = mediaText.empty() ? 0 : 90;
@@ -2480,9 +2465,9 @@ void PlayState::adventureShot() {
             // not interchangeable and a count alone cannot tell
             // them apart - a merge and a full list both leave it
             // unchanged, and the first is correct where the second
-            // is a refusal. Saying "REFUSED (full, or a kind
-            // Inventory_Insert would merge)" made a reader guess,
-            // and it was wrong: the kind-13 rings were neither.
+            // is a refusal. A line saying "REFUSED (full, or a kind
+            // Inventory_Insert would merge)" invites a wrong guess:
+            // the kind-13 rings are neither.
             using B = omk::Session::Banked;
             const char* what =
                 arm == B::Row      ? "a row at the front of list 0"
@@ -2511,11 +2496,9 @@ void PlayState::adventureShot() {
             // group 9 (H_PUTH12/22); 1 and 2 are groups 6 and 7.
             // The cancel PLAYS THE PUT-BACK, and MDLETOBJ inside
             // that group is what releases the object and swaps
-            // the camera. Until 2026-09-04 the port had no
-            // MDNOTAKE handler at all, so a cancel went straight
-            // to standing with the object still held and the
-            // take camera still up (a reader: "if I cancel the
-            // grab, the camera doesn't return").
+            // the camera. Without this handler a cancel goes
+            // straight to standing with the object still held
+            // and the take camera still up.
             const int putGroup = takeWasLow ? 140 : 9;
             const bool got = player->enterGroupById(putGroup);
             std::printf("take: MDNOTAKE - cancel: the put-back plays (%s, group %d%s)\n",
@@ -2699,12 +2682,10 @@ void PlayState::adventureAction() {
     // `Session::pressAction` models all of that, including handing
     // the tracked position to `talkToPedestrian` for the crowd.
     //
-    // **AND IT FIRES ON THE EDGE**, which is a correction: this
-    // used to press on the LEVEL, reasoning that "the pump clears
-    // the flag each frame, so a held button is one press per
-    // frame". A reader measured what that does - a normal 0.2 s
-    // press counted as **six** presses - and the reasoning was
-    // wrong about where the raise comes from.
+    // **AND IT FIRES ON THE EDGE**, not the LEVEL: "the pump
+    // clears the flag each frame, so a held button is one press
+    // per frame" is wrong about where the raise comes from, and on
+    // the level a normal 0.2 s press counts as **six** presses.
     //
     // `Game_RaiseEvent(6, 4)` is NOT raised by the input handler.
     // Its three sites are all ACTOR functions - `sub_466B60`,
@@ -2762,14 +2743,13 @@ void PlayState::adventureAction() {
     // so: the three special arms above, and the BANK the engine
     // switches to (it comes from the object, in `sub_465D30`).
     const int actorState = player ? static_cast<int>(player->state()) : -1;
-    // ACTOR_STATE 3 IS NOT A REFUSAL (corrected 2026-10-05,
-    // todo/drift-audit.md S7). The object-search arm skips the TAKE in
+    // ACTOR_STATE 3 IS NOT A REFUSAL (todo/drift-audit.md S7). The object-search arm skips the TAKE in
     // state 3 (0x46AF3F) and the slider arm (0x46B007), and its tail does
     // `cmp [esi+194h], 3; je 0x46B296` past the pedestrian talk
     // (`sub_452280`) straight to `sub_467950` - `Game_RaiseEvent(6, 4)`, the
-    // ZONE PRESS. This refused state 3 outright, so no zone could be
-    // activated in a shoot phase: the ladders (SCENE 62's Echelles), the
-    // doors and every activate script a phase hangs on a press.
+    // ZONE PRESS. Refusing state 3 outright, no zone could be activated
+    // in a shoot phase: the ladders (SCENE 62's Echelles), the doors and
+    // every activate script a phase hangs on a press.
     const bool shootPress = actorState == 3;
     const bool stateAllowsAction =
         actorState != 3 &&                       // the object arm's own refusal
@@ -2799,14 +2779,13 @@ void PlayState::adventureAction() {
     // the take bank, reached by the `.CTL` machine and not by this
     // gate.
     //
-    // This replaces an earlier guard that installed the take bank
-    // (group 41) on ANY successful press. That was wrong twice
-    // over: `sub_465D30` reaches `SetPersoBankGroup` only when its
+    // No guard installs the take bank (group 41) on ANY successful
+    // press: `sub_465D30` reaches `SetPersoBankGroup` only when its
     // object scan FOUND something - a press that merely activates
     // a zone never gets there - and the take pipeline above
-    // already installs 41/143/600 when it does. Its symptom was a
-    // reader finishing a shop seller's conversation and watching
-    // the whole take graph run on nothing: reach, wait, put back.
+    // already installs 41/143/600 when it does. Such a guard would
+    // run the whole take graph on nothing - reach, wait, put back -
+    // after a shop seller's conversation.
     // ---- AND THE PRESS ONLY REACHES THE ZONES IF MDACTION
     // ---- FOUND NOTHING TO TAKE.
     //
@@ -2826,15 +2805,12 @@ void PlayState::adventureAction() {
     // at all, and `Script_Pump` step 2 - "a press was registered,
     // no zone activated, the hand is empty" - cannot fire on it.
     //
-    // THIS IS `todo/omk-play.md` 92, and it is the link that was
-    // never on the list: seven others were read and cleared while
-    // this one was assumed, because the port raised the press off
-    // the special-move list rather than off the arm. The symptom
-    // was a reader taking food out of Kay'l's kitchen cupboard and
-    // hearing *"Je ne vois pas quoi faire avec ca"* every time -
-    // one of GLOBAL script 10's seven, posted because the cupboard
-    // zone is a spent ONE-SHOT and nothing else could consume the
-    // press. With the arm modelled, the line goes back to what it
+    // THIS IS `todo/omk-play.md` 92: the press is raised off the
+    // arm, not off the special-move list. Raised off the list,
+    // taking food out of Kay'l's kitchen cupboard says *"Je ne
+    // vois pas quoi faire avec ca"* every time - one of GLOBAL
+    // script 10's seven, posted because the cupboard zone is a
+    // spent ONE-SHOT and nothing else could consume the press. With the arm modelled, the line goes back to what it
     // is for: a press with nothing in front of you.
     // THE SLIDER ARM, between the take and the zone press
     if (actionFromMove && stateAllowsAction && !actionTookObject && !ride && !boarded &&

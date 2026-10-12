@@ -60,9 +60,9 @@ int clipOf(const ScxObject& o) {
 // loaded path array at +24) and param 8 the path inside it (`u32(v19, 4 *
 // p8)`). Read as a flat index into every path of the scene, Anekbah's
 // couples, beggars and gym walkers - whose files are records 8 and 7 - all
-// landed on the doors and watchtowers of record 0..12, in one heap
-// (corrected 2026-09-03 from a reader's frame). GRID has one file, which is
-// why the Impasse never showed it. -> the flat index, or -1.
+// land on the doors and watchtowers of record 0..12, in one heap. GRID has
+// one file, which is why the Impasse cannot show the difference. -> the flat
+// index, or -1.
 int flatPath(const std::vector<ScxPath>& paths, int file, int inside) {
     for (std::size_t i = 0; i < paths.size(); ++i)
         if (paths[i].file == file && paths[i].index == inside) return static_cast<int>(i);
@@ -104,11 +104,11 @@ int pathOfFn(const ScxFunction& f, const std::vector<ScxPath>& paths) {
 //
 // (the relative one gated on `Anim_TickClipSfx`), and that Euler is what
 // `Actors_TickAll` turns into `actor+288`, the matrix `Anim_RootDelta` rotates
-// the root motion by. Reading it as sticky - only the relative call writing it
-// - rotated the restaurant waiter's whole WALK by the 145 degrees his standing
-// step had left behind, which is a route through the walls and a yank back at
-// every hand-over ("his whole moving pattern is mirrored", a reader,
-// 2026-09-05). His walk clips author 0.
+// the root motion by. Read as sticky - only the relative call writing it - it
+// rotates the restaurant waiter's whole WALK by the 145 degrees his standing
+// step left behind, which is a route through the walls and a yank back at
+// every hand-over (his whole moving pattern looks mirrored). His walk clips
+// author 0.
 //
 // Where the two DO differ is the offset: params 9/10/11 for the relative call,
 // against the path sample, and 7/8/9 for the absolute one, against the clip's
@@ -217,16 +217,16 @@ void SceneRunner::attachSfx(const std::string& dir, const std::string& name) {
     fired_ = 0;
     setEmittersBound_ = false;           // the clear above took the set's emitters too
     const DataFs fs(dir);
-    // ATTACH EVEN WHEN THERE IS NO `.SFX`, and this used to return first.
+    // ATTACH EVEN WHEN THERE IS NO `.SFX`, rather than returning first.
     // `attach` is what re-sizes the runner's per-piece state to the file it
-    // is given; skipping it left `st_` sized for the PREVIOUS scene while
-    // `sfx_` had just been emptied, so the next tick walked off the end of
+    // is given; skipping it leaves `st_` sized for the PREVIOUS scene while
+    // `sfx_` has just been emptied, so the next tick walks off the end of
     // `sfx_->pieces` - a null `SetPieceRunner::advance`.
     //
-    // It never showed while a scene was only ever attached once, at boot.
-    // Loading a save from the menu attaches a second time, and a reader hit
-    // it on the first save whose set has no `.SFX` beside it: area 179's
-    // `lev-2` after the apartment, which has one.
+    // A scene attached only once, at boot, cannot show it. Loading a save
+    // from the menu attaches a second time, and the first save whose set has
+    // no `.SFX` beside it crashes: area 179's `lev-2` after the apartment,
+    // which has one.
     if (!name.empty()) {
         const auto d = fs.read(name);
         if (!d.empty()) sfx_ = readSfx(d);
@@ -330,11 +330,11 @@ void SceneRunner::firePieces(int a1, int objectId) {
     // `sub_451470(a1, a2)`: SHOW every row keyed to the pair. What a shown row
     // then does every frame - ONE emitter at its CURRENT position, the effect
     // `+52` names (1-based) or, for the indirect form, the current waypoint's
-    // - is `sub_451600`, which `SetPieceRunner::tick` runs. A first port
-    // registered a persistent emitter at the row's shipped `+28` here and so
-    // could not move a piece, wait one out, loop it a counted number of times
-    // or play the indirect ones at all; the section F records it dismissed as
-    // "not emitters" are the WAYPOINTS that do all of that.
+    // - is `sub_451600`, which `SetPieceRunner::tick` runs. A persistent
+    // emitter at the row's shipped `+28` registered here could not move a
+    // piece, wait one out, loop it a counted number of times or play the
+    // indirect ones at all; the section F records are not "not emitters" -
+    // they are the WAYPOINTS that do all of that.
     pieces_.showKeyed(a1, objectId);
     fired_ = pieces_.shows();
 }

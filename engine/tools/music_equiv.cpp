@@ -3,11 +3,11 @@
 //
 //     music_equiv <gamedata> <tables> <track>...
 //
-// `MusicPlayer` used to resample a whole track to the device's rate as
-// interleaved floats when it started - 64 MB for a three-minute track, the
-// largest allocation in the process. It now keeps the decoder's 16-bit stereo
-// at 22050 Hz and resamples in `pull` (todo/optimization.md step 5). This keeps
-// the old player verbatim as `OldMusic` and plays every named track through
+// `MusicPlayer` keeps the decoder's 16-bit stereo at 22050 Hz and resamples
+// in `pull` (todo/optimization.md step 5), rather than resampling a whole
+// track to the device's rate as interleaved floats when it starts - 64 MB for
+// a three-minute track, which would be the largest allocation in the process.
+// This keeps the whole-track player verbatim as `OldMusic` and plays every named track through
 // both, looped and not, pulling in irregular chunks (1, 3, 777, 44100, 100000
 // and 132300 frames) until a looped track has wrapped twice or an unlooped one
 // has ended, and compares every sample bit for bit, plus `play`'s answer and

@@ -58,7 +58,7 @@ public:
     // Texture, reads included, so a copy-on-write one detached - copied the
     // whole texture - on the first texel a sampler READ through a non-const
     // reference, which undoes the saving silently and costs a full copy
-    // mid-frame. The first version had it and `pixel_sharing` caught it.
+    // mid-frame. `pixel_sharing` catches it.
     const std::uint8_t& operator[](std::size_t i) const { return (*p_)[i]; }
     // WRITING is explicit: detach from any other copy, then hand out the bytes.
     std::uint8_t* mutableData() { detach(); return p_ ? p_->data() : nullptr; }
@@ -151,8 +151,8 @@ std::vector<Texture> textures(std::span<const std::byte> d,
 // RGB to RGBA WITH THE COLOUR KEY in alpha - 0 where the texel is black, 255
 // elsewhere - as a GPU upload wants it (GLES; the Vulkan upload's rule).
 // `n` pixels, `rgb` 3n bytes in, `rgba` 4n bytes out. Every texture of a pool
-// change goes through it on the frame of a hand-over (2026-09-25: ~4 ms a
-// 256x256 atlas on a console), so it has a NEON loop - 16 pixels at a time -
+// change goes through it on the frame of a hand-over (~4 ms a 256x256 atlas
+// on a console), so it has a NEON loop - 16 pixels at a time -
 // wherever `__ARM_NEON` is, beside the generic one; integer work, so the two
 // are equal by construction, and `vita_bench`'s `texkey` stage hashes both.
 void rgbToRgbaKeyed(const std::uint8_t* rgb, std::uint8_t* rgba, std::size_t n);

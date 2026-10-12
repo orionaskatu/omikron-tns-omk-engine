@@ -249,9 +249,8 @@ bool PlayerController::jumpLaunch() {
 //                                                  ACTOR_STATE is 2, 3 or 15
 //         sub_414DE0(actor, 18, 1)              -- CAMERA 18, travel 60
 //
-// **CORRECTED 2026-09-17** (`todo/falls.md` 1): this line was read as an
-// ACTOR_STATE write, and the port set "ACTOR_STATE 18" - a state that does not
-// exist. `sub_414DE0` is a camera request with the actor as both subjects; the
+// (`todo/falls.md` 1): this line is NOT an ACTOR_STATE write - there is no
+// ACTOR_STATE 18. `sub_414DE0` is a camera request with the actor as both subjects; the
 // frontend makes it, since the camera is the frontend's.
 //
 // So a short landing is silent and a long one plays the landing reaction. Note
@@ -328,15 +327,14 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
     double nx = w[0] + dx, ny = w[1] + dy, nz = w[2] + dz;
     // the bed is a floor he does not pass (Y grows downward) - probed from where
     // he WAS, since a move that already crossed it would find nothing under him
-    // ...and it stops a body COMING DOWN onto it, nothing else. Written first as
-    // "below the nearest floor: put him on it", it also SNAPPED UP a body that was
+    // ...and it stops a body COMING DOWN onto it, nothing else. A rule of
+    // "below the nearest floor: put him on it" would also SNAP UP a body that is
     // legitimately under a floor's level - the climb out, whose feet come up the
-    // quay's face from 70 cm under its top: the moment his drift carried him over
-    // the edge he was lifted ~11 units and `H_WO_SD`'s remaining rise went on top,
-    // so he ended that much over the platform and fell to it (a reader, twice:
-    // *"still a little too high ... he falls a little each time"*). How early he
-    // crossed the edge depended on the approach, which is why a scripted climb
-    // landed exactly and a played one did not.
+    // quay's face from 70 cm under its top: the moment his drift carries him over
+    // the edge he is lifted ~11 units and `H_WO_SD`'s remaining rise goes on top,
+    // so he ends that much over the platform and falls to it (seen in play). How
+    // early he crosses the edge depends on the approach, which is why a scripted
+    // climb can land exactly and a played one not.
     if (const auto bed = walker_.floorThroughWater(nx, w[1] - kStepUp - 1.0, nz))
         if (w[1] <= *bed + 0.5 && ny > *bed) ny = *bed;
 
@@ -352,18 +350,16 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
                 ny = *s - 11.811024 + crown;
         }
     } else if (st == 14) {
-        // ---- `sub_4A8F30` case 14 WHOLE, and this is a CORRECTION ---------
+        // ---- `sub_4A8F30` case 14 WHOLE ------------------------------------
         //
         // The engine probes from the NODE - `v15 = actor+16` then `v15[11..13]`,
-        // the o3de node's own world position, which for a character is the
-        // PELVIS - and `World_ProbePoint` boxes from there with `+INF` for the
-        // Y maximum, so it is the nearest surface BELOW him and the distance
-        // comes back in the out-param. The first port of this probed from a
-        // HEAD POINT of its own invention (`camLift_ + 0.8 * headLift_`), which
-        // pinned him a head's height too low and is why swimming up did nothing
-        // a reader could see (2026-09-17: *"the animation of going up/down is
-        // playing, but each time the animation loop restarts, the character's
-        // position is reset"*).
+        // the o3de node's own world position (which node: below) - and
+        // `World_ProbePoint` boxes from there with `+INF` for the Y maximum, so
+        // it is the nearest surface BELOW him and the distance comes back in the
+        // out-param. Probed from a point of the port's own invention
+        // (`camLift_ + 0.8 * headLift_`) he is pinned a head's height too low,
+        // and swimming up does nothing visible: the up/down animation plays, and
+        // each time its loop restarts his position is reset.
         //
         // Then the three arms, in the engine's own order:
         //  * the nearest floor below is the WATER SURFACE (0x20000000), which
@@ -377,13 +373,12 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
         //  * the nearest floor below is the BED (0x8000000): up 0.15 a frame
         //    and the pitch turns +0.2, and he stays under.
         //  * anything else under him - a bank, a step, the quay: he SURFACES.
-        // THE PROBE POINT IS THE HEAD, AS POSED (corrected twice, 2026-09-17).
-        // `actor+16` is what `Actor_LoadModel` fills with
-        // `o3de_FindMeshByName(root, "Tete")`, and the arm reads that node's
-        // WORLD position. The first port used a standing head's height over the
-        // feet, which for a PRONE swimmer is a point in the water far above his
-        // real head; the second, mis-reading `+16` as the root, used the pelvis.
-        // The head is the pelvis plus the rest offset turned by his whole Euler
+        // THE PROBE POINT IS THE HEAD, AS POSED. `actor+16` is what
+        // `Actor_LoadModel` fills with `o3de_FindMeshByName(root, "Tete")`, and
+        // the arm reads that node's WORLD position - not the root (the pelvis),
+        // and not a standing head's height over the feet, which for a PRONE
+        // swimmer is a point in the water far above his real head. The head
+        // is the pelvis plus the rest offset turned by his whole Euler
         // - level with him and ahead of him when he lies flat. LABELLED: the
         // clip's own bend of the neck and spine is not in it.
         const float headRest[3] = {0.0f, -0.8f * headLift_, 0.0f};
@@ -414,10 +409,9 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
                 // not a reach). What it meets FIRST decides: the water means two
                 // metres of clear air over him, and he SURFACES; anything else - a
                 // sewer's roof - or nothing means he cannot come up here, and he is
-                // put back down by the distance. This was transcribed BACKWARDS at
-                // first ("water above him"), which pinned him under open sky for
-                // ever - a reader, 2026-09-17: *"the character can not go to the
-                // surface"*.
+                // put back down by the distance. Read the other way round ("water
+                // above him"), it pins him under open sky for ever and he can
+                // never reach the surface.
                 std::uint32_t fl2 = 0;
                 const auto h2 = walker_.probeFlags(hx, node - 78.740158, hz, fl2);
                 const bool clearAbove = h2 && (fl2 & 0x20000000u);
@@ -490,11 +484,11 @@ int PlayerController::waterClimbOut(float* platformOverWater) {
     if (j == 5) return 4;
     // THE ENGINE'S POSITION IS THE NODE - the PELVIS - and this port's is the
     // FEET, `camLift_` below it. `sub_4A9580` puts the pelvis 27.56 (70 cm) under
-    // the platform; putting the FEET there started him 42 units too high, and
-    // `H_WO_SD`'s root, which rises 79 to stand him up, then carried him 51 over
-    // the quay to drop 1.2 m when the clip ended (a reader, with a screenshot:
-    // *"placed too high"*). With the pelvis there the same rise ends ~10 over
-    // the platform, which is the engine's own arithmetic.
+    // the platform; putting the FEET there would start him 42 units too high,
+    // and `H_WO_SD`'s root, which rises 79 to stand him up, would then carry him
+    // 51 over the quay to drop 1.2 m when the clip ends. With the pelvis there
+    // the same rise ends ~10 over the platform, which is the engine's own
+    // arithmetic.
     walker_.moveTo(px - bx * 2.5, platform + 27.559055 + static_cast<double>(camLift_),
                    pz - bz * 2.5);
     for (int c = 0; c < 3; ++c) pos_[c] = static_cast<float>(walker_.pos()[c]);
@@ -519,14 +513,13 @@ int PlayerController::ctlGroup() const {
 }
 
 void PlayerController::nudge(const float d[3]) {
-    // THE PUSH IS SWEPT, not placed (2026-09-11, a reader: robbers' bodies
-    // shoved him "outside the environnement"). `Actor_TickNpc` adds the
+    // THE PUSH IS SWEPT, not placed. `Actor_TickNpc` adds the
     // spatial query's push to +244..252 outright, but `Actor_ApplyMotion`
     // right after takes EVERYTHING since the last safe position (+232..240) -
     // the push included - undoes it and hands it to `Actor_Move`, the
     // collide-and-slide, then puts him back at the safe position if no floor
-    // is under him. So a push never crosses a wall. This walked him there
-    // with `moveTo`, which tests nothing. LABELLED: the engine sweeps push
+    // is under him. So a push never crosses a wall - which `moveTo`, testing
+    // nothing, would let it do. LABELLED: the engine sweeps push
     // and the frame's own motion as ONE delta; this sweeps the push first.
     // The push is horizontal (both per-entry tests write y = 0).
     walker_.step(d[0], d[2], 1.0);
@@ -558,11 +551,11 @@ void PlayerController::setBank(const CtlFile& ctl, std::span<const std::byte> da
     // ...AND EVERY CLIP-KEYED CACHE IS NOW WRONG. `clipTracks`, `rootOf` and
     // the variant grid all memoise on the clip INDEX, and an index means
     // something different in every bank: clip 0 of `H1AVNT` is Kay'l's idle
-    // and clip 0 of `H1CMBT` is his guard. Leaving them meant that the fight
-    // teardown put the channel back on the adventure bank - the state, the
-    // group and the frame all correct - while the POSE kept coming out of the
-    // combat bank's cached tracks, so a reader who won a fight walked around
-    // Anekbah still holding his fists up (`todo/fight-mode.md` 15.6).
+    // and clip 0 of `H1CMBT` is his guard. Left alone, the fight teardown puts
+    // the channel back on the adventure bank - the state, the group and the
+    // frame all correct - while the POSE keeps coming out of the combat bank's
+    // cached tracks, so the winner of a fight walks around Anekbah still
+    // holding his fists up (`todo/fight-mode.md` 15.6).
     //
     // Nothing in the engine has this cache to invalidate: `Actor_LoadBankList`
     // swaps the list and the clips are read through it, so this is a cost the
@@ -801,14 +794,12 @@ void PlayerController::rotateByFacing(const float in[3], float out[3]) const {
         return;
     }
     // IN THE WATER +288 CARRIES THE PITCH, and EVERYTHING that goes through it
-    // must be turned by it - not the root delta alone. The first port of the
-    // swim turned the root delta by the whole Euler at its one call site and
-    // left this function on the yaw, so `Cef_ApplyRootShift`'s glide - which
-    // `H_SWIMIN` applies over frames 19..27 of every stroke, along the upright
-    // clip's own "up" - reached the world UNTURNED: he rose 1.2 a tick through
-    // the strong half of each stroke however far down his nose was, and sank
-    // only in the weak half. A reader, 2026-09-17: *"the character still goes
-    // up whatever the direction I try to give him"*. Scoped to the water
+    // must be turned by it - not the root delta alone. Left on the yaw, this
+    // function hands `Cef_ApplyRootShift`'s glide - which `H_SWIMIN` applies
+    // over frames 19..27 of every stroke, along the upright clip's own "up" -
+    // to the world UNTURNED: he rises 1.2 a tick through the strong half of
+    // each stroke however far down his nose is, and sinks only in the weak
+    // half, so he goes up whatever direction he is given. Scoped to the water
     // states, so no land baseline moves.
     {
         const int ws = static_cast<int>(rt_.state());
@@ -901,10 +892,10 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     // setter of another bit (`Perso_SetInputEnabled` 0x80, `Perso_SetNoPlayback`
     // 0x200, 0x1, 0x4, 0x100) or a read-modify-write clearing one (0x800, 0x1),
     // and the one `or [reg+4], 2` in the image (`sub_4B7AB1`) is a library
-    // object's. So the block always runs. Until 2026-10-11 this port gated the
-    // shift and the turn on 0x200 instead, which changed nothing it could show:
-    // under 0x200 the channel's frame does not advance (`Channel::tick`), so
-    // the window's portion is 0 either way (todo/scene-gameplay-audit.md 23).
+    // object's. So the block always runs. A gate on 0x200 instead would change
+    // nothing visible: under 0x200 the channel's frame does not advance
+    // (`Channel::tick`), so the window's portion is 0 either way
+    // (todo/scene-gameplay-audit.md 23).
     std::string tickMove;
     if (cur >= 0 && cur < static_cast<int>(S.size()) && !(rt_.channel().flags() & 0x2u)) {
         const CtlState& st0 = S[static_cast<std::size_t>(cur)];
@@ -1004,10 +995,9 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     // every new clip's KEY 1 is applied, on the transition tick, and the old
     // clip's last interval is not - with x and z zeroed when the start was a
     // seek (`seekNeeded`, start != 1.0), so a phase-matched entry does not
-    // jump. This port applied NOTHING on a transition, which dropped each new
-    // clip's key 1: H_SLDOUT's whole +12.49 drop into the seat (the reader's
-    // fall after the exit, 2026-10-06) and a frame of stride at every walk
-    // cycle. A clip set from OUTSIDE the tick (`enterGroupById`) is the same
+    // jump. Applying NOTHING on a transition would drop each new clip's key 1:
+    // H_SLDOUT's whole +12.49 drop into the seat (a fall after the exit) and a
+    // frame of stride at every walk cycle. A clip set from OUTSIDE the tick (`enterGroupById`) is the same
     // `GoToMove`, so its first tick runs from 0 too.
     float local[3] = {0, 0, 0};
     const bool transitioned = rt_.channel().stats().transitions != tr0;
@@ -1044,9 +1034,9 @@ void PlayerController::tick(float dt, std::uint32_t word) {
         // is why the approach angle was unchanged across the step (66.4 ->
         // 66.5 degrees, where squaring up is the whole point of it).
         //
-        // AND THAT IS THE ENGINE'S READING TOO (settled 2026-09-04). This
-        // was labelled a port divergence because `Anim_RootDelta` indexes by
-        // the raw frame - it does - but the channel tick never calls it
+        // AND THAT IS THE ENGINE'S READING TOO, not a port divergence.
+        // `Anim_RootDelta` indexes by the raw frame - it does - but the
+        // channel tick never calls it
         // directly for a grid clip: `sub_45CE90` sees flag bit 4 of +1252
         // and routes through `sub_4725B0`, whose position half `sub_472820`
         // makes FOUR `Anim_RootDelta` calls at the four cell offsets and
@@ -1060,13 +1050,13 @@ void PlayerController::tick(float dt, std::uint32_t word) {
             // THE WINDOW'S LAST FRAME IS THE SEAM, AND IT MUST NOT BE READ
             // HERE EITHER. `poseFrame()` already holds the pose one frame
             // short of it, because both the pose and the root snap back to
-            // standing there; this read did not, so the last tick of every
-            // grid state summed the exact negative of the whole window - a
+            // standing there. Read up to the seam, the last tick of every
+            // grid state sums the exact negative of the whole window - a
             // step of 17.8 units toward the object followed by one tick of
-            // `dxz +17.81 -0.56` (measured, play 2026-09-04, six presses,
-            // six snap-backs) - and the character stood where he had pressed
-            // when `MDADJSTP` re-measured. That is why the adjust step
-            // "moved him" to the eye and left the angle unchanged in the log.
+            // `dxz +17.81 -0.56` (measured in play, six presses, six
+            // snap-backs) - and the character stands where he pressed when
+            // `MDADJSTP` re-measures, so the adjust step "moves him" to the
+            // eye and leaves the angle unchanged in the log.
             const int last = static_cast<int>(baked->trans.size()) - 2 > 0
                                  ? static_cast<int>(baked->trans.size()) - 2 : 0;
             const int ia = a < 0 ? 0 : (a > last ? last : a);
@@ -1126,9 +1116,9 @@ void PlayerController::tick(float dt, std::uint32_t word) {
         // `Actor_ApplyMotion`, so a clip's root motion never reaches the
         // actor. Walking into Telis's zone in Kay'l's flat leaves the channel
         // mid-stride, `SetPersoBankGroup` then plays `H_WK-SD` out of it, and
-        // applying its root delta slid him 2.8 units after
+        // applying its root delta would slide him 2.8 units after
         // `actor.goto_address 678` - into the first line camera, which is
-        // authored nine units from his head (a reader, 2026-10-01).
+        // authored nine units from his head.
         last_.stepped = false;
     } else if (channelOnly_) {
         // `Actor_TickChannelOnly` (0x00466B00) is `Cef_TickChannel` and
@@ -1140,8 +1130,8 @@ void PlayerController::tick(float dt, std::uint32_t word) {
         // ...and only x and z reach the POSITION (`sub_45C680` cases 6/8:
         // +244/+252 and +232/+240, never +248); the y goes to the NODE,
         // which the frontend draws through `nodeDrop()`. Moving his position
-        // in y, as this did, left him standing 12 units above the road when
-        // H_SLDOUT's stand-up ended, and he fell.
+        // in y would leave him standing 12 units above the road when
+        // H_SLDOUT's stand-up ends, and he would fall.
         const double* w = walker_.pos();
         nodeDrop_ += world[1];
         walker_.moveTo(w[0] + dx,
@@ -1356,14 +1346,14 @@ const NodeTracks* PlayerController::clipTracks(int c) {
         t.rootTrack = -1;
         for (const auto& tr : d->tracks) t.ids.push_back(meshOfTrack(tr, *meshes_));
         t.quats.assign(static_cast<std::size_t>(d->frames), {});
-        // THE ROOT MOTION, which this used to assign all zeroes.
+        // THE ROOT MOTION.
         //
         // The pelvis (`UBassin`) is the hierarchy root and carries POSITION
         // keys beside its rotations; `Anim_RootDelta` sums them from key 1.
         // For a take that sum IS the crouch - H_TAKL12's pelvis drops 24.3
         // units (62 cm) inside one of its six cells and H_TAKL22 lifts it back
-        // - so dropping it left the body upright while the legs bent, which a
-        // reader saw as floating (omk-play 69).
+        // - so dropping it leaves the body upright while the legs bend, which
+        // looks like floating (omk-play 69).
         t.trans.assign(static_cast<std::size_t>(d->frames), {0.0f, 0.0f, 0.0f});
         for (const auto& tr : d->tracks) {
             if (!tr.posOffset || tr.posKeys <= 1) continue;
@@ -1512,7 +1502,7 @@ const NodeTracks* PlayerController::gridTracks(const NodeTracks& base, int n) {
         // The pelvis is the hierarchy root in all 181 character models, so the
         // crouch is a root TRANSLATION and not just rotation - blend the
         // quaternions alone and the legs animate while the hips stay put,
-        // which a reader saw as the character floating.
+        // which looks like the character floating.
         //
         // `clipRootMotion` accumulates from key 1, so at cell k it already
         // carries every EARLIER cell's motion: six concatenated takes summed

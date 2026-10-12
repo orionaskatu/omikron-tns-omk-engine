@@ -110,7 +110,7 @@ bool clipRect(int a1, int a2, int a3, int a4, int a9, int a10, int a11, int a12,
 }
 
 // (the opaque Gouraud line is `omk::drawLineGouraud`, `ui/surface.h` -
-// shared with the city weather's rain since 2026-10-11)
+// shared with the city weather's rain)
 
 }  // namespace
 

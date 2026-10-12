@@ -242,8 +242,7 @@ void Sliders::tickVehicles(float dt) {
     // ...and while a call is out every arm of `sub_456530` writes
     // `flt_536C28 = 90.0` again, so a latch held then is not let go, and
     // case 3 (boarding) latches the player's own slider (`dword_538E20 =
-    // dword_8F5E44`). (`RideMachine::kLatchFrames` was declared for this and
-    // never used until 2026-10-06.)
+    // dword_8F5E44`). (`RideMachine::kLatchFrames` is this 90.)
     if (called_ >= 0 && callRide_.state >= 1 && callRide_.state <= 7) {
         bumpHold_ = RideMachine::kLatchFrames;
         if (callRide_.state == 3) bumpLatch_ = called_;
@@ -304,14 +303,13 @@ void Sliders::tickVehicles(float dt) {
                 ahead = dx * std::sin(t) - dz * std::cos(t) > 0.0f;
             }
             callRide_.tick(dt, d, toPlayer, ahead);
-            // THE RELEASE IS TESTED FIRST, and that ordering is the whole bug.
-            // `case 7` ends `state = 0`, which also satisfies the "it stopped
-            // where it arrived" arm below (`was != state`, and 0 is neither 2
-            // nor 6) - so the slider was forced straight back to OPEN (3) the
-            // tick after it was released, every time, and never returned to
-            // the traffic. That is why a reader saw it *"blocked all the
-            // vehicles on the road"* even once the mode-0 hand-back was
-            // written: the hand-back ran and was immediately undone.
+            // THE RELEASE IS TESTED FIRST, and the ordering matters. `case 7`
+            // ends `state = 0`, which also satisfies the "it stopped where it
+            // arrived" arm below (`was != state`, and 0 is neither 2 nor 6) -
+            // tested the other way round, the slider is forced straight back
+            // to OPEN the tick after it is released, every time, never returns
+            // to the traffic and blocks all the vehicles on the road: the
+            // mode-0 hand-back runs and is immediately undone.
             if (callRide_.handedBack) {
                 // a MANUAL ride's release: `sub_438330(slider, &dword_8F5E2C)`
                 // - back where the drive began, on its own lane
@@ -336,9 +334,9 @@ void Sliders::tickVehicles(float dt) {
             } else if (was == 2 && callRide_.state == 1) {
                 cameNotice_ = true;           // case 2's arrival, for the viewer
                 // It stopped where it arrived: mode 1, OPEN (bit 4), and the
-                // 600-frame idle running. This forced mode 3 until
-                // 2026-10-06, which nothing in the engine waits in - MDACTION
-                // SETS 3 itself - so an ignored slider stood there for ever.
+                // 600-frame idle running. Not mode 3, which nothing in the
+                // engine waits in - MDACTION SETS 3 itself - and in which an
+                // ignored slider would stand there for ever.
                 v.state = 1;
             }
             if (callRide_.state == 2 || callRide_.state == 6) {
@@ -380,8 +378,6 @@ void Sliders::vehicleDrive(int vi, float dt) {
     // index's own touch flag, set by the player's last crowd query when the
     // vehicle's ELLIPSE (`sub_45E690`, two radii along its heading) overlaps
     // his spheres - the same contact that shoves him (`setPlayerTouched`).
-    // Until 2026-10-07 this was a stand-in, a reach box of the body radius
-    // + 20 about the body point, from before the vehicles were in the index.
     // `v10`: no run-over at all while the player's own slider is in 3..6 -
     // boarding, aboard, getting out, or carrying him on a journey
     // (`sub_456C70`: `if (v11 >= 3 && v11 <= 6) v10 = 0`).
@@ -448,9 +444,7 @@ void Sliders::vehicleSound(int vi) {
     // The mixer is the Session's; this keeps the record's `+20` so a frontend
     // can start and stop the one voice the engine keeps per vehicle.
     // Measured against the LISTENER (the camera's eye, `sub_46D200`), not the
-    // player - which is what this read until 2026-10-06, and only once a
-    // `setPlayer` nothing calls had run, so no vehicle ever sounded (drift
-    // audit A9). Start inside 585, update while within it, stop beyond; and
+    // player (drift audit A9). Start inside 585, update while within it, stop beyond; and
     // only from the drive step, as `sub_456C70` calls it - a slider standing
     // open keeps its voice at the last update.
     Vehicle& v = vehicles_[static_cast<std::size_t>(vi)];
@@ -636,8 +630,8 @@ void RideMachine::tick(float dt, float toTarget, float toPlayer, bool ahead) {
         // goes back to the traffic at once, the tick after `MDSLIDOU` sets
         // this mode, as he stands up. Only a MANUAL ride waits for him to be
         // 300 clear AND in front of it, re-opening it every tick (`v3 | 4`)
-        // so he can get back in. (Until 2026-10-06 every ride waited, and a
-        // journey's slider stood at the kerb ~800 frames after he got out.)
+        // so he can get back in. (Were every ride to wait, a journey's slider
+        // would stand at the kerb ~800 frames after he got out.)
         if (!manual) { state = 0; open = false; handedBack = true; return; }
         open = true;
         if (toPlayer > kLeave && ahead) { state = 0; open = false; handedBack = true; }
@@ -655,7 +649,7 @@ void RideMachine::tick(float dt, float toTarget, float toPlayer, bool ahead) {
 // reserved slider; here the spawner picks the first dead slot, which is the
 // same thing for a pool that has one call out at a time.
 //
-// THE CROSS-AREA JOURNEY, read 2026-10-07 (drift audit, the last slider row).
+// THE CROSS-AREA JOURNEY (drift audit, the last slider row).
 // Screen 7's hook calls `sub_40E630` and then `sub_452570`, and the first is
 // SYNCHRONOUS for another area: it frees both resident slots - whose pool
 // teardown `sub_4541E0` COPIES the player's slider (its 24-byte slot and
@@ -668,10 +662,9 @@ void RideMachine::tick(float dt, float toTarget, float toPlayer, bool ahead) {
 // 6, and `sub_456530` case 6 drives it down to the pickup.
 //
 // This pool is rebuilt by the load, so the slot is acquired again in the
-// new one (`callSlider`) and then sent (`sendCalledTo`, `sub_452CC0`). It
-// used to PARK the slider at the pickup point and KILL the ambient vehicles
-// within 400 of it first - the port's own, from before either function was
-// read; nothing in `sub_40E630` / `sub_452570` kills a vehicle.
+// new one (`callSlider`) and then sent (`sendCalledTo`, `sub_452CC0`) - not
+// parked at the pickup point, and no ambient vehicle near it is killed:
+// nothing in `sub_40E630` / `sub_452570` kills a vehicle.
 bool Sliders::arriveAt(const float target[3]) {
     if (!callSlider(target)) return false;          // the slot in the new pool
     mountCalled();                                   // aboard - he never got out
@@ -682,8 +675,8 @@ bool Sliders::callSlider(const float target[3]) {
     if (!loaded_ || !track_.valid) return false;
     // ONE CALL AT A TIME, and a second one FAILS: `sub_452570` returns 0
     // when `dword_8F5E44` is set and its mode is not 4 - so the sneak shows
-    // string 42 and stays up. This answered true, and the page closed on a
-    // call that did nothing (drift audit B5).
+    // string 42 and stays up. Answering true would close the page on a call
+    // that does nothing (drift audit B5).
     if (called_ >= 0) return false;
     const SliderCall c = planSliderCall(track_, target, counter_ + 1);
     // No vehicle lanes at all is LAHOREY, and the engine fails there too.
@@ -918,7 +911,7 @@ bool Sliders::calledAt(float out[3]) const {
     const Vehicle& v = vehicles_[static_cast<std::size_t>(called_)];
     if (!v.live || v.mover < 0) return false;
     const Pedestrian& m = movers_[static_cast<std::size_t>(v.mover)];
-    // THE BODY, not the lane carrot - and that was a 117-unit error. Every
+    // THE BODY, not the lane carrot - a 117-unit difference. Every
     // engine function that asks where a slider IS goes through
     // `sub_438310(slider, v)`, which dereferences the slot to its NODE and
     // reads the node's +36/+40/+44: the position the MODEL is drawn at. In
@@ -926,12 +919,12 @@ bool Sliders::calledAt(float out[3]) const {
     // `at - dir * kCarrotBehind` - the carrot `m.pos` runs 117 units (2.97 m)
     // AHEAD of the vehicle, because it is the point the mover steers toward.
     //
-    // Returning `m.pos` put the boarding gate's centre nearly three metres off
-    // the slider's nose, so 117 of `MDACTION`'s 157.48 reach was spent before
-    // a player took a step and the only ground satisfying it was in FRONT of
-    // the vehicle - which is exactly what a reader reported: *"I had to go to
-    // the front of the slider to enter it"*. The door point and camera 9 were
-    // measured from the same wrong centre.
+    // Returning `m.pos` would put the boarding gate's centre nearly three
+    // metres off the slider's nose, so 117 of `MDACTION`'s 157.48 reach would
+    // be spent before a player took a step and the only ground satisfying it
+    // would be in FRONT of the vehicle: he would have to go to the front of
+    // the slider to enter it. The door point and camera 9 are measured from
+    // this same centre.
     for (int k = 0; k < 3; ++k) out[k] = m.body[k];
     return true;
 }
@@ -952,9 +945,8 @@ bool Sliders::calledFrame(float pos[3], float localX[3], float localZ[3]) const 
     const float n = std::sqrt(m.dir[0] * m.dir[0] + m.dir[2] * m.dir[2]);
     if (!(n > 0.0f)) return false;
     const float fx = m.dir[0] / n, fz = m.dir[2] / n;
-    // ...and these two rows are the ENGINE's, not a derivation from a yaw -
-    // which is what the first version of this was, and it had both of them
-    // backwards. `sub_453B40` builds a vehicle's node matrix as
+    // ...and these two rows are the ENGINE's, not a derivation from a yaw,
+    // which gets both of them backwards. `sub_453B40` builds a vehicle's node matrix as
     //
     //     sub_4427D0(mover+24, 0.0, mover+32, tmp);   // 18_d3d.c 3938
     //     sub_4423C0(tmp, mover+140);                 // ...and TRANSPOSES it
@@ -970,16 +962,16 @@ bool Sliders::calledFrame(float pos[3], float localX[3], float localZ[3]) const 
     //     row 1 = ( 0,   1,  0  )
     //     row 2 = (-f.x, 0, -f.z)
     //
-    // Deriving them instead from `Matrix3x3_FromEulerAngles`, as this did,
-    // gives the NEGATIVE of both - and since the gate, the door snap and
-    // camera 9 all read row 0, all three moved to the far flank together and
-    // stayed consistent with each other. Nothing self-consistent could see
-    // it; a reader walking up to the slider and being refused could.
-    // A mirror stood here for an hour on 2026-09-08. The door clip's tracks,
-    // read by their +0 index, put the swing on the far door and the man
-    // looked mirrored; the track HEADERS carry the bone's NAME at +4, and
-    // the one that moves is `SlPorteZG` - on the file's -X, his side, the
-    // side these rows already gave. No mirror: row 0 as the engine stores it.
+    // Deriving them instead from `Matrix3x3_FromEulerAngles` gives the
+    // NEGATIVE of both - and since the gate, the door snap and camera 9 all
+    // read row 0, all three move to the far flank together and stay
+    // consistent with each other. Nothing self-consistent can see it; walking
+    // up to the slider and being refused does.
+    // No mirror either. The door clip's tracks, read by their +0 index, put
+    // the swing on the far door and the man looks mirrored; the track HEADERS
+    // carry the bone's NAME at +4, and the one that moves is `SlPorteZG` - on
+    // the file's -X, his side, the side these rows already give. Row 0 as the
+    // engine stores it.
     localX[0] = -fz;  localX[1] = 0.0f; localX[2] =  fx;   // row 0
     localZ[0] = -fx;  localZ[1] = 0.0f; localZ[2] = -fz;   // row 2
     return true;
@@ -988,10 +980,10 @@ bool Sliders::calledFrame(float pos[3], float localX[3], float localZ[3]) const 
 // `MDACTION`'s slider arm (0x0046AEC0, `loc_46AFF8`) - the side and the
 // reach. `sub_438240()` supplying a slider at all is `calledVehicle() >= 0`,
 // and its `+8` mode is not read here: the arm SETS it to 3 rather than
-// requiring it (`sub_438420(slider, 3)`), which is a correction - this port
-// had `MDSLIDIN`'s "slider is not in open mode !" standing in for a gate that
-// belongs to a different handler. The mode test kept anyway, because a slider
-// still driving toward him is not one he may climb into.
+// requiring it (`sub_438420(slider, 3)`) - `MDSLIDIN`'s "slider is not in
+// open mode !" is a gate of a different handler. An open test is kept
+// anyway, because a slider still driving toward him is not one he may climb
+// into.
 bool Sliders::canMount(const float playerPos[3]) const {
     if (!calledIsOpen()) return false;
     float at[3], ax[3], az[3];

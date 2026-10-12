@@ -29,7 +29,7 @@ const char* const kTypeNames[kCharTypeCount] = {
 // on landing, and 78 / 156 the bands that pick its DAMAGE. The two timers
 // are float literals stored as bit patterns - 0x43160000 is 150.0 and
 // 0x42700000 is 60.0 - and only state 20, which nothing of his writes,
-// reads them (corrected 2026-10-05, `todo/astaroth.md`).
+// reads them (`todo/astaroth.md`).
 const std::vector<ShootEdge> kAstarothEdges = {
     {16, 17, "walked to within 195 units of the target: the wind-up"},
     {17, 18, "the wind-up (clip 4) played out: crouched"},
@@ -731,8 +731,8 @@ void initShootRecord(ShootRecord& r, const ShootProperties& p, bool frozen) {
 // `self` is the end carrying a yaw, so it is the SHOOTER. The engine forms
 // `self - targetPos` and dots it against `(0,0,1)` rotated by that yaw; the
 // two sign conventions cancel, because a character faces -Z at yaw 0. See the
-// header - the first version of this had the roles the other way round and
-// would have made every gunman shoot at whatever stood behind him.
+// header - with the roles the other way round every gunman would shoot at
+// whatever stood behind him.
 //
 // `dot > cos(half) * dist` is the cone with both sides scaled by the distance
 // instead of normalising, and the second clause is the range.
@@ -1128,8 +1128,7 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
 }
 
 // `sub_426C20` (0x00426C20) - the MOVE decision states 1, 4, 12 and 14 branch
-// on, and the last of the four suppliers `shootGenericStep` used to take as a
-// parameter.
+// on, and the last of the four suppliers of `shootGenericStep`'s decisions.
 //
 // `dest` is the record's `+44`/`+48` - `goalX`/`goalZ`, which the PATROL
 // writes from `sub_4356B0` and which are not the `+136/+140` cell.
@@ -1155,16 +1154,15 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
 //     0 < b <= 0.80 * distance  behind and off to one side: +/-90
 //     b > 0.80 * distance       directly behind: 180
 //
-// Read as "forward" it says 180 for a destination straight ahead, which is
-// how this was first written up and it was wrong; the probe's `move ahead 0
-// behind 180` is what settled it.
+// Read as "forward" it says 180 for a destination straight ahead; the probe's
+// `move ahead 0 behind 180` is what settles it.
 int shootMoveDecision(const ShootRecord& r, const float self[4],
                       float& eulerY, float dt, bool arrived) {
     if (arrived) return 1;
     const double yaw = double(self[3]) * 3.14159265358979 / 180.0;
     const double sn = -std::sin(yaw), cs = std::cos(yaw);
-    // +44/+48, the WORLD goal - NOT the +136/+140 cell. They shared one pair
-    // of fields until 2026-09-12 (`actor/shoot.h`).
+    // +44/+48, the WORLD goal - NOT the +136/+140 cell, which is a separate
+    // pair of fields (`actor/shoot.h`).
     const double dx = double(r.goalX) - self[0];
     const double dz = double(r.goalZ) - self[2];
     const double dist = std::sqrt(dx * dx + dz * dz);
@@ -1251,9 +1249,9 @@ int shootEngage(ShootRecord& r, const AcquireOut& a, bool inCone, const EngageIn
     const bool coneOk = in.sameNode && inCone;
     if (!in.sameNode) {
         // ---- THE CROSS-FLOOR ARM (05_sys.c 6922, `todo/shoot-navedge.md`) --
-        // The engine splits this on the 0x20 LATCH, and the port collapsed both
-        // halves into the unlatched one until 2026-09-12 - so a gunman never
-        // went after a player on another floor at all.
+        // The engine splits this on the 0x20 LATCH; with both halves collapsed
+        // into the unlatched one a gunman never goes after a player on another
+        // floor at all.
         //
         // LATCHED - he has SEEN the player - and the two are on different
         // floors: `sub_436BB0` for the nearest staircase to the player's floor,

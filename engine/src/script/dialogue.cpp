@@ -365,10 +365,10 @@ void DialogPlayer::next() {
     // so the move's clock restarts with it - WHEN THERE IS ONE.
     // `Dialog_ApplyLineCameras` returns at `request[0] == -1`: a node whose
     // reply pair is unset issues no camera command, and the camera holds
-    // where the line's travel left it. Restarting the clock regardless made
-    // the line's own pair play its 160-frame travel AGAIN from its first
-    // framing - a reader: *the camera suddenly returns to a previous position
-    // while continuing the interpolation*.
+    // where the line's travel left it. Restarting the clock regardless would
+    // play the line's own pair's 160-frame travel AGAIN from its first
+    // framing - in play, the camera jumps back to an earlier position and
+    // carries on interpolating.
     phase_ = DialogPhase::Menu;
     if (menuPair()) camFrames_ = 0.0;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: adventure mode.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -11,7 +11,7 @@ int PlayState::setupAdventure() {
     //
     // The Impasse's cutscene ends `camera.set 0,0,2` + `scene.load 237,57` +
     // `player.anim.release`: the hand-over to the person at the keyboard.
-    // Until 2026-09-02 nothing here moved him after it. The controller
+    // The controller
     // (`actor/player.h`) is the engine's own chain - the input word into the
     // `.CTL` channel, the clip's root motion out of it, the walker under it,
     // the follow camera behind - and this file only builds it, feeds it the
@@ -25,12 +25,11 @@ int PlayState::setupAdventure() {
     // the Session, so the program ending is the signal it leaves - which is
     // also what `Actor_TickScxDriven` keys on (the program's `IsBusy`).
     // `Player_GoToMove` behind `player.move` (63) and `player.move.wait` (89)
-    // - `PlayerController::goToMove`. Neither reached the walker until
-    // 2026-09-08: op 63 was recorded and dropped, and 89 ran on because no
-    // hook was installed, so the `player.move 100` in front of every staged
-    // sequence never stopped him and he played his walk out under the
-    // cutscene camera. In AREA 222's tutorial that is 19 units short of the
-    // zone he had just been teleported out of.
+    // - `PlayerController::goToMove`. Both must reach the walker: without
+    // op 63, and with 89 running on for want of a hook, the `player.move 100`
+    // in front of every staged sequence never stops him and he plays his walk
+    // out under the cutscene camera. In AREA 222's tutorial that is 19 units
+    // short of the zone he had just been teleported out of.
     //
     // `moveWaitCtx` / `moveWaitGroup` are `dword_930744` / `dword_91068C`:
     // the context a 89 must report to, and the group it entered. `Game_Tick`

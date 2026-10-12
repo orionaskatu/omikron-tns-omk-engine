@@ -58,9 +58,8 @@ inline constexpr int kI2dLayers = 16;
 // the display list's own limit, and it is **exactly the sum of the seven** -
 // 4096 + 200 + 100 + 220 + 220 + 16 + 10 - so the list can never fill before
 // the pools do, and the 4862 the docs quote is derived rather than arbitrary.
-// Reaching that identity needs the 24-byte pool in the count, which is how its
-// two submitters were found - and they were recorded as having no callers
-// until 2026-09-15: each is called from a widget draw hook that is only a
+// Reaching that identity needs the 24-byte pool in the count; each of its
+// two submitters is called from a widget draw hook that is only a
 // table dword (`i2d.cpp` has both call sites).
 inline constexpr int kI2dNodeCap = 4862;
 
@@ -131,9 +130,8 @@ public:
     // submitter: `sub_4810D0` passes points 2/3 as `lpDestRect` and points 0/1
     // as `lpSrcRect` to `Blt`, which is at vtable +20
     // (QueryInterface/AddRef/Release/AddAttachedSurface/AddOverlayDirtyRect
-    // /Blt). An earlier version of this header had the two the other way
-    // round; reading the function that CONSUMES the payload is what settled
-    // it, which is CLAUDE.md 1 in one line.
+    // /Blt). The submitter reads plausibly either way round; the function
+    // that CONSUMES the payload decides it (CLAUDE.md 1).
     //
     // Both reject a degenerate rectangle before submitting, with three tests
     // and not four: `src.x0 >= src.x1`, `src.y0 >= src.y1` and

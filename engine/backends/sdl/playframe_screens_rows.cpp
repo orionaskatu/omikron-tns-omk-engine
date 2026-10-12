@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SCREENS' ROWS: the sneak, the shops, Multiplan, the hints, the puzzles, the terminals, the lift.
-// Parts of `PlayState::phaseScreens`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseScreens`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 // The sneak's inventory rows
@@ -212,9 +212,8 @@ void PlayState::screensSneakRows() {
                 // `sub_49BF30` does not touch case 35 at all: it opens a
                 // COMBINE, puts the object in one of two slots, disables
                 // the verb list and sends the player back to the rows for
-                // a second object. Running `Utiliser`'s arm here - which
-                // this did until 2026-09-04 - took the object IN HAND
-                // under the other verb's name.
+                // a second object. Running `Utiliser`'s arm here would
+                // take the object IN HAND under the other verb's name.
                 //
                 // Which slot is `sub_42B520`'s answer: event 37's first
                 // arm compares the object with `u16(GLOBAL, 64)`, the
@@ -270,12 +269,11 @@ void PlayState::screensSneakRows() {
               //
               // `Utiliser`'s ONLY. `Utiliser sur` is `sub_49BF30`, a
               // different callback that opens the combine and returns -
-              // it never calls `sub_42B470`. This block used to run for
-              // BOTH verbs, so `Utiliser sur` opened the combine and then,
-              // on the same press, took the object IN HAND and closed the
-              // device. A reader: *"Utiliser sur does not work correctly
-              // (it means using on another object in the sneak, not
-              // interacting with the environment)"*.
+              // it never calls `sub_42B470`. Run for BOTH verbs, this
+              // block would have `Utiliser sur` open the combine and then,
+              // on the same press, take the object IN HAND and close the
+              // device - where it means using on another object in the
+              // sneak, not interacting with the environment.
               if (verb != 0) {
                 // the combine is open; the rows are waiting for object two
               } else if (!rec->usable()) {
@@ -320,10 +318,8 @@ void PlayState::screensSneakRows() {
                 // 0xFFFF (`v7 = -1`). The setter applies its own per-
                 // property clamp, which `writeActorProperty` carries.
                 //
-                // This used to ANNOUNCE the apply and run nothing - "the
-                // apply is announced and not run" - so a medkit did
-                // nothing and stayed in the bag. A reader: *"impossible to
-                // use health items"*.
+                // Announcing the apply without running it leaves a medkit
+                // doing nothing and staying in the bag.
                 //
                 // NOT ported, labelled: the `rec+4 & 0x20` arm (weapons,
                 // ammunition, seteks, rings - the valuables), which writes
@@ -730,9 +726,9 @@ void PlayState::screensSneakRows() {
             //
             // THE WINDOW is `sub_42AFF0`'s, kept in widget 0's `+0x3C`
             // and moved by the mover - so the text follows the scroll
-            // rather than always starting at row 0. Hardcoded 0 until
-            // 2026-09-04, which truncated any list longer than the nine
-            // widgets: a tenth carried object could not be reached.
+            // rather than always starting at row 0. A window fixed at 0
+            // truncates any list longer than the nine widgets: a tenth
+            // carried object could not be reached.
             const omk::UiPanel* rp = w.at(omk::kPanelSneakInventory);
             for (const auto& l : (rp ? rp->lists : pn->lists)) {
                 if (l.addr != omk::kListSneakRows) continue;
@@ -814,16 +810,15 @@ void PlayState::screensSneakRows() {
             // so `asmfn.py` returns a neighbour and the range has to be
             // dumped by hand.
             //
-            // THE ECHO BAR IS NO LONGER COMPOSED HERE. It was: this
-            // block used to put the selected item's own label into
-            // `sneakRows` for it, which is right for three of the
-            // function's seven arms and silent for the other four - and
-            // the four include the one the page spends its time in, the
-            // TAB LABEL with `  (n / 18)` after it, so the bar was blank
-            // whenever the selection sat in the row list, which is
-            // whenever the player is looking at his inventory.
-            // `ScreenComposer::echoBarText` runs the whole function now,
-            // and reports what it drew in `ScreenFrame::echoBar` - a
+            // THE ECHO BAR IS NOT COMPOSED HERE. Putting the selected
+            // item's own label into `sneakRows` is right for three of
+            // the function's seven arms and silent for the other four -
+            // and the four include the one the page spends its time in,
+            // the TAB LABEL with `  (n / 18)` after it, so the bar would
+            // be blank whenever the selection sits in the row list, which
+            // is whenever the player is looking at his inventory.
+            // `ScreenComposer::echoBarText` runs the whole function, and
+            // reports what it drew in `ScreenFrame::echoBar` - a
             // line composed where the drawing happens can be asserted;
             // one composed here could only report the intention.
             //
@@ -1314,9 +1309,9 @@ void PlayState::screensTerminals() {
     //
     // The same gap as the lift's box, over seven screens: panel 0x004E4108's
     // body is a 430x320 item at (40, 80) in font 74 whose text comes from a
-    // native `textFn`, 0x004AF5D0, so the composer drew nothing and a reader
-    // found Kay'l's terminal blank - the artwork's keypad and screen with no
-    // dossiers on it.
+    // native `textFn`, 0x004AF5D0, so the composer draws nothing and, without
+    // this block, Kay'l's terminal is blank - the artwork's keypad and screen
+    // with no dossiers on it.
     //
     // `sub_4AF5D0` read from the image, in its own order - the first arm
     // that holds draws:
@@ -1339,8 +1334,7 @@ void PlayState::screensTerminals() {
     //      highlighted keypad cell's TAG names: `sub_428EF0(0x004E3FE0)`, the
     //      keypad's selected item, and its `+0x3C`.
     //
-    // The two queries read "an object lookup not read" until 2026-10-11 and
-    // were not ported until oscillators 5 and 6 were (2026-10-12).
+    // The two queries are ported with oscillators 5 and 6.
     if (walk && walk->panel() && !liftHandled) {
         struct Fam { int screen; const char* file; int str; };
         static constexpr Fam kFam[] = {

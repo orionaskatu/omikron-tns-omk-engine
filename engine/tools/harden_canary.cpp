@@ -4,8 +4,8 @@
 //     harden_canary
 //
 // Built by `make` it prints the size of a span that runs past its vector and
-// exits 0 - which is exactly the silent read the code audit of 2026-10-07
-// found in five format readers. Built by `make hardened` the standard library
+// exits 0 - which is exactly the silent read a code audit found in five
+// format readers. Built by `make hardened` the standard library
 // must TRAP on it. `verify.py: engine: hardened` asserts both, so a hardened
 // build that quietly lost its flag fails as a check rather than passing every
 // corpus walk for the wrong reason.

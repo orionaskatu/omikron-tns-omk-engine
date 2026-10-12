@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE VIEWER'S STATE - every local `main` used to hold, as a member under the
-// same name and in the same order (so they are destroyed in the order they
-// were), gathered by `todo/play-split.md` S3 (2026-10-02). `run` is what was
-// `main`'s body: each declaration there is now an ASSIGNMENT at the same
-// point, so everything is set in the order it was. The list and the types
+// THE VIEWER'S STATE - every local of `main`'s body, as a member under the
+// same name and in the same order (so they are destroyed in that order),
+// gathered by `todo/play-split.md` S3. `run` is `main`'s body: each
+// declaration there is an ASSIGNMENT at the same point, so everything is set
+// in the original order. The list and the types
 // came from clang's AST.
 //
 // Three kinds stay locals of `run`: the lambdas, the function-local statics
@@ -725,19 +725,19 @@ struct PlayState {
     std::array<std::pair<std::string, int>, 20> highScores;
 
     // ---- THE FRAME'S OWN STATE that one phase sets and a later one reads
-    // (todo/play-split.md): each was a local of the loop body, and is now
-    // assigned where it used to be declared, every turn.
+    // (todo/play-split.md): each is a local of the loop body, assigned at
+    // its original point of declaration every turn.
     omk::DeviceState st;                    // the devices, as the bindings read them
     std::uint32_t bits = 0, heldBits = 0, edgeBits = 0;   // the input word, held, edged
     bool uiPause = false;                   // the pause screen is the open one
     bool gpuFrame = false;                  // the present pass: the world went to the GPU
     bool overlayFrame = false, softGate = false;   // G6 step 2, the GLES window
-    // `fb` NOT YET CLEARED this frame (`phaseWorld`'s deferred clear, 2026-10-11)
+    // `fb` NOT YET CLEARED this frame (`phaseWorld`'s deferred clear)
     bool fbStale = false;
     // (`omk::zeroBytes`: `dcbz` on a PowerPC, so the 614 KB are not read first)
     void clearFrame() { omk::zeroBytes(fb.px.data(), fb.px.size() * sizeof(std::uint16_t)); fbStale = false; }
     // ...and NOT cleared at all on a world-less frame the menu's CLOUD will
-    // cover (2026-10-11, step 3m): it writes every pixel of `fb` at any size,
+    // cover (step 3m): it writes every pixel of `fb` at any size,
     // so the clear was 614 KB written for nothing. `screensHuds` settles the
     // debt before the composer: if the cloud is not drawn after all, it
     // clears there and says so.
@@ -982,7 +982,7 @@ struct PlayState {
 // and printed with the spans: the per-frame breakdown prints only past
 // `OMK_MARKS_MS` and only when paced, so a console frame of 65 ms - over
 // budget and under 150 - left ~50 ms of it attributed to nothing
-// (2026-09-30, the Bowie sequence).
+// (measured on the Bowie sequence).
     template <class F>
     void spanned(const char* name, F&& fn) {
         OMK_ZONE(name);                     // and the profiler's (a literal: kept by pointer)
@@ -990,7 +990,7 @@ struct PlayState {
         fn();
         phSpan[name] += phaseNow() - a;
     }
-    // THE CROWD'S MEMORY, as the original keeps it (2026-10-04): a vehicle's
+    // THE CROWD'S MEMORY, as the original keeps it: a vehicle's
     // composed sub-object once per (model, sub-object), and a slot's posed
     // buffers given back when its body has not been drawn for a while
     // (`playframe_world_crowd.cpp`, the end of `worldCrowd`).

@@ -2,9 +2,8 @@
 //
 // The SPRITE FAMILY of scene functions - `Script_Display3DSprite` (232 sites
 // in 65 scenes) and the five that set an instance's type, frame, scales and
-// roll - which the port did nothing for until 2026-09-05 (omk-play 71). A
-// scene that showed a flash, a glow or a smoke puff through them drew
-// NOTHING.
+// roll (omk-play 71). Without them a scene that shows a flash, a glow or a
+// smoke puff through them draws NOTHING.
 //
 // `Impasse.SCX` carries both shapes: object 10 `effects2_glow` (handle 26) is the full
 // chain (SetSpriteType 4, SetSpriteFrame 0, SetSpriteRolling, ScaleSpriteOnX,

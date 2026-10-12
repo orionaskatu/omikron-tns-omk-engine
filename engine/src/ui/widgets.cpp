@@ -30,21 +30,16 @@ void UiItem::effective(const std::vector<FlagOp>& broadcast,
     // A flag constant carries its BANK in the top bits, so which word a
     // broadcast lands in is decided by the constant, not by the caller.
     //
-    // **There used to be a `conditional` guard here, refusing any flag the
-    // lift recorded BOTH ways.** It existed because the lift scanned an open
-    // callback's bytes linearly and `Ui_OpenShop` BRANCHES: the shops grey one
-    // row and enable its neighbour on one arm and the reverse on the other, so
-    // a linear scan saw `off, off, on, on` for one item and `on, on, off, off`
-    // for the other, and applying that in address order picked whichever arm
-    // came last. Refusing them left the static record standing - cruder, and
-    // right for the same reason, which is what `tools/sim/ui.py` did too by
-    // reading `+48` raw.
-    //
-    // Since 2026-09-01 the lift FOLLOWS that branch (`sim/ui.py: SHOP_TEST`),
-    // so no contradictory edit is left in the tree - 0 of 411 items, where
-    // there were 20 - and the guard became dead code that would now hide a
-    // real per-screen difference. Removed, and the ten shops each show the
-    // one of "Acheter" and "Vendre" their own arm enables.
+    // **No guard refuses a flag recorded BOTH ways.** `Ui_OpenShop`
+    // BRANCHES: the shops grey one row and enable its neighbour on one arm and
+    // the reverse on the other, so a linear scan of the open callback's bytes
+    // sees `off, off, on, on` for one item and `on, on, off, off` for the
+    // other, and applying that in address order picks whichever arm came
+    // last. The lift FOLLOWS that branch (`sim/ui.py: SHOP_TEST`), so no
+    // contradictory edit is left in the tree - 0 of 411 items, against 20 for
+    // a linear scan - and such a guard would only hide a real per-screen
+    // difference. The ten shops each show the one of "Acheter" and "Vendre"
+    // their own arm enables.
     const auto apply = [&](const std::vector<FlagOp>& ops) {
         for (const auto& [flag, on] : ops) {
             const int bank = (flag & 0x20000000u) ? 0
@@ -347,18 +342,19 @@ const UiPanel* UiWidgets::screen(int id) const {
 // with no screen in hand, and a record whose `screen` is -1, are unchanged:
 // this narrows the preference, it does not remove it.
 //
-// **AND A CHILD IS SHOWN WITH ITS SCREEN'S LISTS** (2026-09-14). A child is
+// **AND A CHILD IS SHOWN WITH ITS SCREEN'S LISTS.** A child is
 // lifted once, as `screen -1`, carrying the open-callback edits of whichever
 // screen reached it first - for the shops' Vente confirm and Analyser page
-// that is screen 20, the BANK, so opening either from the pharmacy re-titled
-// the whole screen "Banque - vente", lit Vente and hid Acheter. The engine
+// that is screen 20, the BANK, so without this, opening either from the
+// pharmacy re-titles the whole screen "Banque - vente", lights Vente and hides
+// Acheter. The engine
 // has ONE record per list address: `Ui_OpenShop` writes it when a shop
 // opens, and `sub_42A370` installing a child rewrites nothing. So a child
 // that shares list addresses with the current screen's own top panel takes
 // those lists from THAT screen's record, as a cached merged copy; and the
-// screen's own record for an address wins outright, which the shop panel's
-// own `-1` duplicate (reached through the Analyser box's `+44`) had been
-// shadowing on the way back.
+// screen's own record for an address wins outright over the shop panel's
+// own `-1` duplicate (reached through the Analyser box's `+44`), which would
+// otherwise shadow it on the way back.
 const UiPanel* UiWidgets::at(std::uint32_t addr, int screen) const {
     const UiPanel* own = nullptr;
     const UiPanel* preferred = nullptr;
@@ -564,8 +560,7 @@ void UiWalk::closeNow(const char* how) {
         // 1 for `1-A-CS SecretFile` (the voice-over, `DATA MEMORIZED` and memo
         // 003) and branches again on 2. It is the screen's close slot
         // (`tables/ui.json` screen 5, `cb[2]`), so BACK and `Quitter le
-        // terminal` reach it as TAB does - this answered only on TAB, and the
-        // other two closed on -1, until 2026-10-12.
+        // terminal` reach it as TAB does, and all three answer.
         answer_ = (termRow3_ ? 2 : 0) + (termRow4_ ? 1 : 0);
         log_.push_back("terminal close: answer " + std::to_string(answer_));
     } else if (answer_ < 0 && closeAnswer_ >= 0) {
@@ -639,7 +634,7 @@ void UiWalk::beginCombine(int row, bool isSpellItem) {
     if (isSpellItem) { state_->combineA = row; state_->combineB = -1; }
     else             { state_->combineA = -1;       state_->combineB = row; }
     state_->combineC = -1;
-    // `sub_49BF30`'s tail, and the port had only the first line of it:
+    // `sub_49BF30`'s tail, all four lines of it:
     //     sub_4290D0(&word_4DE318, 0x20000004, 1);  // the VERBS off
     //     sub_4290D0(&word_4DE6F0, 0x20000004, 0);  // the ROWS back ON
     //     sub_428FF0(&unk_4DE278, 0x40000002, 1);   // light `Utiliser sur`
@@ -671,10 +666,9 @@ void UiWalk::endCombine() {
     installPanel(kPanelSneakInventory);
     // ...and `sub_428FF0(&unk_4DE278, 0x40000002, 0)` right after it
     // (`loc_49BE51`): `Utiliser sur`'s FLASH goes off. `beginCombine` lit it
-    // and nothing put it out, so the verb went on blinking after the combine
-    // as if it were still the selection - a reader: *"the menu selection
-    // should go back to the items list (instead of staying in the verb
-    // sections)"*.
+    // and without this the verb goes on blinking after the combine as if it
+    // were still the selection, where the original sends the selection back
+    // to the items list.
     state_->flagOn[kItemSneakUseOn] &= ~0x40000002u;
 }
 
@@ -689,9 +683,9 @@ int UiWalk::rowWindow(std::uint32_t list) const {
 }
 
 // `sub_42AFF0` - `Ui_MoveSelection` OVER A WINDOW, and the whole of the
-// sneak's row scrolling. Read from the listing 2026-09-04; before that the
-// window was hardcoded 0 and a list longer than its nine widgets was
-// truncated, so a tenth carried object could not be reached at all.
+// sneak's row scrolling. Read from the listing. Without the window a list
+// longer than its nine widgets is truncated, and a tenth carried object
+// cannot be reached at all.
 //
 // It is a CENTRED window: the selection moves until it reaches the middle
 // widget and then the window moves instead.
@@ -786,12 +780,12 @@ void UiWalk::settle() {
     // what decides which page of the sneak comes up: without it screen 9
     // opens on the tab COLUMN with "Identite" lit, and the player is looking
     // at the inventory page with the highlight somewhere else.
-    // **A LIST IS SHARED, AND ITS SELECTION IS LIVE.** `selMap()` used to be
-    // cleared here, so every panel change re-seeded every list from its
-    // static `+2` - and the sneak's pages all carry the same tab column
-    // (0x004DE210), so confirming a tab threw the column's selection back to
-    // whatever that page's record happened to say. A player saw it as
-    // "pressing enter on an item hovers the first item (character)".
+    // **A LIST IS SHARED, AND ITS SELECTION IS LIVE.** `selMap()` is not
+    // cleared here. Clearing it re-seeds every list from its static `+2` on
+    // every panel change - and the sneak's pages all carry the same tab
+    // column (0x004DE210), so confirming a tab throws the column's selection
+    // back to whatever that page's record happens to say (in play, ENTER on
+    // an item highlights the first item, the character).
     //
     // The engine has ONE list record per address; `Ui_DrawList` and
     // `Ui_MoveSelection` read and write its `+2` in place, and nothing
@@ -803,15 +797,13 @@ void UiWalk::settle() {
     // the lifted `current` (the verb panel 2, the examine page 2), so a
     // wholesale reset here would throw both away.
     //
-    // ...and it has to win OUTRIGHT, which it did not until 2026-09-07: the
-    // value was assigned and then the move-rule fallback below overwrote it,
-    // because that branch was reached for every `cur_` other than 0. The
-    // verb panel survived by luck - its builder switches off all four of the
-    // other lists, so the first usable one IS the verb list - and the EXAMINE
-    // page did not: it switches off only the verbs, so the fallback landed on
-    // the tab column at index 0 and the page's own text list was never
-    // current. Nothing on that page then answered UP or DOWN, which is what a
-    // player reported as "the scrolling of long text does not work".
+    // ...and it has to win OUTRIGHT: the move-rule fallback below must not
+    // overwrite it. The verb panel would survive that by luck - its builder
+    // switches off all four of the other lists, so the first usable one IS
+    // the verb list - and the EXAMINE page would not: it switches off only
+    // the verbs, so the fallback lands on the tab column at index 0, the
+    // page's own text list is never current, and nothing on that page
+    // answers UP or DOWN (long text does not scroll).
     // `sub_49B950`'s own instruction is `mov dword_4DEF38, 2` - panel
     // 0x004DEF20 `+24`, list index 2, the scrolling text box.
     bool fromBuilder = false;
@@ -868,10 +860,9 @@ void UiWalk::settle() {
         // and one LIST can serve two screens whose builders hide different
         // items. The load panel's button list is exactly that: `Charger une
         // partie` is live on screen 29 and hidden on screen 30, so a player
-        // who used it on the start menu and then opened a save point had the
-        // save panel sitting on a hidden `Charger` - and confirming it LOADED
-        // instead of saving. A reader met that as "I pressed enter on a save
-        // slot then the menu closed".
+        // who used it on the start menu and then opens a save point has the
+        // save panel sitting on a hidden `Charger` - and confirming it LOADS
+        // instead of saving (the menu closes on ENTER over a save slot).
         //
         // `Ui_MoveSelection` steps over unselectable rows, so a selection can
         // never REACH one by moving; this is the same rule applied to one
@@ -1152,15 +1143,14 @@ void UiWalk::buildPage(const UiPanel& p) {
         // `sub_428FF0(0x004DE2C0, 0x40000002, 1)` - "Examiner" itself, so it
         // FLASHES while its page is up. `Ui_ItemTextStyle` reads bank B `0x2`
         // as "blink on oscillator 1 when selected", and bank C `0x1` on the
-        // same item forces the colour to white - which is exactly what a
-        // player described: "Examiner should flash in white when previewing
-        // an object".
+        // same item forces the colour to white: Examiner flashes white while
+        // an object is previewed, as in the original.
         state_->flagOn[kItemSneakExamine] |= 0x40000002u;
         // `dword_4DEF38 = 2` - panel 0x004DEF20 `+24`, and index 2 of its
         // four is 0x004DE760, the page's own model item. Without it the walk
         // falls back to the first usable list, which is the tab column, and
-        // the highlight jumps to the identity icon - which a player saw as
-        // "the selection goes to the character page button".
+        // the highlight jumps to the identity icon (the character page
+        // button).
         curFromBuilder_ = 2;
     }
     // THE SLIDER PAGE'S TWO-STATE HEADER, and a builder doing more than
@@ -1172,8 +1162,7 @@ void UiWalk::buildPage(const UiPanel& p) {
     //
     // and the tree says why there are two: 0x004DE920 (string 12) and
     // 0x004DE968 (string 13) are BOTH at (187, 30), 202x22 - alternatives at
-    // one coordinate, never both drawn. Drawing both is what a player saw as
-    // overlapping text.
+    // one coordinate, never both drawn. Drawing both overlaps the text.
     //
     // The ELSE arm is what a capture of the original shows - one wide bar
     // reading "Appel du slider", string 12 - so that is the state the page
@@ -1510,7 +1499,7 @@ bool UiWalk::move(const UiList& l, std::uint32_t bits,
 //
 // NOT ported, labelled: the two sounds (`sub_482D90(0x22)`). The 2000 ms
 // oscillator 5 the success arm starts is the screen's DELAYED CLOSE
-// (`startCloseTimer`), ported 2026-10-12.
+// (`startCloseTimer`), ported.
 bool UiWalk::denDial(const UiList& l, std::uint32_t bits) {
     const int wasWheel = denWheel_, wasDigit = denDigit_[denWheel_ & 3];
     int& d = denDigit_[denWheel_ & 3];
@@ -1716,7 +1705,7 @@ bool UiWalk::confirm() {
         // plays the Dakobah/Xendar conversation (DIALOGS 227).
         //
         // NOT ported, labelled: the sound. The 4000 ms oscillator 5 is the
-        // screen's delayed close (`startCloseTimer`), ported 2026-10-12.
+        // screen's delayed close (`startCloseTimer`), ported.
         if (it->callback == kCbXachenCartridge) {
             const UiList* l = curList();
             int idx = -1;
@@ -1844,8 +1833,8 @@ bool UiWalk::confirm() {
             // 0..3, and cell 2 - the `Meurtres` file - writes `dword_930750 =
             // 1`. No oscillator and no close, so the answer WAITS: the screen
             // stays on the file and the parked script hears 1 when the player
-            // closes it (`closeAnswer_`). The port answered and left on the
-            // frame the cell was confirmed until 2026-10-12.
+            // closes it (`closeAnswer_`), not on the frame the cell is
+            // confirmed.
             if (screen_ == screen::Archives) {
                 if (row < 0 || row >= 4) return false;
                 if (row == 2) {
@@ -1855,8 +1844,8 @@ bool UiWalk::confirm() {
                 openDossier(row);
                 return true;
             }
-            // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms,
-            // read 2026-10-12): FIGHT SIM 4500 ms after its answer, MORGUE
+            // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms):
+            // FIGHT SIM 4500 ms after its answer, MORGUE
             // 2000, and the three SURV screens 2000 - SURV ERROR and SURV KIT
             // on ANY cell (no row limit; the answer is written only for row
             // 0), SURV NO KIT with no answer at all, so it closes on -1.
@@ -2394,8 +2383,8 @@ bool UiWalk::confirm() {
         // arms - 0 the inventory, 2 the memory page, 4 the slider - and the
         // row list is SHARED, so every page's rows carry this one callback.
         // Sending them all to the verb panel confirms a slider destination
-        // as if it were a carried object, which a player saw as "press enter
-        // on a line of the slider list redirects to the inventory".
+        // as if it were a carried object: ENTER on a line of the slider list
+        // would go to the inventory.
         //
         // Only the inventory arm is ported. Kind 4 resolves the chosen
         // destination through `sub_40E630` and calls `sub_452570` - the
@@ -2473,7 +2462,7 @@ bool UiWalk::confirm() {
         // are the Session's, not a widget walker's.
         // ---- THE SLIDER PAGE'S HEADER, three buttons ---------------
         //
-        // Keyed on the items' own callbacks, read 2026-09-08 (widgets.h has
+        // Keyed on the items' own callbacks (widgets.h has
         // the three). "Appel du slider" is `sub_452570` on the player's own
         // position with `dword_6A17CC` untouched - a call, no destination.
         if (it->callback == kCbSliderCall) {
@@ -2514,9 +2503,9 @@ bool UiWalk::confirm() {
             // -1, -1, -1)`, "cant find slider interface !"), so a journey is
             // something you ask for once you are ABOARD.
             //
-            // The port teleported on this row whatever the screen, which is
-            // the arrive arm and belongs to neither: a reader met it as
-            // "calling a slider with the sneak teleports me".
+            // Teleporting on this row whatever the screen is the arrive arm
+            // and belongs to neither: calling a slider from the sneak would
+            // teleport the player.
             state_->pendingTravel = row;
             state_->travelToDestination = w_->screenParam(screen_) == 1;
             log_.push_back(state_->travelToDestination
@@ -2529,16 +2518,16 @@ bool UiWalk::confirm() {
         }
         // ---- THE MEMO READER, `sub_49BC60`'s KIND-2 ARM ------------------
         //
-        // Two instructions, and the port refused them for want of reading:
+        // Two instructions:
         //
         //     loc_49BDCC: push offset off_4DEFF0
         //                 jmp  loc_49BE80      ; sub_42A370(screen, panel)
         //
         // ENTER on a memo installs the READER PAGE. Its record ships
         // `+24 = 2`, so the page comes up STANDING IN list 0x004DEAE8 - the
-        // body box - whose hook is the scroller `0x0042A9A0`, and that is
-        // what a reader found in the original: "pressing entree allows to
-        // use the scroll bar of the text zone". Its `+16` hook is 0, so
+        // body box - whose hook is the scroller `0x0042A9A0`, which matches
+        // the original in play: ENTER hands the text zone's scroll bar the
+        // input. Its `+16` hook is 0, so
         // nothing moves between its lists and BACK is the way out, through
         // the leave `sub_49D890`.
         //
@@ -2647,8 +2636,8 @@ bool UiWalk::press(std::uint32_t bits) {
     // shop among them, and none of the start menu, SAVE GAME, PAUSE GAME,
     // OPTIONS or the two input-less panels - and BACK is gated too: a child
     // carrying 0x80 (the start menu's confirm) refuses it, and a top panel
-    // closes on it only with 0x10. This took BACK unconditionally, and TAB
-    // not at all, until 2026-09-14, when a shop would not close on TAB.
+    // closes on it only with 0x10. Taking BACK unconditionally and TAB not
+    // at all leaves a shop that will not close on TAB.
     if ((bits & kUiClose) && (panel_->flags & 0x20u)) {
         closeNow("close (TAB)");                 // the terminal answers here
         return true;
@@ -2786,8 +2775,8 @@ bool UiWalk::press(std::uint32_t bits) {
             // NOT written here: a panel hook is the panel's per-frame tick,
             // so it re-evaluates that test every frame, and `memoBodyShown()`
             // derives it from the current list instead. Writing it here, from
-            // the list current BEFORE the move, made the preview appear one
-            // press late - which is what a reader saw the original not do.
+            // the list current BEFORE the move, makes the preview appear one
+            // press late, which the original does not do.
             if (bits & kUiLeft)  { if (moveLists(-1)) return true; }
             if (bits & kUiRight) { if (moveLists(1))  return true; }
         } else if (panel_->hook == kHookHighScorePage) {
@@ -2816,7 +2805,7 @@ bool UiWalk::press(std::uint32_t bits) {
     if (l->hook == w_->gridHook()) return grid(*l, bits);
     if (l->hook == w_->nameHook()) {
         // The name field answers the CHARACTER channel (`sub_4397B0`) and not
-        // the input bits - with ONE exception this used to miss. `loc_47A499`,
+        // the input bits - with ONE exception. `loc_47A499`,
         // the arm taken when no character is waiting, reads `screen+0x6C` -
         // the live input word `sub_482FE0` reads - and moves the CARET: bit 1
         // (LEFT) steps it back when it is not already at 0, bit 2 (RIGHT)
@@ -2918,16 +2907,13 @@ bool UiWalk::press(std::uint32_t bits) {
         // `0x100000` / `0x200000`, the "more above" and "more below"
         // indicators.
         //
-        // `sub_42AFF0` IS PORTED NOW (2026-09-04). Before that the window
-        // was hardcoded 0 and this fell through to the ordinary move, which
-        // is right for a list no longer than its nine widgets - every list
-        // the port could reach at the time - and silently truncating for
-        // anything longer. A player carrying ten things could not reach the
-        // tenth.
+        // `sub_42AFF0` IS PORTED. With the window hardcoded 0 this would fall
+        // through to the ordinary move, which is right for a list no longer
+        // than its nine widgets and silently truncating for anything longer:
+        // a player carrying ten things could not reach the tenth.
         //
-        // Refusing the whole hook, which is what it did before THAT, meant
-        // the selection never moved inside the sneak's rows on any page, and
-        // a player reported it twice.
+        // Refusing the whole hook would leave the selection never moving
+        // inside the sneak's rows on any page.
         if (moveRowWindow(*l, bits)) {
             // The tail: `sub_4083F0(0x1E, &tag)` on any successful move,
             // guarded on the tag not being -1 - event 30, the inventory
@@ -2939,11 +2925,10 @@ bool UiWalk::press(std::uint32_t bits) {
         }
         // `sub_42AFF0` is only the MOVER. A confirm on a row is the item's
         // own callback (`kCbSneakRowConfirm` -> the verb panel), dispatched
-        // as for every other list - and this branch swallowed it from
-        // 2026-09-04's scrolling commit until a player found every verb
-        // dead: "I can't use Utiliser, Utiliser sur or Examiner when I
-        // select an item". `engine: sneak` was red on main for the same
-        // reason.
+        // as for every other list - and this branch must not swallow it:
+        // if it does, every verb is dead (Utiliser, Utiliser sur and
+        // Examiner do nothing on a selected item) and `engine: sneak` goes
+        // red.
         if (bits & kUiConfirm) return confirm();
         return false;
     }
@@ -2952,8 +2937,8 @@ bool UiWalk::press(std::uint32_t bits) {
         // rows (0x004E3640). The same centred window the sneak's rows reach
         // through `sub_49C050`, without that wrapper's memory-page tail: move
         // the selection, scroll once it passes the middle widget, raise
-        // event 30 on a move. Unmodelled, the walk reached the first row of
-        // a shop and no further, and a library of sixteen books showed nine.
+        // event 30 on a move. Unmodelled, the walk reaches the first row of
+        // a shop and no further, and a library of sixteen books shows nine.
         if (moveRowWindow(*l, bits)) {
             log_.push_back("row move: event 30 for the selected row");
             return true;
@@ -2979,7 +2964,7 @@ bool UiWalk::press(std::uint32_t bits) {
             return true;
         }
         // A CONFIRM ON A ROW MOVES TO THE BUTTONS. The hook's own tail,
-        // which this used to fall through:
+        // which this must not fall through:
         //
         //     if (!(bits & 0x10)) return 0;
         //     if (row == -1)      return 0;
@@ -2991,8 +2976,7 @@ bool UiWalk::press(std::uint32_t bits) {
         // `panel+24` is the current list and 1 is the button list, so ENTER
         // on a slot focuses `Charger`/`Sauvegarde`, `Detruire` and
         // `Annuler` - and sets the load/save mode on the way. Without it the
-        // only way across was LEFT/RIGHT through the panel hook, which a
-        // reader noticed was missing.
+        // only way across is LEFT/RIGHT through the panel hook.
         if ((bits & kUiConfirm) && load_->row >= 0) {
             load_->mode = screen_ == screen::SaveGame ? 1 : 0;   // `word_4CEA9A`
             for (std::size_t k = 0; k < panel_->lists.size(); ++k)
@@ -3146,9 +3130,9 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
         //     screen 29   word_4CEA14 = 2    Detruire   word_4CEA5C = 9  Annuler
         //     screen 30   word_4CEA14 = 11   Detruire   word_4CEA5C = 3  Annuler
         //
-        // Without it the save screen drew `Charger une partie`'s neighbours
+        // Without it the save screen draws `Charger une partie`'s neighbours
         // out of `IAM\Save`, where 1, 2 and 9 are `Indices`, `Cet indice te
-        // coutera :` and `Indice achete !` - which is what a reader saw.
+        // coutera :` and `Indice achete !`.
         if (str >= 0) it->bindString = str;
     };
     const auto& L = w.loadPanel();
@@ -3161,9 +3145,9 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
     //
     // Without it the slot panel still names the START MENU as its parent on
     // screen 30, so the composer's parent chain draws the start menu's items
-    // over the save screen - its name field included, which is why a reader
-    // saw `Non : zfe` and the hints strings piled on one frame - and BACK
-    // leaves to the wrong panel.
+    // over the save screen - its name field included, so `Non : zfe` and
+    // the hints strings pile up on one frame - and BACK leaves to the wrong
+    // panel.
     const std::uint32_t owner = screen == screen::SaveGame ? kPanelSaveRoot : kPanelStartTree;
     for (auto& p : w.panels_)
         if (p.addr == kPanelLoadSlots) p.parent = owner;
@@ -3183,8 +3167,8 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
         place(L.detruire, 326, false, 2);
     }
     // THE CONFIRM PANEL IS BUILT PER SCREEN TOO - `sub_47B850`, which is the
-    // same shape as the slot panel's builder and which a reader met as
-    // "texts on the confirm panel are wrong":
+    // same shape as the slot panel's builder; without it the confirm
+    // panel's texts are wrong:
     //
     //     screen 29   parent = off_4CF280   question 10, yes 6,  no 7
     //     screen 30   parent = off_4CF2E8   question 16, yes 12, no 13
@@ -3193,7 +3177,7 @@ void applyLoadPanelLayout(UiWidgets& w, int screen) {
     // is item 0x004CED50 + 0x1C, `word_4CEDB4` is 0x004CED98 + 0x1C and
     // `word_4CF0E4` is 0x004CF0C8 + 0x1C - each one an item's `+28`, the
     // string id. On screen 30 that reads `Ecraser ce fichier ?` over `Oui`
-    // and `Non`; unported it drew strings 6, 7 and 10, which there are
+    // and `Non`; without it strings 6, 7 and 10 draw, which there are
     // `Anneaux en votre possession :`, the save question and
     // `Votre ame va etre sauvegardee !`.
     place(0x004CED50u, -1, false, screen == screen::SaveGame ? 12 : 6);    // Oui

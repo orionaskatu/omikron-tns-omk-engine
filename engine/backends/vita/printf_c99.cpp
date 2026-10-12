@@ -4,8 +4,8 @@
 //
 // THE LOG: `freopen` does not redirect stdout on the Vita - newlib keeps
 // writing the standard streams to the TTY whatever file is opened over them
-// (seen in Vita3K, 2026-09-18: the log file opened, every line went to
-// `tty0:`), so a console run would leave `omk-play.log` empty. Every printf
+// (the log file opens and every line goes to `tty0:`), so a console run would
+// leave `omk-play.log` empty. Every printf
 // already comes through here, so `omk_vita_redirect` points stdout and stderr
 // at real files instead; `puts` and `putchar` are wrapped too, because GCC
 // turns `printf("text\n")` into them.
@@ -42,18 +42,17 @@ FILE* route(FILE* f) {
 }
 }  // namespace
 
-// ---- THE LOG IS WRITTEN OFF THE FRAME (2026-09-23) --------------------------
+// ---- THE LOG IS WRITTEN OFF THE FRAME --------------------------------------
 //
-// It used to be UNBUFFERED, so every line was its own synchronous write to the
-// memory card, on the frame that printed it. A console log of the city showed
-// what that costs: frames on the 60-frame report boundary, which print six
-// lines, averaged 201 ms against 130 for the other slow frames, and single
-// report frames stalled for 1.1-1.2 s with 8-27 ms of marked work - the card
-// taking its time over a write. And in the city every frame is slow, so every
-// frame wrote its own SLOW FRAME and sections lines: the instrument fed the
-// slowness it was reporting.
+// Unbuffered, every line is its own synchronous write to the memory card, on
+// the frame that printed it. In a console log of the city that cost frames on
+// the 60-frame report boundary (six lines) 201 ms against 130 for the other
+// slow frames, and single report frames stalled for 1.1-1.2 s with 8-27 ms of
+// marked work - the card taking its time over a write. And in the city every
+// frame is slow, so every frame writes its own SLOW FRAME and sections lines:
+// the instrument would feed the slowness it reports.
 //
-// So stdout and stderr are MEMORY streams now (`funopen`): a write copies the
+// So stdout and stderr are MEMORY streams (`funopen`): a write copies the
 // bytes into a buffer under a lightweight mutex and returns - no syscall on the
 // frame - and a low-priority thread drains them to the card every 250 ms.
 // `omk_vita_log_flush` drains synchronously, and every exit path calls it.

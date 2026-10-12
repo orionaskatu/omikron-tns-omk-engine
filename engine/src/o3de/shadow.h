@@ -115,8 +115,8 @@ bool shadowBlob(Geometry& g, const ShadowModel& m, const float bone[3],
 // Which bones a detail level draws, as indices into `kShadowBones`. Empty for
 // a level past 2, because `Actor_DrawShadow`'s switch has no default arm.
 // A reference into tables built once: it is asked for every staged body every
-// frame, and each call used to build the list afresh (todo/optimization.md
-// step 18).
+// frame, and building the list afresh on each call is a cost
+// (todo/optimization.md step 18).
 const std::vector<int>& shadowBonesFor(int detail);
 
 // `o3de_FindMeshByName` (0x00436D90), and it is a SUBSTRING match on the
@@ -154,8 +154,7 @@ int findMeshContaining(const std::vector<Mesh>& meshes, const char* wanted,
 // M1 (`meshidx_equiv`): 852-930 ns on a 76-mesh crowd model, 102 ns on a
 // 19-mesh hero, against **57 ns** answered from a table.
 //
-// Note what is NOT the cost, because the handoff said it was and the
-// measurement refuted it: the ancestry walk turning a parent ID into an index
+// Note what is NOT the cost, measured: the ancestry walk turning a parent ID into an index
 // by scanning the array. Replacing that with a sorted map is exactly
 // equivalent and SLOWER - 1145-1178 ns on the crowd model - because bone
 // chains are shallow, so the sort never earns itself back. The name scan is

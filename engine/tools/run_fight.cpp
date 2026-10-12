@@ -26,7 +26,7 @@
 // The stats are the probe's, not a character record's: this tree has no actor
 // record here, so every fighter gets the same plausible block (vie 100, attack
 // and dodge 50, experience 50) and the check measures the MECHANISM. `omk-play`
-// supplies the real properties in step 2.
+// supplies the real properties (`todo/fight-mode.md` step 2).
 #include "actor/fight.h"
 #include "formats/le.h"
 #include "formats/ctl.h"
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
             // nothing but press its walk-forward table, and a headless probe
             // has no walker to move a body with, so the pair would never close
             // and the attack logic would never run. Closing the distance is
-            // the walker's, and it arrives with the real actor in step 2.
+            // the walker's, which `omk-play` runs with the real actor.
             omk::FightBody player, opponent;
             player.x = 0.0f;   player.z = 0.0f;  player.radius = 30.0f;
             player.channel = &pch; player.isPlayer = true;

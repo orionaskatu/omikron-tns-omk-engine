@@ -2,8 +2,8 @@
 // `%zu` FOR RETRO68, at COMPILE time - force-included into every classic
 // translation unit (`-include`, CMakeLists.txt). Retro68's newlib prints
 // `%zu` as "zu" and consumes no argument, so every later argument shifts (a
-// `%s` after it reads a size as a pointer: `omk-play`'s setup crashed in
-// `printf` on Tiger, 2026-10-03). `printf_c99.cpp` strips the length
+// `%s` after it reads a size as a pointer and crashes in `printf`, as
+// `omk-play`'s setup does on Tiger without this). `printf_c99.cpp` strips the length
 // modifier (`backends/vita/c99format.h`; exact where `size_t` is 32 bits).
 //
 // Why a macro and not the Vita's `-Wl,--wrap`: on XCOFF a call names the

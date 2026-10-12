@@ -3,17 +3,17 @@
 //
 //     scene_steps <gamedata> <vm_opcodes.json> <out.bin>
 //
-// `Started::clip` was filled once at start from the object's FIRST body
-// animation and never refreshed, so any object whose program has more than one
-// animation step posed its whole run with step 0's clip - and, since the body
-// is snapped to that clip's root key 0, stood in step 0's place for the whole
-// shot.
+// `Started::clip` must follow the program's current animation step. Filled
+// once at start from the object's FIRST body animation and never refreshed,
+// any object whose program has more than one animation step would pose its
+// whole run with step 0's clip - and, since the body is snapped to that
+// clip's root key 0, stand in step 0's place for the whole shot.
 //
-// `Impasse.SCX`'s `A_2_DemonLook` is the case a reader reported: clip 15
+// `Impasse.SCX`'s `A_2_DemonLook` is the case that shows it: clip 15
 // (`1-02DEM`, the demon perched on the wall, 91 frames) and then clip 17
 // (`1-03DEM`, his jump down, 41). Frozen on clip 15 the demon never descends,
-// and the next beat's clip teleports him to the ground - which is what "the
-// shot launches too late and part of the animation is missing" looks like.
+// and the next beat's clip teleports him to the ground - which reads as the
+// shot launching too late with part of its animation missing.
 //
 // The invariant this prints is one the DATA can fail and no reader can fake:
 // the three clips of the beat are authored to CHAIN, each starting where the

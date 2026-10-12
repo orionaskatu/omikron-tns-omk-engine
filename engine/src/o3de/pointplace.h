@@ -2,7 +2,7 @@
 // THE POINT PLACEMENT - a moving set mesh's corners and collision triangles,
 // put where its script moves them, every frame (`play.cpp`, "scripted motion:
 // meshes placed"). 2730 triangles and the render corners with them on
-// Anekbah's street; 9.6 ms of a console's city frame (2026-09-23).
+// Anekbah's street; 9.6 ms of a console's city frame.
 //
 // Each point goes through the same three steps the mesh patch always did:
 //
@@ -10,7 +10,7 @@
 //     r     = rotated ? qrot(q, local) : local
 //     out   = r + at
 //
-// in ONE place, with TWO implementations (the reader's rule, 2026-09-25: an
+// in ONE place, with TWO implementations (the project's rule: an
 // ARM-specific path is allowed beside a generic one):
 //
 //   * the GENERIC loop, plain C++, everywhere;

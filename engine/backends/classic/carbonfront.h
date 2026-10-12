@@ -16,13 +16,13 @@
 // callback runs at interrupt time on Mac OS 9, so it only marks a buffer
 // played and touches nothing else.
 //
-// OPENGL (the build with `OMK_GL1_AGL`, 2026-10-04): when the fixed-function
+// OPENGL (the build with `OMK_GL1_AGL`): when the fixed-function
 // backend asks (`backends/gl1/gl1host.h`), an AGL context is attached to the
 // window, the world is drawn into its back buffer, and from then on every
 // frame is PRESENTED through it - `glDrawPixels` of the composited RGB565
 // frame, then `aglSwapBuffers` - since on Mac OS X an AGL surface lies over
 // the window and would hide what CopyBits draws. Never asked, the window stays
-// plain and CopyBits presents as before.
+// plain and CopyBits presents.
 #pragma once
 
 #include "audio/hostmix.h"

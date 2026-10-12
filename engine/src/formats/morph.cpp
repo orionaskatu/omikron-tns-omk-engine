@@ -25,7 +25,7 @@ MorphLayout morphLayout(std::span<const std::byte> d, std::size_t fileSize) {
 
     // in 64 bits: three file words summed in 32 WRAP, and a wrapped record
     // is smaller than its own audio block, which walks `morphAudio` off the
-    // file (the code audit of 2026-10-07). Only a sum that wrapped is refused:
+    // file. Only a sum that wrapped is refused:
     // every layout the 32-bit arithmetic got right is the same layout.
     const std::uint64_t record   = std::uint64_t{L.audio} + 24 * std::uint64_t{L.vertices} +
                                    16 * std::uint64_t{L.nodes} + 12;

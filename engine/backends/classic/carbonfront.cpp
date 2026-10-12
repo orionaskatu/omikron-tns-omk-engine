@@ -85,11 +85,11 @@ bool onMacOS9() {
     return v == 1;
 }
 
-// A CHECKPOINT before a call that has never run on the reader's OS 9 machine
-// (a real 3D card's AGL, the Sound Manager, QuickTime): the line is written
-// and, on OS 9, the volume FLUSHED - so if the call freezes the computer,
-// `omk-out.txt` still says which one it was (the reader, 2026-10-09: "it just
-// made the computer freeze", and nothing to read afterwards).
+// A CHECKPOINT before a call that may freeze a real OS 9 machine (a real 3D
+// card's AGL, the Sound Manager, QuickTime): the line is written and, on
+// OS 9, the volume FLUSHED - so if the call freezes the computer,
+// `omk-out.txt` still says which one it was; without the flush OS 9's write
+// cache leaves nothing to read afterwards.
 void checkpoint(const char* what) {
     std::printf("checkpoint: %s\n", what);
     std::fflush(stdout);
@@ -127,8 +127,8 @@ CarbonFrontend* g_carbon = nullptr;     // the one frontend, for gl1AglContext
 // driver takes fastest is the driver's business: Mac OS X's take 32-bit
 // ARGB (BGRA, 8-8-8-8-REV) and 16-bit ARGB 1555 without converting, and an
 // RGB565 or an RGBA-bytes source may go through a software conversion texel
-// by texel. On the reader's iBook (Rage 128 Pro, Mac OS X 10.2) a 565 frame
-// cost 220-310 ms a menu frame to present (2026-10-09). So `probeUploads`
+// by texel. On an iBook G3 (Rage 128 Pro, Mac OS X 10.2) a 565 frame costs
+// 220-310 ms a menu frame to present (measured 2026-10-09). So `probeUploads`
 // TIMES each when the context is made and the presents use the fastest.
 struct UpFmt { GLint internal; GLenum format, type; int bytes; const char* name; };
 const UpFmt kUiFmts[3] = {
@@ -594,11 +594,11 @@ void* CarbonFrontend::glContext() {
 void CarbonFrontend::presentGL(const Surface& fb) {
 #if defined(OMK_GL1_AGL)
     // A frame the world is not swapped straight for - the interface alone,
-    // the films, a composite - as TEXTURED QUADS. It was `glDrawPixels`
-    // with `glPixelZoom`, which the drivers of the period run in software:
-    // on a real iBook G3 under Mac OS X 10.2 (Rage 128) the menus were far
-    // slower than the city, whose world never takes this path (the reader,
-    // 2026-10-09). The frame stays in RGB565, the packed type in the host's
+    // the films, a composite - as TEXTURED QUADS, not `glDrawPixels` with
+    // `glPixelZoom`, which the drivers of the period run in software: on an
+    // iBook G3 under Mac OS X 10.2 (Rage 128) that makes the menus far
+    // slower than the city, whose world never takes this path. The frame
+    // stays in RGB565, the packed type in the host's
     // own word order - the one `glDrawPixels` already read correctly on
     // OS 9 and Tiger - into 16-bit textures, and only the TILES whose
     // content changed since they were last sent are uploaded: a menu's text
@@ -627,13 +627,12 @@ void CarbonFrontend::presentGL(const Surface& fb) {
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_LIGHTING);
     glDrawBuffer(GL_BACK);
-    // IN 64x64 TILES (step 3l, 2026-10-11), as the GL1 overlay since step 3i:
-    // it was ONE 1024x512 client-storage texture, and the seventh iBook run
-    // put `present: rows` at 44.9 ms a menu frame - the start menu's cloud
-    // (`ui/cloud.h`) changes every row below the title band every frame, and
-    // the Rage's driver sent the whole texture again after any change, the
-    // 384 columns and 32 rows of padding included (as the overlay's single
-    // texture was, step 3i). Now a sum a row a tile
+    // IN 64x64 TILES, as the GL1 overlay: as ONE 1024x512 client-storage
+    // texture, `present: rows` costs 44.9 ms a menu frame on the iBook G3
+    // (`todo/handoff-classic-mac.md`) - the start menu's cloud (`ui/cloud.h`)
+    // changes every row below the title band every frame, and the Rage's
+    // driver sends the whole texture again after any change, the 384 columns
+    // and 32 rows of padding included. So a sum a row a tile
     // column (`overlayBlockSums`) says which tiles changed, only their rows
     // are written into their memory and only they are sent; the title band,
     // a menu's frame and the padding are not. Always GL_TEXTURE_2D: a
@@ -867,7 +866,7 @@ void CarbonFrontend::probeUploads() {
         if (ui[f] >= 0 && (pick < 0 || ui[f] < ui[pick])) pick = f;
     }
     uiFmt_ = pick < 0 ? 0 : pick;
-    // APPLE'S FAST UPLOAD (2026-10-10): the same frame through CLIENT STORAGE
+    // APPLE'S FAST UPLOAD: the same frame through CLIENT STORAGE
     // - the texture's memory is ours and the card reads it there, with no
     // copy into the driver - then also as a RECTANGLE (640x480, not a
     // 1024x512 power of two), then with the SHARED storage hint. Each only
@@ -1006,8 +1005,8 @@ void CarbonFrontend::probeUploads() {
 //
 // What a 1999 Mac port would have done (`todo/classic-mac-port-1999.md`:
 // QuickTime for the MPEG-1 films), and what the iBook needs: the software
-// decoder showed ~0.5 fps there (2026-10-09, `GAME.mpg: 82 of 115 frames
-// dropped`) - every picture decoded by pl_mpeg, doubled on the CPU and
+// decoder runs ~0.5 fps there (measured 2026-10-09, `GAME.mpg: 82 of 115
+// frames dropped`) - every picture decoded by pl_mpeg, doubled on the CPU and
 // sent as a whole 640x480 frame. QuickTime decodes and paces the film and
 // plays its sound itself; only the picture it drew is sent, at its own
 // 320x240, and the card doubles it (GL_NEAREST: the same replication as the
@@ -1070,9 +1069,9 @@ bool CarbonFrontend::filmOpen(const std::string& hostFile) {
     const int ww = win.right - win.left, wh = win.bottom - win.top;
     if (agl_) {
         // under GL: QuickTime draws into a GWorld, `filmShow` sends it
-        // AT 16 BITS when the probe found ARGB1555 the faster upload - the
-        // reader's iBook in thousands of colours: 63 ms a 640x480 frame
-        // against 113 for ARGB8888 (2026-10-09). A 16-bit GWorld is xRGB
+        // AT 16 BITS when the probe found ARGB1555 the faster upload - an
+        // iBook G3 in thousands of colours: 63 ms a 640x480 frame against
+        // 113 for ARGB8888 (measured 2026-10-09). A 16-bit GWorld is xRGB
         // 1-5-5-5, which BGRA 1-5-5-5-REV reads as it stands, and QuickTime
         // converts less to fill it.
         filmDepth_ = film1555_ ? 16 : 32;

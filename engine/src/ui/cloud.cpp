@@ -85,12 +85,12 @@ void MenuCloud::prepare(long frame) const {
     // screen so it repeats, but each row is displaced horizontally and each
     // column vertically, which breaks the repeats up instead of lining them
     // into squares. Applying the warp to the CLOUD instead - one pass - either
-    // smooths it into a flow or leaves hard 256-pixel seams, and a reader
-    // watching the original rejected both.
+    // smooths it into a flow or leaves hard 256-pixel seams, and neither is
+    // what the original shows in play.
 
     // ---- pass 1: 256x256, `loc_4B1BC4`.
     //
-    // (Written for a slow CPU, 2026-10-10 - the reader's iBook G3 draws the
+    // (Written for a slow CPU - an iBook G3 draws the
     // menu at ~6 fps - and SAME PIXELS, byte for byte: the weights the
     // engine counts down per row and per pixel, `(255 - ly) - j2` and
     // `(255 - lx) - i2`, ARE `cy - ly` and `cx - lx` since `cy = 255 - j2`
@@ -123,7 +123,7 @@ void MenuCloud::prepare(long frame) const {
         const std::uint8_t* below = tex + static_cast<std::size_t>((cy + 1) & 0xFF) * 256;
         std::uint16_t* out = buf + static_cast<std::size_t>(j2) * 256;
         claimLines(out, 256 * sizeof(std::uint16_t));   // the row is written whole (`platform/cacheline.h`)
-        // TWO PIXELS AN ITERATION (2026-10-11, step 3o): one pixel is a
+        // TWO PIXELS AN ITERATION: one pixel is a
         // chain - two loads, a subtract, a multiply, a shift, the ramp's load
         // - that the G3 ran at ~35 cycles a pixel, waiting on each link. Two
         // independent chains side by side give it the other to work on; the

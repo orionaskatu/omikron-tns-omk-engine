@@ -2,16 +2,16 @@
 // formats/le.h - reading the game's LITTLE-ENDIAN data on any host.
 //
 // Every shipped file is little-endian (the game ran on x86). Most readers
-// here assemble their values byte by byte and are endian-neutral already; a
-// handful copied the bytes straight into an int or a float, which is right on
-// x86 and ARM and silently wrong on a big-endian CPU. Run on PowerPC (Mac OS
-// X 10.4 under QEMU, 2026-10-02) those reads gave 0 actor records for 1032,
-// 16 map lines for 79, and a traffic circuit that would not load - with no
-// error anywhere (todo/classic-mac-port-1999.md §3a).
+// here assemble their values byte by byte and are endian-neutral already.
+// Copying the bytes straight into an int or a float is right on x86 and ARM
+// and silently wrong on a big-endian CPU: on PowerPC (Mac OS X 10.4 under
+// QEMU) such reads give 0 actor records for 1032, 16 map lines for 79, and a
+// traffic circuit that will not load - with no error anywhere
+// (todo/classic-mac-port-1999.md §3a).
 //
 // loadLE<T>(p) reads the sizeof(T) bytes at p as a little-endian T, for any
 // 1/2/4/8-byte integer or float. It does no bounds check: the caller keeps
-// its own, as before. Byte by byte, so the address need not be aligned.
+// its own. Byte by byte, so the address need not be aligned.
 #pragma once
 
 #include <bit>

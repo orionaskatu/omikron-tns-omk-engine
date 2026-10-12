@@ -93,9 +93,9 @@ private:
 //
 // `std::filesystem` is used on every host but the PS VITA, where the
 // VitaSDK's libstdc++ sits on newlib's directory calls and the game's
-// start-up corrupted the heap while listing the data tree
-// (2026-09-18, in Vita3K: `_malloc_r` on a garbage free-list pointer right
-// after the first `read_dir`s). There the same four answers come from the
+// start-up corrupts the heap while listing the data tree
+// (in Vita3K: `_malloc_r` on a garbage free-list pointer right after the
+// first `read_dir`s). There the same four answers come from the
 // kernel's own `sceIo` calls, and nothing else in the engine touches either.
 //
 // And on CLASSIC MAC OS (Retro68 predefines `macintosh`; Carbon, so OS 9
@@ -120,10 +120,10 @@ long long fileSize(const std::string& path);
 // A WHOLE FILE, read to its end or not at all: empty when it cannot be opened,
 // and when fewer bytes arrive than its size says, what did arrive plus one
 // line on stdout naming the shortfall. On the Vita it is `sceIo` in a loop.
-// A console run, 2026-09-18, found IAM\AREA's directory but read chunk 118 as
-// zeros through `std::ifstream` + `tellg`, while the emulator read the same
-// build's file whole; a short read there was silent, and the buffer's tail
-// stayed the zeros it was allocated with.
+// On a console, `std::ifstream` + `tellg` finds IAM\AREA's directory but
+// reads chunk 118 as zeros, while the emulator reads the same build's file
+// whole; a short read there is silent, and the buffer's tail stays the zeros
+// it was allocated with.
 std::vector<std::byte> readWholeFile(const std::string& path);
 // `size` bytes of `path` from `offset` - fewer at the end of the file, none
 // when it cannot be opened. One seek and one read: `Archive_ReadChunk`'s
@@ -161,8 +161,8 @@ private:
 // `std::ifstream`: on classic Mac OS any C++ stream initialises libstdc++'s
 // locale, and Retro68's linker lays one of the locale's facet ids over the
 // next object (`num_get<char>::id` shares an address with
-// `timepunct_cache_w`), so the first stream crashes (2026-10-03,
-// `todo/classic-mac-port-1999.md` 5). No stream, no locale, no crash - and
+// `timepunct_cache_w`), so the first stream crashes
+// (`todo/classic-mac-port-1999.md` 5). No stream, no locale, no crash - and
 // one file path less, since this already goes through the platform layer.
 std::string readTextFile(const std::string& path);
 // The lines of `text` exactly as `std::getline` gives them: split on '\n',
@@ -175,12 +175,12 @@ bool writeWholeFile(const std::string& path, const void* data, std::size_t n);
 
 // REFUSE TO WRITE OVER SHIPPED GAME DATA.
 //
-// `gamedata/` is INPUT and CLAUDE.md 2 says it is never edited. Nothing in the tree
-// enforced that, and on 2026-09-02 a tool argument in the wrong order -
-// `dump_geom <model> <out>` invoked as `dump_geom <root> <model>` - truncated
-// `gamedata/MESHES/DECORS/grid.3DO` to an 8-byte header. The file is from the 1999
-// disc and there was no second copy on the machine; `verify.py: engine 3DO`
-// reported the loss (635 -> 634 models) but only after the write.
+// `gamedata/` is INPUT and CLAUDE.md 2 says it is never edited. Without a guard
+// a tool argument in the wrong order - `dump_geom <model> <out>` invoked as
+// `dump_geom <root> <model>` - truncates `gamedata/MESHES/DECORS/grid.3DO` to an
+// 8-byte header, a file from the 1999 disc that may have no second copy;
+// `verify.py: engine 3DO` reports the loss (635 -> 634 models) but only after
+// the write.
 //
 // So every tool that takes an OUTPUT path calls this on it first. It is a
 // refusal, not a warning: a tool that would overwrite a shipped asset has been

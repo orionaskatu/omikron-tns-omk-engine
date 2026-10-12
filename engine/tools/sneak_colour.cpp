@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
     // ---- THE OBJECT FLOW: rows -> verbs -> examine --------------------
     //
     // Both descents are `sub_42A370` from a CALLBACK, not an item `+44`, so
-    // neither panel was in the tree until 2026-09-04. Confirming a row must
+    // neither panel is reached by walking item links. Confirming a row must
     // reach the verb panel with ONLY the verbs selectable, and confirming
     // "Examiner" must reach the examine page.
     {

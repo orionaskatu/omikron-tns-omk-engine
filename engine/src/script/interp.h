@@ -289,8 +289,7 @@ public:
     // ------------------------------------------------ THE WORLD OPCODES
     //
     // Twenty opcodes that read or write GAME STATE beyond the variables and
-    // the bitmaps, stubbed until 2026-09-02 (todo/iam-script-engine.md 22,
-    // 24, 29, 30, 33, 34, 37). They split by where the state lives:
+    // the bitmaps (todo/iam-script-engine.md 22, 24, 29, 30, 33, 34, 37). They split by where the state lives:
     //
     //   in the DB, so on `GameState` and needing nothing else:
     //     49 `var.set.has_object`, 50 `inventory.add`, 51 `inventory.remove`,
@@ -372,7 +371,7 @@ private:
     // does NOT go through it is the 1- and 4-byte immediate of 7, 9, 14 and
     // 16, read raw. The handlers of the stubbed 45, 47, 61, 70 and 96 run it
     // as well; their recorded fields here are the raw halves, and no
-    // shipped operand of theirs carries the bit (measured 2026-09-02).
+    // shipped operand of theirs carries the bit (measured).
     std::int32_t fetch16(std::span<const std::byte> code, std::size_t& pc) const;
 
     // `Random_NoRepeat` (0x0041D6B0): an integer in [lo, hi] that is never

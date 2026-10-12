@@ -201,7 +201,7 @@ void runSoup(const std::string& stem, const char* kind, const omk::TriangleSoup&
         sweepLinMs = ms(s0, clk::now());
     }
 
-    // THE TWO-LAYER GRID (collision.h, step 7c): the same probes and boxes
+    // THE TWO-LAYER GRID (collision.h): the same probes and boxes
     // through a split into a `fixed` and a `moving` layer by a pseudo-random
     // mask (~1 in 16 moving), then through its complement, against the linear
     // answers above.
@@ -266,7 +266,7 @@ void runSoup(const std::string& stem, const char* kind, const omk::TriangleSoup&
     totalMismatch += fMis + sMis + bMis;
 }
 
-// THE DECOR UNDER THE FEET THROUGH A MERGED SOUP (actor/walk.h, step 9): two
+// THE DECOR UNDER THE FEET THROUGH A MERGED SOUP (actor/walk.h): two
 // decors' walkable soups concatenated in order, as the viewer builds the
 // player's, asked `decorUnder` through the merged two-layer grid and by the
 // per-decor loop, over every sampled triangle's centre of both from above

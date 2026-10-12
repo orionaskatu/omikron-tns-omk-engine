@@ -172,7 +172,7 @@ NodeTracks clipTracks(std::span<const std::byte> d) {
     t.quats.assign(static_cast<std::size_t>(frames), {});
     t.trans.assign(static_cast<std::size_t>(frames), {0.0f, 0.0f, 0.0f});
 
-    // THE ROOT MOTION, which this reader used to drop on the floor.
+    // THE ROOT MOTION.
     //
     // A `.3DA` track carries POSITION keys at `+24`/`+28` beside its rotation
     // keys at `+32`/`+36`, and exactly one track in each of GRID's three clips
@@ -349,10 +349,10 @@ struct small_buf {
 };
 }  // namespace
 
-// NO `thread_local` HERE (2026-09-26). This runs on the crowd's worker
-// threads, and on the Vita a `thread_local` is NOT per thread for the kernel
-// threads `omk::Threads` makes - the scratch was shared, two threads wrote one
-// `stack` at once, and the NEON build died in the first frame of Anekbah's
+// NO `thread_local` HERE. This runs on the crowd's worker threads, and on the
+// Vita a `thread_local` is NOT per thread for the kernel threads
+// `omk::Threads` makes - with one, the scratch is shared, two threads write one
+// `stack` at once, and the NEON build dies in the first frame of Anekbah's
 // crowd (the core dump: main and `omk_worker0` faulting at one instruction on
 // a garbage index). Everything below is the call's own.
 namespace {
@@ -426,10 +426,10 @@ void composePoseAt(const std::vector<Mesh>& meshes, const NodeTracks& t, int fra
         }
     }
 
-    // WHERE EACH MESH'S PARENT IS (2026-09-25): the parent was found by
-    // scanning every mesh, twice per mesh - 76 x 76 x 2 comparisons a crowd
-    // body. The answer is the old `byId`'s - the FIRST mesh (lowest position)
-    // whose id is the parent id, or none - from a sorted (id, position) list.
+    // WHERE EACH MESH'S PARENT IS, from a sorted (id, position) list rather
+    // than a scan of every mesh twice per mesh (76 x 76 x 2 comparisons a
+    // crowd body). The answer is the scan's - the FIRST mesh (lowest
+    // position) whose id is the parent id, or none.
     small_buf<std::pair<std::int32_t, int>, 128> byId(nm, {0, 0});
     for (std::size_t i = 0; i < nm; ++i) byId[i] = {meshes[i].id, static_cast<int>(i)};
     std::sort(byId.p, byId.p + nm);
@@ -559,10 +559,10 @@ void applyPose(Geometry& g, const Geometry& rest,
     if (rest.cornerMesh.size() != rest.corners.size()) return;
     const std::uint64_t was = g.revision;
     // IN PLACE when the posed geometry already has the rest's corner count
-    // (todo/optimization.md step 10). This used to be `g = rest` on every call
-    // - a whole-geometry copy per body per frame, ~260 samples of the standing
-    // street's profile for its 45 bodies - and then overwrote every corner's
-    // position and normal anyway. Now the per-corner metadata is assigned (the
+    // (todo/optimization.md step 10), not `g = rest` on every call - a
+    // whole-geometry copy per body per frame, ~260 samples of the standing
+    // street's profile for its 45 bodies, that then overwrites every corner's
+    // position and normal anyway. The per-corner metadata is assigned (the
     // vectors keep their memory) and the corners are refreshed in the pose
     // loop itself: the fields the pose does not write are copied from the rest
     // corner there, the ones it does are computed. Every field ends as

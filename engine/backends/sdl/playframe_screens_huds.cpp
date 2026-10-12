@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE HUDS AND THE OVERLAY: the fight HUD, the breath gauge, the shoot HUD, the fps counter, the fades, the flicker catcher.
-// Parts of `PlayState::phaseScreens`, moved byte for byte by `todo/play-split.md`
-// (2026-10-02); the phase calls them in this order.
+// Parts of `PlayState::phaseScreens`, split out by `todo/play-split.md`;
+// the phase calls them in this order.
 #include "playframe.h"
 
 namespace {
@@ -72,14 +72,14 @@ void drawSubtitle(omk::Surface& fb, const omk::TextLayout& lay,
     // literally `{fD}Te voil...`. Wrapping the STRING first and parsing each
     // row separately loses the run's state at every break, so a `{fD}` at the
     // head applied to the first row and every row after it fell back to the
-    // block's default - two faces in one paragraph, which is what a reader
-    // photographed in the Impasse (`todo/omk-play.md` 58).
+    // block's default - two faces in one paragraph, as seen in the Impasse
+    // (`todo/omk-play.md` 58).
     //
-    // ...and since 2026-09-07 the wrap itself is the ENGINE'S, not this
-    // file's: `TextLayout::layOutBlock` is `Text_LayOutBlock` (0x0043F3E0),
-    // and it parses the markup, wraps and breaks in one pass, so the two
-    // paragraphs above describe what it already does rather than what this
-    // lambda has to arrange. What is still this file's is the STACK - which
+    // ...and the wrap itself is the ENGINE'S, not this file's:
+    // `TextLayout::layOutBlock` is `Text_LayOutBlock` (0x0043F3E0), and it
+    // parses the markup, wraps and breaks in one pass, so the two paragraphs
+    // above describe what it already does rather than what this lambda has
+    // to arrange. What is still this file's is the STACK - which
     // row is the line and which are replies, and the tone each takes - because
     // the engine issues a separate `Text_DrawBlock` per string and colours it
     // at the call, so the rows have to come back rather than be drawn.
@@ -124,8 +124,8 @@ void drawSubtitle(omk::Surface& fb, const omk::TextLayout& lay,
     //
     // so the block's TOP is `height - height*64/480` - 80 rows above the
     // bottom at 600 - and `Text_LayOutBlock` fills it DOWNWARD from there.
-    // This used to anchor the text's BOTTOM at `height - inset/2` and grow it
-    // upward by the row count, which put a single line ~46 px lower and left
+    // Anchoring the text's BOTTOM at `height - inset/2` and growing it
+    // upward by the row count would put a single line ~46 px lower and leave
     // the box standing empty above it (`todo/omk-play.md` 58). The reply
     // stack is anchored the same way in the engine - `dword_6A52C4 = v18 -
     // dword_907975`, the bottom less the stack's own height - so a block
@@ -169,9 +169,8 @@ void drawSubtitle(omk::Surface& fb, const omk::TextLayout& lay,
     //
     // so a long one grows upward and is never clipped, scrolled or arrowed.
     // Drawn through the dialogue's fixed block instead, the robot's 17-second
-    // notice in the alley ("Vous avez ete victime d'une agression...") lost
-    // its tail behind a red arrow nothing could scroll - it is a cutscene
-    // (a reader, 2026-09-29).
+    // notice in the alley ("Vous avez ete victime d'une agression...") loses
+    // its tail behind a red arrow nothing can scroll - it is a cutscene.
     const bool fixedBlock = menu.empty() && !mediaLine;
     const int overflow = (fixedBlock && stackH > blockH) ? stackH - blockH : 0;
     if (overflowOut) *overflowOut = overflow;
@@ -648,11 +647,9 @@ void PlayState::screensHuds() {
         // "THE WORLD IS LIVE" IS `player`, NOT `adventure`, and the two
         // differ exactly where this matters. `adventure` is a per-frame
         // MODE and a screen over the world takes it false in the same
-        // breath - so the rule as written drew the cloud over every
-        // world-side screen, which is the one case the screenshots
-        // decide against. It went unseen because until the pause screen
-        // no screen was ever opened from inside the world; the SAVE
-        // screen the reader photographed would have had it too.
+        // breath - so a rule on `adventure` draws the cloud over every
+        // world-side screen (the pause, the SAVE screen), which is the
+        // one case the screenshots decide against.
         comp.attachCloud(player ? nullptr : &cloud);
         // `OMK_NOUI=1` draws the frame WITHOUT the interface layer. An
         // instrument, and the one that found the keyed-tile fault: with
@@ -922,7 +919,7 @@ void PlayState::screensHuds() {
         // The source COLUMN per display column, once for the two widths:
         // `x * w / fb.w` per pixel was a library divide on the Vita's A9,
         // 522K a frame - 83 ms of every frame the title logo was up in the
-        // Bowie sequence (2026-09-30), where the original's is one
+        // Bowie sequence, where the original's is one
         // DirectDraw colour-keyed blit.
         static std::vector<int> mediaCol;
         static int mediaColFor[2] = {-1, -1};
@@ -1153,7 +1150,7 @@ void PlayState::screensFades() {
                     const int grey = outer + static_cast<int>((inner - outer) * t);
                     // `v * grey / 255` for every byte, once a ROW: the
                     // same law, four lookups a pixel instead of four
-                    // multiply-divides (the console's A9, 2026-09-29)
+                    // multiply-divides (the console's A9)
                     std::uint8_t scale[256];
                     for (int v = 0; v < 256; ++v) scale[v] = static_cast<std::uint8_t>(v * grey / 255);
                     const std::size_t row0 = static_cast<std::size_t>(y) * static_cast<std::size_t>(fb.w);
@@ -1174,7 +1171,7 @@ void PlayState::screensFades() {
 
     // ...and what the finished frame actually CONTAINS, for hunting a
     // flicker: a body drawn on a set that is not there shows up as a lit
-    // count far below its neighbours', which is what a reader reports as
+    // count far below its neighbours', which is what a player sees as
     // "Kay'l with a black background" and what no still frame can be
     // chosen to catch.
     if (omk::envSet("OMK_CLIPLOG")) {

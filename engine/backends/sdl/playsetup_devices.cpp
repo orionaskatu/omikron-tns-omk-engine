@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE SETUP: the interface sounds, the renderer, the GLES window, the music, the world.
-// A stretch of what was `main`'s body, moved byte for byte by
-// `todo/play-split.md` (2026-10-02); `PlayState::run` calls the sections in
+// A stretch of `main`'s body, split out by `todo/play-split.md`;
+// `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 
@@ -138,9 +138,9 @@ int PlayState::setupDevices() {
     // aspect is the window's and no resolution is baked in.
     //
     // **The letterbox is NOT applied**, and that is deliberate: the 1.818:1
-    // strip is measured off DIALOGUE captures and a reader watching the
-    // original confirmed it belongs to conversations and cutscenes, not to
-    // free play. Imposing it here would be generalising a camera-mode property
+    // strip is measured off DIALOGUE captures, and watching the original
+    // confirms it belongs to conversations and cutscenes, not to free
+    // play. Imposing it here would be generalising a camera-mode property
     // to all rendering, which is the mistake `--letterbox` exists to avoid in
     // the scene viewer.
     //

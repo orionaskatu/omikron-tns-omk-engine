@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// WHAT `main` DEFINED AS LAMBDAS - `PlayState`'s methods since
-// `todo/play-split.md` S3e (2026-10-02), each body moved byte for byte,
-// each with the comment that stood above it, in their old order. A method
+// `PlayState`'s METHODS - `main`'s lambdas (`todo/play-split.md` S3e), each
+// with the comment that stood above it, in their original order. A method
 // that reads one of the objects built in place (`fs`, `session`, ...) names
-// it first under its old name.
+// it first under its original name.
 #include "playstate.h"
 
 // THE THREE VOLUME ROWS (10..12) - ATTENUATIONS, and one law for all
@@ -53,10 +52,10 @@ void PlayState::applyTextScale(int w, int h) {
 void PlayState::sfxLog(const char* what, std::size_t samples, int a, int b,
                             float gain, const float* peakOf) {
     const double secs = samples / static_cast<double>(kDeviceRate) / 2.0;
-    // the PEAK of what is fed, because a reader heard the effects "very
-    // low" against the music: the number says whether the source or the
-    // mix is quiet. Measured ONCE, where the sample is converted
-    // (`SfxSample::peak`) - it was a pass over every sample on every play.
+    // the PEAK of what is fed, because effects can sound very low against
+    // the music: the number says whether the source or the mix is quiet.
+    // Measured ONCE, where the sample is converted (`SfxSample::peak`), not
+    // in a pass over every sample on every play.
     const float peak = peakOf ? *peakOf : 0.0f;
     const bool pcm = peakOf != nullptr;
     if (secs >= 0.75 || pcm)
@@ -558,15 +557,15 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
     // sentinel so frame f reads key f + 1
     //
     // KEYED BY THE SKELETON TOO. A track's `ids` are mesh INDICES of the
-    // model it was resolved against, and this cache was keyed by (sex, clip)
-    // alone - so whichever model asked first decided the indices for every
-    // walker of that sex playing that clip. A model laid out otherwise (a
-    // city's extras wear 76-mesh LOD chains, others 19 meshes) had its
+    // model it was resolved against, so a cache keyed by (sex, clip) alone
+    // lets whichever model asked first decide the indices for every walker
+    // of that sex playing that clip. A model laid out otherwise (a city's
+    // extras wear 76-mesh LOD chains, others 19 meshes) then has its
     // channels on the wrong meshes or on none, and a part no channel reaches
     // stays at rest: arms out, a T-pose. And WHICH model asked first follows
-    // the order walkers came into view after the last clear - the Quest's
-    // street, 2026-10-07: T-posed npcs after an interior, "sometimes going in
-    // another indoors fixed it, sometimes not". The layout is the meshes'
+    // the order walkers came into view after the last clear, so the T-posed
+    // npcs come and go from one interior visit to the next (seen on the
+    // Quest's street). The layout is the meshes'
     // names and parents, so a model's texture variants (PSH_FN / PSH1_FN)
     // still share one entry.
     std::uint64_t layout = 1469598103934665603ull;
@@ -605,17 +604,17 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
                 if (k >= tr.rotKeys) k = tr.rotKeys - 1;
                 const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(k);
                 if (o + 16 > pedAni.size()) continue;
-                // // little-endian floats, read as such (PORTING A9): a memcpy here reversed
-                // every quaternion on PowerPC - the crowd drew as shards (2026-10-03)
+                // // little-endian floats, read as such (PORTING A9): a memcpy here reverses
+                // every quaternion on PowerPC - the crowd draws as shards
                 const std::byte* src = pedAni.data() + o;
                 row[i] = {omk::loadLE<float>(src), omk::loadLE<float>(src + 4),
                           omk::loadLE<float>(src + 8), omk::loadLE<float>(src + 12)};
             }
         }
     }
-    // ...and what the shared key used to hand this model instead: another
-    // layout's entry for the same clip, compared track by track (a THING
-    // MEASURED - the old rule's error, logged the first times it is seen)
+    // ...and what a key without the layout would hand this model instead:
+    // another layout's entry for the same clip, compared track by track (a
+    // THING MEASURED - that rule's error, logged the first times it is seen)
     static int mismatchTold = 0;
     if (mismatchTold < 12)
         for (const auto& [k, other] : pedTracks) {
@@ -655,10 +654,10 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
 // a bolt stops on the world or on a body. Every gunman with a brain is a
 // record, tested in actor order (the engine's is slot order). His FLOOR
 // is his record's `+188`, as the engine reads it - 0 for a gunman, the
-// zeroed record's, since `Shoot_Think` (its writer) is not wired; this read
-// `sub_435020` of where he stood at first, which found -1 for the two
-// supermarket gunmen standing off the grid and called 22 of a reader's
-// noises "another floor" on a one-floor map. Two things stand in,
+// zeroed record's, since `Shoot_Think` (its writer) is not wired. Not
+// `sub_435020` of where he stood at first, which finds -1 for the two
+// supermarket gunmen standing off the grid and calls 22 of a run's noises
+// "another floor" on a one-floor map. Two things stand in,
 // labelled: a record the port marks dead (`+160 & 8`) is
 // passed over, for the death arm's `& ~0x40` the port does not run; and
 // `Shoot_ActorAction` is RECORDED on the Session, as the hit's is - its own
@@ -1565,8 +1564,8 @@ CharModel * PlayState::charModelFor(const std::string& name) {
     if (it != charModels.end()) return &it->second;
     // EVERY LOAD SAYS WHAT IT COST, and whether it is a RELOAD - a model
     // this run already had and the per-frame eviction below let go of. A
-    // transition's stall is a load inside a frame (todo/vita-port.md
-    // 2026-09-23), and a reload is the one that need not happen at all.
+    // transition's stall is a load inside a frame (todo/vita-port.md),
+    // and a reload is the one that need not happen at all.
     static std::map<std::string, int> loadsOf;
     const int nth = ++loadsOf[name];
     const auto loadT0 = std::chrono::steady_clock::now();
@@ -1795,8 +1794,8 @@ bool PlayState::beginMelee(int opponentId, int level) {
     // fighter and keeps the larger - the NODE's own bounding radius, and
     // this tree has no node, so the model's LARGEST MESH bound stands in
     // and is labelled as a stand-in. It is not `meshes.front()`: that is
-    // one mesh (7.1 for HO1_FN, 18 cm) and the first version of this used
-    // it, which would have let two fighters stand inside each other. The
+    // one mesh (7.1 for HO1_FN, 18 cm), which would let two fighters
+    // stand inside each other. The
     // whole-body mesh gives 42.5, a little over a metre.
     const auto bodyRadius = [](const std::vector<omk::Mesh>& ms) {
         float r = 0.0f;
@@ -1806,13 +1805,11 @@ bool PlayState::beginMelee(int opponentId, int level) {
     fightRun.player = omk::FightBody{};
     // ONE ORIGIN FOR BOTH FIGHTERS. The engine's two actors each store a
     // single position at `+244/+248/+252`, and `Fight_KeepSeparation` and
-    // the camera both read it; this tree had the player on his WALKER's
-    // origin (the feet) and the opponent on his staged placement (the
-    // PELVIS), about 41 units apart. `measureSeparation` is a 3D distance,
-    // so that constant gap satisfied the 43.4 separation radius on its own
-    // and the two stood inside each other - a reader: *"some camera issues
-    // are when Kay'l and the opponent are at the same place at the same
-    // time"*. The camera then took its heading from a two-unit
+    // the camera both read it. The player's WALKER origin (the feet) and the
+    // opponent's staged placement (the PELVIS) are about 41 units apart, and
+    // `measureSeparation` is a 3D distance, so mixing them lets that constant
+    // gap satisfy the 43.4 separation radius on its own: the two stand
+    // inside each other, and the camera takes its heading from a two-unit
     // `atan2(b - a)`, which is noise (`todo/fight-mode.md` 15.8d).
     //
     // The opponent's placement is the convention to meet, because it is
@@ -1897,12 +1894,11 @@ bool PlayState::beginMelee(int opponentId, int level) {
     fightRun.ms = 0.0;
     fightRun.wallStart = front.ticksMs();
     fightRun.fight = std::make_unique<omk::Fight>(
-        // THE CRT's GENERATOR, NOT THE HOST'S (2026-09-23). This was
-        // `std::rand()`: on macOS a different generator from the engine's
-        // MSVC one, and one the SYSTEM LIBRARIES share - an audio or
-        // input thread drawing once before the fight shifted every roll
-        // by one, and a headless fight came out two ways, about one run
-        // in four. Same stream as the gunmen's (the engine has one).
+        // THE CRT's GENERATOR, NOT THE HOST'S. `std::rand()` is, on macOS,
+        // a different generator from the engine's MSVC one, and one the
+        // SYSTEM LIBRARIES share - an audio or input thread drawing once
+        // before the fight shifts every roll by one, and a headless fight
+        // comes out two ways, about one run in four. Same stream as the gunmen's (the engine has one).
         [this] {
             gunRandSeed = gunRandSeed * 214013u + 2531011u;
             return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
@@ -1985,8 +1981,8 @@ omk::NodeTracks PlayState::idleTracksFor(const CharBank& b,
         const int key = tr.rotKeys > 1 ? 1 : 0;      // frame 0 reads key 1
         const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(key);
         if (o + 16 > b.data.size()) continue;
-        // // little-endian floats, read as such (PORTING A9): a memcpy here reversed
-        // every quaternion on PowerPC - the crowd drew as shards (2026-10-03)
+        // // little-endian floats, read as such (PORTING A9): a memcpy here reverses
+        // every quaternion on PowerPC - the crowd draws as shards
         const std::byte* src = b.data.data() + o;
         t.quats[0][i] = {omk::loadLE<float>(src), omk::loadLE<float>(src + 4),
                          omk::loadLE<float>(src + 8), omk::loadLE<float>(src + 12)};
@@ -2074,8 +2070,7 @@ void PlayState::prepareSet(SetLoad& L) {
     // THE UNLIT COPY'S CLAMP (`sub_4947F0`, todo/drift-audit.md L1 step 2):
     // every set vertex's baked colour floored at the set's AMBIENT grey, the
     // scene's `+416`. It greys the cave's pure-green door pieces (`GGporte`,
-    // `GGtedoor01`, 0x00FF00 < 0x3F3F3F), which looked like a contradiction
-    // with the reader's frames until the green there turned out to be the
+    // `GGtedoor01`, 0x00FF00 < 0x3F3F3F); the green seen there in play is the
     // SET PIECES keyed to `Wait2sec` (`PT`, `PT2`: additive sprites, which
     // nothing clamps) - the door is the dark silhouette in front of them, as
     // the clamp draws it (todo/drift-audit.md L1). `OMK_NO_AMBIENT_CLAMP` is
@@ -2150,10 +2145,10 @@ void PlayState::prepareSet(SetLoad& L) {
     // not with any object, which is why nothing started them and why they
     // had never appeared here. 319 across the 12 sets that have any.
     // BOUND IN THE FRAME LOOP, not here: walking in, the set loads while
-    // the OUTGOING scene is resident, and binding here put ANEKBAH's
+    // the OUTGOING scene is resident, and binding here would put ANEKBAH's
     // meshes against the Impasse's `.sfx` (102, the neon alone) in a pool
-    // that was about to be dropped, and the city's own `.SCX` then came up
-    // with none - the Bowie sequence's fire among them (2026-09-29).
+    // about to be dropped, and the city's own `.SCX` would come up with
+    // none - the Bowie sequence's fire among them.
     w.emitters = omk::SceneRunner::setEmitterMeshes(d);
     L.ms[4] = since(t);
     L.found = true;
@@ -2285,12 +2280,12 @@ void PlayState::rebuildWorld() {
     // NOT handed to the renderer here. The frame's pool - the sets', then
     // the characters', the player's and the sprites' - is composed and set
     // before anything is drawn, and this bumps `poolComposition`, so it
-    // will be. Setting the sets' textures ALONE first made a backend that
+    // will be. Setting the sets' textures ALONE first makes a backend that
     // keeps what it has uploaded drop every character and sprite texture
     // and send them again a moment later: on a console's walk into
     // Anekbah, `27 dropped` then `18 uploaded, 57 ms`, and again `18
-    // dropped` / `18 uploaded, 52 ms` on the arrival (2026-09-30).
-    // `OMK_POOL_TWICE=1` is the old order, for the comparison.
+    // dropped` / `18 uploaded, 52 ms` on the arrival.
+    // `OMK_POOL_TWICE=1` is that order, for the comparison.
     static const bool poolTwice = omk::envSet("OMK_POOL_TWICE");
     if (poolTwice) world.setTextures(worldTex);
     poolSize = worldTex.size();
@@ -2324,8 +2319,7 @@ void PlayState::applyPlayerDamage(long n, int owner, const char* what, int dmgIn
                         // `if (+92 <= 0) { sub_423FC0(him); return v30; }` - BEFORE
                         // the gauge, the property and the message, so the killing
                         // hit leaves the gauge at its last value and tells no one.
-                        // ---- THE DEATH, `sub_423FC0` (05_sys.c 4606, ported
-                        // 2026-09-11 - a reader: "continue with the player's death") -
+                        // ---- THE DEATH, `sub_423FC0` (05_sys.c 4606) -
                         //  1. every live gunman (+160 0x40 up, 0x4002 clear, +92 > 0)
                         //     STANDS DOWN: action 0, or on script step 8 his 0x20
                         //     cleared - applied on his own next tick here, where the
@@ -2358,7 +2352,7 @@ void PlayState::applyPlayerDamage(long n, int owner, const char* what, int dmgIn
                                     stood, hudHealth);
                         return;
                     }
-                    // ---- THE HURT REACTION, `sub_47D1F0` (ported 2026-09-12)
+                    // ---- THE HURT REACTION, `sub_47D1F0`
                     // The SOUND first - `word_657A14` resolved in the
                     // resident library, which in shoot mode is shoot2.scx,
                     // and played FLAT: `Sound_Play3D`'s `a3` is 0, so it
@@ -2409,7 +2403,7 @@ double PlayState::phaseNow() {
 // ...and MARKS down the frame, so a slow one names its SECTION: each
 // mark is the end of the section before it, the gaps are printed on a
 // frame over `OMK_MARKS_MS` (default 150) from the largest down. The named
-// spans covered 6 of a console's 200 ms city frame (2026-09-22).
+// spans alone covered 6 of a console's 200 ms city frame.
 #if OMK_PROFILE
 bool PlayState::profPauseTick() {
  omk::HostInput in;

@@ -28,9 +28,8 @@ using omk::le::i32;
 // Integer division the way the ENGINE does it: `cdq; idiv` - the op 34
 // handler at 0x402750 pops the top into eax, the word under it into edi, and
 // `idiv edi`; `var.div` (22, 0x402390) does the same with Var_Get's value
-// over the popped top. x86 idiv truncates toward zero, so -7/2 is -3. It was
-// Python's floor division here until 2026-09-02, after `tools/sim`, and
-// that gave -4.
+// over the popped top. x86 idiv truncates toward zero, so -7/2 is -3, where
+// Python's floor division (as in `tools/sim`) gives -4.
 //
 // The two guards are the PORT's choice, and labelled as such: a zero divisor
 // and INT_MIN / -1 both raise #DE in the engine - a crash, not a decision -
@@ -562,23 +561,23 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
         // Only `Game_HandleEvent` case 2 - raised by the fight code when the
         // fight ends - returns the FIRST context at status 3 to 1.
         //
-        // **The handler makes THREE 2-byte fetches, and the table now gives
-        // this opcode 6** - corrected on 2026-09-02 in `tables/vm_opcodes.json`
-        // and `dialog_disasm.LEN_FIX` together, after `tools/vm_oplen.py` had
-        // flagged `62: 4 -> 6` all along and the corpus adjudicated for 6 the
-        // way it did for op 103 (CLAUDE.md 1): at 4 the 5785-slot corpus
-        // carried 216 phantom instructions, two per site over 108 sites, all
-        // inert, which is why nothing ever failed.
+        // **The handler makes THREE 2-byte fetches, and the table gives this
+        // opcode 6** - in `tables/vm_opcodes.json` and
+        // `dialog_disasm.LEN_FIX` together; `tools/vm_oplen.py` flags
+        // `62: 4 -> 6` and the corpus adjudicates for 6 the way it did for
+        // op 103 (CLAUDE.md 1): at 4 the 5785-slot corpus carries 216 phantom
+        // instructions, two per site over 108 sites, all inert, which is why
+        // a length of 4 never visibly fails.
         //
-        // **The third field is the AI LEVEL** (read from the assembly
-        // 2026-09-16): the handler pushes it as `Fight_Engage`'s second
+        // **The third field is the AI LEVEL** (read from the assembly): the
+        // handler pushes it as `Fight_Engage`'s second
         // argument, and `Fight_SelectAiProfile` selects the `.CTL` fight-AI
         // profile whose `+0` is `level + 1`. Every site is a `case` on
         // `VARIABLES[175] 'Niveau Combat'` and the corpus is 36/36/36 over
         // {0, 1, 2} - the game's adaptive difficulty (`todo/fight-mode.md` 2).
-        // This port does not carry it yet, because nothing consumes it until a
-        // fight runtime exists; that is step 2 of the plan file. Field 1 (the
-        // camera travel) is 0 at all 108 shipped sites.
+        // The Session carries it with the context (`fightLevel`) and hands it
+        // to the fight hook, which selects the profile. Field 1 (the camera
+        // travel) is 0 at all 108 shipped sites.
         //
         // The handler's `mov eax, dword_6A05E0; test eax, eax; jnz` over its
         // own body is the DRY RUN, not a fight gate: `Script_RunToOpcode75`
@@ -607,7 +606,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             r.status = RunStatus::FightWait; r.pc = pc; return r;
         }
 
-        // ---- the world (2026-09-02) -------------------------------------
+        // ---- the world -------------------------------------------------
         //
         // Twenty opcodes that read or write game state the sweep's reference
         // stubs. Every one fetches its fields through the shared fetch (each
@@ -785,9 +784,8 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // 93 `actor.stat.set` (0x404790): actor, property, VARIABLE -
             // `Var_Get(var)`, then `Hud_ShowValue` for the player (the HUD
             // flash, output) and `Actor_SetProperty({property, value,
-            // index})` for both arms, clamps included (`props.h`). Named
-            // `hud.show_var` until 2026-09-02 after the flash rather than
-            // the write.
+            // index})` for both arms, clamps included (`props.h`). Named for
+            // the write, not the flash.
             if (op == op::ActorStatSet) {
                 std::size_t q = start + 1;
                 const auto actor = fetch16(code, q);
@@ -946,8 +944,8 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // 98 `object.place_at` (0x404DB0): CHARACTER, prop STATE INDEX
             // (`hooks.h`) - the prop moved under the character, and nothing
             // in the DB or a chunk record changes. 6 sites, every one the
-            // ring a beaten character drops. (Read as "object, address" until
-            // 2026-10-06.)
+            // ring a beaten character drops. (The second field is not an
+            // address.)
             if (op == op::ObjectPlaceAt && hooks_) {
                 std::size_t q = start + 1;
                 const auto who   = fetch16(code, q);
@@ -958,8 +956,8 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             }
             // 142 `ui.highscore` (0x405CD0): ACTOR, VARIABLE, TABLE - three
             // shared fetches in a straight line, so SIX operand bytes against
-            // the opcode table's 4 (corrected 2026-10-11 with
-            // `dialog_disasm.LEN_FIX`). The Session does the rest - from
+            // the opcode table's 4 (fixed with `dialog_disasm.LEN_FIX`).
+            // The Session does the rest - from
             // the RAW fields, since it records with `recordAll_`; the shipped
             // six are all literals, so the two agree.
             if (op == op::UiHighscore) {

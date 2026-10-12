@@ -4,13 +4,11 @@
 //
 //     vm_probe <tables/vm_opcodes.json>
 //
-// Written 2026-09-02 against the interpreter as it stood, and its first run
-// FAILED every line but the last two - which is the point. Each rule is read
-// from the handler named beside it:
+// Each rule is read from the handler named beside it:
 //
 //   div       `cdq; idiv` at 0x402770 (op 34) and 0x402400 (op 22) truncate
-//             toward zero: -7/2 is -3. The port had Python's floor, -4,
-//             after `tools/sim`. The zero divisor is the port's choice: the
+//             toward zero: -7/2 is -3, not Python's floor, -4 (`tools/sim`'s
+//             trap). The zero divisor is the port's choice: the
 //             engine faults (#DE) where this returns 0.
 //   push.i16  op 8 (0x401D70) runs the shared fetch: 0x4000|k is the
 //             parameter block's word at 2k+2 - for a message handler the

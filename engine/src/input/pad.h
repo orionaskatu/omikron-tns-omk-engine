@@ -109,9 +109,8 @@ inline void toDevices(const Pad& p, DeviceState& st) {
 // interface's 0x203F mask turns a HELD bit into one press. An analog thumb
 // does not hold a bit steady: pushed "down" it drifts 0.3-0.4 sideways, and
 // a component hovering at the 250 dead zone turns its bit on and off frame
-// after frame - each return a fresh edge, so a held stick kept moving the
-// selection (the Quest, 2026-10-07: "the stick changes the selected option as
-// long as it is maintained, not only when pushed down"). Under a screen only
+// after frame - each return a fresh edge, so a held stick keeps moving the
+// selection (seen on the Quest). Under a screen only
 // the DOMINANT axis counts, entered past `kMenuPress` and held until its
 // magnitude falls under `kMenuRelease`; the d-pad's +-1000 passes unchanged.
 // The world keeps both axes - a diagonal walk is two bits there.

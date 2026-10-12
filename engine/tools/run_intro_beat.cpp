@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE BEAT BEFORE THE INTRO'S CONVERSATION - the ~5 seconds a reader reported
-// missing, and where it comes from.
+// THE BEAT BEFORE THE INTRO'S CONVERSATION - the ~5 seconds between the menu
+// and the conversation, and where they come from.
 //
 //     run_intro_beat <gamedata> <tables> <out.txt>
 //

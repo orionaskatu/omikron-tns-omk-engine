@@ -57,9 +57,8 @@ const FontFace* FontTable::byLetter(char c) const {
 // A memo record's description holds TWO bracketed sections: the memo itself,
 // and a CLUE of the kind the save screen sells (37 records carry one, and two
 // memos can share the same clue). The engine shows only the first, because
-// the body box's `+30` is 0 - and a reader who played the original spotted
-// exactly that: "you added some texts to the memo ... which are not in the
-// original game". The port was drawing the whole field.
+// the body box's `+30` is 0. Drawing the whole field shows text the
+// original never shows (seen in play against the original).
 //
 //     if (src == NULL) return "{TEXT ERROR !}";     // its own arm, and the
 //                                                   // SPACE is in the literal
@@ -291,8 +290,7 @@ int TextLayout::drawRun(Surface& dst, int x, int y,
 // the bilinear blend of four, zero outside the glyph, so a filtered edge
 // fades out rather than stopping on a texel's edge.
 //
-// AND THE EDGE IS BLENDED, NOT DARKENED (2026-10-02, a reader: "the black
-// border of the letters is a bit visible now"). The engine's ramp makes a
+// AND THE EDGE IS BLENDED, NOT DARKENED. The engine's ramp makes a
 // partly covered pixel `colour * c / 31` - a DARKER pixel, because it draws on
 // a scratch surface cleared to black and keys out only coverage 0. Native,
 // that is a one-pixel rim nobody sees; scaled 4.5x it is a dark outline four
@@ -327,8 +325,7 @@ void TextLayout::drawGlyphScaled(Surface& dst, int pen, int top, const Glyph& gl
                 const float ax = fx - x0, ay = fy - y0;
                 const float v = (at(x0, y0) * (1 - ax) + at(x0 + 1, y0) * ax) * (1 - ay) +
                                 (at(x0, y0 + 1) * (1 - ax) + at(x0 + 1, y0 + 1) * ax) * ay;
-                // THE EDGE SHARPENED (a reader, 2026-10-02: "a little blurry").
-                // A bilinear sample spreads each glyph edge over one TEXEL,
+                // THE EDGE SHARPENED. A bilinear sample spreads each glyph edge over one TEXEL,
                 // which at 4.5x is four or five screen pixels of ramp. The
                 // interpolated coverage still says WHERE the contour is - it
                 // crosses half at the edge - so it is pushed through a curve
@@ -350,9 +347,9 @@ void TextLayout::drawGlyphScaled(Surface& dst, int pen, int top, const Glyph& gl
             // a colour (`ui/overlay.h`): the blend is affine in it, so it runs
             // on the planes - C = (colour * c + C * (31 - c)) / 31, M scaled
             // by (31 - c) / 31 - and the key stays. Blended with the key's
-            // magenta itself it gave every glyph a pink rim over the world
-            // (the Quest's interface layer, the reader, 2026-10-07: "texts
-            // have pink border"; the flat GLES overlay had it too, unseen).
+            // magenta itself, every glyph gets a pink rim over the world
+            // (seen on the Quest's interface layer; the flat GLES overlay
+            // has the same path).
             OverlayPlanes& ov = overlayPlanes();
             if (ov.on && b == kOverlayKey && ov.w == dst.w && at565 < ov.m.size()) {
                 ov.row(at565);

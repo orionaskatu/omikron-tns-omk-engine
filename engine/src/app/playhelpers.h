@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE VIEWER'S FILE-LEVEL HELPERS, moved out of `backends/sdl/play.cpp`
-// (`todo/play-split.md` S1, 2026-09-22).
+// THE VIEWER'S FILE-LEVEL HELPERS, split out of `backends/sdl/play.cpp`
+// (`todo/play-split.md` S1).
 //
 // These four were the top of that file and they are the easy half of the
 // split: each is a pure function of its arguments, none touches SDL, and none
@@ -34,8 +34,8 @@ namespace omk {
 // `docs/UI.md`: every screen names up to twelve sounds and the slots are
 // POSITIONAL - **slot 0 is the selection move, slot 1 the confirm, slot 2 the
 // screen opening**. The start menu's are 1, 2, 0, which the table resolves to
-// `men002`, `men003`, `men001`. Both halves were already lifted; nothing was
-// playing them, which is what a player reported.
+// `men002`, `men003`, `men001`. Both halves are lifted tables; this is what
+// plays them.
 //
 // The samples are the engine's own 22050/16-bit mono or stereo and the device
 // is running at the movie's 44100 float stereo, so they are converted here.
@@ -77,10 +77,8 @@ std::shared_ptr<const omk::DeviceSound> wavToDeviceSound(std::span<const std::by
 // and is stacked under the line, with the selected row in the ink and the rest
 // in the 0x808080 the engine also loads. So the BOX is read from the engine
 // and the STACK inside it is a reconstruction; they are labelled differently
-// on purpose. The WRAP is no longer among them - `Text_LayOutBlock` is ported
-// (2026-09-07) and `drawSubtitle` lays every string through it.
-//
-// `wrapInto` was this file's own greedy break on spaces and has gone with it.
+// on purpose. The WRAP is not among them - `Text_LayOutBlock` is ported and
+// `drawSubtitle` lays every string through it.
 
 // THE SUBTITLE BOX, and both of its blends.
 //
@@ -107,8 +105,8 @@ std::shared_ptr<const omk::DeviceSound> wavToDeviceSound(std::span<const std::by
 //     & 4   src 6 INVSRCALPHA,  dst 5 SRCALPHA       src*(1-a) + dst*a
 //
 // So the LINE's box is `dst * (1 - 0x808080/255)`, a 50% DARKENING - which
-// over the black letterbox band is invisible, and is why a reader watching
-// the original could not say whether a plain subtitle had a box. The REPLY
+// over the black letterbox band is invisible, which is why a plain
+// subtitle's box cannot be seen in the original. The REPLY
 // box is 50% of the navy 0x002040. Each is gated on a driver-capability test
 // (`sub_464730/40/50`) that can clear the bit and blank the colour; both are
 // supported here.
@@ -196,15 +194,15 @@ struct ViewCam {
 
 // The baked per-vertex light, cycled the way both web viewers' `lights` button
 // cycles it (CLAUDE.md 5). COLOUR is what the game draws and the only mode to
-// compare against a screenshot; GREY is THIS REPO'S OWN BUG before 2026-08-29,
-// the green byte read as a brightness, kept so the two can be seen on one
-// frame; OFF is full bright, for looking at the textures alone.
+// compare against a screenshot; GREY is the green byte read as a brightness
+// - a misreading, not a mode the original has - kept so the two can be seen
+// on one frame; OFF is full bright, for looking at the textures alone.
 enum class Light { Colour, Grey, Off };
 Geometry relight(const Geometry& src, Light mode);
 
 
-// ONE `getenv` PER NAME PER RUN (`todo/vita-port.md`, 2026-09-22). The frame
-// loop made twenty-five uncached `std::getenv` calls a frame - six of them for
+// ONE `getenv` PER NAME PER RUN (`todo/vita-port.md`). Uncached, the frame
+// loop makes twenty-five `std::getenv` calls a frame - six of them for
 // `OMK_NOUI` alone, and `OMK_BODYLOG` once per staged BODY - and `getenv` is a
 // library call that walks the environment comparing strings. The environment
 // does not change while the viewer runs, so each name is looked up once and

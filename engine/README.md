@@ -3744,12 +3744,18 @@ security centre** - each with its record in `todo/` and its finding in `docs/`:
 * the fall reaction and the run-over (§7): `sub_414DE0`'s camera requests, the
   ledge bands and landing groups, messages 10/11/17. There is no adventure
   death to port. `engine: fall reaction`, `engine: run over`;
-* the screens with one or two sites (`docs/UI.md` §3d-bis, §3f, §3k): the
+* the screens with one or two sites (`docs/UI.md` §3d-bis, §3f, §3i, §3k): the
   lift's height band and description box, the seven terminal screens' display,
-  keypad, header and answer, GANDHAR'S DOOR, DEN'S LOCKER, XACHEN, the
-  HIGH-SCORE board, `Lire plan`, the hint shop and the echo bar. Not
-  ported: screen 0, the VIDEOPHONE, and those screens' interface sounds and
-  success timers (labelled in each source);
+  keypad, header and answer, their DOSSIER READER (panel 0x004E4170: the file
+  a cell names, scrolled, the archives' answer held until the close) and
+  oscillator 6's start-up banner, GANDHAR'S DOOR, DEN'S LOCKER, XACHEN, the
+  HIGH-SCORE board, `Lire plan`, the hint shop, the echo bar, and screen 0,
+  the VIDEOPHONE, with its refused first close. Oscillator 5, the engine's
+  DELAYED CLOSE, holds the solved puzzles, the fight simulator, the morgue,
+  the SURV screens and the high score for their 100-10000 ms with input
+  refused (`engine: delayed close`, `engine: call close`, `engine: dossier
+  reader`). Not ported: those screens' interface sounds, and any item's bank-B
+  `0x80` outline (labelled in each source);
 * the sneak's verbs: `Object_ApplyEffect`'s consumable half and `Utiliser sur`
   as a combine over carried-list rows. `engine: sneak verbs`;
 * a script plays objects in its own slot's pool, and a node stays where a

@@ -24970,7 +24970,7 @@ def c_ui_answers():
     **One mutation moves nothing, and it is explained rather than counted.**
     Pointing `TERM_DISPATCH`'s attribution at a single screen changes no
     output - because the widget tree *already* names `0x004AF410` as an item
-    `+40` callback **80 times**, which is how `Ui_ConfirmSelection` reaches
+    `+40` callback **90 times** (80 before the dossier reader), which is how `Ui_ConfirmSelection` reaches
     it. The constant is redundant, not load-bearing, and that count is
     asserted so the non-effect has evidence behind it instead of looking like
     a weak check (`docs/PORTING.md` B4).

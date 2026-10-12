@@ -3006,8 +3006,10 @@ callback — so the mapping is tree → screen. Two things it has to get right:
   31 `PAUSE GAME`** — the same family §2's `0x20000400` flag describes.
 * `0x004AF410` serves seven screens, so its four sites are attributed to all
   seven. No hand-written constant is doing that work: the widget tree already
-  names that address as an item `+40` callback **80 times**, which is exactly
-  how `Ui_ConfirmSelection` reaches it.
+  names that address as an item `+40` callback **90 times** (80 until
+  2026-10-12, when the dossier reader 0x004E4170 joined the lift with its own
+  copy of the keypad's ten cells), which is exactly how `Ui_ConfirmSelection`
+  reaches it.
 
 `ui.open`'s third field is the variable the reply is stored in, or **−1** to
 discard it. Over the whole corpus — and it has to be the *whole* corpus, since

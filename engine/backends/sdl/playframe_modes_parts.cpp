@@ -2236,8 +2236,8 @@ void PlayState::closeAllScreens(const char* who) {
         return;
     }
     if (openScreen != kScreenVideophone) {
-        std::printf("frame %ld: UI_CloseAllScreens (%s) - screen %d closes\n", n, who,
-                    openScreen);
+        std::printf("frame %ld: UI_CloseAllScreens - screen %d closes (%s)\n", n,
+                    openScreen, who);
         walk->closeScreen();
         return;
     }

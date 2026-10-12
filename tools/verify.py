@@ -42130,6 +42130,53 @@ def c_engine_mirror_park():
            "screen closed, by its own close"
 
 
+def c_engine_call_close():
+    r"""The sneak CALL closes the way the engine closes it
+    (`todo/scene-gameplay-audit.md` 12, `docs/UI.md` 3i).
+
+    Nothing on screen 0 closes it, and no VM opcode does: it is
+    `Actor_LeaveDialogueMode` (0x00468E80) - `if (actor[101] == 17)
+    UI_CloseAllScreens()` - and 17 is the conversation entered under a screen
+    that held the player in 9. `UI_CloseAllScreens` calls each open screen's
+    close ONCE; `Ui_CloseSneakFamily`'s VIDEOPHONE arm REFUSES that first call
+    (clears `dword_670BF0`, `sub_466B60`, `Ui_StartOscillator(5, 100)`), and
+    oscillator 5's expiry `sub_42B7E0` writes the screen's `+8 = 3`, which
+    closes it on that tick. So the device stays up through the whole
+    conversation and goes 100 ms after it ends - 3 frames at 30 fps.
+
+    `--call 386` from the restaurant save, ENTER pressed between the two
+    lines. Asserted: no close before the conversation ends; the refusal on
+    the LEAVE frame; the close 3 frames later; and the close happens at all.
+
+    Shown to fail: the refusal removed (closes on the LEAVE frame, 0 frames
+    later); the dialogue-leave trigger removed (never closes).
+    """
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if b.returncode != 0 or not os.path.exists(play):
+        return ("build failed",), ("built",), "engine/ must build"
+    hold = "0*130" + ",k28*3,0*150" * 4
+    out = subprocess.run(
+        [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--software",
+         "--save", os.path.join(ROOT, "traces", "games-resto.bin"), "--slot", "2",
+         "--nofmv", "--no-crowd", "--call", "386", "--frames", "700", "--hold", hold],
+        capture_output=True, text=True, errors="replace",
+        env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    first = lambda rx: next((int(m.group(1)) for m in re.finditer(rx, out)), None)
+    leave = first(r"frame (\d+): dialogue mode LEAVE")
+    refuse = first(r"frame (\d+): UI_CloseAllScreens \(Actor_LeaveDialogueMode[^)]*\) - "
+                   r"screen 0 VIDEOPHONE REFUSES")
+    closed = first(r"frame (\d+): (?:screen 0 VIDEOPHONE - oscillator 5 expired|"
+                   r"UI_CloseAllScreens[^\n]*screen 0 VIDEOPHONE closes)")
+    lines = len(re.findall(r"^\[01C12[56],", out, re.M))
+    got = (lines, leave is not None, refuse == leave and leave is not None,
+           (closed - leave) if (closed is not None and leave is not None) else None)
+    return got, (2, True, True, 3), \
+           "call 386: two lines, the device refuses the close on the LEAVE frame " \
+           "and goes 3 frames (100 ms) later"
+
+
 def c_engine_follow_and_sync():
     r"""`camera.follow_player` (op 54) and `player.pos.sync` (op 127)
     (`todo/scene-gameplay-audit.md` 15, 16).
@@ -46931,6 +46978,7 @@ SLOW = [
     ("engine: city return", c_engine_city_return, "docs/SCRIPT_VM.md; todo/omk-play 79"),
     ("engine: stairs", c_engine_stairs, "docs/ASSETS.md; todo/next-tasks 20"),
     ("engine: stairs down", c_engine_stairs_down, "todo/scene-gameplay-audit.md 22; actor/walk.h"),
+    ("engine: call close", c_engine_call_close, "todo/scene-gameplay-audit.md 12; docs/UI.md 3i"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

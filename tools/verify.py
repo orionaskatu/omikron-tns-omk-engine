@@ -13170,6 +13170,72 @@ def c_engine_stairs():
             "41 of them in Lahoreh")
 
 
+def c_engine_stairs_down():
+    r"""Walking DOWN the game's staircases: no drop is absorbed in adventure,
+    and a short fall keeps walking (`todo/scene-gameplay-audit.md` 22).
+
+    `Walk_GroundResponse`'s airborne arm (`21_d3d.c` 2734) absorbs a drop
+    only `g_IgnoreLedges || v68 < 7.874 && !sub_47CF00()`, and `sub_47CF00`
+    (0x0047CF00, read from the bytes) is `dword_6579CC ? flags & 0x810 : 1`.
+    `dword_6579CC` is the SHOOTER - written by `Shoot_Enter` and
+    `Shoot_TickPlayer` alone - so outside shoot mode the function is 1 and
+    NOTHING is absorbed: a drop past the frame's own gravity (`a5`, 0.43 from
+    rest) is banded `+1304 = 2`, a short fall, and gravity takes him down.
+    The port absorbed every drop under 7.874 since the walker was written, so
+    his feet were glued to every tread.
+
+    And the short band asks for NO bank group: the walk's clip plays on, and
+    `Actor_ApplyMotion` hands everything since the last safe stance to
+    `Actor_Move`, airborne or not. The port went straight down in EVERY fall
+    ("a fall is vertical" - right for a banded fall, whose `H_FALL` is a held
+    pose), so on a riser past the absorb he stopped dead for the frames the
+    fall took: about five a tread on the bank's entrance stairs.
+
+    `engine/tools/stairs_probe --down` walks each flight from its top tread
+    toward its bottom one at 4 units a frame. Asserted for the seven STRAIGHT
+    flights (frames, airborne frames, stalled frames - the horizontal cut
+    under half the stride - and the most he floats above the floor under him,
+    in tenths): the four flights whose top-to-bottom line leaves the stairs
+    (LMprinci's and Sconcert's `MHescalie*`, which turn) are left out, as a
+    fault of the probe's line and not of the walk.
+
+    SHOWN TO FAIL, both halves (2026-10-12): the absorb back on in adventure
+    (`noAbsorb_ = false`) glues him to the treads - 0 airborne and a float of
+    0 on six of the seven (LMFinkar's 8.30 riser alone escapes, for 1 frame);
+    the short fall made vertical again stalls every flight - 4, 28, 56, 56,
+    15 and 63 stalled frames and up to twice the time.
+    """
+    import subprocess, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "MESHES"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    b = subprocess.run(["make", "-s", "build/stairs_probe"], cwd=eng,
+                       capture_output=True, text=True)
+    if b.returncode != 0:
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run([os.path.join(eng, "build", "stairs_probe"), fr, "--down"],
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stdout
+    rows = re.findall(r"^(\S+)\s+(.+?)\s+\d+ treads.*\n\s+down: (\d+) frames, (\d+) airborne, "
+                      r"(\d+) stalled, float (-?[\d.]+)", out, re.M)
+    if len(rows) < 7:
+        return ("parsed %d flights" % len(rows),), ("at least 7",), \
+               "the probe's descent lines must parse"
+    want = [("Abank", "BAescalier"), ("Anekbah", "Escalier"), ("Lahoreh", "escalier04"),
+            ("Lahoreh", "escalier12"), ("LMFinkar", "MOescalier"), ("LMonaste", "MAescalier"),
+            ("Sttra01", "TT escal03")]
+    got = {(r[0], r[1]): (int(r[2]), int(r[3]), int(r[4]), round(float(r[5]) * 10))
+           for r in rows}
+    return tuple(got.get(k) for k in want), \
+           ((14, 8, 0, 93), (95, 28, 0, 74), (59, 50, 0, 115), (60, 50, 0, 93),
+            (66, 50, 0, 114), (24, 16, 0, 93), (78, 57, 0, 40)), \
+           ("per straight flight walked down at 4 a frame: frames to the bottom, "
+            "frames airborne (each riser a short fall, none absorbed), frames "
+            "STALLED (0 - a short fall keeps walking) and the worst float above "
+            "the floor in tenths")
+
+
 def c_engine_city_return():
     r"""`engine/`: the city is still running when you come out of a building.
 
@@ -15125,7 +15191,13 @@ def c_engine_water_entry():
     land = re.search(r"the player LANDS at y (-?[\d.]+)", out)
     if not land:
         return (False,), (True,), "the run must land"
-    states = sorted(set(int(x) for x in re.findall(r"swimming - ACTOR_STATE (\d+),", out)))
+    # the once-a-second swim line SAMPLES the state, and state 11 lasts a few
+    # frames: since 2026-10-12 (the frame's gravity spent as he steps off,
+    # `todo/scene-gameplay-audit.md` 22) the entry lands ON frame 150, after
+    # that frame's sample - so the entry's own line names its state too
+    states = sorted(set(int(x) for x in
+                        re.findall(r"swimming - ACTOR_STATE (\d+),", out) +
+                        re.findall(r"INTO THE WATER at .*?ACTOR_STATE (\d+)", out)))
     clips = set(re.findall(r"swimming - ACTOR_STATE \d+, \.CTL '(\w[\w-]*)'", out))
     bar = re.findall(r"breath gauge \(Hud_DrawBar mode 1\): (\d+)%, \d+ ms left, "
                      r"right edge \d+, (\d+) quads (\d+) blits", out)
@@ -46858,6 +46930,7 @@ SLOW = [
     ("engine: beat handover", c_engine_beat_handover, "todo/omk-play 78"),
     ("engine: city return", c_engine_city_return, "docs/SCRIPT_VM.md; todo/omk-play 79"),
     ("engine: stairs", c_engine_stairs, "docs/ASSETS.md; todo/next-tasks 20"),
+    ("engine: stairs down", c_engine_stairs_down, "todo/scene-gameplay-audit.md 22; actor/walk.h"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

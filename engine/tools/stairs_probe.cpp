@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // CAN THE WALKER CLIMB THE GAME'S STAIRCASES? Every set that ships one, tried.
 //
-//     stairs_probe <gamedata> [set.3DO ...]
+//     stairs_probe <gamedata> [--down] [set.3DO ...]
+//
+// `--down` also walks each flight DOWN, top tread to bottom along the line
+// between their centres at a stride of 4 units a frame, and reports the
+// frames it took, the frames AIRBORNE, the frames STALLED (the horizontal cut
+// below half the stride) and the most he floated above the floor under him -
+// `todo/scene-gameplay-audit.md` 22: in adventure the engine absorbs no drop
+// (`sub_47CF00` is 1 outside shoot mode), so each riser is a short fall, and
+// a short fall keeps walking.
 //
 // A reader reported being stuck on the last step of the bank's stairs
 // (`todo/next-tasks.md` 20). The bank's own staircase turned out to climb, so
@@ -85,7 +93,13 @@ int main(int argc, char** argv) {
     }
     const std::string fr = argv[1];
     std::vector<std::string> sets;
-    for (int i = 2; i < argc; ++i) sets.push_back(argv[i]);
+    bool down = false;
+    for (int i = 2; i < argc; ++i) {
+        if (std::string(argv[i]) == "--down") down = true;
+        else sets.push_back(argv[i]);
+    }
+    int downAir = 0, downStall = 0, downFrames = 0, downRuns = 0;
+    double downFloat = 0.0;
     if (sets.empty())
         sets = {"Abank", "ACSgrot", "ACSgrotl", "Anekbah", "AToit", "L_Khonsu",
                 "Lahoreh", "LMFinkar", "LMonaste", "LMprinci", "Sconcert",
@@ -181,8 +195,41 @@ int main(int argc, char** argv) {
                         set.c_str(), n.c_str(), tr.size(), tr.front().y, tr.back().y,
                         worstRise, ok, ok + bad,
                         bad == 0 ? "all climb" : firstFail.c_str());
+            if (down) {
+                const Tread& top = tr.back();
+                const Tread& bot = tr.front();
+                const double tx = (top.xlo + top.xhi) / 2, tz = (top.zlo + top.zhi) / 2;
+                const double bx = (bot.xlo + bot.xhi) / 2, bz = (bot.zlo + bot.zhi) / 2;
+                const double len = std::hypot(bx - tx, bz - tz);
+                constexpr double kStride = 4.0;
+                omk::Walker w(whole, tx, top.y, tz);
+                int frames = 0, air = 0, stall = 0;
+                double flo = 0.0;
+                bool reached = false;
+                for (; frames < 200 && len > 0.0; ++frames) {
+                    const double x0 = w.pos()[0], z0 = w.pos()[2];
+                    const auto r = w.step((bx - tx) / len * kStride, (bz - tz) / len * kStride);
+                    if (r == omk::StepResult::Fell) ++air;
+                    if (std::hypot(w.pos()[0] - x0, w.pos()[2] - z0) < kStride / 2) ++stall;
+                    if (const auto g = w.ground(w.pos()[0], w.pos()[1], w.pos()[2]))
+                        flo = std::max(flo, *g - w.pos()[1]);
+                    if (!w.airborne() && w.pos()[1] >= bot.y - 0.5) { reached = true; ++frames; break; }
+                }
+                if (reached) {
+                    ++downRuns; downAir += air; downStall += stall; downFrames += frames;
+                    downFloat = std::max(downFloat, flo);
+                    std::printf("    down: %d frames, %d airborne, %d stalled, float %.2f\n",
+                                frames, air, stall, flo);
+                } else {
+                    std::printf("    down: NOT REACHED in %d frames (y %.1f, bottom %.1f)\n",
+                                frames, w.pos()[1], bot.y);
+                }
+            }
         }
     }
     std::printf("\n%d staircase runs: %d climbed, %d not\n", runs, climbed, failed);
+    if (down)
+        std::printf("down: %d runs reached the bottom in %d frames, %d airborne, %d stalled, "
+                    "worst float %.2f\n", downRuns, downFrames, downAir, downStall, downFloat);
     return 0;
 }

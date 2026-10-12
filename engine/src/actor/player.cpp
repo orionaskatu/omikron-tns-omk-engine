@@ -707,7 +707,7 @@ int PlayerController::clipOwner() const {
     const auto& S = ctl_->states;
     for (int guard = 0; guard < 64; ++guard) {
         if (s < 0 || s >= static_cast<int>(S.size())) return -1;
-        if (!(S[static_cast<std::size_t>(s)].flags & 0x8002u)) return s;
+        if (!(S[static_cast<std::size_t>(s)].flags & ctl_entry::NoClipName)) return s;
         s = S[static_cast<std::size_t>(s)].gotoIdx;
     }
     return -1;
@@ -908,13 +908,13 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     std::string tickMove;
     if (cur >= 0 && cur < static_cast<int>(S.size()) && !(rt_.channel().flags() & 0x2u)) {
         const CtlState& st0 = S[static_cast<std::size_t>(cur)];
-        if ((st0.flags & 0x10u) && (st0.flags & 0x200000u)) tickMove = st0.moveName;
+        if ((st0.flags & ctl_entry::MoveName) && (st0.flags & ctl_entry::MoveEveryTick)) tickMove = st0.moveName;
     }
     if (cur >= 0 && cur < static_cast<int>(S.size()) &&
         !(rt_.channel().flags() & 0x2u)) {
         const CtlState& st = S[static_cast<std::size_t>(cur)];
         float portion = 0.0f;
-        if ((st.flags & 0x80u) && st.hasShift &&
+        if ((st.flags & ctl_entry::ShiftInWindow) && st.hasShift &&
             windowPortion(frameBefore_, frameAfter_, st.shift[0], st.shift[1], portion)) {
             const float local[3] = {portion * st.shift[2], portion * st.shift[3],
                                     portion * st.shift[4]};
@@ -922,7 +922,7 @@ void PlayerController::tick(float dt, std::uint32_t word) {
             rotateByFacing(local, w);              // Cef_ApplyRootShift: by +288
             for (int k = 0; k < 3; ++k) last_.shift[k] = w[k];
         }
-        if ((st.flags & 0x40u) && st.hasTurn &&
+        if ((st.flags & ctl_entry::TurnInWindow) && st.hasTurn &&
             windowPortion(frameBefore_, frameAfter_, st.turn[0], st.turn[1], portion)) {
             const float d[3] = {portion * st.turn[2], portion * st.turn[3],
                                 portion * st.turn[4]};

@@ -98,6 +98,17 @@ SCENARIOS = {
 }
 
 
+# PROBES - the engine's own tools, for what no viewer run reaches often enough.
+# name -> (tool, args, the file it writes or None). `{out}` is the output path,
+# `{data}` the game data root. ADDED the day a viewer-only guard went GREEN on a
+# real change: an operator-precedence slip turned one channel test always-true,
+# which disabled one blended-transition path - the thirteen runs never crossed
+# it, and `run_actor_states`' 395352-tick sweep of every bank moved by 8.
+PROBES = {
+    "actor-states": ("run_actor_states", ["{data}/ANIMS", "{out}"], True),
+}
+
+
 def build():
     for target in ([], ["play"]):
         r = subprocess.run(["make", "-s"] + target, cwd=ENG, capture_output=True, text=True)
@@ -140,6 +151,20 @@ def record(label, only=None):
                        capture_output=True, text=True, errors="replace")
     with open(os.path.join(d, "boot.txt"), "w") as f:
         f.write(scrub(r.stdout) + "---- exit %d\n" % r.returncode)
+    for name, (tool, args, writes) in PROBES.items():
+        if only and name not in only:
+            continue
+        out = os.path.join(d, name + ".bin")
+        if os.path.exists(out):
+            os.remove(out)
+        argv = [os.path.join(ENG, "build", tool)] + \
+            [x.format(out=out, data=omkpaths.data_root()) for x in args]
+        r = subprocess.run(argv, capture_output=True, text=True, errors="replace")
+        h = hashlib.sha1(open(out, "rb").read()).hexdigest() \
+            if writes and os.path.exists(out) else "none"
+        with open(os.path.join(d, name + ".txt"), "w") as f:
+            f.write(scrub(r.stdout) + "---- exit %d, output sha1 %s\n" % (r.returncode, h))
+        print("  %-13s probe, output %s" % (name, h[:12]))
     todo = [(n, a, e) for n, (a, e) in SCENARIOS.items() if not only or n in only]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
         for name, n in ex.map(lambda t: run_one(label, *t), todo):

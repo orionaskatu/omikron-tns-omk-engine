@@ -95,6 +95,51 @@ struct CtlEffect {
     float scale = 0;                 // +28
 };
 
+// AN ENTRY'S FLAGS - the word at entry `+8` (`CtlState::flags`), bit by bit.
+// Each name says what its consumer DOES with the bit (`actor/channel.cpp`'s
+// `gotoMove` and `findTransition`, `GoToMove` 0x004A7B80 and
+// `Cef_TickChannel` 0x004A8160 in the engine; `docs/ASSETS.md` "What the
+// flag-gated blocks hold" and the input queue). Where the file's layout
+// depends on a bit, the block it gates is named too.
+namespace ctl_entry {
+inline constexpr std::uint32_t OneShot        = 0x1;         // its clip plays once and then follows its GoTo; without it the clip LOOPS
+inline constexpr std::uint32_t Alias          = 0x2;         // adopt its start frame and follow its GoTo
+inline constexpr std::uint32_t BlendBreak     = 0x4;         // as a child: may be taken while a blend is running
+inline constexpr std::uint32_t StepQueue      = 0x8;         // walks the whole input queue for an edge, not only its front
+inline constexpr std::uint32_t MoveName       = 0x10;        // a 12-byte `tab_special_move[]` name at +64, queued on entry
+inline constexpr std::uint32_t GroupDefault   = 0x20;        // the group's default entry (`Cef_DefaultEntry`)
+inline constexpr std::uint32_t TurnInWindow   = 0x40;        // the turn block applied over the cancel window, per tick
+inline constexpr std::uint32_t ShiftInWindow  = 0x80;        // the root-shift block, likewise
+inline constexpr std::uint32_t TurnOnLeave    = 0x100;       // the turn block applied WHOLE when the state is left
+inline constexpr std::uint32_t ShiftOnLeave   = 0x200;       // the root-shift block, likewise
+inline constexpr std::uint32_t LoopEdges      = 0x400;       // a LOOPING state that takes an edge in mid-clip
+inline constexpr std::uint32_t DynamicReturn  = 0x800;       // its GoTo rewritten to the entry it was entered from
+inline constexpr std::uint32_t QueueHold      = 0x1000;      // a word is committed only while an edge is still open for it
+inline constexpr std::uint32_t InheritGlobal  = 0x2000;      // this state also takes its group's GroupGlobal edges
+inline constexpr std::uint32_t GroupGlobal    = 0x4000;      // an edge every InheritGlobal state of the group may take
+inline constexpr std::uint32_t PassThrough    = 0x8000;      // no clip of its own: crossed through its GoTo chain, blended
+inline constexpr std::uint32_t PhaseMatch     = 0x10000;     // entered at the current phase (+80 added): walk -> run keeps the gait
+inline constexpr std::uint32_t FullBlend      = 0x20000;     // blend the leaving state's whole +78, not what is left of it
+inline constexpr std::uint32_t DropOwnRepeat  = 0x40000;     // a queued word equal to its own input code is dropped
+inline constexpr std::uint32_t ExactCode      = 0x80000;     // its input code must match exactly, not as a bitfield
+inline constexpr std::uint32_t PopOnEnter     = 0x100000;    // pop the input queue when entered
+inline constexpr std::uint32_t MoveEveryTick  = 0x200000;    // with MoveName: the move is queued on every tick, not once
+inline constexpr std::uint32_t PopOnLeave     = 0x400000;    // pop the input queue when left
+inline constexpr std::uint32_t PopOnLand      = 0x800000;    // pop the input queue when a transition lands on it
+inline constexpr std::uint32_t ResetOnEnter   = 0x1000000;   // reset the queue to the idle word when entered
+inline constexpr std::uint32_t Combat         = 0x2000000;   // a 40-byte combat block at +52 (`Fight_ResolveHit`)
+inline constexpr std::uint32_t ResetOnLeave   = 0x4000000;   // reset the queue when left
+inline constexpr std::uint32_t CutNotBlend    = 0x8000000;   // leaving a PassThrough state, cut instead of blending
+inline constexpr std::uint32_t ClearLastInput = 0x10000000;  // forget the last committed input word when entered
+inline constexpr std::uint32_t QueueOne       = 0x20000000;  // cut the queue to one word; no push behind it
+inline constexpr std::uint32_t LatchCode      = 0x40000000;  // record its input code in the channel's 20-slot latch
+inline constexpr std::uint32_t MidClip        = 0x80000000;  // as a child: may be taken before the leaving clip has ended
+
+inline constexpr std::uint32_t NoClipName = Alias | PassThrough;        // no 12-byte clip name at +68
+inline constexpr std::uint32_t HasTurn    = TurnInWindow | TurnOnLeave;   // a 24-byte turn block at +44
+inline constexpr std::uint32_t HasShift   = ShiftInWindow | ShiftOnLeave; // a 20-byte root-shift block at +48
+}  // namespace ctl_entry
+
 struct CtlState {
     std::size_t  offset = 0;
     int          group  = 0;

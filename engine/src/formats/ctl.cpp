@@ -62,7 +62,7 @@ CtlFile readCtl(std::span<const std::byte> d) {
     // the file's, and getting it wrong desynchronises everything after it.
     std::map<std::size_t, std::size_t> named, childOff, parentOff;
     for (auto e : ents)
-        if (!(u32(d, e + 8) & 0x8002u)) { named[e] = v5; v5 += 12; }
+        if (!(u32(d, e + 8) & ctl_entry::NoClipName)) { named[e] = v5; v5 += 12; }
     for (auto e : ents)
         if (u8(d, e + 87)) { childOff[e] = v5; v5 += 4u * u8(d, e + 87); }
     for (auto e : ents)
@@ -75,15 +75,15 @@ CtlFile readCtl(std::span<const std::byte> d) {
     // what keeps the walk landing exactly on the file size.
     std::map<std::size_t, std::size_t> turnOff, shiftOff, moveOff;
     for (auto e : ents)
-        if (u32(d, e + 8) & 0x140u)     { turnOff[e]  = v5; v5 += 24; }
+        if (u32(d, e + 8) & ctl_entry::HasTurn)     { turnOff[e]  = v5; v5 += 24; }
     for (auto e : ents)
-        if (u32(d, e + 8) & 0x280u)     { shiftOff[e] = v5; v5 += 20; }
+        if (u32(d, e + 8) & ctl_entry::HasShift)     { shiftOff[e] = v5; v5 += 20; }
     for (auto e : ents)
-        if (u8(d, e + 8) & 0x10u)       { moveOff[e]  = v5; v5 += 12; }
+        if (u8(d, e + 8) & ctl_entry::MoveName)       { moveOff[e]  = v5; v5 += 12; }
     // the combat block, whose OFFSET the walk used only to step over
     std::map<std::size_t, std::size_t> combatOff;
     for (auto e : ents)
-        if (u32(d, e + 8) & 0x2000000u) { combatOff[e] = v5; v5 += 40; }
+        if (u32(d, e + 8) & ctl_entry::Combat) { combatOff[e] = v5; v5 += 40; }
 
     // the fight AI: 156 bytes a profile, twelve situation slots of {count,
     // ptr, _}, then each slot's items, then every item's input words
@@ -296,7 +296,7 @@ CtlFile readCtl(std::span<const std::byte> d) {
         // Cef_DefaultEntry (0x0047DD40) scans the group's entries in order for
         // the first with flag 0x20 and returns nothing when there is none.
         for (int k = 0; k < g.count; ++k)
-            if (f.states[static_cast<std::size_t>(g.first + k)].flags & 0x20u) {
+            if (f.states[static_cast<std::size_t>(g.first + k)].flags & ctl_entry::GroupDefault) {
                 g.defaultEntry = g.first + k;
                 break;
             }

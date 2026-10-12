@@ -198,6 +198,19 @@ struct ChannelStats {
 // The channel record: 57 ints at `dword_8F5920 + 57*index`, only the fields
 // something below reads. The byte offsets are kept in the comments because
 // every cross-reference in `readable/` is by offset.
+// THE CHANNEL'S OWN FLAGS - the runtime word at `+4` (`CefChannel::flags_`),
+// not the entries' (those are `ctl_entry`). Named for what reads them.
+namespace channel_flag {
+inline constexpr std::uint32_t SkipsInput     = 0x1;    // with InputBlocked, skips the input pass (`flags & 0x81`); its writer is not read
+inline constexpr std::uint32_t Blending       = 0x2;    // a blend runs; the target waits in `pending_` until it lands
+inline constexpr std::uint32_t ClipRanOut     = 0x10;   // the last transition was the clip running out onto its GoTo
+inline constexpr std::uint32_t FollowingAlias = 0x20;   // `gotoMove` is following an Alias chain
+inline constexpr std::uint32_t InputBlocked   = 0x80;   // the device pass is skipped (`Perso_SetInputEnabled(ch, 1)` - misnamed, see below)
+inline constexpr std::uint32_t NoPlayback     = 0x200;  // the clip clock stands, turns and shifts are not applied (`Perso_SetNoPlayback`)
+inline constexpr std::uint32_t PriorityGate   = 0x400;  // `findTransition` honours the +212 priority threshold
+inline constexpr std::uint32_t NoInputPass    = SkipsInput | InputBlocked;
+}  // namespace channel_flag
+
 class CefChannel {
 public:
     CefChannel(const CtlFile& ctl) : ctl_(&ctl) {}
@@ -251,7 +264,7 @@ public:
     // `Perso_GetInputEnabled` (0x0045ACB0) returns `flags & 0x80`, which is
     // what `Actor_EnterDialogueMode` saves so the leave can RESTORE it rather
     // than assert it.
-    bool inputBlocked() const { return (flags_ & 0x80u) != 0; }
+    bool inputBlocked() const { return (flags_ & channel_flag::InputBlocked) != 0; }
     // How many of the 20 latch slots hold an id. Exposed so a check can
     // assert that the engine's two resets do NOT clear them - see
     // `setBankGroup` for the 16-dword store that stops one dword short.
@@ -271,10 +284,10 @@ public:
     // How many candidates the gate has turned away that would otherwise have
     // opened - an instrument; `findTransition` is const, so it is mutable.
     long gateSkips() const { return gateSkips_; }
-    bool priorityGated() const { return (flags_ & 0x400u) != 0; }
+    bool priorityGated() const { return (flags_ & channel_flag::PriorityGate) != 0; }
     int  priorityThreshold() const { return priorityThreshold_; }
     void setPriorityGate(bool on, std::uint16_t threshold = 0) {
-        if (on) flags_ |= 0x400u; else flags_ &= ~0x400u;
+        if (on) flags_ |= channel_flag::PriorityGate; else flags_ &= ~channel_flag::PriorityGate;
         priorityThreshold_ = threshold;
     }
 
@@ -319,7 +332,7 @@ public:
         const auto& S = ctl_->states;
         for (int guard = 0; guard < 64; ++guard) {
             if (s < 0 || s >= static_cast<int>(S.size())) return -1;
-            if (!(S[static_cast<std::size_t>(s)].flags & 0x8002u)) return s;
+            if (!(S[static_cast<std::size_t>(s)].flags & ctl_entry::NoClipName)) return s;
             s = S[static_cast<std::size_t>(s)].gotoIdx;
         }
         return -1;

@@ -72,7 +72,7 @@ bool CefChannel::edgeOpens(const CtlState& cand, std::uint32_t code,
             (prev_ < cand.cancelFrom && frame_ < cand.cancelTo))
             return false;
     }
-    if (cand.flags & 0x80000u)        // exact code, not the bitfield test
+    if (cand.flags & ctl_entry::ExactCode)        // exact code, not the bitfield test
         return cand.inputCode == code;
     return inputMatches(cand.inputCode, code);
 }
@@ -81,7 +81,7 @@ int CefChannel::findTransition(int from, std::uint32_t code,
                                int mustHave, int mustAlso, bool useWindow) const {
     if (from < 0 || from >= static_cast<int>(ctl_->states.size())) return -1;
     const CtlState& f = ctl_->states[static_cast<std::size_t>(from)];
-    const bool gated = (flags_ & 0x400u) != 0;   // honour the +212 threshold
+    const bool gated = (flags_ & channel_flag::PriorityGate) != 0;   // honour the +212 threshold
     const bool reverse = (f.playBits & 0x20u) != 0;
     int best = -1;
 
@@ -107,7 +107,7 @@ int CefChannel::findTransition(int from, std::uint32_t code,
     // The GROUP-GLOBAL edges: flag 0x2000 on the current state lets it inherit
     // every entry of its group carrying 0x4000, so a guard break or a hit
     // reaction need not be wired into every state by hand.
-    if (best < 0 && (f.flags & 0x2000u)) {
+    if (best < 0 && (f.flags & ctl_entry::InheritGlobal)) {
         const int cg = (cur_ >= 0 && cur_ < static_cast<int>(ctl_->states.size()))
                            ? ctl_->states[static_cast<std::size_t>(cur_)].group
                            : f.group;
@@ -120,7 +120,7 @@ int CefChannel::findTransition(int from, std::uint32_t code,
             if (edgeOpens(cand, code, mustHave, mustAlso, useWindow)) ++gateSkips_;
             continue;
         }
-            if (!(cand.flags & 0x4000u)) continue;
+            if (!(cand.flags & ctl_entry::GroupGlobal)) continue;
             if (!edgeOpens(cand, code, -1, -1, useWindow)) continue;
             if (!gated) return static_cast<int>(i);
             if (cand.priority == priorityThreshold_) return static_cast<int>(i);
@@ -177,29 +177,29 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
     for (;;) {
         if (++guard > kChainGuard) { ++stats_.chainAborted; return false; }
         repeat_ = (to == from) ? repeat_ + 1 : 0;
-        if (flags_ & 0x81u) repeat_ = 0;
+        if (flags_ & channel_flag::NoInputPass) repeat_ = 0;
         seek_ = startFrame != 1.0f;            // `seekNeeded`, before the overshoot
 
         if (from >= 0) {
-            if (!(flags_ & 0x20u)) {          // not while following an alias
+            if (!(flags_ & channel_flag::FollowingAlias)) {          // not while following an alias
                 const CtlState& f = S[static_cast<std::size_t>(from)];
-                if (f.flags & 0x400000u) popQueue();
-                if (f.flags & 0x4000000u) resetQueue();
+                if (f.flags & ctl_entry::PopOnLeave) popQueue();
+                if (f.flags & ctl_entry::ResetOnLeave) resetQueue();
                 // Cef_ApplyTurn / Cef_ApplyRootShift, applied WHOLE because
                 // the state is being left. The over-the-window modes (0x40 /
                 // 0x80) are the other bit of each pair and belong to the
                 // per-tick path below.
-                if ((f.flags & 0x100u) && !(flags_ & 0x200u) && f.hasTurn)
+                if ((f.flags & ctl_entry::TurnOnLeave) && !(flags_ & channel_flag::NoPlayback) && f.hasTurn)
                     events_.push_back({ChannelEvent::Kind::Turn, from, to,
                                        startFrame, 0, 0, {}});
-                if ((f.flags & 0x200u) && !(flags_ & 0x200u) && f.hasShift)
+                if ((f.flags & ctl_entry::ShiftOnLeave) && !(flags_ & channel_flag::NoPlayback) && f.hasShift)
                     events_.push_back({ChannelEvent::Kind::Shift, from, to,
                                        startFrame, 0, 0, {}});
             }
         } else {
             // Entered from nowhere: skip the pass-through states. This is the
             // path SetPersoBankGroup takes on the very first transition.
-            while (S[static_cast<std::size_t>(to)].flags & 0x8000u) {
+            while (S[static_cast<std::size_t>(to)].flags & ctl_entry::PassThrough) {
                 to = gotoOf(to);
                 ++stats_.aliasSteps;
                 if (to < 0) { ++stats_.badLanding; return false; }
@@ -208,13 +208,13 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
         }
 
         const CtlState& t = S[static_cast<std::size_t>(to)];
-        if (t.flags & 0x10u)
+        if (t.flags & ctl_entry::MoveName)
             events_.push_back({ChannelEvent::Kind::Move, from, to, startFrame,
                                0, 0, t.moveName});
-        if (t.flags & 0x10000000u) lastInput_ = 0;
-        if (t.flags & 0x100000u) popQueue();
-        if (t.flags & 0x1000000u) resetQueue();
-        if (t.flags & 0x40000000u) {
+        if (t.flags & ctl_entry::ClearLastInput) lastInput_ = 0;
+        if (t.flags & ctl_entry::PopOnEnter) popQueue();
+        if (t.flags & ctl_entry::ResetOnEnter) resetQueue();
+        if (t.flags & ctl_entry::LatchCode) {
             // record the entered code in the 20-slot latch set at +92
             for (int i = 0; i < 20; ++i) {
                 if (latch_[i] == t.inputCode) break;
@@ -226,18 +226,18 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
         // shared file the way the engine writes it into its own loaded copy,
         // because a `CtlFile` here is const and shared between actors; the
         // return is carried per channel instead.
-        if (t.flags & 0x800u) dynamicReturn_[to] = from;
+        if (t.flags & ctl_entry::DynamicReturn) dynamicReturn_[to] = from;
 
-        if (!(t.flags & 2u)) break;
-        flags_ |= 0x20u;                       // an alias: adopt its start
+        if (!(t.flags & ctl_entry::Alias)) break;
+        flags_ |= channel_flag::FollowingAlias;                       // an alias: adopt its start
         startFrame = t.startFrame;             // frame and follow the goto
         to = gotoOf(to);
         ++stats_.aliasSteps;
         if (to < 0) { ++stats_.badLanding; return false; }
     }
 
-    if (from >= 0 && (S[static_cast<std::size_t>(from)].flags & 0x8000u) &&
-        (S[static_cast<std::size_t>(to)].flags & 0x8000u)) {
+    if (from >= 0 && (S[static_cast<std::size_t>(from)].flags & ctl_entry::PassThrough) &&
+        (S[static_cast<std::size_t>(to)].flags & ctl_entry::PassThrough)) {
         const float sf = S[static_cast<std::size_t>(to)].startFrame;
         const int nxt = gotoOf(to);
         ++stats_.aliasSteps;
@@ -245,7 +245,7 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
         return gotoMove(from, nxt, sf);        // and run the entry pass again
     }
 
-    flags_ &= ~0x20u;
+    flags_ &= ~channel_flag::FollowingAlias;
 
     // Rolled past the clip's end: fold the overshoot into the new start, so a
     // transition taken late does not lose the frames it was late by.
@@ -258,26 +258,27 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
 
     const CtlState& t = S[static_cast<std::size_t>(to)];
     int newLen = 0;
-    if (from >= 0 && (S[static_cast<std::size_t>(from)].flags & 0x8000u)) {
+    if (from >= 0 && (S[static_cast<std::size_t>(from)].flags & ctl_entry::PassThrough)) {
         const CtlState& f = S[static_cast<std::size_t>(from)];
-        if (!(flags_ & 0x12u) && !(f.flags & 0x8000000u)) {
+        if (!(flags_ & (channel_flag::Blending | channel_flag::ClipRanOut)) &&
+            !(f.flags & ctl_entry::CutNotBlend)) {
             // ---- blended transition ---------------------------------------
             int real = to, g2 = 0;
-            while (S[static_cast<std::size_t>(real)].flags & 0x8002u) {
+            while (S[static_cast<std::size_t>(real)].flags & ctl_entry::NoClipName) {
                 real = gotoOf(real);
                 ++stats_.aliasSteps;
                 if (real < 0) { ++stats_.badLanding; return false; }
                 if (++g2 > kChainGuard) { ++stats_.chainAborted; return false; }
             }
             int blend;
-            if (t.flags & 0x20000u) blend = f.blendFrames;
+            if (t.flags & ctl_entry::FullBlend) blend = f.blendFrames;
             else if (static_cast<double>(f.blendFrames) >= frame_)
                 blend = f.blendFrames - static_cast<int>(frame_) + 1;
             else blend = 1;
             events_.push_back({ChannelEvent::Kind::Blend, from, real, startFrame,
                                blend, lastInput_, {}});
             newLen = blend;
-            flags_ |= 2u;                      // blending; the target parks
+            flags_ |= channel_flag::Blending;                      // blending; the target parks
             pendingFrame_ = startFrame;        // in pending_ until it lands
             pending_ = to;
             startFrame = 1.0f;
@@ -288,31 +289,31 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
             events_.push_back({ChannelEvent::Kind::Cut, from, to, startFrame,
                                clipFrames(to), lastInput_, {}});
             newLen = clipFrames(to);
-            flags_ &= ~2u;
-            flags_ &= ~0x10u;
+            flags_ &= ~channel_flag::Blending;
+            flags_ &= ~channel_flag::ClipRanOut;
             final = to;
         }
-    } else if (!(t.flags & 0x8000u)) {
+    } else if (!(t.flags & ctl_entry::PassThrough)) {
         cur_ = to;
         events_.push_back({ChannelEvent::Kind::Cut, from, to, startFrame,
                            clipFrames(to), lastInput_, {}});
         newLen = clipFrames(to);
-        flags_ &= ~0x10u;
+        flags_ &= ~channel_flag::ClipRanOut;
         final = to;
     } else {
         // `to` is itself a pass-through: blend into the clip owner behind its
         // GoTo chain, out of the clip being left.
         int real = to, g2 = 0;
-        if (t.flags & 0x8002u) {
+        if (t.flags & ctl_entry::NoClipName) {
             do {
                 real = gotoOf(real);
                 ++stats_.aliasSteps;
                 if (real < 0) { ++stats_.badLanding; return false; }
                 if (++g2 > kChainGuard) { ++stats_.chainAborted; return false; }
-            } while (S[static_cast<std::size_t>(real)].flags & 0x8002u);
+            } while (S[static_cast<std::size_t>(real)].flags & ctl_entry::NoClipName);
         }
         float start = t.startFrame;
-        if (t.flags & 0x10000u) {
+        if (t.flags & ctl_entry::PhaseMatch) {
             // Phase-match: carry the current phase into the target clip, which
             // is what keeps a gait when walk hands over to run. The engine
             // writes the result back into the entry; the replica keeps it
@@ -326,7 +327,7 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
         events_.push_back({ChannelEvent::Kind::Blend, from, real, start,
                            t.blendFrames, lastInput_, {}});
         newLen = t.blendFrames;
-        flags_ &= ~0x10u;
+        flags_ &= ~channel_flag::ClipRanOut;
         final = to;
     }
 
@@ -336,7 +337,7 @@ bool CefChannel::gotoMove(int from, int to, float startFrame) {
     frame_ = startFrame;
     ++stats_.transitions;
     ++stats_.landings;
-    if (final >= 0 && (S[static_cast<std::size_t>(final)].flags & 0x800000u))
+    if (final >= 0 && (S[static_cast<std::size_t>(final)].flags & ctl_entry::PopOnLand))
         popQueue();
     return true;
 }
@@ -383,7 +384,7 @@ bool CefChannel::setBankGroup(int groupIndex) {
     queue_.assign(1, kIdleInput);
     lastInput_ = kIdleInput;
     pendingFrame_ = 1.0f;
-    flags_ &= ~1u;
+    flags_ &= ~channel_flag::SkipsInput;
     const int entry = ctl_->groupList[static_cast<std::size_t>(groupIndex)].defaultEntry;
     if (entry < 0) return false;         // "SetPersoBank, start move not found"
     return gotoMove(cur_, entry, 1.0f);  // "SetPersoBank, error on GoToMove"
@@ -404,9 +405,9 @@ void CefChannel::injectInput(const std::vector<std::uint32_t>& words,
 
 void CefChannel::setInputBlocked(bool on) {
     if (on) {
-        flags_ |= 0x80u;            // `or cl, 80h`, and nothing else
+        flags_ |= channel_flag::InputBlocked;            // `or cl, 80h`, and nothing else
     } else {
-        flags_ &= ~0x80u;           // `and al, 7Fh`, then the reset below
+        flags_ &= ~channel_flag::InputBlocked;           // `and al, 7Fh`, then the reset below
         // ...which is the same 16-dword store as `SetPersoBankGroup`: the
         // queue, the count and `lastInput_`, and NOT the latch at +92.
         queue_.assign(1, kIdleInput);
@@ -415,7 +416,7 @@ void CefChannel::setInputBlocked(bool on) {
 }
 
 void CefChannel::setNoPlayback(bool on) {
-    if (on) flags_ |= 0x200u; else flags_ &= ~0x200u;
+    if (on) flags_ |= channel_flag::NoPlayback; else flags_ &= ~channel_flag::NoPlayback;
 }
 
 bool CefChannel::tick(float dt, std::uint32_t code) {
@@ -452,7 +453,7 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
     if (word && (word & ~(kInputBits | kIdleInput | kNoInputEdge)))
         ++stats_.foreignInput;
 
-    if (!(flags_ & 0x81u) && word) {
+    if (!(flags_ & channel_flag::NoInputPass) && word) {
         // the 20-slot latch: an input already consumed by the state that
         // recorded it is masked out of the word before the search
         for (int i = 0; i < 20 && word; ++i) {
@@ -477,15 +478,15 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
             // apply the wrong record - which is what it did until 2026-09-03,
             // reading `from`'s turn (zero, in H_WALK) and so turning by
             // nothing. This loop IS the diagonal walk.
-            if (e.flags & 0x100u) { if (!(flags_ & 0x200u) && e.hasTurn)
+            if (e.flags & ctl_entry::TurnOnLeave) { if (!(flags_ & channel_flag::NoPlayback) && e.hasTurn)
                                         events_.push_back({ChannelEvent::Kind::TurnRate,
                                                            from, t, 0, 0, word, {}});
                                     consumed = true; word &= ~e.inputCode; }
-            if (e.flags & 0x200u) { if (!(flags_ & 0x200u) && e.hasShift)
+            if (e.flags & ctl_entry::ShiftOnLeave) { if (!(flags_ & channel_flag::NoPlayback) && e.hasShift)
                                         events_.push_back({ChannelEvent::Kind::ShiftRate,
                                                            from, t, 0, 0, word, {}});
                                     consumed = true; word &= ~e.inputCode; }
-            if ((e.flags & 0x10u) && (e.flags & 0x200000u)) {
+            if ((e.flags & ctl_entry::MoveName) && (e.flags & ctl_entry::MoveEveryTick)) {
                 events_.push_back({ChannelEvent::Kind::Move, from, t, 0, 0,
                                    word, e.moveName});
                 consumed = true; word &= ~e.inputCode;
@@ -493,9 +494,9 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
             // `v16[2]` in the original is entry `+8` - the flags - not the
             // role word at `+12`. The two are one dword apart and reading the
             // wrong one here would pop the queue on a role code.
-            if (e.flags & 0x10000000u) lastInput_ = 0;
-            if (e.flags & 0x100000u) popQueue();
-            if (e.flags & 0x1000000u) resetQueue();
+            if (e.flags & ctl_entry::ClearLastInput) lastInput_ = 0;
+            if (e.flags & ctl_entry::PopOnEnter) popQueue();
+            if (e.flags & ctl_entry::ResetOnEnter) resetQueue();
             if (!consumed) break;
         }
         // ---- the commit, transcribed whole ------------------------------
@@ -553,7 +554,7 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
         // Neither rule can be seen by a sweep that injects whole queues, which
         // is why both survived `engine: actor states` (todo/actor-runtime.md 1).
         if (findTransition(from, word, -1, -1, true) >= 0 ||
-            !(stateFlags & 0x1000u)) {
+            !(stateFlags & ctl_entry::QueueHold)) {
             if (!word) word = kIdleInput;
             if (word != lastInput_) {
                 lastInput_ = word;
@@ -562,7 +563,7 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
                     // `[esi+0B8h]` is the current entry; `cur_` has not moved
                     // since `from` was taken - nothing above commits a
                     // transition - so `stateFlags` IS `[[esi+0B8h]+8]`.
-                    if ((stateFlags & 0x20000000u) && n > 1) {
+                    if ((stateFlags & ctl_entry::QueueOne) && n > 1) {
                         queue_.resize(1);
                         ++stats_.queueTruncated;
                     } else {
@@ -581,13 +582,14 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
 
     // ---- the frame, and what the end of the clip does --------------------
     const bool finished = clipLen_ <= frame_;
-    if (stateFlags & 0x8001u) {
+    if (stateFlags & (ctl_entry::PassThrough | ctl_entry::OneShot)) {
         int taken = -1;
         int mustHave = -1;
         bool stepQueue = false;
         if (!queue_.empty()) {
-            mustHave = (flags_ & 2u) ? 4 : (finished ? -1 : 0x80000000);
-            stepQueue = (stateFlags & 8u) != 0;
+            mustHave = (flags_ & channel_flag::Blending) ? static_cast<int>(ctl_entry::BlendBreak)
+                       : (finished ? -1 : static_cast<int>(ctl_entry::MidClip));
+            stepQueue = (stateFlags & ctl_entry::StepQueue) != 0;
             if (stepQueue) {
                 while (!queue_.empty()) {
                     taken = findTransition(from, queue_.front(), mustHave, -1, false);
@@ -608,33 +610,33 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
         }
         if (taken >= 0 && taken != gotoOf(from)) {
             edges_.push_back({from, taken, queue_.empty() ? 0u : queue_.front(),
-                              (flags_ & 0x400u) != 0, priorityThreshold_, true,
+                              (flags_ & channel_flag::PriorityGate) != 0, priorityThreshold_, true,
                               mustHave, -1, !stepQueue, prev_, frame_});
             return gotoMove(from, taken, 1.0f);
         }
         if (finished) {
             ++stats_.clipEnds;
-            if (flags_ & 2u) {                     // a blend landed
+            if (flags_ & channel_flag::Blending) {                     // a blend landed
                 const float sf = pendingFrame_;
                 pendingFrame_ = 1.0f;
                 return gotoMove(from, pending_, sf);
             }
-            flags_ |= 0x10u;
+            flags_ |= channel_flag::ClipRanOut;
             return gotoMove(from, gotoOf(from),
                             S[static_cast<std::size_t>(from)].startFrame);
         }
     } else {
-        if (stateFlags & 0x400u) {
+        if (stateFlags & ctl_entry::LoopEdges) {
             int t = -1;
             if (!queue_.empty())
                 t = findTransition(cur_, queue_.front(), -1, -1, true);
             if (t >= 0) {
                 edges_.push_back({cur_, t, queue_.front(),
-                                  (flags_ & 0x400u) != 0, priorityThreshold_, true,
+                                  (flags_ & channel_flag::PriorityGate) != 0, priorityThreshold_, true,
                                   -1, -1, true, prev_, frame_});
                 return gotoMove(cur_, t, 1.0f);
             }
-            if ((stateFlags & 0x40000u) && !queue_.empty() &&
+            if ((stateFlags & ctl_entry::DropOwnRepeat) && !queue_.empty() &&
                 queue_.front() == S[static_cast<std::size_t>(from)].inputCode) {
                 queue_.clear();
                 lastInput_ = 0;
@@ -647,7 +649,7 @@ bool CefChannel::tickMachine(float dt, std::uint32_t code) {
     }
 
     prev_  = frame_;
-    if (!(flags_ & 0x200u)) frame_ += dt;
+    if (!(flags_ & channel_flag::NoPlayback)) frame_ += dt;
     return true;
 }
 

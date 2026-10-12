@@ -674,7 +674,7 @@ void Fight::postStep(FightContext& c) {
     // `sub_49A830`: which cached reactions the current move allows to
     // interrupt it. Derived and recorded, NOT fed to the channel - see the
     // header.
-    c.allowedMask = (st->flags & 0x2000000u) && st->hasCombat
+    c.allowedMask = (st->flags & ctl_entry::Combat) && st->hasCombat
                         ? static_cast<std::uint32_t>(blockFlags(st->combat))
                         : 0u;
 }
@@ -765,7 +765,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     if (decided_) return;                                // already settled
     if (att.entry == att.scoredEntry) return;            // scored once
     if (att.state == 11 || att.state == 12) return;      // mid-reaction
-    if (!(atkE->flags & 0x2000000u) || !atkE->hasCombat) return;
+    if (!(atkE->flags & ctl_entry::Combat) || !atkE->hasCombat) return;
 
     const CtlCombat& blk = atkE->combat;
     if (blk.reactionA() == 0 && blk.reactionB() == 0) return;
@@ -1059,7 +1059,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
             const bool d8 = (other.stateD & 8) != 0;
             bool lineA = false, lineB = false;
             if (const CtlState* oe = stateAt(other, other.entry))
-                if ((oe->flags & 0x2000000u) && oe->hasCombat) {
+                if ((oe->flags & ctl_entry::Combat) && oe->hasCombat) {
                     lineA = (blockFlags(oe->combat) & 4) != 0;
                     lineB = (blockFlags(oe->combat) & 2) != 0;
                 }

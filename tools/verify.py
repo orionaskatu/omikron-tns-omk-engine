@@ -44704,9 +44704,10 @@ def c_licence_headers():
     # 613: + `engine/src/platform/env.{h,cpp}` (the `OMK_*` switches' one reader)
     # 614: + `engine/tools/probe_common.h` (the probes' shared preamble)
     # 615: + `engine/src/o3de/vecmath.h` (the angle factors and vector helpers, once)
-    # 616: + `tools/extract_method.py` (the giant functions split mechanically)
+    # 617: + `engine/backends/sdl/playframe_world_staged_shoot.cpp` (missed by
+    # step 12a's commit) and `tools/extract_method.py` (the giant functions split)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (616, [], 1, []), \
+           (617, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

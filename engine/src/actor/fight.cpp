@@ -169,7 +169,7 @@ void Fight::camThrow(float height, float dt) {
         // reader watching it: *"Camera switched side quickly at some point,
         // making it difficult to understand what happens"*
         // (`todo/fight-mode.md` 15.8c).
-        const FightContext& thrown = (a_.state == 11) ? a_ : b_;
+        const FightContext& thrown = (a_.state == fight_role::Throwing) ? a_ : b_;
         const float remain =
             (thrown.body && thrown.body->channel)
                 ? thrown.body->channel->clipLength() : 30.0f;
@@ -312,23 +312,25 @@ void Fight::tickCamera(float dt) {
     cam_.divider = 1;
     int state = cam_.state;
     const int was = state;
-    if (state != 4) state = 1;
-    if (a_.state == 11 || b_.state == 11) state = 2;      // the throw
-    if (was == 2 && state == 1) {                          // 2 -> 1 hands over
-        state = 4;
+    if (state != fight_cam::Transition) state = fight_cam::Orbit;
+    if (a_.state == fight_role::Throwing || b_.state == fight_role::Throwing) state = fight_cam::Throw;
+    if (was == fight_cam::Throw && state == fight_cam::Orbit) {   // the throw hands over
+        state = fight_cam::Transition;
         cam_.travel = 10.0f;
         cam_.placed = false;
     }
-    if (koCounter_) state = 7;
-    if (state != cam_.state) cam_.placed = (state == 4) ? cam_.placed : false;
+    if (koCounter_) state = fight_cam::Ko;
+    if (state != cam_.state) cam_.placed = (state == fight_cam::Transition) ? cam_.placed : false;
     cam_.state = state;
 
     switch (state) {
-    case 1: camOrbit(true, 0.0f, -9.8425198f, bits(-1050904334)); break;
-    case 2: camThrow(cam_.height, dt); break;
-    case 3: cam_.height = 19.68504f; camSteady(3.5f, 19.68504f, 0.0f, dt); break;
-    case 4: if (!camTransition(dt)) { cam_.state = 1; cam_.placed = false; } break;
-    case 7: {
+    case fight_cam::Orbit: camOrbit(true, 0.0f, -9.8425198f, bits(-1050904334)); break;
+    case fight_cam::Throw: camThrow(cam_.height, dt); break;
+    case fight_cam::Steady: cam_.height = 19.68504f; camSteady(3.5f, 19.68504f, 0.0f, dt); break;
+    case fight_cam::Transition:
+        if (!camTransition(dt)) { cam_.state = fight_cam::Orbit; cam_.placed = false; }
+        break;
+    case fight_cam::Ko: {
         // The KO. The framing changes ONCE PER REPLAY PASS, not per tick:
         // `dword_530C24` remembers which pass the camera was placed for, the
         // two nudges are guarded on it changing, and `byte_530C80 = 0`
@@ -353,7 +355,7 @@ void Fight::tickCamera(float dt) {
         camPlace(cam_.radius, cam_.heading, cam_.height, 0.0f, true);
         break;
     }
-    case 8: cam_.divider = 3; camOrbit(true, 0.0f, 0.0f, 0.0f); break;
+    case fight_cam::Close: cam_.divider = 3; camOrbit(true, 0.0f, 0.0f, 0.0f); break;
     default: camOrbit(false, 0.0f, 0.0f, 0.0f); break;
     }
 
@@ -556,8 +558,9 @@ void Fight::faceOpponent(FightContext& c, const FightContext& other, bool ease) 
     const bool forced = (c.flags & fight_flag::FaceForced) != 0;
     if (!forced) {
         const int s = c.state;
-        if (s == 1 || s == 2 || s == 21 || s == 6 || s == 7 || s == 9 ||
-            s == 11 || s == 12) return;
+        if (s == fight_role::Standing || s == 2 || s == fight_role::GettingUp ||
+            s == fight_role::Down || s == 7 || s == 9 || s == fight_role::Throwing ||
+            s == fight_role::Thrown) return;
         if (other.state == 9) return;
         if (c.flags & 0x400u) return;
         if (c.flags & 0x20u) return;
@@ -572,7 +575,7 @@ void Fight::faceOpponent(FightContext& c, const FightContext& other, bool ease) 
 // ---- Fight_KeepSeparation 0x0049A610 -------------------------------------
 void Fight::keepSeparation(FightContext& c, FightContext& other) {
     if (!c.body || !other.body) return;
-    if (c.state == 11 || c.state == 12) return;
+    if (c.state == fight_role::Throwing || c.state == fight_role::Thrown) return;
     if (c.flags & 0x20u) return;
     measureSeparation();
     if (separation_ >= radius_ || separation_ <= 0.0f) return;
@@ -648,7 +651,7 @@ void Fight::postStep(FightContext& c) {
 
     // The KO trigger: once a loser is recorded, his own entry into role state
     // 6 or 7 starts the replay (the engine also fades the screen here).
-    if (decided_ && (&c == loser_) && (c.state == 6 || c.state == 7) &&
+    if (decided_ && (&c == loser_) && (c.state == fight_role::Down || c.state == 7) &&
         koCounter_ == 0) {
         ++koCounter_;
         ++stats_.kos;
@@ -656,11 +659,11 @@ void Fight::postStep(FightContext& c) {
     }
 
     // The two distance-gated bank switches, `sub_49A4F0` then `SetPersoBank`.
-    if (c.state == 13) {
+    if (c.state == fight_role::FarSwitch) {
         measureSeparation();
         if (separation_ > kFarSwitch) forceEntry(c, c.farEntry);
     }
-    if (c.state == 19) {
+    if (c.state == fight_role::NearSwitch) {
         measureSeparation();
         if (separation_ <= kNearSwitch) forceEntry(c, c.nearEntry);
     }
@@ -709,11 +712,11 @@ void Fight::applyDamage(FightContext& def, const FightContext& att,
         // the only thing that can ever show it. A fight that will not end is
         // diagnosed from this line plus `OMK_KOTRACE=1`
         // (`todo/fight-mode.md` 15.1).
-        const int want = (def.state == 6 || def.state == 21) ? def.crouched
+        const int want = (def.state == fight_role::Down || def.state == fight_role::GettingUp) ? def.crouched
                        : def.knockdown                       ? reaction
                                                              : def.koEntry;
         // The arm and the reaction must agree - see `knockdownArmWithoutBit`.
-        if (def.knockdown && !(def.state == 6 || def.state == 21)) {
+        if (def.knockdown && !(def.state == fight_role::Down || def.state == fight_role::GettingUp)) {
             const CtlState* rs = stateAt(def, reaction);
             if (!rs || !(rs->flags12 & 0x10000000u))
                 ++stats_.knockdownArmWithoutBit;
@@ -737,7 +740,7 @@ void Fight::applyDamage(FightContext& def, const FightContext& att,
                            ? S[(std::size_t)fromE].name.c_str() : "?",
                 fromE >= 0 && fromE < (int)S.size()
                            ? S[(std::size_t)fromE].gotoIdx : -1,
-                (def.state == 6 || def.state == 21) ? "crouched"
+                (def.state == fight_role::Down || def.state == fight_role::GettingUp) ? "crouched"
                     : def.knockdown ? "knockdown" : "koEntry",
                 want, fl(want), w12(want), okF ? "ok" : "FAILED",
                 land, fl(land), w12(land), own, w12(own),
@@ -758,7 +761,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     if (att.stateD != 8 && (def.flags & 0x200u)) return;
     if (decided_) return;                                // already settled
     if (att.entry == att.scoredEntry) return;            // scored once
-    if (att.state == 11 || att.state == 12) return;      // mid-reaction
+    if (att.state == fight_role::Throwing || att.state == fight_role::Thrown) return;      // mid-reaction
     if (!(atkE->flags & ctl_entry::Combat) || !atkE->hasCombat) return;
 
     const CtlCombat& blk = atkE->combat;
@@ -768,8 +771,8 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     const int defHigh = defE->playBits & 1, defLow = defE->playBits & 2;
     const int lineA = blockFlags(blk) & 4, lineB = blockFlags(blk) & 2;
 
-    if (lineA && def.state == 3) return;     // the high guard blanks line A
-    if (lineB && def.state == 4) return;     // and the low guard line B
+    if (lineA && def.state == fight_role::HighGuard) return;     // the high guard blanks line A
+    if (lineB && def.state == fight_role::LowGuard) return;     // and the low guard line B
     if (!windowOpen(blk, att.frameBefore, att.frameAfter)) return;
 
     att.scoredEntry = att.entry;             // this move has now scored
@@ -783,7 +786,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
     // crouched or already down. The grab offset is authored in the ATTACKER's
     // OWN reaction entry - its block's knockback floats - expressed in the
     // defender's frame, and it is the ATTACKER who is teleported onto it.
-    if (att.state == 10) {
+    if (att.state == fight_role::ThrowTry) {
         if (!(inState8 || inState1 || inState13 || inState6)) return;
         const int reactIdx = entryByLow16(att, blk.reactionA());
         const CtlState* reactE = stateAt(att, reactIdx);
@@ -810,8 +813,8 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
 
         forceEntry(att, reactIdx);
         forceEntry(def, followIdx);
-        att.state = 11;
-        def.state = 12;
+        att.state = fight_role::Throwing;
+        def.state = fight_role::Thrown;
         ++stats_.throws;
         events_.push_back({FightEvent::Kind::Throw, def.body->isPlayer, 0,
                            followIdx, att.entry, -1, 0});
@@ -944,7 +947,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
 
     // States 6 and 21 - down, or getting up - run the slot-7 pair on their own
     // clock, which is what fixes the slot stride in the format.
-    if (c.state == 6 || c.state == 21) {
+    if (c.state == fight_role::Down || c.state == fight_role::GettingUp) {
         if (!c.aiTauntStart) {
             c.aiTauntStart = now;
             const int span = static_cast<int>(c.ai->moveDelay[1]) -
@@ -956,7 +959,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
         if (now > c.aiTauntDeadline) {
             c.aiTauntStart = 0; c.aiTauntDeadline = 0;
             injectMove(c, sl[7], 7);
-            c.aiIntent = 107;
+            c.aiIntent = fight_intent::AfterPair;
         }
         return;
     }
@@ -966,8 +969,8 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
     // built-in tables rather than anything out of the profile - the idle word
     // (whose direction comes from the modifier), then the five 0x02 presses
     // with the modifier set to 2. `dword_53AE14` is that modifier.
-    if (separation_ > kCloseIn && c.state != 19) {
-        c.aiIntent = 104;
+    if (separation_ > kCloseIn && c.state != fight_role::NearSwitch) {
+        c.aiIntent = fight_intent::CloseIn;
         injectWords(c, builtin_.m4CAD30);
         aiOr_ = 2;
         injectWords(c, builtin_.m4CAD0C);
@@ -976,7 +979,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
 
     // The opponent is DOWN and this fighter is on his feet: intent 108, the
     // modifier to 8, then one of two two-word combos, evenly.
-    if ((other.state == 6) && (c.state == 1 || c.state == 2)) {
+    if ((other.state == fight_role::Down) && (c.state == fight_role::Standing || c.state == 2)) {
         c.aiIntent = 108;
         aiOr_ = 8;
         injectWords(c, builtin_.m4CAD30);
@@ -995,9 +998,9 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
         return;
     }
 
-    if (c.aiIntent == 104 ||
-        ((c.aiIntent == 105 || c.aiIntent == 107) &&
-         (c.state == 1 || c.state == 2 || c.state == 15))) {
+    if (c.aiIntent == fight_intent::CloseIn ||
+        ((c.aiIntent == 105 || c.aiIntent == fight_intent::AfterPair) &&
+         (c.state == fight_role::Standing || c.state == 2 || c.state == 15))) {
         c.aiMoveStart = now;
         const int span = static_cast<int>(c.ai->enterDelay[1]) -
                          static_cast<int>(c.ai->enterDelay[0]);
@@ -1008,7 +1011,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
         const int roll = rand_() % 100;
         const std::uint32_t w8 = sl[8].weight, w9 = sl[9].weight, w10 = sl[10].weight;
         if (static_cast<std::uint32_t>(roll) <= w8 + w9 + w10) c.aiIntent = 10;
-        if (static_cast<std::uint32_t>(roll) <= w8 + w9)       c.aiIntent = 9;
+        if (static_cast<std::uint32_t>(roll) <= w8 + w9)       c.aiIntent = fight_intent::Guard;
         if (static_cast<std::uint32_t>(roll) <= w8)            c.aiIntent = 8;
         return;
     }
@@ -1018,11 +1021,11 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
     // fighters idle - state 1, or intent 2, on each side, as read - the three
     // latch bits 0x40/0x80/0x100 are cleared (`& 0xFFFFFE3F`), intent 105, and
     // a move is picked from family 1 when standing, 4 otherwise.
-    if ((c.flags & fight_flag::AiGuardLatch) && (c.state == 1 || c.aiIntent == 2) &&
-        (other.state == 1 || other.aiIntent == 2)) {
+    if ((c.flags & fight_flag::AiGuardLatch) && (c.state == fight_role::Standing || c.aiIntent == 2) &&
+        (other.state == fight_role::Standing || other.aiIntent == 2)) {
         c.flags &= 0xFFFFFE3Fu;
         c.aiIntent = 105;
-        if (c.state == 1) pickFromFamily(c, 1);   // sub_465210
+        if (c.state == fight_role::Standing) pickFromFamily(c, 1);   // sub_465210
         else              pickFromFamily(c, 4);   // sub_465160
     }
     if (now <= c.aiMoveDeadline) {
@@ -1041,7 +1044,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
         //   this fighter's OWN entry `+76`: bit 1 high, bit 2 low.
         // A line-A move with this fighter's low bit set ends the arm.
         // Both presses pass a literal 0 modifier.
-        if (c.aiIntent == 9 && separation_ <= kNearSwitch && !(c.flags & fight_flag::AiGuardLatch)) {
+        if (c.aiIntent == fight_intent::Guard && separation_ <= kNearSwitch && !(c.flags & fight_flag::AiGuardLatch)) {
             c.flags |= fight_flag::AiGuardLatch;
             const CtlState* own = stateAt(c, c.entry);
             const int ownBits = own ? own->playBits : 0;
@@ -1085,7 +1088,7 @@ void Fight::tickAi(FightContext& c, FightContext& other) {
     }
 
     if (separation_ < kNearSwitch && !aiOr_ &&
-        other.state != 6 && other.state != 21) {
+        other.state != fight_role::Down && other.state != fight_role::GettingUp) {
         if (static_cast<std::uint32_t>(rand_() % 100) < sl[11].weight) {
             injectMove(c, sl[11], 11);
             return;

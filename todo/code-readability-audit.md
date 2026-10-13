@@ -369,6 +369,16 @@ finding: a check that hashed a conversation frame would flicker.
   `set pieces`, `shoot radar`, `frame rate`, `stairs`). **A lesson for the
   tutorial**: a constant copied out of a decompilation is the decompiler's
   PRINTING of it; when the value matters, read the bytes.
+* step 11 - the fight's last bare numbers (§5's "fight states and
+  intents", which step 2f's flags had not covered): `fight_role::` for a
+  fighter's role (the `.CTL` entry's `+12` low byte - Standing, High/
+  LowGuard, Down, ThrowTry/Throwing/Thrown, Far/NearSwitch, GettingUp),
+  `fight_intent::` (Guard, CloseIn, AfterPair) and `fight_cam::` for
+  `Fight_TickCamera`'s six arms - named only where the code establishes
+  them; roles 2, 7, 9, 15, 16, 32 and intents 2, 8, 10, 105, 108 stay
+  numbers and the headers say so, and `Fight_ResolveHit`'s `inStateN`
+  booleans keep the decompiled function's own shape. `fight.o`
+  byte-identical before and after.
 
 ## 7. For the tutorial
 

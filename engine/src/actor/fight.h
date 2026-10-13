@@ -112,6 +112,41 @@ inline constexpr std::uint32_t Untouchable  = 0x80;   // no hit lands
 inline constexpr std::uint32_t AiGuardLatch = 0x100;  // the AI has raised its guard this approach
 }  // namespace fight_flag
 
+// A fighter's ROLE - `FightContext::state`, the `.CTL` entry's own `+12` low
+// byte, authored per entry - named where the fight's code establishes it.
+// 2, 7, 9, 15, 16 and 32 are compared too and stay numbers: nothing read so
+// far says what they are beyond the tests that name them.
+namespace fight_role {
+inline constexpr int Standing   = 1;    // on his feet and idle: family 1 is picked from here
+inline constexpr int HighGuard  = 3;    // blanks a line-A blow
+inline constexpr int LowGuard   = 4;    // blanks a line-B blow
+inline constexpr int Down       = 6;    // on the floor (with 7, `sub_4452A0`'s KO trigger)
+inline constexpr int ThrowTry   = 10;   // a throw's attempt; on contact 11 and 12
+inline constexpr int Throwing   = 11;
+inline constexpr int Thrown     = 12;
+inline constexpr int FarSwitch  = 13;   // the bank switch past 3 m (`sub_49A4F0`)
+inline constexpr int NearSwitch = 19;   // the bank switch within 1.5 m
+inline constexpr int GettingUp  = 21;   // with 6, runs the slot-7 pair on its own clock
+}  // namespace fight_role
+
+// What the AI last decided (`FightContext::aiIntent`, +92), where established;
+// 2, 8 and 10 (8 and 10 the other two rolled slots), 105 and 108 stay numbers.
+namespace fight_intent {
+inline constexpr int Guard      = 9;    // rolled slot 9: raise the guard within 1.5 m
+inline constexpr int CloseIn    = 104;  // too far: the built-in closing presses
+inline constexpr int AfterPair  = 107;  // the slot-7 pair has played
+}  // namespace fight_intent
+
+// `Fight_TickCamera`'s state (`dword_906F50`), by the framing each arm runs.
+namespace fight_cam {
+inline constexpr int Orbit      = 1;    // both fighters framed, orbiting
+inline constexpr int Throw      = 2;    // a fighter is Throwing
+inline constexpr int Steady     = 3;
+inline constexpr int Transition = 4;    // the hand-over back from a throw
+inline constexpr int Ko         = 7;    // the KO replay
+inline constexpr int Close      = 8;
+}  // namespace fight_cam
+
 struct FightContext {
     FightBody* body = nullptr;        // +0   the actor record
     int  prevEntry = -1;              // +8   the entry before this one

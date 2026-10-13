@@ -949,7 +949,22 @@ struct PlayState {
     void shootApplyAction(Staged& s, omk::ShootRecord& ar, int action, int a3,
                           const char* why);   // `Shoot_ActorAction` on a staged gunman
     void worldCrowd();   // the pedestrians, the vehicles, the player
+    void worldCrowdPedestrians();   // from `worldCrowd`
+    void worldCrowdPlayer();   // from `worldCrowd`
+    void worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool circuitShown, float reach,
+                           int& pedModelSwapped, int& pedRebound, bool noPedLod,
+                           float (&viewFwd)[3], int pedLodMax);   // from `worldCrowd`
+    void worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const omk::Sliders& pd,
+                            bool circuitShown, float vreach, int& vehPastLod);   // from `worldCrowd`
+    void worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& rootDrop);   // from `worldCrowd`
     void worldDrawLists();   // the particles, the visible set, the lights and the shadows into the frame's draw lists
+    void worldDrawSetRuns(float clipReach, unsigned long& runsCulled, unsigned long& runsDrawn,
+                          unsigned long& hiddenMeshes, unsigned long& hiddenDrawn,
+                          unsigned long& movingCulled, unsigned long& movingDrawn);   // from `worldDrawLists`
+    void worldDrawClassicShadows();   // from `worldDrawLists`
+    void worldDrawParticles(bool scriptSprites, float fxNear, float fxFar, int& spriteSlotBase);   // from `worldDrawLists`
+    void worldDrawSky();   // from `worldDrawLists`
+    void worldDrawShadowLight(bool castShadows);   // from `worldDrawLists`
     void worldMirror();   // the mirror and the present pass
 
     // ---- WHAT `main` DEFINED AS LAMBDAS, methods now (`playstate.cpp`)

@@ -15,11 +15,20 @@ bool PlayState::outsideView(const float c[3], float r, bool bodies) {
     
 }
 
+// A draw's bucket key: the mesh path's state bits (render.h: 0x2100 additive,
+// 0x2200 multiply, 0x400 cutout) over the texture's pool slot
+static std::uint32_t keyOf(omk::Blend bl, bool cutout, std::uint32_t slot) {
+    std::uint32_t state = 0;
+    if (bl == omk::Blend::Add)      state = 0x2100;
+    else if (bl == omk::Blend::Mul) state = 0x2200;
+    else if (cutout)                state = 0x400;
+    return omk::withPoolSlot(state | (slot & 0x3Fu), slot);   // past 64: `drawTextureSlot`
+}
+
 // The particles, the visible set, the lights and the shadows into the frame's draw lists
 void PlayState::worldDrawLists() {
     OMK_ZONE("world: draw lists");   // the profiler (todo/debug-tools.md 6)
     auto& session = *session_;
-    omk::Renderer& world = *world_;
     // THE PARTICLES. A section C effect names its sprite by an
     // index into the GLOBAL library `aventure.scx` registers, and its
     // texture goes into the pool after the set's and the speaker's -
@@ -44,156 +53,7 @@ void PlayState::worldDrawLists() {
     const float fxNear = fxGated ? omk::kNearCut : -std::numeric_limits<float>::infinity();
     const float fxFar = fxGated && std::isfinite(clipInches) ? static_cast<float>(clipInches)
                                                              : std::numeric_limits<float>::infinity();
-    if ((session.scene().effects().count() || !ctlSprites.empty() || !foeSprites.empty() ||
-         scriptSprites) && !spriteTab.empty()) {
-        omk::particleGeometry(fxGeo, session.scene().effects(),
-                              view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
-        // The `.CTL` sprites, each on its bone THIS frame (flag 1,
-        // "follow the bone every frame" - all shipped records here
-        // carry it; the others are placed once and this moves them
-        // too, labelled). The frame is `(clock - from) / duration`,
-        // as Cef_TickEffects writes it; flag 8's doubled sprite
-        // clock is not modelled.
-        if (!ctlSprites.empty() && player && drawPlayer) {
-            const omk::NodeTracks* pt = player->poseTracks();
-            const std::vector<omk::MeshPose> pose = pt
-                ? omk::composePose(playerMeshes, *pt, player->poseFrameF(), false)
-                : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
-            const float* pp = player->pos();
-            const float spriteEuler[3] = {player->euler()[0], player->facing(),
-                                          player->euler()[2]};
-            const float fr = player->channelFrame();
-            ctlField.clear();
-            for (const auto& c : ctlSprites) {
-                const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
-                int node = -1;
-                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                    if (std::strstr(playerMeshes[i].name, want)) node = static_cast<int>(i);
-                if (node < 0 || static_cast<std::size_t>(node) >= pose.size()) continue;
-                const omk::MeshPose& hp = pose[static_cast<std::size_t>(node)];
-                const float in[3] = {hp.pos[0] - playerRootXZ[0], hp.pos[1],
-                                     hp.pos[2] - playerRootXZ[1]};
-                float o[3];
-                omk::rotateEuler(spriteEuler, in, o);
-                omk::Particle p;
-                p.pos[0] = o[0] + pp[0];
-                p.pos[1] = o[1] + pp[1] - playerFeet + lastRootDrop;
-                p.pos[2] = o[2] + pp[2];
-                p.life = c.duration > 0.0f ? c.duration : 1.0f;
-                p.frameAge = fr - c.from;
-                if (p.frameAge < 0.0f) p.frameAge = 0.0f;
-                if (p.frameAge > p.life) p.frameAge = p.life;
-                p.age = p.frameAge;
-                p.scale = c.scale > 0.0f ? c.scale : 1.0f;
-                p.sprite = c.sprite;
-                p.mode = 4;                        // Cef_SpawnEffect: +10 = 4, additive
-                if (fr < c.from) continue;         // not in its window yet
-                ctlField.addParticle(p);
-            }
-            omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
-            const std::size_t base = fxGeo.corners.size();
-            for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
-            fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
-            fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), ctlGeo.cornerMirror.begin(), ctlGeo.cornerMirror.end());
-            fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), ctlGeo.cornerMesh.begin(), ctlGeo.cornerMesh.end());
-            fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), ctlGeo.cornerVertex.begin(), ctlGeo.cornerVertex.end());
-            fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), ctlGeo.cornerDeclared.begin(), ctlGeo.cornerDeclared.end());
-            ++fxGeo.revision;
-        }
-        // THE OPPONENT'S, on his bones as DRAWN last frame (`meshAt`,
-        // the same frame the bolts' hit test reads), found by the
-        // attach table's name - the last match, as the player's.
-        if (!foeSprites.empty() && fightRun.active && fightRun.body &&
-            fightRun.body->mo && fightRun.foeChannel) {
-            const Staged& fb2 = *fightRun.body;
-            const auto& ms = fb2.mo->meshes;
-            const float fr = fightRun.foeChannel->frame();
-            ctlField.clear();
-            long placed = 0;
-            for (const auto& c : foeSprites) {
-                const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
-                int node = -1;
-                for (std::size_t i = 0; i < ms.size(); ++i)
-                    if (std::strstr(ms[i].name, want)) node = static_cast<int>(i);
-                if (node < 0 || fb2.meshAt.size() < (static_cast<std::size_t>(node) + 1) * 3) continue;
-                if (fr < c.from) continue;
-                omk::Particle p;
-                for (int k = 0; k < 3; ++k)
-                    p.pos[k] = fb2.meshAt[static_cast<std::size_t>(node) * 3 + static_cast<std::size_t>(k)];
-                p.life = c.duration > 0.0f ? c.duration : 1.0f;
-                p.frameAge = std::clamp(fr - c.from, 0.0f, p.life);
-                p.age = p.frameAge;
-                p.scale = c.scale > 0.0f ? c.scale : 1.0f;
-                p.sprite = c.sprite;
-                p.mode = 4;
-                ctlField.addParticle(p);
-                ++placed;
-                // what can actually DRAW: a batch whose sprite has no
-                // pool slot is skipped at submission, which is how 482
-                // placements once drew nothing (15.16)
-                if (spriteSlot.count(c.sprite)) ++foeSpritesPooled;
-            }
-            if (placed) {
-                foeSpritesDrawn += placed;
-                omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
-                const std::size_t base = fxGeo.corners.size();
-                for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
-                fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
-                fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), ctlGeo.cornerMirror.begin(), ctlGeo.cornerMirror.end());
-                fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), ctlGeo.cornerMesh.begin(), ctlGeo.cornerMesh.end());
-                fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), ctlGeo.cornerVertex.begin(), ctlGeo.cornerVertex.end());
-                fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), ctlGeo.cornerDeclared.begin(), ctlGeo.cornerDeclared.end());
-                ++fxGeo.revision;
-            }
-        }
-        // THE SCRIPTED SPRITES - `Script_Display3DSprite` and its
-        // family (program.h). An instance the scene has linked is
-        // drawn every frame from its own fields: frame `+22`, type
-        // `+20` (the blend mode), the two scales, the roll. The
-        // engine walks the scene's `+36` list after the effects, and
-        // `Sprite_SetFrame` hides an instance whose frame is past the
-        // sprite's count by writing 0xFFFF, which the clamp here
-        // stands in for.
-        if (scriptSprites) {
-            omk::ParticleField scField;
-            for (const auto& kv : session.scene().sprites()) {
-                const auto& sp = kv.second;
-                const omk::SpriteFrames* spf = sp.id < 0 ? nullptr : spriteTab.framesOf(sp.id);
-                if (!sp.linked || !spf) continue;
-                const int n = static_cast<int>(spf->frames.size());
-                if (sp.frame < 0 || sp.frame >= n) continue;   // 0xFFFF: not drawn
-                if (spriteLogged[sp.row] != sp.linkedAt + 1) {
-                    spriteLogged[sp.row] = sp.linkedAt + 1;
-                    std::printf("sprite: LINKED row %d id %d type %d frame %d/%d scale %.2f/%.2f at %.0f,%.0f,%.0f (scene tick %ld)\n",
-                                sp.row, sp.id, sp.type, sp.frame, n, sp.sx, sp.sy,
-                                sp.pos[0], sp.pos[1], sp.pos[2], sp.linkedAt);
-                }
-                omk::Particle p;
-                for (int k = 0; k < 3; ++k) p.pos[k] = sp.pos[k];
-                p.life = 1.0f;
-                p.frame = sp.frame;
-                p.scale = sp.sx;
-                p.scaleY = sp.sy;
-                p.angle = sp.roll;
-                p.sprite = sp.id;
-                p.mode = static_cast<std::uint8_t>(sp.type & 0xF);
-                scField.addParticle(p);
-            }
-            omk::Geometry scGeo;
-            omk::particleGeometry(scGeo, scField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
-            const std::size_t base = fxGeo.corners.size();
-            for (omk::Batch b : scGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
-            fxGeo.corners.insert(fxGeo.corners.end(), scGeo.corners.begin(), scGeo.corners.end());
-            fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), scGeo.cornerMirror.begin(), scGeo.cornerMirror.end());
-            fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), scGeo.cornerMesh.begin(), scGeo.cornerMesh.end());
-            fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), scGeo.cornerVertex.begin(), scGeo.cornerVertex.end());
-            fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), scGeo.cornerDeclared.begin(), scGeo.cornerDeclared.end());
-            ++fxGeo.revision;
-        }
-        // The pool already carries them: it is built above, in one
-        // place, with a section per model.
-        spriteSlotBase = static_cast<int>(spriteTexBase);
-    }
+    worldDrawParticles(scriptSprites, fxNear, fxFar, spriteSlotBase);
     // ONE bucket order for the set, the speaker and the particles.
     // `Render_FlushBuckets` walks a single 14-bit key ascending and
     // meshes and sprites share it (`Render_SubmitSprites` ORs its
@@ -206,13 +66,6 @@ void PlayState::worldDrawLists() {
     // multiply, 0x400 cutout); the per-face depth bits 0x80/0x1000
     // are not modelled here, as they are not for the set.
     draws.clear();   // its capacity kept from frame to frame (tier A)
-    const auto keyOf = [](omk::Blend bl, bool cutout, std::uint32_t slot) {
-        std::uint32_t state = 0;
-        if (bl == omk::Blend::Add)      state = 0x2100;
-        else if (bl == omk::Blend::Mul) state = 0x2200;
-        else if (cutout)                state = 0x400;
-        return omk::withPoolSlot(state | (slot & 0x3Fu), slot);   // past 64: `drawTextureSlot`
-    };
     // THE SKY, placed and submitted before anything else.
     //
     // `sub_41CF10` sets the node to the camera's x and z and its own
@@ -228,61 +81,7 @@ void PlayState::worldDrawLists() {
     // the far-bucket bit (`!(key & 0x800)` guards it) and why its fog
     // range is DOUBLED. It clears 0x3000 too, so the sky is opaque
     // whatever the material says.
-    if (drawSky && !sky.base.empty() && !sky.geo.batches.empty()) {
-        const float sx = view.cam.eye[0], sz = view.cam.eye[2];
-        const float sy = sky.origin[1] - kSkyLift;
-        static const bool cpuSky = omk::envFlag("OMK_CPU_SKY");   // A/B only
-        const bool skyGpu = !cpuSky && !cpuBodiesFlag && world.posesBodies() &&
-                            sky.rest.cornerMesh.size() == sky.rest.corners.size() &&
-                            !sky.rest.corners.empty();
-        static int skyPathWas = -1;
-        if (skyPathWas != (skyGpu ? 1 : 0)) {
-            skyPathWas = skyGpu ? 1 : 0;
-            std::printf("frame %ld: the sky %s - %zu corners\n", frameNo,
-                        skyGpu ? "MOVED BY THE RENDERER (static, one translation a frame)"
-                               : "rewritten on the CPU when the camera moves",
-                        sky.base.size());
-        }
-        if (skyGpu) {
-            std::int32_t meshes = 0;
-            for (const std::int32_t m : sky.rest.cornerMesh) meshes = std::max(meshes, m + 1);
-            sky.affine.assign(12u * static_cast<std::size_t>(meshes), 0.0f);
-            for (std::int32_t m = 0; m < meshes; ++m) {
-                float* a = sky.affine.data() + 12 * m;
-                a[0] = a[5] = a[10] = 1.0f;
-                a[3] = sx; a[7] = sy; a[11] = sz;
-            }
-            for (const auto& b : sky.rest.batches) {
-                draws.push_back({0x800u | ((static_cast<std::uint32_t>(b.material) +
-                                            static_cast<std::uint32_t>(sky.texBase)) & 0x3Fu),
-                                 &sky.rest, b.start, b.count, omk::Blend::Opaque, false});
-                draws.back().meshPose = sky.affine.data();
-                draws.back().meshPoses = static_cast<std::size_t>(meshes);
-            }
-        } else {
-            // ...and on the CPU only when the camera's x or z CHANGED:
-            // the same corners are the same bytes, and a revision left
-            // alone is a buffer not sent again
-            if (!sky.placed || sky.placedAt[0] != sx || sky.placedAt[1] != sz) {
-                for (std::size_t k = 0; k < sky.base.size(); ++k) {
-                    const omk::Corner& b0 = sky.base[k];
-                    omk::Corner& c = sky.geo.corners[k];
-                    c = b0;
-                    c.x = sx + (b0.x - sky.origin[0]) * kSkyScale;
-                    c.y = sy + (b0.y - sky.origin[1]) * kSkyScale;
-                    c.z = sz + (b0.z - sky.origin[2]) * kSkyScale;
-                }
-                sky.geo.revision = ++worldGeoRev;
-                sky.placed = true;
-                sky.placedAt[0] = sx;
-                sky.placedAt[1] = sz;
-            }
-            for (const auto& b : sky.geo.batches)
-                draws.push_back({0x800u | ((static_cast<std::uint32_t>(b.material) +
-                                            static_cast<std::uint32_t>(sky.texBase)) & 0x3Fu),
-                                 &sky.geo, b.start, b.count, omk::Blend::Opaque, false});
-        }
-    }
+    worldDrawSky();
 
     // THE VISIBLE SET, and it is the CLIP DISTANCE that sizes it.
     //
@@ -301,6 +100,348 @@ void PlayState::worldDrawLists() {
     const float clipReach = static_cast<float>(clipInches);
     std::size_t runsDrawn = 0, runsCulled = 0, movingDrawn = 0, movingCulled = 0;
     std::size_t hiddenMeshes = 0, hiddenDrawn = 0;
+    worldDrawSetRuns(clipReach, runsCulled, runsDrawn, hiddenMeshes, hiddenDrawn, movingCulled,
+                     movingDrawn);
+    {
+        static std::size_t hiddenTold = 0, hiddenDrawnTold = 0;
+        if (hiddenMeshes != hiddenTold || hiddenDrawn != hiddenDrawnTold) {
+            hiddenTold = hiddenMeshes;
+            hiddenDrawnTold = hiddenDrawn;
+            std::printf("frame %ld: world draw - flag 2: %zu set mesh%s hidden, %zu of them "
+                        "drawn\n", frameNo, hiddenMeshes, hiddenMeshes == 1 ? "" : "es", hiddenDrawn);
+        }
+    }
+    if (clipReport) {
+        if (unlimitedClip)
+            std::printf("clip: unlimited - %zu mesh runs drawn, %zu culled\n",
+                        runsDrawn, runsCulled);
+        else
+            std::printf("clip: %.0f in - %zu mesh runs drawn, %zu culled\n",
+                        clipInches, runsDrawn, runsCulled);
+        if (movingDrawn + movingCulled)
+            std::printf("clip: and %zu moving meshes drawn by the renderer from their "
+                        "own corners, %zu culled\n", movingDrawn, movingCulled);
+        clipReport = false;
+    }
+    // A FRAME WHERE THE SET IS CULLED AND THE BODIES ARE NOT draws a
+    // character on black, which is what a player sees as a flicker:
+    // the visible-set walk above tests every mesh against the clip
+    // distance FROM THE CAMERA EYE, and a staged body is added below
+    // with no such test. One line a frame, so a run can be read for
+    // the frames where the two disagree.
+    std::size_t litBodies = 0;
+    for (const auto& up : staged) if (up->drawn && up->mo) ++litBodies;
+    if (omk::envFlag("OMK_CLIPLOG")) {
+        std::printf("  [clip] frame %ld  runs %zu drawn %zu culled  bodies %zu"
+                    "  eye %.0f %.0f %.0f\n", frameNo, runsDrawn, runsCulled, litBodies,
+                    view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]);
+    }
+    harnessFlickerNote(runsDrawn, runsCulled, litBodies);
+    phSpan["player"] += phaseNow() - player0;
+    mark("pedestrians, traffic");
+    // ---- THE LIGHTS, per pixel (`todo/enhancements.md` 7) -------
+    //
+    // The same `.3DO` records the crowd is lit by, handed to the
+    // backend instead of applied on the CPU. Nearest first and capped,
+    // because a uniform block is finite and a body is reached by a
+    // handful: Anekbah ships 155 and its lamps reach 700-900 units.
+    // THE SHIMMER's clock, advanced the way `Game_Tick` does it:
+    // `clock += 2 * frameDelta`, wrapping at 256, where one frame's
+    // delta is 1.0 at 30 Hz (`docs/BOOT.md` 4). 233 set meshes ride
+    // it - the far skyline of every city - and it is the GAME's, not
+    // an enhancement, so both backends draw it.
+    // ...by the DELTA, not the presented frame: `frameSec * 30` is 1.0
+    // at 30 and in every `--frames` run, 0.5 at 60 (todo/sixty-fps.md 2)
+    shimmerClock += 2.0f * static_cast<float>(frameSec * 30.0);
+    while (shimmerClock >= omk::kShimmerWrap) shimmerClock -= omk::kShimmerWrap;
+    view.shimmerClock = shimmerClock;
+    view.dither = dither;
+    const bool litPerPixel = lighting > 0;
+    // TWO BASES, and the difference is a property of the models.
+    //
+    // `1` starts from BLACK, which is the engine's own rule for the
+    // bodies it lights: `sub_494E80` writes `instance[+416]` into
+    // every runtime vertex colour and every site that sets +416 sets
+    // it to 0, and the crowd models ship pure white (all 446 of
+    // PSH_FN's vertices are 255,255,255), so there is no baked light
+    // in them to lose.
+    //
+    // `2` ADDS to the baked colour, for bodies the engine does not light;
+    // it is not used here (todo/drift-audit.md L1): `Actor_LoadModel` calls
+    // `LightObject` and `sub_440CA0` lights every character exactly as it
+    // lights a walker, from the scene's `+416`, so a character takes `1`
+    // like the crowd, and `1` starts from that grey (`View::litBase`)
+    // rather than from black. Mode `2` stays in the shaders, unused here.
+    const int litCrowd  = litPerPixel ? 1 : 0;
+    const int litStaged = litPerPixel ? 1 : 0;
+    view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
+    view.lights.clear();
+    if (litPerPixel) {
+        float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};
+        if (drawPlayer && !playerPosed.corners.empty()) {
+            at[0] = playerPosed.corners.front().x;
+            at[1] = playerPosed.corners.front().y;
+            at[2] = playerPosed.corners.front().z;
+        }
+        std::vector<std::pair<float, const omk::Light3do*>> near;
+        for (const WorldSlot& ws2 : worldSlots)
+            for (const auto& l : ws2.lights) {
+                const float dx = at[0] - l.pos[0], dy = at[1] - l.pos[1],
+                            dz = at[2] - l.pos[2];
+                const float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 > l.radiusA * l.radiusA) continue;   // out of reach
+                if (!(l.radiusA > l.radiusB)) continue;
+                near.emplace_back(d2, &l);
+            }
+        std::sort(near.begin(), near.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (near.size() > static_cast<std::size_t>(omk::View::kMaxGpuLights))
+            near.resize(static_cast<std::size_t>(omk::View::kMaxGpuLights));
+        for (const auto& [d2, l] : near) {
+            omk::View::GpuLight g{};
+            for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
+            g.radiusA = l->radiusA; g.radiusB = l->radiusB;
+            g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
+            g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
+            g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
+            g.intensity = l->f32;
+            view.lights.push_back(g);
+        }
+        if (!lightsTold) {
+            lightsTold = true;
+            std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
+                        "reach the player, nearest first\n", frameNo, view.lights.size());
+        }
+    }
+    // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
+    //
+    // An ENHANCEMENT: nothing in the engine casts a real shadow. What
+    // keeps it from being an invented sun is where the direction comes
+    // from - the strongest of the SET's own `.3DO` light records
+    // reaching the casters, the same table and the same reach and
+    // falloff rules `applyLights` uses to light the crowd. With no
+    // light in reach nothing is drawn, which is honest: the port does
+    // not know where the light is, so it does not guess.
+    //
+    // Only characters cast. A set is shaded by a colour baked into
+    // every vertex and that colour ALREADY contains the artists'
+    // shadows (ASSETS 4c), so a map that darkened the set from the set
+    // would paint a second shadow over the first.
+    const bool castShadows = drawShadows && shadowQuality >= 2;
+    view.shadow = omk::View::ShadowLight{};
+    worldDrawShadowLight(castShadows);
+    mark("lights");
+    // ---- THE SHADOWS ------------------------------------------
+    //
+    // `Actors_TickAll` calls `Actor_DrawShadow(detail, actor)` for
+    // every live actor and `Sliders_Tick` places the crowd's, both
+    // behind option row 5. Built here, after every body has been
+    // placed and before the draw list is sorted, because the blobs
+    // are FRAME GEOMETRY - the engine writes them straight into the
+    // scene's vertex and triangle pools each frame, not into a node.
+    //
+    // The probe is the walkable soup, which is what the bodies are
+    // seated on; the engine's `World_ProbePoint(-1, ...)` runs on the
+    // same collision geometry.
+    shadowGeo.corners.clear();
+    shadowGeo.batches.clear();
+    shadowGeo.cornerMirror.clear();
+    shadowGeo.cornerMesh.clear();
+    shadowGeo.cornerVertex.clear();
+    shadowGeo.cornerDeclared.clear();
+    // ...and only up to `fitted`: a MAPPED frame replaces the blobs
+    // with a real shadow rather than drawing both.
+    worldDrawClassicShadows();
+    // EVERY staged body, each with its own model's base - the change
+    // issue 41 asks for. One geometry per actor, so two bodies wearing
+    // the same model still draw at their own two places.
+    for (const auto& up : staged) {
+        if (!up->drawn || !up->mo) continue;
+        const int base = static_cast<int>(up->mo->texBase);
+        if (up->gpu && up->restGeo) {
+            for (const auto& b : up->restGeo->batches) {
+                draws.push_back({keyOf(b.blend, b.cutout,
+                                       static_cast<std::uint32_t>(b.material + base)),
+                                 up->restGeo, b.start, b.count, b.blend, b.cutout,
+                                 litStaged, castShadows});
+                draws.back().meshPose = up->affine.data();
+                draws.back().meshPoses = up->mo->meshes.size();
+                draws.back().vertexLights = up->lightCount ? up->lights.data() : nullptr;
+                draws.back().vertexLightCount = up->lightCount;
+                draws.back().lightsFromBlack = up->lightsBlack;
+                draws.back().lightBase = up->lightBase;
+            }
+            continue;
+        }
+        for (const auto& b : up->posed.batches)
+            draws.push_back({keyOf(b.blend, b.cutout,
+                                   static_cast<std::uint32_t>(b.material + base)),
+                             &up->posed, b.start, b.count, b.blend, b.cutout,
+                             litStaged, castShadows});
+    }
+    for (const auto& up : pedStaged) {
+        if (!up->drawn || !up->mo) continue;
+        const int base = static_cast<int>(up->mo->texBase);
+        if (up->gpu && up->restGeo) {
+            for (const auto& b : up->restGeo->batches) {
+                draws.push_back({keyOf(b.blend, b.cutout,
+                                       static_cast<std::uint32_t>(b.material + base)),
+                                 up->restGeo, b.start, b.count, b.blend, b.cutout,
+                                 litCrowd, castShadows});
+                omk::Draw& dr = draws.back();
+                dr.meshPose = up->affine.data();
+                dr.meshPoses = up->mo->meshes.size();
+                dr.vertexLights = up->lightCount ? up->lights.data() : nullptr;
+                dr.vertexLightCount = up->lightCount;
+                dr.lightsFromBlack = up->lightsBlack;
+                dr.lightBase = up->lightBase;
+            }
+            continue;
+        }
+        for (const auto& b : up->posed.batches)
+            draws.push_back({keyOf(b.blend, b.cutout,
+                                   static_cast<std::uint32_t>(b.material + base)),
+                             &up->posed, b.start, b.count, b.blend, b.cutout,
+                             litCrowd, castShadows});
+    }
+    for (const auto& up : vehStaged) {
+        if (!up->drawn || !up->mo) continue;
+        const int base = static_cast<int>(up->mo->texBase);
+        if (up->gpu) {
+            for (const auto& b : up->atRest->batches) {
+                draws.push_back({keyOf(b.blend, b.cutout,
+                                       static_cast<std::uint32_t>(b.material + base)),
+                                 up->atRest, b.start, b.count, b.blend, b.cutout,
+                                 litCrowd, castShadows});
+                draws.back().meshPose = up->affine.data();
+                draws.back().meshPoses = up->mo->meshes.size();
+            }
+            continue;
+        }
+        for (const auto& b : up->posed.batches)
+            draws.push_back({keyOf(b.blend, b.cutout,
+                                   static_cast<std::uint32_t>(b.material + base)),
+                             &up->posed, b.start, b.count, b.blend, b.cutout,
+                             litCrowd, castShadows});
+    }
+    // which path drew him, said when it changes - and counted, for the
+    // runs that compare the two
+    {
+        static int pathWas = -1;
+        static long gpuFrames = 0, cpuFrames = 0;
+        const int path = !drawPlayer ? 0 : playerGpu ? 1 : playerOffView ? 2 : 3;
+        gpuFrames += path == 1;
+        cpuFrames += path == 3;
+        if (path != pathWas) {
+            pathWas = path;
+            static const char* const names[4] = {
+                "not drawn", "posed by the RENDERER (his rest, one affine a mesh)",
+                "outside the view, not drawn", "posed on the CPU"};
+            std::printf("frame %ld: the player %s - %zu meshes, %zu corners; so far %ld "
+                        "frames by the renderer, %ld on the CPU\n", frameNo, names[path],
+                        playerMeshes.size(), playerRest.corners.size(), gpuFrames, cpuFrames);
+        }
+    }
+    if (drawPlayer && playerGpu) {
+        for (const auto& b : playerRest.batches) {
+            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
+                                       b.material + static_cast<int>(playerTexBase))),
+                             &playerRest, b.start, b.count, b.blend, b.cutout,
+                             litStaged, castShadows});
+            draws.back().meshPose = playerAffine.data();
+            draws.back().meshPoses = playerMeshes.size();
+            draws.back().vertexLights = playerLightCount ? playerLights.data() : nullptr;
+            draws.back().vertexLightCount = playerLightCount;
+            draws.back().lightsFromBlack = playerLightsBlack;
+            draws.back().lightBase = playerLightBase;
+        }
+    } else if (drawPlayer && !playerOffView)
+        for (const auto& b : playerPosed.batches)
+            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
+                                       b.material + static_cast<int>(playerTexBase))),
+                             &playerPosed, b.start, b.count, b.blend, b.cutout,
+                             litStaged, castShadows});
+    // FIRST PERSON: only the meshes the hide spared - flag 0x200000,
+    // the left arm - cut out of the posed body batch by batch.
+    static omk::Geometry playerArm;
+    if (drawArm) {
+        playerArm.corners.clear();
+        playerArm.batches.clear();
+        const std::vector<std::int32_t>& cm =
+            playerPosed.cornerMesh.size() == playerPosed.corners.size()
+                ? playerPosed.cornerMesh : playerRest.cornerMesh;
+        if (cm.size() == playerPosed.corners.size()) {
+            for (const auto& b : playerPosed.batches) {
+                const std::size_t base = playerArm.corners.size();
+                for (std::size_t c = b.start; c < b.start + b.count; ++c) {
+                    const std::int32_t mi = cm[c];
+                    if (mi < 0 || static_cast<std::size_t>(mi) >= playerMeshes.size()) continue;
+                    if (!(static_cast<std::uint32_t>(playerMeshes[static_cast<std::size_t>(mi)].flags)
+                          & 0x200000u)) continue;
+                    playerArm.corners.push_back(playerPosed.corners[c]);
+                }
+                const std::size_t cnt = playerArm.corners.size() - base;
+                if (!cnt) continue;
+                omk::Batch nb = b;
+                nb.start = base;
+                nb.count = cnt;
+                playerArm.batches.push_back(nb);
+            }
+        }
+        playerArm.revision = ++worldGeoRev;
+        for (const auto& b : playerArm.batches)
+            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
+                                       b.material + static_cast<int>(playerTexBase))),
+                             &playerArm, b.start, b.count, b.blend, b.cutout,
+                             litStaged, false});
+        static long armTold = -1;
+        if (armTold < 0) {
+            armTold = frameNo;
+            std::printf("frame %ld: first person - the arm the hide spares: %zu corners "
+                        "of %zu, %zu batches (meshes flagged 0x200000)\n", frameNo,
+                        playerArm.corners.size(), playerPosed.corners.size(),
+                        playerArm.batches.size());
+        }
+    }
+    // The props, each batch through its own model's pool section.
+    for (std::size_t bi = 0; bi < propGeo.batches.size(); ++bi) {
+        const auto& b = propGeo.batches[bi];
+        const PropModel* owner = bi < propBatchOwner.size() ? propBatchOwner[bi] : nullptr;
+        if (!owner) continue;
+        draws.push_back({keyOf(b.blend, b.cutout,
+                               static_cast<std::uint32_t>(b.material +
+                                   static_cast<int>(owner->texBase))),
+                         &propGeo, b.start, b.count, b.blend, b.cutout});
+        // a prop is lit as a character is (`Object_Load`'s `LightObject`) -
+        // per pixel too, when that enhancement takes the place of the
+        // per-vertex light
+        draws.back().lit = litStaged;
+    }
+    if (spriteSlotBase >= 0)
+        for (const auto& b : fxGeo.batches) {
+            // `b.material` is the sprite's ID; the pool is packed, so
+            // it has to be looked up rather than added to the base
+            const auto slIt = spriteSlot.find(b.material);
+            const int sl = slIt == spriteSlot.end() ? -1 : slIt->second;
+            if (sl < 0) continue;      // a sprite with no texture: not drawn
+            draws.push_back({keyOf(b.blend, b.cutout,
+                                   static_cast<std::uint32_t>(spriteSlotBase + sl)),
+                             &fxGeo, b.start, b.count, b.blend, b.cutout});
+        }
+    std::stable_sort(draws.begin(), draws.end(),
+                     [](const omk::Draw& a, const omk::Draw& b) {
+                         return (a.bucketKey & 0x3FFFu) < (b.bucketKey & 0x3FFFu);
+                     });
+    mark("shadows");
+}
+
+
+// THE SETS' DRAW RUNS: the visible-set walk over both resident slots, at the clip distance (from `worldDrawLists`)
+void PlayState::worldDrawSetRuns(float clipReach, unsigned long& runsCulled,
+                                 unsigned long& runsDrawn, unsigned long& hiddenMeshes,
+                                 unsigned long& hiddenDrawn, unsigned long& movingCulled,
+                                 unsigned long& movingDrawn) {
+    omk::Renderer& world = *world_;
     for (int slot = 0; slot < 2; ++slot) {
         const WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
         // loaded and solid, but not in the RENDER list (state 1)
@@ -431,275 +572,10 @@ void PlayState::worldDrawLists() {
             }
         }
     }
-    {
-        static std::size_t hiddenTold = 0, hiddenDrawnTold = 0;
-        if (hiddenMeshes != hiddenTold || hiddenDrawn != hiddenDrawnTold) {
-            hiddenTold = hiddenMeshes;
-            hiddenDrawnTold = hiddenDrawn;
-            std::printf("frame %ld: world draw - flag 2: %zu set mesh%s hidden, %zu of them "
-                        "drawn\n", frameNo, hiddenMeshes, hiddenMeshes == 1 ? "" : "es", hiddenDrawn);
-        }
-    }
-    if (clipReport) {
-        if (unlimitedClip)
-            std::printf("clip: unlimited - %zu mesh runs drawn, %zu culled\n",
-                        runsDrawn, runsCulled);
-        else
-            std::printf("clip: %.0f in - %zu mesh runs drawn, %zu culled\n",
-                        clipInches, runsDrawn, runsCulled);
-        if (movingDrawn + movingCulled)
-            std::printf("clip: and %zu moving meshes drawn by the renderer from their "
-                        "own corners, %zu culled\n", movingDrawn, movingCulled);
-        clipReport = false;
-    }
-    // A FRAME WHERE THE SET IS CULLED AND THE BODIES ARE NOT draws a
-    // character on black, which is what a player sees as a flicker:
-    // the visible-set walk above tests every mesh against the clip
-    // distance FROM THE CAMERA EYE, and a staged body is added below
-    // with no such test. One line a frame, so a run can be read for
-    // the frames where the two disagree.
-    std::size_t litBodies = 0;
-    for (const auto& up : staged) if (up->drawn && up->mo) ++litBodies;
-    if (omk::envFlag("OMK_CLIPLOG")) {
-        std::printf("  [clip] frame %ld  runs %zu drawn %zu culled  bodies %zu"
-                    "  eye %.0f %.0f %.0f\n", frameNo, runsDrawn, runsCulled, litBodies,
-                    view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]);
-    }
-    harnessFlickerNote(runsDrawn, runsCulled, litBodies);
-    phSpan["player"] += phaseNow() - player0;
-    mark("pedestrians, traffic");
-    // ---- THE LIGHTS, per pixel (`todo/enhancements.md` 7) -------
-    //
-    // The same `.3DO` records the crowd is lit by, handed to the
-    // backend instead of applied on the CPU. Nearest first and capped,
-    // because a uniform block is finite and a body is reached by a
-    // handful: Anekbah ships 155 and its lamps reach 700-900 units.
-    // THE SHIMMER's clock, advanced the way `Game_Tick` does it:
-    // `clock += 2 * frameDelta`, wrapping at 256, where one frame's
-    // delta is 1.0 at 30 Hz (`docs/BOOT.md` 4). 233 set meshes ride
-    // it - the far skyline of every city - and it is the GAME's, not
-    // an enhancement, so both backends draw it.
-    // ...by the DELTA, not the presented frame: `frameSec * 30` is 1.0
-    // at 30 and in every `--frames` run, 0.5 at 60 (todo/sixty-fps.md 2)
-    shimmerClock += 2.0f * static_cast<float>(frameSec * 30.0);
-    while (shimmerClock >= omk::kShimmerWrap) shimmerClock -= omk::kShimmerWrap;
-    view.shimmerClock = shimmerClock;
-    view.dither = dither;
-    const bool litPerPixel = lighting > 0;
-    // TWO BASES, and the difference is a property of the models.
-    //
-    // `1` starts from BLACK, which is the engine's own rule for the
-    // bodies it lights: `sub_494E80` writes `instance[+416]` into
-    // every runtime vertex colour and every site that sets +416 sets
-    // it to 0, and the crowd models ship pure white (all 446 of
-    // PSH_FN's vertices are 255,255,255), so there is no baked light
-    // in them to lose.
-    //
-    // `2` ADDS to the baked colour, for bodies the engine does not light;
-    // it is not used here (todo/drift-audit.md L1): `Actor_LoadModel` calls
-    // `LightObject` and `sub_440CA0` lights every character exactly as it
-    // lights a walker, from the scene's `+416`, so a character takes `1`
-    // like the crowd, and `1` starts from that grey (`View::litBase`)
-    // rather than from black. Mode `2` stays in the shaders, unused here.
-    const int litCrowd  = litPerPixel ? 1 : 0;
-    const int litStaged = litPerPixel ? 1 : 0;
-    view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
-    view.lights.clear();
-    if (litPerPixel) {
-        float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};
-        if (drawPlayer && !playerPosed.corners.empty()) {
-            at[0] = playerPosed.corners.front().x;
-            at[1] = playerPosed.corners.front().y;
-            at[2] = playerPosed.corners.front().z;
-        }
-        std::vector<std::pair<float, const omk::Light3do*>> near;
-        for (const WorldSlot& ws2 : worldSlots)
-            for (const auto& l : ws2.lights) {
-                const float dx = at[0] - l.pos[0], dy = at[1] - l.pos[1],
-                            dz = at[2] - l.pos[2];
-                const float d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 > l.radiusA * l.radiusA) continue;   // out of reach
-                if (!(l.radiusA > l.radiusB)) continue;
-                near.emplace_back(d2, &l);
-            }
-        std::sort(near.begin(), near.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-        if (near.size() > static_cast<std::size_t>(omk::View::kMaxGpuLights))
-            near.resize(static_cast<std::size_t>(omk::View::kMaxGpuLights));
-        for (const auto& [d2, l] : near) {
-            omk::View::GpuLight g{};
-            for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
-            g.radiusA = l->radiusA; g.radiusB = l->radiusB;
-            g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
-            g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
-            g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
-            g.intensity = l->f32;
-            view.lights.push_back(g);
-        }
-        if (!lightsTold) {
-            lightsTold = true;
-            std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
-                        "reach the player, nearest first\n", frameNo, view.lights.size());
-        }
-    }
-    // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
-    //
-    // An ENHANCEMENT: nothing in the engine casts a real shadow. What
-    // keeps it from being an invented sun is where the direction comes
-    // from - the strongest of the SET's own `.3DO` light records
-    // reaching the casters, the same table and the same reach and
-    // falloff rules `applyLights` uses to light the crowd. With no
-    // light in reach nothing is drawn, which is honest: the port does
-    // not know where the light is, so it does not guess.
-    //
-    // Only characters cast. A set is shaded by a colour baked into
-    // every vertex and that colour ALREADY contains the artists'
-    // shadows (ASSETS 4c), so a map that darkened the set from the set
-    // would paint a second shadow over the first.
-    const bool castShadows = drawShadows && shadowQuality >= 2;
-    view.shadow = omk::View::ShadowLight{};
-    if (castShadows) {
-        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
-        bool any = false;
-        int bodies = 0;
-        // ...and only the bodies NEAR THE CAMERA. The slab is one
-        // 1024-texel map, so its width is its resolution: bounding
-        // every staged body in the city made it 7484 units across -
-        // 15 units a texel, which is a shadow the size of a torso.
-        // 1200 units is 30 m, past which a character's shadow is
-        // sub-pixel anyway. LABELLED as this port's number.
-        constexpr float kShadowRange = 1200.0f;
-        const auto bound = [&](const omk::Geometry& g) {
-            if (g.corners.empty()) return;
-            const auto& c0 = g.corners.front();
-            const float dx = c0.x - view.cam.eye[0], dy = c0.y - view.cam.eye[1],
-                        dz = c0.z - view.cam.eye[2];
-            if (dx * dx + dy * dy + dz * dz > kShadowRange * kShadowRange) return;
-            for (const auto& c : g.corners) {
-                const float p3[3] = {c.x, c.y, c.z};
-                for (int k = 0; k < 3; ++k) {
-                    lo[k] = std::min(lo[k], p3[k]);
-                    hi[k] = std::max(hi[k], p3[k]);
-                }
-            }
-            ++bodies;
-            any = true;
-        };
-        // A BODY THE RENDERER POSES (GLES) has no world corners here, so it
-        // is bounded by its meshes' ORIGINS - each affine's translation, the
-        // skeleton's joints - which is what places the slab and nothing
-        // finer is needed for that
-        const auto boundAffine = [&](const std::vector<float>& a) {
-            if (a.size() < 12) return;
-            const float dx = a[3] - view.cam.eye[0], dy = a[7] - view.cam.eye[1],
-                        dz = a[11] - view.cam.eye[2];
-            if (dx * dx + dy * dy + dz * dz > kShadowRange * kShadowRange) return;
-            for (std::size_t m = 0; m + 12 <= a.size(); m += 12) {
-                const float p3[3] = {a[m + 3], a[m + 7], a[m + 11]};
-                for (int k = 0; k < 3; ++k) {
-                    lo[k] = std::min(lo[k], p3[k]);
-                    hi[k] = std::max(hi[k], p3[k]);
-                }
-            }
-            ++bodies;
-            any = true;
-        };
-        if (drawPlayer && !playerPosed.corners.empty()) bound(playerPosed);
-        for (const auto& up : staged)
-            if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
-        for (const auto& up : pedStaged)
-            if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
-        if (any) {
-            // ...CENTRED ON THE PLAYER, not on the bodies' midpoint.
-            // A street's lamps reach about 700 units and eleven
-            // scattered bodies put their midpoint out in the road
-            // beyond all of them, so the light picked there was the
-            // one distant fill that reaches everywhere - and its
-            // shadow lands off the frame. One map, centred on the
-            // character you are looking at; a body outside the slab
-            // casts nothing, which is stated rather than hidden.
-            float centre[3];
-            if (drawPlayer && !playerPosed.corners.empty()) {
-                float plo[3] = {1e30f, 1e30f, 1e30f}, phi[3] = {-1e30f, -1e30f, -1e30f};
-                for (const auto& c : playerPosed.corners) {
-                    const float q[3] = {c.x, c.y, c.z};
-                    for (int k = 0; k < 3; ++k) {
-                        plo[k] = std::min(plo[k], q[k]);
-                        phi[k] = std::max(phi[k], q[k]);
-                    }
-                }
-                for (int k = 0; k < 3; ++k) centre[k] = (plo[k] + phi[k]) * 0.5f;
-            } else {
-                for (int k = 0; k < 3; ++k) centre[k] = (lo[k] + hi[k]) * 0.5f;
-            }
-            // Enough for a body and the throw of its shadow under a
-            // steep light; this port's number, and the resolution is
-            // its width (1024 texels over the slab).
-            float rad = 220.0f;
-            const omk::Light3do* best = nullptr;
-            float bestK = 0.0f;
-            for (const WorldSlot& ws2 : worldSlots)
-                if (!ws2.lights.empty()) {
-                    float k = 0.0f;
-                    const omk::Light3do* l =
-                        omk::strongestLightAt(centre, ws2.lights, &k);
-                    if (l && k > bestK) { bestK = k; best = l; }
-                }
-            if (best) {
-                view.shadow.on = true;
-                for (int k = 0; k < 3; ++k) {
-                    view.shadow.dir[k] = best->dir[k];
-                    view.shadow.centre[k] = centre[k];
-                }
-                view.shadow.radius = rad;
-                view.shadow.strength = 0.6f;
-                static const bool shLog = omk::envFlag("OMK_SHADOWLOG");
-                if (!shadowLightTold || (shLog && (frameNo % 30) == 0)) {
-                    shadowLightTold = true;
-                    std::printf("frame %ld: mapped shadows - light '%s' at "
-                                "%.0f %.0f %.0f, direction %.2f %.2f %.2f, "
-                                "slab radius %.0f over %d bodies, asked at "
-                                "%.0f %.0f %.0f\n", frameNo, best->name.c_str(),
-                                static_cast<double>(best->pos[0]),
-                                static_cast<double>(best->pos[1]),
-                                static_cast<double>(best->pos[2]),
-                                static_cast<double>(best->dir[0]),
-                                static_cast<double>(best->dir[1]),
-                                static_cast<double>(best->dir[2]),
-                                static_cast<double>(rad), bodies,
-                                static_cast<double>(centre[0]),
-                                static_cast<double>(centre[1]),
-                                static_cast<double>(centre[2]));
-                }
-            } else if (!shadowLightTold) {
-                shadowLightTold = true;
-                std::printf("frame %ld: mapped shadows asked for, but no set light "
-                            "reaches the cast - nothing drawn (the port does not "
-                            "invent a sun)\n", frameNo);
-            }
-        }
-    }
-    mark("lights");
-    // ---- THE SHADOWS ------------------------------------------
-    //
-    // `Actors_TickAll` calls `Actor_DrawShadow(detail, actor)` for
-    // every live actor and `Sliders_Tick` places the crowd's, both
-    // behind option row 5. Built here, after every body has been
-    // placed and before the draw list is sorted, because the blobs
-    // are FRAME GEOMETRY - the engine writes them straight into the
-    // scene's vertex and triangle pools each frame, not into a node.
-    //
-    // The probe is the walkable soup, which is what the bodies are
-    // seated on; the engine's `World_ProbePoint(-1, ...)` runs on the
-    // same collision geometry.
-    shadowGeo.corners.clear();
-    shadowGeo.batches.clear();
-    shadowGeo.cornerMirror.clear();
-    shadowGeo.cornerMesh.clear();
-    shadowGeo.cornerVertex.clear();
-    shadowGeo.cornerDeclared.clear();
-    // ...and only up to `fitted`: a MAPPED frame replaces the blobs
-    // with a real shadow rather than drawing both.
+}
+
+// THE CHARACTER SHADOWS, option row 5's classic arm: the shipped quad under a fixed set of bones (`Actor_DrawShadow`) (from `worldDrawLists`)
+void PlayState::worldDrawClassicShadows() {
     if (drawShadows && shadowQuality < 2 && shadowModel.loaded && !playerSoup.empty()) {
         // Option row 7. The player and the fight opponent get it
         // whole; every other actor gets it MINUS ONE, so an npc always
@@ -916,188 +792,352 @@ void PlayState::worldDrawLists() {
                         "(a bone off the wrong LOD skeleton is ~240)\n",
                         static_cast<double>(shadowFootOffMax));
     }
-    // EVERY staged body, each with its own model's base - the change
-    // issue 41 asks for. One geometry per actor, so two bodies wearing
-    // the same model still draw at their own two places.
-    for (const auto& up : staged) {
-        if (!up->drawn || !up->mo) continue;
-        const int base = static_cast<int>(up->mo->texBase);
-        if (up->gpu && up->restGeo) {
-            for (const auto& b : up->restGeo->batches) {
-                draws.push_back({keyOf(b.blend, b.cutout,
-                                       static_cast<std::uint32_t>(b.material + base)),
-                                 up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litStaged, castShadows});
-                draws.back().meshPose = up->affine.data();
-                draws.back().meshPoses = up->mo->meshes.size();
-                draws.back().vertexLights = up->lightCount ? up->lights.data() : nullptr;
-                draws.back().vertexLightCount = up->lightCount;
-                draws.back().lightsFromBlack = up->lightsBlack;
-                draws.back().lightBase = up->lightBase;
-            }
-            continue;
-        }
-        for (const auto& b : up->posed.batches)
-            draws.push_back({keyOf(b.blend, b.cutout,
-                                   static_cast<std::uint32_t>(b.material + base)),
-                             &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
-    }
-    for (const auto& up : pedStaged) {
-        if (!up->drawn || !up->mo) continue;
-        const int base = static_cast<int>(up->mo->texBase);
-        if (up->gpu && up->restGeo) {
-            for (const auto& b : up->restGeo->batches) {
-                draws.push_back({keyOf(b.blend, b.cutout,
-                                       static_cast<std::uint32_t>(b.material + base)),
-                                 up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
-                omk::Draw& dr = draws.back();
-                dr.meshPose = up->affine.data();
-                dr.meshPoses = up->mo->meshes.size();
-                dr.vertexLights = up->lightCount ? up->lights.data() : nullptr;
-                dr.vertexLightCount = up->lightCount;
-                dr.lightsFromBlack = up->lightsBlack;
-                dr.lightBase = up->lightBase;
-            }
-            continue;
-        }
-        for (const auto& b : up->posed.batches)
-            draws.push_back({keyOf(b.blend, b.cutout,
-                                   static_cast<std::uint32_t>(b.material + base)),
-                             &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
-    }
-    for (const auto& up : vehStaged) {
-        if (!up->drawn || !up->mo) continue;
-        const int base = static_cast<int>(up->mo->texBase);
-        if (up->gpu) {
-            for (const auto& b : up->atRest->batches) {
-                draws.push_back({keyOf(b.blend, b.cutout,
-                                       static_cast<std::uint32_t>(b.material + base)),
-                                 up->atRest, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
-                draws.back().meshPose = up->affine.data();
-                draws.back().meshPoses = up->mo->meshes.size();
-            }
-            continue;
-        }
-        for (const auto& b : up->posed.batches)
-            draws.push_back({keyOf(b.blend, b.cutout,
-                                   static_cast<std::uint32_t>(b.material + base)),
-                             &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
-    }
-    // which path drew him, said when it changes - and counted, for the
-    // runs that compare the two
-    {
-        static int pathWas = -1;
-        static long gpuFrames = 0, cpuFrames = 0;
-        const int path = !drawPlayer ? 0 : playerGpu ? 1 : playerOffView ? 2 : 3;
-        gpuFrames += path == 1;
-        cpuFrames += path == 3;
-        if (path != pathWas) {
-            pathWas = path;
-            static const char* const names[4] = {
-                "not drawn", "posed by the RENDERER (his rest, one affine a mesh)",
-                "outside the view, not drawn", "posed on the CPU"};
-            std::printf("frame %ld: the player %s - %zu meshes, %zu corners; so far %ld "
-                        "frames by the renderer, %ld on the CPU\n", frameNo, names[path],
-                        playerMeshes.size(), playerRest.corners.size(), gpuFrames, cpuFrames);
-        }
-    }
-    if (drawPlayer && playerGpu) {
-        for (const auto& b : playerRest.batches) {
-            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
-                                       b.material + static_cast<int>(playerTexBase))),
-                             &playerRest, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
-            draws.back().meshPose = playerAffine.data();
-            draws.back().meshPoses = playerMeshes.size();
-            draws.back().vertexLights = playerLightCount ? playerLights.data() : nullptr;
-            draws.back().vertexLightCount = playerLightCount;
-            draws.back().lightsFromBlack = playerLightsBlack;
-            draws.back().lightBase = playerLightBase;
-        }
-    } else if (drawPlayer && !playerOffView)
-        for (const auto& b : playerPosed.batches)
-            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
-                                       b.material + static_cast<int>(playerTexBase))),
-                             &playerPosed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
-    // FIRST PERSON: only the meshes the hide spared - flag 0x200000,
-    // the left arm - cut out of the posed body batch by batch.
-    static omk::Geometry playerArm;
-    if (drawArm) {
-        playerArm.corners.clear();
-        playerArm.batches.clear();
-        const std::vector<std::int32_t>& cm =
-            playerPosed.cornerMesh.size() == playerPosed.corners.size()
-                ? playerPosed.cornerMesh : playerRest.cornerMesh;
-        if (cm.size() == playerPosed.corners.size()) {
-            for (const auto& b : playerPosed.batches) {
-                const std::size_t base = playerArm.corners.size();
-                for (std::size_t c = b.start; c < b.start + b.count; ++c) {
-                    const std::int32_t mi = cm[c];
-                    if (mi < 0 || static_cast<std::size_t>(mi) >= playerMeshes.size()) continue;
-                    if (!(static_cast<std::uint32_t>(playerMeshes[static_cast<std::size_t>(mi)].flags)
-                          & 0x200000u)) continue;
-                    playerArm.corners.push_back(playerPosed.corners[c]);
-                }
-                const std::size_t cnt = playerArm.corners.size() - base;
-                if (!cnt) continue;
-                omk::Batch nb = b;
-                nb.start = base;
-                nb.count = cnt;
-                playerArm.batches.push_back(nb);
-            }
-        }
-        playerArm.revision = ++worldGeoRev;
-        for (const auto& b : playerArm.batches)
-            draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
-                                       b.material + static_cast<int>(playerTexBase))),
-                             &playerArm, b.start, b.count, b.blend, b.cutout,
-                             litStaged, false});
-        static long armTold = -1;
-        if (armTold < 0) {
-            armTold = frameNo;
-            std::printf("frame %ld: first person - the arm the hide spares: %zu corners "
-                        "of %zu, %zu batches (meshes flagged 0x200000)\n", frameNo,
-                        playerArm.corners.size(), playerPosed.corners.size(),
-                        playerArm.batches.size());
-        }
-    }
-    // The props, each batch through its own model's pool section.
-    for (std::size_t bi = 0; bi < propGeo.batches.size(); ++bi) {
-        const auto& b = propGeo.batches[bi];
-        const PropModel* owner = bi < propBatchOwner.size() ? propBatchOwner[bi] : nullptr;
-        if (!owner) continue;
-        draws.push_back({keyOf(b.blend, b.cutout,
-                               static_cast<std::uint32_t>(b.material +
-                                   static_cast<int>(owner->texBase))),
-                         &propGeo, b.start, b.count, b.blend, b.cutout});
-        // a prop is lit as a character is (`Object_Load`'s `LightObject`) -
-        // per pixel too, when that enhancement takes the place of the
-        // per-vertex light
-        draws.back().lit = litStaged;
-    }
-    if (spriteSlotBase >= 0)
-        for (const auto& b : fxGeo.batches) {
-            // `b.material` is the sprite's ID; the pool is packed, so
-            // it has to be looked up rather than added to the base
-            const auto slIt = spriteSlot.find(b.material);
-            const int sl = slIt == spriteSlot.end() ? -1 : slIt->second;
-            if (sl < 0) continue;      // a sprite with no texture: not drawn
-            draws.push_back({keyOf(b.blend, b.cutout,
-                                   static_cast<std::uint32_t>(spriteSlotBase + sl)),
-                             &fxGeo, b.start, b.count, b.blend, b.cutout});
-        }
-    std::stable_sort(draws.begin(), draws.end(),
-                     [](const omk::Draw& a, const omk::Draw& b) {
-                         return (a.bucketKey & 0x3FFFu) < (b.bucketKey & 0x3FFFu);
-                     });
-    mark("shadows");
 }
+
+
+// THE PARTICLES, through the original's depth gate (`Render_SubmitSprites`) (from `worldDrawLists`)
+void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar,
+                                   int& spriteSlotBase) {
+    auto& session = *session_;
+    if ((session.scene().effects().count() || !ctlSprites.empty() || !foeSprites.empty() ||
+         scriptSprites) && !spriteTab.empty()) {
+        omk::particleGeometry(fxGeo, session.scene().effects(),
+                              view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+        // The `.CTL` sprites, each on its bone THIS frame (flag 1,
+        // "follow the bone every frame" - all shipped records here
+        // carry it; the others are placed once and this moves them
+        // too, labelled). The frame is `(clock - from) / duration`,
+        // as Cef_TickEffects writes it; flag 8's doubled sprite
+        // clock is not modelled.
+        if (!ctlSprites.empty() && player && drawPlayer) {
+            const omk::NodeTracks* pt = player->poseTracks();
+            const std::vector<omk::MeshPose> pose = pt
+                ? omk::composePose(playerMeshes, *pt, player->poseFrameF(), false)
+                : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
+            const float* pp = player->pos();
+            const float spriteEuler[3] = {player->euler()[0], player->facing(),
+                                          player->euler()[2]};
+            const float fr = player->channelFrame();
+            ctlField.clear();
+            for (const auto& c : ctlSprites) {
+                const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
+                int node = -1;
+                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
+                    if (std::strstr(playerMeshes[i].name, want)) node = static_cast<int>(i);
+                if (node < 0 || static_cast<std::size_t>(node) >= pose.size()) continue;
+                const omk::MeshPose& hp = pose[static_cast<std::size_t>(node)];
+                const float in[3] = {hp.pos[0] - playerRootXZ[0], hp.pos[1],
+                                     hp.pos[2] - playerRootXZ[1]};
+                float o[3];
+                omk::rotateEuler(spriteEuler, in, o);
+                omk::Particle p;
+                p.pos[0] = o[0] + pp[0];
+                p.pos[1] = o[1] + pp[1] - playerFeet + lastRootDrop;
+                p.pos[2] = o[2] + pp[2];
+                p.life = c.duration > 0.0f ? c.duration : 1.0f;
+                p.frameAge = fr - c.from;
+                if (p.frameAge < 0.0f) p.frameAge = 0.0f;
+                if (p.frameAge > p.life) p.frameAge = p.life;
+                p.age = p.frameAge;
+                p.scale = c.scale > 0.0f ? c.scale : 1.0f;
+                p.sprite = c.sprite;
+                p.mode = 4;                        // Cef_SpawnEffect: +10 = 4, additive
+                if (fr < c.from) continue;         // not in its window yet
+                ctlField.addParticle(p);
+            }
+            omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+            const std::size_t base = fxGeo.corners.size();
+            for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
+            fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
+            fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), ctlGeo.cornerMirror.begin(), ctlGeo.cornerMirror.end());
+            fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), ctlGeo.cornerMesh.begin(), ctlGeo.cornerMesh.end());
+            fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), ctlGeo.cornerVertex.begin(), ctlGeo.cornerVertex.end());
+            fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), ctlGeo.cornerDeclared.begin(), ctlGeo.cornerDeclared.end());
+            ++fxGeo.revision;
+        }
+        // THE OPPONENT'S, on his bones as DRAWN last frame (`meshAt`,
+        // the same frame the bolts' hit test reads), found by the
+        // attach table's name - the last match, as the player's.
+        if (!foeSprites.empty() && fightRun.active && fightRun.body &&
+            fightRun.body->mo && fightRun.foeChannel) {
+            const Staged& fb2 = *fightRun.body;
+            const auto& ms = fb2.mo->meshes;
+            const float fr = fightRun.foeChannel->frame();
+            ctlField.clear();
+            long placed = 0;
+            for (const auto& c : foeSprites) {
+                const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
+                int node = -1;
+                for (std::size_t i = 0; i < ms.size(); ++i)
+                    if (std::strstr(ms[i].name, want)) node = static_cast<int>(i);
+                if (node < 0 || fb2.meshAt.size() < (static_cast<std::size_t>(node) + 1) * 3) continue;
+                if (fr < c.from) continue;
+                omk::Particle p;
+                for (int k = 0; k < 3; ++k)
+                    p.pos[k] = fb2.meshAt[static_cast<std::size_t>(node) * 3 + static_cast<std::size_t>(k)];
+                p.life = c.duration > 0.0f ? c.duration : 1.0f;
+                p.frameAge = std::clamp(fr - c.from, 0.0f, p.life);
+                p.age = p.frameAge;
+                p.scale = c.scale > 0.0f ? c.scale : 1.0f;
+                p.sprite = c.sprite;
+                p.mode = 4;
+                ctlField.addParticle(p);
+                ++placed;
+                // what can actually DRAW: a batch whose sprite has no
+                // pool slot is skipped at submission, which is how 482
+                // placements once drew nothing (15.16)
+                if (spriteSlot.count(c.sprite)) ++foeSpritesPooled;
+            }
+            if (placed) {
+                foeSpritesDrawn += placed;
+                omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+                const std::size_t base = fxGeo.corners.size();
+                for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
+                fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
+                fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), ctlGeo.cornerMirror.begin(), ctlGeo.cornerMirror.end());
+                fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), ctlGeo.cornerMesh.begin(), ctlGeo.cornerMesh.end());
+                fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), ctlGeo.cornerVertex.begin(), ctlGeo.cornerVertex.end());
+                fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), ctlGeo.cornerDeclared.begin(), ctlGeo.cornerDeclared.end());
+                ++fxGeo.revision;
+            }
+        }
+        // THE SCRIPTED SPRITES - `Script_Display3DSprite` and its
+        // family (program.h). An instance the scene has linked is
+        // drawn every frame from its own fields: frame `+22`, type
+        // `+20` (the blend mode), the two scales, the roll. The
+        // engine walks the scene's `+36` list after the effects, and
+        // `Sprite_SetFrame` hides an instance whose frame is past the
+        // sprite's count by writing 0xFFFF, which the clamp here
+        // stands in for.
+        if (scriptSprites) {
+            omk::ParticleField scField;
+            for (const auto& kv : session.scene().sprites()) {
+                const auto& sp = kv.second;
+                const omk::SpriteFrames* spf = sp.id < 0 ? nullptr : spriteTab.framesOf(sp.id);
+                if (!sp.linked || !spf) continue;
+                const int n = static_cast<int>(spf->frames.size());
+                if (sp.frame < 0 || sp.frame >= n) continue;   // 0xFFFF: not drawn
+                if (spriteLogged[sp.row] != sp.linkedAt + 1) {
+                    spriteLogged[sp.row] = sp.linkedAt + 1;
+                    std::printf("sprite: LINKED row %d id %d type %d frame %d/%d scale %.2f/%.2f at %.0f,%.0f,%.0f (scene tick %ld)\n",
+                                sp.row, sp.id, sp.type, sp.frame, n, sp.sx, sp.sy,
+                                sp.pos[0], sp.pos[1], sp.pos[2], sp.linkedAt);
+                }
+                omk::Particle p;
+                for (int k = 0; k < 3; ++k) p.pos[k] = sp.pos[k];
+                p.life = 1.0f;
+                p.frame = sp.frame;
+                p.scale = sp.sx;
+                p.scaleY = sp.sy;
+                p.angle = sp.roll;
+                p.sprite = sp.id;
+                p.mode = static_cast<std::uint8_t>(sp.type & 0xF);
+                scField.addParticle(p);
+            }
+            omk::Geometry scGeo;
+            omk::particleGeometry(scGeo, scField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+            const std::size_t base = fxGeo.corners.size();
+            for (omk::Batch b : scGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
+            fxGeo.corners.insert(fxGeo.corners.end(), scGeo.corners.begin(), scGeo.corners.end());
+            fxGeo.cornerMirror.insert(fxGeo.cornerMirror.end(), scGeo.cornerMirror.begin(), scGeo.cornerMirror.end());
+            fxGeo.cornerMesh.insert(fxGeo.cornerMesh.end(), scGeo.cornerMesh.begin(), scGeo.cornerMesh.end());
+            fxGeo.cornerVertex.insert(fxGeo.cornerVertex.end(), scGeo.cornerVertex.begin(), scGeo.cornerVertex.end());
+            fxGeo.cornerDeclared.insert(fxGeo.cornerDeclared.end(), scGeo.cornerDeclared.begin(), scGeo.cornerDeclared.end());
+            ++fxGeo.revision;
+        }
+        // The pool already carries them: it is built above, in one
+        // place, with a section per model.
+        spriteSlotBase = static_cast<int>(spriteTexBase);
+    }
+}
+
+
+// THE SKY, placed and submitted before anything else (from `worldDrawLists`)
+void PlayState::worldDrawSky() {
+    omk::Renderer& world = *world_;
+    if (drawSky && !sky.base.empty() && !sky.geo.batches.empty()) {
+        const float sx = view.cam.eye[0], sz = view.cam.eye[2];
+        const float sy = sky.origin[1] - kSkyLift;
+        static const bool cpuSky = omk::envFlag("OMK_CPU_SKY");   // A/B only
+        const bool skyGpu = !cpuSky && !cpuBodiesFlag && world.posesBodies() &&
+                            sky.rest.cornerMesh.size() == sky.rest.corners.size() &&
+                            !sky.rest.corners.empty();
+        static int skyPathWas = -1;
+        if (skyPathWas != (skyGpu ? 1 : 0)) {
+            skyPathWas = skyGpu ? 1 : 0;
+            std::printf("frame %ld: the sky %s - %zu corners\n", frameNo,
+                        skyGpu ? "MOVED BY THE RENDERER (static, one translation a frame)"
+                               : "rewritten on the CPU when the camera moves",
+                        sky.base.size());
+        }
+        if (skyGpu) {
+            std::int32_t meshes = 0;
+            for (const std::int32_t m : sky.rest.cornerMesh) meshes = std::max(meshes, m + 1);
+            sky.affine.assign(12u * static_cast<std::size_t>(meshes), 0.0f);
+            for (std::int32_t m = 0; m < meshes; ++m) {
+                float* a = sky.affine.data() + 12 * m;
+                a[0] = a[5] = a[10] = 1.0f;
+                a[3] = sx; a[7] = sy; a[11] = sz;
+            }
+            for (const auto& b : sky.rest.batches) {
+                draws.push_back({0x800u | ((static_cast<std::uint32_t>(b.material) +
+                                            static_cast<std::uint32_t>(sky.texBase)) & 0x3Fu),
+                                 &sky.rest, b.start, b.count, omk::Blend::Opaque, false});
+                draws.back().meshPose = sky.affine.data();
+                draws.back().meshPoses = static_cast<std::size_t>(meshes);
+            }
+        } else {
+            // ...and on the CPU only when the camera's x or z CHANGED:
+            // the same corners are the same bytes, and a revision left
+            // alone is a buffer not sent again
+            if (!sky.placed || sky.placedAt[0] != sx || sky.placedAt[1] != sz) {
+                for (std::size_t k = 0; k < sky.base.size(); ++k) {
+                    const omk::Corner& b0 = sky.base[k];
+                    omk::Corner& c = sky.geo.corners[k];
+                    c = b0;
+                    c.x = sx + (b0.x - sky.origin[0]) * kSkyScale;
+                    c.y = sy + (b0.y - sky.origin[1]) * kSkyScale;
+                    c.z = sz + (b0.z - sky.origin[2]) * kSkyScale;
+                }
+                sky.geo.revision = ++worldGeoRev;
+                sky.placed = true;
+                sky.placedAt[0] = sx;
+                sky.placedAt[1] = sz;
+            }
+            for (const auto& b : sky.geo.batches)
+                draws.push_back({0x800u | ((static_cast<std::uint32_t>(b.material) +
+                                            static_cast<std::uint32_t>(sky.texBase)) & 0x3Fu),
+                                 &sky.geo, b.start, b.count, omk::Blend::Opaque, false});
+        }
+    }
+}
+
+
+// THE MAPPED SHADOWS' LIGHT: the strongest of the set's own `.3DO` light records reaching the casters (from `worldDrawLists`)
+void PlayState::worldDrawShadowLight(bool castShadows) {
+    if (castShadows) {
+        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+        bool any = false;
+        int bodies = 0;
+        // ...and only the bodies NEAR THE CAMERA. The slab is one
+        // 1024-texel map, so its width is its resolution: bounding
+        // every staged body in the city made it 7484 units across -
+        // 15 units a texel, which is a shadow the size of a torso.
+        // 1200 units is 30 m, past which a character's shadow is
+        // sub-pixel anyway. LABELLED as this port's number.
+        constexpr float kShadowRange = 1200.0f;
+        const auto bound = [&](const omk::Geometry& g) {
+            if (g.corners.empty()) return;
+            const auto& c0 = g.corners.front();
+            const float dx = c0.x - view.cam.eye[0], dy = c0.y - view.cam.eye[1],
+                        dz = c0.z - view.cam.eye[2];
+            if (dx * dx + dy * dy + dz * dz > kShadowRange * kShadowRange) return;
+            for (const auto& c : g.corners) {
+                const float p3[3] = {c.x, c.y, c.z};
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] = std::min(lo[k], p3[k]);
+                    hi[k] = std::max(hi[k], p3[k]);
+                }
+            }
+            ++bodies;
+            any = true;
+        };
+        // A BODY THE RENDERER POSES (GLES) has no world corners here, so it
+        // is bounded by its meshes' ORIGINS - each affine's translation, the
+        // skeleton's joints - which is what places the slab and nothing
+        // finer is needed for that
+        const auto boundAffine = [&](const std::vector<float>& a) {
+            if (a.size() < 12) return;
+            const float dx = a[3] - view.cam.eye[0], dy = a[7] - view.cam.eye[1],
+                        dz = a[11] - view.cam.eye[2];
+            if (dx * dx + dy * dy + dz * dz > kShadowRange * kShadowRange) return;
+            for (std::size_t m = 0; m + 12 <= a.size(); m += 12) {
+                const float p3[3] = {a[m + 3], a[m + 7], a[m + 11]};
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] = std::min(lo[k], p3[k]);
+                    hi[k] = std::max(hi[k], p3[k]);
+                }
+            }
+            ++bodies;
+            any = true;
+        };
+        if (drawPlayer && !playerPosed.corners.empty()) bound(playerPosed);
+        for (const auto& up : staged)
+            if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
+        for (const auto& up : pedStaged)
+            if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
+        if (any) {
+            // ...CENTRED ON THE PLAYER, not on the bodies' midpoint.
+            // A street's lamps reach about 700 units and eleven
+            // scattered bodies put their midpoint out in the road
+            // beyond all of them, so the light picked there was the
+            // one distant fill that reaches everywhere - and its
+            // shadow lands off the frame. One map, centred on the
+            // character you are looking at; a body outside the slab
+            // casts nothing, which is stated rather than hidden.
+            float centre[3];
+            if (drawPlayer && !playerPosed.corners.empty()) {
+                float plo[3] = {1e30f, 1e30f, 1e30f}, phi[3] = {-1e30f, -1e30f, -1e30f};
+                for (const auto& c : playerPosed.corners) {
+                    const float q[3] = {c.x, c.y, c.z};
+                    for (int k = 0; k < 3; ++k) {
+                        plo[k] = std::min(plo[k], q[k]);
+                        phi[k] = std::max(phi[k], q[k]);
+                    }
+                }
+                for (int k = 0; k < 3; ++k) centre[k] = (plo[k] + phi[k]) * 0.5f;
+            } else {
+                for (int k = 0; k < 3; ++k) centre[k] = (lo[k] + hi[k]) * 0.5f;
+            }
+            // Enough for a body and the throw of its shadow under a
+            // steep light; this port's number, and the resolution is
+            // its width (1024 texels over the slab).
+            float rad = 220.0f;
+            const omk::Light3do* best = nullptr;
+            float bestK = 0.0f;
+            for (const WorldSlot& ws2 : worldSlots)
+                if (!ws2.lights.empty()) {
+                    float k = 0.0f;
+                    const omk::Light3do* l =
+                        omk::strongestLightAt(centre, ws2.lights, &k);
+                    if (l && k > bestK) { bestK = k; best = l; }
+                }
+            if (best) {
+                view.shadow.on = true;
+                for (int k = 0; k < 3; ++k) {
+                    view.shadow.dir[k] = best->dir[k];
+                    view.shadow.centre[k] = centre[k];
+                }
+                view.shadow.radius = rad;
+                view.shadow.strength = 0.6f;
+                static const bool shLog = omk::envFlag("OMK_SHADOWLOG");
+                if (!shadowLightTold || (shLog && (frameNo % 30) == 0)) {
+                    shadowLightTold = true;
+                    std::printf("frame %ld: mapped shadows - light '%s' at "
+                                "%.0f %.0f %.0f, direction %.2f %.2f %.2f, "
+                                "slab radius %.0f over %d bodies, asked at "
+                                "%.0f %.0f %.0f\n", frameNo, best->name.c_str(),
+                                static_cast<double>(best->pos[0]),
+                                static_cast<double>(best->pos[1]),
+                                static_cast<double>(best->pos[2]),
+                                static_cast<double>(best->dir[0]),
+                                static_cast<double>(best->dir[1]),
+                                static_cast<double>(best->dir[2]),
+                                static_cast<double>(rad), bodies,
+                                static_cast<double>(centre[0]),
+                                static_cast<double>(centre[1]),
+                                static_cast<double>(centre[2]));
+                }
+            } else if (!shadowLightTold) {
+                shadowLightTold = true;
+                std::printf("frame %ld: mapped shadows asked for, but no set light "
+                            "reaches the cast - nothing drawn (the port does not "
+                            "invent a sun)\n", frameNo);
+            }
+        }
+    }
+}
+
 
 // The mirror and the present pass
 void PlayState::worldMirror() {

@@ -12,6 +12,7 @@ This makes the compiler do that:
     python3 tools/extract_method.py batch <file.cpp> <jobs.txt>
     python3 tools/extract_method.py candidates <file.cpp> <method> [--min N] [--depth D]
     python3 tools/extract_method.py sizes [--over N]
+    python3 tools/extract_method.py tidy <file.cpp>
 
 `extract` moves lines A..B of a method of class C - whole statements at one
 depth - verbatim into a new method `C::<name>`, placed after the enclosing one
@@ -226,7 +227,7 @@ def object_of(cpp):
     return "build/obj/%s/%s.o" % (variant, os.path.basename(rel)[:-4])
 
 
-def compile_errors(cpp):
+def compile_errors(cpp, warnings=False):
     """The errors of compiling `cpp` alone, with the Makefile's own command."""
     rel = os.path.relpath(os.path.abspath(cpp), ENG)
     obj = object_of(cpp)
@@ -237,7 +238,24 @@ def compile_errors(cpp):
         sys.exit("no compile command for %s (target %s)" % (rel, obj))
     line = line[0].replace(" -c ", " -fsyntax-only -ferror-limit=0 ").replace("-o " + obj, "")
     r = subprocess.run(line, shell=True, cwd=ENG, capture_output=True, text=True)
-    return [l for l in r.stderr.split("\n") if ": error: " in l]
+    return [l for l in r.stderr.split("\n") if ": error: " in l or (warnings and ": warning: " in l)]
+
+
+def drop_unused_aliases(path):
+    """Remove an alias line (`auto& session = *session_;`...) a cut has left
+    unused - the compiler's own `-Wunused-variable` says which."""
+    rel = os.path.relpath(os.path.abspath(path), ENG)
+    lines = open(path).read().split("\n")
+    gone = []
+    for w in compile_errors(path, warnings=True):
+        u = re.match(r"%s:(\d+):\d+: warning: unused variable '(\w+)'" % re.escape(rel), w)
+        if u and u.group(2) in ALIASES and lines[int(u.group(1)) - 1].strip() == ALIASES[u.group(2)].strip():
+            gone.append(int(u.group(1)))
+    for ln in sorted(set(gone), reverse=True):
+        del lines[ln - 1]
+    if gone:
+        open(path, "w").write("\n".join(lines))
+    return len(gone)
 
 
 def header_of(cls):
@@ -343,18 +361,22 @@ def extract(path, A, B, name, comment=""):
                 raise ValueError("no type for " + x)
             if "lambda at" in t:
                 raise ValueError("%s is a lambda - make it a method first" % x)
+            for a, b in renames.items():
+                t = re.sub(r"(?<![\w:])%s\b" % re.escape(a), b, t)
             out.append(param(t, x, x in const))
         return out
 
     # A local that shares a member FUNCTION's name is not caught by -Wshadow:
     # moved, `name(...)` would call the method. Declared before the range and
     # used in it, it is passed like any other local.
-    members = set(re.findall(r"\b(\w+)\([^;]*\)\s*(?:const\s*)?;", hdr))
+    members = set(re.findall(r"^\s+(?:[\w:<>,]+[\s&*]+)+(\w+)\([^;{]*\)\s*(?:const\s*)?(?:override\s*)?;",
+                             hdr, re.M))
     used = set(re.findall(r"\b([A-Za-z_]\w*)\b", "".join(c for c, k in zip(text, m) if k)))
     before = "\n".join(L[fstart:A - 1])
     missing = [n for n in sorted(members & used)
-               if re.search(r"(?:\bauto\b|[\w:>*&\]])\s*[&*]?\s*\b%s\b\s*(?:=|\{|;|\(|:)" % re.escape(n),
+               if re.search(r"(?:\bauto|[\w>\]])\s*[&*]?\s+(?<![:.>])%s\s*(?:=|\{|;)" % re.escape(n),
                             before)]
+    renames = {}   # an unqualified type clang printed -> the name it suggests
     for _ in range(10):
         aliases = [ALIASES[x] for x in ALIASES if x in missing and cls == "PlayState"]
         need = [x for x in missing if not (cls == "PlayState" and x in ALIASES)]
@@ -366,9 +388,16 @@ def extract(path, A, B, name, comment=""):
         write(params, need, aliases)
         errs = compile_errors(path)
         if not errs:
-            return "%s: %d lines, %d parameters %s" % (name, B - A + 1, len(params), need)
+            tidied = drop_unused_aliases(path) if cls == "PlayState" else 0
+            return "%s: %d lines, %d parameters %s%s" % (
+                name, B - A + 1, len(params), need,
+                ", %d unused alias(es) dropped" % tidied if tidied else "")
         new = []
         for e in errs:
+            q = re.search(r"unknown type name '(\w+)'; did you mean '([\w:]+)'", e)
+            if q and q.group(1) not in renames:
+                renames[q.group(1)] = q.group(2)
+                new.append(None)
             u = re.search(r"use of undeclared identifier '(\w+)'", e)
             if u and u.group(1) not in missing and u.group(1) not in new:
                 new.append(u.group(1))
@@ -381,7 +410,7 @@ def extract(path, A, B, name, comment=""):
         restore()
         if not new:
             return "refused: the moved form does not compile:\n  " + "\n  ".join(errs[:6])
-        missing += new
+        missing += [n for n in new if n]
     restore()
     return "refused: did not converge"
 
@@ -482,6 +511,9 @@ def main(argv):
         return 0
     if len(argv) >= 3 and argv[0] == "candidates":
         candidates(argv[1], argv[2], int(opt("--min", "40")), int(opt("--depth", "1")))
+        return 0
+    if len(argv) == 2 and argv[0] == "tidy":
+        print("%d unused alias(es) dropped" % drop_unused_aliases(argv[1]))
         return 0
     if argv and argv[0] == "sizes":
         sizes(int(opt("--over", "300")))

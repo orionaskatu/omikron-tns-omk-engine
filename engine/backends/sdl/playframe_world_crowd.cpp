@@ -9,13 +9,22 @@
 // The pedestrians, the vehicles, the player
 void PlayState::worldCrowd() {
     OMK_ZONE("world: crowd");   // the profiler (todo/debug-tools.md 6)
-    const auto& fs = *fs_;
-    auto& session = *session_;
-    omk::Renderer& world = *world_;
     // ---- THE PEDESTRIANS ---------------------------------------
     pedDrawn = pedLive = pedInAction = pedIdle = pedOffView = 0;
     pedLit = 0;
     vehDrawn = vehLive = vehStopped = 0;
+    worldCrowdPedestrians();
+    player0 = phaseNow();
+    playerOffView = false;    // his corners not built, his body not drawn
+    playerGpu = false;        // his corners not built, his rest drawn by the renderer
+    worldCrowdPlayer();
+}
+
+// THE PEDESTRIANS AND THE TRAFFIC: the circuit's library, its walkers and its vehicles, posed and placed (from `worldCrowd`)
+void PlayState::worldCrowdPedestrians() {
+    auto& session = *session_;
+    omk::Renderer& world = *world_;
+    const auto& fs = *fs_;
     {
         const auto& pd = session.sliders();
         const auto& rs = session.residentSlot(session.activeSlot());
@@ -93,122 +102,8 @@ void PlayState::worldCrowd() {
         }
         int pedRebound = 0;   // walkers whose clip pointer survived a library change
         int pedModelSwapped = 0;   // walkers whose slot was drawn last as ANOTHER model
-        for (std::size_t i = 0; i < ws.size(); ++i) {
-            const auto& w = ws[i];
-            PedStaged& p = *pedStaged[i];
-            p.drawn = false;
-            if (!w.live || !w.clip || pedAni.empty()) continue;
-            ++pedLive;
-            if (w.flags & 0x80u) ++pedInAction;
-            if (w.flags & 0x100u) ++pedIdle;
-            if (!circuitShown) continue;   // its street is out of the render chain
-            const float dx = w.body[0] - view.cam.eye[0], dy = w.body[1] - view.cam.eye[1],
-                        dz = w.body[2] - view.cam.eye[2];
-            const float d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 > reach * reach * 4.0f) continue;   // far past any root radius: skip the model
-            // THE WALKER'S OWN MODEL, looked up every frame - a map lookup when
-            // it is resident. Taken ONCE (`if (!p.mo)`), it would go stale:
-            // this list is rebuilt only when the number of movers changes, a
-            // city reloads its circuit on every entry and refills to the same
-            // cap (Anekbah's 200), so after any interior each slot would keep
-            // its LAST occupant's model - the wrong body on a new walker -
-            // and, once the per-frame eviction let that model go because no
-            // live walker wore it any more, a pointer to a freed one (T-posed
-            // npcs beside animated ones after an interior). The caches below
-            // follow `p.mo` (`cacheMo`).
-            {
-                CharModel* const was = p.mo;
-                p.mo = charModelFor(w.model);
-                if (was && p.mo && was != p.mo && p.cacheMo == was) ++pedModelSwapped;
-            }
-            if (!p.mo || !p.mo->ready) continue;
-            {
-                const float r = p.mo->root >= 0 && static_cast<std::size_t>(p.mo->root) < p.mo->meshes.size()
-                                    ? p.mo->meshes[static_cast<std::size_t>(p.mo->root)].radius : 0.0f;
-                if ((r + reach) * (r + reach) <= d2) continue;   // `sub_48D7F0`'s reach test
-            }
-            // outside the view: `sub_48D7F0` skips the instance whole
-            // on its model root's radius at its position
-            if (p.mo->root >= 0 && static_cast<std::size_t>(p.mo->root) < p.mo->meshes.size() &&
-                outsideView(w.body, p.mo->meshes[static_cast<std::size_t>(p.mo->root)].radius, true)) {
-                ++pedOffView;
-                continue;
-            }
-            // REBOUND WHEN THE LIBRARY CHANGES, not only when the clip
-            // pointer does. `p.tracks` points INTO `pedTracks`, which a new
-            // library clears; the walkers' clips are rebuilt at the same
-            // time, and a new clip at the freed one's address leaves the
-            // pointer test equal - the walker drawn from freed tracks, and
-            // every npc in the street T-posed back from an interior.
-            if (w.clip != p.clipWas || p.cacheGen != pedCacheGen || p.cacheMo != p.mo) {
-                if (w.clip == p.clipWas && p.cacheGen != pedCacheGen) ++pedRebound;
-                p.clipWas = w.clip;
-                p.tracks = pedTracksFor(w.sex, *w.clip, p.mo->meshes, w.model);
-            }
-            if (p.cacheGen != pedCacheGen || p.cacheMo != p.mo || p.cacheTracks != p.tracks ||
-                p.cacheModel != w.model) {
-                p.cacheGen = pedCacheGen;
-                p.cacheMo = p.mo;
-                p.cacheTracks = p.tracks;
-                p.cacheModel = w.model;
-                p.cacheRoot = p.tracks ? skeletonRootOf(*p.mo, *p.tracks) : p.mo->root;
-                p.cacheRest = &lodRestFor(w.model, *p.mo, p.cacheRoot);
-                p.lodFilled = 0;
-                for (int f = 0; f < 2; ++f) {
-                    const char* bone = f == 0 ? "Piedg" : "Piedd";
-                    p.cacheFoot[f] = p.mo->boneIdx.built() ? p.mo->boneIdx.find(bone, p.cacheRoot)
-                                                           : omk::findMeshContaining(p.mo->meshes, bone, p.cacheRoot);
-                }
-            }
-            // THE LEVEL, `sub_48D7F0`'s walk of the chain: start one
-            // level down when row 7's detail is 0, then step on while
-            // the VIEW DEPTH is at or past the level's distance; the
-            // last level holds past 40 m. Only for a model whose
-            // chain the index rule holds for, and whose tracks were
-            // bound on the chain's first (largest) skeleton.
-            PedJob job;
-            job.i = i;
-            job.tracks = p.tracks;
-            job.rest = p.cacheRest;
-            job.lodRoot = p.cacheRoot;
-            job.foot[0] = p.cacheFoot[0]; job.foot[1] = p.cacheFoot[1];
-            const int nL = noPedLod ? 0 : lodChainOf(*p.mo);
-            if (nL > 1 && p.tracks && p.cacheRoot == p.mo->lodRootAt[0]) {
-                const float depth = (w.body[0] - view.cam.eye[0]) * viewFwd[0] +
-                                    (w.body[1] - view.cam.eye[1]) * viewFwd[1] +
-                                    (w.body[2] - view.cam.eye[2]) * viewFwd[2];
-                int level = std::min(shadowDetail <= 0 ? 1 : 0, nL - 1);
-                while (level + 1 < nL && depth >= omk::kLodDistances[level]) ++level;
-                level = std::max(0, std::min(level, pedLodMax));
-                job.level = level;
-                job.only = p.mo->lodMask[level].data();
-                if (level > 0) {
-                    if (!(p.lodFilled & (1u << level))) {
-                        p.lodFilled |= static_cast<std::uint8_t>(1u << level);
-                        const int rk = p.mo->lodRootAt[level];
-                        p.lodRestL[level] = &lodRestFor(w.model, *p.mo, rk);
-                        for (int f = 0; f < 2; ++f) {
-                            const char* bone = f == 0 ? "Piedg" : "Piedd";
-                            p.lodFoot[level][f] = p.mo->boneIdx.built() ? p.mo->boneIdx.find(bone, rk)
-                                                : omk::findMeshContaining(p.mo->meshes, bone, rk);
-                        }
-                    }
-                    job.tracks = lodTracksFor(p.tracks, level, p.mo->lodCount);
-                    job.rest = p.lodRestL[level];
-                    job.lodRoot = p.mo->lodRootAt[level];
-                    job.foot[0] = p.lodFoot[level][0]; job.foot[1] = p.lodFoot[level][1];
-                }
-            }
-            // `floor(clock) - 1` as before, with the clock's FRACTION
-            // kept for enhancement 12: `composePose` floors it when
-            // smoothing is off, so the pose is the same key
-            float frame = static_cast<float>(w.clock) - 1.0f;
-            if (frame < 0.0f) frame = 0.0f;
-            if (p.tracks && frame >= static_cast<float>(p.tracks->frames - 1))
-                frame = static_cast<float>(p.tracks->frames - 1);
-            job.frame = frame;
-            pedJobs.push_back(job);
-        }
+        worldCrowdWalkers(ws, circuitShown, reach, pedModelSwapped, pedRebound, noPedLod, viewFwd,
+                          pedLodMax);
         phSpan["ped serial"] += phaseNow() - pedSerial0;
         if (pedModelSwapped)
             std::printf("frame %ld: crowd library - %d walker(s) whose slot was last drawn as another "
@@ -478,240 +373,7 @@ void PlayState::worldCrowd() {
         const float vreach = static_cast<float>(clipInches);
         int vehPastLod = 0;
         const double veh0 = phaseNow();
-        for (std::size_t i = 0; i < vs.size(); ++i) {
-            const auto& v = vs[i];
-            VehStaged& sv = *vehStaged[i];
-            sv.drawn = false;
-            // ...and SAY why the player's own slider is not staged, once
-            // per reason: after a load into another city it vanished
-            // from the picture with the log silent about it.
-            const bool mine = static_cast<int>(i) == pd.calledVehicle();
-            static int calledSkipTold = -1;
-            auto skipMine = [&](int why, const char* what) {
-                if (mine && calledSkipTold != why) {
-                    calledSkipTold = why;
-                    std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is NOT staged: %s\n",
-                                frameNo, i, v.model.c_str(), what);
-                }
-            };
-            if (!v.live || v.mover < 0) { skipMine(1, "not live / no mover"); continue; }
-            const auto& m = pd.movers()[static_cast<std::size_t>(v.mover)];
-            ++vehLive;
-            if (m.flags & 0x100u) ++vehStopped;
-            // ...and the traffic the same way - but NOT the player's own slider
-            // while he rides it: `Slider_TickRide` relinks it into the head
-            // scene `dword_93076C` every tick, so it draws wherever he goes
-            if (!circuitShown && !(mine && (ride || boarded))) {
-                skipMine(4, "its street's slot is hidden (out of the render chain)");
-                continue;
-            }
-            const float vx = m.body[0] - view.cam.eye[0], vy = m.body[1] - view.cam.eye[1],
-                        vz = m.body[2] - view.cam.eye[2];
-            const float vd2 = vx * vx + vy * vy + vz * vz;
-            if (vd2 > vreach * vreach * 4.0f) { skipMine(2, "beyond the clip distance"); continue; }
-            // A SLOT IS REUSED, and with another model: a call spawns into
-            // the first dead slot, in a full
-            // pool takes an ambient vehicle and rebinds its model to the
-            // slider row (`sub_452CC0`'s take-over) - so a slot that drew a
-            // MOTO can hold the player's slider next. `sv.mo` taken once and
-            // never compared would draw the called slider as the moto the
-            // slot had held: a call after a journey bringing a cutscene
-            // without any slider in it
-            if (sv.mo && sv.model != v.model) {
-                std::printf("frame %ld: vehicle slot %zu restaged - '%s' -> '%s'\n",
-                            frameNo, i, sv.model.c_str(), v.model.c_str());
-                sv.mo = nullptr; sv.atRest = nullptr; sv.built = false; sv.lodRoot = -1;
-            }
-            if (!sv.mo) { sv.mo = charModelFor(v.model); sv.model = v.model; }
-            if (!sv.mo || !sv.mo->ready) { skipMine(3, "its model did not load"); continue; }
-            if (mine && calledSkipTold != 0) { calledSkipTold = 0; std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is staged at %.0f %.0f %.0f\n", frameNo, i, v.model.c_str(), m.body[0], m.body[1], m.body[2]); }
-            // ---- `sub_4521E0`, THE MODEL SWAP ----------------------
-            // The slider model TABLE (`dword_538E28`, 88-byte rows)
-            // holds its four root sub-objects at +4..+16 sorted
-            // heaviest first by `sub_453A70` (vertices + faces):
-            // SlBassin 1527 corners, slider_fl 750, SlBasA 366, SlBasB
-            // 144. The reserved slider is created on +8 (slider_fl -
-            // `CharModel::root` here, a shell with no interior and NO
-            // DOOR: both door meshes hang off SlBassin) and
-            // `sub_4521E0` toggles the sub-node to +4, SlBassin, the
-            // COCKPIT, at `MDACTION`'s snap - which is what puts a
-            // door under the clip - and `sub_4570F0` toggles it back
-            // before the exit clip. A reader saw the shell: *"the
-            // current model when Kay'l enters the slider has no
-            // modelised interior"*.
-            const bool swapped = (boarding || boarded) && static_cast<int>(i) == pd.calledVehicle();
-            const int wantRoot = swapped ? heaviestRootOf(*sv.mo)
-                                         : (v.lodBase == 0 ? heaviestRootOf(*sv.mo) : sv.mo->root);
-            if (sv.built && sv.lodRoot != wantRoot) sv.built = false;
-            if (!sv.built) {
-                sv.lodRoot = wantRoot;
-                if (static_cast<int>(i) == pd.calledVehicle() &&
-                    wantRoot >= 0 && static_cast<std::size_t>(wantRoot) < sv.mo->meshes.size())
-                    std::printf("slider: the called vehicle is staged on sub-object "
-                                "'%s'%s\n", sv.mo->meshes[static_cast<std::size_t>(wantRoot)].name,
-                                swapped ? " - the COCKPIT, sub_4521E0's swap" : "");
-                sv.atRest = &vehAtRestFor(v.model, *sv.mo, sv.lodRoot);
-                // The sub-objects of one model are laid out APART in
-                // model space - SLI_FN's four roots sit at x 351..550 -
-                // so each is re-centred on its own root, which is what
-                // makes the four LOD variants land in one place. The
-                // walkers do the same for x and z; a vehicle takes y
-                // too, because it has no feet rule to stand on.
-                if (sv.lodRoot >= 0 && static_cast<std::size_t>(sv.lodRoot) < sv.mo->meshes.size())
-                    for (int k = 0; k < 3; ++k)
-                        sv.origin[k] = sv.mo->meshes[static_cast<std::size_t>(sv.lodRoot)].pos[k];
-                sv.radius = 0.0f;
-                for (const auto& c : sv.atRest->corners) {
-                    const float dx = c.x - sv.origin[0], dy = c.y - sv.origin[1], dz = c.z - sv.origin[2];
-                    sv.radius = std::max(sv.radius, std::sqrt(dx * dx + dy * dy + dz * dz));
-                }
-                sv.built = true;
-            }
-            // PAST THE CLIP DISTANCE: `sub_48D7F0`'s reach test, the
-            // distance against `dword_6A2B9C` plus the radius
-            if ((sv.radius + vreach) * (sv.radius + vreach) <= vd2) {
-                skipMine(2, "beyond the clip distance");
-                continue;
-            }
-            // OUTSIDE THE VIEW: `sub_48D7F0` rejects the instance whole
-            // before any matrix or vertex; the radius here is the
-            // composed model's own, never smaller than the node's
-            {
-                const float at[3] = {m.body[0], m.body[1] - omk::kVehNodeLift, m.body[2]};
-                if (!mine && outsideView(at, sv.radius, true)) continue;
-            }
-            // ...unless this is the slider he is CLIMBING INTO, in
-            // which case its door is posed from the clip at the
-            // character's own frame - the engine's shared clock.
-            bool doorPosed = false;
-            if ((boarding || leaving) && static_cast<int>(i) == pd.calledVehicle() && player) {
-                if (!doorClipsRead) {
-                    doorClipsRead = true;
-                    const auto a = fs.read("ANIMS/SLF_112.3DA");
-                    const auto b = fs.read("ANIMS/SLF_113.3DA");
-                    if (!a.empty()) doorIn  = omk::clipTracks(a);
-                    if (!b.empty()) doorOut = omk::clipTracks(b);
-                }
-                const omk::NodeTracks& dt0 = boarding ? doorIn : doorOut;
-                // THE TRACKS ARE KEYED BY NODE ID, NOT MESH INDEX. The
-                // clip names its five tracks with the bytes 0,3,1,4,2
-                // and `SLI_FN.3DO`'s ids run SlBassin 0, SlPorteZG 1,
-                // SlPorteG 2, SlPorteZD 3, SlPorteD 4 - the cockpit and
-                // its four door parts, exactly a door clip's set. Read
-                // as indices they land on two SHELLS, and the one
-                // moving track fell on the wrong panel. `clipTracks`
-                // fills `ids` as indices (right for the scene clips it
-                // was written for); remapped through the model's ids.
-                omk::NodeTracks dt = dt0;
-                // BY NAME (+4 of the track header), not by id or index:
-                // the mover is named `SlPorteZG`, the parent copy on the
-                // G side; its child `SlPorteG` follows it, so the two
-                // coincident copies swing together and nothing stays
-                // over the hole. Read by index the swing landed on
-                // `SlPorteG` alone; by id on `SlPorteD`, the far door.
-                for (std::size_t ti = 0; ti < dt.ids.size(); ++ti) {
-                    int idx = -1;
-                    const std::string& nm = ti < dt.names.size() ? dt.names[ti] : std::string();
-                    for (std::size_t k = 0; k < sv.mo->meshes.size(); ++k)
-                        if (nm == sv.mo->meshes[k].name) { idx = static_cast<int>(k); break; }
-                    dt.ids[ti] = idx;
-                }
-                static bool doorTold = false;
-                if (!doorTold && dt.valid()) {
-                    doorTold = true;
-                    std::printf("slider: the door clip's tracks by name ->");
-                    for (auto id : dt.ids)
-                        std::printf(" %s", id >= 0 ? sv.mo->meshes[static_cast<std::size_t>(id)].name : "?");
-                    std::printf("\n");
-                }
-                if (dt.valid()) {
-                    int f = player->poseFrame();
-                    if (f < 0) f = 0;
-                    if (f >= dt.frames) f = dt.frames - 1;
-                    const omk::Geometry& rest = lodRestFor(v.model, *sv.mo, sv.lodRoot);
-                    const auto dp = omk::composePose(sv.mo->meshes, dt, f, false);
-                    omk::applyPose(sv.posed, rest, sv.mo->meshes, dp);
-                    doorPosed = true;
-                }
-            }
-            // `sub_437F80(inst, x, y - 30.75, z)`: the instance sits
-            // 30.75 units ABOVE the body point (y is down), turned to
-            // the heading `sub_453330` built from the direction to its
-            // mover - which for a vehicle is where it is going.
-            float vcs, vsn;
-            omk::yawSinCos(m.facing, vcs, vsn);   // once a vehicle, not a corner
-            // THE BANK (drift audit M6): Manuelle's node matrix is
-            // `sub_442160(0, -yaw, -(360 - roll))` (`sub_457F50`), which is a
-            // turn about the model's own LONG axis (local Z) by the roll, then
-            // the yaw: rows (cos r, -sin r, 0), (sin r, cos r, 0), (0, 0, 1)
-            // at yaw 0, applied row-vector. Only the manual ride's tick writes
-            // it - a called or ambient vehicle is yaw alone - so the slider
-            // leans into a turn, up to `kBankLimit` (11), only while he flies it.
-            float bcr = 1.0f, bsr = 0.0f;
-            if (mine && ride && ride->roll != 0.0) {
-                const double rr = ride->roll * omk::kDegToRad;
-                bcr = static_cast<float>(std::cos(rr));
-                bsr = static_cast<float>(std::sin(rr));
-            }
-            sv.gpu = !doorPosed && !cpuBodiesFlag && world.posesBodies() &&
-                     sv.atRest->cornerMesh.size() == sv.atRest->corners.size();
-            if (sv.gpu) {
-                // x' = R (x - origin) + body - lift, R the yaw as
-                // `rotateYawCS` applies it: x' = c x - s z, z' = s x + c z
-                // M = Yaw * Roll(about local z), column form; t = body - lift - M origin
-                const float m00 = vcs * bcr, m01 = vcs * bsr, m02 = -vsn;
-                const float m10 = -bsr,      m11 = bcr,       m12 = 0.0f;
-                const float m20 = vsn * bcr, m21 = vsn * bsr, m22 = vcs;
-                const float* o = sv.origin;
-                const float tx = m.body[0] - (m00 * o[0] + m01 * o[1] + m02 * o[2]);
-                const float ty = m.body[1] - omk::kVehNodeLift - (m10 * o[0] + m11 * o[1] + m12 * o[2]);
-                const float tz = m.body[2] - (m20 * o[0] + m21 * o[1] + m22 * o[2]);
-                const float a[12] = {m00, m01, m02, tx,
-                                     m10, m11, m12, ty,
-                                     m20, m21, m22, tz};
-                sv.affine.resize(12 * sv.mo->meshes.size());
-                for (std::size_t k = 0; k < sv.mo->meshes.size(); ++k)
-                    std::memcpy(&sv.affine[12 * k], a, sizeof a);
-                sv.drawn = true;
-                ++vehDrawn;
-                if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
-                continue;
-            }
-            if (!doorPosed) { OMK_MEM_TAG("crowd: vehicle slots"); sv.posed = *sv.atRest; }
-            // the DRAWN tilt, read back from the posed corners: the two lateral
-            // extremes (model x), their height difference over their spread
-            float latLo = 1e30f, latHi = -1e30f, loW[3] = {0, 0, 0}, hiW[3] = {0, 0, 0};
-            const bool measureBank = mine && ride;
-            for (auto& c : sv.posed.corners) {
-                const float l[3] = {c.x - sv.origin[0], c.y - sv.origin[1], c.z - sv.origin[2]};
-                // the bank first, about the long axis (identity off a manual ride)
-                const float in[3] = {l[0] * bcr + l[1] * bsr, -l[0] * bsr + l[1] * bcr, l[2]};
-                float r[3];
-                omk::rotateYawCS(vcs, vsn, in, r);
-                c.x = r[0] + m.body[0];
-                c.y = r[1] + m.body[1] - omk::kVehNodeLift;
-                c.z = r[2] + m.body[2];
-                if (measureBank) {
-                    if (l[0] < latLo) { latLo = l[0]; loW[0] = c.x; loW[1] = c.y; loW[2] = c.z; }
-                    if (l[0] > latHi) { latHi = l[0]; hiW[0] = c.x; hiW[1] = c.y; hiW[2] = c.z; }
-                }
-            }
-            if (measureBank && latHi > latLo) {
-                const double dx = hiW[0] - loW[0], dz = hiW[2] - loW[2];
-                const double tilt = std::atan2(-(hiW[1] - loW[1]), std::sqrt(dx * dx + dz * dz)) * omk::kRadToDeg;
-                static double tiltMax = 0.0;
-                if (std::fabs(tilt) > tiltMax + 2.0) {
-                    tiltMax = std::fabs(tilt);
-                    std::printf("frame %ld: slider: Manuelle drawn BANKED - its +X side %.1f degrees "
-                                "up, the ride's roll %.1f (sub_457F50's node matrix)\n", frameNo, tilt,
-                                ride->roll > 180.0 ? ride->roll - 360.0 : ride->roll);
-                }
-            }
-            sv.posed.revision = ++worldGeoRev;
-            sv.drawn = true;
-            ++vehDrawn;
-            if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
-        }
+        worldCrowdVehicles(vs, pd, circuitShown, vreach, vehPastLod);
         phSpan["vehicles"] += phaseNow() - veh0;
         releaseIdleCrowd();
         if (vehLive && (vehTold < 0 || frameNo - vehTold >= 300)) {
@@ -733,9 +395,13 @@ void PlayState::worldCrowd() {
                         vehPastLod, vehStopped, brakes, touches, bumps, double(closest));
         }
     }
-    player0 = phaseNow();
-    playerOffView = false;    // his corners not built, his body not drawn
-    playerGpu = false;        // his corners not built, his rest drawn by the renderer
+}
+
+
+// THE PLAYER, posed by his channel's clip, turned by his facing and placed where the walker put him - or his arm alone in shoot mode (from `worldCrowd`)
+void PlayState::worldCrowdPlayer() {
+    auto& session = *session_;
+    omk::Renderer& world = *world_;
     if (drawPlayer || drawArm) {
         // THE PLAYER, posed by his channel's clip - the quaternions
         // alone, since the root motion is the position the walker
@@ -915,155 +581,7 @@ void PlayState::worldCrowd() {
         //
         // Carried, the pair nets out: +24.3 then -24.6 is -0.3.
         float rootDrop = 0.0f;
-        if (pt && !pt->trans.empty()) {
-            const int rf = player->poseFrame();
-            const std::size_t ri = static_cast<std::size_t>(
-                rf < 0 ? 0 : (rf < static_cast<int>(pt->trans.size())
-                                  ? rf : static_cast<int>(pt->trans.size()) - 1));
-            const float cur = pt->trans[ri][1];
-            // a new state re-bases the delta, it does not reset the sum
-            if (player->ctlState() != rootState) {
-                rootState = player->ctlState();
-                rootLast  = cur;
-            }
-            // A WINDOW'S LAST FRAME IS A DISCONTINUITY, NOT MOTION.
-            // Measured across a take: the blend runs 0 -> +21.90 over
-            // H_TAKL12's 21 frames (the crouch, against 19.08 of feet
-            // lifted by the rotations - they very nearly cancel) and
-            // then snaps to -0.22 at f 20. That one bogus delta
-            // poisons the sum, so H_TAKL22 starts from a corrupted
-            // base and ends 22 units up - "it stays higher until I
-            // release the object".
-            //
-            // **A PORT GUARD, labelled**: real root motion is a few
-            // units a frame at most (H_WALK's whole cycle spans 2).
-            // Anything larger is a seam between variants, not the
-            // pelvis moving, so it is not accumulated. The engine has
-            // no such guard because `Anim_RootDelta` never crosses a
-            // seam: it indexes the position keys by the RAW frame and
-            // so reads cell 0 only. Reading the blended cells is this
-            // port's choice, and this is its cost.
-            rootAccum += cur - rootLast;
-            rootLast   = cur;
-            // **A PORT GUARD, labelled**: the engine relies on the
-            // authored motion netting out and has a ground probe under
-            // it every frame; this has neither, so any residue would
-            // live for ever. Back in the idle, the body is standing by
-            // definition, so the sum is released there.
-            if (player->clipName() == "H_STAND") rootAccum = 0.0f;
-            // ...and NOT while the slider clips carry him: in ACTOR_STATE
-            // 6 and 8 the clip's root y is the NODE's (`sub_45C680` cases
-            // 6/8), carried by `PlayerController::nodeDrop()` below - adding
-            // this sum as well would put him one clip's descent (12.5) too
-            // low in the seat.
-            if (boarding || leaving) rootAccum = 0.0f;
-            rootDrop = rootAccum;
-            // ...EXCEPT WHERE THE BODY IS ON THE GROUND BY DEFINITION,
-            // which is every LOOPING clip - the idle, the walk, the
-            // run (`todo/player-vertical.md` step 1).
-            //
-            // The accumulator above exists for the TAKE, whose clips
-            // CHAIN: H_TAKL12 crouches +24.3 and H_TAKL22 carries that
-            // crouch back up, so each reads as a delta on the last and
-            // an absolute reading of either is meaningless (it is the
-            // regression recorded in the note above - H_TAKL22 run as
-            // an absolute goes 0 -> -24.6, from standing to 62 cm
-            // ABOVE it). A locomotion clip is the opposite: it is one
-            // self-contained cycle that begins and ends on the floor,
-            // so its pelvis trans is an OFFSET FROM THE STANDING POSE
-            // and must be read against the origin the anchor was
-            // latched at, never against whatever the last state left
-            // in the sum.
-            //
-            // The discriminator is structural, not a list of names:
-            // `variantCount() > 1` is what marks the grid/take states
-            // (it is what selects `gridTracks`, and what the crouch
-            // trace below is gated on). Everything else loops.
-            //
-            // H_STAND lands on cur 0.68 - ref 0.68 = 0 by
-            // construction, so the explicit release below it cannot
-            // tell a correct walk from one 1.41 out.
-            if (player->variantCount() <= 1) rootDrop = cur - playerRootRef;
-            // ...AND NOT IN THE WATER, for the slider's reason above. In
-            // ACTOR_STATEs 11..14 the clip's root y reaches his POSITION
-            // (`sub_4A9470` moves him by the whole delta, vertical
-            // included), and for a SWIM clip that y is not a bob at all:
-            // the clips are authored upright and stroke along the body's
-            // own axis, which his pitch then lays along the water. Drawn
-            // as a drop as well, the stroke's travel would go onto the body
-            // a second time, in WORLD y and unturned - so on screen he would
-            // climb through every loop whatever way he pointed and snap
-            // back at the wrap.
-            {
-                const int ws = static_cast<int>(player->state());
-                if (ws >= 11 && ws <= 14) { rootDrop = 0.0f; rootAccum = 0.0f; }
-            }
-            // ...AND NOT WHILE THE SLIDER CLIPS CARRY HIM, AFTER the looping
-            // rule as well as before it. The guard above zeroes the
-            // accumulator, but `H_SLDIN` and `H_SLDOUT` are single-variant
-            // clips, so the looping rule puts `cur - ref` straight back:
-            // +11.5..11.9 of descent drawn as a drop on top of the same
-            // descent moving his position (ACTOR_STATE 6/8, `Actor_MoveBy`),
-            // and Kay'l sits a little low in the slider.
-            // ...and what IS drawn there is the NODE's own drop: in ACTOR_STATE
-            // 6/8 the clip's root y moves the node and not his position
-            // (`sub_45C680` cases 6/8, `PlayerController::nodeDrop`), so the
-            // body steps into the seat and out of it on top of a position
-            // that stays where the arm put him (the exit's fall).
-            if (boarding || leaving) rootDrop = player->nodeDrop();
-            // MEASURING, not fixing: how far does the model's own
-            // lowest point travel across a take? If the rotations
-            // lower the body, a CONSTANT anchor is right and the
-            // float came from somewhere else; if it barely moves
-            // while the legs bend, the body never crouches at all.
-            // OMK_PLY=N prints every Nth frame (1 for every frame, which is what a
-            // jump needs - its whole arc is 14 frames and a stride of 4
-            // steps straight over the apex).
-            static const long plyEvery = [] {
-                const long v = omk::envInt("OMK_PLY", 0);
-                return v > 1 ? v : 1;
-            }();
-            if (omk::envFlag("OMK_PLY") && (frameNo % plyEvery) == 0) {
-                float lo = -1e9f, hi = 1e9f;
-                for (const auto& c : playerPosed.corners) {
-                    if (c.y > lo) lo = c.y;
-                    if (c.y < hi) hi = c.y;
-                }
-                // `foot` is the one that matters and the one this
-                // print did NOT carry: `lo` is a MODEL-space corner
-                // (this runs before the offset loop below), so its
-                // `gap` against the ground is not a distance on
-                // screen. The drawn foot sits at
-                // `lo + pos.y - playerFeet + rootDrop`, so its height
-                // above the floor is `lo - playerFeet + rootDrop` -
-                // NEGATIVE is above, y growing down. That is the
-                // number `verify.py: engine player vertical` asserts
-                // and the one the walk float showed up in.
-                std::printf("DBG ply f%ld %-9s pf %2d  ground %+8.2f  lowest %+8.2f"
-                            "  gap %+7.2f  head %+8.2f  rootDrop %+6.2f  foot %+7.2f"
-                            "  at %+9.2f %+9.2f  air %d\n",
-                            frameNo, player->clipName().c_str(), player->poseFrame(),
-                            player->pos()[1], lo, lo - player->pos()[1], hi,
-                            rootDrop, lo - playerFeet + rootDrop,
-                            player->pos()[0], player->pos()[2],
-                            player->walker().airborne() ? 1 : 0);
-            }
-            if (player->variantCount() > 1) {
-                float lo = -1e9f;
-                for (const auto& c : playerPosed.corners)
-                    if (c.y > lo) lo = c.y;
-                const auto& lf = player->last();
-                std::printf("  crouch: %-9s f %2d  lowest %+8.2f  "
-                            "(latched %+8.2f, delta %+7.2f)  root %+6.2f"
-                            "  at %.1f %.1f  dxz %+.2f %+.2f  step %d%s\n",
-                            player->clipName().c_str(), player->poseFrame(),
-                            lo, playerFeet, lo - playerFeet, rootAccum,
-                            player->pos()[0], player->pos()[2],
-                            lf.rootDelta[0], lf.rootDelta[2],
-                            static_cast<int>(lf.step),
-                            lf.stepped ? "" : " (no step asked)");
-            }
-        }
+        worldCrowdPlayerRootDrop(pt, rootDrop);
         const float* pp = player->pos();
         float yaw = player->facing();
         // ---- ...AND THE SLIDER OWNS HIM WHILE HE BOARDS ----------
@@ -1243,6 +761,526 @@ void PlayState::worldCrowd() {
         actorKnown = true;
     }
 }
+
+
+
+// THE WALKERS on the circuit, each bound to its clip, posed and placed (from `worldCrowd`)
+void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool circuitShown,
+                                  float reach, int& pedModelSwapped, int& pedRebound,
+                                  bool noPedLod, float (&viewFwd)[3], int pedLodMax) {
+    for (std::size_t i = 0; i < ws.size(); ++i) {
+        const auto& w = ws[i];
+        PedStaged& p = *pedStaged[i];
+        p.drawn = false;
+        if (!w.live || !w.clip || pedAni.empty()) continue;
+        ++pedLive;
+        if (w.flags & 0x80u) ++pedInAction;
+        if (w.flags & 0x100u) ++pedIdle;
+        if (!circuitShown) continue;   // its street is out of the render chain
+        const float dx = w.body[0] - view.cam.eye[0], dy = w.body[1] - view.cam.eye[1],
+                    dz = w.body[2] - view.cam.eye[2];
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > reach * reach * 4.0f) continue;   // far past any root radius: skip the model
+        // THE WALKER'S OWN MODEL, looked up every frame - a map lookup when
+        // it is resident. Taken ONCE (`if (!p.mo)`), it would go stale:
+        // this list is rebuilt only when the number of movers changes, a
+        // city reloads its circuit on every entry and refills to the same
+        // cap (Anekbah's 200), so after any interior each slot would keep
+        // its LAST occupant's model - the wrong body on a new walker -
+        // and, once the per-frame eviction let that model go because no
+        // live walker wore it any more, a pointer to a freed one (T-posed
+        // npcs beside animated ones after an interior). The caches below
+        // follow `p.mo` (`cacheMo`).
+        {
+            CharModel* const was = p.mo;
+            p.mo = charModelFor(w.model);
+            if (was && p.mo && was != p.mo && p.cacheMo == was) ++pedModelSwapped;
+        }
+        if (!p.mo || !p.mo->ready) continue;
+        {
+            const float r = p.mo->root >= 0 && static_cast<std::size_t>(p.mo->root) < p.mo->meshes.size()
+                                ? p.mo->meshes[static_cast<std::size_t>(p.mo->root)].radius : 0.0f;
+            if ((r + reach) * (r + reach) <= d2) continue;   // `sub_48D7F0`'s reach test
+        }
+        // outside the view: `sub_48D7F0` skips the instance whole
+        // on its model root's radius at its position
+        if (p.mo->root >= 0 && static_cast<std::size_t>(p.mo->root) < p.mo->meshes.size() &&
+            outsideView(w.body, p.mo->meshes[static_cast<std::size_t>(p.mo->root)].radius, true)) {
+            ++pedOffView;
+            continue;
+        }
+        // REBOUND WHEN THE LIBRARY CHANGES, not only when the clip
+        // pointer does. `p.tracks` points INTO `pedTracks`, which a new
+        // library clears; the walkers' clips are rebuilt at the same
+        // time, and a new clip at the freed one's address leaves the
+        // pointer test equal - the walker drawn from freed tracks, and
+        // every npc in the street T-posed back from an interior.
+        if (w.clip != p.clipWas || p.cacheGen != pedCacheGen || p.cacheMo != p.mo) {
+            if (w.clip == p.clipWas && p.cacheGen != pedCacheGen) ++pedRebound;
+            p.clipWas = w.clip;
+            p.tracks = pedTracksFor(w.sex, *w.clip, p.mo->meshes, w.model);
+        }
+        if (p.cacheGen != pedCacheGen || p.cacheMo != p.mo || p.cacheTracks != p.tracks ||
+            p.cacheModel != w.model) {
+            p.cacheGen = pedCacheGen;
+            p.cacheMo = p.mo;
+            p.cacheTracks = p.tracks;
+            p.cacheModel = w.model;
+            p.cacheRoot = p.tracks ? skeletonRootOf(*p.mo, *p.tracks) : p.mo->root;
+            p.cacheRest = &lodRestFor(w.model, *p.mo, p.cacheRoot);
+            p.lodFilled = 0;
+            for (int f = 0; f < 2; ++f) {
+                const char* bone = f == 0 ? "Piedg" : "Piedd";
+                p.cacheFoot[f] = p.mo->boneIdx.built() ? p.mo->boneIdx.find(bone, p.cacheRoot)
+                                                       : omk::findMeshContaining(p.mo->meshes, bone, p.cacheRoot);
+            }
+        }
+        // THE LEVEL, `sub_48D7F0`'s walk of the chain: start one
+        // level down when row 7's detail is 0, then step on while
+        // the VIEW DEPTH is at or past the level's distance; the
+        // last level holds past 40 m. Only for a model whose
+        // chain the index rule holds for, and whose tracks were
+        // bound on the chain's first (largest) skeleton.
+        PedJob job;
+        job.i = i;
+        job.tracks = p.tracks;
+        job.rest = p.cacheRest;
+        job.lodRoot = p.cacheRoot;
+        job.foot[0] = p.cacheFoot[0]; job.foot[1] = p.cacheFoot[1];
+        const int nL = noPedLod ? 0 : lodChainOf(*p.mo);
+        if (nL > 1 && p.tracks && p.cacheRoot == p.mo->lodRootAt[0]) {
+            const float depth = (w.body[0] - view.cam.eye[0]) * viewFwd[0] +
+                                (w.body[1] - view.cam.eye[1]) * viewFwd[1] +
+                                (w.body[2] - view.cam.eye[2]) * viewFwd[2];
+            int level = std::min(shadowDetail <= 0 ? 1 : 0, nL - 1);
+            while (level + 1 < nL && depth >= omk::kLodDistances[level]) ++level;
+            level = std::max(0, std::min(level, pedLodMax));
+            job.level = level;
+            job.only = p.mo->lodMask[level].data();
+            if (level > 0) {
+                if (!(p.lodFilled & (1u << level))) {
+                    p.lodFilled |= static_cast<std::uint8_t>(1u << level);
+                    const int rk = p.mo->lodRootAt[level];
+                    p.lodRestL[level] = &lodRestFor(w.model, *p.mo, rk);
+                    for (int f = 0; f < 2; ++f) {
+                        const char* bone = f == 0 ? "Piedg" : "Piedd";
+                        p.lodFoot[level][f] = p.mo->boneIdx.built() ? p.mo->boneIdx.find(bone, rk)
+                                            : omk::findMeshContaining(p.mo->meshes, bone, rk);
+                    }
+                }
+                job.tracks = lodTracksFor(p.tracks, level, p.mo->lodCount);
+                job.rest = p.lodRestL[level];
+                job.lodRoot = p.mo->lodRootAt[level];
+                job.foot[0] = p.lodFoot[level][0]; job.foot[1] = p.lodFoot[level][1];
+            }
+        }
+        // `floor(clock) - 1` as before, with the clock's FRACTION
+        // kept for enhancement 12: `composePose` floors it when
+        // smoothing is off, so the pose is the same key
+        float frame = static_cast<float>(w.clock) - 1.0f;
+        if (frame < 0.0f) frame = 0.0f;
+        if (p.tracks && frame >= static_cast<float>(p.tracks->frames - 1))
+            frame = static_cast<float>(p.tracks->frames - 1);
+        job.frame = frame;
+        pedJobs.push_back(job);
+    }
+}
+
+// THE VEHICLES on the circuit, each posed and placed - the sliders and the motos, their LOD by `dword_4C8860` (from `worldCrowd`)
+void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const omk::Sliders& pd,
+                                   bool circuitShown, float vreach, int& vehPastLod) {
+    omk::Renderer& world = *world_;
+    const auto& fs = *fs_;
+    for (std::size_t i = 0; i < vs.size(); ++i) {
+        const auto& v = vs[i];
+        VehStaged& sv = *vehStaged[i];
+        sv.drawn = false;
+        // ...and SAY why the player's own slider is not staged, once
+        // per reason: after a load into another city it vanished
+        // from the picture with the log silent about it.
+        const bool mine = static_cast<int>(i) == pd.calledVehicle();
+        static int calledSkipTold = -1;
+        auto skipMine = [&](int why, const char* what) {
+            if (mine && calledSkipTold != why) {
+                calledSkipTold = why;
+                std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is NOT staged: %s\n",
+                            frameNo, i, v.model.c_str(), what);
+            }
+        };
+        if (!v.live || v.mover < 0) { skipMine(1, "not live / no mover"); continue; }
+        const auto& m = pd.movers()[static_cast<std::size_t>(v.mover)];
+        ++vehLive;
+        if (m.flags & 0x100u) ++vehStopped;
+        // ...and the traffic the same way - but NOT the player's own slider
+        // while he rides it: `Slider_TickRide` relinks it into the head
+        // scene `dword_93076C` every tick, so it draws wherever he goes
+        if (!circuitShown && !(mine && (ride || boarded))) {
+            skipMine(4, "its street's slot is hidden (out of the render chain)");
+            continue;
+        }
+        const float vx = m.body[0] - view.cam.eye[0], vy = m.body[1] - view.cam.eye[1],
+                    vz = m.body[2] - view.cam.eye[2];
+        const float vd2 = vx * vx + vy * vy + vz * vz;
+        if (vd2 > vreach * vreach * 4.0f) { skipMine(2, "beyond the clip distance"); continue; }
+        // A SLOT IS REUSED, and with another model: a call spawns into
+        // the first dead slot, in a full
+        // pool takes an ambient vehicle and rebinds its model to the
+        // slider row (`sub_452CC0`'s take-over) - so a slot that drew a
+        // MOTO can hold the player's slider next. `sv.mo` taken once and
+        // never compared would draw the called slider as the moto the
+        // slot had held: a call after a journey bringing a cutscene
+        // without any slider in it
+        if (sv.mo && sv.model != v.model) {
+            std::printf("frame %ld: vehicle slot %zu restaged - '%s' -> '%s'\n",
+                        frameNo, i, sv.model.c_str(), v.model.c_str());
+            sv.mo = nullptr; sv.atRest = nullptr; sv.built = false; sv.lodRoot = -1;
+        }
+        if (!sv.mo) { sv.mo = charModelFor(v.model); sv.model = v.model; }
+        if (!sv.mo || !sv.mo->ready) { skipMine(3, "its model did not load"); continue; }
+        if (mine && calledSkipTold != 0) { calledSkipTold = 0; std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is staged at %.0f %.0f %.0f\n", frameNo, i, v.model.c_str(), m.body[0], m.body[1], m.body[2]); }
+        // ---- `sub_4521E0`, THE MODEL SWAP ----------------------
+        // The slider model TABLE (`dword_538E28`, 88-byte rows)
+        // holds its four root sub-objects at +4..+16 sorted
+        // heaviest first by `sub_453A70` (vertices + faces):
+        // SlBassin 1527 corners, slider_fl 750, SlBasA 366, SlBasB
+        // 144. The reserved slider is created on +8 (slider_fl -
+        // `CharModel::root` here, a shell with no interior and NO
+        // DOOR: both door meshes hang off SlBassin) and
+        // `sub_4521E0` toggles the sub-node to +4, SlBassin, the
+        // COCKPIT, at `MDACTION`'s snap - which is what puts a
+        // door under the clip - and `sub_4570F0` toggles it back
+        // before the exit clip. A reader saw the shell: *"the
+        // current model when Kay'l enters the slider has no
+        // modelised interior"*.
+        const bool swapped = (boarding || boarded) && static_cast<int>(i) == pd.calledVehicle();
+        const int wantRoot = swapped ? heaviestRootOf(*sv.mo)
+                                     : (v.lodBase == 0 ? heaviestRootOf(*sv.mo) : sv.mo->root);
+        if (sv.built && sv.lodRoot != wantRoot) sv.built = false;
+        if (!sv.built) {
+            sv.lodRoot = wantRoot;
+            if (static_cast<int>(i) == pd.calledVehicle() &&
+                wantRoot >= 0 && static_cast<std::size_t>(wantRoot) < sv.mo->meshes.size())
+                std::printf("slider: the called vehicle is staged on sub-object "
+                            "'%s'%s\n", sv.mo->meshes[static_cast<std::size_t>(wantRoot)].name,
+                            swapped ? " - the COCKPIT, sub_4521E0's swap" : "");
+            sv.atRest = &vehAtRestFor(v.model, *sv.mo, sv.lodRoot);
+            // The sub-objects of one model are laid out APART in
+            // model space - SLI_FN's four roots sit at x 351..550 -
+            // so each is re-centred on its own root, which is what
+            // makes the four LOD variants land in one place. The
+            // walkers do the same for x and z; a vehicle takes y
+            // too, because it has no feet rule to stand on.
+            if (sv.lodRoot >= 0 && static_cast<std::size_t>(sv.lodRoot) < sv.mo->meshes.size())
+                for (int k = 0; k < 3; ++k)
+                    sv.origin[k] = sv.mo->meshes[static_cast<std::size_t>(sv.lodRoot)].pos[k];
+            sv.radius = 0.0f;
+            for (const auto& c : sv.atRest->corners) {
+                const float dx = c.x - sv.origin[0], dy = c.y - sv.origin[1], dz = c.z - sv.origin[2];
+                sv.radius = std::max(sv.radius, std::sqrt(dx * dx + dy * dy + dz * dz));
+            }
+            sv.built = true;
+        }
+        // PAST THE CLIP DISTANCE: `sub_48D7F0`'s reach test, the
+        // distance against `dword_6A2B9C` plus the radius
+        if ((sv.radius + vreach) * (sv.radius + vreach) <= vd2) {
+            skipMine(2, "beyond the clip distance");
+            continue;
+        }
+        // OUTSIDE THE VIEW: `sub_48D7F0` rejects the instance whole
+        // before any matrix or vertex; the radius here is the
+        // composed model's own, never smaller than the node's
+        {
+            const float at[3] = {m.body[0], m.body[1] - omk::kVehNodeLift, m.body[2]};
+            if (!mine && outsideView(at, sv.radius, true)) continue;
+        }
+        // ...unless this is the slider he is CLIMBING INTO, in
+        // which case its door is posed from the clip at the
+        // character's own frame - the engine's shared clock.
+        bool doorPosed = false;
+        if ((boarding || leaving) && static_cast<int>(i) == pd.calledVehicle() && player) {
+            if (!doorClipsRead) {
+                doorClipsRead = true;
+                const auto a = fs.read("ANIMS/SLF_112.3DA");
+                const auto b = fs.read("ANIMS/SLF_113.3DA");
+                if (!a.empty()) doorIn  = omk::clipTracks(a);
+                if (!b.empty()) doorOut = omk::clipTracks(b);
+            }
+            const omk::NodeTracks& dt0 = boarding ? doorIn : doorOut;
+            // THE TRACKS ARE KEYED BY NODE ID, NOT MESH INDEX. The
+            // clip names its five tracks with the bytes 0,3,1,4,2
+            // and `SLI_FN.3DO`'s ids run SlBassin 0, SlPorteZG 1,
+            // SlPorteG 2, SlPorteZD 3, SlPorteD 4 - the cockpit and
+            // its four door parts, exactly a door clip's set. Read
+            // as indices they land on two SHELLS, and the one
+            // moving track fell on the wrong panel. `clipTracks`
+            // fills `ids` as indices (right for the scene clips it
+            // was written for); remapped through the model's ids.
+            omk::NodeTracks dt = dt0;
+            // BY NAME (+4 of the track header), not by id or index:
+            // the mover is named `SlPorteZG`, the parent copy on the
+            // G side; its child `SlPorteG` follows it, so the two
+            // coincident copies swing together and nothing stays
+            // over the hole. Read by index the swing landed on
+            // `SlPorteG` alone; by id on `SlPorteD`, the far door.
+            for (std::size_t ti = 0; ti < dt.ids.size(); ++ti) {
+                int idx = -1;
+                const std::string& nm = ti < dt.names.size() ? dt.names[ti] : std::string();
+                for (std::size_t k = 0; k < sv.mo->meshes.size(); ++k)
+                    if (nm == sv.mo->meshes[k].name) { idx = static_cast<int>(k); break; }
+                dt.ids[ti] = idx;
+            }
+            static bool doorTold = false;
+            if (!doorTold && dt.valid()) {
+                doorTold = true;
+                std::printf("slider: the door clip's tracks by name ->");
+                for (auto id : dt.ids)
+                    std::printf(" %s", id >= 0 ? sv.mo->meshes[static_cast<std::size_t>(id)].name : "?");
+                std::printf("\n");
+            }
+            if (dt.valid()) {
+                int f = player->poseFrame();
+                if (f < 0) f = 0;
+                if (f >= dt.frames) f = dt.frames - 1;
+                const omk::Geometry& rest = lodRestFor(v.model, *sv.mo, sv.lodRoot);
+                const auto dp = omk::composePose(sv.mo->meshes, dt, f, false);
+                omk::applyPose(sv.posed, rest, sv.mo->meshes, dp);
+                doorPosed = true;
+            }
+        }
+        // `sub_437F80(inst, x, y - 30.75, z)`: the instance sits
+        // 30.75 units ABOVE the body point (y is down), turned to
+        // the heading `sub_453330` built from the direction to its
+        // mover - which for a vehicle is where it is going.
+        float vcs, vsn;
+        omk::yawSinCos(m.facing, vcs, vsn);   // once a vehicle, not a corner
+        // THE BANK (drift audit M6): Manuelle's node matrix is
+        // `sub_442160(0, -yaw, -(360 - roll))` (`sub_457F50`), which is a
+        // turn about the model's own LONG axis (local Z) by the roll, then
+        // the yaw: rows (cos r, -sin r, 0), (sin r, cos r, 0), (0, 0, 1)
+        // at yaw 0, applied row-vector. Only the manual ride's tick writes
+        // it - a called or ambient vehicle is yaw alone - so the slider
+        // leans into a turn, up to `kBankLimit` (11), only while he flies it.
+        float bcr = 1.0f, bsr = 0.0f;
+        if (mine && ride && ride->roll != 0.0) {
+            const double rr = ride->roll * omk::kDegToRad;
+            bcr = static_cast<float>(std::cos(rr));
+            bsr = static_cast<float>(std::sin(rr));
+        }
+        sv.gpu = !doorPosed && !cpuBodiesFlag && world.posesBodies() &&
+                 sv.atRest->cornerMesh.size() == sv.atRest->corners.size();
+        if (sv.gpu) {
+            // x' = R (x - origin) + body - lift, R the yaw as
+            // `rotateYawCS` applies it: x' = c x - s z, z' = s x + c z
+            // M = Yaw * Roll(about local z), column form; t = body - lift - M origin
+            const float m00 = vcs * bcr, m01 = vcs * bsr, m02 = -vsn;
+            const float m10 = -bsr,      m11 = bcr,       m12 = 0.0f;
+            const float m20 = vsn * bcr, m21 = vsn * bsr, m22 = vcs;
+            const float* o = sv.origin;
+            const float tx = m.body[0] - (m00 * o[0] + m01 * o[1] + m02 * o[2]);
+            const float ty = m.body[1] - omk::kVehNodeLift - (m10 * o[0] + m11 * o[1] + m12 * o[2]);
+            const float tz = m.body[2] - (m20 * o[0] + m21 * o[1] + m22 * o[2]);
+            const float a[12] = {m00, m01, m02, tx,
+                                 m10, m11, m12, ty,
+                                 m20, m21, m22, tz};
+            sv.affine.resize(12 * sv.mo->meshes.size());
+            for (std::size_t k = 0; k < sv.mo->meshes.size(); ++k)
+                std::memcpy(&sv.affine[12 * k], a, sizeof a);
+            sv.drawn = true;
+            ++vehDrawn;
+            if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
+            continue;
+        }
+        if (!doorPosed) { OMK_MEM_TAG("crowd: vehicle slots"); sv.posed = *sv.atRest; }
+        // the DRAWN tilt, read back from the posed corners: the two lateral
+        // extremes (model x), their height difference over their spread
+        float latLo = 1e30f, latHi = -1e30f, loW[3] = {0, 0, 0}, hiW[3] = {0, 0, 0};
+        const bool measureBank = mine && ride;
+        for (auto& c : sv.posed.corners) {
+            const float l[3] = {c.x - sv.origin[0], c.y - sv.origin[1], c.z - sv.origin[2]};
+            // the bank first, about the long axis (identity off a manual ride)
+            const float in[3] = {l[0] * bcr + l[1] * bsr, -l[0] * bsr + l[1] * bcr, l[2]};
+            float r[3];
+            omk::rotateYawCS(vcs, vsn, in, r);
+            c.x = r[0] + m.body[0];
+            c.y = r[1] + m.body[1] - omk::kVehNodeLift;
+            c.z = r[2] + m.body[2];
+            if (measureBank) {
+                if (l[0] < latLo) { latLo = l[0]; loW[0] = c.x; loW[1] = c.y; loW[2] = c.z; }
+                if (l[0] > latHi) { latHi = l[0]; hiW[0] = c.x; hiW[1] = c.y; hiW[2] = c.z; }
+            }
+        }
+        if (measureBank && latHi > latLo) {
+            const double dx = hiW[0] - loW[0], dz = hiW[2] - loW[2];
+            const double tilt = std::atan2(-(hiW[1] - loW[1]), std::sqrt(dx * dx + dz * dz)) * omk::kRadToDeg;
+            static double tiltMax = 0.0;
+            if (std::fabs(tilt) > tiltMax + 2.0) {
+                tiltMax = std::fabs(tilt);
+                std::printf("frame %ld: slider: Manuelle drawn BANKED - its +X side %.1f degrees "
+                            "up, the ride's roll %.1f (sub_457F50's node matrix)\n", frameNo, tilt,
+                            ride->roll > 180.0 ? ride->roll - 360.0 : ride->roll);
+            }
+        }
+        sv.posed.revision = ++worldGeoRev;
+        sv.drawn = true;
+        ++vehDrawn;
+        if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
+    }
+}
+
+
+// THE PLAYER'S ROOT DROP: the clip's vertical root, summed across states the way `Anim_RootDelta`'s offset stands (from `worldCrowd`)
+void PlayState::worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& rootDrop) {
+    if (pt && !pt->trans.empty()) {
+        const int rf = player->poseFrame();
+        const std::size_t ri = static_cast<std::size_t>(
+            rf < 0 ? 0 : (rf < static_cast<int>(pt->trans.size())
+                              ? rf : static_cast<int>(pt->trans.size()) - 1));
+        const float cur = pt->trans[ri][1];
+        // a new state re-bases the delta, it does not reset the sum
+        if (player->ctlState() != rootState) {
+            rootState = player->ctlState();
+            rootLast  = cur;
+        }
+        // A WINDOW'S LAST FRAME IS A DISCONTINUITY, NOT MOTION.
+        // Measured across a take: the blend runs 0 -> +21.90 over
+        // H_TAKL12's 21 frames (the crouch, against 19.08 of feet
+        // lifted by the rotations - they very nearly cancel) and
+        // then snaps to -0.22 at f 20. That one bogus delta
+        // poisons the sum, so H_TAKL22 starts from a corrupted
+        // base and ends 22 units up - "it stays higher until I
+        // release the object".
+        //
+        // **A PORT GUARD, labelled**: real root motion is a few
+        // units a frame at most (H_WALK's whole cycle spans 2).
+        // Anything larger is a seam between variants, not the
+        // pelvis moving, so it is not accumulated. The engine has
+        // no such guard because `Anim_RootDelta` never crosses a
+        // seam: it indexes the position keys by the RAW frame and
+        // so reads cell 0 only. Reading the blended cells is this
+        // port's choice, and this is its cost.
+        rootAccum += cur - rootLast;
+        rootLast   = cur;
+        // **A PORT GUARD, labelled**: the engine relies on the
+        // authored motion netting out and has a ground probe under
+        // it every frame; this has neither, so any residue would
+        // live for ever. Back in the idle, the body is standing by
+        // definition, so the sum is released there.
+        if (player->clipName() == "H_STAND") rootAccum = 0.0f;
+        // ...and NOT while the slider clips carry him: in ACTOR_STATE
+        // 6 and 8 the clip's root y is the NODE's (`sub_45C680` cases
+        // 6/8), carried by `PlayerController::nodeDrop()` below - adding
+        // this sum as well would put him one clip's descent (12.5) too
+        // low in the seat.
+        if (boarding || leaving) rootAccum = 0.0f;
+        rootDrop = rootAccum;
+        // ...EXCEPT WHERE THE BODY IS ON THE GROUND BY DEFINITION,
+        // which is every LOOPING clip - the idle, the walk, the
+        // run (`todo/player-vertical.md` step 1).
+        //
+        // The accumulator above exists for the TAKE, whose clips
+        // CHAIN: H_TAKL12 crouches +24.3 and H_TAKL22 carries that
+        // crouch back up, so each reads as a delta on the last and
+        // an absolute reading of either is meaningless (it is the
+        // regression recorded in the note above - H_TAKL22 run as
+        // an absolute goes 0 -> -24.6, from standing to 62 cm
+        // ABOVE it). A locomotion clip is the opposite: it is one
+        // self-contained cycle that begins and ends on the floor,
+        // so its pelvis trans is an OFFSET FROM THE STANDING POSE
+        // and must be read against the origin the anchor was
+        // latched at, never against whatever the last state left
+        // in the sum.
+        //
+        // The discriminator is structural, not a list of names:
+        // `variantCount() > 1` is what marks the grid/take states
+        // (it is what selects `gridTracks`, and what the crouch
+        // trace below is gated on). Everything else loops.
+        //
+        // H_STAND lands on cur 0.68 - ref 0.68 = 0 by
+        // construction, so the explicit release below it cannot
+        // tell a correct walk from one 1.41 out.
+        if (player->variantCount() <= 1) rootDrop = cur - playerRootRef;
+        // ...AND NOT IN THE WATER, for the slider's reason above. In
+        // ACTOR_STATEs 11..14 the clip's root y reaches his POSITION
+        // (`sub_4A9470` moves him by the whole delta, vertical
+        // included), and for a SWIM clip that y is not a bob at all:
+        // the clips are authored upright and stroke along the body's
+        // own axis, which his pitch then lays along the water. Drawn
+        // as a drop as well, the stroke's travel would go onto the body
+        // a second time, in WORLD y and unturned - so on screen he would
+        // climb through every loop whatever way he pointed and snap
+        // back at the wrap.
+        {
+            const int ws = static_cast<int>(player->state());
+            if (ws >= 11 && ws <= 14) { rootDrop = 0.0f; rootAccum = 0.0f; }
+        }
+        // ...AND NOT WHILE THE SLIDER CLIPS CARRY HIM, AFTER the looping
+        // rule as well as before it. The guard above zeroes the
+        // accumulator, but `H_SLDIN` and `H_SLDOUT` are single-variant
+        // clips, so the looping rule puts `cur - ref` straight back:
+        // +11.5..11.9 of descent drawn as a drop on top of the same
+        // descent moving his position (ACTOR_STATE 6/8, `Actor_MoveBy`),
+        // and Kay'l sits a little low in the slider.
+        // ...and what IS drawn there is the NODE's own drop: in ACTOR_STATE
+        // 6/8 the clip's root y moves the node and not his position
+        // (`sub_45C680` cases 6/8, `PlayerController::nodeDrop`), so the
+        // body steps into the seat and out of it on top of a position
+        // that stays where the arm put him (the exit's fall).
+        if (boarding || leaving) rootDrop = player->nodeDrop();
+        // MEASURING, not fixing: how far does the model's own
+        // lowest point travel across a take? If the rotations
+        // lower the body, a CONSTANT anchor is right and the
+        // float came from somewhere else; if it barely moves
+        // while the legs bend, the body never crouches at all.
+        // OMK_PLY=N prints every Nth frame (1 for every frame, which is what a
+        // jump needs - its whole arc is 14 frames and a stride of 4
+        // steps straight over the apex).
+        static const long plyEvery = [] {
+            const long v = omk::envInt("OMK_PLY", 0);
+            return v > 1 ? v : 1;
+        }();
+        if (omk::envFlag("OMK_PLY") && (frameNo % plyEvery) == 0) {
+            float lo = -1e9f, hi = 1e9f;
+            for (const auto& c : playerPosed.corners) {
+                if (c.y > lo) lo = c.y;
+                if (c.y < hi) hi = c.y;
+            }
+            // `foot` is the one that matters and the one this
+            // print did NOT carry: `lo` is a MODEL-space corner
+            // (this runs before the offset loop below), so its
+            // `gap` against the ground is not a distance on
+            // screen. The drawn foot sits at
+            // `lo + pos.y - playerFeet + rootDrop`, so its height
+            // above the floor is `lo - playerFeet + rootDrop` -
+            // NEGATIVE is above, y growing down. That is the
+            // number `verify.py: engine player vertical` asserts
+            // and the one the walk float showed up in.
+            std::printf("DBG ply f%ld %-9s pf %2d  ground %+8.2f  lowest %+8.2f"
+                        "  gap %+7.2f  head %+8.2f  rootDrop %+6.2f  foot %+7.2f"
+                        "  at %+9.2f %+9.2f  air %d\n",
+                        frameNo, player->clipName().c_str(), player->poseFrame(),
+                        player->pos()[1], lo, lo - player->pos()[1], hi,
+                        rootDrop, lo - playerFeet + rootDrop,
+                        player->pos()[0], player->pos()[2],
+                        player->walker().airborne() ? 1 : 0);
+        }
+        if (player->variantCount() > 1) {
+            float lo = -1e9f;
+            for (const auto& c : playerPosed.corners)
+                if (c.y > lo) lo = c.y;
+            const auto& lf = player->last();
+            std::printf("  crouch: %-9s f %2d  lowest %+8.2f  "
+                        "(latched %+8.2f, delta %+7.2f)  root %+6.2f"
+                        "  at %.1f %.1f  dxz %+.2f %+.2f  step %d%s\n",
+                        player->clipName().c_str(), player->poseFrame(),
+                        lo, playerFeet, lo - playerFeet, rootAccum,
+                        player->pos()[0], player->pos()[2],
+                        lf.rootDelta[0], lf.rootDelta[2],
+                        static_cast<int>(lf.step),
+                        lf.stepped ? "" : " (no step asked)");
+        }
+    }
+}
+
 
 // THE CROWD'S MEMORY, AS THE ORIGINAL KEEPS IT. The engine poses
 // every body each frame into ONE frame scratch pool and submits from it

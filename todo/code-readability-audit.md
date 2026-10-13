@@ -434,6 +434,16 @@ finding: a check that hashed a conversation frame would flicker.
   Guard 0 of 14; `scene facing`, `head look`, `beat handover`, `program
   placement`, `line facing`, `dialogue play`, `walk-in scene`, `training
   partner` green.
+* step 12e - `worldCrowd` (1236 lines) into the pedestrians-and-traffic
+  half and the player's (`worldCrowdPedestrians`, `worldCrowdPlayer`, no
+  parameters either), with the walkers, the vehicles and the player's root
+  drop their own; `worldDrawLists` (1082) loses the particles, the sky, the
+  set runs, the mapped shadows' light and the classic shadows (`keyOf` a
+  file function first - it captured nothing). The tool now drops an alias a
+  cut left unused (`tidy`), and qualifies a type clang printed bare by its
+  own "did you mean" (`Pedestrian` -> `omk::Pedestrian`); its member-name
+  guard reads only real declarations. Guard 0 of 14; the crowd, traffic,
+  shadow, particle and clip checks green.
 
 ## 7. For the tutorial
 

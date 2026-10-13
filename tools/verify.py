@@ -15283,6 +15283,66 @@ def c_events():
         "their keys"
 
 
+def c_tutorial_anchors():
+    r"""Every file and every function `tutorial/` names still exists.
+
+    The course sends its reader to code by NAME - `PlayerController::tick`,
+    `engine/backends/sdl/sdlfront.cpp`, `def c_engine_intro` - never by line,
+    because lines move with every commit. Names move too, more rarely, and a
+    lesson that names a function the tree no longer has fails its reader
+    silently: they grep, find nothing, and cannot tell a rename from their own
+    mistake.
+
+    So every backticked token in a lesson's PROSE (the fenced blocks are
+    commands and their output, proved by running them) is resolved: a path
+    against the repository, `engine/` or `tutorial/`, a bare file name by its
+    basename among the tracked files; `Class::member` as text in the engine's
+    sources; `name()` as a call or definition there; `def c_...` as a check in
+    this file. Absolute paths (`/tmp/...`) are the reader's own and skipped.
+
+    SHOWN TO FAIL, 2026-10-13: `PlayerController::tick` respelled
+    `PlayerController::tock` in lesson 1 is reported by file and name.
+    """
+    import glob, subprocess
+    tut = os.path.join(ROOT, "tutorial")
+    if not os.path.isdir(tut):
+        return ("skipped",), ("skipped",), "tutorial/ absent"
+    src = "".join(open(f, errors="replace").read()
+                  for d in ("engine/src", "engine/backends", "engine/tools")
+                  for f in glob.glob(os.path.join(ROOT, d, "**", "*.*"), recursive=True)
+                  if f.endswith((".cpp", ".h")))
+    me = open(os.path.join(ROOT, "tools", "verify.py")).read()
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+    names = set(os.path.basename(f) for f in tracked)
+    paths = syms = 0
+    missing = []
+    for md in sorted(glob.glob(os.path.join(tut, "*.md"))):
+        t = re.sub(r"```.*?```", "", open(md).read(), flags=re.S)
+        for tok in (x.strip() for x in re.findall(r"`([^`\n]+)`", t)):
+            if tok.startswith(("/", "-")) or any(c in tok for c in "*<{ "):
+                pass
+            elif re.fullmatch(r"[\w./-]+/[\w.-]+|[\w-]+\.(?:md|py|h|cpp|json|log|bin)", tok):
+                paths += 1
+                if "/" in tok:
+                    ok = any(os.path.exists(os.path.join(ROOT, b, tok)) for b in ("", "engine", "tutorial"))
+                else:
+                    ok = tok in names
+                if not ok:
+                    missing.append((os.path.basename(md), tok))
+                continue
+            m = re.fullmatch(r"(def )?([A-Za-z_]\w*(?:::~?\w+)*)(\(\))?", tok)
+            if m and (m.group(1) or "::" in tok or m.group(3)):
+                syms += 1
+                name = m.group(2)
+                ok = ("def %s(" % name) in me if m.group(1) else \
+                    (name in src) if "::" in name else (name + "(") in src
+                if not ok:
+                    missing.append((os.path.basename(md), tok))
+    return (paths >= 20, syms >= 15, missing), (True, True, []), \
+        "at least 20 paths and 15 functions named across the lessons (%d and %d now); " \
+        "the names that no longer resolve, by lesson" % (paths, syms)
+
+
 def c_engine_draw_core():
     r"""The four GPU backends pose, light, settle the depth tie and blend
     through ONE implementation, and it agrees with the reference path
@@ -47303,6 +47363,7 @@ CHECKS = [
     ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
     ("engine: events", c_events, "todo/code-readability-audit.md; engine/src/platform/events.h"),
     ("engine: draw core", c_engine_draw_core, "todo/code-readability-audit.md; engine/src/o3de/drawcore.h"),
+    ("tutorial anchors", c_tutorial_anchors, "tutorial/README.md"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

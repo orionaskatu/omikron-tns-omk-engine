@@ -4,8 +4,8 @@ Two licences, because the two halves of OMK want different things.
 
 | what | licence | file |
 |---|---|---|
-| **code** — `tools/`, `engine/`, `scripts/`, `tables/` | **GPL-3.0-or-later** | [`LICENSE`](LICENSE) |
-| **prose** — `docs/`, `manual/`, `book/`, `CLAUDE.md`, `README.md`, `todo/`, `transcript/` | **CC-BY-4.0** | [`docs/LICENSE`](docs/LICENSE) |
+| **code** — `tools/`, `engine/`, `scripts/`, `tables/`, `tutorial/*.py` | **GPL-3.0-or-later** | [`LICENSE`](LICENSE) |
+| **prose** — `docs/`, `manual/`, `book/`, `tutorial/`, `CLAUDE.md`, `README.md`, `todo/`, `transcript/` | **CC-BY-4.0** | [`docs/LICENSE`](docs/LICENSE) |
 
 ## Why they differ
 

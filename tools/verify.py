@@ -15297,7 +15297,9 @@ def c_tutorial_anchors():
     commands and their output, proved by running them) is resolved: a path
     against the repository, `engine/` or `tutorial/`, a bare file name by its
     basename among the tracked files; `Class::member` as text in the engine's
-    sources; `name()` as a call or definition there; `def c_...` as a check in
+    sources, or - for a member defined inside its class, which never spells
+    `Class::member` - the class and the member's name both there; `name()` as
+    a call or definition there; `def c_...` as a check in
     this file. Absolute paths (`/tmp/...`) are the reader's own and skipped,
     and so is a file the lesson tells them to make ("Create `path`").
 
@@ -15336,8 +15338,17 @@ def c_tutorial_anchors():
             if m and (m.group(1) or "::" in tok or m.group(3)):
                 syms += 1
                 name = m.group(2)
-                ok = ("def %s(" % name) in me if m.group(1) else \
-                    (name in src) if "::" in name else (name + "(") in src
+                if m.group(1):
+                    ok = ("def %s(" % name) in me
+                elif "::" in name:
+                    # `A::b` as written, or b inside A's own definition (a
+                    # member defined in the class never spells `A::b`)
+                    cls, _, mem = name.rpartition("::")
+                    ok = name in src or (
+                        re.search(r"\b(?:class|struct|namespace) %s\b" % re.escape(cls.split("::")[-1]), src)
+                        is not None and re.search(r"\b%s\b" % re.escape(mem), src) is not None)
+                else:
+                    ok = (name + "(") in src
                 if not ok:
                     missing.append((os.path.basename(md), tok))
     return (paths >= 20, syms >= 15, missing), (True, True, []), \

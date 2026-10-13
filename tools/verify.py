@@ -156,6 +156,21 @@ _DIK = {"ESC": 0x01, "TAB": 0x0F, "ENTER": 0x1C, "LCTRL": 0x1D, "RSHIFT": 0x36,
         "LEFT": 0xCB, "RIGHT": 0xCD, "DOWN": 0xD0}
 
 
+def _events(text):
+    """The `@evt name k=v ...` records in a viewer log (`engine/src/platform/
+    events.h`, printed when `OMK_EVENTS` is set), in order, as (name, {k: v})
+    - values as written, quoted ones unquoted. A check that reads these is
+    immune to the prose beside them being reworded."""
+    out = []
+    for line in text.splitlines():
+        if not line.startswith("@evt "):
+            continue
+        parts = re.findall(r'(\w+)=("[^"]*"|\S+)', line[5:])
+        name = line[5:].split(" ", 1)[0]
+        out.append((name, {k: v.strip('"') for k, v in parts}))
+    return out
+
+
 def wait(frames):
     return "0*%d" % frames
 
@@ -15235,6 +15250,37 @@ def c_thread_pool():
             mm and int(mm.group(1))), (True, True, True, 0), \
         "thread_probe read; OMK_THREADS 1; workers > 0 on a host with more than one core " \
         "(%s); the tiling's mismatches" % (m.group(0) if m else "no line")
+
+
+def c_events():
+    r"""THE EVENT LINES' CONTRACT (`engine/src/platform/events.h`).
+
+    Without `OMK_EVENTS` the viewer prints NO `@evt` line - so every check
+    that reads its prose, and the refactor guard, sees what it always saw.
+    With it, the events the checks read are there with their keys: the
+    supermarket fight refused (`fight.begin` how=refused, `fight.park`) and
+    the music switching (`music.switch` track). Renaming an event or a key
+    is changing an interface; this is where that shows.
+
+    SHOWN TO FAIL: `"how", "refused"` renamed in `playstate.cpp`; and the
+    `eventsOn()` gate removed from `omk::event` (the default run prints
+    them).
+    """
+    play = _play_built()
+    if not play:
+        return _PLAY_UNBUILT
+    plain = _play_out(play, "--fight-supermarket", "--frames", "700", "--nodelay",
+                      env={"OMK_FIGHT_REFUSE": "1"})
+    ev = _events(_play_out(play, "--fight-supermarket", "--frames", "700", "--nodelay",
+                           env={"OMK_FIGHT_REFUSE": "1", "OMK_EVENTS": "1"}))
+    names = {n for n, _ in ev}
+    return (plain.count("@evt "), ("fight.begin", {"opponent": "48", "how": "refused"}) in ev,
+            ("fight.park", {"opponent": "48"}) in ev,
+            all("track" in f and "frame" in f for n, f in ev if n == "music.switch") and
+            "music.switch" in names), \
+        (0, True, True, True), \
+        "@evt lines without OMK_EVENTS; with it: the refusal, the park, the music switches with " \
+        "their keys"
 
 
 def c_engine_dossier_reader():
@@ -44182,16 +44228,17 @@ def c_engine_fight_park():
     play = _play_built()
     if not play:
         return _PLAY_UNBUILT
-    o = _play_out(play, "--area", "5", "--fight", "572", "--frames", "30", "--nodelay",
-                  "--no-crowd")
-    attached = "fight.begin 572: not shown - ATTACHED by the fight" in o
-    begins = "FIGHT BEGINS against CHARACTERS 572" in o
-    r = _play_out(play, "--fight-supermarket", "--frames", "700", "--nodelay",
-                  env={"OMK_FIGHT_REFUSE": "1"})
-    refused = "fight.begin 48: REFUSED by OMK_FIGHT_REFUSE" in r
-    waits = "the script waits for event 2 all the same" in r
-    at = r.find("fight.begin 48: REFUSED")
-    ranOn = at >= 0 and "audio: music switch to 59" in r[at:]
+    # read as EVENTS (`_events`), not as the English beside them
+    o = _events(_play_out(play, "--area", "5", "--fight", "572", "--frames", "30",
+                          "--nodelay", "--no-crowd", env={"OMK_EVENTS": "1"}))
+    attached = ("fight.begin", {"opponent": "572", "how": "attached"}) in o
+    begins = any(n == "fight.begins" and f.get("opponent") == "572" for n, f in o)
+    r = _events(_play_out(play, "--fight-supermarket", "--frames", "700", "--nodelay",
+                          env={"OMK_FIGHT_REFUSE": "1", "OMK_EVENTS": "1"}))
+    refused = ("fight.begin", {"opponent": "48", "how": "refused"}) in r
+    waits = ("fight.park", {"opponent": "48"}) in r
+    at = r.index(("fight.begin", {"opponent": "48", "how": "refused"})) if refused else -1
+    ranOn = at >= 0 and any(n == "music.switch" and f.get("track") == "59" for n, f in r[at:])
     return (attached, begins, refused, waits, ranOn), (True, True, True, True, False), \
            "AREA 5: opponent 572 attached by the fight, the fight begins; the supermarket " \
            "refused: the refusal, the wait, and whether the post-fight line played anyway"
@@ -44743,8 +44790,9 @@ def c_licence_headers():
     # (the host file system, one file per platform)
     # 625: + `engine/src/platform/hostthread.h` and `threads_{std,vita,none}.cpp`
     # 626: + `engine/src/platform/sync.h` (a lock that costs nothing without threads)
+    # 627: + `engine/src/platform/events.h` (the `@evt` lines)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (626, [], 1, []), \
+           (627, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -47182,6 +47230,7 @@ CHECKS = [
     ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
     ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
     ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
+    ("engine: events", c_events, "todo/code-readability-audit.md; engine/src/platform/events.h"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

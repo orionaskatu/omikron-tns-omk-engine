@@ -4,6 +4,7 @@
 // that reads one of the objects built in place (`fs`, `session`, ...) names
 // it first under its original name.
 #include "playstate.h"
+#include "platform/events.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
 
@@ -1692,6 +1693,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
     static const bool refuse = omk::envFlag("OMK_FIGHT_REFUSE");
     if (refuse) {
         std::printf("fight.begin %d: REFUSED by OMK_FIGHT_REFUSE (an instrument)\n", opponentId);
+        omk::event("fight.begin", {{"opponent", opponentId}, {"how", "refused"}});
         return false;
     }
     Staged* s = nullptr;
@@ -1723,6 +1725,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
             std::printf("fight.begin %d: not shown - ATTACHED by the fight (Fight_Engage's "
                         "Actor_Attach) and staged %s at %.0f %.0f %.0f\n", opponentId,
                         sh.model.c_str(), sh.pos[0], sh.pos[1], sh.pos[2]);
+            omk::event("fight.begin", {{"opponent", opponentId}, {"how", "attached"}});
             break;
         }
     }
@@ -1756,6 +1759,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
                     "opponent '%s' %s) - the script waits for event 2 all the same\n", opponentId,
                     myBankName.c_str(), (myCharBank && myCharBank->ready) ? "ok" : "MISSING",
                     foeBankName.c_str(), (foeCharBank && foeCharBank->ready) ? "ok" : "MISSING");
+        omk::event("fight.begin", {{"opponent", opponentId}, {"how", "bank-missing"}});
         return false;
     }
     // The stats, `Fight_Begin`'s six event-44 reads. The player's live in
@@ -1932,6 +1936,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
                 session.frameNo(), player->channel().priorityThreshold(), ps.experience,
                 player->channel().priorityGated() ? "set" : "CLEAR",
                 (fightRun.foeChannel && fightRun.foeChannel->priorityGated()) ? "SET" : "none");
+    omk::event("fight.begins", {{"frame", frameNo}, {"opponent", opponentId}});
     std::printf("frame %ld: FIGHT BEGINS against CHARACTERS %d - banks '%s' "
                 "vs '%s', AI level %d (profile %d), difficulty %d, "
                 "radius %.1f, scheme 3\n"

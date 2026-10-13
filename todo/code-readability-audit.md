@@ -604,6 +604,21 @@ finding: a check that hashed a conversation frame would flicker.
   above the jobs still to come shifts them - and the declaration reader
   masks the comment above a statement. Guard 0 of 14; the 13 `.CTL` and 21
   `.SCX` checks green; 3DS and Vita build.
+* step 14a - MACHINE-READABLE EVENT LINES (§6): `platform/events.h`'s
+  `omk::event(name, {{key, value}...})` prints `@evt name k=v` beside the
+  prose line it mirrors, only when `OMK_EVENTS` is set (in the switch
+  table), so every existing check and the guard see what they always saw;
+  `verify.py`'s `_events(text)` reads them as records. The first events:
+  `fight.begin` (how = attached / refused / bank-missing), `fight.begins`,
+  `fight.park` (Session's own: the frontend could not start it) and
+  `music.switch`; `engine: fight park` reads THEM now, not its five English
+  lines. `engine: events` (new) asserts the contract - no `@evt` without
+  the switch, the keys a check relies on with it - shown to fail on a
+  renamed key and on the gate removed; `fight park` fails on the key too.
+  CLAUDE.md §4 has the rule: a new check adds an event beside the line it
+  needs. (A first cut put an event under a brace-less `if`, which would
+  have fired always - caught before building on it; braced.) Guard 0 of
+  14; 3DS and Vita build; `licence headers` 627.
 
 ## 7. For the tutorial
 

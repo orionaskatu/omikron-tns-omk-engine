@@ -1090,6 +1090,16 @@ And a check you ADD is a cost every future sweep pays: prefer one that measures
 the same thing from a short run, and mark anything that renders or replays a
 whole cutscene `--slow` so the default sweep does not carry it.
 
+**A check that reads the viewer reads its EVENTS where they exist**
+(2026-10-13, `engine/src/platform/events.h`): `omk::event("fight.begin",
+{{"opponent", id}, {"how", "refused"}})` prints `@evt fight.begin opponent=48
+how=refused` beside the prose when `OMK_EVENTS` is set, and `verify.py`'s
+`_events(text)` parses them - so rewording a `printf` cannot turn a check red,
+and the event's name at the `printf` says a check depends on it. Off, the run
+is byte for byte what it was. `engine: events` holds the contract; `engine:
+fight park` is the first check moved onto it. New checks add an event beside
+the line they need rather than regexing the English.
+
 Add a check whenever a finding produces a number — a count in `docs/` that
 nothing asserts is a claim with no test behind it.
 

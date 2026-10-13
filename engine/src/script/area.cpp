@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "formats/bytes.h"
+#include "platform/events.h"
 #include "script/area.h"
 #include "platform/profile.h"
 
@@ -3549,9 +3550,11 @@ void Session::execute(int i) {
             // all - a headless tool, where nothing could ever raise event 2 -
             // it still runs on, as the `ObjectWait` rule does.
             if (!fightHook_) break;
-            if (!beginFight(r.fightOpponent, r.fightLevel))
+            if (!beginFight(r.fightOpponent, r.fightLevel)) {
                 std::printf("fight.begin %d: the frontend could not start it - the script "
                             "waits for event 2 all the same, as op 62 does\n", r.fightOpponent);
+                omk::event("fight.park", {{"opponent", r.fightOpponent}});
+            }
             fightCamTravel_ = r.fightCamTravel;
             c->status = ctx_status::InFight;
             c->fightOpponent = r.fightOpponent;

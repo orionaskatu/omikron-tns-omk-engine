@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseModes`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/events.h"
 #include "platform/env.h"
 
 // The pause screen stops the sound; the voices
@@ -33,6 +34,7 @@ void PlayState::modesSound() {
         playingTrack = session.musicTrack();
         std::printf("audio: music switch to %d - the stream is flushed; "
                     "one-shots already playing are NOT\n", playingTrack);
+        omk::event("music.switch", {{"frame", frameNo}, {"track", playingTrack}});
         front.flushAudio();
         if (music.play(fs, adpcmTables, playingTrack, session.musicLoops()))
             std::printf("music: track %d, %.1f s%s\n", music.track(),

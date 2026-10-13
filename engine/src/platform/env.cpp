@@ -29,6 +29,7 @@ constexpr const char* kSwitches[] = {
     "OMK_CPU_SKY",              // A/B: the sky moved on the CPU on a renderer that moves it
     "OMK_DIRTY_AUDIT",          // GLES: checks the dirty-corner list is complete on every partial upload
     "OMK_EAGER_SOUPS",          // A/B: every collision soup built at the load instead of when first asked (engine: lazy collision)
+    "OMK_EVENTS",               // the `@evt` lines beside the prose (`platform/events.h`): machine-readable records for the checks
     "OMK_FADELOG",              // =1 log: the screen fade's terms when they change (engine: fight letterbox)
     "OMK_FEETLOG",              // =<actor> log: that body's lowest drawn corner against the floor, every 30 frames (engine: astaroth floor)
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)

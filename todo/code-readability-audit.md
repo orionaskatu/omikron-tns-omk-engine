@@ -510,6 +510,15 @@ finding: a check that hashed a conversation frame would flicker.
   is precise now: only a `continue`/`break` inside such a loop's own
   statement is that loop's. Guard 0 of 14; 56 checks over the five files
   green.
+* step 12j - `worldStaged`'s loop body is `worldStagedBody` (`drivenBy` a
+  file function, `nodeOwner` a method first - both lambdas over the
+  loop), and from it the program found by name, the skin gate (by
+  `--returns`: its `continue` had become a `return`), the floor under a
+  body with no pelvis anchor, and the body's instrument lines. `worldStaged`
+  3572 -> ~140 lines; what is left in `worldStagedBody` (686) is straight
+  code sharing a dozen locals - the set's lights section was refused at 13
+  parameters - which wants restructuring, not cutting. Guard 0 of 14; 19
+  staging checks green.
 
 ## 7. For the tutorial
 

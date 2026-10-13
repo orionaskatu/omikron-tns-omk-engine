@@ -958,6 +958,18 @@ struct PlayState {
     void worldGuns();   // the gun in his hand, each gunman's gun
     void worldBolts();   // the bolts
     void worldStaged();   // every staged body, posed by whatever drives it
+    void worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRunner& sc, int playerId,
+                         int& loneProgs, int& loneProg, int convSpeaker, int& stagedFar,
+                         int& stagedOff, bool& firstBody);   // from `worldStaged`
+    void worldStagedBodyReport(Staged& s, float& bodyYaw, const char*& src,
+                                std::vector<omk::MeshPose>& pose, bool& firstBody,
+                                const float (&off)[3]);   // from `worldStagedBody`
+    void worldStagedFindProgram(const omk::SceneRunner*& run, int& prog,
+                                const omk::SceneRunner& sc, bool activeOnly, int& playerId,
+                                Staged& s, const omk::SceneRunner::Started::Drive*& nameDrive);   // from `worldStagedBody`
+    bool worldStagedSkinGate(Staged& s, const char*& src, int& stagedFar, int& stagedOff);   // from `worldStagedBody`
+    void worldStagedGround(Staged& s, float& ground);   // from `worldStagedBody`
+    int nodeOwner(const std::string& name) const;   // the staged body a mesh name belongs to
     void worldStagedProgramDrive(const omk::SceneRunner*& run, int& prog,
                                  const omk::SceneRunner::Started*& stt,
                                  const omk::SceneRunner::Started::Drive*& drv,

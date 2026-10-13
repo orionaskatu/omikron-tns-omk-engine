@@ -14,7 +14,6 @@ bool PlayState::cloudCoversFrame() const {
 }
 
 int PlayState::phaseWorld() {
-    const auto& fs = *fs_;
     auto& comp = *comp_;
     auto& session = *session_;
     bool done = false;
@@ -85,175 +84,10 @@ int PlayState::phaseWorld() {
             static int lastPlayerActor = -2;
             if (lastPlayerActor == -2) lastPlayerActor = playerId;
             if (playerId != lastPlayerActor) {
-                if (player) {
-                    std::printf("frame %ld: player.become - the player is actor %d now, was %d; "
-                                "the controller is rebuilt for the new body\n", frameNo, playerId, lastPlayerActor);
-                    // ...WHERE THE NEW BODY STANDS. Op 56 (0x402F60) reads
-                    // the NEW body's own node - `Actor_GetPosAndFacing(new)`,
-                    // actor +244..+252 and +420 - and `Actor_SetPlacement`s
-                    // it there before `sub_40D590` makes it the player: the
-                    // soul moves, the body does not. The controller was
-                    // rebuilt at the OLD body's spot (the Sham's rider
-                    // mounted from Fodo's place, every reincarnation where
-                    // the dead body lay). The live node is the staged body's
-                    // `drawAt`, as the program hand-back below takes it; a
-                    // re-placement `character.show` has queued and not yet
-                    // applied, or a body never drawn, stands at the Session's
-                    // `Shown` placement.
-                    const Staged* nb = nullptr;
-                    for (const auto& up : staged) if (up->actor == playerId) { nb = up.get(); break; }
-                    if (!nb)
-                        for (const auto& up : parked) if (up->actor == playerId) { nb = up.get(); break; }
-                    const omk::Session::Shown* nsh = nullptr;
-                    for (const auto& sh : session.shown()) if (sh.actor == playerId) { nsh = &sh; break; }
-                    const bool pendingPlace = nsh && nsh->fromTable && nb &&
-                                              nsh->placeSeq != nb->placeSeqSeen;
-                    if (nb && nb->drawAtKnown && !pendingPlace) {
-                        const float yaw = nb->progYawKnown ? nb->progYaw : nb->facing;
-                        session.setPlayerPosition(nb->drawAt, yaw);
-                        std::printf("frame %ld: player.become - the new body's own place, "
-                                    "%.0f %.0f %.0f facing %.0f (its drawn node)\n", frameNo,
-                                    nb->drawAt[0], nb->drawAt[1], nb->drawAt[2], yaw);
-                    } else if (nsh && nsh->fromTable) {
-                        session.setPlayerPosition(nsh->pos, nsh->facing);
-                        std::printf("frame %ld: player.become - the new body's own place, "
-                                    "%.0f %.0f %.0f facing %.0f (its placement record)\n", frameNo,
-                                    nsh->pos[0], nsh->pos[1], nsh->pos[2], nsh->facing);
-                    } else {
-                        std::printf("frame %ld: player.become - no place known for the new "
-                                    "body: the old body's, LABELLED\n", frameNo);
-                    }
-                    // the facing is the body's, not the last player clip's
-                    handoverFacingKnown = false;
-                    player.reset();
-                    playerReady = false; adventure = false;
-                    forceAdventure = true;
-                }
+                phaseWorldPlayerBecome(playerId, lastPlayerActor);
                 lastPlayerActor = playerId;
             }
-            for (const auto& sh : session.shown()) {
-                // In adventure mode the CONTROLLER owns the player's body; a
-                // second one here would draw him twice.
-                if ((adventure || session.dialogOpen()) && player && sh.actor == playerId) continue;
-                Staged* s = nullptr;
-                for (auto& up : staged) if (up->actor == sh.actor) { s = up.get(); break; }
-                // RE-SHOWN: `Actor_Attach` re-links the node `Actor_Detach`
-                // parked - same place, same pose. Its cached pointers are
-                // re-resolved, since the model pool may have let them go.
-                if (!s)
-                    for (std::size_t k = 0; k < parked.size(); ++k)
-                        if (parked[k]->actor == sh.actor) {
-                            staged.push_back(std::move(parked[k]));
-                            parked.erase(parked.begin() + static_cast<long>(k));
-                            s = staged.back().get();
-                            s->mo = charModelFor(s->model);
-                            s->bk = charBankFor(s->bank);
-                            s->restGeo = nullptr;
-                            s->gpu = false;
-                            s->poolWas = nullptr;
-                            s->lastSkinned = -1;
-                            std::printf("frame %ld: re-shown actor %d %s - where it was left, "
-                                        "at %.0f %.0f %.0f facing %.0f (Actor_Attach keeps the node)\n",
-                                        frameNo, s->actor, s->model.c_str(), s->at[0], s->at[1], s->at[2],
-                                        s->facing);
-                            ++poolComposition;
-                            break;
-                        }
-                if (!s) {
-                    staged.push_back(std::make_unique<Staged>());
-                    s = staged.back().get();
-                    s->actor = sh.actor;
-                    s->model = sh.model;
-                    s->bank  = sh.bank;
-                    s->placeSeqSeen = sh.placeSeq;
-                    s->mo = charModelFor(sh.model);
-                    s->bk = charBankFor(sh.bank);
-                    ++stagedEver;
-                    stagedIds.push_back(sh.actor);
-                    std::printf("frame %ld: staged actor %d %s (bank %s, %zu meshes, "
-                                "%zu textures) at %.0f %.0f %.0f facing %.0f - %s\n",
-                                frameNo, sh.actor,
-                                sh.model.empty() ? "(no model)" : sh.model.c_str(),
-                                sh.bank.empty() ? "none" : sh.bank.c_str(),
-                                s->mo ? s->mo->meshes.size() : 0u,
-                                s->mo ? s->mo->tex.size() : 0u,
-                                sh.pos[0], sh.pos[1], sh.pos[2], sh.facing,
-                                sh.fromTable ? "a placement record puts him here"
-                                             : "shown by a script, no placement of his own");
-                }
-                s->seen = true;
-                // `character.show` with a NON-ZERO second field: `sub_41BDF0`
-                // puts the node at the record's position and facing, over
-                // whatever a program or a fight had done (0x403CB0, M1).
-                if (sh.fromTable && sh.placeSeq != s->placeSeqSeen) {
-                    s->placeSeqSeen = sh.placeSeq;
-                    for (int k = 0; k < 3; ++k) s->at[k] = sh.pos[k];
-                    s->facing = sh.facing;
-                    // ...and `sub_41BDF0` writes the NODE's facing, so a held
-                    // pose is held at the record's heading from now on. The
-                    // pose itself is not touched: a scene clip's last frame
-                    // may carry its own root turn, which the node's facing
-                    // does not undo in the engine either.
-                    s->progYawKnown = false;
-                    if (s->lastYawKnown) {
-                        s->lastBodyYaw = sh.facing;
-                        s->lastDrawnYaw = sh.facing;
-                        s->lastAboutPelvis = true;
-                    }
-                    s->progRan = false;
-                    s->fightPlaced = false;
-                    s->drawAtKnown = false;
-                    s->placed = true;
-                    s->pelvis = false;
-                    std::printf("frame %ld: actor %d put at his record %.0f %.0f %.0f facing %.0f "
-                                "(character.show, second field set)\n",
-                                frameNo, s->actor, sh.pos[0], sh.pos[1], sh.pos[2], sh.facing);
-                }
-                // A placement record names a spot on the GROUND; a script
-                // show carries none (`Session::showCharacter` pushes a bare
-                // record), so such a body waits for a program or a camera
-                // solve to say where he is.
-                // ...BUT NOT ONCE A PROGRAM HAS MOVED HIM. Run every frame,
-                // this would overwrite both the position and the FACING from
-                // the 20-byte record. While a program drives, the placement
-                // below puts its own back (`progPlaced && sceneClip >= 0`),
-                // so the clobber is invisible; the frame the program ENDS,
-                // `progPlaced` goes false and this would win - the body
-                // snapping back to where the chunk parked him, which for
-                // Kay'l's flat is 3635/1278/-656 against a floor at 1040,
-                // and vanishing.
-                //
-                // `Script_SelectBodyAnimation` never resets the node
-                // (CLAUDE.md 6), so the accumulated placement STANDS; the
-                // branch that carries `drawAt` over on the clip-change frame
-                // is written for exactly that. The facing half is the same
-                // fault seen from the side: Telis looking the wrong way, then
-                // back to the right one for the idle - the record's facing
-                // and the program's Euler alternating.
-                // ...NOR ONCE THE FIGHT OWNS HIM. A melee opponent no program
-                // ever moved - the flat's training partner, CHARACTERS 331 -
-                // would be put back here every frame after the fight had
-                // moved him: drawn standing at his record (7957, -852) while
-                // his walker, his blows and the AI fought the player 200
-                // units away, the player hit by nothing visible. `Fight_Begin`
-                // keeps one actor record; its position is the fight's.
-                // ...and not AFTER it either: `sub_445AC0` leaves the loser's
-                // actor record where he fell, so the record must not take
-                // him back to the chunk's spot once the fight has ended.
-                const bool fightOwns = (fightRun.active && fightRun.body == s) || s->fightPlaced;
-                if (sh.fromTable && !s->progRan && !fightOwns) {
-                    for (int k = 0; k < 3; ++k) s->at[k] = sh.pos[k];
-                    // ...and NOT the facing once a SHOOT BRAIN owns him: his
-                    // heading is then the record's `+420`, which the brain and
-                    // its turn clips write every tick. Put back from the
-                    // placement each frame, a turn kept only its last tick - a
-                    // reader's robber 519 restarted a turn clip every 14 frames
-                    // at 68.0 for the rest of the phase, and 521 turned 7.2 of
-                    // his 180. (77 escaped it: a program had moved him.)
-                    if (!shootBrains.count(sh.actor)) s->facing = sh.facing;
-                    if (!s->placed) { s->placed = true; s->pelvis = false; }
-                }
-            }
+            phaseWorldShown(playerId);
             // A conversation's speaker need not be in `shown()` at all -
             // AREA 118's is, but the camera solve is the only thing that says
             // where a speaker no table places and no script shows is standing.
@@ -295,63 +129,7 @@ int PlayState::phaseWorld() {
             // can never both draw him - and the sweep below drops him again
             // when it ends.
             const int progPid = session.playerActor();
-            if (playerProgram && player && progPid >= 0 && !playerModel.empty()) {
-                const int pid = progPid;
-                Staged* s = nullptr;
-                for (auto& up : staged) if (up->actor == pid) { s = up.get(); break; }
-                if (!s) {
-                    staged.push_back(std::make_unique<Staged>());
-                    s = staged.back().get();
-                    s->actor = pid;
-                    s->model = playerModel;
-                    s->bank  = playerCtlName;
-                    s->mo = charModelFor(playerModel);
-                    s->bk = charBankFor(playerCtlName);
-                    ++stagedEver;
-                    stagedIds.push_back(pid);
-                    // Where he stands until the program's first body step
-                    // RUNS: the walker's own position, which is where the
-                    // world last had him. `pelvis` is false because that is a
-                    // point on the GROUND (`Walk_ProbeGround`'s anchor), not
-                    // an authored hip height.
-                    for (int k = 0; k < 3; ++k) s->at[k] = player->pos()[k];
-                    s->at[1] -= playerFeetKnown ? playerFeet : 0.0f;
-                    s->facing = player->facing();
-                    s->placed = true;
-                    s->pelvis = false;
-                    std::printf("frame %ld: staged the PLAYER as actor %d %s "
-                                "(bank %s) at %.0f %.0f %.0f facing %.0f - a "
-                                "scene program owns his body (scx.play.player "
-                                "starts on Actor_Player())\n",
-                                frameNo, pid, playerModel.c_str(),
-                                playerCtlName.empty() ? "none" : playerCtlName.c_str(),
-                                s->at[0], s->at[1], s->at[2], s->facing);
-                }
-                s->seen = true;
-            } else if (playerProgramWas && player) {
-                // ---- AND THE HAND BACK -------------------------------
-                //
-                // The engine has one body: the program moved the player's own
-                // actor, so when it ends he is standing where it left him and
-                // the walker carries on from there. Handing back the
-                // CONTROLLER's stale position instead would snap him across
-                // the room the frame the cutscene ends - the same shape as the
-                // placement-record clobber, one level up.
-                for (const auto& up : staged)
-                    if (up->actor == session.playerActor() && up->progRan) {
-                        // ...and the yaw the body was DRAWN with, which for a
-                        // program-driven one is the step's own Euler and not
-                        // the placement record's facing (`bodyYaw` below).
-                        const float yaw = up->progYawKnown ? up->progYaw : up->facing;
-                        player->placeAt(up->drawAt, yaw);
-                        session.setPlayerPosition(up->drawAt, yaw);
-                        std::printf("frame %ld: the program ended - the player "
-                                    "keeps the body's place, %.0f %.0f %.0f "
-                                    "facing %.0f\n", frameNo, up->drawAt[0],
-                                    up->drawAt[1], up->drawAt[2], yaw);
-                        break;
-                    }
-            }
+            phaseWorldPlayerProgram(progPid);
             playerProgramWas = playerProgram;
             for (std::size_t k = 0; k < staged.size(); ) {
                 if (staged[k]->seen) { ++k; continue; }
@@ -421,96 +199,7 @@ int PlayState::phaseWorld() {
         // dropped. During a transition that is two sets at once.
         {
             bool changed = false, skyChanged = false;
-            for (int slot = 0; slot < 2; ++slot) {
-                const auto& rs = session.residentSlot(slot);
-                const bool shown = session.slotShown(slot) && rs.area != -1;
-                // THE SET STAYS WHILE THE SLOT HOLDS ITS AREA - hidden or not.
-                // Loading only a SHOWN slot would drop a hidden set's floor and
-                // walls along with its picture, and the player would fall
-                // through the security centre's barriers: `area.arrive -1`
-                // hides the level the lift has just brought in (`ACSLEV-N`),
-                // and every railing, wall and floor of it would go.
-                const std::string want = rs.area != -1 ? rs.set : std::string();
-                const int wantArea = rs.area;
-                WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
-                if (want != slotAsked[slot] || wantArea != slotAskedArea[slot])
-                    changed |= askSet(slot, want, wantArea, frameNo);
-                // ...and IN on the frame BEFORE the Session's last slice is
-                // served, so the set is in the world when `Area_TickLoad`'s
-                // cases 2..9 run and the frame loop binds its emitters to the
-                // arriving `.SCX` - the frame they bound on before. At once for
-                // a load the engine does not stream (mode 0) or of one slice.
-                if (setLoads[slot]) {
-                    const bool streaming = !syncSets && session.loading() &&
-                                           session.loadingSlot() == slot &&
-                                           session.loadSlicesLeft() > 1;
-                    // ...unless the Session's load is held for it (the gate):
-                    // then neither waits, and the game draws on
-                    SetLoad& L = *setLoads[slot];
-                    const bool held = loadGate && L.job && !L.job->ready() &&
-                                      session.loading() && session.loadingSlot() == slot;
-                    if (!streaming && held) ++L.heldFrames;
-                    if (!streaming && !held) {
-                        changed |= integrateSet(L, frameNo);
-                        setLoads[slot].reset();
-                    }
-                }
-                w.shown = shown && !w.stem.empty();
-                // THE SKY IS GLOBAL AND EITHER SLOT CAN BRING IT.
-                //
-                // `Area_LoadMiscModel` keeps ONE model rather than one per
-                // slot: `Area_TickLoad` case 4 calls it for the area being
-                // loaded, so an area naming a sky REPLACES whatever is there
-                // and one naming none (`*a1` false) leaves the previous
-                // standing rather than clearing it. Loaded here so it arrives
-                // with the set.
-                //
-                // **Every slot asks, not slot 0 only.** A load puts its own
-                // area in slot 0, so walking out of a building a save was made
-                // in lands the city in SLOT 1 - a session log has `SHOW area
-                // 217 in slot 0` and then `SHOW area 0 in slot 1` - and with
-                // slot 0 alone Anekbah's `ASKY` is never asked for. Loaded in
-                // the street, the same area arrives in slot 0 and the sky is
-                // there, which is why it shows as a black sky only "in some
-                // cases".
-                {
-                    const std::string wantSky = shown ? rs.sky : std::string();
-                    if (!wantSky.empty() && wantSky != sky.stem) {
-                        sky = Sky{};
-                        const auto o = fs.resolve("MESHES/MISC/" + wantSky + ".3DO");
-                        if (!o) std::printf("sky: no model %s.3DO\n", wantSky.c_str());
-                        else {
-                            const auto d = omk::DataFs::readPath(*o);
-                            sky.stem = wantSky;
-                            sky.geo  = omk::buildGeometry(d, omk::DrawFilter::Engine);
-                            omk::dropCharacterArrays(sky.geo);
-                            sky.base = sky.geo.corners;
-                            const auto t = fs.resolve("MESHES/MISC/" + wantSky + ".3DT");
-                            if (t) sky.tex = omk::textures(d, omk::DataFs::readPath(*t));
-                            const auto hdr = omk::readHeader(d);
-                            if (hdr) {
-                                const auto ms = omk::readMeshes(d, *hdr);
-                                if (!ms.empty())
-                                    for (int k = 0; k < 3; ++k) sky.origin[k] = ms[0].pos[k];
-                            }
-                            sky.rest = sky.geo;
-                            for (auto& c : sky.rest.corners) {
-                                c.x = (c.x - sky.origin[0]) * kSkyScale;
-                                c.y = (c.y - sky.origin[1]) * kSkyScale;
-                                c.z = (c.z - sky.origin[2]) * kSkyScale;
-                            }
-                            sky.rest.revision = ++worldGeoRev;
-                            sky.placed = false;
-                            std::printf("sky: %s - %zu corners, %zu texture(s), origin"
-                                        " %.1f %.1f %.1f, drawn at y %.1f\n",
-                                        wantSky.c_str(), sky.base.size(), sky.tex.size(),
-                                        sky.origin[0], sky.origin[1], sky.origin[2],
-                                        sky.origin[1] - kSkyLift);
-                            skyChanged = true;
-                        }
-                    }
-                }
-            }
+            phaseWorldSets(changed, skyChanged);
             // A NEW SKY is a new section of the texture pool and nothing else:
             // not the whole rebuild below - both sets' soups and grids again,
             // and a new `worldGen`, which bakes the depth tie again - one frame
@@ -560,193 +249,7 @@ int PlayState::phaseWorld() {
             const omk::DialogCamera* ca = dlg.cameraA();
             const omk::DialogCamera* cb = dlg.cameraB();
             if (!ca) ca = cb;
-            if (ca) {
-                const omk::DialogCamera* cbb = cb ? cb : ca;
-                const float u = dlg.cameraProgress();
-                // ---- A DIALOGUE CAMERA'S POINTS CAN HANG OFF A SPEAKER ----
-                //
-                // `Camera_LoadParams` (0x004146C0): a point whose subject is
-                // -1 is absolute and lands at +20/+32; any other subject makes
-                // it an OFFSET at +124, and the block's subject resolver
-                // (`sub_415A10` -> kind 2 is `sub_4151E0`) fills the anchor -
-                // the actor NODE's world origin and its heading, `atan2` of
-                // the node matrix's forward, +90 - and the solver places the
-                // point at `anchor - R(heading) * offset`, the very sign
-                // `resolveCamera` carries. `dialog_issue_camera` maps the
-                // code to an actor: 0/1 the first speaker, 2/3 the second,
-                // 6 both. The first is the player and the second the
-                // conversation's speaker - read off the data rather than the
-                // driver's write: every camera of DIALOG 39 is [2,2] and the
-                // engine's own frame of it is a close-up of the hologram it
-                // speaks with, and 401's camera 11 is [1,1].
-                //
-                // This viewer drew ONLY absolute dialogue cameras and marked
-                // the rest `[relative - not drawn]`, so the transcan's advert
-                // - the only camera the conversation has - fell through to
-                // the follow camera and framed the room from across it. A
-                // reader, with the original beside it: *transcan camera is
-                // not good*.
-                const auto anchorFor = [&](std::uint16_t code, float pos[3], float& yaw) -> bool {
-                    if (code == 0xFFFF) return false;               // absolute: no anchor
-                    const auto speakerBody = [&]() -> const Staged* {
-                        const int sp = session.dialogue().conversation().speaker;
-                        for (const auto& up : staged) if (up->actor == sp) return up.get();
-                        return nullptr;
-                    };
-                    // THE CODE IS THE RESOLVER KIND, not merely which actor.
-                    // `sub_415A10` switches on it - 0 -> `sub_414F30`,
-                    // 1 -> `sub_415050`, 2 -> `sub_4151E0`, 3 -> `sub_415320` -
-                    // and the four differ in WHERE on the actor they anchor:
-                    //
-                    //   0  the actor record's +244/+248/+252
-                    //   1  the `Tete` node (actor+16), `Actor_LoadModel`'s cache,
-                    //      as POSED (node +44..+52)
-                    //   2  the body node's world origin
-                    //   3  the head's REST point, `*(Tete)+36` (below)
-                    //
-                    // while `dialog_issue_camera` picks the actor: 0/1 the
-                    // first speaker, 2/3 the second, 6 both. Applying kind 2's
-                    // body anchor to all of them put camera 11 of dialog 401 -
-                    // `[1,1]`, on the player's HEAD - a foot in front of
-                    // Kay'l's chest, and 176 of the 253 relative cameras the
-                    // file ships are one of the two head kinds.
-                    const auto playerBody = [&](float out[3], float& y) {
-                        const float lift = player ? player->cameraLift() : 0.0f;
-                        const float* pp = session.playerPos();
-                        out[0] = pp[0]; out[1] = pp[1] - lift; out[2] = pp[2];
-                        y = session.playerYaw();
-                    };
-                    const auto playerHead = [&](float out[3], float& y) {
-                        // a program's staged body when one owns the player
-                        // (lunch with Telis): the walker stops drawing him
-                        // and `playerHeadAt` freezes where he stood
-                        if (const int pid = session.playerActor(); pid >= 0)
-                            for (const auto& up : staged)
-                                if (up->actor == pid && up->headKnown) {
-                                    for (int k = 0; k < 3; ++k) out[k] = up->headAt[k];
-                                    y = up->drawnYawKnown ? up->drawnYaw : up->facing;
-                                    return;
-                                }
-                        if (!playerHeadKnown) { playerBody(out, y); return; }
-                        for (int k = 0; k < 3; ++k) out[k] = playerHeadAt[k];
-                        y = session.playerYaw();
-                    };
-                    const auto npcBody = [&](float out[3], float& y) -> bool {
-                        const Staged* sb = speakerBody();
-                        if (!sb) return false;
-                        const float* at = sb->progRan ? sb->drawAt : sb->at;
-                        for (int k = 0; k < 3; ++k) out[k] = at[k];
-                        y = sb->drawnYawKnown ? sb->drawnYaw : sb->facing;
-                        return true;
-                    };
-                    // KIND 3 IS NOT THE ANIMATED HEAD (todo/drift-audit.md):
-                    // `sub_415320` reads `*(Tete)+36`,
-                    // which `sub_4942A0` accumulates as the root's world
-                    // point plus the chain's locals UNROTATED - the head's
-                    // REST offset over the body origin, untouched by the
-                    // clip and the facing. Kind 1 (`sub_415050`) is the one
-                    // that reads the posed node (+44..+52).
-                    const auto npcHead = [&](float out[3], float& y) -> bool {
-                        const Staged* sb = speakerBody();
-                        if (!sb || !npcBody(out, y)) return false;
-                        float rest[3];
-                        if (sb->mo && omk::headRestOffset(sb->mo->meshes, rest))
-                            for (int k = 0; k < 3; ++k) out[k] += rest[k];
-                        return true;
-                    };
-                    switch (code) {
-                        case 0: playerBody(pos, yaw); return true;
-                        case 1: playerHead(pos, yaw); return true;
-                        case 2: return npcBody(pos, yaw);
-                        case 3: return npcHead(pos, yaw);
-                        case 6: {                                   // the two-shot: both
-                            float a[3], b[3], ya, yb;
-                            playerBody(a, ya);
-                            if (!npcBody(b, yb)) return false;
-                            for (int k = 0; k < 3; ++k) pos[k] = 0.5f * (a[k] + b[k]);
-                            yaw = ya;
-                            return true;
-                        }
-                        default: return false;                      // detached: unresolvable
-                    }
-                };
-                const auto placePoint = [&](const float off[3], std::uint16_t code, float out[3]) -> bool {
-                    float p[3], yaw;
-                    if (!anchorFor(code, p, yaw)) {
-                        if (code != 0xFFFF) return false;
-                        for (int k = 0; k < 3; ++k) out[k] = off[k];
-                        return true;
-                    }
-                    const float t = yaw * omk::kDegToRadF;
-                    const float cs = std::cos(t), sn = std::sin(t);
-                    const float rx = off[0] * cs - off[2] * sn;
-                    const float rz = off[0] * sn + off[2] * cs;
-                    out[0] = p[0] - rx; out[1] = p[1] - off[1]; out[2] = p[2] - rz;
-                    return true;
-                };
-                float ea[3], aa[3], eb[3], ab[3];
-                const bool okA = placePoint(ca->eye, ca->subject[0], ea) &&
-                                 placePoint(ca->at,  ca->subject[1], aa);
-                const bool okB = placePoint(cbb->eye, cbb->subject[0], eb) &&
-                                 placePoint(cbb->at,  cbb->subject[1], ab);
-                for (int k = 0; k < 3; ++k) {
-                    dlgView.cam.eye[k] = ea[k] + (eb[k] - ea[k]) * u;
-                    dlgView.cam.at[k]  = aa[k] + (ab[k] - aa[k]) * u;
-                }
-                // THE FOV AND THE ROLL TRAVEL WITH THE POINTS. `sub_418410`
-                // lerps four things across a move, not two:
-                //
-                //     out[52..60] = C[20..28]*u + prev[20..28]*(1-u)   // eye
-                //     out[64..72] = C[32..40]*u + prev[32..40]*(1-u)   // target
-                //     out[44]     = prev[11]*(1-u) + C[11]*u           // ROLL
-                //     out[48]     = C[12]*u + prev[12]*(1-u)           // FOV
-                //
-                // and `Camera_LoadParams` (0x004146C0) settles which is which:
-                // `+44` is the roll, WRAPPED to (-180, 180] as it is loaded
-                // (`if (v14 > 180) v14 -= 360; if (v14 <= -180) v14 += 360`),
-                // and `+48` the fov. `angle4096` already wraps on load here,
-                // so a plain lerp of each is the engine's own arithmetic.
-                //
-                // Both are lerped, neither snapped nor dropped. Six of 402's
-                // sixteen pairs change fov across the move and one changes it
-                // by 15 degrees (4572 -> 4574, 84 -> 99): a 15-degree widening
-                // in one frame in the middle of a travel reads as the camera
-                // suddenly returning to a previous position while continuing
-                // the interpolation. Eleven pairs are rolled, up to 12
-                // degrees.
-                dlgView.cam.hfovDeg = ca->fov  + (cbb->fov  - ca->fov)  * u;
-                dlgView.cam.rollDeg = ca->roll + (cbb->roll - ca->roll) * u;
-                dlgView.cam.w = dispW; dlgView.cam.h = dispH;
-                haveDlgCam = okA && okB;
-                if (ca->id != lastDlgCam) {
-                    lastDlgCam = ca->id;
-                    std::printf("  dialogue camera %d -> %d (%s), fov %.0f, "
-                                "roll %.0f%s\n", ca->id, cbb->id,
-                                dlg.phase() == omk::DialogPhase::Menu
-                                    ? "reply pair" : "line pair",
-                                ca->fov, ca->roll,
-                                haveDlgCam ? (ca->absolute() ? "" : "  [hangs off a speaker]")
-                                           : "  [unresolvable subject - not drawn]");
-                    // ...AND WHERE IT ENDED UP. A dialogue camera is resolved
-                    // against the two speakers, so the id says nothing about
-                    // the place: a camera seen inside the scenery would have
-                    // nothing in the log to name it by, while every world
-                    // camera prints its eye and target two blocks below.
-                    // Printed from the view the frame will be drawn with.
-                    std::printf("    ...resolved: eye %.0f %.0f %.0f  at %.0f %.0f %.0f"
-                                "  (%.0f from its target)\n",
-                                double(dlgView.cam.eye[0]), double(dlgView.cam.eye[1]),
-                                double(dlgView.cam.eye[2]), double(dlgView.cam.at[0]),
-                                double(dlgView.cam.at[1]), double(dlgView.cam.at[2]),
-                                std::sqrt(
-                                    (dlgView.cam.eye[0] - dlgView.cam.at[0]) *
-                                        (dlgView.cam.eye[0] - dlgView.cam.at[0]) +
-                                    (dlgView.cam.eye[1] - dlgView.cam.at[1]) *
-                                        (dlgView.cam.eye[1] - dlgView.cam.at[1]) +
-                                    (dlgView.cam.eye[2] - dlgView.cam.at[2]) *
-                                        (dlgView.cam.eye[2] - dlgView.cam.at[2])));
-                }
-            }
+            phaseWorldDialogCamera(ca, cb, dlg);
         }
         // Report the camera the script asked for, not the interpolated one -
         // mid-travel the position is still near the OUTGOING camera and
@@ -962,3 +465,536 @@ int PlayState::phaseWorld() {
     } while (false);
     return done ? phase::Continue : phase::EndLoop;
 }
+
+// EVERY SHOWN ACTOR staged: his model, his bank, his placement (from `phaseWorld`)
+void PlayState::phaseWorldShown(int playerId) {
+    auto& session = *session_;
+    for (const auto& sh : session.shown()) {
+        // In adventure mode the CONTROLLER owns the player's body; a
+        // second one here would draw him twice.
+        if ((adventure || session.dialogOpen()) && player && sh.actor == playerId) continue;
+        Staged* s = nullptr;
+        for (auto& up : staged) if (up->actor == sh.actor) { s = up.get(); break; }
+        // RE-SHOWN: `Actor_Attach` re-links the node `Actor_Detach`
+        // parked - same place, same pose. Its cached pointers are
+        // re-resolved, since the model pool may have let them go.
+        if (!s)
+            for (std::size_t k = 0; k < parked.size(); ++k)
+                if (parked[k]->actor == sh.actor) {
+                    staged.push_back(std::move(parked[k]));
+                    parked.erase(parked.begin() + static_cast<long>(k));
+                    s = staged.back().get();
+                    s->mo = charModelFor(s->model);
+                    s->bk = charBankFor(s->bank);
+                    s->restGeo = nullptr;
+                    s->gpu = false;
+                    s->poolWas = nullptr;
+                    s->lastSkinned = -1;
+                    std::printf("frame %ld: re-shown actor %d %s - where it was left, "
+                                "at %.0f %.0f %.0f facing %.0f (Actor_Attach keeps the node)\n",
+                                frameNo, s->actor, s->model.c_str(), s->at[0], s->at[1], s->at[2],
+                                s->facing);
+                    ++poolComposition;
+                    break;
+                }
+        if (!s) {
+            staged.push_back(std::make_unique<Staged>());
+            s = staged.back().get();
+            s->actor = sh.actor;
+            s->model = sh.model;
+            s->bank  = sh.bank;
+            s->placeSeqSeen = sh.placeSeq;
+            s->mo = charModelFor(sh.model);
+            s->bk = charBankFor(sh.bank);
+            ++stagedEver;
+            stagedIds.push_back(sh.actor);
+            std::printf("frame %ld: staged actor %d %s (bank %s, %zu meshes, "
+                        "%zu textures) at %.0f %.0f %.0f facing %.0f - %s\n",
+                        frameNo, sh.actor,
+                        sh.model.empty() ? "(no model)" : sh.model.c_str(),
+                        sh.bank.empty() ? "none" : sh.bank.c_str(),
+                        s->mo ? s->mo->meshes.size() : 0u,
+                        s->mo ? s->mo->tex.size() : 0u,
+                        sh.pos[0], sh.pos[1], sh.pos[2], sh.facing,
+                        sh.fromTable ? "a placement record puts him here"
+                                     : "shown by a script, no placement of his own");
+        }
+        s->seen = true;
+        // `character.show` with a NON-ZERO second field: `sub_41BDF0`
+        // puts the node at the record's position and facing, over
+        // whatever a program or a fight had done (0x403CB0, M1).
+        if (sh.fromTable && sh.placeSeq != s->placeSeqSeen) {
+            s->placeSeqSeen = sh.placeSeq;
+            for (int k = 0; k < 3; ++k) s->at[k] = sh.pos[k];
+            s->facing = sh.facing;
+            // ...and `sub_41BDF0` writes the NODE's facing, so a held
+            // pose is held at the record's heading from now on. The
+            // pose itself is not touched: a scene clip's last frame
+            // may carry its own root turn, which the node's facing
+            // does not undo in the engine either.
+            s->progYawKnown = false;
+            if (s->lastYawKnown) {
+                s->lastBodyYaw = sh.facing;
+                s->lastDrawnYaw = sh.facing;
+                s->lastAboutPelvis = true;
+            }
+            s->progRan = false;
+            s->fightPlaced = false;
+            s->drawAtKnown = false;
+            s->placed = true;
+            s->pelvis = false;
+            std::printf("frame %ld: actor %d put at his record %.0f %.0f %.0f facing %.0f "
+                        "(character.show, second field set)\n",
+                        frameNo, s->actor, sh.pos[0], sh.pos[1], sh.pos[2], sh.facing);
+        }
+        // A placement record names a spot on the GROUND; a script
+        // show carries none (`Session::showCharacter` pushes a bare
+        // record), so such a body waits for a program or a camera
+        // solve to say where he is.
+        // ...BUT NOT ONCE A PROGRAM HAS MOVED HIM. Run every frame,
+        // this would overwrite both the position and the FACING from
+        // the 20-byte record. While a program drives, the placement
+        // below puts its own back (`progPlaced && sceneClip >= 0`),
+        // so the clobber is invisible; the frame the program ENDS,
+        // `progPlaced` goes false and this would win - the body
+        // snapping back to where the chunk parked him, which for
+        // Kay'l's flat is 3635/1278/-656 against a floor at 1040,
+        // and vanishing.
+        //
+        // `Script_SelectBodyAnimation` never resets the node
+        // (CLAUDE.md 6), so the accumulated placement STANDS; the
+        // branch that carries `drawAt` over on the clip-change frame
+        // is written for exactly that. The facing half is the same
+        // fault seen from the side: Telis looking the wrong way, then
+        // back to the right one for the idle - the record's facing
+        // and the program's Euler alternating.
+        // ...NOR ONCE THE FIGHT OWNS HIM. A melee opponent no program
+        // ever moved - the flat's training partner, CHARACTERS 331 -
+        // would be put back here every frame after the fight had
+        // moved him: drawn standing at his record (7957, -852) while
+        // his walker, his blows and the AI fought the player 200
+        // units away, the player hit by nothing visible. `Fight_Begin`
+        // keeps one actor record; its position is the fight's.
+        // ...and not AFTER it either: `sub_445AC0` leaves the loser's
+        // actor record where he fell, so the record must not take
+        // him back to the chunk's spot once the fight has ended.
+        const bool fightOwns = (fightRun.active && fightRun.body == s) || s->fightPlaced;
+        if (sh.fromTable && !s->progRan && !fightOwns) {
+            for (int k = 0; k < 3; ++k) s->at[k] = sh.pos[k];
+            // ...and NOT the facing once a SHOOT BRAIN owns him: his
+            // heading is then the record's `+420`, which the brain and
+            // its turn clips write every tick. Put back from the
+            // placement each frame, a turn kept only its last tick - a
+            // reader's robber 519 restarted a turn clip every 14 frames
+            // at 68.0 for the rest of the phase, and 521 turned 7.2 of
+            // his 180. (77 escaped it: a program had moved him.)
+            if (!shootBrains.count(sh.actor)) s->facing = sh.facing;
+            if (!s->placed) { s->placed = true; s->pelvis = false; }
+        }
+    }
+}
+
+
+// THE PLAYER'S PROGRAM owns him: op 46 starts it on `Actor_Player()`'s own actor, which it poses, places and turns (from `phaseWorld`)
+void PlayState::phaseWorldPlayerProgram(int progPid) {
+    auto& session = *session_;
+    if (playerProgram && player && progPid >= 0 && !playerModel.empty()) {
+        const int pid = progPid;
+        Staged* s = nullptr;
+        for (auto& up : staged) if (up->actor == pid) { s = up.get(); break; }
+        if (!s) {
+            staged.push_back(std::make_unique<Staged>());
+            s = staged.back().get();
+            s->actor = pid;
+            s->model = playerModel;
+            s->bank  = playerCtlName;
+            s->mo = charModelFor(playerModel);
+            s->bk = charBankFor(playerCtlName);
+            ++stagedEver;
+            stagedIds.push_back(pid);
+            // Where he stands until the program's first body step
+            // RUNS: the walker's own position, which is where the
+            // world last had him. `pelvis` is false because that is a
+            // point on the GROUND (`Walk_ProbeGround`'s anchor), not
+            // an authored hip height.
+            for (int k = 0; k < 3; ++k) s->at[k] = player->pos()[k];
+            s->at[1] -= playerFeetKnown ? playerFeet : 0.0f;
+            s->facing = player->facing();
+            s->placed = true;
+            s->pelvis = false;
+            std::printf("frame %ld: staged the PLAYER as actor %d %s "
+                        "(bank %s) at %.0f %.0f %.0f facing %.0f - a "
+                        "scene program owns his body (scx.play.player "
+                        "starts on Actor_Player())\n",
+                        frameNo, pid, playerModel.c_str(),
+                        playerCtlName.empty() ? "none" : playerCtlName.c_str(),
+                        s->at[0], s->at[1], s->at[2], s->facing);
+        }
+        s->seen = true;
+    } else if (playerProgramWas && player) {
+        // ---- AND THE HAND BACK -------------------------------
+        //
+        // The engine has one body: the program moved the player's own
+        // actor, so when it ends he is standing where it left him and
+        // the walker carries on from there. Handing back the
+        // CONTROLLER's stale position instead would snap him across
+        // the room the frame the cutscene ends - the same shape as the
+        // placement-record clobber, one level up.
+        for (const auto& up : staged)
+            if (up->actor == session.playerActor() && up->progRan) {
+                // ...and the yaw the body was DRAWN with, which for a
+                // program-driven one is the step's own Euler and not
+                // the placement record's facing (`bodyYaw` below).
+                const float yaw = up->progYawKnown ? up->progYaw : up->facing;
+                player->placeAt(up->drawAt, yaw);
+                session.setPlayerPosition(up->drawAt, yaw);
+                std::printf("frame %ld: the program ended - the player "
+                            "keeps the body's place, %.0f %.0f %.0f "
+                            "facing %.0f\n", frameNo, up->drawAt[0],
+                            up->drawAt[1], up->drawAt[2], yaw);
+                break;
+            }
+    }
+}
+
+
+// `player.become`: the player is another actor now, and the controller is rebuilt for the new body (from `phaseWorld`)
+void PlayState::phaseWorldPlayerBecome(int playerId, int& lastPlayerActor) {
+    auto& session = *session_;
+    if (player) {
+        std::printf("frame %ld: player.become - the player is actor %d now, was %d; "
+                    "the controller is rebuilt for the new body\n", frameNo, playerId, lastPlayerActor);
+        // ...WHERE THE NEW BODY STANDS. Op 56 (0x402F60) reads
+        // the NEW body's own node - `Actor_GetPosAndFacing(new)`,
+        // actor +244..+252 and +420 - and `Actor_SetPlacement`s
+        // it there before `sub_40D590` makes it the player: the
+        // soul moves, the body does not. The controller was
+        // rebuilt at the OLD body's spot (the Sham's rider
+        // mounted from Fodo's place, every reincarnation where
+        // the dead body lay). The live node is the staged body's
+        // `drawAt`, as the program hand-back below takes it; a
+        // re-placement `character.show` has queued and not yet
+        // applied, or a body never drawn, stands at the Session's
+        // `Shown` placement.
+        const Staged* nb = nullptr;
+        for (const auto& up : staged) if (up->actor == playerId) { nb = up.get(); break; }
+        if (!nb)
+            for (const auto& up : parked) if (up->actor == playerId) { nb = up.get(); break; }
+        const omk::Session::Shown* nsh = nullptr;
+        for (const auto& sh : session.shown()) if (sh.actor == playerId) { nsh = &sh; break; }
+        const bool pendingPlace = nsh && nsh->fromTable && nb &&
+                                  nsh->placeSeq != nb->placeSeqSeen;
+        if (nb && nb->drawAtKnown && !pendingPlace) {
+            const float yaw = nb->progYawKnown ? nb->progYaw : nb->facing;
+            session.setPlayerPosition(nb->drawAt, yaw);
+            std::printf("frame %ld: player.become - the new body's own place, "
+                        "%.0f %.0f %.0f facing %.0f (its drawn node)\n", frameNo,
+                        nb->drawAt[0], nb->drawAt[1], nb->drawAt[2], yaw);
+        } else if (nsh && nsh->fromTable) {
+            session.setPlayerPosition(nsh->pos, nsh->facing);
+            std::printf("frame %ld: player.become - the new body's own place, "
+                        "%.0f %.0f %.0f facing %.0f (its placement record)\n", frameNo,
+                        nsh->pos[0], nsh->pos[1], nsh->pos[2], nsh->facing);
+        } else {
+            std::printf("frame %ld: player.become - no place known for the new "
+                        "body: the old body's, LABELLED\n", frameNo);
+        }
+        // the facing is the body's, not the last player clip's
+        handoverFacingKnown = false;
+        player.reset();
+        playerReady = false; adventure = false;
+        forceAdventure = true;
+    }
+}
+
+
+// THE SETS follow the resident slots' state: a slot whose decor is linked is drawn, a hidden one is not (from `phaseWorld`)
+void PlayState::phaseWorldSets(bool& changed, bool& skyChanged) {
+    auto& session = *session_;
+    const auto& fs = *fs_;
+    for (int slot = 0; slot < 2; ++slot) {
+        const auto& rs = session.residentSlot(slot);
+        const bool shown = session.slotShown(slot) && rs.area != -1;
+        // THE SET STAYS WHILE THE SLOT HOLDS ITS AREA - hidden or not.
+        // Loading only a SHOWN slot would drop a hidden set's floor and
+        // walls along with its picture, and the player would fall
+        // through the security centre's barriers: `area.arrive -1`
+        // hides the level the lift has just brought in (`ACSLEV-N`),
+        // and every railing, wall and floor of it would go.
+        const std::string want = rs.area != -1 ? rs.set : std::string();
+        const int wantArea = rs.area;
+        WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
+        if (want != slotAsked[slot] || wantArea != slotAskedArea[slot])
+            changed |= askSet(slot, want, wantArea, frameNo);
+        // ...and IN on the frame BEFORE the Session's last slice is
+        // served, so the set is in the world when `Area_TickLoad`'s
+        // cases 2..9 run and the frame loop binds its emitters to the
+        // arriving `.SCX` - the frame they bound on before. At once for
+        // a load the engine does not stream (mode 0) or of one slice.
+        if (setLoads[slot]) {
+            const bool streaming = !syncSets && session.loading() &&
+                                   session.loadingSlot() == slot &&
+                                   session.loadSlicesLeft() > 1;
+            // ...unless the Session's load is held for it (the gate):
+            // then neither waits, and the game draws on
+            SetLoad& L = *setLoads[slot];
+            const bool held = loadGate && L.job && !L.job->ready() &&
+                              session.loading() && session.loadingSlot() == slot;
+            if (!streaming && held) ++L.heldFrames;
+            if (!streaming && !held) {
+                changed |= integrateSet(L, frameNo);
+                setLoads[slot].reset();
+            }
+        }
+        w.shown = shown && !w.stem.empty();
+        // THE SKY IS GLOBAL AND EITHER SLOT CAN BRING IT.
+        //
+        // `Area_LoadMiscModel` keeps ONE model rather than one per
+        // slot: `Area_TickLoad` case 4 calls it for the area being
+        // loaded, so an area naming a sky REPLACES whatever is there
+        // and one naming none (`*a1` false) leaves the previous
+        // standing rather than clearing it. Loaded here so it arrives
+        // with the set.
+        //
+        // **Every slot asks, not slot 0 only.** A load puts its own
+        // area in slot 0, so walking out of a building a save was made
+        // in lands the city in SLOT 1 - a session log has `SHOW area
+        // 217 in slot 0` and then `SHOW area 0 in slot 1` - and with
+        // slot 0 alone Anekbah's `ASKY` is never asked for. Loaded in
+        // the street, the same area arrives in slot 0 and the sky is
+        // there, which is why it shows as a black sky only "in some
+        // cases".
+        {
+            const std::string wantSky = shown ? rs.sky : std::string();
+            if (!wantSky.empty() && wantSky != sky.stem) {
+                sky = Sky{};
+                const auto o = fs.resolve("MESHES/MISC/" + wantSky + ".3DO");
+                if (!o) std::printf("sky: no model %s.3DO\n", wantSky.c_str());
+                else {
+                    const auto d = omk::DataFs::readPath(*o);
+                    sky.stem = wantSky;
+                    sky.geo  = omk::buildGeometry(d, omk::DrawFilter::Engine);
+                    omk::dropCharacterArrays(sky.geo);
+                    sky.base = sky.geo.corners;
+                    const auto t = fs.resolve("MESHES/MISC/" + wantSky + ".3DT");
+                    if (t) sky.tex = omk::textures(d, omk::DataFs::readPath(*t));
+                    const auto hdr = omk::readHeader(d);
+                    if (hdr) {
+                        const auto ms = omk::readMeshes(d, *hdr);
+                        if (!ms.empty())
+                            for (int k = 0; k < 3; ++k) sky.origin[k] = ms[0].pos[k];
+                    }
+                    sky.rest = sky.geo;
+                    for (auto& c : sky.rest.corners) {
+                        c.x = (c.x - sky.origin[0]) * kSkyScale;
+                        c.y = (c.y - sky.origin[1]) * kSkyScale;
+                        c.z = (c.z - sky.origin[2]) * kSkyScale;
+                    }
+                    sky.rest.revision = ++worldGeoRev;
+                    sky.placed = false;
+                    std::printf("sky: %s - %zu corners, %zu texture(s), origin"
+                                " %.1f %.1f %.1f, drawn at y %.1f\n",
+                                wantSky.c_str(), sky.base.size(), sky.tex.size(),
+                                sky.origin[0], sky.origin[1], sky.origin[2],
+                                sky.origin[1] - kSkyLift);
+                    skyChanged = true;
+                }
+            }
+        }
+    }
+}
+
+
+// THE DIALOGUE CAMERA: the node's first camera and the move to its second over 160 frames; the menu's own pair and cut (from `phaseWorld`)
+void PlayState::phaseWorldDialogCamera(const omk::DialogCamera*& ca, const omk::DialogCamera*& cb,
+                                       const omk::DialogPlayer& dlg) {
+    auto& session = *session_;
+    if (ca) {
+        const omk::DialogCamera* cbb = cb ? cb : ca;
+        const float u = dlg.cameraProgress();
+        // ---- A DIALOGUE CAMERA'S POINTS CAN HANG OFF A SPEAKER ----
+        //
+        // `Camera_LoadParams` (0x004146C0): a point whose subject is
+        // -1 is absolute and lands at +20/+32; any other subject makes
+        // it an OFFSET at +124, and the block's subject resolver
+        // (`sub_415A10` -> kind 2 is `sub_4151E0`) fills the anchor -
+        // the actor NODE's world origin and its heading, `atan2` of
+        // the node matrix's forward, +90 - and the solver places the
+        // point at `anchor - R(heading) * offset`, the very sign
+        // `resolveCamera` carries. `dialog_issue_camera` maps the
+        // code to an actor: 0/1 the first speaker, 2/3 the second,
+        // 6 both. The first is the player and the second the
+        // conversation's speaker - read off the data rather than the
+        // driver's write: every camera of DIALOG 39 is [2,2] and the
+        // engine's own frame of it is a close-up of the hologram it
+        // speaks with, and 401's camera 11 is [1,1].
+        //
+        // This viewer drew ONLY absolute dialogue cameras and marked
+        // the rest `[relative - not drawn]`, so the transcan's advert
+        // - the only camera the conversation has - fell through to
+        // the follow camera and framed the room from across it. A
+        // reader, with the original beside it: *transcan camera is
+        // not good*.
+        const auto anchorFor = [&](std::uint16_t code, float pos[3], float& yaw) -> bool {
+            if (code == 0xFFFF) return false;               // absolute: no anchor
+            const auto speakerBody = [&]() -> const Staged* {
+                const int sp = session.dialogue().conversation().speaker;
+                for (const auto& up : staged) if (up->actor == sp) return up.get();
+                return nullptr;
+            };
+            // THE CODE IS THE RESOLVER KIND, not merely which actor.
+            // `sub_415A10` switches on it - 0 -> `sub_414F30`,
+            // 1 -> `sub_415050`, 2 -> `sub_4151E0`, 3 -> `sub_415320` -
+            // and the four differ in WHERE on the actor they anchor:
+            //
+            //   0  the actor record's +244/+248/+252
+            //   1  the `Tete` node (actor+16), `Actor_LoadModel`'s cache,
+            //      as POSED (node +44..+52)
+            //   2  the body node's world origin
+            //   3  the head's REST point, `*(Tete)+36` (below)
+            //
+            // while `dialog_issue_camera` picks the actor: 0/1 the
+            // first speaker, 2/3 the second, 6 both. Applying kind 2's
+            // body anchor to all of them put camera 11 of dialog 401 -
+            // `[1,1]`, on the player's HEAD - a foot in front of
+            // Kay'l's chest, and 176 of the 253 relative cameras the
+            // file ships are one of the two head kinds.
+            const auto playerBody = [&](float out[3], float& y) {
+                const float lift = player ? player->cameraLift() : 0.0f;
+                const float* pp = session.playerPos();
+                out[0] = pp[0]; out[1] = pp[1] - lift; out[2] = pp[2];
+                y = session.playerYaw();
+            };
+            const auto playerHead = [&](float out[3], float& y) {
+                // a program's staged body when one owns the player
+                // (lunch with Telis): the walker stops drawing him
+                // and `playerHeadAt` freezes where he stood
+                if (const int pid = session.playerActor(); pid >= 0)
+                    for (const auto& up : staged)
+                        if (up->actor == pid && up->headKnown) {
+                            for (int k = 0; k < 3; ++k) out[k] = up->headAt[k];
+                            y = up->drawnYawKnown ? up->drawnYaw : up->facing;
+                            return;
+                        }
+                if (!playerHeadKnown) { playerBody(out, y); return; }
+                for (int k = 0; k < 3; ++k) out[k] = playerHeadAt[k];
+                y = session.playerYaw();
+            };
+            const auto npcBody = [&](float out[3], float& y) -> bool {
+                const Staged* sb = speakerBody();
+                if (!sb) return false;
+                const float* at = sb->progRan ? sb->drawAt : sb->at;
+                for (int k = 0; k < 3; ++k) out[k] = at[k];
+                y = sb->drawnYawKnown ? sb->drawnYaw : sb->facing;
+                return true;
+            };
+            // KIND 3 IS NOT THE ANIMATED HEAD (todo/drift-audit.md):
+            // `sub_415320` reads `*(Tete)+36`,
+            // which `sub_4942A0` accumulates as the root's world
+            // point plus the chain's locals UNROTATED - the head's
+            // REST offset over the body origin, untouched by the
+            // clip and the facing. Kind 1 (`sub_415050`) is the one
+            // that reads the posed node (+44..+52).
+            const auto npcHead = [&](float out[3], float& y) -> bool {
+                const Staged* sb = speakerBody();
+                if (!sb || !npcBody(out, y)) return false;
+                float rest[3];
+                if (sb->mo && omk::headRestOffset(sb->mo->meshes, rest))
+                    for (int k = 0; k < 3; ++k) out[k] += rest[k];
+                return true;
+            };
+            switch (code) {
+                case 0: playerBody(pos, yaw); return true;
+                case 1: playerHead(pos, yaw); return true;
+                case 2: return npcBody(pos, yaw);
+                case 3: return npcHead(pos, yaw);
+                case 6: {                                   // the two-shot: both
+                    float a[3], b[3], ya, yb;
+                    playerBody(a, ya);
+                    if (!npcBody(b, yb)) return false;
+                    for (int k = 0; k < 3; ++k) pos[k] = 0.5f * (a[k] + b[k]);
+                    yaw = ya;
+                    return true;
+                }
+                default: return false;                      // detached: unresolvable
+            }
+        };
+        const auto placePoint = [&](const float off[3], std::uint16_t code, float out[3]) -> bool {
+            float p[3], yaw;
+            if (!anchorFor(code, p, yaw)) {
+                if (code != 0xFFFF) return false;
+                for (int k = 0; k < 3; ++k) out[k] = off[k];
+                return true;
+            }
+            const float t = yaw * omk::kDegToRadF;
+            const float cs = std::cos(t), sn = std::sin(t);
+            const float rx = off[0] * cs - off[2] * sn;
+            const float rz = off[0] * sn + off[2] * cs;
+            out[0] = p[0] - rx; out[1] = p[1] - off[1]; out[2] = p[2] - rz;
+            return true;
+        };
+        float ea[3], aa[3], eb[3], ab[3];
+        const bool okA = placePoint(ca->eye, ca->subject[0], ea) &&
+                         placePoint(ca->at,  ca->subject[1], aa);
+        const bool okB = placePoint(cbb->eye, cbb->subject[0], eb) &&
+                         placePoint(cbb->at,  cbb->subject[1], ab);
+        for (int k = 0; k < 3; ++k) {
+            dlgView.cam.eye[k] = ea[k] + (eb[k] - ea[k]) * u;
+            dlgView.cam.at[k]  = aa[k] + (ab[k] - aa[k]) * u;
+        }
+        // THE FOV AND THE ROLL TRAVEL WITH THE POINTS. `sub_418410`
+        // lerps four things across a move, not two:
+        //
+        //     out[52..60] = C[20..28]*u + prev[20..28]*(1-u)   // eye
+        //     out[64..72] = C[32..40]*u + prev[32..40]*(1-u)   // target
+        //     out[44]     = prev[11]*(1-u) + C[11]*u           // ROLL
+        //     out[48]     = C[12]*u + prev[12]*(1-u)           // FOV
+        //
+        // and `Camera_LoadParams` (0x004146C0) settles which is which:
+        // `+44` is the roll, WRAPPED to (-180, 180] as it is loaded
+        // (`if (v14 > 180) v14 -= 360; if (v14 <= -180) v14 += 360`),
+        // and `+48` the fov. `angle4096` already wraps on load here,
+        // so a plain lerp of each is the engine's own arithmetic.
+        //
+        // Both are lerped, neither snapped nor dropped. Six of 402's
+        // sixteen pairs change fov across the move and one changes it
+        // by 15 degrees (4572 -> 4574, 84 -> 99): a 15-degree widening
+        // in one frame in the middle of a travel reads as the camera
+        // suddenly returning to a previous position while continuing
+        // the interpolation. Eleven pairs are rolled, up to 12
+        // degrees.
+        dlgView.cam.hfovDeg = ca->fov  + (cbb->fov  - ca->fov)  * u;
+        dlgView.cam.rollDeg = ca->roll + (cbb->roll - ca->roll) * u;
+        dlgView.cam.w = dispW; dlgView.cam.h = dispH;
+        haveDlgCam = okA && okB;
+        if (ca->id != lastDlgCam) {
+            lastDlgCam = ca->id;
+            std::printf("  dialogue camera %d -> %d (%s), fov %.0f, "
+                        "roll %.0f%s\n", ca->id, cbb->id,
+                        dlg.phase() == omk::DialogPhase::Menu
+                            ? "reply pair" : "line pair",
+                        ca->fov, ca->roll,
+                        haveDlgCam ? (ca->absolute() ? "" : "  [hangs off a speaker]")
+                                   : "  [unresolvable subject - not drawn]");
+            // ...AND WHERE IT ENDED UP. A dialogue camera is resolved
+            // against the two speakers, so the id says nothing about
+            // the place: a camera seen inside the scenery would have
+            // nothing in the log to name it by, while every world
+            // camera prints its eye and target two blocks below.
+            // Printed from the view the frame will be drawn with.
+            std::printf("    ...resolved: eye %.0f %.0f %.0f  at %.0f %.0f %.0f"
+                        "  (%.0f from its target)\n",
+                        double(dlgView.cam.eye[0]), double(dlgView.cam.eye[1]),
+                        double(dlgView.cam.eye[2]), double(dlgView.cam.at[0]),
+                        double(dlgView.cam.at[1]), double(dlgView.cam.at[2]),
+                        std::sqrt(
+                            (dlgView.cam.eye[0] - dlgView.cam.at[0]) *
+                                (dlgView.cam.eye[0] - dlgView.cam.at[0]) +
+                            (dlgView.cam.eye[1] - dlgView.cam.at[1]) *
+                                (dlgView.cam.eye[1] - dlgView.cam.at[1]) +
+                            (dlgView.cam.eye[2] - dlgView.cam.at[2]) *
+                                (dlgView.cam.eye[2] - dlgView.cam.at[2])));
+        }
+    }
+}
+

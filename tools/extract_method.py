@@ -272,7 +272,7 @@ def header_of(cls):
 
 # ---- extract -----------------------------------------------------------------
 
-def extract(path, A, B, name, comment=""):
+def extract(path, A, B, name, comment="", tidy=True):
     src = open(path).read()
     L = src.split("\n")
     body = L[A - 1:B]
@@ -388,7 +388,7 @@ def extract(path, A, B, name, comment=""):
         write(params, need, aliases)
         errs = compile_errors(path)
         if not errs:
-            tidied = drop_unused_aliases(path) if cls == "PlayState" else 0
+            tidied = drop_unused_aliases(path) if cls == "PlayState" and tidy else 0
             return "%s: %d lines, %d parameters %s%s" % (
                 name, B - A + 1, len(params), need,
                 ", %d unused alias(es) dropped" % tidied if tidied else "")
@@ -424,7 +424,11 @@ def batch(path, jobs_file):
     for ln, name, comment in sorted(jobs, reverse=True):
         s = open(path).read()
         end = statement_end(s, code_mask(s), s.split("\n"), ln)
-        print("%d-%d %s" % (ln, end, extract(path, ln, end, name, comment)))
+        # a tidy deletes lines ABOVE the cuts still to come: once, at the end
+        print("%d-%d %s" % (ln, end, extract(path, ln, end, name, comment, tidy=False)))
+    n = drop_unused_aliases(path)
+    if n:
+        print("%d unused alias(es) dropped" % n)
 
 
 def candidates(path, method, minl, depth_want):

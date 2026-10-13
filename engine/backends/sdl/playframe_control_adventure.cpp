@@ -592,83 +592,7 @@ void PlayState::adventureScreenInput() {
             // moves, a channel thrashing between `HGUARD`, `HRUN`
             // and a clipless pass-through, and a gap that never
             // changed.
-            if (fightRun.foeBank && fightRun.foeChannel) {
-                const auto& ctl = fightRun.foeChannel->ctl();
-                // THE CLIP IS THE OWNER'S, not the current entry's.
-                // A `.CTL` entry carrying 0x8002 is an alias or a
-                // pass-through: it plays nothing and hands the clip
-                // on through its GoTo. Reading `states[state()]`
-                // gives -1 on those frames, which would make the
-                // opponent flicker between his move and the bank's
-                // default stance, with no root motion on those
-                // frames.
-                const int foeState = fightRun.foeChannel->clipOwner();
-                const int clip =
-                    (foeState >= 0 && foeState < static_cast<int>(ctl.states.size()))
-                        ? ctl.states[static_cast<std::size_t>(foeState)].clip : -1;
-                if (clip != fightRun.foeClip) {
-                    fightRun.foeClip = clip;
-                    fightRun.foeRoot.clear();
-                    fightRun.foeFrame = fightRun.foeChannel->frame();
-                    fightRun.foePose = omk::NodeTracks{};
-                    if (clip >= 0 && clip < static_cast<int>(ctl.clips.size())) {
-                        const auto& c = ctl.clips[static_cast<std::size_t>(clip)];
-                        const auto& foeBytes = fightRun.foeBank->data;
-                        if (c.offset + c.length <= foeBytes.size()) {
-                            const auto bytes = std::span<const std::byte>(foeBytes)
-                                                   .subspan(c.offset, c.length);
-                            fightRun.foeRoot = omk::clipRootMotion(bytes);
-                            // ...and the whole clip, for the POSE.
-                            // Built here rather than per frame:
-                            // `clipTracks` decodes every rotation
-                            // of the clip, and a fighter changes
-                            // entry a few times a second.
-                            fightRun.foePose = omk::clipTracks(bytes);
-                        }
-                    }
-                }
-                const float nowF = fightRun.foeChannel->frame();
-                if (!fightRun.foeRoot.empty()) {
-                    const int last =
-                        static_cast<int>(fightRun.foeRoot.size()) - 1;
-                    const auto at = [&](float f) {
-                        // key 0 is the REST SENTINEL: frame f reads
-                        // key f + 1, and `clipRootMotion` is already
-                        // indexed by frame, so frame 1 is entry 0.
-                        int i = static_cast<int>(f) - 1;
-                        if (i < 0) i = 0;
-                        if (i > last) i = last;
-                        return fightRun.foeRoot[static_cast<std::size_t>(i)];
-                    };
-                    // A wrap applies nothing, the way
-                    // `Anim_RootDelta`'s `ceil(prev) <= cur` guard
-                    // drops the frame a loop turns over on.
-                    if (nowF >= fightRun.foeFrame) {
-                        const auto a = at(fightRun.foeFrame);
-                        const auto b = at(nowF);
-                        const float local[3] = {b[0] - a[0], b[1] - a[1],
-                                                b[2] - a[2]};
-                        float world[3] = {0.0f, 0.0f, 0.0f};
-                        omk::rotateYaw(fightRun.foe.yaw, local, world);
-                        // **THE VERTICAL IS DROPPED, and it is
-                        // labelled rather than silently kept.**
-                        // `Actor_ApplyMotion` is what puts a body
-                        // back on the floor after its clip has
-                        // moved it, and this tree has that only
-                        // for the player (his controller). Adding
-                        // the clip's own `y` with no ground pass
-                        // lets the opponent climb - 34 units out
-                        // of frame, vanishing (his y going -29 to
-                        // -63 while the player stands at +9.8, and
-                        // Y points DOWN). Until a non-player body has a
-                        // ground response, he keeps the height
-                        // his placement gave him.
-                        fightRun.foe.x += world[0];
-                        fightRun.foe.z += world[2];
-                    }
-                }
-                fightRun.foeFrame = nowF;
-            }
+            adventureFightFoeMotion();
             // `Actor_ApplyMotion`: EVERYTHING that moved him this
             // frame - the separation push and a knockback inside
             // `step`, and the root motion above - is one try,
@@ -744,223 +668,15 @@ void PlayState::adventureScreenInput() {
             // judged rather than guessed at: the two hit points,
             // how far apart they are, which `.CTL` state each is
             // in, and what the runtime has scored so far.
-            if ((frameNo - fightRun.startedAt) % 30 == 0) {
-                const auto& st = fightRun.fight->stats();
-                // ...naming the ENTRY each channel sits on, not
-                // just its state id: "state 0" on its own says
-                // nothing about which move is playing, and the
-                // entry's name is what a `.CTL` reader can check.
-                const auto entryName = [](const omk::CefChannel& ch) {
-                    const int s = ch.state();
-                    const auto& sts = ch.ctl().states;
-                    return (s >= 0 && s < static_cast<int>(sts.size()))
-                               ? sts[static_cast<std::size_t>(s)].name.c_str()
-                               : "?";
-                };
-                std::printf("  fight +%ld: Vie %d vs %d, %.0f apart "
-                            "(%.2f m), states %d/%d, entries %d '%s' / "
-                            "%d '%s', hits %ld, grazes %ld, blocks %ld, "
-                            "AI moves %ld\n",
-                            frameNo - fightRun.startedAt,
-                            fightRun.fight->player().hp,
-                            fightRun.fight->opponent().hp,
-                            double(fightRun.fight->separation()),
-                            double(fightRun.fight->separation()) * 0.0254,
-                            fightRun.fight->player().state,
-                            fightRun.fight->opponent().state,
-                            player->channel().state(),
-                            entryName(player->channel()),
-                            fightRun.foeChannel->state(),
-                            entryName(*fightRun.foeChannel),
-                            st.hits, st.grazes, st.blocks, st.aiMoves);
-                // ...and the OPPONENT's channel counters, so a
-                // machine that is stuck says WHY: a landing the
-                // link pass could not resolve, a chain that did
-                // not terminate, and how many clip ends and
-                // transitions it has actually made.
-                // The AI's own clock and decision, because "he
-                // stopped pressing" has two causes that look
-                // identical from outside: a wait that never
-                // expires (the ms clock not advancing the way the
-                // profile's millisecond delays expect) and an
-                // intent no branch re-arms.
-                // WHERE THE TWO BODIES ACTUALLY ARE. The line
-                // above carries their separation, which is a
-                // scalar and hides "the enemy disappears": a clip's
-                // root motion moving him vertically with no ground
-                // pass makes him rise out of frame while the
-                // separation - measured in three dimensions - still
-                // reads plausibly. A height that walks away from its
-                // placement is the discriminator, so print both.
-                std::printf("    bodies: player %.0f %.0f %.0f facing %.0f, "
-                            "opponent %.0f %.0f %.0f facing %.0f\n",
-                            double(fightRun.player.x), double(fightRun.player.y),
-                            double(fightRun.player.z), double(fightRun.player.yaw),
-                            double(fightRun.foe.x), double(fightRun.foe.y),
-                            double(fightRun.foe.z), double(fightRun.foe.yaw));
-                // THE CAMERA's own state machine, so a run shows
-                // it working rather than merely existing: 1 the
-                // orbit, 2 the throw swing, 4 the ten-frame hand
-                // over, 7 the KO, 8 close.
-                {
-                    const omk::FightCamera& fc = fightRun.fight->camera();
-                    std::printf("    fight camera: state %d, eye %.0f %.0f %.0f, "
-                                "at %.0f %.0f %.0f, heading %.0f, radius %.0f, "
-                                "ray hits %ld%s\n",
-                                fc.state, double(fc.eye[0]), double(fc.eye[1]),
-                                double(fc.eye[2]), double(fc.at[0]),
-                                double(fc.at[1]), double(fc.at[2]),
-                                double(fc.heading), double(fc.radius),
-                                fc.rayHits, fc.rayHit ? " (pulled in now)" : "");
-                }
-                // The KO counter, because "he is down and nothing
-                // happens" has two causes that look the same from
-                // outside: the trigger in `sub_4452A0` never
-                // firing, and the replay firing but not finishing.
-                std::printf("    fight state: KO counter %d, over %d, "
-                            "player won %d\n",
-                            fightRun.fight->koCounter(),
-                            fightRun.fight->over() ? 1 : 0,
-                            fightRun.fight->playerWon() ? 1 : 0);
-                if (fightRun.foeWalker)
-                    std::printf("    foe walker: %ld steps, %ld swept into a wall, "
-                                "%ld blocked outright\n", fightRun.foeSteps,
-                                fightRun.foeSlid, fightRun.foeBlocked);
-                std::printf("    foe AI: clock %.0f ms, intent %d, "
-                            "deadline %ld, taunt %ld/%ld\n",
-                            fightRun.ms,
-                            fightRun.fight->opponent().aiIntent,
-                            fightRun.fight->opponent().aiMoveDeadline,
-                            fightRun.fight->opponent().aiTauntStart,
-                            fightRun.fight->opponent().aiTauntDeadline);
-                const auto& cs = fightRun.foeChannel->stats();
-                std::printf("    foe channel: ticks %ld, transitions %ld, "
-                            "landings %ld, clipEnds %ld, badLanding %ld, "
-                            "chainAborted %ld, queue %zu\n",
-                            cs.ticks, cs.transitions, cs.landings,
-                            cs.clipEnds, cs.badLanding, cs.chainAborted,
-                            fightRun.foeChannel->queueSize());
-            }
-            if (!on) {
-                // `sub_445AC0`: both channels restored, the
-                // adventure bank back on the player, scheme 0, and
-                // event 2 - which releases the FIRST script parked
-                // at status 3. The life goes back on both records
-                // first, because that is what the scripts read as
-                // `'Vie Combat Après'`.
-                const int myHp = fightRun.fight->player().hp;
-                const int hisHp = fightRun.fight->opponent().hp;
-                auto rec = state.rawMutable().subspan(
-                    static_cast<std::size_t>(omk::GameState::kPlayerRecord),
-                    static_cast<std::size_t>(omk::GameState::kPlayerRecordSize));
-                omk::writeActorProperty(rec, 1, myHp);
-                session.setActorProperty(fightRun.opponent, 1, hisHp);
-                player->setBank(playerCtl, playerCtlData);
-                // THE STATE THE FIGHT LEAVES HIM IN - 1, win or lose,
-                // and it takes two writes to see why. `sub_445AC0`
-                // writes the player's +404 from `dword_906F34`, the
-                // WINNER (`Fight_ResolveHit` stores `att` there): 1 if
-                // he won and 0 if he lost. Then it raises event 2,
-                // whose handler calls `Actor_LoadBankList` on the
-                // player - and that ends `dword_910834[328*i] = 1`,
-                // the +404 alias. So a loser's 0 lasts for the rest
-                // of one call and he leaves the fight in 1 either way
-                // (`todo/fight-mode.md` 15.12). This viewer's
-                // `setBank` rebuilds the runtime, which lands on 1
-                // through the same two rows, and the write below
-                // states the result rather than relying on that.
-                const bool won = fightRun.fight->playerWon();
-                player->setActorState(omk::ActorState::Normal, "Actor_LoadBankList");
-                std::printf("frame %ld: FIGHT GATE - the player's channel turned away "
-                            "%ld candidate moves above priority %d\n", frameNo,
-                            player->channel().gateSkips(), fightRun.fight->gateThreshold());
-                std::printf("frame %ld: sub_445AC0 - the player %s, ACTOR_STATE %d\n",
-                            frameNo, won ? "WON" : "LOST",
-                            static_cast<int>(player->state()));   // the CONSUMER's, not the bool
-                in.installScheme(0);
-                session.fightEnded();
-                std::printf("frame %ld: FIGHT ENDS after %ld frames - "
-                            "%s won, Vie %d vs %d, the script resumes "
-                            "and the adventure bank is back\n",
-                            frameNo, frameNo - fightRun.startedAt,
-                            fightRun.fight->playerWon() ? "the player"
-                                                        : "the opponent",
-                            myHp, hisHp);
-                fightRun.active = false;
-                dropLibrary(fightRt);     // `aventure.scx` back (`loadLibrary`)
-                fightRun.fight.reset();
-                fightRun.foeChannel.reset();
-                if (fightRun.body) {
-                    fightRun.body->inertAfterFight = true;
-                    // where the loser LIES: his placement (the pelvis)
-                    // and his drawn head, both from the draw's own
-                    // record (`meshAt`), not from the fight's intent
-                    const Staged& lb = *fightRun.body;
-                    float headY = 0.0f;
-                    const int hm = lb.mo ? lb.mo->headOf() : -1;
-                    if (hm >= 0 && lb.meshAt.size() >= (static_cast<std::size_t>(hm) + 1) * 3)
-                        headY = lb.meshAt[static_cast<std::size_t>(hm) * 3 + 1];
-                    std::printf("frame %ld: the fight's OPPONENT actor %d is drawn with his "
-                                "pelvis at y %.0f and his head at y %.0f (placement %.0f)\n",
-                                frameNo, lb.actor,
-                                (lb.mo && lb.mo->root >= 0 && lb.meshAt.size() >= (static_cast<std::size_t>(lb.mo->root) + 1) * 3)
-                                    ? lb.meshAt[static_cast<std::size_t>(lb.mo->root) * 3 + 1] : 0.0f,
-                                headY, lb.at[1]);
-                }
-                fightRun.body = nullptr;
-            }
+            adventureFightReport();
+            adventureFightEnd(on, in);
         } else if (!ride && !boarded) {
             // `Actor_TickShoot` runs `sub_47D4D0` BEFORE the channel
             // tick: last frame's intents become this frame's step,
             // and the step meets the ground in the same try as a
             // clip's root motion (`actor/shootmove.h`). Logged once
             // when a run of movement starts and once when it ends.
-            if (shootMode && shootMover.active &&
-                player->state() == omk::ActorState::Shoot) {
-                // ...and the shove's four frames, which write the
-                // actor's own +416 and +424 (`actor/shootmove.h`)
-                const float shoveWas[2] = {player->eulerPitch(),
-                                           player->eulerRoll()};
-                const omk::ShootMoveStep st = omk::shootMoveTick(
-                    shootMover, player->facing(),
-                    static_cast<float>(frameSec * 30.0),
-                    &player->eulerPitch(), &player->eulerRoll(),
-                    player->walker().airborne());
-                if (shoveWas[0] != player->eulerPitch() ||
-                    shoveWas[1] != player->eulerRoll())
-                    std::printf("frame %ld: THE SHOVE (sub_47D1F0) - %.2f left, "
-                                "pitch %+.2f roll %+.2f degrees\n", frameNo,
-                                double(shootMover.shoveTimer),
-                                double(player->eulerPitch()),
-                                double(player->eulerRoll()));
-                // the vertical goes UP (`+248 -= flt_6579C0 x delta`, y down)
-                player->addShootMotion(st.dx, st.dz, -st.dy);
-                if (st.dy != 0.0f)
-                    std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", frameNo,
-                                double(st.dy), shootMover.flags, double(player->pos()[1]));
-                const bool moving = st.dx != 0.0f || st.dz != 0.0f;
-                if (moving && shootMoveFrames == 0) {
-                    for (int k = 0; k < 3; ++k) shootMoveFrom[k] = player->pos()[k];
-                    shootMoveDist = 0.0f;
-                    std::printf("frame %ld: SHOOT MOVE starts at %.1f %.1f %.1f, "
-                                "facing %.1f\n", frameNo, double(shootMoveFrom[0]),
-                                double(shootMoveFrom[1]), double(shootMoveFrom[2]),
-                                double(player->facing()));
-                }
-                if (moving) {
-                    ++shootMoveFrames;
-                    shootMoveDist += std::sqrt(st.dx * st.dx + st.dz * st.dz);
-                } else if (shootMoveFrames > 0) {
-                    const float* p = player->pos();
-                    std::printf("frame %ld: SHOOT MOVE stops after %ld frames - "
-                                "asked %.2f, went %.2f %.2f %.2f\n", frameNo,
-                                shootMoveFrames, double(shootMoveDist),
-                                double(p[0] - shootMoveFrom[0]),
-                                double(p[1] - shootMoveFrom[1]),
-                                double(p[2] - shootMoveFrom[2]));
-                    shootMoveFrames = 0;
-                }
-            }
+            adventureShootMoverTick();
             // ---- `image.show` (op 94), ACTOR_STATE 10 -----------------
             // `Image_Show` (0x0041DFA0): with a player, `IMAGES\<file>` into
             // `dword_93072C` and `sub_468F20` - [101] parked, state 10, the
@@ -1120,157 +836,8 @@ void PlayState::adventureScreenInput() {
                 player->walker().probeFlags(player->pos()[0],
                                             player->pos()[1] - 12.81,
                                             player->pos()[2], standFl);
-            if (player->state() == omk::ActorState::Normal &&
-                (standFl & 0x8000000u)) {
-                const bool grouped = player->enterGroupById(300);
-                enteredWater = true;
-                player->setActorState(omk::ActorState::WaterIn11, "Actor_ApplyMotion");
-                in.installScheme(1);
-                fallBanded = false;
-                // THE SWIM CAMERA IS THE CHASE CAMERA, NOT A FIXED OFFSET:
-                // it stays behind him.
-                // `sub_414520` gives mode 21 its own setup, `sub_413EF0`,
-                // and gives mode 0 - the ordinary follow camera - a SWIM
-                // VARIANT, `sub_413CD0`, whenever the player is in state 11,
-                // 13 or 14; both write the same chase tunables (+228 = -39.37,
-                // one metre; +300 = 1.5, +304 = 1.2, +308 = -1.0, +284 = 5,
-                // +288 = 8, flags 0x4800) and probe for the water line above
-                // him (`flt_4E7D0C`). So what films a swimmer is the camera
-                // that films a walker, retuned - not preset 21's eye
-                // (0, 78.74, -19.685) turned by his pitch, which is what this
-                // did and which put the lens in FRONT of a prone body.
-                // RECONSTRUCTION, labelled: the flagged passes those tunables
-                // feed are not ported (`player.h` says the same of the land
-                // camera's), so this is mode 0's own 3 m behind him, the
-                // tunables' 1 m above, by the YAW alone. `--water-cam preset`
-                // brings the old reading back to lay beside it.
-                static constexpr float kWaterPresetEye[3] = {0.0f, 78.7402f, -19.685f};
-                static constexpr float kWaterChaseEye[3]  = {0.0f, 39.370079f, -118.1102f};
-                const float* kWaterEye = waterCamPreset ? kWaterPresetEye : kWaterChaseEye;
-                static constexpr float kWaterAt[3]  = {0.0f, 0.0f, 0.0f};
-                playerCamRequest(kWaterEye, kWaterAt, 75.0f, 50.0f);
-                // ...and the WATER LINE, as `sub_413CD0` sets the swim camera
-                // up: `World_ProbePoint` from 98.425 above him (2.5 m, Y down)
-                // and, when the surface it meets carries 0x20000000, that
-                // height is `flt_4E7D0C`. Kept until the next setup finds one.
-                {
-                    std::uint32_t fl = 0;
-                    const auto h = player->walker().probeFlags(
-                        player->pos()[0], player->pos()[1] - 98.425194, player->pos()[2], fl);
-                    if (h && (fl & 0x20000000u)) {
-                        waterLine = static_cast<float>(*h);
-                        waterLineKnown = true;
-                        std::printf("frame %ld: the water line (sub_413CD0's probe) at y %.1f\n",
-                                    frameNo, double(waterLine));
-                    }
-                }
-                std::printf("frame %ld: INTO THE WATER at %.0f %.0f %.0f - %s, scheme 1, "
-                            "ACTOR_STATE %d, camera 21 over 50 frames\n", frameNo,
-                            player->pos()[0], player->pos()[1], player->pos()[2],
-                            grouped ? "bank group 300 (H_HFL-IN)" : "NO group 300",
-                            static_cast<int>(player->state()));
-            }
-            {
-                const bool air = player->walker().airborne();
-                const bool slide = player->walker().sliding();
-                if ((air || slide) && !(wasAir || wasSlide)) {
-                    std::printf("frame %ld: the player %s from y %.1f\n", frameNo,
-                                slide ? "SLIDES (a face past the slope limit - a "
-                                        "CONSTANT 11.8 a frame, not gravity)"
-                                      : "FALLS", player->pos()[1]);
-                }
-                else if ((air || slide) && frameNo % 5 == 0) {
-                    // ...and what the GROUND PROBE sees under him,
-                    // because "he went through the ground" has two
-                    // very different causes: nothing in the soup
-                    // below him, or a surface the landing test
-                    // stepped over.
-                    const auto* w = &player->walker();
-                    const auto g = omk::floorUnder(w->soup(), w->pos()[0],
-                                                   w->pos()[1] - 12.81, w->pos()[2]);
-                    char gs[48];
-                    if (g) std::snprintf(gs, sizeof gs, "%.1f (%.1f below)",
-                                         *g, *g - w->pos()[1]);
-                    else   std::snprintf(gs, sizeof gs, "NOTHING under him");
-                    std::printf("frame %ld:   %s: y %.1f, descended %.1f, at %.0f %.0f,"
-                                " ground %s\n", frameNo, slide ? "sliding" : "falling",
-                                player->pos()[1], player->walker().fall(),
-                                double(player->pos()[0]), double(player->pos()[2]), gs);
-                }
-                else if (!air && !slide && (wasAir || wasSlide)) {
-                    std::printf("frame %ld: the player LANDS at y %.1f - dropped "
-                                "%.1f (%.2f m), tier %d\n", frameNo, player->pos()[1],
-                                player->walker().lastLandingDrop(),
-                                player->walker().lastLandingDrop() / 39.37,
-                                player->walker().lastLandingTier());
-                    // ---- THE LANDING MESSAGES, `Walk_GroundResponse` ----
-                    // (`todo/released-spectres.md` step 6). On the landing
-                    // tick, by the accumulated fall `+280`: at 196.85 (5 m)
-                    // and over MESSAGE 11, group 5 and `sub_414DE0(him, 19)`;
-                    // from 118.11 (3 m) MESSAGE 10, group 4 and
-                    // `sub_414DE0(him, 16)`; below, no message. Both are
-                    // posted for the PLAYER whatever his ACTOR_STATE - only
-                    // the group changes skip states 2, 3 and 15, and
-                    // `sub_414DE0` returns at once in 3. NOT PORTED here,
-                    // labelled: the group changes and the landing camera
-                    // requests, which the walker's own tiers stand for; and
-                    // the short band's second test on `+284`. The catacombs'
-                    // handler for 11 costs 45 health with a red flash.
-                    const double lf = player->walker().lastLandingFall();
-                    // THE REACTION (`todo/falls.md` 1): the group by the
-                    // fall, skipped in ACTOR_STATEs 2, 3 and 15, and the
-                    // camera. The short band's second test on `+284` is
-                    // not modelled; the fall alone decides.
-                    // ...and the floor he has just landed ON, because it is ONE
-                    // probe in the engine: the mesh `Walk_ProbeGround` returns
-                    // decides which arm runs, so a body landing on the canal's
-                    // bed never reaches the landing reaction or its message at
-                    // all. The port sees the landing a tick before the flags,
-                    // which is why all three tests are here.
-                    // ...and the mesh he has just landed ON, PROBED here rather
-                    // than read off the walker, because the port notices the
-                    // landing one tick before the stand's flags follow it: at
-                    // the landing tick `floorFlags()` is still the floor he
-                    // left. The engine has no such gap - `Walk_ProbeGround`
-                    // returns one mesh and the if/else at `21_d3d.c` 3830
-                    // chooses on it - so the probe is what must decide.
-                    std::uint32_t landFlags = 0;
-                    player->walker().probeFlags(player->pos()[0],
-                                                player->pos()[1] - 12.81,
-                                                player->pos()[2], landFlags);
-                    const bool waterArm = enteredWater || inWaterState ||
-                                          (landFlags & 0x8000000u);
-                    if (waterArm)
-                        std::printf("frame %ld: the landing's reaction SKIPPED - the "
-                                    "water arm took this tick (ACTOR_STATE %d), and the "
-                                    "engine calls one or the other\n", frameNo,
-                                    static_cast<int>(player->state()));
-                    if (!waterArm) {
-                        const auto st = static_cast<int>(player->state());
-                        const bool may = !(st == 2 || st == 3 || st == 15);
-                        int grp = -1;
-                        if (lf >= 196.85039)      grp = 5;       // H_HFL -> H_SOL
-                        else if (lf >= 59.055119) grp = 4;       // H_LFL
-                        else if (player->ctlGroupId() == 2) grp = 100;
-                        const bool went = may && grp >= 0 && player->enterGroupById(grp);
-                        if (grp >= 0)
-                            std::printf("frame %ld: the landing's reaction - fall %.1f: "
-                                        "bank group %d%s\n", frameNo, lf, grp,
-                                        went ? "" : " REFUSED (state or bank)");
-                        if (lf >= 196.85039) fallCamRequest(19, false, "the landing", st);
-                        else                 fallCamRequest(16, false, "the landing", st);
-                    }
-                    const int msg = waterArm ? -1
-                                  : lf >= 196.85039 ? 11 : lf >= 118.11024 ? 10 : -1;
-                    if (msg >= 0) {
-                        const bool ran = session.postMessage(msg, session.playerActor());
-                        std::printf("frame %ld: the landing (Walk_GroundResponse) - fall "
-                                    "%.1f (%.2f m): MESSAGE %d %s\n", frameNo, lf, lf / 39.37,
-                                    msg, ran ? "to its handler"
-                                             : "- NO handler subscribes");
-                    }
-                }
-            }
+            adventureWaterEntry(standFl, enteredWater, in);
+            adventureFallAndLanding(wasAir, wasSlide, enteredWater, inWaterState);
             // While he BOARDS or LEAVES, say where the clip is
             // carrying him - the door snap is one number and the
             // carry-in is seventy-two more, and a render at the
@@ -1288,6 +855,480 @@ void PlayState::adventureScreenInput() {
         }
     }
 }
+
+// THE OPPONENT'S MOTION PASS: his channel's root motion, as the player's walker does it for the player (from `adventureScreenInput`)
+void PlayState::adventureFightFoeMotion() {
+    if (fightRun.foeBank && fightRun.foeChannel) {
+        const auto& ctl = fightRun.foeChannel->ctl();
+        // THE CLIP IS THE OWNER'S, not the current entry's.
+        // A `.CTL` entry carrying 0x8002 is an alias or a
+        // pass-through: it plays nothing and hands the clip
+        // on through its GoTo. Reading `states[state()]`
+        // gives -1 on those frames, which would make the
+        // opponent flicker between his move and the bank's
+        // default stance, with no root motion on those
+        // frames.
+        const int foeState = fightRun.foeChannel->clipOwner();
+        const int clip =
+            (foeState >= 0 && foeState < static_cast<int>(ctl.states.size()))
+                ? ctl.states[static_cast<std::size_t>(foeState)].clip : -1;
+        if (clip != fightRun.foeClip) {
+            fightRun.foeClip = clip;
+            fightRun.foeRoot.clear();
+            fightRun.foeFrame = fightRun.foeChannel->frame();
+            fightRun.foePose = omk::NodeTracks{};
+            if (clip >= 0 && clip < static_cast<int>(ctl.clips.size())) {
+                const auto& c = ctl.clips[static_cast<std::size_t>(clip)];
+                const auto& foeBytes = fightRun.foeBank->data;
+                if (c.offset + c.length <= foeBytes.size()) {
+                    const auto bytes = std::span<const std::byte>(foeBytes)
+                                           .subspan(c.offset, c.length);
+                    fightRun.foeRoot = omk::clipRootMotion(bytes);
+                    // ...and the whole clip, for the POSE.
+                    // Built here rather than per frame:
+                    // `clipTracks` decodes every rotation
+                    // of the clip, and a fighter changes
+                    // entry a few times a second.
+                    fightRun.foePose = omk::clipTracks(bytes);
+                }
+            }
+        }
+        const float nowF = fightRun.foeChannel->frame();
+        if (!fightRun.foeRoot.empty()) {
+            const int last =
+                static_cast<int>(fightRun.foeRoot.size()) - 1;
+            const auto at = [&](float f) {
+                // key 0 is the REST SENTINEL: frame f reads
+                // key f + 1, and `clipRootMotion` is already
+                // indexed by frame, so frame 1 is entry 0.
+                int i = static_cast<int>(f) - 1;
+                if (i < 0) i = 0;
+                if (i > last) i = last;
+                return fightRun.foeRoot[static_cast<std::size_t>(i)];
+            };
+            // A wrap applies nothing, the way
+            // `Anim_RootDelta`'s `ceil(prev) <= cur` guard
+            // drops the frame a loop turns over on.
+            if (nowF >= fightRun.foeFrame) {
+                const auto a = at(fightRun.foeFrame);
+                const auto b = at(nowF);
+                const float local[3] = {b[0] - a[0], b[1] - a[1],
+                                        b[2] - a[2]};
+                float world[3] = {0.0f, 0.0f, 0.0f};
+                omk::rotateYaw(fightRun.foe.yaw, local, world);
+                // **THE VERTICAL IS DROPPED, and it is
+                // labelled rather than silently kept.**
+                // `Actor_ApplyMotion` is what puts a body
+                // back on the floor after its clip has
+                // moved it, and this tree has that only
+                // for the player (his controller). Adding
+                // the clip's own `y` with no ground pass
+                // lets the opponent climb - 34 units out
+                // of frame, vanishing (his y going -29 to
+                // -63 while the player stands at +9.8, and
+                // Y points DOWN). Until a non-player body has a
+                // ground response, he keeps the height
+                // his placement gave him.
+                fightRun.foe.x += world[0];
+                fightRun.foe.z += world[2];
+            }
+        }
+        fightRun.foeFrame = nowF;
+    }
+}
+
+
+// Every second of the fight, its state on one line, so a headless run can be read (from `adventureScreenInput`)
+void PlayState::adventureFightReport() {
+    if ((frameNo - fightRun.startedAt) % 30 == 0) {
+        const auto& st = fightRun.fight->stats();
+        // ...naming the ENTRY each channel sits on, not
+        // just its state id: "state 0" on its own says
+        // nothing about which move is playing, and the
+        // entry's name is what a `.CTL` reader can check.
+        const auto entryName = [](const omk::CefChannel& ch) {
+            const int s = ch.state();
+            const auto& sts = ch.ctl().states;
+            return (s >= 0 && s < static_cast<int>(sts.size()))
+                       ? sts[static_cast<std::size_t>(s)].name.c_str()
+                       : "?";
+        };
+        std::printf("  fight +%ld: Vie %d vs %d, %.0f apart "
+                    "(%.2f m), states %d/%d, entries %d '%s' / "
+                    "%d '%s', hits %ld, grazes %ld, blocks %ld, "
+                    "AI moves %ld\n",
+                    frameNo - fightRun.startedAt,
+                    fightRun.fight->player().hp,
+                    fightRun.fight->opponent().hp,
+                    double(fightRun.fight->separation()),
+                    double(fightRun.fight->separation()) * 0.0254,
+                    fightRun.fight->player().state,
+                    fightRun.fight->opponent().state,
+                    player->channel().state(),
+                    entryName(player->channel()),
+                    fightRun.foeChannel->state(),
+                    entryName(*fightRun.foeChannel),
+                    st.hits, st.grazes, st.blocks, st.aiMoves);
+        // ...and the OPPONENT's channel counters, so a
+        // machine that is stuck says WHY: a landing the
+        // link pass could not resolve, a chain that did
+        // not terminate, and how many clip ends and
+        // transitions it has actually made.
+        // The AI's own clock and decision, because "he
+        // stopped pressing" has two causes that look
+        // identical from outside: a wait that never
+        // expires (the ms clock not advancing the way the
+        // profile's millisecond delays expect) and an
+        // intent no branch re-arms.
+        // WHERE THE TWO BODIES ACTUALLY ARE. The line
+        // above carries their separation, which is a
+        // scalar and hides "the enemy disappears": a clip's
+        // root motion moving him vertically with no ground
+        // pass makes him rise out of frame while the
+        // separation - measured in three dimensions - still
+        // reads plausibly. A height that walks away from its
+        // placement is the discriminator, so print both.
+        std::printf("    bodies: player %.0f %.0f %.0f facing %.0f, "
+                    "opponent %.0f %.0f %.0f facing %.0f\n",
+                    double(fightRun.player.x), double(fightRun.player.y),
+                    double(fightRun.player.z), double(fightRun.player.yaw),
+                    double(fightRun.foe.x), double(fightRun.foe.y),
+                    double(fightRun.foe.z), double(fightRun.foe.yaw));
+        // THE CAMERA's own state machine, so a run shows
+        // it working rather than merely existing: 1 the
+        // orbit, 2 the throw swing, 4 the ten-frame hand
+        // over, 7 the KO, 8 close.
+        {
+            const omk::FightCamera& fc = fightRun.fight->camera();
+            std::printf("    fight camera: state %d, eye %.0f %.0f %.0f, "
+                        "at %.0f %.0f %.0f, heading %.0f, radius %.0f, "
+                        "ray hits %ld%s\n",
+                        fc.state, double(fc.eye[0]), double(fc.eye[1]),
+                        double(fc.eye[2]), double(fc.at[0]),
+                        double(fc.at[1]), double(fc.at[2]),
+                        double(fc.heading), double(fc.radius),
+                        fc.rayHits, fc.rayHit ? " (pulled in now)" : "");
+        }
+        // The KO counter, because "he is down and nothing
+        // happens" has two causes that look the same from
+        // outside: the trigger in `sub_4452A0` never
+        // firing, and the replay firing but not finishing.
+        std::printf("    fight state: KO counter %d, over %d, "
+                    "player won %d\n",
+                    fightRun.fight->koCounter(),
+                    fightRun.fight->over() ? 1 : 0,
+                    fightRun.fight->playerWon() ? 1 : 0);
+        if (fightRun.foeWalker)
+            std::printf("    foe walker: %ld steps, %ld swept into a wall, "
+                        "%ld blocked outright\n", fightRun.foeSteps,
+                        fightRun.foeSlid, fightRun.foeBlocked);
+        std::printf("    foe AI: clock %.0f ms, intent %d, "
+                    "deadline %ld, taunt %ld/%ld\n",
+                    fightRun.ms,
+                    fightRun.fight->opponent().aiIntent,
+                    fightRun.fight->opponent().aiMoveDeadline,
+                    fightRun.fight->opponent().aiTauntStart,
+                    fightRun.fight->opponent().aiTauntDeadline);
+        const auto& cs = fightRun.foeChannel->stats();
+        std::printf("    foe channel: ticks %ld, transitions %ld, "
+                    "landings %ld, clipEnds %ld, badLanding %ld, "
+                    "chainAborted %ld, queue %zu\n",
+                    cs.ticks, cs.transitions, cs.landings,
+                    cs.clipEnds, cs.badLanding, cs.chainAborted,
+                    fightRun.foeChannel->queueSize());
+    }
+}
+
+
+// THE FIGHT IS OVER (`sub_445AC0`): both channels restored, the adventure bank back on the player, scheme 0, and event 2 (from `adventureScreenInput`)
+void PlayState::adventureFightEnd(bool on, omk::Input& in) {
+    auto& session = *session_;
+    if (!on) {
+        // `sub_445AC0`: both channels restored, the
+        // adventure bank back on the player, scheme 0, and
+        // event 2 - which releases the FIRST script parked
+        // at status 3. The life goes back on both records
+        // first, because that is what the scripts read as
+        // `'Vie Combat Après'`.
+        const int myHp = fightRun.fight->player().hp;
+        const int hisHp = fightRun.fight->opponent().hp;
+        auto rec = state.rawMutable().subspan(
+            static_cast<std::size_t>(omk::GameState::kPlayerRecord),
+            static_cast<std::size_t>(omk::GameState::kPlayerRecordSize));
+        omk::writeActorProperty(rec, 1, myHp);
+        session.setActorProperty(fightRun.opponent, 1, hisHp);
+        player->setBank(playerCtl, playerCtlData);
+        // THE STATE THE FIGHT LEAVES HIM IN - 1, win or lose,
+        // and it takes two writes to see why. `sub_445AC0`
+        // writes the player's +404 from `dword_906F34`, the
+        // WINNER (`Fight_ResolveHit` stores `att` there): 1 if
+        // he won and 0 if he lost. Then it raises event 2,
+        // whose handler calls `Actor_LoadBankList` on the
+        // player - and that ends `dword_910834[328*i] = 1`,
+        // the +404 alias. So a loser's 0 lasts for the rest
+        // of one call and he leaves the fight in 1 either way
+        // (`todo/fight-mode.md` 15.12). This viewer's
+        // `setBank` rebuilds the runtime, which lands on 1
+        // through the same two rows, and the write below
+        // states the result rather than relying on that.
+        const bool won = fightRun.fight->playerWon();
+        player->setActorState(omk::ActorState::Normal, "Actor_LoadBankList");
+        std::printf("frame %ld: FIGHT GATE - the player's channel turned away "
+                    "%ld candidate moves above priority %d\n", frameNo,
+                    player->channel().gateSkips(), fightRun.fight->gateThreshold());
+        std::printf("frame %ld: sub_445AC0 - the player %s, ACTOR_STATE %d\n",
+                    frameNo, won ? "WON" : "LOST",
+                    static_cast<int>(player->state()));   // the CONSUMER's, not the bool
+        in.installScheme(0);
+        session.fightEnded();
+        std::printf("frame %ld: FIGHT ENDS after %ld frames - "
+                    "%s won, Vie %d vs %d, the script resumes "
+                    "and the adventure bank is back\n",
+                    frameNo, frameNo - fightRun.startedAt,
+                    fightRun.fight->playerWon() ? "the player"
+                                                : "the opponent",
+                    myHp, hisHp);
+        fightRun.active = false;
+        dropLibrary(fightRt);     // `aventure.scx` back (`loadLibrary`)
+        fightRun.fight.reset();
+        fightRun.foeChannel.reset();
+        if (fightRun.body) {
+            fightRun.body->inertAfterFight = true;
+            // where the loser LIES: his placement (the pelvis)
+            // and his drawn head, both from the draw's own
+            // record (`meshAt`), not from the fight's intent
+            const Staged& lb = *fightRun.body;
+            float headY = 0.0f;
+            const int hm = lb.mo ? lb.mo->headOf() : -1;
+            if (hm >= 0 && lb.meshAt.size() >= (static_cast<std::size_t>(hm) + 1) * 3)
+                headY = lb.meshAt[static_cast<std::size_t>(hm) * 3 + 1];
+            std::printf("frame %ld: the fight's OPPONENT actor %d is drawn with his "
+                        "pelvis at y %.0f and his head at y %.0f (placement %.0f)\n",
+                        frameNo, lb.actor,
+                        (lb.mo && lb.mo->root >= 0 && lb.meshAt.size() >= (static_cast<std::size_t>(lb.mo->root) + 1) * 3)
+                            ? lb.meshAt[static_cast<std::size_t>(lb.mo->root) * 3 + 1] : 0.0f,
+                        headY, lb.at[1]);
+        }
+        fightRun.body = nullptr;
+    }
+}
+
+
+// `Actor_TickShoot`'s `sub_47D4D0`, run BEFORE the channel: the shoot mover's step (from `adventureScreenInput`)
+void PlayState::adventureShootMoverTick() {
+    if (shootMode && shootMover.active &&
+        player->state() == omk::ActorState::Shoot) {
+        // ...and the shove's four frames, which write the
+        // actor's own +416 and +424 (`actor/shootmove.h`)
+        const float shoveWas[2] = {player->eulerPitch(),
+                                   player->eulerRoll()};
+        const omk::ShootMoveStep st = omk::shootMoveTick(
+            shootMover, player->facing(),
+            static_cast<float>(frameSec * 30.0),
+            &player->eulerPitch(), &player->eulerRoll(),
+            player->walker().airborne());
+        if (shoveWas[0] != player->eulerPitch() ||
+            shoveWas[1] != player->eulerRoll())
+            std::printf("frame %ld: THE SHOVE (sub_47D1F0) - %.2f left, "
+                        "pitch %+.2f roll %+.2f degrees\n", frameNo,
+                        double(shootMover.shoveTimer),
+                        double(player->eulerPitch()),
+                        double(player->eulerRoll()));
+        // the vertical goes UP (`+248 -= flt_6579C0 x delta`, y down)
+        player->addShootMotion(st.dx, st.dz, -st.dy);
+        if (st.dy != 0.0f)
+            std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", frameNo,
+                        double(st.dy), shootMover.flags, double(player->pos()[1]));
+        const bool moving = st.dx != 0.0f || st.dz != 0.0f;
+        if (moving && shootMoveFrames == 0) {
+            for (int k = 0; k < 3; ++k) shootMoveFrom[k] = player->pos()[k];
+            shootMoveDist = 0.0f;
+            std::printf("frame %ld: SHOOT MOVE starts at %.1f %.1f %.1f, "
+                        "facing %.1f\n", frameNo, double(shootMoveFrom[0]),
+                        double(shootMoveFrom[1]), double(shootMoveFrom[2]),
+                        double(player->facing()));
+        }
+        if (moving) {
+            ++shootMoveFrames;
+            shootMoveDist += std::sqrt(st.dx * st.dx + st.dz * st.dz);
+        } else if (shootMoveFrames > 0) {
+            const float* p = player->pos();
+            std::printf("frame %ld: SHOOT MOVE stops after %ld frames - "
+                        "asked %.2f, went %.2f %.2f %.2f\n", frameNo,
+                        shootMoveFrames, double(shootMoveDist),
+                        double(p[0] - shootMoveFrom[0]),
+                        double(p[1] - shootMoveFrom[1]),
+                        double(p[2] - shootMoveFrom[2]));
+            shootMoveFrames = 0;
+        }
+    }
+}
+
+
+// INTO THE WATER: a grounded player on a mesh flagged 0x8000000 enters group 300 - this arm OR the ground response, never both (`21_d3d.c` 3830) (from `adventureScreenInput`)
+void PlayState::adventureWaterEntry(unsigned int& standFl, bool& enteredWater, omk::Input& in) {
+    if (player->state() == omk::ActorState::Normal &&
+        (standFl & 0x8000000u)) {
+        const bool grouped = player->enterGroupById(300);
+        enteredWater = true;
+        player->setActorState(omk::ActorState::WaterIn11, "Actor_ApplyMotion");
+        in.installScheme(1);
+        fallBanded = false;
+        // THE SWIM CAMERA IS THE CHASE CAMERA, NOT A FIXED OFFSET:
+        // it stays behind him.
+        // `sub_414520` gives mode 21 its own setup, `sub_413EF0`,
+        // and gives mode 0 - the ordinary follow camera - a SWIM
+        // VARIANT, `sub_413CD0`, whenever the player is in state 11,
+        // 13 or 14; both write the same chase tunables (+228 = -39.37,
+        // one metre; +300 = 1.5, +304 = 1.2, +308 = -1.0, +284 = 5,
+        // +288 = 8, flags 0x4800) and probe for the water line above
+        // him (`flt_4E7D0C`). So what films a swimmer is the camera
+        // that films a walker, retuned - not preset 21's eye
+        // (0, 78.74, -19.685) turned by his pitch, which is what this
+        // did and which put the lens in FRONT of a prone body.
+        // RECONSTRUCTION, labelled: the flagged passes those tunables
+        // feed are not ported (`player.h` says the same of the land
+        // camera's), so this is mode 0's own 3 m behind him, the
+        // tunables' 1 m above, by the YAW alone. `--water-cam preset`
+        // brings the old reading back to lay beside it.
+        static constexpr float kWaterPresetEye[3] = {0.0f, 78.7402f, -19.685f};
+        static constexpr float kWaterChaseEye[3]  = {0.0f, 39.370079f, -118.1102f};
+        const float* kWaterEye = waterCamPreset ? kWaterPresetEye : kWaterChaseEye;
+        static constexpr float kWaterAt[3]  = {0.0f, 0.0f, 0.0f};
+        playerCamRequest(kWaterEye, kWaterAt, 75.0f, 50.0f);
+        // ...and the WATER LINE, as `sub_413CD0` sets the swim camera
+        // up: `World_ProbePoint` from 98.425 above him (2.5 m, Y down)
+        // and, when the surface it meets carries 0x20000000, that
+        // height is `flt_4E7D0C`. Kept until the next setup finds one.
+        {
+            std::uint32_t fl = 0;
+            const auto h = player->walker().probeFlags(
+                player->pos()[0], player->pos()[1] - 98.425194, player->pos()[2], fl);
+            if (h && (fl & 0x20000000u)) {
+                waterLine = static_cast<float>(*h);
+                waterLineKnown = true;
+                std::printf("frame %ld: the water line (sub_413CD0's probe) at y %.1f\n",
+                            frameNo, double(waterLine));
+            }
+        }
+        std::printf("frame %ld: INTO THE WATER at %.0f %.0f %.0f - %s, scheme 1, "
+                    "ACTOR_STATE %d, camera 21 over 50 frames\n", frameNo,
+                    player->pos()[0], player->pos()[1], player->pos()[2],
+                    grouped ? "bank group 300 (H_HFL-IN)" : "NO group 300",
+                    static_cast<int>(player->state()));
+    }
+}
+
+
+// THE FALL, THE SLIDE AND THE LANDING: each reported (and what the ground probe
+// sees under him every 5 frames), and the landing's reaction by its band unless
+// the water arm took the tick (from `adventureScreenInput`)
+void PlayState::adventureFallAndLanding(bool wasAir, bool wasSlide, bool& enteredWater,
+                                 bool inWaterState) {
+    auto& session = *session_;
+    {
+        const bool air = player->walker().airborne();
+        const bool slide = player->walker().sliding();
+        if ((air || slide) && !(wasAir || wasSlide)) {
+            std::printf("frame %ld: the player %s from y %.1f\n", frameNo,
+                        slide ? "SLIDES (a face past the slope limit - a "
+                                "CONSTANT 11.8 a frame, not gravity)"
+                              : "FALLS", player->pos()[1]);
+        }
+        else if ((air || slide) && frameNo % 5 == 0) {
+            // ...and what the GROUND PROBE sees under him,
+            // because "he went through the ground" has two
+            // very different causes: nothing in the soup
+            // below him, or a surface the landing test
+            // stepped over.
+            const auto* w = &player->walker();
+            const auto g = omk::floorUnder(w->soup(), w->pos()[0],
+                                           w->pos()[1] - 12.81, w->pos()[2]);
+            char gs[48];
+            if (g) std::snprintf(gs, sizeof gs, "%.1f (%.1f below)",
+                                 *g, *g - w->pos()[1]);
+            else   std::snprintf(gs, sizeof gs, "NOTHING under him");
+            std::printf("frame %ld:   %s: y %.1f, descended %.1f, at %.0f %.0f,"
+                        " ground %s\n", frameNo, slide ? "sliding" : "falling",
+                        player->pos()[1], player->walker().fall(),
+                        double(player->pos()[0]), double(player->pos()[2]), gs);
+        }
+        else if (!air && !slide && (wasAir || wasSlide)) {
+            std::printf("frame %ld: the player LANDS at y %.1f - dropped "
+                        "%.1f (%.2f m), tier %d\n", frameNo, player->pos()[1],
+                        player->walker().lastLandingDrop(),
+                        player->walker().lastLandingDrop() / 39.37,
+                        player->walker().lastLandingTier());
+            // ---- THE LANDING MESSAGES, `Walk_GroundResponse` ----
+            // (`todo/released-spectres.md` step 6). On the landing
+            // tick, by the accumulated fall `+280`: at 196.85 (5 m)
+            // and over MESSAGE 11, group 5 and `sub_414DE0(him, 19)`;
+            // from 118.11 (3 m) MESSAGE 10, group 4 and
+            // `sub_414DE0(him, 16)`; below, no message. Both are
+            // posted for the PLAYER whatever his ACTOR_STATE - only
+            // the group changes skip states 2, 3 and 15, and
+            // `sub_414DE0` returns at once in 3. NOT PORTED here,
+            // labelled: the group changes and the landing camera
+            // requests, which the walker's own tiers stand for; and
+            // the short band's second test on `+284`. The catacombs'
+            // handler for 11 costs 45 health with a red flash.
+            const double lf = player->walker().lastLandingFall();
+            // THE REACTION (`todo/falls.md` 1): the group by the
+            // fall, skipped in ACTOR_STATEs 2, 3 and 15, and the
+            // camera. The short band's second test on `+284` is
+            // not modelled; the fall alone decides.
+            // ...and the floor he has just landed ON, because it is ONE
+            // probe in the engine: the mesh `Walk_ProbeGround` returns
+            // decides which arm runs, so a body landing on the canal's
+            // bed never reaches the landing reaction or its message at
+            // all. The port sees the landing a tick before the flags,
+            // which is why all three tests are here.
+            // ...and the mesh he has just landed ON, PROBED here rather
+            // than read off the walker, because the port notices the
+            // landing one tick before the stand's flags follow it: at
+            // the landing tick `floorFlags()` is still the floor he
+            // left. The engine has no such gap - `Walk_ProbeGround`
+            // returns one mesh and the if/else at `21_d3d.c` 3830
+            // chooses on it - so the probe is what must decide.
+            std::uint32_t landFlags = 0;
+            player->walker().probeFlags(player->pos()[0],
+                                        player->pos()[1] - 12.81,
+                                        player->pos()[2], landFlags);
+            const bool waterArm = enteredWater || inWaterState ||
+                                  (landFlags & 0x8000000u);
+            if (waterArm)
+                std::printf("frame %ld: the landing's reaction SKIPPED - the "
+                            "water arm took this tick (ACTOR_STATE %d), and the "
+                            "engine calls one or the other\n", frameNo,
+                            static_cast<int>(player->state()));
+            if (!waterArm) {
+                const auto st = static_cast<int>(player->state());
+                const bool may = !(st == 2 || st == 3 || st == 15);
+                int grp = -1;
+                if (lf >= 196.85039)      grp = 5;       // H_HFL -> H_SOL
+                else if (lf >= 59.055119) grp = 4;       // H_LFL
+                else if (player->ctlGroupId() == 2) grp = 100;
+                const bool went = may && grp >= 0 && player->enterGroupById(grp);
+                if (grp >= 0)
+                    std::printf("frame %ld: the landing's reaction - fall %.1f: "
+                                "bank group %d%s\n", frameNo, lf, grp,
+                                went ? "" : " REFUSED (state or bank)");
+                if (lf >= 196.85039) fallCamRequest(19, false, "the landing", st);
+                else                 fallCamRequest(16, false, "the landing", st);
+            }
+            const int msg = waterArm ? -1
+                          : lf >= 196.85039 ? 11 : lf >= 118.11024 ? 10 : -1;
+            if (msg >= 0) {
+                const bool ran = session.postMessage(msg, session.playerActor());
+                std::printf("frame %ld: the landing (Walk_GroundResponse) - fall "
+                            "%.1f (%.2f m): MESSAGE %d %s\n", frameNo, lf, lf / 39.37,
+                            msg, ran ? "to its handler"
+                                     : "- NO handler subscribes");
+            }
+        }
+    }
+}
+
 
 // Seated, not driving; where the slider is after he gets out
 void PlayState::adventureSeated() {

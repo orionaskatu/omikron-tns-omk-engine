@@ -231,47 +231,7 @@ void PlayState::worldCamera() {
                         settings.v.combatCamera ? "Vue de côté" : "Vue de dos");
         }
     } else if (!haveDlgCam && haveEdit) {
-        // MODE 13: the editing's camera, at the object's own clock -
-        // so the shot and the animation cannot drift apart, they are
-        // one clock. The travel is the request's +24, `max(field, 0)`
-        // frames, blended linearly from the camera last on screen the
-        // way `sub_414A90` sets up the move; with no previous camera
-        // (nothing drawn yet) it is a cut, which is what the engine
-        // does with travel 0. ROLL is sampled and NOT applied -
-        // `RCamera` carries none - and the fov is the editing's own
-        // (Aapkayl's `sdb` opens at 37 and the Impasse's `intro` at
-        // 90, so it is not a constant to leave alone).
-        float u = 1.0f;
-        if (editFromKnown && edit->travel > 0.0f)
-            u = std::min(1.0f, session.scene().editingClock() / edit->travel);
-        for (int k = 0; k < 3; ++k) {
-            view.cam.eye[k] = editFromKnown
-                ? editFromEye[k] + (editCam.eye[k] - editFromEye[k]) * u
-                : editCam.eye[k];
-            view.cam.at[k]  = editFromKnown
-                ? editFromAt[k] + (editCam.at[k] - editFromAt[k]) * u
-                : editCam.at[k];
-        }
-        const float efov = editCam.fov > 1.0f ? editCam.fov : 75.0f;
-        view.cam.hfovDeg = editFromKnown ? editFromFov + (efov - editFromFov) * u : efov;
-        // THE ROLL, blended on the SHORT ARC. An angle that wraps is
-        // the class of error CLAUDE.md 1 keeps: +359 and 0 are the
-        // same rotation standing still and a whole turn apart once
-        // interpolated, and the title sequence span its camera
-        // through them.
-        view.cam.rollDeg = editFromKnown
-            ? editFromRoll + shortArc(editCam.roll - editFromRoll) * u
-            : editCam.roll;
-        // A rolled shot is worth one line, once: a dropped roll is
-        // easy to miss and a still frame cannot show it, so seeing the
-        // number is how a log says it is being applied at all.
-        if (std::fabs(view.cam.rollDeg) > 0.5f && !rollTold) {
-            rollTold = true;
-            std::printf("  camera ROLL %.1f degrees is being applied "
-                        "(224 of the 1073 editing cameras carry one)\n",
-                        static_cast<double>(view.cam.rollDeg));
-        }
-        view.cam.w = dispW; view.cam.h = dispH;
+        worldCameraEditing();
     } else if (!haveDlgCam && holdEditCam) {
         // MODE 13 WITH NO ACTIVE CAMERA: the block is not written, so
         // the last frame stands. Right after the editing branch,
@@ -286,432 +246,16 @@ void PlayState::worldCamera() {
         view.cam.rollDeg = lastRoll;
         view.cam.w = dispW; view.cam.h = dispH;
     } else if (!haveDlgCam && !ride && player && sliderCamMode >= 0) {
-        // ---- THE SLIDER'S OWN CAMERAS -------------------------------
-        //
-        // The modes the slider's code requests (`sliderCamRequest`), each
-        // preset resolved on its own subject every frame and blended into
-        // from the camera on screen at the request:
-        //
-        //   8   the SLIDER from behind - case 2 while it comes, case 6
-        //       while it drives him; preset 8, eye (0, 118.11, -275.59)
-        //   9   the BOARDING side - MDACTION, over 60, and HELD through
-        //       H_SLDIN, the seat and screen 7; preset 9, eye 4.00 m out
-        //       on the door side (-X), 1.50 m up, on the slider
-        //   10  the ARRIVAL - case 6's end; preset 10, eye 8.00 m to the
-        //       side (the side `sub_4141F0` picks) and 4.00 m up on the
-        //       slider, looking at the destination's ADDRESS
-        //   17  the MANUAL STOP - preset 17 resolved on him ONCE, the eye
-        //       then fixed in the world, the target following him with
-        //       `f42` 5's lag; released to mode 0 over 60 the moment he is
-        //       236.22 units (6.00 m) from that eye (`sub_4187B0`)
-        //
-        // Every slider-relative eye is resolved through the node's ROWS
-        // (`out = subject - RotateVector(offset, node+140)`), row 2 being
-        // -forward - which is what put the coming camera BEHIND the
-        // slider (drift audit A2).
-        float tEye[3] = {0, 0, 0}, tAt[3] = {0, 0, 0};
-        bool ok = true;
-        float at[3], rx0[3], rz2[3];
-        const bool frame = session.sliders().calledFrame(at, rx0, rz2);
-        const auto place = [&](const float off[3], float out[3]) {
-            for (int k = 0; k < 3; ++k)
-                out[k] = at[k] - off[0] * rx0[k] - off[2] * rz2[k];
-            out[1] -= off[1];
-        };
-        static constexpr float kComeEye[3] = {0.0f, 118.1102f, -275.5905f};
-        static constexpr float kComeAt[3]  = {0.0f, 78.7402f, 0.0f};
-        static constexpr float kBoardEye[3] = {157.4803f, 59.0551f, 0.0f};
-        static constexpr float kNoOff[3] = {0.0f, 0.0f, 0.0f};
-        // THE LAG, `sub_415D10` / `sub_415E60` as the player's follow
-        // camera transcribes them: the subject's yaw chased at dt/f46
-        // (snapping inside 0.1 degrees), the preset resolved on THAT, then
-        // the target chasing at dt/f42 and the eye at dt/f44 (1 reads as 2).
-        // Rows 8 and 10 lag 0/8/8 and 0/8/16; row 9 is rigid. Without it the
-        // eye 276 behind swings with every change of the slider's heading -
-        // 112, 118, 194 units in ONE frame at a lane change, against 10 a
-        // frame between: the camera stutters following the slider.
-        const auto lagged = [&](const float eyeOff[3], const float atOff[3], int f42, int f44, int f46) {
-            sliderCamLag(at, -rz2[0], -rz2[2], eyeOff, atOff, f42, f44, f46, tEye, tAt);
-        };
-        if (sliderCamMode == 8 && frame) {
-            const bool fresh = sliderCamFresh;
-            lagged(kComeEye, kComeAt, 0, 8, 8);
-            // ...and mode 8's WALL PASS (`sub_4141F0` arms `sub_417070`; drift
-            // audit B12): the second ray is the camera with no lag
-            float sEye[3], sAt[3];
-            place(kComeEye, sEye);
-            place(kComeAt, sAt);
-            sliderCamObstruct(tEye, tAt, sEye, sAt, at[1], fresh);
-        } else if (sliderCamMode == 9 && frame) {
-            place(kBoardEye, tEye);
-            place(kNoOff, tAt);
-        } else if (sliderCamMode == 10 && frame) {
-            const float e10[3] = {sliderCamEyeX10, 157.4803f, 0.0f};
-            lagged(e10, kNoOff, 0, 8, 16);
-            for (int k = 0; k < 3; ++k) tAt[k] = sliderCamAddr[k];   // subject 9, the address
-        } else if (sliderCamMode == 17) {
-            static constexpr float kEye17[3] = {-39.3701f, 78.7402f, 0.0f};
-            static constexpr float kAt17[3]  = {0.0f, 0.0f, 0.0f};
-            const omk::FollowCamera c = player->resolveOffsets(kEye17, kAt17, 75.0f);
-            // `f42` = 5: the target closes a fifth of the gap a frame (by
-            // the delta) - the follow camera's lag form, a LABELLED reading
-            const float lag = std::min(1.0f, static_cast<float>(frameSec * 30.0) / 5.0f);
-            for (int k = 0; k < 3; ++k) {
-                sliderCamAt17[k] += (c.at[k] - sliderCamAt17[k]) * lag;
-                tEye[k] = sliderCamEye17[k];
-                tAt[k] = sliderCamAt17[k];
-            }
-        } else {
-            ok = false;                    // the slider is gone: the follow camera
-        }
-        if (ok) {
-            float u = 1.0f;
-            if (sliderCamDur > 0.0f && haveLastDrawn) {
-                sliderCamClock += static_cast<float>(frameSec * 30.0);
-                u = std::min(1.0f, sliderCamClock / sliderCamDur);
-            }
-            for (int k = 0; k < 3; ++k) {
-                view.cam.eye[k] = sliderCamFromEye[k] + (tEye[k] - sliderCamFromEye[k]) * u;
-                view.cam.at[k]  = sliderCamFromAt[k]  + (tAt[k]  - sliderCamFromAt[k])  * u;
-            }
-            view.cam.hfovDeg = sliderCamFromFov + (75.0f - sliderCamFromFov) * u;
-            view.cam.rollDeg = 0.0f;
-            view.cam.w = dispW; view.cam.h = dispH;
-            if (sliderCamMode == 8 && u >= 1.0f) {
-            // ...and SAY where the eye ended up, from the camera this
-                // frame draws with and the vehicle's own heading (its mover
-                // direction, `-row 2`): behind > 0 is behind it
-                static long comeTold = -1000;
-                if (frameNo - comeTold >= 30) {
-                    comeTold = frameNo;
-                    const float ex = view.cam.eye[0] - at[0], ez = view.cam.eye[2] - at[2];
-                    const float behind = -(ex * -rz2[0] + ez * -rz2[2]);
-                    const float across = ex * rx0[0] + ez * rx0[2];
-                    std::printf("slider: come camera frame %ld - the eye %.0f behind, "
-                                "%.0f across, heading %.2f %.2f\n", frameNo, behind, across,
-                                -rz2[0], -rz2[2]);
-                }
-            }
-            // ...one line per mode change and every 30 frames, from the
-            // camera this frame draws with: where the eye stands in the
-            // SLIDER's frame (side = along its local X, behind = along
-            // -forward, up) - or for 17, how far the target is from the
-            // fixed eye
-            static long camTold = -1000; static int camToldMode = -2;
-            if (frameNo - camTold >= 30 || camToldMode != sliderCamMode) {
-                camTold = frameNo; camToldMode = sliderCamMode;
-                if (frame) {
-                    const float ex = view.cam.eye[0] - at[0], ey = view.cam.eye[1] - at[1],
-                                ez = view.cam.eye[2] - at[2];
-                    std::printf("slider cam %d frame %ld blend %.2f - eye side %.0f behind %.0f "
-                                "up %.0f; at %.0f %.0f %.0f\n", sliderCamMode, frameNo, double(u),
-                                double(ex * rx0[0] + ez * rx0[2]), double(ex * rz2[0] + ez * rz2[2]),
-                                double(-ey), double(view.cam.at[0]), double(view.cam.at[1]),
-                                double(view.cam.at[2]));
-                } else {
-                    const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
-                                dz = sliderCamAt17[2] - sliderCamEye17[2];
-                    std::printf("slider cam %d frame %ld blend %.2f - eye fixed at %.0f %.0f %.0f, "
-                                "target %.0f from it\n", sliderCamMode, frameNo, double(u),
-                                double(sliderCamEye17[0]), double(sliderCamEye17[1]), double(sliderCamEye17[2]),
-                                double(std::sqrt(dx * dx + dy * dy + dz * dz)));
-                }
-            }
-            // mode 17's release, `sub_4187B0`: the target 236.22 from the eye
-            if (sliderCamMode == 17) {
-                const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
-                            dz = sliderCamAt17[2] - sliderCamEye17[2];
-                if (std::sqrt(dx * dx + dy * dy + dz * dz) > 236.22047f) sliderCamRequest(0, 60.0f);
-            }
-        } else {
-            sliderCamMode = -1;
-            const omk::FollowCamera& fc = player->followCamera();
-            for (int k = 0; k < 3; ++k) { view.cam.eye[k] = fc.eye[k]; view.cam.at[k] = fc.at[k]; }
-            view.cam.hfovDeg = fc.fov;
-            view.cam.rollDeg = 0.0f;
-            view.cam.w = dispW; view.cam.h = dispH;
-        }
+        worldCameraSlider();
     } else if (!haveDlgCam && ride) {
-        // CAMERA MODE 8, the ride camera, and its subject is the
-        // SLIDER and not the player: `camera_presets.json`'s row 8 is
-        // eye (0, 118.1102, -275.5905), target (0, 78.7402, 0) with
-        // `eyeSubject` and `targetSubject` both **5**, `f42` 0 (so
-        // the target does not lag) and `f44`/`f46` 8. Those offsets
-        // are exact metres - 3.00 up, 7.00 back and 2.00 up - which
-        // is what says they were authored rather than tuned.
-        //
-        // Resolved the way every subject-relative camera is:
-        // `out = subject - rotateYaw(offset)`, with `out[1] =
-        // subject[1] - offset[1]` (`o3de/worldcam.cpp`).
-        // ...through the node's ROWS, as the coming camera is (drift
-        // audit A2): the ride moves along `f = (-sin yaw, 0, -cos yaw)`
-        // (`x -= sin(yaw) * v`), and a node facing `f` has row 0 =
-        // `(-f.z, 0, f.x)` and row 2 = `-f` - so the eye is 7.00 m
-        // behind the way it flies. Rotating the offset by the yaw put it
-        // ahead or beside on every heading but one.
-        const float t = static_cast<float>(ride->yaw) * omk::kDegToRadF;
-        const float fx = -std::sin(t), fz = -std::cos(t);
-        const float r0[3] = {-fz, 0.0f, fx}, r2[3] = {-fx, 0.0f, -fz};
-        const float sub[3] = {static_cast<float>(ride->x),
-                              static_cast<float>(ride->y),
-                              static_cast<float>(ride->z)};
-        const auto place = [&](const float off[3], float out[3]) {
-            for (int k = 0; k < 3; ++k)
-                out[k] = sub[k] - off[0] * r0[k] - off[2] * r2[k];
-            out[1] -= off[1];
-        };
-        static constexpr float kRideEye[3] = {0.0f, 118.1102f, -275.5905f};
-        static constexpr float kRideAt[3]  = {0.0f, 78.7402f, 0.0f};
-        // NOT RIGID (drift audit B12): `Slider_TickRide` requests mode 8, the
-        // coming camera's own preset and so its own dynamics - the eye and
-        // the yaw chased at dt/8 (`sub_415E60`) and `sub_4141F0`'s wall pass
-        // (`sub_417070`) - with the slider as both subjects
-        float sEye[3], sAt[3];
-        place(kRideEye, sEye);
-        place(kRideAt,  sAt);
-        const bool fresh = sliderCamFresh;
-        sliderCamLag(sub, fx, fz, kRideEye, kRideAt, 0, 8, 8, view.cam.eye, view.cam.at);
-        sliderCamObstruct(view.cam.eye, view.cam.at, sEye, sAt, sub[1], fresh);
-        view.cam.hfovDeg = 75.0f;      // the preset's own fov
-        view.cam.rollDeg = 0.0f;
-        view.cam.w = dispW; view.cam.h = dispH;
+        worldCameraRide();
     } else if (!haveDlgCam && takeCam && player) {
-        // THE TAKE CAMERA (omk-play 69): mode 1's preset resolved
-        // against him every frame, travelled linearly over 30 frames
-        // from the camera that was on screen at the request - the
-        // same blend the editings use, `sub_414A90`'s setup being one
-        // mechanism for both - then held; and mode 16 travels the
-        // same 30 frames back to the follow camera and hands over.
-        // Full-frame, not letterboxed: nothing read ties the strip
-        // to this mode, and the walk it interrupts is full-frame.
-        const int wcs = static_cast<int>(player->state());
-        const bool swimCam = !waterCamPreset && wcs >= 11 && wcs <= 14;
-        swimCamNow = swimCam;
-        omk::FollowCamera tc =
-            swimCam ? player->resolveOffsetsYaw(takeCamEye, takeCamAt, takeCamFov)
-                    : player->resolveOffsets(takeCamEye, takeCamAt, takeCamFov);
-        // THE SWIM CAMERA STAYS INSIDE THE SET: a ray from what it looks
-        // at to where it would stand, through the shown set's `shotSoup`
-        // - the fight camera's own test (`sub_416570` -> `sub_444810`,
-        // CollisionOnly skipped, 0x41 untested) - and the eye is brought
-        // in to nine tenths of the way to the wall, so the camera does not
-        // go outside the environment. RECONSTRUCTION, labelled: the engine's swim
-        // variant (`sub_413CD0`) sets camera flags 4 | 0x4800 and NOT the
-        // land camera's flag 8, whose pass is the wall rule `sub_417070`;
-        // what 0x4000 and 0x800 run is unread, so which rule keeps the
-        // original's lens inside is not established - only that a canal
-        // three metres wide cannot hold a camera three metres behind him.
-        if (swimCam) {
-            const omk::TriangleSoup* shot = nullptr;
-            for (const auto& ws : worldSlots)
-                if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws.shotSoup;
-            if (shot && !shot->empty()) {
-                const double p0[3] = {tc.at[0], tc.at[1], tc.at[2]};
-                const double d[3] = {double(tc.eye[0]) - tc.at[0], double(tc.eye[1]) - tc.at[1],
-                                     double(tc.eye[2]) - tc.at[2]};
-                const auto h = omk::sweepSphere(*shot, p0, d, 0.0);
-                if (h && h->t < 1.0) {
-                    const double t = h->t * 0.9;
-                    for (int k = 0; k < 3; ++k)
-                        tc.eye[k] = static_cast<float>(p0[k] + t * d[k]);
-                    static long swimCamTold = -1000;
-                    if (frameNo - swimCamTold >= 60) {
-                        swimCamTold = frameNo;
-                        std::printf("frame %ld: the swim camera - a wall at %.0f%% of the way to "
-                                    "the eye; brought in to %.0f %.0f %.0f\n", frameNo, h->t * 100.0,
-                                    double(tc.eye[0]), double(tc.eye[1]), double(tc.eye[2]));
-                    }
-                }
-            }
-        }
-        const omk::FollowCamera& fc = player->followCamera();
-        const omk::FollowCamera& to = takeCamPhase == 3 ? fc : tc;
-        float u = 1.0f;
-        if (takeCamPhase == 1 || takeCamPhase == 3) {
-            takeCamClock += static_cast<float>(frameSec * 30.0);
-            u = haveLastDrawn ? std::min(1.0f, takeCamClock / takeCamTravel) : 1.0f;
-        }
-        for (int k = 0; k < 3; ++k) {
-            view.cam.eye[k] = takeCamFromEye[k] + (to.eye[k] - takeCamFromEye[k]) * u;
-            view.cam.at[k]  = takeCamFromAt[k]  + (to.at[k]  - takeCamFromAt[k])  * u;
-        }
-        view.cam.hfovDeg = takeCamFromFov + (to.fov - takeCamFromFov) * u;
-        view.cam.rollDeg = 0.0f;
-        view.cam.w = dispW; view.cam.h = dispH;
-        if (u >= 1.0f) {
-            if (takeCamPhase == 1) takeCamPhase = 2;
-            else if (takeCamPhase == 3) { takeCam = false; takeCamPhase = 0; }
-        }
+        worldCameraTake();
     } else if (!haveDlgCam && (adventure || uiPause) && followCam &&
                player) {
-        // The controller's follow camera: the world camera's offsets
-        // resolved against HIS position and facing every frame, with
-        // the engine's lag (player.h quotes sub_415D10/sub_415E60).
-        //
-        // `|| uiPause` because OPENING A SCREEN DOES NOT MOVE THE
-        // CAMERA. Nothing in the pause screen's open callback touches
-        // the camera mode, and `Game_Frame` renders with whatever is
-        // installed, so the view behind the menu is the view that was
-        // on screen. `adventure` alone is a per-frame mode that any
-        // screen takes false, so on it pausing would swap the follow
-        // camera for the area's own camera 0 - the shot jumping the
-        // moment the menu came up.
-        // THE CAMERA THROUGH A WALL, measured: the one invariant
-        // `sub_417070` exists to keep is that nothing solid lies
-        // between the camera's target and its eye. Cast the segment
-        // and say so.
-        // THE OBSTRUCTION PASS, per frame and at full precision -
-        // `sub_417070`'s `+208`, `+328` and the height it is pushing
-        // the eye to. `todo/camera-obstruction.md` 5 is the
-        // transcription this reports on; the staged probe below is a
-        // different question (does a solid face lie in the segment)
-        // and stays every tenth frame so its own check is unmoved.
-        if (obstructProbe) {
-            const omk::FollowCamera& c = player->followCamera();
-            const float* p = player->pos();
-            // `+312 + +156` = -0.7 x the pelvis height, plus the
-            // subject's own y - the height a fully pinched eye rides.
-            const float lift = p[1] - 1.7f * player->cameraLift();
-            std::printf("obstruct %ld block %d kept %.4f eye %.4f %.4f %.4f "
-                        "at %.4f %.4f %.4f lift %.4f\n",
-                        frameNo, player->cameraBlockState(),
-                        double(player->cameraKeptDistance()),
-                        double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
-                        double(c.at[0]), double(c.at[1]), double(c.at[2]),
-                        double(lift));
-        }
-        if (stagedProbe && (frameNo % 10) == 0) {
-            const omk::FollowCamera& c = player->followCamera();
-            const double at[3] = {c.at[0], c.at[1], c.at[2]};
-            const double d[3]  = {c.eye[0] - c.at[0], c.eye[1] - c.at[1],
-                                  c.eye[2] - c.at[2]};
-            bool through = false;
-            for (const omk::TriangleSoup* sp : {&playerSteep, &playerSoup})
-                if (!sp->empty())
-                    if (const auto h = omk::sweepSphere(*sp, at, d, 1.0))
-                        if (h->t < 0.98) through = true;
-            std::printf("    cam %ld eye %.0f %.0f %.0f  at %.0f %.0f %.0f  "
-                        "dist %.0f  %s  (soups %zu steep / %zu walk tris)\n", frameNo,
-                        c.eye[0], c.eye[1], c.eye[2],
-                        c.at[0], c.at[1], c.at[2],
-                        std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]),
-                        through ? "THROUGH a solid face" : "clear",
-                        playerSteep.size() / 9, playerSoup.size() / 9);
-        }
-        // ---- MODE 4 HAS NO LAG, and the follow camera is all lag -
-        //
-        // `camera_presets.json` row 4's three smoothing divisors are
-        // ZERO. `followCamera()` is `cam_`, the SMOOTHED one - the
-        // mode-0 preset's 3/8/8 - so aiming through it drags the view
-        // behind the mouse - turning, but not correctly. `resolveOffsets` is the same
-        // resolve with NO lag, and the header says exactly what it is
-        // for: "what `Camera_Request(mode)` gives a preset whose
-        // three smoothing divisors are 0". The TAKE camera (mode 1)
-        // already uses it (`todo/omk-play.md` 69, 97i).
-        omk::FollowCamera fc = player->followCamera();
-        if (shootMode && shootCameraLive) {
-            const float rad = shootPitch * omk::kPiF / 180.0f;
-            // Y POINTS DOWN, so raising the eye is a NEGATIVE offset -
-            // the same sign `cameraLift` uses. 0 is the preset's own
-            // value and the faithful one; `--shoot-eye` departs from
-            // it deliberately.
-            // The lift: `--shoot-eye N` if given, otherwise
-            // `sub_414520` case 4's `0.7 * the model's extent`.
-            //
-            // MIND THE SIGN, because it is the opposite of what "Y
-            // grows down" suggests: `resolveOffsets` computes
-            // `eye = subject - R(yaw) * offset`, so it SUBTRACTS, and
-            // a POSITIVE y offset therefore raises the eye - the same
-            // way `camLift_` is subtracted from `pos` to lift the
-            // subject off the feet in the first place.
-            //
-            // Written as `-lift` this would put the eye 29.8 BELOW the
-            // pelvis, which is 6.6 above the feet: ankle height.
-            const float lift = shootEyeSet ? shootEyeLift : player->headLift();
-            const float eye[3] = {0.0f, lift, 0.0f};
-            const float at[3]  = {0.0f, lift + 787.4016f * std::sin(rad),
-                                  787.4016f * std::cos(rad)};
-            fc = player->resolveOffsets(eye, at, 75.0f);
-        }
-        for (int k = 0; k < 3; ++k) {
-            view.cam.eye[k] = fc.eye[k];
-            view.cam.at[k]  = fc.at[k];
-        }
-        view.cam.hfovDeg = fc.fov;
-        view.cam.rollDeg = 0.0f;      // the follow camera carries none
-        view.cam.w = dispW; view.cam.h = dispH;
+        worldCameraFollow();
     } else if (!haveDlgCam) {
-        // A relative point is `subjectPos - R(yaw) * offset`, which is
-        // what `sub_415D10`/`sub_415E60` do; an absolute one is passed
-        // through. `resolveCamera` handles both per point, because the
-        // engine decides per point and 959 of the 1443 relative
-        // cameras are relative in ONE of their two.
-        //
-        // ...AGAINST THE SAME SUBJECT POINT THE FOLLOW CAMERA USES.
-        // `session.playerPos()` is his FEET - the ground point the
-        // walker keeps - and a relative camera's offset is measured
-        // from the pelvis, which is why `resolveSteady` subtracts
-        // `camLift_` (Y points down, so subtracting RAISES). The
-        // follow path did that from issue 49 and this one did not, so
-        // every scripted shot naming a subject sat a whole lift too
-        // low - about 42 units for HO1_FNM, and visibly so on AREA
-        // 222's tutorial shots 4290/4291/4292
-        // (`todo/omk-play.md` 57).
-        const float lift = player ? player->cameraLift() : 0.0f;
-        // ...and the Session solves a TRAVEL's two ends at the same
-        // point, so it has to know the lift too
-        session.setCameraSubjectLift(lift);
-        const float* pp0 = session.playerPos();
-        const float subj[3] = {pp0[0], pp0[1] - lift, pp0[2]};
-        (void)subj;
-        // EACH POINT BY ITS SUBJECT KIND, through the Session's resolver -
-        // the one the travel solves both ends with (`Session::solveCamera`,
-        // `sub_415A10`'s switch): 0 the pelvis above, 9 the request's
-        // ADDRESS (todo/drift-audit.md S14: `sub_415850` reads the in-memory
-        // integers and the integer heading, no pelvis lift; only
-        // `camera.set.at_address`, op 126, hands one over, and the four
-        // kind-9 cameras, 4781..4784 on the rooftops' ladders, are the only
-        // ones it names), 1 and 3 the player's HEAD (`feedCameraHead`).
-        const omk::ResolvedCamera rc = session.solveCamera(*wc);
-        if (wc->eyeSubject == 9 || wc->atSubject == 9) {
-            if (const omk::Address* ad = session.findAddress(session.cameraSubjectAddress())) {
-                static int addrTold = -1000;
-                if (addrTold != wc->id * 10000 + ad->id) {
-                    addrTold = wc->id * 10000 + ad->id;
-                    std::printf("frame %ld: camera %d framed on ADDRESS %d (subject kind 9, "
-                                "sub_415850) at %d %d %d heading %d - eye %.0f %.0f %.0f\n",
-                                frameNo, wc->id, ad->id, ad->memPos[0], ad->memPos[1],
-                                ad->memPos[2], ad->memYaw, double(rc.eye[0]),
-                                double(rc.eye[1]), double(rc.eye[2]));
-                }
-            }
-        }
-        if (wc->eyeSubject == 1 || wc->atSubject == 1 ||
-            wc->eyeSubject == 3 || wc->atSubject == 3) {
-            static int headTold = -1;
-            if (headTold != wc->id) {
-                headTold = wc->id;
-                const int kind = (wc->eyeSubject == 1 || wc->eyeSubject == 3) ? wc->eyeSubject
-                                                                              : wc->atSubject;
-                float an[3], yaw;
-                session.cameraAnchor(kind, an, yaw);
-                std::printf("frame %ld: camera %d framed on the player's HEAD (subject kinds %d/%d, "
-                            "%s) at %.1f %.1f %.1f, %.1f above the kind-0 point%s - eye %.1f %.1f %.1f "
-                            "at %.1f %.1f %.1f\n",
-                            frameNo, wc->id, wc->eyeSubject, wc->atSubject,
-                            kind == 3 ? "sub_415320, the rest offset" : "sub_415050, the Tete node",
-                            double(an[0]), double(an[1]), double(an[2]), double(subj[1] - an[1]),
-                            cameraHeadFrom, double(rc.eye[0]), double(rc.eye[1]), double(rc.eye[2]),
-                            double(rc.at[0]), double(rc.at[1]), double(rc.at[2]));
-            }
-        }
-        for (int k = 0; k < 3; ++k) {
-            view.cam.eye[k] = rc.eye[k];
-            view.cam.at[k]  = rc.at[k];
-        }
-        view.cam.hfovDeg = wc->fov > 1.0f ? wc->fov : 75.0f;
-        view.cam.rollDeg = wc->roll;   // already wrapped to (-180,180]
-        view.cam.w = dispW; view.cam.h = dispH;
+        worldCameraScript();
     }
     // THE FREE LOOK's camera, preset 3 (`omk::headCamera`), REPLACING
     // whatever the frame chose - follow camera or world camera alike, as
@@ -863,6 +407,501 @@ void PlayState::worldCamera() {
     haveLastDrawn = true;
     vrAfterWorldCamera();   // a headset's eyes on this camera (backends/vr; empty without OMK_VR)
 }
+
+// THE FOLLOW CAMERA behind the player, pulled in by `sub_417070`'s obstruction cast (from `worldCamera`)
+void PlayState::worldCameraFollow() {
+    // The controller's follow camera: the world camera's offsets
+    // resolved against HIS position and facing every frame, with
+    // the engine's lag (player.h quotes sub_415D10/sub_415E60).
+    //
+    // `|| uiPause` because OPENING A SCREEN DOES NOT MOVE THE
+    // CAMERA. Nothing in the pause screen's open callback touches
+    // the camera mode, and `Game_Frame` renders with whatever is
+    // installed, so the view behind the menu is the view that was
+    // on screen. `adventure` alone is a per-frame mode that any
+    // screen takes false, so on it pausing would swap the follow
+    // camera for the area's own camera 0 - the shot jumping the
+    // moment the menu came up.
+    // THE CAMERA THROUGH A WALL, measured: the one invariant
+    // `sub_417070` exists to keep is that nothing solid lies
+    // between the camera's target and its eye. Cast the segment
+    // and say so.
+    // THE OBSTRUCTION PASS, per frame and at full precision -
+    // `sub_417070`'s `+208`, `+328` and the height it is pushing
+    // the eye to. `todo/camera-obstruction.md` 5 is the
+    // transcription this reports on; the staged probe below is a
+    // different question (does a solid face lie in the segment)
+    // and stays every tenth frame so its own check is unmoved.
+    if (obstructProbe) {
+        const omk::FollowCamera& c = player->followCamera();
+        const float* p = player->pos();
+        // `+312 + +156` = -0.7 x the pelvis height, plus the
+        // subject's own y - the height a fully pinched eye rides.
+        const float lift = p[1] - 1.7f * player->cameraLift();
+        std::printf("obstruct %ld block %d kept %.4f eye %.4f %.4f %.4f "
+                    "at %.4f %.4f %.4f lift %.4f\n",
+                    frameNo, player->cameraBlockState(),
+                    double(player->cameraKeptDistance()),
+                    double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
+                    double(c.at[0]), double(c.at[1]), double(c.at[2]),
+                    double(lift));
+    }
+    if (stagedProbe && (frameNo % 10) == 0) {
+        const omk::FollowCamera& c = player->followCamera();
+        const double at[3] = {c.at[0], c.at[1], c.at[2]};
+        const double d[3]  = {c.eye[0] - c.at[0], c.eye[1] - c.at[1],
+                              c.eye[2] - c.at[2]};
+        bool through = false;
+        for (const omk::TriangleSoup* sp : {&playerSteep, &playerSoup})
+            if (!sp->empty())
+                if (const auto h = omk::sweepSphere(*sp, at, d, 1.0))
+                    if (h->t < 0.98) through = true;
+        std::printf("    cam %ld eye %.0f %.0f %.0f  at %.0f %.0f %.0f  "
+                    "dist %.0f  %s  (soups %zu steep / %zu walk tris)\n", frameNo,
+                    c.eye[0], c.eye[1], c.eye[2],
+                    c.at[0], c.at[1], c.at[2],
+                    std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]),
+                    through ? "THROUGH a solid face" : "clear",
+                    playerSteep.size() / 9, playerSoup.size() / 9);
+    }
+    // ---- MODE 4 HAS NO LAG, and the follow camera is all lag -
+    //
+    // `camera_presets.json` row 4's three smoothing divisors are
+    // ZERO. `followCamera()` is `cam_`, the SMOOTHED one - the
+    // mode-0 preset's 3/8/8 - so aiming through it drags the view
+    // behind the mouse - turning, but not correctly. `resolveOffsets` is the same
+    // resolve with NO lag, and the header says exactly what it is
+    // for: "what `Camera_Request(mode)` gives a preset whose
+    // three smoothing divisors are 0". The TAKE camera (mode 1)
+    // already uses it (`todo/omk-play.md` 69, 97i).
+    omk::FollowCamera fc = player->followCamera();
+    if (shootMode && shootCameraLive) {
+        const float rad = shootPitch * omk::kPiF / 180.0f;
+        // Y POINTS DOWN, so raising the eye is a NEGATIVE offset -
+        // the same sign `cameraLift` uses. 0 is the preset's own
+        // value and the faithful one; `--shoot-eye` departs from
+        // it deliberately.
+        // The lift: `--shoot-eye N` if given, otherwise
+        // `sub_414520` case 4's `0.7 * the model's extent`.
+        //
+        // MIND THE SIGN, because it is the opposite of what "Y
+        // grows down" suggests: `resolveOffsets` computes
+        // `eye = subject - R(yaw) * offset`, so it SUBTRACTS, and
+        // a POSITIVE y offset therefore raises the eye - the same
+        // way `camLift_` is subtracted from `pos` to lift the
+        // subject off the feet in the first place.
+        //
+        // Written as `-lift` this would put the eye 29.8 BELOW the
+        // pelvis, which is 6.6 above the feet: ankle height.
+        const float lift = shootEyeSet ? shootEyeLift : player->headLift();
+        const float eye[3] = {0.0f, lift, 0.0f};
+        const float at[3]  = {0.0f, lift + 787.4016f * std::sin(rad),
+                              787.4016f * std::cos(rad)};
+        fc = player->resolveOffsets(eye, at, 75.0f);
+    }
+    for (int k = 0; k < 3; ++k) {
+        view.cam.eye[k] = fc.eye[k];
+        view.cam.at[k]  = fc.at[k];
+    }
+    view.cam.hfovDeg = fc.fov;
+    view.cam.rollDeg = 0.0f;      // the follow camera carries none
+    view.cam.w = dispW; view.cam.h = dispH;
+}
+
+
+// A CAMERA EDITING drives the eye: its shot sampled at the scene's frame, a cut never blended (from `worldCamera`)
+void PlayState::worldCameraEditing() {
+    auto& session = *session_;
+    // MODE 13: the editing's camera, at the object's own clock -
+    // so the shot and the animation cannot drift apart, they are
+    // one clock. The travel is the request's +24, `max(field, 0)`
+    // frames, blended linearly from the camera last on screen the
+    // way `sub_414A90` sets up the move; with no previous camera
+    // (nothing drawn yet) it is a cut, which is what the engine
+    // does with travel 0. ROLL is sampled and NOT applied -
+    // `RCamera` carries none - and the fov is the editing's own
+    // (Aapkayl's `sdb` opens at 37 and the Impasse's `intro` at
+    // 90, so it is not a constant to leave alone).
+    float u = 1.0f;
+    if (editFromKnown && edit->travel > 0.0f)
+        u = std::min(1.0f, session.scene().editingClock() / edit->travel);
+    for (int k = 0; k < 3; ++k) {
+        view.cam.eye[k] = editFromKnown
+            ? editFromEye[k] + (editCam.eye[k] - editFromEye[k]) * u
+            : editCam.eye[k];
+        view.cam.at[k]  = editFromKnown
+            ? editFromAt[k] + (editCam.at[k] - editFromAt[k]) * u
+            : editCam.at[k];
+    }
+    const float efov = editCam.fov > 1.0f ? editCam.fov : 75.0f;
+    view.cam.hfovDeg = editFromKnown ? editFromFov + (efov - editFromFov) * u : efov;
+    // THE ROLL, blended on the SHORT ARC. An angle that wraps is
+    // the class of error CLAUDE.md 1 keeps: +359 and 0 are the
+    // same rotation standing still and a whole turn apart once
+    // interpolated, and the title sequence span its camera
+    // through them.
+    view.cam.rollDeg = editFromKnown
+        ? editFromRoll + shortArc(editCam.roll - editFromRoll) * u
+        : editCam.roll;
+    // A rolled shot is worth one line, once: a dropped roll is
+    // easy to miss and a still frame cannot show it, so seeing the
+    // number is how a log says it is being applied at all.
+    if (std::fabs(view.cam.rollDeg) > 0.5f && !rollTold) {
+        rollTold = true;
+        std::printf("  camera ROLL %.1f degrees is being applied "
+                    "(224 of the 1073 editing cameras carry one)\n",
+                    static_cast<double>(view.cam.rollDeg));
+    }
+    view.cam.w = dispW; view.cam.h = dispH;
+}
+
+
+// THE SLIDER'S CAMERA, `Camera_Request` as the slider's code makes it: modes 8, 9, 10 and 17 (from `worldCamera`)
+void PlayState::worldCameraSlider() {
+    auto& session = *session_;
+    // ---- THE SLIDER'S OWN CAMERAS -------------------------------
+    //
+    // The modes the slider's code requests (`sliderCamRequest`), each
+    // preset resolved on its own subject every frame and blended into
+    // from the camera on screen at the request:
+    //
+    //   8   the SLIDER from behind - case 2 while it comes, case 6
+    //       while it drives him; preset 8, eye (0, 118.11, -275.59)
+    //   9   the BOARDING side - MDACTION, over 60, and HELD through
+    //       H_SLDIN, the seat and screen 7; preset 9, eye 4.00 m out
+    //       on the door side (-X), 1.50 m up, on the slider
+    //   10  the ARRIVAL - case 6's end; preset 10, eye 8.00 m to the
+    //       side (the side `sub_4141F0` picks) and 4.00 m up on the
+    //       slider, looking at the destination's ADDRESS
+    //   17  the MANUAL STOP - preset 17 resolved on him ONCE, the eye
+    //       then fixed in the world, the target following him with
+    //       `f42` 5's lag; released to mode 0 over 60 the moment he is
+    //       236.22 units (6.00 m) from that eye (`sub_4187B0`)
+    //
+    // Every slider-relative eye is resolved through the node's ROWS
+    // (`out = subject - RotateVector(offset, node+140)`), row 2 being
+    // -forward - which is what put the coming camera BEHIND the
+    // slider (drift audit A2).
+    float tEye[3] = {0, 0, 0}, tAt[3] = {0, 0, 0};
+    bool ok = true;
+    float at[3], rx0[3], rz2[3];
+    const bool frame = session.sliders().calledFrame(at, rx0, rz2);
+    const auto place = [&](const float off[3], float out[3]) {
+        for (int k = 0; k < 3; ++k)
+            out[k] = at[k] - off[0] * rx0[k] - off[2] * rz2[k];
+        out[1] -= off[1];
+    };
+    static constexpr float kComeEye[3] = {0.0f, 118.1102f, -275.5905f};
+    static constexpr float kComeAt[3]  = {0.0f, 78.7402f, 0.0f};
+    static constexpr float kBoardEye[3] = {157.4803f, 59.0551f, 0.0f};
+    static constexpr float kNoOff[3] = {0.0f, 0.0f, 0.0f};
+    // THE LAG, `sub_415D10` / `sub_415E60` as the player's follow
+    // camera transcribes them: the subject's yaw chased at dt/f46
+    // (snapping inside 0.1 degrees), the preset resolved on THAT, then
+    // the target chasing at dt/f42 and the eye at dt/f44 (1 reads as 2).
+    // Rows 8 and 10 lag 0/8/8 and 0/8/16; row 9 is rigid. Without it the
+    // eye 276 behind swings with every change of the slider's heading -
+    // 112, 118, 194 units in ONE frame at a lane change, against 10 a
+    // frame between: the camera stutters following the slider.
+    const auto lagged = [&](const float eyeOff[3], const float atOff[3], int f42, int f44, int f46) {
+        sliderCamLag(at, -rz2[0], -rz2[2], eyeOff, atOff, f42, f44, f46, tEye, tAt);
+    };
+    if (sliderCamMode == 8 && frame) {
+        const bool fresh = sliderCamFresh;
+        lagged(kComeEye, kComeAt, 0, 8, 8);
+        // ...and mode 8's WALL PASS (`sub_4141F0` arms `sub_417070`; drift
+        // audit B12): the second ray is the camera with no lag
+        float sEye[3], sAt[3];
+        place(kComeEye, sEye);
+        place(kComeAt, sAt);
+        sliderCamObstruct(tEye, tAt, sEye, sAt, at[1], fresh);
+    } else if (sliderCamMode == 9 && frame) {
+        place(kBoardEye, tEye);
+        place(kNoOff, tAt);
+    } else if (sliderCamMode == 10 && frame) {
+        const float e10[3] = {sliderCamEyeX10, 157.4803f, 0.0f};
+        lagged(e10, kNoOff, 0, 8, 16);
+        for (int k = 0; k < 3; ++k) tAt[k] = sliderCamAddr[k];   // subject 9, the address
+    } else if (sliderCamMode == 17) {
+        static constexpr float kEye17[3] = {-39.3701f, 78.7402f, 0.0f};
+        static constexpr float kAt17[3]  = {0.0f, 0.0f, 0.0f};
+        const omk::FollowCamera c = player->resolveOffsets(kEye17, kAt17, 75.0f);
+        // `f42` = 5: the target closes a fifth of the gap a frame (by
+        // the delta) - the follow camera's lag form, a LABELLED reading
+        const float lag = std::min(1.0f, static_cast<float>(frameSec * 30.0) / 5.0f);
+        for (int k = 0; k < 3; ++k) {
+            sliderCamAt17[k] += (c.at[k] - sliderCamAt17[k]) * lag;
+            tEye[k] = sliderCamEye17[k];
+            tAt[k] = sliderCamAt17[k];
+        }
+    } else {
+        ok = false;                    // the slider is gone: the follow camera
+    }
+    if (ok) {
+        float u = 1.0f;
+        if (sliderCamDur > 0.0f && haveLastDrawn) {
+            sliderCamClock += static_cast<float>(frameSec * 30.0);
+            u = std::min(1.0f, sliderCamClock / sliderCamDur);
+        }
+        for (int k = 0; k < 3; ++k) {
+            view.cam.eye[k] = sliderCamFromEye[k] + (tEye[k] - sliderCamFromEye[k]) * u;
+            view.cam.at[k]  = sliderCamFromAt[k]  + (tAt[k]  - sliderCamFromAt[k])  * u;
+        }
+        view.cam.hfovDeg = sliderCamFromFov + (75.0f - sliderCamFromFov) * u;
+        view.cam.rollDeg = 0.0f;
+        view.cam.w = dispW; view.cam.h = dispH;
+        if (sliderCamMode == 8 && u >= 1.0f) {
+        // ...and SAY where the eye ended up, from the camera this
+            // frame draws with and the vehicle's own heading (its mover
+            // direction, `-row 2`): behind > 0 is behind it
+            static long comeTold = -1000;
+            if (frameNo - comeTold >= 30) {
+                comeTold = frameNo;
+                const float ex = view.cam.eye[0] - at[0], ez = view.cam.eye[2] - at[2];
+                const float behind = -(ex * -rz2[0] + ez * -rz2[2]);
+                const float across = ex * rx0[0] + ez * rx0[2];
+                std::printf("slider: come camera frame %ld - the eye %.0f behind, "
+                            "%.0f across, heading %.2f %.2f\n", frameNo, behind, across,
+                            -rz2[0], -rz2[2]);
+            }
+        }
+        // ...one line per mode change and every 30 frames, from the
+        // camera this frame draws with: where the eye stands in the
+        // SLIDER's frame (side = along its local X, behind = along
+        // -forward, up) - or for 17, how far the target is from the
+        // fixed eye
+        static long camTold = -1000; static int camToldMode = -2;
+        if (frameNo - camTold >= 30 || camToldMode != sliderCamMode) {
+            camTold = frameNo; camToldMode = sliderCamMode;
+            if (frame) {
+                const float ex = view.cam.eye[0] - at[0], ey = view.cam.eye[1] - at[1],
+                            ez = view.cam.eye[2] - at[2];
+                std::printf("slider cam %d frame %ld blend %.2f - eye side %.0f behind %.0f "
+                            "up %.0f; at %.0f %.0f %.0f\n", sliderCamMode, frameNo, double(u),
+                            double(ex * rx0[0] + ez * rx0[2]), double(ex * rz2[0] + ez * rz2[2]),
+                            double(-ey), double(view.cam.at[0]), double(view.cam.at[1]),
+                            double(view.cam.at[2]));
+            } else {
+                const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
+                            dz = sliderCamAt17[2] - sliderCamEye17[2];
+                std::printf("slider cam %d frame %ld blend %.2f - eye fixed at %.0f %.0f %.0f, "
+                            "target %.0f from it\n", sliderCamMode, frameNo, double(u),
+                            double(sliderCamEye17[0]), double(sliderCamEye17[1]), double(sliderCamEye17[2]),
+                            double(std::sqrt(dx * dx + dy * dy + dz * dz)));
+            }
+        }
+        // mode 17's release, `sub_4187B0`: the target 236.22 from the eye
+        if (sliderCamMode == 17) {
+            const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
+                        dz = sliderCamAt17[2] - sliderCamEye17[2];
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) > 236.22047f) sliderCamRequest(0, 60.0f);
+        }
+    } else {
+        sliderCamMode = -1;
+        const omk::FollowCamera& fc = player->followCamera();
+        for (int k = 0; k < 3; ++k) { view.cam.eye[k] = fc.eye[k]; view.cam.at[k] = fc.at[k]; }
+        view.cam.hfovDeg = fc.fov;
+        view.cam.rollDeg = 0.0f;
+        view.cam.w = dispW; view.cam.h = dispH;
+    }
+}
+
+
+// THE RIDE CAMERA, mode 8: the subject is the SLIDER, not the player (from `worldCamera`)
+void PlayState::worldCameraRide() {
+    // CAMERA MODE 8, the ride camera, and its subject is the
+    // SLIDER and not the player: `camera_presets.json`'s row 8 is
+    // eye (0, 118.1102, -275.5905), target (0, 78.7402, 0) with
+    // `eyeSubject` and `targetSubject` both **5**, `f42` 0 (so
+    // the target does not lag) and `f44`/`f46` 8. Those offsets
+    // are exact metres - 3.00 up, 7.00 back and 2.00 up - which
+    // is what says they were authored rather than tuned.
+    //
+    // Resolved the way every subject-relative camera is:
+    // `out = subject - rotateYaw(offset)`, with `out[1] =
+    // subject[1] - offset[1]` (`o3de/worldcam.cpp`).
+    // ...through the node's ROWS, as the coming camera is (drift
+    // audit A2): the ride moves along `f = (-sin yaw, 0, -cos yaw)`
+    // (`x -= sin(yaw) * v`), and a node facing `f` has row 0 =
+    // `(-f.z, 0, f.x)` and row 2 = `-f` - so the eye is 7.00 m
+    // behind the way it flies. Rotating the offset by the yaw put it
+    // ahead or beside on every heading but one.
+    const float t = static_cast<float>(ride->yaw) * omk::kDegToRadF;
+    const float fx = -std::sin(t), fz = -std::cos(t);
+    const float r0[3] = {-fz, 0.0f, fx}, r2[3] = {-fx, 0.0f, -fz};
+    const float sub[3] = {static_cast<float>(ride->x),
+                          static_cast<float>(ride->y),
+                          static_cast<float>(ride->z)};
+    const auto place = [&](const float off[3], float out[3]) {
+        for (int k = 0; k < 3; ++k)
+            out[k] = sub[k] - off[0] * r0[k] - off[2] * r2[k];
+        out[1] -= off[1];
+    };
+    static constexpr float kRideEye[3] = {0.0f, 118.1102f, -275.5905f};
+    static constexpr float kRideAt[3]  = {0.0f, 78.7402f, 0.0f};
+    // NOT RIGID (drift audit B12): `Slider_TickRide` requests mode 8, the
+    // coming camera's own preset and so its own dynamics - the eye and
+    // the yaw chased at dt/8 (`sub_415E60`) and `sub_4141F0`'s wall pass
+    // (`sub_417070`) - with the slider as both subjects
+    float sEye[3], sAt[3];
+    place(kRideEye, sEye);
+    place(kRideAt,  sAt);
+    const bool fresh = sliderCamFresh;
+    sliderCamLag(sub, fx, fz, kRideEye, kRideAt, 0, 8, 8, view.cam.eye, view.cam.at);
+    sliderCamObstruct(view.cam.eye, view.cam.at, sEye, sAt, sub[1], fresh);
+    view.cam.hfovDeg = 75.0f;      // the preset's own fov
+    view.cam.rollDeg = 0.0f;
+    view.cam.w = dispW; view.cam.h = dispH;
+}
+
+
+// A TAKEN CAMERA: a script's or the swim's request, travelled to over its frames (from `worldCamera`)
+void PlayState::worldCameraTake() {
+    // THE TAKE CAMERA (omk-play 69): mode 1's preset resolved
+    // against him every frame, travelled linearly over 30 frames
+    // from the camera that was on screen at the request - the
+    // same blend the editings use, `sub_414A90`'s setup being one
+    // mechanism for both - then held; and mode 16 travels the
+    // same 30 frames back to the follow camera and hands over.
+    // Full-frame, not letterboxed: nothing read ties the strip
+    // to this mode, and the walk it interrupts is full-frame.
+    const int wcs = static_cast<int>(player->state());
+    const bool swimCam = !waterCamPreset && wcs >= 11 && wcs <= 14;
+    swimCamNow = swimCam;
+    omk::FollowCamera tc =
+        swimCam ? player->resolveOffsetsYaw(takeCamEye, takeCamAt, takeCamFov)
+                : player->resolveOffsets(takeCamEye, takeCamAt, takeCamFov);
+    // THE SWIM CAMERA STAYS INSIDE THE SET: a ray from what it looks
+    // at to where it would stand, through the shown set's `shotSoup`
+    // - the fight camera's own test (`sub_416570` -> `sub_444810`,
+    // CollisionOnly skipped, 0x41 untested) - and the eye is brought
+    // in to nine tenths of the way to the wall, so the camera does not
+    // go outside the environment. RECONSTRUCTION, labelled: the engine's swim
+    // variant (`sub_413CD0`) sets camera flags 4 | 0x4800 and NOT the
+    // land camera's flag 8, whose pass is the wall rule `sub_417070`;
+    // what 0x4000 and 0x800 run is unread, so which rule keeps the
+    // original's lens inside is not established - only that a canal
+    // three metres wide cannot hold a camera three metres behind him.
+    if (swimCam) {
+        const omk::TriangleSoup* shot = nullptr;
+        for (const auto& ws : worldSlots)
+            if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws.shotSoup;
+        if (shot && !shot->empty()) {
+            const double p0[3] = {tc.at[0], tc.at[1], tc.at[2]};
+            const double d[3] = {double(tc.eye[0]) - tc.at[0], double(tc.eye[1]) - tc.at[1],
+                                 double(tc.eye[2]) - tc.at[2]};
+            const auto h = omk::sweepSphere(*shot, p0, d, 0.0);
+            if (h && h->t < 1.0) {
+                const double t = h->t * 0.9;
+                for (int k = 0; k < 3; ++k)
+                    tc.eye[k] = static_cast<float>(p0[k] + t * d[k]);
+                static long swimCamTold = -1000;
+                if (frameNo - swimCamTold >= 60) {
+                    swimCamTold = frameNo;
+                    std::printf("frame %ld: the swim camera - a wall at %.0f%% of the way to "
+                                "the eye; brought in to %.0f %.0f %.0f\n", frameNo, h->t * 100.0,
+                                double(tc.eye[0]), double(tc.eye[1]), double(tc.eye[2]));
+                }
+            }
+        }
+    }
+    const omk::FollowCamera& fc = player->followCamera();
+    const omk::FollowCamera& to = takeCamPhase == 3 ? fc : tc;
+    float u = 1.0f;
+    if (takeCamPhase == 1 || takeCamPhase == 3) {
+        takeCamClock += static_cast<float>(frameSec * 30.0);
+        u = haveLastDrawn ? std::min(1.0f, takeCamClock / takeCamTravel) : 1.0f;
+    }
+    for (int k = 0; k < 3; ++k) {
+        view.cam.eye[k] = takeCamFromEye[k] + (to.eye[k] - takeCamFromEye[k]) * u;
+        view.cam.at[k]  = takeCamFromAt[k]  + (to.at[k]  - takeCamFromAt[k])  * u;
+    }
+    view.cam.hfovDeg = takeCamFromFov + (to.fov - takeCamFromFov) * u;
+    view.cam.rollDeg = 0.0f;
+    view.cam.w = dispW; view.cam.h = dispH;
+    if (u >= 1.0f) {
+        if (takeCamPhase == 1) takeCamPhase = 2;
+        else if (takeCamPhase == 3) { takeCam = false; takeCamPhase = 0; }
+    }
+}
+
+
+// THE WORLD CAMERA a script installed: its eye and target subjects resolved against the actors (from `worldCamera`)
+void PlayState::worldCameraScript() {
+    auto& session = *session_;
+    // A relative point is `subjectPos - R(yaw) * offset`, which is
+    // what `sub_415D10`/`sub_415E60` do; an absolute one is passed
+    // through. `resolveCamera` handles both per point, because the
+    // engine decides per point and 959 of the 1443 relative
+    // cameras are relative in ONE of their two.
+    //
+    // ...AGAINST THE SAME SUBJECT POINT THE FOLLOW CAMERA USES.
+    // `session.playerPos()` is his FEET - the ground point the
+    // walker keeps - and a relative camera's offset is measured
+    // from the pelvis, which is why `resolveSteady` subtracts
+    // `camLift_` (Y points down, so subtracting RAISES). The
+    // follow path did that from issue 49 and this one did not, so
+    // every scripted shot naming a subject sat a whole lift too
+    // low - about 42 units for HO1_FNM, and visibly so on AREA
+    // 222's tutorial shots 4290/4291/4292
+    // (`todo/omk-play.md` 57).
+    const float lift = player ? player->cameraLift() : 0.0f;
+    // ...and the Session solves a TRAVEL's two ends at the same
+    // point, so it has to know the lift too
+    session.setCameraSubjectLift(lift);
+    const float* pp0 = session.playerPos();
+    const float subj[3] = {pp0[0], pp0[1] - lift, pp0[2]};
+    (void)subj;
+    // EACH POINT BY ITS SUBJECT KIND, through the Session's resolver -
+    // the one the travel solves both ends with (`Session::solveCamera`,
+    // `sub_415A10`'s switch): 0 the pelvis above, 9 the request's
+    // ADDRESS (todo/drift-audit.md S14: `sub_415850` reads the in-memory
+    // integers and the integer heading, no pelvis lift; only
+    // `camera.set.at_address`, op 126, hands one over, and the four
+    // kind-9 cameras, 4781..4784 on the rooftops' ladders, are the only
+    // ones it names), 1 and 3 the player's HEAD (`feedCameraHead`).
+    const omk::ResolvedCamera rc = session.solveCamera(*wc);
+    if (wc->eyeSubject == 9 || wc->atSubject == 9) {
+        if (const omk::Address* ad = session.findAddress(session.cameraSubjectAddress())) {
+            static int addrTold = -1000;
+            if (addrTold != wc->id * 10000 + ad->id) {
+                addrTold = wc->id * 10000 + ad->id;
+                std::printf("frame %ld: camera %d framed on ADDRESS %d (subject kind 9, "
+                            "sub_415850) at %d %d %d heading %d - eye %.0f %.0f %.0f\n",
+                            frameNo, wc->id, ad->id, ad->memPos[0], ad->memPos[1],
+                            ad->memPos[2], ad->memYaw, double(rc.eye[0]),
+                            double(rc.eye[1]), double(rc.eye[2]));
+            }
+        }
+    }
+    if (wc->eyeSubject == 1 || wc->atSubject == 1 ||
+        wc->eyeSubject == 3 || wc->atSubject == 3) {
+        static int headTold = -1;
+        if (headTold != wc->id) {
+            headTold = wc->id;
+            const int kind = (wc->eyeSubject == 1 || wc->eyeSubject == 3) ? wc->eyeSubject
+                                                                          : wc->atSubject;
+            float an[3], yaw;
+            session.cameraAnchor(kind, an, yaw);
+            std::printf("frame %ld: camera %d framed on the player's HEAD (subject kinds %d/%d, "
+                        "%s) at %.1f %.1f %.1f, %.1f above the kind-0 point%s - eye %.1f %.1f %.1f "
+                        "at %.1f %.1f %.1f\n",
+                        frameNo, wc->id, wc->eyeSubject, wc->atSubject,
+                        kind == 3 ? "sub_415320, the rest offset" : "sub_415050, the Tete node",
+                        double(an[0]), double(an[1]), double(an[2]), double(subj[1] - an[1]),
+                        cameraHeadFrom, double(rc.eye[0]), double(rc.eye[1]), double(rc.eye[2]),
+                        double(rc.at[0]), double(rc.at[1]), double(rc.at[2]));
+        }
+    }
+    for (int k = 0; k < 3; ++k) {
+        view.cam.eye[k] = rc.eye[k];
+        view.cam.at[k]  = rc.at[k];
+    }
+    view.cam.hfovDeg = wc->fov > 1.0f ? wc->fov : 75.0f;
+    view.cam.rollDeg = wc->roll;   // already wrapped to (-180,180]
+    view.cam.w = dispW; view.cam.h = dispH;
+}
+
 
 // The texture pool
 void PlayState::worldTexturePool() {

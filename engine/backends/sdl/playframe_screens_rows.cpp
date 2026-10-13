@@ -4,10 +4,26 @@
 // the phase calls them in this order.
 #include "playframe.h"
 
+// Interface sound `id` (`IAM\I2D\sounds`, by the widget table's name) at the
+// device rate, decoded once and kept
+const std::vector<float>& PlayState::uiSoundPcm(int id) {
+    const auto& fs = *fs_;
+    static std::map<int, std::vector<float>> cache;
+    auto it = cache.find(id);
+    if (it == cache.end()) {
+        std::vector<float> v;
+        const std::string& nm = uiWidgets.soundNameById(id);
+        if (!nm.empty())
+            if (const auto path = fs.resolve("I2D/sounds/" + nm + ".wav"))
+                v = wavToDevice(omk::DataFs::readPath(*path), kDeviceRate);
+        it = cache.emplace(id, std::move(v)).first;
+    }
+    return it->second;
+}
+
 // The sneak's inventory rows
 void PlayState::screensSneakRows() {
     OMK_ZONE("screens: sneak rows");   // the profiler (todo/debug-tools.md 6)
-    const auto& fs = *fs_;
     auto& comp = *comp_;
     auto& inv = *inv_;
     auto& session = *session_;
@@ -135,19 +151,6 @@ void PlayState::screensSneakRows() {
         // `sndConfirm` / `sndBack` are the screen's slots 1 and 2 (`SNK003`
         // and `SNK001` on the sneak). A reader: *"there should be a sound
         // effect when a new object is created"*.
-        const auto uiSound = [&](int id) -> const std::vector<float>& {
-            static std::map<int, std::vector<float>> cache;
-            auto it = cache.find(id);
-            if (it == cache.end()) {
-                std::vector<float> v;
-                const std::string& nm = uiWidgets.soundNameById(id);
-                if (!nm.empty())
-                    if (const auto path = fs.resolve("I2D/sounds/" + nm + ".wav"))
-                        v = wavToDevice(omk::DataFs::readPath(*path), kDeviceRate);
-                it = cache.emplace(id, std::move(v)).first;
-            }
-            return it->second;
-        };
         if (int ra = -1, rb = -1; walk->takeCombine(ra, rb)) {
             const auto bag = omk::objectList(state, omk::ObjectList::Carried);
             const auto at = [&](int r) {
@@ -162,7 +165,7 @@ void PlayState::screensSneakRows() {
                 state.listRemove(0, a);
                 state.listRemove(0, b);
                 state.listAdd(0, made);          // InsertFront
-                blip(uiSound(12));               // `push 0Ch; call sub_482D90`
+                blip(uiSoundPcm(12));               // `push 0Ch; call sub_482D90`
                 std::printf("sneak: combine %d '%s' + %d '%s' (gate %d) -> "
                             "%d '%s'\n", a, session.objectName(a).c_str(),
                             b, session.objectName(b).c_str(), gate,
@@ -183,182 +186,7 @@ void PlayState::screensSneakRows() {
                                                                          : "no longer lit",
                         walk->currentList());
         }
-        if (const int verb = walk->takeVerb(); verb >= 0) {
-            const auto carried =
-                omk::objectList(state, omk::ObjectList::Carried);
-            // THE ROW TAG, not the widget index. All three verb
-            // callbacks read `selected_widget[+0x3C]`, which is
-            // `widget + window`; the two agree only while the rows are
-            // unscrolled, and reading the selection applied the verb to
-            // whatever had been under the cursor before the scroll.
-            const int row = walk->selectedRow(omk::kListSneakRows);
-            const omk::ObjectRecord* rec = nullptr;
-            if (row >= 0 && static_cast<std::size_t>(row) < carried.size()) {
-                const int idx = carried[static_cast<std::size_t>(row)];
-                if (idx >= 0 &&
-                    static_cast<std::size_t>(idx) < objectRecords->size())
-                    rec = &(*objectRecords)[static_cast<std::size_t>(idx)];
-            }
-            if (!rec) {
-                std::printf("sneak: %s with no object selected\n",
-                            verb ? "Utiliser sur" : "Utiliser");
-            } else {
-              // the OBJECTS id of the selected row - both halves need it
-              const int objIdx = carried.empty() ? -1
-                  : carried[static_cast<std::size_t>(row)];
-              if (verb == 1) {
-                // ---- `Utiliser sur` IS A MODE, not a use --------------
-                //
-                // `sub_49BF30` does not touch case 35 at all: it opens a
-                // COMBINE, puts the object in one of two slots, disables
-                // the verb list and sends the player back to the rows for
-                // a second object. Running `Utiliser`'s arm here would
-                // take the object IN HAND under the other verb's name.
-                //
-                // Which slot is `sub_42B520`'s answer: event 37's first
-                // arm compares the object with `u16(GLOBAL, 64)`, the
-                // spell item, and sets the recipe gate to 1 for it and 0
-                // for anything else.
-                const int spellItem = omk::globalSpellItem(globalFile);
-                const bool isSpell = (objIdx == spellItem);
-                // The slot takes the ROW, not the object id: `sub_49BF30`
-                // stores the selected widget's row tag (`[+3Ch]`), the
-                // second pick stores its row the same way, and the
-                // resolver below maps BOTH through the carried list.
-                // Handing it `objIdx` made the first slot "row 18" - a
-                // row that does not exist - so every combine came back
-                // `-1 ''` and nothing could ever be made. The spell test
-                // above still reads the object id, which is what event
-                // 37 compares.
-                walk->beginCombine(row, isSpell);
-                std::printf("sneak: Utiliser sur '%s' -> combine opened, "
-                            "gate %d%s. Pick a second object\n",
-                            rec->name.c_str(), isSpell ? 1 : 0,
-                            isSpell ? " (the spell item - and NO shipped "
-                                      "recipe carries gate 1, so this arm "
-                                      "cannot produce anything)" : "");
-              } else if (verb == 0) {
-                // ---- WHAT REACHES THE WORLD -------------------------
-                //
-                // `sub_42B420(tag, 20)` announces, and its second event
-                // is 43 - whose block starts at the ACTION, so case 43
-                // runs `Message_RunHandlers(20, ..., object, ...)`. That
-                // walks the resident SCENE's subscription table, then the
-                // AREA's, then GLOBAL's, first match wins; and this
-                // header already recorded that a message's sender is an
-                // OBJECT id for 4, 20 and 25.
-                //
-                // So `Utiliser` posts message 20 with the object, and
-                // whichever resident chunk subscribes to it decides -
-                // which is why a player says the key "is automatically
-                // used when you are near the location where you should
-                // use it": proximity is which SCENE is resident, and the
-                // handler is its own. Nothing in the Session posted a
-                // message before this.
-                const bool ran = session.postMessage(20, objIdx);
-                const auto& m = session.messagesRun();
-                std::printf("sneak: Utiliser '%s' -> message 20, sender "
-                            "object %d - %s\n", rec->name.c_str(), objIdx,
-                            ran && !m.empty()
-                              ? (m.back().table + " table handles it").c_str()
-                              : "no resident chunk subscribes to it");
-              }
-              // ...and THEN the decision. `sub_49BEA0` calls
-              // `sub_42B420` (the announce, above) and `sub_42B470` (this)
-              // in that order, so both happen on one confirm.
-              //
-              // `Utiliser`'s ONLY. `Utiliser sur` is `sub_49BF30`, a
-              // different callback that opens the combine and returns -
-              // it never calls `sub_42B470`. Run for BOTH verbs, this
-              // block would have `Utiliser sur` open the combine and then,
-              // on the same press, take the object IN HAND and close the
-              // device - where it means using on another object in the
-              // sneak, not interacting with the environment.
-              if (verb != 0) {
-                // the combine is open; the rows are waiting for object two
-              } else if (!rec->usable()) {
-                // THE ARM THAT WORKS, and it is the one WITHOUT the
-                // usable bit. Case 35's `loc_407314` loads the object's
-                // own model from its stem and returns result **1**, and
-                // `sub_42B470` then runs
-                // `sub_41C490(dword_930724, tag)`, which writes
-                // `player[+0xA4] = &unk_4E7EA0[tag * 96]` and attaches
-                // the model to him. So "Utiliser" on a key TAKES IT IN
-                // HAND - which is what a player then carries to a door.
-                // ...and it IS the hand now. `Session::useObject` is
-                // case 35's arm: allocate a `word_4E6CA0` slot for the
-                // id, drop the item from list 0, and hold that slot -
-                // which is exactly what `var.set.used_object` (75) reads
-                // back. The MODEL attach (`sub_437400`/`sub_4374E0`
-                // inside `sub_41C490`) is the renderer's half and is
-                // still not done, so nothing appears in his hand.
-                const int slot = session.useObject(objIdx);
-                std::printf("sneak: '%s' -> IN HAND, slot %d (case 35 "
-                            "result 1, sub_41C490 sets player+0xA4). A "
-                            "zone whose activate script reaches opcode 75 "
-                            "will now see object %d; the model attach is "
-                            "not ported, so it is invisible\n",
-                            rec->name.c_str(), slot, objIdx);
-                // `sub_42B470` returns 1 on this arm alone; `sub_49BEA0`
-                // turns that into `[slot+8] = 3`.
-                useClosedSneak = true;
-            } else {
-                // ---- THE CONSUMABLE ARM, and it now CONSUMES ----------
-                //
-                // `Game_HandleEvent` case 35, the `rec+4 & 1` branch:
-                //
-                //     Object_ApplyEffect(rec, Actor_IdBySlot(Actor_Player()));
-                //     ObjectList_RemoveAt(0, row);        // result 2
-                //
-                // `Object_ApplyEffect` (0x00409780), the consumable half
-                // (`rec+4 & 0x20` clear): `rec+6` picks the property
-                // (`omk::effectProperty` - 6 is *Vie*), `rec+8` is added
-                // to the current value through `Actor_GetProperty` /
-                // `Actor_SetProperty`, and a sum past 0xFFFF becomes
-                // 0xFFFF (`v7 = -1`). The setter applies its own per-
-                // property clamp, which `writeActorProperty` carries.
-                //
-                // Announcing the apply without running it leaves a medkit
-                // doing nothing and staying in the bag.
-                //
-                // NOT ported, labelled: the `rec+4 & 0x20` arm (weapons,
-                // ammunition, seteks, rings - the valuables), which writes
-                // property 35's ammunition slots and 4/5; nothing usable
-                // AND valuable reaches it through this verb in practice,
-                // and it is left announcing rather than guessed.
-                const int prop = omk::effectProperty(rec->effect);
-                std::int32_t before = -1, after = -1;
-                if (prop > 0 && !rec->valuable()) {
-                    const auto pr = state.rawMutable().subspan(
-                        static_cast<std::size_t>(omk::GameState::kPlayerRecord),
-                        static_cast<std::size_t>(omk::GameState::kPlayerRecordSize));
-                    omk::readActorProperty(pr, prop, before);
-                    std::int32_t next = before + rec->amount;
-                    if (next > 0xFFFF) next = 0xFFFF;             // `v7 = -1`
-                    omk::writeActorProperty(pr, prop, next);
-                    omk::readActorProperty(pr, prop, after);      // the setter's clamp
-                    state.listRemove(0, objIdx);                  // ObjectList_RemoveAt(0, row)
-                }
-                blip(uiSound(13));               // `sub_42B470`: interface sound 13
-                if (after >= 0)
-                    std::printf("sneak: '%s' USED - property %d %d -> %d "
-                                "(+%d, effect %d), and it leaves the bag "
-                                "(case 35 result 2)\n",
-                                rec->name.c_str(), prop, before, after,
-                                rec->amount, rec->effect);
-                else
-                    std::printf("sneak: '%s' is a consumable on the VALUABLES "
-                                "arm of Object_ApplyEffect (effect %d), which "
-                                "is not ported - announced, not run\n",
-                                rec->name.c_str(), rec->effect);
-                // `sub_42B470` returned 0, so `sub_49BEA0` takes
-                // `loc_49BEF8`: reset the row list and
-                // `sub_42A370(screen, unk_4DEE50)` - back to the
-                // INVENTORY page, screen still open.
-                walk->installPanel(omk::kPanelSneakInventory);
-              }
-            }
-        }
+        screensSneakVerbs(useClosedSneak);
         comp.setExamineText(nullptr);
         // ---- THE CITY MAP (`ui/citymap.h`) ---------------------------
         //
@@ -381,73 +209,7 @@ void PlayState::screensSneakRows() {
         // city's area id, so the engine takes its same-area fast path).
         static omk::ScreenComposer::CityMapView cityView;
         comp.setCityMap(nullptr);
-        if (pn && pn->addr == omk::kPanelSneakMap) {
-            static std::string cityBmpStem;
-            static omk::Surface cityBmp;
-            const std::string stem = session.setName();
-            if (stem != cityBmpStem) {
-                cityBmpStem = stem;
-                // `sprintf("Images\\%s.bmp")` then `fopen`. DataFs
-                // resolves case-insensitively, which is what the shipped
-                // lower-case `anekbah.bmp` against an upper-case set name
-                // needs.
-                cityBmp = omk::surfaceFromBmp(fs.read("IMAGES/" + stem + ".bmp"));
-            }
-            cityView = omk::ScreenComposer::CityMapView{};
-            cityView.sheet = cityBmp.valid() ? &cityBmp : nullptr;
-            cityView.row = cityMaps.findCity(stem);
-            cityView.playerX = session.playerPos()[0];
-            cityView.playerZ = session.playerPos()[2];
-            cityView.playerFacing = session.playerYaw();
-            {
-                const auto raw = state.raw();
-                const std::size_t rec =
-                    static_cast<std::size_t>(omk::GameState::kPlayerRecord);
-                for (std::size_t i = rec + 8;
-                     i < raw.size() && raw[i] != std::byte{0}; ++i)
-                    cityView.playerName.push_back(static_cast<char>(raw[i]));
-            }
-            int unplaced = 0;
-            if (cityView.row) {
-                const auto& rs = session.residentSlot(session.activeSlot());
-                for (const auto& d : destinations) {
-                    if (!state.bit(omk::StateArray::AddressEnabled, d.bit)) continue;
-                    const std::string place =
-                        omk::cityMapPlaceName(d.name, cityView.row->name);
-                    if (place.empty()) continue;
-                    omk::ScreenComposer::CityMapView::Marker mk;
-                    mk.name = place;
-                    if (const omk::CityPlaceRow* pr = cityMaps.findPlace(place)) {
-                        mk.x = pr->pos[0];
-                        mk.z = pr->pos[2];
-                    } else {
-                        const omk::Address* ad = nullptr;
-                        for (const auto& x : rs.addresses)
-                            if (x.id == d.bit) ad = &x;
-                        if (!ad) { ++unplaced; continue; }
-                        mk.x = ad->pos[0];
-                        mk.z = ad->pos[2];
-                    }
-                    cityView.markers.push_back(mk);
-                }
-            }
-            comp.setCityMap(&cityView);
-            static std::string mapTold;
-            const std::string said =
-                "set '" + stem + "' -> " +
-                (cityBmp.valid() ? "Images/" + stem + ".bmp " +
-                     std::to_string(cityBmp.w) + "x" + std::to_string(cityBmp.h)
-                                 : std::string("no bitmap")) +
-                ", city " + (cityView.row ? cityView.row->name + " id " +
-                             std::to_string(cityView.row->id)
-                                          : std::string("none (tag -1)")) +
-                ", " + std::to_string(cityView.markers.size()) +
-                " markers, " + std::to_string(unplaced) + " unplaced";
-            if (said != mapTold) {
-                mapTold = said;
-                std::printf("sneak map: %s\n", said.c_str());
-            }
-        }
+        screensSneakMap(pn, cityView, comp);
         // ---- THE IDENTITY PAGE'S SHEET (todo/sneak.md §5e step 2) -------
         //
         // What `Actor_GetProperty` (event 44) hands the identity hooks for
@@ -459,225 +221,8 @@ void PlayState::screensSneakRows() {
         // All are C strings: read up to their NUL.
         static omk::ScreenComposer::PlayerSheet playerSheet;
         comp.setPlayerSheet(nullptr);
-        if (pn && pn->addr == omk::kPanelSneakIdentity) {
-            static const auto sneakText = omk::iamStrings(fs, "IAM/Sneak");
-            playerSheet.text = sneakText;
-            const auto raw = state.raw();
-            const auto cstr = [&](std::size_t at) {
-                std::string s;
-                for (std::size_t i = at; i < raw.size() && raw[i] != std::byte{0}; ++i)
-                    s.push_back(static_cast<char>(raw[i]));
-                return s;
-            };
-            const std::size_t rec = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
-            const auto u32at = [&](std::size_t at) {
-                std::uint32_t v = 0;
-                for (int k = 0; k < 4; ++k)
-                    v |= static_cast<std::uint32_t>(raw[at + k]) << (8 * k);
-                return v;
-            };
-            playerSheet.str = {
-                {0, cstr(rec + 108)}, {6, cstr(rec + 8)},   {9, cstr(rec + 128)},
-                {10, cstr(rec + 136)}, {11, cstr(rec + 40)}, {12, cstr(rec + 116)},
-                {13, cstr(rec + 124)},
-                // 14 and 15 dereference the record's `+4` and `+0`, which
-                // `State_Apply` plants as the two bio blocks at image 592
-                // and 336 (`GameState::relocate`). The viewer's copy is not
-                // relocated - its `+0`/`+4` still hold what the save
-                // stored - so the blocks those pointers always designate
-                // are read directly.
-                {14, cstr(static_cast<std::size_t>(omk::GameState::kBio[1]))},
-                {15, cstr(static_cast<std::size_t>(omk::GameState::kBio[0]))},
-            };
-            static bool bioTold = false;
-            if (!bioTold) {
-                bioTold = true;
-                std::printf("sneak: identity bio pointers as stored +0 %#x +4 %#x "
-                            "(State_Apply plants %d / %d)\n", u32at(rec + 0), u32at(rec + 4),
-                            omk::GameState::kBio[0], omk::GameState::kBio[1]);
-            }
-            const auto i16at = [&](std::size_t at) {
-                return static_cast<int>(static_cast<std::int16_t>(
-                    static_cast<std::uint16_t>(raw[at]) |
-                    static_cast<std::uint16_t>(static_cast<std::uint16_t>(raw[at + 1]) << 8)));
-            };
-            // The integers event 44 answers from the same record, for both
-            // contents: 8 the age, and the Caracteristiques - 1 Energie
-            // `+170`, 16 Attaque `+160`, 19 Maitrise `+166`, 17 Resistance
-            // `+162`, 3 Vitesse `+158`, 18 Esquive `+164`, 2 Mana `+156`.
-            playerSheet.num = {{8, i16at(rec + 154)}, {1, i16at(rec + 170)},
-                               {16, i16at(rec + 160)}, {19, i16at(rec + 166)},
-                               {17, i16at(rec + 162)}, {3, i16at(rec + 158)},
-                               {18, i16at(rec + 164)}, {2, i16at(rec + 156)}};
-            static std::string characteristicsTold;
-            std::string cs;
-            for (int p : {1, 16, 19, 17, 3, 18, 2})
-                cs += " | " + std::to_string(p) + "=" + std::to_string(playerSheet.num[p]);
-            if (cs != characteristicsTold) {
-                characteristicsTold = cs;
-                std::printf("sneak: characteristics sheet%s (rank string %d)\n", cs.c_str(),
-                            playerSheet.num[19] / 41 <= 4 ? 36 + playerSheet.num[19] / 41 : -1);
-            }
-            if (const omk::UiList* tabs = uiWidgets.listAt(omk::kListSneakTabs))
-                if (!tabs->items.empty())
-                    for (int c = 0; c < 3; ++c)
-                        playerSheet.icon[c] = static_cast<std::uint8_t>(tabs->items.front().rgb[c]);
-            comp.setPlayerSheet(&playerSheet);
-            // ---- THE CHARACTER VIEW (`sub_4778E0`, step 4) ---------------
-            //
-            // Built once per player model - the engine builds it in the
-            // sneak's open; only this page shows it. The bank is the
-            // LITERAL "F1AVNT.CTL" the open pushes (0x004DF5EC), whatever
-            // the player's own; `Cef_DefaultGroup` is the first group with
-            // flag 1 and `Cef_DefaultClip` that group's flag-0x20 entry's
-            // clip, NOT followed through a goto; `Anim_SetFrame(node, clip,
-            // 0.0, 1.0)` applies frame 1 - key 2, key 0 being the rest
-            // sentinel - to every node, the root's rotation included.
-            // `Anim_RootDelta`'s 0 -> 1 step moves the node, which the
-            // camera does not follow (it targets the model's centre), so
-            // it is not applied here.
-            static std::string characterBuiltFor;
-            if (characterBuiltFor != playerModel) {
-                characterBuiltFor = playerModel;
-                CharModel* cm = charModelFor(playerModel);
-                const std::string characterBank = "F1AVNT";   // 0x004DF5EC, literal
-                CharBank* cb = charBankFor(characterBank);
-                int entry = -1, clip = -1;
-                int clipFrames = 0;
-                std::string firstTrack;
-                if (cb && cb->ready)
-                    for (const auto& g : cb->ctl.groupList)
-                        if (g.flags & 1u) { entry = g.defaultEntry; break; }
-                if (cb && entry >= 0 && entry < static_cast<int>(cb->ctl.states.size()))
-                    clip = cb->ctl.states[static_cast<std::size_t>(entry)].clip;
-                int bound = 0;
-                if (cm && cm->ready && clip >= 0 &&
-                    clip < static_cast<int>(cb->ctl.clips.size())) {
-                    omk::NodeTracks t;
-                    const auto d = omk::animDescriptor(
-                        cb->data, cb->ctl.clips[static_cast<std::size_t>(clip)].offset);
-                    if (d && d->frames > 0 && !d->tracks.empty()) {
-                        clipFrames = d->frames;
-                        firstTrack = d->tracks.front().name;
-                        t.count = static_cast<int>(d->tracks.size());
-                        t.frames = 1;
-                        t.rootTrack = -1;
-                        // BY THE TRACK'S KEY (`omk::meshOfTrack`), as
-                        // `Anim_BindNodeTrack` binds. F1AVNT's tracks are
-                        // `Sh`-prefixed (`ShBassin`) and Kay'l's meshes
-                        // `U`-prefixed (`UBassin`), so an exact name binds 0
-                        // of 19 - the T-pose this drew first - and the bone
-                        // suffix that replaced it only coincided with the key
-                        // (19/19 the same on the identity page).
-                        for (const auto& tr : d->tracks) {
-                            const std::int32_t mi = omk::meshOfTrack(tr, cm->meshes);
-                            if (mi >= 0) ++bound;
-                            t.ids.push_back(mi);
-                        }
-                        t.quats.assign(1, {});
-                        t.trans.assign(1, {0.0f, 0.0f, 0.0f});
-                        t.quats[0].resize(d->tracks.size());
-                        for (std::size_t i = 0; i < d->tracks.size(); ++i) {
-                            const omk::AnimTrack& tr = d->tracks[i];
-                            if (!tr.rotOffset || tr.rotKeys <= 0) continue;
-                            const int key = tr.rotKeys > 2 ? 2 : tr.rotKeys - 1;   // frame 1
-                            const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(key);
-                            if (o + 16 > cb->data.size()) continue;
-                            // little-endian floats (PORTING A9), not a memcpy
-                            const std::byte* src = cb->data.data() + o;
-                            t.quats[0][i] = {omk::loadLE<float>(src), omk::loadLE<float>(src + 4),
-                                             omk::loadLE<float>(src + 8), omk::loadLE<float>(src + 12)};
-                        }
-                        const auto pose = omk::composePose(cm->meshes, t, 0, false);
-                        omk::Geometry posed = cm->rest;
-                        omk::applyPose(posed, cm->rest, cm->meshes, pose);
-                        uiModels.setCharacter(std::move(posed), cm->tex, playerModel);
-                    }
-                }
-                // The bank from the variable it was loaded under, and the
-                // clip's own length and first track: H1AVNT also opens on
-                // entry 0 'H_STAND', clip 0, and binds 19 by exact name, so
-                // only these tell the literal F1AVNT from the player's bank.
-                std::printf("sneak: identity character '%s' - bank %s, default entry %d "
-                            "'%s', clip %d (%d frames, first track '%s'), %d tracks bound, "
-                            "frame 1\n", playerModel.c_str(), characterBank.c_str(),
-                            entry,
-                            cb && entry >= 0 && entry < static_cast<int>(cb->ctl.states.size())
-                                ? cb->ctl.states[static_cast<std::size_t>(entry)].name.c_str() : "",
-                            clip, clipFrames, firstTrack.c_str(), bound);
-            }
-            static std::string identityTold;
-            std::string said;
-            for (int p : {6, 8, 0, 13, 9, 10, 12, 11, 15, 14})
-                said += " | " + std::to_string(p) + "=" +
-                        (p == 8 ? std::to_string(playerSheet.num[8]) : playerSheet.str[p]);
-            if (said != identityTold) {
-                identityTold = said;
-                std::printf("sneak: identity sheet%s\n", said.c_str());
-            }
-        }
-        if (pn && pn->addr == omk::kPanelSneakExamine) {
-            const auto carried =
-                omk::objectList(state, omk::ObjectList::Carried);
-            // BY ADDRESS: the examine page carries no row list of its
-            // own, and the selections are a static record keyed by list,
-            // so the row chosen two panels ago is still there.
-            // ...and the TAG here too: `sub_49BFF0` latches
-            // `dword_4DE74C = selected_widget[+0x3C]` when Examiner is
-            // confirmed, and the page draws whatever that names.
-            const int row = walk->selectedRow(omk::kListSneakRows);
-            // `sub_49BFF0`'s last call, `sub_42B420(tag, 4)`: event 30
-            // answers the object's slot and event 43 runs
-            // `Message_RunHandlers(4, player, slot)`, whose sender is
-            // `ObjectSlot_Id(slot)` - the object. The port never posted
-            // it, so the GLOBAL table's handler never ran from here.
-            if (walk->takeExamineMessage()) {
-                const int eid = row >= 0 && static_cast<std::size_t>(row) < carried.size()
-                    ? carried[static_cast<std::size_t>(row)] : -1;
-                const bool ran = eid >= 0 && session.postMessage(4, eid);
-                const auto& runs = session.messagesRun();
-                std::printf("sneak: Examiner row %d id %d -> message 4 %s\n", row, eid,
-                            ran && !runs.empty()
-                                ? ("handled by the " + runs.back().table + " table").c_str()
-                                : "(no resident chunk subscribes)");
-            }
-            if (row >= 0 && static_cast<std::size_t>(row) < carried.size()) {
-                const int idx = carried[static_cast<std::size_t>(row)];
-                if (idx >= 0 &&
-                    static_cast<std::size_t>(idx) < objectRecords->size()) {
-                    const auto& rec = (*objectRecords)[static_cast<std::size_t>(idx)];
-                    // Case 30 loads the model for whatever is SELECTED,
-                    // whatever its kind, and case 40 hands the
-                    // description back on every arm - so the page gets
-                    // both: the object's own prop and its text.
-                    // WHICH CONTENT. Two captures of the original
-                    // settle it between them: Kay'l's apartment key is
-                    // kind 0 and shows a 3D model with a one-line label,
-                    // and the MK400 notice is kind 15 and shows TEXT
-                    // ONLY - no prop behind it, though its record does
-                    // name one (PAPIER). So the document kinds 15 and 16
-                    // suppress the model, and everything else shows it.
-                    const auto k = uiModels.examine(
-                        fs, (rec.kind == 15 || rec.kind == 16) ? rec.kind : 15,
-                        (rec.kind == 15) ? std::string() : rec.stem);
-                    examineText = rec.description;
-                    comp.setExamineText(&examineText);
-                    // ...and where it is scrolled to. The composer
-                    // CLAMPS this against the laid-out height, the way
-                    // `Ui_ItemTextStyle` clamps `dword_6A5090`, so it
-                    // takes the walk's own field rather than a copy.
-                    comp.setTextScroll(&walk->textScroll());
-                    if (rec.stem != examineTold) {
-                        examineTold = rec.stem;
-                        std::printf("sneak: examine '%s' kind %d -> %s\n",
-                                    rec.name.c_str(), rec.kind,
-                                    k == omk::UiModels::Examine::Model ? "3D model"
-                                    : k == omk::UiModels::Examine::Document
-                                      ? "document bitmap" : "nothing (case 40 result 2)");
-                    }
-                }
-            }
-        }
+        screensSneakIdentity(pn, playerSheet, comp);
+        screensSneakExamine(pn, comp);
         // ---- THE MEMORY PAGE'S ROWS ARE THE MEMO JOURNAL ---------------
         //
         // Kind 2 is the memory page, and it binds OBJECT LIST 2:
@@ -700,166 +245,7 @@ void PlayState::screensSneakRows() {
                             static_cast<long>(front.ticksMs()) - sneakEchoMs < 5000
                             ? &sneakEcho : nullptr);
         if (rowKind == 2 && inv.openedList() != 2) inv.openList(2);
-        if ((rowKind == 0 || rowKind == 2) && inv.openedList() >= 0) {
-            const omk::ObjectList rowSource = rowKind == 2
-                ? omk::ObjectList::Memos : omk::ObjectList::Carried;
-            const auto carried = omk::objectList(state, rowSource);
-            // ---- `sub_42AAE0`, THE ROW BINDER --------------------
-            //
-            // The nine widgets are a WINDOW onto the list, and which of
-            // them are live is decided per row rather than by drawing
-            // whatever has text:
-            //
-            //     for each widget k of the list:
-            //       if (k + window >= list+24)     // past the end
-            //           item+60 = -1;              // tag: empty
-            //           set item 0x40000001;       // and NOT DRAWN
-            //           set item 0x20000004;       // and unselectable
-            //       else
-            //           item+60 = k + window;      // the row it shows
-            //           clear those two;
-            //
-            // so the engine draws only the rows that HOLD something -
-            // two of nine in the user's capture - and that is the gate
-            // `Ui_DrawItemFill`'s bars are behind. `list+24` is the
-            // count the channel reports (case 29).
-            //
-            // THE WINDOW is `sub_42AFF0`'s, kept in widget 0's `+0x3C`
-            // and moved by the mover - so the text follows the scroll
-            // rather than always starting at row 0. A window fixed at 0
-            // truncates any list longer than the nine widgets: a tenth
-            // carried object could not be reached.
-            const omk::UiPanel* rp = uiWidgets.at(omk::kPanelSneakInventory);
-            for (const auto& l : (rp ? rp->lists : pn->lists)) {
-                if (l.addr != omk::kListSneakRows) continue;
-                const std::size_t window = static_cast<std::size_t>(
-                    std::max(0, walk->rowWindow(omk::kListSneakRows)));
-                for (std::size_t k = 0; k < l.items.size(); ++k) {
-                    const std::size_t row = k + window;
-                    if (row >= carried.size()) {
-                        // `sub_42AAE0`: past the end, so tag -1 and
-                        // `0x40000001` - not drawn and not selectable.
-                        sneakHidden.insert(l.items[k].addr);
-                        continue;
-                    }
-                    // `playerCount` is case 33's other half and is NOT
-                    // read: for kinds 2..6 the quantity lives in the
-                    // player record and which field it is has not been
-                    // established, so those rows show the name without
-                    // its " - N". Kinds 7..11 take the item's own `+12`
-                    // and are complete.
-                    sneakRows[l.items[k].addr] =
-                        inv.displayName(carried[row], 0);
-                }
-            }
-            walk->bindRows(omk::kListSneakRows,
-                           static_cast<int>(carried.size()),
-                           walk->rowWindow(omk::kListSneakRows));
-            // One line per change, so a headless run can be held to the
-            // rows the page bound - and to WHICH list they came from.
-            // ---- THE MEMO'S BODY, in the page's own box ----------------
-            //
-            // Item 0x004DEA98's draw hook `0x00477F60` raises event 40 on
-            // the item's `+0x3C` and lays out what it answers - and that
-            // tag field IS `dword_4DEAD4`, which the row hook writes with
-            // the SELECTED row's tag whenever the row kind is 2. Case 40
-            // hands back the object record's description on every arm, so
-            // the box shows the selected memo's text. The composer draws it
-            // through the same path as the examine page's.
-            // ...and only while the BOX IS SHOWN. `0x0049D750` hides it
-            // when the page is built and `0x0049D8B0` lights it once the
-            // rows are the current list, so a memo body on an opened page
-            // nobody has moved into is this port's invention, not the
-            // game's.
-            if (rowKind == 2 && walk->memoBodyShown()) {
-                const int sel = walk->selectedRow(omk::kListSneakRows);
-                const int memo = sel >= 0 && sel < static_cast<int>(carried.size())
-                    ? carried[static_cast<std::size_t>(sel)] : -1;
-                if (const omk::ObjectRecord* mr = memo > 0 ? inv.record(memo) : nullptr) {
-                    examineText = mr->description;
-                    comp.setExamineText(&examineText);
-                    comp.setTextScroll(&walk->textScroll());
-                    // The body, named from the memo the rows selected and
-                    // measured rather than described, so a check can hold
-                    // it: the id, its heading, and how long the text is.
-                    memoBodyPending = "row " + std::to_string(sel) + " id " +
-                                      std::to_string(memo) + " '" + mr->name + "'";
-                }
-            }
-            if (rowKind == 2) {
-                // The list is named from the SOURCE the rows were read
-                // from, not from a literal: a mutation that made this page
-                // read list 0 still printed "object list 2" and only the
-                // ids gave it away.
-                static std::string memosTold;
-                const int from = static_cast<int>(rowSource);
-                std::string said = "object list " + std::to_string(from) + ", " +
-                                   std::to_string(carried.size()) + " rows:";
-                for (int id : carried) said += " " + std::to_string(id);
-                if (said != memosTold) {
-                    memosTold = said;
-                    std::printf("sneak: memory page - %s\n", said.c_str());
-                }
-            }
-            // ---- THE CLOCK, and WHAT THE ECHO BAR NEEDS ---------
-            //
-            // Two of the device's rows are filled by callbacks of its
-            // own, and both are readable - `sub_0049DC20` and
-            // `sub_0049E090` carry no `proc` label (nothing calls them;
-            // they are dwords in the widget table, CLAUDE.md 1's trap),
-            // so `asmfn.py` returns a neighbour and the range has to be
-            // dumped by hand.
-            //
-            // THE ECHO BAR IS NOT COMPOSED HERE. Putting the selected
-            // item's own label into `sneakRows` is right for three of
-            // the function's seven arms and silent for the other four -
-            // and the four include the one the page spends its time in,
-            // the TAB LABEL with `  (n / 18)` after it, so the bar would
-            // be blank whenever the selection sits in the row list, which
-            // is whenever the player is looking at his inventory.
-            // `ScreenComposer::echoBarText` runs the whole function, and
-            // reports what it drew in `ScreenFrame::echoBar` - a
-            // line composed where the drawing happens can be asserted;
-            // one composed here could only report the intention.
-            //
-            // What the bar cannot get for itself is the two counts:
-            // `sub_42B1C0(4)` and `(5)` raise `Game_HandleEvent(44)` on
-            // the player, whose cases 4 and 5 are the player record's
-            // `+172` and `+174` - the seteks and the anneaux.
-            comp.setPlayerCounts(state.money(), state.rings());
-            {
-                for (const auto& l : pn->lists) {
-                    for (const auto& e : l.items) {
-                        if (e.textFn == omk::kTextFnSneakClock) {
-                            // The clock. Both halves are the engine's own
-                            // formatters, already ported and checked
-                            // (`sub_0041E690`'s integer division); the
-                            // " - " joining them is read off the user's
-                            // screenshot - "12 Nadim 7216 - 13:01:15" -
-                            // and is the one part of this line that is
-                            // not from the code.
-                            sneakRows[e.addr] =
-                                omk::formatDate(state.clockDay()) + " - " +
-                                omk::formatTime(state.clock());
-                        }
-                    }
-                }
-            }
-            if (!sneakTold++) {
-                // Count the ROWS, not the map: since the echo bar and
-                // the clock share `sneakRows` this reported "2 rows
-                // shown" for a list holding one object.
-                std::size_t rows = 0;
-                for (const auto& l : pn->lists)
-                    if (l.addr == omk::kListSneakRows)
-                        for (const auto& e : l.items)
-                            rows += sneakRows.count(e.addr);
-                std::printf("sneak: object list %d holds %zu, %zu rows "
-                            "shown, window at %d\n", inv.openedList(),
-                            carried.size(), rows,
-                            walk->rowWindow(omk::kListSneakRows));
-            }
-        }
+        screensSneakInventoryRows(rowKind, inv, pn, comp);
         if (useClosedSneak) {
             std::printf("screen %d closed by the use - `sub_49BEA0` wrote "
                         "state 3 because `sub_42B470` returned 1 (event "
@@ -872,6 +258,664 @@ void PlayState::screensSneakRows() {
         }
     }
 }
+
+// THE SNEAK'S VERBS: the one the walk took this frame, served (from `screensSneakRows`)
+void PlayState::screensSneakVerbs(bool& useClosedSneak) {
+    auto& session = *session_;
+    if (const int verb = walk->takeVerb(); verb >= 0) {
+        const auto carried =
+            omk::objectList(state, omk::ObjectList::Carried);
+        // THE ROW TAG, not the widget index. All three verb
+        // callbacks read `selected_widget[+0x3C]`, which is
+        // `widget + window`; the two agree only while the rows are
+        // unscrolled, and reading the selection applied the verb to
+        // whatever had been under the cursor before the scroll.
+        const int row = walk->selectedRow(omk::kListSneakRows);
+        const omk::ObjectRecord* rec = nullptr;
+        if (row >= 0 && static_cast<std::size_t>(row) < carried.size()) {
+            const int idx = carried[static_cast<std::size_t>(row)];
+            if (idx >= 0 &&
+                static_cast<std::size_t>(idx) < objectRecords->size())
+                rec = &(*objectRecords)[static_cast<std::size_t>(idx)];
+        }
+        if (!rec) {
+            std::printf("sneak: %s with no object selected\n",
+                        verb ? "Utiliser sur" : "Utiliser");
+        } else {
+          // the OBJECTS id of the selected row - both halves need it
+          const int objIdx = carried.empty() ? -1
+              : carried[static_cast<std::size_t>(row)];
+          if (verb == 1) {
+            // ---- `Utiliser sur` IS A MODE, not a use --------------
+            //
+            // `sub_49BF30` does not touch case 35 at all: it opens a
+            // COMBINE, puts the object in one of two slots, disables
+            // the verb list and sends the player back to the rows for
+            // a second object. Running `Utiliser`'s arm here would
+            // take the object IN HAND under the other verb's name.
+            //
+            // Which slot is `sub_42B520`'s answer: event 37's first
+            // arm compares the object with `u16(GLOBAL, 64)`, the
+            // spell item, and sets the recipe gate to 1 for it and 0
+            // for anything else.
+            const int spellItem = omk::globalSpellItem(globalFile);
+            const bool isSpell = (objIdx == spellItem);
+            // The slot takes the ROW, not the object id: `sub_49BF30`
+            // stores the selected widget's row tag (`[+3Ch]`), the
+            // second pick stores its row the same way, and the
+            // resolver below maps BOTH through the carried list.
+            // Handing it `objIdx` made the first slot "row 18" - a
+            // row that does not exist - so every combine came back
+            // `-1 ''` and nothing could ever be made. The spell test
+            // above still reads the object id, which is what event
+            // 37 compares.
+            walk->beginCombine(row, isSpell);
+            std::printf("sneak: Utiliser sur '%s' -> combine opened, "
+                        "gate %d%s. Pick a second object\n",
+                        rec->name.c_str(), isSpell ? 1 : 0,
+                        isSpell ? " (the spell item - and NO shipped "
+                                  "recipe carries gate 1, so this arm "
+                                  "cannot produce anything)" : "");
+          } else if (verb == 0) {
+            // ---- WHAT REACHES THE WORLD -------------------------
+            //
+            // `sub_42B420(tag, 20)` announces, and its second event
+            // is 43 - whose block starts at the ACTION, so case 43
+            // runs `Message_RunHandlers(20, ..., object, ...)`. That
+            // walks the resident SCENE's subscription table, then the
+            // AREA's, then GLOBAL's, first match wins; and this
+            // header already recorded that a message's sender is an
+            // OBJECT id for 4, 20 and 25.
+            //
+            // So `Utiliser` posts message 20 with the object, and
+            // whichever resident chunk subscribes to it decides -
+            // which is why a player says the key "is automatically
+            // used when you are near the location where you should
+            // use it": proximity is which SCENE is resident, and the
+            // handler is its own. Nothing in the Session posted a
+            // message before this.
+            const bool ran = session.postMessage(20, objIdx);
+            const auto& m = session.messagesRun();
+            std::printf("sneak: Utiliser '%s' -> message 20, sender "
+                        "object %d - %s\n", rec->name.c_str(), objIdx,
+                        ran && !m.empty()
+                          ? (m.back().table + " table handles it").c_str()
+                          : "no resident chunk subscribes to it");
+          }
+          // ...and THEN the decision. `sub_49BEA0` calls
+          // `sub_42B420` (the announce, above) and `sub_42B470` (this)
+          // in that order, so both happen on one confirm.
+          //
+          // `Utiliser`'s ONLY. `Utiliser sur` is `sub_49BF30`, a
+          // different callback that opens the combine and returns -
+          // it never calls `sub_42B470`. Run for BOTH verbs, this
+          // block would have `Utiliser sur` open the combine and then,
+          // on the same press, take the object IN HAND and close the
+          // device - where it means using on another object in the
+          // sneak, not interacting with the environment.
+          if (verb != 0) {
+            // the combine is open; the rows are waiting for object two
+          } else if (!rec->usable()) {
+            // THE ARM THAT WORKS, and it is the one WITHOUT the
+            // usable bit. Case 35's `loc_407314` loads the object's
+            // own model from its stem and returns result **1**, and
+            // `sub_42B470` then runs
+            // `sub_41C490(dword_930724, tag)`, which writes
+            // `player[+0xA4] = &unk_4E7EA0[tag * 96]` and attaches
+            // the model to him. So "Utiliser" on a key TAKES IT IN
+            // HAND - which is what a player then carries to a door.
+            // ...and it IS the hand now. `Session::useObject` is
+            // case 35's arm: allocate a `word_4E6CA0` slot for the
+            // id, drop the item from list 0, and hold that slot -
+            // which is exactly what `var.set.used_object` (75) reads
+            // back. The MODEL attach (`sub_437400`/`sub_4374E0`
+            // inside `sub_41C490`) is the renderer's half and is
+            // still not done, so nothing appears in his hand.
+            const int slot = session.useObject(objIdx);
+            std::printf("sneak: '%s' -> IN HAND, slot %d (case 35 "
+                        "result 1, sub_41C490 sets player+0xA4). A "
+                        "zone whose activate script reaches opcode 75 "
+                        "will now see object %d; the model attach is "
+                        "not ported, so it is invisible\n",
+                        rec->name.c_str(), slot, objIdx);
+            // `sub_42B470` returns 1 on this arm alone; `sub_49BEA0`
+            // turns that into `[slot+8] = 3`.
+            useClosedSneak = true;
+        } else {
+            // ---- THE CONSUMABLE ARM, and it now CONSUMES ----------
+            //
+            // `Game_HandleEvent` case 35, the `rec+4 & 1` branch:
+            //
+            //     Object_ApplyEffect(rec, Actor_IdBySlot(Actor_Player()));
+            //     ObjectList_RemoveAt(0, row);        // result 2
+            //
+            // `Object_ApplyEffect` (0x00409780), the consumable half
+            // (`rec+4 & 0x20` clear): `rec+6` picks the property
+            // (`omk::effectProperty` - 6 is *Vie*), `rec+8` is added
+            // to the current value through `Actor_GetProperty` /
+            // `Actor_SetProperty`, and a sum past 0xFFFF becomes
+            // 0xFFFF (`v7 = -1`). The setter applies its own per-
+            // property clamp, which `writeActorProperty` carries.
+            //
+            // Announcing the apply without running it leaves a medkit
+            // doing nothing and staying in the bag.
+            //
+            // NOT ported, labelled: the `rec+4 & 0x20` arm (weapons,
+            // ammunition, seteks, rings - the valuables), which writes
+            // property 35's ammunition slots and 4/5; nothing usable
+            // AND valuable reaches it through this verb in practice,
+            // and it is left announcing rather than guessed.
+            const int prop = omk::effectProperty(rec->effect);
+            std::int32_t before = -1, after = -1;
+            if (prop > 0 && !rec->valuable()) {
+                const auto pr = state.rawMutable().subspan(
+                    static_cast<std::size_t>(omk::GameState::kPlayerRecord),
+                    static_cast<std::size_t>(omk::GameState::kPlayerRecordSize));
+                omk::readActorProperty(pr, prop, before);
+                std::int32_t next = before + rec->amount;
+                if (next > 0xFFFF) next = 0xFFFF;             // `v7 = -1`
+                omk::writeActorProperty(pr, prop, next);
+                omk::readActorProperty(pr, prop, after);      // the setter's clamp
+                state.listRemove(0, objIdx);                  // ObjectList_RemoveAt(0, row)
+            }
+            blip(uiSoundPcm(13));               // `sub_42B470`: interface sound 13
+            if (after >= 0)
+                std::printf("sneak: '%s' USED - property %d %d -> %d "
+                            "(+%d, effect %d), and it leaves the bag "
+                            "(case 35 result 2)\n",
+                            rec->name.c_str(), prop, before, after,
+                            rec->amount, rec->effect);
+            else
+                std::printf("sneak: '%s' is a consumable on the VALUABLES "
+                            "arm of Object_ApplyEffect (effect %d), which "
+                            "is not ported - announced, not run\n",
+                            rec->name.c_str(), rec->effect);
+            // `sub_42B470` returned 0, so `sub_49BEA0` takes
+            // `loc_49BEF8`: reset the row list and
+            // `sub_42A370(screen, unk_4DEE50)` - back to the
+            // INVENTORY page, screen still open.
+            walk->installPanel(omk::kPanelSneakInventory);
+          }
+        }
+    }
+}
+
+
+// THE CITY MAP PAGE: the city's sheet, the player's pin and the addresses the resident chunk can show (from `screensSneakRows`)
+void PlayState::screensSneakMap(const omk::UiPanel*& pn,
+                                omk::ScreenComposer::CityMapView& cityView,
+                                omk::ScreenComposer& comp) {
+    auto& session = *session_;
+    const auto& fs = *fs_;
+    if (pn && pn->addr == omk::kPanelSneakMap) {
+        static std::string cityBmpStem;
+        static omk::Surface cityBmp;
+        const std::string stem = session.setName();
+        if (stem != cityBmpStem) {
+            cityBmpStem = stem;
+            // `sprintf("Images\\%s.bmp")` then `fopen`. DataFs
+            // resolves case-insensitively, which is what the shipped
+            // lower-case `anekbah.bmp` against an upper-case set name
+            // needs.
+            cityBmp = omk::surfaceFromBmp(fs.read("IMAGES/" + stem + ".bmp"));
+        }
+        cityView = omk::ScreenComposer::CityMapView{};
+        cityView.sheet = cityBmp.valid() ? &cityBmp : nullptr;
+        cityView.row = cityMaps.findCity(stem);
+        cityView.playerX = session.playerPos()[0];
+        cityView.playerZ = session.playerPos()[2];
+        cityView.playerFacing = session.playerYaw();
+        {
+            const auto raw = state.raw();
+            const std::size_t rec =
+                static_cast<std::size_t>(omk::GameState::kPlayerRecord);
+            for (std::size_t i = rec + 8;
+                 i < raw.size() && raw[i] != std::byte{0}; ++i)
+                cityView.playerName.push_back(static_cast<char>(raw[i]));
+        }
+        int unplaced = 0;
+        if (cityView.row) {
+            const auto& rs = session.residentSlot(session.activeSlot());
+            for (const auto& d : destinations) {
+                if (!state.bit(omk::StateArray::AddressEnabled, d.bit)) continue;
+                const std::string place =
+                    omk::cityMapPlaceName(d.name, cityView.row->name);
+                if (place.empty()) continue;
+                omk::ScreenComposer::CityMapView::Marker mk;
+                mk.name = place;
+                if (const omk::CityPlaceRow* pr = cityMaps.findPlace(place)) {
+                    mk.x = pr->pos[0];
+                    mk.z = pr->pos[2];
+                } else {
+                    const omk::Address* ad = nullptr;
+                    for (const auto& x : rs.addresses)
+                        if (x.id == d.bit) ad = &x;
+                    if (!ad) { ++unplaced; continue; }
+                    mk.x = ad->pos[0];
+                    mk.z = ad->pos[2];
+                }
+                cityView.markers.push_back(mk);
+            }
+        }
+        comp.setCityMap(&cityView);
+        static std::string mapTold;
+        const std::string said =
+            "set '" + stem + "' -> " +
+            (cityBmp.valid() ? "Images/" + stem + ".bmp " +
+                 std::to_string(cityBmp.w) + "x" + std::to_string(cityBmp.h)
+                             : std::string("no bitmap")) +
+            ", city " + (cityView.row ? cityView.row->name + " id " +
+                         std::to_string(cityView.row->id)
+                                      : std::string("none (tag -1)")) +
+            ", " + std::to_string(cityView.markers.size()) +
+            " markers, " + std::to_string(unplaced) + " unplaced";
+        if (said != mapTold) {
+            mapTold = said;
+            std::printf("sneak map: %s\n", said.c_str());
+        }
+    }
+}
+
+
+// THE IDENTITY PAGE: the character's sheet, its text read through the record's pointers (from `screensSneakRows`)
+void PlayState::screensSneakIdentity(const omk::UiPanel*& pn,
+                                     omk::ScreenComposer::PlayerSheet& playerSheet,
+                                     omk::ScreenComposer& comp) {
+    const auto& fs = *fs_;
+    if (pn && pn->addr == omk::kPanelSneakIdentity) {
+        static const auto sneakText = omk::iamStrings(fs, "IAM/Sneak");
+        playerSheet.text = sneakText;
+        const auto raw = state.raw();
+        const auto cstr = [&](std::size_t at) {
+            std::string s;
+            for (std::size_t i = at; i < raw.size() && raw[i] != std::byte{0}; ++i)
+                s.push_back(static_cast<char>(raw[i]));
+            return s;
+        };
+        const std::size_t rec = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
+        const auto u32at = [&](std::size_t at) {
+            std::uint32_t v = 0;
+            for (int k = 0; k < 4; ++k)
+                v |= static_cast<std::uint32_t>(raw[at + k]) << (8 * k);
+            return v;
+        };
+        playerSheet.str = {
+            {0, cstr(rec + 108)}, {6, cstr(rec + 8)},   {9, cstr(rec + 128)},
+            {10, cstr(rec + 136)}, {11, cstr(rec + 40)}, {12, cstr(rec + 116)},
+            {13, cstr(rec + 124)},
+            // 14 and 15 dereference the record's `+4` and `+0`, which
+            // `State_Apply` plants as the two bio blocks at image 592
+            // and 336 (`GameState::relocate`). The viewer's copy is not
+            // relocated - its `+0`/`+4` still hold what the save
+            // stored - so the blocks those pointers always designate
+            // are read directly.
+            {14, cstr(static_cast<std::size_t>(omk::GameState::kBio[1]))},
+            {15, cstr(static_cast<std::size_t>(omk::GameState::kBio[0]))},
+        };
+        static bool bioTold = false;
+        if (!bioTold) {
+            bioTold = true;
+            std::printf("sneak: identity bio pointers as stored +0 %#x +4 %#x "
+                        "(State_Apply plants %d / %d)\n", u32at(rec + 0), u32at(rec + 4),
+                        omk::GameState::kBio[0], omk::GameState::kBio[1]);
+        }
+        const auto i16at = [&](std::size_t at) {
+            return static_cast<int>(static_cast<std::int16_t>(
+                static_cast<std::uint16_t>(raw[at]) |
+                static_cast<std::uint16_t>(static_cast<std::uint16_t>(raw[at + 1]) << 8)));
+        };
+        // The integers event 44 answers from the same record, for both
+        // contents: 8 the age, and the Caracteristiques - 1 Energie
+        // `+170`, 16 Attaque `+160`, 19 Maitrise `+166`, 17 Resistance
+        // `+162`, 3 Vitesse `+158`, 18 Esquive `+164`, 2 Mana `+156`.
+        playerSheet.num = {{8, i16at(rec + 154)}, {1, i16at(rec + 170)},
+                           {16, i16at(rec + 160)}, {19, i16at(rec + 166)},
+                           {17, i16at(rec + 162)}, {3, i16at(rec + 158)},
+                           {18, i16at(rec + 164)}, {2, i16at(rec + 156)}};
+        static std::string characteristicsTold;
+        std::string cs;
+        for (int p : {1, 16, 19, 17, 3, 18, 2})
+            cs += " | " + std::to_string(p) + "=" + std::to_string(playerSheet.num[p]);
+        if (cs != characteristicsTold) {
+            characteristicsTold = cs;
+            std::printf("sneak: characteristics sheet%s (rank string %d)\n", cs.c_str(),
+                        playerSheet.num[19] / 41 <= 4 ? 36 + playerSheet.num[19] / 41 : -1);
+        }
+        if (const omk::UiList* tabs = uiWidgets.listAt(omk::kListSneakTabs))
+            if (!tabs->items.empty())
+                for (int c = 0; c < 3; ++c)
+                    playerSheet.icon[c] = static_cast<std::uint8_t>(tabs->items.front().rgb[c]);
+        comp.setPlayerSheet(&playerSheet);
+        // ---- THE CHARACTER VIEW (`sub_4778E0`, step 4) ---------------
+        //
+        // Built once per player model - the engine builds it in the
+        // sneak's open; only this page shows it. The bank is the
+        // LITERAL "F1AVNT.CTL" the open pushes (0x004DF5EC), whatever
+        // the player's own; `Cef_DefaultGroup` is the first group with
+        // flag 1 and `Cef_DefaultClip` that group's flag-0x20 entry's
+        // clip, NOT followed through a goto; `Anim_SetFrame(node, clip,
+        // 0.0, 1.0)` applies frame 1 - key 2, key 0 being the rest
+        // sentinel - to every node, the root's rotation included.
+        // `Anim_RootDelta`'s 0 -> 1 step moves the node, which the
+        // camera does not follow (it targets the model's centre), so
+        // it is not applied here.
+        static std::string characterBuiltFor;
+        if (characterBuiltFor != playerModel) {
+            characterBuiltFor = playerModel;
+            CharModel* cm = charModelFor(playerModel);
+            const std::string characterBank = "F1AVNT";   // 0x004DF5EC, literal
+            CharBank* cb = charBankFor(characterBank);
+            int entry = -1, clip = -1;
+            int clipFrames = 0;
+            std::string firstTrack;
+            if (cb && cb->ready)
+                for (const auto& g : cb->ctl.groupList)
+                    if (g.flags & 1u) { entry = g.defaultEntry; break; }
+            if (cb && entry >= 0 && entry < static_cast<int>(cb->ctl.states.size()))
+                clip = cb->ctl.states[static_cast<std::size_t>(entry)].clip;
+            int bound = 0;
+            if (cm && cm->ready && clip >= 0 &&
+                clip < static_cast<int>(cb->ctl.clips.size())) {
+                omk::NodeTracks t;
+                const auto d = omk::animDescriptor(
+                    cb->data, cb->ctl.clips[static_cast<std::size_t>(clip)].offset);
+                if (d && d->frames > 0 && !d->tracks.empty()) {
+                    clipFrames = d->frames;
+                    firstTrack = d->tracks.front().name;
+                    t.count = static_cast<int>(d->tracks.size());
+                    t.frames = 1;
+                    t.rootTrack = -1;
+                    // BY THE TRACK'S KEY (`omk::meshOfTrack`), as
+                    // `Anim_BindNodeTrack` binds. F1AVNT's tracks are
+                    // `Sh`-prefixed (`ShBassin`) and Kay'l's meshes
+                    // `U`-prefixed (`UBassin`), so an exact name binds 0
+                    // of 19 - the T-pose this drew first - and the bone
+                    // suffix that replaced it only coincided with the key
+                    // (19/19 the same on the identity page).
+                    for (const auto& tr : d->tracks) {
+                        const std::int32_t mi = omk::meshOfTrack(tr, cm->meshes);
+                        if (mi >= 0) ++bound;
+                        t.ids.push_back(mi);
+                    }
+                    t.quats.assign(1, {});
+                    t.trans.assign(1, {0.0f, 0.0f, 0.0f});
+                    t.quats[0].resize(d->tracks.size());
+                    for (std::size_t i = 0; i < d->tracks.size(); ++i) {
+                        const omk::AnimTrack& tr = d->tracks[i];
+                        if (!tr.rotOffset || tr.rotKeys <= 0) continue;
+                        const int key = tr.rotKeys > 2 ? 2 : tr.rotKeys - 1;   // frame 1
+                        const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(key);
+                        if (o + 16 > cb->data.size()) continue;
+                        // little-endian floats (PORTING A9), not a memcpy
+                        const std::byte* src = cb->data.data() + o;
+                        t.quats[0][i] = {omk::loadLE<float>(src), omk::loadLE<float>(src + 4),
+                                         omk::loadLE<float>(src + 8), omk::loadLE<float>(src + 12)};
+                    }
+                    const auto pose = omk::composePose(cm->meshes, t, 0, false);
+                    omk::Geometry posed = cm->rest;
+                    omk::applyPose(posed, cm->rest, cm->meshes, pose);
+                    uiModels.setCharacter(std::move(posed), cm->tex, playerModel);
+                }
+            }
+            // The bank from the variable it was loaded under, and the
+            // clip's own length and first track: H1AVNT also opens on
+            // entry 0 'H_STAND', clip 0, and binds 19 by exact name, so
+            // only these tell the literal F1AVNT from the player's bank.
+            std::printf("sneak: identity character '%s' - bank %s, default entry %d "
+                        "'%s', clip %d (%d frames, first track '%s'), %d tracks bound, "
+                        "frame 1\n", playerModel.c_str(), characterBank.c_str(),
+                        entry,
+                        cb && entry >= 0 && entry < static_cast<int>(cb->ctl.states.size())
+                            ? cb->ctl.states[static_cast<std::size_t>(entry)].name.c_str() : "",
+                        clip, clipFrames, firstTrack.c_str(), bound);
+        }
+        static std::string identityTold;
+        std::string said;
+        for (int p : {6, 8, 0, 13, 9, 10, 12, 11, 15, 14})
+            said += " | " + std::to_string(p) + "=" +
+                    (p == 8 ? std::to_string(playerSheet.num[8]) : playerSheet.str[p]);
+        if (said != identityTold) {
+            identityTold = said;
+            std::printf("sneak: identity sheet%s\n", said.c_str());
+        }
+    }
+}
+
+
+// THE EXAMINE PAGE: the selected object's model or picture, and its description (from `screensSneakRows`)
+void PlayState::screensSneakExamine(const omk::UiPanel*& pn, omk::ScreenComposer& comp) {
+    auto& session = *session_;
+    const auto& fs = *fs_;
+    if (pn && pn->addr == omk::kPanelSneakExamine) {
+        const auto carried =
+            omk::objectList(state, omk::ObjectList::Carried);
+        // BY ADDRESS: the examine page carries no row list of its
+        // own, and the selections are a static record keyed by list,
+        // so the row chosen two panels ago is still there.
+        // ...and the TAG here too: `sub_49BFF0` latches
+        // `dword_4DE74C = selected_widget[+0x3C]` when Examiner is
+        // confirmed, and the page draws whatever that names.
+        const int row = walk->selectedRow(omk::kListSneakRows);
+        // `sub_49BFF0`'s last call, `sub_42B420(tag, 4)`: event 30
+        // answers the object's slot and event 43 runs
+        // `Message_RunHandlers(4, player, slot)`, whose sender is
+        // `ObjectSlot_Id(slot)` - the object. The port never posted
+        // it, so the GLOBAL table's handler never ran from here.
+        if (walk->takeExamineMessage()) {
+            const int eid = row >= 0 && static_cast<std::size_t>(row) < carried.size()
+                ? carried[static_cast<std::size_t>(row)] : -1;
+            const bool ran = eid >= 0 && session.postMessage(4, eid);
+            const auto& runs = session.messagesRun();
+            std::printf("sneak: Examiner row %d id %d -> message 4 %s\n", row, eid,
+                        ran && !runs.empty()
+                            ? ("handled by the " + runs.back().table + " table").c_str()
+                            : "(no resident chunk subscribes)");
+        }
+        if (row >= 0 && static_cast<std::size_t>(row) < carried.size()) {
+            const int idx = carried[static_cast<std::size_t>(row)];
+            if (idx >= 0 &&
+                static_cast<std::size_t>(idx) < objectRecords->size()) {
+                const auto& rec = (*objectRecords)[static_cast<std::size_t>(idx)];
+                // Case 30 loads the model for whatever is SELECTED,
+                // whatever its kind, and case 40 hands the
+                // description back on every arm - so the page gets
+                // both: the object's own prop and its text.
+                // WHICH CONTENT. Two captures of the original
+                // settle it between them: Kay'l's apartment key is
+                // kind 0 and shows a 3D model with a one-line label,
+                // and the MK400 notice is kind 15 and shows TEXT
+                // ONLY - no prop behind it, though its record does
+                // name one (PAPIER). So the document kinds 15 and 16
+                // suppress the model, and everything else shows it.
+                const auto k = uiModels.examine(
+                    fs, (rec.kind == 15 || rec.kind == 16) ? rec.kind : 15,
+                    (rec.kind == 15) ? std::string() : rec.stem);
+                examineText = rec.description;
+                comp.setExamineText(&examineText);
+                // ...and where it is scrolled to. The composer
+                // CLAMPS this against the laid-out height, the way
+                // `Ui_ItemTextStyle` clamps `dword_6A5090`, so it
+                // takes the walk's own field rather than a copy.
+                comp.setTextScroll(&walk->textScroll());
+                if (rec.stem != examineTold) {
+                    examineTold = rec.stem;
+                    std::printf("sneak: examine '%s' kind %d -> %s\n",
+                                rec.name.c_str(), rec.kind,
+                                k == omk::UiModels::Examine::Model ? "3D model"
+                                : k == omk::UiModels::Examine::Document
+                                  ? "document bitmap" : "nothing (case 40 result 2)");
+                }
+            }
+        }
+    }
+}
+
+
+// THE INVENTORY'S ROWS on the sneak's pages: each carried object's name and count, the bar's message in their place for 5000 ms (from `screensSneakRows`)
+void PlayState::screensSneakInventoryRows(int rowKind, omk::Inventory& inv,
+                                          const omk::UiPanel*& pn, omk::ScreenComposer& comp) {
+    if ((rowKind == 0 || rowKind == 2) && inv.openedList() >= 0) {
+        const omk::ObjectList rowSource = rowKind == 2
+            ? omk::ObjectList::Memos : omk::ObjectList::Carried;
+        const auto carried = omk::objectList(state, rowSource);
+        // ---- `sub_42AAE0`, THE ROW BINDER --------------------
+        //
+        // The nine widgets are a WINDOW onto the list, and which of
+        // them are live is decided per row rather than by drawing
+        // whatever has text:
+        //
+        //     for each widget k of the list:
+        //       if (k + window >= list+24)     // past the end
+        //           item+60 = -1;              // tag: empty
+        //           set item 0x40000001;       // and NOT DRAWN
+        //           set item 0x20000004;       // and unselectable
+        //       else
+        //           item+60 = k + window;      // the row it shows
+        //           clear those two;
+        //
+        // so the engine draws only the rows that HOLD something -
+        // two of nine in the user's capture - and that is the gate
+        // `Ui_DrawItemFill`'s bars are behind. `list+24` is the
+        // count the channel reports (case 29).
+        //
+        // THE WINDOW is `sub_42AFF0`'s, kept in widget 0's `+0x3C`
+        // and moved by the mover - so the text follows the scroll
+        // rather than always starting at row 0. A window fixed at 0
+        // truncates any list longer than the nine widgets: a tenth
+        // carried object could not be reached.
+        const omk::UiPanel* rp = uiWidgets.at(omk::kPanelSneakInventory);
+        for (const auto& l : (rp ? rp->lists : pn->lists)) {
+            if (l.addr != omk::kListSneakRows) continue;
+            const std::size_t window = static_cast<std::size_t>(
+                std::max(0, walk->rowWindow(omk::kListSneakRows)));
+            for (std::size_t k = 0; k < l.items.size(); ++k) {
+                const std::size_t row = k + window;
+                if (row >= carried.size()) {
+                    // `sub_42AAE0`: past the end, so tag -1 and
+                    // `0x40000001` - not drawn and not selectable.
+                    sneakHidden.insert(l.items[k].addr);
+                    continue;
+                }
+                // `playerCount` is case 33's other half and is NOT
+                // read: for kinds 2..6 the quantity lives in the
+                // player record and which field it is has not been
+                // established, so those rows show the name without
+                // its " - N". Kinds 7..11 take the item's own `+12`
+                // and are complete.
+                sneakRows[l.items[k].addr] =
+                    inv.displayName(carried[row], 0);
+            }
+        }
+        walk->bindRows(omk::kListSneakRows,
+                       static_cast<int>(carried.size()),
+                       walk->rowWindow(omk::kListSneakRows));
+        // One line per change, so a headless run can be held to the
+        // rows the page bound - and to WHICH list they came from.
+        // ---- THE MEMO'S BODY, in the page's own box ----------------
+        //
+        // Item 0x004DEA98's draw hook `0x00477F60` raises event 40 on
+        // the item's `+0x3C` and lays out what it answers - and that
+        // tag field IS `dword_4DEAD4`, which the row hook writes with
+        // the SELECTED row's tag whenever the row kind is 2. Case 40
+        // hands back the object record's description on every arm, so
+        // the box shows the selected memo's text. The composer draws it
+        // through the same path as the examine page's.
+        // ...and only while the BOX IS SHOWN. `0x0049D750` hides it
+        // when the page is built and `0x0049D8B0` lights it once the
+        // rows are the current list, so a memo body on an opened page
+        // nobody has moved into is this port's invention, not the
+        // game's.
+        if (rowKind == 2 && walk->memoBodyShown()) {
+            const int sel = walk->selectedRow(omk::kListSneakRows);
+            const int memo = sel >= 0 && sel < static_cast<int>(carried.size())
+                ? carried[static_cast<std::size_t>(sel)] : -1;
+            if (const omk::ObjectRecord* mr = memo > 0 ? inv.record(memo) : nullptr) {
+                examineText = mr->description;
+                comp.setExamineText(&examineText);
+                comp.setTextScroll(&walk->textScroll());
+                // The body, named from the memo the rows selected and
+                // measured rather than described, so a check can hold
+                // it: the id, its heading, and how long the text is.
+                memoBodyPending = "row " + std::to_string(sel) + " id " +
+                                  std::to_string(memo) + " '" + mr->name + "'";
+            }
+        }
+        if (rowKind == 2) {
+            // The list is named from the SOURCE the rows were read
+            // from, not from a literal: a mutation that made this page
+            // read list 0 still printed "object list 2" and only the
+            // ids gave it away.
+            static std::string memosTold;
+            const int from = static_cast<int>(rowSource);
+            std::string said = "object list " + std::to_string(from) + ", " +
+                               std::to_string(carried.size()) + " rows:";
+            for (int id : carried) said += " " + std::to_string(id);
+            if (said != memosTold) {
+                memosTold = said;
+                std::printf("sneak: memory page - %s\n", said.c_str());
+            }
+        }
+        // ---- THE CLOCK, and WHAT THE ECHO BAR NEEDS ---------
+        //
+        // Two of the device's rows are filled by callbacks of its
+        // own, and both are readable - `sub_0049DC20` and
+        // `sub_0049E090` carry no `proc` label (nothing calls them;
+        // they are dwords in the widget table, CLAUDE.md 1's trap),
+        // so `asmfn.py` returns a neighbour and the range has to be
+        // dumped by hand.
+        //
+        // THE ECHO BAR IS NOT COMPOSED HERE. Putting the selected
+        // item's own label into `sneakRows` is right for three of
+        // the function's seven arms and silent for the other four -
+        // and the four include the one the page spends its time in,
+        // the TAB LABEL with `  (n / 18)` after it, so the bar would
+        // be blank whenever the selection sits in the row list, which
+        // is whenever the player is looking at his inventory.
+        // `ScreenComposer::echoBarText` runs the whole function, and
+        // reports what it drew in `ScreenFrame::echoBar` - a
+        // line composed where the drawing happens can be asserted;
+        // one composed here could only report the intention.
+        //
+        // What the bar cannot get for itself is the two counts:
+        // `sub_42B1C0(4)` and `(5)` raise `Game_HandleEvent(44)` on
+        // the player, whose cases 4 and 5 are the player record's
+        // `+172` and `+174` - the seteks and the anneaux.
+        comp.setPlayerCounts(state.money(), state.rings());
+        {
+            for (const auto& l : pn->lists) {
+                for (const auto& e : l.items) {
+                    if (e.textFn == omk::kTextFnSneakClock) {
+                        // The clock. Both halves are the engine's own
+                        // formatters, already ported and checked
+                        // (`sub_0041E690`'s integer division); the
+                        // " - " joining them is read off the user's
+                        // screenshot - "12 Nadim 7216 - 13:01:15" -
+                        // and is the one part of this line that is
+                        // not from the code.
+                        sneakRows[e.addr] =
+                            omk::formatDate(state.clockDay()) + " - " +
+                            omk::formatTime(state.clock());
+                    }
+                }
+            }
+        }
+        if (!sneakTold++) {
+            // Count the ROWS, not the map: since the echo bar and
+            // the clock share `sneakRows` this reported "2 rows
+            // shown" for a list holding one object.
+            std::size_t rows = 0;
+            for (const auto& l : pn->lists)
+                if (l.addr == omk::kListSneakRows)
+                    for (const auto& e : l.items)
+                        rows += sneakRows.count(e.addr);
+            std::printf("sneak: object list %d holds %zu, %zu rows "
+                        "shown, window at %d\n", inv.openedList(),
+                        carried.size(), rows,
+                        walk->rowWindow(omk::kListSneakRows));
+        }
+    }
+}
+
 
 // The shop's stock rows
 void PlayState::screensShopRows() {

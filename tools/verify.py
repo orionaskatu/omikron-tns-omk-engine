@@ -33412,10 +33412,12 @@ def c_engine_arrival_camera():
         # mutating op 73 out and watching this check pass - so the dispatch is
         # asserted structurally instead of being left untested.
         src = open(os.path.join(ROOT, "engine/src/script/area.cpp")).read()
-        # The dispatch became `Session::onCall`'s switch in batch 2 (T15/T16),
-        # so the structure asserted is the `case 73:` arm reaching
-        # `placeActorAt(call.fields[0])` before the next case.
-        wired = bool(re.search(r"case 73:(?:(?!case \d+:)[\s\S])*?placeActorAt\(call\.fields\[0\]\);", src))
+        # The dispatch is `Session::onCall`'s switch, so the structure asserted
+        # is op 73's arm (`case op::ActorGotoAddress:`, by name since the
+        # readability audit's step 2a) reaching `placeActorAt(call.fields[0])`
+        # before the next case.
+        wired = bool(re.search(r"case (?:73|op::ActorGotoAddress):(?:(?!case [\w:]+:)[\s\S])*?"
+                               r"placeActorAt\(call\.fields\[0\]\);", src))
         return (tuple(addr), placed, cam, res, surf, addEyeY, wired), \
                (((653, 7196, -79, 3019, 90), (654, 6753, 397, 3021, 0)),
                 (1, 654, 6753, 397, 3021, 0),

@@ -444,6 +444,22 @@ finding: a check that hashed a conversation frame would flicker.
   own "did you mean" (`Pedestrian` -> `omk::Pedestrian`); its member-name
   guard reads only real declarations. Guard 0 of 14; the crowd, traffic,
   shadow, particle and clip checks green.
+* step 12f - `worldCamera` (856) along its `if ... else if` chain: the
+  editing, slider, ride, taken, follow and script cameras' arms each a
+  method (their interiors, none needing a parameter); `phaseWorld` (949):
+  the player's become, every shown actor, the player's program, the sets,
+  the dialogue camera; `screensSneakRows` (867): the verbs, the map, the
+  identity, the examine and the inventory rows (`uiSound` a method first,
+  `uiSoundPcm`); `adventureScreenInput` (964): the opponent's motion, the
+  fight's report and end, the shoot mover, the water entry and the fall,
+  slide and landing. The tool's batch now tidies aliases ONCE, at the end -
+  a tidy deletes lines above the cuts still to come, which mis-placed one
+  cut by a line (`phaseWorldPlayerBecome` took the `if`'s interior: still
+  whole statements, verbatim, compile-checked). Guard 0 of 14; 57 camera,
+  sneak, fight, water and landing checks green but one - **`engine: arrival
+  camera`, red since step 2a**: its structural row matched `case 73:`, which
+  2a renamed `case op::ActorGotoAddress:`; it matches either now and is
+  shown to fail with the dispatch removed.
 
 ## 7. For the tutorial
 

@@ -778,6 +778,12 @@ struct PlayState {
     int phaseControl();   // the hand-over and the controller's frame
     int phaseModes();   // the pause's sound, the voices, dialogue mode, shoot mode, the quit and the pending load
     int phaseWorld();   // whoever is on screen, and the world when no screen is over it
+    void phaseWorldShown(int playerId);   // from `phaseWorld`
+    void phaseWorldPlayerProgram(int progPid);   // from `phaseWorld`
+    void phaseWorldPlayerBecome(int playerId, int& lastPlayerActor);   // from `phaseWorld`
+    void phaseWorldSets(bool& changed, bool& skyChanged);   // from `phaseWorld`
+    void phaseWorldDialogCamera(const omk::DialogCamera*& ca, const omk::DialogCamera*& cb,
+                                const omk::DialogPlayer& dlg);   // from `phaseWorld`
     int phaseScreens();   // the screens' rows and the HUDs
     int phasePresent();   // the fps counter, the fades, the flicker catcher and the present
 
@@ -819,6 +825,15 @@ struct PlayState {
     std::vector<std::uint32_t> xachenItems{};   // was a function-local static
     bool liftHandled{};
     void screensSneakRows();   // the sneak's inventory rows
+    void screensSneakVerbs(bool& useClosedSneak);   // from `screensSneakRows`
+    void screensSneakMap(const omk::UiPanel*& pn, omk::ScreenComposer::CityMapView& cityView,
+                         omk::ScreenComposer& comp);   // from `screensSneakRows`
+    void screensSneakIdentity(const omk::UiPanel*& pn,
+                              omk::ScreenComposer::PlayerSheet& playerSheet,
+                              omk::ScreenComposer& comp);   // from `screensSneakRows`
+    void screensSneakExamine(const omk::UiPanel*& pn, omk::ScreenComposer& comp);   // from `screensSneakRows`
+    void screensSneakInventoryRows(int rowKind, omk::Inventory& inv, const omk::UiPanel*& pn,
+                                   omk::ScreenComposer& comp);   // from `screensSneakRows`
     void screensShopRows();   // the shop's stock rows
     void screensMultiplanHints();   // Multiplan's rows and header, the Gandhar door's cursor, the hint shop
     void screensPuzzles();   // Den's locker, Gandhar's door, Xachen's cartridges
@@ -853,6 +868,12 @@ struct PlayState {
     void adventureCrowdPush();
     const char* soupMeshName(std::uint32_t tri) const;   // a playerSoup triangle's set mesh name   // the crowd push
     void adventureScreenInput();   // a screen has the input, and the world still runs
+    void adventureFightFoeMotion();   // from `adventureScreenInput`
+    void adventureFightReport();   // from `adventureScreenInput`
+    void adventureFightEnd(bool on, omk::Input& in);   // from `adventureScreenInput`
+    void adventureShootMoverTick();   // from `adventureScreenInput`
+    void adventureWaterEntry(unsigned int& standFl, bool& enteredWater, omk::Input& in);   // from `adventureScreenInput`
+    void adventureFallAndLanding(bool wasAir, bool wasSlide, bool& enteredWater, bool inWaterState);   // from `adventureScreenInput`
     void adventureSeated();   // seated, not driving; where the slider is after he gets out
     void adventureRide();   // the ride
     void adventureWalls();   // stuck between walls; where the floor ends
@@ -901,6 +922,12 @@ struct PlayState {
     std::vector<omk::Draw> draws{};
     bool outsideView(const float c[3], float r, bool bodies);
     void worldCamera();   // the letterbox, the camera, the instrument override
+    void worldCameraFollow();   // from `worldCamera`
+    void worldCameraEditing();   // from `worldCamera`
+    void worldCameraSlider();   // from `worldCamera`
+    void worldCameraRide();   // from `worldCamera`
+    void worldCameraTake();   // from `worldCamera`
+    void worldCameraScript();   // from `worldCamera`
     void feedCameraHead();   // camera subject kinds 1/3: the player's head, to the Session
     void worldTexturePool();   // the texture pool
     void worldProps();   // the world's props
@@ -985,6 +1012,7 @@ struct PlayState {
     std::vector<float> loadSlot(int screen, int slot);
     void present(const omk::Surface& pic);
     void blip(const std::vector<float>& v);
+    const std::vector<float>& uiSoundPcm(int id);   // an interface sound, decoded once
     int skeletonRootWalk(const CharModel& mo, const omk::NodeTracks& t);
     int skeletonRootOf(const CharModel& mo, const omk::NodeTracks& t);
     bool hasSeveralSkeletons(const CharModel& mo);

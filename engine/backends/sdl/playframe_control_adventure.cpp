@@ -2905,8 +2905,6 @@ void PlayState::adventureAction() {
         // hidden until a door zone's `area.goto 181, 22, 23`
         // brings them in - and until then their walls hold you in
         // the corridor and their floor turns you back.
-        static float lastGood[3] = {0.0f, 0.0f, 0.0f};
-        static bool  haveLastGood = false;
         static int   refusedTold = -1;
         bool drawn = false;
         if (under >= 0)

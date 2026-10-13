@@ -194,6 +194,7 @@ void PlayState::controlBinding() {
             playerRest.revision = ++worldGeoRev;
             playerMeshes.clear();
             if (const auto mh = omk::readHeader(md)) playerMeshes = omk::readMeshes(md, *mh);
+            playerHeadMesh = omk::headMeshOf(playerMeshes);
             playerBoneIdx.build(playerMeshes, omk::MeshNameIndex::shadowNames());
             // his PUSH spheres: the model's own list, hung from the feet
             // (`pushSpheresOf` - HO1_FN's four of 10.9), which is what
@@ -239,6 +240,9 @@ void PlayState::controlBinding() {
                 for (int k = 0; k < 3; ++k) su.pos[k] = session.playerPos()[k];
                 su.facing = handoverFacingKnown ? handoverFacing : session.playerYaw();
                 player = std::make_unique<omk::PlayerController>(su);
+                haveLastGood = false;
+                rootAccum = rootLast = 0.0f;
+                rootState = -12345;
                 // THE CAMERA'S SOLIDS. `sub_417070` casts from the
                 // camera's target to 1.2x its eye distance and pulls
                 // the eye in to the first hit; the engine's ray
@@ -401,6 +405,7 @@ void PlayState::controlBinding() {
     if (player && session.placementSeq() != placementSeen) {
         placementSeen = session.placementSeq();
         player->placeAt(session.playerPos(), session.playerYaw());
+        haveLastGood = false;   // a placement is not a step: nothing to undo to
         std::printf("frame %ld: actor.goto_address %d - the player put down at "
                     "%.0f %.0f %.0f facing %.0f\n", frameNo, session.playerAddress(),
                     player->pos()[0], player->pos()[1], player->pos()[2],

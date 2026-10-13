@@ -335,6 +335,7 @@ struct PlayState {
     std::vector<std::byte> playerCtlData{};
     std::vector<omk::Mesh> playerMeshes{};
     omk::MeshNameIndex playerBoneIdx{};   // rebuilt wherever `playerMeshes` is
+    int playerHeadMesh{-1};               // `headMeshOf(playerMeshes)`, set with them
     std::vector<omk::Texture> playerTex{};
     omk::Geometry playerRest{};
     omk::Geometry playerPosed{};
@@ -400,6 +401,14 @@ struct PlayState {
     std::vector<float> playerMeshRot{};   // ...and each one's world rotation, nine
     bool playerMeshAtKnown{};
     int placementSeen{};   // Session::placementSeq() as last consumed
+    // PER BODY, reset where the controller is built (`controlBinding`):
+    // where his step was last accepted, for the hidden-set undo
+    // (`Walk_ProbeGround`'s state-1 arm) - and forgotten on a placement too,
+    // which is not a step - and the root's vertical sum across states
+    float lastGood[3]{};
+    bool haveLastGood{};
+    float rootAccum{}, rootLast{};
+    int rootState{-12345};
     long heldFrames{};   // frames under player.anim.hold
     std::string mediaText{};
     double mediaTextFrames{};

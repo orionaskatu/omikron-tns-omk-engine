@@ -758,17 +758,7 @@ void PlayState::worldCrowd() {
             : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
         // THE FREE LOOK's head turn, `+324` on the head with no reset
         // (`omk::turnHeadBy`) - on while he looks and while it eases back
-        {
-            static const void* lookFor = nullptr;
-            static std::size_t lookForN = 0;
-            static int lookHead = -1;
-            if (lookFor != playerMeshes.data() || lookForN != playerMeshes.size()) {
-                lookFor = playerMeshes.data();
-                lookForN = playerMeshes.size();
-                lookHead = omk::headMeshOf(playerMeshes);
-            }
-            omk::turnHeadBy(pose, playerMeshes, lookHead, player->headPitch(), player->headYaw());
-        }
+        omk::turnHeadBy(pose, playerMeshes, playerHeadMesh, player->headPitch(), player->headYaw());
         // OUTSIDE THE VIEW, as any actor: `sub_48D3B0` skips a node
         // outside the four side planes before its matrices or its
         // vertices, and the Bowie sequence flies the camera round the
@@ -923,8 +913,6 @@ void PlayState::worldCrowd() {
         // => character suddenly way higher than they should be."
         //
         // Carried, the pair nets out: +24.3 then -24.6 is -0.3.
-        static float rootAccum = 0.0f, rootLast = 0.0f;
-        static int   rootState = -12345;
         float rootDrop = 0.0f;
         if (pt && !pt->trans.empty()) {
             const int rf = player->poseFrame();
@@ -1199,15 +1187,7 @@ void PlayState::worldCrowd() {
         // the head mesh, looked up again only when the player's model
         // changes (`player.become`) - it was an O(n^2) walk and a string
         // a mesh, every frame
-        static const void* headFor = nullptr;
-        static std::size_t headForN = 0;
-        static int headCached = -1;
-        if (headFor != playerMeshes.data() || headForN != playerMeshes.size()) {
-            headFor = playerMeshes.data();
-            headForN = playerMeshes.size();
-            headCached = omk::headMeshOf(playerMeshes);
-        }
-        if (const int hd = headCached;
+        if (const int hd = playerHeadMesh;
             hd >= 0 && static_cast<std::size_t>(hd) < pose.size()) {
             const float in[3] = {pose[static_cast<std::size_t>(hd)].pos[0] - playerRootXZ[0],
                                  pose[static_cast<std::size_t>(hd)].pos[1],

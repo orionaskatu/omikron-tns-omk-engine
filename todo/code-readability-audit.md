@@ -261,6 +261,41 @@ finding: a check that hashed a conversation frame would flicker.
   `mirror park`, `pool past 64`); the 3DS and Vita builds clean. None of the
   `OMK_*` names `verify.py` sets is dead: the seven not in the table are its
   own settings, build defines and paths.
+* step 6 - THE STATICS THAT HOLD STATE, read one by one (the reader's
+  choice, 2026-10-13, over §5's `Told` helper). Measured first: the viewer
+  has 156 mutable function-local statics - 78 log dedups ("told") in at least
+  six shapes (once, on change from a chosen first value, on a threshold, per
+  actor once, per actor on change, rate-limited with `>` or `>=`), so one
+  helper would either bend their semantics or carry every variant, and its
+  payoff is a log line printed again after a load; they stay. Of the other
+  78, ~50 are scratch buffers, instrument counters and harness parsing, and
+  ~25 hold state - read, and FOUR were wrong, each surviving a new body, a
+  placement or another screen:
+  - `lastGood` (the hidden-set undo, `Walk_ProbeGround`'s state-1 arm): the
+    engine undoes THIS FRAME'S MOVE; the port puts him back where his last
+    step was accepted, which after a placement or a new body is the place
+    before it. Now a `PlayState` member, forgotten on both.
+  - the root's vertical sum (`rootAccum`/`rootLast`/`rootState`): per BODY
+    in the engine (it is the node's offset), carried to a new controller
+    here with a stale base. Members, reset where the controller is built.
+  - the player's head-mesh index, cached by the mesh vector's ADDRESS and
+    size twice over: a rebuilt model landing on the freed block with the
+    same count kept the old body's index. `playerHeadMesh`, set where the
+    meshes are read.
+  - the shop's Analyser asked `UiModels::examine` only when the row
+    changed; the slot is shared with the sneak and the multiplan, which ask
+    every frame, so a preview loaded there since showed in the shop. Asked
+    every frame now (the slot keeps its stem: free); only the log is gated.
+  The rest are sound as they are: input edges and the flush re-arm
+  themselves, the media column and window title are keyed by their inputs,
+  `standApplied`/`characterProgPlayed` are once-per-run harnesses,
+  `characterBuiltFor` loads synchronously. Proof: the guard 0 of 14 differ
+  (no run meets a stale case), `shop open`, `head look`, `player vertical`,
+  `player jump`, `player landing`, `cupboard take` green; 3DS and Vita
+  build. **`engine: security rail` is RED at `cb68eb6` already**
+  (`(1, '346.5')`: one fall on level -2's running route, where none is
+  expected) - the same values before and after this step; recorded, not
+  bisected.
 
 ## 7. For the tutorial
 

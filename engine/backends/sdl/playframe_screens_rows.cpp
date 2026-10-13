@@ -1005,15 +1005,20 @@ void PlayState::screensShopRows() {
             const int row = walk->selectedRow(omk::kListShopRows);
             const int id = row >= 0 && row < static_cast<int>(ids.size())
                 ? ids[static_cast<std::size_t>(row)] : -1;
-            static int shopExamined = -1;
-            if (id > 0 && id != shopExamined &&
-                static_cast<std::size_t>(id) < objectRecords->size()) {
-                shopExamined = id;
+            // asked every frame, as the sneak and the multiplan ask: the
+            // examine slot is shared, so a preview another screen loaded
+            // since would otherwise show here (`UiModels::examine` keeps
+            // its own stem, so asking again is free)
+            static int shopExaminedTold = -1;
+            if (id > 0 && static_cast<std::size_t>(id) < objectRecords->size()) {
                 const auto& rec = (*objectRecords)[static_cast<std::size_t>(id)];
                 const auto k = uiModels.examine(fs, 15, rec.stem);
-                std::printf("shop: Analyser - object %d '%s', model %s\n", id,
-                            rec.stem.c_str(),
-                            k == omk::UiModels::Examine::Model ? "loaded" : "none");
+                if (id != shopExaminedTold) {
+                    shopExaminedTold = id;
+                    std::printf("shop: Analyser - object %d '%s', model %s\n", id,
+                                rec.stem.c_str(),
+                                k == omk::UiModels::Examine::Model ? "loaded" : "none");
+                }
             }
         }
         const int window = walk->rowWindow(omk::kListShopRows);

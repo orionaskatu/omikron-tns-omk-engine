@@ -72,10 +72,9 @@ void rotateEuler(const float eulerDeg[3], const float in[3], float out[3]) {
     // it IS `rotateYaw` above, term for term. Two things write +416 and +424 and
     // so can tell the two apart: `applyTurn` (`Cef_ApplyTurn`, a clip's own
     // turn) and the hurt shove.
-    const double k = 0.0174532925199433;
-    const double sx = std::sin(eulerDeg[0] * k), cx = std::cos(eulerDeg[0] * k);
-    const double sy = std::sin(eulerDeg[1] * k), cy = std::cos(eulerDeg[1] * k);
-    const double sz = std::sin(eulerDeg[2] * k), cz = std::cos(eulerDeg[2] * k);
+    const double sx = std::sin(eulerDeg[0] * kDegToRad), cx = std::cos(eulerDeg[0] * kDegToRad);
+    const double sy = std::sin(eulerDeg[1] * kDegToRad), cy = std::cos(eulerDeg[1] * kDegToRad);
+    const double sz = std::sin(eulerDeg[2] * kDegToRad), cz = std::cos(eulerDeg[2] * kDegToRad);
     const double m[9] = {cz * cy,                -(sz * cy),              sy,
                          sy * sx * cz + sz * cx, cz * cx - sx * sz * sy,  -(sx * cy),
                          sz * sx - sy * cz * cx, cx * sz * sy + sx * cz,  cy * cx};
@@ -461,7 +460,7 @@ int PlayerController::waterClimbOut(float* platformOverWater) {
     const auto surf = walker_.probeFlags(w[0], w[1] - crown, w[2], fl);
     if (!surf || !(fl & 0x20000000u)) return 1;
     const double from = *surf - 78.740158;                   // two metres over the water
-    const double yaw = static_cast<double>(euler_[1]) * 0.0174532925199433;
+    const double yaw = static_cast<double>(euler_[1]) * kDegToRad;
     const double sx = std::sin(yaw) * 31.496063 * 0.2, sz = std::cos(yaw) * 31.496063 * 0.2;
     double px = w[0], pz = w[2], platform = 0.0;
     int k = 0;

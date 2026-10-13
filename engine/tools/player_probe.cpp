@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
     const double camDist = xzDist(cam.eye, pc.pos());
     // forward is (sin yaw, -cos yaw) - the ADDRESSES convention, and the
     // heading recipe `atan2(z, x) + 90` is its inverse
-    const double fy = pc.facing() * 0.0174532925199433;
+    const double fy = pc.facing() * omk::kDegToRad;
     const double fwd[2] = {std::sin(fy), -std::cos(fy)};
     const double camBehind = -((cam.eye[0] - pc.pos()[0]) * fwd[0] +
                                (cam.eye[2] - pc.pos()[2]) * fwd[1]);

@@ -173,7 +173,7 @@ RadarFrame Radar::draw(Surface& fb, const RadarView& v, const std::vector<RadarA
 
     // the local camera: the live one's focal lengths scaled to the box
     const int boxW = (v.right - v.left) & 0xFFFF, boxH = (v.bottom - v.top) & 0xFFFF;
-    const float tanHalf = static_cast<float>(std::tan(double(v.fovDeg) * 0.5 * 0.0174532925199433));
+    const float tanHalf = static_cast<float>(std::tan(double(v.fovDeg) * 0.5 * kDegToRad));
     const float f228 = static_cast<float>(double(v.screenW >> 1) / tanHalf);
     const float f232 = static_cast<float>(double(v.screenH >> 1) * 1.3333334 / tanHalf);
     constexpr double k07 = 0.699999988079071;         // 0x4BC2F4

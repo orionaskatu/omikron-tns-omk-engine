@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Astaroth's fight (`actor/astaroth.h`, `todo/astaroth.md`).
 #include "actor/astaroth.h"
+#include "o3de/vecmath.h"
 
 #include "actor/player.h"      // rotateYaw
 #include "actor/shootfire.h"   // shootEulerMatrix, shootRotateRow
@@ -72,7 +73,7 @@ AstarothGate astarothGate(const AstarothFight& fight, ShootRecord& rec, int dama
     AstarothGate g;
     const int s = rec.state;
     if (!((s < 17 || s > 19) && fight.destroyed >= kAstarothSouls)) return g;
-    const double y = double(yawDeg) * 0.0174532925199433;
+    const double y = double(yawDeg) * kDegToRad;
     const double dx = double(seg[3]) - seg[0], dz = double(seg[5]) - seg[2];
     g.fromBehind = std::sin(y) * dx + -std::cos(y) * dz > 0.0;
     if (g.fromBehind && backSweep && backSweep()) {
@@ -156,7 +157,7 @@ void astarothAim(AstarothActor& a, float facing, const AstarothWorld& w) {
     if (w.shoulder) w.shoulder(sh);
     if (w.player) w.player(pl);
     float m[9];
-    shootEulerMatrix(0.0f, static_cast<float>(double(facing) * 0.0174532925199433), 0.0f, m);
+    shootEulerMatrix(0.0f, static_cast<float>(double(facing) * kDegToRad), 0.0f, m);
     const float mz[3] = {0.0f, 0.0f, -1.0f};
     float f[3];
     shootRotateRow(mz, m, f);

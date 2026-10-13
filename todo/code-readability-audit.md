@@ -350,6 +350,25 @@ finding: a check that hashed a conversation frame would flicker.
   crowd, traffic and slider checks (`pedestrians`, `city crowd`, `road
   traffic`, `traffic frame`, `crowd push`, `slider fly`) green. 3DS and Vita
   build; `licence headers` 615.
+* step 10b - THE SHORT CONSTANTS WERE NEVER THE ENGINE'S. Searched in the
+  binary's bytes: pi/180 and 180/pi as exact doubles six times each, the
+  port's `0.0174532925199433` never, no double pi at all, and pi, 2 pi, pi/2
+  and `slider.cpp`'s 37 and 170 degrees as FLOATS. The short spellings are
+  Hex-Rays' renderings (15 digits for a double - `shootfire.cpp`'s comment
+  quotes `v54 = -sub_47D4C0() * 0.0174532925199433` - 8 for a float), copied
+  into the port as decimals. So: the 17 short doubles and the port's own
+  `deg * 3.14159265358979 / 180.0` (4, `shoot.cpp`) are `kDegToRad` now, the
+  other short pi spellings `kPi`, the last local aliases (`player.cpp`'s `k`,
+  `slider.cpp`'s `kDeg`) gone, and `slider.cpp`'s grip and slide angles are
+  written as the floats they are (`3.1415927f`...: an x87 `fcomp` of a dword
+  compares the float's own value). A FIDELITY change of up to an ulp - and it
+  moved nothing measurable: the guard 0 of 14 (last-frame hashes included),
+  and 15 checks over the touched code green (`shoot range`, `shoot
+  generic`, `shoot fire`, `shoot gunfire`, `shoot move`, `astaroth tick`,
+  `slider fly`, `slider journey`, `slider bank`, `scene facing`, `props`,
+  `set pieces`, `shoot radar`, `frame rate`, `stairs`). **A lesson for the
+  tutorial**: a constant copied out of a decompilation is the decompiler's
+  PRINTING of it; when the value matters, read the bytes.
 
 ## 7. For the tutorial
 

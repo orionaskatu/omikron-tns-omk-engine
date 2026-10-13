@@ -354,12 +354,12 @@ int main(int argc, char** argv) {
     {
         std::vector<omk::Quatf> keys;
         for (int k = 1; k <= 15; ++k) {
-            const double h = k * 10.0 * 3.14159265358979 / 360.0;
+            const double h = k * 10.0 * omk::kPi / 360.0;
             keys.push_back({static_cast<float>(std::cos(h)), static_cast<float>(std::sin(h)), 0, 0});
         }
         const auto deg = [](const omk::Quatf& q) {
             return 2.0 * std::acos(std::fabs(double(q.w)) > 1.0 ? 1.0 : std::fabs(double(q.w)))
-                   * 180.0 / 3.14159265358979;
+                   * 180.0 / omk::kPi;
         };
         const float r15 = 15.0f * omk::kDegToRadF, r45 = 45.0f * omk::kDegToRadF,
                     r30 = 30.0f * omk::kDegToRadF;

@@ -7,8 +7,9 @@
 // pi/180 as the double 0x1.1df46a2529d39p-6, which is `kDegToRad` exactly.
 // Every float spelling of these numbers rounds to the same float, so the `F`
 // forms replace any of them bit for bit; a double written short of them
-// (`0.0174532925199433`, `3.14159265358979`) is NOT the same number and moves
-// a result by an ulp.
+// (`0.0174532925199433`, `3.14159265358979`) is NOT the same number: it is
+// Hex-Rays' 15-digit rendering of these constants, and the binary holds no
+// such double (searched: the exact pi/180 six times, the short one never).
 #pragma once
 
 #include <cmath>

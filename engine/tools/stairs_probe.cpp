@@ -32,6 +32,7 @@
 #include "o3de/collision.h"
 #include "formats/mesh3do.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -165,7 +166,7 @@ int main(int argc, char** argv) {
                 bool up = false;
                 omk::StepResult last = omk::StepResult::Moved;
                 for (int a = 0; a < 16 && !up; ++a) {
-                    const double th = a * 2.0 * 3.14159265358979 / 16.0;
+                    const double th = a * 2.0 * omk::kPi / 16.0;
                     const double dx = std::cos(th), dz = std::sin(th);
                     omk::Walker w(whole, lx, lo.y, lz);
                     for (int i = 0; i < 60; ++i) {

@@ -715,7 +715,7 @@ void initShootRecord(ShootRecord& r, const ShootProperties& p, bool frozen) {
     r.rangeAcquire = static_cast<float>(39 * p.rangeAcquireM);
     r.rangeInner   = static_cast<float>(39 * p.rangeInnerM);
     r.rangeThird   = static_cast<float>(39 * p.rangeThirdM);
-    r.coneCos      = static_cast<float>(std::cos(p.coneDegrees * 3.14159265358979 / 180.0));
+    r.coneCos      = static_cast<float>(std::cos(p.coneDegrees  * kDegToRad));
     // property 37's five bits, fanned into `+160` exactly as the engine fans
     // them - the values are not a contiguous field and the order is its own.
     r.flags = 64;                                  // `u32(rec,160) = 64`
@@ -745,7 +745,7 @@ bool shootAcquires(const ShootRecord& r, const float self[4], const float target
     out.dist2d2 = static_cast<float>(dx * dx + dz * dz);
     out.dist3d  = static_cast<float>(std::sqrt(dy * dy + out.dist2d2));
 
-    const double yaw = self[3] * 3.14159265358979 / 180.0;
+    const double yaw = self[3] * kDegToRad;
     // `sub_442160(0, yaw, 0)` then `Matrix3x3_RotateVector(0,0,1, m)`, in the
     // ROW-VECTOR convention this repo uses everywhere - so the x component is
     // `-sin`, not `+sin`.
@@ -1160,7 +1160,7 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
 int shootMoveDecision(const ShootRecord& r, const float self[4],
                       float& eulerY, float dt, bool arrived) {
     if (arrived) return 1;
-    const double yaw = double(self[3]) * 3.14159265358979 / 180.0;
+    const double yaw = double(self[3]) * kDegToRad;
     const double sn = -std::sin(yaw), cs = std::cos(yaw);
     // +44/+48, the WORLD goal - NOT the +136/+140 cell, which is a separate
     // pair of fields (`actor/shoot.h`).
@@ -1180,7 +1180,7 @@ int shootMoveDecision(const ShootRecord& r, const float self[4],
             return std::atan2(dz, dx) * kRadToDeg + 90.0;
         };
         const auto lateralAt = [&](double deg) {
-            const double rr = deg * 3.14159265358979 / 180.0;
+            const double rr = deg  * kDegToRad;
             return std::cos(rr) * dx + std::sin(rr) * dz;
         };
         if (lateral > 0.0) {

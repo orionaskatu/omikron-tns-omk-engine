@@ -21,6 +21,7 @@
 #include "actor/pose.h"
 #include "formats/mesh3do.h"
 #include "script/area.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstdio>
@@ -77,7 +78,7 @@ int main(int argc, char** argv) {
     t.quats = {{rest}, {y90}, {y90}};
     const auto deg = [](const std::vector<omk::MeshPose>& p) {
         const float w = std::fabs(p[0].q.w) > 1.0f ? 1.0f : std::fabs(p[0].q.w);
-        return 2.0 * std::acos(static_cast<double>(w)) * 180.0 / 3.14159265358979;
+        return 2.0 * std::acos(static_cast<double>(w)) * 180.0 / omk::kPi;
     };
     for (const bool on : {false, true}) {
         omk::setPoseSmoothing(on);

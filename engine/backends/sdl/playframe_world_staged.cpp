@@ -123,7 +123,7 @@ void PlayState::worldStaged() {
         if (view.cam.rollDeg == 0.0f) {
             sideFr = omk::frustumFromFov(view.cam.eye, view.cam.at, view.cam.hfovDeg, fw, fh, 1000.0f);
         } else {
-            const double tanH = std::tan(view.cam.hfovDeg * 3.14159265358979 / 360.0);
+            const double tanH = std::tan(view.cam.hfovDeg * omk::kPi / 360.0);
             const double diag = tanH * std::sqrt(1.0 + double(fh) * fh / (double(fw) * fw));
             const float proj = static_cast<float>(1.0 / (2.0 * diag));
             sideFr = omk::frustumFromCamera(view.cam.eye, view.cam.at, proj, proj, 1, 1, 1000.0f);
@@ -2137,7 +2137,7 @@ void PlayState::worldStaged() {
                                         d[k] = d[k] + half * 0.5 - rr;
                                     }
                                 }
-                                const double yawR = double(s.facing) * 0.0174532925199433;
+                                const double yawR = double(s.facing) * omk::kDegToRad;
                                 const double fx = std::sin(yawR), fz = -std::cos(yawR);
                                 const double flat = std::sqrt(d[0] * d[0] + d[2] * d[2]);
                                 double cosv = flat > 0.0 ? (fz * d[2] + fx * d[0]) / flat : 1.0;

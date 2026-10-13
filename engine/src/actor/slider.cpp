@@ -8,7 +8,6 @@
 namespace omk {
 
 namespace {
-constexpr double kDeg = 0.0174532925199433;
 double wrap360(double a) {
     while (a >= 360.0) a -= 360.0;
     while (a < 0.0)    a += 360.0;
@@ -133,17 +132,20 @@ void SliderRide::fly(std::uint32_t input, double dt, const Probe& probe) {
     // The angle between where the nose points and where the velocity goes.
     // Inside 37 degrees the slider grips; past that and inside 170 it is
     // SLIDING, and the arm below snaps the velocity back toward the nose.
+    // The angles are the engine's FLOAT constants (pi, 2 pi, pi/2, 37 and 170
+    // degrees, each a dword in the binary), so they are written as floats: the
+    // 8-digit decimal Hex-Rays prints is not the float's value as a double.
     if (speed != 0.0) {
         double heading;
-        if (vz == 0.0) heading = (vx <= 0.0) ? -1.5707964 : 1.5707964;
+        if (vz == 0.0) heading = (vx <= 0.0) ? -1.5707964f : 1.5707964f;
         else {
             heading = std::atan2(vx / vz, 1.0);
-            if (vz < 0.0) heading += (heading < 0.0) ? 3.1415927 : -3.1415927;
+            if (vz < 0.0) heading += (heading < 0.0) ? 3.1415927f : -3.1415927f;
         }
         yaw = wrap360(yaw);
-        double d = std::fabs(yaw * kDeg - heading);
-        if (d > 3.1415927) d = 6.2831855 - d;
-        slide = (d <= 0.6457718) ? 0.0 : (d < 2.9670596 ? 1.0 : 0.0);
+        double d = std::fabs(yaw * kDegToRad - heading);
+        if (d > 3.1415927f) d = 6.2831855f - d;
+        slide = (d <= 0.6457718f) ? 0.0 : (d < 2.9670596f ? 1.0 : 0.0);
     }
 
     // ---- THE SKID RECOVERY --------------------------------------------
@@ -166,7 +168,7 @@ void SliderRide::fly(std::uint32_t input, double dt, const Probe& probe) {
         if (slide != 0.0 && std::fabs(speed) > 16.0 && speed > 0.0) { steerTerm = 0.0; recover = true; }
     }
     if (recover) {
-        const double r = yaw * kDeg;
+        const double r = yaw * kDegToRad;
         vx += (std::sin(r) * lastSpeed - vx) * 0.2;
         vz += (std::cos(r) * lastSpeed - vz) * 0.2;
         speed = std::sqrt(vx * vx + vz * vz);
@@ -185,7 +187,7 @@ void SliderRide::fly(std::uint32_t input, double dt, const Probe& probe) {
         if (lastSpeed * speed <= 8.0 &&
             (input & (kThrustUp | kThrustDown)) == 0 && !settle) speed = 0.0;
         if (turnSign && lastSpeed * speed <= 0.0 && !settle) speed = 0.0;
-        const double r = yaw * kDeg;
+        const double r = yaw * kDegToRad;
         vx = std::sin(r) * speed;
         vz = std::cos(r) * speed;
     } else {
@@ -194,7 +196,7 @@ void SliderRide::fly(std::uint32_t input, double dt, const Probe& probe) {
         // Each component takes the thrust along the nose and its own
         // quadratic drag, and the YAW is then pulled by the cross product of
         // the velocity with the nose - which is what makes a hard turn slew.
-        const double r = yaw * kDeg;
+        const double r = yaw * kDegToRad;
         lastSpeed = speed;
         const double sn = std::sin(r), cs = std::cos(r);
         const double ax = thrust * sn, az = thrust * cs;
@@ -278,7 +280,7 @@ bool SliderRide::collideVehicles(const RideWorld& w) {
     if (d == 0.0) return false;
     double c = (hit->dirx * ox + hit->dirz * oz) / d;
     double e = c * c * (A2 - B2) + B2;            // its ellipse along the offset
-    c = (std::cos(yaw * kDeg) * -oz + std::sin(yaw * kDeg) * -ox) / d;
+    c = (std::cos(yaw * kDegToRad) * -oz + std::sin(yaw * kDegToRad) * -ox) / d;
     e += c * c * (A2 - B2) + B2;                  // ...and the ride's, same axes
     if (e < d * d) return false;
     const double rv = std::sqrt(rvx * rvx + rvz * rvz);
@@ -296,7 +298,7 @@ bool SliderRide::collideVehicles(const RideWorld& w) {
     vx -= rv * ox / d * 0.66666669;
     vz -= rv * oz / d * 0.66666669;
     double sp = std::sqrt(vx * vx + vz * vz);
-    if (std::sin(yaw * kDeg) * vx + std::cos(yaw * kDeg) * vz < 0.0) sp = -sp;
+    if (std::sin(yaw * kDegToRad) * vx + std::cos(yaw * kDegToRad) * vz < 0.0) sp = -sp;
     speed = sp;
     settle = 40;
     if (w.setSpeed) w.setSpeed(hit->slot, vs);
@@ -336,7 +338,7 @@ void SliderRide::roadEdges(const RideWorld& w) {
     double lx = 0.0, lz = 0.0;                         // v69 / v77, the lead
     if (as > 32.0) { lx = vx * -2.0; lz = vz * -2.0; }
     else if (as > 18.0) { lx = -vx; lz = -vz; }
-    const double r = yaw * kDeg;
+    const double r = yaw * kDegToRad;
     const double c = std::cos(r), s = std::sin(r);
     const double v50 = s * 60.369999, v51 = c * 60.369999, v49 = s * -60.369999;
     const double v52 = v50 * -2.0, v68x = v51 * -2.0;
@@ -474,7 +476,7 @@ void SliderRide::roadEdges(const RideWorld& w) {
 // ground could have moved it, and in a direction nobody can reproduce.
 void SliderRide::wallPass(const RideWorld& w) {
     if (!w.ray || !w.surface) return;
-    const double yr = yaw * kDeg, rr = roll * kDeg;
+    const double yr = yaw * kDegToRad, rr = roll * kDegToRad;
     const double Zx = std::sin(yr) * 60.0, Zz = std::cos(yr) * 60.0;
     const double Xx = std::cos(rr) * std::cos(yr) * 60.0, Xz = -std::sin(yr) * std::cos(rr) * 60.0;
     const double P[4][2] = {{x - Xx - Zx, z - Xz - Zz}, {x + Xx - Zx, z + Xz - Zz},
@@ -615,7 +617,7 @@ void SliderRide::hover(double dt, const RideWorld& w) {
         if (speed == 0.0) {
             bobPhase += dt * kBobRate;
             if (bobPhase >= 360.0) bobPhase -= 360.0;
-            y += gap - std::sin(bobPhase * kDeg) * kBobAmp;
+            y += gap - std::sin(bobPhase * kDegToRad) * kBobAmp;
         } else {
             y += gap * dt * 0.33333334;
         }
@@ -649,7 +651,7 @@ void SliderRide::hover(double dt, const Probe& probe) {
         if (speed == 0.0) {
             bobPhase += dt * kBobRate;
             if (bobPhase >= 360.0) bobPhase -= 360.0;
-            y += gap - std::sin(bobPhase * kDeg) * kBobAmp;
+            y += gap - std::sin(bobPhase * kDegToRad) * kBobAmp;
         } else {
             y += gap * dt * 0.33333334;
         }

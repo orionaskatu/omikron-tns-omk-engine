@@ -3,6 +3,7 @@
 
 #include "actor/shoot.h"
 #include "actor/shootfire.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -152,7 +153,7 @@ bool shootSweepBodies(const float a[3], const float b[3],
 
 int shootHitBand(float victimYawDeg, const float boltVel[3]) {
     float m[9];
-    shootEulerMatrix(0.0f, static_cast<float>(double(victimYawDeg) * 0.0174532925199433),
+    shootEulerMatrix(0.0f, static_cast<float>(double(victimYawDeg) * kDegToRad),
                      0.0f, m);
     const float mz[3] = {0.0f, 0.0f, -1.0f};
     float fwd[3];

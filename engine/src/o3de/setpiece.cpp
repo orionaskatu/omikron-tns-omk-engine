@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include "o3de/setpiece.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 
@@ -31,7 +32,7 @@ void headingMatrix(const float dir[3], float rollDeg, float m[9]) {
         for (int i = 0; i < 9; ++i) m[i] = (i % 4 == 0) ? 1.0f : 0.0f;
         return;
     }
-    const double roll = rollDeg * 0.0174532925199433;
+    const double roll = rollDeg * kDegToRad;
     // `sub_441FF0(a1 = pitch, a2 = yaw, a3 = roll)`, verbatim: f32(a4, 4k)
     // is m[k].
     const double sr = std::sin(roll), sp = std::sin(pitch), cp = std::cos(pitch);

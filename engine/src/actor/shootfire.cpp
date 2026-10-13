@@ -150,8 +150,8 @@ void shootShotMatrix(float yawDeg, float pitchDeg, float m[9]) {
     // `v54 = -sub_47D4C0() * 0.0174532925199433; v29 = f32(v1, 420);
     //  v52 = (v29 - -90.0) * 0.0174532925199433;
     //  sub_442160(0.0, v52, v54, v57)`
-    const float pitch = static_cast<float>(-double(pitchDeg) * 0.0174532925199433);
-    const float yaw = static_cast<float>((double(yawDeg) - -90.0) * 0.0174532925199433);
+    const float pitch = static_cast<float>(-double(pitchDeg) * kDegToRad);
+    const float yaw = static_cast<float>((double(yawDeg) - -90.0) * kDegToRad);
     shootEulerMatrix(0.0f, yaw, pitch, m);
 }
 

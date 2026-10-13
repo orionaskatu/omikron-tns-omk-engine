@@ -1193,9 +1193,9 @@ void PlayState::worldProps() {
                 }
                 continue;
             }
-            const double rx = pr.rotDeg[0] * 0.0174532925199433;
-            const double ry = pr.rotDeg[1] * 0.0174532925199433;
-            const double rz = pr.rotDeg[2] * 0.0174532925199433;
+            const double rx = pr.rotDeg[0] * omk::kDegToRad;
+            const double ry = pr.rotDeg[1] * omk::kDegToRad;
+            const double rz = pr.rotDeg[2] * omk::kDegToRad;
             const double cx = std::cos(rx), sx = std::sin(rx);
             const double cy = std::cos(ry), sy = std::sin(ry);
             const double cz = std::cos(rz), sz = std::sin(rz);

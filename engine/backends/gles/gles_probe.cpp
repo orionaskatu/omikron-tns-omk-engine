@@ -251,7 +251,7 @@ int poseMode(int argc, char** argv) {
     const auto morph = omk::DataFs::readPath(argv[4]);
     const omk::NodeTracks tracks = omk::nodeTracks(morph, omk::rootTrackOf(meshes));
     const int frame = std::atoi(argv[5]);
-    const float yaw = static_cast<float>(std::atof(argv[6])) * kPiF / 180.0f;
+    const float yaw = static_cast<float>(std::atof(argv[6])) * omk::kPiF / 180.0f;
     const auto pose = omk::composePose(meshes, tracks, frame, false);
 
     // the placement: a turn about Y and a move, as a 3x4

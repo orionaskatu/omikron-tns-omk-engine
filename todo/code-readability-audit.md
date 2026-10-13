@@ -460,6 +460,27 @@ finding: a check that hashed a conversation frame would flicker.
   camera`, red since step 2a**: its structural row matched `case 73:`, which
   2a renamed `case op::ActorGotoAddress:`; it matches either now and is
   shown to fail with the dispatch removed.
+* step 12g - `ScreenComposer::draw` (1461), the tool's first class past
+  `PlayState`: the load panel's selection, the examine text, the map pins,
+  the identity and characteristics pages, the high scores, the row mark and
+  fill (with the `itemFill` lambda only it used), the item sprite - and the
+  ITEM LOOP'S BODY, `drawItem`, then its banner sections (the previews, the
+  cursor, the text). The draw-hook addresses defined inside the loop are at
+  file scope with their siblings now (two had arrived as parameters).
+  Sections of 5-12 lines that became four-parameter wrappers were inlined
+  back - a split must read better than what it replaced. **A hole in the
+  tool, found and closed**: a nested bare `return;` left the ENCLOSING
+  method; moved into a void method it leaves only that, and compiles - the
+  tool now refuses one (an audit of all 61 methods it had made: none had
+  one; a stray `break`/`continue` cannot slip, it does not compile in a
+  method of its own). `--loop-body` moves a loop's whole body with its
+  `continue`s as `return`s, ownership read from the braces (`for`/`while`/
+  `do` own a `continue`, a `switch` a `break`, a lambda a `return`; a
+  brace-less inner loop refuses). And `gles_probe.cpp` did not compile
+  since step 10a (`kPiF` unqualified outside `namespace omk`), invisible to
+  every build but its own target - `engine: texture filter` was red for it;
+  `make build/gles_probe build/vita_bench` belongs beside `make play` from
+  here on. Guard 0 of 14; 46 screen checks green.
 
 ## 7. For the tutorial
 

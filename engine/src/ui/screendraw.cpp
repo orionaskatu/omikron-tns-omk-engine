@@ -54,6 +54,12 @@ constexpr std::uint32_t kDrawSneakCharacter = 0x004779C0;
 // `Joueur :` heading and the save rows, neither of which is a string in any
 // record: they come from the save DIRECTORY.
 constexpr std::uint32_t kDrawLoadRows = 0x0047B180;
+// ...and the other draw hooks the composer serves, by address as above
+constexpr std::uint32_t kDrawShopPreview = 0x00477AD0u;   // the shop's 3D preview
+constexpr std::uint32_t kDrawInterference = 0x00477ED0u;   // a monitor's interference
+constexpr std::uint32_t kDrawSneakIdentity = 0x0049C2B0u;   // the sneak's identity text
+constexpr std::uint32_t kDrawHighScore = 0x004ADAD0u;   // the high-score board
+constexpr std::uint32_t kDrawSneakCharacteristics = 0x0049CA30u;   // the sneak's characteristics
 // ...and the string it prefixes the typed name with, `push 0Dh` in that hook:
 // index 13 of the screen's own `IAM\<name>` file, which for the start menu's
 // `IAM\Menu` is its last line, "Entrez votre nom".
@@ -596,74 +602,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             // function's own arithmetic to **a1=20, a2=173, a3=370, a4=16**
             // for the first row - and 173 is this list's own second slot,
             // which is the two readings agreeing (`engine: I2D outline`).
-            if (lp.row >= 0) {
-                const int v7 = 1;                     // `I2D_ScaleX(1)` at 640
-                const int a1 = f.x + q->offsetX, a3 = f.w;
-                const int a2 = f.y + q->offsetY + slot * (lp.row + 1) + 33 - slot;
-                const int a4 = 16;
-                const std::uint16_t c = rgb565(255, 255, 255);
-                const int quads[4][8] = {
-                    {a1-v7, a2-v7, a1+a3+v7, a2-v7, a1+a3+v7, a2,       a1-v7, a2},
-                    {a1-v7, a2+a4, a1+a3+v7, a2+a4, a1+a3+v7, a2+a4+v7, a1-v7, a2+a4+v7},
-                    {a1-v7, a2,    a1,       a2,    a1,       a2+a4,    a1-v7, a2+a4},
-                    {a1+a3, a2,    a1+a3+v7, a2,    a1+a3+v7, a2+a4,    a1+a3, a2+a4},
-                };
-                for (const auto& qd : quads) {
-                    const int xs[4] = {scaleX(qd[0]), scaleX(qd[2]), scaleX(qd[4]), scaleX(qd[6])};
-                    const int ys[4] = {scaleY(qd[1]), scaleY(qd[3]), scaleY(qd[5]), scaleY(qd[7])};
-                    fillQuad(fb, xs, ys, c, quadMode(4));
-                }
-                // the CONNECTOR to the picture - not a line: `Ui_DrawItem`'s
-                // vocabulary has no line at all, and the captured bar is two
-                // rows by sixty-nine columns, a mode-1 quad's signature.
-                const int cy = a2 + a4 / 2;
-                const int cx[4] = {scaleX(a1+a3+v7), scaleX(460), scaleX(460), scaleX(a1+a3+v7)};
-                const int cys[4] = {scaleY(cy), scaleY(cy), scaleY(cy+2), scaleY(cy+2)};
-                fillQuad(fb, cx, cys, c, quadMode(4));
-                // ...and the slot's own 128x96 picture, read on the MOVE the
-                // way `sub_408D70` reads it.
-                const int sl = lp.slotOfRow();
-                if (sl >= 0 && !lp.path.empty()) {
-                    // READ ON A CHANGE, not every frame: the file is the whole
-                    // save directory (3496 + 256 x 32808 bytes, ~8.4 MB) and
-                    // was read from the card on every frame a row was
-                    // selected. Again when the row, the file or a write moves.
-                    if (thumbPath_ != lp.path || thumbSlot_ != sl || thumbWrites_ != saveFileWrites()) {
-                        thumbPath_ = lp.path;
-                        thumbSlot_ = sl;
-                        thumbWrites_ = saveFileWrites();
-                        thumbPx_ = readSaveThumb(DataFs::readPath(lp.path), sl);
-                    }
-                    const auto& px = thumbPx_;
-                    // WALK THE DESTINATION AND SAMPLE THE SOURCE, never the
-                    // other way round. Scaling each of the 128x96 source
-                    // pixels to ONE destination point leaves the gaps between
-                    // them unwritten, and at 640x480 there are none - so it
-                    // looks perfect here and comes out as a dark grid over
-                    // the picture on any larger window, which is what a
-                    // reader saw. `background`'s own comment says the same
-                    // thing about the tile blit: "the destination is scaled
-                    // and the source is not, and getting that backwards is
-                    // invisible at 640x480 and ruins every other resolution."
-                    if (!px.empty()) {
-                        const int thumbX0 = scaleX(460), thumbX1 = scaleX(460 + omk::kThumbW);
-                        const int thumbY0 = scaleY(140), thumbY1 = scaleY(140 + omk::kThumbH);
-                        const int w = thumbX1 - thumbX0, h = thumbY1 - thumbY0;
-                        for (int dy = thumbY0; dy < thumbY1; ++dy) {
-                            if (dy < 0 || dy >= fb.h || h <= 0) continue;
-                            const int sy = (dy - thumbY0) * omk::kThumbH / h;
-                            for (int dx = thumbX0; dx < thumbX1; ++dx) {
-                                if (dx < 0 || dx >= fb.w || w <= 0) continue;
-                                const int sx = (dx - thumbX0) * omk::kThumbW / w;
-                                fb.px[static_cast<std::size_t>(dy) * static_cast<std::size_t>(fb.w) +
-                                      static_cast<std::size_t>(dx)] =
-                                    px[static_cast<std::size_t>(sy) * omk::kThumbW +
-                                       static_cast<std::size_t>(sx)];
-                            }
-                        }
-                    }
-                }
-            }
+            drawLoadSelection(lp, f, q, slot, fb);
             continue;
         }
         if (!l.items.empty() && l.items.front().drawFn == kDrawNameField &&
@@ -711,1083 +650,8 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
             }
         }
         for (const auto& itAuthored : l.items) {
-            // ...AT THE PLACE THE SCREEN'S OWN HOOK PUT IT, when there is one.
-            // A widget tree carries an item's AUTHORED x/y, and a hook like the
-            // Gandhar door's moves its cursor every step (`setItemMove`).
-            UiItem itMoved = itAuthored;
-            if (moved_) {
-                const auto mv = moved_->find(itAuthored.addr);
-                if (mv != moved_->end()) { itMoved.x = mv->second.first; itMoved.y = mv->second.second; }
-            }
-            const UiItem& it = itMoved;
-            // THE IDENTITY PAGE'S CHARACTER: `0x004779C0` - `sub_478DE0` at
-            // 118.11, the node turned by oscillator 4, `I2D_Submit3DView` into
-            // the item's scaled rect at `item+0xB - 1`. Drawn when the walk
-            // reaches THAT layer, so the page's text at the item's own layer
-            // lands over it (the box overlaps the text column by 110 pixels).
-            if (it.drawFn == kDrawSneakCharacter && layer == static_cast<int>(it.layer) - 1) {
-                if (models_ && models_->drawCharacter(fb, scaleX(it.x + q->offsetX),
-                                                      scaleY(it.y + q->offsetY),
-                                                      scaleX(it.w), scaleY(it.h),
-                                                      UiModels::spinDegrees(clockMs_)))
-                    ++out.modelsDrawn;
-                continue;
-            }
-            if (it.layer != layer) continue;
-            std::uint32_t eff0[3];
-            it.effective(l.broadcast, eff0);
-            // ...and the bank-B bits a builder SET at RUN TIME, which the
-            // record cannot carry and which `Ui_ItemTextStyle` reads beside
-            // the record's own. `sub_49B950` sets `0x40000002` on "Examiner",
-            // which is what makes it flash while its page is up. This has to
-            // land BEFORE the lit/unlit ladder below reads `eff0[1]`.
-            eff0[1] |= walk.itemFlagsOn(it.addr) & 0x1FFFFFFFu;
-            // The item's own draw gate, the same `0x40000001` the list has -
-            // from the record, and from the RUNTIME for the lists whose
-            // widgets are a window onto something longer (`sub_42AAE0`).
-            // ...unless a HOOK switched it on: the record's bit is set on the
-            // Gandhar door's four markers, which ship hidden and are revealed
-            // one per press (`sub_428FF0(marker, 0x40000001, 0)`).
-            if ((eff0[1] & 1) && !walk.itemShown(it.addr)) continue;
-            if (hidden_ && hidden_->count(it.addr)) continue;
-            if (walk.itemOff(it.addr)) continue;   // a builder switched it off
-
-            // THE 3D VIEWPORT (`sub_4782B0`): the node `sub_4812E0` clears
-            // the rectangle's DEPTH, sets the D3D viewport to it
-            // (`sub_440C40` -> `sub_42FF80` -> `sub_45FA20`, aspect w/h),
-            // draws the ordinary scene through the camera snapshot the
-            // submit took, and restores the full-screen viewport. The
-            // frontend has done the rendering at that size; this is the
-            // node's place in the layer walk, and nothing else of the item
-            // is drawn - the callback IS its draw.
-            if (it.drawFn == kDrawViewport) {
-                if (view3d_ && view3d_->valid()) {
-                    const int x0 = scaleX(it.x + q->offsetX);
-                    const int y0 = scaleY(it.y + q->offsetY);
-                    blt(fb, {x0, y0, scaleX(it.x + q->offsetX + it.w),
-                             scaleY(it.y + q->offsetY + it.h)},
-                        *view3d_, {0, 0, view3d_->w, view3d_->h}, kBltWait,
-                        /*srcKey*/ 0, /*dstKey*/ 0, filter_);
-                    ++out.itemsDrawn;
-                }
-                continue;
-            }
-
-            // ---- IS THIS ITEM SELECTED, AND IS IT FOCUSED ------------
-            //
-            // `Ui_DrawList` sets two flags before drawing each row:
-            // `0x20000002` UIF_SELECTED on the row the list's `+2` names,
-            // and `0x20000001` UIF_FOCUSED as well when that list is the
-            // panel's CURRENT one - so exactly one item on screen is
-            // focused, which is what `screen+40` caches for the input code.
-            const int selIdx = walk.selectionOf(l);
-            const bool isSel = selIdx >= 0 &&
-                static_cast<std::size_t>(selIdx) < l.items.size() &&
-                l.items[static_cast<std::size_t>(selIdx)].addr == it.addr;
-            const bool isFocus = isSel && &l == curList;
-
-            // ---- THE TWO LIT LADDERS, and they are NOT the same ladder --
-            //
-            // `docs/UI.md` says `Ui_DrawItemSprite` "repeats the same ladder"
-            // as `Ui_ItemTextStyle`. Read side by side they agree on the
-            // first two rungs and differ on the other two, so a drawer that
-            // shares one ladder lights the wrong things:
-            //
-            //   both      0x40000008 -> lit
-            //             0x40000004 -> Ui_Oscillator(1)          (pulse)
-            //   SPRITE    0x40000002 -> !sel: unlit
-            //                           sel & !focus: lit
-            //                           sel &  focus: oscillator  <- FLASH
-            //             otherwise  -> lit = SELECTED
-            //   TEXT      0x40000002 -> !sel: unlit
-            //                           sel: oscillator
-            //             otherwise  -> lit = SELECTED **and** FOCUSED
-            //
-            // (`sub_476E60` LABEL_4/10/11 against `sub_4769A0` LABEL_6/12/13.)
-            //
-            // Oscillator 1 ships period 500, flags 3, and its completion
-            // `sub_42B7B0` does `osc[6] = (osc[6] == 0)` - a square wave
-            // toggling every 500 ms. That is the user's "flashing icon to
-            // indicate the selection", read rather than invented.
-            //
-            // The sneak's own text carries none of the three bits, so it
-            // takes the TEXT default: the current list's selected row is
-            // white and every other row is dimmed. Its tab icons carry
-            // `0x2`, so the focused tab pulses.
-            const bool blink = ((clockMs_ / 500) & 1) != 0;
-            bool litSprite, litText;
-            if (eff0[1] & 8)      { litSprite = litText = true; }
-            else if (eff0[1] & 4) { litSprite = litText = blink; }
-            else if (eff0[1] & 2) {
-                litSprite = !isSel ? false : (isFocus ? blink : true);
-                litText   = isSel && blink;
-            } else {
-                litSprite = isSel;
-                litText   = isSel && isFocus;
-            }
-            const bool lit = litSprite;
-
-            // THE ITEM'S COLOUR, and the record is not always it. A page
-            // builder writes `+8/+9/+10` at run time through `sub_4296D0`,
-            // which is why 209 of the 222 fill items ship the (255, 0, 0)
-            // placeholder: `UiWalk::itemColour` returns what the builder
-            // wrote, and null where nothing did.
-            const int* over = walk.itemColour(it.addr);
-            const int rgb[3] = {over ? over[0] : it.rgb[0],
-                                over ? over[1] : it.rgb[1],
-                                over ? over[2] : it.rgb[2]};
-
-            // ---- THE FILL: `Ui_DrawItemFill` (0x00476FE0) --------------
-            //
-            // A quad over the item's own scaled rect. The colour is the
-            // item's `+8/+9/+10` - or (255, 50, 50) on the `0x42000000`
-            // arm - and the alpha comes from which arm runs: **200** for the
-            // plain `0x40000010`, 100 for `0x44000000`, `+9` otherwise.
-            // `fillQuad` carries the blend and the evidence for it.
-            //
-            // **Two things about it are easy to get wrong.** The
-            // blend is the INVERSE of source-over, so a big alpha makes the
-            // quad faint, not solid - drawn the usual way round the sneak's
-            // rows come out bright red. And the per-row gate is real:
-            // `sub_42AAE0` sets `0x40000001` on every widget past the object
-            // count, so the engine fills only the rows that hold something,
-            // which is why a capture shows two bars of nine.
-            //
-            // AND THE PLACEHOLDER IS ANSWERED. 209 of the
-            // 222 fill items ship (255, 0, 0) because a page BUILDER writes
-            // the real colour at run time - `sub_4296D0` over a whole list,
-            // handed the page's own tab-icon colour. `rgb` above is what it
-            // wrote; `UiWalk::buildPage` and `docs/UI.md` carry the rule and
-            // the five captures that confirm it.
-            // ---- THE 3D PREVIEWS: `I2D_Submit3DView` (0x00428900) -----
-            //
-            // Not an item flag - `Ui_DrawItem` never reaches this primitive,
-            // so the flag table cannot name it. What identifies the three
-            // slots is the LIST: 0x004DE420, whose items take the three
-            // models in the order the sneak's open callback loads them.
-            if (models_ && l.addr == kListSneakPreviews) {
-                // THE SLOT IS THE ITEM'S INDEX IN THE LIST, so it has to be
-                // taken from the item that IS in the list. `it` is a
-                // reference to `itMoved`, a stack COPY made for
-                // `setItemMove` - `&it - &l.items[0]` on that is pointer
-                // arithmetic between unrelated objects, so the slot came out
-                // garbage and `UiModels::draw` refused all three. The three
-                // previews stopped drawing at `1f3e792` and nothing said so:
-                // the C++ is undefined rather than wrong-looking, the frame
-                // simply lost three small pictures, and `sneak previews` is
-                // a `--slow` check that no sweep has run since.
-                const int slot = static_cast<int>(&itAuthored - &l.items[0]);
-                if (models_->draw(fb, slot,
-                                  scaleX(it.x + q->offsetX),
-                                  scaleY(it.y + q->offsetY),
-                                  scaleX(it.w), scaleY(it.h),
-                                  UiModels::spinDegrees(clockMs_)))
-                    ++out.modelsDrawn;
-            }
-
-            // ---- THE EXAMINE PAGE'S TEXT ------------------------------
-            //
-            // The description, laid into the item's own box by
-            // `TextLayout::layOutBlock` - `Text_LayOutBlock` (0x0043F3E0)
-            // itself. The engine's pitch is 120% of the current font's
-            // `+12` and a blank line takes the same - not a greedy wrap's
-            // `height + 2` with a flat 12 for a blank line.
-            //
-            // AND IT SCROLLS. Bank C `0x2` on the item, four of which the
-            // tree carries. `Ui_ItemTextStyle` lays the block out, takes
-            // `laidOutHeight - boxHeight` floored at 0, clamps `dword_6A5090`
-            // into [0, that] and hands the result to the run at `+0x10` -
-            // which `Text_DrawBlock` unpacks into `dword_9079F8`, the layout's
-            // ORIGIN Y. So the scroll is not a special case in the drawer at
-            // all: it is the block's origin, subtracted from every line
-            // (`v41 = v6 - dword_9079F8`). `sub_42A9A0`, the list hook, steps
-            // the same global eight pixels per UP or DOWN and does no
-            // clamping, so the bound is discovered HERE and written back.
-            //
-            // `{B}` is RED, (255, 0, 0), on the frames oscillator 1 is high -
-            // `Text_LayOutBlock`'s run-emit is explicit about it, and
-            // `docs/UI.md`'s markup table had said white. Two captures of the
-            // original two seconds apart settled it before it could be read:
-            // the MK400 notice's Khonsu line, `{fSI226198101B}`, is gold in
-            // one and red in the other, (181, 180, 131) against (150, 33, 42).
-            // Keyed on the item's DRAW HOOK, `0x004780A0`, which both examine
-            // pages' boxes carry - the sneak's (0x004DE710) and MULTIPLAN's
-            // (0x004E57E0). Every arm of it ends in `sub_477F60`, this text.
-            // ...and the MEMORY page's body box, item 0x004DEA98 (400x110 at
-            // (190, 250), draw hook `0x00477F60`), which is the same text
-            // drawer the examine page's every arm ends in. The row hook writes
-            // the selected row's tag into `dword_4DEAD4` - which IS that
-            // item's own `+0x3C` (0x004DEA98 + 60) - and the drawer raises
-            // event 40 on it, so what it shows is the SELECTED MEMO's
-            // description. The page's panel hook `0x0049D8B0` clears the item's
-            // `0x40000001` while the rows are current and sets it elsewhere,
-            // and the reader page `0x004DEFF0` is the same lists with the BOX
-            // as the current list - which is why it needs no artwork of its own.
-            if (examine_ && !examine_->empty() &&
-                (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox ||
-                 it.drawFn == kDrawMemoBody)) {
-                TextBlock blk;
-                blk.left   = scaleX(it.x + q->offsetX);
-                blk.top    = scaleY(it.y + q->offsetY);
-                blk.right  = blk.left + scaleX(it.w);
-                blk.bottom = blk.top + scaleY(it.h);
-                blk.font   = it.face('J');
-                blk.rgb[0] = static_cast<std::uint8_t>(rgb[0]);
-                blk.rgb[1] = static_cast<std::uint8_t>(rgb[1]);
-                blk.rgb[2] = static_cast<std::uint8_t>(rgb[2]);
-                blk.blinkOn = blink;
-                blk.screenW = fb.w;
-                blk.screenH = fb.h;
-                // Rows outside the box are not written, so the line
-                // straddling each edge of a scrolled block is CUT rather than
-                // dropped or spilled over the page art.
-                blk.clipTop = blk.top;
-                blk.clipBottom = blk.bottom;
-
-                // Measure first, because the clamp needs the height and the
-                // hook that moves the offset has no bound of its own. This is
-                // `Ui_ItemTextStyle`'s own order.
-                // `sub_477F60`: `mov ax, [ebx+1Eh]` - the item's own SECTION
-                // INDEX, and `cmp ax, 0FFFFh` is the "draw it whole" case.
-                // The memo body carries 0, so it shows the memo and not the
-                // CLUE that shares the record's description field; the examine
-                // boxes carry -1, which is why an eleven-line notice draws
-                // entire. Extracted once and used for both the measure and
-                // the draw, since the scroll bound is measured from what is
-                // actually laid out.
-                // ...and the SECTION a builder wrote over the record's `+30`,
-                // when there is one. The hint shop's body box ships -1 and
-                // is driven to 0 (the memo) or 1 (the clue it sells).
-                int sectionArg = it.textArg;
-                if (section_) {
-                    const auto sc = section_->find(it.addr);
-                    if (sc != section_->end()) sectionArg = sc->second;
-                }
-                const std::string body = sectionArg >= 0
-                    ? extractTextSection(examine_, sectionArg) : *examine_;
-                if (reportText_ && reportText_->count(it.addr))
-                    out.itemText[it.addr] = body;
-                TextBlock probe = blk;
-                probe.measureOnly = true;
-                const int total = lay_->layOutBlock(nullptr, body, probe);
-                const int overflow = std::max(0, total - (blk.bottom - blk.top));
-                if (scroll_) {
-                    if (*scroll_ > overflow) *scroll_ = overflow;
-                    else if (*scroll_ < 0)   *scroll_ = 0;
-                }
-                out.textOverflow = overflow;
-                blk.originY = scroll_ ? *scroll_ : 0;
-                BlockResult res;
-                lay_->layOutBlock(&fb, body, blk, &res);
-                out.textLines += res.lines;
-                out.textChars += static_cast<int>(body.size());
-            }
-
-            // ---- THE EXAMINE PAGE'S CONTENT ---------------------------
-            //
-            // Panel 0x004DEF20's own list 0x004DE760 holds one item, and what
-            // it shows is whichever arm of `Game_HandleEvent` case 40 the
-            // object's kind takes - a 3D model for kind 15, an
-            // `IMAGES\<stem>.bmp` for kind 16, nothing otherwise.
-            if (models_ && (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox)) {
-                if (models_->drawExamine(fb,
-                                         scaleX(it.x + q->offsetX),
-                                         scaleY(it.y + q->offsetY),
-                                         scaleX(it.w), scaleY(it.h),
-                                         UiModels::spinDegrees(clockMs_)))
-                    ++out.modelsDrawn;
-            }
-
-            // ---- THE SHOP'S "ANALYSER" BOX: draw hook 0x00477AD0 -----------
-            //
-            // Item 0x004E3900 on the Examiner page (0x004E39D8), 400x260. Its
-            // `+20` draw hook takes the item's own tag `+0x3C` - which is the
-            // `dword_4E393C` the row callback writes, reached through the
-            // field rather than the address, which is why no instruction in the
-            // image names it - asks `sub_42B2C0` (EVENT 30, the preview load)
-            // for the object slot, frames the model with `sub_478DE0` (the
-            // previews' bounding-box camera), spins it on oscillator 4 and
-            // submits it through `I2D_Submit3DView` into the item's own
-            // rectangle. No text follows. A reader said it plainly: the button
-            // "shows a 3D view of an item when selecting it in the list" - the
-            // page was drawn empty here after a reading that missed the field.
-            constexpr std::uint32_t kDrawShopPreview = 0x00477AD0u;
-            if (models_ && it.drawFn == kDrawShopPreview) {
-                if (models_->drawExamine(fb,
-                                         scaleX(it.x + q->offsetX),
-                                         scaleY(it.y + q->offsetY),
-                                         scaleX(it.w), scaleY(it.h),
-                                         UiModels::spinDegrees(clockMs_)))
-                    ++out.modelsDrawn;
-            }
-
-            // ---- THE INTERFERENCE BOX: draw hook 0x00477ED0 -----------------
-            //
-            // `I2D_ScaleX/Y` of the item's position and of its SIZE (not of its
-            // far corner - the thumbnail's hook 0x00477E00 adds the two first,
-            // this one does not), submitted by `sub_4286F0` at the item's layer
-            // and drawn by `sub_432940` on the back buffer as it stands. The
-            // walk runs layer by layer, so everything at 0..6 is already here
-            // and the cursor at 8 is not: the same pixels the flush would hand
-            // it. `ui/interference.h` has the rule.
-            constexpr std::uint32_t kDrawInterference = 0x00477ED0u;
-            if (it.drawFn == kDrawInterference) {
-                noise_.apply(fb, scaleX(it.x + q->offsetX), scaleY(it.y + q->offsetY),
-                             scaleX(it.w), scaleY(it.h));
-                ++out.noiseBoxes;
-            }
-
-            // ---- THE CITY MAP'S BITMAP: draw hook 0x00477CA0 ---------------
-            //
-            // `if (!item->tag) return;` and then one blit: `Ui_ItemScreenX/Y`,
-            // `I2D_ScaleX/Y` of that and of the far corner (`+4`/`+6` ADDED to
-            // the near one first - unlike the interference box above, which
-            // scales the size), a source rect of {0, 0, 0, 0} and
-            // `sub_4287A0(dest, bitmap, 0, item->layer - 1)`. The tag is
-            // `dword_4DECB4`, what `sub_49D9E0` loaded, so a page whose
-            // `fopen` failed draws nothing at all - and the engine would
-            // already have left that page.
-            //
-            // The source rect being zeroed is the loader's "whole bitmap":
-            // `I2D_BlitBitmap` takes the file's own extent when the rect is
-            // empty, which for these four is 640x480 - the same size as the
-            // item.
-            if (cityMap_ && it.drawFn == kDrawSneakMapSheet) {
-                if (cityMap_->sheet && cityMap_->sheet->valid()) {
-                    const int x0 = scaleX(it.x + q->offsetX);
-                    const int y0 = scaleY(it.y + q->offsetY);
-                    blt(fb, {x0, y0, scaleX(it.x + q->offsetX + it.w),
-                             scaleY(it.y + q->offsetY + it.h)},
-                        *cityMap_->sheet,
-                        {0, 0, cityMap_->sheet->w, cityMap_->sheet->h},
-                        kBltWait, /*srcKey*/ 0, /*dstKey*/ 0, filter_);
-                    out.mapSheet = true;
-                }
-            }
-
-            // ---- THE PIN AND THE MARKERS: draw hook 0x0049E6F0 -------------
-            //
-            // Transcribed call by call. The item's `+0x3C` tag is the city id
-            // the open hook stored; the hook scans the compiled table for the
-            // row carrying it and returns at once when there is none, which is
-            // the `-1` a location outside the four cities gets.
-            //
-            // THE PIN (`sub_49E5B0`) is a TRIANGLE, not a dot, and it carries
-            // the player's heading: with `b = 90 - facing` degrees, its three
-            // points are the player's own place and `b + 30` / `b - 30` at a
-            // radius of 40, each offset scaled on its own axis. Point 0 is
-            // BLUE at half the pulse's alpha (`I2D_PackColour(osc2 / 2, 0, 0,
-            // 255)`), the other two white - and only point 0's colour reaches
-            // the screen, because `surface.h`'s mode-2 triangle takes its
-            // colour from the FIRST point and draws three lines with no fill.
-            //
-            // EACH MARKER is the same primitive at flags 4: a 10-wide, 10-tall
-            // triangle pointing up, `I2D_PackColour(osc2, 255, 0, 0)` - RED
-            // against the pin's blue.
-            //
-            // Both are labelled, in one 200x80 box at (+10, -10) from their
-            // own point: the pin with the player's NAME (`sub_42B1F0(6)`,
-            // event 44 property 6, the same one the identity page's "Nom" row
-            // shows) and a marker with the place name the city prefix was
-            // stripped from.
-            if (cityMap_ && it.drawFn == kDrawSneakMapPins && cityMap_->row) {
-                const CityMapRow& row = *cityMap_->row;
-                const int ox = it.x + q->offsetX, oy = it.y + q->offsetY;
-                // `Ui_ItemTextStyle(item, block, 0)` runs ONCE, before the
-                // pin, so the pin's label and every marker's share one style.
-                std::uint8_t tr = 255, tg = 255, tb = 255;
-                if (!(eff0[2] & 1)) {
-                    tr = static_cast<std::uint8_t>(rgb[0]);
-                    tg = static_cast<std::uint8_t>(rgb[1]);
-                    tb = static_cast<std::uint8_t>(rgb[2]);
-                }
-                if (!litText) { tr >>= 1; tg >>= 1; tb >>= 1; }
-                const int mapStyle = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
-                const auto caption = [&](const std::string& s, int px, int py) {
-                    if (s.empty()) return;
-                    TextBlock blk;
-                    blk.left = scaleX(px + 10);
-                    blk.top = scaleY(py - 10);
-                    blk.right = scaleX(px + 210);
-                    blk.bottom = scaleY(py + 70);
-                    blk.font = it.face('C');
-                    blk.style = mapStyle;
-                    blk.rgb[0] = tr; blk.rgb[1] = tg; blk.rgb[2] = tb;
-                    blk.blinkOn = blink;
-                    blk.screenW = fb.w; blk.screenH = fb.h;
-                    lay_->layOutBlock(&fb, s, blk);
-                };
-                const int L = 0, R = fb.w - 1, T = 0, B = fb.h - 1;
-                // `I2D_PackColour`'s first byte, from oscillator 2 - halved
-                // for the pin, whole for a marker. It is ALPHA, and the
-                // software triangle drops it (see `mapPulse`), so it is
-                // reported and not applied.
-                const int pulse = cityMapPulse(clockMs_);
-
-                int px = 0, py = 0;
-                cityMapProject(row, cityMap_->playerX, cityMap_->playerZ,
-                               ox, oy, it.w, it.h, &px, &py);
-                {
-                    const double base = 90.0 - cityMap_->playerFacing;
-                    const double kArm = 40.0;                  // dbl_4BCF08
-                    const double a1 = (base + 30.0) * kDegToRad;     // flt_4BCEFC = -30
-                    const double a2 = (base - 30.0) * kDegToRad;     // flt_4BCF10 = +30
-                    const int sx = scaleX(px), sy = scaleY(py);
-                    const int xy[6] = {
-                        sx, sy,
-                        sx + scaleX(static_cast<int>(std::cos(a1) * kArm)),
-                        sy + scaleY(static_cast<int>(std::sin(a1) * kArm)),
-                        sx + scaleX(static_cast<int>(std::cos(a2) * kArm)),
-                        sy + scaleY(static_cast<int>(std::sin(a2) * kArm))};
-                    // point 0's colour, and the software triangle uses no other
-                    drawTriangleWire(fb, xy, rgb565(0, 0, 255), L, R, T, B);
-                    out.mapPin = true;
-                    out.mapPinAt[0] = px;
-                    out.mapPinAt[1] = py;
-                    caption(cityMap_->playerName, px, py);
-                }
-                out.mapPulse = pulse;
-                for (const auto& m : cityMap_->markers) {
-                    int mx = 0, my = 0;
-                    cityMapProject(row, m.x, m.z, ox, oy, it.w, it.h, &mx, &my);
-                    const int sx = scaleX(mx), sy = scaleY(my);
-                    const int xy[6] = {sx - scaleX(5), sy,
-                                       sx + scaleX(5), sy,
-                                       sx,             sy - scaleY(10)};
-                    drawTriangleWire(fb, xy, rgb565(255, 0, 0), L, R, T, B);
-                    caption(m.name, mx, my);
-                    out.mapMarkers.push_back({m.name, {mx, my}});
-                }
-            }
-
-            // ---- THE IDENTITY PAGE'S "IDENTITE": draw hook 0x0049C2B0 ------
-            //
-            // Transcribed call by call from the listing. The box is the
-            // item's scaled position; its WIDTH is `I2D_ScaleX(w)` and its
-            // HEIGHT `I2D_ScaleX(h)` - X, not Y, which is the listing's and
-            // identical at 640x480. `Ui_ItemTextStyle` fills the style block
-            // once (the face, the alignment); every `Text_DrawBlock` after it
-            // is handed that block with its colour bytes rewritten: WHITE for
-            // a label (`Ui_ScreenString`), the identity icon's colour for a
-            // value (`byte_4DDFB8..BA`). Every block spans from its own left
-            // to left + width, and from the row's top to top + height. The
-            // pen moves by individually scaled literals:
-            //
-            //   row 1  Nom 15 | +100 prop 6
-            //   row 2  Age 16 | +60 "%d" prop 8 | +40 Sexe 17 | +70 prop 0
-            //          | +30 Groupe sanguin 18 | +130 prop 13      (back 330)
-            //   row 3  Taille 19 | +60 prop 9 | +40 Poids 20 | +70 prop 10
-            //          | +30 Yeux 21 | +80 prop 12                 (back 280)
-            //   row 4  Profession 22 | +100 prop 11
-            //   row 5  one WHITE block: sprintf("%s : {I%03d%03d%03d} %s",
-            //          label 23, icon, prop 15) then
-            //          sprintf("%s\n{I255255255}%s : {I%03d%03d%03d} %s",
-            //          that, label 24, icon, prop 14)
-            //
-            // rows stepping `I2D_ScaleY(20)`.
-            constexpr std::uint32_t kDrawSneakIdentity = 0x0049C2B0u;
-            if (sheet_ && it.drawFn == kDrawSneakIdentity) {
-                const int width = scaleX(it.w);
-                const int height = scaleX(it.h);
-                int px = scaleX(it.x + q->offsetX);
-                int py = scaleY(it.y + q->offsetY);
-                const auto label = [&](int id) -> std::string {
-                    return id >= 0 && id < static_cast<int>(sheet_->text.size())
-                        ? sheet_->text[static_cast<std::size_t>(id)] : std::string();
-                };
-                const auto prop = [&](int id) -> std::string {
-                    const auto s = sheet_->str.find(id);
-                    return s != sheet_->str.end() ? s->second : std::string();
-                };
-                const auto block = [&](const std::string& s, bool value) {
-                    TextBlock b;
-                    b.left = px;
-                    b.top = py;
-                    b.right = px + width;
-                    b.bottom = py + height;
-                    b.font = it.face('J');
-                    b.style = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
-                    for (int c = 0; c < 3; ++c)
-                        b.rgb[c] = value ? sheet_->icon[c] : std::uint8_t{255};
-                    b.blinkOn = blink;
-                    b.screenW = fb.w;
-                    b.screenH = fb.h;
-                    lay_->layOutBlock(&fb, s, b);
-                    ++out.identityBlocks;
-                };
-                const auto num = [&](int id) {
-                    const auto n = sheet_->num.find(id);
-                    return n != sheet_->num.end() ? n->second : 0;
-                };
-                const auto rgbTag = [&]() {
-                    char t[16];
-                    std::snprintf(t, sizeof t, "%03d%03d%03d", sheet_->icon[0],
-                                  sheet_->icon[1], sheet_->icon[2]);
-                    return std::string(t);
-                };
-                // row 1
-                block(label(15), false);
-                px += scaleX(100);  block(prop(6), true);
-                px -= scaleX(100);  py += scaleY(20);
-                // row 2
-                block(label(16), false);
-                px += scaleX(60);   block(std::to_string(num(8)), true);   // "%d"
-                px += scaleX(40);   block(label(17), false);
-                px += scaleX(70);   block(prop(0), true);
-                px += scaleX(30);   block(label(18), false);
-                px += scaleX(130);  block(prop(13), true);
-                px -= scaleX(330);  py += scaleY(20);
-                // row 3
-                block(label(19), false);
-                px += scaleX(60);   block(prop(9), true);
-                px += scaleX(40);   block(label(20), false);
-                px += scaleX(70);   block(prop(10), true);
-                px += scaleX(30);   block(label(21), false);
-                px += scaleX(80);   block(prop(12), true);
-                px -= scaleX(280);  py += scaleY(20);
-                // row 4
-                block(label(22), false);
-                px += scaleX(100);  block(prop(11), true);
-                px -= scaleX(100);  py += scaleY(20);
-                // row 5: the two prose lines, one block
-                const std::string first =
-                    label(23) + " : {I" + rgbTag() + "} " + prop(15);
-                const std::string both = first + "\n{I255255255}" + label(24) +
-                                         " : {I" + rgbTag() + "} " + prop(14);
-                block(both, false);
-            }
-
-            // ---- THE HIGH-SCORE TABLE: draw hook 0x004ADAD0 ---------------
-            //
-            // Screen 36 is ONE 400x480 item and this hook is the whole of it.
-            // Transcribed call by call. The pen starts at the item's scaled
-            // place, every box runs from the pen to `pen + I2D_ScaleX(w)` and
-            // `+ I2D_ScaleX(h)` (X for the height too, as 0x0049C2B0 does),
-            // and the style block is filled ONCE by `Ui_ItemTextStyle`:
-            //
-            //   y += ScaleY(50) twice        the screen's string 3, font 'C'
-            //   y += ScaleY(30)              param == 0 ? string 6
-            //                                : sprintf("%s %d", string 5, param)
-            //   y += ScaleY(50)              five rows, ScaleY(30) apart:
-            //        "%d.- %s" (row + 1, the name) LEFT in the left half, and
-            //        "%d'%02d\"%02d" RIGHT in the right half
-            //   y += ScaleY(20)              one CENTRED line behind a query
-            //
-            // The rows are `ds:90E454h + param * 180`, stride 36 - the SAVE
-            // HEADER's +724, a 32-byte name and the time in MILLISECONDS at
-            // +0x20. `sub_42B8E0` splits that into minutes / seconds /
-            // hundredths, which is the printf's order.
-            //
-            // The engine's `test ecx, ecx` before each row can never fail -
-            // `ecx` is the record's ADDRESS, a fixed global plus an offset -
-            // so all five rows always draw, an empty table as five numbered
-            // blanks. Transcribed as written rather than "fixed".
-            //
-            // The last line is the posted MESSAGE: `sub_42B5E0(0)` /
-            // `sub_42B5F0` are `Ui_Oscillator` / `Ui_OscillatorFlags`, and
-            // `sub_478D60` copies the buffer oscillator 0's start fills
-            // (0x0042B660, `strncpy(0x6A4CA0, msg, 127)`).
-            constexpr std::uint32_t kDrawHighScore = 0x004ADAD0u;
-            if (scores_ && it.drawFn == kDrawHighScore) {
-                const int width = scaleX(it.w);
-                const int height = scaleX(it.h);
-                const int px = scaleX(it.x + q->offsetX);
-                int py = scaleY(it.y + q->offsetY);
-                const int page = scorePage_ & 3;
-                // the SCREEN's own text file (`IAM\HScore`), which is what
-                // `sub_4767E0` resolves - not the player sheet
-                const auto screenText = [&](int id) -> std::string {
-                    return id >= 0 && id < static_cast<int>(text.size())
-                        ? text[static_cast<std::size_t>(id)] : std::string();
-                };
-                const auto block = [&](const std::string& str, int left, int right,
-                                       int style, char face) {
-                    if (str.empty()) return;
-                    TextBlock b;
-                    b.left = left;
-                    b.top = py;
-                    b.right = right;
-                    b.bottom = py + height;
-                    b.font = face;
-                    b.style = style;
-                    b.rgb[0] = static_cast<std::uint8_t>(rgb[0]);
-                    b.rgb[1] = static_cast<std::uint8_t>(rgb[1]);
-                    b.rgb[2] = static_cast<std::uint8_t>(rgb[2]);
-                    b.blinkOn = blink;
-                    b.screenW = fb.w;
-                    b.screenH = fb.h;
-                    lay_->layOutBlock(&fb, str, b);
-                    ++out.scoreBlocks;
-                    out.scoreRows.push_back(str);
-                };
-                const int itemStyle = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
-                py += scaleY(50) * 2;
-                block(screenText(3), px, px + width, itemStyle, 'C');
-                py += scaleY(30);
-                if (page == 0) {
-                    block(screenText(6), px, px + width, itemStyle, 'C');
-                } else {
-                    block(screenText(5) + " " + std::to_string(page),
-                          px, px + width, itemStyle, 'C');
-                }
-                py += scaleY(50);
-                const int mid = px + width / 2;
-                for (int r = 0; r < 5; ++r) {
-                    const auto& e = (*scores_)[static_cast<std::size_t>(page * 5 + r)];
-                    block(std::to_string(r + 1) + ".- " + e.first, px, mid, 2, 'C');
-                    const int ms = e.second;
-                    char t[32];
-                    std::snprintf(t, sizeof t, "%d'%02d\"%02d",
-                                  (ms / 1000 / 60) % 60, (ms / 1000) % 60,
-                                  (ms % 1000) / 10);
-                    block(t, mid, px + width, 4, 'C');
-                    py += scaleY(30);
-                }
-                // THE LAST LINE: `py += I2D_ScaleY(20)`, then while oscillator
-                // 0's flag is up (`Ui_OscillatorFlags(Ui_Oscillator(0), 1)`)
-                // `sub_478D60` copies the posted message out and it draws
-                // across the item, style 8 (`dword_6A4C60 = 8`), face 'C'
-                // still current: (left, py, left + width, py + height).
-                py += scaleY(20);
-                if (scoreMessage_ && !scoreMessage_->empty())
-                    block(*scoreMessage_, px, px + width, 8, 'C');
-            }
-
-            // ---- THE IDENTITY PAGE'S "CARACTERISTIQUES": draw hook 0x0049CA30
-            //
-            // Transcribed from the listing. `Ui_ItemTextStyle` fills the style
-            // once and, unlike 0x0049C2B0, NOTHING rewrites its colour - so
-            // every text here is the item's own text colour (bank C
-            // `0x80000001` forces white, bank B `0x8` keeps it lit). The
-            // colour handed to the bars is `I2D_PackColour(100, item +8/+9/+10)`.
-            // Seven rows, `I2D_ScaleY(30)` apart; each a label (`IAM\Sneak`
-            // 25..31) in the item's box, then the pen moves `I2D_ScaleX(w/2)`
-            // and the row takes a BAR - `sub_49CE60(x, y, colour, value,
-            // I2D_ScaleY(20), layer)` - except "Maitrise du combat", whose
-            // value is a RANK WORD: `value / 41` -> strings 36..40, none past
-            // 204.
-            //
-            // THE BAR (`sub_49CE60`), in its own order:
-            //   * the value "%d" in face 'J' (style +8 = 0x4A), box
-            //     (x + 5, y) .. (x + ScaleX(100), y + h); the face back to 'C'
-            //   * four `I2D_DrawLine`s, flags 0x14, layer 6, colour
-            //     `PackColour(100, 50, 50, 50)` in the FIRST point's third
-            //     dword - the grey outline (x .. x + ScaleX(200)) x
-            //     (yc - ScaleY(2) - 1 .. yc + ScaleY(2) + 1), yc = y + h / 2
-            //   * `I2D_SubmitQuad` flags 0xC: the KNOB, x + ScaleX(v) - 1 ..
-            //     x + ScaleX(v) + 4, yc - ScaleY(2) .. yc + ScaleY(2)
-            //   * `I2D_SubmitQuad` flags 4: the FILL, x + 1 .. x + ScaleX(v) - 1
-            //     over the same rows, both in the item's colour
-            //
-            // Drawn as the mode-2 software back end draws them, which is what
-            // `surface.h` ports: a line takes its colour from point 0's third
-            // dword and is opaque; a quad is its points' bounding box in
-            // vertex 0's colour, and flags 4 and 0xC are both mode 1. Drawn in
-            // SUBMISSION order; the I2D head cache's within-layer order is not
-            // modelled here, as nowhere else in this composer.
-            constexpr std::uint32_t kDrawSneakCharacteristics = 0x0049CA30u;
-            if (sheet_ && it.drawFn == kDrawSneakCharacteristics) {
-                std::uint8_t tr = 255, tg = 255, tb = 255;
-                if (!(eff0[2] & 1)) {
-                    tr = static_cast<std::uint8_t>(rgb[0]);
-                    tg = static_cast<std::uint8_t>(rgb[1]);
-                    tb = static_cast<std::uint8_t>(rgb[2]);
-                }
-                if (!litText) { tr >>= 1; tg >>= 1; tb >>= 1; }
-                const int halfW = scaleX(it.w / 2);
-                const int rowH = scaleY(20);
-                const int boxW = scaleX(it.w);
-                const int boxH = scaleX(it.h);
-                const std::uint16_t fillColour = rgb565(rgb[0], rgb[1], rgb[2]);
-                const std::uint16_t grey = rgb565(50, 50, 50);
-                int px = scaleX(it.x + q->offsetX);
-                int py = scaleY(it.y + q->offsetY);
-                const auto putText = [&](const std::string& s, int l, int t, int r, int b, char face) {
-                    TextBlock blk;
-                    blk.left = l; blk.top = t; blk.right = r; blk.bottom = b;
-                    blk.font = face;
-                    blk.style = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
-                    blk.rgb[0] = tr; blk.rgb[1] = tg; blk.rgb[2] = tb;
-                    blk.blinkOn = blink;
-                    blk.screenW = fb.w; blk.screenH = fb.h;
-                    lay_->layOutBlock(&fb, s, blk);
-                };
-                const auto label = [&](int id) -> std::string {
-                    return id >= 0 && id < static_cast<int>(sheet_->text.size())
-                        ? sheet_->text[static_cast<std::size_t>(id)] : std::string();
-                };
-                const auto num = [&](int id) {
-                    const auto n = sheet_->num.find(id);
-                    return n != sheet_->num.end() ? n->second : 0;
-                };
-                const auto bar = [&](int x, int y, int value, int h) {
-                    putText(std::to_string(value), x + 5, y, x + scaleX(100), y + h, 'J');
-                    const int yc = y + h / 2;
-                    const int top = yc - scaleY(2) - 1;
-                    const int bot = yc + scaleY(2) + 1;
-                    const int right = x + scaleX(200);
-                    const int L = 0, R = fb.w - 1, T = 0, B = fb.h - 1;
-                    drawLine(fb, x, top, right, top, grey, L, R, T, B);
-                    drawLine(fb, right, bot, right, top, grey, L, R, T, B);
-                    drawLine(fb, right, bot, x, bot, grey, L, R, T, B);
-                    drawLine(fb, x, top, x, bot, grey, L, R, T, B);
-                    const int v = scaleX(value);
-                    const int kx[4] = {x + v - 1, x + v - 1, x + v + 4, x + v + 4};
-                    const int ky[4] = {yc - scaleY(2), yc + scaleY(2), yc + scaleY(2), yc - scaleY(2)};
-                    fillQuad(fb, kx, ky, fillColour, quadMode(0xC));
-                    const int fx[4] = {x + 1, x + v - 1, x + v - 1, x + 1};
-                    const int fy[4] = {yc - scaleY(2), yc - scaleY(2), yc + scaleY(2), yc + scaleY(2)};
-                    fillQuad(fb, fx, fy, fillColour, quadMode(4));
-                    ++out.characteristicBars;
-                };
-                // six bar rows and the rank row, in the hook's order
-                const auto barRow = [&](int labelId, int prop) {
-                    putText(label(labelId), px, py, px + boxW, py + boxH, it.face('J'));
-                    px += halfW;
-                    bar(px, py, num(prop), rowH);
-                    px -= halfW;
-                    py += scaleY(30);
-                };
-                barRow(25, 1);
-                barRow(26, 16);
-                {   // 27 "Maitrise du combat": the rank word
-                    putText(label(27), px, py, px + boxW, py + boxH, it.face('J'));
-                    px += halfW;
-                    const int v = num(19);
-                    const int q41 = v / 41;
-                    const int id = (q41 >= 0 && q41 <= 4) ? 36 + q41 : -1;
-                    putText(label(id), px, py, px + boxW, py + boxH, 'C');
-                    px -= halfW;
-                    py += scaleY(30);
-                }
-                barRow(28, 17);
-                barRow(29, 3);
-                barRow(30, 18);
-                // 31 "Mana" - the last, `ebp + esi` without the step back
-                putText(label(31), px, py, px + boxW, py + boxH, it.face('J'));
-                bar(px + halfW, py, num(2), rowH);
-            }
-
-            // ---- THE CURSOR: `Ui_DrawItemCursor` (`sub_479920`) -------
-            //
-            // Drawn BEFORE the fill and the sprite, because `sub_4795F0`
-            // submits at layer 8 while a fill goes to the item's own
-            // `+11 - 2`, and the I2D per-layer cache is a HEAD cache.
-            //
-            // THE GATE IS READ AT THE CALL SITE, not taken from the docs:
-            // bank B `0x40000200` on the item, then bank A `0x20000001` -
-            // FOCUSED - on the item AND on its list. That is the one row
-            // which is both its list's selection and in the focused list,
-            // which is the row the player is standing on: the hover effect
-            // that tells a player where they are.
-            // DEFERRED, because the I2D display list is sorted by LAYER
-            // and the cursor's is 8 while a sprite's is the item's own 6 and
-            // a fill's is `+11 - 2` = 4. Submitting it here draws it UNDER the
-            // icon, between the background and the selected image, so a cut
-            // image of the icon shows through. Collected now and drawn after
-            // the whole walk, which is what a sort by
-            // layer does with one cursor on screen.
-            if (cursor_ && (eff0[1] & 0x200) && isSel && isFocus) {
-                const int cx = scaleX(it.x + q->offsetX + it.w / 2);
-                const int cy = scaleY(it.y + q->offsetY + it.h / 2);
-                int hr = rgb[0], hg = rgb[1], hb = rgb[2];
-                if (eff0[1] & 0x02000000) { hr = 255; hg = 50; hb = 50; }
-                cursorLate = cursor_->tick(it.addr, cx, cy,
-                                           scaleX(it.w), scaleY(it.h),
-                                           hr, hg, hb, deltaMs_);
-                ++out.cursorQuads;
-            }
-            // `Ui_DrawItemFill` (0x00476FE0) ON THIS ITEM - one call, made
-            // from two places, which is why it is a lambda: the row hook
-            // below makes it and so does the bank-B bit under that.
-            const auto itemFill = [&] {
-                int fr = rgb[0], fg = rgb[1], fb2 = rgb[2];
-                if (eff0[1] & 0x02000000) { fr = 255; fg = 50; fb2 = 50; }
-                const int alpha = (eff0[1] & 0x10) ? 200
-                                : (eff0[1] & 0x04000000) ? 100 : rgb[1];
-                const int x0 = scaleX(it.x + q->offsetX);
-                const int y0 = scaleY(it.y + q->offsetY);
-                const int x1 = scaleX(it.x + q->offsetX + it.w);
-                const int y1 = scaleY(it.y + q->offsetY + it.h);
-                fillQuad(fb, x0, y0, x1, y1, fr, fg, fb2, alpha);
-            };
-
-            // ---- THE ROW MARK: the `+20` hook `0x0049C090` -------------
-            //
-            // Transcribed:
-            //
-            //     tag = item->+3C;  if (tag == -1) return;
-            //     if (screen->+1C != off_4DEEB8) return;   // the VERB panel
-            //     if (!dword_670BE0)
-            //         hit = Ui_ListSelectedItem(&word_4DE6F0) == item;
-            //     else
-            //         hit = tag == dword_670BE4 || == 670BE8 || == 670BEC;
-            //     if (hit) Ui_DrawItemFill(screen, panel, item);
-            //
-            // so it shows ONLY while a verb is being chosen, and during a
-            // `Utiliser sur` it marks the one or two rows already picked -
-            // the page's only feedback for that operation.
-            //
-            // `Ui_DrawItem` runs the `+20` hook FIRST, before the text and
-            // before the flag fill, so this quad goes down before the one
-            // below. They are the same quad, so the order decides nothing;
-            // what it decides is the COUNT. The nine rows carry bank B
-            // `0x40000210`, so every drawn row already fills once, and the
-            // marked one fills TWICE - `src*(1-a)` applied twice takes it
-            // from 0.216 of the page's tint to 0.385. **That correction is
-            // this port's**: the read this was ported from called bank A's
-            // zero "nothing in the record asks for a fill", but the fill is
-            // gated on bank B (`I2D_TestFlag` picks the word from the mask's
-            // top bits), and there the bit is set.
-            if (it.drawFn == kDrawSneakRowFill) {
-                const int tag = walk.rowOf(it.addr);
-                const UiPanel* vp = walk.panel();
-                if (tag != -1 && vp && vp->addr == kPanelSneakVerbs) {
-                    bool hit = false;
-                    if (!walk.combining()) {
-                        const UiList* rows = w_->listAt(kListSneakRows);
-                        const int r = walk.selectionOf(kListSneakRows);
-                        hit = rows && r >= 0 &&
-                              static_cast<std::size_t>(r) < rows->items.size() &&
-                              rows->items[static_cast<std::size_t>(r)].addr == it.addr;
-                    } else {
-                        for (int k = 0; k < 3 && !hit; ++k)
-                            hit = tag == walk.combineSlot(k);
-                    }
-                    if (hit) {
-                        itemFill();
-                        ++out.rowMarks;
-                        out.rowMarked.push_back(tag);
-                    }
-                }
-            }
-
-            if (eff0[1] & 0x10) {
-                itemFill();
-                ++out.fillsDrawn;
-            }
-
-            // ---- THE SPRITE: `Ui_DrawItemSprite` -----------------------
-            //
-            // The lit source at `+12/+14` or the unlit one at `+16/+18`,
-            // each `w x h`, blitted from the screen's own artwork - so the
-            // sneak's five left-hand icons are cut out of `sneak.bmp`.
-            // Source raw, destination scaled, exactly as the background.
-            //
-            // The sneak's tab column carries `0x40000302`: sprite, cursor,
-            // and lit-on-selection. Drawing its `+28` as TEXT instead - what
-            // this did - printed five labels the game has never shown.
-            if ((eff0[1] & 0x100) && sheetOk) {
-                const int* src = lit ? it.lit : it.unlit;
-                int srcOverride[2] = {src[0], src[1]};
-                if (srcMoved_) {
-                    const auto sm = srcMoved_->find(it.addr);
-                    if (sm != srcMoved_->end() && !lit) {
-                        srcOverride[0] = sm->second.first;
-                        srcOverride[1] = sm->second.second;
-                        src = srcOverride;
-                    }
-                }
-                if (litMoved_) {
-                    const auto lm = litMoved_->find(it.addr);
-                    if (lm != litMoved_->end() && lit) {
-                        srcOverride[0] = lm->second.first;
-                        srcOverride[1] = lm->second.second;
-                        src = srcOverride;
-                    }
-                }
-                const int x0 = it.x + q->offsetX, y0 = it.y + q->offsetY;
-                blt(fb, {scaleX(x0), scaleY(y0),
-                         scaleX(x0 + it.w), scaleY(y0 + it.h)},
-                    art, {src[0], src[1], src[0] + it.w, src[1] + it.h},
-                    kBltWait | kBltKeySrc, artKey, /*dstKey*/ 0, filter_);
-                ++out.spritesDrawn;
-                // ...and, for an item the caller asked about, WHERE FROM -
-                // the lit source as readily as the moved unlit one, because
-                // the difference between them is the whole fault this is for.
-                if ((srcMoved_ && srcMoved_->count(it.addr)) ||
-                    (litMoved_ && litMoved_->count(it.addr)))
-                    out.spriteSrc[it.addr] = {src[0], src[1]};
-            }
-
-            // ---- AN ITEM SHOWS TEXT ONLY IF SOMETHING GIVES IT ANY -----
-            //
-            // `Ui_DrawItem` reads `+24` (a resolved `char *`) and, failing
-            // that, calls `+32`. It NEVER reads `+28`. An item with both
-            // zero draws nothing, whatever string id it carries - 111 of
-            // the tree's 572 items are exactly that, and this drew every
-            // one of them. The sneak's six tab icons and its three 50x50
-            // buttons are in that set, which is the whole of the user's
-            // "some of the texts are parts of sub-menu and should not be
-            // displayed at anytime": they are not sub-menu texts, they are
-            // strings belonging to a widget that does not draw text.
-            //
-            // Of the callbacks, two are modelled: `0x00476860` draws the
-            // item's own `+28`, and `0x0042AA00` is the inventory row,
-            // which asks the channel for a name and arrives here as
-            // `rows_`. The other thirteen are native and draw nothing.
-            const std::string* run_ = nullptr;
-            if (rows_) {
-                const auto r = rows_->find(it.addr);
-                if (r != rows_->end() && !r->second.empty()) run_ = &r->second;
-            }
-            const bool ownString = it.textFn == kTextFnString;
-            // ---- THE SNEAK'S ECHO BAR, `sub_0049DC20` -----------------
-            //
-            // A THIRD source of text, beside the record's own string and the
-            // runtime row map: a `+32` callback that composes its line out of
-            // the device's own state. See `kTextFnSneakEcho`; the arm it took
-            // goes into the frame whether or not anything was drawn, so an
-            // empty bar can be told from a bar the walk never reached.
-            const bool isEcho = it.textFn == kTextFnSneakEcho;
-            std::string echoText;
-            if (isEcho) {
-                int arm = -1;
-                echoText = echoBarText(walk, text, &arm);
-                out.echoArm = arm;
-            }
-            if (!run_ && !ownString && !isEcho) continue;
-            const int id = it.label();
-            if (!run_ && !isEcho &&
-                (id < 0 || id >= static_cast<int>(text.size()))) continue;
-            const std::string& s = run_ ? *run_
-                                 : isEcho ? echoText
-                                          : text[static_cast<std::size_t>(id)];
-            if (s.empty()) continue;
-
-            // ---- THE TEXT COLOUR IS THE ITEM'S OWN --------------------
-            //
-            // `Ui_ItemTextStyle` (0x004769A0) takes `+8/+9/+10` as the
-            // colour - unless bank C carries `0x80000001`, which forces
-            // white - and **halves all three when the row is not lit**.
-            // That halving is the `>>= 1` this file already had as `kDim`;
-            // what it did not have is the colour it halves.
-            //
-            // 233 of the 275 text items carry the white flag, the sneak's
-            // among them - so white-and-grey was right there by luck. The
-            // other 42 use their own, and NINE of those are actually
-            // coloured: eight at (254, 68, 20) and one at (255, 100, 70),
-            // on the terminal and SURV screens. Those nine have been drawn
-            // white since the composer existed.
-            std::uint8_t cr = 255, cg = 255, cb = 255;
-            if (!(eff0[2] & 1)) {
-                cr = static_cast<std::uint8_t>(rgb[0]);
-                cg = static_cast<std::uint8_t>(rgb[1]);
-                cb = static_cast<std::uint8_t>(rgb[2]);
-            }
-            if (!litText) { cr >>= 1; cg >>= 1; cb >>= 1; }
-            // THE FACE IS THE ITEM'S OWN, `+36`, not one hard-coded here.
-            //
-            // This drew everything in `I` (MENUINTR) because that is the
-            // start menu's face and the start menu is what was measured. It
-            // is right there for a reason the record states: screen 29's
-            // four buttons carry font **73**, which IS 'I' - so the tier-4
-            // agreement with the engine's own capture never depended on the
-            // hard-coding and does not move now.
-            //
-            // The SNEAK is where it showed. Its verbs, rows and echo bar name
-            // **74** ('J', JOURNAL) and its clock **67** ('C'), and JOURNAL
-            // is two pixels shorter in the line than MENUINTR - so the port
-            // drew the whole device in the menu's face at the menu's leading.
-            // Reported as "the font used is not the one of the main menu",
-            // which is the complaint from the other side: it should not be,
-            // and it was.
-            //
-            // 255 means the record names none, and `Text_DrawBlock`'s own
-            // global default is 74.
-            // `Ui_ItemTextStyle` (0x004769A0) maps the item's BANK 2 bits to
-            // `Text_DrawBlock`'s alignment, and the mapping is NOT the
-            // identity - the ladder is
-            //
-            //     0x80000004 -> 2 (left)    0x80000010 -> 8  (CENTRED)
-            //     0x80000008 -> 4 (right)   0x80000020 -> 0x10
-            //
-            // and it is the EFFECTIVE flags that matter, not the record: the
-            // start menu's four buttons store bank 2 as ZERO and are centred
-            // by one broadcast of `0x80000010` over the list. Drawn from the
-            // record alone they sit hard against the left edge of a 640-wide
-            // row, which is exactly what this composed before the ladder was
-            // read (docs/UI.md 5).
-            std::uint32_t eff[3];
-            it.effective(l.broadcast, eff);
-            // `Ui_DrawItem` scales the item's BOX and hands that to
-            // `Text_DrawBlock`, which aligns inside it:
-            //
-            //     v6  = I2D_ScaleX(x);      v16 = I2D_ScaleX(x + w);
-            //     v14 = I2D_ScaleY(y);      v18 = I2D_ScaleY(y + h);
-            //     Text_DrawBlock(v6, v14, v16, v18, text, style)
-            //
-            // so the alignment is worked out against the SCALED width with a
-            // native-size glyph run. Centring in the 640-wide design space and
-            // scaling the result instead pulls every centred row left of
-            // centre as the display grows.
-            //
-            // ...and the row goes through `layOutBlock` -
-            // `Text_LayOutBlock` itself - rather than through one unwrapped
-            // `drawRun`, because that call above IS a `Text_DrawBlock` with
-            // the item's box: the engine WRAPS inside it, aligns inside it and
-            // steps 120% of the font's height between lines.
-            //
-            // The alignment goes in as the STYLE word the ladder above
-            // produces, which is the same 2/4/8/0x10 `Ui_ItemTextStyle` hands
-            // `Text_DrawBlock`, so the case-4/case-8 arms inside the layout
-            // do the arithmetic these two lines used to.
-            const int x0 = scaleX(it.x + q->offsetX);
-            const int x1 = scaleX(it.x + q->offsetX + it.w);
-            const int y  = scaleY(it.y + q->offsetY);
-            TextBlock row;
-            row.left   = x0;
-            row.top    = y;
-            row.right  = x1;
-            row.bottom = scaleY(it.y + q->offsetY + it.h);
-            row.font   = it.face('J');
-            row.rgb[0] = static_cast<std::uint8_t>(cr);
-            row.rgb[1] = static_cast<std::uint8_t>(cg);
-            row.rgb[2] = static_cast<std::uint8_t>(cb);
-            row.style  = (eff[2] & 0x10) ? 8 : (eff[2] & 0x08) ? 4 : 2;
-            row.blinkOn = blink;
-            row.screenW = fb.w;
-            row.screenH = fb.h;
-            // THE LONG-TEXT SCROLL, `Ui_ItemTextStyle`'s bank C `0x80000002`
-            // arm - which is generic, not the examine page's: it measures the
-            // block (`Text_DrawBlock` with only TEXTP_ORIGIN), floors
-            // `height - boxHeight` at 0, clamps `dword_6A5090` into it, writes
-            // it back and hands it over as the block's origin. Five items
-            // carry the bit; the terminal family's body (0x004E4000), the
-            // dossier reader's text, is the one whose text arrives here.
-            const bool scrolls = (eff[2] & 0x2u) != 0;
-            if (scrolls) {
-                TextBlock probe = row;
-                probe.measureOnly = true;
-                const int total = lay_->layOutBlock(nullptr, s, probe);
-                const int overflow = std::max(0, total - (row.bottom - row.top));
-                if (scroll_) {
-                    if (*scroll_ > overflow) *scroll_ = overflow;
-                    else if (*scroll_ < 0)   *scroll_ = 0;
-                }
-                out.textOverflow = overflow;
-                row.originY = scroll_ ? *scroll_ : 0;
-                row.clipTop = row.top;
-                row.clipBottom = row.bottom;
-            }
-            if (reportText_ && reportText_->count(it.addr)) out.itemText[it.addr] = s;
-            BlockResult rr;
-            lay_->layOutBlock(&fb, s, row, &rr);
-            // a scrolled box counts what it LAID OUT, as the examine text does
-            if (scrolls) {
-                out.textLines += rr.lines;
-                out.textChars += static_cast<int>(s.size());
-            }
-            // `drawRun` returned the pen ADVANCE, not a pixel count - the
-            // width the row occupies - and `BlockResult::advance` is the same
-            // number summed over the lines a block wrapped to.
-            out.textAdvance += rr.advance;
-            out.centred += (eff[2] & 0x10) ? 1 : 0;
-            ++out.itemsDrawn;
-            // ...and the echo bar's line, taken HERE - after the layout ran
-            // on it - so what is reported is what the bar drew and not what
-            // anything handed the composer (CLAUDE.md 1).
-            if (isEcho) out.echoBar = s;
+            drawItem(itAuthored, layer, fb, q, out, l, walk, curList, text, cursorLate, sheetOk,
+                     art, artKey);
         }
     }
     if (reportHash_) {
@@ -1805,6 +669,1255 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
 
     return out;
 }
+
+
+// ONE ITEM of a list, drawn: its text, fill, picture, the hooks its `drawFn` names and its sprite - the body of `draw`'s item loop
+void ScreenComposer::drawItem(const omk::UiItem& itAuthored, int layer, omk::Surface& fb,
+                              const omk::UiPanel*& q, omk::ScreenFrame& out, const omk::UiList& l,
+                              const omk::UiWalk& walk, const omk::UiList*& curList,
+                              const std::vector<std::string>& text,
+                              std::vector<omk::UiCursor::Quad>& cursorLate, bool sheetOk,
+                              const omk::Surface& art, unsigned short artKey) const {
+    // ...AT THE PLACE THE SCREEN'S OWN HOOK PUT IT, when there is one.
+    // A widget tree carries an item's AUTHORED x/y, and a hook like the
+    // Gandhar door's moves its cursor every step (`setItemMove`).
+    UiItem itMoved = itAuthored;
+    if (moved_) {
+        const auto mv = moved_->find(itAuthored.addr);
+        if (mv != moved_->end()) { itMoved.x = mv->second.first; itMoved.y = mv->second.second; }
+    }
+    const UiItem& it = itMoved;
+    // THE IDENTITY PAGE'S CHARACTER: `0x004779C0` - `sub_478DE0` at
+    // 118.11, the node turned by oscillator 4, `I2D_Submit3DView` into
+    // the item's scaled rect at `item+0xB - 1`. Drawn when the walk
+    // reaches THAT layer, so the page's text at the item's own layer
+    // lands over it (the box overlaps the text column by 110 pixels).
+    if (it.drawFn == kDrawSneakCharacter && layer == static_cast<int>(it.layer) - 1) {
+        if (models_ && models_->drawCharacter(fb, scaleX(it.x + q->offsetX),
+                                              scaleY(it.y + q->offsetY),
+                                              scaleX(it.w), scaleY(it.h),
+                                              UiModels::spinDegrees(clockMs_)))
+            ++out.modelsDrawn;
+        return;
+    }
+    if (it.layer != layer) return;
+    std::uint32_t eff0[3];
+    it.effective(l.broadcast, eff0);
+    // ...and the bank-B bits a builder SET at RUN TIME, which the
+    // record cannot carry and which `Ui_ItemTextStyle` reads beside
+    // the record's own. `sub_49B950` sets `0x40000002` on "Examiner",
+    // which is what makes it flash while its page is up. This has to
+    // land BEFORE the lit/unlit ladder below reads `eff0[1]`.
+    eff0[1] |= walk.itemFlagsOn(it.addr) & 0x1FFFFFFFu;
+    // The item's own draw gate, the same `0x40000001` the list has -
+    // from the record, and from the RUNTIME for the lists whose
+    // widgets are a window onto something longer (`sub_42AAE0`).
+    // ...unless a HOOK switched it on: the record's bit is set on the
+    // Gandhar door's four markers, which ship hidden and are revealed
+    // one per press (`sub_428FF0(marker, 0x40000001, 0)`).
+    if ((eff0[1] & 1) && !walk.itemShown(it.addr)) return;
+    if (hidden_ && hidden_->count(it.addr)) return;
+    if (walk.itemOff(it.addr)) return;   // a builder switched it off
+
+    // THE 3D VIEWPORT (`sub_4782B0`): the node `sub_4812E0` clears
+    // the rectangle's DEPTH, sets the D3D viewport to it
+    // (`sub_440C40` -> `sub_42FF80` -> `sub_45FA20`, aspect w/h),
+    // draws the ordinary scene through the camera snapshot the
+    // submit took, and restores the full-screen viewport. The
+    // frontend has done the rendering at that size; this is the
+    // node's place in the layer walk, and nothing else of the item
+    // is drawn - the callback IS its draw.
+    if (it.drawFn == kDrawViewport) {
+        if (view3d_ && view3d_->valid()) {
+            const int x0 = scaleX(it.x + q->offsetX);
+            const int y0 = scaleY(it.y + q->offsetY);
+            blt(fb, {x0, y0, scaleX(it.x + q->offsetX + it.w),
+                     scaleY(it.y + q->offsetY + it.h)},
+                *view3d_, {0, 0, view3d_->w, view3d_->h}, kBltWait,
+                /*srcKey*/ 0, /*dstKey*/ 0, filter_);
+            ++out.itemsDrawn;
+        }
+        return;
+    }
+
+    // ---- IS THIS ITEM SELECTED, AND IS IT FOCUSED ------------
+    //
+    // `Ui_DrawList` sets two flags before drawing each row:
+    // `0x20000002` UIF_SELECTED on the row the list's `+2` names,
+    // and `0x20000001` UIF_FOCUSED as well when that list is the
+    // panel's CURRENT one - so exactly one item on screen is
+    // focused, which is what `screen+40` caches for the input code.
+    const int selIdx = walk.selectionOf(l);
+    const bool isSel = selIdx >= 0 &&
+        static_cast<std::size_t>(selIdx) < l.items.size() &&
+        l.items[static_cast<std::size_t>(selIdx)].addr == it.addr;
+    const bool isFocus = isSel && &l == curList;
+
+    // ---- THE TWO LIT LADDERS, and they are NOT the same ladder --
+    //
+    // `docs/UI.md` says `Ui_DrawItemSprite` "repeats the same ladder"
+    // as `Ui_ItemTextStyle`. Read side by side they agree on the
+    // first two rungs and differ on the other two, so a drawer that
+    // shares one ladder lights the wrong things:
+    //
+    //   both      0x40000008 -> lit
+    //             0x40000004 -> Ui_Oscillator(1)          (pulse)
+    //   SPRITE    0x40000002 -> !sel: unlit
+    //                           sel & !focus: lit
+    //                           sel &  focus: oscillator  <- FLASH
+    //             otherwise  -> lit = SELECTED
+    //   TEXT      0x40000002 -> !sel: unlit
+    //                           sel: oscillator
+    //             otherwise  -> lit = SELECTED **and** FOCUSED
+    //
+    // (`sub_476E60` LABEL_4/10/11 against `sub_4769A0` LABEL_6/12/13.)
+    //
+    // Oscillator 1 ships period 500, flags 3, and its completion
+    // `sub_42B7B0` does `osc[6] = (osc[6] == 0)` - a square wave
+    // toggling every 500 ms. That is the user's "flashing icon to
+    // indicate the selection", read rather than invented.
+    //
+    // The sneak's own text carries none of the three bits, so it
+    // takes the TEXT default: the current list's selected row is
+    // white and every other row is dimmed. Its tab icons carry
+    // `0x2`, so the focused tab pulses.
+    const bool blink = ((clockMs_ / 500) & 1) != 0;
+    bool litSprite, litText;
+    if (eff0[1] & 8)      { litSprite = litText = true; }
+    else if (eff0[1] & 4) { litSprite = litText = blink; }
+    else if (eff0[1] & 2) {
+        litSprite = !isSel ? false : (isFocus ? blink : true);
+        litText   = isSel && blink;
+    } else {
+        litSprite = isSel;
+        litText   = isSel && isFocus;
+    }
+    const bool lit = litSprite;
+
+    // THE ITEM'S COLOUR, and the record is not always it. A page
+    // builder writes `+8/+9/+10` at run time through `sub_4296D0`,
+    // which is why 209 of the 222 fill items ship the (255, 0, 0)
+    // placeholder: `UiWalk::itemColour` returns what the builder
+    // wrote, and null where nothing did.
+    const int* over = walk.itemColour(it.addr);
+    const int rgb[3] = {over ? over[0] : it.rgb[0],
+                        over ? over[1] : it.rgb[1],
+                        over ? over[2] : it.rgb[2]};
+
+    // ---- THE FILL: `Ui_DrawItemFill` (0x00476FE0) --------------
+    //
+    // A quad over the item's own scaled rect. The colour is the
+    // item's `+8/+9/+10` - or (255, 50, 50) on the `0x42000000`
+    // arm - and the alpha comes from which arm runs: **200** for the
+    // plain `0x40000010`, 100 for `0x44000000`, `+9` otherwise.
+    // `fillQuad` carries the blend and the evidence for it.
+    //
+    // **Two things about it are easy to get wrong.** The
+    // blend is the INVERSE of source-over, so a big alpha makes the
+    // quad faint, not solid - drawn the usual way round the sneak's
+    // rows come out bright red. And the per-row gate is real:
+    // `sub_42AAE0` sets `0x40000001` on every widget past the object
+    // count, so the engine fills only the rows that hold something,
+    // which is why a capture shows two bars of nine.
+    //
+    // AND THE PLACEHOLDER IS ANSWERED. 209 of the
+    // 222 fill items ship (255, 0, 0) because a page BUILDER writes
+    // the real colour at run time - `sub_4296D0` over a whole list,
+    // handed the page's own tab-icon colour. `rgb` above is what it
+    // wrote; `UiWalk::buildPage` and `docs/UI.md` carry the rule and
+    // the five captures that confirm it.
+    // ---- THE 3D PREVIEWS: `I2D_Submit3DView` (0x00428900) -----
+    //
+    // Not an item flag - `Ui_DrawItem` never reaches this primitive,
+    // so the flag table cannot name it. What identifies the three
+    // slots is the LIST: 0x004DE420, whose items take the three
+    // models in the order the sneak's open callback loads them.
+    drawItemPreviews(l, itAuthored, fb, it, q, out);
+
+    // ---- THE EXAMINE PAGE'S TEXT ------------------------------
+    //
+    // The description, laid into the item's own box by
+    // `TextLayout::layOutBlock` - `Text_LayOutBlock` (0x0043F3E0)
+    // itself. The engine's pitch is 120% of the current font's
+    // `+12` and a blank line takes the same - not a greedy wrap's
+    // `height + 2` with a flat 12 for a blank line.
+    //
+    // AND IT SCROLLS. Bank C `0x2` on the item, four of which the
+    // tree carries. `Ui_ItemTextStyle` lays the block out, takes
+    // `laidOutHeight - boxHeight` floored at 0, clamps `dword_6A5090`
+    // into [0, that] and hands the result to the run at `+0x10` -
+    // which `Text_DrawBlock` unpacks into `dword_9079F8`, the layout's
+    // ORIGIN Y. So the scroll is not a special case in the drawer at
+    // all: it is the block's origin, subtracted from every line
+    // (`v41 = v6 - dword_9079F8`). `sub_42A9A0`, the list hook, steps
+    // the same global eight pixels per UP or DOWN and does no
+    // clamping, so the bound is discovered HERE and written back.
+    //
+    // `{B}` is RED, (255, 0, 0), on the frames oscillator 1 is high -
+    // `Text_LayOutBlock`'s run-emit is explicit about it, and
+    // `docs/UI.md`'s markup table had said white. Two captures of the
+    // original two seconds apart settled it before it could be read:
+    // the MK400 notice's Khonsu line, `{fSI226198101B}`, is gold in
+    // one and red in the other, (181, 180, 131) against (150, 33, 42).
+    // Keyed on the item's DRAW HOOK, `0x004780A0`, which both examine
+    // pages' boxes carry - the sneak's (0x004DE710) and MULTIPLAN's
+    // (0x004E57E0). Every arm of it ends in `sub_477F60`, this text.
+    // ...and the MEMORY page's body box, item 0x004DEA98 (400x110 at
+    // (190, 250), draw hook `0x00477F60`), which is the same text
+    // drawer the examine page's every arm ends in. The row hook writes
+    // the selected row's tag into `dword_4DEAD4` - which IS that
+    // item's own `+0x3C` (0x004DEA98 + 60) - and the drawer raises
+    // event 40 on it, so what it shows is the SELECTED MEMO's
+    // description. The page's panel hook `0x0049D8B0` clears the item's
+    // `0x40000001` while the rows are current and sets it elsewhere,
+    // and the reader page `0x004DEFF0` is the same lists with the BOX
+    // as the current list - which is why it needs no artwork of its own.
+    drawExamineText(l, it, q, rgb, blink, fb, out);
+
+    // ---- THE EXAMINE PAGE'S CONTENT ---------------------------
+    //
+    // Panel 0x004DEF20's own list 0x004DE760 holds one item, and what
+    // it shows is whichever arm of `Game_HandleEvent` case 40 the
+    // object's kind takes - a 3D model for kind 15, an
+    // `IMAGES\<stem>.bmp` for kind 16, nothing otherwise.
+    if (models_ && (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox)) {
+        if (models_->drawExamine(fb,
+                                 scaleX(it.x + q->offsetX),
+                                 scaleY(it.y + q->offsetY),
+                                 scaleX(it.w), scaleY(it.h),
+                                 UiModels::spinDegrees(clockMs_)))
+            ++out.modelsDrawn;
+    }
+
+    // ---- THE SHOP'S "ANALYSER" BOX: draw hook 0x00477AD0 -----------
+    //
+    // Item 0x004E3900 on the Examiner page (0x004E39D8), 400x260. Its
+    // `+20` draw hook takes the item's own tag `+0x3C` - which is the
+    // `dword_4E393C` the row callback writes, reached through the
+    // field rather than the address, which is why no instruction in the
+    // image names it - asks `sub_42B2C0` (EVENT 30, the preview load)
+    // for the object slot, frames the model with `sub_478DE0` (the
+    // previews' bounding-box camera), spins it on oscillator 4 and
+    // submits it through `I2D_Submit3DView` into the item's own
+    // rectangle. No text follows. A reader said it plainly: the button
+    // "shows a 3D view of an item when selecting it in the list" - the
+    // page was drawn empty here after a reading that missed the field.
+    if (models_ && it.drawFn == kDrawShopPreview) {
+        if (models_->drawExamine(fb,
+                                 scaleX(it.x + q->offsetX),
+                                 scaleY(it.y + q->offsetY),
+                                 scaleX(it.w), scaleY(it.h),
+                                 UiModels::spinDegrees(clockMs_)))
+            ++out.modelsDrawn;
+    }
+
+    // ---- THE INTERFERENCE BOX: draw hook 0x00477ED0 -----------------
+    //
+    // `I2D_ScaleX/Y` of the item's position and of its SIZE (not of its
+    // far corner - the thumbnail's hook 0x00477E00 adds the two first,
+    // this one does not), submitted by `sub_4286F0` at the item's layer
+    // and drawn by `sub_432940` on the back buffer as it stands. The
+    // walk runs layer by layer, so everything at 0..6 is already here
+    // and the cursor at 8 is not: the same pixels the flush would hand
+    // it. `ui/interference.h` has the rule.
+    if (it.drawFn == kDrawInterference) {
+        noise_.apply(fb, scaleX(it.x + q->offsetX), scaleY(it.y + q->offsetY),
+                     scaleX(it.w), scaleY(it.h));
+        ++out.noiseBoxes;
+    }
+
+    // ---- THE CITY MAP'S BITMAP: draw hook 0x00477CA0 ---------------
+    //
+    // `if (!item->tag) return;` and then one blit: `Ui_ItemScreenX/Y`,
+    // `I2D_ScaleX/Y` of that and of the far corner (`+4`/`+6` ADDED to
+    // the near one first - unlike the interference box above, which
+    // scales the size), a source rect of {0, 0, 0, 0} and
+    // `sub_4287A0(dest, bitmap, 0, item->layer - 1)`. The tag is
+    // `dword_4DECB4`, what `sub_49D9E0` loaded, so a page whose
+    // `fopen` failed draws nothing at all - and the engine would
+    // already have left that page.
+    //
+    // The source rect being zeroed is the loader's "whole bitmap":
+    // `I2D_BlitBitmap` takes the file's own extent when the rect is
+    // empty, which for these four is 640x480 - the same size as the
+    // item.
+    if (cityMap_ && it.drawFn == kDrawSneakMapSheet) {
+        if (cityMap_->sheet && cityMap_->sheet->valid()) {
+            const int x0 = scaleX(it.x + q->offsetX);
+            const int y0 = scaleY(it.y + q->offsetY);
+            blt(fb, {x0, y0, scaleX(it.x + q->offsetX + it.w),
+                     scaleY(it.y + q->offsetY + it.h)},
+                *cityMap_->sheet,
+                {0, 0, cityMap_->sheet->w, cityMap_->sheet->h},
+                kBltWait, /*srcKey*/ 0, /*dstKey*/ 0, filter_);
+            out.mapSheet = true;
+        }
+    }
+
+    // ---- THE PIN AND THE MARKERS: draw hook 0x0049E6F0 -------------
+    //
+    // Transcribed call by call. The item's `+0x3C` tag is the city id
+    // the open hook stored; the hook scans the compiled table for the
+    // row carrying it and returns at once when there is none, which is
+    // the `-1` a location outside the four cities gets.
+    //
+    // THE PIN (`sub_49E5B0`) is a TRIANGLE, not a dot, and it carries
+    // the player's heading: with `b = 90 - facing` degrees, its three
+    // points are the player's own place and `b + 30` / `b - 30` at a
+    // radius of 40, each offset scaled on its own axis. Point 0 is
+    // BLUE at half the pulse's alpha (`I2D_PackColour(osc2 / 2, 0, 0,
+    // 255)`), the other two white - and only point 0's colour reaches
+    // the screen, because `surface.h`'s mode-2 triangle takes its
+    // colour from the FIRST point and draws three lines with no fill.
+    //
+    // EACH MARKER is the same primitive at flags 4: a 10-wide, 10-tall
+    // triangle pointing up, `I2D_PackColour(osc2, 255, 0, 0)` - RED
+    // against the pin's blue.
+    //
+    // Both are labelled, in one 200x80 box at (+10, -10) from their
+    // own point: the pin with the player's NAME (`sub_42B1F0(6)`,
+    // event 44 property 6, the same one the identity page's "Nom" row
+    // shows) and a marker with the place name the city prefix was
+    // stripped from.
+    drawMapPins(it, q, eff0, rgb, litText, blink, fb, out);
+
+    // ---- THE IDENTITY PAGE'S "IDENTITE": draw hook 0x0049C2B0 ------
+    //
+    // Transcribed call by call from the listing. The box is the
+    // item's scaled position; its WIDTH is `I2D_ScaleX(w)` and its
+    // HEIGHT `I2D_ScaleX(h)` - X, not Y, which is the listing's and
+    // identical at 640x480. `Ui_ItemTextStyle` fills the style block
+    // once (the face, the alignment); every `Text_DrawBlock` after it
+    // is handed that block with its colour bytes rewritten: WHITE for
+    // a label (`Ui_ScreenString`), the identity icon's colour for a
+    // value (`byte_4DDFB8..BA`). Every block spans from its own left
+    // to left + width, and from the row's top to top + height. The
+    // pen moves by individually scaled literals:
+    //
+    //   row 1  Nom 15 | +100 prop 6
+    //   row 2  Age 16 | +60 "%d" prop 8 | +40 Sexe 17 | +70 prop 0
+    //          | +30 Groupe sanguin 18 | +130 prop 13      (back 330)
+    //   row 3  Taille 19 | +60 prop 9 | +40 Poids 20 | +70 prop 10
+    //          | +30 Yeux 21 | +80 prop 12                 (back 280)
+    //   row 4  Profession 22 | +100 prop 11
+    //   row 5  one WHITE block: sprintf("%s : {I%03d%03d%03d} %s",
+    //          label 23, icon, prop 15) then
+    //          sprintf("%s\n{I255255255}%s : {I%03d%03d%03d} %s",
+    //          that, label 24, icon, prop 14)
+    //
+    // rows stepping `I2D_ScaleY(20)`.
+    drawIdentity(it, q, eff0, blink, fb, out);
+
+    // ---- THE HIGH-SCORE TABLE: draw hook 0x004ADAD0 ---------------
+    //
+    // Screen 36 is ONE 400x480 item and this hook is the whole of it.
+    // Transcribed call by call. The pen starts at the item's scaled
+    // place, every box runs from the pen to `pen + I2D_ScaleX(w)` and
+    // `+ I2D_ScaleX(h)` (X for the height too, as 0x0049C2B0 does),
+    // and the style block is filled ONCE by `Ui_ItemTextStyle`:
+    //
+    //   y += ScaleY(50) twice        the screen's string 3, font 'C'
+    //   y += ScaleY(30)              param == 0 ? string 6
+    //                                : sprintf("%s %d", string 5, param)
+    //   y += ScaleY(50)              five rows, ScaleY(30) apart:
+    //        "%d.- %s" (row + 1, the name) LEFT in the left half, and
+    //        "%d'%02d\"%02d" RIGHT in the right half
+    //   y += ScaleY(20)              one CENTRED line behind a query
+    //
+    // The rows are `ds:90E454h + param * 180`, stride 36 - the SAVE
+    // HEADER's +724, a 32-byte name and the time in MILLISECONDS at
+    // +0x20. `sub_42B8E0` splits that into minutes / seconds /
+    // hundredths, which is the printf's order.
+    //
+    // The engine's `test ecx, ecx` before each row can never fail -
+    // `ecx` is the record's ADDRESS, a fixed global plus an offset -
+    // so all five rows always draw, an empty table as five numbered
+    // blanks. Transcribed as written rather than "fixed".
+    //
+    // The last line is the posted MESSAGE: `sub_42B5E0(0)` /
+    // `sub_42B5F0` are `Ui_Oscillator` / `Ui_OscillatorFlags`, and
+    // `sub_478D60` copies the buffer oscillator 0's start fills
+    // (0x0042B660, `strncpy(0x6A4CA0, msg, 127)`).
+    drawHighScores(it, q, text, rgb, blink, fb, out, eff0);
+
+    // ---- THE IDENTITY PAGE'S "CARACTERISTIQUES": draw hook 0x0049CA30
+    //
+    // Transcribed from the listing. `Ui_ItemTextStyle` fills the style
+    // once and, unlike 0x0049C2B0, NOTHING rewrites its colour - so
+    // every text here is the item's own text colour (bank C
+    // `0x80000001` forces white, bank B `0x8` keeps it lit). The
+    // colour handed to the bars is `I2D_PackColour(100, item +8/+9/+10)`.
+    // Seven rows, `I2D_ScaleY(30)` apart; each a label (`IAM\Sneak`
+    // 25..31) in the item's box, then the pen moves `I2D_ScaleX(w/2)`
+    // and the row takes a BAR - `sub_49CE60(x, y, colour, value,
+    // I2D_ScaleY(20), layer)` - except "Maitrise du combat", whose
+    // value is a RANK WORD: `value / 41` -> strings 36..40, none past
+    // 204.
+    //
+    // THE BAR (`sub_49CE60`), in its own order:
+    //   * the value "%d" in face 'J' (style +8 = 0x4A), box
+    //     (x + 5, y) .. (x + ScaleX(100), y + h); the face back to 'C'
+    //   * four `I2D_DrawLine`s, flags 0x14, layer 6, colour
+    //     `PackColour(100, 50, 50, 50)` in the FIRST point's third
+    //     dword - the grey outline (x .. x + ScaleX(200)) x
+    //     (yc - ScaleY(2) - 1 .. yc + ScaleY(2) + 1), yc = y + h / 2
+    //   * `I2D_SubmitQuad` flags 0xC: the KNOB, x + ScaleX(v) - 1 ..
+    //     x + ScaleX(v) + 4, yc - ScaleY(2) .. yc + ScaleY(2)
+    //   * `I2D_SubmitQuad` flags 4: the FILL, x + 1 .. x + ScaleX(v) - 1
+    //     over the same rows, both in the item's colour
+    //
+    // Drawn as the mode-2 software back end draws them, which is what
+    // `surface.h` ports: a line takes its colour from point 0's third
+    // dword and is opaque; a quad is its points' bounding box in
+    // vertex 0's colour, and flags 4 and 0xC are both mode 1. Drawn in
+    // SUBMISSION order; the I2D head cache's within-layer order is not
+    // modelled here, as nowhere else in this composer.
+    drawCharacteristics(it, eff0, rgb, litText, q, blink, fb,
+                        out);
+
+    // ---- THE CURSOR: `Ui_DrawItemCursor` (`sub_479920`) -------
+    //
+    // Drawn BEFORE the fill and the sprite, because `sub_4795F0`
+    // submits at layer 8 while a fill goes to the item's own
+    // `+11 - 2`, and the I2D per-layer cache is a HEAD cache.
+    //
+    // THE GATE IS READ AT THE CALL SITE, not taken from the docs:
+    // bank B `0x40000200` on the item, then bank A `0x20000001` -
+    // FOCUSED - on the item AND on its list. That is the one row
+    // which is both its list's selection and in the focused list,
+    // which is the row the player is standing on: the hover effect
+    // that tells a player where they are.
+    // DEFERRED, because the I2D display list is sorted by LAYER
+    // and the cursor's is 8 while a sprite's is the item's own 6 and
+    // a fill's is `+11 - 2` = 4. Submitting it here draws it UNDER the
+    // icon, between the background and the selected image, so a cut
+    // image of the icon shows through. Collected now and drawn after
+    // the whole walk, which is what a sort by
+    // layer does with one cursor on screen.
+    drawItemCursor(eff0, isSel, isFocus, it, q, rgb, cursorLate, out, fb, walk);
+
+    // ---- THE SPRITE: `Ui_DrawItemSprite` -----------------------
+    //
+    // The lit source at `+12/+14` or the unlit one at `+16/+18`,
+    // each `w x h`, blitted from the screen's own artwork - so the
+    // sneak's five left-hand icons are cut out of `sneak.bmp`.
+    // Source raw, destination scaled, exactly as the background.
+    //
+    // The sneak's tab column carries `0x40000302`: sprite, cursor,
+    // and lit-on-selection. Drawing its `+28` as TEXT instead - what
+    // this did - printed five labels the game has never shown.
+    drawItemSprite(eff0, sheetOk, lit, it, q, fb, art, artKey, out);
+
+    // ---- AN ITEM SHOWS TEXT ONLY IF SOMETHING GIVES IT ANY -----
+    //
+    // `Ui_DrawItem` reads `+24` (a resolved `char *`) and, failing
+    // that, calls `+32`. It NEVER reads `+28`. An item with both
+    // zero draws nothing, whatever string id it carries - 111 of
+    // the tree's 572 items are exactly that, and this drew every
+    // one of them. The sneak's six tab icons and its three 50x50
+    // buttons are in that set, which is the whole of the user's
+    // "some of the texts are parts of sub-menu and should not be
+    // displayed at anytime": they are not sub-menu texts, they are
+    // strings belonging to a widget that does not draw text.
+    //
+    // Of the callbacks, two are modelled: `0x00476860` draws the
+    // item's own `+28`, and `0x0042AA00` is the inventory row,
+    // which asks the channel for a name and arrives here as
+    // `rows_`. The other thirteen are native and draw nothing.
+    const std::string* run_ = nullptr;
+    if (rows_) {
+        const auto r = rows_->find(it.addr);
+        if (r != rows_->end() && !r->second.empty()) run_ = &r->second;
+    }
+    const bool ownString = it.textFn == kTextFnString;
+    // ---- THE SNEAK'S ECHO BAR, `sub_0049DC20` -----------------
+    //
+    // A THIRD source of text, beside the record's own string and the
+    // runtime row map: a `+32` callback that composes its line out of
+    // the device's own state. See `kTextFnSneakEcho`; the arm it took
+    // goes into the frame whether or not anything was drawn, so an
+    // empty bar can be told from a bar the walk never reached.
+    const bool isEcho = it.textFn == kTextFnSneakEcho;
+    std::string echoText;
+    if (isEcho) {
+        int arm = -1;
+        echoText = echoBarText(walk, text, &arm);
+        out.echoArm = arm;
+    }
+    if (!run_ && !ownString && !isEcho) return;
+    const int id = it.label();
+    if (!run_ && !isEcho &&
+        (id < 0 || id >= static_cast<int>(text.size()))) return;
+    const std::string& s = run_ ? *run_
+                         : isEcho ? echoText
+                                  : text[static_cast<std::size_t>(id)];
+    if (s.empty()) return;
+
+    // ---- THE TEXT COLOUR IS THE ITEM'S OWN --------------------
+    //
+    // `Ui_ItemTextStyle` (0x004769A0) takes `+8/+9/+10` as the
+    // colour - unless bank C carries `0x80000001`, which forces
+    // white - and **halves all three when the row is not lit**.
+    // That halving is the `>>= 1` this file already had as `kDim`;
+    // what it did not have is the colour it halves.
+    //
+    // 233 of the 275 text items carry the white flag, the sneak's
+    // among them - so white-and-grey was right there by luck. The
+    // other 42 use their own, and NINE of those are actually
+    // coloured: eight at (254, 68, 20) and one at (255, 100, 70),
+    // on the terminal and SURV screens. Those nine have been drawn
+    // white since the composer existed.
+    drawItemText(eff0, rgb, litText, it, l, q, blink, fb, s, out, isEcho);
+}
+
+
+// THE 3D PREVIEWS: `I2D_Submit3DView` (0x00428900) (from `drawItem`)
+void ScreenComposer::drawItemPreviews(const omk::UiList& l, const omk::UiItem& itAuthored,
+                                      omk::Surface& fb, const omk::UiItem& it,
+                                      const omk::UiPanel*& q, omk::ScreenFrame& out) const {
+    if (models_ && l.addr == kListSneakPreviews) {
+        // THE SLOT IS THE ITEM'S INDEX IN THE LIST, so it has to be
+        // taken from the item that IS in the list. `it` is a
+        // reference to `itMoved`, a stack COPY made for
+        // `setItemMove` - `&it - &l.items[0]` on that is pointer
+        // arithmetic between unrelated objects, so the slot came out
+        // garbage and `UiModels::draw` refused all three. The three
+        // previews stopped drawing at `1f3e792` and nothing said so:
+        // the C++ is undefined rather than wrong-looking, the frame
+        // simply lost three small pictures, and `sneak previews` is
+        // a `--slow` check that no sweep has run since.
+        const int slot = static_cast<int>(&itAuthored - &l.items[0]);
+        if (models_->draw(fb, slot,
+                          scaleX(it.x + q->offsetX),
+                          scaleY(it.y + q->offsetY),
+                          scaleX(it.w), scaleY(it.h),
+                          UiModels::spinDegrees(clockMs_)))
+            ++out.modelsDrawn;
+    }
+}
+
+
+
+
+
+
+// THE CURSOR: `Ui_DrawItemCursor` (`sub_479920`) (from `drawItem`)
+void ScreenComposer::drawItemCursor(unsigned int (&eff0)[3], bool isSel, bool isFocus,
+                                    const omk::UiItem& it, const omk::UiPanel*& q,
+                                    const int (&rgb)[3],
+                                    std::vector<omk::UiCursor::Quad>& cursorLate,
+                                    omk::ScreenFrame& out, omk::Surface& fb,
+                                    const omk::UiWalk& walk) const {
+    if (cursor_ && (eff0[1] & 0x200) && isSel && isFocus) {
+        const int cx = scaleX(it.x + q->offsetX + it.w / 2);
+        const int cy = scaleY(it.y + q->offsetY + it.h / 2);
+        int hr = rgb[0], hg = rgb[1], hb = rgb[2];
+        if (eff0[1] & 0x02000000) { hr = 255; hg = 50; hb = 50; }
+        cursorLate = cursor_->tick(it.addr, cx, cy,
+                                   scaleX(it.w), scaleY(it.h),
+                                   hr, hg, hb, deltaMs_);
+        ++out.cursorQuads;
+    }
+    // `Ui_DrawItemFill` (0x00476FE0) ON THIS ITEM - one call, made
+    // from two places, which is why it is a lambda: the row hook
+    // below makes it and so does the bank-B bit under that.
+    drawRowMarkAndFill(rgb, eff0, it, q, fb, walk, out);
+}
+
+
+// THE ITEM'S TEXT: its colour the item's own, laid out in its box (from `drawItem`)
+void ScreenComposer::drawItemText(unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+                                  const omk::UiItem& it, const omk::UiList& l,
+                                  const omk::UiPanel*& q, bool blink, omk::Surface& fb,
+                                  const std::string& s, omk::ScreenFrame& out, bool isEcho) const {
+    std::uint8_t cr = 255, cg = 255, cb = 255;
+    if (!(eff0[2] & 1)) {
+        cr = static_cast<std::uint8_t>(rgb[0]);
+        cg = static_cast<std::uint8_t>(rgb[1]);
+        cb = static_cast<std::uint8_t>(rgb[2]);
+    }
+    if (!litText) { cr >>= 1; cg >>= 1; cb >>= 1; }
+    // THE FACE IS THE ITEM'S OWN, `+36`, not one hard-coded here.
+    //
+    // This drew everything in `I` (MENUINTR) because that is the
+    // start menu's face and the start menu is what was measured. It
+    // is right there for a reason the record states: screen 29's
+    // four buttons carry font **73**, which IS 'I' - so the tier-4
+    // agreement with the engine's own capture never depended on the
+    // hard-coding and does not move now.
+    //
+    // The SNEAK is where it showed. Its verbs, rows and echo bar name
+    // **74** ('J', JOURNAL) and its clock **67** ('C'), and JOURNAL
+    // is two pixels shorter in the line than MENUINTR - so the port
+    // drew the whole device in the menu's face at the menu's leading.
+    // Reported as "the font used is not the one of the main menu",
+    // which is the complaint from the other side: it should not be,
+    // and it was.
+    //
+    // 255 means the record names none, and `Text_DrawBlock`'s own
+    // global default is 74.
+    // `Ui_ItemTextStyle` (0x004769A0) maps the item's BANK 2 bits to
+    // `Text_DrawBlock`'s alignment, and the mapping is NOT the
+    // identity - the ladder is
+    //
+    //     0x80000004 -> 2 (left)    0x80000010 -> 8  (CENTRED)
+    //     0x80000008 -> 4 (right)   0x80000020 -> 0x10
+    //
+    // and it is the EFFECTIVE flags that matter, not the record: the
+    // start menu's four buttons store bank 2 as ZERO and are centred
+    // by one broadcast of `0x80000010` over the list. Drawn from the
+    // record alone they sit hard against the left edge of a 640-wide
+    // row, which is exactly what this composed before the ladder was
+    // read (docs/UI.md 5).
+    std::uint32_t eff[3];
+    it.effective(l.broadcast, eff);
+    // `Ui_DrawItem` scales the item's BOX and hands that to
+    // `Text_DrawBlock`, which aligns inside it:
+    //
+    //     v6  = I2D_ScaleX(x);      v16 = I2D_ScaleX(x + w);
+    //     v14 = I2D_ScaleY(y);      v18 = I2D_ScaleY(y + h);
+    //     Text_DrawBlock(v6, v14, v16, v18, text, style)
+    //
+    // so the alignment is worked out against the SCALED width with a
+    // native-size glyph run. Centring in the 640-wide design space and
+    // scaling the result instead pulls every centred row left of
+    // centre as the display grows.
+    //
+    // ...and the row goes through `layOutBlock` -
+    // `Text_LayOutBlock` itself - rather than through one unwrapped
+    // `drawRun`, because that call above IS a `Text_DrawBlock` with
+    // the item's box: the engine WRAPS inside it, aligns inside it and
+    // steps 120% of the font's height between lines.
+    //
+    // The alignment goes in as the STYLE word the ladder above
+    // produces, which is the same 2/4/8/0x10 `Ui_ItemTextStyle` hands
+    // `Text_DrawBlock`, so the case-4/case-8 arms inside the layout
+    // do the arithmetic these two lines used to.
+    const int x0 = scaleX(it.x + q->offsetX);
+    const int x1 = scaleX(it.x + q->offsetX + it.w);
+    const int y  = scaleY(it.y + q->offsetY);
+    TextBlock row;
+    row.left   = x0;
+    row.top    = y;
+    row.right  = x1;
+    row.bottom = scaleY(it.y + q->offsetY + it.h);
+    row.font   = it.face('J');
+    row.rgb[0] = static_cast<std::uint8_t>(cr);
+    row.rgb[1] = static_cast<std::uint8_t>(cg);
+    row.rgb[2] = static_cast<std::uint8_t>(cb);
+    row.style  = (eff[2] & 0x10) ? 8 : (eff[2] & 0x08) ? 4 : 2;
+    row.blinkOn = blink;
+    row.screenW = fb.w;
+    row.screenH = fb.h;
+    // THE LONG-TEXT SCROLL, `Ui_ItemTextStyle`'s bank C `0x80000002`
+    // arm - which is generic, not the examine page's: it measures the
+    // block (`Text_DrawBlock` with only TEXTP_ORIGIN), floors
+    // `height - boxHeight` at 0, clamps `dword_6A5090` into it, writes
+    // it back and hands it over as the block's origin. Five items
+    // carry the bit; the terminal family's body (0x004E4000), the
+    // dossier reader's text, is the one whose text arrives here.
+    const bool scrolls = (eff[2] & 0x2u) != 0;
+    if (scrolls) {
+        TextBlock probe = row;
+        probe.measureOnly = true;
+        const int total = lay_->layOutBlock(nullptr, s, probe);
+        const int overflow = std::max(0, total - (row.bottom - row.top));
+        if (scroll_) {
+            if (*scroll_ > overflow) *scroll_ = overflow;
+            else if (*scroll_ < 0)   *scroll_ = 0;
+        }
+        out.textOverflow = overflow;
+        row.originY = scroll_ ? *scroll_ : 0;
+        row.clipTop = row.top;
+        row.clipBottom = row.bottom;
+    }
+    if (reportText_ && reportText_->count(it.addr)) out.itemText[it.addr] = s;
+    BlockResult rr;
+    lay_->layOutBlock(&fb, s, row, &rr);
+    // a scrolled box counts what it LAID OUT, as the examine text does
+    if (scrolls) {
+        out.textLines += rr.lines;
+        out.textChars += static_cast<int>(s.size());
+    }
+    // `drawRun` returned the pen ADVANCE, not a pixel count - the
+    // width the row occupies - and `BlockResult::advance` is the same
+    // number summed over the lines a block wrapped to.
+    out.textAdvance += rr.advance;
+    out.centred += (eff[2] & 0x10) ? 1 : 0;
+    ++out.itemsDrawn;
+    // ...and the echo bar's line, taken HERE - after the layout ran
+    // on it - so what is reported is what the bar drew and not what
+    // anything handed the composer (CLAUDE.md 1).
+    if (isEcho) out.echoBar = s;
+}
+
+
+// THE HIGH-SCORE BOARD (hook `0x004ADAD0`): its page's rows, names and scores (from `draw`)
+void ScreenComposer::drawHighScores(const omk::UiItem& it, const omk::UiPanel*& q,
+                                    const std::vector<std::string>& text, const int (&rgb)[3],
+                                    bool blink, omk::Surface& fb, omk::ScreenFrame& out,
+                                    unsigned int (&eff0)[3]) const {
+    if (scores_ && it.drawFn == kDrawHighScore) {
+        const int width = scaleX(it.w);
+        const int height = scaleX(it.h);
+        const int px = scaleX(it.x + q->offsetX);
+        int py = scaleY(it.y + q->offsetY);
+        const int page = scorePage_ & 3;
+        // the SCREEN's own text file (`IAM\HScore`), which is what
+        // `sub_4767E0` resolves - not the player sheet
+        const auto screenText = [&](int id) -> std::string {
+            return id >= 0 && id < static_cast<int>(text.size())
+                ? text[static_cast<std::size_t>(id)] : std::string();
+        };
+        const auto block = [&](const std::string& str, int left, int right,
+                               int style, char face) {
+            if (str.empty()) return;
+            TextBlock b;
+            b.left = left;
+            b.top = py;
+            b.right = right;
+            b.bottom = py + height;
+            b.font = face;
+            b.style = style;
+            b.rgb[0] = static_cast<std::uint8_t>(rgb[0]);
+            b.rgb[1] = static_cast<std::uint8_t>(rgb[1]);
+            b.rgb[2] = static_cast<std::uint8_t>(rgb[2]);
+            b.blinkOn = blink;
+            b.screenW = fb.w;
+            b.screenH = fb.h;
+            lay_->layOutBlock(&fb, str, b);
+            ++out.scoreBlocks;
+            out.scoreRows.push_back(str);
+        };
+        const int itemStyle = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
+        py += scaleY(50) * 2;
+        block(screenText(3), px, px + width, itemStyle, 'C');
+        py += scaleY(30);
+        if (page == 0) {
+            block(screenText(6), px, px + width, itemStyle, 'C');
+        } else {
+            block(screenText(5) + " " + std::to_string(page),
+                  px, px + width, itemStyle, 'C');
+        }
+        py += scaleY(50);
+        const int mid = px + width / 2;
+        for (int r = 0; r < 5; ++r) {
+            const auto& e = (*scores_)[static_cast<std::size_t>(page * 5 + r)];
+            block(std::to_string(r + 1) + ".- " + e.first, px, mid, 2, 'C');
+            const int ms = e.second;
+            char t[32];
+            std::snprintf(t, sizeof t, "%d'%02d\"%02d",
+                          (ms / 1000 / 60) % 60, (ms / 1000) % 60,
+                          (ms % 1000) / 10);
+            block(t, mid, px + width, 4, 'C');
+            py += scaleY(30);
+        }
+        // THE LAST LINE: `py += I2D_ScaleY(20)`, then while oscillator
+        // 0's flag is up (`Ui_OscillatorFlags(Ui_Oscillator(0), 1)`)
+        // `sub_478D60` copies the posted message out and it draws
+        // across the item, style 8 (`dword_6A4C60 = 8`), face 'C'
+        // still current: (left, py, left + width, py + height).
+        py += scaleY(20);
+        if (scoreMessage_ && !scoreMessage_->empty())
+            block(*scoreMessage_, px, px + width, 8, 'C');
+    }
+}
+
+
+// THE ROW MARK (the `+20` hook `0x0049C090`) and THE FILL an item's effect asks for (from `draw`)
+void ScreenComposer::drawRowMarkAndFill(const int (&rgb)[3], unsigned int (&eff0)[3],
+                                        const omk::UiItem& it, const omk::UiPanel*& q,
+                                        omk::Surface& fb, const omk::UiWalk& walk,
+                                        omk::ScreenFrame& out) const {
+    const auto itemFill = [&] {
+        int fr = rgb[0], fg = rgb[1], fb2 = rgb[2];
+        if (eff0[1] & 0x02000000) { fr = 255; fg = 50; fb2 = 50; }
+        const int alpha = (eff0[1] & 0x10) ? 200
+                        : (eff0[1] & 0x04000000) ? 100 : rgb[1];
+        const int x0 = scaleX(it.x + q->offsetX);
+        const int y0 = scaleY(it.y + q->offsetY);
+        const int x1 = scaleX(it.x + q->offsetX + it.w);
+        const int y1 = scaleY(it.y + q->offsetY + it.h);
+        fillQuad(fb, x0, y0, x1, y1, fr, fg, fb2, alpha);
+    };
+
+    // ---- THE ROW MARK: the `+20` hook `0x0049C090` -------------
+    //
+    // Transcribed:
+    //
+    //     tag = item->+3C;  if (tag == -1) return;
+    //     if (screen->+1C != off_4DEEB8) return;   // the VERB panel
+    //     if (!dword_670BE0)
+    //         hit = Ui_ListSelectedItem(&word_4DE6F0) == item;
+    //     else
+    //         hit = tag == dword_670BE4 || == 670BE8 || == 670BEC;
+    //     if (hit) Ui_DrawItemFill(screen, panel, item);
+    //
+    // so it shows ONLY while a verb is being chosen, and during a
+    // `Utiliser sur` it marks the one or two rows already picked -
+    // the page's only feedback for that operation.
+    //
+    // `Ui_DrawItem` runs the `+20` hook FIRST, before the text and
+    // before the flag fill, so this quad goes down before the one
+    // below. They are the same quad, so the order decides nothing;
+    // what it decides is the COUNT. The nine rows carry bank B
+    // `0x40000210`, so every drawn row already fills once, and the
+    // marked one fills TWICE - `src*(1-a)` applied twice takes it
+    // from 0.216 of the page's tint to 0.385. **That correction is
+    // this port's**: the read this was ported from called bank A's
+    // zero "nothing in the record asks for a fill", but the fill is
+    // gated on bank B (`I2D_TestFlag` picks the word from the mask's
+    // top bits), and there the bit is set.
+    if (it.drawFn == kDrawSneakRowFill) {
+        const int tag = walk.rowOf(it.addr);
+        const UiPanel* vp = walk.panel();
+        if (tag != -1 && vp && vp->addr == kPanelSneakVerbs) {
+            bool hit = false;
+            if (!walk.combining()) {
+                const UiList* rows = w_->listAt(kListSneakRows);
+                const int r = walk.selectionOf(kListSneakRows);
+                hit = rows && r >= 0 &&
+                      static_cast<std::size_t>(r) < rows->items.size() &&
+                      rows->items[static_cast<std::size_t>(r)].addr == it.addr;
+            } else {
+                for (int k = 0; k < 3 && !hit; ++k)
+                    hit = tag == walk.combineSlot(k);
+            }
+            if (hit) {
+                itemFill();
+                ++out.rowMarks;
+                out.rowMarked.push_back(tag);
+            }
+        }
+    }
+
+    if (eff0[1] & 0x10) {
+        itemFill();
+        ++out.fillsDrawn;
+    }
+}
+
+
+// THE LOAD PANEL'S SELECTION BOX, and the connector, and the picture (from `draw`)
+void ScreenComposer::drawLoadSelection(const omk::LoadPanel& lp, const omk::UiItem& f,
+                                       const omk::UiPanel*& q, int slot, omk::Surface& fb) const {
+    if (lp.row >= 0) {
+        const int v7 = 1;                     // `I2D_ScaleX(1)` at 640
+        const int a1 = f.x + q->offsetX, a3 = f.w;
+        const int a2 = f.y + q->offsetY + slot * (lp.row + 1) + 33 - slot;
+        const int a4 = 16;
+        const std::uint16_t c = rgb565(255, 255, 255);
+        const int quads[4][8] = {
+            {a1-v7, a2-v7, a1+a3+v7, a2-v7, a1+a3+v7, a2,       a1-v7, a2},
+            {a1-v7, a2+a4, a1+a3+v7, a2+a4, a1+a3+v7, a2+a4+v7, a1-v7, a2+a4+v7},
+            {a1-v7, a2,    a1,       a2,    a1,       a2+a4,    a1-v7, a2+a4},
+            {a1+a3, a2,    a1+a3+v7, a2,    a1+a3+v7, a2+a4,    a1+a3, a2+a4},
+        };
+        for (const auto& qd : quads) {
+            const int xs[4] = {scaleX(qd[0]), scaleX(qd[2]), scaleX(qd[4]), scaleX(qd[6])};
+            const int ys[4] = {scaleY(qd[1]), scaleY(qd[3]), scaleY(qd[5]), scaleY(qd[7])};
+            fillQuad(fb, xs, ys, c, quadMode(4));
+        }
+        // the CONNECTOR to the picture - not a line: `Ui_DrawItem`'s
+        // vocabulary has no line at all, and the captured bar is two
+        // rows by sixty-nine columns, a mode-1 quad's signature.
+        const int cy = a2 + a4 / 2;
+        const int cx[4] = {scaleX(a1+a3+v7), scaleX(460), scaleX(460), scaleX(a1+a3+v7)};
+        const int cys[4] = {scaleY(cy), scaleY(cy), scaleY(cy+2), scaleY(cy+2)};
+        fillQuad(fb, cx, cys, c, quadMode(4));
+        // ...and the slot's own 128x96 picture, read on the MOVE the
+        // way `sub_408D70` reads it.
+        const int sl = lp.slotOfRow();
+        if (sl >= 0 && !lp.path.empty()) {
+            // READ ON A CHANGE, not every frame: the file is the whole
+            // save directory (3496 + 256 x 32808 bytes, ~8.4 MB) and
+            // was read from the card on every frame a row was
+            // selected. Again when the row, the file or a write moves.
+            if (thumbPath_ != lp.path || thumbSlot_ != sl || thumbWrites_ != saveFileWrites()) {
+                thumbPath_ = lp.path;
+                thumbSlot_ = sl;
+                thumbWrites_ = saveFileWrites();
+                thumbPx_ = readSaveThumb(DataFs::readPath(lp.path), sl);
+            }
+            const auto& px = thumbPx_;
+            // WALK THE DESTINATION AND SAMPLE THE SOURCE, never the
+            // other way round. Scaling each of the 128x96 source
+            // pixels to ONE destination point leaves the gaps between
+            // them unwritten, and at 640x480 there are none - so it
+            // looks perfect here and comes out as a dark grid over
+            // the picture on any larger window, which is what a
+            // reader saw. `background`'s own comment says the same
+            // thing about the tile blit: "the destination is scaled
+            // and the source is not, and getting that backwards is
+            // invisible at 640x480 and ruins every other resolution."
+            if (!px.empty()) {
+                const int thumbX0 = scaleX(460), thumbX1 = scaleX(460 + omk::kThumbW);
+                const int thumbY0 = scaleY(140), thumbY1 = scaleY(140 + omk::kThumbH);
+                const int w = thumbX1 - thumbX0, h = thumbY1 - thumbY0;
+                for (int dy = thumbY0; dy < thumbY1; ++dy) {
+                    if (dy < 0 || dy >= fb.h || h <= 0) continue;
+                    const int sy = (dy - thumbY0) * omk::kThumbH / h;
+                    for (int dx = thumbX0; dx < thumbX1; ++dx) {
+                        if (dx < 0 || dx >= fb.w || w <= 0) continue;
+                        const int sx = (dx - thumbX0) * omk::kThumbW / w;
+                        fb.px[static_cast<std::size_t>(dy) * static_cast<std::size_t>(fb.w) +
+                              static_cast<std::size_t>(dx)] =
+                            px[static_cast<std::size_t>(sy) * omk::kThumbW +
+                               static_cast<std::size_t>(sx)];
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// THE EXAMINE PAGE'S TEXT, scrolled and clamped as `Ui_ItemTextStyle` clamps it (from `draw`)
+void ScreenComposer::drawExamineText(const omk::UiList& l, const omk::UiItem& it,
+                                     const omk::UiPanel*& q, const int (&rgb)[3], bool blink,
+                                     omk::Surface& fb, omk::ScreenFrame& out) const {
+    if (examine_ && !examine_->empty() &&
+        (l.addr == kListSneakExamineContent || it.drawFn == kDrawExamineBox ||
+         it.drawFn == kDrawMemoBody)) {
+        TextBlock blk;
+        blk.left   = scaleX(it.x + q->offsetX);
+        blk.top    = scaleY(it.y + q->offsetY);
+        blk.right  = blk.left + scaleX(it.w);
+        blk.bottom = blk.top + scaleY(it.h);
+        blk.font   = it.face('J');
+        blk.rgb[0] = static_cast<std::uint8_t>(rgb[0]);
+        blk.rgb[1] = static_cast<std::uint8_t>(rgb[1]);
+        blk.rgb[2] = static_cast<std::uint8_t>(rgb[2]);
+        blk.blinkOn = blink;
+        blk.screenW = fb.w;
+        blk.screenH = fb.h;
+        // Rows outside the box are not written, so the line
+        // straddling each edge of a scrolled block is CUT rather than
+        // dropped or spilled over the page art.
+        blk.clipTop = blk.top;
+        blk.clipBottom = blk.bottom;
+
+        // Measure first, because the clamp needs the height and the
+        // hook that moves the offset has no bound of its own. This is
+        // `Ui_ItemTextStyle`'s own order.
+        // `sub_477F60`: `mov ax, [ebx+1Eh]` - the item's own SECTION
+        // INDEX, and `cmp ax, 0FFFFh` is the "draw it whole" case.
+        // The memo body carries 0, so it shows the memo and not the
+        // CLUE that shares the record's description field; the examine
+        // boxes carry -1, which is why an eleven-line notice draws
+        // entire. Extracted once and used for both the measure and
+        // the draw, since the scroll bound is measured from what is
+        // actually laid out.
+        // ...and the SECTION a builder wrote over the record's `+30`,
+        // when there is one. The hint shop's body box ships -1 and
+        // is driven to 0 (the memo) or 1 (the clue it sells).
+        int sectionArg = it.textArg;
+        if (section_) {
+            const auto sc = section_->find(it.addr);
+            if (sc != section_->end()) sectionArg = sc->second;
+        }
+        const std::string body = sectionArg >= 0
+            ? extractTextSection(examine_, sectionArg) : *examine_;
+        if (reportText_ && reportText_->count(it.addr))
+            out.itemText[it.addr] = body;
+        TextBlock probe = blk;
+        probe.measureOnly = true;
+        const int total = lay_->layOutBlock(nullptr, body, probe);
+        const int overflow = std::max(0, total - (blk.bottom - blk.top));
+        if (scroll_) {
+            if (*scroll_ > overflow) *scroll_ = overflow;
+            else if (*scroll_ < 0)   *scroll_ = 0;
+        }
+        out.textOverflow = overflow;
+        blk.originY = scroll_ ? *scroll_ : 0;
+        BlockResult res;
+        lay_->layOutBlock(&fb, body, blk, &res);
+        out.textLines += res.lines;
+        out.textChars += static_cast<int>(body.size());
+    }
+}
+
+
+// THE PIN AND THE MARKERS: draw hook 0x0049E6F0 on the city map (from `draw`)
+void ScreenComposer::drawMapPins(const omk::UiItem& it, const omk::UiPanel*& q,
+                                 unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+                                 bool blink, omk::Surface& fb, omk::ScreenFrame& out) const {
+    if (cityMap_ && it.drawFn == kDrawSneakMapPins && cityMap_->row) {
+        const CityMapRow& row = *cityMap_->row;
+        const int ox = it.x + q->offsetX, oy = it.y + q->offsetY;
+        // `Ui_ItemTextStyle(item, block, 0)` runs ONCE, before the
+        // pin, so the pin's label and every marker's share one style.
+        std::uint8_t tr = 255, tg = 255, tb = 255;
+        if (!(eff0[2] & 1)) {
+            tr = static_cast<std::uint8_t>(rgb[0]);
+            tg = static_cast<std::uint8_t>(rgb[1]);
+            tb = static_cast<std::uint8_t>(rgb[2]);
+        }
+        if (!litText) { tr >>= 1; tg >>= 1; tb >>= 1; }
+        const int mapStyle = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
+        const auto caption = [&](const std::string& s, int px, int py) {
+            if (s.empty()) return;
+            TextBlock blk;
+            blk.left = scaleX(px + 10);
+            blk.top = scaleY(py - 10);
+            blk.right = scaleX(px + 210);
+            blk.bottom = scaleY(py + 70);
+            blk.font = it.face('C');
+            blk.style = mapStyle;
+            blk.rgb[0] = tr; blk.rgb[1] = tg; blk.rgb[2] = tb;
+            blk.blinkOn = blink;
+            blk.screenW = fb.w; blk.screenH = fb.h;
+            lay_->layOutBlock(&fb, s, blk);
+        };
+        const int L = 0, R = fb.w - 1, T = 0, B = fb.h - 1;
+        // `I2D_PackColour`'s first byte, from oscillator 2 - halved
+        // for the pin, whole for a marker. It is ALPHA, and the
+        // software triangle drops it (see `mapPulse`), so it is
+        // reported and not applied.
+        const int pulse = cityMapPulse(clockMs_);
+
+        int px = 0, py = 0;
+        cityMapProject(row, cityMap_->playerX, cityMap_->playerZ,
+                       ox, oy, it.w, it.h, &px, &py);
+        {
+            const double base = 90.0 - cityMap_->playerFacing;
+            const double kArm = 40.0;                  // dbl_4BCF08
+            const double a1 = (base + 30.0) * kDegToRad;     // flt_4BCEFC = -30
+            const double a2 = (base - 30.0) * kDegToRad;     // flt_4BCF10 = +30
+            const int sx = scaleX(px), sy = scaleY(py);
+            const int xy[6] = {
+                sx, sy,
+                sx + scaleX(static_cast<int>(std::cos(a1) * kArm)),
+                sy + scaleY(static_cast<int>(std::sin(a1) * kArm)),
+                sx + scaleX(static_cast<int>(std::cos(a2) * kArm)),
+                sy + scaleY(static_cast<int>(std::sin(a2) * kArm))};
+            // point 0's colour, and the software triangle uses no other
+            drawTriangleWire(fb, xy, rgb565(0, 0, 255), L, R, T, B);
+            out.mapPin = true;
+            out.mapPinAt[0] = px;
+            out.mapPinAt[1] = py;
+            caption(cityMap_->playerName, px, py);
+        }
+        out.mapPulse = pulse;
+        for (const auto& m : cityMap_->markers) {
+            int mx = 0, my = 0;
+            cityMapProject(row, m.x, m.z, ox, oy, it.w, it.h, &mx, &my);
+            const int sx = scaleX(mx), sy = scaleY(my);
+            const int xy[6] = {sx - scaleX(5), sy,
+                               sx + scaleX(5), sy,
+                               sx,             sy - scaleY(10)};
+            drawTriangleWire(fb, xy, rgb565(255, 0, 0), L, R, T, B);
+            caption(m.name, mx, my);
+            out.mapMarkers.push_back({m.name, {mx, my}});
+        }
+    }
+}
+
+
+// The sneak's IDENTITY page: the player sheet's text (from `draw`)
+void ScreenComposer::drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q, unsigned int (&eff0)[3], bool blink,
+                                  omk::Surface& fb, omk::ScreenFrame& out) const {
+    if (sheet_ && it.drawFn == kDrawSneakIdentity) {
+        const int width = scaleX(it.w);
+        const int height = scaleX(it.h);
+        int px = scaleX(it.x + q->offsetX);
+        int py = scaleY(it.y + q->offsetY);
+        const auto label = [&](int id) -> std::string {
+            return id >= 0 && id < static_cast<int>(sheet_->text.size())
+                ? sheet_->text[static_cast<std::size_t>(id)] : std::string();
+        };
+        const auto prop = [&](int id) -> std::string {
+            const auto s = sheet_->str.find(id);
+            return s != sheet_->str.end() ? s->second : std::string();
+        };
+        const auto block = [&](const std::string& s, bool value) {
+            TextBlock b;
+            b.left = px;
+            b.top = py;
+            b.right = px + width;
+            b.bottom = py + height;
+            b.font = it.face('J');
+            b.style = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
+            for (int c = 0; c < 3; ++c)
+                b.rgb[c] = value ? sheet_->icon[c] : std::uint8_t{255};
+            b.blinkOn = blink;
+            b.screenW = fb.w;
+            b.screenH = fb.h;
+            lay_->layOutBlock(&fb, s, b);
+            ++out.identityBlocks;
+        };
+        const auto num = [&](int id) {
+            const auto n = sheet_->num.find(id);
+            return n != sheet_->num.end() ? n->second : 0;
+        };
+        const auto rgbTag = [&]() {
+            char t[16];
+            std::snprintf(t, sizeof t, "%03d%03d%03d", sheet_->icon[0],
+                          sheet_->icon[1], sheet_->icon[2]);
+            return std::string(t);
+        };
+        // row 1
+        block(label(15), false);
+        px += scaleX(100);  block(prop(6), true);
+        px -= scaleX(100);  py += scaleY(20);
+        // row 2
+        block(label(16), false);
+        px += scaleX(60);   block(std::to_string(num(8)), true);   // "%d"
+        px += scaleX(40);   block(label(17), false);
+        px += scaleX(70);   block(prop(0), true);
+        px += scaleX(30);   block(label(18), false);
+        px += scaleX(130);  block(prop(13), true);
+        px -= scaleX(330);  py += scaleY(20);
+        // row 3
+        block(label(19), false);
+        px += scaleX(60);   block(prop(9), true);
+        px += scaleX(40);   block(label(20), false);
+        px += scaleX(70);   block(prop(10), true);
+        px += scaleX(30);   block(label(21), false);
+        px += scaleX(80);   block(prop(12), true);
+        px -= scaleX(280);  py += scaleY(20);
+        // row 4
+        block(label(22), false);
+        px += scaleX(100);  block(prop(11), true);
+        px -= scaleX(100);  py += scaleY(20);
+        // row 5: the two prose lines, one block
+        const std::string first =
+            label(23) + " : {I" + rgbTag() + "} " + prop(15);
+        const std::string both = first + "\n{I255255255}" + label(24) +
+                                 " : {I" + rgbTag() + "} " + prop(14);
+        block(both, false);
+    }
+}
+
+
+
+// The sneak's CHARACTERISTICS page: the player sheet's statistics (from `draw`)
+void ScreenComposer::drawCharacteristics(const omk::UiItem& it,
+                                         unsigned int (&eff0)[3], const int (&rgb)[3],
+                                         bool& litText, const omk::UiPanel*& q, bool blink,
+                                         omk::Surface& fb, omk::ScreenFrame& out) const {
+    if (sheet_ && it.drawFn == kDrawSneakCharacteristics) {
+        std::uint8_t tr = 255, tg = 255, tb = 255;
+        if (!(eff0[2] & 1)) {
+            tr = static_cast<std::uint8_t>(rgb[0]);
+            tg = static_cast<std::uint8_t>(rgb[1]);
+            tb = static_cast<std::uint8_t>(rgb[2]);
+        }
+        if (!litText) { tr >>= 1; tg >>= 1; tb >>= 1; }
+        const int halfW = scaleX(it.w / 2);
+        const int rowH = scaleY(20);
+        const int boxW = scaleX(it.w);
+        const int boxH = scaleX(it.h);
+        const std::uint16_t fillColour = rgb565(rgb[0], rgb[1], rgb[2]);
+        const std::uint16_t grey = rgb565(50, 50, 50);
+        int px = scaleX(it.x + q->offsetX);
+        int py = scaleY(it.y + q->offsetY);
+        const auto putText = [&](const std::string& s, int l, int t, int r, int b, char face) {
+            TextBlock blk;
+            blk.left = l; blk.top = t; blk.right = r; blk.bottom = b;
+            blk.font = face;
+            blk.style = (eff0[2] & 0x10) ? 8 : (eff0[2] & 0x08) ? 4 : 2;
+            blk.rgb[0] = tr; blk.rgb[1] = tg; blk.rgb[2] = tb;
+            blk.blinkOn = blink;
+            blk.screenW = fb.w; blk.screenH = fb.h;
+            lay_->layOutBlock(&fb, s, blk);
+        };
+        const auto label = [&](int id) -> std::string {
+            return id >= 0 && id < static_cast<int>(sheet_->text.size())
+                ? sheet_->text[static_cast<std::size_t>(id)] : std::string();
+        };
+        const auto num = [&](int id) {
+            const auto n = sheet_->num.find(id);
+            return n != sheet_->num.end() ? n->second : 0;
+        };
+        const auto bar = [&](int x, int y, int value, int h) {
+            putText(std::to_string(value), x + 5, y, x + scaleX(100), y + h, 'J');
+            const int yc = y + h / 2;
+            const int top = yc - scaleY(2) - 1;
+            const int bot = yc + scaleY(2) + 1;
+            const int right = x + scaleX(200);
+            const int L = 0, R = fb.w - 1, T = 0, B = fb.h - 1;
+            drawLine(fb, x, top, right, top, grey, L, R, T, B);
+            drawLine(fb, right, bot, right, top, grey, L, R, T, B);
+            drawLine(fb, right, bot, x, bot, grey, L, R, T, B);
+            drawLine(fb, x, top, x, bot, grey, L, R, T, B);
+            const int v = scaleX(value);
+            const int kx[4] = {x + v - 1, x + v - 1, x + v + 4, x + v + 4};
+            const int ky[4] = {yc - scaleY(2), yc + scaleY(2), yc + scaleY(2), yc - scaleY(2)};
+            fillQuad(fb, kx, ky, fillColour, quadMode(0xC));
+            const int fx[4] = {x + 1, x + v - 1, x + v - 1, x + 1};
+            const int fy[4] = {yc - scaleY(2), yc - scaleY(2), yc + scaleY(2), yc + scaleY(2)};
+            fillQuad(fb, fx, fy, fillColour, quadMode(4));
+            ++out.characteristicBars;
+        };
+        // six bar rows and the rank row, in the hook's order
+        const auto barRow = [&](int labelId, int prop) {
+            putText(label(labelId), px, py, px + boxW, py + boxH, it.face('J'));
+            px += halfW;
+            bar(px, py, num(prop), rowH);
+            px -= halfW;
+            py += scaleY(30);
+        };
+        barRow(25, 1);
+        barRow(26, 16);
+        {   // 27 "Maitrise du combat": the rank word
+            putText(label(27), px, py, px + boxW, py + boxH, it.face('J'));
+            px += halfW;
+            const int v = num(19);
+            const int q41 = v / 41;
+            const int id = (q41 >= 0 && q41 <= 4) ? 36 + q41 : -1;
+            putText(label(id), px, py, px + boxW, py + boxH, 'C');
+            px -= halfW;
+            py += scaleY(30);
+        }
+        barRow(28, 17);
+        barRow(29, 3);
+        barRow(30, 18);
+        // 31 "Mana" - the last, `ebp + esi` without the step back
+        putText(label(31), px, py, px + boxW, py + boxH, it.face('J'));
+        bar(px + halfW, py, num(2), rowH);
+    }
+}
+
+// THE SPRITE: `Ui_DrawItemSprite` - the item's frame off its sheet (from `draw`)
+void ScreenComposer::drawItemSprite(unsigned int (&eff0)[3], bool sheetOk, bool lit,
+                                    const omk::UiItem& it, const omk::UiPanel*& q,
+                                    omk::Surface& fb, const omk::Surface& art,
+                                    unsigned short artKey, omk::ScreenFrame& out) const {
+    if ((eff0[1] & 0x100) && sheetOk) {
+        const int* src = lit ? it.lit : it.unlit;
+        int srcOverride[2] = {src[0], src[1]};
+        if (srcMoved_) {
+            const auto sm = srcMoved_->find(it.addr);
+            if (sm != srcMoved_->end() && !lit) {
+                srcOverride[0] = sm->second.first;
+                srcOverride[1] = sm->second.second;
+                src = srcOverride;
+            }
+        }
+        if (litMoved_) {
+            const auto lm = litMoved_->find(it.addr);
+            if (lm != litMoved_->end() && lit) {
+                srcOverride[0] = lm->second.first;
+                srcOverride[1] = lm->second.second;
+                src = srcOverride;
+            }
+        }
+        const int x0 = it.x + q->offsetX, y0 = it.y + q->offsetY;
+        blt(fb, {scaleX(x0), scaleY(y0),
+                 scaleX(x0 + it.w), scaleY(y0 + it.h)},
+            art, {src[0], src[1], src[0] + it.w, src[1] + it.h},
+            kBltWait | kBltKeySrc, artKey, /*dstKey*/ 0, filter_);
+        ++out.spritesDrawn;
+        // ...and, for an item the caller asked about, WHERE FROM -
+        // the lit source as readily as the moved unlit one, because
+        // the difference between them is the whole fault this is for.
+        if ((srcMoved_ && srcMoved_->count(it.addr)) ||
+            (litMoved_ && litMoved_->count(it.addr)))
+            out.spriteSrc[it.addr] = {src[0], src[1]};
+    }
+}
+
 
 // ---- SCREEN 35: the options rows ------------------------------------------
 //

@@ -8,7 +8,7 @@ viewer's stdout stays byte-identical. Done by hand, each cut means finding
 every local the block reads, its exact type and whether the block writes it.
 This makes the compiler do that:
 
-    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT]
+    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT] [--loop-body]
     python3 tools/extract_method.py batch <file.cpp> <jobs.txt>
     python3 tools/extract_method.py candidates <file.cpp> <method> [--min N] [--depth D]
     python3 tools/extract_method.py sizes [--over N]
@@ -33,6 +33,12 @@ What makes the move safe rather than merely compiling: the code is the same
 text in the same order; a parameter names the very object the local was; and
 `-Wshadow` is on at zero warnings (step 4), so no name the block used as a
 LOCAL can silently bind to a MEMBER of the same name once it is a method.
+
+A bare `return;` nested in the range is refused too: it left the ENCLOSING
+method, and moved it would leave only the new one, which compiles silently.
+`--loop-body` is for a range that is exactly a loop's body: a `continue` of
+that loop becomes `return;` (the same thing there), and a `break` that would
+leave it, or a brace-less inner loop, refuses.
 
 `batch` runs `extract` over `start|name|comment` lines, bottom-up so the line
 numbers above each cut stay valid, finding each statement's end (an `else`
@@ -123,6 +129,91 @@ def statement_end(s, mask, lines, ln):
     return end
 
 
+def brace_kinds(text, m):
+    """Each code `{` of `text` -> 'loop', 'switch', 'lambda' or 'block', read
+    from what precedes it."""
+    kinds = {}
+    for i, c in enumerate(text):
+        if c != "{" or not m[i]:
+            continue
+        j = i - 1
+        while j >= 0 and (text[j].isspace() or not m[j]):
+            j -= 1
+        kind = "block"
+        if j >= 0 and text[j] == ")":
+            d, k = 0, j
+            while k >= 0:
+                if m[k] and text[k] == ")":
+                    d += 1
+                elif m[k] and text[k] == "(":
+                    d -= 1
+                    if d == 0:
+                        break
+                k -= 1
+            before = text[max(0, k - 12):k].rstrip()
+            if re.search(r"\b(for|while)$", before):
+                kind = "loop"
+            elif re.search(r"\bswitch$", before):
+                kind = "switch"
+            elif before.endswith("]") or re.search(r"\bmutable$", before):
+                kind = "lambda"
+            elif re.search(r"->\s*[\w:<>&* ]+$", text[max(0, k - 60):k]):
+                kind = "lambda"
+        elif j >= 0 and text[j] == "]":
+            kind = "lambda"
+        elif text[max(0, j - 1):j + 1] == "do":
+            kind = "loop"
+        kinds[i] = kind
+    return kinds
+
+
+def flow_owners(text, m):
+    """For each `break` / `continue` / `return;` (bare) in `text`: (word, pos,
+    the innermost enclosing brace kind that owns it, or None at the range's
+    own level - 'loop' owns both, 'switch' a break, 'lambda' a return)."""
+    kinds = brace_kinds(text, m)
+    out, stack = [], []
+    for mm in re.finditer(r"[{}]|\b(break|continue)\s*;|\breturn\s*;", text):
+        if not m[mm.start()]:
+            continue
+        t = mm.group(0)
+        if t == "{":
+            stack.append(kinds.get(mm.start(), "block"))
+        elif t == "}":
+            if stack:
+                stack.pop()
+        else:
+            word = t.split()[0].rstrip(";")
+            want = {"break": ("loop", "switch", "lambda"), "continue": ("loop", "lambda"),
+                    "return": ("lambda",)}[word]
+            owner = next((k for k in reversed(stack) if k in want), None)
+            out.append((word, mm.start(), owner))
+    return out
+
+
+def braceless_loop(text, m):
+    """True when the range has a `for`/`while` whose body has no braces - its
+    `break`/`continue` cannot be told from the braces alone."""
+    for mm in re.finditer(r"\b(for|while)\s*\(", text):
+        if not m[mm.start()]:
+            continue
+        d, k = 0, mm.end() - 1
+        while k < len(text):
+            if m[k] and text[k] == "(":
+                d += 1
+            elif m[k] and text[k] == ")":
+                d -= 1
+                if d == 0:
+                    break
+            k += 1
+        k += 1
+        while k < len(text) and (text[k].isspace() or not m[k]):
+            k += 1
+        if k < len(text) and text[k] not in "{;":
+            return True
+    return False
+
+
 # ---- portable parameter types ------------------------------------------------
 
 SCALAR = re.compile(r"^(bool|char|signed char|unsigned char|short|unsigned short|int|"
@@ -179,9 +270,11 @@ def param(t, x, const):
     """The parameter for local `x` of type `t`; `const` when the variable
     itself is (a `const char*` is not: its POINTEE is)."""
     t = t.replace(" &", "&").replace(" *", "*").replace("omk::play::", "")
-    t = re.sub(r"(?<![\w:])(vector|map|set|unordered_map|unordered_set|string|array|optional|"
+    t = re.sub(r"(?<![\w:])(vector|map|set|unordered_map|unordered_set|string|basic_string|array|optional|"
                r"pair|unique_ptr|shared_ptr|span|function)<", r"std::\1<", t)
     t = re.sub(r"(?<![\w:])string\b", "std::string", t)
+    t = re.sub(r"(?:std::)?basic_string<char(?:, std::char_traits<char>, std::allocator<char>)?>",
+               "std::string", t)
     t = portable(t)
     arr = re.match(r"(.+)\[(\d+)\]$", t)
     if arr:
@@ -272,7 +365,7 @@ def header_of(cls):
 
 # ---- extract -----------------------------------------------------------------
 
-def extract(path, A, B, name, comment="", tidy=True):
+def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
     src = open(path).read()
     L = src.split("\n")
     body = L[A - 1:B]
@@ -293,8 +386,33 @@ def extract(path, A, B, name, comment="", tidy=True):
         t = mm.group(0)
         if t in "{}":
             d += 1 if t == "{" else -1
-        elif d == 0:
+        elif d == 0 and not (loop_body and t == "continue"):
             return "refused: a top-level `%s` in the range" % t
+    # A BARE `return;` nested in the range left the ENCLOSING method; moved, it
+    # would leave only the new one and the caller would carry on - silently,
+    # since a void method compiles it either way. (`return value;` cannot
+    # slip: the new method is void.) `continue`/`break` that leave the range
+    # do not compile in it, except under --loop-body, handled here.
+    to_return = []
+    for word, pos, owner in flow_owners(text, m):
+        if owner:
+            continue
+        if word == "return":
+            return "refused: a bare `return;` would leave only the new method"
+        if word == "continue" and loop_body:
+            to_return.append(pos)
+        elif loop_body:
+            return "refused: a `%s` leaves the loop whose body this is" % word
+    if to_return and braceless_loop(text, m):
+        return "refused: a brace-less loop in the range; its `continue` cannot be told apart"
+    if to_return:
+        # `continue;` -> `return;`: the range IS the loop's whole body, so
+        # leaving the body early is leaving this call
+        for pos in sorted(to_return, reverse=True):
+            end = text.index(";", pos) + 1
+            text = text[:pos] + "return;" + text[end:]
+        body = text.split("\n")
+        m = code_mask(text)
     ind = len(body[0]) - len(body[0].lstrip(" "))
     heads = [i for i in range(A - 1) if re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[i])]
     if not heads:
@@ -507,7 +625,8 @@ def main(argv):
     def opt(flag, default):
         return argv[argv.index(flag) + 1] if flag in argv else default
     if len(argv) >= 5 and argv[0] == "extract":
-        r = extract(argv[1], int(argv[2]), int(argv[3]), argv[4], opt("--comment", ""))
+        r = extract(argv[1], int(argv[2]), int(argv[3]), argv[4], opt("--comment", ""),
+                    loop_body="--loop-body" in argv)
         print(r)
         return 1 if r.startswith("refused") else 0
     if len(argv) == 3 and argv[0] == "batch":

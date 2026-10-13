@@ -1067,8 +1067,8 @@ void PlayState::worldStagedShootGeneric(omk::ShootRecord& rec, Staged& s, int& a
         float from[3] = {player->pos()[0],
                          player->pos()[1] - player->cameraLift(),
                          player->pos()[2]};
-        for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-            if (playerMeshes[i].parent < 0) {
+        for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+            if (playerBody.meshes[i].parent < 0) {
                 if (playerMeshAtKnown && playerMeshAt.size() >= i * 3 + 3)
                     for (int k = 0; k < 3; ++k)
                         from[k] = playerMeshAt[i * 3 + static_cast<std::size_t>(k)];
@@ -1666,8 +1666,8 @@ void PlayState::worldStagedShootStrike(const omk::ShootStep& st, omk::ShootRecor
         session.actorAttack(s.actor, rec.attackSlot, rangeM, dmgA);
         float pt[3] = {player->pos()[0], player->pos()[1] - player->cameraLift(),
                        player->pos()[2]};
-        for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-            if (playerMeshes[i].parent < 0) {
+        for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+            if (playerBody.meshes[i].parent < 0) {
                 if (playerMeshAtKnown && playerMeshAt.size() >= i * 3 + 3)
                     for (int k = 0; k < 3; ++k)
                         pt[k] = playerMeshAt[i * 3 + static_cast<std::size_t>(k)];
@@ -1802,9 +1802,9 @@ void PlayState::worldStagedShootFireGate(bool fullArm, omk::ShootRecord& rec,
                 float tgt[3] = {player->pos()[0], player->pos()[1],
                                 player->pos()[2]};
                 float tr = 0.0f;
-                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                    if (playerMeshes[i].parent < 0) {
-                        tr = playerMeshes[i].radius;
+                for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                    if (playerBody.meshes[i].parent < 0) {
+                        tr = playerBody.meshes[i].radius;
                         if (playerMeshAtKnown && playerMeshAt.size() >= i * 3 + 3)
                             for (int k = 0; k < 3; ++k)
                                 tgt[k] = playerMeshAt[i * 3 + static_cast<std::size_t>(k)];
@@ -1885,9 +1885,9 @@ void PlayState::worldStagedShootFireGate(bool fullArm, omk::ShootRecord& rec,
             float pp[3] = {player->pos()[0], player->pos()[1], player->pos()[2]};
             float r = 0.0f;
             int rootMesh = -1;
-            for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                if (playerMeshes[i].parent < 0) {
-                    r = playerMeshes[i].radius;
+            for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                if (playerBody.meshes[i].parent < 0) {
+                    r = playerBody.meshes[i].radius;
                     rootMesh = static_cast<int>(i);
                     break;
                 }

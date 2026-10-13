@@ -139,8 +139,8 @@ void PlayState::adventurePathField() {
         // the feet the supermarket's player stands at y -89, exactly
         // on its grid's upper bound, and `floorAt` found no floor
         float pp[3] = {player->pos()[0], player->pos()[1], player->pos()[2]};
-        for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-            if (playerMeshes[i].parent < 0) {
+        for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+            if (playerBody.meshes[i].parent < 0) {
                 if (playerMeshAtKnown && playerMeshAt.size() >= i * 3 + 3)
                     for (int k = 0; k < 3; ++k) pp[k] = playerMeshAt[i * 3 + static_cast<std::size_t>(k)];
                 break;
@@ -253,7 +253,7 @@ void PlayState::adventureDeath() {
     }
 }
 
-// The NAME of the set mesh a floor triangle of `playerSoup` belongs to - the
+// The NAME of the set mesh a floor triangle of `walkSoup.soup` belongs to - the
 // `+16` that `World_ProbePoint` hands back through its mesh pointer, which the
 // road tests (`X...`, `OP...`) and the crossing test (`O...`) read. Null when
 // the triangle is not a set mesh's.
@@ -295,8 +295,8 @@ void PlayState::adventureCrowdPush() {
         // in the first five frames, before the clip has moved him
         // at all - and he would finish the clip beside the slider
         // with the door open above him (traced frame by frame).
-        if (!boarding && !leaving && !playerSpheres.empty() &&
-            session.crowdPush(playerSpheres, playerReach, player->pos(), player->facing(), push)) {
+        if (!boarding && !leaving && !playerBody.spheres.empty() &&
+            session.crowdPush(playerBody.spheres, playerBody.reach, player->pos(), player->facing(), push)) {
             const float was[3] = {player->pos()[0], player->pos()[1], player->pos()[2]};
             player->nudge(push);
             // once: a push the SWEEP cut short - a wall in the way
@@ -349,7 +349,7 @@ void PlayState::adventureScreenInput() {
     // runs `sub_466B60` AFTER `UI_LoadScreen` held him (state 9 is the gate
     // this `walk` test stands for), so he takes the input word again while
     // the board still pages on LEFT/RIGHT - both read the same device.
-    if (walk && !(openScreen == omk::screen::HighScore && hsReleased)) {
+    if (walk && !(openScreen == omk::screen::HighScore && highScore.released)) {
         player->tick(static_cast<float>(frameSec * 30.0), 0);
         playerTicked = true;
     } else if (session.playerAnimHeld()) {
@@ -445,7 +445,7 @@ void PlayState::adventureScreenInput() {
                         const float p[3] = {e->pos[0] + hx * along - hz * across, e->pos[1],
                                             e->pos[2] + hz * along + hx * across};
                         float out[3] = {0, 0, 0};
-                        omk::SpatialIndex::pushEllipse(playerSpheres, p, player->facing(), *e, out);
+                        omk::SpatialIndex::pushEllipse(playerBody.spheres, p, player->facing(), *e, out);
                         return std::sqrt(out[0] * out[0] + out[2] * out[2]);
                     };
                     std::printf("slider: its index entry - mover %d, %zu sphere(s), reach %.1f: a "
@@ -690,29 +690,29 @@ void PlayState::adventureScreenInput() {
             // it the idle word instead, LABELLED. Not modelled: `word_90EF2C`
             // and `byte_90E155`, which the two write and nothing here reads.
             if (std::string nm = session.takeImageShow(); !nm.empty()) {
-                imageShown = omk::surfaceFromBmp(fs.read("IMAGES/" + nm));
-                if (imageShown.valid() && player->openImageScreen()) {
-                    imageLive = true;
-                    imageMask = imageLast = bits;
+                image.shown = omk::surfaceFromBmp(fs.read("IMAGES/" + nm));
+                if (image.shown.valid() && player->openImageScreen()) {
+                    image.live = true;
+                    image.mask = image.last = bits;
                     std::printf("frame %ld: Image_Show - IMAGES\\%s, %dx%d, ACTOR_STATE 10 "
-                                "(mask 0x%x)\n", frameNo, nm.c_str(), imageShown.w, imageShown.h,
+                                "(mask 0x%x)\n", frameNo, nm.c_str(), image.shown.w, image.shown.h,
                                 bits);
                 } else {
                     std::printf("frame %ld: Image_Show - IMAGES\\%s %s\n", frameNo, nm.c_str(),
-                                imageShown.valid() ? "refused by the state table"
+                                image.shown.valid() ? "refused by the state table"
                                                    : "did not load");
-                    imageShown = omk::Surface{};
+                    image.shown = omk::Surface{};
                 }
             }
             std::uint32_t tickBits = bits;
-            if (imageLive) {
-                const std::uint32_t edges = bits & (bits ^ (imageMask & imageLast));
-                imageLast = bits;
+            if (image.live) {
+                const std::uint32_t edges = bits & (bits ^ (image.mask & image.last));
+                image.last = bits;
                 if (edges && !uiPause) {
                     player->closeImageScreen();
-                    imageLive = false;
-                    imageShown = omk::Surface{};
-                    imageMask = 0;
+                    image.live = false;
+                    image.shown = omk::Surface{};
+                    image.mask = 0;
                     std::printf("frame %ld: Image_Show closed by a press (edge 0x%x) - "
                                 "ACTOR_STATE %d\n", frameNo, edges,
                                 static_cast<int>(player->state()));
@@ -1057,7 +1057,7 @@ void PlayState::adventureFightEnd(bool on, omk::Input& in) {
             static_cast<std::size_t>(omk::GameState::kPlayerRecordSize));
         omk::writeActorProperty(rec, 1, myHp);
         session.setActorProperty(fightRun.opponent, 1, hisHp);
-        player->setBank(playerCtl, playerCtlData);
+        player->setBank(playerCtl, playerBody.ctlData);
         // THE STATE THE FIGHT LEAVES HIM IN - 1, win or lose,
         // and it takes two writes to see why. `sub_445AC0`
         // writes the player's +404 from `dword_906F34`, the
@@ -1347,22 +1347,22 @@ void PlayState::adventureSeated() {
         const float me[3] = {session.playerPos()[0], session.playerPos()[1],
                              session.playerPos()[2]};
         // THE FLOOR'S MESH FLAGS, kept in step with the soup
-        if (soupFlagsFor != playerSoup.data() || soupFlagsSize != playerSoup.size()) {
-            playerSoupFlags.clear();
+        if (soupFlagsFor != walkSoup.soup.data() || soupFlagsSize != walkSoup.soup.size()) {
+            walkSoup.soupFlags.clear();
             for (int sl = 0; sl < 2; ++sl) {
                 const WorldSlot& ws = worldSlots[static_cast<std::size_t>(sl)];
                 if (ws.stem.empty()) continue;
                 const std::size_t cnt = ws.soup.size() / 9;
                 for (std::size_t t = 0; t < cnt; ++t) {
                     const int mi = t < ws.soupMesh.size() ? ws.soupMesh[t] : -1;
-                    playerSoupFlags.push_back(
+                    walkSoup.soupFlags.push_back(
                         (mi >= 0 && static_cast<std::size_t>(mi) < ws.meshes.size())
                             ? ws.meshes[static_cast<std::size_t>(mi)].flags : 0u);
                 }
             }
-            if (playerSoupFlags.size() * 9 != playerSoup.size()) playerSoupFlags.clear();
-            soupFlagsFor = playerSoup.data();
-            soupFlagsSize = playerSoup.size();
+            if (walkSoup.soupFlags.size() * 9 != walkSoup.soup.size()) walkSoup.soupFlags.clear();
+            soupFlagsFor = walkSoup.soup.data();
+            soupFlagsSize = walkSoup.soup.size();
         }
         // THE VEHICLES MUST KNOW WHERE HE IS (`todo/falls.md` 4).
         // `Sliders_Tick` probes the player's ground every frame and
@@ -1376,7 +1376,7 @@ void PlayState::adventureSeated() {
             const float* pp = player->pos();
             bool onRoad = false;
             std::uint32_t tri = 0;
-            if (omk::floorUnder(playerSoup, playerGrid, pp[0], pp[1] - 12.81, pp[2], tri)) {
+            if (omk::floorUnder(walkSoup.soup, walkSoup.grid, pp[0], pp[1] - 12.81, pp[2], tri)) {
                 if (const char* nm = soupMeshName(tri))
                     onRoad = nm[0] == 'X' || (nm[0] == 'O' && nm[1] == 'P');
             }
@@ -1429,7 +1429,7 @@ void PlayState::adventureSeated() {
         // tick has just asked for mode 8 (`if (mode != 8)`), so the guard
         // passes unless he is in 17.
         if (session.sliders().takeCameNotice() && sliderCam.mode != 17) {
-            if (sliderCam.mode >= 0 || takeCam) sliderCamRequest(0, 60.0f);
+            if (sliderCam.mode >= 0 || takeCamera.live) sliderCamRequest(0, 60.0f);
             session.startBlackFade(false);
             session.holdPlayer(false);
             std::printf("frame %ld: the slider has come - Screen_Fade(0), the hold "
@@ -1588,7 +1588,7 @@ void PlayState::adventureRide() {
                                double& drop, bool& braking) {
             braking = false;      // the "OP" surfaces are not
                                   // identified here - step 3b
-            if (const auto h = omk::surfaceUnder(playerSoup, px, py, pz)) {
+            if (const auto h = omk::surfaceUnder(walkSoup.soup, px, py, pz)) {
                 drop = h->y - py;
                 return true;
             }
@@ -1602,7 +1602,7 @@ void PlayState::adventureRide() {
         omk::RideWorld rw;
         rw.surface = [&](double px, double py, double pz, double& drop, char nm[2]) {
             std::uint32_t tri = 0;
-            const auto fy = omk::floorUnder(playerSoup, playerGrid, px, py, pz, tri);
+            const auto fy = omk::floorUnder(walkSoup.soup, walkSoup.grid, px, py, pz, tri);
             if (!fy) return false;
             drop = *fy - py;
             nm[0] = nm[1] = 0;
@@ -1756,7 +1756,7 @@ void PlayState::adventureRide() {
                 // `kVehNodeLift`, as the crowd file stages it) hovers over the
                 // ground under it - the hover's own 30.75 give or take its bob
                 double hover = -1.0;
-                if (const auto h = omk::surfaceUnder(playerSoup, sat[0], sat[1] - 200.0, sat[2]))
+                if (const auto h = omk::surfaceUnder(walkSoup.soup, sat[0], sat[1] - 200.0, sat[2]))
                     hover = h->y - (sat[1] - omk::kVehNodeLift);
                 std::printf("slider: manual ride frame %ld - moved %.0f along its "
                             "drawn nose, %.0f across; the drawn node %.1f over the ground\n", frameNo,
@@ -2170,10 +2170,10 @@ void PlayState::adventureSpecialMove(const std::string& mv, omk::Input& in, omk:
     }
     if (mv == "MDSW2SD") {
         player->setActorState(omk::ActorState::Normal, "MDSW2SD");
-        if (takeCam) { takeCamRequest(3); takeCamTravel = 50.0f; }
+        if (takeCamera.live) { takeCamRequest(3); takeCamera.travel = 50.0f; }
         std::printf("water: MDSW2SD - out of the water, ACTOR_STATE %d%s\n",
                     static_cast<int>(player->state()),
-                    takeCam ? ", camera 0 over 50 frames" : "");
+                    takeCamera.live ? ", camera 0 over 50 frames" : "");
     }
     if (mv == "RSTAVNT") {
         player->setActorState(omk::ActorState::Normal, "RSTAVNT");
@@ -2396,7 +2396,7 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
     } else if (mv == "MDPUTSNK") {
         // `if (C+12 == 1) Camera_Request(16)`: back to the
         // camera the take displaced, 30 frames.
-        if (takeCam) {
+        if (takeCamera.live) {
             takeCamRequest(3);
             std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
         }
@@ -2449,7 +2449,7 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
                     takeWasLow ? "LOW H_PUTL" : "HIGH H_PUTH", putGroup,
                     got ? "" : " - not in this bank");
     } else if (mv == "MDLETOBJ") {
-        if (takeCam) {                // the same mode-16 swap
+        if (takeCamera.live) {                // the same mode-16 swap
             takeCamRequest(3);
             std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
         }
@@ -2535,7 +2535,7 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
         // 60.0, type 1)` unless the mode is 0 or 17 - after a journey
         // it is mode 10 and travels back to the follow camera; after a
         // manual stop it is 17, which lets him walk out of it
-        if (sliderCam.mode != 17 && (sliderCam.mode >= 0 || takeCam))
+        if (sliderCam.mode != 17 && (sliderCam.mode >= 0 || takeCamera.live))
             sliderCamRequest(0, 60.0f);
         player->setActorState(omk::ActorState::Normal, "MDSLIDOU");
         player->setChannelOnly(false);
@@ -2607,7 +2607,7 @@ void PlayState::adventureTakeObject() {
                         pm ? pm->localOff[0] : 0.f, pm ? pm->localOff[1] : 0.f, pm ? pm->localOff[2] : 0.f,
                         pm ? pm->rest.corners.size() : 0u);
         }
-        takeCam = true;
+        takeCamera.live = true;
         takeCamRequest(1);
         std::printf("take: camera mode 1 requested - preset 1 over 30 frames\n");
     }
@@ -2636,8 +2636,8 @@ void PlayState::adventureShotRequest(const omk::ShootWeaponRow*& row) {
             const std::vector<omk::MeshPose> pose =
                 playerPoseNow(&*player, true, *pt, player->poseFrameF());
             int hand = -1;      // the LAST strstr hit, as o3de_Traverse leaves it
-            for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                if (std::strstr(playerMeshes[i].name, "Maing"))
+            for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                if (std::strstr(playerBody.meshes[i].name, "Maing"))
                     hand = static_cast<int>(i);
             if (hand >= 0 && static_cast<std::size_t>(hand) < pose.size()) {
                 const omk::MeshPose& hp = pose[static_cast<std::size_t>(hand)];
@@ -2956,7 +2956,7 @@ void PlayState::adventureAction() {
         static const bool noGroundGridHere = omk::envFlag("OMK_NO_GROUND_GRID");
         int under = noGroundGridHere
             ? omk::decorUnder(worldDecors, pp[0], pp[1], pp[2])
-            : omk::decorUnder(worldDecors, playerSoup, playerGrid, pp[0], pp[1], pp[2]);
+            : omk::decorUnder(worldDecors, walkSoup.soup, walkSoup.grid, pp[0], pp[1], pp[2]);
         // The probe finds the floor across EVERY loaded set - the
         // engine's collision array - and what happens next is
         // `Walk_ProbeGround`'s tail (0x00467030), read whole:

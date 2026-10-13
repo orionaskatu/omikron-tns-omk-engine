@@ -482,13 +482,13 @@ int PlayState::setupSession() {
     // ...and the MELEE OPPONENT's, from his own channel (`todo/fight-mode.md`
     // 15.10): `Cef_TickEffects` runs on every channel the engine ticks, and
     // `Actor_TickPlayerAndOpponent` ticks two.
-    foeFxState = -1; foeFxFrame = -1.0f;
-    foeSpritesDrawn = 0;       // particle-frames placed on his bones
-    foeSpritesPooled = 0;      // ...of which the sprite had a texture slot
-    takeCam = false;            // `C+12 == 1`: the mode-1 camera is live
-    takeCamPhase = 0;           // 1 travelling in, 2 holding, 3 travelling back
-    takeCamClock = 0.0f;        // frames since the request
-    takeCamFromFov = 75.0f;
+    foeFx.fxState = -1; foeFx.fxFrame = -1.0f;
+    foeFx.spritesDrawn = 0;       // particle-frames placed on his bones
+    foeFx.spritesPooled = 0;      // ...of which the sprite had a texture slot
+    takeCamera.live = false;            // `C+12 == 1`: the mode-1 camera is live
+    takeCamera.phase = 0;           // 1 travelling in, 2 holding, 3 travelling back
+    takeCamera.clock = 0.0f;        // frames since the request
+    takeCamera.fromFov = 75.0f;
     // preset 1: 62 cm to his side, 75 cm above the pelvis, 12 cm back, looking
     // 12 cm up and 50 cm ahead of him. In the mode-0 convention the follow
     // camera uses (`point = subject - R(yaw) * offset`, mode 0 = 3 m behind).
@@ -498,10 +498,10 @@ int PlayState::setupSession() {
     // eye (-39.3701, 78.7402, 0) = 1.00 m and 2.00 m, target the actor,
     // subjects 0 and 0, over `dword_930818 = 60.0` frames. The take's
     // preset 1 was the only one wired, as constants.
-    takeCamEye[0] = kTakeCamEye[0], takeCamEye[1] = kTakeCamEye[1], takeCamEye[2] = kTakeCamEye[2];
-    takeCamAt[0] = kTakeCamAt[0], takeCamAt[1] = kTakeCamAt[1], takeCamAt[2] = kTakeCamAt[2];
-    takeCamFov = kTakeCamFov;
-    takeCamTravel = kTakeCamTravel;
+    takeCamera.eye[0] = kTakeCamEye[0], takeCamera.eye[1] = kTakeCamEye[1], takeCamera.eye[2] = kTakeCamEye[2];
+    takeCamera.at[0] = kTakeCamAt[0], takeCamera.at[1] = kTakeCamAt[1], takeCamera.at[2] = kTakeCamAt[2];
+    takeCamera.fov = kTakeCamFov;
+    takeCamera.travel = kTakeCamTravel;
     // THE FALL CAMERAS, `sub_414DE0(actor, mode, flag)` (`todo/falls.md` 1): a
     // player-subject request gated on the mode already up. 18 and 19 are the
     // overhead presets (eye 3 m above him, fov 75); 16 and 0 travel back to the

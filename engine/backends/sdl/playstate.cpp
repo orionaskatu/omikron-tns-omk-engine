@@ -67,13 +67,13 @@ void PlayState::sfxLog(const char* what, std::size_t samples, int a, int b,
 }
 
 void PlayState::takeCamRequest(int phase) {
-    takeCamPhase = phase;
-    takeCamClock = 0.0f;
+    takeCamera.phase = phase;
+    takeCamera.clock = 0.0f;
     for (int k = 0; k < 3; ++k) { takeCamFromEye[k] = lastEye[k]; takeCamFromAt[k] = lastAt[k]; }
-    takeCamFromFov = lastFov;
+    takeCamera.fromFov = lastFov;
     if (phase == 1) {                       // the take: preset 1, 30 frames
-        for (int k = 0; k < 3; ++k) { takeCamEye[k] = kTakeCamEye[k]; takeCamAt[k] = kTakeCamAt[k]; }
-        takeCamFov = kTakeCamFov; takeCamTravel = kTakeCamTravel;
+        for (int k = 0; k < 3; ++k) { takeCamera.eye[k] = kTakeCamEye[k]; takeCamera.at[k] = kTakeCamAt[k]; }
+        takeCamera.fov = kTakeCamFov; takeCamera.travel = kTakeCamTravel;
     }
 }
 
@@ -123,8 +123,8 @@ void PlayState::sliderCamObstruct(float eye[3], float tat[3], const float steady
     // `setCameraGrids`): the steep complement and the walkable faces
     const auto cast = [&](const double from[3], const double ray[3]) {
         double best = 2.0;
-        const omk::TriangleSoup* const solids[2] = {&playerSteep, &playerSoup};
-        const omk::SplitSoupGrid* const grids[2] = {&playerSteepGrid, &playerGrid};
+        const omk::TriangleSoup* const solids[2] = {&playerSteep, &walkSoup.soup};
+        const omk::SplitSoupGrid* const grids[2] = {&playerSteepGrid, &walkSoup.grid};
         for (int k = 0; k < 2; ++k) {
             if (solids[k]->empty()) continue;
             if (const auto h = omk::sweepThrough(*solids[k], grids[k], from, ray, 0.0))
@@ -158,12 +158,12 @@ void PlayState::sliderCamRequest(int mode, float travelFrames) {
     if (mode == 0) {
         sliderCam.mode = -1;
         takeCamRequest(3);
-        takeCamTravel = travelFrames > 0.0f ? travelFrames : 0.001f;
-        takeCam = true;
+        takeCamera.travel = travelFrames > 0.0f ? travelFrames : 0.001f;
+        takeCamera.live = true;
         return;
     }
-    takeCam = false;
-    takeCamPhase = 0;
+    takeCamera.live = false;
+    takeCamera.phase = 0;
     sliderCam.fresh = true;          // `Camera_LoadParams`' flag 1: the first frame snaps
     sliderCam.obs = omk::CamObstruct{};   // `memset(cam + 208, 0, 0x94)`
     sliderCam.mode = mode;
@@ -185,9 +185,9 @@ void PlayState::sliderCamRequest(int mode, float travelFrames) {
 
 void PlayState::playerCamRequest(const float eye[3], const float at[3], float fov, float travelFrames) {
     takeCamRequest(1);
-    for (int k = 0; k < 3; ++k) { takeCamEye[k] = eye[k]; takeCamAt[k] = at[k]; }
-    takeCamFov = fov; takeCamTravel = travelFrames;
-    takeCam = true;
+    for (int k = 0; k < 3; ++k) { takeCamera.eye[k] = eye[k]; takeCamera.at[k] = at[k]; }
+    takeCamera.fov = fov; takeCamera.travel = travelFrames;
+    takeCamera.live = true;
 }
 
 void PlayState::fallCamRequest(int mode, bool flag, const char* who, int actorState) {
@@ -206,8 +206,8 @@ void PlayState::fallCamRequest(int mode, bool flag, const char* who, int actorSt
     } else if ((mode == 16 && fallCamMode == 18) || (mode == 0 && fallCamMode == 19)) {
         travel = mode == 16 ? 30.0f : 90.0f;
         takeCamRequest(3);
-        takeCamTravel = travel;
-        takeCam = true;
+        takeCamera.travel = travel;
+        takeCamera.live = true;
     }
     if (travel < 0.0f) return;
     fallCamMode = (mode == 18 || mode == 19) ? mode : 0;
@@ -215,31 +215,31 @@ void PlayState::fallCamRequest(int mode, bool flag, const char* who, int actorSt
                 session.frameNo(), who, mode, double(travel));
 }
 
-// ...and its probe GRID, rebuilt wherever `playerSoup` is refilled: the
+// ...and its probe GRID, rebuilt wherever `walkSoup.soup` is refilled: the
 // shadows and the crowd's feet probe it every frame, and a linear scan of
 // the city per bone was most of the frame (todo/optimization.md step 2)
-// Which of `playerSoup`'s triangles belong to a mesh that has moved since the
+// Which of `walkSoup.soup`'s triangles belong to a mesh that has moved since the
 // sets last changed: those go in `playerGrid.moving`, rebuilt every moving
 // frame, the rest in `playerGrid.fixed`, rebuilt only when this changes
 // (todo/optimization.md step 7c).
 void PlayState::rebuildFixedGrid() {
-    playerFixedTri.assign(playerMovingTri.size(), 0);
-    for (std::size_t t = 0; t < playerMovingTri.size(); ++t) playerFixedTri[t] = !playerMovingTri[t];
-    playerGrid.fixed = omk::buildSoupGrid(playerSoup, 256.0, &playerFixedTri);
+    walkSoup.fixedTri.assign(walkSoup.movingTri.size(), 0);
+    for (std::size_t t = 0; t < walkSoup.movingTri.size(); ++t) walkSoup.fixedTri[t] = !walkSoup.movingTri[t];
+    walkSoup.grid.fixed = omk::buildSoupGrid(walkSoup.soup, 256.0, &walkSoup.fixedTri);
 }
 
 void PlayState::rebuildMovingGrid() {
     // from the id list, NOT the mask: the mask build walks all of the soup
     // (15137 triangles in Anekbah) to find the ~750 that move
-    playerGrid.moving = omk::buildSoupGrid(playerSoup, 256.0,
-                                           std::span<const std::uint32_t>(playerMovingIds));
-    playerGrid.useParts = false;    // the grid stands for the moving layer again
+    walkSoup.grid.moving = omk::buildSoupGrid(walkSoup.soup, 256.0,
+                                           std::span<const std::uint32_t>(walkSoup.movingIds));
+    walkSoup.grid.useParts = false;    // the grid stands for the moving layer again
 }
 
 // the same merge for the STEEP faces, so the controller can stand on a
 // slope and slide off it instead of finding no floor (omk-play 67)
-// ...and ITS two-layer grid, kept exactly as `playerGrid` is kept over
-// `playerSoup` - rebuilt wherever `playerSteep` is refilled, the moving
+// ...and ITS two-layer grid, kept exactly as `walkSoup.grid` is kept over
+// `walkSoup.soup` - rebuilt wherever `playerSteep` is refilled, the moving
 // layer from the steep triangles the motion patch re-places. The player's
 // body sweep and the camera's sweep walk it (todo/optimization.md step 11).
 void PlayState::rebuildSteepFixedGrid() {
@@ -941,16 +941,16 @@ bool PlayState::hitBodyOf(const Staged& s, omk::HitBody& hb, bool drawnNow) cons
 // first-person frame draws only a few of them, and all of them are posed
 bool PlayState::playerHitBody(omk::HitBody& hb) const {
     if (!player || !playerMeshAtKnown ||
-        playerMeshAt.size() != playerMeshes.size() * 3 ||
-        playerMeshRot.size() != playerMeshes.size() * 9)
+        playerMeshAt.size() != playerBody.meshes.size() * 3 ||
+        playerMeshRot.size() != playerBody.meshes.size() * 9)
         return false;
     hb = omk::HitBody{};
     hb.actor = -1;
-    for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-        if (playerMeshes[i].parent < 0) { hb.root = static_cast<int>(i); break; }
-    hb.meshes.resize(playerMeshes.size());
-    for (std::size_t mi = 0; mi < playerMeshes.size(); ++mi) {
-        const omk::Mesh& me = playerMeshes[mi];
+    for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+        if (playerBody.meshes[i].parent < 0) { hb.root = static_cast<int>(i); break; }
+    hb.meshes.resize(playerBody.meshes.size());
+    for (std::size_t mi = 0; mi < playerBody.meshes.size(); ++mi) {
+        const omk::Mesh& me = playerBody.meshes[mi];
         omk::HitMesh& hm = hb.meshes[mi];
         for (int k = 0; k < 3; ++k) {
             hm.pos[k] = playerMeshAt[mi * 3 + static_cast<std::size_t>(k)];
@@ -1123,7 +1123,7 @@ omk::GandharWorld PlayState::gandharWorld(Staged& s, omk::ShootRecord& rec, floa
                     "%.0f %.0f %.0f radius %.0f, the player's nearest node %.0f away%s%s\n", frameNo,
                     s.actor, s.model.c_str(), m >= 0 ? "MEETS the player" : "misses",
                     double(c[0]), double(c[1]), double(c[2]), double(r.radius), best,
-                    m >= 0 ? " - his " : "", m >= 0 ? playerMeshes[static_cast<std::size_t>(m)].name : "");
+                    m >= 0 ? " - his " : "", m >= 0 ? playerBody.meshes[static_cast<std::size_t>(m)].name : "");
         return m >= 0;
     };
     // the grab's message: his node against his floor's box
@@ -1348,10 +1348,10 @@ void PlayState::shootNoise(long frame, int from, const float at[3], const char* 
 std::vector<omk::MeshPose> PlayState::playerPoseNow(omk::PlayerController* pl, bool aimLayer,
                                    const omk::NodeTracks& pt, float frame) {
     if (!pl || !aimLayer || !pt.valid())
-        return omk::composePose(playerMeshes, pt, frame, false);
+        return omk::composePose(playerBody.meshes, pt, frame, false);
     const omk::NodeTracks* aim = pl->clipTracks(pl->groupDefaultClip(202));
     const omk::NodeTracks* stance = pl->clipTracks(pl->groupDefaultClip(200));
-    if (!aim || aim->frames < 15) return omk::composePose(playerMeshes, pt, frame, false);
+    if (!aim || aim->frames < 15) return omk::composePose(playerBody.meshes, pt, frame, false);
     // the aim layer bends ONE key - the truncated one (enhancement 12
     // smooths the plain pose above, not this)
     const int fi = static_cast<int>(std::floor(frame));
@@ -1369,8 +1369,8 @@ std::vector<omk::MeshPose> PlayState::playerPoseNow(omk::PlayerController* pl, b
     auto& row = one.quats[0];
     for (std::size_t i = 0; i < one.ids.size() && i < row.size(); ++i) {
         const std::int32_t mi = one.ids[i];
-        if (mi < 0 || static_cast<std::size_t>(mi) >= playerMeshes.size()) continue;
-        if (!omk::shootAimMarked(playerMeshes[static_cast<std::size_t>(mi)].slot)) continue;
+        if (mi < 0 || static_cast<std::size_t>(mi) >= playerBody.meshes.size()) continue;
+        if (!omk::shootAimMarked(playerBody.meshes[static_cast<std::size_t>(mi)].slot)) continue;
         // the bone's `S_AUTOLK` keys 1..15: the tracks' frame k is key k + 1
         std::vector<omk::Quatf> keys;
         for (std::size_t j = 0; j < aim->ids.size(); ++j) {
@@ -1391,7 +1391,7 @@ std::vector<omk::MeshPose> PlayState::playerPoseNow(omk::PlayerController* pl, b
         }
         row[i] = q;
     }
-    return omk::composePose(playerMeshes, one, 0, false);
+    return omk::composePose(playerBody.meshes, one, 0, false);
 }
 
 // A GUNMAN'S AIM LAYER - the same `sub_471950` bend, on HIS pieces. The
@@ -1601,7 +1601,7 @@ CharModel * PlayState::charModelFor(const std::string& name) {
         }
         m.ready = !m.rest.corners.empty() && !m.meshes.empty();
     }
-    ++poolComposition;      // the pool gains this model's textures
+    ++texPool.composition;      // the pool gains this model's textures
     return &charModels.emplace(name, std::move(m)).first->second;
 }
 
@@ -1640,7 +1640,7 @@ PropModel * PlayState::propModelFor(const std::string& stem) {
                     stem.c_str(), m.rest.corners.size(), m.rest.batches.size(),
                     m.tex.size());
     }
-    ++poolComposition;
+    ++texPool.composition;
     return &propModels.emplace(stem, std::move(m)).first->second;
 }
 
@@ -1825,7 +1825,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
     fightRun.player.y = player->pos()[1] - player->cameraLift();
     fightRun.player.z = player->pos()[2];
     fightRun.player.yaw = player->facing();
-    fightRun.player.radius = bodyRadius(playerMeshes);
+    fightRun.player.radius = bodyRadius(playerBody.meshes);
     fightRun.player.channel = &player->channel();
     fightRun.player.isPlayer = true;
     // His channel is ticked by the CONTROLLER, because melee's row runs
@@ -1856,18 +1856,18 @@ bool PlayState::beginMelee(int opponentId, int level) {
     // (descriptor +244/+248), centres made relative to the feet.
     fightRun.foeWalker.reset();
     fightRun.foeBlocked = fightRun.foeSlid = fightRun.foeSteps = 0;
-    if (!noFoeCollision && !playerSoup.empty() && s->mo->root >= 0) {
+    if (!noFoeCollision && !walkSoup.soup.empty() && s->mo->root >= 0) {
         float feet = -1e30f;
         for (const auto& m : s->mo->meshes) feet = std::max(feet, m.pos[1] + m.boxMax[1]);
         const float lift = feet - s->mo->meshes[static_cast<std::size_t>(s->mo->root)].pos[1];
         fightRun.foeLift = (lift > 0.0f && lift < 200.0f) ? lift : 0.0f;
         double fy = double(fightRun.foe.y) + fightRun.foeLift;
-        auto w = std::make_unique<omk::Walker>(playerSoup, fightRun.foe.x, fy, fightRun.foe.z);
+        auto w = std::make_unique<omk::Walker>(walkSoup.soup, fightRun.foe.x, fy, fightRun.foe.z);
         if (const auto g = w->ground(fightRun.foe.x, fy, fightRun.foe.z)) {
             w->moveTo(fightRun.foe.x, *g, fightRun.foe.z);
             fy = *g;
         }
-        w->setGrid(&playerGrid);
+        w->setGrid(&walkSoup.grid);
         w->setSteep(&playerSteep);
         std::vector<omk::CollisionSphere> sph;
         if (const auto mp = fs.resolve("MESHES/PERSOS/" + s->model + ".3DO")) {
@@ -2026,30 +2026,30 @@ int PlayState::loadSpritesFrom(SpriteTable& table, std::span<const std::byte> ad
 }
 
 int PlayState::loadSprites(const std::string& scx) {
- return loadSpritesInto(spriteTab, scx);
+ return loadSpritesInto(sprites.tab, scx);
 }
 
 // Re-run that whenever the resident scene changes: the two libraries first
-// (`spriteBase`, decoded once), then the scene's, because the scene's ids
+// (`sprites.base`, decoded once), then the scene's, because the scene's ids
 // WIN where they collide, which is the order `Sfx_TickAmbient` resolves in.
 void PlayState::refreshSprites() {
     auto& session = *session_;
     if (session.scene().file() == spriteScx) return;
     spriteScx = session.scene().file();
     const auto sp0 = std::chrono::steady_clock::now();
-    spriteTab = spriteBase;                          // the two libraries, as above
-    const int glob = spriteBaseGlobal;
-    const int fightSp = spriteBaseFight;
+    sprites.tab = sprites.base;                          // the two libraries, as above
+    const int glob = sprites.baseGlobal;
+    const int fightSp = sprites.baseFight;
     const int local = spriteScx.empty() ? 0 : loadSprites(spriteScx);
     int okTex = 0;
-    for (const auto& kv : spriteTab.tex) if (kv.second.width) ++okTex;
+    for (const auto& kv : sprites.tab.tex) if (kv.second.width) ++okTex;
     std::printf("sprites: reloaded for %s - %d global + %d fight + %d local, "
                 "%d decoded, %.1f ms\n",
                 spriteScx.empty() ? "<none>" : spriteScx.c_str(), glob,
                 fightSp, local, okTex,
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - sp0).count());
-    ++poolComposition;          // the sprite section of the pool changed
+    ++texPool.composition;          // the sprite section of the pool changed
 }
 
 void PlayState::prepareSet(SetLoad& L) {
@@ -2242,7 +2242,7 @@ bool PlayState::integrateSet(SetLoad& L, long frame) {
 
 // After any slot changed: the texture pool (slot 0's first, then slot
 // 1's - a batch's material is offset by its slot's base), the decor list
-// the feet are probed against, and the WALKER'S soup. `playerSoup` is
+// the feet are probed against, and the WALKER'S soup. `walkSoup.soup` is
 // refilled IN PLACE because the controller's walker holds a reference to
 // it: the player walks off one set onto the other without being rebuilt,
 // and his `.CTL` state, position and facing survive the transition the
@@ -2257,7 +2257,7 @@ void PlayState::rebuildWorld() {
     ++worldGen;
     worldTex.clear();
     worldDecors.clear();
-    playerSoup.clear();
+    walkSoup.soup.clear();
     playerSteep.clear();   // rebuilt with the soup, or it accumulates
     for (int slot = 0; slot < 2; ++slot) {
         WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
@@ -2265,16 +2265,16 @@ void PlayState::rebuildWorld() {
         if (w.stem.empty()) continue;
         worldTex.insert(worldTex.end(), w.tex.begin(), w.tex.end());
         worldDecors.push_back({w.area, &w.soup});
-        playerSoup.insert(playerSoup.end(), w.soup.begin(), w.soup.end());
+        walkSoup.soup.insert(walkSoup.soup.end(), w.soup.begin(), w.soup.end());
         playerSteep.insert(playerSteep.end(), w.steep.begin(), w.steep.end());
     }
     const double rebuildA = static_cast<double>(front.perfCounter());
     // exactly their size (todo/ram-vs-original.md, tier A): `clear` keeps a
     // larger set's capacity, and `insert` grows by doubling
-    playerSoup.shrink_to_fit();
+    walkSoup.soup.shrink_to_fit();
     playerSteep.shrink_to_fit();
-    playerMovingTri.assign(playerSoup.size() / 9, 0);   // new sets: nothing has moved yet
-    playerMovingIds.clear();
+    walkSoup.movingTri.assign(walkSoup.soup.size() / 9, 0);   // new sets: nothing has moved yet
+    walkSoup.movingIds.clear();
     rebuildFixedGrid();
     rebuildMovingGrid();
     const double rebuildB = static_cast<double>(front.perfCounter());
@@ -2286,7 +2286,7 @@ void PlayState::rebuildWorld() {
     const double rebuild1 = static_cast<double>(front.perfCounter());
     // NOT handed to the renderer here. The frame's pool - the sets', then
     // the characters', the player's and the sprites' - is composed and set
-    // before anything is drawn, and this bumps `poolComposition`, so it
+    // before anything is drawn, and this bumps `texPool.composition`, so it
     // will be. Setting the sets' textures ALONE first makes a backend that
     // keeps what it has uploaded drop every character and sprite texture
     // and send them again a moment later: on a console's walk into
@@ -2296,12 +2296,12 @@ void PlayState::rebuildWorld() {
     static const bool poolTwice = omk::envFlag("OMK_POOL_TWICE");
     if (poolTwice) world.setTextures(worldTex);
     poolSize = worldTex.size();
-    ++poolComposition;   // the character and sprite sections re-append over this
+    ++texPool.composition;   // the character and sprite sections re-append over this
     const double hz = static_cast<double>(front.perfFrequency());
     std::printf("world: rebuild - soups and grids %.1f ms (the merge %.1f, the walkable grid "
                 "%.1f over %zu triangles, the steep one %.1f over %zu), the texture pool %.1f ms\n",
                 (rebuild1 - rebuild0) * 1000.0 / hz, (rebuildA - rebuild0) * 1000.0 / hz,
-                (rebuildB - rebuildA) * 1000.0 / hz, playerSoup.size() / 9,
+                (rebuildB - rebuildA) * 1000.0 / hz, walkSoup.soup.size() / 9,
                 (rebuild1 - rebuildB) * 1000.0 / hz, playerSteep.size() / 9,
                 (static_cast<double>(front.perfCounter()) - rebuild1) * 1000.0 / hz);
 }

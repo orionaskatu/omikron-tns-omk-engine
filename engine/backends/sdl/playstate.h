@@ -285,10 +285,12 @@ struct PlayState {
     std::map<std::pair<int, int>, int> sceneVoices{};
     // THE VEHICLES' ENGINE SOUND (`sub_456B40`): vehicle slot -> its looping
     // voice, and `SOUNDS\sliderm01.wav` read once (drift audit A9)
-    std::map<int, int> vehVoices{};
-    std::shared_ptr<const omk::DeviceSound> vehSound{};
-    bool vehSoundRead = false;
-    int  vehSoundStarts = 0, vehSoundStops = 0;
+    struct VehSounds {
+        std::map<int, int> voices{};
+        std::shared_ptr<const omk::DeviceSound> sound{};
+        bool soundRead = false;
+        int  soundStarts = 0, soundStops = 0;
+    } vehSounds{};
     int takeCandidate{};   // `dword_53AF6C`, MDACTION's pick
     bool takeWasLow{};
     int heldInHand{};   // the object drawn on the left hand: from MDGETOBJ to the release
@@ -306,23 +308,27 @@ struct PlayState {
     std::vector<CtlSpriteInst> ctlSprites{};
     int ctlFxState{};
     float ctlFxFrame{};
-    std::vector<CtlSpriteInst> foeSprites{};
-    int foeFxState{};
-    float foeFxFrame{};
-    long foeSpritesDrawn{};   // particle-frames placed on his bones
-    long foeSpritesPooled{};   // ...of which the sprite had a texture slot
+    struct FoeFx {
+        std::vector<CtlSpriteInst> sprites{};
+        int fxState{};
+        float fxFrame{};
+        long spritesDrawn{};   // particle-frames placed on his bones
+        long spritesPooled{};   // ...of which the sprite had a texture slot
+    } foeFx{};
     omk::ParticleField ctlField{};
     omk::Geometry ctlGeo{};
-    bool takeCam{};   // `C+12 == 1`: the mode-1 camera is live
-    int takeCamPhase{};   // 1 travelling in, 2 holding, 3 travelling back
-    float takeCamClock{};   // frames since the request
+    struct TakeCamera {
+        bool live{};   // `C+12 == 1`: the mode-1 camera is live
+        int phase{};   // 1 travelling in, 2 holding, 3 travelling back
+        float clock{};   // frames since the request
+        float fromFov{};
+        float eye[3]{};
+        float at[3]{};
+        float fov{};
+        float travel{};
+    } takeCamera{};
     float takeCamFromEye[3] = {0, 0, 0};
     float takeCamFromAt[3] = {0, 0, 0};
-    float takeCamFromFov{};
-    float takeCamEye[3]{};
-    float takeCamAt[3]{};
-    float takeCamFov{};
-    float takeCamTravel{};
     int fallCamMode{};
     bool fallBanded{};   // `+1304` set this fall (1, 3 or 4) - once per fall
     float lastRoll{};   // the camera ROLL, blended like the fov
@@ -340,32 +346,36 @@ struct PlayState {
     omk::CtlFile playerCtl{};
     int moveWaitCtx{};
     int moveWaitGroup{};
-    std::vector<std::byte> playerCtlData{};
-    std::vector<omk::Mesh> playerMeshes{};
-    omk::MeshNameIndex playerBoneIdx{};   // rebuilt wherever `playerMeshes` is
-    int playerHeadMesh{-1};               // `headMeshOf(playerMeshes)`, set with them
-    std::vector<omk::Texture> playerTex{};
-    omk::Geometry playerRest{};
-    omk::Geometry playerPosed{};
-    std::vector<float> playerAffine{};
-    // the set's lights on the PLAYER (todo/drift-audit.md L1): `Actor_LoadModel`
-    // lights his node as it does every character's - the GPU path's list, and
-    // the grey his corners start from
-    std::vector<float> playerLights{};
-    int   playerLightCount{};
-    bool  playerLightsBlack{};
-    float playerLightBase{};
-    long playerPosedFrame{};
-    std::vector<omk::CollisionSphere> playerSpheres{};   // the crowd push tests these
-    float playerReach{};   // his model's +88
-    omk::TriangleSoup playerSoup{};
-    std::vector<std::uint32_t> playerSoupFlags{};
+    struct PlayerBody {
+        std::vector<std::byte> ctlData{};
+        std::vector<omk::Mesh> meshes{};
+        omk::MeshNameIndex boneIdx{};   // rebuilt wherever `meshes` is
+        int headMesh{-1};               // `headMeshOf(meshes)`, set with them
+        std::vector<omk::Texture> tex{};
+        omk::Geometry rest{};
+        omk::Geometry posed{};
+        std::vector<float> affine{};
+        // the set's lights on the PLAYER (todo/drift-audit.md L1): `Actor_LoadModel`
+        // lights his node as it does every character's - the GPU path's list, and
+        // the grey his corners start from
+        std::vector<float> lights{};
+        int   lightCount{};
+        bool  lightsBlack{};
+        float lightBase{};
+        long posedFrame{};
+        std::vector<omk::CollisionSphere> spheres{};   // the crowd push tests these
+        float reach{};   // his model's +88
+    } playerBody{};
+    struct WalkSoup {
+        omk::TriangleSoup soup{};
+        std::vector<std::uint32_t> soupFlags{};
+        omk::SplitSoupGrid grid{};
+        std::vector<std::uint8_t> movingTri{};
+        std::vector<std::uint8_t> fixedTri{};
+        std::vector<std::uint32_t> movingIds{};   // the same set, ascending: the moving layer's build list
+    } walkSoup{};
     const float * soupFlagsFor{};
     std::size_t soupFlagsSize{};
-    omk::SplitSoupGrid playerGrid{};
-    std::vector<std::uint8_t> playerMovingTri{};
-    std::vector<std::uint8_t> playerFixedTri{};
-    std::vector<std::uint32_t> playerMovingIds{};   // the same set, ascending: the moving layer's build list
     bool mergedValid{};
     // THE MOVING COLLISION PLACED LAZILY (todo/cpu-vs-original.md tier C): a
     // moving mesh's walkable and steep triangles are re-placed only when a
@@ -381,9 +391,11 @@ struct PlayState {
         bool boxKnown = false;
         float restBox[2][6]{};   // walkable, steep: the rest triangles' min xyz, max xyz
     };
-    std::map<int, LazyMesh> lazyMeshes{};
-    int lazyPending = 0;
-    long lazyPlacedFrame = 0, lazyPlacedTotal = 0, lazyRecordedTotal = 0;   // counts for the log
+    struct LazyMeshes {
+        std::map<int, LazyMesh> meshes{};
+        int pending = 0;
+        long placedFrame = 0, placedTotal = 0, recordedTotal = 0;   // counts for the log
+    } lazy{};
     std::function<void()> lazyPlaceAllFn{};
     std::function<void(int)> lazyPlaceOneFn{};
     omk::TriangleSoup playerSteep{};
@@ -530,19 +542,23 @@ struct PlayState {
     // `image.show`'s bitmap (`dword_93072C`) while ACTOR_STATE 10 holds him,
     // and the edge word's two inputs (`dword_4E9720` the mask - the keys held
     // when it opened - and `dword_4E9724` the last poll)
-    omk::Surface imageShown{};
-    bool imageLive{};
-    std::uint32_t imageMask{}, imageLast{};
+    struct ImageShow {
+        omk::Surface shown{};
+        bool live{};
+        std::uint32_t mask{}, last{};
+    } image{};
     // THE HIGH-SCORE BOARD (op 142, screen 36). The page `UI_LoadScreen(36,
     // table, -1)` asked for until the screen can open (-1 none); then what
     // its open callback 0x004AD9A0 starts on a level page (1..3): the posted
     // message (oscillator 0, 5000 ms - the board's last line), the close
     // (oscillator 5, 10000 ms on the screen) and the player's release
     // (`sub_466B60`, run AFTER the state-9 hold, so he walks while it shows).
-    int hsOpenPage = -1;
-    std::string hsMessage;
-    double hsMessageLeftMs = 0.0;   // oscillator 0; its close is the walk's oscillator 5
-    bool hsReleased = false;
+    struct HighScoreBoard {
+        int openPage = -1;
+        std::string message;
+        double messageLeftMs = 0.0;   // oscillator 0; its close is the walk's oscillator 5
+        bool released = false;
+    } highScore{};
     long posSyncsSeen{};   // op 127's count, applied once each
     bool lookCam{};
     bool lookMouse{};
@@ -620,11 +636,13 @@ struct PlayState {
     std::string shotGunStem{};   // the stem the player's bolts are cloned from
     long stagedEver{};   // for the summary line
     std::vector<int> stagedIds{};
-    std::uint64_t poolComposition{};
-    std::uint64_t poolBuiltFor{};
-    std::uint64_t poolTold{};
-    bool poolHasSprites{};
-    bool poolHasPlayer{};
+    struct TexturePool {
+        std::uint64_t composition{};
+        std::uint64_t builtFor{};
+        std::uint64_t told{};
+        bool hasSprites{};
+        bool hasPlayer{};
+    } texPool{};
     std::size_t propEventsSeen{};
     std::map<int, std::array<float, 3>> propsDrawnAt{};   // by prop id, for the moved line   // the Session's prop events this frontend has answered
     // the pool was handed over GREYED (ops 150/151): a change of bank is a
@@ -634,10 +652,17 @@ struct PlayState {
     // while the key names it; its grey}
     std::map<const std::uint8_t*, std::pair<omk::PixelBuffer, omk::PixelBuffer>> greyPalettes{};
     std::size_t playerTexBase{};
-    std::size_t spriteTexBase{};
-    std::unordered_map<int, int> spriteSlot{};   // absent = -1, as an unassigned slot was
-    std::set<int> spriteWanted{};
-    std::set<int> spritePooled{};
+    struct Sprites {
+        std::size_t texBase{};
+        std::unordered_map<int, int> slot{};   // absent = -1, as an unassigned slot was
+        std::set<int> wanted{};
+        std::set<int> pooled{};
+        SpriteTable tab{};
+        omk::SpriteLookup lookup{};
+        SpriteTable base{};
+        int baseGlobal{};
+        int baseFight{};
+    } sprites{};
     bool poolOverflowTold{};
     bool stagedProbe{};
     bool obstructProbe{};
@@ -646,11 +671,6 @@ struct PlayState {
     bool fightCamTold{};   // one line when mode 14 takes the view
     std::vector<omk::Texture> pool{};
     std::size_t poolSize{};
-    SpriteTable spriteTab{};
-    omk::SpriteLookup spriteLookup{};
-    SpriteTable spriteBase{};
-    int spriteBaseGlobal{};
-    int spriteBaseFight{};
     std::unique_ptr<omk::ScxRuntime> globalRt{};
     std::unique_ptr<omk::ScxRuntime> fightRt{};
     std::string spriteScx{};
@@ -661,16 +681,18 @@ struct PlayState {
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie
     Sky sky{};
-    omk::ShadowModel shadowModel{};
-    omk::Geometry shadowGeo{};
-    std::size_t shadowTexBase{};
-    float shadowFootOffMax{};
+    struct Shadows {
+        omk::ShadowModel model{};
+        omk::Geometry geo{};
+        std::size_t texBase{};
+        float footOffMax{};
+        float spreadMax{};
+        float spreadPlayer{};
+        long blobsDrawn{};
+        bool told{};
+        bool lightTold{};
+    } shadow{};
     float pedFootOffMax{};
-    float shadowSpreadMax{};
-    float shadowSpreadPlayer{};
-    long shadowBlobsDrawn{};
-    bool shadowTold{};
-    bool shadowLightTold{};
     bool lightsTold{};
     float shimmerClock{};   // `dword_907310`, wrapped at 256
     std::vector<omk::DecorSoup> worldDecors{};   // every LOADED slot's soup, for decorUnder
@@ -732,10 +754,12 @@ struct PlayState {
     std::string sneakEcho{};
     long sneakEchoMs{-1000000};
     std::uint32_t lastMs{};
-    std::uint32_t fpsSince{};
-    std::uint32_t fpsLastMs{};
-    std::uint32_t fpsWorst{};
-    int fpsFrames{};
+    struct FpsMeter {
+        std::uint32_t since{};
+        std::uint32_t lastMs{};
+        std::uint32_t worst{};
+        int frames{};
+    } fpsMeter{};
     float spriteAnchor[3] = {0.0f, 0.0f, 0.0f};
     bool spriteAnchorSet{};
     std::map<int, long> spriteLogged{};   // row -> the link tick already reported
@@ -1135,8 +1159,8 @@ struct PlayState {
     bool beginMelee(int opponentId, int level);
     omk::NodeTracks idleTracksFor(const CharBank& b,
                                    const std::vector<omk::Mesh>& meshes);
-    int loadSpritesInto(SpriteTable& spriteTab, const std::string& scx);
-    int loadSpritesFrom(SpriteTable& spriteTab, std::span<const std::byte> scxFile);
+    int loadSpritesInto(SpriteTable& table, const std::string& scx);
+    int loadSpritesFrom(SpriteTable& table, std::span<const std::byte> scxFile);
     int loadSprites(const std::string& scx);
     void refreshSprites();
     void prepareSet(SetLoad& L);

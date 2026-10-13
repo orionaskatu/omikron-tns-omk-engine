@@ -188,32 +188,32 @@ void PlayState::controlBinding() {
         const auto mt = fs.resolve("MESHES/PERSOS/" + playerModel + ".3DT");
         const auto cp = fs.resolve("ANIMS/" + playerCtlName + ".CTL");
         playerReady = false;
-        if (mo && cp && !playerSoup.empty()) {
+        if (mo && cp && !walkSoup.soup.empty()) {
             const auto md = omk::DataFs::readPath(*mo);
-            playerRest = omk::buildGeometry(md, omk::DrawFilter::Engine);
-            playerRest.revision = ++worldGeoRev;
-            playerMeshes.clear();
-            if (const auto mh = omk::readHeader(md)) playerMeshes = omk::readMeshes(md, *mh);
-            playerHeadMesh = omk::headMeshOf(playerMeshes);
-            playerBoneIdx.build(playerMeshes, omk::MeshNameIndex::shadowNames());
+            playerBody.rest = omk::buildGeometry(md, omk::DrawFilter::Engine);
+            playerBody.rest.revision = ++worldGeoRev;
+            playerBody.meshes.clear();
+            if (const auto mh = omk::readHeader(md)) playerBody.meshes = omk::readMeshes(md, *mh);
+            playerBody.headMesh = omk::headMeshOf(playerBody.meshes);
+            playerBody.boneIdx.build(playerBody.meshes, omk::MeshNameIndex::shadowNames());
             // his PUSH spheres: the model's own list, hung from the feet
             // (`pushSpheresOf` - HO1_FN's four of 10.9), which is what
             // `sub_45E390` reads for the querying body too; the per-mesh
             // spheres (one 42.5 across the whole body) only if it has none
-            playerSpheres = omk::pushSpheresOf(md);
-            if (playerSpheres.empty()) playerSpheres = omk::collisionSpheresOf(playerMeshes);
-            playerReach = playerMeshes.empty() ? 0.0f : playerMeshes.front().radius;
-            playerTex = mt ? omk::textures(md, omk::DataFs::readPath(*mt))
+            playerBody.spheres = omk::pushSpheresOf(md);
+            if (playerBody.spheres.empty()) playerBody.spheres = omk::collisionSpheresOf(playerBody.meshes);
+            playerBody.reach = playerBody.meshes.empty() ? 0.0f : playerBody.meshes.front().radius;
+            playerBody.tex = mt ? omk::textures(md, omk::DataFs::readPath(*mt))
                            : std::vector<omk::Texture>{};
-            playerCtlData = omk::DataFs::readPath(*cp);
-            playerCtl = omk::readCtl(playerCtlData);
-            // `playerSoup` is the shown slots' walkable soups, merged
+            playerBody.ctlData = omk::DataFs::readPath(*cp);
+            playerCtl = omk::readCtl(playerBody.ctlData);
+            // `walkSoup.soup` is the shown slots' walkable soups, merged
             // by `rebuildWorld` - the floor of BOTH decors.
-            if (playerCtl.valid && playerCtl.exact && !playerMeshes.empty() &&
-                !playerSoup.empty()) {
+            if (playerCtl.valid && playerCtl.exact && !playerBody.meshes.empty() &&
+                !walkSoup.soup.empty()) {
                 omk::PlayerController::Setup su;
-                su.ctl = &playerCtl; su.ctlData = playerCtlData;
-                su.meshes = &playerMeshes; su.soup = &playerSoup;
+                su.ctl = &playerCtl; su.ctlData = playerBody.ctlData;
+                su.meshes = &playerBody.meshes; su.soup = &walkSoup.soup;
                 su.steep = &playerSteep;
                 // THE NARROW PHASE (issues 68/75, HANDOFF "the walker
                 // does not block on walls"): the same steep faces,
@@ -256,22 +256,22 @@ void PlayState::controlBinding() {
                 static const bool noCamCollide =
                     omk::envFlag("OMK_NO_CAM_COLLIDE");
                 if (!noCamCollide)
-                    player->setCameraSolids(&playerSteep, &playerSoup);
+                    player->setCameraSolids(&playerSteep, &walkSoup.soup);
                 // THE GROUND GRID (todo/optimization.md step 9): the
-                // walker's floor probe through `playerGrid`, which is
-                // rebuilt wherever `playerSoup` is written.
+                // walker's floor probe through `walkSoup.grid`, which is
+                // rebuilt wherever `walkSoup.soup` is written.
                 // `OMK_NO_GROUND_GRID=1` keeps the linear scan;
                 // `OMK_VERIFY_GROUND=1` runs both and counts.
                 static const bool noGroundGrid = omk::envFlag("OMK_NO_GROUND_GRID");
                 omk::setGroundVerify(omk::envFlag("OMK_VERIFY_GROUND"));
-                player->setGroundGrid(noGroundGrid ? nullptr : &playerGrid);
-                player->setFloorFlags(&playerSoupFlags);
+                player->setGroundGrid(noGroundGrid ? nullptr : &walkSoup.grid);
+                player->setFloorFlags(&walkSoup.soupFlags);
                 // the body and camera sweeps through the steep and
                 // walkable grids (step 11); `OMK_NO_SWEEP_GRID=1` scans
                 static const bool noSweepGrid = omk::envFlag("OMK_NO_SWEEP_GRID");
                 player->setBlockerGrid(noSweepGrid ? nullptr : &playerSteepGrid);
                 player->setCameraGrids(noSweepGrid ? nullptr : &playerSteepGrid,
-                                       noSweepGrid ? nullptr : &playerGrid);
+                                       noSweepGrid ? nullptr : &walkSoup.grid);
                 // `Walk_ProbeGround` raises event 9 when the decor
                 // under his feet changes to a slot in state 2 - and
                 // from here on the feet are probed every tick
@@ -282,7 +282,7 @@ void PlayState::controlBinding() {
                     const float* pp = player->pos();
                     int under = noGroundGrid
                         ? omk::decorUnder(worldDecors, pp[0], pp[1], pp[2])
-                        : omk::decorUnder(worldDecors, playerSoup, playerGrid, pp[0], pp[1], pp[2]);
+                        : omk::decorUnder(worldDecors, walkSoup.soup, walkSoup.grid, pp[0], pp[1], pp[2]);
                     if (under >= 0) {                  // state 2 only, as above
                         bool drawn = false;
                         for (int sl = 0; sl < 2; ++sl)
@@ -303,7 +303,7 @@ void PlayState::controlBinding() {
                                 standAt[0], standAt[1], standAt[2], standAt[3]);
                 }
                 placementSeen = session.placementSeq();
-                playerReady = !playerRest.corners.empty();
+                playerReady = !playerBody.rest.corners.empty();
                 playerFeetKnown = false;
                 playerCamId = -2;
                 handoverFrame = frameNo;
@@ -314,7 +314,7 @@ void PlayState::controlBinding() {
                             frameNo, playerModel.c_str(), modelSrc.c_str(),
                             playerCtlName.c_str(), ctlSrc.c_str(),
                             player->tracksMatched(), player->tracksTotal(),
-                            playerSoup.size() / 9, worldSet.c_str(),
+                            walkSoup.soup.size() / 9, worldSet.c_str(),
                             player->pos()[0], player->pos()[1], player->pos()[2],
                             player->facing(),
                             handoverFacingKnown ? "from the last player clip's root"

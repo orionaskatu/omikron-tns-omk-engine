@@ -791,10 +791,10 @@ void PlayState::inputMotion() {
                     movedSoup[sl].insert(movedSoup[sl].end(), meshSoupTris.begin(), meshSoupTris.end());
                     movedSteep[sl].insert(movedSteep[sl].end(), meshSteepTris.begin(), meshSteepTris.end());
                     const int key = sl * 1000000 + mi;
-                    LazyMesh& lm = lazyMeshes[key];
+                    LazyMesh& lm = lazy.meshes[key];
                     lm.sl = sl; lm.mi = mi; lm.pp = pp; lm.gen = worldGen;
-                    if (!lm.pending) { lm.pending = true; ++lazyPending; }
-                    ++lazyRecordedTotal;
+                    if (!lm.pending) { lm.pending = true; ++lazy.pending; }
+                    ++lazy.recordedTotal;
                     if (!lm.boxKnown) {
                         // the rest triangles' box, each layer - what the
                         // conservative extent is carried from
@@ -858,7 +858,7 @@ void PlayState::inputMotion() {
         }
         bool newlyMoving = false;
         bool newlySteep = false;
-        const bool inPlace = mergedValid && playerSoup.size() == wantSoup && playerSteep.size() == wantSteep;
+        const bool inPlace = mergedValid && walkSoup.soup.size() == wantSoup && playerSteep.size() == wantSteep;
         inputSoupPatchInPlace(inPlace, movedSoup, newlyMoving, movedSteep, newlySteep);
         // `OMK_VERIFY_PATCH=1`: the full merge beside the in-place one, every
         // moving frame, compared bit for bit (`verify.py: engine: patch index`).
@@ -874,8 +874,8 @@ void PlayState::inputMotion() {
                 refSteep.insert(refSteep.end(), w.steep.begin(), w.steep.end());
             }
             ++compared;
-            const bool same = refSoup.size() == playerSoup.size() && refSteep.size() == playerSteep.size() &&
-                (refSoup.empty() || std::memcmp(refSoup.data(), playerSoup.data(), refSoup.size() * sizeof(float)) == 0) &&
+            const bool same = refSoup.size() == walkSoup.soup.size() && refSteep.size() == playerSteep.size() &&
+                (refSoup.empty() || std::memcmp(refSoup.data(), walkSoup.soup.data(), refSoup.size() * sizeof(float)) == 0) &&
                 (refSteep.empty() || std::memcmp(refSteep.data(), playerSteep.data(), refSteep.size() * sizeof(float)) == 0);
             if (!same) ++mismatched;
             if (compared % 30 == 0)
@@ -886,9 +886,9 @@ void PlayState::inputMotion() {
         // THE TWO LAYERS: the fixed one only when the moving set changed, the
         // moving one - a few hundred triangles - every moving frame.
         mark("scripted motion: soups patched");
-        if (newlyMoving) std::sort(playerMovingIds.begin(), playerMovingIds.end());
+        if (newlyMoving) std::sort(walkSoup.movingIds.begin(), walkSoup.movingIds.end());
         spanned("grid fixed", [&] {
-            if (newlyMoving || !playerGrid.fixed.matches(playerSoup)) rebuildFixedGrid();
+            if (newlyMoving || !walkSoup.grid.fixed.matches(walkSoup.soup)) rebuildFixedGrid();
         });
         // THE MOVING LAYER AS WHOLE MESHES (todo/optimization.md step 38):
         // `o3de_ForEachMeshInBox` tests a moving mesh by its extent and
@@ -934,8 +934,8 @@ void PlayState::inputMotion() {
             if (!lazyPlaceOneFn) lazyPlaceOneFn = [this](int key) { lazyPlace(key); };
             grid.place = eager ? std::function<void(int)>{} : lazyPlaceOneFn;
             for (auto& part : grid.parts) {
-                const auto lit = eager ? lazyMeshes.end() : lazyMeshes.find(part.owner);
-                if (lit == lazyMeshes.end()) { omk::measurePart(merged, part); part.pending = false; continue; }
+                const auto lit = eager ? lazy.meshes.end() : lazy.meshes.find(part.owner);
+                if (lit == lazy.meshes.end()) { omk::measurePart(merged, part); part.pending = false; continue; }
                 const LazyMesh& lm = lit->second;
                 const float* b = lm.restBox[steep ? 1 : 0];
                 float c[24], o[24];
@@ -963,7 +963,7 @@ void PlayState::inputMotion() {
         if (movingGrid) lazyPlaceAll();   // a grid built over the triangles reads them all
         spanned("grid moving (floor)", [&] {
             if (movingGrid) rebuildMovingGrid();
-            else partsOf(playerGrid, playerSoup, playerMovingTri, false, newlyMoving);
+            else partsOf(walkSoup.grid, walkSoup.soup, walkSoup.movingTri, false, newlyMoving);
         });
         if (newlySteep) std::sort(steepMovingIds.begin(), steepMovingIds.end());
         spanned("grid fixed", [&] {
@@ -1111,11 +1111,11 @@ void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<std::uint32_t> (
                 // a recorded mesh is copied in when it is placed (`lazyPlace`)
                 if (eagerMerge)
                     std::copy_n(w.soup.data() + 9 * static_cast<std::size_t>(t), 9,
-                                playerSoup.data() + offSoup + 9 * static_cast<std::size_t>(t));
+                                walkSoup.soup.data() + offSoup + 9 * static_cast<std::size_t>(t));
                 const std::size_t gt = offSoup / 9 + t;
-                if (gt < playerMovingTri.size() && !playerMovingTri[gt]) {
-                    playerMovingTri[gt] = 1;
-                    playerMovingIds.push_back(static_cast<std::uint32_t>(gt));
+                if (gt < walkSoup.movingTri.size() && !walkSoup.movingTri[gt]) {
+                    walkSoup.movingTri[gt] = 1;
+                    walkSoup.movingIds.push_back(static_cast<std::uint32_t>(gt));
                     newlyMoving = true;
                 }
             }
@@ -1134,28 +1134,28 @@ void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<std::uint32_t> (
         }
     } else {
         lazyPlaceAll();       // the slots' soups are copied whole: every mesh placed first
-        playerSoup.clear(); playerSteep.clear();
+        walkSoup.soup.clear(); playerSteep.clear();
         for (int sl = 0; sl < 2; ++sl) {
             const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
             if (w.stem.empty()) continue;
-            playerSoup.insert(playerSoup.end(), w.soup.begin(), w.soup.end());
+            walkSoup.soup.insert(walkSoup.soup.end(), w.soup.begin(), w.soup.end());
             playerSteep.insert(playerSteep.end(), w.steep.begin(), w.steep.end());
         }
         mergedValid = true;
         // a full merge: the sets' layout may have changed, so every moved
         // triangle is re-marked against the new offsets
-        playerMovingTri.assign(playerSoup.size() / 9, 0);
+        walkSoup.movingTri.assign(walkSoup.soup.size() / 9, 0);
         std::size_t off = 0;
         for (int sl = 0; sl < 2; ++sl) {
             const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
             if (w.stem.empty()) continue;
             for (const std::uint32_t t : movedSoup[sl])
-                if (off / 9 + t < playerMovingTri.size()) playerMovingTri[off / 9 + t] = 1;
+                if (off / 9 + t < walkSoup.movingTri.size()) walkSoup.movingTri[off / 9 + t] = 1;
             off += w.soup.size();
         }
-        playerMovingIds.clear();
-        for (std::size_t t = 0; t < playerMovingTri.size(); ++t)
-            if (playerMovingTri[t]) playerMovingIds.push_back(static_cast<std::uint32_t>(t));
+        walkSoup.movingIds.clear();
+        for (std::size_t t = 0; t < walkSoup.movingTri.size(); ++t)
+            if (walkSoup.movingTri[t]) walkSoup.movingIds.push_back(static_cast<std::uint32_t>(t));
         newlyMoving = true;
         // ...and the steep faces the same way
         steepMovingTri.assign(playerSteep.size() / 9, 0);
@@ -1183,12 +1183,12 @@ void PlayState::inputVerifySplit(bool verifySplit, std::vector<std::uint32_t> (&
         ++splitFrames;
         const auto check = [&](double x, double y, double z) {
             ++probes;
-            const auto a = omk::floorUnder(playerSoup, playerGrid, x, y, z);
-            const auto b = omk::floorUnder(playerSoup, x, y, z);
+            const auto a = omk::floorUnder(walkSoup.soup, walkSoup.grid, x, y, z);
+            const auto b = omk::floorUnder(walkSoup.soup, x, y, z);
             if (a.has_value() != b.has_value() || (a && std::memcmp(&*a, &*b, sizeof(double)) != 0))
                 ++mismatched;
-            const auto c = omk::surfaceUnder(playerSoup, playerGrid, x, y, z);
-            const auto d = omk::surfaceUnder(playerSoup, x, y, z);
+            const auto c = omk::surfaceUnder(walkSoup.soup, walkSoup.grid, x, y, z);
+            const auto d = omk::surfaceUnder(walkSoup.soup, x, y, z);
             if (c.has_value() != d.has_value() ||
                 (c && std::memcmp(&*c, &*d, sizeof(omk::GroundHit)) != 0)) ++mismatched;
         };
@@ -1198,9 +1198,9 @@ void PlayState::inputVerifySplit(bool verifySplit, std::vector<std::uint32_t> (&
             if (w.stem.empty()) continue;
             for (std::size_t k = 0; k < movedSoup[sl].size(); k += 7) {
                 const std::size_t o = off + 9 * static_cast<std::size_t>(movedSoup[sl][k]);
-                check((double(playerSoup[o]) + playerSoup[o + 3] + playerSoup[o + 6]) / 3.0,
-                      (double(playerSoup[o + 1]) + playerSoup[o + 4] + playerSoup[o + 7]) / 3.0 - 200.0,
-                      (double(playerSoup[o + 2]) + playerSoup[o + 5] + playerSoup[o + 8]) / 3.0);
+                check((double(walkSoup.soup[o]) + walkSoup.soup[o + 3] + walkSoup.soup[o + 6]) / 3.0,
+                      (double(walkSoup.soup[o + 1]) + walkSoup.soup[o + 4] + walkSoup.soup[o + 7]) / 3.0 - 200.0,
+                      (double(walkSoup.soup[o + 2]) + walkSoup.soup[o + 5] + walkSoup.soup[o + 8]) / 3.0);
             }
             off += w.soup.size();
         }
@@ -1210,12 +1210,12 @@ void PlayState::inputVerifySplit(bool verifySplit, std::vector<std::uint32_t> (&
         if (splitFrames % 30 == 0)
             std::printf("split verify: %ld moving frames, %ld probes, %ld mismatched, fixed %d x %d, moving %zu entries "
                         "in %d x %d (steep moving %d x %d, %zu entries)%s\n",
-                        splitFrames, probes, mismatched, playerGrid.fixed.nx, playerGrid.fixed.nz,
-                        playerGrid.moving.index.size(), playerGrid.moving.nx, playerGrid.moving.nz,
+                        splitFrames, probes, mismatched, walkSoup.grid.fixed.nx, walkSoup.grid.fixed.nz,
+                        walkSoup.grid.moving.index.size(), walkSoup.grid.moving.nx, walkSoup.grid.moving.nz,
                         playerSteepGrid.moving.nx, playerSteepGrid.moving.nz,
                         playerSteepGrid.moving.index.size(),
-                        playerGrid.useParts ? (" - the moving layer is " +
-                            std::to_string(playerGrid.parts.size()) + " and " +
+                        walkSoup.grid.useParts ? (" - the moving layer is " +
+                            std::to_string(walkSoup.grid.parts.size()) + " and " +
                             std::to_string(playerSteepGrid.parts.size()) +
                             " whole meshes, no grid").c_str() : "");
     }
@@ -1251,7 +1251,7 @@ void PlayState::inputSounds() {
                 if (!e.sprite || (e.flags & 2)) continue;
                 ctlSprites.push_back({e.sprite, e.duration, e.from, e.to, e.scale,
                                       e.flags, e.attach, st});
-                if (!spriteTab.texOf(e.sprite) || !spriteTab.texOf(e.sprite)->hasPixels())
+                if (!sprites.tab.texOf(e.sprite) || !sprites.tab.texOf(e.sprite)->hasPixels())
                     std::printf("ctl-effect: sprite %d is not registered by the library or the "
                                 "scene - nothing will draw\n", e.sprite);
                 std::printf("ctl-effect: state %d '%s' spawns sprite %d on attach %d "
@@ -1275,13 +1275,13 @@ void PlayState::inputSounds() {
         const auto& fctl = fightRun.foeChannel->ctl();
         const int   st = fightRun.foeChannel->state();
         const float fr = fightRun.foeChannel->frame();
-        if (st != foeFxState || fr < foeFxFrame) {
-            foeSprites.clear();
-            foeFxState = st;
+        if (st != foeFx.fxState || fr < foeFx.fxFrame) {
+            foeFx.sprites.clear();
+            foeFx.fxState = st;
             if (st >= 0 && st < static_cast<int>(fctl.states.size()))
                 for (const auto& e : fctl.states[static_cast<std::size_t>(st)].effects) {
                     if (!e.sprite || (e.flags & 2)) continue;
-                    foeSprites.push_back({e.sprite, e.duration, e.from, e.to, e.scale,
+                    foeFx.sprites.push_back({e.sprite, e.duration, e.from, e.to, e.scale,
                                           e.flags, e.attach, st});
                     std::printf("frame %ld: ctl-effect: OPPONENT state %d '%s' spawns sprite %d on "
                                 "attach %d ('%s') for %.0f frames from %.0f\n", frameNo, st,
@@ -1291,16 +1291,16 @@ void PlayState::inputSounds() {
                                 e.duration, e.from);
                 }
         }
-        foeFxFrame = fr;
-        for (std::size_t i = 0; i < foeSprites.size();) {
-            const auto& c = foeSprites[i];
+        foeFx.fxFrame = fr;
+        for (std::size_t i = 0; i < foeFx.sprites.size();) {
+            const auto& c = foeFx.sprites[i];
             const float to = c.to == 0.0f ? 10000.0f : c.to;
-            if (fr > c.from + c.duration || fr > to) foeSprites.erase(foeSprites.begin() + static_cast<long>(i));
+            if (fr > c.from + c.duration || fr > to) foeFx.sprites.erase(foeFx.sprites.begin() + static_cast<long>(i));
             else ++i;
         }
-    } else if (!foeSprites.empty()) {
-        foeSprites.clear();
-        foeFxState = -1;
+    } else if (!foeFx.sprites.empty()) {
+        foeFx.sprites.clear();
+        foeFx.fxState = -1;
     }
     if (player && globalRt) {
         // The library, see its construction - and `fight.scx` OVER it
@@ -1486,23 +1486,23 @@ void PlayState::vehicleSounds() {
     // applied - this mixer has no pitch. Then the listener for the NEXT
     // frame's decision, the eye, as `Game_Frame` sets it last.
     {
-        if (!vehSoundRead) {
-            vehSoundRead = true;
+        if (!vehSounds.soundRead) {
+            vehSounds.soundRead = true;
             const auto w = fs.read("SOUNDS/sliderm01.wav");
-            if (!w.empty()) vehSound = wavToDeviceSound(w, kDeviceRate);
+            if (!w.empty()) vehSounds.sound = wavToDeviceSound(w, kDeviceRate);
             std::printf("audio: the vehicles' engine sound SOUNDS\\sliderm01.wav %s\n",
-                        vehSound && vehSound->size ? "loaded" : "NOT LOADED");
+                        vehSounds.sound && vehSounds.sound->size ? "loaded" : "NOT LOADED");
         }
         const auto& vs = session.sliders().vehicles();
-        for (auto it = vehVoices.begin(); it != vehVoices.end();) {
+        for (auto it = vehSounds.voices.begin(); it != vehSounds.voices.end();) {
             const std::size_t s = static_cast<std::size_t>(it->first);
             if (s >= vs.size() || !vs[s].live || vs[s].sound == -1) {
                 front.stopSound(it->second);
-                ++vehSoundStops;
+                ++vehSounds.soundStops;
                 std::printf("frame %ld: vehicle sound STOPPED - slot %d (beyond 585 of the "
                             "listener, or gone); %zu sounding\n", frameNo, it->first,
-                            vehVoices.size() - 1);
-                it = vehVoices.erase(it);
+                            vehSounds.voices.size() - 1);
+                it = vehSounds.voices.erase(it);
             } else {
                 ++it;
             }
@@ -1512,14 +1512,14 @@ void PlayState::vehicleSounds() {
             if (!vv.live || vv.sound == -1) continue;
             const float d = vv.soundDist;
             const float g = (d <= 39.0f ? 1.0f : 39.0f / std::min(d, 585.0f)) * fxGain();
-            const auto it = vehVoices.find(static_cast<int>(s));
-            if (it == vehVoices.end()) {
-                const int h = vehSound && vehSound->size ? front.playSound(vehSound, true, g) : -1;
-                vehVoices.emplace(static_cast<int>(s), h);
-                ++vehSoundStarts;
+            const auto it = vehSounds.voices.find(static_cast<int>(s));
+            if (it == vehSounds.voices.end()) {
+                const int h = vehSounds.sound && vehSounds.sound->size ? front.playSound(vehSounds.sound, true, g) : -1;
+                vehSounds.voices.emplace(static_cast<int>(s), h);
+                ++vehSounds.soundStarts;
                 std::printf("frame %ld: vehicle sound STARTED - slot %zu ('%s') at %.0f from "
                             "the listener, gain %.3f; %zu sounding\n", frameNo, s, vv.model.c_str(),
-                            double(d), double(g), vehVoices.size());
+                            double(d), double(g), vehSounds.voices.size());
             } else {
                 front.setSoundGain(it->second, g);
             }
@@ -1533,7 +1533,7 @@ void PlayState::vehicleSounds() {
 //
 // Re-placing a moving mesh's collision triangles every frame it moves is
 // ~2730 in Anekbah, most of them far from anything that probes. So the
-// frame RECORDS the placement (`lazyMeshes`) and the triangles are placed
+// frame RECORDS the placement (`lazy.meshes`) and the triangles are placed
 // the first time a query reaches the mesh: a grid query through its part
 // (`SplitSoupGrid::place`), a linear one through `omk::ensurePlaced`, which
 // places all. The same rest, the same `placePoints`, the same placement - so
@@ -1550,12 +1550,12 @@ std::size_t PlayState::slotSoupOffset(int sl, bool steep) const {
 }
 
 void PlayState::lazyPlace(int key) {
-    auto it = lazyMeshes.find(key);
-    if (it == lazyMeshes.end() || !it->second.pending) return;
+    auto it = lazy.meshes.find(key);
+    if (it == lazy.meshes.end() || !it->second.pending) return;
     LazyMesh& lm = it->second;
     if (lm.gen != worldGen) {             // recorded against soups since replaced
         lm.pending = false;
-        if (--lazyPending <= 0) { lazyPending = 0; lazyRegister(); }
+        if (--lazy.pending <= 0) { lazy.pending = 0; lazyRegister(); }
         return;
     }
     WorldSlot& w = worldSlots[static_cast<std::size_t>(lm.sl)];
@@ -1581,21 +1581,21 @@ void PlayState::lazyPlace(int key) {
                                 merged.data() + off + 9 * static_cast<std::size_t>(t));
     };
     if (mi < w.soupTrisOfMesh.size())
-        placeLayer(w.soup, w.restSoupOfMesh[lm.mi], w.soupTrisOfMesh[mi], playerSoup,
+        placeLayer(w.soup, w.restSoupOfMesh[lm.mi], w.soupTrisOfMesh[mi], walkSoup.soup,
                    slotSoupOffset(lm.sl, false));
     if (mi < w.steepTrisOfMesh.size())
         placeLayer(w.steep, w.restSteepOfMesh[lm.mi], w.steepTrisOfMesh[mi], playerSteep,
                    slotSoupOffset(lm.sl, true));
     lm.pending = false;
-    for (auto* g : {&playerGrid, &playerSteepGrid})
+    for (auto* g : {&walkSoup.grid, &playerSteepGrid})
         for (const auto& p : g->parts)
             if (p.owner == key) p.pending = false;
-    ++lazyPlacedFrame;
-    if (--lazyPending <= 0) { lazyPending = 0; lazyRegister(); }
+    ++lazy.placedFrame;
+    if (--lazy.pending <= 0) { lazy.pending = 0; lazyRegister(); }
 }
 
 void PlayState::lazyPlaceAll() {
-    for (auto& kv : lazyMeshes)
+    for (auto& kv : lazy.meshes)
         if (kv.second.pending) lazyPlace(kv.first);
 }
 
@@ -1603,9 +1603,9 @@ void PlayState::lazyRegister() {
     // the table cleared and refilled with the soups' CURRENT addresses: a
     // vector that reallocated would otherwise leave its old one behind
     omk::clearPendingSoups();
-    if (lazyPending <= 0) return;
+    if (lazy.pending <= 0) return;
     const std::function<void()>* fn = &lazyPlaceAllFn;
-    omk::setPendingSoup(playerSoup.data(), fn);
+    omk::setPendingSoup(walkSoup.soup.data(), fn);
     omk::setPendingSoup(playerSteep.data(), fn);
     for (const WorldSlot& w : worldSlots) {
         omk::setPendingSoup(w.soup.data(), fn);
@@ -1614,7 +1614,7 @@ void PlayState::lazyRegister() {
 }
 
 void PlayState::lazyForget() {
-    lazyPending = 0;
+    lazy.pending = 0;
     lazyRegister();          // unregister while the soups are still the old ones
-    lazyMeshes.clear();
+    lazy.meshes.clear();
 }

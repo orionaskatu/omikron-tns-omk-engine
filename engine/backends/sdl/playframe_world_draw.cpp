@@ -178,10 +178,10 @@ void PlayState::worldDrawLists() {
     view.lights.clear();
     if (litPerPixel) {
         float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};
-        if (drawPlayer && !playerPosed.corners.empty()) {
-            at[0] = playerPosed.corners.front().x;
-            at[1] = playerPosed.corners.front().y;
-            at[2] = playerPosed.corners.front().z;
+        if (drawPlayer && !playerBody.posed.corners.empty()) {
+            at[0] = playerBody.posed.corners.front().x;
+            at[1] = playerBody.posed.corners.front().y;
+            at[2] = playerBody.posed.corners.front().z;
         }
         std::vector<std::pair<float, const omk::Light3do*>> near;
         for (const WorldSlot& ws2 : worldSlots)
@@ -243,12 +243,12 @@ void PlayState::worldDrawLists() {
     // The probe is the walkable soup, which is what the bodies are
     // seated on; the engine's `World_ProbePoint(-1, ...)` runs on the
     // same collision geometry.
-    shadowGeo.corners.clear();
-    shadowGeo.batches.clear();
-    shadowGeo.cornerMirror.clear();
-    shadowGeo.cornerMesh.clear();
-    shadowGeo.cornerVertex.clear();
-    shadowGeo.cornerDeclared.clear();
+    shadow.geo.corners.clear();
+    shadow.geo.batches.clear();
+    shadow.geo.cornerMirror.clear();
+    shadow.geo.cornerMesh.clear();
+    shadow.geo.cornerVertex.clear();
+    shadow.geo.cornerDeclared.clear();
     // ...and only up to `fitted`: a MAPPED frame replaces the blobs
     // with a real shadow rather than drawing both.
     worldDrawClassicShadows();
@@ -339,27 +339,27 @@ void PlayState::worldDrawLists() {
                 "outside the view, not drawn", "posed on the CPU"};
             std::printf("frame %ld: the player %s - %zu meshes, %zu corners; so far %ld "
                         "frames by the renderer, %ld on the CPU\n", frameNo, names[path],
-                        playerMeshes.size(), playerRest.corners.size(), gpuFrames, cpuFrames);
+                        playerBody.meshes.size(), playerBody.rest.corners.size(), gpuFrames, cpuFrames);
         }
     }
     if (drawPlayer && playerGpu) {
-        for (const auto& b : playerRest.batches) {
+        for (const auto& b : playerBody.rest.batches) {
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
-                             &playerRest, b.start, b.count, b.blend, b.cutout,
+                             &playerBody.rest, b.start, b.count, b.blend, b.cutout,
                              litStaged, castShadows});
-            draws.back().meshPose = playerAffine.data();
-            draws.back().meshPoses = playerMeshes.size();
-            draws.back().vertexLights = playerLightCount ? playerLights.data() : nullptr;
-            draws.back().vertexLightCount = playerLightCount;
-            draws.back().lightsFromBlack = playerLightsBlack;
-            draws.back().lightBase = playerLightBase;
+            draws.back().meshPose = playerBody.affine.data();
+            draws.back().meshPoses = playerBody.meshes.size();
+            draws.back().vertexLights = playerBody.lightCount ? playerBody.lights.data() : nullptr;
+            draws.back().vertexLightCount = playerBody.lightCount;
+            draws.back().lightsFromBlack = playerBody.lightsBlack;
+            draws.back().lightBase = playerBody.lightBase;
         }
     } else if (drawPlayer && !playerOffView)
-        for (const auto& b : playerPosed.batches)
+        for (const auto& b : playerBody.posed.batches)
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
-                             &playerPosed, b.start, b.count, b.blend, b.cutout,
+                             &playerBody.posed, b.start, b.count, b.blend, b.cutout,
                              litStaged, castShadows});
     // FIRST PERSON: only the meshes the hide spared - flag 0x200000,
     // the left arm - cut out of the posed body batch by batch.
@@ -368,17 +368,17 @@ void PlayState::worldDrawLists() {
         playerArm.corners.clear();
         playerArm.batches.clear();
         const std::vector<std::int32_t>& cm =
-            playerPosed.cornerMesh.size() == playerPosed.corners.size()
-                ? playerPosed.cornerMesh : playerRest.cornerMesh;
-        if (cm.size() == playerPosed.corners.size()) {
-            for (const auto& b : playerPosed.batches) {
+            playerBody.posed.cornerMesh.size() == playerBody.posed.corners.size()
+                ? playerBody.posed.cornerMesh : playerBody.rest.cornerMesh;
+        if (cm.size() == playerBody.posed.corners.size()) {
+            for (const auto& b : playerBody.posed.batches) {
                 const std::size_t base = playerArm.corners.size();
                 for (std::size_t c = b.start; c < b.start + b.count; ++c) {
                     const std::int32_t mi = cm[c];
-                    if (mi < 0 || static_cast<std::size_t>(mi) >= playerMeshes.size()) continue;
-                    if (!(static_cast<std::uint32_t>(playerMeshes[static_cast<std::size_t>(mi)].flags)
+                    if (mi < 0 || static_cast<std::size_t>(mi) >= playerBody.meshes.size()) continue;
+                    if (!(static_cast<std::uint32_t>(playerBody.meshes[static_cast<std::size_t>(mi)].flags)
                           & 0x200000u)) continue;
-                    playerArm.corners.push_back(playerPosed.corners[c]);
+                    playerArm.corners.push_back(playerBody.posed.corners[c]);
                 }
                 const std::size_t cnt = playerArm.corners.size() - base;
                 if (!cnt) continue;
@@ -399,7 +399,7 @@ void PlayState::worldDrawLists() {
             armTold = frameNo;
             std::printf("frame %ld: first person - the arm the hide spares: %zu corners "
                         "of %zu, %zu batches (meshes flagged 0x200000)\n", frameNo,
-                        playerArm.corners.size(), playerPosed.corners.size(),
+                        playerArm.corners.size(), playerBody.posed.corners.size(),
                         playerArm.batches.size());
         }
     }
@@ -421,8 +421,8 @@ void PlayState::worldDrawLists() {
         for (const auto& b : fxGeo.batches) {
             // `b.material` is the sprite's ID; the pool is packed, so
             // it has to be looked up rather than added to the base
-            const auto slIt = spriteSlot.find(b.material);
-            const int sl = slIt == spriteSlot.end() ? -1 : slIt->second;
+            const auto slIt = sprites.slot.find(b.material);
+            const int sl = slIt == sprites.slot.end() ? -1 : slIt->second;
             if (sl < 0) continue;      // a sprite with no texture: not drawn
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(spriteSlotBase + sl)),
@@ -576,7 +576,7 @@ void PlayState::worldDrawSetRuns(float clipReach, std::size_t& runsCulled,
 
 // THE CHARACTER SHADOWS, option row 5's classic arm: the shipped quad under a fixed set of bones (`Actor_DrawShadow`) (from `worldDrawLists`)
 void PlayState::worldDrawClassicShadows() {
-    if (drawShadows && shadowQuality < 2 && shadowModel.loaded && !playerSoup.empty()) {
+    if (drawShadows && shadowQuality < 2 && shadow.model.loaded && !walkSoup.soup.empty()) {
         // Option row 7. The player and the fight opponent get it
         // whole; every other actor gets it MINUS ONE, so an npc always
         // casts one tier coarser.
@@ -585,7 +585,7 @@ void PlayState::worldDrawClassicShadows() {
         // its grids against those - see `o3de/shadow.h`. Gathered per
         // body inside `castBones`.
         const bool fitted = shadowQuality >= 1;
-        shadowSpreadMax = 0.0f; shadowSpreadPlayer = 0.0f;
+        shadow.spreadMax = 0.0f; shadow.spreadPlayer = 0.0f;
         long blobs = 0, nPlayer = 0, nActor = 0, nCrowd = 0;
         long nPedDrawn = 0, nPedFeet = 0;
         // ...and the same detector over the BONE path: a bone taken
@@ -606,7 +606,7 @@ void PlayState::worldDrawClassicShadows() {
                                            : omk::findMeshContaining(meshes, bn, root);
             };
             if (at.empty()) return;
-            // the body's centre feeds ONE number, `shadowFootOffMax`, which
+            // the body's centre feeds ONE number, `shadow.footOffMax`, which
             // only `OMK_SHADOWLOG` prints - so the pass over every posed
             // corner runs only then (todo/cpu-vs-original.md tier A)
             static const bool footLog = omk::envFlag("OMK_SHADOWLOG");
@@ -638,10 +638,10 @@ void PlayState::worldDrawClassicShadows() {
                 if (!any) return;
                 // inflated by more than the widest blob's half-width
                 // (275.59 x 0.07 x 1.5 = 28.9)
-                local = omk::soupInBox(playerSoup, playerGrid, lo[0] - 40.0, hi[0] + 40.0,
+                local = omk::soupInBox(walkSoup.soup, walkSoup.grid, lo[0] - 40.0, hi[0] + 40.0,
                                        lo[1] - 40.0, hi[1] + 40.0);
             }
-            const omk::TriangleSoup& soup = fitted ? local : playerSoup;
+            const omk::TriangleSoup& soup = fitted ? local : walkSoup.soup;
             for (int bi : bones) {
                 const auto& sb = omk::kShadowBones[static_cast<std::size_t>(bi)];
                 const int mi = boneMesh(sb.bone);
@@ -650,19 +650,19 @@ void PlayState::worldDrawClassicShadows() {
                 if (footLog && ref && !ref->corners.empty()) {
                     const float dx = p3[0] - rx, dz = p3[2] - rz;
                     const float d = std::sqrt(dx * dx + dz * dz);
-                    if (d > shadowFootOffMax) shadowFootOffMax = d;
+                    if (d > shadow.footOffMax) shadow.footOffMax = d;
                 }
                 const auto f = fitted
                     ? omk::floorUnder(soup, p3[0], p3[1], p3[2])
-                    : omk::floorUnder(playerSoup, playerGrid, p3[0], p3[1], p3[2]);
+                    : omk::floorUnder(walkSoup.soup, walkSoup.grid, p3[0], p3[1], p3[2]);
                 if (!f) continue;
-                const std::size_t was = shadowGeo.corners.size();
+                const std::size_t was = shadow.geo.corners.size();
                 const float rad = meshes[static_cast<std::size_t>(mi)].radius;
                 const bool drew = fitted
-                    ? omk::shadowBlobFitted(shadowGeo, shadowModel, p3, rad,
+                    ? omk::shadowBlobFitted(shadow.geo, shadow.model, p3, rad,
                                             sb.divisor, sb.reach,
                                             static_cast<float>(*f), soup)
-                    : omk::shadowBlob(shadowGeo, shadowModel, p3, rad,
+                    : omk::shadowBlob(shadow.geo, shadow.model, p3, rad,
                                       sb.divisor, sb.reach, static_cast<float>(*f));
                 if (drew) {
                     ++blobs;
@@ -677,11 +677,11 @@ void PlayState::worldDrawClassicShadows() {
                     // differently, so they differ a little even on
                     // perfectly flat ground.
                     float lo = 1e30f, hi = -1e30f;
-                    for (std::size_t ci = was; ci < shadowGeo.corners.size(); ++ci) {
-                        lo = std::min(lo, shadowGeo.corners[ci].y);
-                        hi = std::max(hi, shadowGeo.corners[ci].y);
+                    for (std::size_t ci = was; ci < shadow.geo.corners.size(); ++ci) {
+                        lo = std::min(lo, shadow.geo.corners[ci].y);
+                        hi = std::max(hi, shadow.geo.corners[ci].y);
                     }
-                    if (hi - lo > shadowSpreadMax) shadowSpreadMax = hi - lo;
+                    if (hi - lo > shadow.spreadMax) shadow.spreadMax = hi - lo;
                 }
             }
         };
@@ -694,11 +694,11 @@ void PlayState::worldDrawClassicShadows() {
             return !(v == 7 || (v > 10 && v <= 14));
         };
         // The player's model has ONE skeleton, so -1 is the whole of it.
-        shadowFootOffMax = pedFootOffMax;
+        shadow.footOffMax = pedFootOffMax;
         if (drawPlayer && playerMeshAtKnown && player && castsIn(player->state()))
-            castBones(playerMeshes, playerMeshAt, detail, -1, nullptr, &playerBoneIdx);
+            castBones(playerBody.meshes, playerMeshAt, detail, -1, nullptr, &playerBody.boneIdx);
         nPlayer = blobs;
-        shadowSpreadPlayer = shadowSpreadMax;   // his alone, before the rest
+        shadow.spreadPlayer = shadow.spreadMax;   // his alone, before the rest
         // ...but NOT while he flies Manuelle: `Game_Tick` runs
         // `Slider_TickRide` INSTEAD of `Actors_TickAll` then (05_sys.c:2170,
         // drift audit M5), and `Actor_DrawShadow` is called from inside the
@@ -729,13 +729,13 @@ void PlayState::worldDrawClassicShadows() {
             const float mid[3] = {(up->footAt[0][0] + up->footAt[1][0]) * 0.5f,
                                   (up->footAt[0][1] + up->footAt[1][1]) * 0.5f,
                                   (up->footAt[0][2] + up->footAt[1][2]) * 0.5f};
-            const auto h = omk::surfaceUnder(playerSoup, playerGrid, mid[0], mid[1], mid[2]);
+            const auto h = omk::surfaceUnder(walkSoup.soup, walkSoup.grid, mid[0], mid[1], mid[2]);
             if (!h) continue;
             const float nrm[3] = {static_cast<float>(h->n[0]),
                                   static_cast<float>(h->n[1]),
                                   static_cast<float>(h->n[2])};
-            const std::size_t before = shadowGeo.corners.size();
-            if (omk::shadowFootBlob(shadowGeo, shadowModel, up->footAt[0],
+            const std::size_t before = shadow.geo.corners.size();
+            if (omk::shadowFootBlob(shadow.geo, shadow.model, up->footAt[0],
                                     up->footAt[1], static_cast<float>(h->y), nrm)) {
                 ++blobs; ++nCrowd;
                 static const bool pedLog = omk::envFlag("OMK_SHADOWLOG");
@@ -749,32 +749,32 @@ void PlayState::worldDrawClassicShadows() {
                                 static_cast<double>(up->footAt[1][0]),
                                 static_cast<double>(up->footAt[1][1]),
                                 static_cast<double>(up->footAt[1][2]), h->y,
-                                static_cast<double>(shadowGeo.corners[before].x),
-                                static_cast<double>(shadowGeo.corners[before].y),
-                                static_cast<double>(shadowGeo.corners[before].z),
+                                static_cast<double>(shadow.geo.corners[before].x),
+                                static_cast<double>(shadow.geo.corners[before].y),
+                                static_cast<double>(shadow.geo.corners[before].z),
                                 static_cast<double>(
-                                    shadowGeo.corners[before].x - up->footAt[0][0]));
+                                    shadow.geo.corners[before].x - up->footAt[0][0]));
             }
         }
-        if (!shadowGeo.corners.empty()) {
+        if (!shadow.geo.corners.empty()) {
             // ONE batch: every blob goes through the same material and
             // the same mesh flags 0x5000, so the whole frame's shadow
             // is one submission.
-            shadowGeo.batches.push_back({0, false, omk::Blend::Mul, 0,
-                                         shadowGeo.corners.size()});
-            shadowGeo.revision = ++worldGeoRev;
+            shadow.geo.batches.push_back({0, false, omk::Blend::Mul, 0,
+                                         shadow.geo.corners.size()});
+            shadow.geo.revision = ++worldGeoRev;
             draws.push_back({keyOf(omk::Blend::Mul, false,
-                                   static_cast<std::uint32_t>(shadowTexBase)),
-                             &shadowGeo, 0, shadowGeo.corners.size(),
+                                   static_cast<std::uint32_t>(shadow.texBase)),
+                             &shadow.geo, 0, shadow.geo.corners.size(),
                              omk::Blend::Mul, false});
         }
-        shadowBlobsDrawn = blobs;
-        if (!shadowTold && blobs > 0) {
-            shadowTold = true;
+        shadow.blobsDrawn = blobs;
+        if (!shadow.told && blobs > 0) {
+            shadow.told = true;
             std::printf("frame %ld: shadows ON (row 7 detail %d, quality %s) - "
                         "%ld blobs, %zu corners, texture slot %zu\n",
                         frameNo, detail, omk::shadowQualityName(shadowQuality),
-                        blobs, shadowGeo.corners.size(), shadowTexBase);
+                        blobs, shadow.geo.corners.size(), shadow.texBase);
         }
         static const bool shadowLog = omk::envFlag("OMK_SHADOWLOG");
         if (shadowLog && (frameNo % 30) == 0)
@@ -785,12 +785,12 @@ void PlayState::worldDrawClassicShadows() {
         if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] worst blob vertical spread %.2f units, "
                         "the player's %.2f (a flat quad is 0 by construction)\n",
-                        static_cast<double>(shadowSpreadMax),
-                        static_cast<double>(shadowSpreadPlayer));
+                        static_cast<double>(shadow.spreadMax),
+                        static_cast<double>(shadow.spreadPlayer));
         if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] worst foot-to-body offset %.1f units "
                         "(a bone off the wrong LOD skeleton is ~240)\n",
-                        static_cast<double>(shadowFootOffMax));
+                        static_cast<double>(shadow.footOffMax));
     }
 }
 
@@ -799,10 +799,10 @@ void PlayState::worldDrawClassicShadows() {
 void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar,
                                    int& spriteSlotBase) {
     auto& session = *session_;
-    if ((session.scene().effects().count() || !ctlSprites.empty() || !foeSprites.empty() ||
-         scriptSprites) && !spriteTab.empty()) {
+    if ((session.scene().effects().count() || !ctlSprites.empty() || !foeFx.sprites.empty() ||
+         scriptSprites) && !sprites.tab.empty()) {
         omk::particleGeometry(fxGeo, session.scene().effects(),
-                              view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+                              view.cam.eye, view.cam.at, sprites.lookup, fxNear, fxFar);
         // The `.CTL` sprites, each on its bone THIS frame (flag 1,
         // "follow the bone every frame" - all shipped records here
         // carry it; the others are placed once and this moves them
@@ -812,8 +812,8 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
         if (!ctlSprites.empty() && player && drawPlayer) {
             const omk::NodeTracks* pt = player->poseTracks();
             const std::vector<omk::MeshPose> pose = pt
-                ? omk::composePose(playerMeshes, *pt, player->poseFrameF(), false)
-                : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
+                ? omk::composePose(playerBody.meshes, *pt, player->poseFrameF(), false)
+                : omk::composePose(playerBody.meshes, omk::NodeTracks{}, 0, false);
             const float* pp = player->pos();
             const float spriteEuler[3] = {player->euler()[0], player->facing(),
                                           player->euler()[2]};
@@ -822,8 +822,8 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
             for (const auto& c : ctlSprites) {
                 const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
                 int node = -1;
-                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                    if (std::strstr(playerMeshes[i].name, want)) node = static_cast<int>(i);
+                for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                    if (std::strstr(playerBody.meshes[i].name, want)) node = static_cast<int>(i);
                 if (node < 0 || static_cast<std::size_t>(node) >= pose.size()) continue;
                 const omk::MeshPose& hp = pose[static_cast<std::size_t>(node)];
                 const float in[3] = {hp.pos[0] - playerRootXZ[0], hp.pos[1],
@@ -845,7 +845,7 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
                 if (fr < c.from) continue;         // not in its window yet
                 ctlField.addParticle(p);
             }
-            omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+            omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, sprites.lookup, fxNear, fxFar);
             const std::size_t base = fxGeo.corners.size();
             for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
             fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
@@ -858,14 +858,14 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
         // THE OPPONENT'S, on his bones as DRAWN last frame (`meshAt`,
         // the same frame the bolts' hit test reads), found by the
         // attach table's name - the last match, as the player's.
-        if (!foeSprites.empty() && fightRun.active && fightRun.body &&
+        if (!foeFx.sprites.empty() && fightRun.active && fightRun.body &&
             fightRun.body->mo && fightRun.foeChannel) {
             const Staged& fb2 = *fightRun.body;
             const auto& ms = fb2.mo->meshes;
             const float fr = fightRun.foeChannel->frame();
             ctlField.clear();
             long placed = 0;
-            for (const auto& c : foeSprites) {
+            for (const auto& c : foeFx.sprites) {
                 const char* want = c.attach < 18 ? kAttachName[c.attach] : "Buste";
                 int node = -1;
                 for (std::size_t i = 0; i < ms.size(); ++i)
@@ -886,11 +886,11 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
                 // what can actually DRAW: a batch whose sprite has no
                 // pool slot is skipped at submission, which is how 482
                 // placements once drew nothing (15.16)
-                if (spriteSlot.count(c.sprite)) ++foeSpritesPooled;
+                if (sprites.slot.count(c.sprite)) ++foeFx.spritesPooled;
             }
             if (placed) {
-                foeSpritesDrawn += placed;
-                omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+                foeFx.spritesDrawn += placed;
+                omk::particleGeometry(ctlGeo, ctlField, view.cam.eye, view.cam.at, sprites.lookup, fxNear, fxFar);
                 const std::size_t base = fxGeo.corners.size();
                 for (omk::Batch b : ctlGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
                 fxGeo.corners.insert(fxGeo.corners.end(), ctlGeo.corners.begin(), ctlGeo.corners.end());
@@ -913,7 +913,7 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
             omk::ParticleField scField;
             for (const auto& kv : session.scene().sprites()) {
                 const auto& sp = kv.second;
-                const omk::SpriteFrames* spf = sp.id < 0 ? nullptr : spriteTab.framesOf(sp.id);
+                const omk::SpriteFrames* spf = sp.id < 0 ? nullptr : sprites.tab.framesOf(sp.id);
                 if (!sp.linked || !spf) continue;
                 const int n = static_cast<int>(spf->frames.size());
                 if (sp.frame < 0 || sp.frame >= n) continue;   // 0xFFFF: not drawn
@@ -935,7 +935,7 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
                 scField.addParticle(p);
             }
             omk::Geometry scGeo;
-            omk::particleGeometry(scGeo, scField, view.cam.eye, view.cam.at, spriteLookup, fxNear, fxFar);
+            omk::particleGeometry(scGeo, scField, view.cam.eye, view.cam.at, sprites.lookup, fxNear, fxFar);
             const std::size_t base = fxGeo.corners.size();
             for (omk::Batch b : scGeo.batches) { b.start += base; fxGeo.batches.push_back(b); }
             fxGeo.corners.insert(fxGeo.corners.end(), scGeo.corners.begin(), scGeo.corners.end());
@@ -947,7 +947,7 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
         }
         // The pool already carries them: it is built above, in one
         // place, with a section per model.
-        spriteSlotBase = static_cast<int>(spriteTexBase);
+        spriteSlotBase = static_cast<int>(sprites.texBase);
     }
 }
 
@@ -1061,7 +1061,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             ++bodies;
             any = true;
         };
-        if (drawPlayer && !playerPosed.corners.empty()) bound(playerPosed);
+        if (drawPlayer && !playerBody.posed.corners.empty()) bound(playerBody.posed);
         for (const auto& up : staged)
             if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
         for (const auto& up : crowd.staged)
@@ -1076,9 +1076,9 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             // character you are looking at; a body outside the slab
             // casts nothing, which is stated rather than hidden.
             float centre[3];
-            if (drawPlayer && !playerPosed.corners.empty()) {
+            if (drawPlayer && !playerBody.posed.corners.empty()) {
                 float plo[3] = {1e30f, 1e30f, 1e30f}, phi[3] = {-1e30f, -1e30f, -1e30f};
-                for (const auto& c : playerPosed.corners) {
+                for (const auto& c : playerBody.posed.corners) {
                     const float q[3] = {c.x, c.y, c.z};
                     for (int k = 0; k < 3; ++k) {
                         plo[k] = std::min(plo[k], q[k]);
@@ -1111,8 +1111,8 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
                 view.shadow.radius = rad;
                 view.shadow.strength = 0.6f;
                 static const bool shLog = omk::envFlag("OMK_SHADOWLOG");
-                if (!shadowLightTold || (shLog && (frameNo % 30) == 0)) {
-                    shadowLightTold = true;
+                if (!shadow.lightTold || (shLog && (frameNo % 30) == 0)) {
+                    shadow.lightTold = true;
                     std::printf("frame %ld: mapped shadows - light '%s' at "
                                 "%.0f %.0f %.0f, direction %.2f %.2f %.2f, "
                                 "slab radius %.0f over %d bodies, asked at "
@@ -1128,8 +1128,8 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
                                 static_cast<double>(centre[1]),
                                 static_cast<double>(centre[2]));
                 }
-            } else if (!shadowLightTold) {
-                shadowLightTold = true;
+            } else if (!shadow.lightTold) {
+                shadow.lightTold = true;
                 std::printf("frame %ld: mapped shadows asked for, but no set light "
                             "reaches the cast - nothing drawn (the port does not "
                             "invent a sun)\n", frameNo);

@@ -633,6 +633,19 @@ finding: a check that hashed a conversation frame would flicker.
   spelling (`crowd.drawn`, `traffic.drawn`). Guard 0 of 14; 60 slider,
   shoot, boss, crowd and traffic checks green; 3DS and Vita build, the GL1
   glue syntax-checked; `licence headers` 628.
+* step 14c - twelve more `PlayState` components: `vehSounds`, `foeFx`,
+  `takeCamera` (the mode-1 camera - its `takeCam` bool renamed `takeCamLive`
+  first, now `takeCamera.live`), `playerBody` (his model, meshes, bones,
+  textures, rest and posed geometry, lights, spheres, reach - a lambda local
+  of that name renamed `playerBodyAt` first), `walkSoup` (the walkable soup,
+  its flags and split grid), `lazy`, `image` (`image.show`), `highScore`,
+  `texPool`, `sprites` (a header declaration's parameter that shared a
+  field's name renamed `table`, as its definition already was), `shadow`
+  and `fpsMeter`. `world*` is left: a `world` member would collide with the
+  renderer alias every method opens with. Guard 0 of 14; 50 checks over the
+  touched subsystems green - `pool past 64` only with the display held
+  awake (`caffeinate -d -u`): run without it, its GLES half blocked at frame
+  0 for 27 minutes, CLAUDE.md §1's trap exactly. 3DS and Vita build.
 
 ## 7. For the tutorial
 

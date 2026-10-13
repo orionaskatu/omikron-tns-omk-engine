@@ -150,8 +150,8 @@ void PlayState::worldStaged() {
             // the moving collision (`lazyPlace`): meshes the frames recorded,
             // and how many a query needed placed - counted by the placer
             std::printf("frame %ld: moving collision since the last line - %ld mesh placements "
-                        "recorded, %ld made\n", frameNo, lazyRecordedTotal, lazyPlacedFrame);
-            lazyRecordedTotal = 0; lazyPlacedFrame = 0;
+                        "recorded, %ld made\n", frameNo, lazy.recordedTotal, lazy.placedFrame);
+            lazy.recordedTotal = 0; lazy.placedFrame = 0;
             std::printf("frame %ld: staged bodies - %zu staged, %d skinned and drawn, "
                         "%d beyond the clip distance and %d outside the view (not "
                         "skinned), %d posed by the renderer\n",
@@ -496,8 +496,8 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
         float low = -1e9f;
         if (!s.gpu) for (const auto& c : s.posed.corners) if (c.y > low) low = c.y;
         float under = s.at[1];
-        if (!playerSoup.empty())
-            if (const auto g = omk::floorUnder(playerSoup, playerGrid,
+        if (!walkSoup.soup.empty())
+            if (const auto g = omk::floorUnder(walkSoup.soup, walkSoup.grid,
                                                pelvis[0] + off[0], pelvis[1] + off[1],
                                                pelvis[2] + off[2]))
                 under = static_cast<float>(*g);
@@ -516,8 +516,8 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
         // `ground` = that authored pelvis, not a floor - so the floor
         // is probed under it here, for the report only
         float floorY = ground;
-        if (s.pelvis && !playerSoup.empty())
-            if (const auto g = omk::floorUnder(playerSoup, playerGrid, s.at[0],
+        if (s.pelvis && !walkSoup.soup.empty())
+            if (const auto g = omk::floorUnder(walkSoup.soup, walkSoup.grid, s.at[0],
                                                s.at[1] - 1.0, s.at[2]))
                 floorY = static_cast<float>(*g);
         std::printf("frame %ld: actor %d %s - dead: his pelvis %.1f above the floor\n",
@@ -887,9 +887,9 @@ void PlayState::worldStagedBodyReport(Staged& s, float& bodyYaw, const char*& sr
     // that it stays on the set's own walkable mesh - which is what
     // decides the SENSE the delta is turned in, over a corpus
     // rather than over one waiter.
-    if (stagedProbe && (frameNo % 20) == 0 && !playerSoup.empty() &&
+    if (stagedProbe && (frameNo % 20) == 0 && !walkSoup.soup.empty() &&
         s.sceneTracks.valid()) {
-        const auto g = omk::floorUnder(playerSoup, playerGrid, s.drawAt[0],
+        const auto g = omk::floorUnder(walkSoup.soup, walkSoup.grid, s.drawAt[0],
                                        s.drawAt[1] - 120.0, s.drawAt[2]);
         std::printf("    floor %ld actor %d %s at %.0f %.0f %.0f  %s\n", frameNo,
                     s.actor, s.model.c_str(), s.drawAt[0], s.drawAt[1],
@@ -1039,7 +1039,7 @@ bool PlayState::worldStagedSkinGate(Staged& s, const char*& src, int& stagedFar,
 // from just above the authored point; a drop past a body height keeps the
 // authored y (from `worldStagedBody`)
 void PlayState::worldStagedGround(Staged& s, float& ground) {
-    if (!s.pelvis && !playerSoup.empty()) {
+    if (!s.pelvis && !walkSoup.soup.empty()) {
         // `Walk_ProbeGround`'s own direction: down from just above
         // the authored point (walk_set.cpp's `seatOnFloor`).
         // THROUGH THE GRID, which the header's own contract makes
@@ -1049,7 +1049,7 @@ void PlayState::worldStagedGround(Staged& s, float& ground) {
         // frame). A linear probe is the whole city's walkable soup
         // - 15137 triangles in Anekbah - and there are three of
         // them per staged body per frame (todo/vita-port.md).
-        if (const auto g = omk::floorUnder(playerSoup, playerGrid, s.at[0],
+        if (const auto g = omk::floorUnder(walkSoup.soup, walkSoup.grid, s.at[0],
                                            s.at[1] - 1.0, s.at[2])) {
             const float drop = static_cast<float>(*g) - s.at[1];
             // A body height. Further than that and the authored

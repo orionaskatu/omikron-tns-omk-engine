@@ -249,7 +249,7 @@ void PlayState::worldCamera() {
         worldCameraSlider();
     } else if (!haveDlgCam && ride) {
         worldCameraRide();
-    } else if (!haveDlgCam && takeCam && player) {
+    } else if (!haveDlgCam && takeCamera.live && player) {
         worldCameraTake();
     } else if (!haveDlgCam && (adventure || uiPause) && followCam &&
                player) {
@@ -377,12 +377,12 @@ void PlayState::worldCamera() {
         if (underwater != was) {
             // the shimmer on (phase from the vertex, as `buildGeometry` gives
             // a flagged set mesh) or off, on the rest every pose copies from
-            for (std::size_t i = 0; i < playerRest.corners.size(); ++i)
-                playerRest.corners[i].phase =
-                    underwater && i < playerRest.cornerVertex.size() && playerRest.cornerVertex[i] >= 0
-                        ? static_cast<float>((2u * static_cast<std::uint32_t>(playerRest.cornerVertex[i])) % 32u)
+            for (std::size_t i = 0; i < playerBody.rest.corners.size(); ++i)
+                playerBody.rest.corners[i].phase =
+                    underwater && i < playerBody.rest.cornerVertex.size() && playerBody.rest.cornerVertex[i] >= 0
+                        ? static_cast<float>((2u * static_cast<std::uint32_t>(playerBody.rest.cornerVertex[i])) % 32u)
                         : -1.0f;
-            playerRest.revision = ++worldGeoRev;
+            playerBody.rest.revision = ++worldGeoRev;
             std::printf("frame %ld: UNDERWATER %s (dword_93082C) - the eye at y %.1f, the water "
                         "line %.1f\n", frameNo, underwater ? "ON" : "OFF", double(view.cam.eye[1]),
                         double(waterLine));
@@ -452,7 +452,7 @@ void PlayState::worldCameraFollow() {
         const double d[3]  = {c.eye[0] - c.at[0], c.eye[1] - c.at[1],
                               c.eye[2] - c.at[2]};
         bool through = false;
-        for (const omk::TriangleSoup* sp : {&playerSteep, &playerSoup})
+        for (const omk::TriangleSoup* sp : {&playerSteep, &walkSoup.soup})
             if (!sp->empty())
                 if (const auto h = omk::sweepSphere(*sp, at, d, 1.0))
                     if (h->t < 0.98) through = true;
@@ -462,7 +462,7 @@ void PlayState::worldCameraFollow() {
                     c.at[0], c.at[1], c.at[2],
                     std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]),
                     through ? "THROUGH a solid face" : "clear",
-                    playerSteep.size() / 9, playerSoup.size() / 9);
+                    playerSteep.size() / 9, walkSoup.soup.size() / 9);
     }
     // ---- MODE 4 HAS NO LAG, and the follow camera is all lag -
     //
@@ -769,8 +769,8 @@ void PlayState::worldCameraTake() {
     const bool swimCam = !waterCamPreset && wcs >= 11 && wcs <= 14;
     swimCamNow = swimCam;
     omk::FollowCamera tc =
-        swimCam ? player->resolveOffsetsYaw(takeCamEye, takeCamAt, takeCamFov)
-                : player->resolveOffsets(takeCamEye, takeCamAt, takeCamFov);
+        swimCam ? player->resolveOffsetsYaw(takeCamera.eye, takeCamera.at, takeCamera.fov)
+                : player->resolveOffsets(takeCamera.eye, takeCamera.at, takeCamera.fov);
     // THE SWIM CAMERA STAYS INSIDE THE SET: a ray from what it looks
     // at to where it would stand, through the shown set's `shotSoup`
     // - the fight camera's own test (`sub_416570` -> `sub_444810`,
@@ -806,22 +806,22 @@ void PlayState::worldCameraTake() {
         }
     }
     const omk::FollowCamera& fc = player->followCamera();
-    const omk::FollowCamera& to = takeCamPhase == 3 ? fc : tc;
+    const omk::FollowCamera& to = takeCamera.phase == 3 ? fc : tc;
     float u = 1.0f;
-    if (takeCamPhase == 1 || takeCamPhase == 3) {
-        takeCamClock += static_cast<float>(frameSec * 30.0);
-        u = haveLastDrawn ? std::min(1.0f, takeCamClock / takeCamTravel) : 1.0f;
+    if (takeCamera.phase == 1 || takeCamera.phase == 3) {
+        takeCamera.clock += static_cast<float>(frameSec * 30.0);
+        u = haveLastDrawn ? std::min(1.0f, takeCamera.clock / takeCamera.travel) : 1.0f;
     }
     for (int k = 0; k < 3; ++k) {
         view.cam.eye[k] = takeCamFromEye[k] + (to.eye[k] - takeCamFromEye[k]) * u;
         view.cam.at[k]  = takeCamFromAt[k]  + (to.at[k]  - takeCamFromAt[k])  * u;
     }
-    view.cam.hfovDeg = takeCamFromFov + (to.fov - takeCamFromFov) * u;
+    view.cam.hfovDeg = takeCamera.fromFov + (to.fov - takeCamera.fromFov) * u;
     view.cam.rollDeg = 0.0f;
     view.cam.w = dispW; view.cam.h = dispH;
     if (u >= 1.0f) {
-        if (takeCamPhase == 1) takeCamPhase = 2;
-        else if (takeCamPhase == 3) { takeCam = false; takeCamPhase = 0; }
+        if (takeCamera.phase == 1) takeCamera.phase = 2;
+        else if (takeCamera.phase == 3) { takeCamera.live = false; takeCamera.phase = 0; }
     }
 }
 
@@ -1120,11 +1120,11 @@ void PlayState::worldProps() {
             if (held) {
                 const omk::NodeTracks* pt = player->poseTracks();
                 const std::vector<omk::MeshPose> pose = pt
-                    ? omk::composePose(playerMeshes, *pt, player->poseFrameF(), false)
-                    : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
+                    ? omk::composePose(playerBody.meshes, *pt, player->poseFrameF(), false)
+                    : omk::composePose(playerBody.meshes, omk::NodeTracks{}, 0, false);
                 int hand = -1;      // the LAST strstr hit, as o3de_Traverse leaves it
-                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                    if (std::strstr(playerMeshes[i].name, "Maing")) hand = static_cast<int>(i);
+                for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                    if (std::strstr(playerBody.meshes[i].name, "Maing")) hand = static_cast<int>(i);
                 if (hand < 0 || static_cast<std::size_t>(hand) >= pose.size()) continue;
                 const omk::MeshPose& hp = pose[static_cast<std::size_t>(hand)];
                 const float* pp = player->pos();
@@ -1211,9 +1211,9 @@ void PlayState::worldProps() {
                     omk::rotateYaw(yaw, hin, ho);
                     // the FIST as drawn: the hand mesh's corners in playerPosed, world
                     float flo[3] = {1e9f, 1e9f, 1e9f}, fhi[3] = {-1e9f, -1e9f, -1e9f}; std::size_t fc = 0;
-                    for (std::size_t c = 0; playerPosedFrame == frameNo - 1 && c < playerPosed.corners.size(); ++c) {
-                        if (c >= playerPosed.cornerMesh.size() || playerPosed.cornerMesh[c] != hand) continue;
-                        const auto& w = playerPosed.corners[c]; ++fc;
+                    for (std::size_t c = 0; playerBody.posedFrame == frameNo - 1 && c < playerBody.posed.corners.size(); ++c) {
+                        if (c >= playerBody.posed.cornerMesh.size() || playerBody.posed.cornerMesh[c] != hand) continue;
+                        const auto& w = playerBody.posed.corners[c]; ++fc;
                         flo[0] = std::min(flo[0], w.x); fhi[0] = std::max(fhi[0], w.x);
                         flo[1] = std::min(flo[1], w.y); fhi[1] = std::max(fhi[1], w.y);
                         flo[2] = std::min(flo[2], w.z); fhi[2] = std::max(fhi[2], w.z);
@@ -1348,8 +1348,8 @@ void PlayState::worldGuns() {
                 playerPoseNow(&*player, player->state() == omk::ActorState::Shoot,
                               *pt, player->poseFrameF());
             int hand = -1;      // the LAST strstr hit, as o3de_Traverse leaves it
-            for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                if (std::strstr(playerMeshes[i].name, "Maing")) hand = static_cast<int>(i);
+            for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                if (std::strstr(playerBody.meshes[i].name, "Maing")) hand = static_cast<int>(i);
             if (hand >= 0 && static_cast<std::size_t>(hand) < pose.size()) {
                 const omk::MeshPose& hp = pose[static_cast<std::size_t>(hand)];
                 const float* pp = player->pos();
@@ -1490,27 +1490,27 @@ void PlayState::worldBolts() {
     propGeo.revision = ++worldGeoRev;
     refreshSprites();
     const bool wantSprites = (session.scene().effects().count() || !ctlSprites.empty() ||
-                              !foeSprites.empty()) &&
-                             !spriteTab.empty();
+                              !foeFx.sprites.empty()) &&
+                             !sprites.tab.empty();
     // Which sprite ids the resident scene can name. Computed BEFORE the
     // rebuild test and compared, because a scene that starts asking for
     // an id it was not asking for before needs a slot for it - a
     // composition counter cannot see that.
-    spriteWanted.clear();
+    sprites.wanted.clear();
     for (const auto& e : session.scene().sfx().effects)
-        spriteWanted.insert(static_cast<int>(e.sprite));
+        sprites.wanted.insert(static_cast<int>(e.sprite));
     for (const auto& pa : session.scene().effects().particles())
-        spriteWanted.insert(pa.sprite);
-    for (const auto& c : ctlSprites) spriteWanted.insert(c.sprite);
+        sprites.wanted.insert(pa.sprite);
+    for (const auto& c : ctlSprites) sprites.wanted.insert(c.sprite);
     // ...AND THE MELEE OPPONENT'S. His records were spawned and placed
     // on his bones from 15.10 on - 482 placements in one run - and
     // never drew: a batch whose sprite has no POOL SLOT is skipped
     // ("a sprite with no texture: not drawn"), and only the player's
     // ids were pooled. A reader: *"no visual effect when I touched the
     // ennemy"* (`todo/fight-mode.md` 15.16).
-    for (const auto& c : foeSprites) spriteWanted.insert(c.sprite);
-    if (poolBuiltFor != poolComposition || poolHasSprites != wantSprites ||
-        poolHasPlayer != (drawPlayer || drawArm) || spritePooled != spriteWanted ||
+    for (const auto& c : foeFx.sprites) sprites.wanted.insert(c.sprite);
+    if (texPool.builtFor != texPool.composition || texPool.hasSprites != wantSprites ||
+        texPool.hasPlayer != (drawPlayer || drawArm) || sprites.pooled != sprites.wanted ||
         poolGrey != session.renderGrey()) {
         pool = worldTex;
         for (auto& cm : charModels) {
@@ -1540,11 +1540,11 @@ void PlayState::worldBolts() {
         // THE SHADOW's one texture, on the same rule. It is resident
         // for the whole run rather than per set, because the engine
         // loads the model once at game start and never frees it.
-        shadowTexBase = pool.size();
-        pool.insert(pool.end(), shadowModel.tex.begin(), shadowModel.tex.end());
+        shadow.texBase = pool.size();
+        pool.insert(pool.end(), shadow.model.tex.begin(), shadow.model.tex.end());
         playerTexBase = pool.size();
-        if (drawPlayer || drawArm) pool.insert(pool.end(), playerTex.begin(), playerTex.end());
-        spriteTexBase = pool.size();
+        if (drawPlayer || drawArm) pool.insert(pool.end(), playerBody.tex.begin(), playerBody.tex.end());
+        sprites.texBase = pool.size();
         // THE SPRITES GO IN DENSELY, and that is the whole point.
         // `spriteTex` is indexed BY SPRITE ID, because an effect names
         // its sprite by id (`sub_4A5800`) - so 24 decoded sprites
@@ -1558,7 +1558,7 @@ void PlayState::worldBolts() {
         // mod 64.
         //
         // So only the sprites that HAVE a texture go in, and
-        // `spriteSlot` maps an id to its place. The id-keyed arrays
+        // `sprites.slot` maps an id to its place. The id-keyed arrays
         // stay as they are - `particleGeometry` needs them for the
         // frame walk and the quad extent.
         //
@@ -1578,23 +1578,23 @@ void PlayState::worldBolts() {
         // THREE sprites (49589 smoke, 49590 glow, 49591 explo). So
         // take the ids its own `.sfx` names, plus any a live particle
         // is already carrying, and pool those alone.
-        spriteSlot.clear();
+        sprites.slot.clear();
         if (wantSprites)
-            for (int id : spriteWanted) {
-                if (id < 0 || static_cast<std::size_t>(id) >= spriteTab.idCount) continue;
-                const omk::Texture* st = spriteTab.texOf(id);
+            for (int id : sprites.wanted) {
+                if (id < 0 || static_cast<std::size_t>(id) >= sprites.tab.idCount) continue;
+                const omk::Texture* st = sprites.tab.texOf(id);
                 if (!st || !st->hasPixels()) continue;   // an id nothing decoded
-                spriteSlot[id] = static_cast<int>(pool.size() - spriteTexBase);
+                sprites.slot[id] = static_cast<int>(pool.size() - sprites.texBase);
                 pool.push_back(*st);
             }
         if (pool.size() > 64)
             std::printf("WARNING: texture pool is %zu, past the 64 a bucket key "
                         "can address - slots will alias\n", pool.size());
         poolSize = pool.size();
-        poolBuiltFor = poolComposition;
-        poolHasSprites = wantSprites;
-        poolHasPlayer = drawPlayer || drawArm;   // the first-person arm needs them too
-        spritePooled = spriteWanted;
+        texPool.builtFor = texPool.composition;
+        texPool.hasSprites = wantSprites;
+        texPool.hasPlayer = drawPlayer || drawArm;   // the first-person arm needs them too
+        sprites.pooled = sprites.wanted;
         // THE GREYSCALE BANK's textures (`o3de/greybank.h`): while it is on,
         // every slot goes over with its palette greyed - `sub_42FE80` greys
         // every resident texture when the bank comes on, and the uploads it
@@ -1620,13 +1620,13 @@ void PlayState::worldBolts() {
         world.setTextures(pool);
         // The sprite section comes and goes with the effects, several
         // times a second; only a change of CAST is worth a line.
-        if (poolBuiltFor != poolTold) {
-            poolTold = poolBuiltFor;
+        if (texPool.builtFor != texPool.told) {
+            texPool.told = texPool.builtFor;
             std::printf("frame %ld: texture pool - %zu set + %zu character (%zu "
                         "models) + %zu player + %zu sprite = %zu slots\n", frameNo,
                         worldTex.size(), playerTexBase - worldTex.size(),
-                        charModels.size(), spriteTexBase - playerTexBase,
-                        pool.size() - spriteTexBase, pool.size());
+                        charModels.size(), sprites.texBase - playerTexBase,
+                        pool.size() - sprites.texBase, pool.size());
         }
         if (pool.size() > 64 && !poolOverflowTold) {
             poolOverflowTold = true;
@@ -1671,7 +1671,7 @@ void PlayState::feedCameraHead() {
     }
     if (asPlayer) yaw = asPlayer->drawnYawKnown ? asPlayer->drawnYaw : asPlayer->facing;
     float rest[3] = {0, 0, 0};
-    omk::headRestOffset(asPlayer ? asPlayer->mo->meshes : playerMeshes, rest);
+    omk::headRestOffset(asPlayer ? asPlayer->mo->meshes : playerBody.meshes, rest);
     const float h3[3] = {base[0] + rest[0], base[1] + rest[1], base[2] + rest[2]};
     session.setCameraHeadAnchors(head, yaw, h3, yaw);
     cameraHeadFrom = asPlayer ? " (a program's body)" : "";

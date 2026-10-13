@@ -58,7 +58,7 @@ int PlayState::finish() {
                 session.scene().pieces().registered(),
                 session.scene().effects().count());
     std::printf("effects: the melee opponent's .CTL sprites placed on his bones %ld times, "
-                "%ld with a texture slot to draw with\n", foeSpritesDrawn, foeSpritesPooled);
+                "%ld with a texture slot to draw with\n", foeFx.spritesDrawn, foeFx.spritesPooled);
     std::printf("world: %ld frames drawn, last set %s (%d shown), last camera %d, "
                 "%ld frames under player.anim.hold\n",
                 worldFrames, worldSet.empty() ? "(none)" : worldSet.c_str(),

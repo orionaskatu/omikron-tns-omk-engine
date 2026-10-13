@@ -422,10 +422,10 @@ void PlayState::worldCrowdPlayer() {
             ? playerPoseNow(&*player, session.shootMode().active() &&
                                           player->state() == omk::ActorState::Shoot,
                             *pt, player->poseFrameF())
-            : omk::composePose(playerMeshes, omk::NodeTracks{}, 0, false);
+            : omk::composePose(playerBody.meshes, omk::NodeTracks{}, 0, false);
         // THE FREE LOOK's head turn, `+324` on the head with no reset
         // (`omk::turnHeadBy`) - on while he looks and while it eases back
-        omk::turnHeadBy(pose, playerMeshes, playerHeadMesh, player->headPitch(), player->headYaw());
+        omk::turnHeadBy(pose, playerBody.meshes, playerBody.headMesh, player->headPitch(), player->headYaw());
         // OUTSIDE THE VIEW, as any actor: `sub_48D3B0` skips a node
         // outside the four side planes before its matrices or its
         // vertices, and the Bowie sequence flies the camera round the
@@ -458,11 +458,11 @@ void PlayState::worldCrowdPlayer() {
             static const bool cpuPlayer = omk::envFlag("OMK_CPU_PLAYER");   // A/B only
             playerGpu = cornersUnread && !playerOffView && drawPlayer && !cpuBodiesFlag &&
                         !cpuPlayer && world.posesBodies() &&
-                        playerRest.cornerMesh.size() == playerRest.corners.size();
+                        playerBody.rest.cornerMesh.size() == playerBody.rest.corners.size();
         }
         if (!playerOffView && !playerGpu) {
-            omk::applyPose(playerPosed, playerRest, playerMeshes, pose);
-            playerPosedFrame = frameNo;
+            omk::applyPose(playerBody.posed, playerBody.rest, playerBody.meshes, pose);
+            playerBody.posedFrame = frameNo;
         }
         // THE ANCHOR IS THE FLOOR, NOT THE HIPS (omk-play 69).
         //
@@ -532,7 +532,7 @@ void PlayState::worldCrowdPlayer() {
         const bool standing = player->clipName() == "H_STAND";
         if (!playerFeetKnown || (standing && !playerStandLatched)) {
             playerFeet = -1e9f;
-            for (const auto& c : playerPosed.corners)
+            for (const auto& c : playerBody.posed.corners)
                 if (c.y > playerFeet) playerFeet = c.y;
             playerRootRef = (pt && !pt->trans.empty())
                                 ? pt->trans[static_cast<std::size_t>(
@@ -541,7 +541,7 @@ void PlayState::worldCrowdPlayer() {
             // the hierarchy root: the one mesh with no parent. A model
             // constant, so this half stays latched.
             playerRootXZ[0] = playerRootXZ[1] = 0.0f;
-            for (const auto& m : playerMeshes)
+            for (const auto& m : playerBody.meshes)
                 if (m.parent < 0) {
                     playerRootXZ[0] = m.pos[0];
                     playerRootXZ[1] = m.pos[2];
@@ -627,14 +627,14 @@ void PlayState::worldCrowdPlayer() {
         // the CPU way, before his corners are placed.
         const bool playerLit = lightActors && lighting == 0 && drawPlayer && !playerOffView;
         float playerLitAt[3] = {pp[0], pp[1], pp[2]};
-        playerLightCount = 0;
-        playerLightsBlack = false;
-        playerLightBase = static_cast<float>(std::clamp(
+        playerBody.lightCount = 0;
+        playerBody.lightsBlack = false;
+        playerBody.lightBase = static_cast<float>(std::clamp(
             activeAmbientGrey, 0, 255)) / 255.0f;
         if (playerLit) {
             std::size_t ri = 0;
-            for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                if (playerMeshes[i].parent < 0) { ri = i; break; }
+            for (std::size_t i = 0; i < playerBody.meshes.size(); ++i)
+                if (playerBody.meshes[i].parent < 0) { ri = i; break; }
             if (ri < pose.size()) {
                 const float in[3] = {pose[ri].pos[0] - playerRootXZ[0], pose[ri].pos[1],
                                      pose[ri].pos[2] - playerRootXZ[1]};
@@ -644,16 +644,16 @@ void PlayState::worldCrowdPlayer() {
                 playerLitAt[1] = r[1] + pp[1] - playerFeet + rootDrop;
                 playerLitAt[2] = r[2] + pp[2];
             }
-            playerLights.clear();
+            playerBody.lights.clear();
             int reachN = 0;
             for (const WorldSlot& ws2 : worldSlots)
-                if (!ws2.lights.empty()) reachN += omk::lightReach(playerLitAt, ws2.lights, playerLights);
+                if (!ws2.lights.empty()) reachN += omk::lightReach(playerLitAt, ws2.lights, playerBody.lights);
             if (playerGpu && reachN > world.maxVertexLights()) {
                 playerGpu = false;
-                omk::applyPose(playerPosed, playerRest, playerMeshes, pose);
-                playerPosedFrame = frameNo;
+                omk::applyPose(playerBody.posed, playerBody.rest, playerBody.meshes, pose);
+                playerBody.posedFrame = frameNo;
             }
-            if (playerGpu) { playerLightCount = reachN; playerLightsBlack = true; }
+            if (playerGpu) { playerBody.lightCount = reachN; playerBody.lightsBlack = true; }
         }
         // ROTATE ABOUT THE PELVIS, not the model's origin. A `.3DO`'s
         // meshes carry ABSOLUTE positions and the body is not built
@@ -681,9 +681,9 @@ void PlayState::worldCrowdPlayer() {
             for (int r = 0; r < 3; ++r)
                 place[4 * r + 3] = T[r] - (place[4 * r] * playerRootXZ[0] +
                                            place[4 * r + 2] * playerRootXZ[1]);
-            omk::meshAffines(playerMeshes, pose, place, playerAffine);
+            omk::meshAffines(playerBody.meshes, pose, place, playerBody.affine);
         }
-        if (!playerOffView && !playerGpu) for (auto& c : playerPosed.corners) {
+        if (!playerOffView && !playerGpu) for (auto& c : playerBody.posed.corners) {
             const float in[3] = {c.x - playerRootXZ[0], c.y,
                                  c.z - playerRootXZ[1]};
             float r[3];
@@ -706,7 +706,7 @@ void PlayState::worldCrowdPlayer() {
         // the head mesh, looked up again only when the player's model
         // changes (`player.become`) - it was an O(n^2) walk and a string
         // a mesh, every frame
-        if (const int hd = playerHeadMesh;
+        if (const int hd = playerBody.headMesh;
             hd >= 0 && static_cast<std::size_t>(hd) < pose.size()) {
             const float in[3] = {pose[static_cast<std::size_t>(hd)].pos[0] - playerRootXZ[0],
                                  pose[static_cast<std::size_t>(hd)].pos[1],
@@ -750,12 +750,12 @@ void PlayState::worldCrowdPlayer() {
         playerMeshAtKnown = true;
         lastRootDrop = rootDrop;
         if (playerLit && !playerGpu) {
-            for (auto& c : playerPosed.corners) c.r = c.g = c.b = playerLightBase;
+            for (auto& c : playerBody.posed.corners) c.r = c.g = c.b = playerBody.lightBase;
             for (const WorldSlot& ws2 : worldSlots)
                 if (!ws2.lights.empty())
-                    omk::applyLights(playerPosed, 0, playerPosed.corners.size(), playerLitAt, ws2.lights);
+                    omk::applyLights(playerBody.posed, 0, playerBody.posed.corners.size(), playerLitAt, ws2.lights);
         }
-        if (!playerOffView && !playerGpu) playerPosed.revision = ++worldGeoRev;
+        if (!playerOffView && !playerGpu) playerBody.posed.revision = ++worldGeoRev;
         for (int k = 0; k < 3; ++k) actorAt[k] = pp[k];
         actorAt[1] -= playerFeet;
         actorKnown = true;
@@ -1239,7 +1239,7 @@ void PlayState::worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& root
         }();
         if (omk::envFlag("OMK_PLY") && (frameNo % plyEvery) == 0) {
             float lo = -1e9f, hi = 1e9f;
-            for (const auto& c : playerPosed.corners) {
+            for (const auto& c : playerBody.posed.corners) {
                 if (c.y > lo) lo = c.y;
                 if (c.y < hi) hi = c.y;
             }
@@ -1264,7 +1264,7 @@ void PlayState::worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& root
         }
         if (player->variantCount() > 1) {
             float lo = -1e9f;
-            for (const auto& c : playerPosed.corners)
+            for (const auto& c : playerBody.posed.corners)
                 if (c.y > lo) lo = c.y;
             const auto& lf = player->last();
             std::printf("  crouch: %-9s f %2d  lowest %+8.2f  "

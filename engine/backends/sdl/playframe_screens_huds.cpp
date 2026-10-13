@@ -277,15 +277,15 @@ void PlayState::screensHuds() {
     // A bitmap no bigger than the screen is STRETCHED over all of it; a
     // bigger one is scaled to fit, keeping its shape, and centred - the
     // rectangle `sub_466E70` hands `I2D_BlitBitmap`.
-    if (imageLive && imageShown.valid() && fb.valid()) {
+    if (image.live && image.shown.valid() && fb.valid()) {
         omk::Rect dr{0, 0, fb.w, fb.h};
-        if (fb.w < imageShown.w || fb.h < imageShown.h) {
-            const double sx = double(fb.w) / imageShown.w, sy = double(fb.h) / imageShown.h;
+        if (fb.w < image.shown.w || fb.h < image.shown.h) {
+            const double sx = double(fb.w) / image.shown.w, sy = double(fb.h) / image.shown.h;
             const double k = sx > sy ? sy : sx;
-            const int w = static_cast<int>(k * imageShown.w), h = static_cast<int>(k * imageShown.h);
+            const int w = static_cast<int>(k * image.shown.w), h = static_cast<int>(k * image.shown.h);
             dr = {(fb.w - w) / 2, (fb.h - h) / 2, (w + fb.w) / 2, (h + fb.h) / 2};
         }
-        omk::blt(fb, dr, imageShown, omk::Rect{0, 0, imageShown.w, imageShown.h}, 0);
+        omk::blt(fb, dr, image.shown, omk::Rect{0, 0, image.shown.w, image.shown.h}, 0);
     }
     // ---- THE FIGHT HUD (`todo/fight-mode.md` step 5) -----------------
     //
@@ -418,7 +418,7 @@ void PlayState::screensHuds() {
         comp.setReportText(hintReport.empty() ? nullptr : &hintReport);
         comp.setHighScores(openScreen == omk::screen::HighScore ? &highScores : nullptr,
                            walk ? walk->highScorePage() : 0,
-                           hsMessageLeftMs > 0.0 ? &hsMessage : nullptr);
+                           highScore.messageLeftMs > 0.0 ? &highScore.message : nullptr);
         // THE CLOUD IS THE MENU'S BACKGROUND, NOT EVERY SCREEN'S.
         //
         // A reader's screenshots of the original settle it from both
@@ -1068,14 +1068,14 @@ void PlayState::screensFps() {
     // back once, so each backend keeps its own label). `--fps` adds the
     // terminal line with the worst frame.
     {
-        ++fpsFrames;
+        ++fpsMeter.frames;
         const std::uint32_t nowMs = front.ticksMs();
-        const std::uint32_t dtMs = nowMs - fpsLastMs;
-        if (dtMs > fpsWorst) fpsWorst = dtMs;
-        fpsLastMs = nowMs;
-        if (nowMs - fpsSince >= 1000) {
-            const double secs = (nowMs - fpsSince) / 1000.0;
-            const double rate = fpsFrames / secs;
+        const std::uint32_t dtMs = nowMs - fpsMeter.lastMs;
+        if (dtMs > fpsMeter.worst) fpsMeter.worst = dtMs;
+        fpsMeter.lastMs = nowMs;
+        if (nowMs - fpsMeter.since >= 1000) {
+            const double secs = (nowMs - fpsMeter.since) / 1000.0;
+            const double rate = fpsMeter.frames / secs;
             // ...where retitling is cheap, or asked for (`--fps`)
             if (const void* tw = front.windowId(); tw && (showFps || front.cheapWindowTitle())) {
                 static std::string baseTitle;
@@ -1091,12 +1091,12 @@ void PlayState::screensFps() {
             }
             if (showFps) {
                 std::printf("fps %.1f  (%d frames, worst %u ms)  %s%s\n",
-                            rate, fpsFrames, fpsWorst,
+                            rate, fpsMeter.frames, fpsMeter.worst,
                             vkRen ? "vulkan" : glRen ? "gles" : "software",
                             drawWorld ? ", 3D" : ", 2D only");
                 std::fflush(stdout);
             }
-            fpsSince = nowMs; fpsFrames = 0; fpsWorst = 0;
+            fpsMeter.since = nowMs; fpsMeter.frames = 0; fpsMeter.worst = 0;
         }
     }
 }

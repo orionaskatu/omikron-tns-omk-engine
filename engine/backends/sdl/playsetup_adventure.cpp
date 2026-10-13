@@ -59,16 +59,16 @@ int PlayState::setupAdventure() {
         return true;
     });
     // ...or, where the renderer poses bodies, his REST drawn with one affine a
-    // mesh (`todo/gpu-skinning.md` step 5). `playerPosedFrame` is the last
+    // mesh (`todo/gpu-skinning.md` step 5). `playerBody.posedFrame` is the last
     // frame his corners were built on the CPU - what a corner reader must check.
-    playerPosedFrame = -1;
-    playerReach = 0.0f;                           // his model's +88
+    playerBody.posedFrame = -1;
+    playerBody.reach = 0.0f;                           // his model's +88
     // ...and each of its triangles' MESH FLAGS, through the slots' `soupMesh`
     // (`todo/swimming.md`): what the step refusal and the water entry read.
     // Rebuilt whenever the soup it was built for is not the one there now.
     soupFlagsFor = nullptr;
     soupFlagsSize = 0;
-    // True while `playerSoup` / `playerSteep` are exactly the shown slots' soups
+    // True while `walkSoup.soup` / `playerSteep` are exactly the shown slots' soups
     // concatenated - set by a full merge, cleared by a slot load - so a moving
     // mesh can be copied in at its offset instead of re-merging everything.
     mergedValid = false;

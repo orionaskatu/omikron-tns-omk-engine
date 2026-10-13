@@ -142,14 +142,14 @@ int PlayState::phaseWorld() {
                     session.dropActorBody(staged[k]->actor);    // `Actor_Detach`'s `sub_45E090`
                     parked.push_back(std::move(staged[k]));
                     staged.erase(staged.begin() + static_cast<long>(k));
-                    ++poolComposition;
+                    ++texPool.composition;
                     continue;
                 }
                 std::printf("frame %ld: dropped actor %d %s\n", frameNo,
                             staged[k]->actor, staged[k]->model.c_str());
                 session.dropActorBody(staged[k]->actor);
                 staged.erase(staged.begin() + static_cast<long>(k));
-                ++poolComposition;
+                ++texPool.composition;
             }
             // ...and a parked body goes for good once its slot is freed
             for (std::size_t k = 0; k < parked.size(); ) {
@@ -187,7 +187,7 @@ int PlayState::phaseWorld() {
                     std::printf("frame %ld: the PLAYER's model %s evicted - playerReady %d, "
                                 "nobody staged wears it\n", frameNo, it->first.c_str(), playerReady ? 1 : 0);
                 it = charModels.erase(it);
-                ++poolComposition;
+                ++texPool.composition;
             }
         }
 
@@ -204,9 +204,9 @@ int PlayState::phaseWorld() {
             // not the whole rebuild below - both sets' soups and grids again,
             // and a new `worldGen`, which bakes the depth tie again - one frame
             // after the set that names it has just done so.
-            if (skyChanged && !changed) ++poolComposition;
+            if (skyChanged && !changed) ++texPool.composition;
             if (changed) {
-                ++poolComposition;      // the sky section of the pool changed
+                ++texPool.composition;      // the sky section of the pool changed
                 rebuildWorld();
                 std::printf("world: rebuilt - slot 0 '%s' (area %d, %s), slot 1 '%s' (area %d, %s); "
                             "walkable %zu tris, walls %zu tris\n",
@@ -214,7 +214,7 @@ int PlayState::phaseWorld() {
                             session.slotShown(0) ? "shown" : "hidden",
                             worldSlots[1].stem.c_str(), worldSlots[1].area,
                             session.slotShown(1) ? "shown" : "hidden",
-                            playerSoup.size() / 9, playerSteep.size() / 9);
+                            walkSoup.soup.size() / 9, playerSteep.size() / 9);
             }
             const WorldSlot& act = worldSlots[static_cast<std::size_t>(session.activeSlot() & 1)];
             const WorldSlot& oth = worldSlots[static_cast<std::size_t>(1 - (session.activeSlot() & 1))];
@@ -332,7 +332,7 @@ int PlayState::phaseWorld() {
         // conversation is `Camera_Request(12)` (`Dialog_ApplyLineCameras`) and
         // the take is mode 1 out of `MDGETOBJ`. Either installs a mode that is
         // not 13, so the hold is over.
-        if (holdEditCam && (haveDlgCam || takeCam)) holdEditCam = false;
+        if (holdEditCam && (haveDlgCam || takeCamera.live)) holdEditCam = false;
         // ...AND SO IS ENTERING SHOOT MODE. `Shoot_Enter` ends with
         // `Camera_Request(4, ...)`, a real request like any other, so mode
         // 13's hold is over the moment the mode begins. Without this the
@@ -494,7 +494,7 @@ void PlayState::phaseWorldShown(int playerId) {
                                 "at %.0f %.0f %.0f facing %.0f (Actor_Attach keeps the node)\n",
                                 frameNo, s->actor, s->model.c_str(), s->at[0], s->at[1], s->at[2],
                                 s->facing);
-                    ++poolComposition;
+                    ++texPool.composition;
                     break;
                 }
         if (!s) {
@@ -859,7 +859,7 @@ void PlayState::phaseWorldDialogCamera(const omk::DialogCamera*& ca, const omk::
             // `[1,1]`, on the player's HEAD - a foot in front of
             // Kay'l's chest, and 176 of the 253 relative cameras the
             // file ships are one of the two head kinds.
-            const auto playerBody = [&](float out[3], float& y) {
+            const auto playerBodyAt = [&](float out[3], float& y) {
                 const float lift = player ? player->cameraLift() : 0.0f;
                 const float* pp = session.playerPos();
                 out[0] = pp[0]; out[1] = pp[1] - lift; out[2] = pp[2];
@@ -876,7 +876,7 @@ void PlayState::phaseWorldDialogCamera(const omk::DialogCamera*& ca, const omk::
                             y = up->drawnYawKnown ? up->drawnYaw : up->facing;
                             return;
                         }
-                if (!playerHeadKnown) { playerBody(out, y); return; }
+                if (!playerHeadKnown) { playerBodyAt(out, y); return; }
                 for (int k = 0; k < 3; ++k) out[k] = playerHeadAt[k];
                 y = session.playerYaw();
             };
@@ -904,13 +904,13 @@ void PlayState::phaseWorldDialogCamera(const omk::DialogCamera*& ca, const omk::
                 return true;
             };
             switch (code) {
-                case 0: playerBody(pos, yaw); return true;
+                case 0: playerBodyAt(pos, yaw); return true;
                 case 1: playerHead(pos, yaw); return true;
                 case 2: return npcBody(pos, yaw);
                 case 3: return npcHead(pos, yaw);
                 case 6: {                                   // the two-shot: both
                     float a[3], b[3], ya, yb;
-                    playerBody(a, ya);
+                    playerBodyAt(a, ya);
                     if (!npcBody(b, yb)) return false;
                     for (int k = 0; k < 3; ++k) pos[k] = 0.5f * (a[k] + b[k]);
                     yaw = ya;

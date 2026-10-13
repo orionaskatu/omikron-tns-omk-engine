@@ -539,9 +539,9 @@ int PlayState::modesShoot() {
                 std::printf("frame %ld: HighScore_Insert - %d ms makes no row of table %d\n",
                             frameNo, static_cast<int>(h.score), h.table);
             const bool up = walk && openScreen == omk::screen::HighScore;
-            if (!up && hsOpenPage < 0) hsOpenPage = h.table;
+            if (!up && highScore.openPage < 0) highScore.openPage = h.table;
         }
-        if (!walk && hsOpenPage >= 0 && playerScreen < 0) playerScreen = omk::screen::HighScore;
+        if (!walk && highScore.openPage >= 0 && playerScreen < 0) playerScreen = omk::screen::HighScore;
         // `OMK_POST_MESSAGE=M@F`: an INSTRUMENT - message M posted from the
         // player on frame F, as a hit posts message 0 to the hurt handler
         // (`verify.py: engine: close all`)
@@ -657,19 +657,19 @@ int PlayState::modesShoot() {
                 // Flag 0x20000008 has no reader in `UI_TestScreenFlag`'s nine
                 // callers nor any direct `+0x70` test - stored, not consumed.
                 if (want == omk::screen::HighScore) {
-                    const int page = hsOpenPage == -1 ? 0 : hsOpenPage;
-                    hsOpenPage = -1;
+                    const int page = highScore.openPage == -1 ? 0 : highScore.openPage;
+                    highScore.openPage = -1;
                     walk->setHighScorePage(page);
-                    hsReleased = false;
+                    highScore.released = false;
                     if (page >= 1 && page <= 3) {
                         const auto txt = omk::iamStrings(fs, "IAM/" + uiWidgets.textFile(want));
-                        hsMessage = txt.empty() ? std::string() : txt[0];
-                        hsMessageLeftMs = 5000.0;
+                        highScore.message = txt.empty() ? std::string() : txt[0];
+                        highScore.messageLeftMs = 5000.0;
                         walk->startCloseTimer(10000.0, "high score");
-                        hsReleased = true;
+                        highScore.released = true;
                     }
                     std::printf("frame %ld: screen 36 HIGH-SCORE at page %d%s\n", frameNo, page,
-                                hsReleased ? " - message posted, the player released, "
+                                highScore.released ? " - message posted, the player released, "
                                              "closes in 10000 ms" : "");
                 }
                 // `ui.open`'s own `dword_4C0B64 = param` when it is not -1
@@ -1523,8 +1523,8 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
         modesSaveRequest();
         // The board's message oscillator, on the FRAME's milliseconds as
         // `sub_42B6D0` adds them: the line drops at 5000.
-        if (openScreen == omk::screen::HighScore && hsMessageLeftMs > 0.0)
-            hsMessageLeftMs -= frameSec * 1000.0;
+        if (openScreen == omk::screen::HighScore && highScore.messageLeftMs > 0.0)
+            highScore.messageLeftMs -= frameSec * 1000.0;
         // OSCILLATOR 5, the delayed close (`UiWalk::startCloseTimer`):
         // ticked on the same milliseconds, and its expiry is the screen's
         // `+8 = 3`. Until then the screen is HELD - an answer already
@@ -2011,7 +2011,7 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
         walk.reset();
         openScreen = -1;
         screenFromScript = true;
-        hsReleased = false;
+        highScore.released = false;
     } else if (screenLeaving && !screenFromScript) {
         std::printf("screen %d closed by the player - event %d, object "
                     "list %d\n", openScreen, omk::kEventSneakClose,
@@ -2193,7 +2193,7 @@ int PlayState::modesQuitLoad() {
             parked.clear();
             moveWaitCtx = -1; moveWaitGroup = -1;
             in_->installScheme(0);
-            ++poolComposition;
+            ++texPool.composition;
             std::printf("frame %ld: restart - the frontend dropped the player, the "
                         "bodies and any mode; area %d boots\n", frameNo, session.currentArea());
         }

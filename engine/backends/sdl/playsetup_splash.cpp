@@ -62,8 +62,8 @@ int PlayState::setupSplash() {
         front.delayMs(10);
     }
     lastMs = front.ticksMs();
-    fpsSince = lastMs, fpsLastMs = lastMs, fpsWorst = 0;
-    fpsFrames = 0;
+    fpsMeter.since = lastMs, fpsMeter.lastMs = lastMs, fpsMeter.worst = 0;
+    fpsMeter.frames = 0;
     // Where `Script_Display3DSprite` puts a sprite: the active camera's
     // TARGET, read by the handler on every tick it runs (program.h has the
     // trace; the XYZ table it would prefer is never written). The runner is

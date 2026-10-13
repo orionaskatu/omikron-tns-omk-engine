@@ -130,9 +130,9 @@ int PlayState::setupBodies() {
     // The pool is rebuilt on a COMPOSITION change, not on a size change: two
     // models with the same texture count swapping is exactly what a size test
     // cannot see.
-    poolComposition = 1, poolBuiltFor = 0, poolTold = 0;
-    poolHasSprites = false, poolHasPlayer = false;
-    playerTexBase = 0, spriteTexBase = 0;
+    texPool.composition = 1, texPool.builtFor = 0, texPool.told = 0;
+    texPool.hasSprites = false, texPool.hasPlayer = false;
+    playerTexBase = 0, sprites.texBase = 0;
     // sprite id -> its slot within the pool's sprite section, or -1
     // The sprite ids the resident scene can actually name - what goes in the
     // pool, as opposed to everything that decoded.
@@ -160,13 +160,13 @@ int PlayState::setupBodies() {
     // be swapped by assigning a pointer.
     OMK_HEAPCHECK("before effect sprites");
     // (struct SpriteTable: `backends/sdl/playtypes.h`, todo/play-split.md)
-    spriteLookup = [this](int id) { return spriteTab.framesOf(id); };
+    sprites.lookup = [this](int id) { return sprites.tab.framesOf(id); };
     // THE TWO LIBRARIES' SPRITES, decoded ONCE. They never change, and
     // reading `aventure.SCX` and `fight.SCX` again on every scene change is
     // 4 MB, which a console's memory card takes most of a second over, on the
     // frame of the hand-over. The table a scene change starts from is this one; the
     // order global, fight, scene - and so every collision - is unchanged.
-    spriteBaseGlobal = 0, spriteBaseFight = 0;
+    sprites.baseGlobal = 0, sprites.baseFight = 0;
     // WHICH scene's sprites `spriteTex` currently holds. An effect names its
     // sprite by ID and `Sfx_TickAmbient` resolves that id through the SCENE
     // (`sub_4A5800`), and the ids are scene-local: `Grid.sfx` wants 9..12 and
@@ -216,7 +216,7 @@ int PlayState::setupBodies() {
     // that never fights (todo/ram-vs-original.md tier B). Its SPRITES are
     // decoded here, below, once.
     {
-        const int glob = loadSpritesFrom(spriteBase, globalBytes);
+        const int glob = loadSpritesFrom(sprites.base, globalBytes);
         std::vector<std::byte>().swap(globalBytes);   // the runtime kept what it needs
         // ...then the FIGHT's, which `Fight_Begin`'s own `Game_Start` installs
         // (see `fightRt` above). Its 16 sprites are the blow effects the
@@ -232,21 +232,21 @@ int PlayState::setupBodies() {
         // the safe one is chosen deliberately. A scene that did register one
         // of those ids would keep its own, which is the behaviour this tree
         // already has everywhere else.
-        const int fightSp = loadSpritesInto(spriteBase, "fight.SCX");
-        spriteBaseGlobal = glob;
-        spriteBaseFight = fightSp;
-        spriteTab = spriteBase;
+        const int fightSp = loadSpritesInto(sprites.base, "fight.SCX");
+        sprites.baseGlobal = glob;
+        sprites.baseFight = fightSp;
+        sprites.tab = sprites.base;
         // ...then the SCENE's own, which is what `Sfx_TickAmbient` resolves
         // against and which wins where the ids collide.
         const int local = session.scene().file().empty()
                             ? 0 : loadSprites(session.scene().file());
         int okTex = 0; std::size_t frameCount = 0;
-        for (const auto& kv : spriteTab.tex) if (kv.second.width) ++okTex;
-        for (const auto& kv : spriteTab.frames) frameCount += kv.second.frames.size();
+        for (const auto& kv : sprites.tab.tex) if (kv.second.width) ++okTex;
+        for (const auto& kv : sprites.tab.frames) frameCount += kv.second.frames.size();
         std::printf("sprites: %d global + %d fight + %d from %s, %d decoded over ids "
                     "0..%zu, %zu frames in all\n", glob, fightSp, local,
                     session.scene().file().c_str(), okTex,
-                    spriteTab.idCount == 0 ? 0 : spriteTab.idCount - 1, frameCount);
+                    sprites.tab.idCount == 0 ? 0 : sprites.tab.idCount - 1, frameCount);
         spriteScx = session.scene().file();
     }
 
@@ -283,19 +283,19 @@ int PlayState::setupBodies() {
     // fixed set of BONES each frame - see `o3de/shadow.h` for the whole
     // mechanism. Loaded once here for the same reason the engine loads it
     // once: it is not a set's asset and no area change touches it.
-    shadowModel = omk::loadShadowModel(fs);
+    shadow.model = omk::loadShadowModel(fs);
     // Rebuilt every frame into this one object, outside the loop so the
     // revision accumulates - the same rule `fxGeo` above states, and for the
     // same backend-side reason.
-    shadowTexBase = 0;
+    shadow.texBase = 0;
     // The worst distance from a walker's foot-pair midpoint to his own body
     // point this frame - the orphan-shadow detector (see the ped loop).
-    shadowFootOffMax = 0.0f, pedFootOffMax = 0.0f;
+    shadow.footOffMax = 0.0f, pedFootOffMax = 0.0f;
     // The worst vertical spread inside ONE blob - 0 for every classic blob by
     // construction, nonzero for a fitted one wherever the ground is not flat.
-    shadowSpreadMax = 0.0f, shadowSpreadPlayer = 0.0f;
-    shadowBlobsDrawn = 0;
-    shadowTold = false, shadowLightTold = false, lightsTold = false;
+    shadow.spreadMax = 0.0f, shadow.spreadPlayer = 0.0f;
+    shadow.blobsDrawn = 0;
+    shadow.told = false, shadow.lightTold = false, lightsTold = false;
     shimmerClock = 0.0f;   // `dword_907310`, wrapped at 256
     // A set's geometry is REBUILT on every area change, and a fresh
     // Geometry's revision is 0 - the same value the previous set was cached

@@ -10,9 +10,9 @@
 //
 //     +0   int16   the runtime slot, WRITTEN BACK here
 //     +2   int16   the actor id  -> Actor_FindById -> the 276-byte record
-//     +4   int32   x  \
-//     +8   int32   y   > Actor_SetPlacement's float[4]
-//     +12  int32   z  /
+//     +4   int32   x  |
+//     +8   int32   y  | Actor_SetPlacement's float[4]
+//     +12  int32   z  |
 //     +16  int16   facing, 4096 per turn
 //     +18  int16   the ObjectShown bit index; SET means attached
 //

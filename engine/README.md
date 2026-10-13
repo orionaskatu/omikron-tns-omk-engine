@@ -1966,7 +1966,7 @@ A `WorldCamera`'s `eyeSubject`/`atSubject` decide whether its `eye` and `at`
 are world points or OFFSETS from an actor: `-1` is absolute, anything else
 names the actor the point hangs off. `Session::tickCamera` interpolated eye,
 target, fov, roll, id and mode across a travel and copied **neither subject**,
-so `camNow_` kept the OUTGOING camera's for ever.
+so `cam_.now` kept the OUTGOING camera's for ever.
 
 In adventure mode the outgoing camera is the follow camera, whose subject is
 the player — so a travel to an absolute camera *arrived with the right numbers
@@ -1984,7 +1984,7 @@ identical eye — so the camera saw the room fine and the Session was driving it
 wrong.
 
 **The travel's START was wrong as well**, and it is why the frame darkened
-progressively instead of failing outright: `camFrom_` was the follow camera's
+progressively instead of failing outright: `cam_.from` was the follow camera's
 offsets `(-1, 26, -119)`, lerped toward an absolute `(3089, 1006, -753)` — two
 different spaces.
 
@@ -2013,7 +2013,7 @@ rotated offset at `+124..+132`. The moving path solves **both** blocks —
 `sub_417CF0(g_CameraPrev)` at `:4165` as well as the live one — and then lerps
 what those solves wrote.
 
-Carrying `camTo_`'s subjects onto the result is right exactly when the
+Carrying `cam_.to`'s subjects onto the result is right exactly when the
 destination is absolute. AREA 222's tutorial cameras 4290/4291/4292 are all
 `eyeSubject 0 / atSubject 0`, so the port lerped a world point toward a raw
 offset (`eye -24 10 59`) and then added the player on top of the mixture: a
@@ -2029,8 +2029,8 @@ once at request time froze the travel's start, which is the residue a reader
 described as the transcan camera being *"better, but not completely correct"*.
 The one case that does freeze is a request arriving DURING a move, where
 `sub_414A90` redirects `g_CameraPrev` to a third block, `dword_4E7D10`, filled
-from the interpolator's own live output. `camNow_` is exactly that pair once
-the lerp leaves its result absolute, so `camFrom_ = camNow_` serves both. And
+from the interpolator's own live output. `cam_.now` is exactly that pair once
+the lerp leaves its result absolute, so `cam_.from = cam_.now` serves both. And
 when the move ends the live block takes over again, subjects and all — a
 travel INTO a camera that hangs off an actor must hand that camera back, or
 the shot freezes at the world point the last tick computed.

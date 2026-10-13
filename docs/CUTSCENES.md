@@ -236,7 +236,7 @@ the fight."*
 `Session::cameraRequests()` counts the event itself — every `applyCamera` past
 its `Camera_FindWorld` test, which is `camera.set`, the camera-wait resume, a
 touched zone carrying a camera, and the frontend's own `requestCamera`. It
-strictly subsumes the id test, since `cameraId()` is `camTo_.id` and only
+strictly subsumes the id test, since `cameraId()` is `cam_.to.id` and only
 `applyCamera` writes it, so the frontend's clear-list got one case shorter
 rather than one longer. The three that remain are requests the frontend issues
 without the Session — a conversation's `Dialog_ApplyLineCameras`, the take's

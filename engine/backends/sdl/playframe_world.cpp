@@ -324,7 +324,7 @@ int PlayState::phaseWorld() {
         // times over, the medical editing having been entered under camera 0
         // from the same script, so the id never moves and the held last frame
         // would stay on screen for the rest of the game. Counting the REQUEST subsumes the id test - `cameraId()` is
-        // `camTo_.id` and only `applyCamera` writes it - and it costs no new
+        // `cam_.to.id` and only `applyCamera` writes it - and it costs no new
         // special case (`todo/fight-mode.md` §13).
         if (holdEditCam && session.cameraRequests() != heldUnderRequests)
             holdEditCam = false;

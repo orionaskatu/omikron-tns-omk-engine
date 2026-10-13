@@ -646,6 +646,28 @@ finding: a check that hashed a conversation frame would flicker.
   touched subsystems green - `pool past 64` only with the display held
   awake (`caffeinate -d -u`): run without it, its GLES half blocked at frame
   0 for 27 minutes, CLAUDE.md §1's trap exactly. 3DS and Vita build.
+* step 14d - the `Session` (`script/area.h`) gets its first components:
+  `cam_` (the world camera's travel - `from`, `to`, `now`, `travel`,
+  `wait`, `subjectAddress`, `elapsed`; `camWait_` and `camSubjectAddress_`
+  moved beside the rest first), `mirror_` (`parked`, `wasLive`, `toggles`),
+  `head_` (the camera subject's head points and yaws), `pendingUi_` (the
+  screen a script asked for, its parameter, variable and context) and
+  `music_` (track, loop, the ramp, the fade-in, the option level).
+  `group_members.py` learned three things on the way: a class's `x_` is a
+  struct's `x`; only the .cpp files that DEFINE one of the class's members
+  are rewritten, since `World` has a `camWait_` of its own and its header
+  was rewritten by the first try (the build refused and restored); and a
+  `= {0, 0, 0}` initialiser no longer hides an array field. The current-code
+  mentions in `verify.py`'s docstrings, `engine/README.md`,
+  `docs/CUTSCENES.md` and two viewer comments follow; dated records
+  (`RECONSTRUCTION.md`'s log, `todo/pending/`) keep the names they had.
+  And the Vita's gcc showed five warnings clang does not, now gone: a
+  comment ending in a backslash (`placements.h`), step 8's designated
+  `Started{}` leaving fields out (`-Wmissing-field-initializers`), three
+  `sharedObjects(DataFs(...))` temporaries read as dangling, and an enum
+  against a `Uint32` in a conditional. Guard 0 of 14; 18 camera, mirror,
+  music, UI-answer and event checks green; 3DS and Vita build with no
+  warning, the GL1 glue syntax-checked.
 
 ## 7. For the tutorial
 

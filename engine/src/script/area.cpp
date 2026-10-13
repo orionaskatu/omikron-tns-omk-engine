@@ -533,9 +533,9 @@ int Session::loadArea(int areaId) {
     // decor)` - which toggles back to slot 0 only when slot 1 is occupied,
     // and it is not at boot; the area's own music (`+142`) plays if it has
     // one. 118's is 0.
-    if (slots_[0].music && slots_[0].music != musicTrack_) {
-        musicTrack_ = slots_[0].music;
-        musicLoop_ = true;
+    if (slots_[0].music && slots_[0].music != music_.track) {
+        music_.track = slots_[0].music;
+        music_.loop = true;
     }
     int n = 0;
     if (slots_[0].areaCtx >= 0) ++n;
@@ -598,9 +598,9 @@ void Session::playerOnArea(int area) {
     zonesRegisterAll();
     // the area's own track: `if (+142 && +142 != g_MusicTrack) Music_PlayTrack(+142, 1)`
     const ResidentSlot& s = slots_[active_];
-    if (s.music && s.music != musicTrack_) {
-        musicTrack_ = s.music;
-        musicLoop_ = true;
+    if (s.music && s.music != music_.track) {
+        music_.track = s.music;
+        music_.loop = true;
     }
 }
 
@@ -669,8 +669,8 @@ void Session::resetWorld() {
     // 134/135's parking does not outlive the area. LABELLED: the engine never
     // clears `dword_4E90A0`, so a 134 after a load would restore a mesh of
     // the OLD set - a stale pointer the port does not reproduce
-    mirrorParked_ = false;
-    mirrorWasLive_ = false;
+    mirror_.parked = false;
+    mirror_.wasLive = false;
     activatesPending_ = 0;
     actionPressed_ = false;
     objectSlotIds_.fill(-1);
@@ -720,7 +720,7 @@ int Session::newContext(int slot, std::span<const std::byte> chunk,
     c->slot = slot & 1;
     c->zoneId = zoneId;
     c->chunkArea = area;
-    c->vm.setCameraWaitSuspends(camWait_);
+    c->vm.setCameraWaitSuspends(cam_.wait);
     c->vm.setObjectWaitSuspends(objWait_);
     c->vm.setMoveWaitSuspends(static_cast<bool>(moveHook_));
     c->vm.setFightWaitSuspends(static_cast<bool>(fightHook_));
@@ -758,7 +758,7 @@ void Session::freeContext(int idx) {
         if (s.areaCtx == idx) s.areaCtx = -1;
         if (s.sceneCtx == idx) s.sceneCtx = -1;
     }
-    if (pendingUiCtx_ == idx) pendingUiCtx_ = -1;
+    if (pendingUi_.ctx == idx) pendingUi_.ctx = -1;
     // The engine leaves `dword_4C0130` pointing at a freed entry and the
     // pump's tail then reads through a null block. Clearing it is the
     // defined counterpart.
@@ -1266,8 +1266,8 @@ void Session::restart() {
     // ---- Script_Pump(3): sub_40E260 and the two resets around it
     // `Music_PlayTrack(0, 1)` - a STOP (anything below track 2 is one) - and
     // `g_MusicTrack = -1`
-    musicTrack_ = 0;
-    musicLoop_ = true;
+    music_.track = 0;
+    music_.loop = true;
     // the held object and its scene record, the actor's release, the weapon
     // slot: no held-object or weapon model here (issues 34/26)
     if (dialogState_ == 3) { dialog_.reset(); dialogState_ = 1; }
@@ -1295,8 +1295,8 @@ void Session::restart() {
     // `sub_406270()` - the table zeroed - and `sub_406730()`, the prompt slots
     for (auto& c : ctxs_) c.reset();
     resetWorld();
-    pendingUiCtx_ = -1;
-    pendingUiScreen_ = pendingUiParam_ = pendingUiVar_ = -1;
+    pendingUi_.ctx = -1;
+    pendingUi_.screen = pendingUi_.param = pendingUi_.var = -1;
     shown_.clear();
     scriptShown_.clear();
     playerPlaced_ = false;
@@ -1304,7 +1304,7 @@ void Session::restart() {
     pendingAddress_ = -1;
     haveCam_ = false;
     followRequested_ = false;
-    camTravel_ = 0; camElapsed_ = 0.0;
+    cam_.travel = 0; cam_.elapsed = 0.0;
     rootMotion_.clear();
     // `IAM\START` over a zeroed DB, `State_Apply`, day 52, 2000000 into it
     state_ = GameState::fromFile(iam_ + "/START");
@@ -1336,7 +1336,7 @@ const WorldCamera* Session::findCamera(int id) const {
 }
 
 void Session::setCameraWait(bool on) {
-    camWait_ = on;
+    cam_.wait = on;
     for (auto& c : ctxs_) if (c) c->vm.setCameraWaitSuspends(on);
 }
 
@@ -1377,12 +1377,12 @@ void Session::applyCamera(int id, int travel) {
                      frameNo_, id, travel,
                      c->absolute() ? "absolute" : "RELATIVE");
     if (!haveCam_ || travel <= 0) {      // a cut
-        camFrom_ = camTo_ = camNow_ = *c;
-        camTravel_ = 0; camElapsed_ = 0.0;
+        cam_.from = cam_.to = cam_.now = *c;
+        cam_.travel = 0; cam_.elapsed = 0.0;
         haveCam_ = true;
         return;
     }
-    // THE TRAVEL STARTS FROM WHERE THE CAMERA ACTUALLY IS, and `camNow_` is
+    // THE TRAVEL STARTS FROM WHERE THE CAMERA ACTUALLY IS, and `cam_.now` is
     // that in both of the engine's two cases.
     //
     // `Camera_Request` swaps the live block into `g_CameraPrev` and the move
@@ -1393,30 +1393,30 @@ void Session::applyCamera(int id, int travel) {
     // `g_CameraPrev` to a third block, `dword_4E7D10`, filled from the
     // interpolator's own live output - a world point.
     //
-    // `camNow_` is exactly that pair: it carries its subjects when the camera
+    // `cam_.now` is exactly that pair: it carries its subjects when the camera
     // is standing, and `tickCamera` leaves it ABSOLUTE for the length of a
     // travel. So one assignment serves both, and nothing here needs to
     // flatten anything.
-    camFrom_ = camNow_;
-    camTo_     = *c;
-    camTravel_ = travel;
-    camElapsed_ = 0.0;
+    cam_.from = cam_.now;
+    cam_.to     = *c;
+    cam_.travel = travel;
+    cam_.elapsed = 0.0;
 }
 
 void Session::tickCamera() {
-    if (omk::envOn("OMK_CAMLOG") && camTravel_ == 1)
+    if (omk::envOn("OMK_CAMLOG") && cam_.travel == 1)
         std::fprintf(stderr, "[cam] frame %ld  move to %d ENDS\n",
-                     frameNo_, camTo_.id);
-    if (camTravel_ <= 0) return;
-    camElapsed_ += frameDelta();
+                     frameNo_, cam_.to.id);
+    if (cam_.travel <= 0) return;
+    cam_.elapsed += frameDelta();
     // LINEAR, which is what every script move is: `sub_418310` shapes the
     // clock by a type (`sub_418100`: 0 and 2 linear, 1, 3, 4 eased), the type
     // is op 96's `(operand 2 >> 1) & 0x10`, and all 1019 `camera.set.wait` in
     // the game carry 1 or 3 - type 0 (`docs/CUTSCENES.md` 4b).
-    const float u = camElapsed_ >= camTravel_
+    const float u = cam_.elapsed >= cam_.travel
                         ? 1.0f
-                        : static_cast<float>(camElapsed_) /
-                              static_cast<float>(camTravel_);   // in float, as it was
+                        : static_cast<float>(cam_.elapsed) /
+                              static_cast<float>(cam_.travel);   // in float, as it was
     // ---- BOTH ENDS ARE SOLVED TO WORLD, EVERY FRAME ------------------
     //
     // `sub_418410` (04_sys.c:4047) is the engine's interpolator and it is a
@@ -1436,7 +1436,7 @@ void Session::tickCamera() {
     // Two readings of this have now been wrong, and each was right about the
     // set it was found on. Lerping the RAW records mixes an offset with a
     // world point whenever the two ends disagree, which took the flat's
-    // lift-door camera 3000 units outside the building; carrying `camTo_`'s
+    // lift-door camera 3000 units outside the building; carrying `cam_.to`'s
     // subjects onto the result instead made the absolute destinations right
     // and the RELATIVE ones worse - AREA 222's tutorial cameras 4290/4291/4292
     // are all `eyeSubject 0 / atSubject 0`, so the port lerped a world point
@@ -1462,39 +1462,39 @@ void Session::tickCamera() {
         for (int k = 0; k < 3; ++k) { eye[k] = r.eye[k]; at[k] = r.at[k]; }
     };
     float fe[3], fa[3], te[3], ta[3];
-    solve(camFrom_, fe, fa);
-    solve(camTo_,   te, ta);
+    solve(cam_.from, fe, fa);
+    solve(cam_.to,   te, ta);
     for (int k = 0; k < 3; ++k) {
-        camNow_.eye[k] = fe[k] + (te[k] - fe[k]) * u;
-        camNow_.at[k]  = fa[k] + (ta[k] - fa[k]) * u;
+        cam_.now.eye[k] = fe[k] + (te[k] - fe[k]) * u;
+        cam_.now.at[k]  = fa[k] + (ta[k] - fa[k]) * u;
     }
-    camNow_.fov = camFrom_.fov + (camTo_.fov - camFrom_.fov) * u;
+    cam_.now.fov = cam_.from.fov + (cam_.to.fov - cam_.from.fov) * u;
     // Roll is an ANGLE: take the SHORT arc. A move between +179 and -179 is
     // two degrees and lerping the numbers spins the camera 358 - which is the
     // error CLAUDE.md 1 files under "invisible at rest", because either
     // reading draws both endpoints identically.
-    float d = camTo_.roll - camFrom_.roll;
+    float d = cam_.to.roll - cam_.from.roll;
     while (d > 180.0f) d -= 360.0f;
     while (d <= -180.0f) d += 360.0f;
-    camNow_.roll = camFrom_.roll + d * u;
-    camNow_.id = camTo_.id;
-    camNow_.mode = camTo_.mode;
+    cam_.now.roll = cam_.from.roll + d * u;
+    cam_.now.id = cam_.to.id;
+    cam_.now.mode = cam_.to.mode;
     // ...and the result of that lerp is a WORLD point, so it is absolute for
-    // the length of the move. `camera()` hands `camNow_` to the frontend,
+    // the length of the move. `camera()` hands `cam_.now` to the frontend,
     // which resolves whatever subject it carries - and there is nothing left
     // to resolve.
-    camNow_.eyeSubject = camNow_.atSubject = -1;
+    cam_.now.eyeSubject = cam_.now.atSubject = -1;
     // WHEN THE MOVE ENDS THE LIVE BLOCK TAKES OVER AGAIN, subjects and all.
     // The engine simply stops interpolating and uses `C`, which `sub_417CF0`
     // goes on solving every frame - so a travel INTO a camera that hangs off
     // an actor must hand that camera back, or the shot freezes at the world
     // point the last tick happened to compute. Adventure mode's own camera 0
     // is one of those.
-    if (camElapsed_ >= camTravel_) {
-        camTravel_ = 0;
-        const int id = camNow_.id;
-        camNow_ = camTo_;
-        camNow_.id = id;
+    if (cam_.elapsed >= cam_.travel) {
+        cam_.travel = 0;
+        const int id = cam_.now.id;
+        cam_.now = cam_.to;
+        cam_.now.id = id;
     }
 }
 
@@ -1557,25 +1557,25 @@ void Session::trackPlayer() {
 
 void Session::setCameraHeadAnchors(const float posedRel[3], float posedYaw,
                                    const float restRel[3], float restYaw) {
-    for (int k = 0; k < 3; ++k) { headPosed_[k] = posedRel[k]; headRest_[k] = restRel[k]; }
-    headPosedYaw_ = posedYaw;
-    headRestYaw_ = restYaw;
-    headKnown_ = true;
+    for (int k = 0; k < 3; ++k) { head_.posed[k] = posedRel[k]; head_.rest[k] = restRel[k]; }
+    head_.posedYaw = posedYaw;
+    head_.restYaw = restYaw;
+    head_.known = true;
 }
 
 bool Session::cameraAnchor(int kind, float pos[3], float& yaw) const {
     if (kind == -1) return false;
     if (kind == 9) {
-        if (const Address* ad = findAddress(camSubjectAddress_)) {
+        if (const Address* ad = findAddress(cam_.subjectAddress)) {
             for (int k = 0; k < 3; ++k) pos[k] = static_cast<float>(ad->memPos[k]);
             yaw = static_cast<float>(ad->memYaw);
             return true;
         }
     }
-    if (headKnown_ && (kind == 1 || kind == 3)) {
-        const float* h = kind == 1 ? headPosed_ : headRest_;
+    if (head_.known && (kind == 1 || kind == 3)) {
+        const float* h = kind == 1 ? head_.posed : head_.rest;
         for (int k = 0; k < 3; ++k) pos[k] = playerPos_[k] + h[k];
-        yaw = kind == 1 ? headPosedYaw_ : headRestYaw_;
+        yaw = kind == 1 ? head_.posedYaw : head_.restYaw;
         return true;
     }
     pos[0] = playerPos_[0];
@@ -2410,15 +2410,15 @@ int Session::answerScreen(int screen, int param) {
 }
 
 void Session::answerUi(int value) {
-    if (pendingUiScreen_ < 0) return;
+    if (pendingUi_.screen < 0) return;
     // `Game_HandleEvent` case 5: write the variable the `ui.open` named, then
     // release the context. The pc is already past the `ui.open`, so it resumes
     // on the next frame from the instruction after it.
-    if (pendingUiVar_ >= 0) state_.setVar(pendingUiVar_, value);
-    uiAnswers_.push_back({pendingUiScreen_, pendingUiVar_, value, false});
-    uiAnswered(pendingUiCtx_, value);
-    pendingUiScreen_ = pendingUiParam_ = pendingUiVar_ = -1;
-    pendingUiCtx_ = -1;
+    if (pendingUi_.var >= 0) state_.setVar(pendingUi_.var, value);
+    uiAnswers_.push_back({pendingUi_.screen, pendingUi_.var, value, false});
+    uiAnswered(pendingUi_.ctx, value);
+    pendingUi_.screen = pendingUi_.param = pendingUi_.var = -1;
+    pendingUi_.ctx = -1;
 }
 
 // `Game_HandleEvent` case 5, after `Var_Set`:
@@ -2538,23 +2538,23 @@ bool Session::actorRecord(int actor, std::vector<std::byte>& chunk,
 void Session::tickMusicLevel() {
     // the engine's update at 05_sys.c ~995, on the frame clock (dt = 1 at 30 Hz)
     const double dt = frameSeconds_ * 30.0;
-    if (musicFadeIn_ > 0.0) {
-        musicFadeIn_ -= 109226.0 / 65536.0 * dt;
-        if (musicFadeIn_ < 0.0) musicFadeIn_ = 0.0;
+    if (music_.fadeIn > 0.0) {
+        music_.fadeIn -= 109226.0 / 65536.0 * dt;
+        if (music_.fadeIn < 0.0) music_.fadeIn = 0.0;
     }
-    if (musicRampStep_ != 0.0) {
-        musicRamp_ += musicRampStep_ * dt;
-        if ((musicRampStep_ > 0.0 && musicRamp_ >= musicRampTarget_) ||
-            (musicRampStep_ < 0.0 && musicRamp_ <= musicRampTarget_)) {
-            musicRamp_ = musicRampTarget_;
-            musicRampStep_ = 0.0;
+    if (music_.rampStep != 0.0) {
+        music_.ramp += music_.rampStep * dt;
+        if ((music_.rampStep > 0.0 && music_.ramp >= music_.rampTarget) ||
+            (music_.rampStep < 0.0 && music_.ramp <= music_.rampTarget)) {
+            music_.ramp = music_.rampTarget;
+            music_.rampStep = 0.0;
         }
     }
 }
 
 double Session::musicAttenuationDb() const {
     const double base = dialogState_ == 3 ? 10.0 : 0.0;     // Actor_Enter/LeaveDialogueMode
-    double v = base + std::floor(musicRamp_) + musicOption_ + std::floor(musicFadeIn_);
+    double v = base + std::floor(music_.ramp) + music_.option + std::floor(music_.fadeIn);
     if (v < 0.0) v = 0.0;
     if (v > 100.0) v = 100.0;                                // Music_SetVolume's clamp
     return v;
@@ -2906,10 +2906,10 @@ void Session::onCall(int i, const Call& call) {
         // `Music_PlayTrack` refuses anything below 2, so 0 and 1 are the
         // engine's own "stop", not a file it failed to find.
         if (call.fields.size() >= 2) {
-            musicTrack_ = call.fields[0];
-            musicLoop_  = call.fields[1] != 0;
+            music_.track = call.fields[0];
+            music_.loop  = call.fields[1] != 0;
             // `dword_90EFA0 = a2 != 0 ? 100 << 16 : 0`: a fade-in from silence
-            if (call.fields[0] >= 2) musicFadeIn_ = musicLoop_ ? 100.0 : 0.0;
+            if (call.fields[0] >= 2) music_.fadeIn = music_.loop ? 100.0 : 0.0;
         }
         break;
     case op::MusicVolume:
@@ -2918,9 +2918,9 @@ void Session::onCall(int i, const Call& call) {
         // 0 is full and 100 silent (SCRIPT_VM's "0 = fade out" gloss has the
         // sense inverted; the code is `-10000 * v / 100`).
         if (call.fields.size() >= 2) {
-            musicRampTarget_ = static_cast<double>(call.fields[0]);
+            music_.rampTarget = static_cast<double>(call.fields[0]);
             const int frames = call.fields[1] > 0 ? call.fields[1] : 1;
-            musicRampStep_ = (musicRampTarget_ - musicRamp_) / frames;
+            music_.rampStep = (music_.rampTarget - music_.ramp) / frames;
         }
         break;
     case op::PlayerBecome:
@@ -3129,12 +3129,12 @@ void Session::onCall(int i, const Call& call) {
         // when there is one, leaving it parked too. `dword_534F48` is the one
         // mirror `sub_440D90` reflects through (CLAUDE.md 6). AREA 237's zone
         // scripts park it on three camera cuts and restore it in two others.
-        if (call.op == op::SetMirrorOff) { if (!mirrorParked_) mirrorWasLive_ = true; mirrorParked_ = true; }
-        else if (mirrorWasLive_) mirrorParked_ = false;
-        ++mirrorToggles_;
+        if (call.op == op::SetMirrorOff) { if (!mirror_.parked) mirror_.wasLive = true; mirror_.parked = true; }
+        else if (mirror_.wasLive) mirror_.parked = false;
+        ++mirror_.toggles;
         std::printf("frame %ld: %s - the live mirror (dword_534F48) %s\n", frameNo_,
                     call.op == op::SetMirrorOff ? "set.mirror.off" : "set.mirror.on",
-                    mirrorParked_ ? "parked" : "live");
+                    mirror_.parked ? "parked" : "live");
         break;
     case op::UiCloseAll:
         // `ui.close_all` (0x405BA0, read from the image): the dry-run test,
@@ -3254,7 +3254,7 @@ void Session::onCall(int i, const Call& call) {
         // `camera.set.wait` issues the SAME request and, with the hold on,
         // is handled where it parks - so it is applied here only when the
         // interpreter ran through it.
-        if (!camWait_ && !call.fields.empty())
+        if (!cam_.wait && !call.fields.empty())
             applyCamera(call.fields[0],
                         op96Travel(call.fields[0], call.fields.size() >= 2 ? call.fields[1] : 0));
         break;
@@ -3262,9 +3262,9 @@ void Session::onCall(int i, const Call& call) {
         // `camera.set.at_address` issues the same mode-12 request; with the
         // hold on it is applied where it parks, so this is only the
         // ran-through path. Fields are [camera][address][travel].
-        if (!camWait_ && call.fields.size() >= 3) {
+        if (!cam_.wait && call.fields.size() >= 3) {
             applyCamera(call.fields[0], call.fields[2]);
-            camSubjectAddress_ = call.fields[1];
+            cam_.subjectAddress = call.fields[1];
         }
         break;
     default:
@@ -3486,10 +3486,10 @@ void Session::execute(int i) {
                 // `answerUi`, which is exactly what `Game_HandleEvent` case 5
                 // does - so a build with nobody at the keyboard sits here,
                 // which is the engine's behaviour and not a hang.
-                pendingUiScreen_ = r.uiScreen;
-                pendingUiParam_  = r.uiParam;
-                pendingUiVar_    = r.uiResultVar;
-                pendingUiCtx_    = i;
+                pendingUi_.screen = r.uiScreen;
+                pendingUi_.param  = r.uiParam;
+                pendingUi_.var    = r.uiResultVar;
+                pendingUi_.ctx    = i;
                 return;
             }
             {
@@ -3576,7 +3576,7 @@ void Session::execute(int i) {
             // 96's subject is `Actor_Player()` twice; 126's is
             // `Address_Find(field 1)` in both pointers, so a camera whose
             // points are OFFSETS frames that address instead of the player.
-            camSubjectAddress_ = (r.camWaitOp == 126) ? r.camAddress : -1;
+            cam_.subjectAddress = (r.camWaitOp == 126) ? r.camAddress : -1;
             c->status = ctx_status::WaitCamera;
             c->waitingForCamera = travel;
             // 126 has NO travel guard: a 0-frame cut still parks, and the
@@ -3870,7 +3870,8 @@ int Session::scanTakeable(const float pos[3], float /*facing*/, float* dyOut) co
 // lazily-cached table as `objectName`; -1 when the id is unknown.
 int Session::objectKind(int objectId) const {
     if (objectId < 0 || dataRoot_.empty()) return -1;
-    const auto& table = sharedObjects(DataFs(dataRoot_));   // the one table (objects.h)
+    const DataFs fs(dataRoot_);   // named: a temporary would read as dangling to gcc
+    const auto& table = sharedObjects(fs);   // the one table (objects.h)
     for (const auto& o : table) if (o.id == objectId) return o.kind;
     return -1;
 }
@@ -3879,7 +3880,8 @@ std::string Session::objectName(int objectId) const {
     // `IAM\OBJECT` is not otherwise resident in the Session, so it is read
     // once and cached here rather than threaded through every caller.
     if (objectId < 0 || dataRoot_.empty()) return {};
-    const auto& table = sharedObjects(DataFs(dataRoot_));   // the one table (objects.h)
+    const DataFs fs(dataRoot_);   // named: a temporary would read as dangling to gcc
+    const auto& table = sharedObjects(fs);   // the one table (objects.h)
     for (const auto& o : table) if (o.id == objectId) return o.name;
     return {};
 }
@@ -3969,7 +3971,8 @@ Session::Banked Session::bankHeldObject(int objectId) {
 
 void Session::applyObjectEffect(int objectId) {
     if (objectId < 0 || dataRoot_.empty()) return;
-    const auto& table = sharedObjects(DataFs(dataRoot_));   // the one table (objects.h)
+    const DataFs fs(dataRoot_);   // named: a temporary would read as dangling to gcc
+    const auto& table = sharedObjects(fs);   // the one table (objects.h)
     const ObjectRecord* rec = nullptr;
     for (const auto& o : table) if (o.id == objectId) { rec = &o; break; }
     if (!rec) return;

@@ -89,7 +89,7 @@ void PlayState::gpuOpenWindow() {
             // (todo/cpu-vs-original.md) - the readback path is not that path.
             const Uint32 glWinFlags = SDL_WINDOW_OPENGL |
                 (omk::envFlag("OMK_NO_GPU_PRESENT") || omk::envFlag("OMK_HIDDEN_WINDOW")
-                     ? SDL_WINDOW_HIDDEN : omk::sdlFrontend(front).windowFlags());
+                     ? static_cast<Uint32>(SDL_WINDOW_HIDDEN) : omk::sdlFrontend(front).windowFlags());
 #if defined(OMK_SDL3)
             glWin = SDL_CreateWindow("OMK Engine (gles)", dispW, dispH, glWinFlags);
 #else

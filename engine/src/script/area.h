@@ -660,7 +660,7 @@ public:
     // 126's SUBJECT: `Address_Find(field 1)` in both subject pointers where 96
     // puts `Actor_Player()` twice. -1 = the player. Read by whoever frames a
     // camera whose points are offsets.
-    int  cameraSubjectAddress() const { return camSubjectAddress_; }
+    int  cameraSubjectAddress() const { return cam_.subjectAddress; }
     // `Address_Find` (0x0040E5E0): the address record by id over the two
     // resident slots, slot 0 first. -> nullptr when neither holds it.
     const Address* findAddress(int id) const;
@@ -1187,8 +1187,8 @@ public:
     std::string takeImageShow() { std::string s; s.swap(imageShow_); return s; }
     // ops 134/135: whether the live mirror is PARKED (`dword_534F48` moved to
     // `dword_4E90A0`), and how many times the pair ran
-    bool mirrorParked() const { return mirrorParked_; }
-    long mirrorToggles() const { return mirrorToggles_; }
+    bool mirrorParked() const { return mirror_.parked; }
+    long mirrorToggles() const { return mirror_.toggles; }
     // op 137 `ui.close_all`: requests since the frontend last took them
     int  takeCloseAllScreens() { const int v = closeAllScreens_; closeAllScreens_ = 0; return v; }
     // `ui.highscore` (op 142): what `HighScore_Insert` is handed - the name
@@ -1356,8 +1356,8 @@ public:
     // The engine's own handler skips the call when the track is already
     // playing, which is why this is a LEVEL and not an event: a caller
     // compares it with what it has going. -1 is "nothing asked yet".
-    int  musicTrack() const { return musicTrack_; }
-    bool musicLoops() const { return musicLoop_; }
+    int  musicTrack() const { return music_.track; }
+    bool musicLoops() const { return music_.loop; }
     // THE MUSIC'S LEVEL (without it the effects sound very low under the
     // music). The engine's per-frame music update (05_sys.c ~995) hands
     // `Music_SetVolume` a SUM of attenuations, each 0 full .. 100 silent and
@@ -1376,7 +1376,7 @@ public:
     double musicAttenuationDb() const;         // 0..100, this frame
     // Options row 11, `dword_90E19C` - an ATTENUATION (0 full, 40 at the
     // slider's bottom) that `05_sys.c` adds into `Music_SetVolume` every frame
-    void   setMusicOption(int attenuation) { musicOption_ = attenuation; }
+    void   setMusicOption(int attenuation) { music_.option = attenuation; }
     float  musicGain() const;                  // 10^(-dB/20)
 
     // ------------------------------------------------------- THE WORLD
@@ -1502,8 +1502,8 @@ public:
     // any other and cannot be pointed anywhere until something knows where
     // that actor is: `IAM\START` leaves the player at the (-1,-1,-1) sentinel
     // and the actor runtime is not driven from here, so a caller has to check.
-    const WorldCamera* camera() const { return haveCam_ ? &camNow_ : nullptr; }
-    int  cameraId() const { return haveCam_ ? camTo_.id : -1; }
+    const WorldCamera* camera() const { return haveCam_ ? &cam_.now : nullptr; }
+    int  cameraId() const { return haveCam_ ? cam_.to.id : -1; }
     // How many `Camera_Request`s this Session has made - every `camera.set`,
     // every camera-wait resume, every touched zone carrying a camera, and
     // every `requestCamera` from the frontend. It counts the EVENT rather
@@ -1522,9 +1522,9 @@ public:
     // Where the move is going, as opposed to where it currently IS. A caller
     // reporting a cut wants this one; a caller pointing a camera wants
     // `camera()`.
-    const WorldCamera* cameraTarget() const { return haveCam_ ? &camTo_ : nullptr; }
-    int  cameraTravel() const { return camTravel_; }
-    bool cameraMoving() const { return camTravel_ > 0; }
+    const WorldCamera* cameraTarget() const { return haveCam_ ? &cam_.to : nullptr; }
+    int  cameraTravel() const { return cam_.travel; }
+    bool cameraMoving() const { return cam_.travel > 0; }
 
     // Whether `camera.set.wait` holds the script for the length of its move.
     // Off by default - see `Interpreter::setCameraWaitSuspends` for why - and
@@ -1540,11 +1540,11 @@ public:
     // that contains one, which is the only way that path can be looked at
     // headlessly (UI 3i).
     void harnessStartDialogue(int id) { dialogState_ = 3; openDialog(id); }
-    int  pendingUiScreen() const { return pendingUiScreen_; }
-    int  pendingUiParam() const { return pendingUiParam_; }
+    int  pendingUiScreen() const { return pendingUi_.screen; }
+    int  pendingUiParam() const { return pendingUi_.param; }
     // ...and the VARIABLE it will write, so a log line can print what the
     // script will actually read back rather than what the screen handed over
-    int  pendingUiVar() const { return pendingUiVar_; }
+    int  pendingUiVar() const { return pendingUi_.var; }
     // Write the named variable and release the parked context. Safe to call
     // with nothing parked; it does nothing.
     void answerUi(int value);
@@ -1713,11 +1713,13 @@ private:
     std::vector<UiAnswer> uiAnswers_;
     int answerScreen(int screen, int param);
     bool personAnswers_ = false;
-    int  musicTrack_ = -1;
-    bool musicLoop_ = false;
-    double musicRamp_ = 0.0, musicRampTarget_ = 0.0, musicRampStep_ = 0.0;   // 16.16 in the engine
-    double musicFadeIn_ = 0.0;                 // dword_90EFA0, in points
-    int    musicOption_ = 0;                   // dword_90E19C
+    struct MusicState {
+        int  track = -1;
+        bool loop = false;
+        double ramp = 0.0, rampTarget = 0.0, rampStep = 0.0;   // 16.16 in the engine
+        double fadeIn = 0.0;                 // dword_90EFA0, in points
+        int    option = 0;                   // dword_90E19C
+    } music_{};
 public:
     // The engine's music update runs whatever is on screen; `frame()` calls
     // this, and a caller that skips `frame()` while a SCREEN has the world
@@ -1725,8 +1727,10 @@ public:
     // seeded by `music.play` never decays and the menu's track stays silent.
     void tickMusicLevel();
 private:
-    int  pendingUiScreen_ = -1, pendingUiParam_ = -1, pendingUiVar_ = -1;
-    int  pendingUiCtx_ = -1;
+    struct PendingUi {
+        int  screen = -1, param = -1, var = -1;
+        int  ctx = -1;
+    } pendingUi_{};
     std::string scptData_;                   // set by loadScene; "" = no scene
     int  entered_ = 0;
     std::vector<MessageRun> messages_;
@@ -1762,10 +1766,12 @@ private:
     std::vector<NothingHere> nothingHere_;
     bool playerDriven_ = false;              // a scx.play.player* program owns him
     float subjectLift_ = 0.0f;               // feet -> pelvis, the camera's +248
-    float headPosed_[3] = {0, 0, 0};          // camera subject kind 1's point, from the feet
-    float headRest_[3]  = {0, 0, 0};          // kind 3's, from the feet
-    float headPosedYaw_ = 0.0f, headRestYaw_ = 0.0f;
-    bool  headKnown_ = false;
+    struct HeadPoints {
+        float posed[3] = {0, 0, 0};          // camera subject kind 1's point, from the feet
+        float rest[3]  = {0, 0, 0};          // kind 3's, from the feet
+        float posedYaw = 0.0f, restYaw = 0.0f;
+        bool  known = false;
+    } head_{};
     bool playerWalks_ = false;               // something outside feeds his position
     int  placementSeq_ = 0;                  // landings of placeActorAt
     bool playerAnimHeld_ = false;            // Actor_HoldAnimation's 0x81 on the player
@@ -1790,9 +1796,11 @@ private:
     bool followRequested_ = false;           // op 54, until a camera request
     long followRequests_ = 0, posSyncs_ = 0;
     std::string imageShow_;                  // op 94, until the frontend takes it
-    bool mirrorParked_ = false;              // ops 134/135
-    bool mirrorWasLive_ = false;             // `dword_4E90A0` holds one
-    long mirrorToggles_ = 0;
+    struct MirrorState {
+        bool parked = false;              // ops 134/135
+        bool wasLive = false;             // `dword_4E90A0` holds one
+        long toggles = 0;
+    } mirror_{};
     int  closeAllScreens_ = 0;               // op 137, until the frontend takes it
     std::vector<HighScoreCall> highScores_;  // op 142, until the frontend takes them
     std::map<int, int> heldSlot_;            // Actor_HeldObjectSlot, by id; -1 = player
@@ -1914,11 +1922,9 @@ private:
     int   pendingAddress_ = -1;
     // per-clip root motion, kept because a clip is sampled every frame
     std::map<int, std::vector<std::array<float, 3>>> rootMotion_;
-    bool         camWait_ = false;
     std::function<bool(int, int)> moveHook_;
     std::function<bool(int, int)> fightHook_;
     int          fightCamTravel_ = 0;      // `dword_930818` for mode 14, recorded
-    int          camSubjectAddress_ = -1;
     bool startPlayerMove(int groupId, int ctx);
     bool beginFight(int opponentId, int level);
 public:
@@ -1930,15 +1936,19 @@ public:
 private:
     bool         objWait_ = false;
     bool         haveCam_ = false;
-    WorldCamera  camFrom_, camTo_, camNow_;
-    int          camTravel_ = 0;
-    // THE TRAVEL CLOCK, in frames at 30 Hz and advanced by the FRAME DELTA:
-    // the engine's `dword_4E7B34 += flt_4C30D8` (04_sys.c:4168), `30 / fps`
-    // capped at 3. Counting ticks instead runs every camera move at the
-    // console's frame rate - the Bowie sequence, whose moves are timed to the
-    // music, falls behind it at ~15 fps. A frame-bounded run's delta is
-    // exactly 1, so a headless run counts whole frames.
-    double       camElapsed_ = 0.0;
+    struct CameraMove {
+        WorldCamera  from, to, now;
+        int          travel = 0;
+        bool         wait = false;
+        int          subjectAddress = -1;
+        // THE TRAVEL CLOCK, in frames at 30 Hz and advanced by the FRAME DELTA:
+        // the engine's `dword_4E7B34 += flt_4C30D8` (04_sys.c:4168), `30 / fps`
+        // capped at 3. Counting ticks instead runs every camera move at the
+        // console's frame rate - the Bowie sequence, whose moves are timed to the
+        // music, falls behind it at ~15 fps. A frame-bounded run's delta is
+        // exactly 1, so a headless run counts whole frames.
+        double       elapsed = 0.0;
+    } cam_{};
     unsigned long camRequests_ = 0;   // every resolved `Camera_Request`
     long         frameNo_ = 0;
     long         replyActions_ = 0;    // reply actions run as contexts

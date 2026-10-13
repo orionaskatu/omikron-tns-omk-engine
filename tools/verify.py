@@ -4162,7 +4162,7 @@ def c_camera_travel_subjects():
     then lerps what those solves wrote.
 
     **Reading 1, and the set it was found on.** `Session::tickCamera`
-    interpolated the RAW records and copied neither subject, so `camNow_` kept
+    interpolated the RAW records and copied neither subject, so `cam_.now` kept
     the OUTGOING camera's for ever. In adventure mode the outgoing camera is
     the follow camera, whose subject is the player. So a travel to an absolute
     camera arrived with the right numbers flagged relative, and the viewer
@@ -4170,7 +4170,7 @@ def c_camera_travel_subjects():
     outside the building and drawing a black screen.
 
     **Reading 2, which fixed that and broke the opposite case.** Carrying
-    `camTo_`'s subjects onto the result, and flattening `camFrom_` to world
+    `cam_.to`'s subjects onto the result, and flattening `cam_.from` to world
     once at request time, is right whenever the destination is ABSOLUTE and
     wrong whenever it is not: AREA 222's tutorial cameras 4290/4291/4292 are
     all `eyeSubject 0 / atSubject 0`, so the port lerped a world point toward
@@ -4197,8 +4197,8 @@ def c_camera_travel_subjects():
     the move runs - so an outgoing camera with a subject goes on tracking it.
     The one case that freezes is a request arriving DURING a move, where
     `sub_414A90` redirects `g_CameraPrev` to a third block, `dword_4E7D10`,
-    filled from the interpolator's own live output. `camNow_` is exactly that
-    pair once the lerp leaves its result absolute, so `camFrom_ = camNow_`
+    filled from the interpolator's own live output. `cam_.now` is exactly that
+    pair once the lerp leaves its result absolute, so `cam_.from = cam_.now`
     serves both and nothing has to be flattened by hand.
 
     Asserted, both arms in one check:
@@ -4216,7 +4216,7 @@ def c_camera_travel_subjects():
       looking at the sky, and the sky is exactly what the reader saw.
 
     Shown to fail: dropping the subject copy takes the door's three counts to
-    0; keeping it and flattening `camFrom_` (reading 2) leaves the door right
+    0; keeping it and flattening `cam_.from` (reading 2) leaves the door right
     and takes the tutorial's eye past 7000.
     """
     import subprocess, tempfile, shutil, struct as _st, re as _re
@@ -13666,7 +13666,7 @@ def c_engine_hold_release():
     anything else, so a `camera.set`'s mode 12 arriving under an editing's
     mode 13 always changes the camera. `Session::cameraRequests()` counts the
     event itself - every `applyCamera` past its `Camera_FindWorld` test - and
-    `cameraId()` is `camTo_.id`, which only `applyCamera` writes, so counting
+    `cameraId()` is `cam_.to.id`, which only `applyCamera` writes, so counting
     the request strictly subsumes the id test rather than adding to the
     frontend's clear-list.
 

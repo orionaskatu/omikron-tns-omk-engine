@@ -17,10 +17,10 @@ start with `prefix` (a line mixing other names is refused); the comment lines
 among them go with the struct, method declarations stay where they were. A
 name loses the prefix and has its first letter lowered (`sliderCamFromEye`
 -> `fromEye`); a clash refuses. References are rewritten in code - not after
-`.`, `->` or `::` - and backticked mentions in comments, across every source
-file that implements the class (they `#include` the header or define its
-members). Then `make` builds the targets named (`play` by default); a failure
-restores every file. `verify.py` lines that name an old field are printed:
+`.`, `->` or `::` - and backticked mentions in comments, in the header and in
+every .cpp that defines one of the class's members (a field of the same name
+in another class is left alone). Then `make` builds the targets named (`play`
+by default); a failure restores every file. `verify.py` lines that name an old field are printed:
 a source-scanning check may need the new spelling.
 """
 import glob
@@ -44,7 +44,8 @@ def field_names(line, prefix):
     m = re.match(r"^\s*(?:static\s+|mutable\s+|const\s+)*([\w:]+(?:\s*<[^;]*>)?)\s+(.*)$", body)
     if not m:
         return None
-    decls = re.sub(r"\{[^}]*\}|\[[^\]]*\]|=[^,]*", "", m.group(2))
+    decls = re.sub(r"\{[^}]*\}|\[[^\]]*\]", "", m.group(2))   # braces first: `= {0, 0}`
+    decls = re.sub(r"=[^,]*", "", decls)
     names = [d.strip().lstrip("*&").strip() for d in decls.split(",")]
     if not all(re.fullmatch(r"\w+", n) for n in names):
         return None
@@ -52,7 +53,7 @@ def field_names(line, prefix):
 
 
 def main(a):
-    if len(a) < 5:
+    if len(a) < 5:  # noqa
         print(__doc__)
         return 2
     hdr, spec, typ, member, prefix = a[0], a[1], a[2], a[3], a[4]
@@ -79,11 +80,18 @@ def main(a):
     if not fields:
         print("refused: no field starting with `%s` in lines %d-%d" % (prefix, A, B))
         return 1
+    cls = next((m.group(2) for k in range(A - 1, -1, -1)
+                for m in [re.match(r"^(struct|class) (\w+)\b[^;]*$", H[k])] if m), None)
+    if not cls:
+        print("refused: no class or struct encloses line %d" % A)
+        return 1
     rename = {}
     for _, _, names in fields:
         for n in names:
             new = n[len(prefix)]
             new = new.lower() + n[len(prefix) + 1:]
+            if n.endswith("_"):
+                new = new.rstrip("_")    # a class's `x_` is a struct's `x`; the member keeps the `_`
             if new in rename.values() or not re.fullmatch(r"[a-z_]\w*", new):
                 print("refused: %s -> %s clashes or is not a name" % (n, new))
                 return 1
@@ -105,12 +113,16 @@ def main(a):
     # what reaches into the header before the run's first line (its banner) stays put
     files = [hdr]
     cls_files = set()
-    for f in glob.glob(os.path.join(ENG, "backends", "**", "*.cpp"), recursive=True) + \
-            glob.glob(os.path.join(ENG, "backends", "**", "*.h"), recursive=True):
+    for f in [g for d in ("src", "backends", "tools") for ext in ("cpp", "h")
+              for g in glob.glob(os.path.join(ENG, d, "**", "*." + ext), recursive=True)]:
         if "third_party" in f or os.path.abspath(f) == os.path.abspath(hdr):
             continue
         t = open(f, errors="replace").read()
-        if any(re.search(r"(?<![\w.>:])%s\b" % re.escape(o), t) for o in rename):
+        # only the class's own files: the .cpp files that DEFINE its members (a
+        # header naming it may be another class's, with a field of the same name)
+        defines = re.search(r"^[\w:<>,*& ]*\b%s::~?\w+\([^;]*$" % re.escape(cls), t, re.M)
+        if f.endswith(".cpp") and defines and \
+                any(re.search(r"(?<![\w.>:])%s\b" % re.escape(o), t) for o in rename):
             cls_files.add(f)
     originals = {f: open(f).read() for f in [hdr] + sorted(cls_files)}
     try:

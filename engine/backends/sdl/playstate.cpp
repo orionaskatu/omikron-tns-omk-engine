@@ -11,7 +11,7 @@
 // THE THREE VOLUME ROWS (10..12) - ATTENUATIONS, and one law for all
 // three: `-10000 * a / 100` hundredths of a dB, so `a` dB. Read where the
 // engine reads them (`05_sys.c` ~1037..1062, every frame): the music's is
-// summed into `Music_SetVolume` (the Session's `musicOption_`), the
+// summed into `Music_SetVolume` (the Session's `music_.option`), the
 // dialogue's goes to the speech buffer `Morph_Start` plays a line through
 // (`sub_42BBB0`), the effects' is ADDED to every world voice's own volume
 // (`sub_46C1C0`, `dword_53B31C`). The interface's blips take none of them.

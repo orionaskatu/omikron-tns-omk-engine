@@ -163,8 +163,14 @@ int SceneRunner::start(int oid, const char* how, bool waiting) {
     }
     if (!obj) { missed_.push_back(oid); return -1; }
     programs_.push_back(std::make_unique<Program>(*scx_, *obj));
-    Started st{.object = oid, .name = obj->name, .how = how, .waiting = waiting,
-               .actor = -1, .clip = clipOf(*obj), .path = pathOf(*obj, scx_->paths())};
+    Started st;
+    st.object = oid;
+    st.name = obj->name;
+    st.how = how;
+    st.waiting = waiting;
+    st.actor = -1;
+    st.clip = clipOf(*obj);
+    st.path = pathOf(*obj, scx_->paths());
     st.relative = placementOf(*obj, st.offset, st.euler);
     st.objectIndex = objectIndex;
     // One drive per table index the body steps name, in first-use order.

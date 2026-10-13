@@ -50,8 +50,8 @@ quietly go stale.
 | 3 | [Reading the original](03-reading-the-original.md) | find a function by name, by address and in the executable, know which to trust, and find its port - and a behaviour no check covers |
 | 4 | [The script VM](04-the-script-vm.md) | follow `ui.open` from a world script through the interpreter, the `Session` and the screen, and break the answer it brings back |
 | 5 | [The frame loop](05-the-frame-loop.md) | the frame's clock and phases, measured; an `@evt` line a check can read, invisible to every other |
-| 6 | The interface walk | change what a screen answers and watch a check fail for it |
-| 7 | Bodies | the `.CTL` channel and the player controller: change a threshold, see the walk change |
+| 6 | [The interface walk](06-the-interface-walk.md) | a screen as data, a key through `UiWalk::press`, a button by its callback address, and an answer held until the close |
+| 7 | [Bodies](07-bodies.md) | model, clips, the `.CTL` machine and the walker; the machine read as it runs; the step limit changed and the one check that sees it |
 | 8 | The renderer boundary | the software reference against a GPU backend; compare two frames |
 | 9 | Writing a check | build the right binaries, print what the consumer produced, show it fail |
 | 10 | The traps | reproduce three of the repository's classic mistakes on purpose |

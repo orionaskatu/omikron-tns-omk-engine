@@ -1198,7 +1198,7 @@ void ScreenComposer::drawItemPreviews(const omk::UiList& l, const omk::UiItem& i
 
 
 // THE CURSOR: `Ui_DrawItemCursor` (`sub_479920`) (from `drawItem`)
-void ScreenComposer::drawItemCursor(unsigned int (&eff0)[3], bool isSel, bool isFocus,
+void ScreenComposer::drawItemCursor(std::uint32_t (&eff0)[3], bool isSel, bool isFocus,
                                     const omk::UiItem& it, const omk::UiPanel*& q,
                                     const int (&rgb)[3],
                                     std::vector<omk::UiCursor::Quad>& cursorLate,
@@ -1222,7 +1222,7 @@ void ScreenComposer::drawItemCursor(unsigned int (&eff0)[3], bool isSel, bool is
 
 
 // THE ITEM'S TEXT: its colour the item's own, laid out in its box (from `drawItem`)
-void ScreenComposer::drawItemText(unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+void ScreenComposer::drawItemText(std::uint32_t (&eff0)[3], const int (&rgb)[3], bool& litText,
                                   const omk::UiItem& it, const omk::UiList& l,
                                   const omk::UiPanel*& q, bool blink, omk::Surface& fb,
                                   const std::string& s, omk::ScreenFrame& out, bool isEcho) const {
@@ -1352,7 +1352,7 @@ void ScreenComposer::drawItemText(unsigned int (&eff0)[3], const int (&rgb)[3], 
 void ScreenComposer::drawHighScores(const omk::UiItem& it, const omk::UiPanel*& q,
                                     const std::vector<std::string>& text, const int (&rgb)[3],
                                     bool blink, omk::Surface& fb, omk::ScreenFrame& out,
-                                    unsigned int (&eff0)[3]) const {
+                                    std::uint32_t (&eff0)[3]) const {
     if (scores_ && it.drawFn == kDrawHighScore) {
         const int width = scaleX(it.w);
         const int height = scaleX(it.h);
@@ -1421,7 +1421,7 @@ void ScreenComposer::drawHighScores(const omk::UiItem& it, const omk::UiPanel*& 
 
 
 // THE ROW MARK (the `+20` hook `0x0049C090`) and THE FILL an item's effect asks for (from `draw`)
-void ScreenComposer::drawRowMarkAndFill(const int (&rgb)[3], unsigned int (&eff0)[3],
+void ScreenComposer::drawRowMarkAndFill(const int (&rgb)[3], std::uint32_t (&eff0)[3],
                                         const omk::UiItem& it, const omk::UiPanel*& q,
                                         omk::Surface& fb, const omk::UiWalk& walk,
                                         omk::ScreenFrame& out) const {
@@ -1636,7 +1636,7 @@ void ScreenComposer::drawExamineText(const omk::UiList& l, const omk::UiItem& it
 
 // THE PIN AND THE MARKERS: draw hook 0x0049E6F0 on the city map (from `draw`)
 void ScreenComposer::drawMapPins(const omk::UiItem& it, const omk::UiPanel*& q,
-                                 unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+                                 std::uint32_t (&eff0)[3], const int (&rgb)[3], bool& litText,
                                  bool blink, omk::Surface& fb, omk::ScreenFrame& out) const {
     if (cityMap_ && it.drawFn == kDrawSneakMapPins && cityMap_->row) {
         const CityMapRow& row = *cityMap_->row;
@@ -1711,7 +1711,7 @@ void ScreenComposer::drawMapPins(const omk::UiItem& it, const omk::UiPanel*& q,
 
 
 // The sneak's IDENTITY page: the player sheet's text (from `draw`)
-void ScreenComposer::drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q, unsigned int (&eff0)[3], bool blink,
+void ScreenComposer::drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q, std::uint32_t (&eff0)[3], bool blink,
                                   omk::Surface& fb, omk::ScreenFrame& out) const {
     if (sheet_ && it.drawFn == kDrawSneakIdentity) {
         const int width = scaleX(it.w);
@@ -1788,7 +1788,7 @@ void ScreenComposer::drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q,
 
 // The sneak's CHARACTERISTICS page: the player sheet's statistics (from `draw`)
 void ScreenComposer::drawCharacteristics(const omk::UiItem& it,
-                                         unsigned int (&eff0)[3], const int (&rgb)[3],
+                                         std::uint32_t (&eff0)[3], const int (&rgb)[3],
                                          bool& litText, const omk::UiPanel*& q, bool blink,
                                          omk::Surface& fb, omk::ScreenFrame& out) const {
     if (sheet_ && it.drawFn == kDrawSneakCharacteristics) {
@@ -1875,7 +1875,7 @@ void ScreenComposer::drawCharacteristics(const omk::UiItem& it,
 }
 
 // THE SPRITE: `Ui_DrawItemSprite` - the item's frame off its sheet (from `draw`)
-void ScreenComposer::drawItemSprite(unsigned int (&eff0)[3], bool sheetOk, bool lit,
+void ScreenComposer::drawItemSprite(std::uint32_t (&eff0)[3], bool sheetOk, bool lit,
                                     const omk::UiItem& it, const omk::UiPanel*& q,
                                     omk::Surface& fb, const omk::Surface& art,
                                     unsigned short artKey, omk::ScreenFrame& out) const {

@@ -264,6 +264,48 @@ def braceless_loops(text, m):
     return spans
 
 
+def declared_type(before, bm, x):
+    """The type `x` was DECLARED with in `before` (the enclosing method up to
+    the range), as written - `std::uint32_t`, not the `unsigned int` clang
+    prints for it, which is another type on the consoles' libraries. None
+    for an `auto` local, or when no plain declaration is found."""
+    best = None
+    for mm in re.finditer(r"\b%s\b" % re.escape(x), before):
+        if not bm[mm.start()]:
+            continue
+        after = before[mm.end():mm.end() + 40]
+        arr = re.match(r"\s*(\[[^\]]*\])", after)
+        rest = after[arr.end():] if arr else after
+        if not re.match(r"\s*(=|;|\{|,|\()", rest) or re.match(r"\s*==", rest):
+            continue
+        st = mm.start()
+        while st > 0 and not (bm[st - 1] and before[st - 1] in ";{}"):
+            st -= 1
+        prefix = before[st:mm.start()]
+        prefix = re.sub(r"^\s*(?:for\s*\()?", "", prefix)
+        one = re.match(r"^(static\s+|constexpr\s+)*(const\s+)?([\w:]+(?:\s*<[^;{}()]*>)?)"
+                       r"\s*([*&]*)\s*(const\s*)?$", prefix)
+        multi = re.match(r"^(static\s+|constexpr\s+)*(const\s+)?([\w:]+(?:\s*<[^;{}()]*>)?)"
+                         r"\s+[^;]*,\s*([*&]*)\s*$", prefix)
+        mm2 = one or multi
+        if not mm2:
+            continue
+        base = mm2.group(3).strip()
+        if base in ("auto", "return", "else", "case", "goto", "delete", "new", "throw") or \
+                base.startswith("decltype"):
+            best = None if base == "auto" else best
+            continue
+        const = bool(mm2.group(2)) or bool(re.search(r"constexpr", mm2.group(1) or ""))
+        star = mm2.group(4) or ""
+        t = ("const " if const and "*" not in star else "") + base + star
+        if "*" in star and const:
+            t = "const " + base + star            # a pointer to const
+        if arr:
+            t += arr.group(1)
+        best = t
+    return best
+
+
 # ---- portable parameter types ------------------------------------------------
 
 SCALAR = re.compile(r"^(bool|char|signed char|unsigned char|short|unsigned short|int|"
@@ -326,9 +368,9 @@ def param(t, x, const):
     t = re.sub(r"(?:std::)?basic_string<char(?:, std::char_traits<char>, std::allocator<char>)?>",
                "std::string", t)
     t = portable(t)
-    arr = re.match(r"(.+)\[(\d+)\]$", t)
+    arr = re.match(r"(.+)\[([^\]]+)\]$", t)
     if arr:
-        return "%s (&%s)[%s]" % (arr.group(1), x, arr.group(2))
+        return "%s (&%s)[%s]" % (arr.group(1).strip(), x, arr.group(2))
     if t.endswith("&"):
         base = t[:-1].strip()
         if base.startswith("const ") and SCALAR.match(base[6:]):
@@ -580,8 +622,19 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
                 x = re.search(r"decltype\((\w+)\)::omkprobe_", probe[ln - 1]).group(1)
                 types[x] = n.group(1)
         out = []
+        before = "\n".join(L[fstart:A - 1])
+        bm = code_mask(before)
         for x in list(need):
             t = types.get(x)
+            if t is not None and "lambda at" not in t:
+                d = declared_type(before, bm, x)
+                if d:
+                    t = d                          # the source's own spelling
+                elif re.search(r"\b(unsigned|long|short|int|char)\b", t) and \
+                        x not in const and not t.endswith("*"):
+                    # an `auto` local of a platform-sized integer, by reference:
+                    # clang's spelling is this host's, not the consoles'
+                    raise ValueError("%s is an `auto` local of %s - write its type out first" % (x, t))
             if t is None and x in forced:
                 # the guard's regex saw a declaration in another, closed scope:
                 # no local of that name is visible here, so the range's use

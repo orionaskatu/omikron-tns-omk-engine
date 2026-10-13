@@ -1097,9 +1097,9 @@ void PlayState::inputMeshAt() {
 
 
 // THE SOUPS PATCHED IN PLACE, when the slot and the sizes still add up (from `inputMotion`)
-void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<unsigned int> (&movedSoup)[2],
+void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<std::uint32_t> (&movedSoup)[2],
                                       bool& newlyMoving,
-                                      std::vector<unsigned int> (&movedSteep)[2],
+                                      std::vector<std::uint32_t> (&movedSteep)[2],
                                       bool& newlySteep) {
     if (inPlace) {
         std::size_t offSoup = 0, offSteep = 0;
@@ -1176,7 +1176,7 @@ void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<unsigned int> (&
 
 
 // `OMK_VERIFY_SPLIT`: the moved triangles and a lattice probed through the two-layer grid and the scan (from `inputMotion`)
-void PlayState::inputVerifySplit(bool verifySplit, std::vector<unsigned int> (&movedSoup)[2]) {
+void PlayState::inputVerifySplit(bool verifySplit, std::vector<std::uint32_t> (&movedSoup)[2]) {
     if (verifySplit) {
         lazyPlaceAll();   // it reads triangle centres straight out of the soup
         static long splitFrames = 0, probes = 0, mismatched = 0;

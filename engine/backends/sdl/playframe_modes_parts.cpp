@@ -1611,7 +1611,7 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
 }
 
 // The input word handed to a hosted options page (from `modesScreenWalk`)
-void PlayState::modesOptionsInput(unsigned int& uiBits, bool optActive, bool ate,
+void PlayState::modesOptionsInput(std::uint32_t& uiBits, bool optActive, bool ate,
                                   omk::OptionsMenu& optMenu) {
     if (uiBits && optActive) {
         // `Ui_ScreenInput` on the FOCUSED screen, and its sound

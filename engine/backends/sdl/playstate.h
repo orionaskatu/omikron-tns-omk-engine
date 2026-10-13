@@ -800,10 +800,10 @@ struct PlayState {
     void inputCollectMotions(std::vector<omk::Program::NodeMotion>& allMotions,
                              std::map<std::string, omk::SceneRunner::NodeScale>& allScales);   // from `inputMotion`
     void inputMeshAt();   // from `inputMotion`
-    void inputSoupPatchInPlace(bool inPlace, std::vector<unsigned int> (&movedSoup)[2],
-                               bool& newlyMoving, std::vector<unsigned int> (&movedSteep)[2],
+    void inputSoupPatchInPlace(bool inPlace, std::vector<std::uint32_t> (&movedSoup)[2],
+                               bool& newlyMoving, std::vector<std::uint32_t> (&movedSteep)[2],
                                bool& newlySteep);   // from `inputMotion`
-    void inputVerifySplit(bool verifySplit, std::vector<unsigned int> (&movedSoup)[2]);   // from `inputMotion`
+    void inputVerifySplit(bool verifySplit, std::vector<std::uint32_t> (&movedSoup)[2]);   // from `inputMotion`
     void inputSounds();
     void vehicleSounds();          // sub_456B40's voices (playframe_input_parts.cpp)   // adventure mode's and the scene's own sound effects
 
@@ -817,7 +817,7 @@ struct PlayState {
     void modesShootResume(omk::Input& in);   // from `modesShoot`
     void modesDialogEnterLeave();   // from `modesShoot`
     void modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::Inventory& inv);   // from `modesShoot`
-    void modesOptionsInput(unsigned int& uiBits, bool optActive, bool ate,
+    void modesOptionsInput(std::uint32_t& uiBits, bool optActive, bool ate,
                            omk::OptionsMenu& optMenu);   // from `modesScreenWalk`
     void modesOptionsHost(bool optHost, bool optOnSneakTab, omk::OptionsMenu& optMenu,
                           omk::Input& in);   // from `modesScreenWalk`
@@ -892,7 +892,7 @@ struct PlayState {
     void adventureFightReport();   // from `adventureScreenInput`
     void adventureFightEnd(bool on, omk::Input& in);   // from `adventureScreenInput`
     void adventureShootMoverTick();   // from `adventureScreenInput`
-    void adventureWaterEntry(unsigned int& standFl, bool& enteredWater, omk::Input& in);   // from `adventureScreenInput`
+    void adventureWaterEntry(std::uint32_t& standFl, bool& enteredWater, omk::Input& in);   // from `adventureScreenInput`
     void adventureFallAndLanding(bool wasAir, bool wasSlide, bool& enteredWater, bool inWaterState);   // from `adventureScreenInput`
     void adventureSeated();   // seated, not driving; where the slider is after he gets out
     void adventureRide();   // the ride
@@ -1034,9 +1034,9 @@ struct PlayState {
                             bool circuitShown, float vreach, int& vehPastLod);   // from `worldCrowd`
     void worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& rootDrop);   // from `worldCrowd`
     void worldDrawLists();   // the particles, the visible set, the lights and the shadows into the frame's draw lists
-    void worldDrawSetRuns(float clipReach, unsigned long& runsCulled, unsigned long& runsDrawn,
-                          unsigned long& hiddenMeshes, unsigned long& hiddenDrawn,
-                          unsigned long& movingCulled, unsigned long& movingDrawn);   // from `worldDrawLists`
+    void worldDrawSetRuns(float clipReach, std::size_t& runsCulled, std::size_t& runsDrawn,
+                          std::size_t& hiddenMeshes, std::size_t& hiddenDrawn,
+                          std::size_t& movingCulled, std::size_t& movingDrawn);   // from `worldDrawLists`
     void worldDrawClassicShadows();   // from `worldDrawLists`
     void worldDrawParticles(bool scriptSprites, float fxNear, float fxFar, int& spriteSlotBase);   // from `worldDrawLists`
     void worldDrawSky();   // from `worldDrawLists`

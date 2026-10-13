@@ -465,18 +465,18 @@ public:
     void drawItemPreviews(const omk::UiList& l, const omk::UiItem& itAuthored, omk::Surface& fb,
                           const omk::UiItem& it, const omk::UiPanel*& q,
                           omk::ScreenFrame& out) const;   // from `drawItem`
-    void drawItemCursor(unsigned int (&eff0)[3], bool isSel, bool isFocus, const omk::UiItem& it,
+    void drawItemCursor(std::uint32_t (&eff0)[3], bool isSel, bool isFocus, const omk::UiItem& it,
                         const omk::UiPanel*& q, const int (&rgb)[3],
                         std::vector<omk::UiCursor::Quad>& cursorLate, omk::ScreenFrame& out,
                         omk::Surface& fb, const omk::UiWalk& walk) const;   // from `drawItem`
-    void drawItemText(unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+    void drawItemText(std::uint32_t (&eff0)[3], const int (&rgb)[3], bool& litText,
                       const omk::UiItem& it, const omk::UiList& l, const omk::UiPanel*& q,
                       bool blink, omk::Surface& fb, const std::string& s, omk::ScreenFrame& out,
                       bool isEcho) const;   // from `drawItem`
     void drawHighScores(const omk::UiItem& it, const omk::UiPanel*& q,
                         const std::vector<std::string>& text, const int (&rgb)[3], bool blink,
-                        omk::Surface& fb, omk::ScreenFrame& out, unsigned int (&eff0)[3]) const;   // from `draw`
-    void drawRowMarkAndFill(const int (&rgb)[3], unsigned int (&eff0)[3], const omk::UiItem& it,
+                        omk::Surface& fb, omk::ScreenFrame& out, std::uint32_t (&eff0)[3]) const;   // from `draw`
+    void drawRowMarkAndFill(const int (&rgb)[3], std::uint32_t (&eff0)[3], const omk::UiItem& it,
                             const omk::UiPanel*& q, omk::Surface& fb, const omk::UiWalk& walk,
                             omk::ScreenFrame& out) const;   // from `draw`
     void drawLoadSelection(const omk::LoadPanel& lp, const omk::UiItem& f, const omk::UiPanel*& q,
@@ -484,15 +484,15 @@ public:
     void drawExamineText(const omk::UiList& l, const omk::UiItem& it, const omk::UiPanel*& q,
                          const int (&rgb)[3], bool blink, omk::Surface& fb,
                          omk::ScreenFrame& out) const;   // from `draw`
-    void drawMapPins(const omk::UiItem& it, const omk::UiPanel*& q, unsigned int (&eff0)[3],
+    void drawMapPins(const omk::UiItem& it, const omk::UiPanel*& q, std::uint32_t (&eff0)[3],
                      const int (&rgb)[3], bool& litText, bool blink, omk::Surface& fb,
                      omk::ScreenFrame& out) const;   // from `draw`
-    void drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q, unsigned int (&eff0)[3], bool blink,
+    void drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q, std::uint32_t (&eff0)[3], bool blink,
                       omk::Surface& fb, omk::ScreenFrame& out) const;   // from `draw`
-    void drawCharacteristics(const omk::UiItem& it, unsigned int (&eff0)[3], const int (&rgb)[3], bool& litText,
+    void drawCharacteristics(const omk::UiItem& it, std::uint32_t (&eff0)[3], const int (&rgb)[3], bool& litText,
                              const omk::UiPanel*& q, bool blink, omk::Surface& fb,
                              omk::ScreenFrame& out) const;   // from `draw`
-    void drawItemSprite(unsigned int (&eff0)[3], bool sheetOk, bool lit, const omk::UiItem& it,
+    void drawItemSprite(std::uint32_t (&eff0)[3], bool sheetOk, bool lit, const omk::UiItem& it,
                         const omk::UiPanel*& q, omk::Surface& fb, const omk::Surface& art,
                         unsigned short artKey, omk::ScreenFrame& out) const;   // from `draw`
 

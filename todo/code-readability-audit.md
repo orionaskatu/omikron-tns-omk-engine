@@ -544,6 +544,31 @@ finding: a check that hashed a conversation frame would flicker.
   it wants a per-body state struct. `PlayOptions::parse` (635) - one flat
   `else if (a == "--flag")` chain, as readable as a table of the same rows.
   `Session::onCall` (428) stays a switch: its largest arm is 36 lines.
+* **the CONSOLES were broken by step 12 and are fixed** - the 3DS from
+  12g, the Vita from 12f-ish: clang prints a local's CANONICAL type, so
+  `std::uint32_t eff0[3]` became the parameter `unsigned int (&eff0)[3]`,
+  and on the consoles' newlib `uint32_t` is `unsigned long` (`size_t`
+  `unsigned int`) - no binding. Every one (`eff0`, `standFl`, `uiBits`,
+  `movedSoup`/`movedSteep`, six `std::size_t` counters) is back to the
+  source's spelling, both console builds compile, and the TOOL now takes a
+  parameter's type from the local's DECLARATION (`declared_type`), keeping
+  clang's only for an `auto` local - and refusing one of a platform-sized
+  integer passed by reference. Building the consoles belongs to every step
+  that touches shared code; the 3DS's `make -k` gave the whole list.
+* step 13a - PER-PLATFORM FILES for the data layer (§6): `datafs.cpp` 559
+  -> 280 lines and 25 `#if` lines -> 0, over `platform/hostfs.h` - four
+  questions (`isDirectory`, `pathExists`, `listNames`, `comparablePath`) and
+  a read-only open / seek-and-read / close - plus the public `hostPath`,
+  `makeDirectories` and `fileSize`, implemented in `datafs_posix.cpp`
+  (`std::filesystem`, C stdio: the desktops and the 3DS),
+  `datafs_vita.cpp` (`sceIo*`) and `datafs_classic.cpp` (the File
+  Manager), each moved verbatim and compiled only on its own host. The
+  resolver and the write guard are one code everywhere; the whole-file and
+  range reads are one loop over `hostfs::readAt` (a failed seek still
+  returns empty without a message). The classic file is not built here (no
+  Retro68 on this machine): `engine: classic build` is what will. Guard 0 of
+  14; `DataFs`, `hostile files`, `hostile save`, `archive chunks`,
+  `settings resolve` green; 3DS and Vita build; `licence headers` 621.
 
 ## 7. For the tutorial
 

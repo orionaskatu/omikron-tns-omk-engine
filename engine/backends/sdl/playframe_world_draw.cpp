@@ -437,10 +437,10 @@ void PlayState::worldDrawLists() {
 
 
 // THE SETS' DRAW RUNS: the visible-set walk over both resident slots, at the clip distance (from `worldDrawLists`)
-void PlayState::worldDrawSetRuns(float clipReach, unsigned long& runsCulled,
-                                 unsigned long& runsDrawn, unsigned long& hiddenMeshes,
-                                 unsigned long& hiddenDrawn, unsigned long& movingCulled,
-                                 unsigned long& movingDrawn) {
+void PlayState::worldDrawSetRuns(float clipReach, std::size_t& runsCulled,
+                                 std::size_t& runsDrawn, std::size_t& hiddenMeshes,
+                                 std::size_t& hiddenDrawn, std::size_t& movingCulled,
+                                 std::size_t& movingDrawn) {
     omk::Renderer& world = *world_;
     for (int slot = 0; slot < 2; ++slot) {
         const WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];

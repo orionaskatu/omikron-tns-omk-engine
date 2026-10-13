@@ -1166,7 +1166,7 @@ void PlayState::adventureShootMoverTick() {
 
 
 // INTO THE WATER: a grounded player on a mesh flagged 0x8000000 enters group 300 - this arm OR the ground response, never both (`21_d3d.c` 3830) (from `adventureScreenInput`)
-void PlayState::adventureWaterEntry(unsigned int& standFl, bool& enteredWater, omk::Input& in) {
+void PlayState::adventureWaterEntry(std::uint32_t& standFl, bool& enteredWater, omk::Input& in) {
     if (player->state() == omk::ActorState::Normal &&
         (standFl & 0x8000000u)) {
         const bool grouped = player->enterGroupById(300);

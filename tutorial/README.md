@@ -54,10 +54,9 @@ quietly go stale.
 | 7 | [Bodies](07-bodies.md) | model, clips, the `.CTL` machine and the walker; the machine read as it runs; the step limit changed and the one check that sees it |
 | 8 | [The renderer boundary](08-the-renderer-boundary.md) | one frame through the software reference and Vulkan, measured honestly; the light law all four GPU backends share, broken |
 | 9 | [Writing a check](09-writing-a-check.md) | the check for lesson 3's untested button, decision by decision - then its sibling for the shops, yours to write |
-| 10 | The traps | reproduce three of the repository's classic mistakes on purpose |
-| 11 | Capstone | port one small thing end to end |
+| 10 | [The traps](10-the-traps.md) | three classic mistakes reproduced on purpose - flags that were one argument, a restore `make` did not see, a mutation that never applied - and the rest by symptom |
+| 11 | [Capstone](11-capstone.md) | the interface's item outline, from the original's framebuffer to a committed port and its check, on a branch that does not have it |
 
-Lessons 2 to 11 arrive in batches; the table links each one as it is written.
 
 ## Four rules before you start
 

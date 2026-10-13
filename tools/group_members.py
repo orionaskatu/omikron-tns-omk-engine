@@ -41,7 +41,7 @@ def field_names(line, prefix):
     if not code.endswith(";") or "(" in re.sub(r"\{[^}]*\}", "", code):
         return None
     body = code[:-1]
-    m = re.match(r"^\s*(?:static\s+|mutable\s+|const\s+)*([\w:]+(?:\s*<[^;]*>)?)\s+(.*)$", body)
+    m = re.match(r"^\s*(?:static\s+|mutable\s+|const\s+)*([\w:]+(?:\s*<[^;]*>)?[*&]*)\s+(.*)$", body)
     if not m:
         return None
     decls = re.sub(r"\{[^}]*\}|\[[^\]]*\]", "", m.group(2))   # braces first: `= {0, 0}`
@@ -64,19 +64,29 @@ def main(a):
     A, B = min(lines) + 1, max(lines) + 1
     targets = a[a.index("--build") + 1:] if "--build" in a else ["play"]
     H = open(hdr).read().split("\n")
-    fields, comments, keep = [], [], [i for i in range(A - 1, B) if i not in lines]
+    fields, keep = [], [i for i in range(A - 1, B) if i not in lines]
     for i in lines:
         line = H[i]
         names = field_names(line, prefix)
-        if line.strip().startswith("//") and not [k for k in keep if k > A - 1 and k < i]:
-            comments.append(line)
-        elif names is not None:
+        if line.strip().startswith("//"):
+            continue                  # placed below, with what it heads
+        if names is not None:
             if not all(n.startswith(prefix) and len(n) > len(prefix) for n in names):
                 print("refused: line %d mixes names outside `%s`: %s" % (i + 1, prefix, line.strip()))
                 return 1
             fields.append((i, line, names))
         else:
-            keep.append(i)            # a method, or a comment over something that stays
+            keep.append(i)            # a method, or anything else that stays
+    # a comment goes where the line it heads goes: into the struct over a field,
+    # or stays over a method (or at the end of the run, over nothing moved)
+    field_at = {f[0] for f in fields}
+    for i in lines:
+        if H[i].strip().startswith("//"):
+            k = i
+            while k in lines and H[k].strip().startswith("//"):
+                k += 1
+            if k not in field_at:
+                keep.append(i)
     if not fields:
         print("refused: no field starting with `%s` in lines %d-%d" % (prefix, A, B))
         return 1
@@ -108,7 +118,7 @@ def main(a):
                 line = re.sub(r"(?<![\w.])%s\b" % re.escape(old), new, line)
         body.append("    " + line)
     struct = [" " * ind + "struct %s {" % typ] + body + [" " * ind + "} %s{};" % member]
-    first = min(f[0] for f in fields)
+    first = min(i for i in range(A - 1, B) if i not in keep)   # a moving comment heads it
     out = H[:first] + struct + [H[i] for i in range(first, B) if i in keep] + H[B:]
     # what reaches into the header before the run's first line (its banner) stays put
     files = [hdr]

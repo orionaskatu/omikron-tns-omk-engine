@@ -563,8 +563,8 @@ void UiWalk::closeNow(const char* how) {
         // terminal` reach it as TAB does, and all three answer.
         answer_ = (termRow3_ ? 2 : 0) + (termRow4_ ? 1 : 0);
         log_.push_back("terminal close: answer " + std::to_string(answer_));
-    } else if (answer_ < 0 && closeAnswer_ >= 0) {
-        answer_ = closeAnswer_;
+    } else if (answer_ < 0 && close_.answer >= 0) {
+        answer_ = close_.answer;
         log_.push_back("close: the answer written earlier, " + std::to_string(answer_));
     }
     panel_ = nullptr;
@@ -1269,10 +1269,10 @@ void UiWalk::buildPage(const UiPanel& p) {
     // is still navigable when it has nothing to sell.
     if (p.addr == kPanelHints || p.addr == kPanelHintBuy) {
         const bool buy = p.addr == kPanelHintBuy;
-        hintFooter_  = 6;
-        hintSection_ = 0;
-        hintBodyY_   = buy ? 180 : 250;
-        hintFooterY_ = buy ? 290 : 400;
+        hint_.footer  = 6;
+        hint_.section = 0;
+        hint_.bodyY   = buy ? 180 : 250;
+        hint_.footerY = buy ? 290 : 400;
         setItemOff(kItemHintBody, buy);          // 0x40000001 on the body
         setItemOff(kItemHintFoot, false);
         if (buy) {
@@ -1289,7 +1289,7 @@ void UiWalk::buildPage(const UiPanel& p) {
             setItemOff(kItemHintDone, true);     // `Indice achete !` hidden
         }
         // `sub_42ADD0(&word_4E2AF0, 0, 2)`: open object list 2, five widgets,
-        // selection back to 0, then the count from event 29. `hintRows_` is
+        // selection back to 0, then the count from event 29. `hint_.rows` is
         // that count, supplied by the caller (see `setHintRows`).
         //
         // The CONFIRM panel does not carry the row list - the shop's four
@@ -1302,9 +1302,9 @@ void UiWalk::buildPage(const UiPanel& p) {
         // shop's own build wrote, since both calls use window 0 and the same
         // count.
         selMap()[kListHintRows] = 0;
-        bindRows(kListHintRows, hintRows_, 0);
-        hintBodyRow_ = hintRows_ > 0 ? 0 : -1;
-        if (hintRows_ <= 0) curFromBuilder_ = 1;   // `[panel+24] = 1`
+        bindRows(kListHintRows, hint_.rows, 0);
+        hint_.bodyRow = hint_.rows > 0 ? 0 : -1;
+        if (hint_.rows <= 0) curFromBuilder_ = 1;   // `[panel+24] = 1`
         else if (buy)       curFromBuilder_ = 0;   // `mov [esi+18h], 0`
         return;
     }
@@ -1358,8 +1358,8 @@ bool UiWalk::open(int screenId) {
     panel_ = w_->screen(screenId);
     approx_ = false;
     answer_ = -1;
-    closeAnswer_ = -1;
-    closeMs_ = closeStarted_ = 0.0;
+    close_.answer = -1;
+    closeMs_ = close_.started = 0.0;
     bannerMs_ = 0.0;
     log_.clear();
     if (!panel_) { log_.push_back("no panel for this screen"); return false; }
@@ -1385,8 +1385,8 @@ bool UiWalk::open(int screenId) {
     // again, it stands wherever it was left. The cursor's x/y are NOT reset -
     // see `UiListState::itemPlace`.
     if (panel_->addr == kPanelGandhar) {
-        gandCol_ = gandRow_ = gandPresses_ = 0;
-        gandMask_ = 0;
+        gandhar_.col = gandhar_.row = gandhar_.presses = 0;
+        gandhar_.mask = 0;
         for (const auto& l : panel_->lists)
             if (l.hook == kHookGandharGrid)
                 for (std::size_t k = 1; k < l.items.size(); ++k) setItemOff(l.items[k].addr, true);
@@ -1550,23 +1550,23 @@ bool UiWalk::denDial(const UiList& l, std::uint32_t bits) {
 // origin - and its `+3C` becomes `(row << 16) | col`. The hook returns 1 only
 // when the cell moved, so a confirm falls through to the item's callback.
 bool UiWalk::gandhar(const UiList& l, std::uint32_t bits) {
-    const int wasCol = gandCol_, wasRow = gandRow_;
-    if (bits & kUiUp)         { if (gandRow_ != 0) --gandRow_; }
-    else if (bits & kUiDown)  { if (gandRow_ < 5)  ++gandRow_; }
-    else if (bits & kUiLeft)  { if (gandCol_ != 0) --gandCol_; }
-    else if (bits & kUiRight) { if (gandCol_ < 5)  ++gandCol_; }
-    const bool moved = gandCol_ != wasCol || gandRow_ != wasRow;
+    const int wasCol = gandhar_.col, wasRow = gandhar_.row;
+    if (bits & kUiUp)         { if (gandhar_.row != 0) --gandhar_.row; }
+    else if (bits & kUiDown)  { if (gandhar_.row < 5)  ++gandhar_.row; }
+    else if (bits & kUiLeft)  { if (gandhar_.col != 0) --gandhar_.col; }
+    else if (bits & kUiRight) { if (gandhar_.col < 5)  ++gandhar_.col; }
+    const bool moved = gandhar_.col != wasCol || gandhar_.row != wasRow;
     // Written on EVERY call, moved or not, before the hook decides what to
     // return: `+0`/`+0x10` = col * 63 + 135 and `+2`/`+0x12` = row * 63 + 61.
     // The unlit source going with the position is what keeps the cursor
     // invisible when it is not lit - it cuts out the artwork under itself.
     if (!l.items.empty()) {
-        const int x = gandCol_ * 63 + 135, y = gandRow_ * 63 + 61;
+        const int x = gandhar_.col * 63 + 135, y = gandhar_.row * 63 + 61;
         state_->itemPlace[l.items[0].addr] = {x, y, x, y};
     }
     if (moved)
-        log_.push_back("gandhar: cell " + std::to_string(gandRow_) + "," +
-                       std::to_string(gandCol_));
+        log_.push_back("gandhar: cell " + std::to_string(gandhar_.row) + "," +
+                       std::to_string(gandhar_.col));
     if (bits & kUiConfirm) return confirm();
     return moved;
 }
@@ -1881,11 +1881,11 @@ bool UiWalk::confirm() {
         //     loc_4AE243:
         //       sub_42A370(screen, off_4E3080) ; mov eax, 1 ; retn
         if (it->callback == kCbHintRow) {
-            if (rings_ < hintPrice_) {
-                hintFooter_ = 8;
+            if (rings_ < hint_.price) {
+                hint_.footer = 8;
                 log_.push_back("indices: " + std::to_string(rings_) +
                                " anneaux against a price of " +
-                               std::to_string(hintPrice_) + " - refused");
+                               std::to_string(hint_.price) + " - refused");
                 return true;
             }
             return installPanel(kPanelHintBuy);
@@ -2250,12 +2250,12 @@ bool UiWalk::confirmTerminalCell(const omk::UiItem*& it, bool& retVal) {
         // 0..3, and cell 2 - the `Meurtres` file - writes `dword_930750 =
         // 1`. No oscillator and no close, so the answer WAITS: the screen
         // stays on the file and the parked script hears 1 when the player
-        // closes it (`closeAnswer_`), not on the frame the cell is
+        // closes it (`close_.answer`), not on the frame the cell is
         // confirmed.
         if (screen_ == screen::Archives) {
             if (row < 0 || row >= 4) { retVal = false; return true; }
             if (row == 2) {
-                closeAnswer_ = 1;
+                close_.answer = 1;
                 log_.push_back("archives: cell 2 - answer 1, held until the close");
             }
             openDossier(row);
@@ -2430,14 +2430,14 @@ bool UiWalk::confirmXachenCartridge(const omk::UiItem*& it, bool& retVal) {
 // `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image (from `confirm`)
 bool UiWalk::confirmGandharCell(const omk::UiItem*& it, bool& retVal) {
     if (it->callback == kCbGandharCell) {
-        const unsigned cell = (unsigned(gandRow_) << 16) | unsigned(gandCol_);
-        ++gandPresses_;
+        const unsigned cell = (unsigned(gandhar_.row) << 16) | unsigned(gandhar_.col);
+        ++gandhar_.presses;
         unsigned bit = 0;
         if (cell == 0x5u)          bit = 1;
         else if (cell == 0x10003u) bit = 2;
         else if (cell == 0x40002u) bit = 4;
         else if (cell == 0x50004u) bit = 8;
-        gandMask_ |= bit;
+        gandhar_.mask |= bit;
         // THE MARKER. `off_4E4C80[count]` is the widget this press stamps:
         // its x/y are written from the cell the same way the cursor's are,
         // and `sub_428FF0(marker, 0x40000001, 0)` clears the not-drawn bit
@@ -2447,14 +2447,14 @@ bool UiWalk::confirmGandharCell(const omk::UiItem*& it, bool& retVal) {
         // follow: it stamps nothing.
         // Its unlit source is written with its position, as the cursor's.
         if (const UiList* gl = curList()) {
-            const std::size_t mk = static_cast<std::size_t>(gandPresses_);
-            if (mk < gl->items.size() && gandPresses_ <= 4) {
-                const int x = gandCol_ * 63 + 135, y = gandRow_ * 63 + 61;
+            const std::size_t mk = static_cast<std::size_t>(gandhar_.presses);
+            if (mk < gl->items.size() && gandhar_.presses <= 4) {
+                const int x = gandhar_.col * 63 + 135, y = gandhar_.row * 63 + 61;
                 state_->itemPlace[gl->items[mk].addr] = {x, y, x, y};
                 setItemOff(gl->items[mk].addr, false);
             }
         }
-        log_.push_back("gandhar: press " + std::to_string(gandPresses_) +
+        log_.push_back("gandhar: press " + std::to_string(gandhar_.presses) +
                        (bit ? " - one of the four" : " - not in the code"));
         // THE FOURTH PRESS ENDS IT EITHER WAY. `cmp byte_68A608, cl` with
         // `cl = 4`: on the fourth press `Ui_StartOscillator(5, 1500,
@@ -2462,8 +2462,8 @@ bool UiWalk::confirmGandharCell(const omk::UiItem*& it, bool& retVal) {
         // answers nothing - then, all four bits set, the answer 1, a
         // RESTART at 4000 ms and sound 0x27 (0x004B0067, 0x004B0094). The
         // sounds are not ported.
-        if (gandPresses_ == 4) startCloseTimer(1500.0, "gandhar door, the fourth press");
-        if (gandMask_ == 0x0Fu) {
+        if (gandhar_.presses == 4) startCloseTimer(1500.0, "gandhar door, the fourth press");
+        if (gandhar_.mask == 0x0Fu) {
             answer_ = 1;
             log_.push_back("gandhar: the door opens");
             startCloseTimer(4000.0, "gandhar door, the code");
@@ -2598,14 +2598,14 @@ bool UiWalk::confirmShopSell(const omk::UiItem*& it, bool& retVal) {
 bool UiWalk::confirmHintBuy(const omk::UiItem*& it, bool& retVal) {
     if (it->callback == kCbHintBuy) {
         if (!panel_) { retVal = false; return true; }
-        if (rings_ < hintPrice_) {
+        if (rings_ < hint_.price) {
             log_.push_back("indices: the purchase is refused - " +
                            std::to_string(rings_) + " anneaux");
             { retVal = true; return true; }
         }
-        rings_ -= hintPrice_;          // `u16(player + 174) -= price`
-        hintPaid_ = hintPrice_;        // ...for the caller to write back
-        hintSection_ = 1;              // `word_4E2B2E = 1` - THE CLUE
+        rings_ -= hint_.price;          // `u16(player + 174) -= price`
+        hint_.paid = hint_.price;        // ...for the caller to write back
+        hint_.section = 1;              // `word_4E2B2E = 1` - THE CLUE
         for (const auto& l : panel_->lists) {
             if (l.addr != kListHintBuy) continue;
             for (const auto& b : l.items) setItemOff(b.addr, true);
@@ -2615,7 +2615,7 @@ bool UiWalk::confirmHintBuy(const omk::UiItem*& it, bool& retVal) {
         setItemOff(kItemHintPrice, true);
         setItemOff(kItemHintDone, false);
         cur_ = 1;                      // `[screen->panel + 0x18] = 1`
-        log_.push_back("indices: bought for " + std::to_string(hintPrice_) +
+        log_.push_back("indices: bought for " + std::to_string(hint_.price) +
                        ", " + std::to_string(rings_) + " anneaux left");
         { retVal = true; return true; }
     }

@@ -563,8 +563,8 @@ void PlayerController::setBank(const CtlFile& ctl, std::span<const std::byte> da
     // port's memoisation creates and the port's bank swap has to pay.
     tracks_.clear();
     roots_.clear();
-    gridTracks_ = NodeTracks{};
-    gridClip_ = gridGen_ = -1;
+    gridBlend_.tracks = NodeTracks{};
+    gridBlend_.clip = gridBlend_.gen = -1;
     // The track table is counted per bank, so it is re-counted here for the
     // same reason the constructor counts it: a bank whose tracks do not name
     // the model's meshes poses nothing, and the number is how that is seen.
@@ -681,9 +681,9 @@ PlayerController::PlayerController(const Setup& s)
     {
     }
     // the first camera frame snaps (flags & 1 after Camera_LoadParams)
-    for (int k = 0; k < 3; ++k) camEuler_[k] = euler_[k];
+    for (int k = 0; k < 3; ++k) block_.euler[k] = euler_[k];
     resolveSteady(cam_, euler_);
-    camFresh_ = false;
+    block_.fresh = false;
     last_.ground = pos_[1];
     last_.onGround = true;
 }
@@ -1173,49 +1173,49 @@ void PlayerController::tick(float dt, std::uint32_t word) {
 
     // ---- the camera tick, sub_417CF0 -> sub_415D10 / sub_415E60 ---------
     FollowCamera target;
-    if (camFresh_) {
-        for (int k = 0; k < 3; ++k) camEuler_[k] = euler_[k];
-        resolveSteady(cam_, camEuler_);
+    if (block_.fresh) {
+        for (int k = 0; k < 3; ++k) block_.euler[k] = euler_[k];
+        resolveSteady(cam_, block_.euler);
         // `sub_413C00` seeds `+340` from the subject's own y at setup, so the
         // first tick's `+340 - +344` is zero rather than the whole height.
-        camSubjY_ = camPrevSubjY_ = pos_[1] - camLift_;
-        camPrevValid_ = false;
-        camFresh_ = false;
-        camJustChanged_ = true;        // flag 1, for this tick's collision pass
+        collide_.subjY = collide_.prevSubjY = pos_[1] - camLift_;
+        collide_.prevValid = false;
+        block_.fresh = false;
+        collide_.justChanged = true;        // flag 1, for this tick's collision pass
     } else {
         // the lagged Euler triple: chase, snapping inside 0.1 degrees
-        const int k46 = camF46_ == 1 ? 2 : camF46_;
+        const int k46 = block_.f46 == 1 ? 2 : block_.f46;
         for (int k = 0; k < 3; ++k) {
-            if (!k46) { camEuler_[k] = euler_[k]; continue; }
-            const float d = wrap180(euler_[k] - camEuler_[k]);
-            if (std::fabs(d) <= 0.1f) camEuler_[k] = euler_[k];
-            else camEuler_[k] += d * dt / static_cast<float>(k46);
+            if (!k46) { block_.euler[k] = euler_[k]; continue; }
+            const float d = wrap180(euler_[k] - block_.euler[k]);
+            if (std::fabs(d) <= 0.1f) block_.euler[k] = euler_[k];
+            else block_.euler[k] += d * dt / static_cast<float>(k46);
         }
-        resolveSteady(target, camEuler_);
-        const int k42 = camF42_ == 1 ? 2 : camF42_;
-        const int k44 = camF44_ == 1 ? 2 : camF44_;
+        resolveSteady(target, block_.euler);
+        const int k42 = block_.f42 == 1 ? 2 : block_.f42;
+        const int k44 = block_.f44 == 1 ? 2 : block_.f44;
         for (int k = 0; k < 3; ++k) {
             if (k42) cam_.at[k] += (target.at[k] - cam_.at[k]) * dt / static_cast<float>(k42);
             else cam_.at[k] = target.at[k];
             if (k44) cam_.eye[k] += (target.eye[k] - cam_.eye[k]) * dt / static_cast<float>(k44);
             else cam_.eye[k] = target.eye[k];
         }
-        cam_.fov = camFov_;
+        cam_.fov = block_.fov;
     }
     // `+344 = +340; +340 = +156` - the tick latches the eye subject's own Y
     // and the frame before it, in that order and IMMEDIATELY before the
     // collision pass (04_sys.c 3785). `+156` is the subject's origin, which
     // for this controller is the pelvis.
-    camPrevSubjY_ = camSubjY_;
-    camSubjY_     = pos_[1] - camLift_;
+    collide_.prevSubjY = collide_.subjY;
+    collide_.subjY     = pos_[1] - camLift_;
     cameraCollide(dt);
     // ...and `sub_4133B0`/`sub_4133E0` close the tick by writing the final
     // eye and target back into `+20..+28` and `+32..+40`, which is what the
     // NEXT tick's height ease anchors on.
-    camPrevEyeY_  = cam_.eye[1];
-    camPrevAtY_   = cam_.at[1];
-    camPrevValid_ = true;
-    camJustChanged_ = false;      // flag 1: the tick clears it on its way out
+    collide_.prevEyeY  = cam_.eye[1];
+    collide_.prevAtY   = cam_.at[1];
+    collide_.prevValid = true;
+    collide_.justChanged = false;      // flag 1: the tick clears it on its way out
 }
 
 // `sub_417070` (04_sys.c 3370), the arm flag 8 selects - the adventure
@@ -1281,15 +1281,15 @@ void PlayerController::tick(float dt, std::uint32_t word) {
 // the steep complement - but that is a difference in WHICH faces exist, not
 // the flag rule.
 void PlayerController::cameraCollide(float dt) {
-    if (!camSolidA_ && !camSolidB_) return;
+    if (!collide_.solidA && !collide_.solidB) return;
     // `sub_417070`, now `obstructCamera` (o3de/camobstruct.h), with
     // `sub_413C00`'s pushes: +312 = +316 = -0.7 x his pelvis height
     CamObstruct st;
-    st.dist = camDist_; st.block = camBlock_;
-    st.prevEyeY = camPrevEyeY_; st.prevAtY = camPrevAtY_; st.prevValid = camPrevValid_;
-    st.subjY = camSubjY_; st.prevSubjY = camPrevSubjY_;
-    const TriangleSoup* const solids[2] = {camSolidA_, camSolidB_};
-    const SplitSoupGrid* const grids[2] = {camGridA_, camGridB_};
+    st.dist = collide_.dist; st.block = collide_.block;
+    st.prevEyeY = collide_.prevEyeY; st.prevAtY = collide_.prevAtY; st.prevValid = collide_.prevValid;
+    st.subjY = collide_.subjY; st.prevSubjY = collide_.prevSubjY;
+    const TriangleSoup* const solids[2] = {collide_.solidA, collide_.solidB};
+    const SplitSoupGrid* const grids[2] = {collide_.gridA, collide_.gridB};
     const auto cast = [&](const double from[3], const double ray[3]) {
         double best = 2.0;
         for (int k = 0; k < 2; ++k) {
@@ -1306,13 +1306,13 @@ void PlayerController::cameraCollide(float dt) {
     // for the target, which is exactly `+76..+84` against `+112..+120`
     const auto unlagged = [&](float e[3], float a[3]) {
         FollowCamera fc;
-        resolveSteady(fc, camEuler_);
+        resolveSteady(fc, block_.euler);
         for (int k = 0; k < 3; ++k) { e[k] = fc.eye[k]; a[k] = fc.at[k]; }
         return true;
     };
     const double lift = -0.7 * static_cast<double>(camLift_);
-    obstructCamera(st, cam_.eye, cam_.at, lift, lift, dt, camJustChanged_, cast, unlagged);
-    camDist_ = st.dist; camBlock_ = st.block;
+    obstructCamera(st, cam_.eye, cam_.at, lift, lift, dt, collide_.justChanged, cast, unlagged);
+    collide_.dist = st.dist; collide_.block = st.block;
 }
 
 // ------------------------------------------------------------- posing
@@ -1402,7 +1402,7 @@ PlayerController::GridSample PlayerController::gridSample(int n, int keys) const
     // normalised by ITS OWN clamp - 256/51, 256/53, 256/50 against +51, -53
     // and +-50. LABELLED: that correspondence is one hypothesis fitted three
     // times, not three confirmations (todo/omk-play.md 69).
-    float a = takeAngle_;
+    float a = take_.angle;
     // THE ADJUST STEP IS A DIFFERENT BUILDER (`sub_466210`, group 600). Its
     // angle is NOT clamped to the 50 degree cone: the whole circle is split
     // into quadrants, one cell chosen by the quadrant and the other by the
@@ -1428,7 +1428,7 @@ PlayerController::GridSample PlayerController::gridSample(int n, int keys) const
     }
     if (a >  50.0f) a =  50.0f;
     if (a < -50.0f) a = -50.0f;
-    float s = takeSecond_;
+    float s = take_.second;
     const int col = a >= 0.0f ? 2 : 0;
     if (n == 9) {
         if (s >  51.0f) s =  51.0f;
@@ -1455,8 +1455,8 @@ PlayerController::GridSample PlayerController::gridSample(int n, int keys) const
 // the duration of one take.
 const NodeTracks* PlayerController::gridTracks(const NodeTracks& base, int n) {
     const int c = clip();
-    if (gridClip_ == c && gridGen_ == takeGen_ && gridTracks_.valid())
-        return &gridTracks_;
+    if (gridBlend_.clip == c && gridBlend_.gen == take_.gen && gridBlend_.tracks.valid())
+        return &gridBlend_.tracks;
     const int keys = base.frames + 1;         // key 0 is the rest sentinel
     if (n <= 1 || keys % n != 0) return &base;
     const GridSample g = gridSample(n, keys);
@@ -1531,10 +1531,10 @@ const NodeTracks* PlayerController::gridTracks(const NodeTracks& base, int n) {
                 A * (1.0f - g.wAngle) + B * g.wAngle;
         }
     }
-    gridTracks_ = std::move(out);
-    gridClip_ = c;
-    gridGen_  = takeGen_;
-    return &gridTracks_;
+    gridBlend_.tracks = std::move(out);
+    gridBlend_.clip = c;
+    gridBlend_.gen  = take_.gen;
+    return &gridBlend_.tracks;
 }
 
 int PlayerController::poseFrame() const {
@@ -1575,9 +1575,9 @@ float PlayerController::poseFrameF() const {
 // ------------------------------------------------- THE VARIANT GRID (69)
 
 void PlayerController::setTakeGeometry(float angleDeg, float second) {
-    takeAngle_  = angleDeg;
-    takeSecond_ = second;
-    ++takeGen_;                       // the baked window is no longer valid
+    take_.angle  = angleDeg;
+    take_.second = second;
+    ++take_.gen;                       // the baked window is no longer valid
 }
 
 const std::vector<CtlEffect>& PlayerController::stateEffects() const {
@@ -1597,18 +1597,18 @@ int PlayerController::variantCount() const {
 
 void PlayerController::setCameraOffsets(const float eyeOff[3], const float atOff[3],
                                         float fov, int f42, int f44, int f46) {
-    for (int k = 0; k < 3; ++k) { camEyeOff_[k] = eyeOff[k]; camAtOff_[k] = atOff[k]; }
-    camFov_ = fov > 1.0f ? fov : kFollowFov;
-    camF42_ = f42; camF44_ = f44; camF46_ = f46;
-    camFresh_ = true;      // Camera_LoadParams sets flag 1: the next frame snaps
+    for (int k = 0; k < 3; ++k) { block_.eyeOff[k] = eyeOff[k]; block_.atOff[k] = atOff[k]; }
+    block_.fov = fov > 1.0f ? fov : kFollowFov;
+    block_.f42 = f42; block_.f44 = f44; block_.f46 = f46;
+    block_.fresh = true;      // Camera_LoadParams sets flag 1: the next frame snaps
     // ...and `Camera_Request` does `memset(cam + 208, 0, 0x94)` before it
     // calls `sub_414520`, which clears `+208` AND `+328`. So a new camera
     // never inherits the previous one's block state or its kept distance -
     // which is the fault `todo/camera-obstruction.md` 2 records as attempt
     // 2's, and it was still latent here because the two live in the
     // controller rather than in a per-camera block.
-    camBlock_ = 0;
-    camDist_  = 0.0f;
+    collide_.block = 0;
+    collide_.dist  = 0.0f;
 }
 
 void PlayerController::resolveSteady(FollowCamera& c, const float e[3]) const {
@@ -1619,11 +1619,11 @@ void PlayerController::resolveSteady(FollowCamera& c, const float e[3]) const {
     // The subject, which is the actor's ORIGIN and not the floor point - see
     // `cameraLift()`. Y points down, so raising it is a subtraction.
     const float sub[3] = {pos_[0], pos_[1] - camLift_, pos_[2]};
-    rotateYaw(e[1], camEyeOff_, r);
+    rotateYaw(e[1], block_.eyeOff, r);
     for (int k = 0; k < 3; ++k) c.eye[k] = sub[k] - r[k];
-    rotateYaw(euler_[1], camAtOff_, r);
+    rotateYaw(euler_[1], block_.atOff, r);
     for (int k = 0; k < 3; ++k) c.at[k] = sub[k] - r[k];
-    c.fov = camFov_;
+    c.fov = block_.fov;
 }
 
 FollowCamera PlayerController::resolveOffsets(const float eyeOff[3], const float atOff[3],
@@ -1674,14 +1674,14 @@ bool PlayerController::lookTick(std::uint32_t bits, int mdx, int mdy, int sensX,
     float& p = headEuler_[0];
     float& y = headEuler_[1];
     const int st = static_cast<int>(rt_.state());
-    if ((st == 1 || st == 13) && lookFlag_) {
+    if ((st == 1 || st == 13) && look_.flag) {
         if (p >= 180.0f) p -= 360.0f;
         if (y >= 180.0f) y -= 360.0f;
         if (bits & 4u) p -= dt * 6.0f;
         if (bits & 8u) p += dt * 6.0f;
         if (bits & 1u) y += dt * 6.0f;
         if (bits & 2u) y -= dt * 6.0f;
-        if (lookDropMouse_) { mdx = mdy = 0; lookDropMouse_ = false; }
+        if (look_.dropMouse) { mdx = mdy = 0; look_.dropMouse = false; }
         y -= static_cast<float>(static_cast<double>(sensX * mdx) * dt * 0.0099999998);
         p -= static_cast<float>(static_cast<double>(sensY * mdy) * dt * 0.0099999998);
         if (p < -40.0f) p = -40.0f;
@@ -1691,7 +1691,7 @@ bool PlayerController::lookTick(std::uint32_t bits, int mdx, int mdy, int sensX,
         if (p < 0.0f) p += 360.0f;
         if (y < 0.0f) y += 360.0f;
         mouseMoved = mdx != 0 || mdy != 0;
-        lookFlag_ = false;
+        look_.flag = false;
         return true;
     }
     // `Actor_SetHeadLook(a, 0, 0)`: the player has no look-at target

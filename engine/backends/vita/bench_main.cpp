@@ -41,8 +41,7 @@
 //
 // Host build (from engine/, after `make` has built the objects):
 //
-//     c++ -std=c++20 -O2 -Isrc -Ithird_party -o build/vita_bench \
-//         backends/vita/bench_main.cpp build/obj/src/*/*.o
+//     c++ -std=c++20 -O2 -Isrc -Ithird_party -o build/vita_bench backends/vita/bench_main.cpp build/obj/src/*/*.o
 //
 // Vita build: `backends/vita/CMakeLists.txt`, target `omk_bench`. On the
 // device there is no command line, so the defaults below apply and the report

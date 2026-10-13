@@ -41,8 +41,8 @@ things it leaves out:
   second-ray hit this holds the distance rather than re-placing the eye the
   way the engine does (at `+328` along the current direction, shifted by the
   subject's own vertical movement `+340 - +344`); labelled in the code.
-* **flag 1** is in: `camFresh_` already carried it for the eye/target
-  smoothing, and `camJustChanged_` now carries it into the collision pass, so
+* **flag 1** is in: `block_.fresh` already carried it for the eye/target
+  smoothing, and `collide_.justChanged` now carries it into the collision pass, so
   both easings snap on the frame a camera changes.
 * **the see-through flag is UNREACHABLE for this camera**, which is why it
   stays out. Both arms guard their hit with

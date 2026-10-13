@@ -448,10 +448,10 @@ public:
     // the camera before the look returns). The flag is cleared only by the
     // arm, so a press in another state waits for state 1.
     void lookPress() {
-        if (lookFlush_) { lookDropMouse_ = true; lookFlush_ = false; }
-        lookFlag_ = true;
+        if (look_.flush) { look_.dropMouse = true; look_.flush = false; }
+        look_.flag = true;
     }
-    void lookRelease() { lookFlush_ = true; lookFlag_ = false; }
+    void lookRelease() { look_.flush = true; look_.flag = false; }
     // The head arm, once a frame after the moves are drained. `bits` is the
     // frame's input word (`dword_4E9718`), `mdx`/`mdy` the mouse's motion,
     // `sensX`/`sensY` options rows 23/24. -> true when the free look ran
@@ -585,7 +585,7 @@ public:
     // QUADRANT picks one cell, its sign picks the other, and a 0..256 fraction
     // of `angle * 256/90` blends them - no second axis at all (`out[4]` is
     // written 0, so the cross-blend collapses). Group id 600, clip H_ADJSTP.
-    void setAdjustStep(bool on) { if (adjust_ != on) { adjust_ = on; ++takeGen_; } }
+    void setAdjustStep(bool on) { if (adjust_ != on) { adjust_ = on; ++take_.gen; } }
     // THE STEP IS SCALED TO THE DISTANCE, NOT PLAYED AS AUTHORED. `sub_465D30`
     // sets `dword_6A5380 = |D - target| * 0.0508` (the error over the 50 cm
     // step) and `dword_53AE1C = 1`, and the channel tick (`sub_45C680` case
@@ -662,8 +662,8 @@ public:
     const FollowCamera& followCamera() const { return cam_; }
     // `+208` and `+328`, for a probe. 0 clear / 1 blocked / 2 recovering, and
     // the distance the pass is keeping.
-    int   cameraBlockState() const { return camBlock_; }
-    float cameraKeptDistance() const { return camDist_; }
+    int   cameraBlockState() const { return collide_.block; }
+    float cameraKeptDistance() const { return collide_.dist; }
     // --- the camera's COLLISION pass ------------------------------------
     // `sub_413C00` sets the ordinary follow camera's flags to `0x1C` - 4 | 8 |
     // 0x10 - and in the tick `sub_417CF0` flag 4 opens the collision branch,
@@ -674,7 +674,7 @@ public:
     // camera behaves as it did before, which is what every headless check that
     // does not set one still measures.
     void setCameraSolids(const TriangleSoup* a, const TriangleSoup* b) {
-        camSolidA_ = a; camSolidB_ = b;
+        collide_.solidA = a; collide_.solidB = b;
     }
     // The walker's ground probe through a grid over its soup (Walker::setGrid).
     void setGroundGrid(const SplitSoupGrid* g) { walker_.setGrid(g); }
@@ -684,7 +684,7 @@ public:
     // and one for each camera solid, in `setCameraSolids`'s order.
     void setBlockerGrid(const SplitSoupGrid* g) { walker_.setBlockerGrid(g); }
     void setCameraGrids(const SplitSoupGrid* a, const SplitSoupGrid* b) {
-        camGridA_ = a; camGridB_ = b;
+        collide_.gridA = a; collide_.gridB = b;
     }
 
     // Where it settles for the current position and facing - the resolve
@@ -793,38 +793,42 @@ private:
     void waterTick(double dx, double dy, double dz, float dt);
     float shootMotion_[3] = {0, 0, 0}; // `addShootMotion`, spent by the next tick
     float headEuler_[2] = {0, 0};      // +432 / +436, [0, 360)
-    bool  lookFlag_ = false;           // +1305
-    bool  lookFlush_ = true;           // dword_4CB164
-    bool  lookDropMouse_ = false;      // `sub_43D870(0, 0)` this frame
+    struct LookState {
+        bool  flag = false;           // +1305
+        bool  flush = true;           // dword_4CB164
+        bool  dropMouse = false;      // `sub_43D870(0, 0)` this frame
+    } look_{};
     float camLift_ = 0.0f;             // pelvis above the feet - see cameraLift()
     float headLift_ = 0.0f;            // 0.7 * the model's extent - see headLift()
-    // `sub_417070`'s state. `+328` is the distance it keeps between frames -
-    // the camera snaps IN to a blocking hit and eases back OUT over `+320`
-    // frames - and `+208` is 0 clear / 1 blocked / 2 recovering.
-    const TriangleSoup* camSolidA_ = nullptr;
-    const TriangleSoup* camSolidB_ = nullptr;
-    const SplitSoupGrid* camGridA_ = nullptr;
-    const SplitSoupGrid* camGridB_ = nullptr;
-    float camDist_ = 0.0f;             // +328
-    int   camBlock_ = 0;               // +208
-    // `+24` and `+36`, LAST FRAME'S FINAL eye and target Y. The engine keeps
-    // them because `sub_4133B0`/`sub_4133E0` write `+20..+28` and `+32..+40`
-    // back from `+52`/`+64` at the end of every tick, and the height push
-    // eases toward them - so the push is a first-order filter that CONVERGES
-    // rather than a fixed fraction. `todo/camera-obstruction.md` 5a.
-    float camPrevEyeY_ = 0.0f;         // +24
-    float camPrevAtY_  = 0.0f;         // +36
-    bool  camPrevValid_ = false;       // nothing to ease from on the first tick
-    // `+340` and `+344`: `+156`, the eye subject's own Y, this frame and last.
-    // The tick does `+344 = +340; +340 = +156` immediately before the pass,
-    // and the second ray's blocked arm shifts both heights by the difference.
-    float camSubjY_     = 0.0f;        // +340
-    float camPrevSubjY_ = 0.0f;        // +344
-    // FLAG 1, the "just changed" bit: `Camera_LoadParams` sets it, the tick
-    // clears it on its way out, and while it is set BOTH of the collision
-    // pass's easings are skipped and the camera snaps. `camFresh_` is the
-    // same bit for the eye/target smoothing; this is the frame it covers.
-    bool  camJustChanged_ = false;
+    struct CameraCollision {
+        // `sub_417070`'s state. `+328` is the distance it keeps between frames -
+        // the camera snaps IN to a blocking hit and eases back OUT over `+320`
+        // frames - and `+208` is 0 clear / 1 blocked / 2 recovering.
+        const TriangleSoup* solidA = nullptr;
+        const TriangleSoup* solidB = nullptr;
+        const SplitSoupGrid* gridA = nullptr;
+        const SplitSoupGrid* gridB = nullptr;
+        float dist = 0.0f;             // +328
+        int   block = 0;               // +208
+        // `+24` and `+36`, LAST FRAME'S FINAL eye and target Y. The engine keeps
+        // them because `sub_4133B0`/`sub_4133E0` write `+20..+28` and `+32..+40`
+        // back from `+52`/`+64` at the end of every tick, and the height push
+        // eases toward them - so the push is a first-order filter that CONVERGES
+        // rather than a fixed fraction. `todo/camera-obstruction.md` 5a.
+        float prevEyeY = 0.0f;         // +24
+        float prevAtY  = 0.0f;         // +36
+        bool  prevValid = false;       // nothing to ease from on the first tick
+        // `+340` and `+344`: `+156`, the eye subject's own Y, this frame and last.
+        // The tick does `+344 = +340; +340 = +156` immediately before the pass,
+        // and the second ray's blocked arm shifts both heights by the difference.
+        float subjY     = 0.0f;        // +340
+        float prevSubjY = 0.0f;        // +344
+        // FLAG 1, the "just changed" bit: `Camera_LoadParams` sets it, the tick
+        // clears it on its way out, and while it is set BOTH of the collision
+        // pass's easings are skipped and the camera snaps. `block_.fresh` is the
+        // same bit for the eye/target smoothing; this is the frame it covers.
+        bool  justChanged = false;
+    } collide_{};
     void  cameraCollide(float dt);
     float frameBefore_ = 1.0f;         // the channel's +12/+16 pair as the
     float frameAfter_  = 1.0f;         // window rule reads them
@@ -841,13 +845,17 @@ private:
 
     std::map<int, RootTrack>  roots_;
     std::map<int, NodeTracks> tracks_;
-    // The blended window for a variant-grid clip, and the geometry it was
-    // baked from. Keyed on the clip AND on a generation that the setter bumps,
-    // because unlike an ordinary clip the result depends on the approach.
-    NodeTracks gridTracks_;
-    int   gridClip_ = -1, gridGen_ = -1;
-    float takeAngle_ = 0.0f, takeSecond_ = 0.0f;
-    int   takeGen_ = 0;
+    struct GridBlend {
+        // The blended window for a variant-grid clip, and the geometry it was
+        // baked from. Keyed on the clip AND on a generation that the setter bumps,
+        // because unlike an ordinary clip the result depends on the approach.
+        NodeTracks tracks;
+        int   clip = -1, gen = -1;
+    } gridBlend_{};
+    struct TakeApproach {
+        float angle = 0.0f, second = 0.0f;
+        int   gen = 0;
+    } take_{};
     bool  adjust_ = false;
     float stepScale_ = 1.0f;           // `dword_6A5380`, 1.0 outside a step
     bool  haveRootFrame_ = false;      // node+156 is not actor+288
@@ -858,13 +866,15 @@ private:
     bool  clipEntered_ = false;        // a clip set from outside the tick: its first delta is from 0
     int matched_ = 0, total_ = 0;
 
-    // the camera block's live state
-    float camEyeOff_[3] = {0, 0, kFollowEyeBack};
-    float camAtOff_[3]  = {0, 0, 0};
-    float camFov_ = kFollowFov;
-    int   camF42_ = kFollowF42, camF44_ = kFollowF44, camF46_ = kFollowF46;
-    float camEuler_[3] = {0, 0, 0};    // +76..+84, the lagged copy
-    bool  camFresh_ = true;            // flags & 1: the first frame snaps
+    struct CameraBlock {
+        // the camera block's live state
+        float eyeOff[3] = {0, 0, kFollowEyeBack};
+        float atOff[3]  = {0, 0, 0};
+        float fov = kFollowFov;
+        int   f42 = kFollowF42, f44 = kFollowF44, f46 = kFollowF46;
+        float euler[3] = {0, 0, 0};    // +76..+84, the lagged copy
+        bool  fresh = true;            // flags & 1: the first frame snaps
+    } block_{};
     FollowCamera cam_;
 };
 

@@ -88,6 +88,13 @@ inline std::uint64_t keyHash(const P* ps, int n) {
     return h ^ (h >> 32);
 }
 
+// Sorts a key's n <= 4 positions. Not `std::sort`: its insertion pass is sized
+// for 16, and gcc's `-Warray-bounds` cannot see that `n` never reaches it.
+inline void sortKey(P* a, int n) {
+    for (int i = 1; i < n; ++i)
+        for (int k = i; k > 0 && a[k] < a[k - 1]; --k) std::swap(a[k], a[k - 1]);
+}
+
 // Whether two keys are the same MULTISET of positions - what the sorted array
 // compared equal meant.
 inline bool sameKey(const std::uint32_t* stored, const P* ps, int n) {
@@ -96,16 +103,16 @@ inline bool sameKey(const std::uint32_t* stored, const P* ps, int n) {
         a[k] = P{stored[3 * k], stored[3 * k + 1], stored[3 * k + 2]};
         b[k] = ps[k];
     }
-    std::sort(a, a + n);
-    std::sort(b, b + n);
+    sortKey(a, n);
+    sortKey(b, n);
     return std::equal(a, a + n, b);
 }
 
 inline bool sameKeyP(const P* x, const P* ps, int n) {
     P a[4], b[4];
     for (int k = 0; k < n; ++k) { a[k] = x[k]; b[k] = ps[k]; }
-    std::sort(a, a + n);
-    std::sort(b, b + n);
+    sortKey(a, n);
+    sortKey(b, n);
     return std::equal(a, a + n, b);
 }
 

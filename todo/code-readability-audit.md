@@ -668,6 +668,27 @@ finding: a check that hashed a conversation frame would flicker.
   against a `Uint32` in a conditional. Guard 0 of 14; 18 camera, mirror,
   music, UI-answer and event checks green; 3DS and Vita build with no
   warning, the GL1 glue syntax-checked.
+* step 14e - `PlayerController` and `UiWalk` components. The player's
+  follow camera: `block_` (the camera block's live state - offsets, fov,
+  the three `F4x` fields, the lagged Euler, `fresh`) and `collide_`
+  (`sub_417070`'s state: the four soups it casts against, the distance,
+  the block code, last frame's heights and the "just changed" bit, each
+  under its own comment); `look_`, `gridBlend_` (the variant-grid window)
+  and `take_` (the approach it was baked for). The interface walk:
+  `close_` (the answer a callback leaves for the close), `hint_` (the hint
+  shop's eight globals) and `gandhar_` (the door's cursor and mask). The
+  tool's first run here moved a comment INTO the struct and left its copy
+  above, and left four `Type*` fields out; both fixed (a comment goes
+  where the line it heads goes; a pointer-typed field is a field), the
+  run redone, and the committed components of 14b-14d scanned for the same
+  duplication - none. A clean Vita build and a clean 3DS build were run
+  to list every gcc warning at once rather than one recompiled file at a
+  time; four more are gone (a sign compare, two enum/`Uint32`
+  conditionals in `sdlfront.cpp`, a backslash-ended comment, and an
+  `-Warray-bounds` false positive on `std::sort` over a key of at most
+  four positions, now a bounded insertion sort - same order, same
+  multiset test). Guard 0 of 14; 22 camera, collision, look, tie and
+  close checks green; both consoles build clean with no warning.
 
 ## 7. For the tutorial
 

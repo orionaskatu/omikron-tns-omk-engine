@@ -1553,7 +1553,7 @@ void PlayState::lazyPlace(int key) {
     auto it = lazy.meshes.find(key);
     if (it == lazy.meshes.end() || !it->second.pending) return;
     LazyMesh& lm = it->second;
-    if (lm.gen != worldGen) {             // recorded against soups since replaced
+    if (lm.gen != static_cast<long>(worldGen)) {   // recorded against soups since replaced
         lm.pending = false;
         if (--lazy.pending <= 0) { lazy.pending = 0; lazyRegister(); }
         return;

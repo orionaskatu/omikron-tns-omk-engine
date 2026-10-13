@@ -235,7 +235,7 @@ void SdlFrontend::setFullscreen(bool on) {
 #if defined(OMK_SDL3)
         SDL_SetWindowFullscreen(wnd, on);
 #else
-        SDL_SetWindowFullscreen(wnd, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
+        SDL_SetWindowFullscreen(wnd, on ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u);
 #endif
         std::printf("fullscreen: %s\n", on ? "on (F11 leaves it)" : "off");
     }
@@ -257,7 +257,7 @@ std::uint32_t SdlFrontend::windowFlags() const {
 #if defined(OMK_SDL3)
     return SDL_WINDOW_RESIZABLE | (fullscreen_ ? SDL_WINDOW_FULLSCREEN : 0u);
 #else
-    return SDL_WINDOW_RESIZABLE | (fullscreen_ ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0u);
+    return SDL_WINDOW_RESIZABLE | (fullscreen_ ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u);
 #endif
 }
 

@@ -908,24 +908,24 @@ public:
     // resolves because it is a world MESSAGE and then a game variable, and
     // the walk owns neither. Read once per build in the engine; supplied
     // here for as long as the screen is up, which is the same value.
-    void setHintPrice(int n) { hintPrice_ = n; }
-    int  hintPrice() const { return hintPrice_; }
+    void setHintPrice(int n) { hint_.price = n; }
+    int  hintPrice() const { return hint_.price; }
     // `dword_4E2B08` - the row list's `+24`, what `sub_42ADD0` takes from
     // the channel's event 29. The builders branch on it (no rows: the body
     // box takes the focus and the footer prints string 5), so the walk needs
     // it BEFORE `buildPage` runs, not after: a caller sets it every frame
     // the save screen is open.
-    void setHintRows(int n) { hintRows_ = n; }
-    int  hintRows() const { return hintRows_; }
+    void setHintRows(int n) { hint_.rows = n; }
+    int  hintRows() const { return hint_.rows; }
     // `word_4E2D0C` - the footer item's string id, 6 or (after a refusal) 8.
-    int  hintFooterString() const { return hintFooter_; }
+    int  hintFooterString() const { return hint_.footer; }
     // `word_4E2B2E` - the body box's SECTION index, `sub_477F60`'s
     // `mov ax, [ebx+1Eh]`: 0 the memo, 1 the CLUE a purchase reveals.
-    int  hintBodySection() const { return hintSection_; }
+    int  hintBodySection() const { return hint_.section; }
     // `word_4E2B12` / `word_4E2CF2` - the Y each builder writes over the two
     // items the two panels SHARE. -1 when the walk is on neither page.
-    int  hintBodyY() const { return hintBodyY_; }
-    int  hintFooterY() const { return hintFooterY_; }
+    int  hintBodyY() const { return hint_.bodyY; }
+    int  hintFooterY() const { return hint_.footerY; }
     // `dword_4E2B4C` - the body box's own `+0x3C`, the ROW whose description
     // it shows. Every build writes it from the row list's selection, and
     // `sub_42ADD0(rows, 0, 2)` has just put that selection back to 0, so it
@@ -934,10 +934,10 @@ public:
     // `sub_42AFF0` - so moving the highlight does NOT change what the box
     // shows or what `Acheter` pays for. Read from the code; not a claim
     // about what the authors meant.
-    int  hintBodyRow() const { return hintBodyRow_; }
+    int  hintBodyRow() const { return hint_.bodyRow; }
     // A purchase the caller must carry out: the anneaux `Game_HandleEvent`
     // case 38's list-2 arm took off the player record. -1 when there is none.
-    int  takeHintPurchase() { const int p = hintPaid_; hintPaid_ = -1; return p; }
+    int  takeHintPurchase() { const int p = hint_.paid; hint_.paid = -1; return p; }
 
     // The panel the walk is ON, which is not always the screen's own: an item
     // with a `child` descends into one, and that is how the start menu's
@@ -1033,8 +1033,8 @@ public:
     // closes (`sub_466B60`'s event 5), so the script waits the delay out too.
     void startCloseTimer(double ms, const char* who) {
         closeMs_ = ms;
-        closeStarted_ = ms;
-        closeWho_ = who;
+        close_.started = ms;
+        close_.who = who;
         log_.push_back(std::string("oscillator 5: ") + who + " closes in " +
                        std::to_string(static_cast<int>(ms)) + " ms");
     }
@@ -1042,9 +1042,9 @@ public:
     // The last start since the caller asked, for its log line: -> the period,
     // 0 when none. `who` names the arm that started it.
     double takeCloseStarted(std::string& who) {
-        const double v = closeStarted_;
-        closeStarted_ = 0.0;
-        who = closeWho_;
+        const double v = close_.started;
+        close_.started = 0.0;
+        who = close_.who;
         return v;
     }
     double closeLeftMs() const { return closeMs_; }
@@ -1067,7 +1067,7 @@ public:
         return true;
     }
     // An ANSWER WRITTEN WITHOUT A CLOSE, still waiting for one: -1 none.
-    int heldAnswer() const { return answer_ < 0 ? closeAnswer_ : -1; }
+    int heldAnswer() const { return answer_ < 0 ? close_.answer : -1; }
     // One tick of it. -> true on the tick it expires, the screen then closed.
     bool tickClose(double ms) {
         if (!closing()) return false;
@@ -1199,7 +1199,7 @@ public:
     // carrying 0x10, `0x0042A990`'s button). For the TERMINAL that is
     // `sub_4AF0E0`, which writes its answer here; every other screen of the
     // family has the generic close, which posts whatever `dword_930750`
-    // already holds - so an answer written earlier and held (`closeAnswer_`)
+    // already holds - so an answer written earlier and held (`close_.answer`)
     // reaches the script now. `how` goes into the log.
     void closeNow(const char* how);
     // The terminal family's dossier reader: `sub_42A370(screen, 0x004E4170)`
@@ -1217,10 +1217,10 @@ public:
     // name field leaves the script suspended for ever.
     int   answer() const { return answer_; }
     // The Gandhar door's cursor, for the viewer that draws it.
-    int   gandharCol() const { return gandCol_; }
-    int   gandharRow() const { return gandRow_; }
-    int   gandharPresses() const { return gandPresses_; }
-    unsigned gandharMask() const { return gandMask_; }
+    int   gandharCol() const { return gandhar_.col; }
+    int   gandharRow() const { return gandhar_.row; }
+    int   gandharPresses() const { return gandhar_.presses; }
+    unsigned gandharMask() const { return gandhar_.mask; }
     // Where a hook put an item - {x, y, unlit source x, unlit source y} - or
     // null for the record's own place. See `UiListState::itemPlace`.
     const std::array<int, 4>* itemPlace(std::uint32_t addr) const {
@@ -1461,13 +1461,15 @@ private:
     int  answer_ = -1;
     double closeMs_ = 0.0;   // oscillator 5 (`startCloseTimer`)
     double bannerMs_ = 0.0;  // oscillator 6 (`bannerRunning`)
-    // `dword_930750` WRITTEN BY A CALLBACK THAT LEAVES THE SCREEN UP - the
-    // ARCHIVES' row 2. The parked script hears it only when the screen
-    // closes, whichever way, so it is held here and handed to `answer_` by
-    // `closeNow`. -1 none.
-    int    closeAnswer_ = -1;
-    double closeStarted_ = 0.0;
-    std::string closeWho_;
+    struct PendingClose {
+        // `dword_930750` WRITTEN BY A CALLBACK THAT LEAVES THE SCREEN UP - the
+        // ARCHIVES' row 2. The parked script hears it only when the screen
+        // closes, whichever way, so it is held here and handed to `answer_` by
+        // `closeNow`. -1 none.
+        int    answer = -1;
+        double started = 0.0;
+        std::string who;
+    } close_{};
     std::string name_;
     int         nameCursor_ = 0;
     // The load panel's directory state, when a caller has attached one. It
@@ -1485,17 +1487,19 @@ private:
     // `sub_49D9E0`'s `fopen` test, supplied from outside - see `setCityMap`.
     bool        cityMapKnown_ = false;
     bool        cityMapAvailable_ = false;
-    // The hint shop's globals. All five are static records in the engine's
-    // data segment, like the selections and the colours - a builder writes
-    // the ones it means to and the rest keep what the last one left.
-    int         hintPrice_ = 0;      // dword_6A17C0
-    int         hintRows_ = 0;       // dword_4E2B08 (the list's +24)
-    int         hintFooter_ = 6;     // word_4E2D0C
-    int         hintSection_ = 0;    // word_4E2B2E
-    int         hintBodyY_ = -1;     // word_4E2B12
-    int         hintFooterY_ = -1;   // word_4E2CF2
-    int         hintBodyRow_ = -1;   // dword_4E2B4C
-    int         hintPaid_ = -1;      // the anneaux case 38's list-2 arm took
+    struct HintShop {
+        // The hint shop's globals. All five are static records in the engine's
+        // data segment, like the selections and the colours - a builder writes
+        // the ones it means to and the rest keep what the last one left.
+        int         price = 0;      // dword_6A17C0
+        int         rows = 0;       // dword_4E2B08 (the list's +24)
+        int         footer = 6;     // word_4E2D0C
+        int         section = 0;    // word_4E2B2E
+        int         bodyY = -1;     // word_4E2B12
+        int         footerY = -1;   // word_4E2CF2
+        int         bodyRow = -1;   // dword_4E2B4C
+        int         paid = -1;      // the anneaux case 38's list-2 arm took
+    } hint_{};
     int         pendingSave_ = -1;
     // The row an overwrite confirm is standing over, so its `Oui` knows
     // which slot it agreed to. -1 when no confirm is up.
@@ -1513,11 +1517,13 @@ private:
     // `dword_68A5FC` (dossier 5, row 4). Its answer is written on CLOSE by
     // `sub_4AF0E0`, not by the cell - see `keypad`.
     bool        termRow3_ = false, termRow4_ = false;
-    // THE GANDHAR DOOR's cursor and the symbols pressed so far: the cell is
-    // the cursor item's own `+3C` as `(row << 16) | col`, the mask is
-    // `byte_68A60C` and the count `byte_68A608`.
-    int         gandCol_ = 0, gandRow_ = 0, gandPresses_ = 0;
-    unsigned    gandMask_ = 0;
+    struct GandharCursor {
+        // THE GANDHAR DOOR's cursor and the symbols pressed so far: the cell is
+        // the cursor item's own `+3C` as `(row << 16) | col`, the mask is
+        // `byte_68A60C` and the count `byte_68A608`.
+        int         col = 0, row = 0, presses = 0;
+        unsigned    mask = 0;
+    } gandhar_{};
     // DEN'S LOCKER: which wheel is under the hand (the list's own `+2`) and
     // the four digits (each wheel item's `+3C`).
     int         denWheel_ = 0;

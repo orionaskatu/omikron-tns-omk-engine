@@ -19,6 +19,7 @@
 #include "script/area.h"
 #include "script/gamestate.h"
 #include "script/script.h"
+#include "probe_common.h"
 
 #include <cstdio>
 #include <string>
@@ -64,17 +65,11 @@ void runOne(omk::Session& s, const omk::OpcodeTable& t, int op) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: checkpoint_probe <gamedata> <tables>\n");
-        return 2;
-    }
-    const std::string fr = argv[1], tb = argv[2];
-    const auto table = omk::OpcodeTable::loadJson(tb + "/vm_opcodes.json");
-    if (!table.valid()) return 1;
-    const std::string iam = fr + "/IAM";
-
-    auto state = omk::GameState::fromFile(iam + "/START");
-    omk::Session s(iam, state, table);
+    const auto in = omk::probe::open(argc, argv, 3, "usage: checkpoint_probe <gamedata> <tables>");
+    if (!in) return in.code;
+    const auto& table = in.table;
+    auto state = in.newGame();
+    omk::Session s(in.iam, state, table);
     s.loadArea(2);
     for (int k = 0; k < 2; ++k) {
         if (s.residentSlot(k).areaCtx >= 0) s.freeContext(s.residentSlot(k).areaCtx);

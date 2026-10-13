@@ -114,6 +114,60 @@ def _viewer_run(args, *a, **k):
 
 subprocess.run = _viewer_run
 
+
+# THE VIEWER RUN - the preamble the engine checks repeat
+# (`todo/code-readability-audit.md` 5): build the viewer, run it headless
+# against the data and the tables, read its log. A check written or touched
+# from 2026-10-13 on uses these; the older ones move onto them as they are
+# touched. Both still pass through `_viewer_run` above (the build lock, the
+# resolution, the private saves file, the filter).
+_PLAY_UNBUILT = (("build failed",), ("built",), "engine/ must build")
+
+
+def _play_built(target="play"):
+    """`make -s <target>` and the viewer it builds, or None when it did not
+    build. A check returns `_PLAY_UNBUILT` on None."""
+    eng = os.path.join(ROOT, "engine")
+    binary = {"play": "omk-play", "play-gles": "omk-play-gles"}[target]
+    b = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True)
+    path = os.path.join(eng, "build", binary)
+    return path if b.returncode == 0 and os.path.exists(path) else None
+
+
+def _play_out(play, *flags, save="save-appart.bin", env=None, timeout=None):
+    """`play` run headless (`SDL_VIDEODRIVER=dummy`) with the data root and
+    the tables, then `--save traces/<save>` unless `save` is None, then
+    `flags`; its stdout, decoded as latin-1 (the log carries the game's own
+    text). `env` adds variables - an `OMK_*` switch, say."""
+    argv = [play, omkpaths.data_root(), os.path.join(ROOT, "tables")]
+    if save:
+        argv += ["--save", os.path.join(ROOT, "traces", save)]
+    argv += [str(f) for f in flags]
+    e = dict(os.environ, SDL_VIDEODRIVER="dummy", **(env or {}))
+    return subprocess.run(argv, capture_output=True, encoding="latin-1", env=e,
+                          timeout=timeout).stdout
+
+
+# `--hold`'s stream from readable steps: `hold(wait(40), press("TAB", frames=3),
+# press("UP", "SPACE", frames=12))` is "0*40,k15*3,k200+57*12" - the grammar
+# `playsetup_adventure.cpp` parses: `k<DIK>[+<DIK>...]*<frames>`, `0*n` none.
+_DIK = {"ESC": 0x01, "TAB": 0x0F, "ENTER": 0x1C, "LCTRL": 0x1D, "RSHIFT": 0x36,
+        "SPACE": 0x39, "NUM4": 0x4B, "NUM6": 0x4D, "RCTRL": 0x9D, "UP": 0xC8,
+        "LEFT": 0xCB, "RIGHT": 0xCD, "DOWN": 0xD0}
+
+
+def wait(frames):
+    return "0*%d" % frames
+
+
+def press(*keys, frames=1):
+    return "k" + "+".join(str(_DIK[k] if isinstance(k, str) else k) for k in keys) + \
+        "*%d" % frames
+
+
+def hold(*steps):
+    return ",".join(steps)
+
 # BEFORE the readers are imported, not in main(). Several of them resolve a
 # path at MODULE level - `omkdata.DIALOG`, `omkdata.MORPH`, `fnt.FONTS_DIR` -
 # so a `--data` parsed any later would be read after the value it is meant to
@@ -44092,27 +44146,15 @@ def c_engine_fight_park():
     log line turned it red. SHOWN TO FAIL: the old
     `if (!beginFight(...)) break;` restored - the music switches at once.
     """
-    import subprocess
-    eng = os.path.join(ROOT, "engine")
-    fr = omkpaths.data_root()
-    b = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True)
-    play = os.path.join(eng, "build", "omk-play")
-    if b.returncode != 0 or not os.path.exists(play):
-        return ("build failed",), ("built",), "engine/ must build"
-    o = subprocess.run(
-        [play, fr, os.path.join(ROOT, "tables"), "--save",
-         os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "5",
-         "--fight", "572", "--frames", "30", "--nodelay", "--no-crowd"],
-        capture_output=True, encoding="latin-1",
-        env=dict(os.environ, SDL_VIDEODRIVER="dummy")).stdout
+    play = _play_built()
+    if not play:
+        return _PLAY_UNBUILT
+    o = _play_out(play, "--area", "5", "--fight", "572", "--frames", "30", "--nodelay",
+                  "--no-crowd")
     attached = "fight.begin 572: not shown - ATTACHED by the fight" in o
     begins = "FIGHT BEGINS against CHARACTERS 572" in o
-    r = subprocess.run(
-        [play, fr, os.path.join(ROOT, "tables"), "--save",
-         os.path.join(ROOT, "traces", "save-appart.bin"),
-         "--fight-supermarket", "--frames", "700", "--nodelay"],
-        capture_output=True, encoding="latin-1",
-        env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_FIGHT_REFUSE="1")).stdout
+    r = _play_out(play, "--fight-supermarket", "--frames", "700", "--nodelay",
+                  env={"OMK_FIGHT_REFUSE": "1"})
     refused = "fight.begin 48: REFUSED by OMK_FIGHT_REFUSE" in r
     waits = "the script waits for event 2 all the same" in r
     at = r.find("fight.begin 48: REFUSED")
@@ -44660,8 +44702,9 @@ def c_licence_headers():
     # 610 the same day: + `engine/src/ui/screens.h` (the 37 screens by name);
     # 611: + `tools/comments_only.py` (a comments-only change, proved)
     # 613: + `engine/src/platform/env.{h,cpp}` (the `OMK_*` switches' one reader)
+    # 614: + `engine/tools/probe_common.h` (the probes' shared preamble)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (613, [], 1, []), \
+           (614, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -46385,7 +46428,8 @@ def c_engine_player_jump():
             [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
              "--save", save, "--area", "0",
              "--stand", "1804,0,-6890,336", "--no-crowd",
-             "--hold", "0*30,k200*60,k200+57*12,k200*70,0*40", "--frames", "220",
+             "--hold", hold(wait(30), press("UP", frames=60), press("UP", "SPACE", frames=12),
+                             press("UP", frames=70), wait(40)), "--frames", "220",
              "--dump", os.path.join(tmp, "f.bin")],
             capture_output=True, text=True, env=env)
         out = r.stdout + r.stderr

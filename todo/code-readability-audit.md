@@ -317,6 +317,19 @@ finding: a check that hashed a conversation frame would flicker.
   run those probes green (`parking ops`, `zone pump`, `dialogue play`, `line
   stream`, `shoot generic`, `shoot range`, `shoot fire`, `cull`, `sfx set
   pieces`); guard 0 of 14; 3DS and Vita build.
+* step 9 - the shared PREAMBLES, migrated as touched (§5's rule):
+  `verify.py`'s `_play_built(target)` / `_play_out(play, *flags, save=,
+  env=)` (the build, the headless run against the data and the tables, the
+  log as latin-1 - 196 checks repeat it by hand) with `_PLAY_UNBUILT`, and
+  the `--hold` builder `hold(wait(40), press("TAB", frames=3), press("UP",
+  "SPACE", frames=12))` over the parser's own grammar (`+` joins keys); and
+  `engine/tools/probe_common.h`'s `omk::probe::open(argc, argv, min,
+  usage)` for the `<gamedata> <tables>` preamble 64 probes repeat (the
+  opcode table, `IAM`, `newGame()`). First users: `engine: fight park`,
+  `engine: player jump`'s hold string (the builder reproduces the literal
+  byte for byte), `checkpoint_probe` (its output identical before and
+  after, its usage exit 2 kept). Those checks and `inventory checkpoint`
+  green; `licence headers` 614.
 
 ## 7. For the tutorial
 

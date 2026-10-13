@@ -74,6 +74,7 @@ const char* status(omk::RunStatus s) {
         case omk::RunStatus::PcOutOfRange:   return "pc-out-of-range";
         case omk::RunStatus::UnknownOpcode:  return "unknown-opcode";
         case omk::RunStatus::StackUnderflow: return "underflow";
+        case omk::RunStatus::StoppedAtOpcode: return "stopped-at-opcode";
     }
     return "?";
 }

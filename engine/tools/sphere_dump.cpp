@@ -12,7 +12,7 @@
 #include "actor/spatial.h"
 #include "platform/datafs.h"
 #include <cstdio>
-int main(int argc, char** argv) {
+int main(int, char** argv) {
     const auto d = omk::DataFs::readPath(argv[1]);
     const auto sp = omk::modelSweepSpheres(d);
     std::printf("%zu spheres (offsets are from the model origin):\n", sp.size());

@@ -10,7 +10,7 @@
 #include "platform/datafs.h"
 #include <cstdio>
 #include <string>
-int main(int argc, char** argv) {
+int main(int, char** argv) {
     const omk::DataFs fs(argv[1]);
     const auto p = fs.resolve(std::string("SCPTDATA/") + argv[2]);
     if (!p) { std::fprintf(stderr, "no such scx\n"); return 1; }

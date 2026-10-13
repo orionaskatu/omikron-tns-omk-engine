@@ -12,7 +12,7 @@
 #include <cstdio>
 #include <string>
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
     const omk::DataFs fs(argv[1]);
     const auto p = fs.resolve(std::string("SCPTDATA/") + argv[2]);
     if (!p) { std::fprintf(stderr, "no such scx\n"); return 1; }
@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
     const auto st = omk::readScxStream(d);
     std::printf("%s: %zu sprite registrations\n", argv[2], st.sprites.size());
     for (const auto& sp : st.sprites) {
-        std::printf("  id %-6d name '%s' offset %u model %u texture %u",
+        std::printf("  id %-6d name '%s' offset %zu model %zu texture %zu",
                     sp.id, sp.name.c_str(), sp.offset, sp.model, sp.texture);
         if (!sp.model || !sp.texture || sp.offset + sp.model + sp.texture > d.size()) {
             std::printf("   -> SKIPPED (bad extents)\n");

@@ -926,7 +926,7 @@ int main(int argc, char** argv) {
                 in2.moveCode = 0;
                 in2.movedThisFrame = len * 0.5f;   // half way
                 float y2 = y1;
-                const auto s2a = omk::shootGenericStep(r, in2, y2);
+                omk::shootGenericStep(r, in2, y2);
                 const float halfClimb = r.groundY;
                 in2.movedThisFrame = len;          // the rest, and past it
                 const auto s2b = omk::shootGenericStep(r, in2, y2);

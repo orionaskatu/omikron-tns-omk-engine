@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <string>
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
     const omk::DataFs fs(argv[1]);
     const auto p = fs.resolve(std::string("MESHES/OBJETS/") + argv[2] + ".3DO");
     if (!p) { std::fprintf(stderr, "no model\n"); return 1; }

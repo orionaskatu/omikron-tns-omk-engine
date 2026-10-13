@@ -156,7 +156,6 @@ int main(int argc, char** argv) {
                 for (const auto& cam : omk::readCameras(d, *h)) {
                     ++cameras;
                     const auto narrow = omk::frustumFromFov(cam.pos, cam.target, 45.0f, 640, 480, kFar);
-                    const auto wide   = omk::frustumFromFov(cam.pos, cam.target, 90.0f, 640, 480, kFar);
                     const auto near_  = omk::frustumFromFov(cam.pos, cam.target, 45.0f, 640, 480, 500.0f);
                     long here = 0;
                     for (const auto& m : ms) {

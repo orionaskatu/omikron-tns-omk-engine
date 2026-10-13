@@ -454,7 +454,7 @@ void Session::completeLoad(int slot) {
         return std::chrono::duration<double, std::milli>(LoadClock::now() - a).count();
     };
     auto lt = LoadClock::now();
-    if (!scptData_.empty()) reloadScene(s.area, s.scene);
+    if (!scptData_.empty()) reloadScene(s.area);
     const double msScene = loadMs(lt);
     lt = LoadClock::now();
     // case 9: `Script_NewContext(slot, block[+4], 0, 0)`, `*block = ctx`,
@@ -1057,7 +1057,7 @@ int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, in
         hideSet(slots_[1 - active_].area);
     };
     const auto finishScene = [&]() {
-        reloadScene(slots_[curSlot_].area, slots_[curSlot_].scene);
+        reloadScene(slots_[curSlot_].area);
     };
 
     // omk-play 70: the tunnel's far door. AREA 224 has TWO transition zones at
@@ -1312,7 +1312,7 @@ void Session::restart() {
     const int start = state_.currentArea();
     if (start >= 0) {
         loadArea(start);
-        if (!scptData_.empty()) reloadScene(start, slots_[0].scene);
+        if (!scptData_.empty()) reloadScene(start);
     }
     ++entered_;
 }
@@ -1636,7 +1636,7 @@ bool Session::placeActorAt(int addressId) {
 
 // ---------------------------------------------------------- THE SCENE
 
-void Session::reloadScene(int area, int scene) {
+void Session::reloadScene(int area) {
     // Only for a caller that asked for scenes at all: a Session that only
     // wants the script decisions never pays for a 7 MB load.
     //
@@ -1793,7 +1793,7 @@ void Session::sceneLoad(int area, int scene) {
         spawnFromTables(s, false, true);
         if (sl.scene != -1) loadProps(s, false, true);
         if (sl.scene != -1) sl.sceneCtx = queueStartup(s, true);
-        if (s == curSlot_) reloadScene(area, sl.scene);
+        if (s == curSlot_) reloadScene(area);
     }
     state_.setSceneOfArea(area, static_cast<std::int16_t>(scene));
     zonesRegisterAll();
@@ -1851,7 +1851,7 @@ void Session::sceneUnload(int area, int caller) {
         }
         fillSlotTables(sl);
         // The area's own `.SCX` (`AREA +97`) stands where the scene's did.
-        if (s == curSlot_) reloadScene(area, -1);
+        if (s == curSlot_) reloadScene(area);
     }
     state_.setSceneOfArea(area, -1);
     zonesRegisterAll();

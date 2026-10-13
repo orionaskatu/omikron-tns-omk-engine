@@ -54,6 +54,11 @@
 // A8: this is a system dependency and it is OPTIONAL. `make` and the whole
 // suite must pass on a machine with no Vulkan SDK, so nothing under `src/`
 // includes this and the Makefile builds it only when pkg-config finds vulkan.
+// Every Vulkan create-info here is written `VkXxxInfo x{VK_STRUCTURE_TYPE_...}`:
+// the type set, every other field value-initialised to zero - the API's own
+// idiom, which `-Wmissing-field-initializers` reports once per struct.
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 #include <vulkan/vulkan.h>
 #include "platform/profile.h"
 

@@ -56,12 +56,15 @@ const char* statusName(omk::RunStatus s) {
     case omk::RunStatus::Dialog:         return "dialog";
     case omk::RunStatus::UiOpen:         return "ui.open";
     case omk::RunStatus::CameraWait:     return "camera.wait";
+    case omk::RunStatus::MoveWait:       return "move.wait";
+    case omk::RunStatus::FightWait:      return "fight.wait";
     case omk::RunStatus::ObjectWait:     return "object.wait";
     case omk::RunStatus::Suspended:      return "suspended";
     case omk::RunStatus::Runaway:        return "runaway";
     case omk::RunStatus::PcOutOfRange:   return "pc-out-of-range";
     case omk::RunStatus::UnknownOpcode:  return "unknown-opcode";
     case omk::RunStatus::StackUnderflow: return "stack-underflow";
+    case omk::RunStatus::StoppedAtOpcode: return "stopped-at-opcode";
     }
     return "?";
 }

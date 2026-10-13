@@ -1894,7 +1894,7 @@ private:
     int  queueStartup(int slot, bool isScene);
     // Make the resident `.SCX` follow the shown slot - the scene over `area`
     // when the DB names one, else the area's own.
-    void reloadScene(int area, int scene);
+    void reloadScene(int area);   // the AREA's `.SCX`: a SCENE chunk names none
     // The 276-byte actor record with `actor` at +272, out of the shown
     // slot's AREA (+56 / +80) then SCENE (+24 / +48), then the other slot's
     // - `Actor_FindById` (0x0040B190). -> false when no record.

@@ -148,8 +148,8 @@ public:
     // audible across a city and through a cutscene (omk-play 73). The CURVE
     // is this port's, not the engine's - DirectSound owned the attenuation and
     // pan law and it has no reachable tier (PORTING, the audio row).
-    virtual int  playSound(std::span<const float>, bool loop = false,
-                           float gain = 1.0f) { return -1; }
+    virtual int  playSound(std::span<const float>, bool /*loop*/ = false,
+                           float /*gain*/ = 1.0f) { return -1; }
     // The same, TAKING the samples: a conversation line's voice is ~11 MB of
     // device-rate floats, and copying it on the frame it starts is one more
     // pass over it on a console's memory bus.

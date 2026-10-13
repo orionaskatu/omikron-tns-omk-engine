@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     const std::uint32_t C = u32(d, o);        const std::size_t cAt = o + 4;
     o = cAt + 80u * C;
     const std::uint32_t D = u32(d, o);        o += 4 + 16u * D;
-    const std::uint32_t E = u32(d, o);        const std::size_t eAt = o + 4;
+    const std::uint32_t E = u32(d, o);
 
     // ...and the same file through the port's own reader, so what this
     // prints is what the runtime uses.

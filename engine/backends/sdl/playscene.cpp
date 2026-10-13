@@ -13,7 +13,9 @@ int sceneViewer(const std::string& fr, const std::string& setName,
                 int camIndex, const float* eyeArg, const float* atArg,
                 float fovArg, bool letterbox, int frameBudget,
                 const std::string& dump, bool startVulkan, bool noDelay,
-                int aaSamples, int texFilter, int texAniso, int ssaa,
+                // the enhancements, which only the Vulkan build's live renderer takes
+                [[maybe_unused]] int aaSamples, [[maybe_unused]] int texFilter,
+                [[maybe_unused]] int texAniso, [[maybe_unused]] int ssaa,
                 bool sceneDither) {
     // The set. A bare name is looked up in MESHES/DECORS, which is where the
     // decor sets live; anything with a slash is taken as given, so a character

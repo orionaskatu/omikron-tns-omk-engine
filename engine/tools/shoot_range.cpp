@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
     const int s135 = bandOf(0, d135, false, m135);
     const int sSnapAbeam = bandOf(0, d45, true, mv);
     const int sSnapBack  = bandOf(0, d180, true, m180s);
-    const int sR45 = bandOf(0, dR45, false, mR45);
+    bandOf(0, dR45, false, mR45);   // only the turn it writes (mR45) is printed
     std::printf("turn: ahead %d/%.1f  15deg %d/%.1f  45deg %d/%.1f  "
                 "behind %d/%.1f  mirrored45 %.1f\n",
                 s0, m0, s15, m15, s45, m45, s135, m135, mR45);
@@ -470,7 +470,7 @@ int main(int argc, char** argv) {
             const int r50 = omk::shootEngage(in50.first, in50.second, true, e2);
             auto in50b = mk(39.0f * 50);
             omk::EngageIn e3 = e; e3.coinHeads = false;
-            const int r50b = omk::shootEngage(in50b.first, in50b.second, true, e3);
+            omk::shootEngage(in50b.first, in50b.second, true, e3);
             // dead target, and the 0x8000 gate
             auto ind = mk(39.0f * 10);
             omk::EngageIn e4 = e; e4.targetAlive = false;

@@ -300,6 +300,23 @@ finding: a check that hashed a conversation frame would flicker.
   `phase::EndLoop` (-2) in `playstate.h`, any value >= 0 the program's exit
   code; every setup section, phase and part (`inputPump`, `modesShoot`,
   `modesQuitLoad`) and both loops (`run`, `step`) use them. Guard 0 of 14.
+* step 8 - ZERO WARNINGS in `make`, `play`, `play-gles` and `vulkan` (was
+  ~760 lines a full build, 8 distinct in the engine): `frontend.h`'s default
+  `playSound` names its ignored `loop`/`gain` in comments; `vkrender.cpp`
+  silences `-Wmissing-field-initializers` for itself, with the reason (the
+  `{VK_STRUCTURE_TYPE_...}` idiom zeroes the rest on purpose);
+  `Session::reloadScene` LOSES its `scene` parameter, unused because the
+  `.SCX` is the AREA's; `playscene.cpp`'s four enhancement flags are
+  `[[maybe_unused]]` (the Vulkan build alone takes them). In the probes: the
+  unused locals gone - three kept their CALLS, which write through reference
+  arguments (`bandOf`'s `moved`, `shootGenericStep`'s `y`); `zone_probe` and
+  `parking_probe` name every `RunStatus` instead of printing `?` for three;
+  `sprite_dump` prints its `size_t`s with `%zu`. And the one warning the
+  noise had hidden: `scenerunner.cpp`'s POSITIONAL `Started{...}` (CLAUDE.md
+  1's "a positional initialiser shifts" trap) is DESIGNATED now. Checks that
+  run those probes green (`parking ops`, `zone pump`, `dialogue play`, `line
+  stream`, `shoot generic`, `shoot range`, `shoot fire`, `cull`, `sfx set
+  pieces`); guard 0 of 14; 3DS and Vita build.
 
 ## 7. For the tutorial
 

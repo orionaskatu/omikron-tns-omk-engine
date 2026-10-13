@@ -51,7 +51,6 @@ int main(int argc, char** argv) {
     // 60 seconds of frames between presses, which is longer than any line in
     // the game - so if anything here advanced on its own, it would.
     const double dt = 1.0 / 30.0;
-    long ticks = 0;
     double voiced = 0.0;
     std::size_t at = 0;
     int lines = 0, menus = 0, streamedAtStart = 0, linesStreamed = 0;
@@ -115,7 +114,7 @@ int main(int argc, char** argv) {
         // it would happen here.
         const int before = p.node();
         const auto phaseBefore = p.phase();
-        for (int k = 0; k < 1800; ++k) { p.tick(dt); ++ticks; }
+        for (int k = 0; k < 1800; ++k) { p.tick(dt); }
         if (p.lineChanged() == false && linesStreamed < lines) lineRows();
         if (p.node() != before || p.phase() != phaseBefore) {
             f << "ADVANCED WITHOUT A PRESS\n";

@@ -1993,7 +1993,7 @@ int PlayState::modesShoot() {
         mark("input, ui, shoot");
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }
 
 int PlayState::modesQuitLoad() {
@@ -2156,7 +2156,7 @@ int PlayState::modesQuitLoad() {
         }
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }
 
 // `sub_452570` refused the call (0x0049D400's `loc_49D44C`, `sub_49BC60`'s

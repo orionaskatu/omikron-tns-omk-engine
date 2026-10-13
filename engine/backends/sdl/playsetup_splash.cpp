@@ -83,5 +83,5 @@ int PlayState::setupSplash() {
     phTop = 0.0, phRb0 = -1.0, phRb1 = -1.0;
     phN = 0;
     phGpu = 0;                          // frames presented from the GPU
-    return -1;
+    return phase::Continue;
 }

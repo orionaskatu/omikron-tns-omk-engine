@@ -378,5 +378,5 @@ int PlayState::setupBodies() {
             return !L || !L->job || L->job->ready();
         });
 
-    return -1;
+    return phase::Continue;
 }

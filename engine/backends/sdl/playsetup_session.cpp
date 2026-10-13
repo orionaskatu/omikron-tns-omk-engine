@@ -690,5 +690,5 @@ int PlayState::setupSession() {
     fxSpriteWas = -2;
 
     OMK_HEAPCHECK("before adventure mode");
-    return -1;
+    return phase::Continue;
 }

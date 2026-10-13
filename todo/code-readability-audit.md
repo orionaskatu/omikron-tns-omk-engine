@@ -296,6 +296,10 @@ finding: a check that hashed a conversation frame would flicker.
   (`(1, '346.5')`: one fall on level -2's running route, where none is
   expected) - the same values before and after this step; recorded, not
   bisected.
+* step 7 - the phase return codes by name: `phase::Continue` (-1) and
+  `phase::EndLoop` (-2) in `playstate.h`, any value >= 0 the program's exit
+  code; every setup section, phase and part (`inputPump`, `modesShoot`,
+  `modesQuitLoad`) and both loops (`run`, `step`) use them. Guard 0 of 14.
 
 ## 7. For the tutorial
 

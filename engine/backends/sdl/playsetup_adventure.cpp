@@ -167,5 +167,5 @@ int PlayState::setupAdventure() {
     handoverFrame = -1;
 
     OMK_HEAPCHECK("before interface sounds");
-    return -1;
+    return phase::Continue;
 }

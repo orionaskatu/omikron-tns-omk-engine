@@ -25,6 +25,14 @@
 
 #include <optional>
 
+// WHAT A SETUP SECTION OR A FRAME PHASE ASKS OF THE LOOP AROUND IT
+// (`PlayState::run`, `PlayState::step`). Any value >= 0 ends the program at
+// once with that exit code - a `--help`, a failed load, a finished render.
+namespace phase {
+constexpr int Continue = -1;   // go on: the next section, phase or frame
+constexpr int EndLoop = -2;    // leave the frame loop; `finish()` writes the dumps and returns
+}
+
 struct PlayState {
     omk::PlayOptions opt{};
     const std::string & dataRoot = opt.fr;

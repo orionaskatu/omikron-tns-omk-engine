@@ -15,5 +15,5 @@ int PlayState::phaseScreens() {
     screensFps();             // the fps counter
     screensFades();           // the screen fades, over everything
     screensFlicker();         // the flicker catcher
-    return -1;
+    return phase::Continue;
 }

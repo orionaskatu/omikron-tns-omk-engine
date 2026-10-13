@@ -43,24 +43,24 @@ int PlayState::run(int argc, char** argv) {
                 omkInstrumentsBuilt() ? "in" : "out");
     OMK_HEAPCHECK("main");
     // THE SETUP, in order (`playsetup_<section>.cpp`, todo/play-split.md)
-    int r = -1;
-    if ((r = setupOptions(argc, argv)) != -1) return r;
+    int r = phase::Continue;
+    if ((r = setupOptions(argc, argv)) != phase::Continue) return r;
     vrSetup(argc, argv);   // the --vr-* flags (backends/vr; empty without OMK_VR)
     // the profiler (`--profile`, todo/debug-tools.md): the setup is FRAME -1,
     // each section a zone; then one capture frame per `step`
     omk::prof::beginFrame(-1);
     {
-        { OMK_ZONE("setup: boot"); if ((r = setupBoot()) != -1) return r; }
-        { OMK_ZONE("setup: session"); if ((r = setupSession()) != -1) return r; }
-        { OMK_ZONE("setup: adventure"); if ((r = setupAdventure()) != -1) return r; }
-        { OMK_ZONE("setup: devices"); if ((r = setupDevices()) != -1) return r; }
+        { OMK_ZONE("setup: boot"); if ((r = setupBoot()) != phase::Continue) return r; }
+        { OMK_ZONE("setup: session"); if ((r = setupSession()) != phase::Continue) return r; }
+        { OMK_ZONE("setup: adventure"); if ((r = setupAdventure()) != phase::Continue) return r; }
+        { OMK_ZONE("setup: devices"); if ((r = setupDevices()) != phase::Continue) return r; }
         // THE FILMS BEFORE THE GLOBAL LIBRARY, in `Game_Main`'s order: the
         // window, `Game_Init`, the three movies, THEN `Game_Start
         // ("aventure.scx")` - which `setupBodies` reads - then the splash
         // (`docs/BOOT.md` 1). The films need only the window.
-        { OMK_ZONE("setup: play"); if ((r = setupPlay()) != -1) return r; }
-        { OMK_ZONE("setup: bodies"); if ((r = setupBodies()) != -1) return r; }
-        { OMK_ZONE("setup: splash"); if ((r = setupSplash()) != -1) return r; }
+        { OMK_ZONE("setup: play"); if ((r = setupPlay()) != phase::Continue) return r; }
+        { OMK_ZONE("setup: bodies"); if ((r = setupBodies()) != phase::Continue) return r; }
+        { OMK_ZONE("setup: splash"); if ((r = setupSplash()) != phase::Continue) return r; }
     }
     omk::prof::endFrame();
     // THE FRAME LOOP - `PlayState::step` in `playframe.cpp` (todo/play-split.md).
@@ -83,7 +83,7 @@ int PlayState::run(int argc, char** argv) {
         profLastFrame = drawn;
         if (omk::prof::snapshotOwed()) omk::prof::snapshot(drawn, fb.w, fb.h, fb.px.data());
 #endif
-        if (stepped == -2) break;
+        if (stepped == phase::EndLoop) break;
         if (stepped >= 0) { omk::prof::close(); return stepped; }
     }
     const int rc = finish();

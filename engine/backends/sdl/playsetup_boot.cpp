@@ -40,5 +40,5 @@ int PlayState::setupBoot() {
                 "as Game_Main does\n", movies, movies == 1 ? "" : "s");
 
     OMK_HEAPCHECK("before live session");
-    return -1;
+    return phase::Continue;
 }

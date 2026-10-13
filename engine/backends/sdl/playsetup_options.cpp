@@ -129,5 +129,5 @@ int PlayState::setupOptions(int argc, char** argv) {
     in.setRepeatMask(0x203F);          // `Ui_BeginScreen`
 
     OMK_HEAPCHECK("before boot chain");
-    return -1;
+    return phase::Continue;
 }

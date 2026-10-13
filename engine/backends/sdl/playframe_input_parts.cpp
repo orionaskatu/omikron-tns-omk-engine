@@ -86,7 +86,7 @@ int PlayState::inputPump() {
         }
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }
 
 // ESC opens the pause screen; the last screen's close flushes the input

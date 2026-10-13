@@ -148,5 +148,5 @@ int PlayState::phasePresent() {
         }
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }

@@ -271,5 +271,5 @@ int PlayState::setupPlay() {
     }
 
 
-    return -1;
+    return phase::Continue;
 }

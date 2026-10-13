@@ -8,9 +8,9 @@ int PlayState::phaseModes() {
     do {
         modesSound();
         modesDialogue();
-        if (const int part = modesShoot(); part != -1) { if (part == -2) break; return part; }
-        if (const int part = modesQuitLoad(); part != -1) { if (part == -2) break; return part; }
+        if (const int part = modesShoot(); part != phase::Continue) { if (part == phase::EndLoop) break; return part; }
+        if (const int part = modesQuitLoad(); part != phase::Continue) { if (part == phase::EndLoop) break; return part; }
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }

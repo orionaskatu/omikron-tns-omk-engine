@@ -151,5 +151,5 @@ int PlayState::setupDevices() {
     // and the frame is drawn by the software reference rasterizer, which
     // `PORTING` B6 carries as a reference implementation and not as a port.
     OMK_HEAPCHECK("before speaker");
-    return -1;
+    return phase::Continue;
 }

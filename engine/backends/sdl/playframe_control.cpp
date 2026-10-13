@@ -8,5 +8,5 @@ int PlayState::phaseControl() {
     controlBinding();     // who is bound to him and who poses him; the shoot camera
     controlFlight();      // the bolts' flight, before the actors tick
     controlAdventure();   // adventure mode's controller frame
-    return -1;
+    return phase::Continue;
 }

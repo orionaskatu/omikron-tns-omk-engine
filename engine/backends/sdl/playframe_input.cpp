@@ -6,12 +6,12 @@
 int PlayState::phaseInput() {
     bool done = false;
     do {
-        if (const int part = inputPump(); part != -1) { if (part == -2) break; return part; }
+        if (const int part = inputPump(); part != phase::Continue) { if (part == phase::EndLoop) break; return part; }
         inputPause();
         inputTick();
         inputMotion();
         inputSounds();
         done = true;
     } while (false);
-    return done ? -1 : -2;
+    return done ? phase::Continue : phase::EndLoop;
 }

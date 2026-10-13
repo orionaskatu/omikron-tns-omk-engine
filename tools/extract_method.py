@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+r"""Split a giant C++ method by MOVING whole statements into a new method.
+
+`todo/code-readability-audit.md` §6 asks for the giant functions to be broken
+"along their own banners, nothing reordered", so that every check reading the
+viewer's stdout stays byte-identical. Done by hand, each cut means finding
+every local the block reads, its exact type and whether the block writes it.
+This makes the compiler do that:
+
+    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT]
+    python3 tools/extract_method.py batch <file.cpp> <jobs.txt>
+    python3 tools/extract_method.py candidates <file.cpp> <method> [--min N] [--depth D]
+    python3 tools/extract_method.py sizes [--over N]
+
+`extract` moves lines A..B of a method of class C - whole statements at one
+depth - verbatim into a new method `C::<name>`, placed after the enclosing one
+and declared beside it in C's header. The locals of the enclosing method that
+the range uses become REFERENCE parameters, so a write still reaches the
+caller: which locals, the compiler says ("use of undeclared identifier",
+asked again until none is left, since clang's error recovery hides some
+behind others); their types, the compiler says too (a `decltype(x)::probe`
+line at A, and `std::is_const` for the constness clang's printing drops on a
+class type). libc++'s internal spellings (`std::__map_iterator<...>`) are
+mapped to the standard ones, since the consoles compile with libstdc++, and a
+const scalar arrives by value. The move is REFUSED, and every file restored,
+when a needed local is a lambda (make it a method first), when the range has
+a `break`/`continue`/`return` at its own level, or when the moved form does
+not compile - a `break` that left an enclosing loop, a `return` of a value.
+
+What makes the move safe rather than merely compiling: the code is the same
+text in the same order; a parameter names the very object the local was; and
+`-Wshadow` is on at zero warnings (step 4), so no name the block used as a
+LOCAL can silently bind to a MEMBER of the same name once it is a method.
+
+`batch` runs `extract` over `start|name|comment` lines, bottom-up so the line
+numbers above each cut stay valid, finding each statement's end (an `else`
+chain included). `candidates` lists a method's compound statements of at least
+N lines at depth D (2 for a body inside the viewer's `do { } while (false)`),
+with the banner above each. `sizes` lists the functions over N lines.
+
+PlayState's methods rebuild `session`, `world` and `fs` from the members
+rather than taking them as parameters.
+"""
+import glob
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENG = os.path.join(ROOT, "engine")
+PLAYSTATE_H = os.path.join(ENG, "backends", "sdl", "playstate.h")
+ALIASES = {   # PlayState's usual locals, rebuilt from the members
+    "session": "    auto& session = *session_;",
+    "world": "    omk::Renderer& world = *world_;",
+    "fs": "    const auto& fs = *fs_;",
+}
+
+
+# ---- reading C++ without a parser -------------------------------------------
+
+def code_mask(s):
+    """True where s[i] is code: not in a comment, a string or a char literal."""
+    m = [True] * len(s)
+    i, n = 0, len(s)
+    while i < n:
+        if s.startswith("//", i):
+            j = s.find("\n", i)
+            j = n if j < 0 else j
+            m[i:j] = [False] * (j - i)
+            i = j
+        elif s.startswith("/*", i):
+            j = s.find("*/", i + 2) + 2
+            m[i:j] = [False] * (j - i)
+            i = j
+        elif s[i] in "\"'":
+            q, j = s[i], i + 1
+            while s[j] != q:
+                j += 2 if s[j] == "\\" else 1
+            m[i:j + 1] = [False] * (j + 1 - i)
+            i = j + 1
+        else:
+            i += 1
+    return m
+
+
+def match_close(s, mask, i, o="{", c="}"):
+    d = 0
+    for j in range(i, len(s)):
+        if not mask[j]:
+            continue
+        if s[j] == o:
+            d += 1
+        elif s[j] == c:
+            d -= 1
+            if d == 0:
+                return j
+    raise ValueError("unbalanced")
+
+
+def offset_of_line(lines, ln):
+    return sum(len(x) + 1 for x in lines[:ln - 1])
+
+
+def statement_end(s, mask, lines, ln):
+    """The last line of the compound statement whose first `{` is on/after
+    line `ln`, an `else` chain included."""
+    b = offset_of_line(lines, ln)
+    while True:                       # the first `{` that opens a block
+        b = s.index("{", b)
+        j = b - 1
+        while s[j].isspace() or not mask[j]:
+            j -= 1
+        if mask[b] and (s[j] in ");{}" or s[j - 3:j + 1] == "else" or s[j - 1:j + 1] == "do"):
+            break
+        b = match_close(s, mask, b) + 1 if mask[b] else b + 1
+    end = s[:match_close(s, mask, b)].count("\n") + 1
+    while lines[end - 1].strip().startswith("}") and "else" in lines[end - 1]:
+        b = s.index("{", offset_of_line(lines, end))
+        end = s[:match_close(s, mask, b)].count("\n") + 1
+    return end
+
+
+# ---- portable parameter types ------------------------------------------------
+
+SCALAR = re.compile(r"^(bool|char|signed char|unsigned char|short|unsigned short|int|"
+                    r"unsigned int|long|unsigned long|long long|unsigned long long|"
+                    r"float|double|unsigned|std::size_t|std::u?int(8|16|32|64)_t)$")
+
+
+def _angle(s, at):
+    d = 0
+    for i in range(at, len(s)):
+        if s[i] == "<":
+            d += 1
+        elif s[i] == ">":
+            d -= 1
+            if d == 0:
+                return s[at + 1:i], i
+    raise ValueError(s)
+
+
+def split_top(s):
+    out, d, cur = [], 0, ""
+    for c in s:
+        d += c in "<("
+        d -= c in ">)"
+        if c == "," and d == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += c
+    out.append(cur.strip())
+    return out
+
+
+def portable(t):
+    """libc++'s internal spellings to the standard ones; refused if any remain."""
+    for kind, member in (("std::__map_iterator<", "iterator"),
+                         ("std::__map_const_iterator<", "const_iterator")):
+        while kind in t:
+            i = t.index(kind)
+            inner, j = _angle(t, i + len(kind) - 1)
+            vt = re.search(r"std::__value_type<", inner)
+            k, v = split_top(_angle(inner, vt.end() - 1)[0])
+            t = t[:i] + "std::map<%s, %s>::%s" % (k, v, member) + t[j + 1:]
+    m = re.search(r"std::__wrap_iter<(const )?([^<>]+)\s*\*>", t)
+    if m:
+        t = t[:m.start()] + "std::vector<%s>::%s" % (
+            m.group(2).strip(), "const_iterator" if m.group(1) else "iterator") + t[m.end():]
+    if "std::__" in t:
+        raise ValueError("a libc++ internal type: " + t)
+    return t
+
+
+def param(t, x, const):
+    """The parameter for local `x` of type `t`; `const` when the variable
+    itself is (a `const char*` is not: its POINTEE is)."""
+    t = t.replace(" &", "&").replace(" *", "*").replace("omk::play::", "")
+    t = re.sub(r"(?<![\w:])(vector|map|set|unordered_map|unordered_set|string|array|optional|"
+               r"pair|unique_ptr|shared_ptr|span|function)<", r"std::\1<", t)
+    t = re.sub(r"(?<![\w:])string\b", "std::string", t)
+    t = portable(t)
+    arr = re.match(r"(.+)\[(\d+)\]$", t)
+    if arr:
+        return "%s (&%s)[%s]" % (arr.group(1), x, arr.group(2))
+    if t.endswith("&"):
+        base = t[:-1].strip()
+        if base.startswith("const ") and SCALAR.match(base[6:]):
+            return "%s %s" % (base[6:], x)
+        return "%s %s" % (t, x)
+    if const:
+        if t.endswith("*") or t.endswith("*const"):
+            return "%s %s" % (t, x)                  # the pointer itself is const
+        base = t[6:] if t.startswith("const ") else t
+        if SCALAR.match(base):
+            return "%s %s" % (base, x)
+        return "const %s& %s" % (base, x)
+    return "%s& %s" % (t, x)
+
+
+def wrap(head, items, indent, tail=")"):
+    one = head + "(" + ", ".join(items) + tail
+    if len(one) + indent <= 100:
+        return one
+    pad = " " * len(head + "(")
+    lines, cur = [], head + "("
+    for i, p in enumerate(items):
+        piece = p + (", " if i < len(items) - 1 else tail)
+        if len(cur) + len(piece) + indent > 100 and cur.strip() != (head + "(").strip():
+            lines.append(cur.rstrip())
+            cur = pad
+        cur += piece
+    lines.append(cur)
+    return ("\n" + " " * indent).join(lines)
+
+
+# ---- the build ---------------------------------------------------------------
+
+def object_of(cpp):
+    rel = os.path.relpath(os.path.abspath(cpp), ENG)
+    if rel.startswith("src/"):
+        return "build/obj/" + rel[:-4] + ".o"
+    variant = "play-vk" if os.path.isdir(os.path.join(ENG, "build", "obj", "play-vk")) else "play-sw"
+    return "build/obj/%s/%s.o" % (variant, os.path.basename(rel)[:-4])
+
+
+def compile_errors(cpp):
+    """The errors of compiling `cpp` alone, with the Makefile's own command."""
+    rel = os.path.relpath(os.path.abspath(cpp), ENG)
+    obj = object_of(cpp)
+    cmd = subprocess.run(["make", "-n", "-B", obj], cwd=ENG, capture_output=True,
+                         text=True).stdout
+    line = [l for l in cmd.split("\n") if rel in l and " -c " in l]
+    if not line:
+        sys.exit("no compile command for %s (target %s)" % (rel, obj))
+    line = line[0].replace(" -c ", " -fsyntax-only -ferror-limit=0 ").replace("-o " + obj, "")
+    r = subprocess.run(line, shell=True, cwd=ENG, capture_output=True, text=True)
+    return [l for l in r.stderr.split("\n") if ": error: " in l]
+
+
+def header_of(cls):
+    if cls == "PlayState":
+        return PLAYSTATE_H
+    for h in glob.glob(os.path.join(ENG, "src", "**", "*.h"), recursive=True) + \
+            glob.glob(os.path.join(ENG, "backends", "**", "*.h"), recursive=True):
+        if "third_party" in h:
+            continue
+        if re.search(r"^\s*(class|struct) %s\b[^;]*$" % cls, open(h).read(), re.M):
+            return h
+    sys.exit("no header defines class " + cls)
+
+
+# ---- extract -----------------------------------------------------------------
+
+def extract(path, A, B, name, comment=""):
+    src = open(path).read()
+    L = src.split("\n")
+    body = L[A - 1:B]
+    text = "\n".join(body)
+    m = code_mask(text)
+    depth = 0
+    for i, c in enumerate(text):
+        if m[i] and c in "{}":
+            depth += 1 if c == "{" else -1
+            if depth < 0:
+                return "refused: the range closes a block it did not open"
+    if depth:
+        return "refused: the range leaves a block open"
+    d = 0
+    for mm in re.finditer(r"[{}]|\b(break|continue|return)\b", text):
+        if not m[mm.start()]:
+            continue
+        t = mm.group(0)
+        if t in "{}":
+            d += 1 if t == "{" else -1
+        elif d == 0:
+            return "refused: a top-level `%s` in the range" % t
+    ind = len(body[0]) - len(body[0].lstrip(" "))
+    heads = [i for i in range(A - 1) if re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[i])]
+    if not heads:
+        return "refused: no enclosing method"
+    fstart = max(heads)
+    cls, encl = re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[fstart]).groups()
+    sig = "\n".join(L[fstart:A])
+    is_const = bool(re.search(r"\)\s*const\s*\{", sig[:sig.index("{") + 1]))
+    hdr_path = header_of(cls)
+    hdr = open(hdr_path).read()
+    newbody = [l[ind - 4:] if l.startswith(" " * ind) else l for l in body]
+
+    def restore():
+        open(path, "w").write(src)
+        open(hdr_path, "w").write(hdr)
+
+    def write(params, args, aliases):
+        out = L[:A - 1] + [" " * ind + wrap(name, list(args), ind) + ";"] + L[B:]
+        fn = (["// " + c for c in comment.split("\n")] if comment else []) + \
+            [wrap("void %s::%s" % (cls, name), params, 0, ") const {" if is_const else ") {")] + \
+            aliases + newbody + ["}", ""]
+        s2 = "\n".join(out)
+        mk = code_mask(s2)
+        b = s2.index("{", offset_of_line(out, fstart + 1))
+        endline = s2[:match_close(s2, mk, b)].count("\n") + 1
+        out = out[:endline] + [""] + fn + out[endline:]
+        open(path, "w").write("\n".join(out))
+        mm = re.search(r"^( *)[^\n;]*\b%s\([^;]*\)( const)?;[^\n]*\n" % re.escape(encl), hdr, re.M)
+        if not mm:
+            raise RuntimeError("no declaration of %s in %s" % (encl, hdr_path))
+        decl = mm.group(1) + wrap("void " + name, params, len(mm.group(1)),
+                                  ") const;" if is_const else ");") + \
+            "   // from `%s`\n" % encl
+        open(hdr_path, "w").write(hdr[:mm.end()] + decl + hdr[mm.end():])
+
+    def typed(need):
+        if not need:
+            return []
+        probe = L[:A - 1] + [" " * ind + "decltype(%s)::omkprobe_; static_assert(!std::is_const_v<"
+                             "std::remove_reference_t<decltype(%s)>>, \"omkconst:%s\");" % (x, x, x)
+                             for x in need] + L[A - 1:]
+        open(path, "w").write("\n".join(probe))
+        perrs = compile_errors(path)
+        restore()
+        types, const = {}, set()
+        for e in perrs:
+            c = re.search(r"omkconst:(\w+)", e)
+            if c:
+                const.add(c.group(1))
+                continue
+            a = re.search(r"'decltype\((\w+)\)' \(aka '(.+)'\) is not a class", e)
+            if a:
+                types[a.group(1)] = a.group(2)
+                continue
+            n = re.search(r"no member named 'omkprobe_' in '(.+)'", e)
+            if n:
+                ln = int(re.search(r":(\d+):\d+: error", e).group(1))
+                x = re.search(r"decltype\((\w+)\)::omkprobe_", probe[ln - 1]).group(1)
+                types[x] = n.group(1)
+        out = []
+        for x in need:
+            t = types.get(x)
+            if t is None:
+                raise ValueError("no type for " + x)
+            if "lambda at" in t:
+                raise ValueError("%s is a lambda - make it a method first" % x)
+            out.append(param(t, x, x in const))
+        return out
+
+    # A local that shares a member FUNCTION's name is not caught by -Wshadow:
+    # moved, `name(...)` would call the method. Declared before the range and
+    # used in it, it is passed like any other local.
+    members = set(re.findall(r"\b(\w+)\([^;]*\)\s*(?:const\s*)?;", hdr))
+    used = set(re.findall(r"\b([A-Za-z_]\w*)\b", "".join(c for c, k in zip(text, m) if k)))
+    before = "\n".join(L[fstart:A - 1])
+    missing = [n for n in sorted(members & used)
+               if re.search(r"(?:\bauto\b|[\w:>*&\]])\s*[&*]?\s*\b%s\b\s*(?:=|\{|;|\(|:)" % re.escape(n),
+                            before)]
+    for _ in range(10):
+        aliases = [ALIASES[x] for x in ALIASES if x in missing and cls == "PlayState"]
+        need = [x for x in missing if not (cls == "PlayState" and x in ALIASES)]
+        try:
+            params = typed(need)
+        except ValueError as e:
+            restore()
+            return "refused: %s" % e
+        write(params, need, aliases)
+        errs = compile_errors(path)
+        if not errs:
+            return "%s: %d lines, %d parameters %s" % (name, B - A + 1, len(params), need)
+        new = []
+        for e in errs:
+            u = re.search(r"use of undeclared identifier '(\w+)'", e)
+            if u and u.group(1) not in missing and u.group(1) not in new:
+                new.append(u.group(1))
+            f = re.search(r":(\d+):(\d+): error: reference to non-static member function", e)
+            if f and e.startswith(os.path.relpath(os.path.abspath(path), ENG)):
+                ln, col = int(f.group(1)), int(f.group(2))
+                tok = re.match(r"\w+", open(path).read().split("\n")[ln - 1][col - 1:])
+                if tok and tok.group(0) not in missing and tok.group(0) not in new:
+                    new.append(tok.group(0))
+        restore()
+        if not new:
+            return "refused: the moved form does not compile:\n  " + "\n  ".join(errs[:6])
+        missing += new
+    restore()
+    return "refused: did not converge"
+
+
+def batch(path, jobs_file):
+    jobs = []
+    for line in open(jobs_file):
+        if line.strip() and not line.startswith("#"):
+            ln, name, comment = line.rstrip("\n").split("|", 2)
+            jobs.append((int(ln), name, comment.replace("\\n", "\n")))
+    for ln, name, comment in sorted(jobs, reverse=True):
+        s = open(path).read()
+        end = statement_end(s, code_mask(s), s.split("\n"), ln)
+        print("%d-%d %s" % (ln, end, extract(path, ln, end, name, comment)))
+
+
+def candidates(path, method, minl, depth_want):
+    s = open(path).read()
+    m = code_mask(s)
+    L = s.split("\n")
+    mm = re.search(r"^\S[^\n;]*\b%s\(" % re.escape(method), s, re.M)
+    b = s.index("{", mm.end())
+    e = match_close(s, m, b)
+    fstart, fend = s[:b].count("\n") + 1, s[:e].count("\n") + 1
+    print("%s: %d-%d (%d lines)" % (method, fstart, fend, fend - fstart + 1))
+    def opens_block(k):
+        j = k - 1
+        while j > b and (s[j].isspace() or not m[j]):
+            j -= 1
+        return s[j] in ");{}" or s[j - 3:j + 1] == "else" or s[j - 1:j + 1] == "do"
+    depth, k = 1, b + 1
+    while k < e:
+        if not m[k] or s[k] not in "{}":
+            k += 1
+            continue
+        if s[k] == "}":
+            depth -= 1
+            k += 1
+            continue
+        if not opens_block(k):               # an initialiser's braces, not a block
+            k = match_close(s, m, k) + 1
+            continue
+        if depth != depth_want:
+            depth += 1
+            k += 1
+            continue
+        ln = st = s[:k].count("\n") + 1
+        while st > fstart + 1:
+            prev = L[st - 2].split("//")[0].rstrip()
+            if prev.endswith((";", "{", "}")) or not prev:
+                break
+            st -= 1
+        end = statement_end(s, m, L, ln)
+        if end - st + 1 >= minl:
+            c, com = st - 1, ""
+            while c > fstart and L[c - 1].strip().startswith("//"):
+                t = L[c - 1].strip()
+                if "----" in t or re.match(r"//\s*[A-Z`'\"(]", t):
+                    com = t
+                c -= 1
+            print("  %d-%d (%d) %r  | %s" % (st, end, end - st + 1, L[st - 1].strip()[:60], com[:90]))
+        k = offset_of_line(L, end + 1)
+
+
+def sizes(over):
+    res = []
+    files = [f for pat in ("src/**/*.cpp", "src/**/*.h", "backends/**/*.cpp", "backends/**/*.h")
+             for f in glob.glob(os.path.join(ENG, pat), recursive=True) if "third_party" not in f]
+    for f in sorted(files):
+        s = open(f, errors="replace").read()
+        m = code_mask(s)
+        for mm in re.finditer(r"^(?:[\w:<>,&*~ ]+?)\b([\w:~]+)\(([^;{}]*)\)\s*(?:const\s*)?"
+                              r"(?:noexcept\s*)?(?:override\s*)?\{", s, re.M | re.S):
+            if not m[mm.start()] or mm.group(1) in ("if", "for", "while", "switch", "catch"):
+                continue
+            b = s.index("{", mm.end() - 1)
+            try:
+                n = s[b:match_close(s, m, b)].count("\n") + 1
+            except ValueError:
+                continue
+            res.append((n, os.path.relpath(f, ENG), s[:mm.start()].count("\n") + 1, mm.group(1)))
+    res.sort(reverse=True)
+    big = [r for r in res if r[0] > over]
+    print("%d functions over %d lines" % (len(big), over))
+    for n, f, ln, name in big:
+        print("%5d %s  %s:%d" % (n, name, f, ln))
+
+
+def main(argv):
+    def opt(flag, default):
+        return argv[argv.index(flag) + 1] if flag in argv else default
+    if len(argv) >= 5 and argv[0] == "extract":
+        r = extract(argv[1], int(argv[2]), int(argv[3]), argv[4], opt("--comment", ""))
+        print(r)
+        return 1 if r.startswith("refused") else 0
+    if len(argv) == 3 and argv[0] == "batch":
+        batch(argv[1], argv[2])
+        return 0
+    if len(argv) >= 3 and argv[0] == "candidates":
+        candidates(argv[1], argv[2], int(opt("--min", "40")), int(opt("--depth", "1")))
+        return 0
+    if argv and argv[0] == "sizes":
+        sizes(int(opt("--over", "300")))
+        return 0
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

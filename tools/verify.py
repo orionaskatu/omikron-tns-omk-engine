@@ -44704,8 +44704,9 @@ def c_licence_headers():
     # 613: + `engine/src/platform/env.{h,cpp}` (the `OMK_*` switches' one reader)
     # 614: + `engine/tools/probe_common.h` (the probes' shared preamble)
     # 615: + `engine/src/o3de/vecmath.h` (the angle factors and vector helpers, once)
+    # 616: + `tools/extract_method.py` (the giant functions split mechanically)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (615, [], 1, []), \
+           (616, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

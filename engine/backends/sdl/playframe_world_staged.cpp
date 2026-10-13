@@ -321,154 +321,7 @@ void PlayState::worldStaged() {
                 s.progYawKnown = true;
             }
         }
-        if (sceneClip != s.sceneClipWas) {
-            // THE HAND-OVER GAP. A program's steps are authored to
-            // chain: each clip's placement is where the previous one
-            // left the body, so a correct run re-places him on the
-            // spot he already occupies and nothing visibly moves.
-            // Where the accumulated root motion is wrong the two
-            // disagree and the next step YANKS him - a teleport. The gap
-            // is therefore
-            // a measure of the root motion, independent of the walk
-            // mesh: two chains that must agree.
-            const float wasAt[3] = {s.drawAt[0], s.drawAt[1], s.drawAt[2]};
-            const bool hadOne = s.progRan && s.sceneClipWas >= 0;
-            s.sceneClipWas = sceneClip;
-            s.sceneTracks = omk::NodeTracks{};
-            if (sceneClip >= 0 && run->loaded())
-                s.sceneTracks = omk::clipTracks(run->scene().clipData(sceneClip));
-            if (scenePath >= 0 && run->loaded() &&
-                scenePath < static_cast<int>(run->scene().paths().size())) {
-                const auto& pa = run->scene().paths()[static_cast<std::size_t>(scenePath)];
-                if (!pa.keys.empty()) {
-                    // `Path_Sample(path, 1.0, ..., 1)` - the engine's
-                    // own call, mode 1 being LINEAR: find the key span
-                    // containing t and lerp. Not the first key.
-                    const float t = 1.0f;
-                    float p[3] = {pa.keys.front().pos[0],
-                                  pa.keys.front().pos[1],
-                                  pa.keys.front().pos[2]};
-                    for (std::size_t i = 0; i + 1 < pa.keys.size(); ++i) {
-                        const float a = static_cast<float>(pa.keys[i].frame);
-                        const float b = static_cast<float>(pa.keys[i + 1].frame);
-                        if (t < a || t > b) continue;
-                        const float u = b > a ? (t - a) / (b - a) : 0.0f;
-                        for (int k = 0; k < 3; ++k)
-                            p[k] = pa.keys[i].pos[k] +
-                                   (pa.keys[i + 1].pos[k] - pa.keys[i].pos[k]) * u;
-                        break;
-                    }
-                    // ...plus the call's own offset, params 9/10/11 in
-                    // INCHES, which `placementOf` has already divided.
-                    for (int k = 0; k < 3; ++k)
-                        s.at[k] = p[k] + (stt ? stt->offset[k] : 0.0f);
-                    s.placed = true;
-                    s.pelvis = true;    // an authored path names the PELVIS
-                    s.progPlaced = true; s.progPelvis = true;
-                    s.progRan = true;
-                    // ...and the FACING is the call's Euler, written to the
-                    // node every tick; the clip's root quaternion sits under
-                    // it. Anekbah's Kiss couples say -70, the walkers 180 -
-                    // without it a couple placed right still stood turned
-                    // away and intersecting.
-                    // Pitch and roll (params 4 and 6) are rarely non-zero
-                    // (three beggars carry -7 of pitch) and are not applied.
-                    for (int k = 0; k < 3; ++k) s.progBase[k] = s.at[k];
-                    for (float& w : s.walkMove) w = 0.0f;   // the program places him
-                }
-                std::printf("  pose: actor %d %s - clip %d '%s' (%d frames) on path "
-                            "%d '%s' at %.0f %.0f %.0f%s\n", s.actor, s.model.c_str(),
-                            sceneClip, run->scene().clipName(sceneClip).c_str(),
-                            s.sceneTracks.frames, scenePath, pa.name.c_str(),
-                            s.at[0], s.at[1], s.at[2],
-                            byLone ? "  [the program names another actor; this is "
-                                     "the frame's only body - LABELLED]" : "");
-            } else if (sceneClip >= 0 && run->loaded()) {
-                // No path: the plain `Script_SelectBodyAnimation`
-                // (0x02000004) SNAPS the node to the clip's root key 0
-                // - the authored placement, a PELVIS point whose
-                // height is kept - and `Anim_RootDelta` sums the keys
-                // after it (CLAUDE.md 6; `Session::trackPlayer` is the
-                // same rule for the player). Left on its 20-byte
-                // placement record instead, the body would be framed by
-                // none of the Impasse's beat cameras, which frame the
-                // clip roots: Kay'l's arrival clip starts at 6462 -121
-                // 3215 while his record puts him at 7217.
-                float base[3] = {0, 0, 0};
-                if (omk::clipRootStart(run->scene().clipData(sceneClip), base)) {
-                    // ...plus the call's own offset, params 7/8/9 in
-                    // inches: `x = node.x - GetParamFloatB(fn, 7) *
-                    // -0.39370078`. Zero at every shipped site read so
-                    // far, but it is the field the function reads.
-                    for (int k = 0; k < 3; ++k)
-                        base[k] += stt ? stt->offset[k] : 0.0f;
-                    for (int k = 0; k < 3; ++k) s.at[k] = base[k];
-                    s.placed = true;
-                    s.pelvis = true;
-                    s.progPlaced = true; s.progPelvis = true;
-                    s.progRan = true;
-                    for (int k = 0; k < 3; ++k) s.progBase[k] = base[k];
-                    for (float& w : s.walkMove) w = 0.0f;   // the program places him
-                    std::printf("  pose: actor %d %s - clip %d '%s' (%d frames), no "
-                                "path: snapped to its root key 0 at %.0f %.0f %.0f%s\n",
-                                s.actor, s.model.c_str(), sceneClip,
-                                run->scene().clipName(sceneClip).c_str(),
-                                s.sceneTracks.frames, s.at[0], s.at[1], s.at[2],
-                                byLone ? "  [the program names another actor; this "
-                                         "is the frame's only body - LABELLED]" : "");
-                }
-            } else if (sceneClip < 0 && stt && !stt->animReached) {
-                // NOT YET: the program has not reached a body-animation
-                // step, so the engine has not touched the actor. He is
-                // where the world has him - for the player, the DB
-                // position (`actor.goto_address` parks Kay'l at address
-                // 654, under the alley, before his jump); for anyone
-                // else, the placement record.
-                s.progPlaced = false;
-                if (stt->how == "player") {
-                    const float* pp = session.playerPos();
-                    for (int k = 0; k < 3; ++k) s.at[k] = pp[k];
-                    s.placed = true;
-                    s.pelvis = false;
-                }
-                std::printf("  pose: actor %d %s - its program has not reached an "
-                            "animation yet; he stays where the world has him "
-                            "(%.0f %.0f %.0f)\n", s.actor, s.model.c_str(),
-                            s.at[0], s.at[1], s.at[2]);
-            } else if (sceneClip < 0 && s.progRan) {
-                // The program ended. `Script_SelectBodyAnimation` never
-                // resets the node, so the accumulated offset STANDS
-                // (CLAUDE.md 6): he stays where the clip left him, and in
-                // the pose it left him in - the node keeps its last frame
-                // (the player alone falls back to his channel's idle;
-                // todo/drift-audit.md M2).
-                s.progPlaced = false;
-                if (s.placed) {  // drawAt is last frame's; `drawn` was just cleared
-                    for (int k = 0; k < 3; ++k) s.at[k] = s.drawAt[k];
-                    for (float& w : s.walkMove) w = 0.0f;   // drawAt carries it
-                }
-                std::printf("  pose: actor %d %s - its program ended; he stays where "
-                            "it left him (%.0f %.0f %.0f), in the pose it left\n",
-                            s.actor, s.model.c_str(),
-                            s.at[0], s.at[1], s.at[2]);
-            } else if (sceneClip < 0) {
-                // NO program ever drove this body. `drawAt` is not
-                // "where the program left him" - on the first frame it
-                // has never been written - so the placement record the
-                // chunk gives him STANDS, untouched. Gandhar's cave is
-                // the case: twelve ZOH_FN whose actor records carry no
-                // .CTL at all and whom only `shoot.actor.enter` names,
-                // every one of them teleported to 0 0 0 on frame 0.
-                s.progPlaced = false;
-            }
-            if (stagedProbe && hadOne && sceneClip >= 0) {
-                const float dx = s.at[0] - wasAt[0], dz = s.at[2] - wasAt[2];
-                std::printf("    handover %ld actor %d %s  %.0f %.0f -> %.0f %.0f"
-                            "   gap %.0f\n", frameNo, s.actor, s.model.c_str(),
-                            wasAt[0], wasAt[2], s.at[0], s.at[2],
-                            std::sqrt(dx * dx + dz * dz));
-            }
-        }
+        worldStagedSceneClipChange(run, sceneClip, s, scenePath, stt, byLone);
         // (b) THE CONVERSATION'S LINE, for its speaker only - the body
         // whose actor id is the DIALOG chunk's word 0. The model name
         // is no fallback: it would make EVERY body wearing the
@@ -527,197 +380,8 @@ void PlayState::worldStaged() {
         // the held frame and back again on the next.
         bool poseHeld = false;
         const char* src = "the rest pose (no bank clip)";
-        if (useLine) {
-            // (never past what the stream has read - it keeps two seconds
-            // ahead of the clock, so this holds only through a stall)
-            const int frame = std::min(static_cast<int>(lineT),
-                                       std::max(0, (speakerTracks.built > 0 ? speakerTracks.built
-                                                                            : speakerTracks.frames) - 1));
-            // THE LATCH, on the line's first frame - what `Morph_Play`
-            // reads off the node once and `sub_42BE00` hands the morph
-            // for its whole length. `heading` is the node's world yaw
-            // less the Euler: the scene clip's root heading at the
-            // frame the line began. The clip's root goes INTO the
-            // morph's root here (`turnRootBy`), the Euler is kept
-            // beside it, and neither is re-read while the line plays -
-            // the program may end under it, as the goodbye's does.
-            // ...and it must be THIS line's tracks. The Session enters
-            // a line on its tick and the frontend rebuilds
-            // `speakerTracks` on the next frame's `lineChanged`, so
-            // the first `useLine` frame still holds the PREVIOUS
-            // line's. Latched then, a 451-frame line runs on a
-            // 135-frame copy and `composePose` clamps at 135: Telis
-            // frozen but for her mouth for the last two thirds of
-            // "Il y a quatre jours...". The latch
-            // is re-taken when the tracks' line changes under it.
-            if (s.lineYawLatched && s.lineVoice != speakerVoice) s.lineYawLatched = false;
-            if (!s.lineYawLatched) {
-                s.lineVoice = speakerVoice;
-                const bool haveClip = s.sceneTracks.valid() && sceneClip >= 0 && run && run->loaded();
-                // ...at the frame the FADE blends from. `Morph_Play`
-                // hands the morph `rec[47]` (`sub_42BDD0`), and the
-                // fade-in slerps from the clip at that frame -
-                // `lineIdleFrame` here - toward the morph. The latch
-                // must read the clip at the SAME frame, or the two
-                // ends of the fade sit at different headings: read at
-                // the live `sceneFrame` instead, 402's greeting
-                // latched 73 against an idle end at 85 and she stepped
-                // 12 degrees on the line's first frame.
-                s.lineRootYaw = haveClip
-                    ? omk::headingFromClipRoot(run->scene().clipData(sceneClip),
-                                               static_cast<int>(lineIdleFrame))
-                    : (s.restYawKnown ? s.restYaw - (s.progYawKnown ? progYawSign * s.progYaw : 0.0f) : 0.0f);
-                s.lineYaw = s.progYawKnown ? progYawSign * s.progYaw : 0.0f;   // the Euler
-                s.lineTracks = speakerTracks;
-                turnRootBy(s.lineTracks, s.lineRootYaw, 0);
-                s.lineYawLatched = true;
-            }
-            // ...and the frames the STREAM has read since (`formats/
-            // morphstream.h`): copied in and turned the same way, so the
-            // latched copy is the whole line once the line is read
-            if (s.lineTracks.built < speakerTracks.built) {
-                const int from = s.lineTracks.built;
-                for (int f = from; f < speakerTracks.built; ++f) {
-                    s.lineTracks.quats[static_cast<std::size_t>(f)] = speakerTracks.quats[static_cast<std::size_t>(f)];
-                    s.lineTracks.trans[static_cast<std::size_t>(f)] = speakerTracks.trans[static_cast<std::size_t>(f)];
-                }
-                s.lineTracks.built = speakerTracks.built;
-                turnRootBy(s.lineTracks, s.lineRootYaw, from);
-            }
-            // THE FADE at both ends of the line - `sub_42D120`'s,
-            // pose.h has the read - and the root is NOT cancelled when
-            // a scene clip stages him: the engine plays the root as
-            // `root x yaw` (key 1 of the pair `sub_42D120` builds), which
-            // is `turnRootBy` above.
-            float w = 1.0f;
-            int idleFrame = static_cast<int>(sceneFrame);
-            if (s.sceneTracks.valid()) {
-                const float total = static_cast<float>(speakerTracks.frames);
-                const float bl = omk::morphBlendFrames(speakerTracks.frames);
-                const bool blendOut = speakerVoice.find("02E19A") == std::string::npos;
-                if (bl > 0.0f && lineT < bl) {
-                    w = lineT / bl;                          // from rec[47]
-                    idleFrame = static_cast<int>(lineIdleFrame);
-                } else if (bl > 0.0f && blendOut && lineT > total - bl) {
-                    w = 1.0f - (lineT - (total - bl)) / bl;  // to KEY 1
-                    idleFrame = 0;
-                }
-            }
-            const bool cancelLineRoot = !s.sceneTracks.valid();
-            if (w < 1.0f) {
-                const auto mixed = omk::blendTracks(s.sceneTracks, idleFrame, false,
-                                                    s.lineTracks, frame,
-                                                    cancelLineRoot, w);
-                omk::composePose(s.mo->meshes, mixed, 0, false, pose);
-            } else {
-                omk::composePose(s.mo->meshes, s.lineTracks, frame,
-                                        cancelLineRoot, pose);
-            }
-            // THE PLACEMENT IS THE SCENE CLIP'S, WHOLE, WHILE A LINE
-            // PLAYS. A line changes the POSE, never where the body
-            // stands: the morph player (08_wave.c) never writes the
-            // line's root translation into the node - the write behind
-            // `track == g_MorphRootTrack` is the root TRACK's position-key
-            // pointer, which nothing applying a frame reads - and instead
-            // rotates that translation
-            // by the Y euler and adds it to `g_MorphOrigin`, latched
-            // once at the start of the line (`dword_4EA8FC`). So a
-            // line's root is a DELTA from where the body already
-            // stands, and the scene clip's own root motion is still
-            // under it.
-            //
-            // NOT weighted by the blend (`rootW = 1 - w`): weighted, a
-            // speaking body drifts back to its bare staged placement and
-            // the fade lerps it there and back - Telis in the restaurant
-            // FLYING between the line and the idle, the idle's end being
-            // the right one, because her face leaves the (correct)
-            // camera while she speaks. The position is not something the
-            // fade owns (`todo/omk-play.md` 81).
-            rootW = 1.0f;
-            rootFrame = static_cast<int>(sceneFrame);
-            // The FACE has no bone track: its vertices come straight
-            // out of the line's own frame, which is what moves the lips.
-            if (speakerMorph && !speakerMorph->empty()) fv = omk::faceFrame(*speakerMorph, frame);
-            src = "the line's .3DM";
-        } else if (s.sceneTracks.valid()) {
-            s.inertAfterFight = false;     // a program owns him again
-            rootFrame = static_cast<int>(sceneFrame);
-            // A SCENE CLIP keeps its root rotation - it is the
-            // character's real orientation, lying on the floor and
-            // getting up (`Anim_ApplyNodeFrame` applies every node's
-            // quaternion, the root's included).
-            // the program's FLOAT clock, so enhancement 12 can blend
-            // between keys; off, it floors to `rootFrame` exactly
-            omk::composePose(s.mo->meshes, s.sceneTracks, sceneFrame, false, pose);
-            rootW = 1.0f;
-            src = "a scene program's clip";
-        } else if (shootTracks && shootTracks->valid()) {
-            // ...bent by his aim layer while the gate runs him
-            pose = astGrid ? astarothPoseNow(s.mo, *shootTracks, *astGrid)
-                           : gunmanPoseNow(s.actor, s.deathType, s.mo, *shootTracks, shootFrame);
-            src = "shoot mode: the area's .ani, by character type";
-        } else if (!s.lastPose.empty() && session.parkedOnProgram()) {
-            // BETWEEN TWO BEATS OF ONE CUTSCENE the body holds the
-            // pose its last step left it in. The engine never resets a
-            // node - `Script_SelectBodyAnimation` writes the node's
-            // animation and nothing clears it when the program ends -
-            // and the chain is still in flight, so the next beat is
-            // about to pose him again. Falling back to the bank's idle
-            // here would put Kay'l in his standing stance for the one
-            // frame between every pair of the Impasse's beats, visible
-            // whenever the camera does not cut away at the same moment
-            // (todo/omk-play.md 78).
-            //
-            // Scoped to the gap deliberately: with NOTHING coming the
-            // PLAYER is driven by his channel (`Cef_TickChannel`) and
-            // takes his idle below; an NPC holds his last pose there
-            // anyway (todo/drift-audit.md M2).
-            pose = s.lastPose;
-            poseHeld = true;
-            src = "the pose the last beat left (the chain is mid-flight)";
-        } else if (fightRun.active && fightRun.body == &s &&
-                   fightRun.foePose.valid() && fightRun.foeChannel) {
-            // A FIGHTER IS POSED BY HIS OWN CHANNEL. Everything else
-            // here is driven by a program, a line or the shoot gate;
-            // a melee opponent is driven by `Cef_TickChannel`, so his
-            // clip and his frame come from it. Without this branch he
-            // lands on the idle below and stands in the bank's default
-            // entry, frame 0, while he walks in and throws punches -
-            // which is what step 3's first half left him doing.
-            //
-            // Key 0 is the rest sentinel, so frame `f` reads key
-            // `f + 1` and `clipTracks` is indexed from 0 by frame.
-            int ff = static_cast<int>(fightRun.foeChannel->frame()) - 1;
-            if (ff < 0) ff = 0;
-            if (ff >= fightRun.foePose.frames) ff = fightRun.foePose.frames - 1;
-            omk::composePose(s.mo->meshes, fightRun.foePose, ff, false, pose);
-            src = "the fight channel's own clip";
-        } else if (s.inertAfterFight && !s.lastPose.empty()) {
-            pose = s.lastPose;
-            src = "the fight's last pose (ACTOR_STATE 0 after sub_445AC0 - no tick)";
-        } else if (s.idle.valid() && s.actor == playerId) {
-            // THE PLAYER'S IDLE ALONE (todo/drift-audit.md M2). His
-            // channel runs (`SetPersoBankList` - the player's and a melee
-            // opponent's are the only ones the engine ever gives a bank),
-            // so his default entry stands. An NPC no program drives gets
-            // NO clip in the original - `Actor_LoadModel` leaves ACTOR_STATE
-            // 0, which does not tick, and neither the spawn nor the load
-            // applies one - so he holds the last pose he was given, or the
-            // model's REST pose when he was never given one: the branches
-            // below - not on frame 0 of a bank's default entry.
-            if (s.idlePoseFor != s.mo || s.idlePoseModel != s.model) {
-                omk::composePose(s.mo->meshes, s.idle, 0, false, s.idlePose);
-                s.idlePoseFor = s.mo;
-                s.idlePoseModel = s.model;
-            }
-            pose = s.idlePose;   // a copy: the head look below bends `pose`
-            src = "the bank's default entry, frame 0";
-        } else if (!s.lastPose.empty()) {
-            pose = s.lastPose;
-            src = "the last pose it was given (nothing drives it now)";
-        } else {
-            omk::composePose(s.mo->meshes, omk::NodeTracks{}, 0, false, pose);
-        }
+        worldStagedLinePose(run, useLine, lineT, s, sceneClip, sceneFrame, pose, rootW, rootFrame,
+                            fv, src, shootTracks, astGrid, shootFrame, poseHeld, playerId);
         if (useLine || s.sceneTracks.valid() || (shootTracks && shootTracks->valid()) ||
             (fightRun.active && fightRun.body == &s && fightRun.foePose.valid()) ||
             s.idle.valid())
@@ -728,80 +392,7 @@ void PlayState::worldStaged() {
         // world position is the frontend's; back into the pose's own
         // space through the placement below (facing, pelvis, at).
         static const bool lookAll = omk::envFlag("OMK_LOOK_ALL");   // a diagnostic: everyone looks
-        if ((lookAll || session.looksAtPlayer(s.actor)) && s.placed && s.mo->root >= 0) {
-            const int head = s.mo->headOf();
-            if (head >= 0) {
-                const float* pp = (adventure && player) ? player->pos() : session.playerPos();
-                // THE TARGET'S HEAD NODE, as the engine reads it: `th =
-                // *(tgt + 16)`, the player's cached `Tete`, its world
-                // position at node +44..+52 (`Actors_TickAll`).
-                // `playerHeadAt` is that node as the
-                // player was last drawn - one frame old here, since
-                // the player is posed later in the frame. Until he has
-                // been drawn once, his feet less a standing head height.
-                //
-                // ...AND WHILE A PROGRAM OWNS HIM, HIS STAGED BODY'S. A
-                // `scx.play.player` program poses the player as a staged
-                // body and the walker stops drawing him, so `playerHeadAt`
-                // froze where his head was before he sat down: Telis, at
-                // lunch, aimed at the spot Kay'l stood in when he pressed
-                // action, a head higher and 21 units off his seat.
-                const Staged* asPlayer = nullptr;
-                if (const int pid = session.playerActor(); pid >= 0)
-                    for (const auto& other : staged)
-                        if (other->actor == pid && other.get() != &s && other->headKnown) { asPlayer = other.get(); break; }
-                const float playerHead[3] = {asPlayer ? asPlayer->headAt[0] : playerHeadKnown ? playerHeadAt[0] : pp[0],
-                                        asPlayer ? asPlayer->headAt[1] : playerHeadKnown ? playerHeadAt[1] : pp[1] - 60.0f,
-                                        asPlayer ? asPlayer->headAt[2] : playerHeadKnown ? playerHeadAt[2] : pp[2]};
-                float pelvis[3] = {0, 0, 0};
-                if (static_cast<std::size_t>(s.mo->root) < pose.size())
-                    for (int k = 0; k < 3; ++k) pelvis[k] = pose[static_cast<std::size_t>(s.mo->root)].pos[k];
-                // ...THROUGH WHERE THE PELVIS IS DRAWN, the inverse of the
-                // placement below (`R(p - pelvis) + pelvis + off`). This
-                // used `s.at`, which is the program's root key 0: under a
-                // clip whose root DROPS (Telis sitting, TELRES05 19 units)
-                // the seated Kay'l came out 19 units below where he is in
-                // her frame, and the look tipped her head down at a man
-                // whose head is level with hers.
-                const float* base = s.pelvisDrawnKnown ? s.pelvisDrawnAt : s.at;
-                const float rel[3] = {playerHead[0] - base[0], playerHead[1] - base[1], playerHead[2] - base[2]};
-                float local[3];
-                // ...IN THE FRAME THE BODY WILL ACTUALLY BE DRAWN IN.
-                // A body a scene program drives is turned by the
-                // call's Euler (`progYaw`), not by its placement
-                // record's facing. Backed out through `s.facing` - 0
-                // for every one of the restaurant's diners while their
-                // Euler is 90 - the target would sit 90 degrees off,
-                // the yaw pinned at `Actor_SetHeadLook`'s own +-70
-                // clamp, and a diner the player is standing almost in
-                // front of would stare sideways for as long as his
-                // zone held. Diner 71 wants -13 degrees.
-                // ...AND WHILE A LINE PLAYS: the body is drawn turned by
-                // the Euler latched with the line (`s.lineYaw`, the body
-                // yaw below - the clip's root heading is inside the
-                // morph's root, already in `pose`), so the aim is backed
-                // out through the same yaw. `s.facing` here would be the
-                // same 90-degree trap for a program-turned speaker. (Telis at
-                // lunch has an Euler of 0, so it changes nothing for her.)
-                const bool progTurned = s.sceneTracks.valid() && !useLine &&
-                                        s.progYawKnown;
-                const float bodyYaw = useLine ? s.lineYaw
-                                    : progTurned ? progYawSign * s.progYaw : s.facing;
-                omk::rotateYaw(-bodyYaw, rel, local);
-                const float target[3] = {local[0] + pelvis[0], local[1] + pelvis[1], local[2] + pelvis[2]};
-                // No snap: the angles live in the actor record (+432/+436)
-                // and ease from wherever they are; with no target they
-                // ease back to 0 (`Actor_SetHeadLook(a, 0, 0)`), which the
-                // zeroing below stands in for.
-                // ...HELD while he flies Manuelle: the look is `Actors_
-                // TickAll`'s, which `Slider_TickRide` replaces (05_sys.c:2170,
-                // drift audit M5), so the angles at +432/+436 do not move
-                omk::aimHead(pose, s.mo->meshes, head, target, s.look,
-                             ride ? 0.0f : static_cast<float>(frameSec * 30.0), false);
-            }
-        } else if (!ride) {
-            s.look = omk::HeadLook{};
-        }
+        worldStagedHeadLook(lookAll, s, pose, useLine);
         if (!s.placed) {
             if (!s.placeTold) {
                 s.placeTold = true;
@@ -923,58 +514,7 @@ void PlayState::worldStaged() {
         // how much of the pose is the scene's, so a line stands where
         // it was staged and a fade lerps the position too.
         float rootMove[3] = {0, 0, 0};
-        if (rootW > 0.0f && !s.sceneTracks.trans.empty()) {
-            int fi = rootFrame;
-            if (fi < 0) fi = 0;
-            if (fi >= static_cast<int>(s.sceneTracks.trans.size()))
-                fi = static_cast<int>(s.sceneTracks.trans.size()) - 1;
-            for (int k = 0; k < 3; ++k)
-                rootMove[k] = rootW *
-                    s.sceneTracks.trans[static_cast<std::size_t>(fi)]
-                                       [static_cast<std::size_t>(k)];
-            // ...TURNED BY THE ACTOR'S FACING, which is what
-            // `Anim_RootDelta` (0x004711D0) does and this file did
-            // not. Its second argument is `node+156`, and
-            // `Actor_LoadModel` binds that to `actor+288` -
-            // `sub_437140(node, actor + 288)` - which `Actors_TickAll`
-            // rebuilds every frame from the Euler at `actor+416..424`:
-            //
-            //     Matrix3x3_FromEulerAngles(a[104]*rad, a[105]*rad,
-            //                               a[106]*rad, a + 288);
-            //
-            // and the Euler is what `Script_SelectRelativeBodyAnimation`
-            // writes with `Actor_SetEuler(node, p4, p5, p6)` on the tick
-            // BEFORE it calls `Actor_MoveBy(node, delta)`. The tail of
-            // `Anim_RootDelta` is the row-vector multiply
-            //
-            //     out.x = m0*dx + m3*dy + m6*dz
-            //     out.y = m1*dx + m4*dy + m7*dz
-            //     out.z = m2*dx + m5*dy + m8*dz
-            //
-            // so for a yaw-only Euler it is the same `rotateYaw` the
-            // body is turned by. Without it the restaurant's waiter -
-            // `Serveur00`, Euler y 145 - plays a walk cycle facing one
-            // way and travels the other: walking forward, moving
-            // backward.
-            // Note the Euler is STICKY, as it is in the engine: only
-            // the relative call writes it, `Script_SelectBodyAnimation`
-            // never does, and the actor record keeps the last one - so
-            // the waiter's ABS walk clips travel under the 145 his
-            // preceding REL wait left there.
-            static const bool noRootSpin =
-                omk::envFlag("OMK_NO_ROOTSPIN");
-            // ...and the SENSE is its own question: the body's spin and
-            // `Anim_RootDelta`'s multiply are different code paths in the
-            // engine and need not share it. `OMK_ROOTSPIN_NEG` turns the
-            // delta the other way while leaving the body alone.
-            static const float rootSpinSign =
-                omk::envFlag("OMK_ROOTSPIN_NEG") ? -1.0f : 1.0f;
-            if (!noRootSpin && s.progYawKnown && std::fabs(s.progYaw) > 0.01f) {
-                float r[3];
-                omk::rotateYaw(rootSpinSign * progYawSign * s.progYaw, rootMove, r);
-                for (int k = 0; k < 3; ++k) rootMove[k] = r[k];
-            }
-        }
+        worldStagedRootMotion(rootW, s, rootFrame, rootMove);
         // A DEATH CLIP'S ROOT MOTION, without which the dead float in
         // the air. `sub_421770` moves the node by the picked
         // clip's root delta every tick - `o3de_MoveNodeBy(node, dx, dy,
@@ -1592,3 +1132,501 @@ void PlayState::worldStaged() {
     releaseIdleStaged();
     mark("staged bodies");
 }
+
+// A SCENE CLIP CHANGED for this body: its placement from the clip's root or the call's path (from `worldStaged`)
+void PlayState::worldStagedSceneClipChange(const omk::SceneRunner*& run, int& sceneClip, Staged& s,
+                                           int& scenePath, const omk::SceneRunner::Started*& stt,
+                                           bool& byLone) {
+    auto& session = *session_;
+    if (sceneClip != s.sceneClipWas) {
+        // THE HAND-OVER GAP. A program's steps are authored to
+        // chain: each clip's placement is where the previous one
+        // left the body, so a correct run re-places him on the
+        // spot he already occupies and nothing visibly moves.
+        // Where the accumulated root motion is wrong the two
+        // disagree and the next step YANKS him - a teleport. The gap
+        // is therefore
+        // a measure of the root motion, independent of the walk
+        // mesh: two chains that must agree.
+        const float wasAt[3] = {s.drawAt[0], s.drawAt[1], s.drawAt[2]};
+        const bool hadOne = s.progRan && s.sceneClipWas >= 0;
+        s.sceneClipWas = sceneClip;
+        s.sceneTracks = omk::NodeTracks{};
+        if (sceneClip >= 0 && run->loaded())
+            s.sceneTracks = omk::clipTracks(run->scene().clipData(sceneClip));
+        if (scenePath >= 0 && run->loaded() &&
+            scenePath < static_cast<int>(run->scene().paths().size())) {
+            const auto& pa = run->scene().paths()[static_cast<std::size_t>(scenePath)];
+            if (!pa.keys.empty()) {
+                // `Path_Sample(path, 1.0, ..., 1)` - the engine's
+                // own call, mode 1 being LINEAR: find the key span
+                // containing t and lerp. Not the first key.
+                const float t = 1.0f;
+                float p[3] = {pa.keys.front().pos[0],
+                              pa.keys.front().pos[1],
+                              pa.keys.front().pos[2]};
+                for (std::size_t i = 0; i + 1 < pa.keys.size(); ++i) {
+                    const float a = static_cast<float>(pa.keys[i].frame);
+                    const float b = static_cast<float>(pa.keys[i + 1].frame);
+                    if (t < a || t > b) continue;
+                    const float u = b > a ? (t - a) / (b - a) : 0.0f;
+                    for (int k = 0; k < 3; ++k)
+                        p[k] = pa.keys[i].pos[k] +
+                               (pa.keys[i + 1].pos[k] - pa.keys[i].pos[k]) * u;
+                    break;
+                }
+                // ...plus the call's own offset, params 9/10/11 in
+                // INCHES, which `placementOf` has already divided.
+                for (int k = 0; k < 3; ++k)
+                    s.at[k] = p[k] + (stt ? stt->offset[k] : 0.0f);
+                s.placed = true;
+                s.pelvis = true;    // an authored path names the PELVIS
+                s.progPlaced = true; s.progPelvis = true;
+                s.progRan = true;
+                // ...and the FACING is the call's Euler, written to the
+                // node every tick; the clip's root quaternion sits under
+                // it. Anekbah's Kiss couples say -70, the walkers 180 -
+                // without it a couple placed right still stood turned
+                // away and intersecting.
+                // Pitch and roll (params 4 and 6) are rarely non-zero
+                // (three beggars carry -7 of pitch) and are not applied.
+                for (int k = 0; k < 3; ++k) s.progBase[k] = s.at[k];
+                for (float& w : s.walkMove) w = 0.0f;   // the program places him
+            }
+            std::printf("  pose: actor %d %s - clip %d '%s' (%d frames) on path "
+                        "%d '%s' at %.0f %.0f %.0f%s\n", s.actor, s.model.c_str(),
+                        sceneClip, run->scene().clipName(sceneClip).c_str(),
+                        s.sceneTracks.frames, scenePath, pa.name.c_str(),
+                        s.at[0], s.at[1], s.at[2],
+                        byLone ? "  [the program names another actor; this is "
+                                 "the frame's only body - LABELLED]" : "");
+        } else if (sceneClip >= 0 && run->loaded()) {
+            // No path: the plain `Script_SelectBodyAnimation`
+            // (0x02000004) SNAPS the node to the clip's root key 0
+            // - the authored placement, a PELVIS point whose
+            // height is kept - and `Anim_RootDelta` sums the keys
+            // after it (CLAUDE.md 6; `Session::trackPlayer` is the
+            // same rule for the player). Left on its 20-byte
+            // placement record instead, the body would be framed by
+            // none of the Impasse's beat cameras, which frame the
+            // clip roots: Kay'l's arrival clip starts at 6462 -121
+            // 3215 while his record puts him at 7217.
+            float base[3] = {0, 0, 0};
+            if (omk::clipRootStart(run->scene().clipData(sceneClip), base)) {
+                // ...plus the call's own offset, params 7/8/9 in
+                // inches: `x = node.x - GetParamFloatB(fn, 7) *
+                // -0.39370078`. Zero at every shipped site read so
+                // far, but it is the field the function reads.
+                for (int k = 0; k < 3; ++k)
+                    base[k] += stt ? stt->offset[k] : 0.0f;
+                for (int k = 0; k < 3; ++k) s.at[k] = base[k];
+                s.placed = true;
+                s.pelvis = true;
+                s.progPlaced = true; s.progPelvis = true;
+                s.progRan = true;
+                for (int k = 0; k < 3; ++k) s.progBase[k] = base[k];
+                for (float& w : s.walkMove) w = 0.0f;   // the program places him
+                std::printf("  pose: actor %d %s - clip %d '%s' (%d frames), no "
+                            "path: snapped to its root key 0 at %.0f %.0f %.0f%s\n",
+                            s.actor, s.model.c_str(), sceneClip,
+                            run->scene().clipName(sceneClip).c_str(),
+                            s.sceneTracks.frames, s.at[0], s.at[1], s.at[2],
+                            byLone ? "  [the program names another actor; this "
+                                     "is the frame's only body - LABELLED]" : "");
+            }
+        } else if (sceneClip < 0 && stt && !stt->animReached) {
+            // NOT YET: the program has not reached a body-animation
+            // step, so the engine has not touched the actor. He is
+            // where the world has him - for the player, the DB
+            // position (`actor.goto_address` parks Kay'l at address
+            // 654, under the alley, before his jump); for anyone
+            // else, the placement record.
+            s.progPlaced = false;
+            if (stt->how == "player") {
+                const float* pp = session.playerPos();
+                for (int k = 0; k < 3; ++k) s.at[k] = pp[k];
+                s.placed = true;
+                s.pelvis = false;
+            }
+            std::printf("  pose: actor %d %s - its program has not reached an "
+                        "animation yet; he stays where the world has him "
+                        "(%.0f %.0f %.0f)\n", s.actor, s.model.c_str(),
+                        s.at[0], s.at[1], s.at[2]);
+        } else if (sceneClip < 0 && s.progRan) {
+            // The program ended. `Script_SelectBodyAnimation` never
+            // resets the node, so the accumulated offset STANDS
+            // (CLAUDE.md 6): he stays where the clip left him, and in
+            // the pose it left him in - the node keeps its last frame
+            // (the player alone falls back to his channel's idle;
+            // todo/drift-audit.md M2).
+            s.progPlaced = false;
+            if (s.placed) {  // drawAt is last frame's; `drawn` was just cleared
+                for (int k = 0; k < 3; ++k) s.at[k] = s.drawAt[k];
+                for (float& w : s.walkMove) w = 0.0f;   // drawAt carries it
+            }
+            std::printf("  pose: actor %d %s - its program ended; he stays where "
+                        "it left him (%.0f %.0f %.0f), in the pose it left\n",
+                        s.actor, s.model.c_str(),
+                        s.at[0], s.at[1], s.at[2]);
+        } else if (sceneClip < 0) {
+            // NO program ever drove this body. `drawAt` is not
+            // "where the program left him" - on the first frame it
+            // has never been written - so the placement record the
+            // chunk gives him STANDS, untouched. Gandhar's cave is
+            // the case: twelve ZOH_FN whose actor records carry no
+            // .CTL at all and whom only `shoot.actor.enter` names,
+            // every one of them teleported to 0 0 0 on frame 0.
+            s.progPlaced = false;
+        }
+        if (stagedProbe && hadOne && sceneClip >= 0) {
+            const float dx = s.at[0] - wasAt[0], dz = s.at[2] - wasAt[2];
+            std::printf("    handover %ld actor %d %s  %.0f %.0f -> %.0f %.0f"
+                        "   gap %.0f\n", frameNo, s.actor, s.model.c_str(),
+                        wasAt[0], wasAt[2], s.at[0], s.at[2],
+                        std::sqrt(dx * dx + dz * dz));
+        }
+    }
+}
+
+
+
+// THE CONVERSATION LINE drives the pose: the line's tracks, faded into and out of the idle (from `worldStaged`)
+void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, float lineT,
+                                    Staged& s, int& sceneClip, float& sceneFrame,
+                                    std::vector<omk::MeshPose>& pose, float& rootW, int& rootFrame,
+                                    std::vector<float>& fv, const char*& src,
+                                    const omk::NodeTracks*& shootTracks,
+                                    const omk::AstarothActor*& astGrid, int& shootFrame,
+                                    bool& poseHeld, int playerId) {
+    auto& session = *session_;
+    if (useLine) {
+        // (never past what the stream has read - it keeps two seconds
+        // ahead of the clock, so this holds only through a stall)
+        const int frame = std::min(static_cast<int>(lineT),
+                                   std::max(0, (speakerTracks.built > 0 ? speakerTracks.built
+                                                                        : speakerTracks.frames) - 1));
+        // THE LATCH, on the line's first frame - what `Morph_Play`
+        // reads off the node once and `sub_42BE00` hands the morph
+        // for its whole length. `heading` is the node's world yaw
+        // less the Euler: the scene clip's root heading at the
+        // frame the line began. The clip's root goes INTO the
+        // morph's root here (`turnRootBy`), the Euler is kept
+        // beside it, and neither is re-read while the line plays -
+        // the program may end under it, as the goodbye's does.
+        // ...and it must be THIS line's tracks. The Session enters
+        // a line on its tick and the frontend rebuilds
+        // `speakerTracks` on the next frame's `lineChanged`, so
+        // the first `useLine` frame still holds the PREVIOUS
+        // line's. Latched then, a 451-frame line runs on a
+        // 135-frame copy and `composePose` clamps at 135: Telis
+        // frozen but for her mouth for the last two thirds of
+        // "Il y a quatre jours...". The latch
+        // is re-taken when the tracks' line changes under it.
+        if (s.lineYawLatched && s.lineVoice != speakerVoice) s.lineYawLatched = false;
+        if (!s.lineYawLatched) {
+            s.lineVoice = speakerVoice;
+            const bool haveClip = s.sceneTracks.valid() && sceneClip >= 0 && run && run->loaded();
+            // ...at the frame the FADE blends from. `Morph_Play`
+            // hands the morph `rec[47]` (`sub_42BDD0`), and the
+            // fade-in slerps from the clip at that frame -
+            // `lineIdleFrame` here - toward the morph. The latch
+            // must read the clip at the SAME frame, or the two
+            // ends of the fade sit at different headings: read at
+            // the live `sceneFrame` instead, 402's greeting
+            // latched 73 against an idle end at 85 and she stepped
+            // 12 degrees on the line's first frame.
+            s.lineRootYaw = haveClip
+                ? omk::headingFromClipRoot(run->scene().clipData(sceneClip),
+                                           static_cast<int>(lineIdleFrame))
+                : (s.restYawKnown ? s.restYaw - (s.progYawKnown ? progYawSign * s.progYaw : 0.0f) : 0.0f);
+            s.lineYaw = s.progYawKnown ? progYawSign * s.progYaw : 0.0f;   // the Euler
+            s.lineTracks = speakerTracks;
+            turnRootBy(s.lineTracks, s.lineRootYaw, 0);
+            s.lineYawLatched = true;
+        }
+        // ...and the frames the STREAM has read since (`formats/
+        // morphstream.h`): copied in and turned the same way, so the
+        // latched copy is the whole line once the line is read
+        if (s.lineTracks.built < speakerTracks.built) {
+            const int from = s.lineTracks.built;
+            for (int f = from; f < speakerTracks.built; ++f) {
+                s.lineTracks.quats[static_cast<std::size_t>(f)] = speakerTracks.quats[static_cast<std::size_t>(f)];
+                s.lineTracks.trans[static_cast<std::size_t>(f)] = speakerTracks.trans[static_cast<std::size_t>(f)];
+            }
+            s.lineTracks.built = speakerTracks.built;
+            turnRootBy(s.lineTracks, s.lineRootYaw, from);
+        }
+        // THE FADE at both ends of the line - `sub_42D120`'s,
+        // pose.h has the read - and the root is NOT cancelled when
+        // a scene clip stages him: the engine plays the root as
+        // `root x yaw` (key 1 of the pair `sub_42D120` builds), which
+        // is `turnRootBy` above.
+        float w = 1.0f;
+        int idleFrame = static_cast<int>(sceneFrame);
+        if (s.sceneTracks.valid()) {
+            const float total = static_cast<float>(speakerTracks.frames);
+            const float bl = omk::morphBlendFrames(speakerTracks.frames);
+            const bool blendOut = speakerVoice.find("02E19A") == std::string::npos;
+            if (bl > 0.0f && lineT < bl) {
+                w = lineT / bl;                          // from rec[47]
+                idleFrame = static_cast<int>(lineIdleFrame);
+            } else if (bl > 0.0f && blendOut && lineT > total - bl) {
+                w = 1.0f - (lineT - (total - bl)) / bl;  // to KEY 1
+                idleFrame = 0;
+            }
+        }
+        const bool cancelLineRoot = !s.sceneTracks.valid();
+        if (w < 1.0f) {
+            const auto mixed = omk::blendTracks(s.sceneTracks, idleFrame, false,
+                                                s.lineTracks, frame,
+                                                cancelLineRoot, w);
+            omk::composePose(s.mo->meshes, mixed, 0, false, pose);
+        } else {
+            omk::composePose(s.mo->meshes, s.lineTracks, frame,
+                                    cancelLineRoot, pose);
+        }
+        // THE PLACEMENT IS THE SCENE CLIP'S, WHOLE, WHILE A LINE
+        // PLAYS. A line changes the POSE, never where the body
+        // stands: the morph player (08_wave.c) never writes the
+        // line's root translation into the node - the write behind
+        // `track == g_MorphRootTrack` is the root TRACK's position-key
+        // pointer, which nothing applying a frame reads - and instead
+        // rotates that translation
+        // by the Y euler and adds it to `g_MorphOrigin`, latched
+        // once at the start of the line (`dword_4EA8FC`). So a
+        // line's root is a DELTA from where the body already
+        // stands, and the scene clip's own root motion is still
+        // under it.
+        //
+        // NOT weighted by the blend (`rootW = 1 - w`): weighted, a
+        // speaking body drifts back to its bare staged placement and
+        // the fade lerps it there and back - Telis in the restaurant
+        // FLYING between the line and the idle, the idle's end being
+        // the right one, because her face leaves the (correct)
+        // camera while she speaks. The position is not something the
+        // fade owns (`todo/omk-play.md` 81).
+        rootW = 1.0f;
+        rootFrame = static_cast<int>(sceneFrame);
+        // The FACE has no bone track: its vertices come straight
+        // out of the line's own frame, which is what moves the lips.
+        if (speakerMorph && !speakerMorph->empty()) fv = omk::faceFrame(*speakerMorph, frame);
+        src = "the line's .3DM";
+    } else if (s.sceneTracks.valid()) {
+        s.inertAfterFight = false;     // a program owns him again
+        rootFrame = static_cast<int>(sceneFrame);
+        // A SCENE CLIP keeps its root rotation - it is the
+        // character's real orientation, lying on the floor and
+        // getting up (`Anim_ApplyNodeFrame` applies every node's
+        // quaternion, the root's included).
+        // the program's FLOAT clock, so enhancement 12 can blend
+        // between keys; off, it floors to `rootFrame` exactly
+        omk::composePose(s.mo->meshes, s.sceneTracks, sceneFrame, false, pose);
+        rootW = 1.0f;
+        src = "a scene program's clip";
+    } else if (shootTracks && shootTracks->valid()) {
+        // ...bent by his aim layer while the gate runs him
+        pose = astGrid ? astarothPoseNow(s.mo, *shootTracks, *astGrid)
+                       : gunmanPoseNow(s.actor, s.deathType, s.mo, *shootTracks, shootFrame);
+        src = "shoot mode: the area's .ani, by character type";
+    } else if (!s.lastPose.empty() && session.parkedOnProgram()) {
+        // BETWEEN TWO BEATS OF ONE CUTSCENE the body holds the
+        // pose its last step left it in. The engine never resets a
+        // node - `Script_SelectBodyAnimation` writes the node's
+        // animation and nothing clears it when the program ends -
+        // and the chain is still in flight, so the next beat is
+        // about to pose him again. Falling back to the bank's idle
+        // here would put Kay'l in his standing stance for the one
+        // frame between every pair of the Impasse's beats, visible
+        // whenever the camera does not cut away at the same moment
+        // (todo/omk-play.md 78).
+        //
+        // Scoped to the gap deliberately: with NOTHING coming the
+        // PLAYER is driven by his channel (`Cef_TickChannel`) and
+        // takes his idle below; an NPC holds his last pose there
+        // anyway (todo/drift-audit.md M2).
+        pose = s.lastPose;
+        poseHeld = true;
+        src = "the pose the last beat left (the chain is mid-flight)";
+    } else if (fightRun.active && fightRun.body == &s &&
+               fightRun.foePose.valid() && fightRun.foeChannel) {
+        // A FIGHTER IS POSED BY HIS OWN CHANNEL. Everything else
+        // here is driven by a program, a line or the shoot gate;
+        // a melee opponent is driven by `Cef_TickChannel`, so his
+        // clip and his frame come from it. Without this branch he
+        // lands on the idle below and stands in the bank's default
+        // entry, frame 0, while he walks in and throws punches -
+        // which is what step 3's first half left him doing.
+        //
+        // Key 0 is the rest sentinel, so frame `f` reads key
+        // `f + 1` and `clipTracks` is indexed from 0 by frame.
+        int ff = static_cast<int>(fightRun.foeChannel->frame()) - 1;
+        if (ff < 0) ff = 0;
+        if (ff >= fightRun.foePose.frames) ff = fightRun.foePose.frames - 1;
+        omk::composePose(s.mo->meshes, fightRun.foePose, ff, false, pose);
+        src = "the fight channel's own clip";
+    } else if (s.inertAfterFight && !s.lastPose.empty()) {
+        pose = s.lastPose;
+        src = "the fight's last pose (ACTOR_STATE 0 after sub_445AC0 - no tick)";
+    } else if (s.idle.valid() && s.actor == playerId) {
+        // THE PLAYER'S IDLE ALONE (todo/drift-audit.md M2). His
+        // channel runs (`SetPersoBankList` - the player's and a melee
+        // opponent's are the only ones the engine ever gives a bank),
+        // so his default entry stands. An NPC no program drives gets
+        // NO clip in the original - `Actor_LoadModel` leaves ACTOR_STATE
+        // 0, which does not tick, and neither the spawn nor the load
+        // applies one - so he holds the last pose he was given, or the
+        // model's REST pose when he was never given one: the branches
+        // below - not on frame 0 of a bank's default entry.
+        if (s.idlePoseFor != s.mo || s.idlePoseModel != s.model) {
+            omk::composePose(s.mo->meshes, s.idle, 0, false, s.idlePose);
+            s.idlePoseFor = s.mo;
+            s.idlePoseModel = s.model;
+        }
+        pose = s.idlePose;   // a copy: the head look below bends `pose`
+        src = "the bank's default entry, frame 0";
+    } else if (!s.lastPose.empty()) {
+        pose = s.lastPose;
+        src = "the last pose it was given (nothing drives it now)";
+    } else {
+        omk::composePose(s.mo->meshes, omk::NodeTracks{}, 0, false, pose);
+    }
+}
+
+// THE HEAD LOOK: an actor a script pointed at the player turns his head toward the player's head (from `worldStaged`)
+void PlayState::worldStagedHeadLook(bool lookAll, Staged& s, std::vector<omk::MeshPose>& pose,
+                                    bool useLine) {
+    auto& session = *session_;
+    if ((lookAll || session.looksAtPlayer(s.actor)) && s.placed && s.mo->root >= 0) {
+        const int head = s.mo->headOf();
+        if (head >= 0) {
+            const float* pp = (adventure && player) ? player->pos() : session.playerPos();
+            // THE TARGET'S HEAD NODE, as the engine reads it: `th =
+            // *(tgt + 16)`, the player's cached `Tete`, its world
+            // position at node +44..+52 (`Actors_TickAll`).
+            // `playerHeadAt` is that node as the
+            // player was last drawn - one frame old here, since
+            // the player is posed later in the frame. Until he has
+            // been drawn once, his feet less a standing head height.
+            //
+            // ...AND WHILE A PROGRAM OWNS HIM, HIS STAGED BODY'S. A
+            // `scx.play.player` program poses the player as a staged
+            // body and the walker stops drawing him, so `playerHeadAt`
+            // froze where his head was before he sat down: Telis, at
+            // lunch, aimed at the spot Kay'l stood in when he pressed
+            // action, a head higher and 21 units off his seat.
+            const Staged* asPlayer = nullptr;
+            if (const int pid = session.playerActor(); pid >= 0)
+                for (const auto& other : staged)
+                    if (other->actor == pid && other.get() != &s && other->headKnown) { asPlayer = other.get(); break; }
+            const float playerHead[3] = {asPlayer ? asPlayer->headAt[0] : playerHeadKnown ? playerHeadAt[0] : pp[0],
+                                    asPlayer ? asPlayer->headAt[1] : playerHeadKnown ? playerHeadAt[1] : pp[1] - 60.0f,
+                                    asPlayer ? asPlayer->headAt[2] : playerHeadKnown ? playerHeadAt[2] : pp[2]};
+            float pelvis[3] = {0, 0, 0};
+            if (static_cast<std::size_t>(s.mo->root) < pose.size())
+                for (int k = 0; k < 3; ++k) pelvis[k] = pose[static_cast<std::size_t>(s.mo->root)].pos[k];
+            // ...THROUGH WHERE THE PELVIS IS DRAWN, the inverse of the
+            // placement below (`R(p - pelvis) + pelvis + off`). This
+            // used `s.at`, which is the program's root key 0: under a
+            // clip whose root DROPS (Telis sitting, TELRES05 19 units)
+            // the seated Kay'l came out 19 units below where he is in
+            // her frame, and the look tipped her head down at a man
+            // whose head is level with hers.
+            const float* base = s.pelvisDrawnKnown ? s.pelvisDrawnAt : s.at;
+            const float rel[3] = {playerHead[0] - base[0], playerHead[1] - base[1], playerHead[2] - base[2]};
+            float local[3];
+            // ...IN THE FRAME THE BODY WILL ACTUALLY BE DRAWN IN.
+            // A body a scene program drives is turned by the
+            // call's Euler (`progYaw`), not by its placement
+            // record's facing. Backed out through `s.facing` - 0
+            // for every one of the restaurant's diners while their
+            // Euler is 90 - the target would sit 90 degrees off,
+            // the yaw pinned at `Actor_SetHeadLook`'s own +-70
+            // clamp, and a diner the player is standing almost in
+            // front of would stare sideways for as long as his
+            // zone held. Diner 71 wants -13 degrees.
+            // ...AND WHILE A LINE PLAYS: the body is drawn turned by
+            // the Euler latched with the line (`s.lineYaw`, the body
+            // yaw below - the clip's root heading is inside the
+            // morph's root, already in `pose`), so the aim is backed
+            // out through the same yaw. `s.facing` here would be the
+            // same 90-degree trap for a program-turned speaker. (Telis at
+            // lunch has an Euler of 0, so it changes nothing for her.)
+            const bool progTurned = s.sceneTracks.valid() && !useLine &&
+                                    s.progYawKnown;
+            const float bodyYaw = useLine ? s.lineYaw
+                                : progTurned ? progYawSign * s.progYaw : s.facing;
+            omk::rotateYaw(-bodyYaw, rel, local);
+            const float target[3] = {local[0] + pelvis[0], local[1] + pelvis[1], local[2] + pelvis[2]};
+            // No snap: the angles live in the actor record (+432/+436)
+            // and ease from wherever they are; with no target they
+            // ease back to 0 (`Actor_SetHeadLook(a, 0, 0)`), which the
+            // zeroing below stands in for.
+            // ...HELD while he flies Manuelle: the look is `Actors_
+            // TickAll`'s, which `Slider_TickRide` replaces (05_sys.c:2170,
+            // drift audit M5), so the angles at +432/+436 do not move
+            omk::aimHead(pose, s.mo->meshes, head, target, s.look,
+                         ride ? 0.0f : static_cast<float>(frameSec * 30.0), false);
+        }
+    } else if (!ride) {
+        s.look = omk::HeadLook{};
+    }
+}
+
+
+// THE ROOT MOTION: `Anim_RootDelta`'s running sum, weighted by how much of the pose is the scene's (from `worldStaged`)
+void PlayState::worldStagedRootMotion(float& rootW, Staged& s, int& rootFrame,
+                                      float (&rootMove)[3]) {
+    if (rootW > 0.0f && !s.sceneTracks.trans.empty()) {
+        int fi = rootFrame;
+        if (fi < 0) fi = 0;
+        if (fi >= static_cast<int>(s.sceneTracks.trans.size()))
+            fi = static_cast<int>(s.sceneTracks.trans.size()) - 1;
+        for (int k = 0; k < 3; ++k)
+            rootMove[k] = rootW *
+                s.sceneTracks.trans[static_cast<std::size_t>(fi)]
+                                   [static_cast<std::size_t>(k)];
+        // ...TURNED BY THE ACTOR'S FACING, which is what
+        // `Anim_RootDelta` (0x004711D0) does and this file did
+        // not. Its second argument is `node+156`, and
+        // `Actor_LoadModel` binds that to `actor+288` -
+        // `sub_437140(node, actor + 288)` - which `Actors_TickAll`
+        // rebuilds every frame from the Euler at `actor+416..424`:
+        //
+        //     Matrix3x3_FromEulerAngles(a[104]*rad, a[105]*rad,
+        //                               a[106]*rad, a + 288);
+        //
+        // and the Euler is what `Script_SelectRelativeBodyAnimation`
+        // writes with `Actor_SetEuler(node, p4, p5, p6)` on the tick
+        // BEFORE it calls `Actor_MoveBy(node, delta)`. The tail of
+        // `Anim_RootDelta` is the row-vector multiply
+        //
+        //     out.x = m0*dx + m3*dy + m6*dz
+        //     out.y = m1*dx + m4*dy + m7*dz
+        //     out.z = m2*dx + m5*dy + m8*dz
+        //
+        // so for a yaw-only Euler it is the same `rotateYaw` the
+        // body is turned by. Without it the restaurant's waiter -
+        // `Serveur00`, Euler y 145 - plays a walk cycle facing one
+        // way and travels the other: walking forward, moving
+        // backward.
+        // Note the Euler is STICKY, as it is in the engine: only
+        // the relative call writes it, `Script_SelectBodyAnimation`
+        // never does, and the actor record keeps the last one - so
+        // the waiter's ABS walk clips travel under the 145 his
+        // preceding REL wait left there.
+        static const bool noRootSpin =
+            omk::envFlag("OMK_NO_ROOTSPIN");
+        // ...and the SENSE is its own question: the body's spin and
+        // `Anim_RootDelta`'s multiply are different code paths in the
+        // engine and need not share it. `OMK_ROOTSPIN_NEG` turns the
+        // delta the other way while leaving the body alone.
+        static const float rootSpinSign =
+            omk::envFlag("OMK_ROOTSPIN_NEG") ? -1.0f : 1.0f;
+        if (!noRootSpin && s.progYawKnown && std::fabs(s.progYaw) > 0.01f) {
+            float r[3];
+            omk::rotateYaw(rootSpinSign * progYawSign * s.progYaw, rootMove, r);
+            for (int k = 0; k < 3; ++k) rootMove[k] = r[k];
+        }
+    }
+}
+

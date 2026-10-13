@@ -419,6 +419,21 @@ finding: a check that hashed a conversation frame would flicker.
   `worldDrawLists`, `modesScreenWalk`; the src/ classes need the tool
   generalised past `PlayState`. The rest of §6 (god objects, the shared
   renderer core, event lines, per-platform files) is not started.
+* step 12d - the extraction tool COMMITTED as `tools/extract_method.py`
+  (`extract`, `batch`, `candidates`, `sizes`), generalised past
+  `PlayState` to any class whose header defines it, a `const` method's
+  pieces const too. Two fixes the first runs forced: an INITIALISER's braces
+  (`for (... : {&a, &b})`) are not a block, and a local that shares a member
+  FUNCTION's name - `run`, `step`, `fn` in the viewer - is not caught by
+  `-Wshadow`, so one declared before the range and used in it is passed like
+  any local (a moved `name(...)` would otherwise call the method; checked
+  over the earlier cuts: none of those names is CALLED, and any other use
+  fails to compile against a function). `worldStaged`: four more blocks out
+  - the scene-clip change, the line pose (16 parameters: the coupling the
+  audit asked to see), the head look, the root motion - 1565 -> ~1100 lines.
+  Guard 0 of 14; `scene facing`, `head look`, `beat handover`, `program
+  placement`, `line facing`, `dialogue play`, `walk-in scene`, `training
+  partner` green.
 
 ## 7. For the tutorial
 

@@ -907,6 +907,18 @@ struct PlayState {
     void worldGuns();   // the gun in his hand, each gunman's gun
     void worldBolts();   // the bolts
     void worldStaged();   // every staged body, posed by whatever drives it
+    void worldStagedSceneClipChange(const omk::SceneRunner*& run, int& sceneClip, Staged& s,
+                                    int& scenePath, const omk::SceneRunner::Started*& stt,
+                                    bool& byLone);   // from `worldStaged`
+    void worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, float lineT, Staged& s,
+                             int& sceneClip, float& sceneFrame, std::vector<omk::MeshPose>& pose,
+                             float& rootW, int& rootFrame, std::vector<float>& fv,
+                             const char*& src, const omk::NodeTracks*& shootTracks,
+                             const omk::AstarothActor*& astGrid, int& shootFrame, bool& poseHeld,
+                             int playerId);   // from `worldStaged`
+    void worldStagedHeadLook(bool lookAll, Staged& s, std::vector<omk::MeshPose>& pose,
+                             bool useLine);   // from `worldStaged`
+    void worldStagedRootMotion(float& rootW, Staged& s, int& rootFrame, float (&rootMove)[3]);   // from `worldStaged`
     void worldStagedShoot(Staged& s, const omk::NodeTracks*& shootTracks, int& shootFrame,
                           const omk::AstarothActor*& astGrid);   // its shoot-mode tick
     void worldStagedShootEnter(std::map<int, omk::ShootRecord>::iterator& it, Staged& s, int act);   // from `worldStagedShoot`

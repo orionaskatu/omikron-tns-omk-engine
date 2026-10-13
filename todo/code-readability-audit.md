@@ -408,6 +408,17 @@ finding: a check that hashed a conversation frame would flicker.
   the patrol, the edge walk, the state's clip, the arrival, the clip
   advance, the strike, the fire gate and the turn clip. Guard 0 of 14; all
   32 shoot/Astaroth/Gandhar engine checks green; 3DS and Vita build.
+* step 12c - `modesShoot` (1574 lines): four blocks out by the same tool -
+  `modesShootEnterLeave`, `modesShootResume`, `modesDialogEnterLeave`,
+  `modesScreenWalk` (839 lines, still to split). `modesScreenOpen` was
+  REFUSED: it returns the program's exit code (`return 1` when a script's
+  screen has no panel), so it needs a phase-code return before it can move.
+  Guard 0 of 14. **Where this stands (2026-10-13)**: 34 functions over 300
+  lines by a brace-matching count (the audit's 25 used a narrower scan) -
+  next `worldStaged`, `ScreenComposer::draw`, `worldCrowd`,
+  `worldDrawLists`, `modesScreenWalk`; the src/ classes need the tool
+  generalised past `PlayState`. The rest of §6 (god objects, the shared
+  renderer core, event lines, per-platform files) is not started.
 
 ## 7. For the tutorial
 

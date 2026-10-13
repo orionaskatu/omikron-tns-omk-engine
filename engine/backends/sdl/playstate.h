@@ -800,6 +800,10 @@ struct PlayState {
     void modesSound();   // the pause screen stops the sound; the voices
     void modesDialogue();   // dialogue mode
     int modesShoot();   // shoot mode
+    void modesShootEnterLeave(omk::Input& in);   // from `modesShoot`
+    void modesShootResume(omk::Input& in);   // from `modesShoot`
+    void modesDialogEnterLeave();   // from `modesShoot`
+    void modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::Inventory& inv);   // from `modesShoot`
     int modesQuitLoad();   // the quit asked for, and the pending load, served between pumps
 
     // ---- `phaseScreens`'s PARTS (todo/play-split.md) and the state they share: each

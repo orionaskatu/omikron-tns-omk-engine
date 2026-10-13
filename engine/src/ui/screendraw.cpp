@@ -645,15 +645,15 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                     // and the source is not, and getting that backwards is
                     // invisible at 640x480 and ruins every other resolution."
                     if (!px.empty()) {
-                        const int x0 = scaleX(460), x1 = scaleX(460 + omk::kThumbW);
-                        const int y0 = scaleY(140), y1 = scaleY(140 + omk::kThumbH);
-                        const int w = x1 - x0, h = y1 - y0;
-                        for (int dy = y0; dy < y1; ++dy) {
+                        const int thumbX0 = scaleX(460), thumbX1 = scaleX(460 + omk::kThumbW);
+                        const int thumbY0 = scaleY(140), thumbY1 = scaleY(140 + omk::kThumbH);
+                        const int w = thumbX1 - thumbX0, h = thumbY1 - thumbY0;
+                        for (int dy = thumbY0; dy < thumbY1; ++dy) {
                             if (dy < 0 || dy >= fb.h || h <= 0) continue;
-                            const int sy = (dy - y0) * omk::kThumbH / h;
-                            for (int dx = x0; dx < x1; ++dx) {
+                            const int sy = (dy - thumbY0) * omk::kThumbH / h;
+                            for (int dx = thumbX0; dx < thumbX1; ++dx) {
                                 if (dx < 0 || dx >= fb.w || w <= 0) continue;
-                                const int sx = (dx - x0) * omk::kThumbW / w;
+                                const int sx = (dx - thumbX0) * omk::kThumbW / w;
                                 fb.px[static_cast<std::size_t>(dy) * static_cast<std::size_t>(fb.w) +
                                       static_cast<std::size_t>(dx)] =
                                     px[static_cast<std::size_t>(sy) * omk::kThumbW +
@@ -1402,7 +1402,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                 const std::uint16_t grey = rgb565(50, 50, 50);
                 int px = scaleX(it.x + q->offsetX);
                 int py = scaleY(it.y + q->offsetY);
-                const auto text = [&](const std::string& s, int l, int t, int r, int b, char face) {
+                const auto putText = [&](const std::string& s, int l, int t, int r, int b, char face) {
                     TextBlock blk;
                     blk.left = l; blk.top = t; blk.right = r; blk.bottom = b;
                     blk.font = face;
@@ -1421,7 +1421,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                     return n != sheet_->num.end() ? n->second : 0;
                 };
                 const auto bar = [&](int x, int y, int value, int h) {
-                    text(std::to_string(value), x + 5, y, x + scaleX(100), y + h, 'J');
+                    putText(std::to_string(value), x + 5, y, x + scaleX(100), y + h, 'J');
                     const int yc = y + h / 2;
                     const int top = yc - scaleY(2) - 1;
                     const int bot = yc + scaleY(2) + 1;
@@ -1442,7 +1442,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                 };
                 // six bar rows and the rank row, in the hook's order
                 const auto barRow = [&](int labelId, int prop) {
-                    text(label(labelId), px, py, px + boxW, py + boxH, it.face('J'));
+                    putText(label(labelId), px, py, px + boxW, py + boxH, it.face('J'));
                     px += halfW;
                     bar(px, py, num(prop), rowH);
                     px -= halfW;
@@ -1451,12 +1451,12 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                 barRow(25, 1);
                 barRow(26, 16);
                 {   // 27 "Maitrise du combat": the rank word
-                    text(label(27), px, py, px + boxW, py + boxH, it.face('J'));
+                    putText(label(27), px, py, px + boxW, py + boxH, it.face('J'));
                     px += halfW;
                     const int v = num(19);
                     const int q41 = v / 41;
                     const int id = (q41 >= 0 && q41 <= 4) ? 36 + q41 : -1;
-                    text(label(id), px, py, px + boxW, py + boxH, 'C');
+                    putText(label(id), px, py, px + boxW, py + boxH, 'C');
                     px -= halfW;
                     py += scaleY(30);
                 }
@@ -1464,7 +1464,7 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                 barRow(29, 3);
                 barRow(30, 18);
                 // 31 "Mana" - the last, `ebp + esi` without the step back
-                text(label(31), px, py, px + boxW, py + boxH, it.face('J'));
+                putText(label(31), px, py, px + boxW, py + boxH, it.face('J'));
                 bar(px + halfW, py, num(2), rowH);
             }
 

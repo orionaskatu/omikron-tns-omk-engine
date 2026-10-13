@@ -145,7 +145,7 @@ bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
 // footprint the run needed) and what is in use, the profiler's counted peak,
 // linear memory and VRAM free now and at the lowest seen
 void PlayState::gpuReportTimings() {
-    if (worldVk) omk::c3dReport(worldVk, n);
+    if (worldVk) omk::c3dReport(worldVk, frameNo);
     const struct mallinfo mi = mallinfo();
     static u32 linMin = ~0u, vramMin = ~0u;
     const u32 lin = linearSpaceFree(), vram = vramSpaceFree();
@@ -153,7 +153,7 @@ void PlayState::gpuReportTimings() {
     vramMin = std::min(vramMin, vram);
     const omk::prof::MemTotals mt = omk::prof::memTotals();
     std::printf("frame %ld memory: heap %.1f MB in use, %.1f MB high water, of %.1f; counted peak %.1f MB; "
-                "linear %.1f MB free (lowest %.1f); VRAM %.2f MB free (lowest %.2f)\n", n,
+                "linear %.1f MB free (lowest %.1f); VRAM %.2f MB free (lowest %.2f)\n", frameNo,
                 mi.uordblks / 1048576.0, mi.arena / 1048576.0, omk::n3ds::heapBytes() / 1048576.0,
                 mt.peak / 1048576.0, lin / 1048576.0, linMin / 1048576.0, vram / 1048576.0,
                 vramMin / 1048576.0);

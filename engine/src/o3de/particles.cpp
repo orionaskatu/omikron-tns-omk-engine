@@ -372,8 +372,8 @@ void particleGeometry(Geometry& g, const ParticleField& f, const float eye[3],
         }
         const std::pair<int, int> key{spriteModeBits(p.mode) * 16 + p.mode, p.sprite};
         keyOf.push_back(key);
-        const auto at = std::lower_bound(keys.begin(), keys.end(), key);
-        if (at == keys.end() || *at != key) keys.insert(at, key);
+        const auto where = std::lower_bound(keys.begin(), keys.end(), key);
+        if (where == keys.end() || *where != key) keys.insert(where, key);
         quad.insert(quad.end(), {c[0], c[1], c[2], c[0], c[2], c[3]});
     }
 

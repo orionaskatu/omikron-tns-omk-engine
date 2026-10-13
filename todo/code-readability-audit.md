@@ -228,6 +228,22 @@ finding: a check that hashed a conversation frame would flicker.
   mirror's confinement IS traced - draw order and depth; only the CPU
   fallback's mask is a reconstruction), `interp.cpp` (op 62's AI level is
   carried).
+* step 4 - the shadowed members renamed (`fr` -> `dataRoot`, `w` ->
+  `uiWidgets`, `n` -> `frameNo`, `st` -> `devices`) and `-Wshadow` ON in the
+  main Makefile: the 46 sites it then named (engine, viewers, tools) renamed
+  inside their own scope only, none of them a real bug. Proof: every object
+  of `make`, `play`, `play-gles` and `vulkan` built at HEAD and after, paths
+  normalised - 387 of 391 BYTE-IDENTICAL; two differ only in a renamed
+  static's symbol (text identical) and two (`playharness.o`) in the one
+  intended fix - `--scx-play`'s line printed `frames`, the `--frames` limit,
+  as a `%ld` where it meant the frame (`frameNo`). The 3DS and Vita builds
+  rebuilt clean; the GL1 glue syntax-checked. **A trap, for the tutorial**:
+  the first pass of this rename (interrupted by a crash) missed
+  `playgpu_gl1.cpp` and `playgpu_citro3d.cpp`, PlayState methods that only
+  the PowerPC and 3DS makefiles compile - so a rename that the Mac build
+  calls complete is not, and a rename of a `PlayState` member must build or
+  at least grep every platform's glue. `-Wshadow` is not on in the Vita,
+  3DS, classic or PowerPC build files yet.
 
 ## 7. For the tutorial
 

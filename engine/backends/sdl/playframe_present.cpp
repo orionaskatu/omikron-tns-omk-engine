@@ -35,20 +35,20 @@ int PlayState::phasePresent() {
             phSum[3] += pr1 - pr0;
             if (++phN == 60) {
                 std::printf("frame %ld phases (ms, mean of 60): sim+draw %.1f, readback %.1f, "
-                            "compose %.1f, present %.1f\n", n, phSum[0] * 1000.0 / 60.0,
+                            "compose %.1f, present %.1f\n", frameNo, phSum[0] * 1000.0 / 60.0,
                             phSum[1] * 1000.0 / 60.0, phSum[2] * 1000.0 / 60.0,
                             phSum[3] * 1000.0 / 60.0);
                 gpuReportTimings();   // the GLES backend's counters
                 // counted by the instruments (`playharness.cpp`): a build
                 // without them would print "0 of 60" for every frame
                 if (omkInstrumentsBuilt()) {
-                    std::printf("frame %ld present: %ld of 60 straight from the GPU; on the CPU:", n, phGpu);
+                    std::printf("frame %ld present: %ld of 60 straight from the GPU; on the CPU:", frameNo, phGpu);
                     for (const auto& [why, count] : phKept) std::printf(" %s %ld,", why.c_str(), count);
                     std::printf("\n");
                 }
                 phGpu = 0;
                 phKept.clear();
-                std::printf("frame %ld spans (ms, mean of 60):", n);
+                std::printf("frame %ld spans (ms, mean of 60):", frameNo);
                 for (auto& [name, sec] : phSpan) {
                     std::printf(" %s %.1f,", name.c_str(), sec * 1000.0 / 60.0);
                     sec = 0.0;
@@ -62,7 +62,7 @@ int PlayState::phasePresent() {
                         sec = 0.0;
                     }
                     std::sort(secs.begin(), secs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-                    std::printf("frame %ld sections (ms, mean of 60):", n);
+                    std::printf("frame %ld sections (ms, mean of 60):", frameNo);
                     for (const auto& [ms, name] : secs) std::printf(" %s %.1f,", name.c_str(), ms);
                     std::printf("\n");
                 }
@@ -71,8 +71,8 @@ int PlayState::phasePresent() {
             }
         }
         harnessSnaps();
-        ++n;
-        if (frames && n >= frames) break;
+        ++frameNo;
+        if (frames && frameNo >= frames) break;
         // 30 Hz, PORTING A7 - and it is a CAP, not an addition. A flat
         // `SDL_Delay(33)` sleeps a whole frame budget ON TOP of however long
         // the frame took, so a 30 ms software frame ran the loop at ~16 fps
@@ -105,7 +105,7 @@ int PlayState::phasePresent() {
             // else the log says then.
             static double paceLeft = 0.0;
             if (paceLeft > 0.0 && now - paceLeft > 2.0 * kPeriod)
-                std::printf("frame %ld: SLOW FRAME - %.0f ms of work (the budget is 33)%s\n", n,
+                std::printf("frame %ld: SLOW FRAME - %.0f ms of work (the budget is 33)%s\n", frameNo,
                             (now - paceLeft) * 1000.0,
                             player ? (" at " + std::to_string(int(player->pos()[0])) + " " +
                                       std::to_string(int(player->pos()[2]))).c_str() : "");
@@ -117,7 +117,7 @@ int PlayState::phasePresent() {
                 for (std::size_t k = 1; k < phMarks.size(); ++k)
                     gaps.emplace_back((phMarks[k].second - phMarks[k - 1].second) * 1000.0, phMarks[k].first);
                 std::sort(gaps.begin(), gaps.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-                std::printf("frame %ld: sections -", n);
+                std::printf("frame %ld: sections -", frameNo);
                 for (std::size_t k = 0; k < gaps.size() && k < 8; ++k)
                     std::printf(" %s %.1f ms,", gaps[k].second, gaps[k].first);
                 std::printf(" (%zu marks, %.1f ms top to last)\n", phMarks.size(),
@@ -126,7 +126,7 @@ int PlayState::phasePresent() {
             // ...and a VERY slow one says where it went: this frame's own
             // simulation-and-submission span, and the GL backend's counts
             if (paceLeft > 0.0 && now - paceLeft > 0.5) {
-                std::printf("frame %ld: of which sim+draw %.0f ms", n, (phRb0 - phTop) * 1000.0);
+                std::printf("frame %ld: of which sim+draw %.0f ms", frameNo, (phRb0 - phTop) * 1000.0);
                 gpuSlowFrameReport();
                 std::printf("\n");
             }

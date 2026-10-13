@@ -492,7 +492,7 @@ int PlayState::modesShoot() {
                     playerCamId = rc->id;
                 front.setRelativeMouse(true);
                 std::printf("frame %ld: shoot camera - mode %d, eye %.1f above the "
-                            "pelvis (%s), aim 20 m ahead\n", n,
+                            "pelvis (%s), aim 20 m ahead\n", frameNo,
                             omk::ShootMode::kCameraMode,
                             double(shootEyeSet ? shootEyeLift : player->headLift()),
                             shootEyeSet ? "--shoot-eye"
@@ -561,7 +561,7 @@ int PlayState::modesShoot() {
                     session.shootModeMutable().setPlayerType(static_cast<int>(ctype));
                     playerShootRec.type = static_cast<std::uint32_t>(ctype);
                     std::printf("frame %ld: SHOOT TYPE - property 7 = %d -> HUD screen %d\n",
-                                n, int(ctype), session.shootMode().hudScreen());
+                                frameNo, int(ctype), session.shootMode().hudScreen());
                 }
                 // `sub_422540(player)`, `Shoot_Enter`'s own call: his property
                 // 1 into +92 - the health `Shoot_SyncHudHealth` hands the HUD,
@@ -578,7 +578,7 @@ int PlayState::modesShoot() {
                     playerShootRec.health = hp != 0 ? static_cast<int>(hp) : 10;
                     hudHealth = playerShootRec.health;   // `Shoot_SyncHudHealth`, `dword_90E100`
                     std::printf("frame %ld: SHOOT HEALTH (sub_422540) - property 1 = %d "
-                                "-> record +92 = %d\n", n, int(hp), playerShootRec.health);
+                                "-> record +92 = %d\n", frameNo, int(hp), playerShootRec.health);
                     hudBar.refresh(0, 22, fb.w);
                     hudBar.refresh(1, 22, fb.w);
                 }
@@ -604,7 +604,7 @@ int PlayState::modesShoot() {
                     shootMap = omk::Map2d{};
                     shootField = omk::ShootField{};   // its field belongs to the old grid
                     if (!mp.empty() && shootMap.load(fs.read("MAP2D/" + mp + ".MPT")))
-                        std::printf("frame %ld: MAP2D %s.MPT - %zu floors, cell %u\n", n,
+                        std::printf("frame %ld: MAP2D %s.MPT - %zu floors, cell %u\n", frameNo,
                                     mp.c_str(), shootMap.floors().size(), shootMap.scale());
                     // ...AND `Shoot_Enter`'S LAST CALL, `Shoot_TickPlayer(player)`:
                     // the player's record thinks ONCE, here, before any gunman's
@@ -634,20 +634,20 @@ int PlayState::modesShoot() {
                         const bool took = omk::shootThink(playerShootRec, shootMap, ep, 0, -1);
                         playerShootRec.flags &= ~0x1000u;
                         std::printf("frame %ld: Shoot_Enter's own Shoot_TickPlayer - the player's "
-                                    "record at entry: floor %d, cell (%d,%d)%s\n", n,
+                                    "record at entry: floor %d, cell (%d,%d)%s\n", frameNo,
                                     static_cast<signed char>(playerShootRec.node & 0xFF),
                                     playerShootRec.destX, playerShootRec.destZ,
                                     took ? "" : " (Shoot_Think refused the cell)");
                     }
                     if (radar.loaded())
                         std::printf("frame %ld: RADAR - AREA +106 '%s' -> %s, height %.2f, "
-                                    "%d vertices, %d edges\n", n, mp.c_str(),
+                                    "%d vertices, %d edges\n", frameNo, mp.c_str(),
                                     radar.file().c_str(), double(radar.height()),
                                     radar.wire().vertices(), radar.wire().edges());
                     else
                         std::printf("frame %ld: RADAR - AREA +106 '%s' -> none: not one of "
                                     "0x42EE70's nine names, so the item stays hidden\n",
-                                    n, mp.c_str());
+                                    frameNo, mp.c_str());
                 }
                 shotLatch = omk::ShotLatch{};
                 shootAim = omk::ShootAim{};
@@ -657,12 +657,12 @@ int PlayState::modesShoot() {
                 // period is `sub_45AC80` of group 200's default entry, the
                 // stance clip's length (only the bob reads it, not modelled)
                 {
-                    std::int32_t speed = 0;
+                    std::int32_t playerSpeed = 0;
                     omk::readActorProperty(
                         state.raw().subspan(
                             static_cast<std::size_t>(omk::GameState::kPlayerRecord),
                             static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
-                        3, speed);
+                        3, playerSpeed);
                     float period = 0.0f;
                     if (player)
                         if (const omk::NodeTracks* st =
@@ -679,14 +679,14 @@ int PlayState::modesShoot() {
                             static_cast<std::size_t>(omk::GameState::kPlayerRecord),
                             static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
                         3, jump3);
-                    omk::shootMoveInit(shootMover, speed, period,
+                    omk::shootMoveInit(shootMover, playerSpeed, period,
                                        session.shootMode().playerType(), jump3);
                     shootMoveFrames = 0;
                     std::printf("frame %ld: SHOOT MOVER (sub_47CC70) - Speed %d -> row %d: "
                                 "top %.3f, accel %.4f, brake %.3f a frame, period %.0f, "
                                 "jump %.2f (property 36[3] %d); "
                                 "type %d -> hurt sound %d, steps %d/%d%s\n",
-                                n, int(speed), shootMover.row, double(shootMover.top),
+                                frameNo, int(playerSpeed), shootMover.row, double(shootMover.top),
                                 double(shootMover.accel), double(shootMover.brake),
                                 double(period), double(shootMover.impulse), int(jump3),
                                 session.shootMode().playerType(),
@@ -722,30 +722,30 @@ int PlayState::modesShoot() {
                     const omk::FxShotSprite* sp = shootSfx.shotSprite(gf.root);
                     std::printf("frame %ld: the gun %s - root '%s', tir %s (local %.1f %.1f "
                                 "%.1f), shot sprite %s (grow %.0f, wind-up %.0f), %zu in "
-                                "shoot2.sfx\n", n, shotGunStem.c_str(), gf.root.c_str(),
+                                "shoot2.sfx\n", frameNo, shotGunStem.c_str(), gf.root.c_str(),
                                 gf.ok ? "found" : "MISSING", double(gf.tirLocal[0]),
                                 double(gf.tirLocal[1]), double(gf.tirLocal[2]),
                                 sp ? "found" : "none", sp ? double(sp->grow) : 0.0,
                                 sp ? double(sp->windUp) : 0.0, shootSfx.shotSprites.size());
                 }
-                hudWalk = std::make_unique<omk::UiWalk>(w);
+                hudWalk = std::make_unique<omk::UiWalk>(uiWidgets);
                 if (!hudWalk->open(session.shootMode().hudScreen())) hudWalk.reset();
                 hudTold.clear();
                 if (const omk::ShootWeaponRow* w = playerShootRec.weapon)
                     std::printf("frame %ld: Shoot_InitWeapon - object %d kind %d -> type %d: "
-                                "rate %.0f frames, speed %.1f, damage %d, magazine %d\n", n,
+                                "rate %.0f frames, speed %.1f, damage %d, magazine %d\n", frameNo,
                                 obj, kind, type, double(w->rate), double(w->speed),
                                 w->damage, w->ammoIndex);
                 else
                     std::printf("frame %ld: Shoot_InitWeapon - object %d kind %d -> type %d: "
-                                "NO ROW, so the gate will never fire\n", n, obj, kind, type);
+                                "NO ROW, so the gate will never fire\n", frameNo, obj, kind, type);
             } else {
                 playerShootRec.weapon = nullptr;
                 shotLatch = omk::ShotLatch{};
             }
             std::printf("frame %ld: SHOOT MODE %s - weapon slot %d (object %d), "
                         "HUD screen %d, library %s, ACTOR_STATE %d, scheme %d\n",
-                        n, shootMode ? "ENTER (Shoot_Enter)" : "LEAVE (Shoot_Leave)",
+                        frameNo, shootMode ? "ENTER (Shoot_Enter)" : "LEAVE (Shoot_Leave)",
                         session.shootMode().weaponSlot(),
                         session.shootMode().weaponObject(),
                         session.shootMode().hudScreen(),
@@ -798,7 +798,7 @@ int PlayState::modesShoot() {
                 in.installScheme(0);
                 std::printf("frame %ld: shoot.player.suspend - %d bolt%s freed, the bank's "
                             "default group, HUD closed, scheme %d, every gunman's brain OFF "
-                            "(ACTOR_STATE stays %d)\n", n, bolts, bolts == 1 ? "" : "s",
+                            "(ACTOR_STATE stays %d)\n", frameNo, bolts, bolts == 1 ? "" : "s",
                             in.group(), static_cast<int>(player->state()));
             }
         }
@@ -806,7 +806,7 @@ int PlayState::modesShoot() {
             shootResumesSeen = session.shootMode().resumes();
             if (shootMode && player) {
                 player->enterShootMode();
-                hudWalk = std::make_unique<omk::UiWalk>(w);
+                hudWalk = std::make_unique<omk::UiWalk>(uiWidgets);
                 if (!hudWalk->open(session.shootMode().hudScreen())) hudWalk.reset();
                 hudTold.clear();
                 if (session.shootMode().hudScreen() == 34) {   // `Hud_Refresh` on 34 only
@@ -822,12 +822,12 @@ int PlayState::modesShoot() {
                     playerCamId = rc->id;
                 front.setRelativeMouse(true);
                 {
-                    std::int32_t speed = 0;
+                    std::int32_t playerSpeed = 0;
                     omk::readActorProperty(
                         state.raw().subspan(
                             static_cast<std::size_t>(omk::GameState::kPlayerRecord),
                             static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
-                        3, speed);
+                        3, playerSpeed);
                     float period = 0.0f;
                     if (const omk::NodeTracks* st =
                             player->clipTracks(player->groupDefaultClip(200)))
@@ -838,7 +838,7 @@ int PlayState::modesShoot() {
                             static_cast<std::size_t>(omk::GameState::kPlayerRecord),
                             static_cast<std::size_t>(omk::GameState::kPlayerRecordSize)),
                         3, jump3);
-                    omk::shootMoveInit(shootMover, speed, period,
+                    omk::shootMoveInit(shootMover, playerSpeed, period,
                                        session.shootMode().playerType(), jump3);
                     shootMoveFrames = 0;
                 }
@@ -848,7 +848,7 @@ int PlayState::modesShoot() {
                 in.installScheme(omk::ShootMode::kInputScheme);
                 std::printf("frame %ld: shoot.player.resume - ACTOR_STATE %d, group 200, HUD "
                             "screen %d, camera mode %d, weapon type %d (%s), scheme %d, the "
-                            "gunmen's brains ON\n", n, static_cast<int>(player->state()),
+                            "gunmen's brains ON\n", frameNo, static_cast<int>(player->state()),
                             session.shootMode().hudScreen(), omk::ShootMode::kCameraMode, type,
                             playerShootRec.weapon ? "a row" : "NO ROW", in.group());
             }
@@ -861,7 +861,7 @@ int PlayState::modesShoot() {
                 else            player->leaveDialogueMode();
             }
             std::printf("frame %ld: dialogue mode %s - bank group %d, ACTOR_STATE %d\n",
-                        n,
+                        frameNo,
                         dialogMode ? "ENTER (Actor_EnterDialogueMode)"
                                    : "LEAVE (Actor_LeaveDialogueMode)",
                         dialogMode ? 400 : 100,
@@ -887,7 +887,7 @@ int PlayState::modesShoot() {
             // conversation began.
             if (dialogMode) {
                 dialogFromUi = walk && !walk->closed() && openScreen >= 0 &&
-                               !w.worldBehind(openScreen);
+                               !uiWidgets.worldBehind(openScreen);
             } else if (dialogFromUi) {
                 dialogFromUi = false;
                 closeAllScreens("Actor_LeaveDialogueMode from ACTOR_STATE 17");
@@ -906,7 +906,7 @@ int PlayState::modesShoot() {
                         state.bit(omk::StateArray::AddressEnabled, k));
                     if (now == addrSeen[static_cast<std::size_t>(k)]) continue;
                     addrSeen[static_cast<std::size_t>(k)] = now;
-                    std::printf("frame %ld: ADDRESS %d %s\n", n, k,
+                    std::printf("frame %ld: ADDRESS %d %s\n", frameNo, k,
                                 now ? "ENABLED - a place the scripts can send him now"
                                     : "disabled");
                 }
@@ -932,11 +932,11 @@ int PlayState::modesShoot() {
             for (std::size_t k = 0; k < t.size(); ++k) highScores[k] = {t[k].name, t[k].ms};
             if (row >= 0)
                 std::printf("frame %ld: HighScore_Insert - '%s' %d'%02d\"%02d into table %d "
-                            "row %d\n", n, h.name.c_str(), (h.score / 60000) % 60,
+                            "row %d\n", frameNo, h.name.c_str(), (h.score / 60000) % 60,
                             (h.score / 1000) % 60, (h.score % 1000) / 10, h.table, row + 1);
             else
                 std::printf("frame %ld: HighScore_Insert - %d ms makes no row of table %d\n",
-                            n, static_cast<int>(h.score), h.table);
+                            frameNo, static_cast<int>(h.score), h.table);
             const bool up = walk && openScreen == omk::screen::HighScore;
             if (!up && hsOpenPage < 0) hsOpenPage = h.table;
         }
@@ -951,9 +951,9 @@ int PlayState::modesShoot() {
                 if (const char* e = std::getenv("OMK_POST_MESSAGE"))
                     if (std::sscanf(e, "%d@%d", &pmMsg, &pmFrame) != 2) pmMsg = -1;
             }
-            if (pmMsg >= 0 && n == pmFrame) {
+            if (pmMsg >= 0 && frameNo == pmFrame) {
                 const bool ran = session.postMessage(pmMsg, session.playerActor());
-                std::printf("frame %ld: OMK_POST_MESSAGE - message %d posted, %s\n", n, pmMsg,
+                std::printf("frame %ld: OMK_POST_MESSAGE - message %d posted, %s\n", frameNo, pmMsg,
                             ran ? "to its handler" : "no handler subscribes");
             }
         }
@@ -973,25 +973,25 @@ int PlayState::modesShoot() {
             // writes it, and never reset. So the device remembers the verb
             // you last used and the row you were on across closing and
             // reopening it, and a walk built fresh each open would forget.
-            auto fresh = std::make_unique<omk::UiWalk>(w, uiLists);
+            auto fresh = std::make_unique<omk::UiWalk>(uiWidgets, uiLists);
             // The load panel's directory, so its rows have something to be.
             // `Ui_BuildLoadPanel` calls `SaveDir_Build` itself in the OPEN
             // callback, which is why it is read here and not once at start-up:
             // a save written during this run has to show up next time the
             // panel opens.
             loadPanelState = omk::buildLoadPanel(
-                omk::saveDirectory(omk::readSaveFile(savesPath, fr + "/IAM/GAMES").empty()
-                                       ? fr + "/IAM/GAMES" : savesPath, w));
+                omk::saveDirectory(omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES").empty()
+                                       ? dataRoot + "/IAM/GAMES" : savesPath, uiWidgets));
             loadPanelState.path =
-                omk::readSaveFile(savesPath, fr + "/IAM/GAMES").empty()
-                    ? fr + "/IAM/GAMES" : savesPath;
+                omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES").empty()
+                    ? dataRoot + "/IAM/GAMES" : savesPath;
             fresh->attachLoadPanel(&loadPanelState);
             // `Ui_BuildLoadPanel` runs in the OPEN callback and lays the
             // shared panel out differently for each of its two screens - 29
             // puts `Charger une partie` in the top slot and hides `Nouvelle
             // partie`, 30 does the opposite. Re-applied per open for that
             // reason.
-            omk::applyLoadPanelLayout(w, want);
+            omk::applyLoadPanelLayout(uiWidgets, want);
             // The player's ANNEAUX, which the save screen's `Sauvegarde`
             // refuses without. `Actor_GetProperty` case 5 is the player
             // record's +174, and `GameState::rings` reads it.
@@ -1061,13 +1061,13 @@ int PlayState::modesShoot() {
                     walk->setHighScorePage(page);
                     hsReleased = false;
                     if (page >= 1 && page <= 3) {
-                        const auto txt = omk::iamStrings(fs, "IAM/" + w.textFile(want));
+                        const auto txt = omk::iamStrings(fs, "IAM/" + uiWidgets.textFile(want));
                         hsMessage = txt.empty() ? std::string() : txt[0];
                         hsMessageLeftMs = 5000.0;
                         walk->startCloseTimer(10000.0, "high score");
                         hsReleased = true;
                     }
-                    std::printf("frame %ld: screen 36 HIGH-SCORE at page %d%s\n", n, page,
+                    std::printf("frame %ld: screen 36 HIGH-SCORE at page %d%s\n", frameNo, page,
                                 hsReleased ? " - message posted, the player released, "
                                              "closes in 10000 ms" : "");
                 }
@@ -1104,7 +1104,7 @@ int PlayState::modesShoot() {
                                 calledDestination);
                 }
                 std::printf("frame %ld: screen %d %s - arrows move, ENTER confirms, "
-                            "TAB closes\n", n, openScreen,
+                            "TAB closes\n", frameNo, openScreen,
                             fromScript ? "is asking" : "opened by the player");
                 // The screen's own sounds, by slot. Which slot is which is
                 // `sub_482FE0`'s answer - it dispatches on the INPUT BIT - not
@@ -1121,7 +1121,7 @@ int PlayState::modesShoot() {
                     blip(own);
                     std::printf("screen %d: its own sound (slot 4, `%s`)\n",
                                 openScreen,
-                                w.soundName(openScreen, omk::UiWidgets::kSoundScreen).c_str());
+                                uiWidgets.soundName(openScreen, omk::UiWidgets::kSoundScreen).c_str());
                 }
                 // ...AND THE SNEAK CALL ANSWERS ITSELF ON THE WAY IN.
                 // `Ui_OpenSneakFamily`'s param-2 arm ends `call sub_42B560`,
@@ -1276,7 +1276,7 @@ int PlayState::modesShoot() {
             if (fightRun.active) {
                 uiBits &= ~0x10u;                  // slot 4: `Coup de poing 1`
                 const int k = in.schemes().code(0, 4, omk::Device::Keyboard);
-                const bool down = k > 0 && st.holds(omk::Device::Keyboard, k);
+                const bool down = k > 0 && devices.holds(omk::Device::Keyboard, k);
                 static bool advConfirmWasDown = false;
                 if (down && !advConfirmWasDown) uiBits |= omk::kUiConfirm;
                 advConfirmWasDown = down;
@@ -1315,7 +1315,7 @@ int PlayState::modesShoot() {
             // ...and UNDER THE SNEAK (param 0, `todo/sneak.md` 5c): its open
             // loads 35 hidden; the Options tab's builder 0x0049D8F0 SHOWS it,
             // the tab's hook 0x0049D960 focuses it on LEFT / RIGHT.
-            const bool optHost = (openScreen == omk::screen::StartMenu || openScreen == omk::screen::Sneak) && w.valid();
+            const bool optHost = (openScreen == omk::screen::StartMenu || openScreen == omk::screen::Sneak) && uiWidgets.valid();
             if (optHost && optWalkSeen != walk.get()) {
                 optWalkSeen = walk.get();
                 optMenu.open(openScreen == omk::screen::StartMenu ? 1 : 0, settings.v);
@@ -1342,7 +1342,7 @@ int PlayState::modesShoot() {
                 optMenu.focus();
                 blip(sndMove);
                 std::printf("frame %ld: options: screen 35 focused from the sneak's "
-                            "Options tab (hook 0x0049D960), page %d\n", n, optMenu.page());
+                            "Options tab (hook 0x0049D960), page %d\n", frameNo, optMenu.page());
                 uiBits = 0;
             }
             const bool optActive = optHost && optMenu.focused();
@@ -1353,7 +1353,7 @@ int PlayState::modesShoot() {
                 else if (bits & omk::kUiBack)    blip(optSndBack);
                 else if (optMenu.moved())        blip(optSndMove);
                 if (!optMenu.focused())
-                    std::printf("frame %ld: options: focus back to screen %d\n", n, openScreen);
+                    std::printf("frame %ld: options: focus back to screen %d\n", frameNo, openScreen);
                 // ...AND, UNDER THE START MENU, ON TO ITS FOUR BUTTONS. A
                 // RECONSTRUCTION, labelled as one: read alone, the root's
                 // `Retour` and BACK only focus 29 (`Opt_RowInput` case 6,
@@ -1367,7 +1367,7 @@ int PlayState::modesShoot() {
                     walk->panel() && walk->panel()->addr == omk::kPanelOptionsHost) {
                     walk->press(omk::kUiBack);
                     std::printf("frame %ld: options: the start menu back on its buttons "
-                                "(a second BACK - the reader's account, a reconstruction)\n", n);
+                                "(a second BACK - the reader's account, a reconstruction)\n", frameNo);
                 }
                 // `UI_CloseScreen(9)`: the device's own close, as TAB does it
                 if (optMenu.takeHostClose()) walk->press(omk::kUiClose);
@@ -1404,7 +1404,7 @@ int PlayState::modesShoot() {
                     optEntered = true;
                     optMenu.focus();
                     std::printf("frame %ld: options: screen 35 focused (panel 0x004CF420's "
-                                "enter hook 0x0047BB40), page %d\n", n, optMenu.page());
+                                "enter hook 0x0047BB40), page %d\n", frameNo, optMenu.page());
                 }
                 if (!onPanel) optEntered = false;
                 // ---- WHAT THE APPLY HOOKS WROTE, reaching the viewer ----
@@ -1499,7 +1499,7 @@ int PlayState::modesShoot() {
                                     std::max(0, in.schemes().code(g, k, omk::Device::Joystick)));
                             }
                     }
-                    auto file = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+                    auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
                     if (file.size() < omk::kSaveFileSize) file = omk::blankSaveFile(out);
                     else omk::putSettings(file, out);
                     if (omk::writeSaveFile(savesPath, file))
@@ -1541,7 +1541,7 @@ int PlayState::modesShoot() {
             if (walk->takeExitRequest()) {
                 exitProgram = true;
                 std::printf("frame %ld: start menu: Quitter -> Oui - PostQuitMessage, "
-                            "the program ends\n", n);
+                            "the program ends\n", frameNo);
             }
             // ...and the SAVE, which the callback performs itself rather than
             // deferring: `Game_WriteSave(slot)` right after the charge, and
@@ -1552,12 +1552,12 @@ int PlayState::modesShoot() {
             // picture stay on disk - an empty slot is an empty NAME and
             // nothing else (GAME_STATE 8b).
             if (const int slot = walk->takePendingClear(); slot >= 0) {
-                auto file = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+                auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
                 if (omk::clearSaveSlot(file, slot) &&
                     omk::writeSaveFile(savesPath, file)) {
                     std::printf("detruire: slot %d cleared\n", slot);
                     loadPanelState = omk::buildLoadPanel(
-                        omk::saveDirectory(loadPanelState.path, w));
+                        omk::saveDirectory(loadPanelState.path, uiWidgets));
                 } else {
                     std::fprintf(stderr, "detruire: slot %d not cleared\n", slot);
                 }
@@ -1820,7 +1820,7 @@ int PlayState::modesShoot() {
                 out.time = state.clock();
                 out.state = state;
                 const auto thumb = omk::thumbFromRgb565(fb.px, fb.w, fb.h);
-                auto file = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+                auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
                 if (file.size() < omk::kSaveFileSize)
                     file = omk::blankSaveFile(saveSettings ? *saveSettings
                                                            : omk::defaultSettingsBlock());
@@ -1849,17 +1849,17 @@ int PlayState::modesShoot() {
                 std::string who;
                 if (const double ms = walk->takeCloseStarted(who); ms > 0.0)
                     std::printf("frame %ld: screen %d - oscillator 5 started, %.0f ms (%s); "
-                                "the screen takes no input until it closes\n", n, openScreen,
+                                "the screen takes no input until it closes\n", frameNo, openScreen,
                                 ms, who.c_str());
             }
             if (walk->closing()) {
                 if (walk->tickClose(frameSec * 1000.0)) {
                     if (openScreen == omk::screen::HighScore)
                         std::printf("frame %ld: screen 36 - oscillator 5 expired, "
-                                    "screen +8 = 3: the board closes itself\n", n);
+                                    "screen +8 = 3: the board closes itself\n", frameNo);
                     else
                         std::printf("frame %ld: screen %d - oscillator 5 expired, screen "
-                                    "+8 = 3: it closes itself, answer %d\n", n, openScreen,
+                                    "+8 = 3: it closes itself, answer %d\n", frameNo, openScreen,
                                     walk->answer());
                 }
             }
@@ -1868,8 +1868,8 @@ int PlayState::modesShoot() {
             // hook then takes its next arm
             if (walk->tickBanner(frameSec * 1000.0))
                 std::printf("frame %ld: screen %d - oscillator 6 expired: the banner "
-                            "gives way\n", n, openScreen);
-            const bool leaving = !walk->closing() && (walk->answer() >= 0 || walk->closed());
+                            "gives way\n", frameNo, openScreen);
+            const bool screenLeaving = !walk->closing() && (walk->answer() >= 0 || walk->closed());
             // THE KEY THAT CLOSED THE SCREEN IS NOT THE WORLD'S ACTION.
             //
             // The mirror of the gate at the open. The world's action button
@@ -1885,7 +1885,7 @@ int PlayState::modesShoot() {
             // Spending it costs nothing when the key is already up: the gate
             // above clears `actionSpent` on the first frame the bit is not
             // held.
-            if (leaving || walk->answer() >= 0 || walk->closed())
+            if (screenLeaving || walk->answer() >= 0 || walk->closed())
                 actionSpent = true;
             // THE PAUSE SCREEN CLOSES ON ITS OWN TERMS, and they are not
             // the sneak's. Its close callback (0x004ADEB0) clears the pause
@@ -1896,13 +1896,13 @@ int PlayState::modesShoot() {
             // sneak's close event and shut a list that was never open.
             if (walk->closing()) {
                 // held by oscillator 5: nothing leaves this frame
-            } else if (leaving && openScreen == omk::screen::Pause) {
+            } else if (screenLeaving && openScreen == omk::screen::Pause) {
                 std::printf("screen %d PAUSE GAME closed - the world runs "
                             "again\n", openScreen);
                 walk.reset();
                 openScreen = -1;
                 screenFromScript = true;
-            } else if (leaving && openScreen == omk::screen::HighScore) {
+            } else if (screenLeaving && openScreen == omk::screen::HighScore) {
                 // its close slot is the generic `Ui_CloseScreenDefault`: no
                 // event 26, no list - and `sub_466B60` again only if the
                 // player is still held, which a level page already undid
@@ -1911,7 +1911,7 @@ int PlayState::modesShoot() {
                 openScreen = -1;
                 screenFromScript = true;
                 hsReleased = false;
-            } else if (leaving && !screenFromScript) {
+            } else if (screenLeaving && !screenFromScript) {
                 std::printf("screen %d closed by the player - event %d, object "
                             "list %d\n", openScreen, omk::kEventSneakClose,
                             inv.openedList());
@@ -1977,7 +1977,7 @@ int PlayState::modesShoot() {
                 if (callCloseLeftMs <= 0.0) {
                     std::printf("frame %ld: screen %d VIDEOPHONE - oscillator 5 expired, "
                                 "screen +8 = 3: Ui_CloseSneakFamily closes it (event %d, "
-                                "object list %d)\n", n, openScreen, omk::kEventSneakClose,
+                                "object list %d)\n", frameNo, openScreen, omk::kEventSneakClose,
                                 inv.openedList());
                     inv.closeList();          // Game_RaiseEvent(26, 0)
                     walk.reset();
@@ -2035,7 +2035,7 @@ int PlayState::modesQuitLoad() {
             quitRequested = false;
             session.requestRestart();
             std::printf("frame %ld: `Quitter le jeu` confirmed - dword_4E6C9C = 1, the "
-                        "restart served at the next pump\n", n);
+                        "restart served at the next pump\n", frameNo);
         }
 
         // ---- THE PENDING LOAD, served the way `sub_408410` serves it
@@ -2063,7 +2063,7 @@ int PlayState::modesQuitLoad() {
         if (pendingLoadSlot >= 0 && session.bootContext() < 0) {
             const int slotNo = pendingLoadSlot;
             pendingLoadSlot = -1;
-            const auto bytes = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+            const auto bytes = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
             if (const auto sl = omk::readSaveSlot(bytes, slotNo)) {
                 state = sl->state;
                 state.setClockDay(sl->day);
@@ -2128,7 +2128,7 @@ int PlayState::modesQuitLoad() {
             in_->installScheme(0);
             ++poolComposition;
             std::printf("frame %ld: restart - the frontend dropped the player, the "
-                        "bodies and any mode; area %d boots\n", n, session.currentArea());
+                        "bodies and any mode; area %d boots\n", frameNo, session.currentArea());
         }
 
         if (session.areasEntered() != lastArea) {
@@ -2147,7 +2147,7 @@ int PlayState::modesQuitLoad() {
             const std::string now = session.scene().loaded() ? session.scene().file() : "(none)";
             if (now != scxWas) {
                 scxWas = now;
-                std::printf("[scx] frame %ld  resident scene is now %s (%zu objects)\n", n,
+                std::printf("[scx] frame %ld  resident scene is now %s (%zu objects)\n", frameNo,
                             now.c_str(),
                             session.scene().loaded()
                                 ? session.scene().scene().scene().objects.size() : 0u);
@@ -2181,7 +2181,7 @@ void PlayState::sliderHold() {
     auto& session = *session_;
     session.startBlackFade(true);
     session.holdPlayer(true);
-    std::printf("frame %ld: sub_452570 - Screen_Fade(1) and the player HELD\n", n);
+    std::printf("frame %ld: sub_452570 - Screen_Fade(1) and the player HELD\n", frameNo);
 }
 
 // A LOAD OR A RESTART UNDER A RIDE (drift audit B9). The Session's pool goes
@@ -2205,7 +2205,7 @@ void PlayState::sliderForget(const char* why) {
     if (any)
         std::printf("frame %ld: %s - the ride, the boarding and the slider camera "
                     "dropped with the old world (now ride %d boarding %d boarded %d "
-                    "leaving %d camera %d held %d)\n", n, why, ride ? 1 : 0, boarding ? 1 : 0,
+                    "leaving %d camera %d held %d)\n", frameNo, why, ride ? 1 : 0, boarding ? 1 : 0,
                     boarded ? 1 : 0, leaving ? 1 : 0, sliderCamMode,
                     session.playerAnimHeld() ? 1 : 0);
 }
@@ -2240,11 +2240,11 @@ void PlayState::sliderForget(const char* why) {
 void PlayState::closeAllScreens(const char* who) {
     auto& inv = *inv_;
     if (!walk || walk->closed() || openScreen < 0) {
-        std::printf("frame %ld: UI_CloseAllScreens (%s) - no screen up\n", n, who);
+        std::printf("frame %ld: UI_CloseAllScreens (%s) - no screen up\n", frameNo, who);
         return;
     }
     if (openScreen != omk::screen::Videophone) {
-        std::printf("frame %ld: UI_CloseAllScreens - screen %d closes (%s)\n", n,
+        std::printf("frame %ld: UI_CloseAllScreens - screen %d closes (%s)\n", frameNo,
                     openScreen, who);
         walk->closeScreen();
         return;
@@ -2255,17 +2255,17 @@ void PlayState::closeAllScreens(const char* who) {
         callCloseLeftMs = 100.0;
         std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE REFUSES: "
                     "dword_670BF0 cleared, sub_466B60 (the world view back on), oscillator "
-                    "5 started for 100 ms\n", n, who);
+                    "5 started for 100 ms\n", frameNo, who);
         return;
     }
     if (callCloseLeftMs > 0.0) {
         std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE refuses "
-                    "again: oscillator 5 still running (%.1f ms left)\n", n, who,
+                    "again: oscillator 5 still running (%.1f ms left)\n", frameNo, who,
                     callCloseLeftMs);
         return;
     }
     std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE closes (event "
-                "%d, object list %d)\n", n, who, omk::kEventSneakClose, inv.openedList());
+                "%d, object list %d)\n", frameNo, who, omk::kEventSneakClose, inv.openedList());
     inv.closeList();                  // Game_RaiseEvent(26, 0)
     walk.reset();
     openScreen = -1;

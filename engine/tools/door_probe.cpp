@@ -95,10 +95,10 @@ int main(int argc, char** argv) {
             // ...and the SOUND CUES the same programs raise. A door that
             // slides in silence is either a program with no sound step or a
             // cue the port drops on the floor, and these tell the two apart.
-            for (const auto& c : sr->sounds())
+            for (const auto& snd : sr->sounds())
                 std::printf("frame %3d  SOUND program %d object %d  wav %d "
-                            "node %d %s\n", f, c.program, c.object,
-                            c.cue.wav, c.cue.node, c.cue.stop ? "STOP" : "play");
+                            "node %d %s\n", f, snd.program, snd.object,
+                            snd.cue.wav, snd.cue.node, snd.cue.stop ? "STOP" : "play");
         }
     }
     return 0;

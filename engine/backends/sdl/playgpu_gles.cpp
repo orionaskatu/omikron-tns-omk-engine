@@ -197,7 +197,7 @@ void PlayState::gpuPresentVerify(bool& presentedWorld) {
             if (diff) ++differing;
             if (diff || compared % 30 == 0)
                 std::printf("gles present verify: frame %ld, %ld pixels differ; %ld of %ld frames differed\n",
-                            n, diff, differing, compared);
+                            frameNo, diff, differing, compared);
             swapOrSubmit(glRen);
             presentedWorld = true;
         }
@@ -233,7 +233,7 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
 #endif
         if (presentedWorld) {
             static const char* winDump = std::getenv("OMK_GLES_WINDUMP");
-            if (winDump && frames && n + 1 >= frames) {
+            if (winDump && frames && frameNo + 1 >= frames) {
                 std::vector<unsigned char> pic;
                 omk::glesWindowPicture(glRen, ww, wh, pic);
                 if (omk::safeOutputPath(winDump)) {
@@ -296,7 +296,7 @@ void PlayState::gpuReportTimings() {
         omk::glesTakeTimings(g);
         std::printf("frame %ld gles (ms, mean of 60): glReadPixels %.1f, to-565 %.1f, "
                     "texture upload %.1f, present draw %.1f, swap %.1f; "
-                    "%.0f buffer patches a frame (%.0f the depth tie's)\n", n,
+                    "%.0f buffer patches a frame (%.0f the depth tie's)\n", frameNo,
                     g[0] / 60.0, g[1] / 60.0, g[2] / 60.0, g[3] / 60.0, glSwapMs / 60.0,
                     omk::glesTakePatches() / 60.0, omk::glesTakeTiePatches() / 60.0);
         {
@@ -304,7 +304,7 @@ void PlayState::gpuReportTimings() {
             long sc[3];
             omk::glesTakeStateCalls(sc);
             std::printf("frame %ld gles state (a frame, mean of 60): %.0f draws, "
-                        "%.0f state calls made, %.0f skipped\n", n,
+                        "%.0f state calls made, %.0f skipped\n", frameNo,
                         sc[0] / 60.0, sc[1] / 60.0, sc[2] / 60.0);
         }
         {
@@ -312,11 +312,11 @@ void PlayState::gpuReportTimings() {
             omk::glesTakeWindow(gw);
             std::printf("frame %ld gles world (a frame, mean of 60): %.1f vertex uploads, "
                         "%.1f of them whole, %.1f streamed, %.0f KB sent, %.1f ms; draws %.1f ms, "
-                        "ties %.1f ms\n", n,
+                        "ties %.1f ms\n", frameNo,
                         gw[0] / 60.0, gw[5] / 60.0, gw[6] / 60.0, gw[1] / 60.0, gw[2] / 60.0,
                         gw[3] / 60.0, gw[4] / 60.0);
         }
-        std::printf("frame %ld overlay: %ld plane rows re-sent in 60 frames\n", n,
+        std::printf("frame %ld overlay: %ld plane rows re-sent in 60 frames\n", frameNo,
                     omk::glesTakeOverlayRows(glRen));
         glSwapMs = 0.0;
     }

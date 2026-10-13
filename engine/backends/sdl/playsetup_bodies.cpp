@@ -239,13 +239,13 @@ int PlayState::setupBodies() {
         // against and which wins where the ids collide.
         const int local = session.scene().file().empty()
                             ? 0 : loadSprites(session.scene().file());
-        int okTex = 0; std::size_t frames = 0;
+        int okTex = 0; std::size_t frameCount = 0;
         for (const auto& kv : spriteTab.tex) if (kv.second.width) ++okTex;
-        for (const auto& kv : spriteTab.frames) frames += kv.second.frames.size();
+        for (const auto& kv : spriteTab.frames) frameCount += kv.second.frames.size();
         std::printf("sprites: %d global + %d fight + %d from %s, %d decoded over ids "
                     "0..%zu, %zu frames in all\n", glob, fightSp, local,
                     session.scene().file().c_str(), okTex,
-                    spriteTab.idCount == 0 ? 0 : spriteTab.idCount - 1, frames);
+                    spriteTab.idCount == 0 ? 0 : spriteTab.idCount - 1, frameCount);
         spriteScx = session.scene().file();
     }
 

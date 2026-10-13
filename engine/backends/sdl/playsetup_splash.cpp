@@ -51,7 +51,7 @@ int PlayState::setupSplash() {
                 "ESC opens the pause screen.\n", screenId);
 
     fb = omk::Surface(dispW, dispH, 0);
-    n = 0;
+    frameNo = 0;
     // WAIT FOR THE KEY THAT SKIPPED THE MOVIE TO COME UP. Any key now ends a
     // movie and ESC also quits, so one press did both: skipped the last movie
     // and closed the menu behind it - "0 frames presented", with the window

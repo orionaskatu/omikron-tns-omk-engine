@@ -75,10 +75,10 @@ int PlayState::inputPump() {
         // diagnostic worthless.
         if (shootMode && (host.mouseDX != 0.0f || host.mouseDY != 0.0f)) {
             static long mouseTold = -1;
-            if (mouseTold < 0 || n - mouseTold > 120) {
-                mouseTold = n;
+            if (mouseTold < 0 || frameNo - mouseTold > 120) {
+                mouseTold = frameNo;
                 std::printf("frame %ld: MOUSE dx %.1f dy %.1f - shootMode %d, "
-                            "cameraLive %d, pitch %.1f\n", n, host.mouseDX,
+                            "cameraLive %d, pitch %.1f\n", frameNo, host.mouseDX,
                             host.mouseDY, int(shootMode), int(shootCameraLive),
                             shootPitch);
             }
@@ -150,23 +150,23 @@ void PlayState::inputPause() {
     // the only way it produces an edge - `Game_Frame`'s filter is why
     // holding a direction does not scroll (docs/UI.md 3c), and a driver
     // that held them would send one word and see one move.
-    st = omk::DeviceState{};
-    for (int dik : host.held) st.keyboard.push_back(dik);
+    devices = omk::DeviceState{};
+    for (int dik : host.held) devices.keyboard.push_back(dik);
     // The mouse BUTTONS are a device like any other - the scheme's own
     // table decides what they do, and in shoot mode 12 is `Tir`. Fed
     // unconditionally rather than only in shoot mode: the binding tables
     // are what gate a device per group, and second-guessing them here is
     // how a port ends up with its own control scheme.
-    for (int b : host.mouse) st.mouse.push_back(b);
+    for (int b : host.mouse) devices.mouse.push_back(b);
     // ...and a GAMEPAD, as the engine's own JOYSTICK device
     // (`input/pad.h`): buttons 48 + k, the stick on slots 0..3 through
     // `Input_Poll`'s hardwired axes. Zero when there is no pad.
-    omk::pad::toDevices(host.pad, st);
+    omk::pad::toDevices(host.pad, devices);
     // ...and under a SCREEN the stick is one direction with hysteresis, so a
     // held push is one press (`pad::MenuStick`, the Quest's report)
     {
         static omk::pad::MenuStick menuStick;
-        if (walk) menuStick.apply(st.joyX, st.joyY);
+        if (walk) menuStick.apply(devices.joyX, devices.joyY);
         else menuStick.reset();
     }
     // the `--hold` stream: held, not tapped, and only once he can walk
@@ -182,16 +182,16 @@ void PlayState::inputPause() {
     // that cannot press ENTER through a conversation cannot test what
     // happens when the conversation ends.
     if ((adventure || walk || session.dialogOpen()) && !holds.empty()) {
-        for (int k : holds.front().keys) st.keyboard.push_back(k);
+        for (int k : holds.front().keys) devices.keyboard.push_back(k);
         if (--holds.front().frames <= 0) holds.erase(holds.begin());
     }
-    if (!scripted.empty() && (n % keyEvery) == 0) {
+    if (!scripted.empty() && (frameNo % keyEvery) == 0) {
         const int k = scripted.front();
         scripted.erase(scripted.begin());
         if (k == kTypeMarker) host.text += typeText;   // as if it were typed
         else if (k <= kCharMarker)                    // `cN`: one character
             host.text += static_cast<char>(kCharMarker - k);
-        else st.keyboard.push_back(k);
+        else devices.keyboard.push_back(k);
     }
     // ...and ESC is read off THAT, once the scripted streams have been
     // merged in, rather than off `host.held`. The engine reads it from
@@ -199,13 +199,13 @@ void PlayState::inputPause() {
     // either is faithful to "is the key down"; taking it here is what
     // lets `--keys`/`--hold` drive it, and a screen the harness cannot
     // open is a screen nothing can check.
-    const bool esc = std::find(st.keyboard.begin(), st.keyboard.end(), 0x01)
-                     != st.keyboard.end();
+    const bool esc = std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x01)
+                     != devices.keyboard.end();
     if (esc && !walk && playerScreen < 0) {
         playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "
                     "(`Game_RunLoop`'s own GetAsyncKeyState(27), guarded "
-                    "by the pause flag)\n", n, omk::screen::Pause);
+                    "by the pause flag)\n", frameNo, omk::screen::Pause);
     }
     // ---- THE LAST SCREEN'S CLOSE FLUSHES THE INPUT ------------------
     //
@@ -230,17 +230,17 @@ void PlayState::inputPause() {
         static bool hadScreen = false;
         static std::set<int> flushed[3];
         if (hadScreen && !walk) {
-            flushed[0].insert(st.keyboard.begin(), st.keyboard.end());
+            flushed[0].insert(devices.keyboard.begin(), devices.keyboard.end());
             flushed[0].erase(0x01);
-            flushed[1].insert(st.mouse.begin(), st.mouse.end());
-            flushed[2].insert(st.joystick.begin(), st.joystick.end());
+            flushed[1].insert(devices.mouse.begin(), devices.mouse.end());
+            flushed[2].insert(devices.joystick.begin(), devices.joystick.end());
             if (!flushed[0].empty() || !flushed[1].empty() || !flushed[2].empty())
                 std::printf("frame %ld: the last screen closed - %zu key(s) held "
                             "through it ignored until released (the input flush)\n",
-                            n, flushed[0].size() + flushed[1].size() + flushed[2].size());
+                            frameNo, flushed[0].size() + flushed[1].size() + flushed[2].size());
         }
         hadScreen = static_cast<bool>(walk);
-        std::vector<int>* devs[3] = {&st.keyboard, &st.mouse, &st.joystick};
+        std::vector<int>* devs[3] = {&devices.keyboard, &devices.mouse, &devices.joystick};
         for (int d = 0; d < 3; ++d) {
             auto& v = *devs[d];
             for (auto it = flushed[d].begin(); it != flushed[d].end();)
@@ -277,11 +277,11 @@ void PlayState::inputPause() {
     // to follow the group too.
     if (walk) in.setRepeatMask(omk::kUiRepeatMask | (shootMode ? 0x100u : 0u));
     else if (adventure) in.setRepeatMask(0);
-    bits = in.frame(st);
+    bits = in.frame(devices);
     vrAdventureInput(bits);   // a headset's first person: the walk turned to the look (backends/vr)
     // ...and the word HELD this frame, before any edge filter - what a
     // "while held" rule reads (the dialogue line's scroll, below).
-    heldBits = in.poll(st);
+    heldBits = in.poll(devices);
     if (boardPress) { bits |= 0x10u; boardPress = false; }   // `--board`, one press
     // The EDGES, taken here rather than at each consumer so a frame that
     // never reaches one - a dialogue, a cutscene, a screen - cannot leave
@@ -429,7 +429,7 @@ void PlayState::inputTick() {
     // the channel's current group against the one the move entered.
     if (moveWaitCtx >= 0 && player && player->ctlGroup() != moveWaitGroup) {
         std::printf("frame %ld: player.move.wait ended - the channel left group %d "
-                    "for %d, context %d resumes\n", n, moveWaitGroup,
+                    "for %d, context %d resumes\n", frameNo, moveWaitGroup,
                     player->ctlGroup(), moveWaitCtx);
         session.playerMoveEnded(moveWaitCtx);
         moveWaitCtx = -1; moveWaitGroup = -1;
@@ -438,12 +438,12 @@ void PlayState::inputTick() {
     spanned("session", [&] { session.frame(); });
     // `dword_4E9760` as this frame's scripts left it, onto the records the
     // brains read below (todo/drift-audit.md S7)
-    shootFreezeSync(n);
+    shootFreezeSync(frameNo);
     // `g_IgnoreLedges` as this frame's scripts left it, for the walker that
     // `Actors_TickAll` steps after the pump (todo/drift-audit.md S5)
     if (player && player->walker().ignoreLedges != session.ignoreLedges()) {
         player->setIgnoreLedges(session.ignoreLedges());
-        std::printf("frame %ld: the walker %s ledges (walk.ledges.%s)\n", n,
+        std::printf("frame %ld: the walker %s ledges (walk.ledges.%s)\n", frameNo,
                     player->walker().ignoreLedges ? "IGNORES" : "obeys",
                     player->walker().ignoreLedges ? "ignore" : "obey");
     }
@@ -910,8 +910,8 @@ void PlayState::inputMotion() {
                 } else {
                     scan.clear();
                     const std::size_t nc = std::min(w.geo.corners.size(), w.geo.cornerMesh.size());
-                    for (std::size_t c = 0; c < nc; ++c)
-                        if (w.geo.cornerMesh[c] == mi) scan.push_back(static_cast<std::uint32_t>(c));
+                    for (std::size_t corner = 0; corner < nc; ++corner)
+                        if (w.geo.cornerMesh[corner] == mi) scan.push_back(static_cast<std::uint32_t>(corner));
                     idxp = &scan;
                 }
                 const auto& idxs = *idxp;
@@ -1147,8 +1147,8 @@ void PlayState::inputMotion() {
         static const bool verifySplit = std::getenv("OMK_VERIFY_SPLIT") != nullptr;
         if (verifySplit) {
             lazyPlaceAll();   // it reads triangle centres straight out of the soup
-            static long frames = 0, probes = 0, mismatched = 0;
-            ++frames;
+            static long splitFrames = 0, probes = 0, mismatched = 0;
+            ++splitFrames;
             const auto check = [&](double x, double y, double z) {
                 ++probes;
                 const auto a = omk::floorUnder(playerSoup, playerGrid, x, y, z);
@@ -1175,10 +1175,10 @@ void PlayState::inputMotion() {
             for (int gx = -4; gx <= 4; ++gx)
                 for (int gz = -4; gz <= 4; ++gz)
                     check(1804.0 + gx * 900.0, -2000.0, -6890.0 + gz * 900.0);
-            if (frames % 30 == 0)
+            if (splitFrames % 30 == 0)
                 std::printf("split verify: %ld moving frames, %ld probes, %ld mismatched, fixed %d x %d, moving %zu entries "
                             "in %d x %d (steep moving %d x %d, %zu entries)%s\n",
-                            frames, probes, mismatched, playerGrid.fixed.nx, playerGrid.fixed.nz,
+                            splitFrames, probes, mismatched, playerGrid.fixed.nx, playerGrid.fixed.nz,
                             playerGrid.moving.index.size(), playerGrid.moving.nx, playerGrid.moving.nz,
                             playerSteepGrid.moving.nx, playerSteepGrid.moving.nz,
                             playerSteepGrid.moving.index.size(),
@@ -1254,7 +1254,7 @@ void PlayState::inputSounds() {
                     foeSprites.push_back({e.sprite, e.duration, e.from, e.to, e.scale,
                                           e.flags, e.attach, st});
                     std::printf("frame %ld: ctl-effect: OPPONENT state %d '%s' spawns sprite %d on "
-                                "attach %d ('%s') for %.0f frames from %.0f\n", n, st,
+                                "attach %d ('%s') for %.0f frames from %.0f\n", frameNo, st,
                                 fctl.states[static_cast<std::size_t>(st)].name.c_str(),
                                 e.sprite, e.attach,
                                 e.attach < 18 ? kAttachName[e.attach] : "Buste",
@@ -1470,7 +1470,7 @@ void PlayState::vehicleSounds() {
                 front.stopSound(it->second);
                 ++vehSoundStops;
                 std::printf("frame %ld: vehicle sound STOPPED - slot %d (beyond 585 of the "
-                            "listener, or gone); %zu sounding\n", n, it->first,
+                            "listener, or gone); %zu sounding\n", frameNo, it->first,
                             vehVoices.size() - 1);
                 it = vehVoices.erase(it);
             } else {
@@ -1488,7 +1488,7 @@ void PlayState::vehicleSounds() {
                 vehVoices.emplace(static_cast<int>(s), h);
                 ++vehSoundStarts;
                 std::printf("frame %ld: vehicle sound STARTED - slot %zu ('%s') at %.0f from "
-                            "the listener, gain %.3f; %zu sounding\n", n, s, vv.model.c_str(),
+                            "the listener, gain %.3f; %zu sounding\n", frameNo, s, vv.model.c_str(),
                             double(d), double(g), vehVoices.size());
             } else {
                 front.setSoundGain(it->second, g);

@@ -701,18 +701,18 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
                 const auto rv   = fetch16(code, q);
                 const auto cap  = [](int l) { return l >= 0 && l < GameState::kLists
                                                   ? GameState::kListCapacity[l] : 0; };
-                std::int32_t n = state_.var(cv);
-                if (n == -1) n = state_.listCount(from);
-                if (n > state_.listCount(from)) n = state_.listCount(from);
+                std::int32_t count = state_.var(cv);
+                if (count == -1) count = state_.listCount(from);
+                if (count > state_.listCount(from)) count = state_.listCount(from);
                 const auto room = cap(to) - state_.listCount(to);
-                if (n > room) n = room;
-                for (std::int32_t k = 0; k < n; ++k) {
+                if (count > room) count = room;
+                for (std::int32_t k = 0; k < count; ++k) {
                     const int id = state_.listAt(from, 0);
                     state_.listAdd(to, id, false);       // InsertFront, no duplicate test
                     state_.listRemove(from, id);         // RemoveAt(from, 0): index 0 is
                                                          // the first occurrence
                 }
-                if (rv != -1) state_.setVar(rv, n);
+                if (rv != -1) state_.setVar(rv, count);
                 recordCall(op, {from, to, cv, rv});
                 continue;
             }

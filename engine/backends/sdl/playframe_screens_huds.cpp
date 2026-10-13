@@ -301,7 +301,7 @@ void PlayState::screensHuds() {
             hudBar.refresh(0, 22, fb.w);           // `sub_446C40(0, 22)`
             hudBar.refresh(1, 22, fb.w);
             hudBar.refreshCard(fightRun.cardProps, fightRun.ms);
-            std::printf("frame %ld: FIGHT HUD (Hud_Refresh) - stat card", n);
+            std::printf("frame %ld: FIGHT HUD (Hud_Refresh) - stat card", frameNo);
             for (int k = 0; k < 6; ++k)
                 std::printf(" %s=%d", hudBar.cardLabel(k).c_str(), hudBar.cardValue(k));
             // non-ASCII bytes ESCAPED: the rank is raw Latin-1 ("Initi\xe9"),
@@ -322,7 +322,7 @@ void PlayState::screensHuds() {
             const omk::HudBarFrame a = hudBar.draw(fb, fightRun.fight->player().hp, 200, 0, 2,
                                                    &lay, fightRun.ms);
             const omk::HudBarFrame b = hudBar.draw(fb, fightRun.fight->opponent().hp, 200, 1, 0);
-            if ((n - fightRun.startedAt) % 30 == 0)
+            if ((frameNo - fightRun.startedAt) % 30 == 0)
                 std::printf("    fight HUD: player gauge %d%% (top %d), opponent %d%% (top %d), "
                             "card rows %d text %d\n", a.percent, a.top, b.percent, b.top,
                             a.cardRows, a.cardText);
@@ -339,7 +339,7 @@ void PlayState::screensHuds() {
         if (!hudBar.loaded()) hudBar.load(fs);
         const int v = static_cast<int>(1000.0 * player->breathLeftMs() / 40000.0);
         const omk::HudBarFrame br = hudBar.draw(fb, v, 1000, 0, 1);
-        if (n % 30 == 0)
+        if (frameNo % 30 == 0)
             std::printf("    breath gauge (Hud_DrawBar mode 1): %d%%, %d ms left, "
                         "right edge %d, %d quads %d blits\n", br.percent,
                         int(player->breathLeftMs()), br.top, br.quads, br.blits);
@@ -378,7 +378,7 @@ void PlayState::screensHuds() {
             blk.screenW = fb.w;  blk.screenH = fb.h;
             omk::BlockResult res;
             lay.layOutBlock(&fb, text, blk, &res);
-            if (n % 30 == 0)
+            if (frameNo % 30 == 0)
                 std::printf("    script timer readout \"%s\": %d line(s), advance %d\n",
                             text, res.lines, res.advance);
         }
@@ -479,7 +479,7 @@ void PlayState::screensHuds() {
             if (astBarTold != ab.percent) {
                 astBarTold = ab.percent;
                 std::printf("frame %ld: Astaroth's gauge (Hud_DrawBar side 1): %d/200 = %d%%, "
-                            "top %d\n", n, astarothBar, ab.percent, ab.top);
+                            "top %d\n", frameNo, astarothBar, ab.percent, ab.top);
             }
             astarothBar = -1;
         }
@@ -498,7 +498,7 @@ void PlayState::screensHuds() {
             if (radar.loaded() && int(radarShown) != radarShownTold) {
                 radarShownTold = int(radarShown);
                 std::printf("frame %ld: RADAR %s - the game's switch (ops 146/147) is %s%s\n",
-                            n, radarShown ? "SHOWN" : "hidden",
+                            frameNo, radarShown ? "SHOWN" : "hidden",
                             session.radarOn() ? "ON" : "off",
                             radarAlways ? ", radar = always" : "");
             }
@@ -533,7 +533,7 @@ void PlayState::screensHuds() {
                                   rf.playerX < fb.w && rf.playerY < fb.h;
                 std::printf("frame %ld: RADAR drawn - %d of %d edges in front, %d lines "
                             "in the box %d,%d-%d,%d, %d gunmen, player square %d at "
-                            "%d,%d pixel 0x%04x\n", n,
+                            "%d,%d pixel 0x%04x\n", frameNo,
                             rf.edgesInFront, radar.wire().edges(), rf.lines, rv.left,
                             rv.top, rv.right, rv.bottom, rf.blips, int(rf.player),
                             rf.playerX, rf.playerY,
@@ -579,7 +579,7 @@ void PlayState::screensHuds() {
         const std::string key = told.substr(0, told.find(", frame pixel"));
         if (hudTold != key) {
             hudTold = key;
-            std::printf("frame %ld: shoot HUD (screen %d) - %s\n", n,
+            std::printf("frame %ld: shoot HUD (screen %d) - %s\n", frameNo,
                         session.shootMode().hudScreen(), line);
         }
     }
@@ -590,12 +590,12 @@ void PlayState::screensHuds() {
             static bool told = false;
             if (!told) {
                 told = true;
-                std::printf("frame %ld: the cloud was expected and not drawn - the frame cleared late\n", n);
+                std::printf("frame %ld: the cloud was expected and not drawn - the frame cleared late\n", frameNo);
             }
         }
     }
     if (walk) {
-        comp.setFrame(n);
+        comp.setFrame(frameNo);
         // The oscillators run on a MILLISECOND clock, not on the frame
         // index - their periods are 500, 1000 and 5000 and
         // `Ui_TickScreens` advances them by the frame delta.
@@ -670,7 +670,7 @@ void PlayState::screensHuds() {
                 for (const auto& l : od.lines) line += " [" + l + "]";
                 if (line != optTold) {
                     optTold = line;
-                    std::printf("frame %ld: %s - %d drawn, %d lit, %d slider%s\n", n,
+                    std::printf("frame %ld: %s - %d drawn, %d lit, %d slider%s\n", frameNo,
                                 line.c_str(), od.widgets, od.lit, od.sliders,
                                 od.sliders == 1 ? "" : "s");
                 }
@@ -1130,7 +1130,7 @@ void PlayState::screensFades() {
                     bf.bandGrey(false), bf.bandGrey(true), bf.running() ? 1 : 0);
                 if (told != buf) {
                     told = buf;
-                    std::printf("frame %ld: blackFade %s\n", n, buf);
+                    std::printf("frame %ld: blackFade %s\n", frameNo, buf);
                 }
             }
         }
@@ -1189,6 +1189,6 @@ void PlayState::screensFades() {
                 if (fb.px[k] != prevPx[k]) ++diffpx;
         prevPx = fb.px;
         std::printf("  [lit] frame %ld  %ld of %zu  changed %ld\n",
-                    n, litpx, fb.px.size(), diffpx);
+                    frameNo, litpx, fb.px.size(), diffpx);
     }
 }

@@ -146,16 +146,16 @@ void PlayState::sliderCamObstruct(float eye[3], float tat[3], const float steady
     sliderCamObs.prevValid = true;
     if (sliderCamObs.block != was && sliderCamObs.block == 1)
         std::printf("frame %ld: slider camera 8 BLOCKED (sub_417070) - pulled in to %.0f\n",
-                    n, double(sliderCamObs.dist));
+                    frameNo, double(sliderCamObs.dist));
 }
 
-void PlayState::sliderCamRequest(int mode, float frames) {
+void PlayState::sliderCamRequest(int mode, float travelFrames) {
     std::printf("frame %ld: slider camera %d requested over %.0f frames (from %d)\n",
-                n, mode, double(frames), sliderCamMode);
+                frameNo, mode, double(travelFrames), sliderCamMode);
     if (mode == 0) {
         sliderCamMode = -1;
         takeCamRequest(3);
-        takeCamTravel = frames > 0.0f ? frames : 0.001f;
+        takeCamTravel = travelFrames > 0.0f ? travelFrames : 0.001f;
         takeCam = true;
         return;
     }
@@ -165,7 +165,7 @@ void PlayState::sliderCamRequest(int mode, float frames) {
     sliderCamObs = omk::CamObstruct{};   // `memset(cam + 208, 0, 0x94)`
     sliderCamMode = mode;
     sliderCamClock = 0.0f;
-    sliderCamDur = frames;
+    sliderCamDur = travelFrames;
     for (int k = 0; k < 3; ++k) { sliderCamFromEye[k] = lastEye[k]; sliderCamFromAt[k] = lastAt[k]; }
     sliderCamFromFov = lastFov;
     // MODE 17 FIXES ITS EYE (`sub_414520` case 0x11): the land camera
@@ -180,10 +180,10 @@ void PlayState::sliderCamRequest(int mode, float frames) {
     }
 }
 
-void PlayState::playerCamRequest(const float eye[3], const float at[3], float fov, float frames) {
+void PlayState::playerCamRequest(const float eye[3], const float at[3], float fov, float travelFrames) {
     takeCamRequest(1);
     for (int k = 0; k < 3; ++k) { takeCamEye[k] = eye[k]; takeCamAt[k] = at[k]; }
-    takeCamFov = fov; takeCamTravel = frames;
+    takeCamFov = fov; takeCamTravel = travelFrames;
     takeCam = true;
 }
 
@@ -253,7 +253,7 @@ void PlayState::rebuildSteepMovingGrid() {
 
 std::vector<float> PlayState::loadSlot(int screen, int slot) {
     const auto& fs = *fs_;
-    const std::string& nm = w.soundName(screen, slot);
+    const std::string& nm = uiWidgets.soundName(screen, slot);
     if (nm.empty()) return std::vector<float>{};
     const auto path = fs.resolve("I2D/sounds/" + nm + ".wav");
     if (!path) return std::vector<float>{};
@@ -980,9 +980,9 @@ void PlayState::strikePlayer(Staged& s, int dmg, const float dir[3], const char*
     sin.victimYaw = player->facing();
     sin.dir[0] = dir[0];
     sin.dir[2] = dir[2];
-    shootWake(n, "a boss's direct damage (sub_423B10)");
+    shootWake(frameNo, "a boss's direct damage (sub_423B10)");
     const omk::HitOut sho = omk::shootApplyStrike(playerShootRec, sin);
-    std::printf("frame %ld: actor %d %s - %s (sub_423B10): damage %d at %.0f away\n", n,
+    std::printf("frame %ld: actor %d %s - %s (sub_423B10): damage %d at %.0f away\n", frameNo,
                 s.actor, s.model.c_str(), who, dmg,
                 std::sqrt(double(dir[0]) * dir[0] + double(dir[2]) * dir[2]));
     if (sho.refused)
@@ -990,7 +990,7 @@ void PlayState::strikePlayer(Staged& s, int dmg, const float dir[3], const char*
     else if (sho.healthWas <= 0)
         std::printf("  the player is down already (health %d): nothing\n", sho.healthWas);
     else
-        applyPlayerDamage(n, s.actor, kind, dmg, int(shield), sho);
+        applyPlayerDamage(frameNo, s.actor, kind, dmg, int(shield), sho);
 }
 
 // GANDHAR's world (`actor/gandhar.h`, `todo/gandhar.md`): the clips, the
@@ -1087,11 +1087,11 @@ omk::GandharWorld PlayState::gandharWorld(Staged& s, omk::ShootRecord& rec, floa
         auto& session = *session_;
         const int sender = fromPlayer ? session.playerActor() : s.actor;
         const bool ran = session.postMessage(message, sender);
-        std::printf("frame %ld: actor %d %s - GANDHAR posts message %d from %d (%s)\n", n,
+        std::printf("frame %ld: actor %d %s - GANDHAR posts message %d from %d (%s)\n", frameNo,
                     s.actor, s.model.c_str(), message, sender, ran ? "handled" : "unsubscribed");
     };
     w.say = [this, &s](const std::string& line) {
-        std::printf("frame %ld: actor %d %s - GANDHAR %s\n", n, s.actor, s.model.c_str(),
+        std::printf("frame %ld: actor %d %s - GANDHAR %s\n", frameNo, s.actor, s.model.c_str(),
                     line.c_str());
     };
     // `sub_440C80(player) ; sub_45BC50(his node, the player's)`: his root
@@ -1101,7 +1101,7 @@ omk::GandharWorld PlayState::gandharWorld(Staged& s, omk::ShootRecord& rec, floa
         const bool hb1 = hitBodyOf(s, him, false), hb2 = playerHitBody(them);
         if (!hb1 || !hb2) {
             std::printf("frame %ld: actor %d %s - GANDHAR's TOUCH (sub_45BC50) not tested: %s%s\n",
-                        n, s.actor, s.model.c_str(), hb1 ? "" : "his body is not drawn ",
+                        frameNo, s.actor, s.model.c_str(), hb1 ? "" : "his body is not drawn ",
                         hb2 ? "" : "the player's body is not posed");
             return false;
         }
@@ -1117,7 +1117,7 @@ omk::GandharWorld PlayState::gandharWorld(Staged& s, omk::ShootRecord& rec, floa
             best = std::min(best, std::sqrt(dx * dx + dy * dy + dz * dz));
         }
         std::printf("frame %ld: actor %d %s - GANDHAR's TOUCH (sub_45BC50) %s: his root sphere at "
-                    "%.0f %.0f %.0f radius %.0f, the player's nearest node %.0f away%s%s\n", n,
+                    "%.0f %.0f %.0f radius %.0f, the player's nearest node %.0f away%s%s\n", frameNo,
                     s.actor, s.model.c_str(), m >= 0 ? "MEETS the player" : "misses",
                     double(c[0]), double(c[1]), double(c[2]), double(r.radius), best,
                     m >= 0 ? " - his " : "", m >= 0 ? playerMeshes[static_cast<std::size_t>(m)].name : "");
@@ -1264,12 +1264,12 @@ bool PlayState::recordFire(Staged& s, omk::ShootRecord& rec, int slot, const flo
     const omk::RecordShotOut out = projectiles.fireFromRecord(s.actor, row, rs);
     std::printf("frame %ld: actor %d %s - %s FIRES slot %d (sub_44CDF0): %s from %.0f %.0f "
                 "%.0f, speed %.1f, damage %d, wait %.1f, row '%s' -> '%s', ammo %d -> %d, entry %d\n",
-                n, s.actor, s.model.c_str(), who, slot, wm.name, double(rs.muzzle[0]),
+                frameNo, s.actor, s.model.c_str(), who, slot, wm.name, double(rs.muzzle[0]),
                 double(rs.muzzle[1]), double(rs.muzzle[2]), double(row.speed), row.damage,
                 double(rs.windUp), parentName.c_str(), rowName.c_str(), ammo, ammo - 1, out.entry);
     if (out.entry >= 0) {
-        shotSound(n, muzzleFx, rs.muzzle, player ? player->pos() : nullptr, who);
-        shootNoise(n, s.actor, rs.muzzle, who);
+        shotSound(frameNo, muzzleFx, rs.muzzle, player ? player->pos() : nullptr, who);
+        shootNoise(frameNo, s.actor, rs.muzzle, who);
     }
     return out.entry >= 0;
 }
@@ -1471,7 +1471,7 @@ std::vector<omk::MeshPose> PlayState::gunmanPoseNow(int actor, int deathType, co
 // bytes, and a later load at the same address would find another file's
 // sounds there. A voice still playing keeps its own samples (shared).
 void PlayState::loadLibrary(std::unique_ptr<omk::ScxRuntime>& rt, const char* path) {
-    const omk::DataFs fs(fr);
+    const omk::DataFs fs(dataRoot);
     if (const auto p = fs.resolve(path)) {
         rt = std::make_unique<omk::ScxRuntime>(omk::DataFs::readPath(*p));
         if (!rt->valid()) rt.reset();
@@ -1747,13 +1747,13 @@ bool PlayState::beginMelee(int opponentId, int level) {
             myBankName = (!playerModel.empty() && playerModel[0] == 'F')
                              ? "F1CMBT" : "H1CMBT";   // LABELLED fallback
     }
-    CharBank* fb = charBankFor(foeBankName);
-    CharBank* pb = charBankFor(myBankName);
-    if (!fb || !fb->ready || !pb || !pb->ready) {
+    CharBank* foeCharBank = charBankFor(foeBankName);
+    CharBank* myCharBank = charBankFor(myBankName);
+    if (!foeCharBank || !foeCharBank->ready || !myCharBank || !myCharBank->ready) {
         std::printf("fight.begin %d: combat bank missing (player '%s' %s, "
                     "opponent '%s' %s) - the script waits for event 2 all the same\n", opponentId,
-                    myBankName.c_str(), (pb && pb->ready) ? "ok" : "MISSING",
-                    foeBankName.c_str(), (fb && fb->ready) ? "ok" : "MISSING");
+                    myBankName.c_str(), (myCharBank && myCharBank->ready) ? "ok" : "MISSING",
+                    foeBankName.c_str(), (foeCharBank && foeCharBank->ready) ? "ok" : "MISSING");
         return false;
     }
     // The stats, `Fight_Begin`'s six event-44 reads. The player's live in
@@ -1782,12 +1782,12 @@ bool PlayState::beginMelee(int opponentId, int level) {
         if (session.actorProperty(opponentId, 18, w)) os.dodge = w;
         if (session.actorProperty(opponentId, 19, w)) os.experience = w;
     }
-    fightRun.foeChannel = std::make_unique<omk::CefChannel>(fb->ctl);
+    fightRun.foeChannel = std::make_unique<omk::CefChannel>(foeCharBank->ctl);
     {
         const int g = fightRun.foeChannel->defaultGroup();
         if (g >= 0) fightRun.foeChannel->setBankGroup(g);
     }
-    player->setBank(pb->ctl, pb->data);
+    player->setBank(myCharBank->ctl, myCharBank->data);
     player->setActorState(omk::ActorState::Melee, "Fight_Engage");
 
     // THE SEPARATION RADIUS. `Fight_Begin` takes `f32(node, 88)` for each
@@ -1884,7 +1884,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
                     double(r > 0.0f ? r : 12.0f), playerSteep.size() / 9);
         fightRun.foeWalker = std::move(w);
     }
-    fightRun.foeBank = fb;
+    fightRun.foeBank = foeCharBank;
     fightRun.foeClip = -1;
     fightRun.foeRootRef = -1e30f;
     s->inertAfterFight = false;
@@ -1990,29 +1990,29 @@ omk::NodeTracks PlayState::idleTracksFor(const CharBank& b,
     return t;
 }
 
-int PlayState::loadSpritesInto(SpriteTable& spriteTab, const std::string& scx) {
+int PlayState::loadSpritesInto(SpriteTable& table, const std::string& scx) {
     const auto& fs = *fs_;
     const auto ap = fs.resolve("SCPTDATA/" + scx);
     if (!ap) return 0;
-    return loadSpritesFrom(spriteTab, omk::DataFs::readPath(*ap));
+    return loadSpritesFrom(table, omk::DataFs::readPath(*ap));
 }
 
 // ...out of a file already read
-int PlayState::loadSpritesFrom(SpriteTable& spriteTab, std::span<const std::byte> ad) {
+int PlayState::loadSpritesFrom(SpriteTable& table, std::span<const std::byte> ad) {
     const auto st = omk::readScxStream(ad);
     int n = 0;
     for (const auto& sp : st.sprites) {
         if (sp.id < 0) continue;
         const auto slot = static_cast<std::size_t>(sp.id);
-        if (spriteTab.idCount <= slot) spriteTab.idCount = slot + 1;
+        if (table.idCount <= slot) table.idCount = slot + 1;
         if (!sp.model || !sp.texture ||
             sp.offset + sp.model + sp.texture > ad.size()) continue;
         const std::span<const std::byte> mo(ad.data() + sp.offset, sp.model);
         const std::span<const std::byte> te(ad.data() + sp.offset + sp.model,
                                             sp.texture);
         auto t = omk::textures(mo, te);
-        if (!t.empty()) spriteTab.tex[sp.id] = t.front();
-        spriteTab.frames[sp.id] = omk::spriteFrames(mo);
+        if (!t.empty()) table.tex[sp.id] = t.front();
+        table.frames[sp.id] = omk::spriteFrames(mo);
         ++n;
     }
     return n;
@@ -2122,9 +2122,9 @@ void PlayState::prepareSet(SetLoad& L) {
         // be ~1 MB): the bolts' world ray names the mesh it met
         // (`off_4C8444`, Astaroth's souls - `todo/astaroth.md`)
         w.shotMeshRuns.clear();
-        for (std::size_t t = 0; t < shotMesh.size(); ++t)
-            if (w.shotMeshRuns.empty() || w.shotMeshRuns.back().second != shotMesh[t])
-                w.shotMeshRuns.push_back({static_cast<std::uint32_t>(t), shotMesh[t]});
+        for (std::size_t tri = 0; tri < shotMesh.size(); ++tri)
+            if (w.shotMeshRuns.empty() || w.shotMeshRuns.back().second != shotMesh[tri])
+                w.shotMeshRuns.push_back({static_cast<std::uint32_t>(tri), shotMesh[tri]});
         w.shotMeshRuns.shrink_to_fit();
     }
     w.restXyzOfMesh.clear(); w.restSoupOfMesh.clear(); w.restSteepOfMesh.clear();
@@ -2301,7 +2301,7 @@ void PlayState::rebuildWorld() {
 
 // the interface's clock: the wall's, or a headless run's frames at 30 a second
 long PlayState::uiClockMs() {
-    if (frames > 0) return n * 1000 / 30;
+    if (frames > 0) return frameNo * 1000 / 30;
     return static_cast<long>(front.ticksMs());
 }
 

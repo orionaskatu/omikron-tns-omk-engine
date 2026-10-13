@@ -26,7 +26,7 @@
 
 struct PlayState {
     omk::PlayOptions opt{};
-    const std::string & fr = opt.fr;
+    const std::string & dataRoot = opt.fr;
     std::string & tb = opt.tb;
     int & screenId = opt.screenId;
     int & frames = opt.frames;
@@ -184,7 +184,7 @@ struct PlayState {
     float savedYaw{};
     bool haveSavedPlacement{};
     std::optional<omk::DataFs> fs_;
-    omk::UiWidgets w{};
+    omk::UiWidgets uiWidgets{};
     omk::FontTable fonts{};
     std::optional<omk::TextLayout> lay_;
     std::optional<omk::ScreenComposer> comp_;
@@ -657,7 +657,7 @@ struct PlayState {
     int loadDelayMs{};
     omk::HostInput host{};
     omk::Surface fb{};
-    long n{};
+    long frameNo{};
     long slidOutAt{-1};        // the frame MDSLIDOU last fired, for the release line
     // THE SLIDER'S CAMERA - `Camera_Request` as the slider's code makes it
     // (todo/slider-drift-audit.md A3/A7/B11): the mode it asked for (8 the
@@ -727,7 +727,7 @@ struct PlayState {
     // ---- THE FRAME'S OWN STATE that one phase sets and a later one reads
     // (todo/play-split.md): each is a local of the loop body, assigned at
     // its original point of declaration every turn.
-    omk::DeviceState st;                    // the devices, as the bindings read them
+    omk::DeviceState devices;                    // the devices, as the bindings read them
     std::uint32_t bits = 0, heldBits = 0, edgeBits = 0;   // the input word, held, edged
     bool uiPause = false;                   // the pause screen is the open one
     bool gpuFrame = false;                  // the present pass: the world went to the GPU

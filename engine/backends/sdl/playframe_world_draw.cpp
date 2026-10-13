@@ -27,8 +27,8 @@ void PlayState::worldDrawLists() {
     // mechanism.
     // Each batch carries the SPRITE index as its material; the pool
     // holds every sprite after the set's and the speaker's textures,
-    // so a batch's slot is `spriteBase + sprite`.
-    int spriteBase = -1;
+    // so a batch's slot is `spriteSlotBase + sprite`.
+    int spriteSlotBase = -1;
     for (int k = 0; k < 3; ++k) spriteAnchor[k] = view.cam.at[k];
     spriteAnchorSet = true;
     const bool scriptSprites = !noScriptSprites && session.scene().loaded() && !session.scene().sprites().empty();
@@ -191,7 +191,7 @@ void PlayState::worldDrawLists() {
         }
         // The pool already carries them: it is built above, in one
         // place, with a section per model.
-        spriteBase = static_cast<int>(spriteTexBase);
+        spriteSlotBase = static_cast<int>(spriteTexBase);
     }
     // ONE bucket order for the set, the speaker and the particles.
     // `Render_FlushBuckets` walks a single 14-bit key ascending and
@@ -237,7 +237,7 @@ void PlayState::worldDrawLists() {
         static int skyPathWas = -1;
         if (skyPathWas != (skyGpu ? 1 : 0)) {
             skyPathWas = skyGpu ? 1 : 0;
-            std::printf("frame %ld: the sky %s - %zu corners\n", n,
+            std::printf("frame %ld: the sky %s - %zu corners\n", frameNo,
                         skyGpu ? "MOVED BY THE RENDERER (static, one translation a frame)"
                                : "rewritten on the CPU when the camera moves",
                         sky.base.size());
@@ -436,7 +436,7 @@ void PlayState::worldDrawLists() {
             hiddenTold = hiddenMeshes;
             hiddenDrawnTold = hiddenDrawn;
             std::printf("frame %ld: world draw - flag 2: %zu set mesh%s hidden, %zu of them "
-                        "drawn\n", n, hiddenMeshes, hiddenMeshes == 1 ? "" : "es", hiddenDrawn);
+                        "drawn\n", frameNo, hiddenMeshes, hiddenMeshes == 1 ? "" : "es", hiddenDrawn);
         }
     }
     if (clipReport) {
@@ -461,7 +461,7 @@ void PlayState::worldDrawLists() {
     for (const auto& up : staged) if (up->drawn && up->mo) ++litBodies;
     if (omk::envSet("OMK_CLIPLOG")) {
         std::printf("  [clip] frame %ld  runs %zu drawn %zu culled  bodies %zu"
-                    "  eye %.0f %.0f %.0f\n", n, runsDrawn, runsCulled, litBodies,
+                    "  eye %.0f %.0f %.0f\n", frameNo, runsDrawn, runsCulled, litBodies,
                     view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]);
     }
     harnessFlickerNote(runsDrawn, runsCulled, litBodies);
@@ -538,7 +538,7 @@ void PlayState::worldDrawLists() {
         if (!lightsTold) {
             lightsTold = true;
             std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
-                        "reach the player, nearest first\n", n, view.lights.size());
+                        "reach the player, nearest first\n", frameNo, view.lights.size());
         }
     }
     // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
@@ -653,12 +653,12 @@ void PlayState::worldDrawLists() {
                 view.shadow.radius = rad;
                 view.shadow.strength = 0.6f;
                 static const bool shLog = std::getenv("OMK_SHADOWLOG") != nullptr;
-                if (!shadowLightTold || (shLog && (n % 30) == 0)) {
+                if (!shadowLightTold || (shLog && (frameNo % 30) == 0)) {
                     shadowLightTold = true;
                     std::printf("frame %ld: mapped shadows - light '%s' at "
                                 "%.0f %.0f %.0f, direction %.2f %.2f %.2f, "
                                 "slab radius %.0f over %d bodies, asked at "
-                                "%.0f %.0f %.0f\n", n, best->name.c_str(),
+                                "%.0f %.0f %.0f\n", frameNo, best->name.c_str(),
                                 static_cast<double>(best->pos[0]),
                                 static_cast<double>(best->pos[1]),
                                 static_cast<double>(best->pos[2]),
@@ -674,7 +674,7 @@ void PlayState::worldDrawLists() {
                 shadowLightTold = true;
                 std::printf("frame %ld: mapped shadows asked for, but no set light "
                             "reaches the cast - nothing drawn (the port does not "
-                            "invent a sun)\n", n);
+                            "invent a sun)\n", frameNo);
             }
         }
     }
@@ -839,7 +839,7 @@ void PlayState::worldDrawLists() {
             if (ride && !frozenTold && frozenLeftOut > 0) {
                 frozenTold = true;
                 std::printf("frame %ld: slider: Manuelle drives - Actors_TickAll does not run, "
-                            "%d actor shadow(s) left out\n", n, frozenLeftOut);
+                            "%d actor shadow(s) left out\n", frameNo, frozenLeftOut);
             }
             if (!ride) frozenTold = false;
         }
@@ -862,7 +862,7 @@ void PlayState::worldDrawLists() {
                                     up->footAt[1], static_cast<float>(h->y), nrm)) {
                 ++blobs; ++nCrowd;
                 static const bool pedLog = std::getenv("OMK_SHADOWLOG") != nullptr;
-                if (pedLog && nCrowd == 1 && (n % 60) == 0)
+                if (pedLog && nCrowd == 1 && (frameNo % 60) == 0)
                     std::printf("  [shadow] crowd blob: feet %.0f %.0f %.0f / "
                                 "%.0f %.0f %.0f  floor %.0f  corner0 %.0f %.0f %.0f "
                                 "extent %.1f\n",
@@ -896,21 +896,21 @@ void PlayState::worldDrawLists() {
             shadowTold = true;
             std::printf("frame %ld: shadows ON (row 7 detail %d, quality %s) - "
                         "%ld blobs, %zu corners, texture slot %zu\n",
-                        n, detail, omk::shadowQualityName(shadowQuality),
+                        frameNo, detail, omk::shadowQualityName(shadowQuality),
                         blobs, shadowGeo.corners.size(), shadowTexBase);
         }
         static const bool shadowLog = std::getenv("OMK_SHADOWLOG") != nullptr;
-        if (shadowLog && (n % 30) == 0)
+        if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] frame %ld: %ld player + %ld actor + %ld crowd"
                         " = %ld blobs (%zu peds staged, %ld drawn, %ld with feet)\n",
-                        n, nPlayer, nActor, nCrowd, blobs, pedStaged.size(),
+                        frameNo, nPlayer, nActor, nCrowd, blobs, pedStaged.size(),
                         nPedDrawn, nPedFeet);
-        if (shadowLog && (n % 30) == 0)
+        if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] worst blob vertical spread %.2f units, "
                         "the player's %.2f (a flat quad is 0 by construction)\n",
                         static_cast<double>(shadowSpreadMax),
                         static_cast<double>(shadowSpreadPlayer));
-        if (shadowLog && (n % 30) == 0)
+        if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] worst foot-to-body offset %.1f units "
                         "(a bone off the wrong LOD skeleton is ~240)\n",
                         static_cast<double>(shadowFootOffMax));
@@ -1001,7 +1001,7 @@ void PlayState::worldDrawLists() {
                 "not drawn", "posed by the RENDERER (his rest, one affine a mesh)",
                 "outside the view, not drawn", "posed on the CPU"};
             std::printf("frame %ld: the player %s - %zu meshes, %zu corners; so far %ld "
-                        "frames by the renderer, %ld on the CPU\n", n, names[path],
+                        "frames by the renderer, %ld on the CPU\n", frameNo, names[path],
                         playerMeshes.size(), playerRest.corners.size(), gpuFrames, cpuFrames);
         }
     }
@@ -1059,9 +1059,9 @@ void PlayState::worldDrawLists() {
                              litStaged, false});
         static long armTold = -1;
         if (armTold < 0) {
-            armTold = n;
+            armTold = frameNo;
             std::printf("frame %ld: first person - the arm the hide spares: %zu corners "
-                        "of %zu, %zu batches (meshes flagged 0x200000)\n", n,
+                        "of %zu, %zu batches (meshes flagged 0x200000)\n", frameNo,
                         playerArm.corners.size(), playerPosed.corners.size(),
                         playerArm.batches.size());
         }
@@ -1080,7 +1080,7 @@ void PlayState::worldDrawLists() {
         // per-vertex light
         draws.back().lit = litStaged;
     }
-    if (spriteBase >= 0)
+    if (spriteSlotBase >= 0)
         for (const auto& b : fxGeo.batches) {
             // `b.material` is the sprite's ID; the pool is packed, so
             // it has to be looked up rather than added to the base
@@ -1088,7 +1088,7 @@ void PlayState::worldDrawLists() {
             const int sl = slIt == spriteSlot.end() ? -1 : slIt->second;
             if (sl < 0) continue;      // a sprite with no texture: not drawn
             draws.push_back({keyOf(b.blend, b.cutout,
-                                   static_cast<std::uint32_t>(spriteBase + sl)),
+                                   static_cast<std::uint32_t>(spriteSlotBase + sl)),
                              &fxGeo, b.start, b.count, b.blend, b.cutout});
         }
     std::stable_sort(draws.begin(), draws.end(),
@@ -1126,7 +1126,7 @@ void PlayState::worldMirror() {
         static const bool camLog = [] { const char* e = std::getenv("OMK_CAMLOG"); return e && *e == '1'; }();
         if (camLog)
             std::fprintf(stderr, "[cam] frame %ld eye %.4f %.4f %.4f at %.4f %.4f %.4f fov %.3f\n",
-                         n, view.cam.eye[0], view.cam.eye[1], view.cam.eye[2],
+                         frameNo, view.cam.eye[0], view.cam.eye[1], view.cam.eye[2],
                          view.cam.at[0], view.cam.at[1], view.cam.at[2], view.cam.hfovDeg);
     }
     mark("shadows, hud models");
@@ -1153,7 +1153,7 @@ void PlayState::worldMirror() {
         mirrorLive = mst.active;
         if (mst.maskPixels > 0) mirrorSeen = true;
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
-                    "%.0f in front)\n", n,
+                    "%.0f in front)\n", frameNo,
                     mst.active ? "REFLECTING"
                     : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
                                              : "out of view - the camera is behind it",
@@ -1177,7 +1177,7 @@ void PlayState::worldMirror() {
     // only a build with a GPU window decides it (`playgpu_<backend>.cpp`)
     if (gpuWindowBuild()) {
         static const bool noGpuPresent = std::getenv("OMK_NO_GPU_PRESENT") != nullptr;
-        const bool lastDumped = !dump.empty() && frames && n + 1 >= frames;
+        const bool lastDumped = !dump.empty() && frames && frameNo + 1 >= frames;
         // THE GLES WINDOW TAKES THE SAME PATH (`todo/vita-port.md` G6
         // step 1). A console log put 90 of a cutscene
         // frame's 106 ms in exactly the round trip this skips -
@@ -1256,9 +1256,9 @@ void PlayState::worldMirror() {
         // read first - `platform/cacheline.h`, step 3o)
         const std::size_t rowBytes = static_cast<std::size_t>(fb.w) * sizeof(std::uint16_t);
         for (int dy = 0; dy < fb.h; ++dy) {
-            const bool world = dy >= view.vy && dy < view.vy + view.vh;
+            const bool inView = dy >= view.vy && dy < view.vy + view.vh;
             std::uint16_t* row = fb.px.data() + static_cast<std::size_t>(dy) * fb.w;
-            if (!world) { omk::zeroBytes(row, rowBytes); continue; }
+            if (!inView) { omk::zeroBytes(row, rowBytes); continue; }
             omk::claimLines(row, rowBytes);
             std::fill(row, row + fb.w, std::uint16_t(0xF81F));
         }

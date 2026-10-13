@@ -31,7 +31,7 @@ void PlayState::worldCrowd() {
             shootClips.clear();
             ++pedCacheGen;
             std::printf("frame %ld: crowd library - ANIMS/%s.ANI (%zu bytes), "
-                        "the track caches cleared (generation %ld)\n", n, rs.ani.c_str(),
+                        "the track caches cleared (generation %ld)\n", frameNo, rs.ani.c_str(),
                         pedAni.size(), pedCacheGen);
         }
         const auto& ws = pd.movers();
@@ -85,7 +85,7 @@ void PlayState::worldCrowd() {
             if (session.sliders().loaded() && shownWas != (circuitShown ? 1 : 0)) {
                 shownWas = circuitShown ? 1 : 0;
                 std::printf("frame %ld: crowd library - the circuit's slot %d is %s: its walkers and "
-                            "traffic %s\n", n, session.trafficSlot(), circuitShown ? "SHOWN" : "HIDDEN",
+                            "traffic %s\n", frameNo, session.trafficSlot(), circuitShown ? "SHOWN" : "HIDDEN",
                             circuitShown ? "drawn" : "not drawn (they keep moving)");
             }
         }
@@ -210,11 +210,11 @@ void PlayState::worldCrowd() {
         phSpan["ped serial"] += phaseNow() - pedSerial0;
         if (pedModelSwapped)
             std::printf("frame %ld: crowd library - %d walker(s) whose slot was last drawn as another "
-                        "model, re-resolved to their own\n", n, pedModelSwapped);
+                        "model, re-resolved to their own\n", frameNo, pedModelSwapped);
         if (pedRebound)
             std::printf("frame %ld: crowd library - %d walker(s) rebound after the library change "
                         "though their clip pointer was unchanged (their tracks were the cleared "
-                        "cache's)\n", n, pedRebound);
+                        "cache's)\n", frameNo, pedRebound);
         // ---- THE BODIES, which may run on several cores -----------
         //
         // The pass above is the SERIAL half and it is serial for a
@@ -450,15 +450,15 @@ void PlayState::worldCrowd() {
         // `--dump` shows: since the side planes (optimization step 28 j)
         // a frame-0 count can be all `outside the view` while the frame
         // a check compares has walkers on it
-        if (pedLive && (pedTold < 0 || n - pedTold >= 300 ||
-                        (frames > 0 && n + 1 == static_cast<long>(frames)))) {
-            pedTold = n;
+        if (pedLive && (pedTold < 0 || frameNo - pedTold >= 300 ||
+                        (frames > 0 && frameNo + 1 == static_cast<long>(frames)))) {
+            pedTold = frameNo;
             int pedGpu = 0;
             for (const auto& up : pedStaged) pedGpu += up->drawn && up->gpu;
             std::printf("frame %ld: pedestrians - %d live, %d drawn within %.0f of the eye "
                         "(%d outside the view, %d past the last LOD distance), %d at an action "
                         "point, %d idling, %d light hits, %d posed by the renderer\n",
-                        n, pedLive, pedDrawn, reach, pedOffView, pedPastLod, pedInAction, pedIdle,
+                        frameNo, pedLive, pedDrawn, reach, pedOffView, pedPastLod, pedInAction, pedIdle,
                         pedLit, pedGpu);
         }
         // ...and the ROAD TRAFFIC on the same circuit's vehicle lanes.
@@ -489,7 +489,7 @@ void PlayState::worldCrowd() {
                 if (mine && calledSkipTold != why) {
                     calledSkipTold = why;
                     std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is NOT staged: %s\n",
-                                n, i, v.model.c_str(), what);
+                                frameNo, i, v.model.c_str(), what);
                 }
             };
             if (!v.live || v.mover < 0) { skipMine(1, "not live / no mover"); continue; }
@@ -517,12 +517,12 @@ void PlayState::worldCrowd() {
             // without any slider in it
             if (sv.mo && sv.model != v.model) {
                 std::printf("frame %ld: vehicle slot %zu restaged - '%s' -> '%s'\n",
-                            n, i, sv.model.c_str(), v.model.c_str());
+                            frameNo, i, sv.model.c_str(), v.model.c_str());
                 sv.mo = nullptr; sv.atRest = nullptr; sv.built = false; sv.lodRoot = -1;
             }
             if (!sv.mo) { sv.mo = charModelFor(v.model); sv.model = v.model; }
             if (!sv.mo || !sv.mo->ready) { skipMine(3, "its model did not load"); continue; }
-            if (mine && calledSkipTold != 0) { calledSkipTold = 0; std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is staged at %.0f %.0f %.0f\n", n, i, v.model.c_str(), m.body[0], m.body[1], m.body[2]); }
+            if (mine && calledSkipTold != 0) { calledSkipTold = 0; std::printf("frame %ld: the called vehicle (slot %zu, model '%s') is staged at %.0f %.0f %.0f\n", frameNo, i, v.model.c_str(), m.body[0], m.body[1], m.body[2]); }
             // ---- `sub_4521E0`, THE MODEL SWAP ----------------------
             // The slider model TABLE (`dword_538E28`, 88-byte rows)
             // holds its four root sub-objects at +4..+16 sorted
@@ -701,7 +701,7 @@ void PlayState::worldCrowd() {
                 if (std::fabs(tilt) > tiltMax + 2.0) {
                     tiltMax = std::fabs(tilt);
                     std::printf("frame %ld: slider: Manuelle drawn BANKED - its +X side %.1f degrees "
-                                "up, the ride's roll %.1f (sub_457F50's node matrix)\n", n, tilt,
+                                "up, the ride's roll %.1f (sub_457F50's node matrix)\n", frameNo, tilt,
                                 ride->roll > 180.0 ? ride->roll - 360.0 : ride->roll);
                 }
             }
@@ -712,8 +712,8 @@ void PlayState::worldCrowd() {
         }
         phSpan["vehicles"] += phaseNow() - veh0;
         releaseIdleCrowd();
-        if (vehLive && (vehTold < 0 || n - vehTold >= 300)) {
-            vehTold = n;
+        if (vehLive && (vehTold < 0 || frameNo - vehTold >= 300)) {
+            vehTold = frameNo;
             int brakes = 0, bumps = 0, touches = 0;
             float closest = 1e9f;
             const float* ppos = player ? player->pos() : session.playerPos();
@@ -727,7 +727,7 @@ void PlayState::worldCrowd() {
             std::printf("frame %ld: traffic - %d live, %d drawn within %.0f of the eye "
                         "(%d past the last LOD distance), "
                         "%d stopped; braked for the player %d frames, touched him %d frames, "
-                        "ran him over %d times, nearest now %.0f\n", n, vehLive, vehDrawn, vreach,
+                        "ran him over %d times, nearest now %.0f\n", frameNo, vehLive, vehDrawn, vreach,
                         vehPastLod, vehStopped, brakes, touches, bumps, double(closest));
         }
     }
@@ -804,7 +804,7 @@ void PlayState::worldCrowd() {
         }
         if (!playerOffView && !playerGpu) {
             omk::applyPose(playerPosed, playerRest, playerMeshes, pose);
-            playerPosedFrame = n;
+            playerPosedFrame = frameNo;
         }
         // THE ANCHOR IS THE FLOOR, NOT THE HIPS (omk-play 69).
         //
@@ -1034,7 +1034,7 @@ void PlayState::worldCrowd() {
                 const long v = e ? std::atol(e) : 0;
                 return v > 1 ? v : 1;
             }();
-            if (omk::envSet("OMK_PLY") && (n % plyEvery) == 0) {
+            if (omk::envSet("OMK_PLY") && (frameNo % plyEvery) == 0) {
                 float lo = -1e9f, hi = 1e9f;
                 for (const auto& c : playerPosed.corners) {
                     if (c.y > lo) lo = c.y;
@@ -1053,7 +1053,7 @@ void PlayState::worldCrowd() {
                 std::printf("DBG ply f%ld %-9s pf %2d  ground %+8.2f  lowest %+8.2f"
                             "  gap %+7.2f  head %+8.2f  rootDrop %+6.2f  foot %+7.2f"
                             "  at %+9.2f %+9.2f  air %d\n",
-                            n, player->clipName().c_str(), player->poseFrame(),
+                            frameNo, player->clipName().c_str(), player->poseFrame(),
                             player->pos()[1], lo, lo - player->pos()[1], hi,
                             rootDrop, lo - playerFeet + rootDrop,
                             player->pos()[0], player->pos()[2],
@@ -1144,7 +1144,7 @@ void PlayState::worldCrowd() {
             if (playerGpu && reachN > world.maxVertexLights()) {
                 playerGpu = false;
                 omk::applyPose(playerPosed, playerRest, playerMeshes, pose);
-                playerPosedFrame = n;
+                playerPosedFrame = frameNo;
             }
             if (playerGpu) { playerLightCount = reachN; playerLightsBlack = true; }
         }
@@ -1305,8 +1305,8 @@ void PlayState::releaseIdleCrowd() {
     constexpr long kIdleFrames = 60;      // two seconds at 30
     for (auto& up : pedStaged) {
         PedStaged& p = *up;
-        if (p.drawn) { p.lastDrawn = n; continue; }
-        if (p.lastDrawn < 0 || n - p.lastDrawn <= kIdleFrames) continue;
+        if (p.drawn) { p.lastDrawn = frameNo; continue; }
+        if (p.lastDrawn < 0 || frameNo - p.lastDrawn <= kIdleFrames) continue;
         releaseGeometry(p.posed);
         releaseVector(p.pose);
         releaseVector(p.lights);
@@ -1315,8 +1315,8 @@ void PlayState::releaseIdleCrowd() {
     }
     for (auto& up : vehStaged) {
         VehStaged& v = *up;
-        if (v.drawn) { v.lastDrawn = n; continue; }
-        if (v.lastDrawn < 0 || n - v.lastDrawn <= kIdleFrames) continue;
+        if (v.drawn) { v.lastDrawn = frameNo; continue; }
+        if (v.lastDrawn < 0 || frameNo - v.lastDrawn <= kIdleFrames) continue;
         releaseGeometry(v.posed);
         releaseVector(v.affine);
         v.lastDrawn = -1;
@@ -1333,7 +1333,7 @@ void PlayState::releaseIdleStaged() {
     constexpr long kIdleFrames = 60;
     for (auto& up : staged) {
         Staged& s = *up;
-        if (s.lastSkinned < 0 || n - s.lastSkinned <= kIdleFrames) continue;
+        if (s.lastSkinned < 0 || frameNo - s.lastSkinned <= kIdleFrames) continue;
         releaseGeometry(s.posed);
         s.lastSkinned = -1;
     }

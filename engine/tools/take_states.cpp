@@ -118,11 +118,11 @@ int main(int argc, char** argv) {
     // MDNOTAKE (0x0046B530) is the dispatcher: it switches on the scan's
     // result code and installs a group BY ID - case 0 -> 140, 1 -> 6, 2 -> 7,
     // 3 -> 9. Which of those actually carries the take?
-    for (int want : {140, 6, 7, 9, 41, 45}) {
+    for (int groupId : {140, 6, 7, 9, 41, 45}) {
         for (std::size_t gi = 0; gi < ctl.groupList.size(); ++gi) {
-            if (ctl.groupList[gi].id != want) continue;
+            if (ctl.groupList[gi].id != groupId) continue;
             const int de = ctl.groupList[gi].defaultEntry;
-            std::printf("\ngroup id %3d = index %2zu, defaultEntry %d\n", want, gi, de);
+            std::printf("\ngroup id %3d = index %2zu, defaultEntry %d\n", groupId, gi, de);
             for (std::size_t j = 0; j < ctl.states.size(); ++j) {
                 if (ctl.states[j].group != static_cast<int>(gi)) continue;
                 std::printf("    entry %3zu move %-9s flags %08x input %08x clip %d%s\n",

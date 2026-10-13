@@ -95,7 +95,7 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
     if (!presentedWorld && !refusedTold) {
         refusedTold = true;
         std::printf("gl1: the overlay REFUSED at frame %ld (window %dx%d, frame %dx%d) - "
-                    "composed on the CPU\n", n, ww, wh, fb.w, fb.h);
+                    "composed on the CPU\n", frameNo, ww, wh, fb.w, fb.h);
     }
 }
 void PlayState::gpuPresentWorld(bool& presentedWorld) {
@@ -107,7 +107,7 @@ void PlayState::gpuPresentWorld(bool& presentedWorld) {
     if (!presentedWorld && !refusedTold) {
         refusedTold = true;
         std::printf("gl1: the straight present REFUSED at frame %ld (window %dx%d, frame %dx%d) - "
-                    "composed on the CPU\n", n, ww, wh, fb.w, fb.h);
+                    "composed on the CPU\n", frameNo, ww, wh, fb.w, fb.h);
     }
 }
 bool PlayState::gpuWorldOnWindow() {
@@ -135,15 +135,15 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
     static long probeAt = -1;
     const bool mediaLine = path == "overlay (media line)";
     if (path != lastPath) {
-        std::printf("gl1 present: %s from frame %ld\n", path.c_str(), n);
+        std::printf("gl1 present: %s from frame %ld\n", path.c_str(), frameNo);
         lastPath = path;
-        probeAt = n;
+        probeAt = frameNo;
     }
     if (mediaLine && mediaText != lastLine) {
         lastLine = mediaText;
-        probeAt = n;
+        probeAt = frameNo;
     }
-    g_ovProbe = overlayFrame && (n == probeAt || n == probeAt + 15);
+    g_ovProbe = overlayFrame && (frameNo == probeAt || frameNo == probeAt + 15);
 }
 #else
 void PlayState::gpuPresentOverlay(bool&) {}

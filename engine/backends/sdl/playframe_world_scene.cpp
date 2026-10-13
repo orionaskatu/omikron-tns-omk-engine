@@ -109,7 +109,7 @@ void PlayState::worldCamera() {
                 session.parkedOnProgram() ? 1 : 0,
                 session.scene().activeEditing() ? 1 : 0);
             if (told != buf) { told = buf;
-                std::printf("frame %ld: letterbox %s\n", n, buf); }
+                std::printf("frame %ld: letterbox %s\n", frameNo, buf); }
         }
     }
     if (view.vh > dispH) view.vh = dispH;
@@ -155,7 +155,7 @@ void PlayState::worldCamera() {
             dayNightToldArea = rs.area;
             dayNightToldPhase = dayNight.phase;
             std::printf("frame %ld: day/night (sub_41E7A0) - area %d, clock %d, phase %d: "
-                        "fog and clear colour %d %d %d%s\n", n, rs.area,
+                        "fog and clear colour %d %d %d%s\n", frameNo, rs.area,
                         static_cast<int>(state.clock()), dayNight.phase,
                         dayNight.rgb[0], dayNight.rgb[1], dayNight.rgb[2],
                         dayNight.floorByClock ? ", ambient floor by the clock" : "");
@@ -185,7 +185,7 @@ void PlayState::worldCamera() {
             const std::size_t floored = omk::reclampToAmbient(w.geo, w.bakedColour, grey, dirty);
             if (w.clampGrey < 0 || std::abs(grey - w.clampGrey) >= 16 || dirty.size() > 0)
                 std::printf("frame %ld: set %s re-floored at grey %d by the clock (sub_41E7A0): "
-                            "%zu corners floored, %zu changed\n", n, w.stem.c_str(), grey,
+                            "%zu corners floored, %zu changed\n", frameNo, w.stem.c_str(), grey,
                             floored, dirty.size());
             w.clampGrey = grey;
             if (!dirty.empty()) {
@@ -227,7 +227,7 @@ void PlayState::worldCamera() {
             fightCamTold = true;
             std::printf("frame %ld: the FIGHT CAMERA (mode 14) has the view - "
                         "state %d, options row 18 'Caméra de combat' = %d (%s)\n",
-                        n, fc.state, settings.v.combatCamera,
+                        frameNo, fc.state, settings.v.combatCamera,
                         settings.v.combatCamera ? "Vue de côté" : "Vue de dos");
         }
     } else if (!haveDlgCam && haveEdit) {
@@ -382,13 +382,13 @@ void PlayState::worldCamera() {
                 // frame draws with and the vehicle's own heading (its mover
                 // direction, `-row 2`): behind > 0 is behind it
                 static long comeTold = -1000;
-                if (n - comeTold >= 30) {
-                    comeTold = n;
+                if (frameNo - comeTold >= 30) {
+                    comeTold = frameNo;
                     const float ex = view.cam.eye[0] - at[0], ez = view.cam.eye[2] - at[2];
                     const float behind = -(ex * -rz2[0] + ez * -rz2[2]);
                     const float across = ex * rx0[0] + ez * rx0[2];
                     std::printf("slider: come camera frame %ld - the eye %.0f behind, "
-                                "%.0f across, heading %.2f %.2f\n", n, behind, across,
+                                "%.0f across, heading %.2f %.2f\n", frameNo, behind, across,
                                 -rz2[0], -rz2[2]);
                 }
             }
@@ -398,13 +398,13 @@ void PlayState::worldCamera() {
             // -forward, up) - or for 17, how far the target is from the
             // fixed eye
             static long camTold = -1000; static int camToldMode = -2;
-            if (n - camTold >= 30 || camToldMode != sliderCamMode) {
-                camTold = n; camToldMode = sliderCamMode;
+            if (frameNo - camTold >= 30 || camToldMode != sliderCamMode) {
+                camTold = frameNo; camToldMode = sliderCamMode;
                 if (frame) {
                     const float ex = view.cam.eye[0] - at[0], ey = view.cam.eye[1] - at[1],
                                 ez = view.cam.eye[2] - at[2];
                     std::printf("slider cam %d frame %ld blend %.2f - eye side %.0f behind %.0f "
-                                "up %.0f; at %.0f %.0f %.0f\n", sliderCamMode, n, double(u),
+                                "up %.0f; at %.0f %.0f %.0f\n", sliderCamMode, frameNo, double(u),
                                 double(ex * rx0[0] + ez * rx0[2]), double(ex * rz2[0] + ez * rz2[2]),
                                 double(-ey), double(view.cam.at[0]), double(view.cam.at[1]),
                                 double(view.cam.at[2]));
@@ -412,7 +412,7 @@ void PlayState::worldCamera() {
                     const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
                                 dz = sliderCamAt17[2] - sliderCamEye17[2];
                     std::printf("slider cam %d frame %ld blend %.2f - eye fixed at %.0f %.0f %.0f, "
-                                "target %.0f from it\n", sliderCamMode, n, double(u),
+                                "target %.0f from it\n", sliderCamMode, frameNo, double(u),
                                 double(sliderCamEye17[0]), double(sliderCamEye17[1]), double(sliderCamEye17[2]),
                                 double(std::sqrt(dx * dx + dy * dy + dz * dz)));
                 }
@@ -515,10 +515,10 @@ void PlayState::worldCamera() {
                     for (int k = 0; k < 3; ++k)
                         tc.eye[k] = static_cast<float>(p0[k] + t * d[k]);
                     static long swimCamTold = -1000;
-                    if (n - swimCamTold >= 60) {
-                        swimCamTold = n;
+                    if (frameNo - swimCamTold >= 60) {
+                        swimCamTold = frameNo;
                         std::printf("frame %ld: the swim camera - a wall at %.0f%% of the way to "
-                                    "the eye; brought in to %.0f %.0f %.0f\n", n, h->t * 100.0,
+                                    "the eye; brought in to %.0f %.0f %.0f\n", frameNo, h->t * 100.0,
                                     double(tc.eye[0]), double(tc.eye[1]), double(tc.eye[2]));
                     }
                 }
@@ -574,13 +574,13 @@ void PlayState::worldCamera() {
             const float lift = p[1] - 1.7f * player->cameraLift();
             std::printf("obstruct %ld block %d kept %.4f eye %.4f %.4f %.4f "
                         "at %.4f %.4f %.4f lift %.4f\n",
-                        n, player->cameraBlockState(),
+                        frameNo, player->cameraBlockState(),
                         double(player->cameraKeptDistance()),
                         double(c.eye[0]), double(c.eye[1]), double(c.eye[2]),
                         double(c.at[0]), double(c.at[1]), double(c.at[2]),
                         double(lift));
         }
-        if (stagedProbe && (n % 10) == 0) {
+        if (stagedProbe && (frameNo % 10) == 0) {
             const omk::FollowCamera& c = player->followCamera();
             const double at[3] = {c.at[0], c.at[1], c.at[2]};
             const double d[3]  = {c.eye[0] - c.at[0], c.eye[1] - c.at[1],
@@ -591,7 +591,7 @@ void PlayState::worldCamera() {
                     if (const auto h = omk::sweepSphere(*sp, at, d, 1.0))
                         if (h->t < 0.98) through = true;
             std::printf("    cam %ld eye %.0f %.0f %.0f  at %.0f %.0f %.0f  "
-                        "dist %.0f  %s  (soups %zu steep / %zu walk tris)\n", n,
+                        "dist %.0f  %s  (soups %zu steep / %zu walk tris)\n", frameNo,
                         c.eye[0], c.eye[1], c.eye[2],
                         c.at[0], c.at[1], c.at[2],
                         std::sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]),
@@ -680,7 +680,7 @@ void PlayState::worldCamera() {
                     addrTold = wc->id * 10000 + ad->id;
                     std::printf("frame %ld: camera %d framed on ADDRESS %d (subject kind 9, "
                                 "sub_415850) at %d %d %d heading %d - eye %.0f %.0f %.0f\n",
-                                n, wc->id, ad->id, ad->memPos[0], ad->memPos[1],
+                                frameNo, wc->id, ad->id, ad->memPos[0], ad->memPos[1],
                                 ad->memPos[2], ad->memYaw, double(rc.eye[0]),
                                 double(rc.eye[1]), double(rc.eye[2]));
                 }
@@ -698,7 +698,7 @@ void PlayState::worldCamera() {
                 std::printf("frame %ld: camera %d framed on the player's HEAD (subject kinds %d/%d, "
                             "%s) at %.1f %.1f %.1f, %.1f above the kind-0 point%s - eye %.1f %.1f %.1f "
                             "at %.1f %.1f %.1f\n",
-                            n, wc->id, wc->eyeSubject, wc->atSubject,
+                            frameNo, wc->id, wc->eyeSubject, wc->atSubject,
                             kind == 3 ? "sub_415320, the rest offset" : "sub_415050, the Tete node",
                             double(an[0]), double(an[1]), double(an[2]), double(subj[1] - an[1]),
                             cameraHeadFrom, double(rc.eye[0]), double(rc.eye[1]), double(rc.eye[2]),
@@ -756,7 +756,7 @@ void PlayState::worldCamera() {
         if (shakeTold != session.cameraShakes()) {
             shakeTold = session.cameraShakes();
             std::printf("frame %ld: CAMERA SHAKE (sub_418030) - shake %ld, first dy %.3f "
-                        "(aim %.3f)\n", n, session.cameraShakes(),
+                        "(aim %.3f)\n", frameNo, session.cameraShakes(),
                         double(view.cam.eye[1] - eyeWas), double(view.cam.at[1] - atWas));
         }
     }
@@ -786,7 +786,7 @@ void PlayState::worldCamera() {
             const omk::DialogCamera* qa = dg.cameraA();
             const omk::DialogCamera* qb = dg.cameraB();
             std::printf("  [dlgcam] frame %ld  pair %d -> %d  u %.3f  phase %d  node %d"
-                        "  inForce %d  fov %.2f  roll %.2f\n", n,
+                        "  inForce %d  fov %.2f  roll %.2f\n", frameNo,
                         qa ? qa->id : -1, qb ? qb->id : -1,
                         static_cast<double>(dg.cameraProgress()),
                         static_cast<int>(dg.phase()), dg.node(), haveDlgCam ? 1 : 0,
@@ -794,7 +794,7 @@ void PlayState::worldCamera() {
                         static_cast<double>(dlgView.cam.rollDeg));
         }
         std::printf("  [cameye] frame %ld  eye %.0f %.0f %.0f  at %.0f %.0f %.0f"
-                    "  player %.0f %.0f %.0f\n", n,
+                    "  player %.0f %.0f %.0f\n", frameNo,
                     view.cam.eye[0], view.cam.eye[1], view.cam.eye[2],
                     view.cam.at[0], view.cam.at[1], view.cam.at[2],
                     session.playerPos()[0], session.playerPos()[1],
@@ -840,7 +840,7 @@ void PlayState::worldCamera() {
                         : -1.0f;
             playerRest.revision = ++worldGeoRev;
             std::printf("frame %ld: UNDERWATER %s (dword_93082C) - the eye at y %.1f, the water "
-                        "line %.1f\n", n, underwater ? "ON" : "OFF", double(view.cam.eye[1]),
+                        "line %.1f\n", frameNo, underwater ? "ON" : "OFF", double(view.cam.eye[1]),
                         double(waterLine));
         }
         if (underwater) {
@@ -852,7 +852,7 @@ void PlayState::worldCamera() {
             // said on the frame the mode comes on, from the view handed on
             if (!was)
                 std::printf("frame %ld: underwater view - fog %d %d %d over %.1f..%.1f, clear "
-                            "%d %d %d, fov %.1f roll %.2f\n", n, view.fogColour[0],
+                            "%d %d %d, fov %.1f roll %.2f\n", frameNo, view.fogColour[0],
                             view.fogColour[1], view.fogColour[2], double(view.fogStart),
                             double(view.fogEnd), view.clearColour[0], view.clearColour[1],
                             view.clearColour[2], double(view.cam.hfovDeg), double(view.cam.rollDeg));
@@ -927,7 +927,7 @@ void PlayState::worldTexturePool() {
         static bool wasSeatedHidden = false;
         if (seatedHidden != wasSeatedHidden && player) {
             wasSeatedHidden = seatedHidden;
-            std::printf("frame %ld: player %s\n", n, seatedHidden
+            std::printf("frame %ld: player %s\n", frameNo, seatedHidden
                         ? "HIDDEN in the slider - MDSLIDIN's o3de_DisableObject(node, 8); drawn: no"
                         : (drawPlayer ? "SHOWN again - sub_468FA0's o3de_EnableObject(node, 8); drawn: yes"
                                       : "SHOWN again - sub_468FA0's o3de_EnableObject(node, 8); drawn: no"));
@@ -994,7 +994,7 @@ void PlayState::worldProps() {
             }
             const double k = 255.0 / static_cast<double>(cnt);
             std::printf("frame %ld: prop at %.0f %.0f %.0f LIT by the set (sub_440CA0) - base %.0f, "
-                        "%d lights reach, corners' mean %.0f %.0f %.0f\n", n, double(at[0]),
+                        "%d lights reach, corners' mean %.0f %.0f %.0f\n", frameNo, double(at[0]),
                         double(at[1]), double(at[2]), double(propBase) * 255.0, reached,
                         m[0] * k, m[1] * k, m[2] * k);
         }
@@ -1033,7 +1033,7 @@ void PlayState::worldProps() {
                 ? propModelFor(objs[static_cast<std::size_t>(propId)].stem) : nullptr;
             if (!body || !pm || !pm->ready) {
                 std::printf("frame %ld: object.place_at - prop state %d under CHARACTERS %d: "
-                            "%s - left at its chunk placement\n", n, e.slot, e.actor,
+                            "%s - left at its chunk placement\n", frameNo, e.slot, e.actor,
                             !body ? "no body of his is staged" : "no model for the prop");
                 continue;
             }
@@ -1046,7 +1046,7 @@ void PlayState::worldProps() {
             const bool ok = session.setPropPlacement(e.slot, pos, rot);
             std::printf("frame %ld: object.place_at - prop %d (state %d) PLACED under CHARACTERS "
                         "%d at %.1f %.1f %.1f: his origin %.1f %.1f %.1f, +276 %.2f, the prop's "
-                        "box bottom %.2f (Object_SetPlacement)%s\n", n, propId, e.slot, e.actor,
+                        "box bottom %.2f (Object_SetPlacement)%s\n", frameNo, propId, e.slot, e.actor,
                         double(pos[0]), double(pos[1]), double(pos[2]), double(origin[0]),
                         double(origin[1]), double(origin[2]), double(body->mo->extentBelow),
                         double(pm->rootBoxMaxY), ok ? "" : " - REFUSED");
@@ -1156,8 +1156,8 @@ void PlayState::worldProps() {
                     propBatchOwner.push_back(pm);
                 }
                 static long heldToldFrame = -1000;
-                if (n - heldToldFrame >= 30) {
-                    heldToldFrame = n;
+                if (frameNo - heldToldFrame >= 30) {
+                    heldToldFrame = frameNo;
                     double cx = 0, cy = 0, cz = 0; const std::size_t cnt = propGeo.corners.size() - base;
                     float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
                     for (std::size_t c = base; c < propGeo.corners.size(); ++c) {
@@ -1172,7 +1172,7 @@ void PlayState::worldProps() {
                     omk::rotateYaw(yaw, hin, ho);
                     // the FIST as drawn: the hand mesh's corners in playerPosed, world
                     float flo[3] = {1e9f, 1e9f, 1e9f}, fhi[3] = {-1e9f, -1e9f, -1e9f}; std::size_t fc = 0;
-                    for (std::size_t c = 0; playerPosedFrame == n - 1 && c < playerPosed.corners.size(); ++c) {
+                    for (std::size_t c = 0; playerPosedFrame == frameNo - 1 && c < playerPosed.corners.size(); ++c) {
                         if (c >= playerPosed.cornerMesh.size() || playerPosed.cornerMesh[c] != hand) continue;
                         const auto& w = playerPosed.corners[c]; ++fc;
                         flo[0] = std::min(flo[0], w.x); fhi[0] = std::max(fhi[0], w.x);
@@ -1253,7 +1253,7 @@ void PlayState::worldProps() {
                     if (!fresh && std::hypot(c[0] - it->second[0], c[1] - it->second[1],
                                              c[2] - it->second[2]) > 1.0f) {
                         std::printf("frame %ld: prop %d DRAWN at %.1f %.1f %.1f (its corners' "
-                                    "mean; was %.1f %.1f %.1f)\n", n, pr.id, double(c[0]),
+                                    "mean; was %.1f %.1f %.1f)\n", frameNo, pr.id, double(c[0]),
                                     double(c[1]), double(c[2]), double(it->second[0]),
                                     double(it->second[1]), double(it->second[2]));
                         it->second = c;
@@ -1397,7 +1397,7 @@ void PlayState::worldGuns() {
             }
             if (gunDrawnTold.insert(up->actor).second)
                 std::printf("frame %ld: actor %d %s - HIS GUN drawn: object %d '%s' on his "
-                            "Maing (mesh %d), tir left out\n", n, up->actor,
+                            "Maing (mesh %d), tir left out\n", frameNo, up->actor,
                             up->model.c_str(), obj, stem.c_str(), hand);
         }
     }
@@ -1566,7 +1566,7 @@ void PlayState::worldBolts() {
         // it goes off, which is `sub_42FC10`'s re-upload from the source.
         // The indices are shared; a grey palette is made once per source.
         if (poolGrey != session.renderGrey())
-            std::printf("frame %ld: texture pool handed over %s (%zu slots)\n", n,
+            std::printf("frame %ld: texture pool handed over %s (%zu slots)\n", frameNo,
                         session.renderGrey() ? "GREYED (sub_42FE80)" : "in colour (sub_42FC10)",
                         pool.size());
         poolGrey = session.renderGrey();
@@ -1587,7 +1587,7 @@ void PlayState::worldBolts() {
         if (poolBuiltFor != poolTold) {
             poolTold = poolBuiltFor;
             std::printf("frame %ld: texture pool - %zu set + %zu character (%zu "
-                        "models) + %zu player + %zu sprite = %zu slots\n", n,
+                        "models) + %zu player + %zu sprite = %zu slots\n", frameNo,
                         worldTex.size(), playerTexBase - worldTex.size(),
                         charModels.size(), spriteTexBase - playerTexBase,
                         pool.size() - spriteTexBase, pool.size());

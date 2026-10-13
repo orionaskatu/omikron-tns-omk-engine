@@ -83,10 +83,10 @@ int main(int argc, char** argv) {
             if (mh) {
                 const auto meshes = omk::readMeshes(md, *mh);
                 const auto tr = omk::clipTracks(sc.scene().clipData(0));
-                for (int fr : {0, 30, 90, 184}) {
-                    if (fr >= tr.frames) continue;
+                for (int frame : {0, 30, 90, 184}) {
+                    if (frame >= tr.frames) continue;
                     for (int up = 0; up < 2; ++up) {
-                        const auto ps = omk::composePose(meshes, tr, fr, up != 0);
+                        const auto ps = omk::composePose(meshes, tr, frame, up != 0);
                         float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
                         for (const auto& q : ps)
                             for (int k = 0; k < 3; ++k) {
@@ -96,10 +96,10 @@ int main(int argc, char** argv) {
                         const float dx = hi[0] - lo[0], dy = hi[1] - lo[1],
                                     dz = hi[2] - lo[2];
                         const float horiz = dx > dz ? dx : dz;
-                        f << "posture " << fr << ' ' << (up ? "upright" : "asis")
+                        f << "posture " << frame << ' ' << (up ? "upright" : "asis")
                           << ' ' << int(dy + 0.5f) << ' ' << int(horiz + 0.5f) << '\n';
                         std::printf("posture f%-4d %-8s height %5.1f  spread %5.1f"
-                                    "  %s\n", fr, up ? "upright" : "asis", dy, horiz,
+                                    "  %s\n", frame, up ? "upright" : "asis", dy, horiz,
                                     dy > horiz ? "STANDING" : "down");
                     }
                 }

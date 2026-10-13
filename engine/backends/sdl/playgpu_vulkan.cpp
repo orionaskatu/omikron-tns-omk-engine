@@ -29,23 +29,23 @@ void PlayState::gpuOpenWindow() {
             SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, nullptr);
             std::vector<const char*> ext(nx);
             SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, ext.data());
-            omk::Renderer* vr = omk::makeVulkanRenderer();
-            if (aaSamples > 1) vr->setMultisample(aaSamples);   // the enhancements
-            if (texFilter > 0) vr->setTextureFilter(texFilter);
-            if (texAniso > 1) vr->setAnisotropy(texAniso);
-            if (ssaa > 1) vr->setSupersample(ssaa);
-            omk::vulkanNeedExtensions(vr, ext.data(), nx);
-            void* inst = omk::vulkanCreateInstance(vr);
+            omk::Renderer* vkr = omk::makeVulkanRenderer();
+            if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
+            if (texFilter > 0) vkr->setTextureFilter(texFilter);
+            if (texAniso > 1) vkr->setAnisotropy(texAniso);
+            if (ssaa > 1) vkr->setSupersample(ssaa);
+            omk::vulkanNeedExtensions(vkr, ext.data(), nx);
+            void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
             if (inst &&
                 SDL_Vulkan_CreateSurface(vkWin, static_cast<VkInstance>(inst), &surf) &&
-                omk::vulkanAttachSurface(vr, reinterpret_cast<unsigned long long>(surf)) &&
-                vr->init(dispW, dispH)) {
-                vkRen = vr;
+                omk::vulkanAttachSurface(vkr, reinterpret_cast<unsigned long long>(surf)) &&
+                vkr->init(dispW, dispH)) {
+                vkRen = vkr;
                 omk::sdlFrontend(front).attachWindow(vkWin);   // F11 and row 2 act on it
-                std::printf("renderer: VULKAN - %s\n", omk::vulkanDeviceName(vr));
+                std::printf("renderer: VULKAN - %s\n", omk::vulkanDeviceName(vkr));
             } else {
-                delete vr;
+                delete vkr;
                 SDL_DestroyWindow(vkWin); vkWin = nullptr;
                 std::printf("renderer: no Vulkan device - the software "
                             "reference\n");
@@ -126,11 +126,11 @@ void PlayState::gpuVerifyWorldPicture() {
             if (diff) {
                 ++differing; badPixels += diff;
                 // at once, so a run with only a few GPU frames still says so
-                std::printf("gpu present verify: frame %ld DIFFERS in %ld pixels\n", n, diff);
+                std::printf("gpu present verify: frame %ld DIFFERS in %ld pixels\n", frameNo, diff);
             }
         }
         if (compared > 0 && compared % 30 == 0)
             std::printf("gpu present verify: frame %ld, %ld frames compared, %ld differ (%ld pixels)\n",
-                        n, compared, differing, badPixels);
+                        frameNo, compared, differing, badPixels);
     }
 }

@@ -80,7 +80,7 @@ int PlayState::setupOptions(int argc, char** argv) {
     // tree and no movies, and mixing it into the interface loop would make
     // both harder to read than either is worth.
     if (!scene.empty())
-        return sceneViewer(fr, scene, camIndex, haveEye ? eyeA : nullptr,
+        return sceneViewer(dataRoot, scene, camIndex, haveEye ? eyeA : nullptr,
                            haveAt ? atA : nullptr, fovA, letterbox, frames, dump,
                            startVulkan, noDelay, aaFlag < 0 ? 0 : aaFlag,
                            filterFlag < 0 ? 0 : filterFlag, anisoFlag < 0 ? 1 : anisoFlag,
@@ -88,23 +88,23 @@ int PlayState::setupOptions(int argc, char** argv) {
                            // it takes the flag alone; `--config` is the game's
                            ssaaFlag < 0 ? 1 : ssaaFlag, dither);
 
-    const auto& fs = fs_.emplace(fr);
-    w = omk::UiWidgets::loadJson(tb + "/ui_widgets.json");
+    const auto& fs = fs_.emplace(dataRoot);
+    uiWidgets = omk::UiWidgets::loadJson(tb + "/ui_widgets.json");
     // `Ui_BuildLoadPanel`'s layout, applied for screen 29.  The four buttons
     // of the load panel all ship at (460, 210) and the builder moves three of
     // them apart; without this they draw on top of one another and the panel
     // shows one line of text where the original shows three.  The engine does
     // this in the OPEN callback and would redo it for screen 30's save
     // layout - which this port does not open yet, so it is applied once.
-    omk::applyLoadPanelLayout(w, 29);
-    if (!w.valid())
+    omk::applyLoadPanelLayout(uiWidgets, 29);
+    if (!uiWidgets.valid())
         std::printf("tables: no widget tree (ui_widgets.json) - the interface "
                     "screens cannot be drawn or walked, so the Session answers "
                     "them itself and the start menu is skipped\n");
-    w.loadScreens(tb + "/ui.json");
+    uiWidgets.loadScreens(tb + "/ui.json");
     fonts = omk::FontTable::loadJson(tb + "/ui.json");
-    auto& lay = lay_.emplace(fonts, fr + "/FONTS");   // not const: the text-scaling enhancement
-    auto& comp = comp_.emplace(fs, w, lay);
+    auto& lay = lay_.emplace(fonts, dataRoot + "/FONTS");   // not const: the text-scaling enhancement
+    auto& comp = comp_.emplace(fs, uiWidgets, lay);
     // SCREEN 35, the options (`todo/options-menu.md`): the page tree out of
     // the widget lift, the 74 rows out of `ui.json`, and the screen's own
     // strings - the labels by `+24`, the save prompt's and Accel 3D's.

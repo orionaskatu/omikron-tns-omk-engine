@@ -345,8 +345,8 @@ int main(int argc, char** argv) {
                 c3.draw(fx, omk::screen::Sneak, fex);
                 for (int yy = 30; yy < 52; ++yy)
                     for (int xx = 456; xx < 590; ++xx) {
-                        const std::uint16_t v = fx.px[static_cast<std::size_t>(yy) * 640 + xx];
-                        const int t = ((v >> 11) & 31) * 255 / 31;
+                        const std::uint16_t pix = fx.px[static_cast<std::size_t>(yy) * 640 + xx];
+                        const int t = ((pix >> 11) & 31) * 255 / 31;
                         if (t > bright[ph]) bright[ph] = t;
                     }
             }

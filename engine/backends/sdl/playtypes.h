@@ -296,7 +296,7 @@ struct Staged {
     // and the frame it began - the clip plays once and holds its last
     // frame. -1 while alive.
     int   deathType = -1;
-    double deathStart = 0;             // on `gameClock`, not the presented `n`
+    double deathStart = 0;             // on `gameClock`, not the presented `frameNo`
     // ...and the death CLIP itself, whose root motion lays the body down
     const omk::PedClip* deathClip = nullptr;
     bool  deathFallTold = false;       // his fall has been logged

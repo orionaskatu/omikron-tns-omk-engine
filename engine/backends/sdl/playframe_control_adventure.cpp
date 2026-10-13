@@ -22,14 +22,14 @@ void PlayState::adventureAim() {
         const float at[3]  = {0.0f, 0.0f, 0.0f};
         player->setCameraOffsets(eye, at, 75.0f);
         std::printf("frame %ld: follow camera (camera.follow_player) - preset 0, eye "
-                    "offset 0 0 %.0f, fov 75\n", n, double(omk::kFollowEyeBack));
+                    "offset 0 0 %.0f, fov 75\n", frameNo, double(omk::kFollowEyeBack));
     }
     if (session.posSyncs() != posSyncsSeen) {
         posSyncsSeen = session.posSyncs();
         if (player) {
             player->posSync();
             std::printf("frame %ld: player.pos.sync (sub_41C140) - at %.0f %.0f %.0f, the "
-                        "vertical state zeroed\n", n, double(player->pos()[0]),
+                        "vertical state zeroed\n", frameNo, double(player->pos()[0]),
                         double(player->pos()[1]), double(player->pos()[2]));
         }
     }
@@ -46,7 +46,7 @@ void PlayState::adventureAim() {
         player->setCameraOffsets(hc->eye, hc->at, hc->fov);
         std::printf("frame %ld: follow camera %d - eye offset %.0f %.0f %.0f, "
                     "target offset %.0f %.0f %.0f, fov %.0f (smoothing 3/8/8 "
-                    "from the mode-0 preset)\n", n, hc->id,
+                    "from the mode-0 preset)\n", frameNo, hc->id,
                     hc->eye[0], hc->eye[1], hc->eye[2],
                     hc->at[0], hc->at[1], hc->at[2], hc->fov);
     }
@@ -68,10 +68,10 @@ void PlayState::adventureAim() {
     // after entry.
     if (shootMode) {
         static long aimTold = -1;
-        if (aimTold < 0 || n - aimTold > 120) {
-            aimTold = n;
+        if (aimTold < 0 || frameNo - aimTold > 120) {
+            aimTold = frameNo;
             std::printf("frame %ld: AIM reached - cameraLive %d, "
-                        "pitch %.1f, facing %.1f\n", n,
+                        "pitch %.1f, facing %.1f\n", frameNo,
                         int(shootCameraLive), shootPitch,
                         player->facing());
         }
@@ -175,7 +175,7 @@ void PlayState::adventurePathField() {
             if (key != recTold) {
                 recTold = key;
                 std::printf("frame %ld: the player's shoot record (Shoot_TickPlayer): "
-                            "floor %d (was %d), cell (%d,%d) - %s at %.0f %.0f\n", n, fl,
+                            "floor %d (was %d), cell (%d,%d) - %s at %.0f %.0f\n", frameNo, fl,
                             oldFloor, cx, cz,
                             thought ? "Shoot_Think took it"
                                     : (snapped ? "Shoot_Think refused, sub_4368E0 snapped"
@@ -189,14 +189,14 @@ void PlayState::adventurePathField() {
             static long fieldFrom = -1, fieldTold = -1;
             if (!shootField.seeded() || shootField.floor() != fl) {
                 shootField.seed(shootMap, fl, cx, cz);
-                if (fieldFrom < 0) fieldFrom = n;
+                if (fieldFrom < 0) fieldFrom = frameNo;
             }
             if (shootField.expand(shootMap)) {
                 if (fieldTold < 0) {
-                    fieldTold = n;
+                    fieldTold = frameNo;
                     std::printf("frame %ld: the path field (sub_436260 / sub_436350) ran "
                                 "dry %ld ticks after it was seeded at the player's cell "
-                                "(%d,%d) on floor %d\n", n, n - fieldFrom + 1, cx, cz, fl);
+                                "(%d,%d) on floor %d\n", frameNo, frameNo - fieldFrom + 1, cx, cz, fl);
                 }
                 shootField.seed(shootMap, fl, cx, cz);
             }
@@ -206,7 +206,7 @@ void PlayState::adventurePathField() {
             if (!noFloorTold) {
                 noFloorTold = true;
                 std::printf("frame %ld: the path field has no floor under the player at "
-                            "%.0f %.0f %.0f (floor %d); the grid's floors span y:", n,
+                            "%.0f %.0f %.0f (floor %d); the grid's floors span y:", frameNo,
                             double(pp[0]), double(pp[1]), double(pp[2]), fl);
                 for (const auto& gf : shootMap.floors())
                     std::printf(" [%.0f..%.0f x %.0f..%.0f z %.0f..%.0f]",
@@ -245,7 +245,7 @@ void PlayState::adventureDeath() {
             const bool g200 = player->enterGroupById(200);
             std::printf("frame %ld: the player's death clip is over (Shoot_TickPlayer): "
                         "ACTOR_STATE 3, message 1 %s, health read back %d, .CTL group "
-                        "200 %s\n", n, ran1 ? "to its handler" : "- NO handler subscribes",
+                        "200 %s\n", frameNo, ran1 ? "to its handler" : "- NO handler subscribes",
                         int(h), g200 ? "on" : "NOT FOUND");
         }
     }
@@ -306,7 +306,7 @@ void PlayState::adventureCrowdPush() {
                 pushWallTold = true;
                 std::printf("frame %ld: the push %.2f %.2f met a wall - the sweep "
                             "(Actor_ApplyMotion -> Actor_Move) moved him %.2f %.2f\n",
-                            n, double(push[0]), double(push[2]), double(gx), double(gz));
+                            frameNo, double(push[0]), double(push[2]), double(gx), double(gz));
             }
             // once per gunman: his body shoved the player
             static std::set<int> bodyPushTold;
@@ -315,7 +315,7 @@ void PlayState::adventureCrowdPush() {
                 if (who >= 0 && bodyPushTold.insert(who).second)
                     std::printf("frame %ld: the player is pushed out of actor %d's "
                                 "body (SpatialIndex_Query, sub_45E390): %.2f %.2f\n",
-                                n, who, double(push[0]), double(push[2]));
+                                frameNo, who, double(push[0]), double(push[2]));
             }
         }
     }
@@ -413,7 +413,7 @@ void PlayState::adventureScreenInput() {
                             "%.2f %.2f) and press the action button\n",
                             door[0], door[1], door[2], az[0], az[2]);
                 if (boardAfter > 0) {
-                    boardAt = n + boardAfter;
+                    boardAt = frameNo + boardAfter;
                     for (int k = 0; k < 3; ++k) { boardAtSlider[k] = at[k]; boardAtDoor[k] = door[k]; }
                 } else {
                     harnessBoard(at, door);
@@ -453,7 +453,7 @@ void PlayState::adventureScreenInput() {
                 }
             }
         }
-        if (boardAt >= 0 && n >= boardAt && session.sliders().calledIsOpen() && !walk) {
+        if (boardAt >= 0 && frameNo >= boardAt && session.sliders().calledIsOpen() && !walk) {
             boardAt = -1;
             harnessBoard(boardAtSlider, boardAtDoor);
         }
@@ -557,11 +557,11 @@ void PlayState::adventureScreenInput() {
             // cinema bars.
             if (fightRun.koSeen == 0 && fightRun.fight->koCounter() > 0) {
                 session.startBlackFade(true);
-                std::printf("frame %ld: KO - Screen_Fade(1), the bands in\n", n);
+                std::printf("frame %ld: KO - Screen_Fade(1), the bands in\n", frameNo);
             }
             if (!on && fightRun.fight->koCounter() > 0) {
                 session.startBlackFade(false);
-                std::printf("frame %ld: KO replay over - Screen_Fade(0), the bands out\n", n);
+                std::printf("frame %ld: KO replay over - Screen_Fade(0), the bands out\n", frameNo);
             }
             fightRun.koSeen = fightRun.fight->koCounter();
             // The bodies back: the player through `nudge` so the
@@ -600,10 +600,10 @@ void PlayState::adventureScreenInput() {
                 // opponent flicker between his move and the bank's
                 // default stance, with no root motion on those
                 // frames.
-                const int fs = fightRun.foeChannel->clipOwner();
+                const int foeState = fightRun.foeChannel->clipOwner();
                 const int clip =
-                    (fs >= 0 && fs < static_cast<int>(ctl.states.size()))
-                        ? ctl.states[static_cast<std::size_t>(fs)].clip : -1;
+                    (foeState >= 0 && foeState < static_cast<int>(ctl.states.size()))
+                        ? ctl.states[static_cast<std::size_t>(foeState)].clip : -1;
                 if (clip != fightRun.foeClip) {
                     fightRun.foeClip = clip;
                     fightRun.foeRoot.clear();
@@ -611,9 +611,9 @@ void PlayState::adventureScreenInput() {
                     fightRun.foePose = omk::NodeTracks{};
                     if (clip >= 0 && clip < static_cast<int>(ctl.clips.size())) {
                         const auto& c = ctl.clips[static_cast<std::size_t>(clip)];
-                        const auto& d = fightRun.foeBank->data;
-                        if (c.offset + c.length <= d.size()) {
-                            const auto bytes = std::span<const std::byte>(d)
+                        const auto& foeBytes = fightRun.foeBank->data;
+                        if (c.offset + c.length <= foeBytes.size()) {
+                            const auto bytes = std::span<const std::byte>(foeBytes)
                                                    .subspan(c.offset, c.length);
                             fightRun.foeRoot = omk::clipRootMotion(bytes);
                             // ...and the whole clip, for the POSE.
@@ -742,7 +742,7 @@ void PlayState::adventureScreenInput() {
             // judged rather than guessed at: the two hit points,
             // how far apart they are, which `.CTL` state each is
             // in, and what the runtime has scored so far.
-            if ((n - fightRun.startedAt) % 30 == 0) {
+            if ((frameNo - fightRun.startedAt) % 30 == 0) {
                 const auto& st = fightRun.fight->stats();
                 // ...naming the ENTRY each channel sits on, not
                 // just its state id: "state 0" on its own says
@@ -759,7 +759,7 @@ void PlayState::adventureScreenInput() {
                             "(%.2f m), states %d/%d, entries %d '%s' / "
                             "%d '%s', hits %ld, grazes %ld, blocks %ld, "
                             "AI moves %ld\n",
-                            n - fightRun.startedAt,
+                            frameNo - fightRun.startedAt,
                             fightRun.fight->player().hp,
                             fightRun.fight->opponent().hp,
                             double(fightRun.fight->separation()),
@@ -870,17 +870,17 @@ void PlayState::adventureScreenInput() {
                 const bool won = fightRun.fight->playerWon();
                 player->setActorState(omk::ActorState::Normal, "Actor_LoadBankList");
                 std::printf("frame %ld: FIGHT GATE - the player's channel turned away "
-                            "%ld candidate moves above priority %d\n", n,
+                            "%ld candidate moves above priority %d\n", frameNo,
                             player->channel().gateSkips(), fightRun.fight->gateThreshold());
                 std::printf("frame %ld: sub_445AC0 - the player %s, ACTOR_STATE %d\n",
-                            n, won ? "WON" : "LOST",
+                            frameNo, won ? "WON" : "LOST",
                             static_cast<int>(player->state()));   // the CONSUMER's, not the bool
                 in.installScheme(0);
                 session.fightEnded();
                 std::printf("frame %ld: FIGHT ENDS after %ld frames - "
                             "%s won, Vie %d vs %d, the script resumes "
                             "and the adventure bank is back\n",
-                            n, n - fightRun.startedAt,
+                            frameNo, frameNo - fightRun.startedAt,
                             fightRun.fight->playerWon() ? "the player"
                                                         : "the opponent",
                             myHp, hisHp);
@@ -900,7 +900,7 @@ void PlayState::adventureScreenInput() {
                         headY = lb.meshAt[static_cast<std::size_t>(hm) * 3 + 1];
                     std::printf("frame %ld: the fight's OPPONENT actor %d is drawn with his "
                                 "pelvis at y %.0f and his head at y %.0f (placement %.0f)\n",
-                                n, lb.actor,
+                                frameNo, lb.actor,
                                 (lb.mo && lb.mo->root >= 0 && lb.meshAt.size() >= (static_cast<std::size_t>(lb.mo->root) + 1) * 3)
                                     ? lb.meshAt[static_cast<std::size_t>(lb.mo->root) * 3 + 1] : 0.0f,
                                 headY, lb.at[1]);
@@ -927,21 +927,21 @@ void PlayState::adventureScreenInput() {
                 if (shoveWas[0] != player->eulerPitch() ||
                     shoveWas[1] != player->eulerRoll())
                     std::printf("frame %ld: THE SHOVE (sub_47D1F0) - %.2f left, "
-                                "pitch %+.2f roll %+.2f degrees\n", n,
+                                "pitch %+.2f roll %+.2f degrees\n", frameNo,
                                 double(shootMover.shoveTimer),
                                 double(player->eulerPitch()),
                                 double(player->eulerRoll()));
                 // the vertical goes UP (`+248 -= flt_6579C0 x delta`, y down)
                 player->addShootMotion(st.dx, st.dz, -st.dy);
                 if (st.dy != 0.0f)
-                    std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", n,
+                    std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", frameNo,
                                 double(st.dy), shootMover.flags, double(player->pos()[1]));
                 const bool moving = st.dx != 0.0f || st.dz != 0.0f;
                 if (moving && shootMoveFrames == 0) {
                     for (int k = 0; k < 3; ++k) shootMoveFrom[k] = player->pos()[k];
                     shootMoveDist = 0.0f;
                     std::printf("frame %ld: SHOOT MOVE starts at %.1f %.1f %.1f, "
-                                "facing %.1f\n", n, double(shootMoveFrom[0]),
+                                "facing %.1f\n", frameNo, double(shootMoveFrom[0]),
                                 double(shootMoveFrom[1]), double(shootMoveFrom[2]),
                                 double(player->facing()));
                 }
@@ -951,7 +951,7 @@ void PlayState::adventureScreenInput() {
                 } else if (shootMoveFrames > 0) {
                     const float* p = player->pos();
                     std::printf("frame %ld: SHOOT MOVE stops after %ld frames - "
-                                "asked %.2f, went %.2f %.2f %.2f\n", n,
+                                "asked %.2f, went %.2f %.2f %.2f\n", frameNo,
                                 shootMoveFrames, double(shootMoveDist),
                                 double(p[0] - shootMoveFrom[0]),
                                 double(p[1] - shootMoveFrom[1]),
@@ -977,10 +977,10 @@ void PlayState::adventureScreenInput() {
                     imageLive = true;
                     imageMask = imageLast = bits;
                     std::printf("frame %ld: Image_Show - IMAGES\\%s, %dx%d, ACTOR_STATE 10 "
-                                "(mask 0x%x)\n", n, nm.c_str(), imageShown.w, imageShown.h,
+                                "(mask 0x%x)\n", frameNo, nm.c_str(), imageShown.w, imageShown.h,
                                 bits);
                 } else {
-                    std::printf("frame %ld: Image_Show - IMAGES\\%s %s\n", n, nm.c_str(),
+                    std::printf("frame %ld: Image_Show - IMAGES\\%s %s\n", frameNo, nm.c_str(),
                                 imageShown.valid() ? "refused by the state table"
                                                    : "did not load");
                     imageShown = omk::Surface{};
@@ -996,7 +996,7 @@ void PlayState::adventureScreenInput() {
                     imageShown = omk::Surface{};
                     imageMask = 0;
                     std::printf("frame %ld: Image_Show closed by a press (edge 0x%x) - "
-                                "ACTOR_STATE %d\n", n, edges,
+                                "ACTOR_STATE %d\n", frameNo, edges,
                                 static_cast<int>(player->state()));
                 }
                 tickBits = 0;
@@ -1051,7 +1051,7 @@ void PlayState::adventureScreenInput() {
                     const bool grouped = !(st == 2 || st == 3 || st == 15) &&
                                          player->enterGroupById(2);
                     std::printf("frame %ld: a LEDGE - clearance %.1f (%.2f m): "
-                                "%s\n", n, clear, clear / 39.37,
+                                "%s\n", frameNo, clear, clear / 39.37,
                                 grouped ? "bank group 2, H_FALL"
                                         : "no group change");
                     fallCamRequest(18, false, "the ledge", st);
@@ -1063,7 +1063,7 @@ void PlayState::adventureScreenInput() {
             for (const int m : player->takeWaterMessages()) {
                 const bool ran = session.postMessage(m, session.playerActor());
                 std::printf("frame %ld: water (sub_4A8F30) - MESSAGE %d %s; ACTOR_STATE %d\n",
-                            n, m, ran ? "to its handler" : "- no handler subscribes",
+                            frameNo, m, ran ? "to its handler" : "- no handler subscribes",
                             static_cast<int>(player->state()));
             }
             {
@@ -1071,15 +1071,15 @@ void PlayState::adventureScreenInput() {
                 // an instrument: every tick, for a stroke that loses its travel
                 if (ws >= 11 && ws <= 14 && omk::envSet("OMK_SWIMTRACE"))
                     std::printf("  swimtrace %ld: state %d '%s' frame %.2f -> %.2f, local y %+.2f, "
-                                "pitch %.1f, y %.2f\n", n, player->ctlState(),
+                                "pitch %.1f, y %.2f\n", frameNo, player->ctlState(),
                                 player->ctlStateName().c_str(),
                                 double(player->tickFrameBefore()),
                                 double(player->tickFrameAfter()),
                                 double(player->last().rootLocal[1]),
                                 double(player->eulerPitch()), player->pos()[1]);
-                if (ws >= 11 && ws <= 14 && n % 30 == 0)
+                if (ws >= 11 && ws <= 14 && frameNo % 30 == 0)
                     std::printf("frame %ld: swimming - ACTOR_STATE %d, .CTL '%s' group %d, at "
-                                "%.0f %.1f %.0f, pitch %.0f, drawn head %.0f over the pelvis, root local %+.2f %+.2f %+.2f -> world %+.2f %+.2f %+.2f, breath %s\n", n, ws,
+                                "%.0f %.1f %.0f, pitch %.0f, drawn head %.0f over the pelvis, root local %+.2f %+.2f %+.2f -> world %+.2f %+.2f %+.2f, breath %s\n", frameNo, ws,
                                 player->ctlStateName().c_str(), player->ctlGroupId(),
                                 player->pos()[0], player->pos()[1], player->pos()[2],
                                 double(player->eulerPitch()),
@@ -1159,11 +1159,11 @@ void PlayState::adventureScreenInput() {
                         waterLine = static_cast<float>(*h);
                         waterLineKnown = true;
                         std::printf("frame %ld: the water line (sub_413CD0's probe) at y %.1f\n",
-                                    n, double(waterLine));
+                                    frameNo, double(waterLine));
                     }
                 }
                 std::printf("frame %ld: INTO THE WATER at %.0f %.0f %.0f - %s, scheme 1, "
-                            "ACTOR_STATE %d, camera 21 over 50 frames\n", n,
+                            "ACTOR_STATE %d, camera 21 over 50 frames\n", frameNo,
                             player->pos()[0], player->pos()[1], player->pos()[2],
                             grouped ? "bank group 300 (H_HFL-IN)" : "NO group 300",
                             static_cast<int>(player->state()));
@@ -1172,12 +1172,12 @@ void PlayState::adventureScreenInput() {
                 const bool air = player->walker().airborne();
                 const bool slide = player->walker().sliding();
                 if ((air || slide) && !(wasAir || wasSlide)) {
-                    std::printf("frame %ld: the player %s from y %.1f\n", n,
+                    std::printf("frame %ld: the player %s from y %.1f\n", frameNo,
                                 slide ? "SLIDES (a face past the slope limit - a "
                                         "CONSTANT 11.8 a frame, not gravity)"
                                       : "FALLS", player->pos()[1]);
                 }
-                else if ((air || slide) && n % 5 == 0) {
+                else if ((air || slide) && frameNo % 5 == 0) {
                     // ...and what the GROUND PROBE sees under him,
                     // because "he went through the ground" has two
                     // very different causes: nothing in the soup
@@ -1191,13 +1191,13 @@ void PlayState::adventureScreenInput() {
                                          *g, *g - w->pos()[1]);
                     else   std::snprintf(gs, sizeof gs, "NOTHING under him");
                     std::printf("frame %ld:   %s: y %.1f, descended %.1f, at %.0f %.0f,"
-                                " ground %s\n", n, slide ? "sliding" : "falling",
+                                " ground %s\n", frameNo, slide ? "sliding" : "falling",
                                 player->pos()[1], player->walker().fall(),
                                 double(player->pos()[0]), double(player->pos()[2]), gs);
                 }
                 else if (!air && !slide && (wasAir || wasSlide)) {
                     std::printf("frame %ld: the player LANDS at y %.1f - dropped "
-                                "%.1f (%.2f m), tier %d\n", n, player->pos()[1],
+                                "%.1f (%.2f m), tier %d\n", frameNo, player->pos()[1],
                                 player->walker().lastLandingDrop(),
                                 player->walker().lastLandingDrop() / 39.37,
                                 player->walker().lastLandingTier());
@@ -1241,7 +1241,7 @@ void PlayState::adventureScreenInput() {
                     if (waterArm)
                         std::printf("frame %ld: the landing's reaction SKIPPED - the "
                                     "water arm took this tick (ACTOR_STATE %d), and the "
-                                    "engine calls one or the other\n", n,
+                                    "engine calls one or the other\n", frameNo,
                                     static_cast<int>(player->state()));
                     if (!waterArm) {
                         const auto st = static_cast<int>(player->state());
@@ -1253,7 +1253,7 @@ void PlayState::adventureScreenInput() {
                         const bool went = may && grp >= 0 && player->enterGroupById(grp);
                         if (grp >= 0)
                             std::printf("frame %ld: the landing's reaction - fall %.1f: "
-                                        "bank group %d%s\n", n, lf, grp,
+                                        "bank group %d%s\n", frameNo, lf, grp,
                                         went ? "" : " REFUSED (state or bank)");
                         if (lf >= 196.85039) fallCamRequest(19, false, "the landing", st);
                         else                 fallCamRequest(16, false, "the landing", st);
@@ -1263,7 +1263,7 @@ void PlayState::adventureScreenInput() {
                     if (msg >= 0) {
                         const bool ran = session.postMessage(msg, session.playerActor());
                         std::printf("frame %ld: the landing (Walk_GroundResponse) - fall "
-                                    "%.1f (%.2f m): MESSAGE %d %s\n", n, lf, lf / 39.37,
+                                    "%.1f (%.2f m): MESSAGE %d %s\n", frameNo, lf, lf / 39.37,
                                     msg, ran ? "to its handler"
                                              : "- NO handler subscribes");
                     }
@@ -1289,7 +1289,6 @@ void PlayState::adventureScreenInput() {
 
 // Seated, not driving; where the slider is after he gets out
 void PlayState::adventureSeated() {
-    const auto& fs = *fs_;
     auto& session = *session_;
     // ---- SEATED, not driving ------------------------------
     //
@@ -1342,7 +1341,7 @@ void PlayState::adventureSeated() {
             static int roadTold = -1;
             if (int(onRoad) != roadTold) {
                 roadTold = int(onRoad);
-                std::printf("frame %ld: the player is %s (dword_8F5E38 = %d)\n", n,
+                std::printf("frame %ld: the player is %s (dword_8F5E38 = %d)\n", frameNo,
                             onRoad ? "ON THE ROAD" : "off the road", int(onRoad));
             }
         }
@@ -1353,12 +1352,12 @@ void PlayState::adventureSeated() {
     // Qalisar's kerb while the staging says "staged".
     if (leaving || (session.sliders().calledVehicle() >= 0 && !boarded && !boarding)) {
         static long lastVehTold = -1000;
-        if (n - lastVehTold >= 45) {
-            lastVehTold = n;
+        if (frameNo - lastVehTold >= 45) {
+            lastVehTold = frameNo;
             float vat[3] = {0, 0, 0};
             const bool have = session.sliders().calledAt(vat);
             std::printf("frame %ld: after the ride - the called vehicle %s at %.0f %.0f %.0f, "
-                        "ride state %d; he is at %.0f %.0f %.0f\n", n,
+                        "ride state %d; he is at %.0f %.0f %.0f\n", frameNo,
                         have ? "is" : "is GONE", vat[0], vat[1], vat[2],
                         session.sliders().callMachine().state,
                         session.playerPos()[0], session.playerPos()[1], session.playerPos()[2]);
@@ -1391,7 +1390,7 @@ void PlayState::adventureSeated() {
             session.startBlackFade(false);
             session.holdPlayer(false);
             std::printf("frame %ld: the slider has come - Screen_Fade(0), the hold "
-                        "released\n", n);
+                        "released\n", frameNo);
         }
         sliderPrevState = st;
     }
@@ -1399,7 +1398,7 @@ void PlayState::adventureSeated() {
     static long releasedAt = -1;
     if (session.sliders().calledVehicle() >= 0) releasedSlot = session.sliders().calledVehicle();
     if (const int how = session.sliders().takeReleasedNotice()) {
-        releasedAt = n;
+        releasedAt = frameNo;
         std::printf("slider: RELEASED - %s, so it goes back to mode 0 and "
                     "drives as ordinary traffic again\n",
                     how == 1 ? "nobody boarded it in 600 frames (case 1)"
@@ -1408,19 +1407,19 @@ void PlayState::adventureSeated() {
                                : "he is 300 clear and in front of it (case 7, "
                                  "a manual ride)");
         if (how != 1 && slidOutAt >= 0)
-            std::printf("slider: released %ld frame(s) after MDSLIDOU\n", n - slidOutAt);
+            std::printf("slider: released %ld frame(s) after MDSLIDOU\n", frameNo - slidOutAt);
     }
-    if (releasedAt >= 0 && n - releasedAt <= 300 && (n - releasedAt) % 30 == 0 &&
+    if (releasedAt >= 0 && frameNo - releasedAt <= 300 && (frameNo - releasedAt) % 30 == 0 &&
         releasedSlot >= 0 && static_cast<std::size_t>(releasedSlot) < session.sliders().vehicles().size()) {
         const auto& rv = session.sliders().vehicles()[static_cast<std::size_t>(releasedSlot)];
         if (rv.live && rv.mover >= 0) {
             const auto& rm = session.sliders().movers()[static_cast<std::size_t>(rv.mover)];
             std::printf("frame %ld: the released vehicle (slot %d, '%s', state %d) at %.0f %.0f %.0f, "
-                        "lane %d seg %d remaining %.0f; he is at %.0f %.0f %.0f\n", n, releasedSlot,
+                        "lane %d seg %d remaining %.0f; he is at %.0f %.0f %.0f\n", frameNo, releasedSlot,
                         rv.model.c_str(), rv.state, rm.body[0], rm.body[1], rm.body[2], rm.lane, rm.seg,
                         rm.remaining, session.playerPos()[0], session.playerPos()[1], session.playerPos()[2]);
         } else {
-            std::printf("frame %ld: the released vehicle (slot %d) is DEAD\n", n, releasedSlot);
+            std::printf("frame %ld: the released vehicle (slot %d) is DEAD\n", frameNo, releasedSlot);
         }
     }
     if (boarded && !ride) {
@@ -1601,20 +1600,20 @@ void PlayState::adventureRide() {
         ride->hover(dt, rw);
         if (ride->vehicleHits != hitsWas)
             std::printf("frame %ld: slider: Manuelle HIT a vehicle (sub_458880) - pushed out to "
-                        "%.0f %.0f, speed %.2f, settle %d\n", n, ride->x, ride->z, ride->speed, ride->settle);
-        if (n % 30 == 0) {
+                        "%.0f %.0f, speed %.2f, settle %d\n", frameNo, ride->x, ride->z, ride->speed, ride->settle);
+        if (frameNo % 30 == 0) {
             double dr = 0.0; char nm[2] = {0, 0};
             const bool on = rw.surface(ride->x, ride->y, ride->z, dr, nm);
             std::printf("frame %ld: slider ride at %.0f %.0f, speed %.2f, road-edge pushes %d, "
-                        "vehicle hits %d, wall slides %d, surface '%c%c'%s\n", n, ride->x, ride->z, ride->speed,
+                        "vehicle hits %d, wall slides %d, surface '%c%c'%s\n", frameNo, ride->x, ride->z, ride->speed,
                         ride->edgeHits, ride->vehicleHits, ride->wallHits, nm[0] ? nm[0] : '-', nm[1] ? nm[1] : '-',
                         on ? "" : " (none)");
         }
         if (ride->wallHits != wallsWas && (ride->wallHits == 1 || ride->wallHits % 20 == 0))
             std::printf("frame %ld: slider: Manuelle SLIDES along a wall (sub_459BD0), %d so far "
-                        "(%d single-edge hits left alone)\n", n, ride->wallHits, ride->wallSingles);
+                        "(%d single-edge hits left alone)\n", frameNo, ride->wallHits, ride->wallSingles);
         if (ride->walkerSteps != stepsWas && ride->walkerSteps == 1)
-            std::printf("frame %ld: slider: Manuelle steps round a walker on a crossing (sub_459970)\n", n);
+            std::printf("frame %ld: slider: Manuelle steps round a walker on a crossing (sub_459970)\n", frameNo);
         // `Slider_TickRide`, after its three helpers: `if (dword_8F5E08)
         // --dword_8F5E08`
         if (ride->settle) --ride->settle;
@@ -1707,8 +1706,8 @@ void PlayState::adventureRide() {
                 for (int k = 0; k < 3; ++k) rideFrom[k] = vp[k];
             }
             float sat[3], sx[3], sz[3];
-            if (n - rideTold >= 30 && session.sliders().calledFrame(sat, sx, sz)) {
-                rideTold = n;
+            if (frameNo - rideTold >= 30 && session.sliders().calledFrame(sat, sx, sz)) {
+                rideTold = frameNo;
                 const float dx = vp[0] - rideFrom[0], dz = vp[2] - rideFrom[2];
                 // ...and how high the node the pool DRAWS (its body less
                 // `kVehNodeLift`, as the crowd file stages it) hovers over the
@@ -1717,7 +1716,7 @@ void PlayState::adventureRide() {
                 if (const auto h = omk::surfaceUnder(playerSoup, sat[0], sat[1] - 200.0, sat[2]))
                     hover = h->y - (sat[1] - omk::kVehNodeLift);
                 std::printf("slider: manual ride frame %ld - moved %.0f along its "
-                            "drawn nose, %.0f across; the drawn node %.1f over the ground\n", n,
+                            "drawn nose, %.0f across; the drawn node %.1f over the ground\n", frameNo,
                             dx * -sz[0] + dz * -sz[2], dx * sx[0] + dz * sx[2], hover);
             }
         }
@@ -1737,8 +1736,8 @@ void PlayState::adventureWalls() {
         const bool asked = std::fabs(lf.rootDelta[0]) + std::fabs(lf.rootDelta[2]) > 0.05f;
         if (lf.stepped && asked && lf.step == omk::StepResult::Blocked) ++blockedRun;
         else blockedRun = 0;
-        if (blockedRun >= 30 && n - stuckTold >= 30) {
-            stuckTold = n;
+        if (blockedRun >= 30 && frameNo - stuckTold >= 30) {
+            stuckTold = frameNo;
             std::printf("walker: STUCK - blocked %d frames running at %.1f %.1f %.1f facing %.0f, "
                         "asking %+.2f %+.2f, %d wall passes hit last step\n",
                         blockedRun, player->pos()[0], player->pos()[1], player->pos()[2],
@@ -1756,8 +1755,8 @@ void PlayState::adventureWalls() {
         const auto& lf = player->last();
         const bool off = lf.stepped && (lf.step == omk::StepResult::Reverted ||
                                         lf.step == omk::StepResult::Fell);
-        if (off && n - voidTold >= 30) {
-            voidTold = n;
+        if (off && frameNo - voidTold >= 30) {
+            voidTold = frameNo;
             const auto gp = player->walker().ground(player->pos()[0], player->pos()[1], player->pos()[2]);
             std::printf("walker: %s at %.1f %.1f %.1f facing %.0f - move %+.2f %+.2f, "
                         "%d wall passes hit, ground %s (probe: %s, soup %zu tris)\n",
@@ -1811,7 +1810,7 @@ void PlayState::adventureWalls() {
             if (c != lastClip) {
                 lastClip = c;
                 std::printf("  anim: frame %ld  .CTL state %d '%s'  clip '%s' "
-                            "f %.1f  input %04x%s\n", n, player->ctlState(),
+                            "f %.1f  input %04x%s\n", frameNo, player->ctlState(),
                             player->ctlStateName().c_str(), c.c_str(),
                             player->clipFrame(), bits,
                             bits ? "" : "   <- NO INPUT");
@@ -2031,7 +2030,7 @@ void PlayState::adventureShot() {
             // keeps them and takes the new row's magazine. No change, and the
             // round is taken from the empty one anyway, as before.
             omk::ShootWeaponRow flight = *row;
-            if (mag && count <= 0 && shootChangeWeapon(n, "an empty magazine")) {
+            if (mag && count <= 0 && shootChangeWeapon(frameNo, "an empty magazine")) {
                 const omk::ShootWeaponRow* nr = playerShootRec.weapon;
                 flight.ammoIndex = nr ? nr->ammoIndex : 0;
                 count = 0;
@@ -2050,16 +2049,16 @@ void PlayState::adventureShot() {
                 ++shotsFired;
                 // `sub_44EF80(row, node, ..., 0.0)` as the entry is
                 // made: the MUZZLE effect, its sound armed
-                shotSound(n, muzzleFx, rs.muzzle, player->pos(), "fire");
+                shotSound(frameNo, muzzleFx, rs.muzzle, player->pos(), "fire");
                 // ...and the NOISE at the muzzle (0x44D5CC / 0x44D7A5)
-                shootNoise(n, -1, rs.muzzle, "a shot");
+                shootNoise(frameNo, -1, rs.muzzle, "a shot");
                 const omk::Projectile& e =
                     projectiles.entries()[static_cast<std::size_t>(out.entry)];
                 const float sp = e.speed != 0.0f ? e.speed : 1.0f;
                 std::printf("frame %ld: SHOT %ld - Actor_TickProjectiles(player): "
                             "entry %d, speed %.1f, damage %d, dir %.3f %.3f %.3f "
                             "(yaw %.1f pitch %.1f), from %s %.1f %.1f %.1f, "
-                            "magazine %s, %d live\n", n, shotsFired, out.entry,
+                            "magazine %s, %d live\n", frameNo, shotsFired, out.entry,
                             double(e.speed), e.kind, double(e.vel[0] / sp),
                             double(e.vel[1] / sp), double(e.vel[2] / sp),
                             double(yaw), double(shootPitch), from,
@@ -2070,7 +2069,7 @@ void PlayState::adventureShot() {
                             projectiles.liveOf(-1));
             } else {
                 std::printf("frame %ld: SHOT refused - the pool is full (%d live), "
-                            "nothing spent\n", n, projectiles.live());
+                            "nothing spent\n", frameNo, projectiles.live());
             }
         }
     }
@@ -2090,11 +2089,11 @@ void PlayState::adventureShot() {
                     in.installScheme(0);
                     std::printf("frame %ld: OUT OF THE WATER (sub_4A9580) - a platform %.1f over "
                                 "the water; ACTOR_STATE %d, bank group 303 (H_WO_SD), scheme 0, "
-                                "at %.0f %.1f %.0f\n", n, double(over),
+                                "at %.0f %.1f %.0f\n", frameNo, double(over),
                                 static_cast<int>(player->state()), player->pos()[0],
                                 player->pos()[1], player->pos()[2]);
                 } else {
-                    std::printf("frame %ld: the climb out refused - %s%s\n", n, kWhy[why],
+                    std::printf("frame %ld: the climb out refused - %s%s\n", frameNo, kWhy[why],
                                 why == 3 ? (" (" + std::to_string(over) + " over the water)").c_str() : "");
                 }
                 continue;
@@ -2105,7 +2104,7 @@ void PlayState::adventureShot() {
         // only - the next frame's channel tick hands it to the gate.
         if (mv == "MDSHOOT0" &&
             omk::mdShoot0(shotLatch, static_cast<int>(player->state())))
-            std::printf("frame %ld: MDSHOOT0 - the latch (dword_53AE3C) armed\n", n);
+            std::printf("frame %ld: MDSHOOT0 - the latch (dword_53AE3C) armed\n", frameNo);
         // MOVING IN FIRST PERSON (`actor/shootmove.h`). Group 200's
         // movement entries play no clip: they queue these, and the
         // handlers only raise INTENTS for next frame's mover. What
@@ -2129,7 +2128,7 @@ void PlayState::adventureShot() {
         // reload (`dword_90E104`) - `PlayState::shootChangeWeapon`. Entry
         // 134 of group 200 queues it on input 0x2000, between the arm
         // lowered (S_ARMOFF) and raised again (S_ARMON).
-        if (mv == "MDGUN") shootChangeWeapon(n, "MDGUN");
+        if (mv == "MDGUN") shootChangeWeapon(frameNo, "MDGUN");
         // THE FREE LOOK's two handlers (`PlayerController::lookPress`). The
         // second MDHEAD01 of `tab_special_move` (row 52, the shoot HEAD
         // mode's) is never reached: the first match wins, row 2
@@ -2140,7 +2139,7 @@ void PlayState::adventureShot() {
         // `sub_47D2E0` (`omk::shootJump`)
         if (mv == "MDJP" &&
             omk::shootJump(shootMover, player->walker().airborne()))
-            std::printf("frame %ld: MDJP - the shoot jump, %.2f a frame\n", n,
+            std::printf("frame %ld: MDJP - the shoot jump, %.2f a frame\n", frameNo,
                         double(shootMover.vertical));
         if ((mv == "MDRG" || mv == "MDRD") && shootMover.active)
             player->aimYawBy(omk::shootTurnDegrees(mv == "MDRG" ? -50 : 50,
@@ -2586,7 +2585,7 @@ void PlayState::adventureShot() {
             // here and is not transcribed)
             player->resetInputQueue();
             session.sliders().slidOutCalled();   // 5 -> 7 (or 7 -> 5 -> 7)
-            slidOutAt = n;
+            slidOutAt = frameNo;
             // ...and the camera: `Camera_Request(0, {player, player},
             // 60.0, type 1)` unless the mode is 0 or 17 - after a journey
             // it is mode 10 and travels back to the follow camera; after a
@@ -2643,7 +2642,7 @@ void PlayState::adventureShot() {
         if (ran != lookCam) {
             lookCam = ran;
             lookAtKnown = false;
-            std::printf("frame %ld: FREE LOOK %s - camera %s, head pitch %.1f yaw %.1f\n", n,
+            std::printf("frame %ld: FREE LOOK %s - camera %s, head pitch %.1f yaw %.1f\n", frameNo,
                         ran ? "on" : "off", ran ? "mode 3 (Camera_Request(3))"
                                                 : "back to the one before (Camera_Request(16))",
                         double(player->headPitch()), double(player->headYaw()));
@@ -2919,7 +2918,7 @@ void PlayState::adventureAction() {
                 refusedTold = under;
                 std::printf("frame %ld: the floor ahead is AREA %d's, a HIDDEN set - "
                             "the step is undone (`Walk_ProbeGround`'s state-1 arm)\n",
-                            n, under);
+                            frameNo, under);
             }
             under = -1;
         } else {
@@ -2929,18 +2928,18 @@ void PlayState::adventureAction() {
             if (under == session.activeArea()) refusedTold = -1;
         }
         static const bool verifyGround = std::getenv("OMK_VERIFY_GROUND") != nullptr;
-        if (verifyGround && n % 30 == 0) {
+        if (verifyGround && frameNo % 30 == 0) {
             const auto& gv = omk::groundVerify();
             std::printf("ground verify: frame %ld, walker %ld probes %ld mismatched, "
                         "decor %ld probes %ld mismatched, sweep %ld sweeps %ld mismatched\n",
-                        static_cast<long>(n), gv.walker, gv.walkerBad, gv.decor, gv.decorBad,
+                        static_cast<long>(frameNo), gv.walker, gv.walkerBad, gv.decor, gv.decorBad,
                         gv.sweep, gv.sweepBad);
         }
         if (under >= 0 && under != session.activeArea()) {
             session.playerOnArea(under);
             std::printf("frame %ld: event 9 - his feet are on AREA %d's decor; "
                         "the active row follows (zones re-registered: %zu)\n",
-                        n, under, session.zones().registered().size());
+                        frameNo, under, session.zones().registered().size());
         }
     }
 }

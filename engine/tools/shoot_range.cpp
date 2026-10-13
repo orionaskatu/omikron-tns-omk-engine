@@ -250,11 +250,11 @@ int main(int argc, char** argv) {
             const auto st = omk::shootGenericStep(q, t, e);
             return st;
         };
-        const auto back  = turnClip(390, 0);      // hard behind -> 180 -> clip 32
+        const auto behind  = turnClip(390, 0);      // hard behind -> 180 -> clip 32
         const auto left  = turnClip(0, -390);     // abeam
         const auto right = turnClip(0, 390);      // the other side
         std::printf("generic: snap clips behind %d/%.0f  abeam-a %d/%.0f  abeam-b %d/%.0f\n",
-                    back.clipType, back.turnTotal, left.clipType, left.turnTotal,
+                    behind.clipType, behind.turnTotal, left.clipType, left.turnTotal,
                     right.clipType, right.turnTotal);
 
         // ---- the NAVIGATE -> TRAVERSE -> hub loop (states 1, 2) --------
@@ -436,12 +436,12 @@ int main(int argc, char** argv) {
             q.goalX = -300; q.goalZ = 300;
             const int quartB = omk::shootMoveDecision(q, self4, e, 1.0f, false);
             q.goalX = 0;    q.goalZ = 390;                      // behind
-            float turned = 0;
-            const int back = omk::shootMoveDecision(q, self4, turned, 1.0f, false);
+            float turnYaw = 0;
+            const int backMove = omk::shootMoveDecision(q, self4, turnYaw, 1.0f, false);
             const int there = omk::shootMoveDecision(q, self4, e, 1.0f, true);
             std::printf("generic: move ahead %d abeam %d quarter %d/%d behind %d "
                         "(yaw %.1f) arrived %d\n",
-                        ahead, abeamA, quartA, quartB, back, turned, there);
+                        ahead, abeamA, quartA, quartB, backMove, turnYaw, there);
         }
 
         // ---- ENGAGE, `sub_426E00`: the three ranges each doing a job ----
@@ -510,12 +510,12 @@ int main(int argc, char** argv) {
                 in.difficulty = diff; in.dir[2] = -1.0f;
                 return omk::shootApplyStrike(v, in);
             };
-            const auto d1 = strike(10, 1, 50), d0 = strike(10, 0, 50), d2 = strike(10, 2, 50);
+            const auto hit1 = strike(10, 1, 50), hit0 = strike(10, 0, 50), hit2 = strike(10, 2, 50);
             const auto one = strike(1, 1, 50), kill = strike(4, 1, 3), crush = strike(-1, 1, 50);
             std::printf("attack arms: pick near %d far %d none %d rolls %d; tie %d/%d rolls %d; "
                         "strike d1 %d d0 %d d2 %d min %d kill %d->%d %d crush %d\n",
                         near, far, none, rollsBefore, tie0, tie2, rolls - rollsBefore,
-                        d1.damage, d0.damage, d2.damage, one.damage, kill.healthWas, kill.health,
+                        hit1.damage, hit0.damage, hit2.damage, one.damage, kill.healthWas, kill.health,
                         int(kill.killed), int(crush.killed));
         }
 

@@ -64,7 +64,7 @@ void PlayState::controlBinding() {
             // while SCENE 55 stays resident with its programs - and the
             // walk into the airlock would freeze him in the alley.
             std::printf("frame %ld: area transition %d with the player at the keys - "
-                        "he keeps walking\n", n, playerDrivenArea);
+                        "he keeps walking\n", frameNo, playerDrivenArea);
         }
     }
     if (playerDriven) playerDrivenSeen = true;
@@ -301,12 +301,12 @@ void PlayState::controlBinding() {
                 playerReady = !playerRest.corners.empty();
                 playerFeetKnown = false;
                 playerCamId = -2;
-                handoverFrame = n;
+                handoverFrame = frameNo;
                 std::printf("frame %ld: ADVENTURE MODE - the player is %s (%s) on "
                             "%s (%s); %d/%d tracks resolve; %zu walkable "
                             "triangles of %s; standing at %.0f %.0f %.0f facing "
                             "%.0f (%s); arrows walk and turn, RSHIFT runs\n",
-                            n, playerModel.c_str(), modelSrc.c_str(),
+                            frameNo, playerModel.c_str(), modelSrc.c_str(),
                             playerCtlName.c_str(), ctlSrc.c_str(),
                             player->tracksMatched(), player->tracksTotal(),
                             playerSoup.size() / 9, worldSet.c_str(),
@@ -362,10 +362,10 @@ void PlayState::controlBinding() {
     // but the cutscene hand-overs this was written for (omk-play 78)
     // have not been re-read against that, so it is left as it was.
     const bool shootLive = session.shootMode().active();
-    const bool parked = shootLive ? session.parkedOnPlayerProgram()
+    const bool scriptParked = shootLive ? session.parkedOnPlayerProgram()
                                   : session.parkedOnProgram();
     adventure = player && !playerDriven && !session.dialogOpen() &&
-                !uiPause && !sc.activeEditing() && !parked;
+                !uiPause && !sc.activeEditing() && !scriptParked;
     // GAMEPLAY EVENTS ARE NOT CUTSCENES: an enemy appearing with a
     // special animation must not stop the player's move or take the
     // camera as a cutscene would. In the engine only
@@ -377,13 +377,13 @@ void PlayState::controlBinding() {
         static bool advTold = true;
         if (adventure != advTold) {
             advTold = adventure;
-            std::printf("frame %ld: adventure %s in shoot mode -%s%s%s%s%s%s\n", n,
+            std::printf("frame %ld: adventure %s in shoot mode -%s%s%s%s%s%s\n", frameNo,
                         adventure ? "ON" : "OFF", player ? "" : " no player",
                         playerDriven ? " playerDriven" : "",
                         session.dialogOpen() ? " dialog" : "",
                         uiPause ? " uiPause" : "",
                         sc.activeEditing() ? " editing" : "",
-                        parked ? " parked on the player's program" : "");
+                        scriptParked ? " parked on the player's program" : "");
         }
     }
     // A TELEPORT IS CONSUMED WHATEVER THE MODE. `sub_41BF50` writes the
@@ -401,7 +401,7 @@ void PlayState::controlBinding() {
         placementSeen = session.placementSeq();
         player->placeAt(session.playerPos(), session.playerYaw());
         std::printf("frame %ld: actor.goto_address %d - the player put down at "
-                    "%.0f %.0f %.0f facing %.0f\n", n, session.playerAddress(),
+                    "%.0f %.0f %.0f facing %.0f\n", frameNo, session.playerAddress(),
                     player->pos()[0], player->pos()[1], player->pos()[2],
                     player->facing());
     }
@@ -454,7 +454,7 @@ void PlayState::controlFlight() {
     // is not caught by this.
     if (projectiles.live() && shootMode && !session.shootMode().active()) {
         std::printf("frame %ld: the projectile pool emptied (Shoot_Leave's "
-                    "sub_44CDB0(0)) - %d bolt%s in flight\n", n, projectiles.live(),
+                    "sub_44CDB0(0)) - %d bolt%s in flight\n", frameNo, projectiles.live(),
                     projectiles.live() == 1 ? "" : "s");
         projectiles.clear();
     }
@@ -517,8 +517,8 @@ void PlayState::controlFlight() {
         static long bodiesTold = -1;
         if (bodiesTold < 0 || (!shootMode && bodiesTold >= 0)) {
             if (shootMode) {
-                bodiesTold = n;
-                std::printf("frame %ld: sweep - %zu bodies (staged %zu):", n,
+                bodiesTold = frameNo;
+                std::printf("frame %ld: sweep - %zu bodies (staged %zu):", frameNo,
                             bodies.size(), staged.size());
                 for (const auto& hb : bodies) {
                     const bool ok = hb.root >= 0 &&
@@ -564,7 +564,7 @@ void PlayState::controlFlight() {
                         ev.mesh >= 0 && static_cast<std::size_t>(ev.mesh) < shotSlot->meshes.size()
                     ? shotSlot->meshes[static_cast<std::size_t>(ev.mesh)].name : "-";
                 std::printf("frame %ld: %s retired - entry %d %s at %.1f %.1f %.1f "
-                            "after %.1f, %d live, mesh %d %s\n", n, boltWho.c_str(), ev.entry,
+                            "after %.1f, %d live, mesh %d %s\n", frameNo, boltWho.c_str(), ev.entry,
                             ev.why == omk::FlightEvent::Why::World ? "hit the world"
                                                                  : "out of range",
                             double(ev.at[0]), double(ev.at[1]), double(ev.at[2]),
@@ -574,29 +574,29 @@ void PlayState::controlFlight() {
                 // setup installs (`sub_47FCF0`, `actor/astaroth.h`) - any
                 // bolt, any owner, any damage
                 if (ev.why == omk::FlightEvent::Why::World && astaroth.callbackArmed)
-                    astarothWorldHit(n, ev.mesh, shotSlotIdx, ev.at);
+                    astarothWorldHit(frameNo, ev.mesh, shotSlotIdx, ev.at);
                 // `sub_44F0D0`: the IMPACT effect where the world
                 // stopped it - the range running out calls nothing
                 if (ev.why == omk::FlightEvent::Why::World) {
-                    shotSound(n, ev.impactEffect, ev.at,
+                    shotSound(frameNo, ev.impactEffect, ev.at,
                               player ? player->pos() : nullptr,
                               hisBolt ? "impact" : "impact of a gunman's bolt");
                     // the NOISE where it stopped, the maker excluded
                     // (0x44DE15, after `sub_44F0D0`)
-                    shootNoise(n, -1, ev.at, "a bolt on the world");
+                    shootNoise(frameNo, -1, ev.at, "a bolt on the world");
                 }
                 continue;
             }
             std::printf("frame %ld: %s retired - entry %d HIT ACTOR %d at %.1f %.1f "
-                        "%.1f after %.1f, %d live\n", n, boltWho.c_str(), ev.entry,
+                        "%.1f after %.1f, %d live\n", frameNo, boltWho.c_str(), ev.entry,
                         ev.victim, double(ev.at[0]), double(ev.at[1]), double(ev.at[2]),
                         double(ev.travelled), boltLive);
             // ...and on a BODY, whatever `sub_4240E0` then decides
-            shotSound(n, ev.impactEffect, ev.at, player ? player->pos() : nullptr,
+            shotSound(frameNo, ev.impactEffect, ev.at, player ? player->pos() : nullptr,
                       hisBolt ? "impact on a body" : "impact of a gunman's bolt on a body");
             // the NOISE there, the VICTIM excluded - 0x44DD0E / 0x44DD40
             // hand `sub_4246E0` the index `sub_4240E0` was given
-            shootNoise(n, ev.victim, ev.at, "a bolt on a body");
+            shootNoise(frameNo, ev.victim, ev.at, "a bolt on a body");
             // ---- `sub_4240E0`'s PLAYER ARM: a gunman's bolt on him ----
             //   the damage through his Body Shield (property 17), C's
             //   truncation and never 0; +92 -= it; `dword_90E100 = +92`,
@@ -609,7 +609,7 @@ void PlayState::controlFlight() {
             //   40, and its heal comes back through `shootStatSet`).
             // NOT PORTED, labelled: the death and the shove.
             if (ev.victim == -1) {
-                shootWake(n, "a bolt's hit on the player (sub_4240E0)");
+                shootWake(frameNo, "a bolt's hit on the player (sub_4240E0)");
                 const std::size_t recAt = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
                 const std::size_t recLen = static_cast<std::size_t>(omk::GameState::kPlayerRecordSize);
                 omk::HitIn hin;
@@ -631,14 +631,14 @@ void PlayState::controlFlight() {
                 if (ho.healthWas <= 0) {
                     // `if (+92 <= 0) return v30;` - down already: nothing
                     std::printf("frame %ld: PLAYER HIT by actor %d's bolt - he is down "
-                                "already (health %d): nothing\n", n, ev.owner, ho.healthWas);
+                                "already (health %d): nothing\n", frameNo, ev.owner, ho.healthWas);
                     continue;
                 }
-                applyPlayerDamage(n, ev.owner, "bolt", ev.damage, int(shield), ho);
+                applyPlayerDamage(frameNo, ev.owner, "bolt", ev.damage, int(shield), ho);
                 continue;
             }
             // ---- `sub_4240E0`, the damage, on his shoot record ----
-            shootWake(n, "a bolt's hit (sub_4240E0)");
+            shootWake(frameNo, "a bolt's hit (sub_4240E0)");
             Staged* vs = nullptr;
             for (auto& up : staged)
                 if (up && up->actor == ev.victim) { vs = up.get(); break; }
@@ -723,7 +723,7 @@ void PlayState::controlFlight() {
                             static_cast<std::size_t>(bh.body) < bodies.size()) {
                             const omk::HitBody& hb = bodies[static_cast<std::size_t>(bh.body)];
                             if (bh.mesh >= 0 && static_cast<std::size_t>(bh.mesh) < hb.meshes.size())
-                                shotSound(n, 20, hb.meshes[static_cast<std::size_t>(bh.mesh)].pos,
+                                shotSound(frameNo, 20, hb.meshes[static_cast<std::size_t>(bh.mesh)].pos,
                                           player ? player->pos() : nullptr,
                                           "Astaroth hit in the back (sub_44EF00 20)");
                         }
@@ -770,7 +770,7 @@ void PlayState::controlFlight() {
                                 double(ev.seg[4]), double(ev.seg[5]), dmg,
                                 inHead ? "passes" : "refused");
                     if (!inHead) return 0;
-                    shotSound(n, 19, at, player ? player->pos() : nullptr,
+                    shotSound(frameNo, 19, at, player ? player->pos() : nullptr,
                               "Gandhar hit in the head (sub_44EF00 19)");
                     return dmg;
                 };

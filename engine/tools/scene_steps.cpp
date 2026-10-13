@@ -104,11 +104,11 @@ int main(int argc, char** argv) {
         }
         if (clip >= 0) ++steps;
         sc.tick(1.0f);
-        for (const auto& fs : sc.sounds())
-            std::printf("   f%-4d wav %-3d '%s'%s%s\n", f + 1, fs.cue.wav,
-                        sc.scene().wavName(fs.cue.wav).c_str(),
-                        fs.cue.sync ? "  (sync)" : "  (plain)",
-                        fs.cue.loop ? "  looping" : "");
+        for (const auto& snd : sc.sounds())
+            std::printf("   f%-4d wav %-3d '%s'%s%s\n", f + 1, snd.cue.wav,
+                        sc.scene().wavName(snd.cue.wav).c_str(),
+                        snd.cue.sync ? "  (sync)" : "  (plain)",
+                        snd.cue.loop ? "  looping" : "");
     }
     const int ran = static_cast<int>(sc.programClock(0));
 

@@ -19,7 +19,7 @@ void PlayState::harnessNewWorld() {
         // The save brought its own world - doors opened, addresses
         // enabled. Put a new game's back, keeping the player record the
         // save is loaded FOR.
-        if (state.debugCopyWorldFrom(omk::GameState::fromFile(fr + "/IAM/START")))
+        if (state.debugCopyWorldFrom(omk::GameState::fromFile(dataRoot + "/IAM/START")))
             std::printf("--newgame-world: the six state arrays and the "
                         "three object lists reset to IAM/START (a harness "
                         "write, not `Game_NewGame`)\n");
@@ -242,7 +242,7 @@ void PlayState::harnessSaveSlot() {
         // takes too.
         const auto thumb = omk::thumbFromRgb565(fb.px, fb.w, fb.h);
 
-        auto file = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+        auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
         if (file.size() < omk::kSaveFileSize) {
             // `sub_4092A0`'s create arm - the settings, then 256 empty slots.
             file = omk::blankSaveFile(saveSettings ? *saveSettings
@@ -302,7 +302,7 @@ void PlayState::harnessShootEnd() {
     // --shoot-end N: the harness's way OUT - `shoot.end 1` at frame
     // N, what op 81 does for a script, so the RETURN to adventure
     // mode (`todo/shoot-mode.md` 8.5e) can be driven headless.
-    if (shootEndAt >= 0 && n >= shootEndAt && session.shootMode().active()) {
+    if (shootEndAt >= 0 && frameNo >= shootEndAt && session.shootMode().active()) {
         shootEndAt = -1;
         session.shootEnd(1);
         std::printf("--shoot-end: shoot.end 1\n");
@@ -352,13 +352,13 @@ void PlayState::harnessFight() {
                         "two metres in front of the player, at "
                         "%.0f %.0f %.0f facing %.0f (the engine stages "
                         "them with a script instead)\n",
-                        n, fightArg, double(up->at[0]), double(up->at[1]),
+                        frameNo, fightArg, double(up->at[0]), double(up->at[1]),
                         double(up->at[2]), double(up->facing));
             break;
         }
         std::printf("frame %ld: harness --fight %d level %d - "
                     "standing in for a script's fight.begin\n",
-                    n, fightArg, fightLevelArg);
+                    frameNo, fightArg, fightLevelArg);
         beginMelee(fightArg, fightLevelArg);
     }
 }
@@ -376,7 +376,7 @@ void PlayState::harnessShootHealth(std::int32_t& hp) {
             1, shootHealth);
         hp = shootHealth;
         std::printf("frame %ld: SHOOT HEALTH - the test harness --shoot-health "
-                    "writes property 1 = %d\n", n, shootHealth);
+                    "writes property 1 = %d\n", frameNo, shootHealth);
     }
 }
 
@@ -397,7 +397,7 @@ void PlayState::harnessAimAt(omk::RecordShot& rs) {
     if (!told) {
         told = true;
         std::printf("frame %ld: AIM AT - the test harness --aim-at %.0f %.0f %.0f: yaw %.1f "
-                    "pitch %.1f from the muzzle\n", n, double(aimAt[0]), double(aimAt[1]),
+                    "pitch %.1f from the muzzle\n", frameNo, double(aimAt[0]), double(aimAt[1]),
                     double(aimAt[2]), double(a.yawDeg), double(a.pitchDeg));
     }
 }
@@ -407,30 +407,30 @@ void PlayState::harnessAstaroth() {
     auto& session = *session_;
     // THE HARNESS: no shipped address stands the player BEHIND Astaroth -
     // in the game he walks round him - so this puts him down there.
-    if (playerAtFrame >= 0 && n >= playerAtFrame && player) {
+    if (playerAtFrame >= 0 && frameNo >= playerAtFrame && player) {
         playerAtFrame = -1;
         player->placeAt(playerAt, playerAt[3]);
         session.setPlayerPosition(player->pos(), playerAt[3]);
         std::printf("frame %ld: PLAYER AT - the test harness --player-at puts him at %.0f "
-                    "%.0f %.0f facing %.0f\n", n, double(player->pos()[0]),
+                    "%.0f %.0f facing %.0f\n", frameNo, double(player->pos()[0]),
                     double(player->pos()[1]), double(player->pos()[2]), double(playerAt[3]));
     }
-    if (playerAt2Frame >= 0 && playerAtFrame < 0 && n >= playerAt2Frame && player) {
+    if (playerAt2Frame >= 0 && playerAtFrame < 0 && frameNo >= playerAt2Frame && player) {
         playerAt2Frame = -1;
         player->placeAt(opt.playerAt2, opt.playerAt2[3]);
         session.setPlayerPosition(player->pos(), opt.playerAt2[3]);
         std::printf("frame %ld: PLAYER AT - the test harness's second --player-at puts him at "
-                    "%.0f %.0f %.0f facing %.0f\n", n, double(player->pos()[0]),
+                    "%.0f %.0f %.0f facing %.0f\n", frameNo, double(player->pos()[0]),
                     double(player->pos()[1]), double(player->pos()[2]), double(opt.playerAt2[3]));
     }
     // ...and the six souls struck down through the SAME callback a bolt's
     // world hit calls (`astarothWorldHit`, `sub_47FCF0`), three times each:
     // three of them are out of sight of the retry point, and the bolt's
     // path to them is `engine: astaroth souls`'s
-    if (astarothSoulsAt >= 0 && n >= astarothSoulsAt && astaroth.callbackArmed) {
+    if (astarothSoulsAt >= 0 && frameNo >= astarothSoulsAt && astaroth.callbackArmed) {
         astarothSoulsAt = -1;
         std::printf("frame %ld: ASTAROTH SOULS - the test harness --astaroth-souls strikes "
-                    "all six\n", n);
+                    "all six\n", frameNo);
         for (int i = 0; i < omk::kAstarothSouls; ++i) {
             const int mesh = astaroth.soulMesh[i], slot = astarothSoulSlot[i];
             if (mesh < 0 || slot < 0) continue;
@@ -439,7 +439,7 @@ void PlayState::harnessAstaroth() {
                                   ? w.meshes[static_cast<std::size_t>(mesh)].pos : nullptr;
             const float zero[3] = {0.0f, 0.0f, 0.0f};
             for (int k = 0; k < omk::kAstarothSoulHits && astaroth.callbackArmed; ++k)
-                astarothWorldHit(n, mesh, slot, at ? at : zero);
+                astarothWorldHit(frameNo, mesh, slot, at ? at : zero);
         }
     }
 }
@@ -478,7 +478,7 @@ void PlayState::harnessScxPlay() {
             c.fields = {static_cast<std::int16_t>(h), 0, 0};
             const int idx = session.sceneMutable().handle({c});
             std::printf("--scx-play: frame %ld  object handle %d -> program %d (a harness start)\n",
-                        frames, h, idx);
+                        frameNo, h, idx);
         }
     }
     // `--character-show N:h`: the program the showing script starts with it,
@@ -502,15 +502,15 @@ void PlayState::harnessScxPlay() {
 void PlayState::harnessHideShow() {
     if (hideShow[0] < 0) return;
     auto& session = *session_;
-    if (n == hideShow[1]) {
+    if (frameNo == hideShow[1]) {
         session.characterHide(hideShow[0]);
         std::printf("--hide-show: frame %ld  character.hide %d (a harness call)\n",
-                    n, hideShow[0]);
+                    frameNo, hideShow[0]);
     }
-    if (n == hideShow[2]) {
+    if (frameNo == hideShow[2]) {
         session.characterShow(hideShow[0], hideShow[3]);
         std::printf("--hide-show: frame %ld  character.show %d, %d (a harness call)\n",
-                    n, hideShow[0], hideShow[3]);
+                    frameNo, hideShow[0], hideShow[3]);
     }
 }
 
@@ -526,11 +526,11 @@ void PlayState::harnessGameRestart() {
                                            session.currentArea());
         if (idx >= 0) session.queueAction(idx, 1);
         std::printf("%s: frame %ld  op %d queued as context %d (a harness call)\n",
-                    flag, n, op, idx);
+                    flag, frameNo, op, idx);
     };
-    if (gameRestartAt >= 0 && n == gameRestartAt) runOp(152, "--game-restart");
+    if (gameRestartAt >= 0 && frameNo == gameRestartAt) runOp(152, "--game-restart");
     for (const auto& [f, op] : opAt)
-        if (n == f) runOp(op, "--op-at");
+        if (frameNo == f) runOp(op, "--op-at");
 }
 
 // the frame's facts for the flicker catcher
@@ -557,8 +557,8 @@ void PlayState::harnessFlickerNote(std::size_t& runsDrawn, std::size_t& runsCull
 
 // --snaps: the framebuffer every N frames from the hand-over
 void PlayState::harnessSnaps() {
-    if (!snapsDir.empty() && handoverFrame >= 0 && ((n - handoverFrame) % snapEvery) == 0) {
-        const std::string path = snapsDir + "/snap-" + std::to_string(n) + ".bin";
+    if (!snapsDir.empty() && handoverFrame >= 0 && ((frameNo - handoverFrame) % snapEvery) == 0) {
+        const std::string path = snapsDir + "/snap-" + std::to_string(frameNo) + ".bin";
         if (omk::safeOutputPath(path)) {
             std::ofstream o(path, std::ios::binary);
             for (auto v : fb.px) {
@@ -600,19 +600,19 @@ void PlayState::screensFlicker() {
             base = w[w.size() / 2];
         }
         if (flickAfter > 0) {                       // still writing an event
-            write(n, fb.px, frameNote);
+            write(frameNo, fb.px, frameNote);
             --flickAfter;
-        } else if (base > 0 && lit < base * 3 / 5 && n > flickQuietUntil) {
-            flickEvent = n;
-            flickQuietUntil = n + 60;               // one dump per two seconds
+        } else if (base > 0 && lit < base * 3 / 5 && frameNo > flickQuietUntil) {
+            flickEvent = frameNo;
+            flickQuietUntil = frameNo + 60;               // one dump per two seconds
             std::printf("frame %ld: FLICKER - %ld lit against a median of %ld; "
                         "writing %d frames to %s/flick-%ld-*.bin\n",
-                        n, lit, base, kFlickPre + 1 + kFlickPost,
+                        frameNo, lit, base, kFlickPre + 1 + kFlickPost,
                         flickerDir.c_str(), flickEvent);
             for (std::size_t k = 0; k < flickRing.size(); ++k)
-                write(n - static_cast<long>(flickRing.size() - k), flickRing[k],
+                write(frameNo - static_cast<long>(flickRing.size() - k), flickRing[k],
                       k < flickNote.size() ? flickNote[k] : std::string());
-            write(n, fb.px, frameNote);
+            write(frameNo, fb.px, frameNote);
             flickAfter = kFlickPost;
         }
         flickLit.push_back(lit);
@@ -634,7 +634,7 @@ void PlayState::screensFlicker() {
         else ++keptBy[gpuKeep];
         if (omk::envSet("OMK_GPU_PRESENT_STATS") && framesSeen % 30 == 0) {
             std::printf("gpu present: frame %ld, %ld of %ld frames stayed on the GPU; on the CPU:",
-                        n, gpuPresented, framesSeen);
+                        frameNo, gpuPresented, framesSeen);
             for (const auto& [why, count] : keptBy) std::printf(" %s %ld,", why.c_str(), count);
             std::printf("\n");
         }

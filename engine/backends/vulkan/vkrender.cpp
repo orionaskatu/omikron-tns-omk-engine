@@ -892,16 +892,16 @@ bool VulkanRenderer::makeTarget() {
             dep[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
             dep[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             dep[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-            rpi.attachmentCount = 1; rpi.pAttachments = &da;
-            rpi.subpassCount = 1; rpi.pSubpasses = &sp;
-            rpi.dependencyCount = 2; rpi.pDependencies = dep;
-            vkCreateRenderPass(dev_, &rpi, nullptr, &shPass_);
+            VkRenderPassCreateInfo shadowRpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            shadowRpi.attachmentCount = 1; shadowRpi.pAttachments = &da;
+            shadowRpi.subpassCount = 1; shadowRpi.pSubpasses = &sp;
+            shadowRpi.dependencyCount = 2; shadowRpi.pDependencies = dep;
+            vkCreateRenderPass(dev_, &shadowRpi, nullptr, &shPass_);
 
-            VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            fi.renderPass = shPass_; fi.attachmentCount = 1; fi.pAttachments = &shView_;
-            fi.width = kShadowSide; fi.height = kShadowSide; fi.layers = 1;
-            vkCreateFramebuffer(dev_, &fi, nullptr, &shFbuf_);
+            VkFramebufferCreateInfo shadowFi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            shadowFi.renderPass = shPass_; shadowFi.attachmentCount = 1; shadowFi.pAttachments = &shView_;
+            shadowFi.width = kShadowSide; shadowFi.height = kShadowSide; shadowFi.layers = 1;
+            vkCreateFramebuffer(dev_, &shadowFi, nullptr, &shFbuf_);
 
             // NEAREST, because the fragment shader compares depths itself and
             // a linear filter would average DEPTHS rather than the comparison.
@@ -2574,9 +2574,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     push_.fogStart = 0.0f;
     push_.fogEnd = 0.0f;
     if (fog_ && !(d.bucketKey & 0x2080u)) {
-        const float k = (d.bucketKey & 0x800u) ? 2.0f : 1.0f;
-        push_.fogStart = fogStart_ * k;
-        push_.fogEnd   = fogEnd_ * k;
+        const float fogScale = (d.bucketKey & 0x800u) ? 2.0f : 1.0f;
+        push_.fogStart = fogStart_ * fogScale;
+        push_.fogEnd   = fogEnd_ * fogScale;
         for (int i = 0; i < 3; ++i) push_.fogColour[i] = fogColour_[i];
     }
     const auto it = vbo_.find(d.geo);

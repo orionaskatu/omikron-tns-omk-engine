@@ -161,7 +161,7 @@ void PlayState::vrAfterWorldCamera() {
         // which is how a check turns the head
         const auto held = [&](int dik) {
             if (host.held.count(dik)) return true;
-            for (int k : st.keyboard) if (k == dik) return true;
+            for (int k : devices.keyboard) if (k == dik) return true;
             return false;
         };
         constexpr float kStep = 1.5f;
@@ -172,11 +172,11 @@ void PlayState::vrAfterWorldCamera() {
         if (held(0x47)) vr.roll -= kStep;
         if (held(0x49)) vr.roll += kStep;
         if (held(0x4C)) { vr.yaw = vr.pitch = vr.roll = 0.0f; simRecentre = true; }
-        if (vr.headAfterFrame >= 0 && n >= vr.headAfterFrame) {
+        if (vr.headAfterFrame >= 0 && frameNo >= vr.headAfterFrame) {
             vr.headAfterFrame = -1;
             vr.yaw = vr.headAfter[0]; vr.pitch = vr.headAfter[1]; vr.roll = vr.headAfter[2];
             std::printf("frame %ld: vr - the fake head turned to yaw %.1f pitch %.1f roll %.1f "
-                        "(--vr-head-after)\n", n, static_cast<double>(vr.yaw),
+                        "(--vr-head-after)\n", frameNo, static_cast<double>(vr.yaw),
                         static_cast<double>(vr.pitch), static_cast<double>(vr.roll));
         }
         simPose(vr, raw);
@@ -233,7 +233,7 @@ void PlayState::vrAfterWorldCamera() {
         // the SNAP TURN, 30 degrees an edge (numpad 1 / 3; a stick on a headset)
         const auto down = [&](int dik) {
             if (host.held.count(dik)) return true;
-            for (int k : st.keyboard) if (k == dik) return true;
+            for (int k : devices.keyboard) if (k == dik) return true;
             return false;
         };
         // ...and the RIGHT STICK pushed sideways past 600 (a Touch controller)
@@ -299,7 +299,7 @@ void PlayState::vrAfterWorldCamera() {
         vr.zeroYaw = yawOf(raw.head.quat);
         for (int k = 0; k < 3; ++k) vr.zeroPos[k] = raw.head.pos[k];
         ++vr.recentres;
-        std::printf("frame %ld: vr - camera %s%s, the head recentred (%ld)\n", n, vrKindName(kind),
+        std::printf("frame %ld: vr - camera %s%s, the head recentred (%ld)\n", frameNo, vrKindName(kind),
                     kindChanged ? "" : " - a CUT", vr.recentres);
     }
     vr.kind = kind;
@@ -343,9 +343,9 @@ void PlayState::vrAfterWorldCamera() {
     vr.haveHeadFwd = normH(vr.headFwd);
     vr.haveEyes = true;
     if (vr.told < 0) {
-        vr.told = n;
+        vr.told = frameNo;
         std::printf("frame %ld: vr - the head on the authored camera; eye 0 at %.1f %.1f %.1f "
-                    "fov %.1f roll %.2f lens %.3f %.3f\n", n,
+                    "fov %.1f roll %.2f lens %.3f %.3f\n", frameNo,
                     static_cast<double>(vr.eye[0].eye[0]), static_cast<double>(vr.eye[0].eye[1]),
                     static_cast<double>(vr.eye[0].eye[2]), static_cast<double>(vr.eye[0].hfovDeg),
                     static_cast<double>(vr.eye[0].rollDeg), static_cast<double>(vr.eye[0].lensX),
@@ -354,7 +354,7 @@ void PlayState::vrAfterWorldCamera() {
     static const bool vrLog = std::getenv("OMK_VRLOG") && *std::getenv("OMK_VRLOG") == '1';
     if (vrLog)
         std::printf("[vr] frame %ld kind %s target %.2f %.2f %.2f authored %.2f %.2f %.2f drawn %.2f %.2f %.2f "
-                    "look %.3f %.3f %.3f origin %.2f %.2f %.2f him %.2f %.2f %.2f facing %.2f pitch %.2f\n", n, vrKindName(kind),
+                    "look %.3f %.3f %.3f origin %.2f %.2f %.2f him %.2f %.2f %.2f facing %.2f pitch %.2f\n", frameNo, vrKindName(kind),
                     static_cast<double>(authored.at[0]), static_cast<double>(authored.at[1]),
                     static_cast<double>(authored.at[2]),
                     static_cast<double>(authored.eye[0]), static_cast<double>(authored.eye[1]),
@@ -501,7 +501,7 @@ void PlayState::vrShootAim(std::uint32_t& word) {
     player->setFacing(a.yawDeg);
     shootPitch = std::max(-45.0f, std::min(45.0f, a.pitchDeg));
     if (!vr.aimed || std::fabs(a.yawDeg - vr.aimYaw) > 5.0f || std::fabs(shootPitch - vr.aimPitch) > 5.0f)
-        std::printf("frame %ld: vr - the controller aims: facing %.1f, look pitch %.1f\n", n,
+        std::printf("frame %ld: vr - the controller aims: facing %.1f, look pitch %.1f\n", frameNo,
                     static_cast<double>(a.yawDeg), static_cast<double>(shootPitch));
     vr.aimed = true;
     vr.aimYaw = a.yawDeg;

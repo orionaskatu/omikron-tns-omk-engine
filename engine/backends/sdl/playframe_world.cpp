@@ -38,7 +38,7 @@ int PlayState::phaseWorld() {
                 const int bound = session.sceneMutable().bindSetEmitters(ws.emitters);
                 if (bound > 0)
                     std::printf("world: frame %ld  %s binds %d ambient emitters into %s\n",
-                                n, ws.stem.c_str(), bound, session.scene().file().c_str());
+                                frameNo, ws.stem.c_str(), bound, session.scene().file().c_str());
                 break;
             }
         };
@@ -85,7 +85,7 @@ int PlayState::phaseWorld() {
             if (playerId != lastPlayerActor) {
                 if (player) {
                     std::printf("frame %ld: player.become - the player is actor %d now, was %d; "
-                                "the controller is rebuilt for the new body\n", n, playerId, lastPlayerActor);
+                                "the controller is rebuilt for the new body\n", frameNo, playerId, lastPlayerActor);
                     // ...WHERE THE NEW BODY STANDS. Op 56 (0x402F60) reads
                     // the NEW body's own node - `Actor_GetPosAndFacing(new)`,
                     // actor +244..+252 and +420 - and `Actor_SetPlacement`s
@@ -110,16 +110,16 @@ int PlayState::phaseWorld() {
                         const float yaw = nb->progYawKnown ? nb->progYaw : nb->facing;
                         session.setPlayerPosition(nb->drawAt, yaw);
                         std::printf("frame %ld: player.become - the new body's own place, "
-                                    "%.0f %.0f %.0f facing %.0f (its drawn node)\n", n,
+                                    "%.0f %.0f %.0f facing %.0f (its drawn node)\n", frameNo,
                                     nb->drawAt[0], nb->drawAt[1], nb->drawAt[2], yaw);
                     } else if (nsh && nsh->fromTable) {
                         session.setPlayerPosition(nsh->pos, nsh->facing);
                         std::printf("frame %ld: player.become - the new body's own place, "
-                                    "%.0f %.0f %.0f facing %.0f (its placement record)\n", n,
+                                    "%.0f %.0f %.0f facing %.0f (its placement record)\n", frameNo,
                                     nsh->pos[0], nsh->pos[1], nsh->pos[2], nsh->facing);
                     } else {
                         std::printf("frame %ld: player.become - no place known for the new "
-                                    "body: the old body's, LABELLED\n", n);
+                                    "body: the old body's, LABELLED\n", frameNo);
                     }
                     // the facing is the body's, not the last player clip's
                     handoverFacingKnown = false;
@@ -152,7 +152,7 @@ int PlayState::phaseWorld() {
                             s->lastSkinned = -1;
                             std::printf("frame %ld: re-shown actor %d %s - where it was left, "
                                         "at %.0f %.0f %.0f facing %.0f (Actor_Attach keeps the node)\n",
-                                        n, s->actor, s->model.c_str(), s->at[0], s->at[1], s->at[2],
+                                        frameNo, s->actor, s->model.c_str(), s->at[0], s->at[1], s->at[2],
                                         s->facing);
                             ++poolComposition;
                             break;
@@ -170,7 +170,7 @@ int PlayState::phaseWorld() {
                     stagedIds.push_back(sh.actor);
                     std::printf("frame %ld: staged actor %d %s (bank %s, %zu meshes, "
                                 "%zu textures) at %.0f %.0f %.0f facing %.0f - %s\n",
-                                n, sh.actor,
+                                frameNo, sh.actor,
                                 sh.model.empty() ? "(no model)" : sh.model.c_str(),
                                 sh.bank.empty() ? "none" : sh.bank.c_str(),
                                 s->mo ? s->mo->meshes.size() : 0u,
@@ -205,7 +205,7 @@ int PlayState::phaseWorld() {
                     s->pelvis = false;
                     std::printf("frame %ld: actor %d put at his record %.0f %.0f %.0f facing %.0f "
                                 "(character.show, second field set)\n",
-                                n, s->actor, sh.pos[0], sh.pos[1], sh.pos[2], sh.facing);
+                                frameNo, s->actor, sh.pos[0], sh.pos[1], sh.pos[2], sh.facing);
                 }
                 // A placement record names a spot on the GROUND; a script
                 // show carries none (`Session::showCharacter` pushes a bare
@@ -275,7 +275,7 @@ int PlayState::phaseWorld() {
                     stagedIds.push_back(sp);
                     std::printf("frame %ld: staged actor %d %s for conversation %d - "
                                 "no table places him and no script shows him\n",
-                                n, sp, speakerModel.c_str(), speakerConv);
+                                frameNo, sp, speakerModel.c_str(), speakerConv);
                 }
                 s->seen = true;
                 if (!s->placed && speakerSolved) {
@@ -321,7 +321,7 @@ int PlayState::phaseWorld() {
                                 "(bank %s) at %.0f %.0f %.0f facing %.0f - a "
                                 "scene program owns his body (scx.play.player "
                                 "starts on Actor_Player())\n",
-                                n, pid, playerModel.c_str(),
+                                frameNo, pid, playerModel.c_str(),
                                 playerCtlName.empty() ? "none" : playerCtlName.c_str(),
                                 s->at[0], s->at[1], s->at[2], s->facing);
                 }
@@ -345,7 +345,7 @@ int PlayState::phaseWorld() {
                         session.setPlayerPosition(up->drawAt, yaw);
                         std::printf("frame %ld: the program ended - the player "
                                     "keeps the body's place, %.0f %.0f %.0f "
-                                    "facing %.0f\n", n, up->drawAt[0],
+                                    "facing %.0f\n", frameNo, up->drawAt[0],
                                     up->drawAt[1], up->drawAt[2], yaw);
                         break;
                     }
@@ -357,7 +357,7 @@ int PlayState::phaseWorld() {
                 if (staged[k]->actor != session.playerActor() &&
                     session.actorHeld(staged[k]->actor)) {
                     std::printf("frame %ld: hid actor %d %s - kept where it stands "
-                                "(Actor_Detach)\n", n,
+                                "(Actor_Detach)\n", frameNo,
                                 staged[k]->actor, staged[k]->model.c_str());
                     session.dropActorBody(staged[k]->actor);    // `Actor_Detach`'s `sub_45E090`
                     parked.push_back(std::move(staged[k]));
@@ -365,7 +365,7 @@ int PlayState::phaseWorld() {
                     ++poolComposition;
                     continue;
                 }
-                std::printf("frame %ld: dropped actor %d %s\n", n,
+                std::printf("frame %ld: dropped actor %d %s\n", frameNo,
                             staged[k]->actor, staged[k]->model.c_str());
                 session.dropActorBody(staged[k]->actor);
                 staged.erase(staged.begin() + static_cast<long>(k));
@@ -375,7 +375,7 @@ int PlayState::phaseWorld() {
             for (std::size_t k = 0; k < parked.size(); ) {
                 if (session.actorHeld(parked[k]->actor)) { ++k; continue; }
                 std::printf("frame %ld: dropped actor %d %s (hidden, and its slot freed)\n",
-                            n, parked[k]->actor, parked[k]->model.c_str());
+                            frameNo, parked[k]->actor, parked[k]->model.c_str());
                 parked.erase(parked.begin() + static_cast<long>(k));
             }
             // A model no staged body wears any more leaves the pool, so the
@@ -405,7 +405,7 @@ int PlayState::phaseWorld() {
                 if (used) { ++it; continue; }
                 if (it->first == playerModel)
                     std::printf("frame %ld: the PLAYER's model %s evicted - playerReady %d, "
-                                "nobody staged wears it\n", n, it->first.c_str(), playerReady ? 1 : 0);
+                                "nobody staged wears it\n", frameNo, it->first.c_str(), playerReady ? 1 : 0);
                 it = charModels.erase(it);
                 ++poolComposition;
             }
@@ -432,7 +432,7 @@ int PlayState::phaseWorld() {
                 const int wantArea = rs.area;
                 WorldSlot& w = worldSlots[static_cast<std::size_t>(slot)];
                 if (want != slotAsked[slot] || wantArea != slotAskedArea[slot])
-                    changed |= askSet(slot, want, wantArea, n);
+                    changed |= askSet(slot, want, wantArea, frameNo);
                 // ...and IN on the frame BEFORE the Session's last slice is
                 // served, so the set is in the world when `Area_TickLoad`'s
                 // cases 2..9 run and the frame loop binds its emitters to the
@@ -449,7 +449,7 @@ int PlayState::phaseWorld() {
                                       session.loading() && session.loadingSlot() == slot;
                     if (!streaming && held) ++L.heldFrames;
                     if (!streaming && !held) {
-                        changed |= integrateSet(L, n);
+                        changed |= integrateSet(L, frameNo);
                         setLoads[slot].reset();
                     }
                 }
@@ -790,7 +790,7 @@ int PlayState::phaseWorld() {
             editFromRoll = lastRoll;
             std::printf("frame %ld: editing %d '%s' takes the camera (mode 13): object %d '%s', "
                         "%u frames, travel %.0f%s\n",
-                        n, edit->editing, edit->editingName.c_str(), edit->object,
+                        frameNo, edit->editing, edit->editingName.c_str(), edit->object,
                         edit->objectName.c_str(), edit->duration, edit->travel,
                         editFromKnown ? "" : " (nothing on screen to travel from: a cut)");
         } else if (!edit && editingShown >= 0) {
@@ -803,7 +803,7 @@ int PlayState::phaseWorld() {
             holdEditCam = haveLastDrawn;
             heldUnderRequests = session.cameraRequests();
             std::printf("frame %ld: editing over - the camera HOLDS its last frame "
-                        "(mode 13, no active camera, autocameraplayer 0)%s\n", n,
+                        "(mode 13, no active camera, autocameraplayer 0)%s\n", frameNo,
                         holdEditCam ? "" : " - nothing drawn yet, so the world camera stands");
         }
         if (edit) holdEditCam = false;      // a new editing takes it back
@@ -897,7 +897,7 @@ int PlayState::phaseWorld() {
         // `sub_466B60`, whose `byte_90E155 = 1` puts the full-screen view
         // back for the device's last 100 ms (`PlayState::closeAllScreens`).
         const bool screenKeepsWorld = !walk || openScreen < 0 ||
-                                      w.worldBehind(openScreen) || panelShowsWorld ||
+                                      uiWidgets.worldBehind(openScreen) || panelShowsWorld ||
                                       callWorldBack;
         // ...UNLESS THE PANEL CARRIES A 3D VIEWPORT ITEM. `byte_90E155` only
         // guards `Game_Frame`'s full-screen submit; a UI item whose draw
@@ -911,14 +911,14 @@ int PlayState::phaseWorld() {
         // panel's items (`docs/UI.md` 3i, todo/omk-play.md 83).
         vpItem = (walk && openScreen >= 0)
             ? omk::ScreenComposer::viewportItem(walk->panel() ? walk->panel()
-                                                              : w.screen(openScreen))
+                                                              : uiWidgets.screen(openScreen))
             : nullptr;
         comp.attachView3D(nullptr);
         screenReadsPicture = false;
         if (walk && openScreen >= 0) {
             constexpr std::uint32_t kDrawInterference = 0x00477ED0u;   // `ui/interference.h`
             screenReadsPicture = openScreen == omk::screen::SaveGame;                     // SAVE GAME
-            if (const omk::UiPanel* rp = walk->panel() ? walk->panel() : w.screen(openScreen))
+            if (const omk::UiPanel* rp = walk->panel() ? walk->panel() : uiWidgets.screen(openScreen))
                 for (const auto& l : rp->lists)
                     for (const auto& it : l.items)
                         if (it.drawFn == kDrawInterference) screenReadsPicture = true;

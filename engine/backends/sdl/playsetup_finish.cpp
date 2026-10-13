@@ -6,7 +6,7 @@
 
 int PlayState::finish() {
     auto& session = *session_;
-    std::printf("%ld frames presented\n", n);
+    std::printf("%ld frames presented\n", frameNo);
     gpuFinishReport();
     if (!dump.empty()) {
         // The framebuffer the WINDOW was shown, as raw LE RGB565 - so the

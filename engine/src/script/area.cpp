@@ -387,7 +387,7 @@ void Session::evictSlot(int slot) {
     // the circuit goes with the slot that loaded it (`Area_LoadSliderTrack`'s
     // walk over the decor slots' "has a track" flags, `sub_4548C0`)
     if (trafficSlot_ == (slot & 1)) {
-        for (const int s : pedSlots_) spatial_.remove(s);
+        for (const int ped : pedSlots_) spatial_.remove(ped);
         pedSlots_.clear();
         pedSlotModel_.clear();
         sliders_.clear(); trafficSlot_ = -1;
@@ -3009,9 +3009,9 @@ void Session::onCall(int i, const Call& call) {
         // `g_PlayerRecord` is DB +60, so +0x104 is the record's +260..+268:
         // the ammunition of weapon slots 5..9, the five guns (GAME_STATE).
         // The id loop has no bound in the engine; 23 is the two arrays.
-        int i = 0;
-        for (; i < state_.listCount(0) && i < 23; ++i) invCheckpoint_[i] = state_.listAt(0, i);
-        for (; i < 18; ++i) invCheckpoint_[i] = -1;
+        int idx = 0;
+        for (; idx < state_.listCount(0) && idx < 23; ++idx) invCheckpoint_[idx] = state_.listAt(0, idx);
+        for (; idx < 18; ++idx) invCheckpoint_[idx] = -1;
         for (int k = 0; k < 5; ++k) invCheckpoint_[18 + k] = state_.playerI16(260 + 2 * k);
         std::printf("frame %ld: inventory.save - %d carried, ammo %d %d %d %d %d\n",
                     frameNo_, state_.listCount(0), invCheckpoint_[18], invCheckpoint_[19],
@@ -3028,8 +3028,8 @@ void Session::onCall(int i, const Call& call) {
         // the nineteenth being the first ammunition word; then the five
         // ammunition words back into the record (`mov word`).
         while (state_.listCount(0) > 0) state_.listRemove(0, state_.listAt(0, 0));
-        for (int i = 0; i <= 18 && invCheckpoint_[i] != -1; ++i)
-            state_.listAdd(0, invCheckpoint_[i]);
+        for (int idx = 0; idx <= 18 && invCheckpoint_[idx] != -1; ++idx)
+            state_.listAdd(0, invCheckpoint_[idx]);
         for (int k = 0; k < 5; ++k)
             state_.setPlayerI16(260 + 2 * k, static_cast<std::int16_t>(invCheckpoint_[18 + k]));
         std::printf("frame %ld: inventory.restore - %d carried, ammo %d %d %d %d %d\n",
@@ -4370,7 +4370,7 @@ void Session::loadTrafficFor(int slot) {
         sliders_.setVehicleModelRadius(v, modelReach(v));
     trafficSlot_ = slot & 1;
     // `sub_45E040` at every spawn: each walker an instance entry of the index
-    for (const int s : pedSlots_) spatial_.remove(s);
+    for (const int ped : pedSlots_) spatial_.remove(ped);
     pedSlots_.assign(sliders_.movers().size(), -1);
     pedSlotModel_.assign(sliders_.movers().size(), std::string());
     for (std::size_t i = 0; i < sliders_.movers().size(); ++i) {

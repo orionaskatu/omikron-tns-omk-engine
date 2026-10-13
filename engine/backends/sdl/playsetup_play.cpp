@@ -36,7 +36,7 @@ int PlayState::setupPlay() {
                 if (const auto dt = stem.rfind('.'); dt != std::string::npos) stem = stem.substr(0, dt);
                 for (auto& c : stem) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
                 std::string where;
-                const std::string mp4 = omk::vita::avFind(stem, fr, where);
+                const std::string mp4 = omk::vita::avFind(stem, dataRoot, where);
                 if (omk::vita::AvFilm* av = mp4.empty() ? nullptr : omk::vita::avOpen(mp4)) {
                     std::printf("  %s: hardware decoder, %s\n", name, mp4.c_str());
                     front.openAudio(44100, 2);

@@ -37,7 +37,7 @@ int PlayState::setupSession() {
             tb.empty() ? "<no tables dir>" : tb.c_str());
         return 1;
     }
-    state = omk::GameState::fromFile(fr + "/IAM/START");
+    state = omk::GameState::fromFile(dataRoot + "/IAM/START");
     // THE SETTINGS, from the three sources in their own order: the engine's
     // defaults (`sub_41F4C0`), then the ini, then the save file's 3496-byte
     // header - which is what the options MENU last wrote, and so is later
@@ -54,7 +54,7 @@ int PlayState::setupSession() {
         saveFrom = saveFile;
     } else if (slotArg >= 0) {
         saveFrom = savesPath;
-        saveBytes = omk::readSaveFile(savesPath, fr + "/IAM/GAMES", &saveFrom);
+        saveBytes = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES", &saveFrom);
         if (saveBytes.empty())
             std::fprintf(stderr, "--slot: no save file at %s, and none in the "
                                  "game tree either\n", savesPath.c_str());
@@ -68,7 +68,7 @@ int PlayState::setupSession() {
     // menu last saved - the writable file, else the shipped `IAM/GAMES` - and
     // loads no slot (that is still `--slot`'s, through `saveBytes` above).
     if (!saveSettings && saveFile.empty() && slotArg < 0) {
-        const auto head = omk::readSaveFile(savesPath, fr + "/IAM/GAMES");
+        const auto head = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
         if (!head.empty()) saveSettings = omk::readSettingsBlock(head);
     }
     ini = configFile.empty() ? omk::OptionsFile{} : omk::loadOptionsFile(configFile);
@@ -381,13 +381,13 @@ int PlayState::setupSession() {
     if (objectRecords->empty())
         std::printf("no IAM/OBJECT - the sneak's inventory page will be "
                     "empty\n");
-    auto& session = session_.emplace(fr + "/IAM", state, opcodes);
+    auto& session = session_.emplace(dataRoot + "/IAM", state, opcodes);
     harnessBankReject();
     if (!session.loadAnnounceMap(tb + "/vm_announce.json"))
         std::printf("tables: no vm_announce.json - the log will name fewer "
                     "operands\n");
     // A person answers the screens only when there ARE screens to draw.
-    session.answerUiFromPerson(w.valid());
+    session.answerUiFromPerson(uiWidgets.valid());
     // There is a frame clock here, so `camera.set.wait` can do what the
     // handler does: hold the script for the length of the move it started.
     // Without it AREA 118's six intro cameras and its `area.goto` all happen
@@ -403,16 +403,16 @@ int PlayState::setupSession() {
     // AFTER `dialog.start 272` then arrived two seconds after the menu instead
     // of three minutes. `src/script/dialogue.h` carries the reasoning; the
     // decision is on the ported side and this file only plays the audio.
-    session.attachDialogue(fr + "/MORPH");
+    session.attachDialogue(dataRoot + "/MORPH");
     // STREET LIFE: the pedestrians of an area naming a circuit spawn at its
     // load, at the density the options menu will one day hand in.
     session.setStreetActivity(density);
     session.setMusicOption(settings.v.volumeMusic);   // options row 11
-    session.setDataRoot(fr);   // IAM\OBJECT for the kind ladder, crowd or not
+    session.setDataRoot(dataRoot);   // IAM\OBJECT for the kind ladder, crowd or not
     // `Script_Pump` case 0's `srand(ms since start)` - in paced play only, so
     // a `--frames` run draws the fixed sequence every check was written on
     if (!frames) session.setSessionSeed(front.ticksMs() | 1u);
-    if (!noCrowd) session.loadTraffic(fr);
+    if (!noCrowd) session.loadTraffic(dataRoot);
     // A movie chain is the intro's; a street start skips it.
     if (forceAdventure) playMovies = false;
     startArea = areaArg >= 0 ? areaArg : state.currentArea();
@@ -485,12 +485,12 @@ int PlayState::setupSession() {
     // ~5 second beat before the conversation going missing.
     // The scene's `.SFX` too - `AREA +97` names both, and starting an object
     // fires the set pieces keyed to it.
-    if (session.loadScene(fr + "/SCPTDATA", omk::ChunkKind::Area, startArea))
+    if (session.loadScene(dataRoot + "/SCPTDATA", omk::ChunkKind::Area, startArea))
     {
         std::string sfxName = session.scene().file();
         const auto dot = sfxName.rfind('.');
         if (dot != std::string::npos) sfxName = sfxName.substr(0, dot) + ".sfx";
-        session.sceneMutable().attachSfx(fr + "/SCPTDATA", sfxName);
+        session.sceneMutable().attachSfx(dataRoot + "/SCPTDATA", sfxName);
         const auto& sf = session.scene().sfx();
         std::printf("scene: %s resident, %zu objects; %s: %zu effects, "
                     "%zu set pieces (%d of them keyed so this trigger cannot "

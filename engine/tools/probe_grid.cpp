@@ -170,11 +170,11 @@ void runSoup(const std::string& stem, const char* kind, const omk::TriangleSoup&
         s.p0[0] = grid.minX - 0.05 * wx + 1.1 * wx * r.next();
         s.p0[1] = ylo - 300.0 + (yhi - ylo + 350.0) * r.next();
         s.p0[2] = grid.minZ - 0.05 * wz + 1.1 * wz * r.next();
-        const int kind = i % 4;
+        const int shape = i % 4;
         const double len = 600.0 * r.next();
-        if (kind == 0) { s.d[1] = len; }                                   // straight down
-        else if (kind == 1) { s.d[0] = len * (r.next() - 0.5); s.d[2] = len * (r.next() - 0.5); }
-        else if (kind == 2) { /* zero length */ }
+        if (shape == 0) { s.d[1] = len; }                                   // straight down
+        else if (shape == 1) { s.d[0] = len * (r.next() - 0.5); s.d[2] = len * (r.next() - 0.5); }
+        else if (shape == 2) { /* zero length */ }
         else { s.d[0] = len * (r.next() - 0.5); s.d[1] = len * (r.next() - 0.5); s.d[2] = len * (r.next() - 0.5); }
         s.radius = radii[i % 3];
         sweeps.push_back(s);

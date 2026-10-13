@@ -55,9 +55,9 @@ void UiItem::effective(const std::vector<FlagOp>& broadcast,
 }
 
 bool UiItem::selectable(const std::vector<FlagOp>& broadcast) const {
-    std::uint32_t w[3];
-    effective(broadcast, w);
-    return (w[0] & kItemUnselectable) == 0;
+    std::uint32_t words[3];
+    effective(broadcast, words);
+    return (words[0] & kItemUnselectable) == 0;
 }
 
 bool NameField::type(char ch) {

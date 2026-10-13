@@ -35,7 +35,7 @@ CXX      ?= c++
 # system dependency: it is checked in, so the default build may use it and
 # `make` still needs nothing installed - a missing one is a broken checkout,
 # not a disabled frontend.
-CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -Wpedantic -Isrc -Ithird_party
+CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -Wpedantic -Wshadow -Isrc -Ithird_party
 DEPFLAGS := -MMD -MP
 # VR (`todo/quest-port.md` §5): `VR=1` (the default here) defines OMK_VR for
 # every object of this Makefile - `src/vr/`, `backends/vr/`, and the few

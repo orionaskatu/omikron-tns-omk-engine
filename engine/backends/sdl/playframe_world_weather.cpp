@@ -18,9 +18,9 @@ void PlayState::weatherFrame(const omk::View& v) {
     // headless run reaches the rain (`verify.py: engine: weather`)
     static const double skipMs = std::getenv("OMK_WEATHER_SKIP_MS")
                                      ? std::atof(std::getenv("OMK_WEATHER_SKIP_MS")) : 0.0;
-    if (n == 1 && skipMs > 0.0) {
+    if (frameNo == 1 && skipMs > 0.0) {
         weatherClockMs += skipMs;
-        std::printf("frame %ld: weather - OMK_WEATHER_SKIP_MS: the clock jumps %.0f ms\n", n, skipMs);
+        std::printf("frame %ld: weather - OMK_WEATHER_SKIP_MS: the clock jumps %.0f ms\n", frameNo, skipMs);
     }
     // the view's +80 bits, from the SHOWN slot's AREA +176 (`sub_41D3F0`)
     const auto& chunk = session.residentSlot(session.activeSlot() & 1).areaChunk;
@@ -28,14 +28,14 @@ void PlayState::weatherFrame(const omk::View& v) {
     if (chunk.size() >= 178)
         type = static_cast<int>(static_cast<std::uint8_t>(chunk[176])) |
                static_cast<int>(static_cast<std::uint8_t>(chunk[177])) << 8;
-    const unsigned bits = omk::weatherBitsOfAreaType(type);
+    const unsigned viewBits = omk::weatherBitsOfAreaType(type);
     // `cmp byte ptr [0x90E727], 2` - option row 7 (the `--detail` flag holds it)
-    const bool gate = bits != 0 && shadowDetail == 2 && !worldSet.empty();
-    if (bits != weatherBitsTold) {
-        weatherBitsTold = bits;
+    const bool gate = viewBits != 0 && shadowDetail == 2 && !worldSet.empty();
+    if (viewBits != weatherBitsTold) {
+        weatherBitsTold = viewBits;
         std::printf("frame %ld: weather - AREA +176 type %d, view bits 0x%x, detail %d: %s\n",
-                    n, type, bits, shadowDetail,
-                    !bits ? "none here" : gate ? "the cycle runs (sub_4815D0)"
+                    frameNo, type, viewBits, shadowDetail,
+                    !viewBits ? "none here" : gate ? "the cycle runs (sub_4815D0)"
                           : "row 7 is not 2, so sub_4815D0 does nothing");
     }
     if (!gate) return;
@@ -60,21 +60,21 @@ void PlayState::weatherFrame(const omk::View& v) {
         return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
     };
     const long now = static_cast<long>(weatherClockMs);
-    weather.tick(bits, now, covered, noPlayer, crt, [&](int m) {
+    weather.tick(viewBits, now, covered, noPlayer, crt, [&](int m) {
         const bool ran = session.postMessage(m, -1);    // event 43; the sender word is unset
         std::printf("frame %ld: weather - message %d posted (Game_RaiseEvent 43) %s\n",
-                    n, m, ran ? "to its handler" : "- no handler subscribes");
+                    frameNo, m, ran ? "to its handler" : "- no handler subscribes");
     });
     if (weather.state() != weatherStateTold) {
         weatherStateTold = weather.state();
         std::printf("frame %ld: weather - state %d, %d drops%s, next change at %ld ms (now %ld)\n",
-                    n, weather.state(), weather.count(), covered ? ", a roof overhead" : "",
+                    frameNo, weather.state(), weather.count(), covered ? ", a roof overhead" : "",
                     weather.waitEndsAt(), now);
     }
-    const auto drops = weather.step(bits, v.cam.eye, v.cam.at);
+    const auto drops = weather.step(viewBits, v.cam.eye, v.cam.at);
     if (drops.empty()) {
-        if (n % 30 == 0)
-            std::printf("frame %ld: weather - state %d, %d drops, nothing stepped%s\n", n,
+        if (frameNo % 30 == 0)
+            std::printf("frame %ld: weather - state %d, %d drops, nothing stepped%s\n", frameNo,
                         weather.state(), weather.count(), covered ? " (a roof overhead)" : "");
         return;
     }
@@ -106,7 +106,7 @@ void PlayState::weatherFrame(const omk::View& v) {
         const int x0 = static_cast<int>(pa.x) + v.vx, y0 = static_cast<int>(pa.y) + v.vy;
         const int x1 = static_cast<int>(pb.x) + v.vx, y1 = static_cast<int>(pb.y) + v.vy;
         if (!onScreen(x0, y0) || !onScreen(x1, y1)) continue;
-        if (bits & 2u) {
+        if (viewBits & 2u) {
             // `I2D_DrawLine` flags 0x18: the scene's fog colour (+336) at the
             // drop, 0xC0C0C0 at its tail
             weatherLines.push_back({x0, y0, x1, y1, fog, 0xC0C0C0u});
@@ -118,9 +118,9 @@ void PlayState::weatherFrame(const omk::View& v) {
         }
     }
     // once a second, from what the projection kept - the draw's own input
-    if (n % 30 == 0)
+    if (frameNo % 30 == 0)
         std::printf("frame %ld: weather - %zu drops stepped, %zu streaks and %zu flakes drawn\n",
-                    n, drops.size(), weatherLines.size(), weatherFlakes.size());
+                    frameNo, drops.size(), weatherLines.size(), weatherFlakes.size());
 }
 
 // The drops into `fb`, under every interface layer - the 3D view's own

@@ -288,12 +288,12 @@ int sceneViewer(const std::string& fr, const std::string& setName,
         // clamped at the engine's 3.0 - the loop sleeps 16 ms, so it was
         // shimmering twice as fast as the game (todo/sixty-fps.md 2).
         {
-            float d = 1.0f;
+            float steps = 1.0f;
             const Uint32 nowMs = SDL_GetTicks();
             if (!frameBudget && sceneShimmerMs)
-                d = std::min(3.0f, static_cast<float>(nowMs - sceneShimmerMs) * 30.0f / 1000.0f);
+                steps = std::min(3.0f, static_cast<float>(nowMs - sceneShimmerMs) * 30.0f / 1000.0f);
             sceneShimmerMs = nowMs;
-            sceneShimmer += 2.0f * d;
+            sceneShimmer += 2.0f * steps;
         }
         while (sceneShimmer >= omk::kShimmerWrap) sceneShimmer -= omk::kShimmerWrap;
         view.shimmerClock = sceneShimmer;

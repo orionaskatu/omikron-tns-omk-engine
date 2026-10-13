@@ -145,7 +145,7 @@ void PlayState::worldStaged() {
                 s.placeTold = true;
                 std::printf("frame %ld: actor %d %s has no drawable geometry "
                             "(%zu meshes, %zu corners after the drawable mask) - "
-                            "nothing to stage\n", n, s.actor, s.model.c_str(),
+                            "nothing to stage\n", frameNo, s.actor, s.model.c_str(),
                             s.mo ? s.mo->meshes.size() : 0u,
                             s.mo ? s.mo->rest.corners.size() : 0u);
             }
@@ -210,7 +210,7 @@ void PlayState::worldStaged() {
                             if (who == omk::SceneRunner::kNodeUnset) continue;
                             cand->cacheNode(t.objectIndex, d.table, who);
                             std::printf("frame %ld: node '%s' of object %d '%s' (%s start) "
-                                        "resolves BY NAME to actor %d\n", n, d.node.c_str(),
+                                        "resolves BY NAME to actor %d\n", frameNo, d.node.c_str(),
                                         t.object, t.name.c_str(), t.how.c_str(), who);
                         }
                         if (who == omk::SceneRunner::kNodePlayer) who = playerId;
@@ -219,7 +219,7 @@ void PlayState::worldStaged() {
                             static bool said = false;
                             if (!said) std::printf("frame %ld: node '%s' of object '%s' names the "
                                                    "PLAYER - not taken (his channel owns him)\n",
-                                                   n, d.node.c_str(), t.name.c_str());
+                                                   frameNo, d.node.c_str(), t.name.c_str());
                             said = true;
                             continue;
                         }
@@ -267,7 +267,7 @@ void PlayState::worldStaged() {
             s.poolWas = run;
             if (prog >= 0 && stagedProbe)
                 std::printf("    pool %ld actor %d %s driven by the %s pool (%s)\n",
-                            n, s.actor, s.model.c_str(),
+                            frameNo, s.actor, s.model.c_str(),
                             run == &sc ? "ACTIVE" : "OUTGOING", run->file().c_str());
         }
         int sceneClip = -1, scenePath = -1;
@@ -462,7 +462,7 @@ void PlayState::worldStaged() {
             if (stagedProbe && hadOne && sceneClip >= 0) {
                 const float dx = s.at[0] - wasAt[0], dz = s.at[2] - wasAt[2];
                 std::printf("    handover %ld actor %d %s  %.0f %.0f -> %.0f %.0f"
-                            "   gap %.0f\n", n, s.actor, s.model.c_str(),
+                            "   gap %.0f\n", frameNo, s.actor, s.model.c_str(),
                             wasAt[0], wasAt[2], s.at[0], s.at[2],
                             std::sqrt(dx * dx + dz * dz));
             }
@@ -609,7 +609,7 @@ void PlayState::worldStaged() {
                     if (patrolTold.insert(s.actor).second)
                         std::printf("frame %ld: actor %d %s - PATROLS (Shoot_ActorAction 1): "
                                     "operand %d -> route %d on floor %d, point 0 at %.0f %.0f, "
-                                    "%d points%s\n", n, s.actor, s.model.c_str(), a3,
+                                    "%d points%s\n", frameNo, s.actor, s.model.c_str(), a3,
                                     ar.route, static_cast<signed char>(ar.node & 0xFF),
                                     double(ar.goalX), double(ar.goalZ),
                                     routeLen(ar),
@@ -628,12 +628,12 @@ void PlayState::worldStaged() {
                 }
                 // logged when the action, the clip or the state CHANGES - a
                 // request repeated every tick says nothing new
-                static std::map<int, std::array<int, 3>> actionTold;
+                static std::map<int, std::array<int, 3>> gunActionTold;
                 const std::array<int, 3> key{action, o.clipType, ar.state};
-                if (auto at = actionTold.find(s.actor); at == actionTold.end() || at->second != key) {
-                    actionTold[s.actor] = key;
+                if (auto at = gunActionTold.find(s.actor); at == gunActionTold.end() || at->second != key) {
+                    gunActionTold[s.actor] = key;
                     std::printf("frame %ld: actor %d %s - ACTION %d (Shoot_ActorAction, %s): %s "
-                                "clip type %d, state %d, timer %.0f\n", n, s.actor,
+                                "clip type %d, state %d, timer %.0f\n", frameNo, s.actor,
                                 s.model.c_str(), action, why,
                                 o.parked ? "PARKED under flag 8 -" : "", o.clipType, ar.state,
                                 double(ar.timer));
@@ -765,7 +765,7 @@ void PlayState::worldStaged() {
                         const bool ran = session.postMessage(3, s.actor);
                         std::printf("frame %ld: actor %d %s - ASTAROTH DEAD (sub_4800C0 "
                                     "0x480245): health %d, his clip played out - message 3 "
-                                    "%s\n", n, s.actor, s.model.c_str(), ar.health,
+                                    "%s\n", frameNo, s.actor, s.model.c_str(), ar.health,
                                     ran ? "handled" : "unsubscribed");
                         gc = GunClip{};
                         clipHolds = true;
@@ -780,7 +780,7 @@ void PlayState::worldStaged() {
                             astPlace(aa);
                         }
                         std::printf("frame %ld: actor %d %s - his picked clip over (sub_4800C0): "
-                                    "state %d resumes with clip %d, health %d\n", n, s.actor,
+                                    "state %d resumes with clip %d, health %d\n", frameNo, s.actor,
                                     s.model.c_str(), ar.state, aa.clip, ar.health);
                     }
                 } else if (gandharRec && gandharActors.count(s.actor)) {
@@ -798,12 +798,12 @@ void PlayState::worldStaged() {
                     ga.node[2] = ga.pos[2];
                     for (int k = 0; k < 3; ++k) s.walkMove[k] = ga.node[k] - s.at[k];
                     std::printf("frame %ld: actor %d %s - GANDHAR's picked clip over "
-                                "(sub_47F6F0): action %d's clip %d again\n", n, s.actor,
+                                "(sub_47F6F0): action %d's clip %d again\n", frameNo, s.actor,
                                 s.model.c_str(), deadIt->second.state, ga.clip);
                 } else {
                     deadIt->second.flags &= ~8u;
                     std::printf("frame %ld: actor %d %s - picked clip over (sub_421770): "
-                                "type %d after %.0f frames, facing %.1f\n", n, s.actor,
+                                "type %d after %.0f frames, facing %.1f\n", frameNo, s.actor,
                                 s.model.c_str(), gc.type, double(gc.frame), double(s.facing));
                     gc = GunClip{};
                     // `sub_421A20(+12, 0)`: his previous clip back, at 1.0
@@ -858,7 +858,7 @@ void PlayState::worldStaged() {
                         }
                         if (k)
                             std::printf("frame %ld: actor %d %s - ATTACKS (Shoot_ActorEnter +112): "
-                                        "%d type-12 clip%s, first slot %d\n", n, s.actor,
+                                        "%d type-12 clip%s, first slot %d\n", frameNo, s.actor,
                                         s.model.c_str(), k, k == 1 ? "" : "s", fresh.attacks[0]);
                     }
                     fresh.state = 6;          // the hub, where a
@@ -935,21 +935,21 @@ void PlayState::worldStaged() {
                         if (astarothHealth >= 0) {
                             fresh.health = astarothHealth;
                             std::printf("frame %ld: ASTAROTH HEALTH - the test harness "
-                                        "--astaroth-health writes +92 = %d\n", n, astarothHealth);
+                                        "--astaroth-health writes +92 = %d\n", frameNo, astarothHealth);
                         }
                         actorSlotTimer[s.actor] = {0.0f, 0.0f, 0.0f, 0.0f};
                         if (s.mo) {
                             int tire[4];
                             omk::astarothTireSlots(s.mo->meshes, tire);
                             std::printf("frame %ld: actor %d %s - weapon slots (sub_436DD0 "
-                                        "\"Tire\"): %s, %s\n", n, s.actor, s.model.c_str(),
+                                        "\"Tire\"): %s, %s\n", frameNo, s.actor, s.model.c_str(),
                                         tire[0] >= 0 ? s.mo->meshes[static_cast<std::size_t>(tire[0])].name : "-",
                                         tire[1] >= 0 ? s.mo->meshes[static_cast<std::size_t>(tire[1])].name : "-");
                         }
                         std::printf("frame %ld: actor %d %s - ASTAROTH SETUP (sub_47FF70): state "
                                     "%d, +88 %d, flags 0x%x, AstDos mesh %d, %d of %d souls found "
                                     "and shown at %d hits, difficulty %.1f, the world-hit "
-                                    "callback armed\n", n, s.actor, s.model.c_str(), fresh.state,
+                                    "callback armed\n", frameNo, s.actor, s.model.c_str(), fresh.state,
                                     fresh.actionCounter, fresh.flags, backMesh, shown,
                                     omk::kAstarothSouls, omk::kAstarothSoulHits,
                                     double(astaroth.difficulty));
@@ -977,7 +977,7 @@ void PlayState::worldStaged() {
                             shootTablesLoaded = true;
                             if (!shootTables.loadJson(tb + "/shoot_ai.json"))
                                 std::printf("frame %ld: GANDHAR - tables/shoot_ai.json did not "
-                                            "load: his scripts are empty\n", n);
+                                            "load: his scripts are empty\n", frameNo);
                         }
                         omk::GandharActor& ga = gandharActors[s.actor];
                         ga = omk::GandharActor{};
@@ -985,7 +985,7 @@ void PlayState::worldStaged() {
                         if (gandharHealth >= 0) {
                             it->second.health = gandharHealth;
                             std::printf("frame %ld: GANDHAR HEALTH - the test harness "
-                                        "--gandhar-health writes +92 = %d\n", n, gandharHealth);
+                                        "--gandhar-health writes +92 = %d\n", frameNo, gandharHealth);
                         }
                         std::int32_t p3 = 0;
                         session.actorProperty(s.actor, 3, p3);
@@ -1008,7 +1008,7 @@ void PlayState::worldStaged() {
                         s.pelvis = true;
                         std::printf("frame %ld: actor %d %s - GANDHAR ENTERS (sub_47DFD0): node y "
                                     "%.0f (+60 %.0f, +64 %.1f), speed %.1f (property 3 = %d), "
-                                    "state %d, clip %d, health %d, scripts %zu/%zu/%zu\n", n,
+                                    "state %d, clip %d, health %d, scripts %zu/%zu/%zu\n", frameNo,
                                     s.actor, s.model.c_str(), double(ga.node[1]),
                                     double(it->second.groundY), double(it->second.height),
                                     double(ga.speed),
@@ -1029,7 +1029,7 @@ void PlayState::worldStaged() {
                         gunEntryPending.insert(s.actor);
                         std::printf("frame %ld: actor %d %s - entry action %d HELD: he is "
                                     "not on the grid yet (Shoot_ActorEnter thinks first)\n",
-                                    n, s.actor, s.model.c_str(), act);
+                                    frameNo, s.actor, s.model.c_str(), act);
                     }
                     // ...and put on his SCENE action, as `Shoot_ActorEnter`
                     // does - for the robbers, action 3: the hub, the walking
@@ -1052,13 +1052,13 @@ void PlayState::worldStaged() {
                         gunEntryPending.erase(s.actor);
                         std::printf("frame %ld: actor %d %s - ENTERED WITH NO ACTION "
                                     "(sub_47DFD0's default arm): clip type 11, state 0\n",
-                                    n, s.actor, s.model.c_str());
+                                    frameNo, s.actor, s.model.c_str());
                     } else if ((onGridAtEntry || !shootMap.valid()) && !bossHere)
                         applyAction(it->second, act, session.shootActionArg(s.actor),
                                     "his scene action, at entry");
                     std::printf("frame %ld: actor %d %s - shoot brain: "
                                 "acquire %.0f engage %.0f disengage %.0f "
-                                "cone %.3f health %d\n", n, s.actor,
+                                "cone %.3f health %d\n", frameNo, s.actor,
                                 s.model.c_str(), it->second.rangeAcquire,
                                 it->second.rangeInner, it->second.rangeThird,
                                 it->second.coneCos, it->second.health);
@@ -1149,7 +1149,7 @@ void PlayState::worldStaged() {
                         s.drawAt[1] = rec.groundY;
                         std::printf("frame %ld: actor %d %s - stands at y %.0f "
                                     "(Shoot_ActorEnter: floor %d's edge %.0f minus his "
-                                    "%.0f) and does not leave it\n", n, s.actor,
+                                    "%.0f) and does not leave it\n", frameNo, s.actor,
                                     s.model.c_str(), double(rec.groundY), fl0,
                                     double(shootMap.floors()[
                                         static_cast<std::size_t>(fl0)].bound[3]),
@@ -1161,7 +1161,7 @@ void PlayState::worldStaged() {
                     static std::set<int> floorTold;
                     if (onGrid && floorTold.insert(s.actor).second)
                         std::printf("frame %ld: actor %d %s - Shoot_Think: floor %d, cell "
-                                    "(%d,%d)\n", n, s.actor, s.model.c_str(),
+                                    "(%d,%d)\n", frameNo, s.actor, s.model.c_str(),
                                     static_cast<signed char>(rec.node & 0xFF),
                                     rec.destX, rec.destZ);
                     // ...and when he LEAVES it, which is the state the
@@ -1174,7 +1174,7 @@ void PlayState::worldStaged() {
                         std::printf("frame %ld: actor %d %s - OFF THE GRID at %.0f %.0f "
                                     "%.0f: Shoot_Think finds no floor, so nothing walls "
                                     "him in (sub_4368E0 is the engine's recovery and runs "
-                                    "only at his entry)\n", n, s.actor, s.model.c_str(),
+                                    "only at his entry)\n", frameNo, s.actor, s.model.c_str(),
                                     double(at[0]), double(at[1]), double(at[2]));
                 }
                 // ---- ASTAROTH's tick is his own (`sub_4800C0`, step 3 of
@@ -1196,7 +1196,7 @@ void PlayState::worldStaged() {
                             astPlace(aa);
                             std::printf("frame %ld: actor %d %s - ASTAROTH STANDS (sub_4B2E90): "
                                         "the stand grid, %d frames, cell %d, aim %.1f / %.1f, "
-                                        "weights %d / %d, keys +%d +%d +%d +%d\n", n, s.actor,
+                                        "weights %d / %d, keys +%d +%d +%d +%d\n", frameNo, s.actor,
                                         s.model.c_str(), aa.clipFrames, (aa.clipFrames + 1) / 9,
                                         double(aa.aimYaw), double(aa.aimPitch),
                                         aa.blend.wYaw, aa.blend.wPitch, aa.blend.off8,
@@ -1232,14 +1232,14 @@ void PlayState::worldStaged() {
                             rec.flags |= 8u;
                             rec.repeats = 0;
                             std::printf("frame %ld: actor %d %s - ASTAROTH plays clip %d (type %d, "
-                                        "%d frames) picked, %.2f a frame\n", n, s.actor,
+                                        "%d frames) picked, %.2f a frame\n", frameNo, s.actor,
                                         s.model.c_str(), qc ? qc->slot : -1, qc ? qc->type : -1,
                                         qc ? qc->frames : 0, double(gc.turn));
                         }
                         astPlace(aa);
                         if (rec.state != stateWas)
                             std::printf("frame %ld: actor %d %s - ASTAROTH state %d -> %d (clip %d), "
-                                        "health %d, at %.0f %.0f %.0f facing %.1f\n", n, s.actor,
+                                        "health %d, at %.0f %.0f %.0f facing %.1f\n", frameNo, s.actor,
                                         s.model.c_str(), stateWas, rec.state, aa.clip, rec.health,
                                         double(aa.node[0]), double(aa.node[1]),
                                         double(aa.node[2]), double(s.facing));
@@ -1260,7 +1260,7 @@ void PlayState::worldStaged() {
                     if (rec.state != stateWas)
                         std::printf("frame %ld: actor %d %s - GANDHAR action %d -> %d (clip %d, "
                                     "%d frames), health %d, band %d, step %d/%d, node %.0f %.0f "
-                                    "%.0f facing %.1f\n", n, s.actor, s.model.c_str(), stateWas,
+                                    "%.0f facing %.1f\n", frameNo, s.actor, s.model.c_str(), stateWas,
                                     rec.state, ga.clip, ga.clipFrames, rec.health, rec.band,
                                     rec.scriptStep, rec.repeats, double(ga.node[0]),
                                     double(ga.node[1]), double(ga.node[2]), double(s.facing));
@@ -1307,7 +1307,7 @@ void PlayState::worldStaged() {
                     if (h >= 0 && steerTold.insert(s.actor).second)
                         std::printf("frame %ld: actor %d %s - STEERS by the path field "
                                     "(sub_421CD0 -> sub_435C40): heading %d from his cell "
-                                    "(%d,%d), facing %.1f\n", n, s.actor, s.model.c_str(), h,
+                                    "(%d,%d), facing %.1f\n", frameNo, s.actor, s.model.c_str(), h,
                                     rec.destX, rec.destZ, double(s.facing));
                     return h;
                 };
@@ -1339,12 +1339,12 @@ void PlayState::worldStaged() {
                         sightTold[s.actor] = key;
                         if (gfl < 0)
                             std::printf("frame %ld: actor %d %s - GRID SIGHT (sub_4359A0): "
-                                        "none - he is on no floor\n", n, s.actor,
+                                        "none - he is on no floor\n", frameNo, s.actor,
                                         s.model.c_str());
                         else
                             std::printf("frame %ld: actor %d %s - GRID SIGHT (sub_4359A0, "
                                         "target->self) from the player's (%d,%d) to his "
-                                        "(%d,%d) on floor %d: %s", n, s.actor,
+                                        "(%d,%d) on floor %d: %s", frameNo, s.actor,
                                         s.model.c_str(), playerShootRec.destX,
                                         playerShootRec.destZ, rec.destX, rec.destZ, gfl,
                                         gridSees ? "CLEAR\n" : "BLOCKED");
@@ -1392,14 +1392,14 @@ void PlayState::worldStaged() {
                     ft->second != std::make_pair(gunFloor, playerFloor)) {
                     floorsTold[s.actor] = {gunFloor, playerFloor};
                     std::printf("frame %ld: actor %d %s - FLOORS: he %d, the player %d, "
-                                "same %d, latched %d\n", n, s.actor, s.model.c_str(),
+                                "same %d, latched %d\n", frameNo, s.actor, s.model.c_str(),
                                 gunFloor, playerFloor, int(ein.sameNode),
                                 int((rec.flags & 0x20u) != 0));
                 }
                 static std::set<int> crossTold;
                 if (!ein.sameNode && crossTold.insert(s.actor).second)
                     std::printf("frame %ld: actor %d %s - the player is on ANOTHER FLOOR "
-                                "(%d against his %d)%s\n", n, s.actor, s.model.c_str(),
+                                "(%d against his %d)%s\n", frameNo, s.actor, s.model.c_str(),
                                 playerFloor, gunFloor,
                                 (rec.flags & 0x20u) ? " and he has seen him: looking for "
                                                       "a staircase (sub_436BB0)"
@@ -1415,7 +1415,7 @@ void PlayState::worldStaged() {
                         if ((rec.flags & 0x20u) && linkTold.insert(s.actor).second)
                             std::printf("frame %ld: actor %d %s - takes the STAIR %d of "
                                         "floor %d: its near end %.0f %.0f %.0f, its far "
-                                        "end %.0f %.0f %.0f on floor %u\n", n, s.actor,
+                                        "end %.0f %.0f %.0f on floor %u\n", frameNo, s.actor,
                                         s.model.c_str(), ein.link, gunFloor,
                                         double(L.from[0]), double(L.from[1]),
                                         double(L.from[2]), double(L.to[0]),
@@ -1490,7 +1490,7 @@ void PlayState::worldStaged() {
                         rayTold[s.actor] = rayKey;
                         if (spectreArm || watchArm)
                             std::printf("frame %ld: actor %d %s - RAY (sub_4449E0) at %.1f, "
-                                        "%s: %s, %s cone\n", n, s.actor, s.model.c_str(),
+                                        "%s: %s, %s cone\n", frameNo, s.actor, s.model.c_str(),
                                         double(ao.dist3d),
                                         spectreArm ? "the SPECTRE's sight (type 12)"
                                                    : "the CROSS-FLOOR watcher's sight (0x800000)",
@@ -1500,7 +1500,7 @@ void PlayState::worldStaged() {
                                                                        : "outside his");
                         else
                         std::printf("frame %ld: actor %d %s - RAY (sub_4449E0) at %.1f, inside "
-                                    "half his inner range %.1f: %s\n", n, s.actor,
+                                    "half his inner range %.1f: %s\n", frameNo, s.actor,
                                     s.model.c_str(), double(ao.dist3d),
                                     double(rec.rangeInner) * 0.5,
                                     !sightSlot ? "no set to cast over"
@@ -1616,7 +1616,7 @@ void PlayState::worldStaged() {
                                                              rec.goalX, rec.goalZ);
                         fin.routePointHasClip = clip > 0;
                         std::printf("frame %ld: actor %d %s - PATROL point %d -> %d of %d, "
-                                    "now walking to %.0f %.0f%s\n", n, s.actor,
+                                    "now walking to %.0f %.0f%s\n", frameNo, s.actor,
                                     s.model.c_str(), was, rec.repeats,
                                     rec.route < static_cast<int>(wl.size())
                                         ? int(wl[static_cast<std::size_t>(rec.route)].len)
@@ -1702,11 +1702,11 @@ void PlayState::worldStaged() {
                             gunAnims[s.actor].clip = nullptr;
                             if (atkTold[s.actor]++ < 3)
                                 std::printf("frame %ld: actor %d %s - ATTACK CLIP (sub_4272B0 case 9): "
-                                            "slot %d '%s', %d frames\n", n, s.actor, s.model.c_str(),
+                                            "slot %d '%s', %d frames\n", frameNo, s.actor, s.model.c_str(),
                                             atk->slot, atk->name.c_str(), atk->frames);
                         } else if (atkTold[s.actor]++ < 3) {
                             std::printf("frame %ld: actor %d %s - anim ATTAQUE PROCHE non existante "
-                                        "dans le .ANI (slot %d)\n", n, s.actor, s.model.c_str(),
+                                        "dans le .ANI (slot %d)\n", frameNo, s.actor, s.model.c_str(),
                                         rec.attackSlot);
                         }
                     } else if (rec.state == 11 && grpS >= 0 && grpS < 64) {
@@ -1739,7 +1739,7 @@ void PlayState::worldStaged() {
                     rec.link = -1;
                     std::printf("frame %ld: actor %d %s - CHANGED FLOOR %d -> %d at "
                                 "%.0f %.0f %.0f (sub_424DE0 state 2's far end)\n",
-                                n, s.actor, s.model.c_str(), was,
+                                frameNo, s.actor, s.model.c_str(), was,
                                 static_cast<signed char>(rec.node & 0xFF),
                                 double(s.at[0]), double(rec.groundY), double(s.at[2]));
                 }
@@ -1759,7 +1759,7 @@ void PlayState::worldStaged() {
                     if (!s.brainTold && gunCellSeeded.count(s.actor)) {
                         s.brainTold = true;
                         std::printf("frame %ld: actor %d %s - brain %d -> %d, "
-                                    "outcome %d, %.0f units away\n", n,
+                                    "outcome %d, %.0f units away\n", frameNo,
                                     s.actor, s.model.c_str(), before,
                                     rec.state, int(st.outcome), ao.dist3d);
                     }
@@ -1850,7 +1850,7 @@ void PlayState::worldStaged() {
                             if (d01Told.insert({s.actor, ac->type}).second)
                                 std::printf("frame %ld: actor %d %s - clip type %d starts "
                                             "(sub_421A20): frame 0->1 root %.2f %.2f %.2f, "
-                                            "%d root keys\n", n, s.actor, s.model.c_str(),
+                                            "%d root keys\n", frameNo, s.actor, s.model.c_str(),
                                             ac->type, double(d01[0]), double(d01[1]),
                                             double(d01[2]),
                                             static_cast<int>(ac->root.size() / 3));
@@ -1870,7 +1870,7 @@ void PlayState::worldStaged() {
                             if (gunLooped.insert(s.actor).second)
                                 std::printf("frame %ld: actor %d %s - current clip "
                                             "(sub_421370): type %d slot %d, %d frames, "
-                                            "looped to %.1f\n", n, s.actor,
+                                            "looped to %.1f\n", frameNo, s.actor,
                                             s.model.c_str(), ac->type, ac->slot,
                                             ac->frames, double(ga.frame));
                         }
@@ -1922,7 +1922,7 @@ void PlayState::worldStaged() {
                                     s.walkTold = true;
                                     std::printf("frame %ld: actor %d %s - walks (sub_421370): "
                                                 "clip type %d, root delta %.2f %.2f %.2f "
-                                                "at facing %.1f from %.0f %.0f\n", n,
+                                                "at facing %.1f from %.0f %.0f\n", frameNo,
                                                 s.actor, s.model.c_str(), ac->type,
                                                 double(dx), double(dy), double(dz),
                                                 double(s.facing), double(x0), double(z0));
@@ -1931,7 +1931,7 @@ void PlayState::worldStaged() {
                                     s.walkWallTold = true;
                                     std::printf("frame %ld: actor %d %s - the wall test "
                                                 "(sub_421140) stops his walk at %.0f %.0f: "
-                                                "%s, facing %.1f, now %.0f %.0f\n", n,
+                                                "%s, facing %.1f, now %.0f %.0f\n", frameNo,
                                                 s.actor, s.model.c_str(), double(x0),
                                                 double(z0), how, double(s.facing),
                                                 double(s.at[0] + s.walkMove[0]),
@@ -2019,20 +2019,20 @@ void PlayState::worldStaged() {
                         sin.dir[2] = static_cast<float>(sdz);
                         // `sub_423B10` wakes a freeze first - unreachable here,
                         // since a frozen gunman never strikes (`0x8000` above)
-                        shootWake(n, "a strike (sub_423B10)");
+                        shootWake(frameNo, "a strike (sub_423B10)");
                         const omk::HitOut sho = omk::shootApplyStrike(playerShootRec, sin);
                         std::printf("frame %ld: actor %d %s - STRIKE (outcome 3, sub_423B10): "
                                     "attack slot %d, range %d m (%d), %.1f away, damage %d, "
-                                    "difficulty %d\n", n, s.actor, s.model.c_str(),
+                                    "difficulty %d\n", frameNo, s.actor, s.model.c_str(),
                                     rec.attackSlot, int(rangeM), 39 * int(rangeM), sd,
                                     int(dmgA), sin.difficulty);
                         if (sho.refused)
                             std::printf("  PLAYER strike REFUSED (`sub_423B10` returns -1)\n");
                         else if (sho.healthWas <= 0)
                             std::printf("frame %ld: PLAYER HIT by actor %d's strike - he is down "
-                                        "already (health %d): nothing\n", n, s.actor, sho.healthWas);
+                                        "already (health %d): nothing\n", frameNo, s.actor, sho.healthWas);
                         else
-                            applyPlayerDamage(n, s.actor, "strike", int(dmgA), int(shieldS), sho);
+                            applyPlayerDamage(frameNo, s.actor, "strike", int(dmgA), int(shieldS), sho);
                     }
                 }
                 const bool fullArm = st.outcome == omk::ShootOutcome::Fire;
@@ -2060,7 +2060,7 @@ void PlayState::worldStaged() {
                         rec.weapon = shootWeapons.find(type, false);
                         if (gunTold.insert(s.actor).second) {
                             std::printf("frame %ld: actor %d %s - Shoot_InitWeapon: held slot %d, "
-                                        "object %d '%s' kind %d -> type %d, ", n, s.actor,
+                                        "object %d '%s' kind %d -> type %d, ", frameNo, s.actor,
                                         s.model.c_str(), hs, obj, stem.c_str(), kind, type);
                             if (rec.weapon)
                                 std::printf("row rate %.1f speed %.1f damage %d\n",
@@ -2073,7 +2073,7 @@ void PlayState::worldStaged() {
                     if (!fireTest && gunTold.insert(s.actor).second)
                         std::printf("frame %ld: actor %d %s - the fire test is clear "
                                     "(sub_4348B0: ANIMS\\%s.ANI group %d, +8 %s) - he aims "
-                                    "and never shoots\n", n, s.actor, s.model.c_str(),
+                                    "and never shoots\n", frameNo, s.actor, s.model.c_str(),
                                     pedAniName.c_str(), grpT,
                                     w8 ? std::to_string(*w8).c_str() : "absent");
                     omk::FireGate gate = omk::FireGate::Released;
@@ -2150,7 +2150,7 @@ void PlayState::worldStaged() {
                         if (gm.live && gate != omk::FireGate::Released &&
                             gunAimTold.insert(s.actor).second)
                             std::printf("frame %ld: actor %d %s - AIM LAYER (sub_434C30): yaw "
-                                        "%.3f pitch %.3f rad, lowered %.2f\n", n, s.actor,
+                                        "%.3f pitch %.3f rad, lowered %.2f\n", frameNo, s.actor,
                                         s.model.c_str(), double(gm.yaw), double(gm.pitch),
                                         double(rec.weaponLowered));
                     }
@@ -2237,7 +2237,7 @@ void PlayState::worldStaged() {
                             while (dd > 180.0) dd -= 360.0;
                             while (dd < -180.0) dd += 360.0;
                             std::printf("frame %ld: actor %d %s - HIS BARREL points %.1f degrees off "
-                                        "the line to the player\n", n, s.actor, s.model.c_str(), dd);
+                                        "the line to the player\n", frameNo, s.actor, s.model.c_str(), dd);
                         }
                         rs.yawDeg = aim.yawDeg;
                         rs.pitchDeg = aim.pitchDeg;
@@ -2260,9 +2260,9 @@ void PlayState::worldStaged() {
                         const omk::RecordShotOut out = projectiles.fireFromRecord(s.actor, *rec.weapon, rs);
                         if (out.entry >= 0) {
                             const long k = ++gunShots[s.actor];
-                            shotSound(n, muzzleFx, rs.muzzle, player->pos(), "a gunman's fire");
+                            shotSound(frameNo, muzzleFx, rs.muzzle, player->pos(), "a gunman's fire");
                             // `sub_4246E0(him, the muzzle)` as the entry is made
-                            shootNoise(n, s.actor, rs.muzzle, "a gunman's shot");
+                            shootNoise(frameNo, s.actor, rs.muzzle, "a gunman's shot");
                             const omk::Projectile& e =
                                 projectiles.entries()[static_cast<std::size_t>(out.entry)];
                             const float spd = e.speed != 0.0f ? e.speed : 1.0f;
@@ -2270,7 +2270,7 @@ void PlayState::worldStaged() {
                                         "Actor_TickProjectiles: entry %d, speed %.1f, damage %d, "
                                         "dir %.3f %.3f %.3f (yaw %.1f pitch %.1f), from %s "
                                         "%.1f %.1f %.1f, at the player's %s %.0f away, jitter %d %d %d "
-                                        "of r %.1f, %d live\n", n, k, s.actor, s.model.c_str(),
+                                        "of r %.1f, %d live\n", frameNo, k, s.actor, s.model.c_str(),
                                         out.entry, double(e.speed), e.kind,
                                         double(e.vel[0] / spd), double(e.vel[1] / spd),
                                         double(e.vel[2] / spd), double(rs.yawDeg),
@@ -2280,7 +2280,7 @@ void PlayState::worldStaged() {
                                         jit[0], jit[1], jit[2], double(r), projectiles.live());
                         } else {
                             std::printf("frame %ld: GUNMAN SHOT refused - actor %d, the pool "
-                                        "is full (%d live)\n", n, s.actor, projectiles.live());
+                                        "is full (%d live)\n", frameNo, s.actor, projectiles.live());
                         }
                     }
                 }
@@ -2307,7 +2307,7 @@ void PlayState::worldStaged() {
                         gc.turn = st.turnTotal / static_cast<float>(tc->frames);
                         rec.flags |= 8u;
                         std::printf("frame %ld: actor %d %s - TURN CLIP (sub_421A20): type %d, "
-                                    "%d frames, %.2f a frame, from facing %.1f\n", n, s.actor,
+                                    "%d frames, %.2f a frame, from facing %.1f\n", frameNo, s.actor,
                                     s.model.c_str(), gc.type, gc.frames, double(gc.turn),
                                     double(s.facing));
                     } else {
@@ -2433,7 +2433,7 @@ void PlayState::worldStaged() {
                     const bool ran = session.postMessage(3, s.actor);
                     const auto& mr = session.messagesRun();
                     std::printf("frame %ld: actor %d %s - death clip over: message 3 "
-                                "(Game_RaiseEvent 43) %s", n, s.actor, s.model.c_str(),
+                                "(Game_RaiseEvent 43) %s", frameNo, s.actor, s.model.c_str(),
                                 ran ? "- handler " : "- NO handler subscribes\n");
                     if (ran && !mr.empty())
                         std::printf("%s +0x%zx\n", mr.back().table.c_str(),
@@ -2460,7 +2460,7 @@ void PlayState::worldStaged() {
                         }
                     std::printf("frame %ld: actor %d %s - %d/%zu tracks resolve "
                                 "against %zu meshes, %d frames, %d non-unit "
-                                "quaternions\n", n, s.actor, s.model.c_str(),
+                                "quaternions\n", frameNo, s.actor, s.model.c_str(),
                                 bound, shootTracks->ids.size(),
                                 s.mo->meshes.size(), shootTracks->frames, nonUnit);
                     if (bound == 0) {
@@ -2478,7 +2478,7 @@ void PlayState::worldStaged() {
                     s.shootTold = true;
                     std::printf("frame %ld: actor %d %s - shoot mode, action %d, "
                                 "character type %d -> %s (%s, %zu clips in the "
-                                "group)\n", n, s.actor, s.model.c_str(), act, grp,
+                                "group)\n", frameNo, s.actor, s.model.c_str(), act, grp,
                                 c ? "a clip" : "NO CLIP",
                                 pedAniName.empty() ? "no .ani loaded"
                                                    : pedAniName.c_str(),
@@ -2731,9 +2731,9 @@ void PlayState::worldStaged() {
                 // action, a head higher and 21 units off his seat.
                 const Staged* asPlayer = nullptr;
                 if (const int pid = session.playerActor(); pid >= 0)
-                    for (const auto& up : staged)
-                        if (up->actor == pid && up.get() != &s && up->headKnown) { asPlayer = up.get(); break; }
-                const float world[3] = {asPlayer ? asPlayer->headAt[0] : playerHeadKnown ? playerHeadAt[0] : pp[0],
+                    for (const auto& other : staged)
+                        if (other->actor == pid && other.get() != &s && other->headKnown) { asPlayer = other.get(); break; }
+                const float playerHead[3] = {asPlayer ? asPlayer->headAt[0] : playerHeadKnown ? playerHeadAt[0] : pp[0],
                                         asPlayer ? asPlayer->headAt[1] : playerHeadKnown ? playerHeadAt[1] : pp[1] - 60.0f,
                                         asPlayer ? asPlayer->headAt[2] : playerHeadKnown ? playerHeadAt[2] : pp[2]};
                 float pelvis[3] = {0, 0, 0};
@@ -2747,7 +2747,7 @@ void PlayState::worldStaged() {
                 // her frame, and the look tipped her head down at a man
                 // whose head is level with hers.
                 const float* base = s.pelvisDrawnKnown ? s.pelvisDrawnAt : s.at;
-                const float rel[3] = {world[0] - base[0], world[1] - base[1], world[2] - base[2]};
+                const float rel[3] = {playerHead[0] - base[0], playerHead[1] - base[1], playerHead[2] - base[2]};
                 float local[3];
                 // ...IN THE FRAME THE BODY WILL ACTUALLY BE DRAWN IN.
                 // A body a scene program drives is turned by the
@@ -2790,14 +2790,14 @@ void PlayState::worldStaged() {
                 s.placeTold = true;
                 std::printf("frame %ld: actor %d %s is shown but nothing says WHERE - "
                             "no placement record, no program path, no camera solve; "
-                            "not drawn\n", n, s.actor, s.model.c_str());
+                            "not drawn\n", frameNo, s.actor, s.model.c_str());
             }
             continue;
         }
         if (s.src != src) {
             s.src = src;
             std::printf("frame %ld: actor %d %s - pose source: %s\n",
-                        n, s.actor, s.model.c_str(), src);
+                        frameNo, s.actor, s.model.c_str(), src);
         }
         // `OMK_TRACE_ACTOR=<id>` - one line a frame for one body:
         // where the port thinks he stands and where it last drew him,
@@ -2811,7 +2811,7 @@ void PlayState::worldStaged() {
             std::printf("  [trace] frame %ld actor %d  at %.0f %.0f %.0f"
                         "  drawAt %.0f %.0f %.0f  placed %d progPlaced %d"
                         "  progRan %d  sceneClip %d  yaw %.0f  src %s\n",
-                        n, s.actor, s.at[0], s.at[1], s.at[2],
+                        frameNo, s.actor, s.at[0], s.at[1], s.at[2],
                         s.drawAt[0], s.drawAt[1], s.drawAt[2],
                         s.placed ? 1 : 0, s.progPlaced ? 1 : 0,
                         s.progRan ? 1 : 0, sceneClip,
@@ -2901,7 +2901,7 @@ void PlayState::worldStaged() {
             spanned("staged skin", [&] {
                 omk::applyPose(s.posed, restUsed, s.mo->meshes, pose, &s.mo->face, &fv);
             });
-        if (!s.gpu) s.lastSkinned = n;
+        if (!s.gpu) s.lastSkinned = frameNo;
         // THE ROOT MOTION: `Anim_RootDelta`'s running sum, weighted by
         // how much of the pose is the scene's, so a line stands where
         // it was staged and a fade lerps the position too.
@@ -3008,7 +3008,7 @@ void PlayState::worldStaged() {
                 s.deathFallTold = true;
                 std::printf("frame %ld: actor %d %s - death clip's root motion (sub_421770): "
                             "%.1f %.1f %.1f over %d frames, down %.1f, %d ticks against a "
-                            "wall\n", n, s.actor, s.model.c_str(), double(s.deathMove[0]),
+                            "wall\n", frameNo, s.actor, s.model.c_str(), double(s.deathMove[0]),
                             double(s.deathMove[1]), double(s.deathMove[2]),
                             s.deathClip->frames, double(s.deathMove[1]), s.deathWalls);
             }
@@ -3052,7 +3052,7 @@ void PlayState::worldStaged() {
                     std::printf("frame %ld: actor %d %s stands at y %.0f with the "
                                 "walkable floor %.0f BELOW him - kept where he is "
                                 "authored (a ledge the walk mesh does not carry)\n",
-                                n, s.actor, s.model.c_str(), s.at[1], drop);
+                                frameNo, s.actor, s.model.c_str(), s.at[1], drop);
                 }
             }
         }
@@ -3077,7 +3077,7 @@ void PlayState::worldStaged() {
         // a float from a sink without a screenshot (todo/astaroth.md 4)
         static const int feetLog = [] { const char* e = std::getenv("OMK_FEETLOG");
                                          return e ? std::atoi(e) : -1; }();
-        if (feetLog == s.actor && n % 30 == 0) {
+        if (feetLog == s.actor && frameNo % 30 == 0) {
             float low = -1e9f;
             if (!s.gpu) for (const auto& c : s.posed.corners) if (c.y > low) low = c.y;
             float under = s.at[1];
@@ -3087,7 +3087,7 @@ void PlayState::worldStaged() {
                                                    pelvis[2] + off[2]))
                     under = static_cast<float>(*g);
             std::printf("FEET %ld actor %d: lowest drawn %.1f, floor under %.1f, gap %.1f "
-                        "(pelvis %.1f, %s)\n", n, s.actor, double(low + off[1]),
+                        "(pelvis %.1f, %s)\n", frameNo, s.actor, double(low + off[1]),
                         double(under), double(under - (low + off[1])),
                         double(pelvis[1] + off[1]), s.pelvis ? "pelvis seat" : "feet seat");
         }
@@ -3106,7 +3106,7 @@ void PlayState::worldStaged() {
                                                    s.at[1] - 1.0, s.at[2]))
                     floorY = static_cast<float>(*g);
             std::printf("frame %ld: actor %d %s - dead: his pelvis %.1f above the floor\n",
-                        n, s.actor, s.model.c_str(),
+                        frameNo, s.actor, s.model.c_str(),
                         double(floorY - (pelvis[1] + off[1])));
         }
         // THE FACING, for a body no scene clip is turning:
@@ -3346,7 +3346,7 @@ void PlayState::worldStaged() {
                 spanned("staged skin", [&] {
                     omk::applyPose(s.posed, restUsed, s.mo->meshes, pose, &s.mo->face, &fv);
                 });
-                s.lastSkinned = n;
+                s.lastSkinned = frameNo;
             }
             if (s.gpu) { s.lightCount = reachN; s.lightsBlack = true; }
         }
@@ -3398,7 +3398,7 @@ void PlayState::worldStaged() {
                 for (const auto& c : s.posed.corners) { m[0] += c.r; m[1] += c.g; m[2] += c.b; }
                 const double k = 255.0 / static_cast<double>(s.posed.corners.size());
                 std::printf("frame %ld: actor %d %s LIT by the set (sub_440CA0) - base %d, "
-                            "%d lights reach, corners' mean %.0f %.0f %.0f\n", n, s.actor,
+                            "%d lights reach, corners' mean %.0f %.0f %.0f\n", frameNo, s.actor,
                             s.model.c_str(), baseGrey, reached, m[0] * k, m[1] * k, m[2] * k);
             }
         }
@@ -3489,7 +3489,7 @@ void PlayState::worldStaged() {
             }
             std::printf("  [body] frame %ld actor %d  at %.1f %.1f %.1f"
                         "  yaw %.1f  vertsMoved %.2f  src %s\n",
-                        n, s.actor, s.drawAt[0], s.drawAt[1], s.drawAt[2],
+                        frameNo, s.actor, s.drawAt[0], s.drawAt[1], s.drawAt[2],
                         bodyYaw * 57.2957795f, moved, src ? src : "-");
         }
         // ON THE FLOOR? A scene program's body walks its clip's root
@@ -3497,11 +3497,11 @@ void PlayState::worldStaged() {
         // that it stays on the set's own walkable mesh - which is what
         // decides the SENSE the delta is turned in, over a corpus
         // rather than over one waiter.
-        if (stagedProbe && (n % 20) == 0 && !playerSoup.empty() &&
+        if (stagedProbe && (frameNo % 20) == 0 && !playerSoup.empty() &&
             s.sceneTracks.valid()) {
             const auto g = omk::floorUnder(playerSoup, playerGrid, s.drawAt[0],
                                            s.drawAt[1] - 120.0, s.drawAt[2]);
-            std::printf("    floor %ld actor %d %s at %.0f %.0f %.0f  %s\n", n,
+            std::printf("    floor %ld actor %d %s at %.0f %.0f %.0f  %s\n", frameNo,
                         s.actor, s.model.c_str(), s.drawAt[0], s.drawAt[1],
                         s.drawAt[2], g ? "on the walk mesh" : "OFF the walk mesh");
         }
@@ -3512,7 +3512,7 @@ void PlayState::worldStaged() {
         // in `Actors_TickAll` uses the same two), so anything past 70
         // cannot have come from that path and is the CLIP's or the
         // composition's.
-        if (stagedProbe && (n % 100) == 0 && s.mo->root >= 0) {
+        if (stagedProbe && (frameNo % 100) == 0 && s.mo->root >= 0) {
             const int hd = s.mo->headOf();
             if (hd >= 0 && static_cast<std::size_t>(hd) < pose.size() &&
                 static_cast<std::size_t>(s.mo->root) < pose.size()) {
@@ -3523,12 +3523,12 @@ void PlayState::worldStaged() {
                 const float d = std::atan2(rf[0] * hf[2] - rf[2] * hf[0],
                                            rf[0] * hf[0] + rf[2] * hf[2]) * 57.29578f;
                 std::printf("    head %ld actor %d %s twist %.0f deg from the pelvis"
-                            "%s\n", n, s.actor, s.model.c_str(), d,
+                            "%s\n", frameNo, s.actor, s.model.c_str(), d,
                             std::fabs(d) > 70.0f ? "   <- past the engine's own "
                                                    "+-70 clamp" : "");
             }
         }
-        if (stagedProbe && (n % 100) == 0) {
+        if (stagedProbe && (frameNo % 100) == 0) {
             float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
             for (const auto& c : s.posed.corners) {
                 const float p[3] = {c.x, c.y, c.z};
@@ -3539,7 +3539,7 @@ void PlayState::worldStaged() {
             }
             std::printf("    probe %ld actor %d %s box %.0f %.0f %.0f .. %.0f %.0f "
                         "%.0f (%zu corners, %zu batches) cam eye %.0f %.0f %.0f at "
-                        "%.0f %.0f %.0f fov %.0f\n", n, s.actor, s.model.c_str(),
+                        "%.0f %.0f %.0f fov %.0f\n", frameNo, s.actor, s.model.c_str(),
                         lo[0], lo[1], lo[2], hi[0], hi[1], hi[2],
                         s.posed.corners.size(), s.posed.batches.size(),
                         view.cam.eye[0], view.cam.eye[1], view.cam.eye[2],
@@ -3556,21 +3556,21 @@ void PlayState::worldStaged() {
         static long farTold = -1000;
         int stagedDrawn = 0, stagedGpu = 0;
         for (const auto& up : staged) if (up->drawn) { ++stagedDrawn; stagedGpu += up->gpu; }
-        if (n - farTold >= 300 && !staged.empty()) {
-            farTold = n;
+        if (frameNo - farTold >= 300 && !staged.empty()) {
+            farTold = frameNo;
             long fxBuilt = 0, fxGated = 0;
             omk::particleGateCounts(fxBuilt, fxGated);
             std::printf("frame %ld: particles since the last line - %ld made into quads, %ld "
-                        "left out by the depth gate\n", n, fxBuilt, fxGated);
+                        "left out by the depth gate\n", frameNo, fxBuilt, fxGated);
             // the moving collision (`lazyPlace`): meshes the frames recorded,
             // and how many a query needed placed - counted by the placer
             std::printf("frame %ld: moving collision since the last line - %ld mesh placements "
-                        "recorded, %ld made\n", n, lazyRecordedTotal, lazyPlacedFrame);
+                        "recorded, %ld made\n", frameNo, lazyRecordedTotal, lazyPlacedFrame);
             lazyRecordedTotal = 0; lazyPlacedFrame = 0;
             std::printf("frame %ld: staged bodies - %zu staged, %d skinned and drawn, "
                         "%d beyond the clip distance and %d outside the view (not "
                         "skinned), %d posed by the renderer\n",
-                        n, staged.size(), stagedDrawn, stagedFar, stagedOff, stagedGpu);
+                        frameNo, staged.size(), stagedDrawn, stagedFar, stagedOff, stagedGpu);
         }
     }
     releaseIdleStaged();

@@ -68,7 +68,7 @@ void PlayState::screensSneakRows() {
                 if (state.bit(omk::StateArray::AddressEnabled, d.bit)) {
                     known.push_back(d.name); knownRecs.push_back(&d);
                 }
-            const omk::UiPanel* rp = w.at(omk::kPanelSneakSlider);
+            const omk::UiPanel* rp = uiWidgets.at(omk::kPanelSneakSlider);
             for (const auto& l : (rp ? rp->lists : pn->lists)) {
                 if (l.addr != omk::kListSneakRows) continue;
                 for (std::size_t k = 0; k < l.items.size(); ++k) {
@@ -140,7 +140,7 @@ void PlayState::screensSneakRows() {
             auto it = cache.find(id);
             if (it == cache.end()) {
                 std::vector<float> v;
-                const std::string& nm = w.soundNameById(id);
+                const std::string& nm = uiWidgets.soundNameById(id);
                 if (!nm.empty())
                     if (const auto path = fs.resolve("I2D/sounds/" + nm + ".wav"))
                         v = wavToDevice(omk::DataFs::readPath(*path), kDeviceRate);
@@ -518,7 +518,7 @@ void PlayState::screensSneakRows() {
                 std::printf("sneak: characteristics sheet%s (rank string %d)\n", cs.c_str(),
                             playerSheet.num[19] / 41 <= 4 ? 36 + playerSheet.num[19] / 41 : -1);
             }
-            if (const omk::UiList* tabs = w.listAt(omk::kListSneakTabs))
+            if (const omk::UiList* tabs = uiWidgets.listAt(omk::kListSneakTabs))
                 if (!tabs->items.empty())
                     for (int c = 0; c < 3; ++c)
                         playerSheet.icon[c] = static_cast<std::uint8_t>(tabs->items.front().rgb[c]);
@@ -729,7 +729,7 @@ void PlayState::screensSneakRows() {
             // rather than always starting at row 0. A window fixed at 0
             // truncates any list longer than the nine widgets: a tenth
             // carried object could not be reached.
-            const omk::UiPanel* rp = w.at(omk::kPanelSneakInventory);
+            const omk::UiPanel* rp = uiWidgets.at(omk::kPanelSneakInventory);
             for (const auto& l : (rp ? rp->lists : pn->lists)) {
                 if (l.addr != omk::kListSneakRows) continue;
                 const std::size_t window = static_cast<std::size_t>(
@@ -897,7 +897,7 @@ void PlayState::screensShopRows() {
         shopPanel == omk::kPanelShopExamine) {
         sneakRows.clear();
         sneakHidden.clear();
-        if (w.screenParam(openScreen) == 0 && inv.openedList() != 0)
+        if (uiWidgets.screenParam(openScreen) == 0 && inv.openedList() != 0)
             inv.openList(0);                        // Game_RaiseEvent(25, 0)
         std::vector<int> ids;
         const auto readIds = [&]() {
@@ -927,7 +927,7 @@ void PlayState::screensShopRows() {
             auto it = shopSounds.find(id);
             if (it == shopSounds.end()) {
                 std::vector<float> pcm;
-                const std::string& nm = w.soundNameById(id);
+                const std::string& nm = uiWidgets.soundNameById(id);
                 if (!nm.empty())
                     if (const auto path = fs.resolve("I2D/sounds/" + nm + ".wav"))
                         pcm = wavToDevice(omk::DataFs::readPath(*path), kDeviceRate);
@@ -1049,8 +1049,8 @@ void PlayState::screensShopRows() {
             // The hooks name the lists by ADDRESS (`0x004E3640`,
             // `off_4E337C`), not through the installed panel - which on the
             // Vente confirm and the Examiner page carries no stock rows.
-            const omk::UiList* buttons = w.listAt(omk::kListShopButtons);
-            const omk::UiList* rows = w.listAt(omk::kListShopRows);
+            const omk::UiList* buttons = uiWidgets.listAt(omk::kListShopButtons);
+            const omk::UiList* rows = uiWidgets.listAt(omk::kListShopRows);
             int price = 0;
             int rowId = -1;                 // the selected row's object
             if (rows) {
@@ -1059,7 +1059,7 @@ void PlayState::screensShopRows() {
                 if (row >= 0 && row < static_cast<int>(ids.size())) {
                     rowId = ids[static_cast<std::size_t>(row)];
                     price = inv.price(rowId);
-                    if (w.screenParam(openScreen) == 0) price /= 2;
+                    if (uiWidgets.screenParam(openScreen) == 0) price /= 2;
                 }
             }
             // oscillator 0: `sub_42B6D0` adds the frame's ms to `+4` and at
@@ -1166,7 +1166,7 @@ void PlayState::screensMultiplanHints() {
         // The five widgets, through `sub_42AAE0`'s window rule. The walk
         // already bound them in `buildPage`; this supplies the NAMES,
         // which are `sub_42AA00` -> event 33 on the widget's own tag.
-        if (const omk::UiList* rl = w.listAt(omk::kListHintRows))
+        if (const omk::UiList* rl = uiWidgets.listAt(omk::kListHintRows))
             for (std::size_t k = 0; k < rl->items.size(); ++k)
                 if (k < memos.size())
                     sneakRows[rl->items[k].addr] =
@@ -1618,7 +1618,7 @@ void PlayState::screensLift() {
         const auto ids = omk::objectList(state, src == 0 ? omk::ObjectList::Carried
                                                          : omk::ObjectList::Second);
         const int window = walk->rowWindow(omk::kListMultiplanRows);
-        if (const omk::UiList* rows = w.listAt(omk::kListMultiplanRows)) {
+        if (const omk::UiList* rows = uiWidgets.listAt(omk::kListMultiplanRows)) {
             for (std::size_t k = 0; k < rows->items.size(); ++k) {
                 const std::size_t row = k + static_cast<std::size_t>(std::max(0, window));
                 if (row >= ids.size()) {
@@ -1664,7 +1664,7 @@ void PlayState::screensLift() {
                 }
             }
             if (pa == omk::kPanelMultiplanDestroy && selId >= 0)
-                if (const omk::UiList* c = w.listAt(omk::kListMultiplanDestroy))
+                if (const omk::UiList* c = uiWidgets.listAt(omk::kListMultiplanDestroy))
                     for (const auto& e : c->items)
                         if (e.textFn == omk::kTextMultiplanRowName)
                             sneakRows[e.addr] = inv.displayName(selId, 0);
@@ -1676,11 +1676,11 @@ void PlayState::screensLift() {
         // second buffer (`sub_42AA00`) - and never prints it: the format
         // at 0x004E5AF8 is "%s" with the label as its only argument.
         const bool mpMessageUp = mpNowMs - mpMessageMs < 5000;
-        if (const omk::UiList* buttons = w.listAt(omk::kListMultiplanButtons)) {
+        if (const omk::UiList* buttons = uiWidgets.listAt(omk::kListMultiplanButtons)) {
             const int b = walk->selectionOf(*buttons);
             if (b >= 0 && b < static_cast<int>(buttons->items.size())) {
                 const int id = buttons->items[static_cast<std::size_t>(b)].label();
-                if (const omk::UiList* head = w.listAt(omk::kListMultiplanHeader))
+                if (const omk::UiList* head = uiWidgets.listAt(omk::kListMultiplanHeader))
                     for (const auto& e : head->items) {
                         if (e.textFn != omk::kTextFnMultiplanButton) continue;
                         if (mpMessageUp)
@@ -1722,11 +1722,11 @@ void PlayState::screensPropertyTail() {
                 playerShootRec.health = static_cast<int>(w.value);
                 hudHealth = playerShootRec.health;   // `dword_90E100 = value`
                 std::printf("frame %ld: SHOOT STAT (sub_423A40) - the player's health "
-                            "-> %d, and the gauge's\n", n, int(w.value));
+                            "-> %d, and the gauge's\n", frameNo, int(w.value));
             } else if (const auto it = shootBrains.find(w.actor); it != shootBrains.end()) {
                 it->second.health = static_cast<int>(w.value);
                 std::printf("frame %ld: SHOOT STAT (sub_423A40) - actor %d's health -> %d\n",
-                            n, w.actor, int(w.value));
+                            frameNo, w.actor, int(w.value));
             }
         } else if (w.property == 35 && w.actor == -1) {
             if (const omk::ShootWeaponRow* row = playerShootRec.weapon)

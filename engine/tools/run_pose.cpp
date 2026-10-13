@@ -150,8 +150,8 @@ int main(int argc, char** argv) {
             const float dx = dp.pos[0] + r[0] - posed.corners[i].x;
             const float dy = dp.pos[1] + r[1] - posed.corners[i].y;
             const float dz = dp.pos[2] + r[2] - posed.corners[i].z;
-            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-            if (d > worst) worst = d;
+            const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist > worst) worst = dist;
         }
         std::printf("skinned corners %ld; posing them by the declaring mesh "
                     "moves one as far as %.1f units\n", skinned, worst);

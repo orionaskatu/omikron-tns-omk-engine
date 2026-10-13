@@ -140,7 +140,7 @@ int PlayState::setupAdventure() {
     frameSec = 1.0 / 30.0;
     // GAME TIME in frames at 30 Hz: the sum of the deltas, so it stands still
     // under the pause and runs at the same speed at any presentation rate.
-    // `n` counts PRESENTED frames and is the clock of the harness and the
+    // `frameNo` counts PRESENTED frames and is the clock of the harness and the
     // log, never of anything the game times (todo/sixty-fps.md 2).
     gameClock = 0.0;
     // (struct HoldRun: `backends/sdl/playtypes.h`, todo/play-split.md)

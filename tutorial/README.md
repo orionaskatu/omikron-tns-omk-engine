@@ -46,8 +46,8 @@ quietly go stale.
 |---|---|---|
 | 0 | [Setup](00-setup.md) | point the repo at your game, build, boot the replica, and see it agree with the original 42 decisions of 42 |
 | 1 | [The tree, and one key press](01-the-tree.md) | know where each subsystem lives, and follow the UP arrow from SDL to the walker |
-| 2 | A file format | write a small tool that reads a texture, with the output-path guard every tool carries |
-| 3 | Reading the original | find a function in the listing and in `readable/`, and find its port |
+| 2 | [A file format](02-a-file-format.md) | write a small tool on the texture reader, with the output-path guard, and break the codec to see the whole-corpus check catch it |
+| 3 | [Reading the original](03-reading-the-original.md) | find a function by name, by address and in the executable, know which to trust, and find its port - and a behaviour no check covers |
 | 4 | The script VM | follow a world script through a run, including how it parks and resumes |
 | 5 | The frame loop | add a log line in the right phase and see it in a headless run |
 | 6 | The interface walk | change what a screen answers and watch a check fail for it |

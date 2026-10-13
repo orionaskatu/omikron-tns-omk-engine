@@ -15298,7 +15298,8 @@ def c_tutorial_anchors():
     against the repository, `engine/` or `tutorial/`, a bare file name by its
     basename among the tracked files; `Class::member` as text in the engine's
     sources; `name()` as a call or definition there; `def c_...` as a check in
-    this file. Absolute paths (`/tmp/...`) are the reader's own and skipped.
+    this file. Absolute paths (`/tmp/...`) are the reader's own and skipped,
+    and so is a file the lesson tells them to make ("Create `path`").
 
     SHOWN TO FAIL, 2026-10-13: `PlayerController::tick` respelled
     `PlayerController::tock` in lesson 1 is reported by file and name.
@@ -15318,8 +15319,9 @@ def c_tutorial_anchors():
     missing = []
     for md in sorted(glob.glob(os.path.join(tut, "*.md"))):
         t = re.sub(r"```.*?```", "", open(md).read(), flags=re.S)
+        made = set(re.findall(r"Create `([^`\n]+)`", t))    # the reader's own new file
         for tok in (x.strip() for x in re.findall(r"`([^`\n]+)`", t)):
-            if tok.startswith(("/", "-")) or any(c in tok for c in "*<{ "):
+            if tok.startswith(("/", "-")) or tok in made or any(c in tok for c in "*<{ "):
                 pass
             elif re.fullmatch(r"[\w./-]+/[\w.-]+|[\w-]+\.(?:md|py|h|cpp|json|log|bin)", tok):
                 paths += 1

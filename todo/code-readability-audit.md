@@ -391,6 +391,23 @@ finding: a check that hashed a conversation frame would flicker.
   a member of the same name. `worldStaged` 3572 -> 1594 lines. Guard 0 of
   14; 3DS and Vita build (the Vita's CMake lists the viewer's files by
   name - added).
+* step 12b - `worldStagedShoot` along its own banners, by a MECHANICAL
+  extraction: a range of whole statements moves verbatim into a new method;
+  the compiler names the locals it needs ("undeclared identifier", iterated,
+  since clang's recovery hides some behind others) and their exact types (a
+  `decltype(x)::probe` line, and `std::is_const` for the constness clang's
+  type printing drops); they arrive by reference, so writes reach the
+  caller; a lambda-typed local, a top-level `break`/`continue`/`return`, or
+  a form that does not compile refuses the move. libc++'s internal spellings
+  (`std::__map_iterator<...>`) are mapped to the standard ones, since the
+  Vita, 3DS and PowerPC compile with libstdc++. Two lambdas used across
+  blocks became methods first (`shootApplyAction`, and `astPlace` a file
+  function). Thirteen methods out: the clip tick, the gunman's first tick,
+  `Shoot_ActorEnter`'s properties, THE BRAIN (Astaroth's, Gandhar's or the
+  generic one - the generic is the `else` of that chain), the move decision,
+  the patrol, the edge walk, the state's clip, the arrival, the clip
+  advance, the strike, the fire gate and the turn clip. Guard 0 of 14; all
+  32 shoot/Astaroth/Gandhar engine checks green; 3DS and Vita build.
 
 ## 7. For the tutorial
 

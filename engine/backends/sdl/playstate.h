@@ -905,6 +905,33 @@ struct PlayState {
     void worldStaged();   // every staged body, posed by whatever drives it
     void worldStagedShoot(Staged& s, const omk::NodeTracks*& shootTracks, int& shootFrame,
                           const omk::AstarothActor*& astGrid);   // its shoot-mode tick
+    void worldStagedShootEnter(std::map<int, omk::ShootRecord>::iterator& it, Staged& s, int act);   // from `worldStagedShoot`
+    void worldStagedShootEnterProps(bool astThinks, Staged& s, omk::ShootRecord& rec, int act);   // from `worldStagedShoot`
+    void worldStagedShootBrain(omk::ShootRecord& rec, Staged& s, float astDt,
+                                  omk::AstarothBand& astBand, int act);   // from `worldStagedShoot`
+    void worldStagedShootMoveDecision(omk::ShootRecord& rec, int gunFloor, omk::ShootFrameIn& fin,
+                                      float& yaw);   // from `worldStagedShoot`
+    void worldStagedShootPatrol(omk::ShootRecord& rec, int patrolFloor, omk::ShootFrameIn& fin,
+                                float& yaw, Staged& s);   // from `worldStagedShoot`
+    void worldStagedShootEdgeWalk(omk::ShootRecord& rec, int gunFloor, omk::ShootFrameIn& fin);   // from `worldStagedShoot`
+    void worldStagedShootStateClip(bool entryPending, omk::ShootRecord& rec, int before, Staged& s);   // from `worldStagedShoot`
+    void worldStagedShootArrive(const omk::ShootStep& st, omk::ShootFrameIn& fin, int gunFloor,
+                                Staged& s, omk::ShootRecord& rec);   // from `worldStagedShoot`
+    void worldStagedShootClipAdvance(omk::ShootRecord& rec, Staged& s, int act,
+                                     omk::ShootFrameIn& fin);   // from `worldStagedShoot`
+    void worldStagedShootStrike(const omk::ShootStep& st, omk::ShootRecord& rec, Staged& s,
+                                bool entryPending);   // from `worldStagedShoot`
+    void worldStagedShootFireGate(bool fullArm, omk::ShootRecord& rec, const omk::ShootStep& st,
+                                  bool entryPending, Staged& s, omk::ShootFrameIn& fin);   // from `worldStagedShoot`
+    void worldStagedShootTurnClip(const omk::ShootStep& st, Staged& s, omk::ShootRecord& rec,
+                                  omk::ShootFrameIn& fin);   // from `worldStagedShoot`
+    void worldStagedShootClipTick(bool inShoot, bool shotDead, bool brainsOff,
+                                  const std::map<int, omk::ShootRecord>::iterator& deadIt,
+                                  omk::play::Staged& s, bool astarothRec,
+                                  omk::AstarothBand& astBand, bool& clipHolds, float astDt,
+                                  bool gandharRec);   // from `worldStagedShoot`
+    void shootApplyAction(Staged& s, omk::ShootRecord& ar, int action, int a3,
+                          const char* why);   // `Shoot_ActorAction` on a staged gunman
     void worldCrowd();   // the pedestrians, the vehicles, the player
     void worldDrawLists();   // the particles, the visible set, the lights and the shadows into the frame's draw lists
     void worldMirror();   // the mirror and the present pass

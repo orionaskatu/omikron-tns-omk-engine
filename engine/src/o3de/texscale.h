@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cstdlib>
+#include "platform/env.h"
 
 namespace omk {
 
@@ -29,7 +30,7 @@ struct TextureScale {
 // (bytes) stands in for a card's answer, so the rule can run where the host
 // gives none (`verify.py: engine: gl1 backend`).
 inline TextureScale originalTextureScale(long freeBytes, int bytesPerTexel = 2) {
-    if (const char* e = std::getenv("OMK_TEXTURE_MEMORY")) freeBytes = std::atol(e);
+    freeBytes = omk::envInt("OMK_TEXTURE_MEMORY", freeBytes);
     TextureScale s;
     if (freeBytes <= 0) return s;
     constexpr long kSlots = 58;                                 // `SetMaterialsMemory(58, 0)`

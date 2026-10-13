@@ -14,6 +14,7 @@
 #include "n3dsfront.h"
 #include "n3dshost.h"
 #include "platform/profile.h"
+#include "platform/env.h"
 
 #include <3ds.h>
 #include <malloc.h>
@@ -126,7 +127,7 @@ void PlayState::gpuPresentWorld(bool& presentedWorld) {
 }
 bool PlayState::gpuWorldOnWindow() { return worldVk && world_ == worldVk; }
 void PlayState::gpuOverlayDecision(const char*& keep) {
-    static const bool noOverlay = omk::envSet("OMK_NO_OVERLAY");
+    static const bool noOverlay = omk::envFlag("OMK_NO_OVERLAY");
     omk::N3dsFrontend* f = omk::liveN3dsFrontend();
     overlayFrame = softGate && !noOverlay && worldVk && world_ == worldVk && f && f->topFramebuffer() &&
                    omk::c3dOverlayReady(worldVk);

@@ -4,6 +4,7 @@
 
 #include "n3dshost.h"
 #include "platform/profile.h"
+#include "platform/env.h"
 
 #include <3ds.h>
 #include <malloc.h>
@@ -204,7 +205,7 @@ void Panel::draw(Surface& s, const PanelStats& st) const {
     heldHead_ = std::move(head);
     heldLog_ = std::move(log);
     heldLogY_ = logY;
-    static const bool check = std::getenv("OMK_PANEL_CHECK") != nullptr;
+    static const bool check = omk::envFlag("OMK_PANEL_CHECK");
     if (check && !whole) {
         if (check_.w != kW || check_.h != kH) check_ = Surface(kW, kH, 0);
         drawAll(check_, heldHead_, heldLogY_, heldLog_);

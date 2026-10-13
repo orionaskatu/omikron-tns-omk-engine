@@ -60,6 +60,7 @@
 #include "o3de/renderer.h"
 #include "o3de/depthtie.h"
 #include "o3de/vertexlight.h"
+#include "platform/env.h"
 
 #include <algorithm>
 #include <array>
@@ -220,7 +221,7 @@ public:
     // frame's fence has been waited on. `OMK_NO_GEOMETRY_RELEASE=1` keeps the
     // old behaviour, to compare.
     VulkanRenderer() {
-        releaseOn_ = std::getenv("OMK_NO_GEOMETRY_RELEASE") == nullptr;
+        releaseOn_ = !omk::envFlag("OMK_NO_GEOMETRY_RELEASE");
         omk::addGeometryListener(&VulkanRenderer::geometryGone, this);
     }
     bool releaseOn_ = true;
@@ -2074,7 +2075,7 @@ bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
             // crate is a few hundred of Anekbah's 139245 corners. The triangles
             // the depth tie degenerated stay degenerated; `resolveTies` puts
             // back the ones that are no longer losers.
-            static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
+            static const bool noDirty = omk::envFlag("OMK_NO_DIRTY");
             const bool partial = !noDirty && seen != vboRev_.end() && g->dirtyTo != 0 &&
                                  g->dirtyTo == g->revision && seen->second == g->dirtyFrom &&
                                  it->second == g->corners.size();
@@ -2133,8 +2134,8 @@ bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
 // step back rather than degenerated, so a culled winner or a door leaf moved
 // off its frame leaves the loser drawn, as the engine draws it.
 bool VulkanRenderer::bakeDepthTie(const omk::Geometry* g, std::span<const omk::Draw> order) {
-    static const bool off = std::getenv("OMK_NO_TIE") != nullptr;
-    static const bool noBake = std::getenv("OMK_NO_TIE_BAKE") != nullptr;
+    static const bool off = omk::envFlag("OMK_NO_TIE");
+    static const bool noBake = omk::envFlag("OMK_NO_TIE_BAKE");
     if (off || noBake || !g) return false;
     omk::DepthTie t;
     std::vector<std::size_t> losers, restore;
@@ -2149,7 +2150,7 @@ bool VulkanRenderer::bakeDepthTie(const omk::Geometry* g, std::span<const omk::D
     // forget both, so the next upload is whole and marked
     tie_.erase(g);
     vboRev_.erase(g);
-    static const bool tieLog = std::getenv("OMK_TIE_LOG") != nullptr;
+    static const bool tieLog = omk::envFlag("OMK_TIE_LOG");
     if (tieLog)
         std::printf("[tie] vulkan: baked %zu losers over %zu draws on geometry %p\n",
                     tris.size(), order.size(), static_cast<const void*>(g));
@@ -2158,7 +2159,7 @@ bool VulkanRenderer::bakeDepthTie(const omk::Geometry* g, std::span<const omk::D
 
 void VulkanRenderer::resolveTies(const omk::Draw& d) {
     // `OMK_NO_TIE=1` leaves the fight in, for a before/after.
-    static const bool off = std::getenv("OMK_NO_TIE") != nullptr;
+    static const bool off = omk::envFlag("OMK_NO_TIE");
     if (off) return;
     const omk::Geometry* g = d.geo;
     if (baked_.count(g)) return;             // settled once, drawn back (`bakeDepthTie`)
@@ -2167,7 +2168,7 @@ void VulkanRenderer::resolveTies(const omk::Draw& d) {
     t.resolve(*g, d.start, d.count, d.blend == omk::Blend::Opaque, losers, restore);
     if (losers.empty() && restore.empty()) return;
     // `OMK_TIE_LOG=1`: every loser, with the mesh it came from
-    static const bool tieLog = std::getenv("OMK_TIE_LOG") != nullptr;
+    static const bool tieLog = omk::envFlag("OMK_TIE_LOG");
     if (tieLog)
         for (const std::size_t tri : losers)
             std::printf("[tie] triangle %zu mesh %d at %.1f %.1f %.1f (draw start %zu count %zu)\n",
@@ -2642,7 +2643,7 @@ void VulkanRenderer::end() {
     // `OMK_TIE_STATS=1`: every 30 frames, how each large geometry's revisions
     // were answered - replayed from the dirty corners, walked, or a replay
     // abandoned part way (`engine: dirty corners`).
-    static const bool tieStats = std::getenv("OMK_TIE_STATS") != nullptr;
+    static const bool tieStats = omk::envFlag("OMK_TIE_STATS");
     static long frameNo = 0;
     if (tieStats && ++frameNo % 30 == 0) {
         for (const auto& [g, t] : tie_)

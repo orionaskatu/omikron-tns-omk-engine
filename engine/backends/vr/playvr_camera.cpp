@@ -18,6 +18,7 @@
 #if OMK_VR
 
 #include "../sdl/playframe.h"
+#include "platform/env.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
 #endif
@@ -351,7 +352,7 @@ void PlayState::vrAfterWorldCamera() {
                     static_cast<double>(vr.eye[0].rollDeg), static_cast<double>(vr.eye[0].lensX),
                     static_cast<double>(vr.eye[0].lensY));
     }
-    static const bool vrLog = std::getenv("OMK_VRLOG") && *std::getenv("OMK_VRLOG") == '1';
+    static const bool vrLog = omk::envOn("OMK_VRLOG");
     if (vrLog)
         std::printf("[vr] frame %ld kind %s target %.2f %.2f %.2f authored %.2f %.2f %.2f drawn %.2f %.2f %.2f "
                     "look %.3f %.3f %.3f origin %.2f %.2f %.2f him %.2f %.2f %.2f facing %.2f pitch %.2f\n", frameNo, vrKindName(kind),

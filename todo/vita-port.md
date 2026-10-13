@@ -796,7 +796,8 @@ for `OMK_NOUI`, one per staged BODY for `OMK_BODYLOG`, and three for
 the environment comparing strings, and this is the third time the Vita's C
 library has cost this port real time (`%zu`, the missing integer divide).
 
-`omk::envSet` (`src/app/playhelpers.h`) looks a name up once and keeps it,
+`omk::envSet` (`src/app/playhelpers.h`; since 2026-10-13 `omk::envFlag` in
+`src/platform/env.h`, which snapshots every switch once) looks a name up once and keeps it,
 scanned by the literal's own POINTER first. **22 call sites converted**; the
 three left take the value and already sit inside `static` initialisers. The
 golden record is identical, all four targets build. **Whether it is the 42 ms

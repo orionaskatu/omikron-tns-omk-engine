@@ -2,12 +2,13 @@
 // THE FRAME'S WORLD PHASE - whoever is on screen, and the world when no screen is over it.
 // Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
+#include "platform/env.h"
 
 // A world-less frame the menu's cloud will cover (`fbCloudOwed`): a screen
 // open with no player, the cloud loaded, and the composer's table holding the
 // screen - the one early return before `ScreenComposer::draw` draws the cloud
 bool PlayState::cloudCoversFrame() const {
-    static const bool noUi = omk::envSet("OMK_NOUI");
+    static const bool noUi = omk::envFlag("OMK_NOUI");
     return walk && !player && cloud.valid() && !noUi && comp_ && comp_->hasScreen(openScreen);
 }
 

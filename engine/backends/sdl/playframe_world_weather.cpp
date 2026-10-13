@@ -2,6 +2,7 @@
 // THE CITY WEATHER: `sub_4815D0` ticked and its drops projected and drawn
 // (`o3de/weather.h` has the reading; `todo/scene-gameplay-audit.md` 8).
 #include "playframe.h"
+#include "platform/env.h"
 
 #include <cstdlib>
 
@@ -16,8 +17,7 @@ void PlayState::weatherFrame(const omk::View& v) {
     // `OMK_WEATHER_SKIP_MS=N`: an INSTRUMENT - the weather's clock jumps N ms
     // on frame 1, past the 8-14 minute wait the first cycle starts with, so a
     // headless run reaches the rain (`verify.py: engine: weather`)
-    static const double skipMs = std::getenv("OMK_WEATHER_SKIP_MS")
-                                     ? std::atof(std::getenv("OMK_WEATHER_SKIP_MS")) : 0.0;
+    static const double skipMs = omk::envNum("OMK_WEATHER_SKIP_MS", 0.0);
     if (frameNo == 1 && skipMs > 0.0) {
         weatherClockMs += skipMs;
         std::printf("frame %ld: weather - OMK_WEATHER_SKIP_MS: the clock jumps %.0f ms\n", frameNo, skipMs);

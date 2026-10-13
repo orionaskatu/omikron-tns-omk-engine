@@ -14,6 +14,7 @@
 #include "script/objects.h"
 #include "script/opcodes.h"
 #include "script/ctxstatus.h"
+#include "platform/env.h"
 
 #include <chrono>
 #include <cmath>
@@ -649,10 +650,9 @@ void Session::zonesRegisterAll() {
         const bool ok = zones_.resolve(static_cast<std::int16_t>(c->zoneId)) != nullptr &&
                         (!zoneResolves_ || zoneResolves_(c->zoneId));
         if (ok) continue;
-        if (const char* e = std::getenv("OMK_CAMLOG"))
-            if (*e == '1')
-                std::fprintf(stderr, "[zone] frame %ld  context %d of zone %d PRUNED\n",
-                             frameNo_, i, c->zoneId);
+        if (omk::envOn("OMK_CAMLOG"))
+            std::fprintf(stderr, "[zone] frame %ld  context %d of zone %d PRUNED\n",
+                         frameNo_, i, c->zoneId);
         freeContext(i);
     }
     if (onZonesRegister_) onZonesRegister_();
@@ -978,10 +978,9 @@ void Session::transitionObjectEnded() {
     if (tr_.program == -1) return;
     if (tr_.program >= 0 &&
         (tr_.outPool ? sceneOut_ : scene_).programRunning(tr_.program)) return;
-    if (const char* e = std::getenv("OMK_CAMLOG"))
-        if (*e == '1')
-            std::fprintf(stderr, "[tr] frame %ld  program %d ENDED (state %d)\n",
-                         frameNo_, tr_.program, tr_.state);
+    if (omk::envOn("OMK_CAMLOG"))
+        std::fprintf(stderr, "[tr] frame %ld  program %d ENDED (state %d)\n",
+                     frameNo_, tr_.program, tr_.state);
     tr_.program = -1;
     const int ctxIdx = tr_.ctx;
     if (ctxIdx == kNoContext) {
@@ -1026,11 +1025,10 @@ bool Session::shootEnd(int clear) { return shoot_.end(clear); }
 // it returns: op 47 rewinds its pc by 7 on 0.
 int Session::areaTransition(int mode, int ctxIdx, int slot, int area, int f1, int f2) {
     slot &= 1;
-    if (const char* e = std::getenv("OMK_CAMLOG"))
-        if (*e == '1')
-            std::fprintf(stderr, "[tr] frame %ld  mode %d ctx %d slot %d area %d f1 %d f2 %d"
-                         "  state %d dest %d deferred %d\n", frameNo_, mode, ctxIdx, slot,
-                         area, f1, f2, tr_.state, tr_.dest, deferred_);
+    if (omk::envOn("OMK_CAMLOG"))
+        std::fprintf(stderr, "[tr] frame %ld  mode %d ctx %d slot %d area %d f1 %d f2 %d"
+                     "  state %d dest %d deferred %d\n", frameNo_, mode, ctxIdx, slot,
+                     area, f1, f2, tr_.state, tr_.dest, deferred_);
     const auto sameCaller = [&]() { return slot == tr_.slot && ctxIdx == tr_.ctx; };
     // `if (dword_69BC60) sub_419A90(dword_69BC48[0]); else sub_419A90(dword_69BC58);`
     // - hide the NON-ACTIVE slot's decor. The engine reaches these arms after
@@ -1372,11 +1370,10 @@ void Session::applyCamera(int id, int travel) {
     // replaces op 54's mode 0.
     ++camRequests_;
     followRequested_ = false;
-    if (const char* e = std::getenv("OMK_CAMLOG"))
-        if (*e == '1')
-            std::fprintf(stderr, "[cam] frame %ld  camera %d  travel %d  %s\n",
-                         frameNo_, id, travel,
-                         c->absolute() ? "absolute" : "RELATIVE");
+    if (omk::envOn("OMK_CAMLOG"))
+        std::fprintf(stderr, "[cam] frame %ld  camera %d  travel %d  %s\n",
+                     frameNo_, id, travel,
+                     c->absolute() ? "absolute" : "RELATIVE");
     if (!haveCam_ || travel <= 0) {      // a cut
         camFrom_ = camTo_ = camNow_ = *c;
         camTravel_ = 0; camElapsed_ = 0.0;
@@ -1405,10 +1402,9 @@ void Session::applyCamera(int id, int travel) {
 }
 
 void Session::tickCamera() {
-    if (const char* e = std::getenv("OMK_CAMLOG"))
-        if (*e == '1' && camTravel_ == 1)
-            std::fprintf(stderr, "[cam] frame %ld  move to %d ENDS\n",
-                         frameNo_, camTo_.id);
+    if (omk::envOn("OMK_CAMLOG") && camTravel_ == 1)
+        std::fprintf(stderr, "[cam] frame %ld  move to %d ENDS\n",
+                     frameNo_, camTo_.id);
     if (camTravel_ <= 0) return;
     camElapsed_ += frameDelta();
     // LINEAR, which is what every script move is: `sub_418310` shapes the
@@ -3337,14 +3333,13 @@ void Session::execute(int i) {
             // omk-play 70: this is the refusal that loses the tunnel's far
             // door - the doorless zone's transition is still in flight, so the
             // door-carrying goto never dispatches.
-            if (const char* e = std::getenv("OMK_TUNNEL"))
-                if (*e == '1') {
-                    static long told = 0;
-                    if (told++ < 40)
-                        std::printf("[tr] frame %ld  op %d REFUSED - context %d is mid-transition "
-                                    "(ctx %d held at status 9)\n",
-                                    frameNo_, op, deferred_, static_cast<int>(i));
-                }
+            if (omk::envOn("OMK_TUNNEL")) {
+                static long told = 0;
+                if (told++ < 40)
+                    std::printf("[tr] frame %ld  op %d REFUSED - context %d is mid-transition "
+                                "(ctx %d held at status 9)\n",
+                                frameNo_, op, deferred_, static_cast<int>(i));
+            }
             return;
         }
         const int n = table_.operandLength(op);
@@ -3358,7 +3353,7 @@ void Session::execute(int i) {
         // like a script that ran and did nothing, and no other log tells them
         // apart. It is what showed five lift contexts reaching `ui.open` on one
         // frame (`verify.py: engine: lift`).
-        if (std::getenv("OMK_VMTRACE"))
+        if (omk::envFlag("OMK_VMTRACE"))
             std::fprintf(stderr, "[ctx] frame %ld  ctx %d  status %d  pc %zu  op %d\n",
                          frameNo_, i, c->status, c->pc,
                          c->pc < c->code.size() ? int(std::to_integer<unsigned>(c->code[c->pc])) : -1);
@@ -3511,12 +3506,11 @@ void Session::execute(int i) {
             }
             return;
         case RunStatus::ObjectWait:
-            if (const char* e = std::getenv("OMK_CAMLOG"))
-                if (*e == '1')
-                    std::fprintf(stderr, "[obj] frame %ld  op %d  program %d  "
-                                 "(%zu started, %zu missed)\n", frameNo_,
-                                 r.objectWaitOp, waitOn, scene_.started().size(),
-                                 scene_.missed().size());
+            if (omk::envOn("OMK_CAMLOG"))
+                std::fprintf(stderr, "[obj] frame %ld  op %d  program %d  "
+                             "(%zu started, %zu missed)\n", frameNo_,
+                             r.objectWaitOp, waitOn, scene_.started().size(),
+                             scene_.missed().size());
             // Park on the program - but only if it actually started: with no
             // scene resident the engine has nothing to release the script
             // either, and a replica that parked anyway would stop where the
@@ -3676,7 +3670,7 @@ void Session::pumpZoneSlots() {
     std::vector<ZoneEvent> ev;
     zones_.pumpSlots(pressed, ev);
     int ran = 0;                                   // dword_4E61E0
-    const bool log = [] { const char* e = std::getenv("OMK_CAMLOG"); return e && *e == '1'; }();
+    const bool log = omk::envOn("OMK_CAMLOG");
     for (const auto& e : ev) {
         if (e.kind == ZoneEvent::Kind::Touch) continue;
         const auto it = slotOfZone.find(e.zone);

@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // The letterbox, the camera, the instrument override
 void PlayState::worldCamera() {
@@ -94,9 +95,7 @@ void PlayState::worldCamera() {
         // never whether they are there but WHICH term is holding them
         // on - a stale `holdEditCam` and a running fade look identical
         // on screen (`todo/fight-mode.md` 15.4).
-        static const bool lbLog = [] {
-            const char* e = std::getenv("OMK_LBLOG"); return e && *e == '1';
-        }();
+        static const bool lbLog = omk::envOn("OMK_LBLOG");
         static std::string told;
         if (lbLog) {
             char buf[200];
@@ -170,7 +169,7 @@ void PlayState::worldCamera() {
     activeAmbientGrey = dayNight.floorByClock
         ? dayNight.floorGrey
         : worldSlots[static_cast<std::size_t>(session.activeSlot() & 1)].ambientGrey;
-    if (!omk::envSet("OMK_NO_AMBIENT_CLAMP"))
+    if (!omk::envFlag("OMK_NO_AMBIENT_CLAMP"))
         for (std::size_t k = 0; k < worldSlots.size(); ++k) {
             WorldSlot& w = worldSlots[k];
             if (w.bakedColour.empty() || w.bakedColour.size() != w.geo.corners.size()) continue;
@@ -192,7 +191,7 @@ void PlayState::worldCamera() {
                 // `OMK_NO_DIRTY=1` leaves the list unset here too, as the motion
                 // patch does - the comparison run re-does everything (`engine:
                 // dirty corners`)
-                static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
+                static const bool noDirty = omk::envFlag("OMK_NO_DIRTY");
                 if (!noDirty) w.geo.dirtyFrom = w.geo.revision;
                 w.geo.revision = ++worldGeoRev;
                 if (!noDirty) {
@@ -780,7 +779,7 @@ void PlayState::worldCamera() {
     // is actually about. A frame counts lit pixels and cannot tell a
     // correct shot from a wrong one that happens to see the sky; the
     // eye's distance from the player can (`verify.py: camera travel`).
-    if (omk::envSet("OMK_CAMEYE")) {
+    if (omk::envFlag("OMK_CAMEYE")) {
         if (session.dialogOpen()) {
             const auto& dg = session.dialogue();
             const omk::DialogCamera* qa = dg.cameraA();
@@ -1495,10 +1494,7 @@ void PlayState::worldBolts() {
         // long session on the Quest reaches by itself (72 slots).
         // A padded frame must be the unpadded one, pixel for pixel.
         {
-            static const int poolPad = [] {
-                const char* e = std::getenv("OMK_POOL_PAD");
-                return e ? std::max(0, std::atoi(e)) : 0;
-            }();
+            static const int poolPad = static_cast<int>(std::max(0L, omk::envInt("OMK_POOL_PAD", 0)));
             for (int k = 0; k < poolPad && !pool.empty(); ++k) pool.push_back(pool[0]);
         }
         // THE SHADOW's one texture, on the same rule. It is resident

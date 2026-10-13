@@ -3,6 +3,7 @@
 // Parts of `PlayState::controlAdventure`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // The follow camera's offsets, first-person aim
 void PlayState::adventureAim() {
@@ -1069,7 +1070,7 @@ void PlayState::adventureScreenInput() {
             {
                 const int ws = static_cast<int>(player->state());
                 // an instrument: every tick, for a stroke that loses its travel
-                if (ws >= 11 && ws <= 14 && omk::envSet("OMK_SWIMTRACE"))
+                if (ws >= 11 && ws <= 14 && omk::envFlag("OMK_SWIMTRACE"))
                     std::printf("  swimtrace %ld: state %d '%s' frame %.2f -> %.2f, local y %+.2f, "
                                 "pitch %.1f, y %.2f\n", frameNo, player->ctlState(),
                                 player->ctlStateName().c_str(),
@@ -2882,7 +2883,7 @@ void PlayState::adventureAction() {
     {
         const float* pp = player->pos();
         // through the merged soup's grid unless `OMK_NO_GROUND_GRID`
-        static const bool noGroundGridHere = std::getenv("OMK_NO_GROUND_GRID") != nullptr;
+        static const bool noGroundGridHere = omk::envFlag("OMK_NO_GROUND_GRID");
         int under = noGroundGridHere
             ? omk::decorUnder(worldDecors, pp[0], pp[1], pp[2])
             : omk::decorUnder(worldDecors, playerSoup, playerGrid, pp[0], pp[1], pp[2]);
@@ -2927,7 +2928,7 @@ void PlayState::adventureAction() {
             haveLastGood = true;
             if (under == session.activeArea()) refusedTold = -1;
         }
-        static const bool verifyGround = std::getenv("OMK_VERIFY_GROUND") != nullptr;
+        static const bool verifyGround = omk::envFlag("OMK_VERIFY_GROUND");
         if (verifyGround && frameNo % 30 == 0) {
             const auto& gv = omk::groundVerify();
             std::printf("ground verify: frame %ld, walker %ld probes %ld mismatched, "

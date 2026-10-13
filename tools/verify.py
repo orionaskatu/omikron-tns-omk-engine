@@ -15109,6 +15109,49 @@ def c_opcode_names():
         "opcodes.h matches tables/vm_opcodes.json, and no opcode is compared by number"
 
 
+def c_env_switches():
+    r"""Every `OMK_*` switch is read through `src/platform/env.h` and named in `env.cpp`'s table.
+
+    The switches were read four ways - a raw `getenv` (some in per-frame
+    paths, uncached), a 32-entry pointer cache, `atoi(getenv(..))`, a
+    value-starts-with-'1' test - with nowhere listing what exists
+    (`todo/code-readability-audit.md`). Now one reader snapshots the
+    environment once, and the table carries a line on what each switch does.
+    This holds the two to each other: every name the code reads is in the
+    table, every name in the table is read, and no `getenv("OMK_...")` is left
+    outside `env.cpp`. (The table's ORDER is the compiler's: a
+    `static_assert` refuses an unsorted one.)
+
+    SHOWN TO FAIL: a `std::getenv("OMK_NOUI")` put back in a viewer file (the
+    raw-read list names it); a row deleted from the table (that name is
+    `unlisted`); a row added that nothing reads (`unread`).
+    """
+    table_src = open(os.path.join(ROOT, "engine", "src", "platform", "env.cpp")).read()
+    body = table_src.split("kSwitches[] = {", 1)[1].split("};", 1)[0]
+    table = set(re.findall(r'^\s*"(OMK_\w+)",', body, re.M))
+    read, raw = set(), []
+    for d in ("engine/src", "engine/tools", "engine/backends"):
+        for root, _, files in os.walk(os.path.join(ROOT, d)):
+            if "third_party" in root:
+                continue
+            for f in files:
+                if not f.endswith((".cpp", ".h")):
+                    continue
+                p = os.path.join(root, f)
+                rel = os.path.relpath(p, ROOT)
+                if rel == "engine/src/platform/env.cpp":
+                    continue
+                for k, line in enumerate(open(p, errors="replace"), 1):
+                    code = line.split("//", 1)[0]
+                    read.update(re.findall(r'\benv(?:Str|Flag|On|Int|Num)\("(OMK_\w+)"', code))
+                    if re.search(r'getenv\("OMK_', code):
+                        raw.append("%s:%d" % (rel, k))
+    # the table read at all: a parse that finds nothing must fail AS a parse
+    return (len(table) > 50, sorted(read - table), sorted(table - read), raw[:5]), \
+        (True, [], [], []), \
+        "%d switches: every one read is listed, every one listed is read, none read raw" % len(table)
+
+
 def c_engine_dossier_reader():
     r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
 
@@ -44616,8 +44659,9 @@ def c_licence_headers():
     # `engine/src/script/ctxstatus.h` (the opcodes and the status word by name);
     # 610 the same day: + `engine/src/ui/screens.h` (the 37 screens by name);
     # 611: + `tools/comments_only.py` (a comments-only change, proved)
+    # 613: + `engine/src/platform/env.{h,cpp}` (the `OMK_*` switches' one reader)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (611, [], 1, []), \
+           (613, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -47052,6 +47096,7 @@ CHECKS = [
     ("boot sequence",      c_boot_sequence,     "BOOT"),
     ("opcode table fresh", c_vm_doc,            "SCRIPT_VM"),
     ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
+    ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

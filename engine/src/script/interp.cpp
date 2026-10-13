@@ -4,6 +4,7 @@
 #include "platform/profile.h"
 #include "script/props.h"
 #include "script/opcodes.h"
+#include "platform/env.h"
 
 namespace omk {
 namespace {
@@ -220,7 +221,7 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
             // ...and which way each `case` went, under the same variable: a
             // switch that matches nothing is the other half of the park/ran
             // ambiguity above
-            if (std::getenv("OMK_VMTRACE"))
+            if (omk::envFlag("OMK_VMTRACE"))
                 std::fprintf(stderr, "[vm] pc %zu case label %d top %d depth %zu -> %s\n",
                              start, int(label), int(top), stack_.size(),
                              top == label ? "TAKEN" : "next");

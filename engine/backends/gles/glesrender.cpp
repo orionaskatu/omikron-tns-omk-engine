@@ -108,6 +108,7 @@
 #include "o3de/shimmer.h"
 #include "ui/overlay.h"
 #include "ui/surface.h"
+#include "platform/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -861,7 +862,7 @@ long g_glesStateSet = 0, g_glesStateSkipped = 0, g_glesDrawsWindow = 0;
 // which geometries a frame re-sends in full, the cost the console's `gles world`
 // line measures
 bool glesUploadLog() {
-    static const bool on = std::getenv("OMK_UPLOAD_LOG") != nullptr;
+    static const bool on = omk::envFlag("OMK_UPLOAD_LOG");
     return on;
 }
 // The renderer's own timings (the `gles` line, a slow frame's report): six
@@ -932,7 +933,7 @@ public:
     // A geometry the renderer holds state for tells it when it is destroyed
     // (`omk::GpuResidency`, todo/optimization.md step 26).
     GlesRenderer() {
-        releaseOn_ = std::getenv("OMK_NO_GEOMETRY_RELEASE") == nullptr;
+        releaseOn_ = !omk::envFlag("OMK_NO_GEOMETRY_RELEASE");
         addGeometryListener(&GlesRenderer::geometryGone, this);
     }
     ~GlesRenderer() override;
@@ -1383,7 +1384,7 @@ GlesRenderer::~GlesRenderer() {
 bool GlesRenderer::init(int w, int h) {
     w_ = w; h_ = h;
     // the environment can only turn it OFF - a probe's `setStateCache` holds
-    if (std::getenv("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
+    if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
     fb_ = Surface(w, h, 0);
     if (ready_) {
         // a resize: only the target changes
@@ -1670,12 +1671,12 @@ gpuBuffer("vertex buffers", quad_, sizeof quad);
             anisoOn_ = std::min(aniso_, static_cast<int>(most));
         if (anisoOn_ > 1) std::printf("gles: anisotropy %dx\n", anisoOn_);
     }
-    static const bool noTie = std::getenv("OMK_NO_TIE") != nullptr;
+    static const bool noTie = omk::envFlag("OMK_NO_TIE");
     if (noTie) tieOn_ = false;
 #if defined(__vita__)
-    streamOn_ = std::getenv("OMK_NO_STREAM") == nullptr;
+    streamOn_ = !omk::envFlag("OMK_NO_STREAM");
 #else
-    streamOn_ = std::getenv("OMK_STREAM") != nullptr;
+    streamOn_ = omk::envFlag("OMK_STREAM");
 #endif
     if (posed_ && !poseSelfTest()) {
         glDeleteProgram(posed_);
@@ -2042,7 +2043,7 @@ bool GlesRenderer::uploadGeometry(const Geometry* g, bool allowStream) {
     // as a 5 MB upload every frame
     if (it != vbo_.end() && it->second.n == g->corners.size()) {
         Vbo& vb = it->second;
-        static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
+        static const bool noDirty = omk::envFlag("OMK_NO_DIRTY");
         bool partial = !noDirty && g->dirtyTo != 0 && g->dirtyTo == g->revision &&
                              vb.rev == g->dirtyFrom;
 #if defined(__ANDROID__)
@@ -2067,7 +2068,7 @@ bool GlesRenderer::uploadGeometry(const Geometry* g, bool allowStream) {
         // COMPLETE? A copy of the corners last uploaded, per buffer, and on a
         // partial upload every corner the list does not name must be what it
         // was. An instrument - off, it costs one static bool.
-        static const bool audit = std::getenv("OMK_DIRTY_AUDIT") != nullptr;
+        static const bool audit = omk::envFlag("OMK_DIRTY_AUDIT");
         if (audit) {
             static std::unordered_map<const Geometry*, std::vector<Corner>> shadow;
             auto& sh = shadow[g];
@@ -2253,7 +2254,7 @@ void GlesRenderer::foldBias(const Geometry& g, GpuVert* v, std::uint32_t lo, std
 // back changing nothing where nothing is coincident.
 bool GlesRenderer::bakeDepthTie(const Geometry* g, std::span<const Draw> order) {
     if (!tieOn_ || !g) return false;
-    static const bool noBake = std::getenv("OMK_NO_TIE_BAKE") != nullptr;
+    static const bool noBake = omk::envFlag("OMK_NO_TIE_BAKE");
     if (noBake) return false;
     DepthTie t;
     std::vector<std::size_t> losers, restore;
@@ -2267,7 +2268,7 @@ bool GlesRenderer::bakeDepthTie(const Geometry* g, std::span<const Draw> order) 
     // marked. Forget both, so the next upload is whole and marked.
     tie_.erase(g);
     if (auto v = vbo_.find(g); v != vbo_.end()) v->second.rev = ~std::uint64_t{0};
-    static const bool tieLog = std::getenv("OMK_TIE_LOG") != nullptr;
+    static const bool tieLog = omk::envFlag("OMK_TIE_LOG");
     if (tieLog)
         std::printf("[tie] gles: baked %zu losers over %zu draws on geometry %p\n",
                     baked_[g].size(), order.size(), static_cast<const void*>(g));
@@ -2395,7 +2396,7 @@ void GlesRenderer::setView(const View& view) {
 // `OMK_CPU_MIRROR=1` keeps the fallback, for laying the two side by side.
 bool GlesRenderer::drawMirrorScene(const View& v, const View& refl, std::span<const Draw> scene,
                                    std::span<const Draw> sceneClipped, std::span<const Draw> mirror) {
-    static const bool cpuMirror = std::getenv("OMK_CPU_MIRROR") != nullptr;
+    static const bool cpuMirror = omk::envFlag("OMK_CPU_MIRROR");
     if (cpuMirror || mirror.empty()) return false;
     begin(v);
     setView(refl);
@@ -2995,7 +2996,7 @@ void GlesRenderer::end() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     dirty_ = true;
     // Per geometry, once, as the Vulkan backend reports it.
-    static const bool tieLog = std::getenv("OMK_TIE_LOG") != nullptr;
+    static const bool tieLog = omk::envFlag("OMK_TIE_LOG");
     if (tieLog)
         for (auto& [g, t] : tie_)
             if (t.touched && !t.logged) {
@@ -3198,7 +3199,7 @@ bool GlesRenderer::presentSurface(const Surface& s, int winW, int winH) {
     // gain little, so once half the rows have changed the next fifteen frames
     // are copied whole without asking, the hashes thrown away; then one frame
     // takes them again and the next compares.
-    static const bool check = std::getenv("OMK_PRESENT_CHECK") != nullptr;
+    static const bool check = omk::envFlag("OMK_PRESENT_CHECK");
     const std::size_t rowBytes = static_cast<std::size_t>(s.w) * 2u;
     const unsigned char* cur = reinterpret_cast<const unsigned char*>(s.px.data());
     const auto rowHash = [](const unsigned char* p, std::size_t n) {
@@ -3274,7 +3275,7 @@ gpuTexture("interface", surfTex_, 2LL * s.w * s.h);
 #if !defined(__vita__)
             // (`OMK_PRESENT_ROWS`: the Vita's decision on a desktop - row by
             // row always - so the check above can see the path a console takes)
-            static const bool rowsOnly = std::getenv("OMK_PRESENT_ROWS") != nullptr;
+            static const bool rowsOnly = omk::envFlag("OMK_PRESENT_ROWS");
             whole = !rowsOnly && changed * 4 > s.h;
 #endif
             if (whole) { sendAll(); surfRowsSent_ -= s.h; }
@@ -3420,7 +3421,7 @@ gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
             // byte (the same shape as the buffer re-floor in the handoff's
             // traps). `OMK_PRESENT_ROWS` keeps the console's row-by-row.
 #if !defined(__vita__)
-            static const bool rowsOnly = std::getenv("OMK_PRESENT_ROWS") != nullptr;
+            static const bool rowsOnly = omk::envFlag("OMK_PRESENT_ROWS");
 #endif
             int runFrom = -1, runTo = -1;   // the run (or span) not yet sent
             const auto flush = [&] {

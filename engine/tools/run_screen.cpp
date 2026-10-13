@@ -16,6 +16,7 @@
 #include "ui/screendraw.h"
 #include "ui/text.h"
 #include "ui/widgets.h"
+#include "platform/env.h"
 
 #include <cstdio>
 #include <fstream>
@@ -48,7 +49,7 @@ int main(int argc, char** argv) {
     // quantity `engine: screen scale` is built on. Without the cloud it
     // measures it again.
     omk::MenuCloud cloud;
-    if (!std::getenv("OMK_NOCLOUD") && cloud.load(fs)) comp.attachCloud(&cloud);
+    if (!omk::envFlag("OMK_NOCLOUD") && cloud.load(fs)) comp.attachCloud(&cloud);
     // The background ANIMATES, so a frame-for-frame comparison against the
     // live window has to name the same frame. `engine: screen` passes the one
     // the player's loop ends on; without it the two differ by a phase and the

@@ -4,6 +4,7 @@
 #include "o3de/greybank.h"
 #include "o3de/shimmer.h"
 #include "ui/surface.h"
+#include "platform/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -240,7 +241,7 @@ RasterStats drawGeometry(Surface& fb, std::vector<float>& depth,
             // `OMK_NO_CULL=1` draws both sides - the device-state reading
             // (CULL_NONE) - for laying the two beside each other, the way
             // `--no-dither` does; `engine: back-face cull` renders both.
-            static const bool noCull = std::getenv("OMK_NO_CULL") != nullptr;
+            static const bool noCull = omk::envFlag("OMK_NO_CULL");
             const bool oneSided = !noCull && g.cornerCull.size() == g.corners.size() &&
                                   g.cornerCull[i] != 0;
 

@@ -12,6 +12,7 @@
 // is drawn in the window's own AGL context (`backends/gl1/gl1host.h`).
 #include "playframe.h"
 #include "../gl1/gl1render.h"
+#include "platform/env.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +32,7 @@ bool PlayState::gpuWindowBuild() const { return false; }
 #endif
 void PlayState::gpuOpenWindow() {}
 void PlayState::gpuOpenWorldHarness() {
-    const char* e = std::getenv("OMK_GL1");
+    const char* e = omk::envStr("OMK_GL1");
     if (e && std::strcmp(e, "0") == 0) {
         std::printf("renderer: OMK_GL1=0 - the software reference\n");
         return;
@@ -111,11 +112,11 @@ void PlayState::gpuPresentWorld(bool& presentedWorld) {
     }
 }
 bool PlayState::gpuWorldOnWindow() {
-    static const bool composite = omk::envSet("OMK_GL1_COMPOSITE");
+    static const bool composite = omk::envFlag("OMK_GL1_COMPOSITE");
     return worldVk && world_ == worldVk && !composite && !gl1Composite;
 }
 void PlayState::gpuOverlayDecision(const char*& keep) {
-    static const bool noOverlay = omk::envSet("OMK_NO_OVERLAY");
+    static const bool noOverlay = omk::envFlag("OMK_NO_OVERLAY");
     overlayFrame = softGate && !noOverlay && !verifyGpuPresent && gpuWorldOnWindow();
     if (overlayFrame) {
         static std::string overlayWhy;

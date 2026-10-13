@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseScreens`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 namespace {
 
@@ -294,7 +295,7 @@ void PlayState::screensHuds() {
     // - the two gauges down the screen's two edges, and mode 2's STAT CARD
     // for the four seconds after `Fight_Begin`'s `Hud_Refresh`
     // (`ui/hudbar.h`). Hidden through the KO replay, as the engine's gate.
-    if (fightRun.active && fightRun.fight && !omk::envSet("OMK_NOUI")) {
+    if (fightRun.active && fightRun.fight && !omk::envFlag("OMK_NOUI")) {
         if (!hudBar.loaded()) hudBar.load(fs);
         if (fightRun.hudRefresh) {
             fightRun.hudRefresh = false;
@@ -335,7 +336,7 @@ void PlayState::screensHuds() {
     // - mode 1, the horizontal bar (`ui/hudbar.h`). The engine's
     // `Hud_Refresh` on the first tick seeds the sparks and the stat card's
     // clock, neither of which mode 1 draws, so nothing is done for it here.
-    if (player && player->breathLeftMs() >= 0.0 && !omk::envSet("OMK_NOUI")) {
+    if (player && player->breathLeftMs() >= 0.0 && !omk::envFlag("OMK_NOUI")) {
         if (!hudBar.loaded()) hudBar.load(fs);
         const int v = static_cast<int>(1000.0 * player->breathLeftMs() / 40000.0);
         const omk::HudBarFrame br = hudBar.draw(fb, v, 1000, 0, 1);
@@ -359,7 +360,7 @@ void PlayState::screensHuds() {
     {
         using GS = omk::GameState;
         const int f = state.timerFlags();
-        if (!(f & GS::kTimerStopped) && (f & GS::kTimerVisible) && !omk::envSet("OMK_NOUI")) {
+        if (!(f & GS::kTimerStopped) && (f & GS::kTimerVisible) && !omk::envFlag("OMK_NOUI")) {
             int v = 0;
             if (f & GS::kTimerExpired) {
                 v = state.timerValue();
@@ -404,7 +405,7 @@ void PlayState::screensHuds() {
     // GAUGE (`ui/hudbar.h`). The two turning models go into their boxes
     // below. NOT drawn yet, labelled: the top-right minimap
     // `RADAR\<level>.WRE`.
-    if (shootMode && hudWalk && !walk && !omk::envSet("OMK_NOUI")) {
+    if (shootMode && hudWalk && !walk && !omk::envFlag("OMK_NOUI")) {
         hudRows.clear();
         std::int32_t rings = 0;
         omk::readActorProperty(state.raw().subspan(
@@ -655,7 +656,7 @@ void PlayState::screensHuds() {
         // instrument, and the one that found the keyed-tile fault: with
         // the device off, the caller was there all along, so the world
         // was never the problem.
-        if (!omk::envSet("OMK_NOUI")) {
+        if (!omk::envFlag("OMK_NOUI")) {
             omk::ScreenFrame sf;
             spanned("screen draw", [&] { sf = comp.draw(fb, openScreen, *walk); });
             // screen 35 over the menu while it has the focus - its panel
@@ -1118,9 +1119,7 @@ void PlayState::screensFades() {
             // band greys. It exists to tell the fade's own two bands apart
             // from the LETTERBOX, which occupies the same 64 rows at 480
             // and is what one report turned out to be.
-            static const bool fadeLog = [] {
-                const char* e = std::getenv("OMK_FADELOG"); return e && *e == '1';
-            }();
+            static const bool fadeLog = omk::envOn("OMK_FADELOG");
             static std::string told;
             if (fadeLog) {
                 char buf[160];
@@ -1174,7 +1173,7 @@ void PlayState::screensFades() {
     // count far below its neighbours', which is what a player sees as
     // "Kay'l with a black background" and what no still frame can be
     // chosen to catch.
-    if (omk::envSet("OMK_CLIPLOG")) {
+    if (omk::envFlag("OMK_CLIPLOG")) {
         // Lit pixels, and how many changed since the previous frame. The
         // second is what a POP looks like: a body or a camera moving a
         // long way in one frame repaints a large part of the picture, and

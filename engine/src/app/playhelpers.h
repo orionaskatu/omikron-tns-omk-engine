@@ -200,16 +200,6 @@ struct ViewCam {
 enum class Light { Colour, Grey, Off };
 Geometry relight(const Geometry& src, Light mode);
 
-
-// ONE `getenv` PER NAME PER RUN (`todo/vita-port.md`). Uncached, the frame
-// loop makes twenty-five `std::getenv` calls a frame - six of them for
-// `OMK_NOUI` alone, and `OMK_BODYLOG` once per staged BODY - and `getenv` is a
-// library call that walks the environment comparing strings. The environment
-// does not change while the viewer runs, so each name is looked up once and
-// kept. The cache is scanned by POINTER first, which is what every call site
-// hands it (a string literal), so a hit is a handful of pointer compares.
-bool envSet(const char* name);
-
 // Raw int16 PCM to the device's interleaved float (`playhelpers.cpp`).
 std::vector<float> resampleToDevice(const std::vector<std::int16_t>& pcm,
                                     int channels, int rate, int deviceRate);

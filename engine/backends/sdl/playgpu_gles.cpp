@@ -5,6 +5,7 @@
 #include "playframe.h"
 #include "playgpu_gles.h"
 #include "sdlfront.h"
+#include "platform/env.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
 #endif
@@ -87,7 +88,7 @@ void PlayState::gpuOpenWindow() {
             // off: what a profile of the path a player takes needs
             // (todo/cpu-vs-original.md) - the readback path is not that path.
             const Uint32 glWinFlags = SDL_WINDOW_OPENGL |
-                (omk::envSet("OMK_NO_GPU_PRESENT") || omk::envSet("OMK_HIDDEN_WINDOW")
+                (omk::envFlag("OMK_NO_GPU_PRESENT") || omk::envFlag("OMK_HIDDEN_WINDOW")
                      ? SDL_WINDOW_HIDDEN : omk::sdlFrontend(front).windowFlags());
 #if defined(OMK_SDL3)
             glWin = SDL_CreateWindow("OMK Engine (gles)", dispW, dispH, glWinFlags);
@@ -232,7 +233,7 @@ void PlayState::gpuPresentOverlay(bool& presentedWorld) {
         omk::glesSetOverlayAsLayer(glRen, false);
 #endif
         if (presentedWorld) {
-            static const char* winDump = std::getenv("OMK_GLES_WINDUMP");
+            static const char* winDump = omk::envStr("OMK_GLES_WINDUMP");
             if (winDump && frames && frameNo + 1 >= frames) {
                 std::vector<unsigned char> pic;
                 omk::glesWindowPicture(glRen, ww, wh, pic);
@@ -275,7 +276,7 @@ bool PlayState::gpuWorldOnWindow() {
 void PlayState::gpuOverlayDecision(const char*& keep) {
     omk::Renderer& world = *world_;
     {
-        static const bool noOverlay = std::getenv("OMK_NO_OVERLAY") != nullptr;
+        static const bool noOverlay = omk::envFlag("OMK_NO_OVERLAY");
         overlayFrame = softGate && !noOverlay && !verifyGpuPresent &&
                        glRen && &world == glRen;
         if (overlayFrame) {

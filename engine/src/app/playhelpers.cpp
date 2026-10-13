@@ -182,20 +182,6 @@ Geometry relight(const Geometry& src, Light mode) {
     return g;
 }
 
-
-bool envSet(const char* name) {
-    struct Seen { const char* name; bool set; };
-    static Seen seen[32];
-    static int n = 0;
-    for (int i = 0; i < n; ++i)                       // the literal's own pointer
-        if (seen[i].name == name) return seen[i].set;
-    for (int i = 0; i < n; ++i)                       // ...or the same text
-        if (std::strcmp(seen[i].name, name) == 0) return seen[i].set;
-    const bool set = std::getenv(name) != nullptr;
-    if (n < static_cast<int>(sizeof seen / sizeof seen[0])) seen[n++] = Seen{name, set};
-    return set;
-}
-
 // Raw int16 PCM to the device's interleaved float, the same nearest-neighbour
 // step `wavToDevice` uses and for the same reason (B5: a resampler's sound is
 // the driver's and has no reachable tier). This one exists because a dialogue

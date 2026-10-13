@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // -> true when the sphere is wholly outside one side plane
 bool PlayState::outsideView(const float c[3], float r, bool bodies) {
@@ -38,7 +39,7 @@ void PlayState::worldDrawLists() {
     // submits the sprites once a PASS with that pass's camera, and these are
     // built once a frame with the eye's - a particle behind the eye can be in
     // the reflection. `OMK_NO_FX_GATE=1` draws every particle, as before.
-    static const bool noFxGate = omk::envSet("OMK_NO_FX_GATE");
+    static const bool noFxGate = omk::envFlag("OMK_NO_FX_GATE");
     const bool fxGated = !noFxGate && !mirrorLive;
     const float fxNear = fxGated ? omk::kNearCut : -std::numeric_limits<float>::infinity();
     const float fxFar = fxGated && std::isfinite(clipInches) ? static_cast<float>(clipInches)
@@ -230,7 +231,7 @@ void PlayState::worldDrawLists() {
     if (drawSky && !sky.base.empty() && !sky.geo.batches.empty()) {
         const float sx = view.cam.eye[0], sz = view.cam.eye[2];
         const float sy = sky.origin[1] - kSkyLift;
-        static const bool cpuSky = omk::envSet("OMK_CPU_SKY");   // A/B only
+        static const bool cpuSky = omk::envFlag("OMK_CPU_SKY");   // A/B only
         const bool skyGpu = !cpuSky && !cpuBodiesFlag && world.posesBodies() &&
                             sky.rest.cornerMesh.size() == sky.rest.corners.size() &&
                             !sky.rest.corners.empty();
@@ -459,7 +460,7 @@ void PlayState::worldDrawLists() {
     // the frames where the two disagree.
     std::size_t litBodies = 0;
     for (const auto& up : staged) if (up->drawn && up->mo) ++litBodies;
-    if (omk::envSet("OMK_CLIPLOG")) {
+    if (omk::envFlag("OMK_CLIPLOG")) {
         std::printf("  [clip] frame %ld  runs %zu drawn %zu culled  bodies %zu"
                     "  eye %.0f %.0f %.0f\n", frameNo, runsDrawn, runsCulled, litBodies,
                     view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]);
@@ -652,7 +653,7 @@ void PlayState::worldDrawLists() {
                 }
                 view.shadow.radius = rad;
                 view.shadow.strength = 0.6f;
-                static const bool shLog = std::getenv("OMK_SHADOWLOG") != nullptr;
+                static const bool shLog = omk::envFlag("OMK_SHADOWLOG");
                 if (!shadowLightTold || (shLog && (frameNo % 30) == 0)) {
                     shadowLightTold = true;
                     std::printf("frame %ld: mapped shadows - light '%s' at "
@@ -732,7 +733,7 @@ void PlayState::worldDrawLists() {
             // the body's centre feeds ONE number, `shadowFootOffMax`, which
             // only `OMK_SHADOWLOG` prints - so the pass over every posed
             // corner runs only then (todo/cpu-vs-original.md tier A)
-            static const bool footLog = std::getenv("OMK_SHADOWLOG") != nullptr;
+            static const bool footLog = omk::envFlag("OMK_SHADOWLOG");
             float rx = 0.0f, rz = 0.0f;
             if (footLog && ref && !ref->corners.empty()) {
                 float lo[2] = {1e30f, 1e30f}, hi[2] = {-1e30f, -1e30f};
@@ -861,7 +862,7 @@ void PlayState::worldDrawLists() {
             if (omk::shadowFootBlob(shadowGeo, shadowModel, up->footAt[0],
                                     up->footAt[1], static_cast<float>(h->y), nrm)) {
                 ++blobs; ++nCrowd;
-                static const bool pedLog = std::getenv("OMK_SHADOWLOG") != nullptr;
+                static const bool pedLog = omk::envFlag("OMK_SHADOWLOG");
                 if (pedLog && nCrowd == 1 && (frameNo % 60) == 0)
                     std::printf("  [shadow] crowd blob: feet %.0f %.0f %.0f / "
                                 "%.0f %.0f %.0f  floor %.0f  corner0 %.0f %.0f %.0f "
@@ -899,7 +900,7 @@ void PlayState::worldDrawLists() {
                         frameNo, detail, omk::shadowQualityName(shadowQuality),
                         blobs, shadowGeo.corners.size(), shadowTexBase);
         }
-        static const bool shadowLog = std::getenv("OMK_SHADOWLOG") != nullptr;
+        static const bool shadowLog = omk::envFlag("OMK_SHADOWLOG");
         if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] frame %ld: %ld player + %ld actor + %ld crowd"
                         " = %ld blobs (%zu peds staged, %ld drawn, %ld with feet)\n",
@@ -1113,7 +1114,7 @@ void PlayState::worldMirror() {
     //
     // The engine keeps a SINGLE global (`dword_534F48`), so at most
     // one mirror is live at a time; the shown slot's is the one.
-    static const bool noMirror = std::getenv("OMK_NO_MIRROR") != nullptr;
+    static const bool noMirror = omk::envFlag("OMK_NO_MIRROR");
     // ...unless ops 134/135 parked it (`sub_41E1D0(0)`: `dword_534F48 = 0`)
     static const omk::MirrorPlane parkedMirror{};
     const omk::MirrorPlane& wmp = session.mirrorParked() ? parkedMirror
@@ -1123,7 +1124,7 @@ void PlayState::worldMirror() {
         // after every writer above. A creep of a hundredth of a unit
         // is invisible in any still and is what makes a point-sampled
         // texture twinkle (todo/omk-play 88).
-        static const bool camLog = [] { const char* e = std::getenv("OMK_CAMLOG"); return e && *e == '1'; }();
+        static const bool camLog = omk::envOn("OMK_CAMLOG");
         if (camLog)
             std::fprintf(stderr, "[cam] frame %ld eye %.4f %.4f %.4f at %.4f %.4f %.4f fov %.3f\n",
                          frameNo, view.cam.eye[0], view.cam.eye[1], view.cam.eye[2],
@@ -1176,7 +1177,7 @@ void PlayState::worldMirror() {
     // would show.
     // only a build with a GPU window decides it (`playgpu_<backend>.cpp`)
     if (gpuWindowBuild()) {
-        static const bool noGpuPresent = std::getenv("OMK_NO_GPU_PRESENT") != nullptr;
+        static const bool noGpuPresent = omk::envFlag("OMK_NO_GPU_PRESENT");
         const bool lastDumped = !dump.empty() && frames && frameNo + 1 >= frames;
         // THE GLES WINDOW TAKES THE SAME PATH (`todo/vita-port.md` G6
         // step 1). A console log put 90 of a cutscene
@@ -1198,7 +1199,7 @@ void PlayState::worldMirror() {
         // with the monitors' INTERFERENCE (row shifts and an OR mask).
         else if (vpItem || (walk && screenReadsPicture)) keep = "screen";
         else if (mst.active && !mst.native) keep = "cpu mirror";
-        else if (!flickerDir.empty() || !snapsDir.empty() || omk::envSet("OMK_CLIPLOG")) keep = "instrument";
+        else if (!flickerDir.empty() || !snapsDir.empty() || omk::envFlag("OMK_CLIPLOG")) keep = "instrument";
         else if (lastDumped) keep = "dump";
         // THE SOFT GATES, last: what these three draw goes OVER the
         // picture without reading it (a full-screen bitmap, the text's
@@ -1228,11 +1229,11 @@ void PlayState::worldMirror() {
         // picture, opaque, without reading it
         else if (!weatherLines.empty() || !weatherFlakes.empty()) { keep = "weather"; softGate = true; }
         else if (fightRun.active && fightRun.fight && fightRun.fight->koCounter() == 0 &&
-                 !omk::envSet("OMK_NOUI")) { keep = "fight hud"; softGate = true; }
+                 !omk::envFlag("OMK_NOUI")) { keep = "fight hud"; softGate = true; }
         // ...and the BREATH gauge, under the test that draws it - the
         // same GPU-present gap the fight's gauges fell into
         else if (player && player->breathLeftMs() >= 0.0 &&
-                 !omk::envSet("OMK_NOUI")) { keep = "breath gauge"; softGate = true; }
+                 !omk::envFlag("OMK_NOUI")) { keep = "breath gauge"; softGate = true; }
         // G6 step 4: the SHOOT HUD. Its readers are the composer's alpha
         // fill and 50% quad, the gauge's and the radar's `fillQuadD3d` -
         // all on the planes; the turning models, the crosshair and the

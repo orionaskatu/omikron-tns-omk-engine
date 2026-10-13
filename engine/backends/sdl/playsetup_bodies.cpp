@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "platform/env.h"
 
 int PlayState::setupBodies() {
     const auto& fs = *fs_;
@@ -136,13 +137,13 @@ int PlayState::setupBodies() {
     // The sprite ids the resident scene can actually name - what goes in the
     // pool, as opposed to everything that decoded.
     poolOverflowTold = false;
-    stagedProbe = std::getenv("OMK_STAGE_PROBE") != nullptr;
+    stagedProbe = omk::envFlag("OMK_STAGE_PROBE");
     // `engine: camera obstruction` - one line per frame from `sub_417070`.
-    obstructProbe = std::getenv("OMK_CAM_OBSTRUCT_PROBE") != nullptr;
+    obstructProbe = omk::envFlag("OMK_CAM_OBSTRUCT_PROBE");
     // A DIAGNOSTIC for the sign of the scene call's Euler: CLAUDE.md 5's
     // rule is that leaving the game's space reflects one axis and so
     // reverses the sense of every rotation about it.
-    progYawSign = std::getenv("OMK_PROGYAW_NEG") ? -1.0f : 1.0f;
+    progYawSign = omk::envFlag("OMK_PROGYAW_NEG") ? -1.0f : 1.0f;
     // ...and that clip as a pose, at FRAME 0. The recipe is
     OMK_HEAPCHECK("before melee");
     // (struct FightRun: `backends/sdl/playtypes.h`, todo/play-split.md)
@@ -356,7 +357,7 @@ int PlayState::setupBodies() {
     // (struct SetLoad: `backends/sdl/playtypes.h`, todo/play-split.md)
     // what each slot was last ASKED for - not `WorldSlot::stem`, which is what
     // is IN it: a set that does not resolve is asked for once, not every frame
-    syncSets = omk::envSet("OMK_SYNC_SETS");   // A/B only
+    syncSets = omk::envFlag("OMK_SYNC_SETS");   // A/B only
     // THE LOAD HELD FOR THE SET (`Session::setLoadGate`). A console's card and
     // A9 took 1.3 s over Anekbah where the slices give 0.57, and the frame
     // that brought the set in waited 727 ms for the rest. With
@@ -365,12 +366,12 @@ int PlayState::setupBodies() {
     // the machine's, so it is ON only where that is wanted: a Vita, or
     // `OMK_LOAD_GATE=1`; every check runs by the count alone.
 #if defined(__vita__)
-    loadGate = !syncSets && !omk::envSet("OMK_NO_LOAD_GATE");
+    loadGate = !syncSets && !omk::envFlag("OMK_NO_LOAD_GATE");
 #else
-    loadGate = !syncSets && omk::envSet("OMK_LOAD_GATE");
+    loadGate = !syncSets && omk::envFlag("OMK_LOAD_GATE");
 #endif
     // (a test's slow card: the job sleeps this long first - desktop only)
-    loadDelayMs = std::getenv("OMK_LOAD_DELAY_MS") ? std::atoi(std::getenv("OMK_LOAD_DELAY_MS")) : 0;
+    loadDelayMs = omk::envInt("OMK_LOAD_DELAY_MS", 0);
     if (loadGate)
         session.setLoadGate([this](int slot) {
             const auto& L = setLoads[slot & 1];

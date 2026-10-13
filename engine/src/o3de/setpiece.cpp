@@ -2,6 +2,7 @@
 // The set pieces. See `setpiece.h` for which function each rule is.
 #include <cstdlib>
 #include "o3de/setpiece.h"
+#include "platform/env.h"
 
 #include <cmath>
 
@@ -292,7 +293,7 @@ void SetPieceRunner::tick(float dt, ParticleField& fx) {
             const int id = p.effectId > 0 ? p.effectId : indirectEffect(static_cast<int>(i));
             // A DIAGNOSTIC, not a port: `OMK_SKIP_EFFECT=n` leaves effect n
             // unspawned, so a picture can be argued with one ingredient out.
-            static const int skip = std::getenv("OMK_SKIP_EFFECT") ? std::atoi(std::getenv("OMK_SKIP_EFFECT")) : -1;
+            static const int skip = omk::envInt("OMK_SKIP_EFFECT", -1);
             // AN UNDEFINED ANCHOR. A type-1 link puts this row's records in
             // the frame of another row, whose heading `sub_450940` builds
             // from its current and NEXT record. For a row with ONE record

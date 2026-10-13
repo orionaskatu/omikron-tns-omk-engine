@@ -12,6 +12,7 @@
 // links `playharness_off.cpp` instead, where every one is an empty stub -
 // the flags still parse and do nothing, and the run says so once.
 #include "playframe.h"
+#include "platform/env.h"
 
 // --newgame-world: a new game's world under the save's player
 void PlayState::harnessNewWorld() {
@@ -632,7 +633,7 @@ void PlayState::screensFlicker() {
         ++framesSeen;
         if (gpuFrame) ++gpuPresented;
         else ++keptBy[gpuKeep];
-        if (omk::envSet("OMK_GPU_PRESENT_STATS") && framesSeen % 30 == 0) {
+        if (omk::envFlag("OMK_GPU_PRESENT_STATS") && framesSeen % 30 == 0) {
             std::printf("gpu present: frame %ld, %ld of %ld frames stayed on the GPU; on the CPU:",
                         frameNo, gpuPresented, framesSeen);
             for (const auto& [why, count] : keptBy) std::printf(" %s %ld,", why.c_str(), count);

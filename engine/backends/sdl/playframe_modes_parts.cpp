@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseModes`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // The pause screen stops the sound; the voices
 void PlayState::modesSound() {
@@ -948,7 +949,7 @@ int PlayState::modesShoot() {
             static int pmMsg = -2, pmFrame = -1;
             if (pmMsg == -2) {
                 pmMsg = -1;
-                if (const char* e = std::getenv("OMK_POST_MESSAGE"))
+                if (const char* e = omk::envStr("OMK_POST_MESSAGE"))
                     if (std::sscanf(e, "%d@%d", &pmMsg, &pmFrame) != 2) pmMsg = -1;
             }
             if (pmMsg >= 0 && frameNo == pmFrame) {

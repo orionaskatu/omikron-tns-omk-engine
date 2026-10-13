@@ -2,6 +2,7 @@
 #include "formats/bytes.h"
 #include "actor/player.h"
 #include "o3de/camobstruct.h"
+#include "platform/env.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -396,7 +397,7 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
         // is under the body answers.
         if (!h) h = walker_.probeFlags(nx, node, nz, fl);
         bool under = true, done = false;
-        if (std::getenv("OMK_SWIMTRACE"))
+        if (omk::envFlag("OMK_SWIMTRACE"))
             std::printf("  waterprobe: head at %.1f %.1f %.1f -> %s y %.1f flags %08x\n", hx, node, hz,
                         h ? "hit" : "NOTHING", h ? *h : 0.0, fl);
         if (h && (fl & 0x20000000u)) {

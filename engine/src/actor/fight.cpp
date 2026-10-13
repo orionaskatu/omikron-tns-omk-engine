@@ -23,6 +23,7 @@
 //     case" this repo has a rule about.
 //   * the screen fade, the camera and the gauges: steps 3, 4 and 5.
 #include "actor/fight.h"
+#include "platform/env.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -620,9 +621,7 @@ void Fight::postStep(FightContext& c) {
         c.entry = cur;
     }
 
-    static const bool koTrace = [] {
-        const char* e = std::getenv("OMK_KOTRACE"); return e && *e == '1';
-    }();
+    static const bool koTrace = omk::envOn("OMK_KOTRACE");
     if (koTrace && koTraceLeft_ > 0 && koTraceWho_ == &c) {
         const auto& S = c.body->channel->ctl().states;
         std::printf("  koTrace %2d: entry %d '%s' clipOwner %d "

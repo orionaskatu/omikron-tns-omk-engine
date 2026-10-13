@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseInput`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
 #endif
@@ -524,7 +525,7 @@ void PlayState::inputMotion() {
         // the old, wrong reading, kept so the two can be run a variable
         // apart (`verify.py: engine: node rest`).
         static const bool transientMotions =
-            omk::envSet("OMK_TRANSIENT_MOTIONS");
+            omk::envFlag("OMK_TRANSIENT_MOTIONS");
         if (transientMotions) {
             for (const auto& mo : sr->motions()) allMotions.push_back(mo);
         } else {
@@ -536,8 +537,8 @@ void PlayState::inputMotion() {
     // the GPU path for the moving meshes: a renderer that poses bodies, and
     // nothing this frame that reads their corners out of the set's buffer
     // (`OMK_MESH_AT`); `OMK_CPU_MOTION=1` for the comparison
-    static const bool cpuMotion = omk::envSet("OMK_CPU_MOTION") ||
-                                  std::getenv("OMK_MESH_AT") != nullptr;
+    static const bool cpuMotion = omk::envFlag("OMK_CPU_MOTION") ||
+                                  omk::envFlag("OMK_MESH_AT");
     const bool gpuMotion = !cpuMotion && !cpuBodiesFlag && world.posesBodies();
     if (!allMotions.empty() || !allScales.empty()) {
         struct Patch {
@@ -619,7 +620,7 @@ void PlayState::inputMotion() {
                     for (auto& kv : motionAt) if (kv.first == mo.name) { kv.second = at; found = true; break; }
                     if (!found) motionAt.emplace_back(mo.name, at);
                 }
-                if (omk::envSet("OMK_TRACE_MOTION")) {
+                if (omk::envFlag("OMK_TRACE_MOTION")) {
                     const float* mp = w.meshes[static_cast<std::size_t>(mi)].pos;
                     std::printf("  [motion] %-12s sample %.0f %.0f %.0f  from %.0f %.0f %.0f"
                                 "  anchor %.0f %.0f %.0f  ->  %.0f %.0f %.0f  (%s)\n",
@@ -815,7 +816,7 @@ void PlayState::inputMotion() {
                         omk::placePoints(pp, soup.data(), 3, soup.data(), 3, pts.data(), pts.size());
                 };
                 const double motionSoups0 = phaseNow();
-                static const bool eagerSoups = omk::envSet("OMK_EAGER_SOUPS");
+                static const bool eagerSoups = omk::envFlag("OMK_EAGER_SOUPS");
                 if (eagerSoups) {
                     patchSoup(w.soup, w.restSoupOfMesh[mi], meshSoupTris, movedSoup[sl]);
                     patchSoup(w.steep, w.restSteepOfMesh[mi], meshSteepTris, movedSteep[sl]);
@@ -856,7 +857,7 @@ void PlayState::inputMotion() {
                 // revision - the backend's vertex upload and depth tie take
                 // just those (Geometry::dirtyCorners). `OMK_NO_DIRTY=1`
                 // leaves the list unset, so everything is re-done as before.
-                static const bool noDirty = std::getenv("OMK_NO_DIRTY") != nullptr;
+                static const bool noDirty = omk::envFlag("OMK_NO_DIRTY");
                 if (!noDirty) w.geo.dirtyFrom = w.geo.revision;
                 w.geo.revision = ++worldGeoRev;
                 if (!noDirty) {
@@ -874,7 +875,7 @@ void PlayState::inputMotion() {
     // node RESTS; this one is the drawn geometry and answers on every
     // frame, moving or still. `verify.py: engine: node rest`.
     {
-        static const char* meshAtName = std::getenv("OMK_MESH_AT");
+        static const char* meshAtName = omk::envStr("OMK_MESH_AT");
         if (meshAtName && *meshAtName) {
             const auto lower = [](std::string n) {
                 for (auto& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -958,7 +959,7 @@ void PlayState::inputMotion() {
             for (int sl = 0; sl < 2; ++sl) {
                 const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
                 if (w.stem.empty()) continue;
-                static const bool eagerMerge = omk::envSet("OMK_EAGER_SOUPS");
+                static const bool eagerMerge = omk::envFlag("OMK_EAGER_SOUPS");
                 for (const std::uint32_t t : movedSoup[sl]) {
                     // a recorded mesh is copied in when it is placed (`lazyPlace`)
                     if (eagerMerge)
@@ -1026,7 +1027,7 @@ void PlayState::inputMotion() {
         }
         // `OMK_VERIFY_PATCH=1`: the full merge beside the in-place one, every
         // moving frame, compared bit for bit (`verify.py: engine: patch index`).
-        static const bool verifyPatch = std::getenv("OMK_VERIFY_PATCH") != nullptr;
+        static const bool verifyPatch = omk::envFlag("OMK_VERIFY_PATCH");
         if (verifyPatch) {
             lazyPlaceAll();   // the instrument compares every triangle
             static long compared = 0, mismatched = 0;
@@ -1061,7 +1062,7 @@ void PlayState::inputMotion() {
         // extent it has now - the ids re-gathered only when the moving set
         // or the merge changed, the extents every moving frame.
         // `OMK_MOVING_GRID=1` rebuilds the grid as before.
-        static const bool movingGrid = omk::envSet("OMK_MOVING_GRID");
+        static const bool movingGrid = omk::envFlag("OMK_MOVING_GRID");
         const auto partsOf = [&](omk::SplitSoupGrid& grid, const omk::TriangleSoup& merged,
                                  const std::vector<std::uint8_t>& movingTri, bool steep,
                                  bool regather) {
@@ -1094,7 +1095,7 @@ void PlayState::inputMotion() {
             // carried from its rest box through the placement and padded by
             // a unit - a superset of where its triangles will be, so a query
             // gathers what it would have, and the answers do not move
-            static const bool eager = omk::envSet("OMK_EAGER_SOUPS");
+            static const bool eager = omk::envFlag("OMK_EAGER_SOUPS");
             if (!lazyPlaceOneFn) lazyPlaceOneFn = [this](int key) { lazyPlace(key); };
             grid.place = eager ? std::function<void(int)>{} : lazyPlaceOneFn;
             for (auto& part : grid.parts) {
@@ -1144,7 +1145,7 @@ void PlayState::inputMotion() {
         // fixed lattice over the street, probed through the two-layer grid and
         // through the linear scan, every moving frame
         // (`verify.py: engine: split grid`).
-        static const bool verifySplit = std::getenv("OMK_VERIFY_SPLIT") != nullptr;
+        static const bool verifySplit = omk::envFlag("OMK_VERIFY_SPLIT");
         if (verifySplit) {
             lazyPlaceAll();   // it reads triangle centres straight out of the soup
             static long splitFrames = 0, probes = 0, mismatched = 0;

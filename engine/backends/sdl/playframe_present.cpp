@@ -2,6 +2,7 @@
 // THE FRAME'S PRESENT PHASE - the fps counter, the fades, the flicker catcher and the present.
 // Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
+#include "platform/env.h"
 
 bool omkInstrumentsBuilt();   // playharness.cpp / playharness_off.cpp
 
@@ -111,7 +112,7 @@ int PlayState::phasePresent() {
                                       std::to_string(int(player->pos()[2]))).c_str() : "");
             // ...and one over OMK_MARKS_MS (150) says which SECTIONS: the
             // gaps between the marks, largest first, the top eight
-            static const double marksMs = std::getenv("OMK_MARKS_MS") ? std::atof(std::getenv("OMK_MARKS_MS")) : 150.0;
+            static const double marksMs = omk::envNum("OMK_MARKS_MS", 150.0);
             if (paceLeft > 0.0 && (now - paceLeft) * 1000.0 > marksMs && phMarks.size() > 1) {
                 std::vector<std::pair<double, const char*>> gaps;
                 for (std::size_t k = 1; k < phMarks.size(); ++k)

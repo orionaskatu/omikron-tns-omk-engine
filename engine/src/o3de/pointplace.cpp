@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "o3de/pointplace.h"
+#include "platform/env.h"
 
 #include <cstdlib>
 
@@ -137,7 +138,7 @@ void placePoints(const PointPlace& p, const float* in, std::size_t inStride,
                  const std::uint32_t* idx, std::size_t n) {
 #if OMK_HAS_NEON
     // `OMK_NO_NEON` runs the generic loop in the same binary, for comparing
-    static const bool noNeon = std::getenv("OMK_NO_NEON") != nullptr;
+    static const bool noNeon = omk::envFlag("OMK_NO_NEON");
     if (noNeon) placePointsGeneric(p, in, inStride, out, outStride, idx, n);
     else placePointsNeon(p, in, inStride, out, outStride, idx, n);
 #else

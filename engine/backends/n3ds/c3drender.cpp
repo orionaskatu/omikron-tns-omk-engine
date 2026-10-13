@@ -14,6 +14,7 @@
 #include "platform/profile.h"
 #include "ui/overlay.h"
 #include "ui/surface.h"
+#include "platform/env.h"
 
 #include <3ds.h>
 #include <citro3d.h>
@@ -949,7 +950,7 @@ private:
         bool vram = false;            // in VRAM (6.3), else linear memory
     };
 
-    static bool noCull() { static const bool n = std::getenv("OMK_NO_CULL") != nullptr; return n; }
+    static bool noCull() { static const bool n = omk::envFlag("OMK_NO_CULL"); return n; }
 
     u32 transferFormats() const {
         return rgb565_ ? (GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565))

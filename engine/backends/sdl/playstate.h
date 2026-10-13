@@ -18,6 +18,7 @@
 
 #include "playshared.h"
 #include "platform/cacheline.h"   // clearFrame
+#include "platform/env.h"
 #if OMK_VR
 #include "../vr/playvr.h"   // VrState: the VR build's only state (todo/quest-port.md)
 #endif
@@ -751,7 +752,7 @@ struct PlayState {
     bool drawWorld = false;                 // the world is drawn this turn
     // a function-local `static const` in the body, read once: the same here,
     // read when the frame is built
-    const bool verifyGpuPresent = std::getenv("OMK_VERIFY_GPU_PRESENT") != nullptr;
+    const bool verifyGpuPresent = omk::envFlag("OMK_VERIFY_GPU_PRESENT");
 
     // ---- THE PHASES, in the body's order (`playframe_<name>.cpp`). Each
     // returns what `step()` does: -1 to go on, -2 for the body's `break`, or

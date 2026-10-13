@@ -92,6 +92,7 @@
 #include "platform/profile.h"
 #include "ui/overlay.h"
 #include "ui/surface.h"
+#include "platform/env.h"
 
 #include <algorithm>
 #include <cmath>
@@ -566,7 +567,7 @@ public:
         // a posed draw, whose corners are at rest.
         // `OMK_GL1_NO_SKIP=1` turns the skip off, to show it changes no pixel
         // (`verify.py: engine: gl1 backend`)
-        static const bool noSkip = std::getenv("OMK_GL1_NO_SKIP") != nullptr;
+        static const bool noSkip = omk::envFlag("OMK_GL1_NO_SKIP");
         const Clusters* cl = posed || noSkip ? nullptr : clustersFor(g);
         std::size_t clusterChecked = ~std::size_t{0};
         for (std::size_t t = 0; t < nCorner; t += 3) {
@@ -842,7 +843,7 @@ public:
     // `OMK_CPU_MIRROR=1` keeps the fallback, as on GLES.
     bool drawMirrorScene(const View& v, const View& refl, std::span<const Draw> scene,
                          std::span<const Draw> sceneClipped, std::span<const Draw> mirror) override {
-        static const bool cpuMirror = std::getenv("OMK_CPU_MIRROR") != nullptr;
+        static const bool cpuMirror = omk::envFlag("OMK_CPU_MIRROR");
         if (cpuMirror || mirror.empty()) return false;
         begin(v);
         setCamera(refl);                     // the camera alone: no clear, no state
@@ -1317,7 +1318,7 @@ public:
     // loser is drawn a hair back. Without a tie the street's coincident ground
     // faces fight in the depth buffer and flicker as the camera moves.
     bool bakeDepthTie(const Geometry* g, std::span<const Draw> order) override {
-        static const bool off = std::getenv("OMK_NO_TIE") != nullptr || std::getenv("OMK_NO_TIE_BAKE") != nullptr;
+        static const bool off = omk::envFlag("OMK_NO_TIE") || omk::envFlag("OMK_NO_TIE_BAKE");
         if (off || !g) return false;
         DepthTie t;
         std::vector<std::size_t> losers, restore;
@@ -1418,7 +1419,7 @@ private:
 #if defined(OMK_GL1_AGL)
         freeMem = gl1TextureMemory();
 #endif
-        if (const char* e = std::getenv("OMK_TEXTURE_MEMORY")) freeMem = std::atol(e);
+        freeMem = omk::envInt("OMK_TEXTURE_MEMORY", freeMem);
         const TextureScale sc = fullTextures_ ? TextureScale{} : originalTextureScale(freeMem);
         texScaleW_ = sc.w; texScaleH_ = sc.h;
         if (freeMem > 0 || fullTextures_)
@@ -1541,7 +1542,7 @@ private:
         return o;
     }
     // `OMK_NO_CULL=1` draws both sides, as it does for the reference
-    static bool noCull() { static const bool n = std::getenv("OMK_NO_CULL") != nullptr; return n; }
+    static bool noCull() { static const bool n = omk::envFlag("OMK_NO_CULL"); return n; }
 
     // THE CAMERA, applied on the CPU as the original did: it transformed
     // every vertex itself and handed D3D screen positions (`D3DTLVERTEX`:

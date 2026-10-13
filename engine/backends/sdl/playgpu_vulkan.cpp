@@ -5,6 +5,7 @@
 // exactly one of `playgpu_vulkan.cpp`, `playgpu_gles.cpp`, `playgpu_none.cpp`.
 #include "playframe.h"
 #include "playgpu_vulkan.h"
+#include "platform/env.h"
 
 // The Vulkan window - this glue's, not the game's (the gateway: game code
 // holds no host handle). One viewer a process, so one window.
@@ -21,7 +22,7 @@ void PlayState::gpuOpenWindow() {
                                      dispW, dispH, SDL_WINDOW_VULKAN |
                                      // hidden for a profile of the direct present
                                      // (`OMK_HIDDEN_WINDOW`, playgpu_gles.cpp)
-                                     (omk::envSet("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
+                                     (omk::envFlag("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
                                                                        : omk::sdlFrontend(front).windowFlags()));
         }
         if (vkWin) {

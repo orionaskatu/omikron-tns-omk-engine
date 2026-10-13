@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // The pedestrians, the vehicles, the player
 void PlayState::worldCrowd() {
@@ -62,11 +63,11 @@ void PlayState::worldCrowd() {
         }
         // `OMK_NO_PED_LOD=1`: every walker on its largest skeleton, as
         // before - for laying the two side by side
-        static const bool noPedLod = std::getenv("OMK_NO_PED_LOD") != nullptr;
+        static const bool noPedLod = omk::envFlag("OMK_NO_PED_LOD");
         // `OMK_PED_LOD_MAX=n`: no level past n - at 0 the skeleton mask
         // is on and every walker on level 0, which must draw exactly
         // what `OMK_NO_PED_LOD` draws
-        static const int pedLodMax = std::getenv("OMK_PED_LOD_MAX") ? std::atoi(std::getenv("OMK_PED_LOD_MAX")) : 3;
+        static const int pedLodMax = omk::envInt("OMK_PED_LOD_MAX", 3);
         pedFootOffMax = 0.0f;
         pedJobs.clear();
         const double pedSerial0 = phaseNow();
@@ -784,7 +785,7 @@ void PlayState::worldCrowd() {
             const bool standingNow = player->clipName() == "H_STAND";
             const bool cornersUnread =
                 playerFeetKnown && !(standingNow && !playerStandLatched) &&
-                player->variantCount() <= 1 && !omk::envSet("OMK_PLY") &&
+                player->variantCount() <= 1 && !omk::envFlag("OMK_PLY") &&
                 !fightRun.active && !session.shootMode().active() && !drawArm &&
                 lighting == 0 && !(drawShadows && shadowQuality >= 2);
             playerOffView = cornersUnread && outsideView(centre, 150.0f, true);
@@ -797,7 +798,7 @@ void PlayState::worldCrowd() {
             // once, and one affine a mesh with his placement folded in
             // (`todo/gpu-skinning.md` step 5); the frames that READ his
             // corners - the list above - keep the CPU path.
-            static const bool cpuPlayer = omk::envSet("OMK_CPU_PLAYER");   // A/B only
+            static const bool cpuPlayer = omk::envFlag("OMK_CPU_PLAYER");   // A/B only
             playerGpu = cornersUnread && !playerOffView && drawPlayer && !cpuBodiesFlag &&
                         !cpuPlayer && world.posesBodies() &&
                         playerRest.cornerMesh.size() == playerRest.corners.size();
@@ -1030,11 +1031,10 @@ void PlayState::worldCrowd() {
             // jump needs - its whole arc is 14 frames and a stride of 4
             // steps straight over the apex).
             static const long plyEvery = [] {
-                const char* e = std::getenv("OMK_PLY");
-                const long v = e ? std::atol(e) : 0;
+                const long v = omk::envInt("OMK_PLY", 0);
                 return v > 1 ? v : 1;
             }();
-            if (omk::envSet("OMK_PLY") && (frameNo % plyEvery) == 0) {
+            if (omk::envFlag("OMK_PLY") && (frameNo % plyEvery) == 0) {
                 float lo = -1e9f, hi = 1e9f;
                 for (const auto& c : playerPosed.corners) {
                     if (c.y > lo) lo = c.y;

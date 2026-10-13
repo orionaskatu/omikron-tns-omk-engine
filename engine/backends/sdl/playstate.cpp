@@ -4,6 +4,7 @@
 // that reads one of the objects built in place (`fs`, `session`, ...) names
 // it first under its original name.
 #include "playstate.h"
+#include "platform/env.h"
 
 // THE THREE VOLUME ROWS (10..12) - ATTENUATIONS, and one law for all
 // three: `-10000 * a / 100` hundredths of a dB, so `a` dB. Read where the
@@ -1687,7 +1688,7 @@ bool PlayState::beginMelee(int opponentId, int level) {
     // AN INSTRUMENT, not the engine: `OMK_FIGHT_REFUSE=1` makes the frontend
     // refuse every fight, so `engine: fight park` can show that a script
     // waits for event 2 whatever the frontend does (op 62 parks with no test)
-    static const bool refuse = omk::envSet("OMK_FIGHT_REFUSE");
+    static const bool refuse = omk::envFlag("OMK_FIGHT_REFUSE");
     if (refuse) {
         std::printf("fight.begin %d: REFUSED by OMK_FIGHT_REFUSE (an instrument)\n", opponentId);
         return false;
@@ -2075,7 +2076,7 @@ void PlayState::prepareSet(SetLoad& L) {
     // nothing clamps) - the door is the dark silhouette in front of them, as
     // the clamp draws it (todo/drift-audit.md L1). `OMK_NO_AMBIENT_CLAMP` is
     // the before/after.
-    if (const auto mh0 = omk::readHeader(d); mh0 && !omk::envSet("OMK_NO_AMBIENT_CLAMP")) {
+    if (const auto mh0 = omk::readHeader(d); mh0 && !omk::envFlag("OMK_NO_AMBIENT_CLAMP")) {
         const int grey = static_cast<int>(static_cast<std::int64_t>(
             static_cast<double>(mh0->ambient) * 255.0));
         if (L.dayNight) w.bakedColour = omk::bakedColours(w.geo);   // before the floor
@@ -2286,7 +2287,7 @@ void PlayState::rebuildWorld() {
     // Anekbah, `27 dropped` then `18 uploaded, 57 ms`, and again `18
     // dropped` / `18 uploaded, 52 ms` on the arrival.
     // `OMK_POOL_TWICE=1` is that order, for the comparison.
-    static const bool poolTwice = omk::envSet("OMK_POOL_TWICE");
+    static const bool poolTwice = omk::envFlag("OMK_POOL_TWICE");
     if (poolTwice) world.setTextures(worldTex);
     poolSize = worldTex.size();
     ++poolComposition;   // the character and sprite sections re-append over this

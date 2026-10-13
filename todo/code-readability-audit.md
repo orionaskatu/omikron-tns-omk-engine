@@ -244,6 +244,23 @@ finding: a check that hashed a conversation frame would flicker.
   calls complete is not, and a rename of a `PlayState` member must build or
   at least grep every platform's glue. `-Wshadow` is not on in the Vita,
   3DS, classic or PowerPC build files yet.
+* step 5 - ONE READER for the `OMK_*` switches, `src/platform/env.{h,cpp}`:
+  `envFlag` (set at all), `envOn` (starts with '1'), `envInt`, `envNum`,
+  `envStr`, over a snapshot taken at the first read, so no `getenv` runs in
+  a frame loop any more (`area.cpp` called it uncached on every camera move,
+  transition and zone prune; `envSet`'s 32-entry cache was too small for the
+  names it served) and a worker thread may read one. All 86 switches sit in
+  ONE TABLE with a line each on what they do and the check that sets them;
+  a `static_assert` keeps it in `strcmp` order for the binary search, and
+  `verify.py: env switches` (fast list, a source scan) holds table and code
+  to each other both ways and refuses a raw `getenv("OMK_...")` - shown to
+  fail on a raw read put back, a row deleted, a row nothing reads. 143 reads
+  converted, `envSet` gone. Proof: the guard 0 of 14 differ (switches off),
+  and the seven checks that SET a switch of each shape green (`fight park`,
+  `address camera`, `astaroth floor`, `weather`, `program placement`,
+  `mirror park`, `pool past 64`); the 3DS and Vita builds clean. None of the
+  `OMK_*` names `verify.py` sets is dead: the seven not in the table are its
+  own settings, build defines and paths.
 
 ## 7. For the tutorial
 

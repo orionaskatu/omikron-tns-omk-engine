@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "script/zones.h"
+#include "platform/env.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -315,7 +316,7 @@ void ZoneRegistry::scanZones(const double pos[3], double facingDegrees,
             }
             constexpr double kZoneHeight = 19.685039;   // dword_910354
             const double pelvis = pos[1] - actorLift_;  // Y grows downward
-            const bool open = std::getenv("OMK_NO_ZONE_BAND") != nullptr;
+            const bool open = omk::envFlag("OMK_NO_ZONE_BAND");
             if (!open && (lo - kZoneHeight > pelvis + actorRadius_ ||
                           hi < pelvis - actorRadius_)) { ++heightSkips_; continue; }
         }

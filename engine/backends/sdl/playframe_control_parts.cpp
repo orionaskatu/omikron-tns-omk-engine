@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseControl`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // Who is bound to him and who poses him, the shoot camera, the player made, the screens that stop the world, a teleport
 void PlayState::controlBinding() {
@@ -249,7 +250,7 @@ void PlayState::controlBinding() {
                 // `rebuildWorld`, so the pointers survive a
                 // transition the way the walker's do.
                 static const bool noCamCollide =
-                    omk::envSet("OMK_NO_CAM_COLLIDE");
+                    omk::envFlag("OMK_NO_CAM_COLLIDE");
                 if (!noCamCollide)
                     player->setCameraSolids(&playerSteep, &playerSoup);
                 // THE GROUND GRID (todo/optimization.md step 9): the
@@ -257,13 +258,13 @@ void PlayState::controlBinding() {
                 // rebuilt wherever `playerSoup` is written.
                 // `OMK_NO_GROUND_GRID=1` keeps the linear scan;
                 // `OMK_VERIFY_GROUND=1` runs both and counts.
-                static const bool noGroundGrid = std::getenv("OMK_NO_GROUND_GRID") != nullptr;
-                omk::setGroundVerify(omk::envSet("OMK_VERIFY_GROUND"));
+                static const bool noGroundGrid = omk::envFlag("OMK_NO_GROUND_GRID");
+                omk::setGroundVerify(omk::envFlag("OMK_VERIFY_GROUND"));
                 player->setGroundGrid(noGroundGrid ? nullptr : &playerGrid);
                 player->setFloorFlags(&playerSoupFlags);
                 // the body and camera sweeps through the steep and
                 // walkable grids (step 11); `OMK_NO_SWEEP_GRID=1` scans
-                static const bool noSweepGrid = std::getenv("OMK_NO_SWEEP_GRID") != nullptr;
+                static const bool noSweepGrid = omk::envFlag("OMK_NO_SWEEP_GRID");
                 player->setBlockerGrid(noSweepGrid ? nullptr : &playerSteepGrid);
                 player->setCameraGrids(noSweepGrid ? nullptr : &playerSteepGrid,
                                        noSweepGrid ? nullptr : &playerGrid);

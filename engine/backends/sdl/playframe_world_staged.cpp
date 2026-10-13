@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/env.h"
 
 // THE MORPH ROOT TURNED BY A WORLD YAW, the engine's own composition.
 // `08_wave.c` 963-965: `sub_442B50(v40, 0, X, 0)` builds the yaw and
@@ -109,7 +110,7 @@ void PlayState::worldStaged() {
     // mapped shadows (an enhancement) draw casters the eye cannot see.
     // A correct cull leaves every frame byte-identical - the test.
     // `OMK_NO_SIDECULL=1` turns it off, for that comparison.
-    static const bool noSideCull = std::getenv("OMK_NO_SIDECULL") != nullptr;
+    static const bool noSideCull = omk::envFlag("OMK_NO_SIDECULL");
     bool mirrorShown = false;
     for (const auto& ws : worldSlots) if (ws.shown && ws.mirror.found) mirrorShown = true;
     sideCullSet = !noSideCull && !mirrorShown && view.cam.hfovDeg < 179.0f &&
@@ -168,7 +169,7 @@ void PlayState::worldStaged() {
         const omk::SceneRunner* run = &sc;
         int prog = -1;
         static const bool activeOnly =
-            omk::envSet("OMK_ACTIVE_POOL_ONLY");   // the old, wrong lookup
+            omk::envFlag("OMK_ACTIVE_POOL_ONLY");   // the old, wrong lookup
         for (const omk::SceneRunner* cand : {&sc, &session.sceneOut()}) {
             if (activeOnly && cand != &sc) break;
             if (!cand->loaded()) continue;
@@ -313,7 +314,7 @@ void PlayState::worldStaged() {
             // and reading only the relative call's Euler rotated his
             // whole route by the 145 his standing step had left.
             static const bool stickyEuler =
-                omk::envSet("OMK_STICKY_EULER");   // the old, wrong reading
+                omk::envFlag("OMK_STICKY_EULER");   // the old, wrong reading
             if (stt->animReached && (!stickyEuler || stt->relative)) {
                 s.progYaw = stt->euler[1];
                 s.progYawKnown = true;
@@ -2710,7 +2711,7 @@ void PlayState::worldStaged() {
         // SetHeadLook`), the target being the player's head. His
         // world position is the frontend's; back into the pose's own
         // space through the placement below (facing, pelvis, at).
-        static const bool lookAll = std::getenv("OMK_LOOK_ALL") != nullptr;   // a diagnostic: everyone looks
+        static const bool lookAll = omk::envFlag("OMK_LOOK_ALL");   // a diagnostic: everyone looks
         if ((lookAll || session.looksAtPlayer(s.actor)) && s.placed && s.mo->root >= 0) {
             const int head = s.mo->headOf();
             if (head >= 0) {
@@ -2806,7 +2807,7 @@ void PlayState::worldStaged() {
         // such changes is exactly what a per-change report cannot
         // show, which is how "he stays where the program left him"
         // could be printed and then not happen.
-        static const char* traceEnv = std::getenv("OMK_TRACE_ACTOR");
+        static const char* traceEnv = omk::envStr("OMK_TRACE_ACTOR");
         if (traceEnv && s.actor == std::atoi(traceEnv))
             std::printf("  [trace] frame %ld actor %d  at %.0f %.0f %.0f"
                         "  drawAt %.0f %.0f %.0f  placed %d progPlaced %d"
@@ -2857,8 +2858,8 @@ void PlayState::worldStaged() {
             // restaurant's diners go silent after frame 0 and the
             // Impasse's Kay'l loses frames from his body line, and
             // `engine: scene facing` and `beat handover` read short)
-            static const bool skinAll = std::getenv("OMK_SKIN_FAR") != nullptr ||
-                                        stagedProbe || omk::envSet("OMK_BODYLOG");
+            static const bool skinAll = omk::envFlag("OMK_SKIN_FAR") ||
+                                        stagedProbe || omk::envFlag("OMK_BODYLOG");
             if (!skinAll && seatHeld && std::isfinite(reach) &&
                 double(ex) * ex + double(ey) * ey + double(ez) * ez > reach * reach) {
                 ++stagedFar;
@@ -2892,7 +2893,7 @@ void PlayState::worldStaged() {
         {
             const bool latchHeld = s.seatKnown && s.seatClip == s.sceneClipWas &&
                                    s.seatSrc == src;
-            static const bool cornerLogs = omk::envSet("OMK_BODYLOG") || stagedProbe;
+            static const bool cornerLogs = omk::envFlag("OMK_BODYLOG") || stagedProbe;
             s.gpu = !cpuBodiesFlag && world.posesBodies() && latchHeld && fv.empty() &&
                     !cornerLogs;
             s.restGeo = &restUsed;
@@ -2945,13 +2946,13 @@ void PlayState::worldStaged() {
             // the waiter's ABS walk clips travel under the 145 his
             // preceding REL wait left there.
             static const bool noRootSpin =
-                omk::envSet("OMK_NO_ROOTSPIN");
+                omk::envFlag("OMK_NO_ROOTSPIN");
             // ...and the SENSE is its own question: the body's spin and
             // `Anim_RootDelta`'s multiply are different code paths in the
             // engine and need not share it. `OMK_ROOTSPIN_NEG` turns the
             // delta the other way while leaving the body alone.
             static const float rootSpinSign =
-                omk::envSet("OMK_ROOTSPIN_NEG") ? -1.0f : 1.0f;
+                omk::envFlag("OMK_ROOTSPIN_NEG") ? -1.0f : 1.0f;
             if (!noRootSpin && s.progYawKnown && std::fabs(s.progYaw) > 0.01f) {
                 float r[3];
                 omk::rotateYaw(rootSpinSign * progYawSign * s.progYaw, rootMove, r);
@@ -3075,8 +3076,7 @@ void PlayState::worldStaged() {
         // `OMK_FEETLOG=<actor>`: an INSTRUMENT - every 30 frames, that body's
         // lowest posed corner as DRAWN against the floor under him, to tell
         // a float from a sink without a screenshot (todo/astaroth.md 4)
-        static const int feetLog = [] { const char* e = std::getenv("OMK_FEETLOG");
-                                         return e ? std::atoi(e) : -1; }();
+        static const int feetLog = omk::envInt("OMK_FEETLOG", -1);
         if (feetLog == s.actor && frameNo % 30 == 0) {
             float low = -1e9f;
             if (!s.gpu) for (const auto& c : s.posed.corners) if (c.y > low) low = c.y;
@@ -3138,7 +3138,7 @@ void PlayState::worldStaged() {
         // reads it - `Anim_ApplyNodeFrame` orients every node,
         // the pelvis included, from the CLIP's own quaternion. So the
         // call's Euler may well turn the motion and not the body.
-        static const bool noProgSpin = std::getenv("OMK_NO_PROGSPIN") != nullptr;
+        static const bool noProgSpin = omk::envFlag("OMK_NO_PROGSPIN");
         const bool progSpin = !noProgSpin && s.sceneTracks.valid() &&
                               s.progYawKnown && std::fabs(s.progYaw) > 0.01f;
         // A LINE PLAYS IN THE FRAME THE NODE WAS IN WHEN IT STARTED.
@@ -3469,7 +3469,7 @@ void PlayState::worldStaged() {
         // position, a pose falling back to an idle - shows as a step
         // in one or both; walking and animating show as a small
         // steady value. A diagnostic: nothing draws differently.
-        if (omk::envSet("OMK_BODYLOG")) {
+        if (omk::envFlag("OMK_BODYLOG")) {
             double moved = 0.0;
             std::size_t nc = s.posed.corners.size();
             if (s.poseWas.size() == nc * 3 && nc) {

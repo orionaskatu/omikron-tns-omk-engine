@@ -127,8 +127,8 @@ int PlayState::setupSession() {
     //
     // It is an INSTRUMENT and no part of the port: nothing here changes a
     // pixel, and with the flag absent none of it runs.
-    flickAfter = 0;                                 // frames still to write
-    flickEvent = -1, flickQuietUntil = -1;
+    flicker.after = 0;                                 // frames still to write
+    flicker.event = -1, flicker.quietUntil = -1;
     drawSky = skyFlag >= 0 ? skyFlag != 0 : settings.v.sky;
     // Options rows 5 and 7, with a flag beating the save the way --sky does.
     drawShadows = shadowFlag >= 0 ? shadowFlag != 0 : settings.v.shadows;

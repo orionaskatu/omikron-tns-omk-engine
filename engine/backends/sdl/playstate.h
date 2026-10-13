@@ -214,13 +214,15 @@ struct PlayState {
     bool unlimitedClip{};
     double clipInches{};
     bool clipReport{};
-    std::vector<std::vector<std::uint16_t>> flickRing{};   // the last kFlickPre frames
-    std::vector<std::string> flickNote{};   // ...and their context
-    std::vector<long> flickLit{};   // the lit-count window
+    struct FlickerCatcher {
+        std::vector<std::vector<std::uint16_t>> ring{};   // the last kFlickPre frames
+        std::vector<std::string> note{};   // ...and their context
+        std::vector<long> lit{};   // the lit-count window
+        int after{};   // frames still to write
+        long event{};
+        long quietUntil{};
+    } flicker{};
     std::string frameNote{};   // this frame's context
-    int flickAfter{};   // frames still to write
-    long flickEvent{};
-    long flickQuietUntil{};
     bool drawSky{};
     bool drawShadows{};
     bool threadBodies{};
@@ -472,21 +474,23 @@ struct PlayState {
     omk::VoiceOverLibrary & voiceLib = game.audio.voiceLib;
     omk::VoiceOverPlayer & voices = game.audio.voices;
     int & voiceOverShot = game.audio.voiceOverShot;
-    std::vector<omk::Mesh> speakerMeshes{};
-    omk::NodeTracks speakerTracks{};
+    struct SpeakerStage {
+        std::vector<omk::Mesh> meshes{};
+        omk::NodeTracks tracks{};
+        std::shared_ptr<const std::vector<std::byte>> morph{};
+        std::string model{};
+        std::string voice{};
+        float at[3] = {0, 0, 0};   // the camera solve, a GROUND point
+        bool solved{};
+        bool ready{};
+        int conv{};
+    } speaker{};
     float sceneFrameLast{};
     float lineIdleFrame{};
-    std::shared_ptr<const std::vector<std::byte>> speakerMorph{};
-    std::string speakerModel{};
-    std::string speakerVoice{};
     int voiceShot{};   // the line's voice in the mixer, for the press that cuts it
     std::size_t voiceFed{};   // ...and how many of its samples it has been fed
     omk::LineSync lineSync{};
     std::uint32_t smoothMs{33};   // `dword_4E9700`, the smoothed frame time (T6)   // `Game_Frame`'s line sync (T2, `script/linesync.h`)
-    float speakerAt[3] = {0, 0, 0};   // the camera solve, a GROUND point
-    bool speakerSolved{};
-    bool speakerReady{};
-    int speakerConv{};
     bool dialogMode{};
     bool shootMode{};   // ops 80/81, `actor/shootmode.h`
     bool shootFrozenApplied{};   // the records' 0x8000, as last made equal to dword_4E9760
@@ -766,16 +770,18 @@ struct PlayState {
     std::set<std::string> motionLogged{};   // mesh/pool pairs already reported
     double paceNext{};
     double phaseHz{};
-    double phTop{};
-    double phRb0{};
-    double phRb1{};
-    std::vector<std::pair<const char *, double>> phMarks{};
-    std::map<std::string, double> phSpan{};
-    std::map<std::string, double> phSection{};
-    double phSum[4] = {0, 0, 0, 0};
-    long phN{};
-    long phGpu{};   // frames presented from the GPU
-    std::map<std::string, long> phKept{};   // ...and why the others were not
+    struct PhaseTimes {
+        double top{};
+        double rb0{};
+        double rb1{};
+        std::vector<std::pair<const char *, double>> marks{};
+        std::map<std::string, double> span{};
+        std::map<std::string, double> section{};
+        double sum[4] = {0, 0, 0, 0};
+        long n{};
+        long gpu{};   // frames presented from the GPU
+        std::map<std::string, long> kept{};   // ...and why the others were not
+    } phases{};
 
     // `world`'s object, chosen in `run` (the GPU renderer when there is one)
     omk::Renderer* world_ = nullptr;
@@ -1183,7 +1189,7 @@ struct PlayState {
         OMK_ZONE(name);                     // and the profiler's (a literal: kept by pointer)
         const double a = phaseNow();
         fn();
-        phSpan[name] += phaseNow() - a;
+        phases.span[name] += phaseNow() - a;
     }
     // THE CROWD'S MEMORY, as the original keeps it: a vehicle's
     // composed sub-object once per (model, sub-object), and a slot's posed

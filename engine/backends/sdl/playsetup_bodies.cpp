@@ -37,9 +37,9 @@ int PlayState::setupBodies() {
     sceneFrameLast = 0.0f, lineIdleFrame = 0.0f;
     // the line's .3DM, for the FACE - the conversation's own bytes, shared
     voiceShot = -1;   // the line's voice in the mixer, for the press that cuts it
-    speakerSolved = false;
-    speakerReady = false;
-    speakerConv = -1;
+    speaker.solved = false;
+    speaker.ready = false;
+    speaker.conv = -1;
     // Whether the player's actor is in DIALOGUE MODE, so the two sides of
     // `Actor_EnterDialogueMode` / `Actor_LeaveDialogueMode` are called once
     // each per conversation. See the transition below.

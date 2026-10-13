@@ -4737,7 +4737,7 @@ def c_dialogue_camera_subject():
     the room from across it. A reader, with the original beside it: *transcan
     camera is not good*.
 
-    **And the same conversation hid a second fault.** `speakerReady` was the
+    **And the same conversation hid a second fault.** `speaker.ready` was the
     camera SOLVE's validity (`stageSpeaker` casts rays from absolute cameras
     to find where a speaker stands), and the line's .3DM was loaded only when
     ready - so a conversation framed entirely off its speaker cast no rays,
@@ -4756,7 +4756,7 @@ def c_dialogue_camera_subject():
 
     Shown to fail: restoring the absolute-only gate drops the camera line to
     `[relative - not drawn]` and puts the eye 200+ from him; restoring
-    `speakerReady = st.valid` drops the face line and "of 813" to "of 0".
+    `speaker.ready = st.valid` drops the face line and "of 813" to "of 0".
     """
     import subprocess, re as _re, math as _m
     eng = os.path.join(ROOT, "engine")

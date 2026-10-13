@@ -580,7 +580,7 @@ void PlayState::screensFlicker() {
         if (frameNote.empty()) frameNote = "2D only - the world was not drawn";
         auto write = [&](long fno, const std::vector<std::uint16_t>& px,
                          const std::string& note) {
-            const std::string path = flickerDir + "/flick-" + std::to_string(flickEvent) +
+            const std::string path = flickerDir + "/flick-" + std::to_string(flicker.event) +
                                      "-" + std::to_string(fno) + ".bin";
             if (!omk::safeOutputPath(path)) return;
             std::ofstream o(path, std::ios::binary);
@@ -588,7 +588,7 @@ void PlayState::screensFlicker() {
                 const char b2[2] = {static_cast<char>(v & 0xFF), static_cast<char>(v >> 8)};
                 o.write(b2, 2);
             }
-            std::ofstream t(flickerDir + "/flick-" + std::to_string(flickEvent) + ".txt",
+            std::ofstream t(flickerDir + "/flick-" + std::to_string(flicker.event) + ".txt",
                             std::ios::app);
             t << "frame " << fno << "  " << note << "\n";
         };
@@ -596,34 +596,34 @@ void PlayState::screensFlicker() {
         // the fault lasts up to five frames, so its neighbours are inside
         // it and a neighbour test cannot see it.
         long base = 0;
-        if (flickLit.size() >= static_cast<std::size_t>(kFlickWindow)) {
-            std::vector<long> w(flickLit.end() - kFlickWindow, flickLit.end());
+        if (flicker.lit.size() >= static_cast<std::size_t>(kFlickWindow)) {
+            std::vector<long> w(flicker.lit.end() - kFlickWindow, flicker.lit.end());
             std::nth_element(w.begin(), w.begin() + w.size() / 2, w.end());
             base = w[w.size() / 2];
         }
-        if (flickAfter > 0) {                       // still writing an event
+        if (flicker.after > 0) {                       // still writing an event
             write(frameNo, fb.px, frameNote);
-            --flickAfter;
-        } else if (base > 0 && lit < base * 3 / 5 && frameNo > flickQuietUntil) {
-            flickEvent = frameNo;
-            flickQuietUntil = frameNo + 60;               // one dump per two seconds
+            --flicker.after;
+        } else if (base > 0 && lit < base * 3 / 5 && frameNo > flicker.quietUntil) {
+            flicker.event = frameNo;
+            flicker.quietUntil = frameNo + 60;               // one dump per two seconds
             std::printf("frame %ld: FLICKER - %ld lit against a median of %ld; "
                         "writing %d frames to %s/flick-%ld-*.bin\n",
                         frameNo, lit, base, kFlickPre + 1 + kFlickPost,
-                        flickerDir.c_str(), flickEvent);
-            for (std::size_t k = 0; k < flickRing.size(); ++k)
-                write(frameNo - static_cast<long>(flickRing.size() - k), flickRing[k],
-                      k < flickNote.size() ? flickNote[k] : std::string());
+                        flickerDir.c_str(), flicker.event);
+            for (std::size_t k = 0; k < flicker.ring.size(); ++k)
+                write(frameNo - static_cast<long>(flicker.ring.size() - k), flicker.ring[k],
+                      k < flicker.note.size() ? flicker.note[k] : std::string());
             write(frameNo, fb.px, frameNote);
-            flickAfter = kFlickPost;
+            flicker.after = kFlickPost;
         }
-        flickLit.push_back(lit);
-        if (flickLit.size() > static_cast<std::size_t>(kFlickWindow)) flickLit.erase(flickLit.begin());
-        flickRing.push_back(fb.px);
-        flickNote.push_back(frameNote);
-        if (flickRing.size() > static_cast<std::size_t>(kFlickPre)) {
-            flickRing.erase(flickRing.begin());
-            flickNote.erase(flickNote.begin());
+        flicker.lit.push_back(lit);
+        if (flicker.lit.size() > static_cast<std::size_t>(kFlickWindow)) flicker.lit.erase(flicker.lit.begin());
+        flicker.ring.push_back(fb.px);
+        flicker.note.push_back(frameNote);
+        if (flicker.ring.size() > static_cast<std::size_t>(kFlickPre)) {
+            flicker.ring.erase(flicker.ring.begin());
+            flicker.note.erase(flicker.note.begin());
         }
         frameNote.clear();
     }
@@ -640,7 +640,7 @@ void PlayState::screensFlicker() {
             for (const auto& [why, count] : keptBy) std::printf(" %s %ld,", why.c_str(), count);
             std::printf("\n");
         }
-        if (gpuFrame) ++phGpu; else ++phKept[gpuKeep];
+        if (gpuFrame) ++phases.gpu; else ++phases.kept[gpuKeep];
     }
 }
 

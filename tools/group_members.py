@@ -135,6 +135,17 @@ def main(a):
                 any(re.search(r"(?<![\w.>:])%s\b" % re.escape(o), t) for o in rename):
             cls_files.add(f)
     originals = {f: open(f).read() for f in [hdr] + sorted(cls_files)}
+    # the member's name must be free in every file rewritten: a local or a
+    # lambda of that name in one of the class's methods would take
+    # `member.field` for itself
+    bare = re.compile(r"(?<![\w.>:])%s\b" % re.escape(member))
+    for f, t in originals.items():
+        m = code_mask(t)
+        taken = [k for k in (mm.start() for mm in bare.finditer(t)) if m[k]]
+        if taken:
+            print("refused: `%s` already names something in %s, line %d"
+                  % (member, os.path.relpath(f, ROOT), t[:taken[0]].count("\n") + 1))
+            return 1
     try:
         open(hdr, "w").write("\n".join(out))
         for f in sorted(cls_files) + [hdr]:

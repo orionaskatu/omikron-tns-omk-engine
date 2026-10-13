@@ -31,7 +31,7 @@ bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plan
 #if OMK_OPENXR
     omk::xr::setQuadOverEyes(openScreen >= 0);
 #endif
-    phRb0 = phaseNow();
+    phases.rb0 = phaseNow();
     for (int e = 0; e < 2; ++e) {
         omk::View ev = drawn;
         ev.cam = vr.eye[e];
@@ -98,7 +98,7 @@ bool PlayState::vrWorldDraw(const omk::View& drawn, const omk::MirrorPlane& plan
         std::fill(fb.px.begin(), fb.px.end(), vr.shadeWorld ? std::uint16_t(0) : kOverlayKey);
     }
 #endif
-    phRb1 = phaseNow();
+    phases.rb1 = phaseNow();
     mark("vr: both eyes");
     ++worldFrames;
     return true;

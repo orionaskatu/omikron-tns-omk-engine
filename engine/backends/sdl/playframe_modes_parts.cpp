@@ -106,7 +106,7 @@ void PlayState::modesSound() {
     // `media.play` is an EVENT, not a level like music: each announcement
     // is one play, and the handler's `Morph_Stop()` means a second one
     // CUTS the first. That is the whole of the engine's policy here.
-    phSpan["audio: music top-up"] += phaseNow() - auA;
+    phases.span["audio: music top-up"] += phaseNow() - auA;
     const double auB = phaseNow();
     for (const int mediaId : voices.poll(session.announced())) {
         const auto vo  = voiceLib.resolve(fs, mediaId);
@@ -172,7 +172,7 @@ void PlayState::modesSound() {
     // speaker's pose the web viewer carries are not wired in - so what is
     // on screen during a conversation is the world camera the script last
     // set.
-    phSpan["audio: voice-overs"] += phaseNow() - auB;
+    phases.span["audio: voice-overs"] += phaseNow() - auB;
     const double auC = phaseNow();
     if (session.dialogOpen()) {
         // THE PRESS BELONGS TO THE CONVERSATION. While a dialogue is up
@@ -188,18 +188,18 @@ void PlayState::modesSound() {
         const auto& dlg = session.dialogue();
         // A new conversation: stage the speaker (the model itself is
         // loaded on `character.show`, which comes first).
-        if (session.dialogue().conversation().id != speakerConv) {
-            speakerConv = session.dialogue().conversation().id;
-            speakerReady = false;
-            speakerSolved = false;
-            speakerModel = session.speakerModel();
-            speakerMeshes.clear();
+        if (session.dialogue().conversation().id != speaker.conv) {
+            speaker.conv = session.dialogue().conversation().id;
+            speaker.ready = false;
+            speaker.solved = false;
+            speaker.model = session.speakerModel();
+            speaker.meshes.clear();
             // The BODY is a `Staged` like any other - one `CharModel` per
             // model name, shared with whoever else wears it. The meshes
             // are copied here only for `rootTrackOf` and the report.
-            CharModel* cm = charModelFor(speakerModel);
+            CharModel* cm = charModelFor(speaker.model);
             if (cm && cm->ready) {
-                speakerMeshes = cm->meshes;
+                speaker.meshes = cm->meshes;
                 // Where he stands: the line cameras' rays, dropped onto
                 // the set's own walkable floor.
                 omk::TriangleSoup soup;
@@ -215,13 +215,13 @@ void PlayState::modesSound() {
                 // is the fallback for a conversation whose speaker no
                 // scene object drives. The staging below applies it only
                 // to a body nothing else has placed.
-                for (int k = 0; k < 3; ++k) speakerAt[k] = st.pos[k];
-                speakerSolved = st.valid;
+                for (int k = 0; k < 3; ++k) speaker.at[k] = st.pos[k];
+                speaker.solved = st.valid;
                 // READY MEANS THE MODEL IS LOADED, NOT THAT A CAMERA SOLVE
                 // FOUND HIM. `Morph_Play` runs the line on the speaker's
                 // own node whatever the cameras are; the solve exists
                 // only to PLACE a speaker nothing else places, and
-                // `speakerSolved` carries that for the staging below.
+                // `speaker.solved` carries that for the staging below.
                 // Gating readiness on the solve meant a conversation
                 // framed entirely off its speaker - the transcan's
                 // advert, whose one camera is [2,2] - cast no rays,
@@ -229,10 +229,10 @@ void PlayState::modesSound() {
                 // hologram played its scene clip through the whole
                 // advert, "frame 95 of 0". A reader: *the character on
                 // transcan is not animated correctly*.
-                speakerReady = true;
+                speaker.ready = true;
                 std::printf("speaker: %s (%zu meshes, %zu corners), %d rays "
                             "converge scatter %.1f, stands at %.0f %.0f %.0f%s\n",
-                            speakerModel.c_str(), speakerMeshes.size(),
+                            speaker.model.c_str(), speaker.meshes.size(),
                             cm->rest.corners.size(), st.rays, st.scatter,
                             st.pos[0], st.pos[1], st.pos[2],
                             st.onFloor ? " on the walkable floor" : "");
@@ -244,9 +244,9 @@ void PlayState::modesSound() {
         if (dlg.lineChanged()) {
             session.clearDialogLineChanged();
             // The line's own `.3DM` drives the pose.
-            speakerVoice = dlg.voice();
-            speakerTracks = omk::NodeTracks{};
-            speakerMorph.reset();
+            speaker.voice = dlg.voice();
+            speaker.tracks = omk::NodeTracks{};
+            speaker.morph.reset();
             lineIdleFrame = sceneFrameLast;
             const auto lineT0 = std::chrono::steady_clock::now();
             const auto lineMs = [](std::chrono::steady_clock::time_point a) {
@@ -254,8 +254,8 @@ void PlayState::modesSound() {
                            std::chrono::steady_clock::now() - a).count();
             };
             double tracksMs = 0.0;
-            if (speakerReady && !speakerVoice.empty())
-                if (const auto ma = fs.resolve("MORPH/" + speakerVoice + ".3DM")) {
+            if (speaker.ready && !speaker.voice.empty())
+                if (const auto ma = fs.resolve("MORPH/" + speaker.voice + ".3DM")) {
                     // THE BYTES THE CONVERSATION ALREADY READ for the
                     // voice: a line's .3DM runs to 3.5 MB, and reading it
                     // a second time here costs a console ~700 ms on the
@@ -263,17 +263,17 @@ void PlayState::modesSound() {
                     // ...and STREAMED (`formats/morphstream.h`): the file's
                     // size, read so far up to `streamedFrames()`; the tracks
                     // grow with it below, every frame
-                    speakerMorph = dlg.morph().empty()
+                    speaker.morph = dlg.morph().empty()
                         ? std::make_shared<const std::vector<std::byte>>(
                               omk::DataFs::readPath(*ma))
                         : dlg.morphShared();
                     const auto tt0 = std::chrono::steady_clock::now();
-                    speakerTracks = omk::nodeTracks(
-                        *speakerMorph, omk::rootTrackOf(speakerMeshes),
+                    speaker.tracks = omk::nodeTracks(
+                        *speaker.morph, omk::rootTrackOf(speaker.meshes),
                         dlg.morph().empty() ? static_cast<std::size_t>(-1) : dlg.streamedFrames());
                     tracksMs = lineMs(tt0);
-                    const CharModel* fm = charModels.count(speakerModel)
-                        ? &charModels.at(speakerModel) : nullptr;
+                    const CharModel* fm = charModels.count(speaker.model)
+                        ? &charModels.at(speaker.model) : nullptr;
                     std::printf("  face: mesh %d, %d verts; the line supplies %s\n",
                                 fm ? fm->face.mesh : -1, fm ? fm->face.count : 0,
                                 fm && fm->face.valid() ? "them" : "none");
@@ -302,7 +302,7 @@ void PlayState::modesSound() {
                         "into the mixer %.0f ms; %.0f ms here in all - the rest is "
                         "read as it plays\n",
                         dlg.voice().empty() ? "no voice" : dlg.voice().c_str(),
-                        dlg.loadReadMs(), dlg.streamedFrames(), speakerTracks.frames,
+                        dlg.loadReadMs(), dlg.streamedFrames(), speaker.tracks.frames,
                         dlg.morph().size() / 1024, dlg.loadDecodeMs(),
                         tracksMs, lineMs(ps0), lineMs(lineT0));
             replySel = 0; menuShown = false; lineScroll = 0;
@@ -315,9 +315,9 @@ void PlayState::modesSound() {
             front.feedSound(voiceShot, std::span<const std::int16_t>(dlg.pcm()).subspan(voiceFed));
             voiceFed = dlg.pcm().size();
         }
-        if (speakerTracks.valid() && speakerTracks.built < speakerTracks.frames &&
-            speakerMorph && speakerMorph == dlg.morphShared())
-            omk::extendNodeTracks(speakerTracks, *speakerMorph, dlg.streamedFrames());
+        if (speaker.tracks.valid() && speaker.tracks.built < speaker.tracks.frames &&
+            speaker.morph && speaker.morph == dlg.morphShared())
+            omk::extendNodeTracks(speaker.tracks, *speaker.morph, dlg.streamedFrames());
         if (dlg.phase() == omk::DialogPhase::Menu && !menuShown) {
             menuShown = true;
             replySel = -1;
@@ -384,7 +384,7 @@ void PlayState::modesSound() {
             std::printf("--- conversation over ---\n");
     }
 
-    phSpan["audio: conversation"] += phaseNow() - auC;
+    phases.span["audio: conversation"] += phaseNow() - auC;
     mark("audio");
 }
 

@@ -2422,7 +2422,7 @@ bool PlayState::profPauseTick() {
 #endif
 
 void PlayState::mark(const char* name) {
- phMarks.emplace_back(name, phaseNow());
+ phases.marks.emplace_back(name, phaseNow());
  if (omk::prof::on()) {
   const std::uint64_t t = omk::prof::now();
   OMK_SECTION(name, profMarkT, t);

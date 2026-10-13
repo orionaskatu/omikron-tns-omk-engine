@@ -734,6 +734,28 @@ finding: a check that hashed a conversation frame would flicker.
   build`, `vita build`, `vita bench` and `vita printf` green. The PowerPC
   makefile and the classic build stay without `-Wshadow`: neither can be
   built here, and GL1's two sources are clean under clang's.
+* step 15c - three more `PlayState` components, the last contiguous runs
+  sharing a prefix: `phases` (the per-phase timing - top, the two
+  readbacks, the marks, the spans and sections, the sums and counts),
+  `speaker` (the conversation's speaking body - meshes, tracks, morph,
+  model, voice, the solved ground point and its flags; `speaker.ready` is
+  the one a check's docstring named) and `flicker` (`--flicker`'s ring,
+  notes, lit window and counters; `frameNote` stays, as every frame
+  writes it). `group_members.py` now REFUSES when the member's name is
+  already taken in a file it would rewrite - a local or lambda of that name
+  in one method would take `member.field` for itself and might still
+  compile - shown by asking for the speaker fields under `weather`; and
+  every member name the earlier steps (14b-14e) introduced was checked
+  against the tree before its step, strings and comments stripped: no
+  collision (`playerBody`, the one match, was renamed first, as recorded).
+  WHERE THE GOD OBJECTS STAND: `PlayState` 554 direct fields, of which the
+  remaining prefixes (`player`, `shoot`, `world`, `last`, `have`, `opt`...)
+  are scattered across the class and mean different things under one
+  word, so a further split is a reading job per field, not a mechanical
+  one; `Session` 117, its transition, load and zone registry already
+  structs of their own; `PlayerController` 38, no run left. Guard 0 of 14;
+  12 dialogue, voice, line-sync, flicker and profiler checks green; both
+  consoles build with no warning.
 
 ## 7. For the tutorial
 

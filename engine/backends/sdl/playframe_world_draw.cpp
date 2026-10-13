@@ -137,7 +137,7 @@ void PlayState::worldDrawLists() {
                     view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]);
     }
     harnessFlickerNote(runsDrawn, runsCulled, litBodies);
-    phSpan["player"] += phaseNow() - player0;
+    phases.span["player"] += phaseNow() - player0;
     mark("pedestrians, traffic");
     // ---- THE LIGHTS, per pixel (`todo/enhancements.md` 7) -------
     //
@@ -1305,10 +1305,10 @@ void PlayState::worldMirror() {
         }
         fbStale = false;
     } else if (!gpuFrame || verifyGpuPresent) {
-    phRb0 = phaseNow();
+    phases.rb0 = phaseNow();
     mark("world end, submit");
     const omk::Surface& pic = world.readback();
-    phRb1 = phaseNow();
+    phases.rb1 = phaseNow();
     if (!(pic.w == fb.w && !vpItem)) clearFrame();   // nothing of the picture lands in `fb`
     if (vpItem && pic.w == fb.w) {
         // The picture is the viewport item's; the composer places it

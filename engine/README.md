@@ -2159,14 +2159,14 @@ so the advert fell through to the follow camera and framed the room from
 across it. `Staged::drawnYaw` now records the heading a body was drawn with,
 and the dialogue-camera block resolves each point per subject code.
 
-The second fault hid behind the first: `speakerReady` was the camera SOLVE's
+The second fault hid behind the first: `speaker.ready` was the camera SOLVE's
 validity — `stageSpeaker` casts rays from absolute cameras to find where a
 speaker stands — and the line's `.3DM` was loaded only when ready. A
 conversation framed entirely off its speaker cast no rays, solved nothing,
 and never loaded its morph: *frame 95 of 0*, the hologram playing its scene
 clip through the whole advert. `Morph_Play` runs on the speaker's own node
 whatever the cameras are; the solve exists only to PLACE a speaker nothing
-else places, and `speakerSolved` already carried that. Now `face: mesh 19,
+else places, and `speaker.solved` already carried that. Now `face: mesh 19,
 130 verts`, `frame 115 of 813`, and the eye settles 50 units from the
 hologram. `verify.py: dialogue camera subject`.
 
@@ -2271,7 +2271,7 @@ camera holds. The clock now restarts only when the menu brings a pair.
 the camera's travel, then 6–13k — the mouth alone — from frame 1441 to 1621
 with the line running to 1674, and the data's bones move to frame 449. The
 cause was the day-old latch. The Session enters a line on its tick, the
-frontend rebuilds `speakerTracks` on the *next* frame's `lineChanged`, and
+frontend rebuilds `speaker.tracks` on the *next* frame's `lineChanged`, and
 the pose pass on the first `useLine` frame still holds the previous line's
 tracks — before the latch that cost one stale frame; the latch copied the
 previous line's 135 frames and `composePose` clamped there. Line 2 escaped

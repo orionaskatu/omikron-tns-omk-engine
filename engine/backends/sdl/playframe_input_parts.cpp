@@ -18,10 +18,10 @@ int PlayState::inputPump() {
     auto& comp = *comp_;
     bool done = false;
     do {
-        phTop = phaseNow();
-        phRb0 = phRb1 = -1.0;
-        phMarks.clear();
-        phMarks.emplace_back("top", phTop);
+        phases.top = phaseNow();
+        phases.rb0 = phases.rb1 = -1.0;
+        phases.marks.clear();
+        phases.marks.emplace_back("top", phases.top);
         profMarkT = omk::prof::now();
         bool pumpOk = true;
         spanned("pump", [&] { pumpOk = front.pump(host); });
@@ -499,7 +499,7 @@ void PlayState::inputMotion() {
     std::map<std::string, omk::SceneRunner::NodeScale> allScales;
     const double motionGather0 = phaseNow();
     inputCollectMotions(allMotions, allScales);
-    phSpan["motion gather"] += phaseNow() - motionGather0;
+    phases.span["motion gather"] += phaseNow() - motionGather0;
     // the GPU path for the moving meshes: a renderer that poses bodies, and
     // nothing this frame that reads their corners out of the set's buffer
     // (`OMK_MESH_AT`); `OMK_CPU_MOTION=1` for the comparison
@@ -757,7 +757,7 @@ void PlayState::inputMotion() {
                     omk::placePoints(pp, &w.geo.corners[0].x, 12, &w.geo.corners[0].x, 12,
                                      meshCorners.data(), meshCorners.size());
                 }
-                phSpan["motion corners"] += phaseNow() - motionCorners0;
+                phases.span["motion corners"] += phaseNow() - motionCorners0;
                 // the collision soups follow the mesh exactly as the
                 // render corners above (`Sweep_MeshTest` collides
                 // against the mesh's CURRENT matrix)
@@ -813,11 +813,11 @@ void PlayState::inputMotion() {
                 }
                 if (std::find(w.soupMovers.begin(), w.soupMovers.end(), mi) == w.soupMovers.end())
                     w.soupMovers.push_back(mi);
-                phSpan["motion soups"] += phaseNow() - motionSoups0;
+                phases.span["motion soups"] += phaseNow() - motionSoups0;
                 soupsMoved = true;
                 if (!gpuMotion) moved = true;
             }
-            phSpan["motion patch"] += phaseNow() - motionPatch0;
+            phases.span["motion patch"] += phaseNow() - motionPatch0;
             if (moved) {
                 // only the patched meshes' corners changed since the last
                 // revision - the backend's vertex upload and depth tie take

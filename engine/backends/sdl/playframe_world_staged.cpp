@@ -290,12 +290,12 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
     // the line on one actor (`Morph_Play`), and with no speaker (-1)
     // on the street's stand-in, which nothing draws
     // (`todo/drift-audit.md` M3).
-    const bool isSpeaker = session.dialogOpen() && speakerReady &&
+    const bool isSpeaker = session.dialogOpen() && speaker.ready &&
         s.actor == convSpeaker && convSpeaker >= 0;
-    const float lineT = (isSpeaker && speakerTracks.valid())
+    const float lineT = (isSpeaker && speaker.tracks.valid())
         ? static_cast<float>(session.dialogue().elapsed() * 30.0) : -1.0f;
     const bool useLine = lineT >= 0.0f &&
-                         lineT < static_cast<float>(speakerTracks.frames);
+                         lineT < static_cast<float>(speaker.tracks.frames);
     if (isSpeaker) sceneFrameLast = sceneFrame;
     // (c) THE IDLE, built once: the default group's default entry's
     // clip at FRAME 0.
@@ -412,7 +412,7 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
     // none and is skinned. The root radius pads the reach, as the
     // set's runs are padded by their own bounds.
     if (worldStagedSkinGate(s, src, stagedFar, stagedOff)) return;
-    phSpan["staged resolve"] += phaseNow() - stagedResolve0;
+    phases.span["staged resolve"] += phaseNow() - stagedResolve0;
     // THE GPU PATH (todo/gpu-skinning.md step 4), a walker's: where
     // the renderer poses bodies, the body is its rest and one affine
     // a mesh. NOT for the frame a clip changes - the feet latch
@@ -761,7 +761,7 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
         }
         c.x += off[0]; c.y += off[1]; c.z += off[2];
     }
-    phSpan["staged place"] += phaseNow() - stagedPlace0;
+    phases.span["staged place"] += phaseNow() - stagedPlace0;
     // ...and on the CPU path the corners themselves: black, then every
     // light that reaches him (`o3de/vertexlight.h`), from both resident
     // slots, as the crowd's are
@@ -1378,8 +1378,8 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
         // (never past what the stream has read - it keeps two seconds
         // ahead of the clock, so this holds only through a stall)
         const int frame = std::min(static_cast<int>(lineT),
-                                   std::max(0, (speakerTracks.built > 0 ? speakerTracks.built
-                                                                        : speakerTracks.frames) - 1));
+                                   std::max(0, (speaker.tracks.built > 0 ? speaker.tracks.built
+                                                                        : speaker.tracks.frames) - 1));
         // THE LATCH, on the line's first frame - what `Morph_Play`
         // reads off the node once and `sub_42BE00` hands the morph
         // for its whole length. `heading` is the node's world yaw
@@ -1390,16 +1390,16 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
         // the program may end under it, as the goodbye's does.
         // ...and it must be THIS line's tracks. The Session enters
         // a line on its tick and the frontend rebuilds
-        // `speakerTracks` on the next frame's `lineChanged`, so
+        // `speaker.tracks` on the next frame's `lineChanged`, so
         // the first `useLine` frame still holds the PREVIOUS
         // line's. Latched then, a 451-frame line runs on a
         // 135-frame copy and `composePose` clamps at 135: Telis
         // frozen but for her mouth for the last two thirds of
         // "Il y a quatre jours...". The latch
         // is re-taken when the tracks' line changes under it.
-        if (s.lineYawLatched && s.lineVoice != speakerVoice) s.lineYawLatched = false;
+        if (s.lineYawLatched && s.lineVoice != speaker.voice) s.lineYawLatched = false;
         if (!s.lineYawLatched) {
-            s.lineVoice = speakerVoice;
+            s.lineVoice = speaker.voice;
             const bool haveClip = s.sceneTracks.valid() && sceneClip >= 0 && run && run->loaded();
             // ...at the frame the FADE blends from. `Morph_Play`
             // hands the morph `rec[47]` (`sub_42BDD0`), and the
@@ -1415,20 +1415,20 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
                                            static_cast<int>(lineIdleFrame))
                 : (s.restYawKnown ? s.restYaw - (s.progYawKnown ? progYawSign * s.progYaw : 0.0f) : 0.0f);
             s.lineYaw = s.progYawKnown ? progYawSign * s.progYaw : 0.0f;   // the Euler
-            s.lineTracks = speakerTracks;
+            s.lineTracks = speaker.tracks;
             turnRootBy(s.lineTracks, s.lineRootYaw, 0);
             s.lineYawLatched = true;
         }
         // ...and the frames the STREAM has read since (`formats/
         // morphstream.h`): copied in and turned the same way, so the
         // latched copy is the whole line once the line is read
-        if (s.lineTracks.built < speakerTracks.built) {
+        if (s.lineTracks.built < speaker.tracks.built) {
             const int from = s.lineTracks.built;
-            for (int f = from; f < speakerTracks.built; ++f) {
-                s.lineTracks.quats[static_cast<std::size_t>(f)] = speakerTracks.quats[static_cast<std::size_t>(f)];
-                s.lineTracks.trans[static_cast<std::size_t>(f)] = speakerTracks.trans[static_cast<std::size_t>(f)];
+            for (int f = from; f < speaker.tracks.built; ++f) {
+                s.lineTracks.quats[static_cast<std::size_t>(f)] = speaker.tracks.quats[static_cast<std::size_t>(f)];
+                s.lineTracks.trans[static_cast<std::size_t>(f)] = speaker.tracks.trans[static_cast<std::size_t>(f)];
             }
-            s.lineTracks.built = speakerTracks.built;
+            s.lineTracks.built = speaker.tracks.built;
             turnRootBy(s.lineTracks, s.lineRootYaw, from);
         }
         // THE FADE at both ends of the line - `sub_42D120`'s,
@@ -1439,9 +1439,9 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
         float w = 1.0f;
         int idleFrame = static_cast<int>(sceneFrame);
         if (s.sceneTracks.valid()) {
-            const float total = static_cast<float>(speakerTracks.frames);
-            const float bl = omk::morphBlendFrames(speakerTracks.frames);
-            const bool blendOut = speakerVoice.find("02E19A") == std::string::npos;
+            const float total = static_cast<float>(speaker.tracks.frames);
+            const float bl = omk::morphBlendFrames(speaker.tracks.frames);
+            const bool blendOut = speaker.voice.find("02E19A") == std::string::npos;
             if (bl > 0.0f && lineT < bl) {
                 w = lineT / bl;                          // from rec[47]
                 idleFrame = static_cast<int>(lineIdleFrame);
@@ -1484,7 +1484,7 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
         rootFrame = static_cast<int>(sceneFrame);
         // The FACE has no bone track: its vertices come straight
         // out of the line's own frame, which is what moves the lips.
-        if (speakerMorph && !speakerMorph->empty()) fv = omk::faceFrame(*speakerMorph, frame);
+        if (speaker.morph && !speaker.morph->empty()) fv = omk::faceFrame(*speaker.morph, frame);
         src = "the line's .3DM";
     } else if (s.sceneTracks.valid()) {
         s.inertAfterFight = false;     // a program owns him again

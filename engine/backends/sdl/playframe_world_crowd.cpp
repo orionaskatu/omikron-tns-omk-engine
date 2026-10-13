@@ -104,7 +104,7 @@ void PlayState::worldCrowdPedestrians() {
         int pedModelSwapped = 0;   // walkers whose slot was drawn last as ANOTHER model
         worldCrowdWalkers(ws, circuitShown, reach, pedModelSwapped, pedRebound, noPedLod, viewFwd,
                           pedLodMax);
-        phSpan["ped serial"] += phaseNow() - pedSerial0;
+        phases.span["ped serial"] += phaseNow() - pedSerial0;
         if (pedModelSwapped)
             std::printf("frame %ld: crowd library - %d walker(s) whose slot was last drawn as another "
                         "model, re-resolved to their own\n", frameNo, pedModelSwapped);
@@ -323,7 +323,7 @@ void PlayState::worldCrowdPedestrians() {
                 omk::Threads::shared().parallelFor(0, crowd.jobs.size(), 1, pedBodies);
             else
                 pedBodies(0, crowd.jobs.size());
-            phSpan["ped bodies (wall)"] += phaseNow() - pedAll0;
+            phases.span["ped bodies (wall)"] += phaseNow() - pedAll0;
         }
         for (PedJob& j : crowd.jobs) {
             PedStaged& p = *crowd.staged[j.i];
@@ -337,10 +337,10 @@ void PlayState::worldCrowdPedestrians() {
             }
             crowd.lit += j.lit;
             if (j.footOff > pedFootOffMax) pedFootOffMax = j.footOff;
-            phSpan["ped compose"] += j.tCompose;
-            phSpan["ped apply"] += j.tApply;
-            phSpan["ped place"] += j.tPlace;
-            phSpan["ped light"] += j.tLight;
+            phases.span["ped compose"] += j.tCompose;
+            phases.span["ped apply"] += j.tApply;
+            phases.span["ped place"] += j.tPlace;
+            phases.span["ped light"] += j.tLight;
         }
 
         // ...and on a headless run's LAST frame, which is the one its
@@ -374,7 +374,7 @@ void PlayState::worldCrowdPedestrians() {
         int vehPastLod = 0;
         const double veh0 = phaseNow();
         worldCrowdVehicles(vs, pd, circuitShown, vreach, vehPastLod);
-        phSpan["vehicles"] += phaseNow() - veh0;
+        phases.span["vehicles"] += phaseNow() - veh0;
         releaseIdleCrowd();
         if (traffic.live && (traffic.told < 0 || frameNo - traffic.told >= 300)) {
             traffic.told = frameNo;

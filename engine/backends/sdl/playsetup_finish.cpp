@@ -49,8 +49,8 @@ int PlayState::finish() {
         const auto& dlg = session.dialogue();
         std::printf("dialogue: line '%s' at %.2f of %.2f s - frame %d of %d, blend %g\n",
                     dlg.voice().c_str(), dlg.elapsed(), dlg.lineSeconds(),
-                    static_cast<int>(dlg.elapsed() * 30.0), speakerTracks.frames,
-                    omk::morphBlendFrames(speakerTracks.frames));
+                    static_cast<int>(dlg.elapsed() * 30.0), speaker.tracks.frames,
+                    omk::morphBlendFrames(speaker.tracks.frames));
     }
     std::printf("effects: %d set pieces shown so far, %d shown now, "
                 "%d emitters registered on the last frame, %zu particles alive\n",

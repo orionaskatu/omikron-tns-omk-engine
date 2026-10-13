@@ -27,30 +27,30 @@ int PlayState::phasePresent() {
             }
             const double pr1 = phaseNow();
             mark("present, swap");
-            for (std::size_t k = 1; k < phMarks.size(); ++k)
-                phSection[phMarks[k].first] += phMarks[k].second - phMarks[k - 1].second;
-            if (phRb0 < 0.0) phRb0 = phRb1 = pr0;   // a frame with no readback
-            phSum[0] += phRb0 - phTop;
-            phSum[1] += phRb1 - phRb0;
-            phSum[2] += pr0 - phRb1;
-            phSum[3] += pr1 - pr0;
-            if (++phN == 60) {
+            for (std::size_t k = 1; k < phases.marks.size(); ++k)
+                phases.section[phases.marks[k].first] += phases.marks[k].second - phases.marks[k - 1].second;
+            if (phases.rb0 < 0.0) phases.rb0 = phases.rb1 = pr0;   // a frame with no readback
+            phases.sum[0] += phases.rb0 - phases.top;
+            phases.sum[1] += phases.rb1 - phases.rb0;
+            phases.sum[2] += pr0 - phases.rb1;
+            phases.sum[3] += pr1 - pr0;
+            if (++phases.n == 60) {
                 std::printf("frame %ld phases (ms, mean of 60): sim+draw %.1f, readback %.1f, "
-                            "compose %.1f, present %.1f\n", frameNo, phSum[0] * 1000.0 / 60.0,
-                            phSum[1] * 1000.0 / 60.0, phSum[2] * 1000.0 / 60.0,
-                            phSum[3] * 1000.0 / 60.0);
+                            "compose %.1f, present %.1f\n", frameNo, phases.sum[0] * 1000.0 / 60.0,
+                            phases.sum[1] * 1000.0 / 60.0, phases.sum[2] * 1000.0 / 60.0,
+                            phases.sum[3] * 1000.0 / 60.0);
                 gpuReportTimings();   // the GLES backend's counters
                 // counted by the instruments (`playharness.cpp`): a build
                 // without them would print "0 of 60" for every frame
                 if (omkInstrumentsBuilt()) {
-                    std::printf("frame %ld present: %ld of 60 straight from the GPU; on the CPU:", frameNo, phGpu);
-                    for (const auto& [why, count] : phKept) std::printf(" %s %ld,", why.c_str(), count);
+                    std::printf("frame %ld present: %ld of 60 straight from the GPU; on the CPU:", frameNo, phases.gpu);
+                    for (const auto& [why, count] : phases.kept) std::printf(" %s %ld,", why.c_str(), count);
                     std::printf("\n");
                 }
-                phGpu = 0;
-                phKept.clear();
+                phases.gpu = 0;
+                phases.kept.clear();
                 std::printf("frame %ld spans (ms, mean of 60):", frameNo);
-                for (auto& [name, sec] : phSpan) {
+                for (auto& [name, sec] : phases.span) {
                     std::printf(" %s %.1f,", name.c_str(), sec * 1000.0 / 60.0);
                     sec = 0.0;
                 }
@@ -58,7 +58,7 @@ int PlayState::phasePresent() {
                 {
                     // the sections, largest first; each is the gap ENDING at its mark
                     std::vector<std::pair<double, std::string>> secs;
-                    for (auto& [name, sec] : phSection) {
+                    for (auto& [name, sec] : phases.section) {
                         if (sec * 1000.0 / 60.0 >= 0.1) secs.emplace_back(sec * 1000.0 / 60.0, name);
                         sec = 0.0;
                     }
@@ -67,8 +67,8 @@ int PlayState::phasePresent() {
                     for (const auto& [ms, name] : secs) std::printf(" %s %.1f,", name.c_str(), ms);
                     std::printf("\n");
                 }
-                phSum[0] = phSum[1] = phSum[2] = phSum[3] = 0.0;
-                phN = 0;
+                phases.sum[0] = phases.sum[1] = phases.sum[2] = phases.sum[3] = 0.0;
+                phases.n = 0;
             }
         }
         harnessSnaps();
@@ -113,21 +113,21 @@ int PlayState::phasePresent() {
             // ...and one over OMK_MARKS_MS (150) says which SECTIONS: the
             // gaps between the marks, largest first, the top eight
             static const double marksMs = omk::envNum("OMK_MARKS_MS", 150.0);
-            if (paceLeft > 0.0 && (now - paceLeft) * 1000.0 > marksMs && phMarks.size() > 1) {
+            if (paceLeft > 0.0 && (now - paceLeft) * 1000.0 > marksMs && phases.marks.size() > 1) {
                 std::vector<std::pair<double, const char*>> gaps;
-                for (std::size_t k = 1; k < phMarks.size(); ++k)
-                    gaps.emplace_back((phMarks[k].second - phMarks[k - 1].second) * 1000.0, phMarks[k].first);
+                for (std::size_t k = 1; k < phases.marks.size(); ++k)
+                    gaps.emplace_back((phases.marks[k].second - phases.marks[k - 1].second) * 1000.0, phases.marks[k].first);
                 std::sort(gaps.begin(), gaps.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
                 std::printf("frame %ld: sections -", frameNo);
                 for (std::size_t k = 0; k < gaps.size() && k < 8; ++k)
                     std::printf(" %s %.1f ms,", gaps[k].second, gaps[k].first);
-                std::printf(" (%zu marks, %.1f ms top to last)\n", phMarks.size(),
-                            (phMarks.back().second - phMarks.front().second) * 1000.0);
+                std::printf(" (%zu marks, %.1f ms top to last)\n", phases.marks.size(),
+                            (phases.marks.back().second - phases.marks.front().second) * 1000.0);
             }
             // ...and a VERY slow one says where it went: this frame's own
             // simulation-and-submission span, and the GL backend's counts
             if (paceLeft > 0.0 && now - paceLeft > 0.5) {
-                std::printf("frame %ld: of which sim+draw %.0f ms", frameNo, (phRb0 - phTop) * 1000.0);
+                std::printf("frame %ld: of which sim+draw %.0f ms", frameNo, (phases.rb0 - phases.top) * 1000.0);
                 gpuSlowFrameReport();
                 std::printf("\n");
             }

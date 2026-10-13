@@ -80,8 +80,8 @@ int PlayState::setupSplash() {
     // the GPU), the CPU compose after it, and the present with its swap.
     // Averaged over 60 frames and printed as one `frame phases:` line.
     phaseHz = static_cast<double>(front.perfFrequency());
-    phTop = 0.0, phRb0 = -1.0, phRb1 = -1.0;
-    phN = 0;
-    phGpu = 0;                          // frames presented from the GPU
+    phases.top = 0.0, phases.rb0 = -1.0, phases.rb1 = -1.0;
+    phases.n = 0;
+    phases.gpu = 0;                          // frames presented from the GPU
     return phase::Continue;
 }

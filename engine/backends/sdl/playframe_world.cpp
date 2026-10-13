@@ -91,7 +91,7 @@ int PlayState::phaseWorld() {
             // A conversation's speaker need not be in `shown()` at all -
             // AREA 118's is, but the camera solve is the only thing that says
             // where a speaker no table places and no script shows is standing.
-            if (session.dialogOpen() && speakerReady && !speakerModel.empty()) {
+            if (session.dialogOpen() && speaker.ready && !speaker.model.empty()) {
                 const int sp = session.dialogue().conversation().speaker;
                 // HIS body and no other: `Dialog_Load` resolves the speaker by
                 // his id and `Dialog_SetSubjectActor` flags that actor's own
@@ -105,17 +105,17 @@ int PlayState::phaseWorld() {
                     staged.push_back(std::make_unique<Staged>());
                     s = staged.back().get();
                     s->actor = sp;
-                    s->model = speakerModel;
-                    s->mo = charModelFor(speakerModel);
+                    s->model = speaker.model;
+                    s->mo = charModelFor(speaker.model);
                     ++stagedEver;
                     stagedIds.push_back(sp);
                     std::printf("frame %ld: staged actor %d %s for conversation %d - "
                                 "no table places him and no script shows him\n",
-                                frameNo, sp, speakerModel.c_str(), speakerConv);
+                                frameNo, sp, speaker.model.c_str(), speaker.conv);
                 }
                 s->seen = true;
-                if (!s->placed && speakerSolved) {
-                    for (int k = 0; k < 3; ++k) s->at[k] = speakerAt[k];
+                if (!s->placed && speaker.solved) {
+                    for (int k = 0; k < 3; ++k) s->at[k] = speaker.at[k];
                     s->placed = true;
                     s->pelvis = false;   // the solve names a spot on the GROUND
                 }
@@ -163,7 +163,7 @@ int PlayState::phaseWorld() {
             // area's cast.
             for (auto it = charModels.begin(); it != charModels.end(); ) {
                 bool used = (it->first == playerModel && playerReady) ||
-                            it->first == speakerModel;
+                            it->first == speaker.model;
                 for (const auto& up : staged) if (up->model == it->first) used = true;
                 // ...AND the models the traffic circuit's own bodies wear.
                 // The crowd's walkers and the road traffic's two vehicles are

@@ -64,6 +64,7 @@
 
 #include "o3de/renderer.h"
 #include "o3de/depthtie.h"
+#include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "platform/env.h"
 
@@ -1041,37 +1042,36 @@ bool VulkanRenderer::makePipelines() {
     ds.depthTestEnable = VK_TRUE;
     ds.depthCompareOp = VK_COMPARE_OP_LESS;
 
-    for (int k = 0; k < 3; ++k) {
+    // the three pipelines are the three blend modes, by `blendRule`
+    // (`o3de/drawcore.h`): opaque, additive (0x1000|0x2000, 211 meshes) and
+    // multiply (0x1000|0x4000, 6 meshes and the mode-6 sprites - `dst * (1 -
+    // src)`, darkening where the source is bright; DST_COLOR / ZERO would be
+    // `dst * src`, the wrong law). Only an OPAQUE pass owns the depth.
+    const auto vkFactor = [](omk::BlendFactor f) {
+        return f == omk::BlendFactor::Zero ? VK_BLEND_FACTOR_ZERO
+             : f == omk::BlendFactor::One  ? VK_BLEND_FACTOR_ONE
+                                           : VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    };
+    const omk::Blend kModes[3] = {omk::Blend::Opaque, omk::Blend::Add, omk::Blend::Mul};
+    const auto blendState = [&](int k) {
+        const omk::BlendRule rule = omk::blendRule(kModes[k]);
         VkPipelineColorBlendAttachmentState cba{};
         cba.colorWriteMask = 0xF;
-        if (k == 0) {
-            cba.blendEnable = VK_FALSE;
-        } else if (k == 1) {
-            // additive: 0x1000|0x2000, 211 meshes (ASSETS 4b)
-            cba.blendEnable = VK_TRUE;
-            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        cba.blendEnable = rule.blend ? VK_TRUE : VK_FALSE;
+        if (rule.blend) {
+            cba.srcColorBlendFactor = vkFactor(rule.src);
+            cba.dstColorBlendFactor = vkFactor(rule.dst);
             cba.colorBlendOp = VK_BLEND_OP_ADD;
+            // the alpha's factors are this backend's own (`BlendRule`)
             cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.alphaBlendOp = VK_BLEND_OP_ADD;
-        } else {
-            // multiply: 0x1000|0x4000, 6 meshes and the mode-6 sprites.
-            // SRCBLEND=ZERO / DESTBLEND=INVSRCCOLOR - `dst * (1 - src)`, the
-            // same arithmetic `raster.cpp` does, darkening where the source
-            // is bright. DST_COLOR / ZERO would be `dst * src`, the wrong law.
-            cba.blendEnable = VK_TRUE;
-            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-            cba.colorBlendOp = VK_BLEND_OP_ADD;
-            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cba.dstAlphaBlendFactor = kModes[k] == omk::Blend::Add ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ZERO;
             cba.alphaBlendOp = VK_BLEND_OP_ADD;
         }
-        // Only an OPAQUE pass owns the depth - a transparent one that wrote it
-        // would hide whatever comes after it in the same bucket order. That is
-        // `raster.cpp`'s rule, transcribed.
-        ds.depthWriteEnable = (k == 0) ? VK_TRUE : VK_FALSE;
+        return cba;
+    };
+    for (int k = 0; k < 3; ++k) {
+        const VkPipelineColorBlendAttachmentState cba = blendState(k);
+        ds.depthWriteEnable = omk::blendRule(kModes[k]).depthWrite ? VK_TRUE : VK_FALSE;
 
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         cb.attachmentCount = 1; cb.pAttachments = &cba;
@@ -1163,28 +1163,10 @@ bool VulkanRenderer::makePipelines() {
 
     // and the reflection's three, the scene states with the stencil test on
     for (int k = 0; k < 3; ++k) {
-        VkPipelineColorBlendAttachmentState cba{};
-        cba.colorWriteMask = 0xF;
-        if (k == 1) {
-            cba.blendEnable = VK_TRUE;
-            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.colorBlendOp = VK_BLEND_OP_ADD;
-            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.alphaBlendOp = VK_BLEND_OP_ADD;
-        } else if (k == 2) {
-            cba.blendEnable = VK_TRUE;
-            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;   // dst * (1 - src)
-            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-            cba.colorBlendOp = VK_BLEND_OP_ADD;
-            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-            cba.alphaBlendOp = VK_BLEND_OP_ADD;
-        }
+        const VkPipelineColorBlendAttachmentState cba = blendState(k);
         VkPipelineDepthStencilStateCreateInfo rd{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         rd.depthTestEnable = VK_TRUE;
-        rd.depthWriteEnable = (k == 0) ? VK_TRUE : VK_FALSE;
+        rd.depthWriteEnable = omk::blendRule(kModes[k]).depthWrite ? VK_TRUE : VK_FALSE;
         rd.depthCompareOp = VK_COMPARE_OP_LESS;
         rd.stencilTestEnable = VK_TRUE;
         rd.front = rd.back = stencilOp(VK_STENCIL_OP_KEEP, VK_COMPARE_OP_EQUAL, 0);
@@ -2139,15 +2121,9 @@ bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
 // step back rather than degenerated, so a culled winner or a door leaf moved
 // off its frame leaves the loser drawn, as the engine draws it.
 bool VulkanRenderer::bakeDepthTie(const omk::Geometry* g, std::span<const omk::Draw> order) {
-    static const bool off = omk::envFlag("OMK_NO_TIE");
-    static const bool noBake = omk::envFlag("OMK_NO_TIE_BAKE");
-    if (off || noBake || !g) return false;
-    omk::DepthTie t;
-    std::vector<std::size_t> losers, restore;
-    for (const omk::Draw& d : order)
-        if (d.geo == g) t.resolve(*g, d.start, d.count, d.blend == omk::Blend::Opaque, losers, restore);
+    if (omk::tieBakeOff() || !g) return false;
+    const std::vector<std::size_t> tris = omk::bakeTieLosers(*g, order);
     std::vector<std::uint8_t> lose(g->corners.size(), 0);
-    std::set<std::size_t> tris(losers.begin(), losers.end());
     for (const std::size_t tri : tris)
         for (std::size_t k = 3 * tri; k < 3 * tri + 3 && k < lose.size(); ++k) lose[k] = 1;
     baked_[g] = std::move(lose);
@@ -2163,9 +2139,7 @@ bool VulkanRenderer::bakeDepthTie(const omk::Geometry* g, std::span<const omk::D
 }
 
 void VulkanRenderer::resolveTies(const omk::Draw& d) {
-    // `OMK_NO_TIE=1` leaves the fight in, for a before/after.
-    static const bool off = omk::envFlag("OMK_NO_TIE");
-    if (off) return;
+    if (omk::tieOff()) return;              // the fight left in, for a before/after
     const omk::Geometry* g = d.geo;
     if (baked_.count(g)) return;             // settled once, drawn back (`bakeDepthTie`)
     auto& t = tie_[g];
@@ -2479,40 +2453,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
 // shadow map, whose depth-only pipeline has no set 2.
 omk::Draw VulkanRenderer::cpuPose(const omk::Draw& d) {
     omk::Geometry& cp = cpuPosed_[d.geo];
-    if (cp.corners.size() != d.geo->corners.size()) cp = *d.geo;
-    const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
-    for (std::size_t i = 0; i < cp.corners.size(); ++i) {
-        const omk::Corner& rc = d.geo->corners[i];
-        omk::Corner& c = cp.corners[i];
-        c = rc;
-        const std::int32_t m = d.geo->cornerMesh[i];
-        if (m >= 0 && static_cast<std::size_t>(m) < d.meshPoses) {
-            const float* a = d.meshPose + 12 * static_cast<std::size_t>(m);
-            c.x = a[0] * rc.x + a[1] * rc.y + a[2] * rc.z + a[3];
-            c.y = a[4] * rc.x + a[5] * rc.y + a[6] * rc.z + a[7];
-            c.z = a[8] * rc.x + a[9] * rc.y + a[10] * rc.z + a[11];
-            c.nx = a[0] * rc.nx + a[1] * rc.ny + a[2] * rc.nz;
-            c.ny = a[4] * rc.nx + a[5] * rc.ny + a[6] * rc.nz;
-            c.nz = a[8] * rc.nx + a[9] * rc.ny + a[10] * rc.nz;
-        }
-        if (nl > 0 || d.lightsFromBlack) {
-            float cr = d.lightsFromBlack ? d.lightBase : rc.r;
-            float cg = d.lightsFromBlack ? d.lightBase : rc.g;
-            float cb = d.lightsFromBlack ? d.lightBase : rc.b;
-            for (int k = 0; k < nl; ++k) {
-                const float* L = d.vertexLights + 8 * k;
-                int ti = static_cast<int>(-(c.nx * L[0] + c.ny * L[1] + c.nz * L[2]));
-                ti = ti < 0 ? 0 : (ti > 255 ? 255 : ti);
-                const float ar = omk::lightRamp(static_cast<std::uint8_t>(L[4]), ti) / 255.0f;
-                const float ag = omk::lightRamp(static_cast<std::uint8_t>(L[5]), ti) / 255.0f;
-                const float ab = omk::lightRamp(static_cast<std::uint8_t>(L[6]), ti) / 255.0f;
-                cr = cr + ar > 1.0f ? 1.0f : cr + ar;
-                cg = cg + ag > 1.0f ? 1.0f : cg + ag;
-                cb = cb + ab > 1.0f ? 1.0f : cb + ab;
-            }
-            c.r = cr; c.g = cg; c.b = cb;
-        }
-    }
+    omk::poseGeometry(d, cp, omk::PoseParts{true, true, kPoseLights});   // o3de/drawcore.h
     cp.revision = d.geo->revision + (++cpuPoseRev_ << 32);
     omk::Draw out = d;
     out.geo = &cp;

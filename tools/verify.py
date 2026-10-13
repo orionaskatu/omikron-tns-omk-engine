@@ -15283,6 +15283,74 @@ def c_events():
         "their keys"
 
 
+def c_engine_draw_core():
+    r"""The four GPU backends pose, light, settle the depth tie and blend
+    through ONE implementation, and it agrees with the reference path
+    (`engine/src/o3de/drawcore.h`, todo/code-readability-audit.md §6).
+
+    Vulkan, GLES, GL 1.x and citro3d each carried their own copy of the CPU
+    pose (one affine a mesh), the per-vertex light law, the depth-tie bake and
+    the blend switch, and the copies had drifted in detail: which switch turned
+    the tie off, whether a light's colour was read as a byte or as a float. The
+    rules are the engine's, not the API's, so they now live once.
+
+    Two halves. `engine/tools/drawcore_probe.cpp` poses three real characters
+    by `meshAffines` + `poseGeometry` against `applyPose`, 48 random poses
+    each, under Anekbah's 155 lights (the body stood inside each in turn),
+    alternately from the baked colour and from the scene's grey: the positions
+    and normals agree to a few ulps (the same rotation in two orders), the
+    colours to the BIT against `applyLights` over the same normals, a
+    non-vacuous number of corners are actually lit, and the GLES variant (only
+    the posed fields written) leaves what the whole-corner one does. Then a
+    source scan: each backend includes the core and carries no copy of it - no
+    `lightRamp`, no `OMK_NO_TIE` switch of its own, no `DepthTie` bake loop, no
+    `case Blend::` switch.
+
+    SHOWN TO FAIL, 2026-10-13: the core's ramp index rounded instead of
+    truncated (`static_cast<int>(x + 0.5f)`) gives light mismatches on all
+    three models; a `case Blend::Opaque:` put back into the GL1 backend turns
+    the scan red with that file named.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    b = subprocess.run(["make", "-s", "build/drawcore_probe"], cwd=eng, capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "drawcore_probe")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    paths = [omkpaths.data("MESHES/DECORS/Anekbah.3DO")]
+    for stem in ("HO1_FN", "PSH_FN", "JEN_FNM"):
+        paths.append(omkpaths.data("MESHES/PERSOS/%s.3DO" % stem))
+    if not all(os.path.exists(p) for p in paths):
+        return ("skipped",), ("skipped",), "the set or a character is absent"
+    r = subprocess.run([binp] + paths, capture_output=True, text=True)
+    lights = re.findall(r"^set lights (\d+)$", r.stdout, re.M)
+    rows = re.findall(r"^(\S+)\.3DO corners (\d+) calls (\d+) pose_err ([\d.]+) light_mismatch (\d+) "
+                      r"lit (\d+) rest_mismatch (\d+)$", r.stdout, re.M)
+    if len(lights) != 1 or len(rows) != 3:
+        return (len(lights), len(rows)), (1, 3), "drawcore_probe output parsed - the tool's format changed"
+    probe = (int(lights[0]),) + tuple(
+        (st, int(c), int(calls), float(err) < 1e-3, int(lm), int(lit) > 1000, int(rm))
+        for st, c, calls, err, lm, lit, rm in rows)
+    copies = (r"\blightRamp\(", r'envFlag\("OMK_NO_TIE', r"\bDepthTie t;", r"\bcase Blend::")
+    scan = []
+    for f in ("backends/vulkan/vkrender.cpp", "backends/gles/glesrender.cpp",
+              "backends/gl1/gl1render.cpp", "backends/n3ds/c3drender.cpp"):
+        src = open(os.path.join(eng, f)).read()
+        scan.append((f.split("/")[-1], '#include "o3de/drawcore.h"' in src,
+                     sum(len(re.findall(pat, src)) for pat in copies)))
+    return (probe, tuple(scan)), \
+        ((155, ("HO1_FN", 1626, 48, True, 0, True, 0), ("PSH_FN", 2370, 48, True, 0, True, 0),
+          ("JEN_FNM", 2388, 48, True, 0, True, 0)),
+         (("vkrender.cpp", True, 0), ("glesrender.cpp", True, 0),
+          ("gl1render.cpp", True, 0), ("c3drender.cpp", True, 0))), \
+        "Anekbah's lights; per model: corners, poses compared, positions and normals within 1e-3 " \
+        "of applyPose, corners whose colour bits differ from applyLights, more than 1000 corner-poses " \
+        "lit, corners the GLES variant leaves different; then per backend: includes the core, and " \
+        "the copies of it left (lightRamp, its own OMK_NO_TIE switch, a DepthTie bake, a Blend switch)"
+
+
 def c_engine_dossier_reader():
     r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
 
@@ -44792,8 +44860,10 @@ def c_licence_headers():
     # 626: + `engine/src/platform/sync.h` (a lock that costs nothing without threads)
     # 627: + `engine/src/platform/events.h` (the `@evt` lines)
     # 628: + `tools/group_members.py` (fields gathered into owned components)
+    # 631: + `engine/src/o3de/drawcore.{h,cpp}` and `engine/tools/drawcore_probe.cpp`
+    # (the GPU backends' shared pose, light, tie and blend)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (628, [], 1, []), \
+           (631, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -47232,6 +47302,7 @@ CHECKS = [
     ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
     ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
     ("engine: events", c_events, "todo/code-readability-audit.md; engine/src/platform/events.h"),
+    ("engine: draw core", c_engine_draw_core, "todo/code-readability-audit.md; engine/src/o3de/drawcore.h"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

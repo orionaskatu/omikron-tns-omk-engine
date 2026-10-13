@@ -9,6 +9,7 @@
 #include "c3drender.h"
 #include "c3dstereo.h"
 
+#include "o3de/drawcore.h"
 #include "o3de/shimmer.h"
 #include "o3de/texscale.h"
 #include "platform/profile.h"
@@ -1663,34 +1664,23 @@ private:
             return nullptr;
         }
         const bool haveMesh = g.cornerMesh.size() == g.corners.size();
-        const int nl = d.vertexLights ? d.vertexLightCount : 0;
-        const bool lit = nl > 0 || d.lightsFromBlack;
+        CornerLight lights[64];                                // o3de/drawcore.h
+        const int nl = prepareLights(d, 64, lights);
+        const bool lit = relit(d, nl);
         GpuVert* out = ring_ + used_;
         for (std::size_t k = 0; k < d.count; ++k) {
             const Corner& c = g.corners[d.start + k];
-            const std::int32_t m = haveMesh ? g.cornerMesh[d.start + k] : -1;
-            float px = c.x, py = c.y, pz = c.z, nx = c.nx, ny = c.ny, nz = c.nz;
-            if (m >= 0 && static_cast<std::size_t>(m) < d.meshPoses) {
-                const float* a = d.meshPose + 12 * static_cast<std::size_t>(m);
-                px = a[0] * c.x + a[1] * c.y + a[2] * c.z + a[3];
-                py = a[4] * c.x + a[5] * c.y + a[6] * c.z + a[7];
-                pz = a[8] * c.x + a[9] * c.y + a[10] * c.z + a[11];
-                nx = a[0] * c.nx + a[1] * c.ny + a[2] * c.nz;
-                ny = a[4] * c.nx + a[5] * c.ny + a[6] * c.nz;
-                nz = a[8] * c.nx + a[9] * c.ny + a[10] * c.nz;
+            float p[3] = {c.x, c.y, c.z}, n[3] = {c.nx, c.ny, c.nz};
+            if (const float* a = haveMesh ? cornerAffine(d, d.start + k) : nullptr) {
+                posePoint(a, c.x, c.y, c.z, p);
+                poseNormal(a, c.nx, c.ny, c.nz, n);
             }
             float col[3] = {c.r, c.g, c.b};
             if (lit) {
-                if (d.lightsFromBlack) col[0] = col[1] = col[2] = d.lightBase;
-                for (int i = 0; i < nl; ++i) {
-                    const float* L = d.vertexLights + 8 * i;
-                    const float t = -(nx * L[0] + ny * L[1] + nz * L[2]);
-                    const float ti = std::clamp(t < 0.0f ? std::ceil(t) : std::floor(t), 0.0f, 255.0f);
-                    for (int j = 0; j < 3; ++j)
-                        col[j] = std::min(col[j] + std::floor(ti * L[4 + j] / 256.0f) / 255.0f, 1.0f);
-                }
+                lightStart(d, c, col);
+                lightCorner(n, lights, nl, col);
             }
-            out[k] = {px, py, pz, c.u, c.v, toByte(col[0]), toByte(col[1]), toByte(col[2]), 255, c.phase};
+            out[k] = {p[0], p[1], p[2], c.u, c.v, toByte(col[0]), toByte(col[1]), toByte(col[2]), 255, c.phase};
         }
         GSPGPU_FlushDataCache(out, d.count * sizeof(GpuVert));
         used_ += d.count;
@@ -1853,21 +1843,16 @@ private:
         const std::size_t slot = drawTextureSlot(d);   // ASSETS 4b; past 64 the pool's index
         const bool hasTex = !noTex_ && slot < tex_.size() && tex_[slot].tex;
         if (!stateValid_ || d.blend != blend_) {
-            switch (d.blend) {
-            case Blend::Opaque:
-                C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO, GPU_ONE, GPU_ZERO);
-                C3D_DepthTest(true, GPU_LESS, GPU_WRITE_ALL);
-                break;
-            case Blend::Add:                                  // src + dst, saturating
-                C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ONE, GPU_ONE, GPU_ONE);
-                C3D_DepthTest(true, GPU_LESS, GPU_WRITE_COLOR);
-                break;
-            case Blend::Mul:                                  // dst * (1 - src)
-                C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ZERO, GPU_ONE_MINUS_SRC_COLOR,
-                               GPU_ZERO, GPU_ONE);
-                C3D_DepthTest(true, GPU_LESS, GPU_WRITE_COLOR);
-                break;
-            }
+            const BlendRule r = blendRule(d.blend);          // o3de/drawcore.h
+            const auto pf = [](BlendFactor f) {
+                return f == BlendFactor::Zero ? GPU_ZERO : f == BlendFactor::One ? GPU_ONE : GPU_ONE_MINUS_SRC_COLOR;
+            };
+            // the alpha's factors are this backend's own (`BlendRule`): the
+            // colour's pair, except that a multiply keeps the target's
+            const bool keepAlpha = d.blend == Blend::Mul;
+            C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, pf(r.src), pf(r.dst),
+                           keepAlpha ? GPU_ZERO : pf(r.src), keepAlpha ? GPU_ONE : pf(r.dst));
+            C3D_DepthTest(true, GPU_LESS, r.depthWrite ? GPU_WRITE_ALL : GPU_WRITE_COLOR);
             blend_ = d.blend;
         }
         if (!stateValid_ || d.cutout != cutout_) {

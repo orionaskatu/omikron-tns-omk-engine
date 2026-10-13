@@ -689,6 +689,33 @@ finding: a check that hashed a conversation frame would flicker.
   four positions, now a bounded insertion sort - same order, same
   multiset test). Guard 0 of 14; 22 camera, collision, look, tie and
   close checks green; both consoles build clean with no warning.
+* step 15a - ONE CORE FOR THE FOUR GPU BACKENDS: `src/o3de/drawcore.*`.
+  Vulkan, GLES, GL 1.x and citro3d each carried the CPU pose, the per-vertex
+  light law, the depth-tie bake and the blend switch; now `posePoint` /
+  `poseNormal` / `cornerAffine`, `prepareLights` / `lightStart` /
+  `lightCorner`, `poseGeometry` (the whole-body fallback, with `PoseParts`
+  saying what a backend wants written - GLES: the posed fields only, its
+  lights in the shader; Vulkan: everything, lit here), `tieOff` /
+  `tieBakeOff` / `bakeTieLosers`, and `blendRule` (the colour factors and the
+  depth write; each API keeps a three-line factor map). What the copies had
+  drifted on: GL1 read `OMK_NO_TIE_BAKE` as turning the tie off altogether
+  where the others baked nothing and settled per draw - unchanged here, since
+  GL1 has no per-draw path, but now one switch read in one place; the 3DS
+  computed the ramp as `floor(t * c / 256)` in floats where the others shift
+  integers (the same values: every operand is a whole number below 2^24);
+  the 3DS applied every light it was handed where the others capped at their
+  GPU path's count (the frontend never hands more than `maxVertexLights`, so
+  kept, at 64); and the ALPHA factors of the two transparent modes differ
+  between Vulkan, GL and the PICA - left as they were, said in `BlendRule`,
+  since nothing on screen is made of the target's alpha. GL1's two `-Wshadow`
+  warnings (a `Current c` guard) went on the way. The check that they agree,
+  `engine: draw core` (fast list, 0.4 s): `drawcore_probe` poses HO1_FN,
+  PSH_FN and JEN_FNM 48 times each under Anekbah's 155 lights against
+  `applyPose` (5e-5 at worst) and `applyLights` (0 corners differing in a
+  bit), plus a scan that no backend keeps a copy; shown to fail both ways.
+  Guard 0 of 14; 30 GPU checks green (GLES, Vulkan, GL1 backend, ties,
+  shadows, mirror, per-pixel light); 3DS and Vita build with no warning;
+  `licence headers` 631.
 
 ## 7. For the tutorial
 

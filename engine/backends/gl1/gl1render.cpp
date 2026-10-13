@@ -85,6 +85,7 @@
 #include "gl1host.h"
 
 #include "o3de/depthtie.h"
+#include "o3de/drawcore.h"
 #include "o3de/greybank.h"
 #include "o3de/shimmer.h"
 #include "o3de/texscale.h"
@@ -105,6 +106,11 @@
 
 namespace omk {
 namespace {
+
+// `blendRule`'s factors (`o3de/drawcore.h`) as GL's
+GLenum glFactor(BlendFactor f) {
+    return f == BlendFactor::Zero ? GL_ZERO : f == BlendFactor::One ? GL_ONE : GL_ONE_MINUS_SRC_COLOR;
+}
 
 #if defined(OMK_GL1_AGL)
 // The fog's colour sum is EXT_secondary_color on OpenGL 1.2 (core only from
@@ -172,7 +178,7 @@ public:
         if (gl1AglContext() != ctx_) return;
 #endif
         {
-            Current c(ctx_);
+            Current current(ctx_);
             for (auto& [key, u] : uploaded_) {
                 gpuForget(omk::prof::kGlTexture, &u.name, 1);
                 glDeleteTextures(1, &u.name);
@@ -199,7 +205,7 @@ public:
 
     bool init(int w, int h) override {
         if (!ctx_ && !makeContext()) return false;
-        Current c(ctx_);
+        Current current(ctx_);
         w_ = w; h_ = h;
 #if defined(OMK_GL1_AGL)
         // the window's own back buffer, which is the window's size - the
@@ -255,7 +261,7 @@ public:
     // TRUNCATED to five bits, as the engine's own 16-bit conversion does
     // (`rgb565`), and the colour key (alpha 0) on a black palette entry.
     void setTextures(std::span<const Texture> t) override {
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         for (auto& [key, u] : uploaded_) u.used = false;
         tex_.assign(t.size(), 0);
@@ -359,7 +365,7 @@ public:
     void begin(const View& v) override {
         OMK_ZONE("gl1: begin");   // the profiler; `begin`, `submit`, `end` split the frame's
                                   // CPU share from the driver's (`todo/handoff-classic-mac.md` 3f)
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         setCamera(v);
         RCamera cam = v.cam;
@@ -458,7 +464,7 @@ public:
     void submit(const Draw& d) override {
         if (!d.geo || d.count < 3) return;
         OMK_ZONE("gl1: submit");  // the loop below; a batch's draw call nests inside it
-        Current c(ctx_);
+        Current current(ctx_);
         const Geometry& g = *d.geo;
         if (d.start + d.count > g.corners.size()) return;
 
@@ -512,8 +518,7 @@ public:
         // draw - view = B (R rest + t - eye), B the camera's three rows - and
         // the lights that reach the body, applied per corner below
         const bool posed = d.meshPose && d.meshPoses && g.cornerMesh.size() == g.corners.size();
-        struct PoseLight { float lx, ly, lz; unsigned char r, g, b; };
-        PoseLight pl[kPoseLights];
+        CornerLight pl[kPoseLights];
         int nl = 0;
         bool relight = false;
         if (posed) {
@@ -522,13 +527,8 @@ public:
                 poseGen_.resize(d.meshPoses, 0u);
                 poseView_.resize(12 * d.meshPoses);
             }
-            nl = d.vertexLights ? std::min(d.vertexLightCount, static_cast<int>(kPoseLights)) : 0;
-            for (int i = 0; i < nl; ++i) {
-                const float* v = d.vertexLights + 8 * i;   // dir * strength, then the colour bytes
-                pl[i] = {v[0], v[1], v[2], static_cast<unsigned char>(v[4]),
-                         static_cast<unsigned char>(v[5]), static_cast<unsigned char>(v[6])};
-            }
-            relight = nl > 0 || d.lightsFromBlack;
+            nl = prepareLights(d, kPoseLights, pl);    // o3de/drawcore.h
+            relight = relit(d, nl);
         }
         const auto viewAffine = [&](std::size_t m) -> const float* {
             float* P = poseView_.data() + 12 * m;
@@ -673,37 +673,22 @@ public:
             // ...then the COLOURS, of a corner that is sent (`colourOf`)
             const auto colourOf = [&](int k) {
                 const Corner& c = g.corners[d.start + t + static_cast<std::size_t>(k)];
-                float cr = c.r, cg = c.g, cb = c.b;
+                float rgb[3] = {c.r, c.g, c.b};
                 if (relight) {
-                    // the GLES shader's rule: from the scene's grey when the
-                    // body starts black, else from the corner's colour, each
-                    // reaching light added and clamped in turn on the POSED
-                    // normal (`applyLights`' law and ramp)
-                    if (d.lightsFromBlack) cr = cg = cb = d.lightBase;
+                    // from the scene's grey when the body starts black, else
+                    // from the corner's colour, each reaching light added and
+                    // clamped in turn on the POSED normal (`o3de/drawcore.h`)
+                    lightStart(d, c, rgb);
                     if (nl > 0) {
-                        float nx = c.nx, ny = c.ny, nz = c.nz;
-                        if (meshOf[k] >= 0) {
-                            const float* a = d.meshPose + 12 * static_cast<std::size_t>(meshOf[k]);
-                            nx = a[0] * c.nx + a[1] * c.ny + a[2] * c.nz;
-                            ny = a[4] * c.nx + a[5] * c.ny + a[6] * c.nz;
-                            nz = a[8] * c.nx + a[9] * c.ny + a[10] * c.nz;
-                        }
-                        for (int i = 0; i < nl; ++i) {
-                            const float tl = -(nx * pl[i].lx + ny * pl[i].ly + nz * pl[i].lz);
-                            int ti = static_cast<int>(tl);
-                            ti = ti < 0 ? 0 : (ti > 255 ? 255 : ti);
-                            const float ar = static_cast<float>(lightRamp(pl[i].r, ti)) / 255.0f;
-                            const float ag = static_cast<float>(lightRamp(pl[i].g, ti)) / 255.0f;
-                            const float ab = static_cast<float>(lightRamp(pl[i].b, ti)) / 255.0f;
-                            cr = cr + ar > 1.0f ? 1.0f : cr + ar;
-                            cg = cg + ag > 1.0f ? 1.0f : cg + ag;
-                            cb = cb + ab > 1.0f ? 1.0f : cb + ab;
-                        }
+                        float n[3] = {c.nx, c.ny, c.nz};
+                        if (meshOf[k] >= 0)
+                            poseNormal(d.meshPose + 12 * static_cast<std::size_t>(meshOf[k]), c.nx, c.ny, c.nz, n);
+                        lightCorner(n, pl, nl, rgb);
                     }
                 }
                 // the shimmer first, as the engine adds it into the bytes
                 const float sh = shimmerOffset(c.phase, view_.shimmerClock);
-                in[k].c[0] = cr + sh; in[k].c[1] = cg + sh; in[k].c[2] = cb + sh;
+                in[k].c[0] = rgb[0] + sh; in[k].c[1] = rgb[1] + sh; in[k].c[2] = rgb[2] + sh;
                 // ...then the greyscale bank (ops 150/151, `o3de/greybank.h`)
                 if (view_.grey)
                     in[k].c[0] = in[k].c[1] = in[k].c[2] =
@@ -795,7 +780,7 @@ public:
 
     void end() override {
         OMK_ZONE("gl1: end");     // the last batch, and the `glFlush` the driver may work in
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         // THE FOG'S COLOUR SUM ENDS WITH THE WORLD. Left on, everything drawn
         // after it in the frame - the interface overlay, the fade quad, the
@@ -857,7 +842,7 @@ public:
 
     const Surface& readback() override {
         if (readDone_) return fb_;           // idempotent (renderer.h)
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         bindTarget();
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -912,7 +897,7 @@ public:
     // own size; anything else stays on the composite.
     bool presentWorld(int ww, int wh) {
         if (ww != w_ || wh != h_) return false;
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         OMK_ZONE("gl1: swap");
         aglSwapBuffers(ctx_);
@@ -1011,7 +996,7 @@ public:
                 if (ovRowDraw_[yy]) { if (lo > y) lo = y; hi = y; }
             }
         }
-        Current c(ctx_);
+        Current current(ctx_);
         flush();
         if (hi >= lo || fading) {
             // the 2D state for the quads; `begin` sets all of its own again
@@ -1318,12 +1303,8 @@ public:
     // loser is drawn a hair back. Without a tie the street's coincident ground
     // faces fight in the depth buffer and flicker as the camera moves.
     bool bakeDepthTie(const Geometry* g, std::span<const Draw> order) override {
-        static const bool off = omk::envFlag("OMK_NO_TIE") || omk::envFlag("OMK_NO_TIE_BAKE");
-        if (off || !g) return false;
-        DepthTie t;
-        std::vector<std::size_t> losers, restore;
-        for (const Draw& d : order)
-            if (d.geo == g) t.resolve(*g, d.start, d.count, d.blend == Blend::Opaque, losers, restore);
+        if (tieBakeOff() || !g) return false;
+        const std::vector<std::size_t> losers = bakeTieLosers(*g, order);   // o3de/drawcore.h
         std::vector<std::uint8_t> lose(g->corners.size() / 3 + 1, 0);
         for (const std::size_t tri : losers) if (tri < lose.size()) lose[tri] = 1;
         tieBaked_[g] = std::move(lose);
@@ -1347,7 +1328,7 @@ public:
         if (mode >= 2)
             std::printf("gl1: trilinear asked - no mip chain in this backend, drawn bilinear\n");
         if (!uploaded_.empty()) {
-            Current c(ctx_);
+            Current current(ctx_);
             flush();
             for (auto& [key, u] : uploaded_) {
                 const GLuint id = u.name;
@@ -1469,7 +1450,7 @@ private:
             std::fprintf(stderr, "gl1: no AGL context on the window\n");
             return false;
         }
-        Current c(ctx_);
+        Current current(ctx_);
         const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
         hasColourSum_ = ext && std::strstr(ext, "GL_EXT_secondary_color");
         GLint vp[4] = {0, 0, 0, 0};
@@ -1520,7 +1501,7 @@ private:
             std::fprintf(stderr, "gl1: no accelerated OpenGL context\n");
             return false;
         }
-        Current c(ctx_);
+        Current current(ctx_);
         const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
         if (!ext || !std::strstr(ext, "GL_EXT_framebuffer_object")) {
             std::fprintf(stderr, "gl1: no EXT_framebuffer_object (%s)\n",
@@ -1661,14 +1642,14 @@ private:
         const std::size_t slot = drawTextureSlot(d);   // ASSETS 4b; past 64 the pool's index
         const bool hasTex = slot < tex_.size() && tex_[slot] != 0;
         if (!stateValid_ || d.blend != blend_) {
-            switch (d.blend) {
-            case Blend::Opaque: glDisable(GL_BLEND); glDepthMask(GL_TRUE); break;
-            case Blend::Add:                                  // src + dst, saturating
-                glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE); glDepthMask(GL_FALSE); break;
-            case Blend::Mul:                                  // dst * (1 - src)
-                glEnable(GL_BLEND); glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
-                glDepthMask(GL_FALSE); break;
+            const BlendRule r = blendRule(d.blend);          // o3de/drawcore.h
+            if (r.blend) {
+                glEnable(GL_BLEND);
+                glBlendFunc(glFactor(r.src), glFactor(r.dst));
+            } else {
+                glDisable(GL_BLEND);
             }
+            glDepthMask(r.depthWrite ? GL_TRUE : GL_FALSE);
             blend_ = d.blend;
         }
         if (!stateValid_ || d.cutout != cutout_) {

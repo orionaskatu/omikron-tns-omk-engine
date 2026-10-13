@@ -103,6 +103,7 @@
 #endif
 
 #include "o3de/depthtie.h"
+#include "o3de/drawcore.h"
 #include "platform/profile.h"
 #include "o3de/renderer.h"
 #include "o3de/shimmer.h"
@@ -125,6 +126,13 @@
 #include <vector>
 
 namespace {
+
+// `blendRule`'s factors (`o3de/drawcore.h`) as GL's
+GLenum glFactor(omk::BlendFactor f) {
+    return f == omk::BlendFactor::Zero ? GL_ZERO
+         : f == omk::BlendFactor::One  ? GL_ONE
+                                       : GL_ONE_MINUS_SRC_COLOR;
+}
 
 // ---------------------------------------------------------------- shaders
 //
@@ -1671,8 +1679,7 @@ gpuBuffer("vertex buffers", quad_, sizeof quad);
             anisoOn_ = std::min(aniso_, static_cast<int>(most));
         if (anisoOn_ > 1) std::printf("gles: anisotropy %dx\n", anisoOn_);
     }
-    static const bool noTie = omk::envFlag("OMK_NO_TIE");
-    if (noTie) tieOn_ = false;
+    if (omk::tieOff()) tieOn_ = false;
 #if defined(__vita__)
     streamOn_ = !omk::envFlag("OMK_NO_STREAM");
 #else
@@ -2253,17 +2260,9 @@ void GlesRenderer::foldBias(const Geometry& g, GpuVert* v, std::uint32_t lo, std
 // and a face that moves off its winner (a door leaf) still draws, the step
 // back changing nothing where nothing is coincident.
 bool GlesRenderer::bakeDepthTie(const Geometry* g, std::span<const Draw> order) {
-    if (!tieOn_ || !g) return false;
-    static const bool noBake = omk::envFlag("OMK_NO_TIE_BAKE");
-    if (noBake) return false;
-    DepthTie t;
-    std::vector<std::size_t> losers, restore;
-    for (const Draw& d : order)
-        if (d.geo == g) t.resolve(*g, d.start, d.count, d.blend == Blend::Opaque, losers, restore);
-    std::vector<std::uint32_t> L(losers.begin(), losers.end());
-    std::sort(L.begin(), L.end());
-    L.erase(std::unique(L.begin(), L.end()), L.end());
-    baked_[g] = std::move(L);
+    if (!tieOn_ || omk::tieBakeOff() || !g) return false;
+    const std::vector<std::size_t> losers = bakeTieLosers(*g, order);   // o3de/drawcore.h
+    baked_[g] = std::vector<std::uint32_t>(losers.begin(), losers.end());
     // what the buffer holds is the old decision: degenerated faces, or none
     // marked. Forget both, so the next upload is whole and marked.
     tie_.erase(g);
@@ -2609,26 +2608,9 @@ void GlesRenderer::buildPoseUniforms(const Draw& d, const PoseVbo& pv) {
 Draw GlesRenderer::cpuPose(const Draw& d) {
     Geometry& cp = cpuPosed_[d.geo];
     d.geo->resident.mark();
-    if (cp.corners.size() != d.geo->corners.size()) cp = *d.geo;
-    for (std::size_t i = 0; i < cp.corners.size(); ++i) {
-        const Corner& rc = d.geo->corners[i];
-        const std::int32_t m = d.geo->cornerMesh[i];
-        Corner& c = cp.corners[i];
-        if (m < 0 || static_cast<std::size_t>(m) >= d.meshPoses) {
-            c.x = rc.x; c.y = rc.y; c.z = rc.z;
-            if (pixLights_) { c.nx = rc.nx; c.ny = rc.ny; c.nz = rc.nz; }
-            continue;
-        }
-        const float* a = d.meshPose + 12 * static_cast<std::size_t>(m);
-        c.x = a[0] * rc.x + a[1] * rc.y + a[2] * rc.z + a[3];
-        c.y = a[4] * rc.x + a[5] * rc.y + a[6] * rc.z + a[7];
-        c.z = a[8] * rc.x + a[9] * rc.y + a[10] * rc.z + a[11];
-        if (pixLights_) {
-            c.nx = a[0] * rc.nx + a[1] * rc.ny + a[2] * rc.nz;
-            c.ny = a[4] * rc.nx + a[5] * rc.ny + a[6] * rc.nz;
-            c.nz = a[8] * rc.nx + a[9] * rc.ny + a[10] * rc.nz;
-        }
-    }
+    // positions, and the normals only for the per-pixel lights: the lights are
+    // the shader's here, and the rest of a corner was copied once
+    poseGeometry(d, cp, PoseParts{false, pixLights_, 0});   // o3de/drawcore.h
     cp.revision = d.geo->revision + (++cpuPoseRev_ << 32);
     Draw c = d;
     c.geo = &cp;
@@ -2831,22 +2813,14 @@ void GlesRenderer::submit(const Draw& d) {
     }
 
     if (set(ds_.blend != static_cast<int>(d.blend))) {
-        switch (d.blend) {
-        case Blend::Opaque:
+        const BlendRule r = blendRule(d.blend);              // o3de/drawcore.h
+        if (r.blend) {
+            glEnable(GL_BLEND);
+            glBlendFunc(glFactor(r.src), glFactor(r.dst));
+        } else {
             glDisable(GL_BLEND);
-            glDepthMask(GL_TRUE);
-            break;
-        case Blend::Add:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ONE, GL_ONE);
-            glDepthMask(GL_FALSE);
-            break;
-        case Blend::Mul:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);   // dst * (1 - src)
-            glDepthMask(GL_FALSE);
-            break;
         }
+        glDepthMask(r.depthWrite ? GL_TRUE : GL_FALSE);
         ds_.blend = static_cast<int>(d.blend);
     }
 

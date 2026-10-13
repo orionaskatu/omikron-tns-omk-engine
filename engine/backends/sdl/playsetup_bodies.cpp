@@ -65,15 +65,15 @@ int PlayState::setupBodies() {
     // (struct PedJob: `backends/sdl/playtypes.h`, todo/play-split.md)
 
     // (struct VehStaged: `backends/sdl/playtypes.h`, todo/play-split.md)
-    vehDrawn = 0, vehLive = 0, vehStopped = 0;
-    vehTold = -1;
-    // bumped wherever `pedTracks` or `pedStaged` is cleared: a walker's cached
+    traffic.drawn = 0, traffic.live = 0, traffic.stopped = 0;
+    traffic.told = -1;
+    // bumped wherever `crowd.tracks` or `crowd.staged` is cleared: a walker's cached
     // root / rest / feet (`PedStaged::cacheGen`) are then taken afresh
-    pedCacheGen = 0;
-    pedDrawn = 0, pedLive = 0, pedInAction = 0, pedIdle = 0, pedOffView = 0;
+    crowd.cacheGen = 0;
+    crowd.drawn = 0, crowd.live = 0, crowd.inAction = 0, crowd.idle = 0, crowd.offView = 0;
     // how many (walker, light) pairs actually reached this frame
-    pedLit = 0;
-    pedTold = -1;
+    crowd.lit = 0;
+    crowd.told = -1;
     // one shoot record per gunman, built from his own properties the first
     // frame he is staged and kept for the run (`todo/shoot-mode.md` 7d)
     // Is the FIRST-PERSON shoot camera actually the one in force? Hiding the
@@ -112,7 +112,7 @@ int PlayState::setupBodies() {
     // its default seed, drawn by the gunmen AND the melee AI - the engine's is
     // one stream too. Never the host's `std::rand()`, which is another
     // generator and is shared with whatever system library calls it.
-    gunRandSeed = 1;
+    gun.randSeed = 1;
     hudAmmo = -1;
     shootMoveFrames = 0;
     shootMoveDist = 0.0f;

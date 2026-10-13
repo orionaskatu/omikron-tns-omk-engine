@@ -245,7 +245,7 @@ void PlayState::worldCamera() {
         view.cam.hfovDeg = lastFov;
         view.cam.rollDeg = lastRoll;
         view.cam.w = dispW; view.cam.h = dispH;
-    } else if (!haveDlgCam && !ride && player && sliderCamMode >= 0) {
+    } else if (!haveDlgCam && !ride && player && sliderCam.mode >= 0) {
         worldCameraSlider();
     } else if (!haveDlgCam && ride) {
         worldCameraRide();
@@ -606,8 +606,8 @@ void PlayState::worldCameraSlider() {
     const auto lagged = [&](const float eyeOff[3], const float atOff[3], int f42, int f44, int f46) {
         sliderCamLag(at, -rz2[0], -rz2[2], eyeOff, atOff, f42, f44, f46, tEye, tAt);
     };
-    if (sliderCamMode == 8 && frame) {
-        const bool fresh = sliderCamFresh;
+    if (sliderCam.mode == 8 && frame) {
+        const bool fresh = sliderCam.fresh;
         lagged(kComeEye, kComeAt, 0, 8, 8);
         // ...and mode 8's WALL PASS (`sub_4141F0` arms `sub_417070`; drift
         // audit B12): the second ray is the camera with no lag
@@ -615,14 +615,14 @@ void PlayState::worldCameraSlider() {
         place(kComeEye, sEye);
         place(kComeAt, sAt);
         sliderCamObstruct(tEye, tAt, sEye, sAt, at[1], fresh);
-    } else if (sliderCamMode == 9 && frame) {
+    } else if (sliderCam.mode == 9 && frame) {
         place(kBoardEye, tEye);
         place(kNoOff, tAt);
-    } else if (sliderCamMode == 10 && frame) {
-        const float e10[3] = {sliderCamEyeX10, 157.4803f, 0.0f};
+    } else if (sliderCam.mode == 10 && frame) {
+        const float e10[3] = {sliderCam.eyeX10, 157.4803f, 0.0f};
         lagged(e10, kNoOff, 0, 8, 16);
-        for (int k = 0; k < 3; ++k) tAt[k] = sliderCamAddr[k];   // subject 9, the address
-    } else if (sliderCamMode == 17) {
+        for (int k = 0; k < 3; ++k) tAt[k] = sliderCam.addr[k];   // subject 9, the address
+    } else if (sliderCam.mode == 17) {
         static constexpr float kEye17[3] = {-39.3701f, 78.7402f, 0.0f};
         static constexpr float kAt17[3]  = {0.0f, 0.0f, 0.0f};
         const omk::FollowCamera c = player->resolveOffsets(kEye17, kAt17, 75.0f);
@@ -630,27 +630,27 @@ void PlayState::worldCameraSlider() {
         // the delta) - the follow camera's lag form, a LABELLED reading
         const float lag = std::min(1.0f, static_cast<float>(frameSec * 30.0) / 5.0f);
         for (int k = 0; k < 3; ++k) {
-            sliderCamAt17[k] += (c.at[k] - sliderCamAt17[k]) * lag;
-            tEye[k] = sliderCamEye17[k];
-            tAt[k] = sliderCamAt17[k];
+            sliderCam.at17[k] += (c.at[k] - sliderCam.at17[k]) * lag;
+            tEye[k] = sliderCam.eye17[k];
+            tAt[k] = sliderCam.at17[k];
         }
     } else {
         ok = false;                    // the slider is gone: the follow camera
     }
     if (ok) {
         float u = 1.0f;
-        if (sliderCamDur > 0.0f && haveLastDrawn) {
-            sliderCamClock += static_cast<float>(frameSec * 30.0);
-            u = std::min(1.0f, sliderCamClock / sliderCamDur);
+        if (sliderCam.dur > 0.0f && haveLastDrawn) {
+            sliderCam.clock += static_cast<float>(frameSec * 30.0);
+            u = std::min(1.0f, sliderCam.clock / sliderCam.dur);
         }
         for (int k = 0; k < 3; ++k) {
-            view.cam.eye[k] = sliderCamFromEye[k] + (tEye[k] - sliderCamFromEye[k]) * u;
-            view.cam.at[k]  = sliderCamFromAt[k]  + (tAt[k]  - sliderCamFromAt[k])  * u;
+            view.cam.eye[k] = sliderCam.fromEye[k] + (tEye[k] - sliderCam.fromEye[k]) * u;
+            view.cam.at[k]  = sliderCam.fromAt[k]  + (tAt[k]  - sliderCam.fromAt[k])  * u;
         }
-        view.cam.hfovDeg = sliderCamFromFov + (75.0f - sliderCamFromFov) * u;
+        view.cam.hfovDeg = sliderCam.fromFov + (75.0f - sliderCam.fromFov) * u;
         view.cam.rollDeg = 0.0f;
         view.cam.w = dispW; view.cam.h = dispH;
-        if (sliderCamMode == 8 && u >= 1.0f) {
+        if (sliderCam.mode == 8 && u >= 1.0f) {
         // ...and SAY where the eye ended up, from the camera this
             // frame draws with and the vehicle's own heading (its mover
             // direction, `-row 2`): behind > 0 is behind it
@@ -671,33 +671,33 @@ void PlayState::worldCameraSlider() {
         // -forward, up) - or for 17, how far the target is from the
         // fixed eye
         static long camTold = -1000; static int camToldMode = -2;
-        if (frameNo - camTold >= 30 || camToldMode != sliderCamMode) {
-            camTold = frameNo; camToldMode = sliderCamMode;
+        if (frameNo - camTold >= 30 || camToldMode != sliderCam.mode) {
+            camTold = frameNo; camToldMode = sliderCam.mode;
             if (frame) {
                 const float ex = view.cam.eye[0] - at[0], ey = view.cam.eye[1] - at[1],
                             ez = view.cam.eye[2] - at[2];
                 std::printf("slider cam %d frame %ld blend %.2f - eye side %.0f behind %.0f "
-                            "up %.0f; at %.0f %.0f %.0f\n", sliderCamMode, frameNo, double(u),
+                            "up %.0f; at %.0f %.0f %.0f\n", sliderCam.mode, frameNo, double(u),
                             double(ex * rx0[0] + ez * rx0[2]), double(ex * rz2[0] + ez * rz2[2]),
                             double(-ey), double(view.cam.at[0]), double(view.cam.at[1]),
                             double(view.cam.at[2]));
             } else {
-                const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
-                            dz = sliderCamAt17[2] - sliderCamEye17[2];
+                const float dx = sliderCam.at17[0] - sliderCam.eye17[0], dy = sliderCam.at17[1] - sliderCam.eye17[1],
+                            dz = sliderCam.at17[2] - sliderCam.eye17[2];
                 std::printf("slider cam %d frame %ld blend %.2f - eye fixed at %.0f %.0f %.0f, "
-                            "target %.0f from it\n", sliderCamMode, frameNo, double(u),
-                            double(sliderCamEye17[0]), double(sliderCamEye17[1]), double(sliderCamEye17[2]),
+                            "target %.0f from it\n", sliderCam.mode, frameNo, double(u),
+                            double(sliderCam.eye17[0]), double(sliderCam.eye17[1]), double(sliderCam.eye17[2]),
                             double(std::sqrt(dx * dx + dy * dy + dz * dz)));
             }
         }
         // mode 17's release, `sub_4187B0`: the target 236.22 from the eye
-        if (sliderCamMode == 17) {
-            const float dx = sliderCamAt17[0] - sliderCamEye17[0], dy = sliderCamAt17[1] - sliderCamEye17[1],
-                        dz = sliderCamAt17[2] - sliderCamEye17[2];
+        if (sliderCam.mode == 17) {
+            const float dx = sliderCam.at17[0] - sliderCam.eye17[0], dy = sliderCam.at17[1] - sliderCam.eye17[1],
+                        dz = sliderCam.at17[2] - sliderCam.eye17[2];
             if (std::sqrt(dx * dx + dy * dy + dz * dz) > 236.22047f) sliderCamRequest(0, 60.0f);
         }
     } else {
-        sliderCamMode = -1;
+        sliderCam.mode = -1;
         const omk::FollowCamera& fc = player->followCamera();
         for (int k = 0; k < 3; ++k) { view.cam.eye[k] = fc.eye[k]; view.cam.at[k] = fc.at[k]; }
         view.cam.hfovDeg = fc.fov;
@@ -746,7 +746,7 @@ void PlayState::worldCameraRide() {
     float sEye[3], sAt[3];
     place(kRideEye, sEye);
     place(kRideAt,  sAt);
-    const bool fresh = sliderCamFresh;
+    const bool fresh = sliderCam.fresh;
     sliderCamLag(sub, fx, fz, kRideEye, kRideAt, 0, 8, 8, view.cam.eye, view.cam.at);
     sliderCamObstruct(view.cam.eye, view.cam.at, sEye, sAt, sub[1], fresh);
     view.cam.hfovDeg = 75.0f;      // the preset's own fov
@@ -1434,7 +1434,7 @@ void PlayState::worldGuns() {
                 propGeo.batches.push_back(nb);
                 propBatchOwner.push_back(pm);
             }
-            if (gunDrawnTold.insert(up->actor).second)
+            if (gun.drawnTold.insert(up->actor).second)
                 std::printf("frame %ld: actor %d %s - HIS GUN drawn: object %d '%s' on his "
                             "Maing (mesh %d), tir left out\n", frameNo, up->actor,
                             up->model.c_str(), obj, stem.c_str(), hand);

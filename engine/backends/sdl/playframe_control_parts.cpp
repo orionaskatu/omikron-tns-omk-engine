@@ -709,7 +709,7 @@ void PlayState::controlFlight() {
                         const int grpR = static_cast<int>(ar.type);
                         const omk::PedClip* rc = g.reaction == R::Back
                             ? shootClipExact(grpR, 4) : shootClipBySlot(grpR, 14);
-                        GunClip& gc = gunClips[ev.victim];
+                        GunClip& gc = gun.clips[ev.victim];
                         gc = GunClip{};
                         if (rc) {
                             gc.type = rc->type;

@@ -91,13 +91,13 @@ void PlayState::sliderCamLag(const float at[3], float fx, float fz, const float 
     const float dtl = static_cast<float>(frameSec * 30.0);
     const auto wrap = [](float d) { while (d > 180.0f) d -= 360.0f; while (d < -180.0f) d += 360.0f; return d; };
     const int k46 = f46 == 1 ? 2 : f46, k44 = f44 == 1 ? 2 : f44, k42 = f42 == 1 ? 2 : f42;
-    if (sliderCamFresh || !k46) sliderCamLagYaw = yawNow;
+    if (sliderCam.fresh || !k46) sliderCam.lagYaw = yawNow;
     else {
-        const float d = wrap(yawNow - sliderCamLagYaw);
-        if (std::fabs(d) <= 0.1f) sliderCamLagYaw = yawNow;
-        else sliderCamLagYaw += d * std::min(1.0f, dtl / static_cast<float>(k46));
+        const float d = wrap(yawNow - sliderCam.lagYaw);
+        if (std::fabs(d) <= 0.1f) sliderCam.lagYaw = yawNow;
+        else sliderCam.lagYaw += d * std::min(1.0f, dtl / static_cast<float>(k46));
     }
-    const float t = sliderCamLagYaw * omk::kDegToRadF;
+    const float t = sliderCam.lagYaw * omk::kDegToRadF;
     const float gx = std::sin(t), gz = std::cos(t);
     const float r0[3] = {-gz, 0.0f, gx}, r2[3] = {-gx, 0.0f, -gz};
     float e[3], a[3];
@@ -107,14 +107,14 @@ void PlayState::sliderCamLag(const float at[3], float fx, float fz, const float 
     }
     e[1] -= eyeOff[1]; a[1] -= atOff[1];
     for (int k = 0; k < 3; ++k) {
-        if (sliderCamFresh || !k44) sliderCamLagEye[k] = e[k];
-        else sliderCamLagEye[k] += (e[k] - sliderCamLagEye[k]) * std::min(1.0f, dtl / static_cast<float>(k44));
-        if (sliderCamFresh || !k42) sliderCamLagAt[k] = a[k];
-        else sliderCamLagAt[k] += (a[k] - sliderCamLagAt[k]) * std::min(1.0f, dtl / static_cast<float>(k42));
-        eye[k] = sliderCamLagEye[k];
-        tat[k] = sliderCamLagAt[k];
+        if (sliderCam.fresh || !k44) sliderCam.lagEye[k] = e[k];
+        else sliderCam.lagEye[k] += (e[k] - sliderCam.lagEye[k]) * std::min(1.0f, dtl / static_cast<float>(k44));
+        if (sliderCam.fresh || !k42) sliderCam.lagAt[k] = a[k];
+        else sliderCam.lagAt[k] += (a[k] - sliderCam.lagAt[k]) * std::min(1.0f, dtl / static_cast<float>(k42));
+        eye[k] = sliderCam.lagEye[k];
+        tat[k] = sliderCam.lagAt[k];
     }
-    sliderCamFresh = false;
+    sliderCam.fresh = false;
 }
 
 void PlayState::sliderCamObstruct(float eye[3], float tat[3], const float steadyEye[3],
@@ -137,26 +137,26 @@ void PlayState::sliderCamObstruct(float eye[3], float tat[3], const float steady
         return true;
     };
     // +344 = +340; +340 = +156, immediately before the pass
-    sliderCamObs.prevSubjY = sliderCamObs.prevValid ? sliderCamObs.subjY : subjY;
-    sliderCamObs.subjY = subjY;
-    const int was = sliderCamObs.block;
+    sliderCam.obs.prevSubjY = sliderCam.obs.prevValid ? sliderCam.obs.subjY : subjY;
+    sliderCam.obs.subjY = subjY;
+    const int was = sliderCam.obs.block;
     // `sub_4141F0`: +312 = -78.74 (2 m), +316 = -39.37 (1 m); +300 1.2, +320 8, +324 4
-    omk::obstructCamera(sliderCamObs, eye, tat, -78.74015808105469, -39.370079040527344,
+    omk::obstructCamera(sliderCam.obs, eye, tat, -78.74015808105469, -39.370079040527344,
                         static_cast<float>(frameSec * 30.0), fresh, cast, unlagged);
     // ...and `sub_4133B0`/`sub_4133E0` write the final y back for the next ease
-    sliderCamObs.prevEyeY = eye[1];
-    sliderCamObs.prevAtY = tat[1];
-    sliderCamObs.prevValid = true;
-    if (sliderCamObs.block != was && sliderCamObs.block == 1)
+    sliderCam.obs.prevEyeY = eye[1];
+    sliderCam.obs.prevAtY = tat[1];
+    sliderCam.obs.prevValid = true;
+    if (sliderCam.obs.block != was && sliderCam.obs.block == 1)
         std::printf("frame %ld: slider camera 8 BLOCKED (sub_417070) - pulled in to %.0f\n",
-                    frameNo, double(sliderCamObs.dist));
+                    frameNo, double(sliderCam.obs.dist));
 }
 
 void PlayState::sliderCamRequest(int mode, float travelFrames) {
     std::printf("frame %ld: slider camera %d requested over %.0f frames (from %d)\n",
-                frameNo, mode, double(travelFrames), sliderCamMode);
+                frameNo, mode, double(travelFrames), sliderCam.mode);
     if (mode == 0) {
-        sliderCamMode = -1;
+        sliderCam.mode = -1;
         takeCamRequest(3);
         takeCamTravel = travelFrames > 0.0f ? travelFrames : 0.001f;
         takeCam = true;
@@ -164,13 +164,13 @@ void PlayState::sliderCamRequest(int mode, float travelFrames) {
     }
     takeCam = false;
     takeCamPhase = 0;
-    sliderCamFresh = true;          // `Camera_LoadParams`' flag 1: the first frame snaps
-    sliderCamObs = omk::CamObstruct{};   // `memset(cam + 208, 0, 0x94)`
-    sliderCamMode = mode;
-    sliderCamClock = 0.0f;
-    sliderCamDur = travelFrames;
-    for (int k = 0; k < 3; ++k) { sliderCamFromEye[k] = lastEye[k]; sliderCamFromAt[k] = lastAt[k]; }
-    sliderCamFromFov = lastFov;
+    sliderCam.fresh = true;          // `Camera_LoadParams`' flag 1: the first frame snaps
+    sliderCam.obs = omk::CamObstruct{};   // `memset(cam + 208, 0, 0x94)`
+    sliderCam.mode = mode;
+    sliderCam.clock = 0.0f;
+    sliderCam.dur = travelFrames;
+    for (int k = 0; k < 3; ++k) { sliderCam.fromEye[k] = lastEye[k]; sliderCam.fromAt[k] = lastAt[k]; }
+    sliderCam.fromFov = lastFov;
     // MODE 17 FIXES ITS EYE (`sub_414520` case 0x11): the land camera
     // resolves preset 17 against him once (`sub_415E60`), the eye is copied
     // to +20 and its subject cut (`+140 = -1`) - so it stays where it was
@@ -179,7 +179,7 @@ void PlayState::sliderCamRequest(int mode, float travelFrames) {
         static constexpr float kEye17[3] = {-39.3701f, 78.7402f, 0.0f};
         static constexpr float kAt17[3]  = {0.0f, 0.0f, 0.0f};
         const omk::FollowCamera c = player->resolveOffsets(kEye17, kAt17, 75.0f);
-        for (int k = 0; k < 3; ++k) { sliderCamEye17[k] = c.eye[k]; sliderCamAt17[k] = c.at[k]; }
+        for (int k = 0; k < 3; ++k) { sliderCam.eye17[k] = c.eye[k]; sliderCam.at17[k] = c.at[k]; }
     }
 }
 
@@ -376,18 +376,18 @@ const omk::NodeTracks * PlayState::lodTracksFor(const omk::NodeTracks* base, int
     if (!base || level == 0) return base;
     OMK_MEM_TAG("crowd: LOD tracks");   // the profiler's category (todo/debug-tools.md)
     const auto key = std::make_pair(base, level);
-    auto it = pedLodTracks.find(key);
-    if (it == pedLodTracks.end()) {
+    auto it = crowd.lodTracks.find(key);
+    if (it == crowd.lodTracks.end()) {
         omk::NodeTracks t = *base;
         for (auto& id : t.ids) if (id >= 0) id += level * count;
-        it = pedLodTracks.emplace(key, std::move(t)).first;
+        it = crowd.lodTracks.emplace(key, std::move(t)).first;
     }
     return &it->second;
 }
 
 const omk::Geometry & PlayState::lodRestFor(const std::string& model, const CharModel& mo, int rootMesh) {
     OMK_MEM_TAG("crowd: LOD rest geometry");   // the profiler's category (todo/debug-tools.md)
-    auto& per = pedLodRest[model];
+    auto& per = crowd.lodRest[model];
     auto it = per.find(rootMesh);
     if (it != per.end()) return it->second;
     // the meshes whose ancestor chain ends at `rootMesh`
@@ -488,10 +488,10 @@ int PlayState::heaviestRootOf(const CharModel& mo) {
 // per-request seed is the same shape and keeps a still frame
 // reproducible. LABELLED as that.
 const omk::PedClip * PlayState::shootClipFor(int group, int action) {
-    if (pedAni.empty()) return nullptr;
+    if (crowd.ani.empty()) return nullptr;
     auto it = shootClips.find(group);
     if (it == shootClips.end())
-        it = shootClips.emplace(group, omk::animGroupClips(pedAni, group)).first;
+        it = shootClips.emplace(group, omk::animGroupClips(crowd.ani, group)).first;
     if (it->second.empty()) return nullptr;
     int want[2] = {9, -1};
     if (action == 0 || action == 5)      { want[0] = 11; want[1] = 25; }
@@ -516,10 +516,10 @@ const omk::PedClip * PlayState::shootClipFor(int group, int action) {
 // clip of that TYPE, and type 5 when the group has none. The engine's pick
 // is `rand()`; this one is a fixed function of (group, type), labelled.
 const omk::PedClip * PlayState::shootClipOfType(int group, int type) {
-    if (pedAni.empty()) return nullptr;
+    if (crowd.ani.empty()) return nullptr;
     auto it = shootClips.find(group);
     if (it == shootClips.end())
-        it = shootClips.emplace(group, omk::animGroupClips(pedAni, group)).first;
+        it = shootClips.emplace(group, omk::animGroupClips(crowd.ani, group)).first;
     for (int t : {type, 5}) {
         std::vector<const omk::PedClip*> m;
         for (const auto& c : it->second) if (c.type == t) m.push_back(&c);
@@ -533,10 +533,10 @@ const omk::PedClip * PlayState::shootClipOfType(int group, int type) {
 // of EXACTLY that type or none - no type-5 fallback, since the null return
 // is what sends the arm to its fallback turn rate. The same fixed pick.
 const omk::PedClip * PlayState::shootClipExact(int group, int type) {
-    if (pedAni.empty()) return nullptr;
+    if (crowd.ani.empty()) return nullptr;
     auto it = shootClips.find(group);
     if (it == shootClips.end())
-        it = shootClips.emplace(group, omk::animGroupClips(pedAni, group)).first;
+        it = shootClips.emplace(group, omk::animGroupClips(crowd.ani, group)).first;
     std::vector<const omk::PedClip*> m;
     for (const auto& c : it->second) if (c.type == type) m.push_back(&c);
     return m.empty() ? nullptr : m[static_cast<std::size_t>(group * 7 + type) % m.size()];
@@ -545,10 +545,10 @@ const omk::PedClip * PlayState::shootClipExact(int group, int type) {
 // ...and `sub_434630(list, slot)`: the clip whose +4 SLOT is that, or none
 // - how `sub_4272B0` case 9 finds the attack at +108
 const omk::PedClip * PlayState::shootClipBySlot(int group, int slot) {
-    if (pedAni.empty() || !slot) return nullptr;
+    if (crowd.ani.empty() || !slot) return nullptr;
     auto it = shootClips.find(group);
     if (it == shootClips.end())
-        it = shootClips.emplace(group, omk::animGroupClips(pedAni, group)).first;
+        it = shootClips.emplace(group, omk::animGroupClips(crowd.ani, group)).first;
     for (const auto& c : it->second) if (c.slot == slot) return &c;
     return nullptr;
 }
@@ -577,10 +577,10 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
         layout = (layout ^ static_cast<std::uint64_t>(static_cast<std::uint32_t>(m.parent))) * 1099511628211ull;
     }
     const auto key = std::make_tuple(sex, c.slot, layout);
-    auto it = pedTracks.find(key);
-    if (it != pedTracks.end()) return it->second.valid() ? &it->second : nullptr;
+    auto it = crowd.tracks.find(key);
+    if (it != crowd.tracks.end()) return it->second.valid() ? &it->second : nullptr;
     omk::NodeTracks t;
-    const auto d = omk::animDescriptor(pedAni, c.descriptor);
+    const auto d = omk::animDescriptor(crowd.ani, c.descriptor);
     if (d && d->frames > 0 && !meshes.empty()) {
         t.count = static_cast<int>(d->tracks.size());
         t.frames = d->frames;
@@ -606,10 +606,10 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
                 int k = f + 1;
                 if (k >= tr.rotKeys) k = tr.rotKeys - 1;
                 const std::size_t o = tr.rotOffset + 16u * static_cast<std::size_t>(k);
-                if (o + 16 > pedAni.size()) continue;
+                if (o + 16 > crowd.ani.size()) continue;
                 // // little-endian floats, read as such (PORTING A9): a memcpy here reverses
                 // every quaternion on PowerPC - the crowd draws as shards
-                const std::byte* src = pedAni.data() + o;
+                const std::byte* src = crowd.ani.data() + o;
                 row[i] = {omk::loadLE<float>(src), omk::loadLE<float>(src + 4),
                           omk::loadLE<float>(src + 8), omk::loadLE<float>(src + 12)};
             }
@@ -620,7 +620,7 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
     // THING MEASURED - that rule's error, logged the first times it is seen)
     static int mismatchTold = 0;
     if (mismatchTold < 12)
-        for (const auto& [k, other] : pedTracks) {
+        for (const auto& [k, other] : crowd.tracks) {
             if (std::get<0>(k) != sex || std::get<1>(k) != c.slot || std::get<2>(k) == layout) continue;
             if (other.ids.size() != t.ids.size()) continue;
             int differ = 0, unbound = 0;
@@ -638,7 +638,7 @@ const omk::NodeTracks * PlayState::pedTracksFor(int sex, const omk::PedClip& c, 
             }
             break;
         }
-    it = pedTracks.emplace(key, std::move(t)).first;
+    it = crowd.tracks.emplace(key, std::move(t)).first;
     return it->second.valid() ? &it->second : nullptr;
 }
 
@@ -837,8 +837,8 @@ omk::AstarothWorld PlayState::astarothWorld(Staged& s, omk::ShootRecord& rec, fl
     w.fieldTurn = [this, &s, &rec, dt](float& facing, int& clipType, float& perFrame) {
         if (!shootMap.valid()) return false;
         auto crt = [this]() {
-            gunRandSeed = gunRandSeed * 214013u + 2531011u;
-            return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
+            gun.randSeed = gun.randSeed * 214013u + 2531011u;
+            return static_cast<int>((gun.randSeed >> 16) & 0x7FFFu);
         };
         const int h = shootField.heading(shootMap, static_cast<signed char>(rec.node & 0xFF),
                                          rec.destX, rec.destZ, crt);
@@ -1003,16 +1003,16 @@ omk::GandharWorld PlayState::gandharWorld(Staged& s, omk::ShootRecord& rec, floa
     omk::GandharWorld w;
     const int grp = static_cast<int>(rec.type);
     auto crt = [this]() {
-        gunRandSeed = gunRandSeed * 214013u + 2531011u;
-        return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
+        gun.randSeed = gun.randSeed * 214013u + 2531011u;
+        return static_cast<int>((gun.randSeed >> 16) & 0x7FFFu);
     };
     w.rnd = crt;
     // `List_PickRandomByType(+20, type)`: `rand() % count` over the clips of
     // that type, in list order
     w.pickType = [this, grp, crt](int type) {
-        if (pedAni.empty() || grp < 0 || grp >= 64) return -1;
+        if (crowd.ani.empty() || grp < 0 || grp >= 64) return -1;
         std::vector<int> slots;
-        for (const auto& c : omk::animGroupClips(pedAni, grp))
+        for (const auto& c : omk::animGroupClips(crowd.ani, grp))
             if (c.type == type) slots.push_back(c.slot);
         if (slots.empty()) return -1;
         return slots[static_cast<std::size_t>(crt() % static_cast<int>(slots.size()))];
@@ -1400,13 +1400,13 @@ std::vector<omk::MeshPose> PlayState::playerPoseNow(omk::PlayerController* pl, b
 // bones his `+84` table marks (0x4C3798 for every type but 13, the
 // player's own table), with the type-17 clip as the stance the lowering
 // blends to (`dword_6A472C`), and bends them by his aim angles and his
-// `+176`. Only while the gate ran him this tick (`gunAims`).
+// `+176`. Only while the gate ran him this tick (`gun.aims`).
 std::vector<omk::MeshPose> PlayState::gunmanPoseNow(int actor, int deathType, const CharModel* mo,
                                    const omk::NodeTracks& pt, float frame) {
     auto& session = *session_;
-    const auto aimIt = gunAims.find(actor);
+    const auto aimIt = gun.aims.find(actor);
     const auto recIt = shootBrains.find(actor);
-    if (!mo || !pt.valid() || deathType >= 0 || aimIt == gunAims.end() ||
+    if (!mo || !pt.valid() || deathType >= 0 || aimIt == gun.aims.end() ||
         !aimIt->second.live || recIt == shootBrains.end() ||
         session.typeOfActor(actor) == 13u)      // 0x4C37E8, not lifted
         return omk::composePose(mo->meshes, pt, frame, false);
@@ -1906,8 +1906,8 @@ bool PlayState::beginMelee(int opponentId, int level) {
         // before the fight shifts every roll by one, and a headless fight
         // comes out two ways, about one run in four. Same stream as the gunmen's (the engine has one).
         [this] {
-            gunRandSeed = gunRandSeed * 214013u + 2531011u;
-            return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
+            gun.randSeed = gun.randSeed * 214013u + 2531011u;
+            return static_cast<int>((gun.randSeed >> 16) & 0x7FFFu);
         },
         [this] { return static_cast<long>(fightRun.ms); });
     fightRun.fight->setBodyTick([&](float dt, std::uint32_t word) {
@@ -2340,7 +2340,7 @@ void PlayState::applyPlayerDamage(long n, int owner, const char* what, int dmgIn
                         int stood = 0;
                         for (const auto& [ga, gr] : shootBrains)
                             if ((gr.flags & 0x40u) && !(gr.flags & 0x4002u) && gr.health > 0) {
-                                gunStandDown.insert(ga);
+                                gun.standDown.insert(ga);
                                 ++stood;
                             }
                         playerDeathCountdown = 0.0f;

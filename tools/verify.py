@@ -44791,8 +44791,9 @@ def c_licence_headers():
     # 625: + `engine/src/platform/hostthread.h` and `threads_{std,vita,none}.cpp`
     # 626: + `engine/src/platform/sync.h` (a lock that costs nothing without threads)
     # 627: + `engine/src/platform/events.h` (the `@evt` lines)
+    # 628: + `tools/group_members.py` (fields gathered into owned components)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (627, [], 1, []), \
+           (628, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

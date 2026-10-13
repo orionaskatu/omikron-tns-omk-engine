@@ -56,8 +56,8 @@ void PlayState::weatherFrame(const omk::View& v) {
     const bool noPlayer = player ? static_cast<int>(player->state()) == 14
                                  : !session.playerPlaced();
     auto crt = [this]() {               // the engine's ONE `rand()`, shared
-        gunRandSeed = gunRandSeed * 214013u + 2531011u;
-        return static_cast<int>((gunRandSeed >> 16) & 0x7FFFu);
+        gun.randSeed = gun.randSeed * 214013u + 2531011u;
+        return static_cast<int>((gun.randSeed >> 16) & 0x7FFFu);
     };
     const long now = static_cast<long>(weatherClockMs);
     weather.tick(viewBits, now, covered, noPlayer, crt, [&](int m) {

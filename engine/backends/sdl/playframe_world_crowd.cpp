@@ -10,9 +10,9 @@
 void PlayState::worldCrowd() {
     OMK_ZONE("world: crowd");   // the profiler (todo/debug-tools.md 6)
     // ---- THE PEDESTRIANS ---------------------------------------
-    pedDrawn = pedLive = pedInAction = pedIdle = pedOffView = 0;
-    pedLit = 0;
-    vehDrawn = vehLive = vehStopped = 0;
+    crowd.drawn = crowd.live = crowd.inAction = crowd.idle = crowd.offView = 0;
+    crowd.lit = 0;
+    traffic.drawn = traffic.live = traffic.stopped = 0;
     worldCrowdPedestrians();
     player0 = phaseNow();
     playerOffView = false;    // his corners not built, his body not drawn
@@ -32,26 +32,26 @@ void PlayState::worldCrowdPedestrians() {
         // whether or not it has a slider circuit - the crowd is only
         // one of its consumers, and a shoot-mode character with no
         // `.CTL` is another. So this no longer waits on `pd.loaded()`.
-        if (!rs.ani.empty() && rs.ani != pedAniName) {
-            pedAniName = rs.ani;
-            pedAni = fs.read("ANIMS/" + rs.ani + ".ANI");
-            pedTracks.clear();
-            pedLodTracks.clear();
+        if (!rs.ani.empty() && rs.ani != crowd.aniName) {
+            crowd.aniName = rs.ani;
+            crowd.ani = fs.read("ANIMS/" + rs.ani + ".ANI");
+            crowd.tracks.clear();
+            crowd.lodTracks.clear();
             // ...and the shoot groups' clip lists, which are DESCRIPTORS into
             // the library just replaced (`shootClipBySlot`)
             shootClips.clear();
-            ++pedCacheGen;
+            ++crowd.cacheGen;
             std::printf("frame %ld: crowd library - ANIMS/%s.ANI (%zu bytes), "
                         "the track caches cleared (generation %ld)\n", frameNo, rs.ani.c_str(),
-                        pedAni.size(), pedCacheGen);
+                        crowd.ani.size(), crowd.cacheGen);
         }
         const auto& ws = pd.movers();
-        if (pedStaged.size() != ws.size()) {
-            pedStaged.clear();
-            for (std::size_t i = 0; i < ws.size(); ++i) pedStaged.push_back(std::make_unique<PedStaged>());
-            pedTracks.clear();
-            pedLodTracks.clear();
-            ++pedCacheGen;
+        if (crowd.staged.size() != ws.size()) {
+            crowd.staged.clear();
+            for (std::size_t i = 0; i < ws.size(); ++i) crowd.staged.push_back(std::make_unique<PedStaged>());
+            crowd.tracks.clear();
+            crowd.lodTracks.clear();
+            ++crowd.cacheGen;
         }
         // THE REACH is the CLIP DISTANCE, as for every other instance:
         // `sub_48D7F0` rejects one only when it lies at or past
@@ -79,7 +79,7 @@ void PlayState::worldCrowdPedestrians() {
         // what `OMK_NO_PED_LOD` draws
         static const int pedLodMax = omk::envInt("OMK_PED_LOD_MAX", 3);
         pedFootOffMax = 0.0f;
-        pedJobs.clear();
+        crowd.jobs.clear();
         const double pedSerial0 = phaseNow();
         // THE CROWD IS DRAWN WITH ITS STREET (docs/STREET_LIFE.md). Every instance of the circuit is linked into the
         // street decor's own scene (`Slider_Init`'s `dword_8F5E34`, the slot's
@@ -147,9 +147,9 @@ void PlayState::worldCrowdPedestrians() {
         }
         const auto pedBodies = [&](std::size_t from, std::size_t to) {
             for (std::size_t k = from; k < to; ++k) {
-                PedJob& j = pedJobs[k];
+                PedJob& j = crowd.jobs[k];
                 const auto& w = ws[j.i];
-                PedStaged& p = *pedStaged[j.i];
+                PedStaged& p = *crowd.staged[j.i];
                 const omk::Geometry& rest = *j.rest;
                 const float frame = j.frame;
                 // The per-body times are the JOB's own, summed in index
@@ -319,23 +319,23 @@ void PlayState::worldCrowdPedestrians() {
         };
         {
             const double pedAll0 = phaseNow();
-            if (threadBodies && pedJobs.size() > 1)
-                omk::Threads::shared().parallelFor(0, pedJobs.size(), 1, pedBodies);
+            if (threadBodies && crowd.jobs.size() > 1)
+                omk::Threads::shared().parallelFor(0, crowd.jobs.size(), 1, pedBodies);
             else
-                pedBodies(0, pedJobs.size());
+                pedBodies(0, crowd.jobs.size());
             phSpan["ped bodies (wall)"] += phaseNow() - pedAll0;
         }
-        for (PedJob& j : pedJobs) {
-            PedStaged& p = *pedStaged[j.i];
+        for (PedJob& j : crowd.jobs) {
+            PedStaged& p = *crowd.staged[j.i];
             p.posed.revision = ++worldGeoRev;
             p.drawn = true;
-            ++pedDrawn;
+            ++crowd.drawn;
             {
                 const float* b = ws[j.i].body;
                 const float ex = b[0] - view.cam.eye[0], ey = b[1] - view.cam.eye[1], ez = b[2] - view.cam.eye[2];
                 if (ex * ex + ey * ey + ez * ez > omk::kLodDistances[3] * omk::kLodDistances[3]) ++pedPastLod;
             }
-            pedLit += j.lit;
+            crowd.lit += j.lit;
             if (j.footOff > pedFootOffMax) pedFootOffMax = j.footOff;
             phSpan["ped compose"] += j.tCompose;
             phSpan["ped apply"] += j.tApply;
@@ -347,22 +347,22 @@ void PlayState::worldCrowdPedestrians() {
         // `--dump` shows: since the side planes (optimization step 28 j)
         // a frame-0 count can be all `outside the view` while the frame
         // a check compares has walkers on it
-        if (pedLive && (pedTold < 0 || frameNo - pedTold >= 300 ||
+        if (crowd.live && (crowd.told < 0 || frameNo - crowd.told >= 300 ||
                         (frames > 0 && frameNo + 1 == static_cast<long>(frames)))) {
-            pedTold = frameNo;
+            crowd.told = frameNo;
             int pedGpu = 0;
-            for (const auto& up : pedStaged) pedGpu += up->drawn && up->gpu;
+            for (const auto& up : crowd.staged) pedGpu += up->drawn && up->gpu;
             std::printf("frame %ld: pedestrians - %d live, %d drawn within %.0f of the eye "
                         "(%d outside the view, %d past the last LOD distance), %d at an action "
                         "point, %d idling, %d light hits, %d posed by the renderer\n",
-                        frameNo, pedLive, pedDrawn, reach, pedOffView, pedPastLod, pedInAction, pedIdle,
-                        pedLit, pedGpu);
+                        frameNo, crowd.live, crowd.drawn, reach, crowd.offView, pedPastLod, crowd.inAction, crowd.idle,
+                        crowd.lit, pedGpu);
         }
         // ...and the ROAD TRAFFIC on the same circuit's vehicle lanes.
         const auto& vs = pd.vehicles();
-        if (vehStaged.size() != vs.size()) {
-            vehStaged.clear();
-            for (std::size_t i = 0; i < vs.size(); ++i) vehStaged.push_back(std::make_unique<VehStaged>());
+        if (traffic.staged.size() != vs.size()) {
+            traffic.staged.clear();
+            for (std::size_t i = 0; i < vs.size(); ++i) traffic.staged.push_back(std::make_unique<VehStaged>());
         }
         // `dword_4C8860`, the VEHICLE LOD distances - 20/30/40/50 m
         // where the crowd's are 10/20/30/40, so a slider is still
@@ -376,8 +376,8 @@ void PlayState::worldCrowdPedestrians() {
         worldCrowdVehicles(vs, pd, circuitShown, vreach, vehPastLod);
         phSpan["vehicles"] += phaseNow() - veh0;
         releaseIdleCrowd();
-        if (vehLive && (vehTold < 0 || frameNo - vehTold >= 300)) {
-            vehTold = frameNo;
+        if (traffic.live && (traffic.told < 0 || frameNo - traffic.told >= 300)) {
+            traffic.told = frameNo;
             int brakes = 0, bumps = 0, touches = 0;
             float closest = 1e9f;
             const float* ppos = player ? player->pos() : session.playerPos();
@@ -391,8 +391,8 @@ void PlayState::worldCrowdPedestrians() {
             std::printf("frame %ld: traffic - %d live, %d drawn within %.0f of the eye "
                         "(%d past the last LOD distance), "
                         "%d stopped; braked for the player %d frames, touched him %d frames, "
-                        "ran him over %d times, nearest now %.0f\n", frameNo, vehLive, vehDrawn, vreach,
-                        vehPastLod, vehStopped, brakes, touches, bumps, double(closest));
+                        "ran him over %d times, nearest now %.0f\n", frameNo, traffic.live, traffic.drawn, vreach,
+                        vehPastLod, traffic.stopped, brakes, touches, bumps, double(closest));
         }
     }
 }
@@ -769,12 +769,12 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
                                   bool noPedLod, float (&viewFwd)[3], int pedLodMax) {
     for (std::size_t i = 0; i < ws.size(); ++i) {
         const auto& w = ws[i];
-        PedStaged& p = *pedStaged[i];
+        PedStaged& p = *crowd.staged[i];
         p.drawn = false;
-        if (!w.live || !w.clip || pedAni.empty()) continue;
-        ++pedLive;
-        if (w.flags & 0x80u) ++pedInAction;
-        if (w.flags & 0x100u) ++pedIdle;
+        if (!w.live || !w.clip || crowd.ani.empty()) continue;
+        ++crowd.live;
+        if (w.flags & 0x80u) ++crowd.inAction;
+        if (w.flags & 0x100u) ++crowd.idle;
         if (!circuitShown) continue;   // its street is out of the render chain
         const float dx = w.body[0] - view.cam.eye[0], dy = w.body[1] - view.cam.eye[1],
                     dz = w.body[2] - view.cam.eye[2];
@@ -805,23 +805,23 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
         // on its model root's radius at its position
         if (p.mo->root >= 0 && static_cast<std::size_t>(p.mo->root) < p.mo->meshes.size() &&
             outsideView(w.body, p.mo->meshes[static_cast<std::size_t>(p.mo->root)].radius, true)) {
-            ++pedOffView;
+            ++crowd.offView;
             continue;
         }
         // REBOUND WHEN THE LIBRARY CHANGES, not only when the clip
-        // pointer does. `p.tracks` points INTO `pedTracks`, which a new
+        // pointer does. `p.tracks` points INTO `crowd.tracks`, which a new
         // library clears; the walkers' clips are rebuilt at the same
         // time, and a new clip at the freed one's address leaves the
         // pointer test equal - the walker drawn from freed tracks, and
         // every npc in the street T-posed back from an interior.
-        if (w.clip != p.clipWas || p.cacheGen != pedCacheGen || p.cacheMo != p.mo) {
-            if (w.clip == p.clipWas && p.cacheGen != pedCacheGen) ++pedRebound;
+        if (w.clip != p.clipWas || p.cacheGen != crowd.cacheGen || p.cacheMo != p.mo) {
+            if (w.clip == p.clipWas && p.cacheGen != crowd.cacheGen) ++pedRebound;
             p.clipWas = w.clip;
             p.tracks = pedTracksFor(w.sex, *w.clip, p.mo->meshes, w.model);
         }
-        if (p.cacheGen != pedCacheGen || p.cacheMo != p.mo || p.cacheTracks != p.tracks ||
+        if (p.cacheGen != crowd.cacheGen || p.cacheMo != p.mo || p.cacheTracks != p.tracks ||
             p.cacheModel != w.model) {
-            p.cacheGen = pedCacheGen;
+            p.cacheGen = crowd.cacheGen;
             p.cacheMo = p.mo;
             p.cacheTracks = p.tracks;
             p.cacheModel = w.model;
@@ -881,7 +881,7 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
         if (p.tracks && frame >= static_cast<float>(p.tracks->frames - 1))
             frame = static_cast<float>(p.tracks->frames - 1);
         job.frame = frame;
-        pedJobs.push_back(job);
+        crowd.jobs.push_back(job);
     }
 }
 
@@ -892,7 +892,7 @@ void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const om
     const auto& fs = *fs_;
     for (std::size_t i = 0; i < vs.size(); ++i) {
         const auto& v = vs[i];
-        VehStaged& sv = *vehStaged[i];
+        VehStaged& sv = *traffic.staged[i];
         sv.drawn = false;
         // ...and SAY why the player's own slider is not staged, once
         // per reason: after a load into another city it vanished
@@ -908,8 +908,8 @@ void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const om
         };
         if (!v.live || v.mover < 0) { skipMine(1, "not live / no mover"); continue; }
         const auto& m = pd.movers()[static_cast<std::size_t>(v.mover)];
-        ++vehLive;
-        if (m.flags & 0x100u) ++vehStopped;
+        ++traffic.live;
+        if (m.flags & 0x100u) ++traffic.stopped;
         // ...and the traffic the same way - but NOT the player's own slider
         // while he rides it: `Slider_TickRide` relinks it into the head
         // scene `dword_93076C` every tick, so it draws wherever he goes
@@ -1085,7 +1085,7 @@ void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const om
             for (std::size_t k = 0; k < sv.mo->meshes.size(); ++k)
                 std::memcpy(&sv.affine[12 * k], a, sizeof a);
             sv.drawn = true;
-            ++vehDrawn;
+            ++traffic.drawn;
             if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
             continue;
         }
@@ -1121,7 +1121,7 @@ void PlayState::worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const om
         }
         sv.posed.revision = ++worldGeoRev;
         sv.drawn = true;
-        ++vehDrawn;
+        ++traffic.drawn;
         if (vd2 > omk::kVehLodDistances[3] * omk::kVehLodDistances[3]) ++vehPastLod;
     }
 }
@@ -1321,7 +1321,7 @@ void releaseVector(std::vector<T>& v) { std::vector<T>().swap(v); }
 
 void PlayState::releaseIdleCrowd() {
     constexpr long kIdleFrames = 60;      // two seconds at 30
-    for (auto& up : pedStaged) {
+    for (auto& up : crowd.staged) {
         PedStaged& p = *up;
         if (p.drawn) { p.lastDrawn = frameNo; continue; }
         if (p.lastDrawn < 0 || frameNo - p.lastDrawn <= kIdleFrames) continue;
@@ -1331,7 +1331,7 @@ void PlayState::releaseIdleCrowd() {
         releaseVector(p.affine);
         p.lastDrawn = -1;                 // nothing held until it is drawn again
     }
-    for (auto& up : vehStaged) {
+    for (auto& up : traffic.staged) {
         VehStaged& v = *up;
         if (v.drawn) { v.lastDrawn = frameNo; continue; }
         if (v.lastDrawn < 0 || frameNo - v.lastDrawn <= kIdleFrames) continue;

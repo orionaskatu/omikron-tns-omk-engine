@@ -279,7 +279,7 @@ void PlayState::worldDrawLists() {
                              &up->posed, b.start, b.count, b.blend, b.cutout,
                              litStaged, castShadows});
     }
-    for (const auto& up : pedStaged) {
+    for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
         const int base = static_cast<int>(up->mo->texBase);
         if (up->gpu && up->restGeo) {
@@ -304,7 +304,7 @@ void PlayState::worldDrawLists() {
                              &up->posed, b.start, b.count, b.blend, b.cutout,
                              litCrowd, castShadows});
     }
-    for (const auto& up : vehStaged) {
+    for (const auto& up : traffic.staged) {
         if (!up->drawn || !up->mo) continue;
         const int base = static_cast<int>(up->mo->texBase);
         if (up->gpu) {
@@ -722,7 +722,7 @@ void PlayState::worldDrawClassicShadows() {
         }
         nActor = blobs - nPlayer;
         // The crowd's, which is the other mechanism entirely.
-        for (const auto& up : pedStaged) {
+        for (const auto& up : crowd.staged) {
             if (up->drawn) ++nPedDrawn;
             if (up->drawn && up->footKnown) ++nPedFeet;
             if (!up->drawn || !up->footKnown) continue;
@@ -780,7 +780,7 @@ void PlayState::worldDrawClassicShadows() {
         if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] frame %ld: %ld player + %ld actor + %ld crowd"
                         " = %ld blobs (%zu peds staged, %ld drawn, %ld with feet)\n",
-                        frameNo, nPlayer, nActor, nCrowd, blobs, pedStaged.size(),
+                        frameNo, nPlayer, nActor, nCrowd, blobs, crowd.staged.size(),
                         nPedDrawn, nPedFeet);
         if (shadowLog && (frameNo % 30) == 0)
             std::printf("  [shadow] worst blob vertical spread %.2f units, "
@@ -1064,7 +1064,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
         if (drawPlayer && !playerPosed.corners.empty()) bound(playerPosed);
         for (const auto& up : staged)
             if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
-        for (const auto& up : pedStaged)
+        for (const auto& up : crowd.staged)
             if (up->drawn && up->mo) { if (up->gpu) boundAffine(up->affine); else bound(up->posed); }
         if (any) {
             // ...CENTRED ON THE PLAYER, not on the bodies' midpoint.

@@ -492,28 +492,37 @@ struct PlayState {
     // back into `staged` when a show re-links it, as `Actor_Detach` /
     // `Actor_Attach` keep the node. Dropped once the slot is freed.
     std::vector<std::unique_ptr<Staged>> parked{};
-    std::vector<PedJob> pedJobs{};
-    std::vector<std::unique_ptr<PedStaged>> pedStaged{};
-    std::map<std::pair<const omk::NodeTracks *, int>, omk::NodeTracks> pedLodTracks{};
-    std::map<std::string, std::map<int, omk::Geometry>> pedLodRest{};   // model -> root mesh -> its subtree's rest
-    std::vector<std::unique_ptr<VehStaged>> vehStaged{};
-    int vehDrawn{};
-    int vehLive{};
-    int vehStopped{};
-    long vehTold{};
-    // (sex or shoot group, clip slot, the model's SKELETON LAYOUT) -> its tracks:
-    // a track's mesh index is the model's own, so two layouts cannot share one
-    std::map<std::tuple<int, int, std::uint64_t>, omk::NodeTracks> pedTracks{};
-    long pedCacheGen{};
-    std::vector<std::byte> pedAni{};
-    std::string pedAniName{};
-    int pedDrawn{};
-    int pedLive{};
-    int pedInAction{};
-    int pedIdle{};
-    int pedOffView{};
-    int pedLit{};
-    long pedTold{};
+    // THE STREET'S PEDESTRIANS (`actor/pedestrians.h`, STREET_LIFE): their
+    // posing jobs and staged bodies, the LOD caches, the library their clips
+    // come from, and this frame's counts
+    struct Crowd {
+        std::vector<PedJob> jobs{};
+        std::vector<std::unique_ptr<PedStaged>> staged{};
+        std::map<std::pair<const omk::NodeTracks *, int>, omk::NodeTracks> lodTracks{};
+        std::map<std::string, std::map<int, omk::Geometry>> lodRest{};   // model -> root mesh -> its subtree's rest
+        // (sex or shoot group, clip slot, the model's SKELETON LAYOUT) -> its tracks:
+        // a track's mesh index is the model's own, so two layouts cannot share one
+        std::map<std::tuple<int, int, std::uint64_t>, omk::NodeTracks> tracks{};
+        long cacheGen{};
+        std::vector<std::byte> ani{};
+        std::string aniName{};
+        int drawn{};
+        int live{};
+        int inAction{};
+        int idle{};
+        int offView{};
+        int lit{};
+        long told{};
+    } crowd{};
+    // THE ROAD TRAFFIC on the same circuit (the sliders and the motos): the
+    // staged vehicles and this frame's counts
+    struct Traffic {
+        std::vector<std::unique_ptr<VehStaged>> staged{};
+        int drawn{};
+        int live{};
+        int stopped{};
+        long told{};
+    } traffic{};
     std::map<int, std::vector<omk::PedClip>> shootClips{};   // character type -> its group
     bool shootCameraLive{};
     // THE FREE LOOK's camera (preset 3, `PlayerController::lookTick`): on
@@ -541,22 +550,27 @@ struct PlayState {
     float lookAt[3] = {0, 0, 0};
     float shootPitch{};
     std::map<int, omk::ShootRecord> shootBrains{};
-    std::map<int, long> gunShots{};
-    std::set<int> gunTold{};
-    std::map<int, GunClip> gunClips{};
-    std::map<int, GunAnim> gunAnims{};
-    std::map<int, int> gunCurType{};   // the clip TYPE his last action started
-    std::map<int, int> gunCurSlot{};
-    std::map<int, int> gunActSerialSeen{};   // the shoot requests applied, per actor (S13)
+    // THE GUNMEN of a shoot phase, per actor id: their shots, clips and
+    // animations, aims, the requests applied, who has said what, and the CRT
+    // `rand()` state their brains and the bolts' jitter draw from
+    struct Gunmen {
+        std::map<int, long> shots{};
+        std::set<int> told{};
+        std::map<int, GunClip> clips{};
+        std::map<int, GunAnim> anims{};
+        std::map<int, int> curType{};   // the clip TYPE his last action started
+        std::map<int, int> curSlot{};
+        std::map<int, int> actSerialSeen{};   // the shoot requests applied, per actor (S13)
+        std::set<int> standDown{};
+        std::set<int> looped{};   // who has said his clip looped
+        std::map<int, GunAim> aims{};
+        std::set<int> aimTold{};   // who has said his first aim
+        std::set<int> drawnTold{};   // whose gun has been said drawn
+        std::set<int> barrelTold{};   // whose barrel direction has been said
+        std::uint32_t randSeed{};
+    } gun{};
     float playerDeathCountdown{};
-    std::set<int> gunStandDown{};
-    std::set<int> gunLooped{};   // who has said his clip looped
-    std::map<int, GunAim> gunAims{};
-    std::set<int> gunAimTold{};   // who has said his first aim
-    std::set<int> gunDrawnTold{};   // whose gun has been said drawn
-    std::set<int> gunBarrelTold{};   // whose barrel direction has been said
     int hudHealth{};
-    std::uint32_t gunRandSeed{};
     omk::ShootRecord playerShootRec{};
     omk::ShotLatch shotLatch{};
     omk::ShootAim shootAim{};
@@ -684,20 +698,22 @@ struct PlayState {
     // blend from the camera on screen at the request over `dword_930818`
     // frames (0 a cut), mode 10's address and eye side, mode 17's fixed eye
     // and its lagging target
-    int sliderCamMode{-1};
-    float sliderCamClock{}, sliderCamDur{};
-    float sliderCamFromEye[3]{}, sliderCamFromAt[3]{}, sliderCamFromFov{75.0f};
-    float sliderCamAddr[3]{}, sliderCamEyeX10{-314.9606f};
-    float sliderCamEye17[3]{}, sliderCamAt17[3]{};
-    // the LAG (`sub_415D10`/`sub_415E60`, drift audit B12): the slider's yaw
-    // chased at dt/f46, the eye at dt/f44 and the target at dt/f42 - seeded
-    // on the request's first frame
-    bool  sliderCamFresh{true};
-    float sliderCamLagYaw{}, sliderCamLagEye[3]{}, sliderCamLagAt[3]{};
-    // MODE 8's obstruction pass (`sub_4141F0` arms `sub_417070`; drift
-    // audit B12) - its state, reset by every request as `Camera_Request`'s
-    // memset of +208.. does
-    omk::CamObstruct sliderCamObs{};
+    struct SliderCam {
+        int mode{-1};
+        float clock{}, dur{};
+        float fromEye[3]{}, fromAt[3]{}, fromFov{75.0f};
+        float addr[3]{}, eyeX10{-314.9606f};
+        float eye17[3]{}, at17[3]{};
+        // the LAG (`sub_415D10`/`sub_415E60`, drift audit B12): the slider's yaw
+        // chased at dt/f46, the eye at dt/f44 and the target at dt/f42 - seeded
+        // on the request's first frame
+        bool  fresh{true};
+        float lagYaw{}, lagEye[3]{}, lagAt[3]{};
+        // MODE 8's obstruction pass (`sub_4141F0` arms `sub_417070`; drift
+        // audit B12) - its state, reset by every request as `Camera_Request`'s
+        // memset of +208.. does
+        omk::CamObstruct obs{};
+    } sliderCam{};
     // `sub_415D10`/`sub_415E60`'s chase for a slider camera: the subject at
     // `at` heading (fx, fz), the preset's two offsets, the lag f42/f44/f46
     void sliderCamLag(const float at[3], float fx, float fz, const float eyeOff[3],

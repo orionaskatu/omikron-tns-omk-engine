@@ -1419,7 +1419,7 @@ void PlayState::adventureSeated() {
     {
         const int st = session.sliders().calledVehicle() >= 0
                      ? session.sliders().callMachine().state : 0;
-        if ((st == 2 || st == 6) && !ride && sliderCamMode != 8) sliderCamRequest(8, 0.0f);
+        if ((st == 2 || st == 6) && !ride && sliderCam.mode != 8) sliderCamRequest(8, 0.0f);
         // ...and in the same arm, under the same guard, `Screen_Fade(0)`
         // and `Actor_HoldAnimation(player, 0)`: the bands go and he is his
         // own again (drift audit A4)
@@ -1428,8 +1428,8 @@ void PlayState::adventureSeated() {
         // tick and the frames never see it in state 2. In the engine that
         // tick has just asked for mode 8 (`if (mode != 8)`), so the guard
         // passes unless he is in 17.
-        if (session.sliders().takeCameNotice() && sliderCamMode != 17) {
-            if (sliderCamMode >= 0 || takeCam) sliderCamRequest(0, 60.0f);
+        if (session.sliders().takeCameNotice() && sliderCam.mode != 17) {
+            if (sliderCam.mode >= 0 || takeCam) sliderCamRequest(0, 60.0f);
             session.startBlackFade(false);
             session.holdPlayer(false);
             std::printf("frame %ld: the slider has come - Screen_Fade(0), the hold "
@@ -1535,22 +1535,22 @@ void PlayState::adventureSeated() {
                 for (const auto& x : session.residentSlot(session.activeSlot()).addresses)
                     if (x.id == static_cast<int>(journeyAddr)) ad = &x;
                 if (ad && haveFrame) {
-                    for (int k = 0; k < 3; ++k) sliderCamAddr[k] = ad->pos[k];
+                    for (int k = 0; k < 3; ++k) sliderCam.addr[k] = ad->pos[k];
                     const double b = std::atan2(ad->pos[2] - sat[2], ad->pos[0] - sat[0]) * omk::kRadToDeg + 90.0;
                     const double h = std::atan2(-sz[2], -sz[0]) * omk::kRadToDeg + 90.0;
                     double dd = b - h;
                     if (dd > 180.0) dd -= 360.0;
                     if (dd < -180.0) dd += 360.0;
-                    sliderCamEyeX10 = dd > 0.0 ? 314.9606f : -314.9606f;
-                    sliderCamRequest(10, sliderCamMode == 8 ? 60.0f : 0.0f);
+                    sliderCam.eyeX10 = dd > 0.0 ? 314.9606f : -314.9606f;
+                    sliderCamRequest(10, sliderCam.mode == 8 ? 60.0f : 0.0f);
                     // which side of the slider the address lies on, along
                     // its local X, against which side the eye goes to
                     // (`out = subject - x * row0`, so the eye is at -x)
                     const double addrSide = (ad->pos[0] - sat[0]) * sx[0] + (ad->pos[2] - sat[2]) * sx[2];
                     std::printf("slider: camera 10 - on the slider, looking at address %d "
                                 "(bearing %+.0f of its heading, eye x %+.0f): the eye is %s "
-                                "the address\n", ad->id, dd, double(sliderCamEyeX10),
-                                (addrSide > 0.0) == (-sliderCamEyeX10 > 0.0f)
+                                "the address\n", ad->id, dd, double(sliderCam.eyeX10),
+                                (addrSide > 0.0) == (-sliderCam.eyeX10 > 0.0f)
                                     ? "on the SAME side as" : "ACROSS the slider from");
                 } else {
                     std::printf("slider: camera 10 not requested - %s\n",
@@ -2535,7 +2535,7 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
         // 60.0, type 1)` unless the mode is 0 or 17 - after a journey
         // it is mode 10 and travels back to the follow camera; after a
         // manual stop it is 17, which lets him walk out of it
-        if (sliderCamMode != 17 && (sliderCamMode >= 0 || takeCam))
+        if (sliderCam.mode != 17 && (sliderCam.mode >= 0 || takeCam))
             sliderCamRequest(0, 60.0f);
         player->setActorState(omk::ActorState::Normal, "MDSLIDOU");
         player->setChannelOnly(false);

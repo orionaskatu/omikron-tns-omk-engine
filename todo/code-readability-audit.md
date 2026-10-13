@@ -619,6 +619,20 @@ finding: a check that hashed a conversation frame would flicker.
   needs. (A first cut put an event under a brace-less `if`, which would
   have fired always - caught before building on it; braced.) Guard 0 of
   14; 3DS and Vita build; `licence headers` 627.
+* step 14b - OWNED COMPONENTS in `PlayState` (§6), by
+  `tools/group_members.py`: a run of fields under one banner, read and
+  written as one thing, becomes a nested struct, its shared prefix dropped
+  and every reference rewritten (code, and backticked comment mentions) in
+  the files that implement the class; a clash, a line mixing other names,
+  or a failed build refuses and restores. Four so far: `sliderCam` (the
+  slider's `Camera_Request` state, 15 fields - `sliderCamFromEye` is
+  `sliderCam.fromEye`), `gun` (the gunmen per actor, 14), `crowd` (the
+  pedestrians' jobs, bodies, LOD caches, clip library and counts, 15) and
+  `traffic` (the vehicles, 5). A field's place in the struct is what
+  states what it belongs to; a read across components now shows in its
+  spelling (`crowd.drawn`, `traffic.drawn`). Guard 0 of 14; 60 slider,
+  shoot, boss, crowd and traffic checks green; 3DS and Vita build, the GL1
+  glue syntax-checked; `licence headers` 628.
 
 ## 7. For the tutorial
 

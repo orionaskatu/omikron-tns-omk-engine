@@ -859,13 +859,13 @@ void PlayState::modesShootEnterLeave(omk::Input& in) {
             shootBrains.clear();
             astarothActors.clear();
             gandharActors.clear();
-            gunClips.clear();
-            gunAnims.clear();
-            gunCurType.clear();
-            gunCurSlot.clear();
-            gunActSerialSeen.clear();
+            gun.clips.clear();
+            gun.anims.clear();
+            gun.curType.clear();
+            gun.curSlot.clear();
+            gun.actSerialSeen.clear();
             gunEntryPending.clear();
-            gunStandDown.clear();
+            gun.standDown.clear();
             gunCellSeeded.clear();
             playerShootRec = omk::ShootRecord{};
             playerShootRec.node = -1;
@@ -2261,11 +2261,11 @@ void PlayState::sliderHold() {
 // writes it.
 void PlayState::sliderForget(const char* why) {
     auto& session = *session_;
-    const bool any = ride || boarding || boarded || leaving || sliderCamMode >= 0;
+    const bool any = ride || boarding || boarded || leaving || sliderCam.mode >= 0;
     ride.reset();
     boarding = false; boarded = false; leaving = false;
     journeyTo = -1;
-    sliderCamMode = -1;
+    sliderCam.mode = -1;
     sliderPrevState = 0;
     boardAt = -1;
     session.holdPlayer(false);
@@ -2273,7 +2273,7 @@ void PlayState::sliderForget(const char* why) {
         std::printf("frame %ld: %s - the ride, the boarding and the slider camera "
                     "dropped with the old world (now ride %d boarding %d boarded %d "
                     "leaving %d camera %d held %d)\n", frameNo, why, ride ? 1 : 0, boarding ? 1 : 0,
-                    boarded ? 1 : 0, leaving ? 1 : 0, sliderCamMode,
+                    boarded ? 1 : 0, leaving ? 1 : 0, sliderCam.mode,
                     session.playerAnimHeld() ? 1 : 0);
 }
 

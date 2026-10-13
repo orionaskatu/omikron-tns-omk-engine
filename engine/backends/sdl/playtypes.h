@@ -465,7 +465,7 @@ struct PedStaged {
     // two foot bones' mesh indices under that root - each recomputed every
     // frame before, by a mesh walk, two map lookups (one by a string) and
     // two name searches. Valid while the model, its tracks, the model's
-    // NAME and `pedCacheGen` are what they were when it was filled.
+    // NAME and `crowd.cacheGen` are what they were when it was filled.
     long cacheGen = -1;
     const CharModel* cacheMo = nullptr;
     const omk::NodeTracks* cacheTracks = nullptr;

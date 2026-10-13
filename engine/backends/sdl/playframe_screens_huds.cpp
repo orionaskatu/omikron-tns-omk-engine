@@ -59,7 +59,8 @@ void drawSubtitle(omk::Surface& fb, const omk::TextLayout& lay,
                   SubBox box = SubBox::None, char face = 'J',
                   int scroll = 0, int* overflowOut = nullptr,
                   bool mediaLine = false, std::uint32_t nowMs = 0) {
-    // `nowMs`: the host's tick (`Frontend::ticksMs`), which pulses the scroll
+    // `nowMs`: the interface clock (`PlayState::uiClockMs` - the host's tick,
+    // or a headless run's frames at 30 a second), which pulses the scroll
     // arrows below - handed in, as a free function has no frontend.
     // 32 is `Dialog_TickUI`'s block; `Subtitle_Show` (0x0041E040) lays a
     // `media.play` line out inset 16 - the caller says which.
@@ -471,7 +472,8 @@ void PlayState::screensHuds() {
         const auto ptMedia = omk::parseMarkup(mediaText, 'V');
         if (!drawPositioned(fb, lay, ptMedia, dispW, dispH))
             drawSubtitle(fb, lay, mediaText, {}, -1, dispW, dispH, 16,
-                         SubBox::None, 'V', 0, nullptr, /*mediaLine*/ true, front.ticksMs());
+                         SubBox::None, 'V', 0, nullptr, /*mediaLine*/ true,
+                         static_cast<std::uint32_t>(uiClockMs()));
         mediaTextFrames -= frameSec * 30.0;
     }
     // The subtitle goes over whatever the frame already holds - which
@@ -1047,7 +1049,8 @@ void PlayState::screensSubtitle(omk::TextLayout& lay) {
                      inMenu ? std::string() : dlg.lineText(),
                      menu, sel, dispW, dispH, 32,
                      inMenu ? SubBox::Replies : SubBox::Line, 'J',
-                     lineScroll, &lineOverflow, false, front.ticksMs());
+                     lineScroll, &lineOverflow, false,
+                     static_cast<std::uint32_t>(uiClockMs()));   // the arrows' pulse
         });
     }
 }

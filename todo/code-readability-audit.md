@@ -181,13 +181,17 @@ work: the Gandhar door's 1500 ms close set to 1600 moved its close from frame
 208 to 211 and the guard named it. Two recordings of one tree agree 13 of 13
 once the timing lines (milliseconds, the music level) are dropped.
 
-**Found on the way, not yet explained**: a run that ENDS INSIDE A CONVERSATION
-(Xachen to frame 600, the Dakobah/Xendar conversation from frame 468) logs the
-same lines on every run but its LAST FRAME differs between two runs of the same
-tree - so something in a conversation's picture is not deterministic under
-`--frames` (the line stream reads no thread; the interface clock is
-`n * 1000 / 30` there). The guard's Xachen run stops at 460 for now. Worth
-finding: a check that hashed a conversation frame would flicker.
+**Found on the way, EXPLAINED 2026-10-13 (step 16a)**: a run that ENDS
+INSIDE A CONVERSATION (Xachen to frame 600, the Dakobah/Xendar conversation
+from frame 468) logged the same lines on every run but its LAST FRAME differed
+between two runs of the same tree. The difference was 36 pixels in one 8x8
+block at x 608-615 - the subtitle's red SCROLL ARROW (`sub_4400D0`'s, at
+`w-32 .. w-25`), whose pulse is `sin(nowMs * 0.006)`: both `drawSubtitle`
+calls handed it `front.ticksMs()`, the WALL clock, where every other piece of
+the interface reads `uiClockMs()` - the wall in play, `n * 1000 / 30` under
+`--frames`. Now the interface clock, so live play is unchanged and a headless
+frame is one picture: three runs, one hash. The guard's Xachen run goes to
+600 again, inside the conversation, and two recordings agree 14 of 14.
 
 ## 6c. Progress
 
@@ -756,6 +760,11 @@ finding: a check that hashed a conversation frame would flicker.
   structs of their own; `PlayerController` 38, no run left. Guard 0 of 14;
   12 dialogue, voice, line-sync, flicker and profiler checks green; both
   consoles build with no warning.
+* step 16a - §6b's open finding closed: the scroll arrows pulsed on the
+  wall clock (`front.ticksMs()`) in both `drawSubtitle` calls; now on
+  `uiClockMs()`. With the guard unchanged, 0 of 14 runs differ (no other
+  run ends in a conversation); with its Xachen run back at 600, two
+  recordings agree 14 of 14. 8 subtitle and dialogue checks green.
 
 ## 7. For the tutorial
 

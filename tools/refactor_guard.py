@@ -81,12 +81,12 @@ SCENARIOS = {
                "--no-crowd", "--give", "2:913,2:915,2:336", "--frames", "960", "--keys",
                "0x0F,0x0F,0xCD,0xD0,0x1C,0xCD,0xD0,0xD0,0x1C,0xD0,0xD0,0xD0",
                "--keydelay", "60"], {}),
-    # ends at 460, after the 4000 ms delayed close and before the conversation
-    # it opens (frame 468): a run that ends INSIDE a conversation logs the same
-    # lines every time but its last frame differs between two runs of one tree
-    # (recorded in todo/code-readability-audit.md), so no hash could hold
+    # ends at 600, INSIDE the conversation the 4000 ms delayed close opens
+    # (frame 468): its scroll arrows pulse on the interface clock, a headless
+    # run's frames, so the last frame is one picture every run (it stopped at
+    # 460 while they pulsed on the wall's - todo/code-readability-audit.md 6b)
     "xachen": (["--save", SAVE, "--area", "58", "--var", "28=1,57=0", "--stand",
-                "-1471,150,133,290", "--frames", "460", "--nofmv", "--nodelay", "--no-crowd",
+                "-1471,150,133,290", "--frames", "600", "--nofmv", "--nodelay", "--no-crowd",
                 "--hold", ",".join(["k*60", "k28*8", "k*60"] + ["k28*2,k*5"] * 7 +
                                    ["k205*2,k*5"] + ["k28*2,k*5"] * 3 + ["k205*2,k*5"] +
                                    ["k28*2,k*5"] * 10 + ["k205*2,k*5"] + ["k28*2,k*5"] * 5 +

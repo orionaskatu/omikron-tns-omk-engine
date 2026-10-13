@@ -455,7 +455,6 @@ void PlayState::inputTick() {
 // Scripted object motion - the crates, the doors, the lifts
 void PlayState::inputMotion() {
     OMK_ZONE("input: motion");   // the profiler (todo/debug-tools.md 6)
-    auto& session = *session_;
     omk::Renderer& world = *world_;
     // ---- SCRIPTED OBJECT MOTION - the crates, the doors, the lifts ---
     //
@@ -499,40 +498,7 @@ void PlayState::inputMotion() {
     std::vector<omk::Program::NodeMotion> allMotions;
     std::map<std::string, omk::SceneRunner::NodeScale> allScales;
     const double motionGather0 = phaseNow();
-    for (const omk::SceneRunner* sr : {&session.sceneOut(), &session.scene()}) {
-        if (!sr->loaded()) continue;
-        for (const auto& mo : sr->motions()) {
-            // say once which pool moved which mesh - a door that resolved
-            // in the outgoing pool is the case this line exists for
-            const std::string key = mo.name + (sr == &session.scene() ? "/active" : "/out");
-            if (motionLogged.insert(key).second)
-                std::printf("motion: mesh '%s' moved by the %s pool (%s) - first sample %.0f %.0f %.0f%s\n",
-                            mo.name.c_str(), sr == &session.scene() ? "ACTIVE" : "OUTGOING",
-                            sr->file().c_str(), mo.pos[0], mo.pos[1], mo.pos[2],
-                            mo.rotated ? ", rotated" : "");
-        }
-        // THE PATCH IS BUILT FROM WHERE THE NODES REST, not from what moved
-        // this tick. `Script_MoveObjectOnPath` ends in `o3de_SetNodePos`
-        // and leaves the node there, so a program that has finished still
-        // holds its node out of place - `SceneRunner::placements()` is that
-        // state and it outlives the program. Read from `motions()`, a mesh
-        // that is also SCALED kept its patch entry after its move ended,
-        // that entry had no motion, and the mesh was re-placed at its
-        // AUTHORED origin every frame from then on: a node a finished
-        // program had displaced, put back. 35 shipped mesh names are both
-        // scaled and moved by their scene (`node_rest`).
-        // `OMK_TRANSIENT_MOTIONS=1` takes the per-tick record instead -
-        // the old, wrong reading, kept so the two can be run a variable
-        // apart (`verify.py: engine: node rest`).
-        static const bool transientMotions =
-            omk::envFlag("OMK_TRANSIENT_MOTIONS");
-        if (transientMotions) {
-            for (const auto& mo : sr->motions()) allMotions.push_back(mo);
-        } else {
-            for (const auto& kv : sr->placements()) allMotions.push_back(kv.second);
-        }
-        for (const auto& ns : sr->nodeScales()) allScales[ns.first] = ns.second;
-    }
+    inputCollectMotions(allMotions, allScales);
     phSpan["motion gather"] += phaseNow() - motionGather0;
     // the GPU path for the moving meshes: a renderer that poses bodies, and
     // nothing this frame that reads their corners out of the set's buffer
@@ -874,68 +840,7 @@ void PlayState::inputMotion() {
     // derived from a motion cannot say anything at all about where the
     // node RESTS; this one is the drawn geometry and answers on every
     // frame, moving or still. `verify.py: engine: node rest`.
-    {
-        static const char* meshAtName = omk::envStr("OMK_MESH_AT");
-        if (meshAtName && *meshAtName) {
-            const auto lower = [](std::string n) {
-                for (auto& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-                return n;
-            };
-            const std::string want = lower(meshAtName);
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.geo.corners.empty() || w.meshes.empty()) continue;
-                int mi = -1;
-                for (std::size_t k = 0; k < w.meshes.size(); ++k)
-                    if (lower(std::string(w.meshes[k].name)) == want) { mi = static_cast<int>(k); break; }
-                if (mi < 0) continue;
-                // the DRAWN centroid and the AS-BUILT one, so the line
-                // carries the displacement itself and not a number that
-                // has to be compared against a mesh origin elsewhere.
-                // the AS-BUILT one is the mesh's own rest copy, taken by its
-                // first patch; before any patch its corners ARE as built.
-                // (Summed in `cornersOfMesh` order, ascending - the order
-                // the whole-set walk took.)
-                double c[3] = {0, 0, 0}, b[3] = {0, 0, 0};
-                long n = 0;
-                const auto rit = w.restXyzOfMesh.find(mi);
-                // THE INDEX IS BUILT BY THE FIRST PLACEMENT (`patchIndexReady`,
-                // above): before it - frame 0 of a scene, or a set nothing has
-                // moved - the mesh's corners are found by `cornerMesh`, in the
-                // same ascending order. Reading the unbuilt index crashed every
-                // run with this instrument on from `f9fad39` (`engine: slot pool`).
-                static std::vector<std::uint32_t> scan;
-                const std::vector<std::uint32_t>* idxp = nullptr;
-                if (static_cast<std::size_t>(mi) < w.cornersOfMesh.size()) {
-                    idxp = &w.cornersOfMesh[static_cast<std::size_t>(mi)];
-                } else {
-                    scan.clear();
-                    const std::size_t nc = std::min(w.geo.corners.size(), w.geo.cornerMesh.size());
-                    for (std::size_t corner = 0; corner < nc; ++corner)
-                        if (w.geo.cornerMesh[corner] == mi) scan.push_back(static_cast<std::uint32_t>(corner));
-                    idxp = &scan;
-                }
-                const auto& idxs = *idxp;
-                for (std::size_t k = 0; k < idxs.size(); ++k) {
-                    const omk::Corner& cc = w.geo.corners[idxs[k]];
-                    c[0] += cc.x; c[1] += cc.y; c[2] += cc.z;
-                    if (rit != w.restXyzOfMesh.end()) {
-                        b[0] += rit->second[3 * k]; b[1] += rit->second[3 * k + 1]; b[2] += rit->second[3 * k + 2];
-                    } else {
-                        b[0] += cc.x; b[1] += cc.y; b[2] += cc.z;
-                    }
-                    ++n;
-                }
-                if (!n) continue;
-                std::printf("mesh at: frame %ld  slot %d  %s  drawn %.1f %.1f %.1f"
-                            "  built %.1f %.1f %.1f  moved %.1f %.1f %.1f  corners %ld\n",
-                            static_cast<long>(session.frameNo()), sl,
-                            w.meshes[static_cast<std::size_t>(mi)].name,
-                            c[0] / n, c[1] / n, c[2] / n, b[0] / n, b[1] / n, b[2] / n,
-                            (c[0] - b[0]) / n, (c[1] - b[1]) / n, (c[2] - b[2]) / n, n);
-            }
-        }
-    }
+    inputMeshAt();
     mark("scripted motion: meshes placed");
     if (soupsMoved) {
         // the walker holds REFERENCES to the merged copies, so they are
@@ -954,77 +859,7 @@ void PlayState::inputMotion() {
         bool newlyMoving = false;
         bool newlySteep = false;
         const bool inPlace = mergedValid && playerSoup.size() == wantSoup && playerSteep.size() == wantSteep;
-        if (inPlace) {
-            std::size_t offSoup = 0, offSteep = 0;
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.stem.empty()) continue;
-                static const bool eagerMerge = omk::envFlag("OMK_EAGER_SOUPS");
-                for (const std::uint32_t t : movedSoup[sl]) {
-                    // a recorded mesh is copied in when it is placed (`lazyPlace`)
-                    if (eagerMerge)
-                        std::copy_n(w.soup.data() + 9 * static_cast<std::size_t>(t), 9,
-                                    playerSoup.data() + offSoup + 9 * static_cast<std::size_t>(t));
-                    const std::size_t gt = offSoup / 9 + t;
-                    if (gt < playerMovingTri.size() && !playerMovingTri[gt]) {
-                        playerMovingTri[gt] = 1;
-                        playerMovingIds.push_back(static_cast<std::uint32_t>(gt));
-                        newlyMoving = true;
-                    }
-                }
-                for (const std::uint32_t t : movedSteep[sl]) {
-                    if (eagerMerge)
-                        std::copy_n(w.steep.data() + 9 * static_cast<std::size_t>(t), 9,
-                                    playerSteep.data() + offSteep + 9 * static_cast<std::size_t>(t));
-                    const std::size_t gt = offSteep / 9 + t;
-                    if (gt < steepMovingTri.size() && !steepMovingTri[gt]) {
-                        steepMovingTri[gt] = 1;
-                        steepMovingIds.push_back(static_cast<std::uint32_t>(gt));
-                        newlySteep = true;
-                    }
-                }
-                offSoup += w.soup.size(); offSteep += w.steep.size();
-            }
-        } else {
-            lazyPlaceAll();       // the slots' soups are copied whole: every mesh placed first
-            playerSoup.clear(); playerSteep.clear();
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.stem.empty()) continue;
-                playerSoup.insert(playerSoup.end(), w.soup.begin(), w.soup.end());
-                playerSteep.insert(playerSteep.end(), w.steep.begin(), w.steep.end());
-            }
-            mergedValid = true;
-            // a full merge: the sets' layout may have changed, so every moved
-            // triangle is re-marked against the new offsets
-            playerMovingTri.assign(playerSoup.size() / 9, 0);
-            std::size_t off = 0;
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.stem.empty()) continue;
-                for (const std::uint32_t t : movedSoup[sl])
-                    if (off / 9 + t < playerMovingTri.size()) playerMovingTri[off / 9 + t] = 1;
-                off += w.soup.size();
-            }
-            playerMovingIds.clear();
-            for (std::size_t t = 0; t < playerMovingTri.size(); ++t)
-                if (playerMovingTri[t]) playerMovingIds.push_back(static_cast<std::uint32_t>(t));
-            newlyMoving = true;
-            // ...and the steep faces the same way
-            steepMovingTri.assign(playerSteep.size() / 9, 0);
-            std::size_t offS = 0;
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.stem.empty()) continue;
-                for (const std::uint32_t t : movedSteep[sl])
-                    if (offS / 9 + t < steepMovingTri.size()) steepMovingTri[offS / 9 + t] = 1;
-                offS += w.steep.size();
-            }
-            steepMovingIds.clear();
-            for (std::size_t t = 0; t < steepMovingTri.size(); ++t)
-                if (steepMovingTri[t]) steepMovingIds.push_back(static_cast<std::uint32_t>(t));
-            newlySteep = true;
-        }
+        inputSoupPatchInPlace(inPlace, movedSoup, newlyMoving, movedSteep, newlySteep);
         // `OMK_VERIFY_PATCH=1`: the full merge beside the in-place one, every
         // moving frame, compared bit for bit (`verify.py: engine: patch index`).
         static const bool verifyPatch = omk::envFlag("OMK_VERIFY_PATCH");
@@ -1146,52 +981,246 @@ void PlayState::inputMotion() {
         // through the linear scan, every moving frame
         // (`verify.py: engine: split grid`).
         static const bool verifySplit = omk::envFlag("OMK_VERIFY_SPLIT");
-        if (verifySplit) {
-            lazyPlaceAll();   // it reads triangle centres straight out of the soup
-            static long splitFrames = 0, probes = 0, mismatched = 0;
-            ++splitFrames;
-            const auto check = [&](double x, double y, double z) {
-                ++probes;
-                const auto a = omk::floorUnder(playerSoup, playerGrid, x, y, z);
-                const auto b = omk::floorUnder(playerSoup, x, y, z);
-                if (a.has_value() != b.has_value() || (a && std::memcmp(&*a, &*b, sizeof(double)) != 0))
-                    ++mismatched;
-                const auto c = omk::surfaceUnder(playerSoup, playerGrid, x, y, z);
-                const auto d = omk::surfaceUnder(playerSoup, x, y, z);
-                if (c.has_value() != d.has_value() ||
-                    (c && std::memcmp(&*c, &*d, sizeof(omk::GroundHit)) != 0)) ++mismatched;
-            };
-            std::size_t off = 0;
-            for (int sl = 0; sl < 2; ++sl) {
-                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
-                if (w.stem.empty()) continue;
-                for (std::size_t k = 0; k < movedSoup[sl].size(); k += 7) {
-                    const std::size_t o = off + 9 * static_cast<std::size_t>(movedSoup[sl][k]);
-                    check((double(playerSoup[o]) + playerSoup[o + 3] + playerSoup[o + 6]) / 3.0,
-                          (double(playerSoup[o + 1]) + playerSoup[o + 4] + playerSoup[o + 7]) / 3.0 - 200.0,
-                          (double(playerSoup[o + 2]) + playerSoup[o + 5] + playerSoup[o + 8]) / 3.0);
-                }
-                off += w.soup.size();
-            }
-            for (int gx = -4; gx <= 4; ++gx)
-                for (int gz = -4; gz <= 4; ++gz)
-                    check(1804.0 + gx * 900.0, -2000.0, -6890.0 + gz * 900.0);
-            if (splitFrames % 30 == 0)
-                std::printf("split verify: %ld moving frames, %ld probes, %ld mismatched, fixed %d x %d, moving %zu entries "
-                            "in %d x %d (steep moving %d x %d, %zu entries)%s\n",
-                            splitFrames, probes, mismatched, playerGrid.fixed.nx, playerGrid.fixed.nz,
-                            playerGrid.moving.index.size(), playerGrid.moving.nx, playerGrid.moving.nz,
-                            playerSteepGrid.moving.nx, playerSteepGrid.moving.nz,
-                            playerSteepGrid.moving.index.size(),
-                            playerGrid.useParts ? (" - the moving layer is " +
-                                std::to_string(playerGrid.parts.size()) + " and " +
-                                std::to_string(playerSteepGrid.parts.size()) +
-                                " whole meshes, no grid").c_str() : "");
-        }
+        inputVerifySplit(verifySplit, movedSoup);
     }
 
     mark("scripted motion");
 }
+
+// EVERY SCENE'S MESH MOTIONS this frame, collected (from `inputMotion`)
+void PlayState::inputCollectMotions(std::vector<omk::Program::NodeMotion>& allMotions,
+                                    std::map<std::string, omk::SceneRunner::NodeScale>& allScales) {
+    auto& session = *session_;
+    for (const omk::SceneRunner* sr : {&session.sceneOut(), &session.scene()}) {
+        if (!sr->loaded()) continue;
+        for (const auto& mo : sr->motions()) {
+            // say once which pool moved which mesh - a door that resolved
+            // in the outgoing pool is the case this line exists for
+            const std::string key = mo.name + (sr == &session.scene() ? "/active" : "/out");
+            if (motionLogged.insert(key).second)
+                std::printf("motion: mesh '%s' moved by the %s pool (%s) - first sample %.0f %.0f %.0f%s\n",
+                            mo.name.c_str(), sr == &session.scene() ? "ACTIVE" : "OUTGOING",
+                            sr->file().c_str(), mo.pos[0], mo.pos[1], mo.pos[2],
+                            mo.rotated ? ", rotated" : "");
+        }
+        // THE PATCH IS BUILT FROM WHERE THE NODES REST, not from what moved
+        // this tick. `Script_MoveObjectOnPath` ends in `o3de_SetNodePos`
+        // and leaves the node there, so a program that has finished still
+        // holds its node out of place - `SceneRunner::placements()` is that
+        // state and it outlives the program. Read from `motions()`, a mesh
+        // that is also SCALED kept its patch entry after its move ended,
+        // that entry had no motion, and the mesh was re-placed at its
+        // AUTHORED origin every frame from then on: a node a finished
+        // program had displaced, put back. 35 shipped mesh names are both
+        // scaled and moved by their scene (`node_rest`).
+        // `OMK_TRANSIENT_MOTIONS=1` takes the per-tick record instead -
+        // the old, wrong reading, kept so the two can be run a variable
+        // apart (`verify.py: engine: node rest`).
+        static const bool transientMotions =
+            omk::envFlag("OMK_TRANSIENT_MOTIONS");
+        if (transientMotions) {
+            for (const auto& mo : sr->motions()) allMotions.push_back(mo);
+        } else {
+            for (const auto& kv : sr->placements()) allMotions.push_back(kv.second);
+        }
+        for (const auto& ns : sr->nodeScales()) allScales[ns.first] = ns.second;
+    }
+}
+
+
+// `OMK_MESH_AT=<mesh name>`: where that set mesh actually is, read out of the set's buffer (from `inputMotion`)
+void PlayState::inputMeshAt() {
+    auto& session = *session_;
+    {
+        static const char* meshAtName = omk::envStr("OMK_MESH_AT");
+        if (meshAtName && *meshAtName) {
+            const auto lower = [](std::string n) {
+                for (auto& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                return n;
+            };
+            const std::string want = lower(meshAtName);
+            for (int sl = 0; sl < 2; ++sl) {
+                const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+                if (w.geo.corners.empty() || w.meshes.empty()) continue;
+                int mi = -1;
+                for (std::size_t k = 0; k < w.meshes.size(); ++k)
+                    if (lower(std::string(w.meshes[k].name)) == want) { mi = static_cast<int>(k); break; }
+                if (mi < 0) continue;
+                // the DRAWN centroid and the AS-BUILT one, so the line
+                // carries the displacement itself and not a number that
+                // has to be compared against a mesh origin elsewhere.
+                // the AS-BUILT one is the mesh's own rest copy, taken by its
+                // first patch; before any patch its corners ARE as built.
+                // (Summed in `cornersOfMesh` order, ascending - the order
+                // the whole-set walk took.)
+                double c[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+                long n = 0;
+                const auto rit = w.restXyzOfMesh.find(mi);
+                // THE INDEX IS BUILT BY THE FIRST PLACEMENT (`patchIndexReady`,
+                // above): before it - frame 0 of a scene, or a set nothing has
+                // moved - the mesh's corners are found by `cornerMesh`, in the
+                // same ascending order. Reading the unbuilt index crashed every
+                // run with this instrument on from `f9fad39` (`engine: slot pool`).
+                static std::vector<std::uint32_t> scan;
+                const std::vector<std::uint32_t>* idxp = nullptr;
+                if (static_cast<std::size_t>(mi) < w.cornersOfMesh.size()) {
+                    idxp = &w.cornersOfMesh[static_cast<std::size_t>(mi)];
+                } else {
+                    scan.clear();
+                    const std::size_t nc = std::min(w.geo.corners.size(), w.geo.cornerMesh.size());
+                    for (std::size_t corner = 0; corner < nc; ++corner)
+                        if (w.geo.cornerMesh[corner] == mi) scan.push_back(static_cast<std::uint32_t>(corner));
+                    idxp = &scan;
+                }
+                const auto& idxs = *idxp;
+                for (std::size_t k = 0; k < idxs.size(); ++k) {
+                    const omk::Corner& cc = w.geo.corners[idxs[k]];
+                    c[0] += cc.x; c[1] += cc.y; c[2] += cc.z;
+                    if (rit != w.restXyzOfMesh.end()) {
+                        b[0] += rit->second[3 * k]; b[1] += rit->second[3 * k + 1]; b[2] += rit->second[3 * k + 2];
+                    } else {
+                        b[0] += cc.x; b[1] += cc.y; b[2] += cc.z;
+                    }
+                    ++n;
+                }
+                if (!n) continue;
+                std::printf("mesh at: frame %ld  slot %d  %s  drawn %.1f %.1f %.1f"
+                            "  built %.1f %.1f %.1f  moved %.1f %.1f %.1f  corners %ld\n",
+                            static_cast<long>(session.frameNo()), sl,
+                            w.meshes[static_cast<std::size_t>(mi)].name,
+                            c[0] / n, c[1] / n, c[2] / n, b[0] / n, b[1] / n, b[2] / n,
+                            (c[0] - b[0]) / n, (c[1] - b[1]) / n, (c[2] - b[2]) / n, n);
+            }
+        }
+    }
+}
+
+
+// THE SOUPS PATCHED IN PLACE, when the slot and the sizes still add up (from `inputMotion`)
+void PlayState::inputSoupPatchInPlace(bool inPlace, std::vector<unsigned int> (&movedSoup)[2],
+                                      bool& newlyMoving,
+                                      std::vector<unsigned int> (&movedSteep)[2],
+                                      bool& newlySteep) {
+    if (inPlace) {
+        std::size_t offSoup = 0, offSteep = 0;
+        for (int sl = 0; sl < 2; ++sl) {
+            const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+            if (w.stem.empty()) continue;
+            static const bool eagerMerge = omk::envFlag("OMK_EAGER_SOUPS");
+            for (const std::uint32_t t : movedSoup[sl]) {
+                // a recorded mesh is copied in when it is placed (`lazyPlace`)
+                if (eagerMerge)
+                    std::copy_n(w.soup.data() + 9 * static_cast<std::size_t>(t), 9,
+                                playerSoup.data() + offSoup + 9 * static_cast<std::size_t>(t));
+                const std::size_t gt = offSoup / 9 + t;
+                if (gt < playerMovingTri.size() && !playerMovingTri[gt]) {
+                    playerMovingTri[gt] = 1;
+                    playerMovingIds.push_back(static_cast<std::uint32_t>(gt));
+                    newlyMoving = true;
+                }
+            }
+            for (const std::uint32_t t : movedSteep[sl]) {
+                if (eagerMerge)
+                    std::copy_n(w.steep.data() + 9 * static_cast<std::size_t>(t), 9,
+                                playerSteep.data() + offSteep + 9 * static_cast<std::size_t>(t));
+                const std::size_t gt = offSteep / 9 + t;
+                if (gt < steepMovingTri.size() && !steepMovingTri[gt]) {
+                    steepMovingTri[gt] = 1;
+                    steepMovingIds.push_back(static_cast<std::uint32_t>(gt));
+                    newlySteep = true;
+                }
+            }
+            offSoup += w.soup.size(); offSteep += w.steep.size();
+        }
+    } else {
+        lazyPlaceAll();       // the slots' soups are copied whole: every mesh placed first
+        playerSoup.clear(); playerSteep.clear();
+        for (int sl = 0; sl < 2; ++sl) {
+            const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+            if (w.stem.empty()) continue;
+            playerSoup.insert(playerSoup.end(), w.soup.begin(), w.soup.end());
+            playerSteep.insert(playerSteep.end(), w.steep.begin(), w.steep.end());
+        }
+        mergedValid = true;
+        // a full merge: the sets' layout may have changed, so every moved
+        // triangle is re-marked against the new offsets
+        playerMovingTri.assign(playerSoup.size() / 9, 0);
+        std::size_t off = 0;
+        for (int sl = 0; sl < 2; ++sl) {
+            const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+            if (w.stem.empty()) continue;
+            for (const std::uint32_t t : movedSoup[sl])
+                if (off / 9 + t < playerMovingTri.size()) playerMovingTri[off / 9 + t] = 1;
+            off += w.soup.size();
+        }
+        playerMovingIds.clear();
+        for (std::size_t t = 0; t < playerMovingTri.size(); ++t)
+            if (playerMovingTri[t]) playerMovingIds.push_back(static_cast<std::uint32_t>(t));
+        newlyMoving = true;
+        // ...and the steep faces the same way
+        steepMovingTri.assign(playerSteep.size() / 9, 0);
+        std::size_t offS = 0;
+        for (int sl = 0; sl < 2; ++sl) {
+            const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+            if (w.stem.empty()) continue;
+            for (const std::uint32_t t : movedSteep[sl])
+                if (offS / 9 + t < steepMovingTri.size()) steepMovingTri[offS / 9 + t] = 1;
+            offS += w.steep.size();
+        }
+        steepMovingIds.clear();
+        for (std::size_t t = 0; t < steepMovingTri.size(); ++t)
+            if (steepMovingTri[t]) steepMovingIds.push_back(static_cast<std::uint32_t>(t));
+        newlySteep = true;
+    }
+}
+
+
+// `OMK_VERIFY_SPLIT`: the moved triangles and a lattice probed through the two-layer grid and the scan (from `inputMotion`)
+void PlayState::inputVerifySplit(bool verifySplit, std::vector<unsigned int> (&movedSoup)[2]) {
+    if (verifySplit) {
+        lazyPlaceAll();   // it reads triangle centres straight out of the soup
+        static long splitFrames = 0, probes = 0, mismatched = 0;
+        ++splitFrames;
+        const auto check = [&](double x, double y, double z) {
+            ++probes;
+            const auto a = omk::floorUnder(playerSoup, playerGrid, x, y, z);
+            const auto b = omk::floorUnder(playerSoup, x, y, z);
+            if (a.has_value() != b.has_value() || (a && std::memcmp(&*a, &*b, sizeof(double)) != 0))
+                ++mismatched;
+            const auto c = omk::surfaceUnder(playerSoup, playerGrid, x, y, z);
+            const auto d = omk::surfaceUnder(playerSoup, x, y, z);
+            if (c.has_value() != d.has_value() ||
+                (c && std::memcmp(&*c, &*d, sizeof(omk::GroundHit)) != 0)) ++mismatched;
+        };
+        std::size_t off = 0;
+        for (int sl = 0; sl < 2; ++sl) {
+            const WorldSlot& w = worldSlots[static_cast<std::size_t>(sl)];
+            if (w.stem.empty()) continue;
+            for (std::size_t k = 0; k < movedSoup[sl].size(); k += 7) {
+                const std::size_t o = off + 9 * static_cast<std::size_t>(movedSoup[sl][k]);
+                check((double(playerSoup[o]) + playerSoup[o + 3] + playerSoup[o + 6]) / 3.0,
+                      (double(playerSoup[o + 1]) + playerSoup[o + 4] + playerSoup[o + 7]) / 3.0 - 200.0,
+                      (double(playerSoup[o + 2]) + playerSoup[o + 5] + playerSoup[o + 8]) / 3.0);
+            }
+            off += w.soup.size();
+        }
+        for (int gx = -4; gx <= 4; ++gx)
+            for (int gz = -4; gz <= 4; ++gz)
+                check(1804.0 + gx * 900.0, -2000.0, -6890.0 + gz * 900.0);
+        if (splitFrames % 30 == 0)
+            std::printf("split verify: %ld moving frames, %ld probes, %ld mismatched, fixed %d x %d, moving %zu entries "
+                        "in %d x %d (steep moving %d x %d, %zu entries)%s\n",
+                        splitFrames, probes, mismatched, playerGrid.fixed.nx, playerGrid.fixed.nz,
+                        playerGrid.moving.index.size(), playerGrid.moving.nx, playerGrid.moving.nz,
+                        playerSteepGrid.moving.nx, playerSteepGrid.moving.nz,
+                        playerSteepGrid.moving.index.size(),
+                        playerGrid.useParts ? (" - the moving layer is " +
+                            std::to_string(playerGrid.parts.size()) + " and " +
+                            std::to_string(playerSteepGrid.parts.size()) +
+                            " whole meshes, no grid").c_str() : "");
+    }
+}
+
 
 // Adventure mode's and the scene's own sound effects
 void PlayState::inputSounds() {

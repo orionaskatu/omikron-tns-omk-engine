@@ -295,40 +295,7 @@ void PlayState::screensHuds() {
     // - the two gauges down the screen's two edges, and mode 2's STAT CARD
     // for the four seconds after `Fight_Begin`'s `Hud_Refresh`
     // (`ui/hudbar.h`). Hidden through the KO replay, as the engine's gate.
-    if (fightRun.active && fightRun.fight && !omk::envFlag("OMK_NOUI")) {
-        if (!hudBar.loaded()) hudBar.load(fs);
-        if (fightRun.hudRefresh) {
-            fightRun.hudRefresh = false;
-            hudBar.refresh(0, 22, fb.w);           // `sub_446C40(0, 22)`
-            hudBar.refresh(1, 22, fb.w);
-            hudBar.refreshCard(fightRun.cardProps, fightRun.ms);
-            std::printf("frame %ld: FIGHT HUD (Hud_Refresh) - stat card", frameNo);
-            for (int k = 0; k < 6; ++k)
-                std::printf(" %s=%d", hudBar.cardLabel(k).c_str(), hudBar.cardValue(k));
-            // non-ASCII bytes ESCAPED: the rank is raw Latin-1 ("Initi\xe9"),
-            // and one invalid UTF-8 byte in this log makes `grep` go quiet
-            // and a strict decode throw (`engine: fight letterbox`)
-            std::string rank = "(none)";
-            if (hudBar.cardValue(1) >= 0 && hudBar.cardValue(1) < 5) {
-                rank.clear();
-                for (const char ch : hudBar.rankName(hudBar.cardValue(1))) {
-                    const auto u = static_cast<unsigned char>(ch);
-                    if (u < 0x80) rank.push_back(ch);
-                    else { char e[8]; std::snprintf(e, sizeof e, "\\x%02x", u); rank += e; }
-                }
-            }
-            std::printf(", rank '%s'\n", rank.c_str());
-        }
-        if (fightRun.fight->koCounter() == 0) {
-            const omk::HudBarFrame a = hudBar.draw(fb, fightRun.fight->player().hp, 200, 0, 2,
-                                                   &lay, fightRun.ms);
-            const omk::HudBarFrame b = hudBar.draw(fb, fightRun.fight->opponent().hp, 200, 1, 0);
-            if ((frameNo - fightRun.startedAt) % 30 == 0)
-                std::printf("    fight HUD: player gauge %d%% (top %d), opponent %d%% (top %d), "
-                            "card rows %d text %d\n", a.percent, a.top, b.percent, b.top,
-                            a.cardRows, a.cardText);
-        }
-    }
+    screensFightHud(lay);
     // ---- THE BREATH GAUGE (`todo/swimming.md` step 4) ----------------
     //
     // `sub_4A8F30`'s underwater arm, every tick until the 40 seconds are
@@ -405,6 +372,158 @@ void PlayState::screensHuds() {
     // GAUGE (`ui/hudbar.h`). The two turning models go into their boxes
     // below. NOT drawn yet, labelled: the top-right minimap
     // `RADAR\<level>.WRE`.
+    screensShootHud(comp);
+    if (fbCloudOwed) {                   // `phaseWorld` skipped the clear for the cloud
+        fbCloudOwed = false;
+        if (!cloudCoversFrame()) {
+            clearFrame();
+            static bool told = false;
+            if (!told) {
+                told = true;
+                std::printf("frame %ld: the cloud was expected and not drawn - the frame cleared late\n", frameNo);
+            }
+        }
+    }
+    if (walk) {
+        comp.setFrame(frameNo);
+        // The oscillators run on a MILLISECOND clock, not on the frame
+        // index - their periods are 500, 1000 and 5000 and
+        // `Ui_TickScreens` advances them by the frame delta.
+        //
+        // ...and in a HEADLESS run (`--frames`, no pacing) on the frame
+        // clock, 1000/30 ms a frame - the paced run's own - so a run is the
+        // same run however busy the machine is. On the wall clock, `engine:
+        // den locker` went red under a sweep's load: its frames came slower,
+        // the hand's wheel spent the few frames that showed its 2 in the
+        // blink's blank half, and the display's union read 7210 for 7212.
+        comp.setClockMs(uiClockMs());
+        // THE HIGHLIGHT. `Ui_DrawItemCursor` eases sixteen elements
+        // between frames, so it needs a delta and somewhere to live; it
+        // is attached rather than owned by the composer so that
+        // `run_screen`'s hashes stay a pure function of the screen.
+        {
+            static long uiLastMs = 0;
+            const long nowMs = uiClockMs();
+            comp.setDeltaMs(uiLastMs ? nowMs - uiLastMs : 33);
+            uiLastMs = nowMs;
+        }
+        comp.attachCursor(&uiCursor);
+        comp.attachModels(&uiModels);
+        comp.setRowText(sneakRows.empty() ? nullptr : &sneakRows);
+        comp.setHidden(sneakHidden.empty() ? nullptr : &sneakHidden);
+        comp.setItemMove(itemMoved.empty() ? nullptr : &itemMoved);
+        comp.setItemSource(itemSource.empty() ? nullptr : &itemSource);
+        comp.setItemLitSource(itemLitSource.empty() ? nullptr : &itemLitSource);
+        comp.setItemSection(itemSection.empty() ? nullptr : &itemSection);
+        comp.setReportText(hintReport.empty() ? nullptr : &hintReport);
+        comp.setHighScores(openScreen == omk::screen::HighScore ? &highScores : nullptr,
+                           walk ? walk->highScorePage() : 0,
+                           hsMessageLeftMs > 0.0 ? &hsMessage : nullptr);
+        // THE CLOUD IS THE MENU'S BACKGROUND, NOT EVERY SCREEN'S.
+        //
+        // A reader's screenshots of the original settle it from both
+        // sides: the load panel (screen 29, at the menu) draws over the
+        // animated cloud, and the SAVE screen (30, opened from a save
+        // point) draws over the LIVE 3D SCENE - Kay'l is visible standing
+        // on the rings behind the menu text.
+        //
+        // What gates it in the engine is not read: `sub_4B19C0` only
+        // creates and frees the cloud's surface around a resolution
+        // change, and the per-frame drawer has no `proc` label, so it is
+        // in the decompilation's blind spot (CLAUDE.md 1). The rule here
+        // is taken from those screenshots - no cloud once the world is
+        // live - and is labelled a RECONSTRUCTION for that reason.
+        //
+        // "THE WORLD IS LIVE" IS `player`, NOT `adventure`, and the two
+        // differ exactly where this matters. `adventure` is a per-frame
+        // MODE and a screen over the world takes it false in the same
+        // breath - so a rule on `adventure` draws the cloud over every
+        // world-side screen (the pause, the SAVE screen), which is the
+        // one case the screenshots decide against.
+        comp.attachCloud(player ? nullptr : &cloud);
+        // `OMK_NOUI=1` draws the frame WITHOUT the interface layer. An
+        // instrument, and the one that found the keyed-tile fault: with
+        // the device off, the caller was there all along, so the world
+        // was never the problem.
+        screensInterfaceLayer(comp, optMenu);
+    }
+
+    // A `media.play` line, while `Subtitle_Show`'s timer runs: inset 16,
+    // against the bottom, white. A conversation's own text takes over.
+    // The document bitmap sits over the frame until the next media.play
+    // replaces it. Black is the key - 284581 of `ZVOG001`'s 307200 pixels
+    // are it - so only the logo lands on the scene.
+    screensMediaInset();
+    // ...and it DOES draw over the videophone: two of the ten sneak
+    // calls are a `media.play` and nothing else, so a subtitle suppressed
+    // by "a screen is up" would lose the whole of those two.
+    if (!session.dialogOpen() && (!walk || openScreen == omk::screen::Videophone) &&
+        mediaTextFrames > 0) {
+        // A DIFFERENT FACE, and it is the engine's choice. The
+        // dialogue's params are TEXTP_FLAG_A alone, so its font stays the
+        // `Text_DrawBlock` default 74 = 'J'; `Subtitle_Show` (0x0041E040)
+        // passes `params[0] = 0x20 | 0x40` and `params[2] = 86`, and
+        // TEXTP_SLOT2 writes `dword_907A10 = params[2]` - the font global
+        // whose default is that 74. So the adventure-mode interaction
+        // line, the one that always comes with a sound, is face 86 = 'V'.
+        // A credit block positions itself; anything else is the
+        // ordinary bottom-anchored subtitle.
+        const auto ptMedia = omk::parseMarkup(mediaText, 'V');
+        if (!drawPositioned(fb, lay, ptMedia, dispW, dispH))
+            drawSubtitle(fb, lay, mediaText, {}, -1, dispW, dispH, 16,
+                         SubBox::None, 'V', 0, nullptr, /*mediaLine*/ true, front.ticksMs());
+        mediaTextFrames -= frameSec * 30.0;
+    }
+    // The subtitle goes over whatever the frame already holds - which
+    // during a conversation is the dialogue camera's view of the set.
+    screensSubtitle(lay);
+    mark("screens, hud");
+}
+
+// THE FIGHT HUD (`todo/fight-mode.md` step 5): the two gauges and the stat card (from `screensHuds`)
+void PlayState::screensFightHud(omk::TextLayout& lay) {
+    const auto& fs = *fs_;
+    if (fightRun.active && fightRun.fight && !omk::envFlag("OMK_NOUI")) {
+        if (!hudBar.loaded()) hudBar.load(fs);
+        if (fightRun.hudRefresh) {
+            fightRun.hudRefresh = false;
+            hudBar.refresh(0, 22, fb.w);           // `sub_446C40(0, 22)`
+            hudBar.refresh(1, 22, fb.w);
+            hudBar.refreshCard(fightRun.cardProps, fightRun.ms);
+            std::printf("frame %ld: FIGHT HUD (Hud_Refresh) - stat card", frameNo);
+            for (int k = 0; k < 6; ++k)
+                std::printf(" %s=%d", hudBar.cardLabel(k).c_str(), hudBar.cardValue(k));
+            // non-ASCII bytes ESCAPED: the rank is raw Latin-1 ("Initi\xe9"),
+            // and one invalid UTF-8 byte in this log makes `grep` go quiet
+            // and a strict decode throw (`engine: fight letterbox`)
+            std::string rank = "(none)";
+            if (hudBar.cardValue(1) >= 0 && hudBar.cardValue(1) < 5) {
+                rank.clear();
+                for (const char ch : hudBar.rankName(hudBar.cardValue(1))) {
+                    const auto u = static_cast<unsigned char>(ch);
+                    if (u < 0x80) rank.push_back(ch);
+                    else { char e[8]; std::snprintf(e, sizeof e, "\\x%02x", u); rank += e; }
+                }
+            }
+            std::printf(", rank '%s'\n", rank.c_str());
+        }
+        if (fightRun.fight->koCounter() == 0) {
+            const omk::HudBarFrame a = hudBar.draw(fb, fightRun.fight->player().hp, 200, 0, 2,
+                                                   &lay, fightRun.ms);
+            const omk::HudBarFrame b = hudBar.draw(fb, fightRun.fight->opponent().hp, 200, 1, 0);
+            if ((frameNo - fightRun.startedAt) % 30 == 0)
+                std::printf("    fight HUD: player gauge %d%% (top %d), opponent %d%% (top %d), "
+                            "card rows %d text %d\n", a.percent, a.top, b.percent, b.top,
+                            a.cardRows, a.cardText);
+        }
+    }
+}
+
+
+// THE SHOOT HUD, screen 34 (`todo/shoot-mode.md` 8.3) (from `screensHuds`)
+void PlayState::screensShootHud(omk::ScreenComposer& comp) {
+    auto& session = *session_;
+    const auto& fs = *fs_;
     if (shootMode && hudWalk && !walk && !omk::envFlag("OMK_NOUI")) {
         hudRows.clear();
         std::int32_t rings = 0;
@@ -504,46 +623,7 @@ void PlayState::screensHuds() {
                             radarAlways ? ", radar = always" : "");
             }
         }
-        if (radarShown) {
-            omk::RadarView rv;
-            const int* bx = radar.box();
-            rv.left = fb.w * bx[0] / 640;
-            rv.top = fb.h * bx[1] / 480;
-            rv.right = rv.left + fb.w * bx[2] / 640;
-            rv.bottom = rv.top + fb.h * bx[3] / 480;
-            rv.screenW = fb.w;
-            rv.screenH = fb.h;
-            rv.fovDeg = 75.0f;
-            for (int k = 0; k < 3; ++k) rv.player[k] = player->pos()[k];
-            rv.facingDeg = player->facing();
-            std::vector<omk::RadarActor> ra;
-            for (const auto& sp : staged) {
-                if (!sp) continue;
-                omk::RadarActor a;
-                a.id = sp->actor;
-                for (int k = 0; k < 3; ++k) a.pos[k] = sp->drawAt[k];
-                const auto br = shootBrains.find(sp->actor);
-                a.state = br == shootBrains.end() ? 1 : (br->second.health > 0 ? 3 : 0);
-                ra.push_back(a);
-            }
-            const omk::RadarFrame rf = radar.draw(fb, rv, ra);
-            static int radarBlipsTold = -1;
-            if (rf.blips != radarBlipsTold) {
-                radarBlipsTold = rf.blips;
-                const bool inFb = rf.playerX >= 0 && rf.playerY >= 0 &&
-                                  rf.playerX < fb.w && rf.playerY < fb.h;
-                std::printf("frame %ld: RADAR drawn - %d of %d edges in front, %d lines "
-                            "in the box %d,%d-%d,%d, %d gunmen, player square %d at "
-                            "%d,%d pixel 0x%04x\n", frameNo,
-                            rf.edgesInFront, radar.wire().edges(), rf.lines, rv.left,
-                            rv.top, rv.right, rv.bottom, rf.blips, int(rf.player),
-                            rf.playerX, rf.playerY,
-                            inFb ? unsigned(fb.px[static_cast<std::size_t>(rf.playerY) *
-                                                      static_cast<std::size_t>(fb.w) +
-                                                  static_cast<std::size_t>(rf.playerX)])
-                                 : 0u);
-            }
-        }
+        screensShootRadar(radarShown);
         const auto pixel = [&](int x, int y) {
             return unsigned(fb.px[static_cast<std::size_t>(y) * static_cast<std::size_t>(fb.w) +
                                   static_cast<std::size_t>(x)]);
@@ -584,332 +664,309 @@ void PlayState::screensHuds() {
                         session.shootMode().hudScreen(), line);
         }
     }
-    if (fbCloudOwed) {                   // `phaseWorld` skipped the clear for the cloud
-        fbCloudOwed = false;
-        if (!cloudCoversFrame()) {
-            clearFrame();
-            static bool told = false;
-            if (!told) {
-                told = true;
-                std::printf("frame %ld: the cloud was expected and not drawn - the frame cleared late\n", frameNo);
-            }
-        }
-    }
-    if (walk) {
-        comp.setFrame(frameNo);
-        // The oscillators run on a MILLISECOND clock, not on the frame
-        // index - their periods are 500, 1000 and 5000 and
-        // `Ui_TickScreens` advances them by the frame delta.
-        //
-        // ...and in a HEADLESS run (`--frames`, no pacing) on the frame
-        // clock, 1000/30 ms a frame - the paced run's own - so a run is the
-        // same run however busy the machine is. On the wall clock, `engine:
-        // den locker` went red under a sweep's load: its frames came slower,
-        // the hand's wheel spent the few frames that showed its 2 in the
-        // blink's blank half, and the display's union read 7210 for 7212.
-        comp.setClockMs(uiClockMs());
-        // THE HIGHLIGHT. `Ui_DrawItemCursor` eases sixteen elements
-        // between frames, so it needs a delta and somewhere to live; it
-        // is attached rather than owned by the composer so that
-        // `run_screen`'s hashes stay a pure function of the screen.
-        {
-            static long uiLastMs = 0;
-            const long nowMs = uiClockMs();
-            comp.setDeltaMs(uiLastMs ? nowMs - uiLastMs : 33);
-            uiLastMs = nowMs;
-        }
-        comp.attachCursor(&uiCursor);
-        comp.attachModels(&uiModels);
-        comp.setRowText(sneakRows.empty() ? nullptr : &sneakRows);
-        comp.setHidden(sneakHidden.empty() ? nullptr : &sneakHidden);
-        comp.setItemMove(itemMoved.empty() ? nullptr : &itemMoved);
-        comp.setItemSource(itemSource.empty() ? nullptr : &itemSource);
-        comp.setItemLitSource(itemLitSource.empty() ? nullptr : &itemLitSource);
-        comp.setItemSection(itemSection.empty() ? nullptr : &itemSection);
-        comp.setReportText(hintReport.empty() ? nullptr : &hintReport);
-        comp.setHighScores(openScreen == omk::screen::HighScore ? &highScores : nullptr,
-                           walk ? walk->highScorePage() : 0,
-                           hsMessageLeftMs > 0.0 ? &hsMessage : nullptr);
-        // THE CLOUD IS THE MENU'S BACKGROUND, NOT EVERY SCREEN'S.
-        //
-        // A reader's screenshots of the original settle it from both
-        // sides: the load panel (screen 29, at the menu) draws over the
-        // animated cloud, and the SAVE screen (30, opened from a save
-        // point) draws over the LIVE 3D SCENE - Kay'l is visible standing
-        // on the rings behind the menu text.
-        //
-        // What gates it in the engine is not read: `sub_4B19C0` only
-        // creates and frees the cloud's surface around a resolution
-        // change, and the per-frame drawer has no `proc` label, so it is
-        // in the decompilation's blind spot (CLAUDE.md 1). The rule here
-        // is taken from those screenshots - no cloud once the world is
-        // live - and is labelled a RECONSTRUCTION for that reason.
-        //
-        // "THE WORLD IS LIVE" IS `player`, NOT `adventure`, and the two
-        // differ exactly where this matters. `adventure` is a per-frame
-        // MODE and a screen over the world takes it false in the same
-        // breath - so a rule on `adventure` draws the cloud over every
-        // world-side screen (the pause, the SAVE screen), which is the
-        // one case the screenshots decide against.
-        comp.attachCloud(player ? nullptr : &cloud);
-        // `OMK_NOUI=1` draws the frame WITHOUT the interface layer. An
-        // instrument, and the one that found the keyed-tile fault: with
-        // the device off, the caller was there all along, so the world
-        // was never the problem.
-        if (!omk::envFlag("OMK_NOUI")) {
-            omk::ScreenFrame sf;
-            spanned("screen draw", [&] { sf = comp.draw(fb, openScreen, *walk); });
-            // screen 35 over the menu while it has the focus - its panel
-            // paints no background, so the menu's sheet shows through
-            const bool optShown = (openScreen == omk::screen::StartMenu && optMenu.focused()) ||
-                (openScreen == omk::screen::Sneak && optMenu.isOpen() && walk->panel() &&
-                 walk->panel()->addr == omk::kPanelSneakOptions);
-            if (optShown) {
-                const omk::OptionsDrawn od = comp.drawOptions(fb, optMenu);
-                static std::string optTold;
-                std::string line = "options: page " + std::to_string(optMenu.page()) + ":";
-                for (const auto& l : od.lines) line += " [" + l + "]";
-                if (line != optTold) {
-                    optTold = line;
-                    std::printf("frame %ld: %s - %d drawn, %d lit, %d slider%s\n", frameNo,
-                                line.c_str(), od.widgets, od.lit, od.sliders,
-                                od.sliders == 1 ? "" : "s");
-                }
-            }
-            // ---- THE HINT SHOP, REPORTED FROM THE DRAW -----------
-            //
-            // Every field on this line comes out of `ScreenFrame`, and
-            // the four texts are the strings the COMPOSER laid out, not
-            // the map it was handed: an item the builders hid has no
-            // entry at all, which is the half a handed-over map cannot
-            // say (CLAUDE.md 1, the log-line rule). `-` marks one that
-            // drew nothing this frame - and on a correct page three of
-            // the four always do, because the shop hides `Indice achete
-            // !` and the confirm hides the body until you have paid.
-            if (!hintReport.empty()) {
-                const auto txt = [&](std::uint32_t a) {
-                    const auto t = sf.itemText.find(a);
-                    return t == sf.itemText.end() ? std::string("-")
-                                                  : t->second;
-                };
-                char page[512];
-                std::snprintf(page, sizeof page,
-                              "indices: %s, %d row%s, list %d, %d items drawn; "
-                              "body '%s' | price '%s' | foot '%s' | done '%s'",
-                              hintPanel == omk::kPanelHintBuy ? "the purchase confirm"
-                                                              : "the shop",
-                              walk->hintRows(), walk->hintRows() == 1 ? "" : "s",
-                              walk->currentList(), sf.itemsDrawn,
-                              txt(omk::kItemHintBody).c_str(),
-                              txt(omk::kItemHintPrice).c_str(),
-                              txt(omk::kItemHintFoot).c_str(),
-                              txt(omk::kItemHintDone).c_str());
-                if (hintTitleTold != page) {
-                    hintTitleTold = page;
-                    std::printf("%s\n", page);
-                }
-            }
-            // ---- DEN'S LOCKER, REPORTED FROM THE DRAW ------------
-            //
-            // Not from `denDigit()`: the hook hands the composer a source
-            // row per wheel and the composer decides whether to use it,
-            // because the wheel the hand is on draws its LIT source -
-            // its own empty place in the artwork - while oscillator 1
-            // blinks it. A line printed from what was HANDED OVER said
-            // "7 2 1 2" through a display that showed three figures and a
-            // gap, which is the fault this is written against
-            // (CLAUDE.md 1). `-` is a wheel drawn blank this frame.
-            if (openScreen == omk::screen::Den && !denWheelItems.empty()) {
-                std::string read;
-                for (const std::uint32_t a : denWheelItems) {
-                    const auto sr = sf.spriteSrc.find(a);
-                    const int y = sr == sf.spriteSrc.end() ? -1 : sr->second.second;
-                    // the strip is at x = 0 and 46 to a figure; anything
-                    // else is the item's own lit place, so: blank
-                    const bool digit = sr != sf.spriteSrc.end() &&
-                                       sr->second.first == 0 && y >= 0 && (y % 46) == 0;
-                    read += digit ? std::to_string(y / 46) : std::string("-");
-                    read += ' ';
-                }
-                static std::string denTold;
-                if (read != denTold) {
-                    denTold = read;
-                    std::printf("den locker: the display reads %s(the hand is on %d, "
-                                "and that wheel blinks)\n", read.c_str(), walk->denWheel());
-                }
-            }
-            // ---- THE HIGH-SCORE TABLE, reported from the draw --------
-            //
-            // `scoreBlocks` is what the hook actually laid out: the title,
-            // the page heading and two per row - so a page whose rows are
-            // blank says so by its count, and a heading that resolved to
-            // nothing cannot be claimed.
-            if (openScreen == omk::screen::HighScore) {
-                static std::string hsTold;
-                std::string rows;
-                for (const auto& r : sf.scoreRows) rows += " | " + r;
-                const std::string said = "page " + std::to_string(walk->highScorePage()) +
-                                         ", " + std::to_string(sf.scoreBlocks) +
-                                         " blocks drawn:" + rows;
-                if (said != hsTold) {
-                    hsTold = said;
-                    std::printf("high score: %s\n", said.c_str());
-                }
-            }
-            // ---- THE CITY MAP, reported from the DRAW ----------------
-            //
-            // The line above says what the viewer RESOLVED; this one says
-            // what the two hooks put on the frame - `mapSheet` is set
-            // inside the blit's own `if (item->tag)` arm, and every point
-            // is the projection's own output. A run that matched the city
-            // and then drew nothing would read differently here, which is
-            // the half a line printed at the hand-over cannot see.
-            if (openScreen == omk::screen::Sneak && sf.mapPin) {
-                static std::string mapDrawTold;
-                std::string said = std::string("the sheet ") +
-                    (sf.mapSheet ? "blitted" : "MISSING") + ", the pin at " +
-                    std::to_string(sf.mapPinAt[0]) + "," +
-                    std::to_string(sf.mapPinAt[1]) + ", " +
-                    std::to_string(sf.mapMarkers.size()) + " markers:";
-                for (const auto& m : sf.mapMarkers)
-                    said += " " + m.first + " at " +
-                            std::to_string(m.second.first) + "," +
-                            std::to_string(m.second.second) + " |";
-                if (!said.empty() && said.back() == '|') said.resize(said.size() - 2);
-                if (said != mapDrawTold) {
-                    mapDrawTold = said;
-                    std::printf("sneak map: %s\n", said.c_str());
-                }
-            }
-            // ---- XACHEN, reported from the draw for the same reason ---
-            //
-            // The symbol is a CELL of the artwork, so what a check can see
-            // is the rect the composer sampled; turning it back into the
-            // value through the same table the hook used says the symbol
-            // reached the screen rather than only the walk.
-            if (openScreen == omk::screen::Xachen && !xachenItems.empty()) {
-                std::string read;
-                for (const std::uint32_t a : xachenItems) {
-                    const auto sr = sf.spriteSrc.find(a);
-                    int v = -1;
-                    if (sr != sf.spriteSrc.end())
-                        for (int k = 1; k <= 14; ++k) {
-                            int xy[2];
-                            omk::UiWalk::xachenSprite(k, xy);
-                            if (xy[0] == sr->second.first && xy[1] == sr->second.second)
-                                { v = k; break; }
-                        }
-                    read += (v < 0 ? std::string("-") : std::to_string(v)) + " ";
-                }
-                static std::string xaTold;
-                if (read != xaTold) {
-                    xaTold = read;
-                    std::printf("xachen: the cartridges show %s(%s)\n", read.c_str(),
-                                walk->xachenSolved() ? "10 14 7 9 - the door opens"
-                                                     : "not the code");
-                }
-            }
-            // ---- THE SNEAK'S ECHO BAR, reported from the DRAW ------
-            //
-            // `sf.echoBar` is the string the composer's transcription of
-            // `sub_0049DC20` handed the LAYOUT, taken after it ran, and
-            // `sf.echoArm` is which of the function's seven branches
-            // produced it - so an empty bar (the examine box's arm, or a
-            // panel with nothing selected) reads differently from a bar
-            // the walk never reached at all, and no part of the line can
-            // be satisfied by something this file computed.
-            //
-            // `sf.rowMarks` is the row hook `0x0049C090`'s own fills, and
-            // `rowMarked` the row tags it marked - the second mark being
-            // what a `Utiliser sur` shows and nothing else in the device
-            // does.
-            if (openScreen == omk::screen::Sneak) {
-                static std::string echoTold;
-                std::string marks;
-                for (int t : sf.rowMarked) marks += " " + std::to_string(t);
-                const std::string said =
-                    "arm " + std::to_string(sf.echoArm) + " '" + sf.echoBar +
-                    "', " + std::to_string(sf.rowMarks) + " row marks" +
-                    (marks.empty() ? std::string() : " (tags" + marks + ")");
-                if (said != echoTold) {
-                    echoTold = said;
-                    std::printf("sneak: echo bar - %s\n", said.c_str());
-                }
-            }
-            // ...and the memo body is reported from the DRAW: `textLines`
-            // counts what the body/examine block laid out, so a box fed
-            // nothing says 0 lines instead of repeating what it was handed.
-            if (!memoBodyPending.empty()) {
-                static std::string memoBodyTold;
-                // ...and WHEN, because the content alone stopped being
-                // able to say it. The box is lit as soon as the selection
-                // enters the list, and the selection starts on row 0 - so
-                // a body wrongly drawn while the page merely SITS OPEN
-                // prints the same `row 0 id 913` as the right one does.
-                // The frame separates them: the legitimate line cannot
-                // appear before the press that selects the line. It is a
-                // property of this harness (fixed `--frames` and
-                // `--keydelay`), not of the engine.
-                const std::string said = memoBodyPending + ", " +
-                                         std::to_string(sf.textChars) + " chars, " +
-                                         std::to_string(sf.textLines) + " lines drawn";
-                if (said != memoBodyTold) {
-                    memoBodyTold = said;
-                    // The frame is stamped on the line but kept OUT of the
-                    // change test: inside it, every frame differed and the
-                    // same body printed on all 360 of them.
-                    std::printf("sneak: memo body - %s at frame %ld\n",
-                                said.c_str(),
-                                static_cast<long>(session.frameNo()));
-                }
-                memoBodyPending.clear();
-            }
-            // ---- THE MEMO READER ---------------------------------
-            //
-            // The page a memo row's confirm installs (`sub_49BC60`'s
-            // kind-2 arm). It ships `+24 = 2`, so it comes up standing in
-            // the body box's own list, whose hook is the scroller - which
-            // is what makes UP and DOWN move the text rather than the
-            // selection. Reported as the list it stands in and the scroll
-            // offset, beside what the box actually drew.
-            if (const omk::UiPanel* rp = walk->panel();
-                rp && rp->addr == omk::kPanelSneakReader) {
-                static std::string readerTold;
-                const std::string said =
-                    "list " + std::to_string(walk->currentList()) +
-                    ", scroll " + std::to_string(walk->textScroll()) +
-                    ", " + std::to_string(sf.textChars) + " chars, " +
-                    std::to_string(sf.textLines) + " lines drawn";
-                if (said != readerTold) {
-                    readerTold = said;
-                    std::printf("sneak: memo reader - %s\n", said.c_str());
-                }
-            }
-            // ...and the TERMINAL FAMILY's dossier reader (0x004E4170), the
-            // same shape: the list it stands in, the offset after the
-            // composer's clamp, and what the body box laid out
-            if (const omk::UiPanel* dp = walk->panel();
-                dp && dp->addr == omk::kPanelTerminalDossier) {
-                static std::string dossierTold;
-                const std::string said =
-                    "list " + std::to_string(walk->currentList()) +
-                    ", scroll " + std::to_string(walk->textScroll()) +
-                    " of " + std::to_string(sf.textOverflow) + ", " +
-                    std::to_string(sf.textChars) + " chars, " +
-                    std::to_string(sf.textLines) + " lines drawn";
-                if (said != dossierTold) {
-                    dossierTold = said;
-                    std::printf("terminal family: dossier reader - %s\n", said.c_str());
-                }
-            }
-        }
-    }
+}
 
-    // A `media.play` line, while `Subtitle_Show`'s timer runs: inset 16,
-    // against the bottom, white. A conversation's own text takes over.
-    // The document bitmap sits over the frame until the next media.play
-    // replaces it. Black is the key - 284581 of `ZVOG001`'s 307200 pixels
-    // are it - so only the logo lands on the scene.
+
+// THE RADAR on the shoot HUD (from `screensHuds`)
+void PlayState::screensShootRadar(bool radarShown) {
+    if (radarShown) {
+        omk::RadarView rv;
+        const int* bx = radar.box();
+        rv.left = fb.w * bx[0] / 640;
+        rv.top = fb.h * bx[1] / 480;
+        rv.right = rv.left + fb.w * bx[2] / 640;
+        rv.bottom = rv.top + fb.h * bx[3] / 480;
+        rv.screenW = fb.w;
+        rv.screenH = fb.h;
+        rv.fovDeg = 75.0f;
+        for (int k = 0; k < 3; ++k) rv.player[k] = player->pos()[k];
+        rv.facingDeg = player->facing();
+        std::vector<omk::RadarActor> ra;
+        for (const auto& sp : staged) {
+            if (!sp) continue;
+            omk::RadarActor a;
+            a.id = sp->actor;
+            for (int k = 0; k < 3; ++k) a.pos[k] = sp->drawAt[k];
+            const auto br = shootBrains.find(sp->actor);
+            a.state = br == shootBrains.end() ? 1 : (br->second.health > 0 ? 3 : 0);
+            ra.push_back(a);
+        }
+        const omk::RadarFrame rf = radar.draw(fb, rv, ra);
+        static int radarBlipsTold = -1;
+        if (rf.blips != radarBlipsTold) {
+            radarBlipsTold = rf.blips;
+            const bool inFb = rf.playerX >= 0 && rf.playerY >= 0 &&
+                              rf.playerX < fb.w && rf.playerY < fb.h;
+            std::printf("frame %ld: RADAR drawn - %d of %d edges in front, %d lines "
+                        "in the box %d,%d-%d,%d, %d gunmen, player square %d at "
+                        "%d,%d pixel 0x%04x\n", frameNo,
+                        rf.edgesInFront, radar.wire().edges(), rf.lines, rv.left,
+                        rv.top, rv.right, rv.bottom, rf.blips, int(rf.player),
+                        rf.playerX, rf.playerY,
+                        inFb ? unsigned(fb.px[static_cast<std::size_t>(rf.playerY) *
+                                                  static_cast<std::size_t>(fb.w) +
+                                              static_cast<std::size_t>(rf.playerX)])
+                             : 0u);
+        }
+    }
+}
+
+
+// THE INTERFACE LAYER of the open screen (`OMK_NOUI=1` leaves it out) (from `screensHuds`)
+void PlayState::screensInterfaceLayer(omk::ScreenComposer& comp, omk::OptionsMenu& optMenu) {
+    auto& session = *session_;
+    if (!omk::envFlag("OMK_NOUI")) {
+        omk::ScreenFrame sf;
+        spanned("screen draw", [&] { sf = comp.draw(fb, openScreen, *walk); });
+        // screen 35 over the menu while it has the focus - its panel
+        // paints no background, so the menu's sheet shows through
+        const bool optShown = (openScreen == omk::screen::StartMenu && optMenu.focused()) ||
+            (openScreen == omk::screen::Sneak && optMenu.isOpen() && walk->panel() &&
+             walk->panel()->addr == omk::kPanelSneakOptions);
+        if (optShown) {
+            const omk::OptionsDrawn od = comp.drawOptions(fb, optMenu);
+            static std::string optTold;
+            std::string line = "options: page " + std::to_string(optMenu.page()) + ":";
+            for (const auto& l : od.lines) line += " [" + l + "]";
+            if (line != optTold) {
+                optTold = line;
+                std::printf("frame %ld: %s - %d drawn, %d lit, %d slider%s\n", frameNo,
+                            line.c_str(), od.widgets, od.lit, od.sliders,
+                            od.sliders == 1 ? "" : "s");
+            }
+        }
+        // ---- THE HINT SHOP, REPORTED FROM THE DRAW -----------
+        //
+        // Every field on this line comes out of `ScreenFrame`, and
+        // the four texts are the strings the COMPOSER laid out, not
+        // the map it was handed: an item the builders hid has no
+        // entry at all, which is the half a handed-over map cannot
+        // say (CLAUDE.md 1, the log-line rule). `-` marks one that
+        // drew nothing this frame - and on a correct page three of
+        // the four always do, because the shop hides `Indice achete
+        // !` and the confirm hides the body until you have paid.
+        if (!hintReport.empty()) {
+            const auto txt = [&](std::uint32_t a) {
+                const auto t = sf.itemText.find(a);
+                return t == sf.itemText.end() ? std::string("-")
+                                              : t->second;
+            };
+            char page[512];
+            std::snprintf(page, sizeof page,
+                          "indices: %s, %d row%s, list %d, %d items drawn; "
+                          "body '%s' | price '%s' | foot '%s' | done '%s'",
+                          hintPanel == omk::kPanelHintBuy ? "the purchase confirm"
+                                                          : "the shop",
+                          walk->hintRows(), walk->hintRows() == 1 ? "" : "s",
+                          walk->currentList(), sf.itemsDrawn,
+                          txt(omk::kItemHintBody).c_str(),
+                          txt(omk::kItemHintPrice).c_str(),
+                          txt(omk::kItemHintFoot).c_str(),
+                          txt(omk::kItemHintDone).c_str());
+            if (hintTitleTold != page) {
+                hintTitleTold = page;
+                std::printf("%s\n", page);
+            }
+        }
+        // ---- DEN'S LOCKER, REPORTED FROM THE DRAW ------------
+        //
+        // Not from `denDigit()`: the hook hands the composer a source
+        // row per wheel and the composer decides whether to use it,
+        // because the wheel the hand is on draws its LIT source -
+        // its own empty place in the artwork - while oscillator 1
+        // blinks it. A line printed from what was HANDED OVER said
+        // "7 2 1 2" through a display that showed three figures and a
+        // gap, which is the fault this is written against
+        // (CLAUDE.md 1). `-` is a wheel drawn blank this frame.
+        if (openScreen == omk::screen::Den && !denWheelItems.empty()) {
+            std::string read;
+            for (const std::uint32_t a : denWheelItems) {
+                const auto sr = sf.spriteSrc.find(a);
+                const int y = sr == sf.spriteSrc.end() ? -1 : sr->second.second;
+                // the strip is at x = 0 and 46 to a figure; anything
+                // else is the item's own lit place, so: blank
+                const bool digit = sr != sf.spriteSrc.end() &&
+                                   sr->second.first == 0 && y >= 0 && (y % 46) == 0;
+                read += digit ? std::to_string(y / 46) : std::string("-");
+                read += ' ';
+            }
+            static std::string denTold;
+            if (read != denTold) {
+                denTold = read;
+                std::printf("den locker: the display reads %s(the hand is on %d, "
+                            "and that wheel blinks)\n", read.c_str(), walk->denWheel());
+            }
+        }
+        // ---- THE HIGH-SCORE TABLE, reported from the draw --------
+        //
+        // `scoreBlocks` is what the hook actually laid out: the title,
+        // the page heading and two per row - so a page whose rows are
+        // blank says so by its count, and a heading that resolved to
+        // nothing cannot be claimed.
+        if (openScreen == omk::screen::HighScore) {
+            static std::string hsTold;
+            std::string rows;
+            for (const auto& r : sf.scoreRows) rows += " | " + r;
+            const std::string said = "page " + std::to_string(walk->highScorePage()) +
+                                     ", " + std::to_string(sf.scoreBlocks) +
+                                     " blocks drawn:" + rows;
+            if (said != hsTold) {
+                hsTold = said;
+                std::printf("high score: %s\n", said.c_str());
+            }
+        }
+        // ---- THE CITY MAP, reported from the DRAW ----------------
+        //
+        // The line above says what the viewer RESOLVED; this one says
+        // what the two hooks put on the frame - `mapSheet` is set
+        // inside the blit's own `if (item->tag)` arm, and every point
+        // is the projection's own output. A run that matched the city
+        // and then drew nothing would read differently here, which is
+        // the half a line printed at the hand-over cannot see.
+        if (openScreen == omk::screen::Sneak && sf.mapPin) {
+            static std::string mapDrawTold;
+            std::string said = std::string("the sheet ") +
+                (sf.mapSheet ? "blitted" : "MISSING") + ", the pin at " +
+                std::to_string(sf.mapPinAt[0]) + "," +
+                std::to_string(sf.mapPinAt[1]) + ", " +
+                std::to_string(sf.mapMarkers.size()) + " markers:";
+            for (const auto& m : sf.mapMarkers)
+                said += " " + m.first + " at " +
+                        std::to_string(m.second.first) + "," +
+                        std::to_string(m.second.second) + " |";
+            if (!said.empty() && said.back() == '|') said.resize(said.size() - 2);
+            if (said != mapDrawTold) {
+                mapDrawTold = said;
+                std::printf("sneak map: %s\n", said.c_str());
+            }
+        }
+        // ---- XACHEN, reported from the draw for the same reason ---
+        //
+        // The symbol is a CELL of the artwork, so what a check can see
+        // is the rect the composer sampled; turning it back into the
+        // value through the same table the hook used says the symbol
+        // reached the screen rather than only the walk.
+        if (openScreen == omk::screen::Xachen && !xachenItems.empty()) {
+            std::string read;
+            for (const std::uint32_t a : xachenItems) {
+                const auto sr = sf.spriteSrc.find(a);
+                int v = -1;
+                if (sr != sf.spriteSrc.end())
+                    for (int k = 1; k <= 14; ++k) {
+                        int xy[2];
+                        omk::UiWalk::xachenSprite(k, xy);
+                        if (xy[0] == sr->second.first && xy[1] == sr->second.second)
+                            { v = k; break; }
+                    }
+                read += (v < 0 ? std::string("-") : std::to_string(v)) + " ";
+            }
+            static std::string xaTold;
+            if (read != xaTold) {
+                xaTold = read;
+                std::printf("xachen: the cartridges show %s(%s)\n", read.c_str(),
+                            walk->xachenSolved() ? "10 14 7 9 - the door opens"
+                                                 : "not the code");
+            }
+        }
+        // ---- THE SNEAK'S ECHO BAR, reported from the DRAW ------
+        //
+        // `sf.echoBar` is the string the composer's transcription of
+        // `sub_0049DC20` handed the LAYOUT, taken after it ran, and
+        // `sf.echoArm` is which of the function's seven branches
+        // produced it - so an empty bar (the examine box's arm, or a
+        // panel with nothing selected) reads differently from a bar
+        // the walk never reached at all, and no part of the line can
+        // be satisfied by something this file computed.
+        //
+        // `sf.rowMarks` is the row hook `0x0049C090`'s own fills, and
+        // `rowMarked` the row tags it marked - the second mark being
+        // what a `Utiliser sur` shows and nothing else in the device
+        // does.
+        if (openScreen == omk::screen::Sneak) {
+            static std::string echoTold;
+            std::string marks;
+            for (int t : sf.rowMarked) marks += " " + std::to_string(t);
+            const std::string said =
+                "arm " + std::to_string(sf.echoArm) + " '" + sf.echoBar +
+                "', " + std::to_string(sf.rowMarks) + " row marks" +
+                (marks.empty() ? std::string() : " (tags" + marks + ")");
+            if (said != echoTold) {
+                echoTold = said;
+                std::printf("sneak: echo bar - %s\n", said.c_str());
+            }
+        }
+        // ...and the memo body is reported from the DRAW: `textLines`
+        // counts what the body/examine block laid out, so a box fed
+        // nothing says 0 lines instead of repeating what it was handed.
+        if (!memoBodyPending.empty()) {
+            static std::string memoBodyTold;
+            // ...and WHEN, because the content alone stopped being
+            // able to say it. The box is lit as soon as the selection
+            // enters the list, and the selection starts on row 0 - so
+            // a body wrongly drawn while the page merely SITS OPEN
+            // prints the same `row 0 id 913` as the right one does.
+            // The frame separates them: the legitimate line cannot
+            // appear before the press that selects the line. It is a
+            // property of this harness (fixed `--frames` and
+            // `--keydelay`), not of the engine.
+            const std::string said = memoBodyPending + ", " +
+                                     std::to_string(sf.textChars) + " chars, " +
+                                     std::to_string(sf.textLines) + " lines drawn";
+            if (said != memoBodyTold) {
+                memoBodyTold = said;
+                // The frame is stamped on the line but kept OUT of the
+                // change test: inside it, every frame differed and the
+                // same body printed on all 360 of them.
+                std::printf("sneak: memo body - %s at frame %ld\n",
+                            said.c_str(),
+                            static_cast<long>(session.frameNo()));
+            }
+            memoBodyPending.clear();
+        }
+        // ---- THE MEMO READER ---------------------------------
+        //
+        // The page a memo row's confirm installs (`sub_49BC60`'s
+        // kind-2 arm). It ships `+24 = 2`, so it comes up standing in
+        // the body box's own list, whose hook is the scroller - which
+        // is what makes UP and DOWN move the text rather than the
+        // selection. Reported as the list it stands in and the scroll
+        // offset, beside what the box actually drew.
+        if (const omk::UiPanel* rp = walk->panel();
+            rp && rp->addr == omk::kPanelSneakReader) {
+            static std::string readerTold;
+            const std::string said =
+                "list " + std::to_string(walk->currentList()) +
+                ", scroll " + std::to_string(walk->textScroll()) +
+                ", " + std::to_string(sf.textChars) + " chars, " +
+                std::to_string(sf.textLines) + " lines drawn";
+            if (said != readerTold) {
+                readerTold = said;
+                std::printf("sneak: memo reader - %s\n", said.c_str());
+            }
+        }
+        // ...and the TERMINAL FAMILY's dossier reader (0x004E4170), the
+        // same shape: the list it stands in, the offset after the
+        // composer's clamp, and what the body box laid out
+        if (const omk::UiPanel* dp = walk->panel();
+            dp && dp->addr == omk::kPanelTerminalDossier) {
+            static std::string dossierTold;
+            const std::string said =
+                "list " + std::to_string(walk->currentList()) +
+                ", scroll " + std::to_string(walk->textScroll()) +
+                " of " + std::to_string(sf.textOverflow) + ", " +
+                std::to_string(sf.textChars) + " chars, " +
+                std::to_string(sf.textLines) + " lines drawn";
+            if (said != dossierTold) {
+                dossierTold = said;
+                std::printf("terminal family: dossier reader - %s\n", said.c_str());
+            }
+        }
+    }
+}
+
+
+// A `media.play` line's picture while `Subtitle_Show`'s timer runs, inset 16 (from `screensHuds`)
+void PlayState::screensMediaInset() {
     if (mediaBmp.w > 0 && mediaBmp.h > 0) {
         // SCALED TO THE DISPLAY, like every other interface bitmap: the
         // interface is authored at 640x480 and `ScreenDraw` maps it with
@@ -946,28 +1003,12 @@ void PlayState::screensHuds() {
             }
         }
     }
-    // ...and it DOES draw over the videophone: two of the ten sneak
-    // calls are a `media.play` and nothing else, so a subtitle suppressed
-    // by "a screen is up" would lose the whole of those two.
-    if (!session.dialogOpen() && (!walk || openScreen == omk::screen::Videophone) &&
-        mediaTextFrames > 0) {
-        // A DIFFERENT FACE, and it is the engine's choice. The
-        // dialogue's params are TEXTP_FLAG_A alone, so its font stays the
-        // `Text_DrawBlock` default 74 = 'J'; `Subtitle_Show` (0x0041E040)
-        // passes `params[0] = 0x20 | 0x40` and `params[2] = 86`, and
-        // TEXTP_SLOT2 writes `dword_907A10 = params[2]` - the font global
-        // whose default is that 74. So the adventure-mode interaction
-        // line, the one that always comes with a sound, is face 86 = 'V'.
-        // A credit block positions itself; anything else is the
-        // ordinary bottom-anchored subtitle.
-        const auto ptMedia = omk::parseMarkup(mediaText, 'V');
-        if (!drawPositioned(fb, lay, ptMedia, dispW, dispH))
-            drawSubtitle(fb, lay, mediaText, {}, -1, dispW, dispH, 16,
-                         SubBox::None, 'V', 0, nullptr, /*mediaLine*/ true, front.ticksMs());
-        mediaTextFrames -= frameSec * 30.0;
-    }
-    // The subtitle goes over whatever the frame already holds - which
-    // during a conversation is the dialogue camera's view of the set.
+}
+
+
+// THE SUBTITLE, over whatever the frame already holds (from `screensHuds`)
+void PlayState::screensSubtitle(omk::TextLayout& lay) {
+    auto& session = *session_;
     if (session.dialogOpen()) {
         const auto& dlg = session.dialogue();
         std::vector<std::string> menu;
@@ -1009,8 +1050,8 @@ void PlayState::screensHuds() {
                      lineScroll, &lineOverflow, false, front.ticksMs());
         });
     }
-    mark("screens, hud");
 }
+
 
 // The fps counter
 void PlayState::screensFps() {

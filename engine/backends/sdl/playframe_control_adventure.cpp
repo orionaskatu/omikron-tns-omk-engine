@@ -1891,6 +1891,7 @@ void PlayState::adventureWalls() {
     }
 }
 
+
 // The world take; where the action raise comes from
 void PlayState::adventureTake() {
     auto& inv = *inv_;
@@ -1999,675 +2000,10 @@ void PlayState::adventureShot() {
             omk::shootAimSlew(shootAim, 0.0f, shootPitch * 0.017453279f,
                               static_cast<float>(frameSec * 30.0));
         const omk::ShootWeaponRow* row = playerShootRec.weapon;
-        if (shotLatch.request && row) {
-            shotLatch.request = false;          // dword_4E9744 = 0
-            // `Actor_TickProjectiles(player)`, the record path.
-            //
-            // THE MUZZLE is a RECONSTRUCTION, labelled: the engine
-            // places the shot at the held object's `+12` node,
-            // which rides actor `+44` - `Maing`, the left hand.
-            // No weapon model is loaded here, so the shot leaves
-            // from the hand node itself, placed exactly the way
-            // the held prop is (the render pass, "THE OBJECT IN
-            // HIS HAND").
-            const float* pp = player->pos();
-            const float yaw = player->facing();
-            omk::RecordShot rs;
-            rs.muzzle[0] = pp[0]; rs.muzzle[1] = pp[1]; rs.muzzle[2] = pp[2];
-            const char* from = "his position (no pose)";
-            if (const omk::NodeTracks* pt = player->poseTracks()) {
-                const std::vector<omk::MeshPose> pose =
-                    playerPoseNow(&*player, true, *pt, player->poseFrameF());
-                int hand = -1;      // the LAST strstr hit, as o3de_Traverse leaves it
-                for (std::size_t i = 0; i < playerMeshes.size(); ++i)
-                    if (std::strstr(playerMeshes[i].name, "Maing"))
-                        hand = static_cast<int>(i);
-                if (hand >= 0 && static_cast<std::size_t>(hand) < pose.size()) {
-                    const omk::MeshPose& hp = pose[static_cast<std::size_t>(hand)];
-                    // `tir`, linked under the hand with its own
-                    // +128 local: the hand's rotation applied to it
-                    float off[3] = {0.0f, 0.0f, 0.0f};
-                    const GunFacts* gf = shotGunStem.empty() ? nullptr
-                                                             : &gunFactsFor(shotGunStem);
-                    if (gf && gf->ok) omk::qrot(hp.q, gf->tirLocal, off);
-                    const float hin[3] = {hp.pos[0] + off[0] - playerRootXZ[0],
-                                          hp.pos[1] + off[1],
-                                          hp.pos[2] + off[2] - playerRootXZ[1]};
-                    float ho[3];
-                    omk::rotateYaw(yaw, hin, ho);
-                    rs.muzzle[0] = ho[0] + pp[0];
-                    rs.muzzle[1] = ho[1] + pp[1] - playerFeet + lastRootDrop;
-                    rs.muzzle[2] = ho[2] + pp[2];
-                    from = gf && gf->ok ? "the tir node" : "the Maing node";
-                }
-            }
-            // the SHOT SPRITE: section A by the gun's root name
-            int muzzleFx = 0;
-            if (!shotGunStem.empty())
-                if (const omk::FxShotSprite* sp =
-                        shootSfx.shotSprite(gunFactsFor(shotGunStem).root)) {
-                    muzzleFx = sp->muzzleEffect;
-                    rs.impactEffect = sp->impactEffect;
-                    rs.sprite = true;
-                    rs.windUp = sp->windUp;
-                    rs.grow = sp->grow;
-                    for (int k = 0; k < 3; ++k) rs.growStep[k] = sp->growStep[k];
-                }
-            rs.yawDeg = yaw;
-            rs.pitchDeg = shootPitch;
-            harnessAimAt(rs);       // --aim-at (an instrument)
-            // THE MAGAZINE: property 35, slot `index - 1`, on the
-            // DB player record. A row with index 0 has none.
-            std::int32_t count = 0;
-            const std::size_t recAt = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
-            const std::size_t recLen = static_cast<std::size_t>(omk::GameState::kPlayerRecordSize);
-            bool mag = row->ammoIndex &&
-                omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
-                                  row->ammoIndex - 1, count);
-            // AN EMPTY MAGAZINE CHANGES THE WEAPON (17_script.c 1278): at a
-            // count of 0 or less the player's shot raises event 48, and on a
-            // change `Shoot_InitWeapon`s the new gun and re-reads the count
-            // from ITS magazine - the round below comes out of that one. But
-            // the bolt's SPEED and DAMAGE were read from the old row before
-            // the call (`v68`, `v71`), so it flies as the old gun's: `flight`
-            // keeps them and takes the new row's magazine. No change, and the
-            // round is taken from the empty one anyway, as before.
-            omk::ShootWeaponRow flight = *row;
-            if (mag && count <= 0 && shootChangeWeapon(frameNo, "an empty magazine")) {
-                const omk::ShootWeaponRow* nr = playerShootRec.weapon;
-                flight.ammoIndex = nr ? nr->ammoIndex : 0;
-                count = 0;
-                mag = flight.ammoIndex &&
-                      omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
-                                        flight.ammoIndex - 1, count);
-            }
-            int left = static_cast<int>(count);
-            if (mag) rs.ammo = &left;
-            const omk::RecordShotOut out = projectiles.fireFromRecord(-1, flight, rs);
-            if (mag && out.ammoSpent)
-                omk::writeActorProperty(state.rawMutable().subspan(recAt, recLen), 0x23,
-                                        ((flight.ammoIndex - 1) << 16) | (left & 0xFFFF));
-            if (mag && out.ammoSpent) hudAmmo = out.hudAmmo;   // `dword_90E11C`
-            if (out.entry >= 0) {
-                ++shotsFired;
-                // `sub_44EF80(row, node, ..., 0.0)` as the entry is
-                // made: the MUZZLE effect, its sound armed
-                shotSound(frameNo, muzzleFx, rs.muzzle, player->pos(), "fire");
-                // ...and the NOISE at the muzzle (0x44D5CC / 0x44D7A5)
-                shootNoise(frameNo, -1, rs.muzzle, "a shot");
-                const omk::Projectile& e =
-                    projectiles.entries()[static_cast<std::size_t>(out.entry)];
-                const float sp = e.speed != 0.0f ? e.speed : 1.0f;
-                std::printf("frame %ld: SHOT %ld - Actor_TickProjectiles(player): "
-                            "entry %d, speed %.1f, damage %d, dir %.3f %.3f %.3f "
-                            "(yaw %.1f pitch %.1f), from %s %.1f %.1f %.1f, "
-                            "magazine %s, %d live\n", frameNo, shotsFired, out.entry,
-                            double(e.speed), e.kind, double(e.vel[0] / sp),
-                            double(e.vel[1] / sp), double(e.vel[2] / sp),
-                            double(yaw), double(shootPitch), from,
-                            double(rs.muzzle[0]), double(rs.muzzle[1]),
-                            double(rs.muzzle[2]),
-                            mag ? (std::to_string(count) + " -> " +
-                                   std::to_string(left)).c_str() : "none",
-                            projectiles.liveOf(-1));
-            } else {
-                std::printf("frame %ld: SHOT refused - the pool is full (%d live), "
-                            "nothing spent\n", frameNo, projectiles.live());
-            }
-        }
+        adventureShotRequest(row);
     }
     for (const auto& mv : (playerTicked ? player->specialMoves() : kNoMoves)) {
-        // IN THE WATER `MDACTION` IS THE WAY OUT (`sub_4A9580`, `actor/player.h`):
-        // groups 301 and 302 both carry it, and its arm looks for a
-        // platform ahead of him instead of for something to use.
-        if (mv == "MDACTION") {
-            const int ws = static_cast<int>(player->state());
-            if (ws >= 11 && ws <= 14) {
-                float over = 0.0f;
-                const int why = player->waterClimbOut(&over);
-                static const char* kWhy[5] = {"", "not at the surface",
-                    "no platform within 80 cm ahead", "the platform is too high or under water",
-                    "no water edge on the way back"};
-                if (why == 0) {
-                    in.installScheme(0);
-                    std::printf("frame %ld: OUT OF THE WATER (sub_4A9580) - a platform %.1f over "
-                                "the water; ACTOR_STATE %d, bank group 303 (H_WO_SD), scheme 0, "
-                                "at %.0f %.1f %.0f\n", frameNo, double(over),
-                                static_cast<int>(player->state()), player->pos()[0],
-                                player->pos()[1], player->pos()[2]);
-                } else {
-                    std::printf("frame %ld: the climb out refused - %s%s\n", frameNo, kWhy[why],
-                                why == 3 ? (" (" + std::to_string(over) + " over the water)").c_str() : "");
-                }
-                continue;
-            }
-        }
-        if (mv == "MDACTION") actionFromMove = true;
-        // `MDSHOOT0` (0x0046B610): the latch, in ACTOR_STATE 3
-        // only - the next frame's channel tick hands it to the gate.
-        if (mv == "MDSHOOT0" &&
-            omk::mdShoot0(shotLatch, static_cast<int>(player->state())))
-            std::printf("frame %ld: MDSHOOT0 - the latch (dword_53AE3C) armed\n", frameNo);
-        // MOVING IN FIRST PERSON (`actor/shootmove.h`). Group 200's
-        // movement entries play no clip: they queue these, and the
-        // handlers only raise INTENTS for next frame's mover. What
-        // refuses them is the actor's fall byte (+1304), which is
-        // the walker's airborne flag here - the landing's codes are
-        // not kept. Each is a no-op outside the mode, as the
-        // engine's are with `dword_6579CC` null.
-        if (mv == "MDAV" || mv == "MDAR") {
-            float headPitch = 0.0f;   // HEAD mode: action 7 has no key
-            omk::shootMoveForward(shootMover, mv == "MDAV",
-                                  player->walker().airborne(),
-                                  static_cast<float>(frameSec * 30.0), headPitch);
-        }
-        if (mv == "MDDG" || mv == "MDDD")
-            omk::shootMoveStrafe(shootMover, mv == "MDDD",
-                                 player->walker().airborne());
-        if (mv == "MDDO" || mv == "MDUP")
-            omk::shootMoveCrouch(shootMover, mv == "MDDO");
-        // `MDGUN` (0x0046B740): event 48, and on a change the gun into his
-        // hand (`sub_41C490`), `Shoot_InitWeapon` and the HUD weapon's
-        // reload (`dword_90E104`) - `PlayState::shootChangeWeapon`. Entry
-        // 134 of group 200 queues it on input 0x2000, between the arm
-        // lowered (S_ARMOFF) and raised again (S_ARMON).
-        if (mv == "MDGUN") shootChangeWeapon(frameNo, "MDGUN");
-        // THE FREE LOOK's two handlers (`PlayerController::lookPress`). The
-        // second MDHEAD01 of `tab_special_move` (row 52, the shoot HEAD
-        // mode's) is never reached: the first match wins, row 2
-        if (mv == "MDHEAD00") player->lookPress();
-        if (mv == "MDHEAD01") player->lookRelease();
-        // `MDJP` (0x0046B710): `dword_6A52CC = 0` - this walker's `jumping_`,
-        // which only MDJUMP0A sets and group 200 never queues - then
-        // `sub_47D2E0` (`omk::shootJump`)
-        if (mv == "MDJP" &&
-            omk::shootJump(shootMover, player->walker().airborne()))
-            std::printf("frame %ld: MDJP - the shoot jump, %.2f a frame\n", frameNo,
-                        double(shootMover.vertical));
-        if ((mv == "MDRG" || mv == "MDRD") && shootMover.active)
-            player->aimYawBy(omk::shootTurnDegrees(mv == "MDRG" ? -50 : 50,
-                                                   mouseSensX));
-        // `Regarder En-Haut` / `En-Bas`: MDLUP and MDLDO are
-        // `sub_45D1D0(0, 0, -/+25)` (0x0046B6E0 / 0x0046B6F0) - the
-        // mouse's pitch, stepped 25 units; the camera takes it at
-        // the aim block's next pass
-        if ((mv == "MDLUP" || mv == "MDLDO") && shootMover.active) {
-            if (omk::shootMovePitches(shootMover))
-                shootPitch = -omk::shootPitchStep(-shootPitch,
-                                                  mv == "MDLUP" ? -25 : 25,
-                                                  mouseSensY, mouseInverted,
-                                                  static_cast<float>(frameSec * 30.0));
-            else
-                shootPitch = 0.0f;            // the Mecagarde arm, as above
-            shootPitchDirty = true;
-        }
-        // THE JUMP'S IMPULSE (`todo/player-vertical.md` step 2).
-        // `MDJUMP01` is the one that writes the three velocity
-        // fields; `MDJUMP0A`/`0B` only prepare them, and the
-        // controller does that arithmetic (`player.cpp`). Without
-        // it the walker's `vy_`/`airborne_` serve only FALLING and
-        // nothing pushes into them: the jump clip plays and the
-        // body never leaves the floor.
-        if (mv == "MDJUMP0A" || mv == "MDJUMP0B") {
-            if (player->jumpPrepare())
-                std::printf("jump: armed on '%s'\n",
-                            player->ctlStateName().c_str());
-        }
-        if (mv == "MDJUMP03") {
-            const double d = player->walker().lastLandingDrop();
-            const int band = player->jumpLand();
-            std::printf("jump: landed, drop %.2f -> band %d%s\n",
-                        d, band,
-                        band == 2 ? " (short, no reaction)"
-                                  : " (bank group 2, camera 18)");
-            if (band != 2) fallCamRequest(18, true, "MDJUMP03", static_cast<int>(player->state()));
-        }
-        // `MDRAISE0` (0x0046BED0, `H_SOL-SD` - getting up from a
-        // 5 m landing): `sub_414DE0(actor, 0, 0)`, home from 19
-        if (mv == "MDRAISE0") fallCamRequest(0, false, "MDRAISE0", static_cast<int>(player->state()));
-        // THE WATER MOVES (`todo/swimming.md` 1, read from the raw
-        // image). `MDDIVEND` 0x0046BEF0: ACTOR_STATE 14 and message 22.
-        // `MDSW2SD` 0x0046BF20: ACTOR_STATE 1 and, if a camera is
-        // up, camera 0 on him over 50 frames. `RSTAVNT` 0x0046C120:
-        // ACTOR_STATE 1, pitch 0, `Input_InstallScheme(0)`.
-        // `RSTNAGE` 0x0046C150: ACTOR_STATE 14, pitch 0. `MDDIVBEG`
-        // 0x0046C180: `+1288 |= 2`, the dive.
-        if (mv == "MDDIVEND") {
-            player->setActorState(omk::ActorState::Swim, "MDDIVEND");
-            const bool ran = session.postMessage(22, session.playerActor());
-            std::printf("water: MDDIVEND - ACTOR_STATE %d, message 22 %s\n",
-                        static_cast<int>(player->state()),
-                        ran ? "to its handler" : "- no handler subscribes");
-        }
-        if (mv == "MDSW2SD") {
-            player->setActorState(omk::ActorState::Normal, "MDSW2SD");
-            if (takeCam) { takeCamRequest(3); takeCamTravel = 50.0f; }
-            std::printf("water: MDSW2SD - out of the water, ACTOR_STATE %d%s\n",
-                        static_cast<int>(player->state()),
-                        takeCam ? ", camera 0 over 50 frames" : "");
-        }
-        if (mv == "RSTAVNT") {
-            player->setActorState(omk::ActorState::Normal, "RSTAVNT");
-            player->eulerPitch() = 0.0f;
-            in.installScheme(0);
-            std::printf("water: RSTAVNT - ACTOR_STATE %d, pitch 0, scheme 0\n",
-                        static_cast<int>(player->state()));
-        }
-        if (mv == "RSTNAGE") {
-            player->setActorState(omk::ActorState::Swim, "RSTNAGE");
-            player->eulerPitch() = 0.0f;
-            std::printf("water: RSTNAGE - ACTOR_STATE %d, pitch 0\n",
-                        static_cast<int>(player->state()));
-        }
-        if (mv == "MDDIVBEG") {
-            player->waterFlags() |= 2u;
-            std::printf("water: MDDIVBEG - the dive flag (+1288 |= 2)\n");
-        }
-        if (mv == "MDJUMP01") {
-            const bool went = player->jumpLaunch();
-            std::printf("jump: %s\n", went
-                ? "launched"
-                : "refused (nothing armed, or already off the ground)");
-        }
-        const omk::SpecialMoves::Row* row = specialMoves.find(mv);
-        if (row)
-            std::printf("special move: %s (tab_special_move[%d] = 0x%08x)\n",
-                        row->name.c_str(), row->index, row->handler);
-        // ...NOT in ACTOR_STATE 3: MDACTION scans (`sub_41C810`) and then
-        // `cmp [esi+194h], 3; je 0x46AFF8` - a shoot phase takes nothing,
-        // and the press goes on to the zones below (todo/drift-audit.md S7)
-        if ((mv == "MDACTION" || mv == "MDADJSTP") &&
-            !(player && player->state() == omk::ActorState::Shoot)) {
-            // ---- `sub_465D30(actor, obj, fromAdjust)` ----------
-            //
-            // ONE function decides both stages of the take. Read
-            // whole:
-            //
-            //   dx, dy, dz  = object node pos - actor node pos.
-            //                 The actor's node is the PELVIS (the
-            //                 same +244..+252 the follow camera
-            //                 targets), so dy here is the port's
-            //                 feet-relative dy plus the pelvis
-            //                 height - and it counts DOWN, like
-            //                 every y in this world. An object on
-            //                 the floor is +40 below the pelvis;
-            //                 `dy <= 27.47` (less than 70 cm below
-            //                 it) is the HIGH take, group 143.
-            //   D           = hypot(dx, dz); angle = the signed
-            //                 bearing off his facing.
-            //   LOW arm:      angle -= 10 (a bias, authored into
-            //                 the clips); target = 40 cm / cos;
-            //                 second = dy - 27.47 (scaled by
-            //                 1/29.53 inside sub_466390).
-            //   HIGH arm:     target = 60 cm / cos; second = the
-            //                 PITCH of the object seen from the
-            //                 target point, asin(-dy / hypot(
-            //                 target, dy)) in degrees - which
-            //                 answers what reaches +0x1C8 there.
-            //   refuse if     |angle| > 50 and (fromAdjust or
-            //                 D < target), or |D - target| > 120cm.
-            //   from MDACTION: if D/target is within 10%, no step:
-            //                 take at once. Else the step SCALE
-            //                 `dword_6A5380 = |D - target|/19.69`.
-            //   target point = object - target * dir; the move
-            //                 to it is `Actor_Move`d OUTRIGHT
-            //                 before a take (both from MDADJSTP
-            //                 and in the no-step case), and only
-            //                 PROBED before a step: if the probe
-            //                 moves under 25 cm the step is
-            //                 dropped and it takes at once (and
-            //                 fails if still > 125 cm off).
-            //   angle stored  flipped by 180 when D < target and a
-            //                 step is coming: he steps BACK.
-            //
-            // The step's DIRECTION and DISTANCE are both this
-            // function: without it he steps 50 cm whatever the
-            // distance and walks through the rings.
-            const bool fromAdjust = mv == "MDADJSTP";
-            constexpr float kTakeHigh  = 27.472441f;   // flt_4BC7E0, 70 cm
-            constexpr float kReachLow  = 15.748032f;   // 40 cm
-            constexpr float kReachHigh = 23.622047f;   // 60 cm
-            constexpr float kStepLen   = 19.685039f;   // 1 / 0.0508, the 50 cm step
-            constexpr float kMaxError  = 47.244096f;   // 120 cm
-            constexpr float kNoStep    = 9.8425198f;   // 25 cm
-            constexpr float kMaxProbe  = 49.212598f;   // 125 cm
-            player->setAdjustStep(false);
-            float dyFeet = 0.0f;
-            const int obj = session.scanTakeable(player->pos(),
-                                                 player->facing(), &dyFeet);
-            // `sub_41C810` answered with something inside
-            // `flt_4BC918`, so MDACTION takes its object arm and
-            // RETURNS - see the `pressAction` gate below. Set from
-            // the scan and not from whether the take succeeded,
-            // because `sub_465D30` refusing lands at `loc_46AFB2`,
-            // which returns too.
-            if (obj >= 0) actionTookObject = true;
-            float op[3] = {0, 0, 0};
-            bool  ok = obj >= 0 && session.propPos(obj, op);
-            float D = 0.0f, angle = 0.0f, target = 0.0f, second = 0.0f;
-            float dyP = 0.0f, mx = 0.0f, mz = 0.0f, scale = 1.0f;
-            bool  low = true, takeNow = fromAdjust, moved = false;
-            const char* why = "no object in reach";
-            if (ok) {
-                const float dx = op[0] - player->pos()[0];
-                const float dz = op[2] - player->pos()[2];
-                dyP = dyFeet + player->cameraLift();
-                D = std::sqrt(dx * dx + dz * dz);
-                if (!(D > 0.0f)) { ok = false; why = "standing on it"; }
-                else {
-                    // the port's facing convention, as before:
-                    // `headingFromClipRoot` ends `atan2(z, x) + 90`
-                    const float bearing = std::atan2(dz, dx) *
-                                          omk::kRadToDegF + 90.0f;
-                    float rel = bearing - player->facing();
-                    while (rel < -180.0f) rel += 360.0f;
-                    while (rel >  180.0f) rel -= 360.0f;
-                    // THE ENGINE'S SIGN IS THE OPPOSITE OF `rel`.
-                    // `sub_465D30`: `v41 = acos(cos); if (fx*dz -
-                    // fz*dx > 0) v41 = -v41`, and with the heading
-                    // recipe both facings use (`atan2(z, x) + 90`,
-                    // so f = (sin F, -cos F)) that cross product is
-                    // sin(bearing - facing) = sin(rel). Positive
-                    // rel is a NEGATIVE engine angle. Measured
-                    // with the sign unflipped: the step's side
-                    // cell pushes him AWAY from the object line -
-                    // lateral offset 15.4 -> 26.8 and 17.7 -> 20.5
-                    // across two steps - because the quadrant
-                    // table is fed the mirrored sign.
-                    angle = -rel;
-                    const float cosA = std::cos(rel * omk::kDegToRadF);
-                    low = dyP > kTakeHigh;
-                    if (low) { angle -= 10.0f; target = kReachLow / cosA;
-                               second = dyP - kTakeHigh; }
-                    else     { target = kReachHigh / cosA; }
-                    const float err = std::fabs(D - target);
-                    if (std::fabs(angle) > 50.0f && (fromAdjust || D < target)) {
-                        ok = false; why = "outside the 50 degree cone";
-                    } else if (err > kMaxError) {
-                        ok = false; why = "more than 120 cm off the target";
-                    } else {
-                        if (!fromAdjust) {
-                            const float r = std::fabs(D / target);
-                            if (r > 0.9f && r < 1.1f) takeNow = true;
-                            else scale = err / kStepLen;
-                        }
-                        mx = dx - target * dx / D;
-                        mz = dz - target * dz / D;
-                        if (!low)
-                            second = std::asin(-dyP / std::sqrt(target * target + dyP * dyP)) *
-                                     omk::kRadToDegF;
-                        if (!takeNow) {
-                            // **PORT SHORTCUT, labelled**: the
-                            // engine PROBES the move (Actor_Move,
-                            // then puts him back) and measures
-                            // what the collision let through;
-                            // this takes the requested length.
-                            const float probe = std::sqrt(mx * mx + mz * mz);
-                            if (probe < kNoStep) {
-                                takeNow = true; scale = 1.0f;
-                                if (std::fabs(D - probe) > kMaxProbe) {
-                                    ok = false; why = "cannot close on it";
-                                }
-                            }
-                        }
-                        if (ok && takeNow) moved = player->moveBy(mx, mz);
-                        if (!(D >= target || takeNow))
-                            angle = angle < 0.0f ? 180.0f - angle : angle - 180.0f;
-                    }
-                }
-            }
-            if (!ok) {
-                if (obj >= 0)
-                    std::printf("take: %s - object %d '%s' refused (%s): D %.1f "
-                                "target %.1f angle %+.1f dy(pelvis) %+.1f\n",
-                                mv.c_str(), obj, session.objectName(obj).c_str(),
-                                why, D, target, angle, dyP);
-                else if (fromAdjust)
-                    std::printf("take: MDADJSTP - nothing in reach after the step\n");
-                // engine: dword_53AE1C = 0, nothing installed
-            } else if (takeNow) {
-                const int g = low ? 41 : 143;
-                player->setTakeGeometry(angle, low ? second * 0.033866666f : second);
-                takeCandidate = obj;
-                takeWasLow = low;
-                std::printf("take: %s - object %d '%s' D %.1f target %.1f -> moved %s "
-                            "%+.1f %+.1f; %s take group %d, angle %+.1f second %+.2f\n",
-                            mv.c_str(), obj, session.objectName(obj).c_str(), D, target,
-                            moved ? "to" : "BLOCKED toward", mx, mz,
-                            low ? "LOW H_TAKL" : "HIGH H_TAKH", g, angle, second);
-                if (!player->enterGroupById(g))
-                    std::printf("take: the bank has no group %d\n", g);
-            } else {
-                // ---- STAGE ONE: THE ADJUST STEP ---------------
-                // `sub_466210`: group 600, H_ADJSTP, the cells
-                // picked by the angle's quadrant and sign, the
-                // root motion scaled by `dword_6A5380`.
-                player->setTakeGeometry(angle, low ? second * 0.033866666f : second);
-                player->setAdjustStep(true);
-                player->setStepScale(scale);
-                takeCandidate = obj;
-                takeWasLow = low;
-                std::printf("take: MDACTION - object %d '%s' D %.1f target %.1f: "
-                            "adjust step of %.1f (scale %.2f) at angle %+.1f, "
-                            "then the %s take\n",
-                            obj, session.objectName(obj).c_str(), D, target,
-                            std::fabs(D - target), scale, angle,
-                            low ? "LOW" : "HIGH");
-                if (!player->enterGroupById(600))
-                    std::printf("take: the bank has no group 600\n");
-            }
-        } else if (mv == "MDGETOBJ") {
-            if (takeCandidate >= 0 && session.takeObject(takeCandidate)) {
-                // `sub_4083F0(46, ...)` then `Subtitle_Show`
-                // (0x0041E040): the object's NAME at the bottom of
-                // the screen, as seen on the take. It rides the
-                // same subtitle
-                // the voice-overs use.
-                mediaText = session.objectName(takeCandidate);
-                mediaTextFrames = mediaText.empty() ? 0 : 90;
-                std::printf("take: MDGETOBJ - holding %d '%s'\n",
-                            takeCandidate, mediaText.c_str());
-                // `Camera_Request(1, dword_930800)`: the take
-                // camera, travelling 30 frames from what is on
-                // screen (`sub_414A90` keeps the outgoing block as
-                // g_CameraPrev, request+24 = 30 the frames).
-                heldInHand = takeCandidate;       // `sub_41C490`: it rides the hand from here
-                {
-                    float op[3] = {0, 0, 0};
-                    session.propPos(takeCandidate, op);
-                    const auto& objs = voiceLib.objects();
-                    const PropModel* pm = takeCandidate >= 0 &&
-                        static_cast<std::size_t>(takeCandidate) < objs.size()
-                        ? propModelFor(objs[static_cast<std::size_t>(takeCandidate)].stem) : nullptr;
-                    std::printf("take: GRAB object %d - placement %.1f %.1f %.1f, model %s "
-                                "origin %.2f %.2f %.2f local(+128) %.2f %.2f %.2f, %zu rest corners\n",
-                                takeCandidate, op[0], op[1], op[2],
-                                pm ? "ready" : "MISSING",
-                                pm ? pm->origin[0] : 0.f, pm ? pm->origin[1] : 0.f, pm ? pm->origin[2] : 0.f,
-                                pm ? pm->localOff[0] : 0.f, pm ? pm->localOff[1] : 0.f, pm ? pm->localOff[2] : 0.f,
-                                pm ? pm->rest.corners.size() : 0u);
-                }
-                takeCam = true;
-                takeCamRequest(1);
-                std::printf("take: camera mode 1 requested - preset 1 over 30 frames\n");
-            }
-        } else if (mv == "MDPUTSNK") {
-            // `if (C+12 == 1) Camera_Request(16)`: back to the
-            // camera the take displaced, 30 frames.
-            if (takeCam) {
-                takeCamRequest(3);
-                std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
-            }
-            const int was = static_cast<int>(
-                omk::objectList(state, omk::ObjectList::Carried).size());
-            const auto arm = session.bankHeldObject(takeCandidate);
-            const int now = static_cast<int>(
-                omk::objectList(state, omk::ObjectList::Carried).size());
-            // NAME THE ARM. `Inventory_Insert`'s four outcomes are
-            // not interchangeable and a count alone cannot tell
-            // them apart - a merge and a full list both leave it
-            // unchanged, and the first is correct where the second
-            // is a refusal. A line saying "REFUSED (full, or a kind
-            // Inventory_Insert would merge)" invites a wrong guess:
-            // the kind-13 rings are neither.
-            using B = omk::Session::Banked;
-            const char* what =
-                arm == B::Row      ? "a row at the front of list 0"
-              : arm == B::Consumed ? "kind 12/13: Object_ApplyEffect applied and "
-                                     "CONSUMED, no row - the count is the take"
-              : arm == B::Merged   ? "merged into an existing row of a related "
-                                     "kind, no new row - and the quantity is in "
-                                     "the 56-byte cache this port does not model, "
-                                     "so nothing counts up"
-                                   : "REFUSED - list 0 is full, case 10 returns 0 "
-                                     "and it stays in his hand";
-            heldInHand = -1;
-            std::printf("take: RELEASE object %d into the bank\n", takeCandidate);
-            std::printf("take: MDPUTSNK - object %d '%s' (kind %d) -> "
-                        "carried list %d -> %d: %s%s%s\n",
-                        takeCandidate,
-                        session.objectName(takeCandidate).c_str(),
-                        session.objectKind(takeCandidate), was, now, what,
-                        session.lastObjectEffect().empty() ? "" : "; effect: ",
-                        session.lastObjectEffect().c_str());
-            takeCandidate = -1;
-        } else if (mv == "MDNOTAKE") {
-            // `sub_46B530` (0x0046B530): a four-case switch on
-            // `dword_53AE5C`, the code MDACTION kept - 0 -> group
-            // 0x8C = 140 (H_PUTL12 -> MDLETOBJ -> H_PUTL22), 3 ->
-            // group 9 (H_PUTH12/22); 1 and 2 are groups 6 and 7.
-            // The cancel PLAYS THE PUT-BACK, and MDLETOBJ inside
-            // that group is what releases the object and swaps
-            // the camera. Without this handler a cancel goes
-            // straight to standing with the object still held
-            // and the take camera still up.
-            const int putGroup = takeWasLow ? 140 : 9;
-            const bool got = player->enterGroupById(putGroup);
-            std::printf("take: MDNOTAKE - cancel: the put-back plays (%s, group %d%s)\n",
-                        takeWasLow ? "LOW H_PUTL" : "HIGH H_PUTH", putGroup,
-                        got ? "" : " - not in this bank");
-        } else if (mv == "MDLETOBJ") {
-            if (takeCam) {                // the same mode-16 swap
-                takeCamRequest(3);
-                std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
-            }
-            // The put-back matches the take's HEIGHT, the same way
-            // and from the same decision: the engine keeps
-            // `dword_53AE5C = (ret == 2) ? 3 : 0` at MDACTION and
-            // `sub_46B530` turns it back into a group - case 0 ->
-            // 140, case 3 -> 9. H1Avnt.CTL: 140 is H_PUTL12/22 and
-            // 9 is H_PUTH12/22, the mirrors of the two takes. The
-            // switch is best-effort; a bank without the group
-            // leaves the machine where it is, which is what
-            // `Cef_FindGroupById` returning nothing does.
-            // Inside the put group already (MDNOTAKE entered it):
-            // `sub_41C540(actor, 0)` - the object back to the world.
-            std::printf("take: MDLETOBJ - RELEASE object %d, put back where it was\n",
-                        takeCandidate);
-            session.putHeldObjectBack();
-            heldInHand = -1;
-            takeCandidate = -1;
-        } else if (mv == "MDSLIDIN") {
-            // 0x0046B7F0, and the channel is what fires it: group
-            // 60's entry [160] is a child of `H_SLDIN` with no
-            // input at all, so it is taken when the door clip
-            // ends, and its GoTo lands on `H_SLIDER` - the riding
-            // pose. The handler's own body is
-            // `sub_438420(slider, 4); player[+404] = 7;
-            // UI_OpenScreen(7, -1, -1, -1)`: he is ABOARD, and the
-            // slider page opens as SCREEN 7, whose param is 1.
-            // What happens next is that page's hook (0x0049D4D0):
-            // with a destination remembered from the sneak the
-            // journey starts at once; with none, the bar reads
-            // Automatique / Manuelle and he chooses.
-            boarding = false;
-            boarded = true;
-            boardCam = 0;
-            player->setActorState(omk::ActorState::SliderMount, "MDSLIDIN");
-            player->setChannelOnly(false);
-            player->clearRootFrame();
-            session.sliders().mountCalled();
-            playerScreen = 7;
-            float at[3] = {0, 0, 0};
-            session.sliders().calledAt(at);
-            std::printf("MDSLIDIN: aboard at %.0f %.0f %.0f - H_SLDIN "
-                        "ended and the channel took its no-input child "
-                        "to H_SLIDER; ACTOR_STATE 7, screen 7 opens\n",
-                        at[0], at[1], at[2]);
-        } else if (mv == "MDSLIDOU") {
-            // 0x0046B890, the mirror of `MDSLIDIN`: group 61's
-            // entry [162] is a child of `H_SLDOUT` with no input,
-            // so it fires when that clip ends, and [163] gotos
-            // `H_STAND`. The handler refuses from anything but
-            // ACTOR_STATE 8 ("bad mode getting out of the slider
-            // !") and leaves the actor at 1.
-            leaving = false;
-            // HIS FACING, written as H_SLDOUT ends (drift audit A6):
-            // `sub_442D70(0, 0, 1, node+5Ch)`, `fpatan`, `* 57.29... -
-            // -180.0` into +420 - the heading of the node's +Z. He is drawn
-            // in the slider's frame while the clip plays (`leaving` poses
-            // him at `atan2(-row2.x, row2.z)`) and H_SLDOUT's root ends at
-            // the very turn H_STAND starts on (`slider_door`'s `root turn`:
-            // 180.0 and 180.0), so the node's matrix at that moment IS the
-            // slider's and that yaw is the one he walks away on. Nothing
-            // wrote it before: he popped back to the seat's yaw - the pool's
-            // MIRRORED convention - and walked off that way.
-            {
-                float sat[3], sx[3], sz[3];
-                if (session.sliders().calledFrame(sat, sx, sz)) {
-                    const float was = player->facing();
-                    player->setFacing(static_cast<float>(std::atan2(-sz[0], sz[2]) * omk::kRadToDeg));
-                    std::printf("MDSLIDOU: his facing %.1f -> %.1f, the slider's frame "
-                                "H_SLDOUT ended in\n", double(was), double(player->facing()));
-                }
-            }
-            // `sub_45A9A0(actor+18Ch)`: the channel's input queue reset to
-            // the idle word, so nothing pressed through H_SLDOUT is carried
-            // into H_STAND (drift audit B10; MDSLIDOU's own ground probe,
-            // under a momentary `g_IgnoreLedges = 1`, is the walker's floor
-            // here and is not transcribed)
-            player->resetInputQueue();
-            session.sliders().slidOutCalled();   // 5 -> 7 (or 7 -> 5 -> 7)
-            slidOutAt = frameNo;
-            // ...and the camera: `Camera_Request(0, {player, player},
-            // 60.0, type 1)` unless the mode is 0 or 17 - after a journey
-            // it is mode 10 and travels back to the follow camera; after a
-            // manual stop it is 17, which lets him walk out of it
-            if (sliderCamMode != 17 && (sliderCamMode >= 0 || takeCam))
-                sliderCamRequest(0, 60.0f);
-            player->setActorState(omk::ActorState::Normal, "MDSLIDOU");
-            player->setChannelOnly(false);
-            player->clearRootFrame();
-            std::printf("MDSLIDOU: out and standing - H_SLDOUT ended, "
-                        "the channel gotos H_STAND, ACTOR_STATE 1\n");
-        } else if (mv == omk::kMoveOpenSneak) {
-            // ROW 0, and the other end of the same table. TAB is
-            // the Aventure scheme's "Ouvrir sneak" (bit 0x2000);
-            // H1Avnt/F1Avnt group 0 has an entry waiting on
-            // exactly that bit whose flag-2 alias redirects
-            // through its GoTo into group 6, and group 6's child
-            // names `MDSNEAK0` (`actor/moves.h` quotes the whole
-            // chain and `sub_0046ADF0` with it).
-            //
-            // The handler's own gate is `sub_41A350(actor)`: when
-            // the actor carries a pending target at `+164` it
-            // raises event 10 for that object and does NOT open
-            // the sneak - which is the SAME `+164` MDGETOBJ links
-            // an object to just above. Not modelled, so the sneak
-            // always opens; with nothing held that is what the
-            // engine does, and holding something is the case to
-            // come back to.
-            //
-            // What IS reproduced is the pair around it: event 25
-            // opening object list 0 on the way in, and event 26
-            // if the open fails or when the close comes.
-            if (walk || playerScreen >= 0) continue;   // already up
-            inv.openList(0);          // Game_RaiseEvent(25, 0)
-            playerScreen = omk::screen::Sneak;
-            std::printf("MDSNEAK0: event %d opens object list 0, "
-                        "screen %d\n", omk::kEventSneakOpen,
-                        omk::screen::Sneak);
-        }
+        adventureSpecialMove(mv, in, inv);
     }
     // ---- THE FREE LOOK, `Actors_TickAll`'s head arm (21_d3d.c 4483) ----
     // after the moves, so this frame's MDHEAD00 counts this frame (the
@@ -2706,6 +2042,701 @@ void PlayState::adventureShot() {
     if (player->cameraLift() > 0.0f && player->rootRadius() > 0.0f)
         session.setPlayerZoneBox(player->cameraLift(), player->rootRadius());
 }
+
+// ONE SPECIAL MOVE the player's channel fired this tick (`Cef_QueueSpecialMove` -> `tab_special_move`): its handler (from `adventureShot`'s loop over them)
+void PlayState::adventureSpecialMove(const std::string& mv, omk::Input& in, omk::Inventory& inv) {
+    auto& session = *session_;
+    // IN THE WATER `MDACTION` IS THE WAY OUT (`sub_4A9580`, `actor/player.h`):
+    // groups 301 and 302 both carry it, and its arm looks for a
+    // platform ahead of him instead of for something to use.
+    if (mv == "MDACTION") {
+        const int ws = static_cast<int>(player->state());
+        if (ws >= 11 && ws <= 14) {
+            float over = 0.0f;
+            const int why = player->waterClimbOut(&over);
+            static const char* kWhy[5] = {"", "not at the surface",
+                "no platform within 80 cm ahead", "the platform is too high or under water",
+                "no water edge on the way back"};
+            if (why == 0) {
+                in.installScheme(0);
+                std::printf("frame %ld: OUT OF THE WATER (sub_4A9580) - a platform %.1f over "
+                            "the water; ACTOR_STATE %d, bank group 303 (H_WO_SD), scheme 0, "
+                            "at %.0f %.1f %.0f\n", frameNo, double(over),
+                            static_cast<int>(player->state()), player->pos()[0],
+                            player->pos()[1], player->pos()[2]);
+            } else {
+                std::printf("frame %ld: the climb out refused - %s%s\n", frameNo, kWhy[why],
+                            why == 3 ? (" (" + std::to_string(over) + " over the water)").c_str() : "");
+            }
+            return;
+        }
+    }
+    if (mv == "MDACTION") actionFromMove = true;
+    // `MDSHOOT0` (0x0046B610): the latch, in ACTOR_STATE 3
+    // only - the next frame's channel tick hands it to the gate.
+    if (mv == "MDSHOOT0" &&
+        omk::mdShoot0(shotLatch, static_cast<int>(player->state())))
+        std::printf("frame %ld: MDSHOOT0 - the latch (dword_53AE3C) armed\n", frameNo);
+    // MOVING IN FIRST PERSON (`actor/shootmove.h`). Group 200's
+    // movement entries play no clip: they queue these, and the
+    // handlers only raise INTENTS for next frame's mover. What
+    // refuses them is the actor's fall byte (+1304), which is
+    // the walker's airborne flag here - the landing's codes are
+    // not kept. Each is a no-op outside the mode, as the
+    // engine's are with `dword_6579CC` null.
+    if (mv == "MDAV" || mv == "MDAR") {
+        float headPitch = 0.0f;   // HEAD mode: action 7 has no key
+        omk::shootMoveForward(shootMover, mv == "MDAV",
+                              player->walker().airborne(),
+                              static_cast<float>(frameSec * 30.0), headPitch);
+    }
+    if (mv == "MDDG" || mv == "MDDD")
+        omk::shootMoveStrafe(shootMover, mv == "MDDD",
+                             player->walker().airborne());
+    if (mv == "MDDO" || mv == "MDUP")
+        omk::shootMoveCrouch(shootMover, mv == "MDDO");
+    // `MDGUN` (0x0046B740): event 48, and on a change the gun into his
+    // hand (`sub_41C490`), `Shoot_InitWeapon` and the HUD weapon's
+    // reload (`dword_90E104`) - `PlayState::shootChangeWeapon`. Entry
+    // 134 of group 200 queues it on input 0x2000, between the arm
+    // lowered (S_ARMOFF) and raised again (S_ARMON).
+    if (mv == "MDGUN") shootChangeWeapon(frameNo, "MDGUN");
+    // THE FREE LOOK's two handlers (`PlayerController::lookPress`). The
+    // second MDHEAD01 of `tab_special_move` (row 52, the shoot HEAD
+    // mode's) is never reached: the first match wins, row 2
+    if (mv == "MDHEAD00") player->lookPress();
+    if (mv == "MDHEAD01") player->lookRelease();
+    // `MDJP` (0x0046B710): `dword_6A52CC = 0` - this walker's `jumping_`,
+    // which only MDJUMP0A sets and group 200 never queues - then
+    // `sub_47D2E0` (`omk::shootJump`)
+    if (mv == "MDJP" &&
+        omk::shootJump(shootMover, player->walker().airborne()))
+        std::printf("frame %ld: MDJP - the shoot jump, %.2f a frame\n", frameNo,
+                    double(shootMover.vertical));
+    if ((mv == "MDRG" || mv == "MDRD") && shootMover.active)
+        player->aimYawBy(omk::shootTurnDegrees(mv == "MDRG" ? -50 : 50,
+                                               mouseSensX));
+    // `Regarder En-Haut` / `En-Bas`: MDLUP and MDLDO are
+    // `sub_45D1D0(0, 0, -/+25)` (0x0046B6E0 / 0x0046B6F0) - the
+    // mouse's pitch, stepped 25 units; the camera takes it at
+    // the aim block's next pass
+    if ((mv == "MDLUP" || mv == "MDLDO") && shootMover.active) {
+        if (omk::shootMovePitches(shootMover))
+            shootPitch = -omk::shootPitchStep(-shootPitch,
+                                              mv == "MDLUP" ? -25 : 25,
+                                              mouseSensY, mouseInverted,
+                                              static_cast<float>(frameSec * 30.0));
+        else
+            shootPitch = 0.0f;            // the Mecagarde arm, as above
+        shootPitchDirty = true;
+    }
+    // THE JUMP'S IMPULSE (`todo/player-vertical.md` step 2).
+    // `MDJUMP01` is the one that writes the three velocity
+    // fields; `MDJUMP0A`/`0B` only prepare them, and the
+    // controller does that arithmetic (`player.cpp`). Without
+    // it the walker's `vy_`/`airborne_` serve only FALLING and
+    // nothing pushes into them: the jump clip plays and the
+    // body never leaves the floor.
+    if (mv == "MDJUMP0A" || mv == "MDJUMP0B") {
+        if (player->jumpPrepare())
+            std::printf("jump: armed on '%s'\n",
+                        player->ctlStateName().c_str());
+    }
+    if (mv == "MDJUMP03") {
+        const double d = player->walker().lastLandingDrop();
+        const int band = player->jumpLand();
+        std::printf("jump: landed, drop %.2f -> band %d%s\n",
+                    d, band,
+                    band == 2 ? " (short, no reaction)"
+                              : " (bank group 2, camera 18)");
+        if (band != 2) fallCamRequest(18, true, "MDJUMP03", static_cast<int>(player->state()));
+    }
+    // `MDRAISE0` (0x0046BED0, `H_SOL-SD` - getting up from a
+    // 5 m landing): `sub_414DE0(actor, 0, 0)`, home from 19
+    if (mv == "MDRAISE0") fallCamRequest(0, false, "MDRAISE0", static_cast<int>(player->state()));
+    // THE WATER MOVES (`todo/swimming.md` 1, read from the raw
+    // image). `MDDIVEND` 0x0046BEF0: ACTOR_STATE 14 and message 22.
+    // `MDSW2SD` 0x0046BF20: ACTOR_STATE 1 and, if a camera is
+    // up, camera 0 on him over 50 frames. `RSTAVNT` 0x0046C120:
+    // ACTOR_STATE 1, pitch 0, `Input_InstallScheme(0)`.
+    // `RSTNAGE` 0x0046C150: ACTOR_STATE 14, pitch 0. `MDDIVBEG`
+    // 0x0046C180: `+1288 |= 2`, the dive.
+    if (mv == "MDDIVEND") {
+        player->setActorState(omk::ActorState::Swim, "MDDIVEND");
+        const bool ran = session.postMessage(22, session.playerActor());
+        std::printf("water: MDDIVEND - ACTOR_STATE %d, message 22 %s\n",
+                    static_cast<int>(player->state()),
+                    ran ? "to its handler" : "- no handler subscribes");
+    }
+    if (mv == "MDSW2SD") {
+        player->setActorState(omk::ActorState::Normal, "MDSW2SD");
+        if (takeCam) { takeCamRequest(3); takeCamTravel = 50.0f; }
+        std::printf("water: MDSW2SD - out of the water, ACTOR_STATE %d%s\n",
+                    static_cast<int>(player->state()),
+                    takeCam ? ", camera 0 over 50 frames" : "");
+    }
+    if (mv == "RSTAVNT") {
+        player->setActorState(omk::ActorState::Normal, "RSTAVNT");
+        player->eulerPitch() = 0.0f;
+        in.installScheme(0);
+        std::printf("water: RSTAVNT - ACTOR_STATE %d, pitch 0, scheme 0\n",
+                    static_cast<int>(player->state()));
+    }
+    if (mv == "RSTNAGE") {
+        player->setActorState(omk::ActorState::Swim, "RSTNAGE");
+        player->eulerPitch() = 0.0f;
+        std::printf("water: RSTNAGE - ACTOR_STATE %d, pitch 0\n",
+                    static_cast<int>(player->state()));
+    }
+    if (mv == "MDDIVBEG") {
+        player->waterFlags() |= 2u;
+        std::printf("water: MDDIVBEG - the dive flag (+1288 |= 2)\n");
+    }
+    if (mv == "MDJUMP01") {
+        const bool went = player->jumpLaunch();
+        std::printf("jump: %s\n", went
+            ? "launched"
+            : "refused (nothing armed, or already off the ground)");
+    }
+    const omk::SpecialMoves::Row* row = specialMoves.find(mv);
+    if (row)
+        std::printf("special move: %s (tab_special_move[%d] = 0x%08x)\n",
+                    row->name.c_str(), row->index, row->handler);
+    // ...NOT in ACTOR_STATE 3: MDACTION scans (`sub_41C810`) and then
+    // `cmp [esi+194h], 3; je 0x46AFF8` - a shoot phase takes nothing,
+    // and the press goes on to the zones below (todo/drift-audit.md S7)
+    if (adventureActionMove(mv, inv)) return;
+}
+
+// `MDACTION` / `MDADJSTP`: the action button's move - a slider boarded, an object taken, a door, a conversation (from `adventureSpecialMove`)
+bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) {
+    auto& session = *session_;
+    if ((mv == "MDACTION" || mv == "MDADJSTP") &&
+        !(player && player->state() == omk::ActorState::Shoot)) {
+        // ---- `sub_465D30(actor, obj, fromAdjust)` ----------
+        //
+        // ONE function decides both stages of the take. Read
+        // whole:
+        //
+        //   dx, dy, dz  = object node pos - actor node pos.
+        //                 The actor's node is the PELVIS (the
+        //                 same +244..+252 the follow camera
+        //                 targets), so dy here is the port's
+        //                 feet-relative dy plus the pelvis
+        //                 height - and it counts DOWN, like
+        //                 every y in this world. An object on
+        //                 the floor is +40 below the pelvis;
+        //                 `dy <= 27.47` (less than 70 cm below
+        //                 it) is the HIGH take, group 143.
+        //   D           = hypot(dx, dz); angle = the signed
+        //                 bearing off his facing.
+        //   LOW arm:      angle -= 10 (a bias, authored into
+        //                 the clips); target = 40 cm / cos;
+        //                 second = dy - 27.47 (scaled by
+        //                 1/29.53 inside sub_466390).
+        //   HIGH arm:     target = 60 cm / cos; second = the
+        //                 PITCH of the object seen from the
+        //                 target point, asin(-dy / hypot(
+        //                 target, dy)) in degrees - which
+        //                 answers what reaches +0x1C8 there.
+        //   refuse if     |angle| > 50 and (fromAdjust or
+        //                 D < target), or |D - target| > 120cm.
+        //   from MDACTION: if D/target is within 10%, no step:
+        //                 take at once. Else the step SCALE
+        //                 `dword_6A5380 = |D - target|/19.69`.
+        //   target point = object - target * dir; the move
+        //                 to it is `Actor_Move`d OUTRIGHT
+        //                 before a take (both from MDADJSTP
+        //                 and in the no-step case), and only
+        //                 PROBED before a step: if the probe
+        //                 moves under 25 cm the step is
+        //                 dropped and it takes at once (and
+        //                 fails if still > 125 cm off).
+        //   angle stored  flipped by 180 when D < target and a
+        //                 step is coming: he steps BACK.
+        //
+        // The step's DIRECTION and DISTANCE are both this
+        // function: without it he steps 50 cm whatever the
+        // distance and walks through the rings.
+        const bool fromAdjust = mv == "MDADJSTP";
+        constexpr float kTakeHigh  = 27.472441f;   // flt_4BC7E0, 70 cm
+        constexpr float kReachLow  = 15.748032f;   // 40 cm
+        constexpr float kReachHigh = 23.622047f;   // 60 cm
+        constexpr float kStepLen   = 19.685039f;   // 1 / 0.0508, the 50 cm step
+        constexpr float kMaxError  = 47.244096f;   // 120 cm
+        constexpr float kNoStep    = 9.8425198f;   // 25 cm
+        constexpr float kMaxProbe  = 49.212598f;   // 125 cm
+        player->setAdjustStep(false);
+        float dyFeet = 0.0f;
+        const int obj = session.scanTakeable(player->pos(),
+                                             player->facing(), &dyFeet);
+        // `sub_41C810` answered with something inside
+        // `flt_4BC918`, so MDACTION takes its object arm and
+        // RETURNS - see the `pressAction` gate below. Set from
+        // the scan and not from whether the take succeeded,
+        // because `sub_465D30` refusing lands at `loc_46AFB2`,
+        // which returns too.
+        if (obj >= 0) actionTookObject = true;
+        float op[3] = {0, 0, 0};
+        bool  ok = obj >= 0 && session.propPos(obj, op);
+        float D = 0.0f, angle = 0.0f, target = 0.0f, second = 0.0f;
+        float dyP = 0.0f, mx = 0.0f, mz = 0.0f, scale = 1.0f;
+        bool  low = true, takeNow = fromAdjust, moved = false;
+        const char* why = "no object in reach";
+        if (ok) {
+            const float dx = op[0] - player->pos()[0];
+            const float dz = op[2] - player->pos()[2];
+            dyP = dyFeet + player->cameraLift();
+            D = std::sqrt(dx * dx + dz * dz);
+            if (!(D > 0.0f)) { ok = false; why = "standing on it"; }
+            else {
+                // the port's facing convention, as before:
+                // `headingFromClipRoot` ends `atan2(z, x) + 90`
+                const float bearing = std::atan2(dz, dx) *
+                                      omk::kRadToDegF + 90.0f;
+                float rel = bearing - player->facing();
+                while (rel < -180.0f) rel += 360.0f;
+                while (rel >  180.0f) rel -= 360.0f;
+                // THE ENGINE'S SIGN IS THE OPPOSITE OF `rel`.
+                // `sub_465D30`: `v41 = acos(cos); if (fx*dz -
+                // fz*dx > 0) v41 = -v41`, and with the heading
+                // recipe both facings use (`atan2(z, x) + 90`,
+                // so f = (sin F, -cos F)) that cross product is
+                // sin(bearing - facing) = sin(rel). Positive
+                // rel is a NEGATIVE engine angle. Measured
+                // with the sign unflipped: the step's side
+                // cell pushes him AWAY from the object line -
+                // lateral offset 15.4 -> 26.8 and 17.7 -> 20.5
+                // across two steps - because the quadrant
+                // table is fed the mirrored sign.
+                angle = -rel;
+                const float cosA = std::cos(rel * omk::kDegToRadF);
+                low = dyP > kTakeHigh;
+                if (low) { angle -= 10.0f; target = kReachLow / cosA;
+                           second = dyP - kTakeHigh; }
+                else     { target = kReachHigh / cosA; }
+                const float err = std::fabs(D - target);
+                if (std::fabs(angle) > 50.0f && (fromAdjust || D < target)) {
+                    ok = false; why = "outside the 50 degree cone";
+                } else if (err > kMaxError) {
+                    ok = false; why = "more than 120 cm off the target";
+                } else {
+                    if (!fromAdjust) {
+                        const float r = std::fabs(D / target);
+                        if (r > 0.9f && r < 1.1f) takeNow = true;
+                        else scale = err / kStepLen;
+                    }
+                    mx = dx - target * dx / D;
+                    mz = dz - target * dz / D;
+                    if (!low)
+                        second = std::asin(-dyP / std::sqrt(target * target + dyP * dyP)) *
+                                 omk::kRadToDegF;
+                    if (!takeNow) {
+                        // **PORT SHORTCUT, labelled**: the
+                        // engine PROBES the move (Actor_Move,
+                        // then puts him back) and measures
+                        // what the collision let through;
+                        // this takes the requested length.
+                        const float probe = std::sqrt(mx * mx + mz * mz);
+                        if (probe < kNoStep) {
+                            takeNow = true; scale = 1.0f;
+                            if (std::fabs(D - probe) > kMaxProbe) {
+                                ok = false; why = "cannot close on it";
+                            }
+                        }
+                    }
+                    if (ok && takeNow) moved = player->moveBy(mx, mz);
+                    if (!(D >= target || takeNow))
+                        angle = angle < 0.0f ? 180.0f - angle : angle - 180.0f;
+                }
+            }
+        }
+        if (!ok) {
+            if (obj >= 0)
+                std::printf("take: %s - object %d '%s' refused (%s): D %.1f "
+                            "target %.1f angle %+.1f dy(pelvis) %+.1f\n",
+                            mv.c_str(), obj, session.objectName(obj).c_str(),
+                            why, D, target, angle, dyP);
+            else if (fromAdjust)
+                std::printf("take: MDADJSTP - nothing in reach after the step\n");
+            // engine: dword_53AE1C = 0, nothing installed
+        } else if (takeNow) {
+            const int g = low ? 41 : 143;
+            player->setTakeGeometry(angle, low ? second * 0.033866666f : second);
+            takeCandidate = obj;
+            takeWasLow = low;
+            std::printf("take: %s - object %d '%s' D %.1f target %.1f -> moved %s "
+                        "%+.1f %+.1f; %s take group %d, angle %+.1f second %+.2f\n",
+                        mv.c_str(), obj, session.objectName(obj).c_str(), D, target,
+                        moved ? "to" : "BLOCKED toward", mx, mz,
+                        low ? "LOW H_TAKL" : "HIGH H_TAKH", g, angle, second);
+            if (!player->enterGroupById(g))
+                std::printf("take: the bank has no group %d\n", g);
+        } else {
+            // ---- STAGE ONE: THE ADJUST STEP ---------------
+            // `sub_466210`: group 600, H_ADJSTP, the cells
+            // picked by the angle's quadrant and sign, the
+            // root motion scaled by `dword_6A5380`.
+            player->setTakeGeometry(angle, low ? second * 0.033866666f : second);
+            player->setAdjustStep(true);
+            player->setStepScale(scale);
+            takeCandidate = obj;
+            takeWasLow = low;
+            std::printf("take: MDACTION - object %d '%s' D %.1f target %.1f: "
+                        "adjust step of %.1f (scale %.2f) at angle %+.1f, "
+                        "then the %s take\n",
+                        obj, session.objectName(obj).c_str(), D, target,
+                        std::fabs(D - target), scale, angle,
+                        low ? "LOW" : "HIGH");
+            if (!player->enterGroupById(600))
+                std::printf("take: the bank has no group 600\n");
+        }
+    } else if (mv == "MDGETOBJ") {
+        adventureTakeObject();
+    } else if (mv == "MDPUTSNK") {
+        // `if (C+12 == 1) Camera_Request(16)`: back to the
+        // camera the take displaced, 30 frames.
+        if (takeCam) {
+            takeCamRequest(3);
+            std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
+        }
+        const int was = static_cast<int>(
+            omk::objectList(state, omk::ObjectList::Carried).size());
+        const auto arm = session.bankHeldObject(takeCandidate);
+        const int now = static_cast<int>(
+            omk::objectList(state, omk::ObjectList::Carried).size());
+        // NAME THE ARM. `Inventory_Insert`'s four outcomes are
+        // not interchangeable and a count alone cannot tell
+        // them apart - a merge and a full list both leave it
+        // unchanged, and the first is correct where the second
+        // is a refusal. A line saying "REFUSED (full, or a kind
+        // Inventory_Insert would merge)" invites a wrong guess:
+        // the kind-13 rings are neither.
+        using B = omk::Session::Banked;
+        const char* what =
+            arm == B::Row      ? "a row at the front of list 0"
+          : arm == B::Consumed ? "kind 12/13: Object_ApplyEffect applied and "
+                                 "CONSUMED, no row - the count is the take"
+          : arm == B::Merged   ? "merged into an existing row of a related "
+                                 "kind, no new row - and the quantity is in "
+                                 "the 56-byte cache this port does not model, "
+                                 "so nothing counts up"
+                               : "REFUSED - list 0 is full, case 10 returns 0 "
+                                 "and it stays in his hand";
+        heldInHand = -1;
+        std::printf("take: RELEASE object %d into the bank\n", takeCandidate);
+        std::printf("take: MDPUTSNK - object %d '%s' (kind %d) -> "
+                    "carried list %d -> %d: %s%s%s\n",
+                    takeCandidate,
+                    session.objectName(takeCandidate).c_str(),
+                    session.objectKind(takeCandidate), was, now, what,
+                    session.lastObjectEffect().empty() ? "" : "; effect: ",
+                    session.lastObjectEffect().c_str());
+        takeCandidate = -1;
+    } else if (mv == "MDNOTAKE") {
+        // `sub_46B530` (0x0046B530): a four-case switch on
+        // `dword_53AE5C`, the code MDACTION kept - 0 -> group
+        // 0x8C = 140 (H_PUTL12 -> MDLETOBJ -> H_PUTL22), 3 ->
+        // group 9 (H_PUTH12/22); 1 and 2 are groups 6 and 7.
+        // The cancel PLAYS THE PUT-BACK, and MDLETOBJ inside
+        // that group is what releases the object and swaps
+        // the camera. Without this handler a cancel goes
+        // straight to standing with the object still held
+        // and the take camera still up.
+        const int putGroup = takeWasLow ? 140 : 9;
+        const bool got = player->enterGroupById(putGroup);
+        std::printf("take: MDNOTAKE - cancel: the put-back plays (%s, group %d%s)\n",
+                    takeWasLow ? "LOW H_PUTL" : "HIGH H_PUTH", putGroup,
+                    got ? "" : " - not in this bank");
+    } else if (mv == "MDLETOBJ") {
+        if (takeCam) {                // the same mode-16 swap
+            takeCamRequest(3);
+            std::printf("take: camera mode 16 requested - back to the follow camera over 30 frames\n");
+        }
+        // The put-back matches the take's HEIGHT, the same way
+        // and from the same decision: the engine keeps
+        // `dword_53AE5C = (ret == 2) ? 3 : 0` at MDACTION and
+        // `sub_46B530` turns it back into a group - case 0 ->
+        // 140, case 3 -> 9. H1Avnt.CTL: 140 is H_PUTL12/22 and
+        // 9 is H_PUTH12/22, the mirrors of the two takes. The
+        // switch is best-effort; a bank without the group
+        // leaves the machine where it is, which is what
+        // `Cef_FindGroupById` returning nothing does.
+        // Inside the put group already (MDNOTAKE entered it):
+        // `sub_41C540(actor, 0)` - the object back to the world.
+        std::printf("take: MDLETOBJ - RELEASE object %d, put back where it was\n",
+                    takeCandidate);
+        session.putHeldObjectBack();
+        heldInHand = -1;
+        takeCandidate = -1;
+    } else if (mv == "MDSLIDIN") {
+        // 0x0046B7F0, and the channel is what fires it: group
+        // 60's entry [160] is a child of `H_SLDIN` with no
+        // input at all, so it is taken when the door clip
+        // ends, and its GoTo lands on `H_SLIDER` - the riding
+        // pose. The handler's own body is
+        // `sub_438420(slider, 4); player[+404] = 7;
+        // UI_OpenScreen(7, -1, -1, -1)`: he is ABOARD, and the
+        // slider page opens as SCREEN 7, whose param is 1.
+        // What happens next is that page's hook (0x0049D4D0):
+        // with a destination remembered from the sneak the
+        // journey starts at once; with none, the bar reads
+        // Automatique / Manuelle and he chooses.
+        boarding = false;
+        boarded = true;
+        boardCam = 0;
+        player->setActorState(omk::ActorState::SliderMount, "MDSLIDIN");
+        player->setChannelOnly(false);
+        player->clearRootFrame();
+        session.sliders().mountCalled();
+        playerScreen = 7;
+        float at[3] = {0, 0, 0};
+        session.sliders().calledAt(at);
+        std::printf("MDSLIDIN: aboard at %.0f %.0f %.0f - H_SLDIN "
+                    "ended and the channel took its no-input child "
+                    "to H_SLIDER; ACTOR_STATE 7, screen 7 opens\n",
+                    at[0], at[1], at[2]);
+    } else if (mv == "MDSLIDOU") {
+        // 0x0046B890, the mirror of `MDSLIDIN`: group 61's
+        // entry [162] is a child of `H_SLDOUT` with no input,
+        // so it fires when that clip ends, and [163] gotos
+        // `H_STAND`. The handler refuses from anything but
+        // ACTOR_STATE 8 ("bad mode getting out of the slider
+        // !") and leaves the actor at 1.
+        leaving = false;
+        // HIS FACING, written as H_SLDOUT ends (drift audit A6):
+        // `sub_442D70(0, 0, 1, node+5Ch)`, `fpatan`, `* 57.29... -
+        // -180.0` into +420 - the heading of the node's +Z. He is drawn
+        // in the slider's frame while the clip plays (`leaving` poses
+        // him at `atan2(-row2.x, row2.z)`) and H_SLDOUT's root ends at
+        // the very turn H_STAND starts on (`slider_door`'s `root turn`:
+        // 180.0 and 180.0), so the node's matrix at that moment IS the
+        // slider's and that yaw is the one he walks away on. Nothing
+        // wrote it before: he popped back to the seat's yaw - the pool's
+        // MIRRORED convention - and walked off that way.
+        {
+            float sat[3], sx[3], sz[3];
+            if (session.sliders().calledFrame(sat, sx, sz)) {
+                const float was = player->facing();
+                player->setFacing(static_cast<float>(std::atan2(-sz[0], sz[2]) * omk::kRadToDeg));
+                std::printf("MDSLIDOU: his facing %.1f -> %.1f, the slider's frame "
+                            "H_SLDOUT ended in\n", double(was), double(player->facing()));
+            }
+        }
+        // `sub_45A9A0(actor+18Ch)`: the channel's input queue reset to
+        // the idle word, so nothing pressed through H_SLDOUT is carried
+        // into H_STAND (drift audit B10; MDSLIDOU's own ground probe,
+        // under a momentary `g_IgnoreLedges = 1`, is the walker's floor
+        // here and is not transcribed)
+        player->resetInputQueue();
+        session.sliders().slidOutCalled();   // 5 -> 7 (or 7 -> 5 -> 7)
+        slidOutAt = frameNo;
+        // ...and the camera: `Camera_Request(0, {player, player},
+        // 60.0, type 1)` unless the mode is 0 or 17 - after a journey
+        // it is mode 10 and travels back to the follow camera; after a
+        // manual stop it is 17, which lets him walk out of it
+        if (sliderCamMode != 17 && (sliderCamMode >= 0 || takeCam))
+            sliderCamRequest(0, 60.0f);
+        player->setActorState(omk::ActorState::Normal, "MDSLIDOU");
+        player->setChannelOnly(false);
+        player->clearRootFrame();
+        std::printf("MDSLIDOU: out and standing - H_SLDOUT ended, "
+                    "the channel gotos H_STAND, ACTOR_STATE 1\n");
+    } else if (mv == omk::kMoveOpenSneak) {
+        // ROW 0, and the other end of the same table. TAB is
+        // the Aventure scheme's "Ouvrir sneak" (bit 0x2000);
+        // H1Avnt/F1Avnt group 0 has an entry waiting on
+        // exactly that bit whose flag-2 alias redirects
+        // through its GoTo into group 6, and group 6's child
+        // names `MDSNEAK0` (`actor/moves.h` quotes the whole
+        // chain and `sub_0046ADF0` with it).
+        //
+        // The handler's own gate is `sub_41A350(actor)`: when
+        // the actor carries a pending target at `+164` it
+        // raises event 10 for that object and does NOT open
+        // the sneak - which is the SAME `+164` MDGETOBJ links
+        // an object to just above. Not modelled, so the sneak
+        // always opens; with nothing held that is what the
+        // engine does, and holding something is the case to
+        // come back to.
+        //
+        // What IS reproduced is the pair around it: event 25
+        // opening object list 0 on the way in, and event 26
+        // if the open fails or when the close comes.
+        if (walk || playerScreen >= 0) return true;   // already up
+        inv.openList(0);          // Game_RaiseEvent(25, 0)
+        playerScreen = omk::screen::Sneak;
+        std::printf("MDSNEAK0: event %d opens object list 0, "
+                    "screen %d\n", omk::kEventSneakOpen,
+                    omk::screen::Sneak);
+    }
+    return false;
+}
+
+
+
+// THE TAKE: the object taken, and its NAME shown as the take's subtitle (`sub_4083F0(46, ...)`, `Subtitle_Show`) (from `adventureActionMove`)
+void PlayState::adventureTakeObject() {
+    auto& session = *session_;
+    if (takeCandidate >= 0 && session.takeObject(takeCandidate)) {
+        // `sub_4083F0(46, ...)` then `Subtitle_Show`
+        // (0x0041E040): the object's NAME at the bottom of
+        // the screen, as seen on the take. It rides the
+        // same subtitle
+        // the voice-overs use.
+        mediaText = session.objectName(takeCandidate);
+        mediaTextFrames = mediaText.empty() ? 0 : 90;
+        std::printf("take: MDGETOBJ - holding %d '%s'\n",
+                    takeCandidate, mediaText.c_str());
+        // `Camera_Request(1, dword_930800)`: the take
+        // camera, travelling 30 frames from what is on
+        // screen (`sub_414A90` keeps the outgoing block as
+        // g_CameraPrev, request+24 = 30 the frames).
+        heldInHand = takeCandidate;       // `sub_41C490`: it rides the hand from here
+        {
+            float op[3] = {0, 0, 0};
+            session.propPos(takeCandidate, op);
+            const auto& objs = voiceLib.objects();
+            const PropModel* pm = takeCandidate >= 0 &&
+                static_cast<std::size_t>(takeCandidate) < objs.size()
+                ? propModelFor(objs[static_cast<std::size_t>(takeCandidate)].stem) : nullptr;
+            std::printf("take: GRAB object %d - placement %.1f %.1f %.1f, model %s "
+                        "origin %.2f %.2f %.2f local(+128) %.2f %.2f %.2f, %zu rest corners\n",
+                        takeCandidate, op[0], op[1], op[2],
+                        pm ? "ready" : "MISSING",
+                        pm ? pm->origin[0] : 0.f, pm ? pm->origin[1] : 0.f, pm ? pm->origin[2] : 0.f,
+                        pm ? pm->localOff[0] : 0.f, pm ? pm->localOff[1] : 0.f, pm ? pm->localOff[2] : 0.f,
+                        pm ? pm->rest.corners.size() : 0u);
+        }
+        takeCam = true;
+        takeCamRequest(1);
+        std::printf("take: camera mode 1 requested - preset 1 over 30 frames\n");
+    }
+}
+
+
+
+
+// A SHOT REQUESTED with a row: the arm's angles toward the look, and the bolt (from `adventureShot`)
+void PlayState::adventureShotRequest(const omk::ShootWeaponRow*& row) {
+    if (shotLatch.request && row) {
+        shotLatch.request = false;          // dword_4E9744 = 0
+        // `Actor_TickProjectiles(player)`, the record path.
+        //
+        // THE MUZZLE is a RECONSTRUCTION, labelled: the engine
+        // places the shot at the held object's `+12` node,
+        // which rides actor `+44` - `Maing`, the left hand.
+        // No weapon model is loaded here, so the shot leaves
+        // from the hand node itself, placed exactly the way
+        // the held prop is (the render pass, "THE OBJECT IN
+        // HIS HAND").
+        const float* pp = player->pos();
+        const float yaw = player->facing();
+        omk::RecordShot rs;
+        rs.muzzle[0] = pp[0]; rs.muzzle[1] = pp[1]; rs.muzzle[2] = pp[2];
+        const char* from = "his position (no pose)";
+        if (const omk::NodeTracks* pt = player->poseTracks()) {
+            const std::vector<omk::MeshPose> pose =
+                playerPoseNow(&*player, true, *pt, player->poseFrameF());
+            int hand = -1;      // the LAST strstr hit, as o3de_Traverse leaves it
+            for (std::size_t i = 0; i < playerMeshes.size(); ++i)
+                if (std::strstr(playerMeshes[i].name, "Maing"))
+                    hand = static_cast<int>(i);
+            if (hand >= 0 && static_cast<std::size_t>(hand) < pose.size()) {
+                const omk::MeshPose& hp = pose[static_cast<std::size_t>(hand)];
+                // `tir`, linked under the hand with its own
+                // +128 local: the hand's rotation applied to it
+                float off[3] = {0.0f, 0.0f, 0.0f};
+                const GunFacts* gf = shotGunStem.empty() ? nullptr
+                                                         : &gunFactsFor(shotGunStem);
+                if (gf && gf->ok) omk::qrot(hp.q, gf->tirLocal, off);
+                const float hin[3] = {hp.pos[0] + off[0] - playerRootXZ[0],
+                                      hp.pos[1] + off[1],
+                                      hp.pos[2] + off[2] - playerRootXZ[1]};
+                float ho[3];
+                omk::rotateYaw(yaw, hin, ho);
+                rs.muzzle[0] = ho[0] + pp[0];
+                rs.muzzle[1] = ho[1] + pp[1] - playerFeet + lastRootDrop;
+                rs.muzzle[2] = ho[2] + pp[2];
+                from = gf && gf->ok ? "the tir node" : "the Maing node";
+            }
+        }
+        // the SHOT SPRITE: section A by the gun's root name
+        int muzzleFx = 0;
+        if (!shotGunStem.empty())
+            if (const omk::FxShotSprite* sp =
+                    shootSfx.shotSprite(gunFactsFor(shotGunStem).root)) {
+                muzzleFx = sp->muzzleEffect;
+                rs.impactEffect = sp->impactEffect;
+                rs.sprite = true;
+                rs.windUp = sp->windUp;
+                rs.grow = sp->grow;
+                for (int k = 0; k < 3; ++k) rs.growStep[k] = sp->growStep[k];
+            }
+        rs.yawDeg = yaw;
+        rs.pitchDeg = shootPitch;
+        harnessAimAt(rs);       // --aim-at (an instrument)
+        // THE MAGAZINE: property 35, slot `index - 1`, on the
+        // DB player record. A row with index 0 has none.
+        std::int32_t count = 0;
+        const std::size_t recAt = static_cast<std::size_t>(omk::GameState::kPlayerRecord);
+        const std::size_t recLen = static_cast<std::size_t>(omk::GameState::kPlayerRecordSize);
+        bool mag = row->ammoIndex &&
+            omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
+                              row->ammoIndex - 1, count);
+        // AN EMPTY MAGAZINE CHANGES THE WEAPON (17_script.c 1278): at a
+        // count of 0 or less the player's shot raises event 48, and on a
+        // change `Shoot_InitWeapon`s the new gun and re-reads the count
+        // from ITS magazine - the round below comes out of that one. But
+        // the bolt's SPEED and DAMAGE were read from the old row before
+        // the call (`v68`, `v71`), so it flies as the old gun's: `flight`
+        // keeps them and takes the new row's magazine. No change, and the
+        // round is taken from the empty one anyway, as before.
+        omk::ShootWeaponRow flight = *row;
+        if (mag && count <= 0 && shootChangeWeapon(frameNo, "an empty magazine")) {
+            const omk::ShootWeaponRow* nr = playerShootRec.weapon;
+            flight.ammoIndex = nr ? nr->ammoIndex : 0;
+            count = 0;
+            mag = flight.ammoIndex &&
+                  omk::readAmmoSlot(state.raw().subspan(recAt, recLen),
+                                    flight.ammoIndex - 1, count);
+        }
+        int left = static_cast<int>(count);
+        if (mag) rs.ammo = &left;
+        const omk::RecordShotOut out = projectiles.fireFromRecord(-1, flight, rs);
+        if (mag && out.ammoSpent)
+            omk::writeActorProperty(state.rawMutable().subspan(recAt, recLen), 0x23,
+                                    ((flight.ammoIndex - 1) << 16) | (left & 0xFFFF));
+        if (mag && out.ammoSpent) hudAmmo = out.hudAmmo;   // `dword_90E11C`
+        if (out.entry >= 0) {
+            ++shotsFired;
+            // `sub_44EF80(row, node, ..., 0.0)` as the entry is
+            // made: the MUZZLE effect, its sound armed
+            shotSound(frameNo, muzzleFx, rs.muzzle, player->pos(), "fire");
+            // ...and the NOISE at the muzzle (0x44D5CC / 0x44D7A5)
+            shootNoise(frameNo, -1, rs.muzzle, "a shot");
+            const omk::Projectile& e =
+                projectiles.entries()[static_cast<std::size_t>(out.entry)];
+            const float sp = e.speed != 0.0f ? e.speed : 1.0f;
+            std::printf("frame %ld: SHOT %ld - Actor_TickProjectiles(player): "
+                        "entry %d, speed %.1f, damage %d, dir %.3f %.3f %.3f "
+                        "(yaw %.1f pitch %.1f), from %s %.1f %.1f %.1f, "
+                        "magazine %s, %d live\n", frameNo, shotsFired, out.entry,
+                        double(e.speed), e.kind, double(e.vel[0] / sp),
+                        double(e.vel[1] / sp), double(e.vel[2] / sp),
+                        double(yaw), double(shootPitch), from,
+                        double(rs.muzzle[0]), double(rs.muzzle[1]),
+                        double(rs.muzzle[2]),
+                        mag ? (std::to_string(count) + " -> " +
+                               std::to_string(left)).c_str() : "none",
+                        projectiles.liveOf(-1));
+        } else {
+            std::printf("frame %ld: SHOT refused - the pool is full (%d live), "
+                        "nothing spent\n", frameNo, projectiles.live());
+        }
+    }
+}
+
 
 // The action button, MDACTION, one activation per press
 void PlayState::adventureAction() {

@@ -1380,169 +1380,8 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
             uiBits = 0;
         }
         const bool optActive = optHost && optMenu.focused();
-        if (uiBits && optActive) {
-            // `Ui_ScreenInput` on the FOCUSED screen, and its sound
-            if (!ate) optMenu.press(uiBits);
-            if (bits & omk::kUiConfirm)      blip(optSndConfirm);
-            else if (bits & omk::kUiBack)    blip(optSndBack);
-            else if (optMenu.moved())        blip(optSndMove);
-            if (!optMenu.focused())
-                std::printf("frame %ld: options: focus back to screen %d\n", frameNo, openScreen);
-            // ...AND, UNDER THE START MENU, ON TO ITS FOUR BUTTONS. A
-            // RECONSTRUCTION, labelled as one: read alone, the root's
-            // `Retour` and BACK only focus 29 (`Opt_RowInput` case 6,
-            // 0x00492AD0), and `UI_TickScreens` visits slot 0 - screen 29 -
-            // before slot 1, so 29 cannot take the same key that frame.
-            // That leaves the menu on the bare `Options` heading until a
-            // second BACK, which the original does not need. An account
-            // of the game outranks a reading that has found no
-            // mechanism; the second BACK is sent here.
-            if (!optMenu.focused() && openScreen == omk::screen::StartMenu &&
-                walk->panel() && walk->panel()->addr == omk::kPanelOptionsHost) {
-                walk->press(omk::kUiBack);
-                std::printf("frame %ld: options: the start menu back on its buttons "
-                            "(a second BACK - the reader's account, a reconstruction)\n", frameNo);
-            }
-            // `UI_CloseScreen(9)`: the device's own close, as TAB does it
-            if (optMenu.takeHostClose()) walk->press(omk::kUiClose);
-        } else if (uiBits) {
-            const int wasSel = walk->selection(), wasList = walk->currentList();
-            // THE SOUND IS NOT GATED ON IT, and that is read rather than
-            // assumed: `Ui_ScreenInput` (0x0042A0F0) calls
-            // `Ui_DispatchInput` and then `sub_482FE0(screen)`
-            // UNCONDITIONALLY, so the slot is picked from the live input
-            // word whatever the dispatch did. A frame the field ate still
-            // clicks - RETURN in the name box plays the confirm sound and
-            // presses nothing.
-            if (!ate) walk->press(uiBits);
-            // The MOVE sound fires when the selection actually MOVED, not
-            // on every press: `Ui_MoveSelection` steps over unselectable
-            // rows and a pinned list stops at its ends, so a key that
-            // changes nothing must make no sound either.
-            // One sound per press, chosen by the BIT, which is what
-            // `sub_482FE0` does. The move is still gated on the selection
-            // having actually moved - `Ui_MoveSelection` steps over
-            // unselectable rows and a pinned list stops at its ends.
-            if (bits & omk::kUiConfirm)      blip(sndConfirm);
-            else if (bits & omk::kUiBack)    blip(sndBack);
-            else if (walk->selection() != wasSel ||
-                     walk->currentList() != wasList) blip(sndMove);
-        }
-        if (optHost) {
-            const bool onPanel = openScreen == omk::screen::StartMenu && walk->panel() &&
-                                 walk->panel()->addr == omk::kPanelOptionsHost;
-            // the sneak's tab LEFT: the leave hook 0x0049D940 hides 35
-            if (openScreen == omk::screen::Sneak && !optOnSneakTab && optMenu.focused())
-                optMenu.unfocus();
-            if (onPanel && !optEntered) {
-                optEntered = true;
-                optMenu.focus();
-                std::printf("frame %ld: options: screen 35 focused (panel 0x004CF420's "
-                            "enter hook 0x0047BB40), page %d\n", frameNo, optMenu.page());
-            }
-            if (!onPanel) optEntered = false;
-            // ---- WHAT THE APPLY HOOKS WROTE, reaching the viewer ----
-            //
-            // The engine's hooks write `byte_90E180` and every consumer
-            // reads it when it next runs; here the block is `settings.v`
-            // and the viewer's own copies are refreshed from it - unless a
-            // flag on the command line holds one, which outranks the menu
-            // the way it outranks the save.
-            for (const int item : optMenu.takeApplied()) {
-                settings.v = optMenu.settings();
-                // a slot save writes the header too (`Game_WriteSave`'s
-                // first copy), so it must carry what the menu changed
-                if (saveSettings) saveSettings = settings.v;
-                const omk::SettingsBlock& v = settings.v;
-                switch (item) {
-                case 2:
-                    if (v.screenX != dispW || v.screenY != dispH) {
-                        pendingDisplay = {v.screenX, v.screenY};
-                    }
-                    break;
-                case 3:
-                    if (clipFlag || unlimitedClip)
-                        std::printf("options: clip distance %d m - held at the "
-                                    "command line's / the enhancement's\n", v.clipDistance);
-                    else {
-                        clipInches = static_cast<double>(v.clipDistance) * omk::kInchesPerMetre;
-                        clipReport = true;
-                        std::printf("options: clip distance %d m = %.0f in "
-                                    "(sub_41D570 re-applies it to the scene)\n",
-                                    v.clipDistance, clipInches);
-                    }
-                    break;
-                case 4:
-                    if (skyFlag < 0) drawSky = v.sky;
-                    std::printf("options: sky %s%s\n", v.sky ? "on" : "off",
-                                skyFlag >= 0 ? " - held at --sky" : "");
-                    break;
-                case 5:
-                    if (shadowFlag < 0) drawShadows = v.shadows;
-                    std::printf("options: shadows %s%s\n", v.shadows ? "on" : "off",
-                                shadowFlag >= 0 ? " - held at --shadows" : "");
-                    break;
-                case 6:
-                    if (!densityFlag) {
-                        density = v.streetActivity;
-                        session.setStreetActivity(density);
-                    }
-                    std::printf("options: street activity %d%s - `Slider_Init` reads it "
-                                "when the next area loads, as the game's does\n",
-                                v.streetActivity, densityFlag ? " - held at --density" : "");
-                    break;
-                case 7:
-                    if (detailFlag < 0) shadowDetail = v.levelOfDetail;
-                    std::printf("options: level of detail %d%s\n", v.levelOfDetail,
-                                detailFlag >= 0 ? " - held at --detail" : "");
-                    break;
-                case 10: case 11: case 12:
-                    // read where they are played: the music every frame,
-                    // the other two by the next sound to start
-                    session.setMusicOption(v.volumeMusic);
-                    std::printf("options: volumes - attenuation dialogue %d, music %d, "
-                                "effects %d dB\n", v.volumeDialogue, v.volumeMusic,
-                                v.volumeEffects);
-                    break;
-                case 8:
-                    std::printf("options: Accélération 3D -> %d - NOT switched live: the "
-                                "viewer picks its renderer at start (--software, "
-                                "--vulkan)\n", optMenu.current(8));
-                    break;
-                default:
-                    std::printf("options: row %d applied\n", item);
-                    break;
-                }
-            }
-            // `Oui` on "Sauvegarder les options": `sub_4092A0`, the
-            // settings-only save - the 3496 bytes over the file's head,
-            // or a new file of 256 empty slots behind them
-            if (optMenu.takeSaveRequest()) {
-                omk::SettingsBlock out = settings.v;
-                if (settings.bindings != omk::Settings::Source::Save) {
-                    // the header carries the three binding tables verbatim,
-                    // and a block that never came from a save has none
-                    for (int g = 0; g < 4; ++g)
-                        for (int k = 0; k < 14; ++k) {
-                            const std::size_t i = static_cast<std::size_t>(g * 14 + k);
-                            out.keyboard[i] = static_cast<std::uint32_t>(
-                                std::max(0, in.schemes().code(g, k, omk::Device::Keyboard)));
-                            out.mouse[i] = static_cast<std::uint32_t>(
-                                std::max(0, in.schemes().code(g, k, omk::Device::Mouse)));
-                            out.joystick[i] = static_cast<std::uint32_t>(
-                                std::max(0, in.schemes().code(g, k, omk::Device::Joystick)));
-                        }
-                }
-                auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
-                if (file.size() < omk::kSaveFileSize) file = omk::blankSaveFile(out);
-                else omk::putSettings(file, out);
-                if (omk::writeSaveFile(savesPath, file))
-                    std::printf("options: saved - the settings header written to %s\n",
-                                savesPath.c_str());
-                else
-                    std::fprintf(stderr, "options: could not write %s\n", savesPath.c_str());
-            }
-        }
+        modesOptionsInput(uiBits, optActive, ate, optMenu);
+        modesOptionsHost(optHost, optOnSneakTab, optMenu, in);
         // CLOSING THE SNEAK is not closing a script's screen, and the
         // difference is the whole reason `screenFromScript` exists.
         // `Ui_CloseSneakFamily`'s parameter-0 arm - the one that serves
@@ -1678,198 +1517,8 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
                             "are his\n");
             }
         }
-        if (const int row = walk->takeTravel(); row >= 0) {
-            std::vector<const omk::Destination*> known;
-            for (const auto& d : destinations)
-                if (state.bit(omk::StateArray::AddressEnabled, d.bit))
-                    known.push_back(&d);
-            if (row >= static_cast<int>(known.size())) {
-                std::printf("slider: row %d is past the %zu enabled "
-                            "destinations\n", row, known.size());
-            } else if (!walk->travelIsJourney()) {
-                // ---- THE SNEAK'S PAGE CALLS ONE ---------------------
-                //
-                // Screen 9's `param` is 0, so `sub_49BC60` takes the arm
-                // that uses the PLAYER'S own position: a slider is armed
-                // and comes to him, and the row he chose is remembered
-                // (`dword_6A17CC = tag`) for the arrival camera. The
-                // JOURNEY is a second confirm, on screen 7, once he is
-                // aboard - which is why `MDSLIDIN` ends in
-                // `UI_OpenScreen(7, ...)`.
-                const auto* d = known[static_cast<std::size_t>(row)];
-                float me[3] = {session.playerPos()[0], session.playerPos()[1],
-                               session.playerPos()[2]};
-                if (session.callSlider(me)) {
-                    sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
-                    // `dword_6A17CC = tag` - written only when the call
-                    // is accepted (`sub_49BC60`, `loc_49BCFA`)
-                    calledDestination = row;
-                    walk->closeScreen();            // `screen[+8] = 3`
-                    std::printf("slider: '%s' chosen - a slider is COMING "
-                                "to %.0f %.0f %.0f. Wait for it, then walk "
-                                "to it and press the action button\n",
-                                d->name.c_str(), me[0], me[1], me[2]);
-                } else {
-                    sliderRefused();
-                }
-            } else if (boarded && known[static_cast<std::size_t>(row)]->area
-                                   == session.residentSlot(session.activeSlot()).area) {
-                // ...the RESIDENT area, not `state.currentArea()`: the
-                // drive is possible exactly when the destination is in
-                // the world the circuit belongs to, and the harness's
-                // `--area` leaves the DB's current area at the save's
-                // (237) while the world is Anekbah (0). Compared against
-                // the DB, every journey in the fixture took the
-                // other-area arm and was placed instead of driven.
-                // ---- THE JOURNEY, inside this area --------------------
-                //
-                // Screen 7's row confirm: `sub_40E630(tag)` finds the
-                // address, `sub_452570` with a slider already assigned
-                // sets it to state 6, and `sub_456530` drives it to the
-                // lane nearest that address. He is on it the whole way.
-                const auto* d = known[static_cast<std::size_t>(row)];
-                const auto& rs = session.residentSlot(session.activeSlot());
-                const omk::Address* ad = nullptr;
-                for (const auto& x : rs.addresses) if (x.id == d->bit) ad = &x;
-                if (ad && session.sliders().sendCalledTo(ad->pos)) {
-                    sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
-                    journeyTo = d->bit;
-                    std::printf("slider: JOURNEY to '%s' - state 6, driving "
-                                "to the lane nearest address %d\n",
-                                d->name.c_str(), d->bit);
-                } else {
-                    std::printf("slider: '%s' has no road within reach - "
-                                "the journey FAILS (text 42)\n", d->name.c_str());
-                }
-            } else {
-                // ---- THE JOURNEY, to another AREA -------------------
-                //
-                // `sub_40E630` loads the area first and only then looks
-                // for a lane; the circuit changes under the vehicle. Not
-                // driven here: the port loads the area and places him,
-                // which is the arrive arm, and says so.
-                const auto* d = known[static_cast<std::size_t>(row)];
-                const int wasArea = state.currentArea();
-                // ...FROM ABOARD, and it is not a bare placement: after
-                // `sub_40E630`'s load, `sub_452570` runs against the NEW
-                // pool - the lane nearest the destination, `sub_452CC0`
-                // relinking a vehicle THERE (not at the top of the lane),
-                // state 6 - so `sub_456530` case 6 finds it within its 117
-                // at once and it ARRIVES: the stop, the exit clip, camera
-                // 17, the release. This dropped him at the address bare.
-                const bool wasAboard = boarded;
-                if (d->area != wasArea) {
-                    state.setCurrentArea(static_cast<std::int16_t>(d->area));
-                    session.loadArea(d->area);
-                }
-                bool arrived = false;
-                if (wasAboard) {
-                    const auto& rs2 = session.residentSlot(session.activeSlot());
-                    const omk::Address* ad2 = nullptr;
-                    for (const auto& x : rs2.addresses) if (x.id == d->bit) ad2 = &x;
-                    if (ad2 && session.sliders().arriveAt(ad2->pos)) {
-                        sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
-                        journeyTo = d->bit;
-                        arrived = true;
-                        std::printf("slider: JOURNEY to '%s' in area %d - loaded, "
-                                    "the slider relinked at the lane nearest address "
-                                    "%d with him aboard, state 6; %d vehicles live in "
-                                    "the new pool\n",
-                                    d->name.c_str(), d->area, d->bit,
-                                    session.sliders().liveVehicles());
-                    } else {
-                        session.sliders().dismountCalled();
-                        boarded = false;
-                        std::printf("slider: '%s' - area %d has no road within reach "
-                                    "of address %d; placing him instead\n",
-                                    d->name.c_str(), d->area, d->bit);
-                    }
-                }
-                // The address whose `+14` is this record's own bit - the
-                // one number that joins the two tables.
-                const bool changed = d->area != wasArea;
-                const bool placed = arrived ? true : session.placeActorAt(d->bit);
-                session.requestCamera(0, 0);
-                // `Screen_Fade(0)` is `fade.from_black` - it CLEARS the
-                // load's black at the exit (case 8 calls it every tick of
-                // H_SLDOUT), not a sixty-frame dip: the dip belongs only
-                // to the bare placement, and on the aboard path it is a
-                // fade that should not be there.
-                if (!arrived) session.startColourFade(4, 0u, 60.0f);
-                // ONLY WHEN THE AREA ACTUALLY CHANGED. Dropping
-                // `playerReady` asks the hand-over gate to build the
-                // player again for a new area's set, which is right after
-                // a load and WRONG without one: nothing rebuilds him, so
-                // there is no player left at all and control goes with
-                // him. A reader met exactly that - *"calling a slider
-                // with the sneak teleports me and makes the character
-                // disappear"* - and every headless test of this path had
-                // taken the other branch, because the fixture save's area
-                // is 237 and every destination is in 0, 1, 64 or 101.
-                // Travelling INSIDE the city you are standing in is the
-                // common case and was the untested one.
-                // ONLY WHEN THERE IS NO CONTROLLER YET. The hand-over gate
-                // that rebuilds him and sets `playerReady` runs on
-                // `!player`; with a controller already alive an area
-                // change keeps him ("he keeps walking", the walk-through
-                // path above). Dropping `playerReady` here with `player`
-                // alive left it false for ever, and the model eviction
-                // keeps his model only while `playerReady` - so in a city
-                // where no staged actor wears HO1_FN (Qalisar) Kay'l was
-                // thrown away on the first frame. The reader, twice:
-                // *"the character disappearing"*.
-                if (changed && !player) {
-                    playerReady = false; adventure = false;
-                    forceAdventure = true;
-                }
-                if (player && !arrived) {
-                    const float at[3] = {session.playerPos()[0],
-                                         session.playerPos()[1],
-                                         session.playerPos()[2]};
-                    player->placeAt(at, session.playerYaw());
-                }
-                if (!arrived)
-                std::printf("slider: '%s' - area %d -> %d, address %d %s"
-                            " at %.0f %.0f %.0f facing %.0f\n",
-                            d->name.c_str(), wasArea, d->area, d->bit,
-                            placed ? "placed him" : "IS NOT IN THAT AREA",
-                            session.playerPos()[0], session.playerPos()[1],
-                            session.playerPos()[2], session.playerYaw());
-            }
-        }
-        if (const int slot = walk->takePendingSave(); slot >= 0) {
-            // ONE RING, through `Actor_GetProperty` / `Actor_SetProperty`
-            // (events 44 and 45, property 5) exactly as the callback
-            // does - and only when it has one to spend, which is the
-            // `jz` that skips the decrement without skipping the write.
-            const int had = state.rings();
-            if (had > 0) state.setRings(had - 1);
-            state.setCurrentArea(static_cast<std::int16_t>(session.activeArea()));
-            state.setCurrentScene(static_cast<std::int16_t>(
-                session.residentSlot(session.activeSlot()).scene));
-            state.setPlacement(session.playerPos(), session.playerYaw());
-            omk::SaveSlot out;
-            out.name = loadedName.empty() ? std::string("OMK") : loadedName;
-            out.day  = state.clockDay();
-            out.time = state.clock();
-            out.state = state;
-            const auto thumb = omk::thumbFromRgb565(fb.px, fb.w, fb.h);
-            auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
-            if (file.size() < omk::kSaveFileSize)
-                file = omk::blankSaveFile(saveSettings ? *saveSettings
-                                                       : omk::defaultSettingsBlock());
-            if (saveSettings) omk::putSettings(file, *saveSettings);
-            if (omk::writeSaveSlot(file, slot, out, thumb) &&
-                omk::writeSaveFile(savesPath, file))
-                std::printf("save: slot %d written - '%s', %s %s, area %d "
-                            "scene %d; %d anneau%s left\n", slot,
-                            out.name.c_str(), omk::formatDate(out.day).c_str(),
-                            omk::formatTime(out.time).c_str(),
-                            state.currentArea(), state.currentScene(),
-                            state.rings(), state.rings() == 1 ? "" : "x");
-            else
-                std::fprintf(stderr, "save: slot %d could not be written\n", slot);
-        }
+        modesSliderTravel();
+        modesSaveRequest();
         // The board's message oscillator, on the FRAME's milliseconds as
         // `sub_42B6D0` adds them: the line drops at 5000.
         if (openScreen == omk::screen::HighScore && hsMessageLeftMs > 0.0)
@@ -1928,70 +1577,7 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
         // event 26 and frees no object list, because nothing was opened.
         // Sending it through the branch below would have raised the
         // sneak's close event and shut a list that was never open.
-        if (walk->closing()) {
-            // held by oscillator 5: nothing leaves this frame
-        } else if (screenLeaving && openScreen == omk::screen::Pause) {
-            std::printf("screen %d PAUSE GAME closed - the world runs "
-                        "again\n", openScreen);
-            walk.reset();
-            openScreen = -1;
-            screenFromScript = true;
-        } else if (screenLeaving && openScreen == omk::screen::HighScore) {
-            // its close slot is the generic `Ui_CloseScreenDefault`: no
-            // event 26, no list - and `sub_466B60` again only if the
-            // player is still held, which a level page already undid
-            std::printf("screen 36 HIGH-SCORE closed - the generic close\n");
-            walk.reset();
-            openScreen = -1;
-            screenFromScript = true;
-            hsReleased = false;
-        } else if (screenLeaving && !screenFromScript) {
-            std::printf("screen %d closed by the player - event %d, object "
-                        "list %d\n", openScreen, omk::kEventSneakClose,
-                        inv.openedList());
-            inv.closeList();          // Game_RaiseEvent(26, 0)
-            walk.reset();
-            openScreen = -1;
-            screenFromScript = true;
-        } else if (walk->answer() >= 0) {
-            const int uiVar = session.pendingUiVar();
-            session.answerUi(walk->answer());
-            // printed from what the SESSION stored, not from the answer
-            // handed over: the two differ whenever the write misses
-            std::printf("screen %d answered %d -> the script resumes"
-                        " (variable %d now %d)\n", openScreen, walk->answer(),
-                        uiVar, uiVar >= 0 ? int(state.var(uiVar)) : -1);
-            walk.reset();
-            openScreen = -1;
-        } else if (walk->closed()) {
-            // The player LEFT the screen without choosing. `UI_OpenScreen`
-            // parks the caller and presets the answer `dword_930750` to
-            // -1; every close path - `UI_SendAnswer` and the two ESC/TAB
-            // closes in 21_d3d.c (0x4034xx, 0x4035xx) - posts event 5
-            // with whatever it holds, and `Game_HandleEvent` case 5 does
-            // `Var_Set(var, answer)` and writes status 1 regardless. So
-            // leaving IS an answer, -1, and the script resumes with it -
-            // AREA 118's takes that branch as the unseeded opening. No
-            // `break` out of the loop: the engine has no quit here.
-            std::printf("screen %d closed without an answer -> -1, "
-                        "the script resumes\n", openScreen);
-            // A SHOP's close callback is `Ui_CloseShop` (0x004AE7E0):
-            // `Game_RaiseEvent(26, 0)` and then the generic close. Case 26
-            // clears the open list only when it is list 0 - the bank's.
-            // MULTIPLAN's close `0x004B02D0` is the same two calls - and
-            // nothing on screen 2 writes `dword_930750`, so its thirteen
-            // answer-keeping sites always read back this -1.
-            if ((openScreen >= 20 && openScreen <= 28) || openScreen == omk::screen::LibLahorey ||
-                openScreen == omk::screen::Multiplan) {
-                const int was = inv.openedList();
-                inv.closeList();          // Game_RaiseEvent(26, 0)
-                std::printf("screen %d close: event 26, open list %d -> %d\n",
-                            openScreen, was, inv.openedList());
-            }
-            session.answerUi(-1);
-            walk.reset();
-            openScreen = -1;
-        }
+        modesScreenClosing(screenLeaving, inv);
         // ...AND THE SNEAK CALL'S CLOSE, 100 ms after it was asked for.
         //
         // `closeAllScreens` made the first attempt and
@@ -2023,6 +1609,456 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
         }
     }
 }
+
+// The input word handed to a hosted options page (from `modesScreenWalk`)
+void PlayState::modesOptionsInput(unsigned int& uiBits, bool optActive, bool ate,
+                                  omk::OptionsMenu& optMenu) {
+    if (uiBits && optActive) {
+        // `Ui_ScreenInput` on the FOCUSED screen, and its sound
+        if (!ate) optMenu.press(uiBits);
+        if (bits & omk::kUiConfirm)      blip(optSndConfirm);
+        else if (bits & omk::kUiBack)    blip(optSndBack);
+        else if (optMenu.moved())        blip(optSndMove);
+        if (!optMenu.focused())
+            std::printf("frame %ld: options: focus back to screen %d\n", frameNo, openScreen);
+        // ...AND, UNDER THE START MENU, ON TO ITS FOUR BUTTONS. A
+        // RECONSTRUCTION, labelled as one: read alone, the root's
+        // `Retour` and BACK only focus 29 (`Opt_RowInput` case 6,
+        // 0x00492AD0), and `UI_TickScreens` visits slot 0 - screen 29 -
+        // before slot 1, so 29 cannot take the same key that frame.
+        // That leaves the menu on the bare `Options` heading until a
+        // second BACK, which the original does not need. An account
+        // of the game outranks a reading that has found no
+        // mechanism; the second BACK is sent here.
+        if (!optMenu.focused() && openScreen == omk::screen::StartMenu &&
+            walk->panel() && walk->panel()->addr == omk::kPanelOptionsHost) {
+            walk->press(omk::kUiBack);
+            std::printf("frame %ld: options: the start menu back on its buttons "
+                        "(a second BACK - the reader's account, a reconstruction)\n", frameNo);
+        }
+        // `UI_CloseScreen(9)`: the device's own close, as TAB does it
+        if (optMenu.takeHostClose()) walk->press(omk::kUiClose);
+    } else if (uiBits) {
+        const int wasSel = walk->selection(), wasList = walk->currentList();
+        // THE SOUND IS NOT GATED ON IT, and that is read rather than
+        // assumed: `Ui_ScreenInput` (0x0042A0F0) calls
+        // `Ui_DispatchInput` and then `sub_482FE0(screen)`
+        // UNCONDITIONALLY, so the slot is picked from the live input
+        // word whatever the dispatch did. A frame the field ate still
+        // clicks - RETURN in the name box plays the confirm sound and
+        // presses nothing.
+        if (!ate) walk->press(uiBits);
+        // The MOVE sound fires when the selection actually MOVED, not
+        // on every press: `Ui_MoveSelection` steps over unselectable
+        // rows and a pinned list stops at its ends, so a key that
+        // changes nothing must make no sound either.
+        // One sound per press, chosen by the BIT, which is what
+        // `sub_482FE0` does. The move is still gated on the selection
+        // having actually moved - `Ui_MoveSelection` steps over
+        // unselectable rows and a pinned list stops at its ends.
+        if (bits & omk::kUiConfirm)      blip(sndConfirm);
+        else if (bits & omk::kUiBack)    blip(sndBack);
+        else if (walk->selection() != wasSel ||
+                 walk->currentList() != wasList) blip(sndMove);
+    }
+}
+
+
+// THE OPTIONS PAGE hosted by another screen: its walk moved with the selection (`sub_482FE0`) (from `modesScreenWalk`)
+void PlayState::modesOptionsHost(bool optHost, bool optOnSneakTab, omk::OptionsMenu& optMenu,
+                                 omk::Input& in) {
+    auto& session = *session_;
+    if (optHost) {
+        const bool onPanel = openScreen == omk::screen::StartMenu && walk->panel() &&
+                             walk->panel()->addr == omk::kPanelOptionsHost;
+        // the sneak's tab LEFT: the leave hook 0x0049D940 hides 35
+        if (openScreen == omk::screen::Sneak && !optOnSneakTab && optMenu.focused())
+            optMenu.unfocus();
+        if (onPanel && !optEntered) {
+            optEntered = true;
+            optMenu.focus();
+            std::printf("frame %ld: options: screen 35 focused (panel 0x004CF420's "
+                        "enter hook 0x0047BB40), page %d\n", frameNo, optMenu.page());
+        }
+        if (!onPanel) optEntered = false;
+        // ---- WHAT THE APPLY HOOKS WROTE, reaching the viewer ----
+        //
+        // The engine's hooks write `byte_90E180` and every consumer
+        // reads it when it next runs; here the block is `settings.v`
+        // and the viewer's own copies are refreshed from it - unless a
+        // flag on the command line holds one, which outranks the menu
+        // the way it outranks the save.
+        for (const int item : optMenu.takeApplied()) {
+            settings.v = optMenu.settings();
+            // a slot save writes the header too (`Game_WriteSave`'s
+            // first copy), so it must carry what the menu changed
+            if (saveSettings) saveSettings = settings.v;
+            const omk::SettingsBlock& v = settings.v;
+            switch (item) {
+            case 2:
+                if (v.screenX != dispW || v.screenY != dispH) {
+                    pendingDisplay = {v.screenX, v.screenY};
+                }
+                break;
+            case 3:
+                if (clipFlag || unlimitedClip)
+                    std::printf("options: clip distance %d m - held at the "
+                                "command line's / the enhancement's\n", v.clipDistance);
+                else {
+                    clipInches = static_cast<double>(v.clipDistance) * omk::kInchesPerMetre;
+                    clipReport = true;
+                    std::printf("options: clip distance %d m = %.0f in "
+                                "(sub_41D570 re-applies it to the scene)\n",
+                                v.clipDistance, clipInches);
+                }
+                break;
+            case 4:
+                if (skyFlag < 0) drawSky = v.sky;
+                std::printf("options: sky %s%s\n", v.sky ? "on" : "off",
+                            skyFlag >= 0 ? " - held at --sky" : "");
+                break;
+            case 5:
+                if (shadowFlag < 0) drawShadows = v.shadows;
+                std::printf("options: shadows %s%s\n", v.shadows ? "on" : "off",
+                            shadowFlag >= 0 ? " - held at --shadows" : "");
+                break;
+            case 6:
+                if (!densityFlag) {
+                    density = v.streetActivity;
+                    session.setStreetActivity(density);
+                }
+                std::printf("options: street activity %d%s - `Slider_Init` reads it "
+                            "when the next area loads, as the game's does\n",
+                            v.streetActivity, densityFlag ? " - held at --density" : "");
+                break;
+            case 7:
+                if (detailFlag < 0) shadowDetail = v.levelOfDetail;
+                std::printf("options: level of detail %d%s\n", v.levelOfDetail,
+                            detailFlag >= 0 ? " - held at --detail" : "");
+                break;
+            case 10: case 11: case 12:
+                // read where they are played: the music every frame,
+                // the other two by the next sound to start
+                session.setMusicOption(v.volumeMusic);
+                std::printf("options: volumes - attenuation dialogue %d, music %d, "
+                            "effects %d dB\n", v.volumeDialogue, v.volumeMusic,
+                            v.volumeEffects);
+                break;
+            case 8:
+                std::printf("options: Accélération 3D -> %d - NOT switched live: the "
+                            "viewer picks its renderer at start (--software, "
+                            "--vulkan)\n", optMenu.current(8));
+                break;
+            default:
+                std::printf("options: row %d applied\n", item);
+                break;
+            }
+        }
+        // `Oui` on "Sauvegarder les options": `sub_4092A0`, the
+        // settings-only save - the 3496 bytes over the file's head,
+        // or a new file of 256 empty slots behind them
+        if (optMenu.takeSaveRequest()) {
+            omk::SettingsBlock out = settings.v;
+            if (settings.bindings != omk::Settings::Source::Save) {
+                // the header carries the three binding tables verbatim,
+                // and a block that never came from a save has none
+                for (int g = 0; g < 4; ++g)
+                    for (int k = 0; k < 14; ++k) {
+                        const std::size_t i = static_cast<std::size_t>(g * 14 + k);
+                        out.keyboard[i] = static_cast<std::uint32_t>(
+                            std::max(0, in.schemes().code(g, k, omk::Device::Keyboard)));
+                        out.mouse[i] = static_cast<std::uint32_t>(
+                            std::max(0, in.schemes().code(g, k, omk::Device::Mouse)));
+                        out.joystick[i] = static_cast<std::uint32_t>(
+                            std::max(0, in.schemes().code(g, k, omk::Device::Joystick)));
+                    }
+            }
+            auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
+            if (file.size() < omk::kSaveFileSize) file = omk::blankSaveFile(out);
+            else omk::putSettings(file, out);
+            if (omk::writeSaveFile(savesPath, file))
+                std::printf("options: saved - the settings header written to %s\n",
+                            savesPath.c_str());
+            else
+                std::fprintf(stderr, "options: could not write %s\n", savesPath.c_str());
+        }
+    }
+}
+
+
+// A DESTINATION the slider's call screen chose (`takeTravel`): the journey begins (from `modesScreenWalk`)
+void PlayState::modesSliderTravel() {
+    auto& session = *session_;
+    if (const int row = walk->takeTravel(); row >= 0) {
+        std::vector<const omk::Destination*> known;
+        for (const auto& d : destinations)
+            if (state.bit(omk::StateArray::AddressEnabled, d.bit))
+                known.push_back(&d);
+        if (row >= static_cast<int>(known.size())) {
+            std::printf("slider: row %d is past the %zu enabled "
+                        "destinations\n", row, known.size());
+        } else if (!walk->travelIsJourney()) {
+            // ---- THE SNEAK'S PAGE CALLS ONE ---------------------
+            //
+            // Screen 9's `param` is 0, so `sub_49BC60` takes the arm
+            // that uses the PLAYER'S own position: a slider is armed
+            // and comes to him, and the row he chose is remembered
+            // (`dword_6A17CC = tag`) for the arrival camera. The
+            // JOURNEY is a second confirm, on screen 7, once he is
+            // aboard - which is why `MDSLIDIN` ends in
+            // `UI_OpenScreen(7, ...)`.
+            const auto* d = known[static_cast<std::size_t>(row)];
+            float me[3] = {session.playerPos()[0], session.playerPos()[1],
+                           session.playerPos()[2]};
+            if (session.callSlider(me)) {
+                sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
+                // `dword_6A17CC = tag` - written only when the call
+                // is accepted (`sub_49BC60`, `loc_49BCFA`)
+                calledDestination = row;
+                walk->closeScreen();            // `screen[+8] = 3`
+                std::printf("slider: '%s' chosen - a slider is COMING "
+                            "to %.0f %.0f %.0f. Wait for it, then walk "
+                            "to it and press the action button\n",
+                            d->name.c_str(), me[0], me[1], me[2]);
+            } else {
+                sliderRefused();
+            }
+        } else if (boarded && known[static_cast<std::size_t>(row)]->area
+                               == session.residentSlot(session.activeSlot()).area) {
+            // ...the RESIDENT area, not `state.currentArea()`: the
+            // drive is possible exactly when the destination is in
+            // the world the circuit belongs to, and the harness's
+            // `--area` leaves the DB's current area at the save's
+            // (237) while the world is Anekbah (0). Compared against
+            // the DB, every journey in the fixture took the
+            // other-area arm and was placed instead of driven.
+            // ---- THE JOURNEY, inside this area --------------------
+            //
+            // Screen 7's row confirm: `sub_40E630(tag)` finds the
+            // address, `sub_452570` with a slider already assigned
+            // sets it to state 6, and `sub_456530` drives it to the
+            // lane nearest that address. He is on it the whole way.
+            const auto* d = known[static_cast<std::size_t>(row)];
+            const auto& rs = session.residentSlot(session.activeSlot());
+            const omk::Address* ad = nullptr;
+            for (const auto& x : rs.addresses) if (x.id == d->bit) ad = &x;
+            if (ad && session.sliders().sendCalledTo(ad->pos)) {
+                sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
+                journeyTo = d->bit;
+                std::printf("slider: JOURNEY to '%s' - state 6, driving "
+                            "to the lane nearest address %d\n",
+                            d->name.c_str(), d->bit);
+            } else {
+                std::printf("slider: '%s' has no road within reach - "
+                            "the journey FAILS (text 42)\n", d->name.c_str());
+            }
+        } else {
+            // ---- THE JOURNEY, to another AREA -------------------
+            //
+            // `sub_40E630` loads the area first and only then looks
+            // for a lane; the circuit changes under the vehicle. Not
+            // driven here: the port loads the area and places him,
+            // which is the arrive arm, and says so.
+            const auto* d = known[static_cast<std::size_t>(row)];
+            const int wasArea = state.currentArea();
+            // ...FROM ABOARD, and it is not a bare placement: after
+            // `sub_40E630`'s load, `sub_452570` runs against the NEW
+            // pool - the lane nearest the destination, `sub_452CC0`
+            // relinking a vehicle THERE (not at the top of the lane),
+            // state 6 - so `sub_456530` case 6 finds it within its 117
+            // at once and it ARRIVES: the stop, the exit clip, camera
+            // 17, the release. This dropped him at the address bare.
+            const bool wasAboard = boarded;
+            if (d->area != wasArea) {
+                state.setCurrentArea(static_cast<std::int16_t>(d->area));
+                session.loadArea(d->area);
+            }
+            bool arrived = false;
+            if (wasAboard) {
+                const auto& rs2 = session.residentSlot(session.activeSlot());
+                const omk::Address* ad2 = nullptr;
+                for (const auto& x : rs2.addresses) if (x.id == d->bit) ad2 = &x;
+                if (ad2 && session.sliders().arriveAt(ad2->pos)) {
+                    sliderHold();                       // `sub_452570`: Screen_Fade(1), the hold
+                    journeyTo = d->bit;
+                    arrived = true;
+                    std::printf("slider: JOURNEY to '%s' in area %d - loaded, "
+                                "the slider relinked at the lane nearest address "
+                                "%d with him aboard, state 6; %d vehicles live in "
+                                "the new pool\n",
+                                d->name.c_str(), d->area, d->bit,
+                                session.sliders().liveVehicles());
+                } else {
+                    session.sliders().dismountCalled();
+                    boarded = false;
+                    std::printf("slider: '%s' - area %d has no road within reach "
+                                "of address %d; placing him instead\n",
+                                d->name.c_str(), d->area, d->bit);
+                }
+            }
+            // The address whose `+14` is this record's own bit - the
+            // one number that joins the two tables.
+            const bool changed = d->area != wasArea;
+            const bool placed = arrived ? true : session.placeActorAt(d->bit);
+            session.requestCamera(0, 0);
+            // `Screen_Fade(0)` is `fade.from_black` - it CLEARS the
+            // load's black at the exit (case 8 calls it every tick of
+            // H_SLDOUT), not a sixty-frame dip: the dip belongs only
+            // to the bare placement, and on the aboard path it is a
+            // fade that should not be there.
+            if (!arrived) session.startColourFade(4, 0u, 60.0f);
+            // ONLY WHEN THE AREA ACTUALLY CHANGED. Dropping
+            // `playerReady` asks the hand-over gate to build the
+            // player again for a new area's set, which is right after
+            // a load and WRONG without one: nothing rebuilds him, so
+            // there is no player left at all and control goes with
+            // him. A reader met exactly that - *"calling a slider
+            // with the sneak teleports me and makes the character
+            // disappear"* - and every headless test of this path had
+            // taken the other branch, because the fixture save's area
+            // is 237 and every destination is in 0, 1, 64 or 101.
+            // Travelling INSIDE the city you are standing in is the
+            // common case and was the untested one.
+            // ONLY WHEN THERE IS NO CONTROLLER YET. The hand-over gate
+            // that rebuilds him and sets `playerReady` runs on
+            // `!player`; with a controller already alive an area
+            // change keeps him ("he keeps walking", the walk-through
+            // path above). Dropping `playerReady` here with `player`
+            // alive left it false for ever, and the model eviction
+            // keeps his model only while `playerReady` - so in a city
+            // where no staged actor wears HO1_FN (Qalisar) Kay'l was
+            // thrown away on the first frame. The reader, twice:
+            // *"the character disappearing"*.
+            if (changed && !player) {
+                playerReady = false; adventure = false;
+                forceAdventure = true;
+            }
+            if (player && !arrived) {
+                const float at[3] = {session.playerPos()[0],
+                                     session.playerPos()[1],
+                                     session.playerPos()[2]};
+                player->placeAt(at, session.playerYaw());
+            }
+            if (!arrived)
+            std::printf("slider: '%s' - area %d -> %d, address %d %s"
+                        " at %.0f %.0f %.0f facing %.0f\n",
+                        d->name.c_str(), wasArea, d->area, d->bit,
+                        placed ? "placed him" : "IS NOT IN THAT AREA",
+                        session.playerPos()[0], session.playerPos()[1],
+                        session.playerPos()[2], session.playerYaw());
+        }
+    }
+}
+
+
+// A SAVE the walk asked for (`takePendingSave`), written to its slot (from `modesScreenWalk`)
+void PlayState::modesSaveRequest() {
+    auto& session = *session_;
+    if (const int slot = walk->takePendingSave(); slot >= 0) {
+        // ONE RING, through `Actor_GetProperty` / `Actor_SetProperty`
+        // (events 44 and 45, property 5) exactly as the callback
+        // does - and only when it has one to spend, which is the
+        // `jz` that skips the decrement without skipping the write.
+        const int had = state.rings();
+        if (had > 0) state.setRings(had - 1);
+        state.setCurrentArea(static_cast<std::int16_t>(session.activeArea()));
+        state.setCurrentScene(static_cast<std::int16_t>(
+            session.residentSlot(session.activeSlot()).scene));
+        state.setPlacement(session.playerPos(), session.playerYaw());
+        omk::SaveSlot out;
+        out.name = loadedName.empty() ? std::string("OMK") : loadedName;
+        out.day  = state.clockDay();
+        out.time = state.clock();
+        out.state = state;
+        const auto thumb = omk::thumbFromRgb565(fb.px, fb.w, fb.h);
+        auto file = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
+        if (file.size() < omk::kSaveFileSize)
+            file = omk::blankSaveFile(saveSettings ? *saveSettings
+                                                   : omk::defaultSettingsBlock());
+        if (saveSettings) omk::putSettings(file, *saveSettings);
+        if (omk::writeSaveSlot(file, slot, out, thumb) &&
+            omk::writeSaveFile(savesPath, file))
+            std::printf("save: slot %d written - '%s', %s %s, area %d "
+                        "scene %d; %d anneau%s left\n", slot,
+                        out.name.c_str(), omk::formatDate(out.day).c_str(),
+                        omk::formatTime(out.time).c_str(),
+                        state.currentArea(), state.currentScene(),
+                        state.rings(), state.rings() == 1 ? "" : "x");
+        else
+            std::fprintf(stderr, "save: slot %d could not be written\n", slot);
+    }
+}
+
+
+// THE OPEN SCREEN CLOSING on its own terms - the pause screen's not the others' (from `modesScreenWalk`)
+void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
+    auto& session = *session_;
+    if (walk->closing()) {
+        // held by oscillator 5: nothing leaves this frame
+    } else if (screenLeaving && openScreen == omk::screen::Pause) {
+        std::printf("screen %d PAUSE GAME closed - the world runs "
+                    "again\n", openScreen);
+        walk.reset();
+        openScreen = -1;
+        screenFromScript = true;
+    } else if (screenLeaving && openScreen == omk::screen::HighScore) {
+        // its close slot is the generic `Ui_CloseScreenDefault`: no
+        // event 26, no list - and `sub_466B60` again only if the
+        // player is still held, which a level page already undid
+        std::printf("screen 36 HIGH-SCORE closed - the generic close\n");
+        walk.reset();
+        openScreen = -1;
+        screenFromScript = true;
+        hsReleased = false;
+    } else if (screenLeaving && !screenFromScript) {
+        std::printf("screen %d closed by the player - event %d, object "
+                    "list %d\n", openScreen, omk::kEventSneakClose,
+                    inv.openedList());
+        inv.closeList();          // Game_RaiseEvent(26, 0)
+        walk.reset();
+        openScreen = -1;
+        screenFromScript = true;
+    } else if (walk->answer() >= 0) {
+        const int uiVar = session.pendingUiVar();
+        session.answerUi(walk->answer());
+        // printed from what the SESSION stored, not from the answer
+        // handed over: the two differ whenever the write misses
+        std::printf("screen %d answered %d -> the script resumes"
+                    " (variable %d now %d)\n", openScreen, walk->answer(),
+                    uiVar, uiVar >= 0 ? int(state.var(uiVar)) : -1);
+        walk.reset();
+        openScreen = -1;
+    } else if (walk->closed()) {
+        // The player LEFT the screen without choosing. `UI_OpenScreen`
+        // parks the caller and presets the answer `dword_930750` to
+        // -1; every close path - `UI_SendAnswer` and the two ESC/TAB
+        // closes in 21_d3d.c (0x4034xx, 0x4035xx) - posts event 5
+        // with whatever it holds, and `Game_HandleEvent` case 5 does
+        // `Var_Set(var, answer)` and writes status 1 regardless. So
+        // leaving IS an answer, -1, and the script resumes with it -
+        // AREA 118's takes that branch as the unseeded opening. No
+        // `break` out of the loop: the engine has no quit here.
+        std::printf("screen %d closed without an answer -> -1, "
+                    "the script resumes\n", openScreen);
+        // A SHOP's close callback is `Ui_CloseShop` (0x004AE7E0):
+        // `Game_RaiseEvent(26, 0)` and then the generic close. Case 26
+        // clears the open list only when it is list 0 - the bank's.
+        // MULTIPLAN's close `0x004B02D0` is the same two calls - and
+        // nothing on screen 2 writes `dword_930750`, so its thirteen
+        // answer-keeping sites always read back this -1.
+        if ((openScreen >= 20 && openScreen <= 28) || openScreen == omk::screen::LibLahorey ||
+            openScreen == omk::screen::Multiplan) {
+            const int was = inv.openedList();
+            inv.closeList();          // Game_RaiseEvent(26, 0)
+            std::printf("screen %d close: event 26, open list %d -> %d\n",
+                        openScreen, was, inv.openedList());
+        }
+        session.answerUi(-1);
+        walk.reset();
+        openScreen = -1;
+    }
+}
+
 
 
 int PlayState::modesQuitLoad() {

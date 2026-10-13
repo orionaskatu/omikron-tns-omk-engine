@@ -797,6 +797,13 @@ struct PlayState {
     void inputPause();   // ESC opens the pause screen; the last screen's close flushes the input
     void inputTick();   // the pause flag, one frame of the game, the Session under a screen
     void inputMotion();   // scripted object motion - the crates, the doors, the lifts
+    void inputCollectMotions(std::vector<omk::Program::NodeMotion>& allMotions,
+                             std::map<std::string, omk::SceneRunner::NodeScale>& allScales);   // from `inputMotion`
+    void inputMeshAt();   // from `inputMotion`
+    void inputSoupPatchInPlace(bool inPlace, std::vector<unsigned int> (&movedSoup)[2],
+                               bool& newlyMoving, std::vector<unsigned int> (&movedSteep)[2],
+                               bool& newlySteep);   // from `inputMotion`
+    void inputVerifySplit(bool verifySplit, std::vector<unsigned int> (&movedSoup)[2]);   // from `inputMotion`
     void inputSounds();
     void vehicleSounds();          // sub_456B40's voices (playframe_input_parts.cpp)   // adventure mode's and the scene's own sound effects
 
@@ -810,6 +817,13 @@ struct PlayState {
     void modesShootResume(omk::Input& in);   // from `modesShoot`
     void modesDialogEnterLeave();   // from `modesShoot`
     void modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::Inventory& inv);   // from `modesShoot`
+    void modesOptionsInput(unsigned int& uiBits, bool optActive, bool ate,
+                           omk::OptionsMenu& optMenu);   // from `modesScreenWalk`
+    void modesOptionsHost(bool optHost, bool optOnSneakTab, omk::OptionsMenu& optMenu,
+                          omk::Input& in);   // from `modesScreenWalk`
+    void modesSliderTravel();   // from `modesScreenWalk`
+    void modesSaveRequest();   // from `modesScreenWalk`
+    void modesScreenClosing(bool screenLeaving, omk::Inventory& inv);   // from `modesScreenWalk`
     int modesQuitLoad();   // the quit asked for, and the pending load, served between pumps
 
     // ---- `phaseScreens`'s PARTS (todo/play-split.md) and the state they share: each
@@ -841,6 +855,12 @@ struct PlayState {
     void screensLift();   // the lift's description box
     void screensPropertyTail();   // the tail of Actor_SetProperty
     void screensHuds();   // the fight HUD, the breath gauge, the shoot HUD
+    void screensFightHud(omk::TextLayout& lay);   // from `screensHuds`
+    void screensShootHud(omk::ScreenComposer& comp);   // from `screensHuds`
+    void screensShootRadar(bool radarShown);   // from `screensHuds`
+    void screensInterfaceLayer(omk::ScreenComposer& comp, omk::OptionsMenu& optMenu);   // from `screensHuds`
+    void screensMediaInset();   // from `screensHuds`
+    void screensSubtitle(omk::TextLayout& lay);   // from `screensHuds`
     // THE CITY WEATHER (`o3de/weather.h`, `playframe_world_weather.cpp`):
     // the cycle ticked and the drops projected before the present's gates,
     // which then know whether `fb` carries any; drawn first by `screensHuds`
@@ -879,6 +899,10 @@ struct PlayState {
     void adventureWalls();   // stuck between walls; where the floor ends
     void adventureTake();   // the world take; where the action raise comes from
     void adventureShot();   // the shot
+    void adventureSpecialMove(const std::string& mv, omk::Input& in, omk::Inventory& inv);   // from `adventureShot`
+    bool adventureActionMove(const std::string& mv, omk::Inventory& inv);   // from `adventureSpecialMove`
+    void adventureTakeObject();   // from `adventureActionMove`
+    void adventureShotRequest(const omk::ShootWeaponRow*& row);   // from `adventureShot`
     void adventureAction();   // the action button, MDACTION, one activation per press
 
     // ---- `phaseControl`'s PARTS (todo/play-split.md) and the state they share: each
@@ -934,6 +958,15 @@ struct PlayState {
     void worldGuns();   // the gun in his hand, each gunman's gun
     void worldBolts();   // the bolts
     void worldStaged();   // every staged body, posed by whatever drives it
+    void worldStagedProgramDrive(const omk::SceneRunner*& run, int& prog,
+                                 const omk::SceneRunner::Started*& stt,
+                                 const omk::SceneRunner::Started::Drive*& drv,
+                                 omk::SceneRunner::Started& driveView, int& sceneClip,
+                                 int& scenePath, float& sceneFrame, Staged& s);   // from `worldStaged`
+    void worldStagedDeathRoot(Staged& s, float (&rootMove)[3]);   // from `worldStaged`
+    void worldStagedTurnPose(std::vector<omk::MeshPose>& pose, bool spins, bool& aboutPelvis,
+                             float& bcs, float& bsn, const float (&off)[3], float (&pelvis)[3],
+                             float scs, float ssn, Staged& s);   // from `worldStaged`
     void worldStagedSceneClipChange(const omk::SceneRunner*& run, int& sceneClip, Staged& s,
                                     int& scenePath, const omk::SceneRunner::Started*& stt,
                                     bool& byLone);   // from `worldStaged`

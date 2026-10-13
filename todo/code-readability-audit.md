@@ -493,6 +493,23 @@ finding: a check that hashed a conversation frame would flicker.
   retVal;`. The member-name guard drops a name it forced in when no local of
   it is visible at the range (another arm's, out of scope). Guard 0 of 14;
   83 screen, UI and walk checks green.
+* step 12i - five more viewer methods: `worldStaged` (the program found by
+  name is left - it needs the `nodeOwner` lambda - but the program's drive,
+  the dead gunman's root and the turned pose are out), `modesScreenWalk`
+  (the hosted options page and its input, the slider's travel, a save, the
+  closing), `screensHuds` (the fight and shoot HUDs, the radar, the
+  interface layer, the media inset, the subtitle), `inputMotion` (every
+  scene's motions collected, `OMK_MESH_AT`, the soups patched in place, the
+  split verify - one slot's motions need `Patch`, a struct local to the
+  function, so they stay) and `adventureShot` (the shot's request, and the
+  special-move loop's body `adventureSpecialMove` with its `MDACTION` arm
+  `adventureActionMove` and the take). Two cuts were INLINED BACK - the
+  take's step and refusal wanted 23 and 16 parameters, one state machine of
+  locals that wants a struct, not a cut - and the tool now refuses past 12
+  (`--max-params`) and can undo a cut (`inline`). The brace-less-loop rule
+  is precise now: only a `continue`/`break` inside such a loop's own
+  statement is that loop's. Guard 0 of 14; 56 checks over the five files
+  green.
 
 ## 7. For the tutorial
 

@@ -8,11 +8,12 @@ viewer's stdout stays byte-identical. Done by hand, each cut means finding
 every local the block reads, its exact type and whether the block writes it.
 This makes the compiler do that:
 
-    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT] [--loop-body] [--returns]
+    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT] [--loop-body] [--returns] [--max-params N]
     python3 tools/extract_method.py batch <file.cpp> <jobs.txt>
     python3 tools/extract_method.py candidates <file.cpp> <method> [--min N] [--depth D]
     python3 tools/extract_method.py sizes [--over N]
     python3 tools/extract_method.py tidy <file.cpp>
+    python3 tools/extract_method.py inline <file.cpp> <name>
 
 `extract` moves lines A..B of a method of class C - whole statements at one
 depth - verbatim into a new method `C::<name>`, placed after the enclosing one
@@ -45,6 +46,10 @@ arm): the new method returns `bool`, each `return X;` that is not a lambda's
 becomes `{ retVal = X; return true; }` with `retVal` an out-parameter, falling
 off the end is `false`, and the call is `if (T retVal{}; name(..., retVal))
 return retVal;` (for a void method, `if (name(...)) return;`).
+
+A block that needs more than `--max-params` (12) parameters is refused: it
+shares too much state with its surroundings to read well alone, and wants a
+struct for that state rather than a cut.
 
 `batch` runs `extract` over `start|name|comment` lines, bottom-up so the line
 numbers above each cut stay valid, finding each statement's end (an `else`
@@ -197,9 +202,48 @@ def flow_owners(text, m):
     return out
 
 
-def braceless_loop(text, m):
-    """True when the range has a `for`/`while` whose body has no braces - its
-    `break`/`continue` cannot be told from the braces alone."""
+def _statement_end(text, m, k):
+    """The end of the one statement starting at code index k."""
+    n = len(text)
+    while k < n and (text[k].isspace() or not m[k]):
+        k += 1
+    if text[k] == "{":
+        return match_close(text, m, k)
+    head = re.match(r"(if|for|while|switch)\s*\(", text[k:])
+    if head:
+        d, j = 0, k + head.end() - 1
+        while j < n:
+            if m[j] and text[j] == "(":
+                d += 1
+            elif m[j] and text[j] == ")":
+                d -= 1
+                if d == 0:
+                    break
+            j += 1
+        end = _statement_end(text, m, j + 1)
+        if head.group(1) == "if":
+            r = end + 1
+            while r < n and (text[r].isspace() or not m[r]):
+                r += 1
+            if text[r:r + 4] == "else" and not (text[r + 4:r + 5].isalnum() or text[r + 4:r + 5] == "_"):
+                end = _statement_end(text, m, r + 4)
+        return end
+    d = 0
+    while k < n:
+        if m[k] and text[k] in "({[":
+            d += 1
+        elif m[k] and text[k] in ")}]":
+            d -= 1
+        elif m[k] and text[k] == ";" and d == 0:
+            return k
+        k += 1
+    return n - 1
+
+
+def braceless_loops(text, m):
+    """The spans of the range's `for`/`while` loops whose body has no braces -
+    a `break`/`continue` in one belongs to it, which the braces cannot show."""
+    spans = []
     for mm in re.finditer(r"\b(for|while)\s*\(", text):
         if not m[mm.start()]:
             continue
@@ -212,12 +256,12 @@ def braceless_loop(text, m):
                 if d == 0:
                     break
             k += 1
-        k += 1
-        while k < len(text) and (text[k].isspace() or not m[k]):
-            k += 1
-        if k < len(text) and text[k] not in "{;":
-            return True
-    return False
+        j = k + 1
+        while j < len(text) and (text[j].isspace() or not m[j]):
+            j += 1
+        if j < len(text) and text[j] not in "{;":
+            spans.append((j, _statement_end(text, m, j)))
+    return spans
 
 
 # ---- portable parameter types ------------------------------------------------
@@ -371,7 +415,7 @@ def header_of(cls):
 
 # ---- extract -----------------------------------------------------------------
 
-def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=False):
+def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=False, max_params=12):
     src = open(path).read()
     L = src.split("\n")
     body = L[A - 1:B]
@@ -386,12 +430,15 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
     if depth:
         return "refused: the range leaves a block open"
     d = 0
+    owned = braceless_loops(text, m)
     for mm in re.finditer(r"[{}]|\b(break|continue|return)\b", text):
         if not m[mm.start()]:
             continue
         t = mm.group(0)
         if t in "{}":
             d += 1 if t == "{" else -1
+        elif t != "return" and any(a <= mm.start() <= z for a, z in owned):
+            continue                         # a brace-less inner loop's own
         elif d == 0 and not (loop_body and t == "continue") and not (returns and t == "return"):
             return "refused: a top-level `%s` in the range" % t
     # A BARE `return;` nested in the range left the ENCLOSING method; moved, it
@@ -400,8 +447,9 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
     # slip: the new method is void.) `continue`/`break` that leave the range
     # do not compile in it, except under --loop-body, handled here.
     to_return = []
+    bl = braceless_loops(text, m)
     for word, pos, owner in flow_owners(text, m):
-        if owner:
+        if owner or (word != "return" and any(a <= pos <= z for a, z in bl)):
             continue
         if word == "return":
             if returns:
@@ -411,8 +459,8 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
             to_return.append(pos)
         elif loop_body:
             return "refused: a `%s` leaves the loop whose body this is" % word
-    if to_return and braceless_loop(text, m):
-        return "refused: a brace-less loop in the range; its `continue` cannot be told apart"
+    spans = braceless_loops(text, m)
+    to_return = [p for p in to_return if not any(a <= p <= z for a, z in spans)]
     if to_return:
         # `continue;` -> `return;`: the range IS the loop's whole body, so
         # leaving the body early is leaving this call
@@ -570,6 +618,10 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
         except ValueError as e:
             restore()
             return "refused: %s" % e
+        if len(params) > max_params:
+            restore()
+            return "refused: %d parameters (over %d) - the block shares too much state to stand alone" % (
+                len(params), max_params)
         write(params, need, aliases)
         errs = compile_errors(path)
         if not errs:
@@ -598,6 +650,43 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
         missing += [n for n in new if n]
     restore()
     return "refused: did not converge"
+
+
+def inline(path, name):
+    """Undo an extraction: method `name`'s body back at its one call site,
+    re-indented, its alias lines dropped; the definition and the declaration
+    removed. For a cut that read worse than what it replaced."""
+    s = open(path).read()
+    m = code_mask(s)
+    dm = re.search(r"^void (\w+)::%s\(" % re.escape(name), s, re.M)
+    if not dm:
+        return "no void method %s in %s" % (name, path)
+    b = s.index("{", dm.end())
+    e = match_close(s, m, b)
+    c0 = dm.start()
+    while True:                              # its comment block too
+        p = s.rfind("\n", 0, c0 - 1) + 1
+        if p < c0 and s[p:c0].startswith("//"):
+            c0 = p
+        else:
+            break
+    aliases = {a.strip() for a in ALIASES.values()}
+    body = [l for l in s[b + 1:e].strip("\n").split("\n") if l.strip() not in aliases]
+    dend = e + 1
+    while s[dend:dend + 1] == "\n" and dend - e < 3:
+        dend += 1
+    s2 = s[:c0] + s[dend:]
+    cm = re.search(r"^( *)%s\([^;]*\);\n" % re.escape(name), s2, re.M)
+    if not cm:
+        return "no plain call of %s (a --returns cut is inlined by hand)" % name
+    ind = len(cm.group(1))
+    inl = "\n".join((" " * (ind - 4) + l) if l.strip() else l for l in body) + "\n"
+    open(path, "w").write(s2[:cm.start()] + inl + s2[cm.end():])
+    hdr_path = header_of(dm.group(1))
+    t = open(hdr_path).read()
+    d2 = re.search(r"^ *void %s\([^;]*\)( const)?;[^\n]*\n" % re.escape(name), t, re.M)
+    open(hdr_path, "w").write(t[:d2.start()] + t[d2.end():])
+    return "inlined %s: %d lines" % (name, len(body))
 
 
 def batch(path, jobs_file):
@@ -693,7 +782,8 @@ def main(argv):
         return argv[argv.index(flag) + 1] if flag in argv else default
     if len(argv) >= 5 and argv[0] == "extract":
         r = extract(argv[1], int(argv[2]), int(argv[3]), argv[4], opt("--comment", ""),
-                    loop_body="--loop-body" in argv, returns="--returns" in argv)
+                    loop_body="--loop-body" in argv, returns="--returns" in argv,
+                    max_params=int(opt("--max-params", "12")))
         print(r)
         return 1 if r.startswith("refused") else 0
     if len(argv) == 3 and argv[0] == "batch":
@@ -701,6 +791,9 @@ def main(argv):
         return 0
     if len(argv) >= 3 and argv[0] == "candidates":
         candidates(argv[1], argv[2], int(opt("--min", "40")), int(opt("--depth", "1")))
+        return 0
+    if len(argv) == 3 and argv[0] == "inline":
+        print(inline(argv[1], argv[2]))
         return 0
     if len(argv) == 2 and argv[0] == "tidy":
         print("%d unused alias(es) dropped" % drop_unused_aliases(argv[1]))

@@ -277,50 +277,7 @@ void PlayState::worldStaged() {
         const omk::SceneRunner::Started* stt = nullptr;
         omk::SceneRunner::Started driveView;
         const omk::SceneRunner::Started::Drive* drv = nameDrive;
-        if (prog >= 0) {
-            stt = &run->started()[static_cast<std::size_t>(prog)];
-            // The node this body IS: a name's drive, or the pinned one of
-            // an object that animates more than one - whose own step, and
-            // own clock, is his (the fields of `Started` follow it).
-            if (!drv && stt->drives.size() > 1)
-                for (const auto& d : stt->drives) if (d.pinned) drv = &d;
-            if (drv) {
-                driveView = *stt;
-                driveView.clip = drv->clip;
-                driveView.path = drv->path;
-                driveView.relative = drv->relative;
-                driveView.animReached = drv->reached;
-                for (int k = 0; k < 3; ++k) {
-                    driveView.offset[k] = drv->offset[k];
-                    driveView.euler[k] = drv->euler[k];
-                }
-                stt = &driveView;
-            }
-            // Nothing is posed or placed before the program's first
-            // body-animation step RUNS (`Started::animReached`): an
-            // object that opens with a wait leaves its actor where
-            // the world has him - Kay'l under the alley at address
-            // 654 for the 60 frames before his jump out of the portal.
-            sceneClip = stt->animReached ? stt->clip : -1;
-            scenePath = stt->animReached ? stt->path : -1;
-            // The frame of THAT clip, not of the program: a program
-            // walks its steps and each may name a different animation,
-            // so the clock the pose is sampled at counts from the step
-            // (`SceneRunner::programAnimClock`).
-            sceneFrame = drv ? drv->clock : run->programAnimClock(prog);
-            // THE FACING, from the step the pc is on - and from BOTH
-            // kinds of body animation, because both end in
-            // `Actor_SetEuler(node, p4, p5, p6)`. It is not sticky:
-            // the waiter's walk clips author 0 and turn him back to 0,
-            // and reading only the relative call's Euler rotated his
-            // whole route by the 145 his standing step had left.
-            static const bool stickyEuler =
-                omk::envFlag("OMK_STICKY_EULER");   // the old, wrong reading
-            if (stt->animReached && (!stickyEuler || stt->relative)) {
-                s.progYaw = stt->euler[1];
-                s.progYawKnown = true;
-            }
-        }
+        worldStagedProgramDrive(run, prog, stt, drv, driveView, sceneClip, scenePath, sceneFrame, s);
         worldStagedSceneClipChange(run, sceneClip, s, scenePath, stt, byLone);
         // (b) THE CONVERSATION'S LINE, for its speaker only - the body
         // whose actor id is the DIALOG chunk's word 0. The model name
@@ -532,44 +489,7 @@ void PlayState::worldStaged() {
         // ...and the WALK his current clip made while alive (`sub_421370`,
         // in the brain above) - where he fell from
         for (int k = 0; k < 3; ++k) rootMove[k] += s.walkMove[k];
-        if (s.deathType >= 0 && s.deathClip && !s.deathClip->root.empty() &&
-            s.deathClip->frames > 1) {
-            const long el = std::max<long>(static_cast<long>(gameClock - s.deathStart), 0);
-            const long upto = std::min<long>(el, static_cast<long>(s.deathClip->frames) - 1);
-            const auto bi = shootBrains.find(s.actor);
-            while (s.deathEl < upto) {
-                const float ta = 1.0f + static_cast<float>(s.deathEl);
-                float d[3] = {0.0f, 0.0f, 0.0f};
-                omk::pedRootDelta(*s.deathClip, ta, ta + 1.0f, nullptr, d);
-                float r[3];
-                omk::rotateYaw(s.facing, d, r);
-                bool wall = false;
-                if (bi != shootBrains.end() && shootMap.valid()) {
-                    float snap[2];
-                    wall = omk::shootWallTest(bi->second, shootMap,
-                                              s.at[0] + s.walkMove[0] + s.deathMove[0],
-                                              s.at[2] + s.walkMove[2] + s.deathMove[2],
-                                              r[0], r[2], 1, snap) != 0;
-                }
-                if (wall) {
-                    ++s.deathWalls;
-                } else {
-                    s.deathMove[0] += r[0];
-                    s.deathMove[2] += r[2];
-                }
-                s.deathMove[1] += r[1];
-                ++s.deathEl;
-            }
-            for (int k = 0; k < 3; ++k) rootMove[k] += s.deathMove[k];
-            if (!s.deathFallTold && el >= static_cast<long>(s.deathClip->frames) - 1) {
-                s.deathFallTold = true;
-                std::printf("frame %ld: actor %d %s - death clip's root motion (sub_421770): "
-                            "%.1f %.1f %.1f over %d frames, down %.1f, %d ticks against a "
-                            "wall\n", frameNo, s.actor, s.model.c_str(), double(s.deathMove[0]),
-                            double(s.deathMove[1]), double(s.deathMove[2]),
-                            s.deathClip->frames, double(s.deathMove[1]), s.deathWalls);
-            }
-        }
+        worldStagedDeathRoot(s, rootMove);
         // THE ANCHOR. An authored PATH names the pelvis - the
         // hierarchy root, whose height is authored - so the model
         // goes there as it is. A placement record and a camera solve
@@ -822,41 +742,7 @@ void PlayState::worldStaged() {
         omk::yawSinCos(bodyYaw, bcs, bsn);
         const bool spins = std::fabs(bodyYaw) > 0.01f;
         const float scs = spins ? bcs : 1.0f, ssn = spins ? bsn : 0.0f;
-        for (std::size_t mi = 0; mi < pose.size(); ++mi) {
-            float r[3];
-            if (spins && !aboutPelvis) {
-                // ...ON THE CORNERS' OWN TRANSFORM: a body turned
-                // about its MODEL origin is `R * pos + off` (the loop
-                // below). Adding `off` first and turning the sum about
-                // the WORLD origin would put every mesh of such a body -
-                // a gunman facing by his record - its own distance from
-                // the world origin away, rotated by his facing: the
-                // projectile sweep finding actor 240's pelvis at (2875,
-                // 4466) with him drawn at (4516, -2797), his shadow's
-                // bones there too.
-                omk::rotateYawCS(bcs, bsn, pose[mi].pos, r);
-                for (int k = 0; k < 3; ++k) r[k] += off[k];
-            } else {
-                const float mp[3] = {pose[mi].pos[0] - pelvis[0],
-                                     pose[mi].pos[1] - pelvis[1],
-                                     pose[mi].pos[2] - pelvis[2]};
-                omk::rotateYawCS(scs, ssn, mp, r);
-                for (int k = 0; k < 3; ++k) r[k] += pelvis[k] + off[k];
-            }
-            for (int k = 0; k < 3; ++k) s.meshAt[mi * 3 + static_cast<std::size_t>(k)] = r[k];
-            // its world rotation: the pose's own, then the body's yaw -
-            // the same yaw whichever point it turns about
-            if (s.meshRot.size() != pose.size() * 9) s.meshRot.assign(pose.size() * 9, 0.0f);
-            for (int ax = 0; ax < 3; ++ax) {
-                const float e[3] = {ax == 0 ? 1.0f : 0.0f, ax == 1 ? 1.0f : 0.0f,
-                                    ax == 2 ? 1.0f : 0.0f};
-                float qv[3], wv[3];
-                omk::qrot(pose[mi].q, e, qv);
-                omk::rotateYawCS(scs, ssn, qv, wv);
-                for (int k = 0; k < 3; ++k)
-                    s.meshRot[mi * 9 + static_cast<std::size_t>(ax * 3 + k)] = wv[k];
-            }
-        }
+        worldStagedTurnPose(pose, spins, aboutPelvis, bcs, bsn, off, pelvis, scs, ssn, s);
         // ---- THE SET'S LIGHTS ON A CHARACTER (todo/drift-audit.md L1)
         //
         // `Actor_LoadModel` (and `Object_Load`) call `LightObject`
@@ -1132,6 +1018,145 @@ void PlayState::worldStaged() {
     releaseIdleStaged();
     mark("staged bodies");
 }
+
+// THE PROGRAM drives this body: its clip, its frame and its placement (from `worldStaged`)
+void PlayState::worldStagedProgramDrive(const omk::SceneRunner*& run, int& prog,
+                                        const omk::SceneRunner::Started*& stt,
+                                        const omk::SceneRunner::Started::Drive*& drv,
+                                        omk::SceneRunner::Started& driveView, int& sceneClip,
+                                        int& scenePath, float& sceneFrame, Staged& s) {
+    if (prog >= 0) {
+        stt = &run->started()[static_cast<std::size_t>(prog)];
+        // The node this body IS: a name's drive, or the pinned one of
+        // an object that animates more than one - whose own step, and
+        // own clock, is his (the fields of `Started` follow it).
+        if (!drv && stt->drives.size() > 1)
+            for (const auto& d : stt->drives) if (d.pinned) drv = &d;
+        if (drv) {
+            driveView = *stt;
+            driveView.clip = drv->clip;
+            driveView.path = drv->path;
+            driveView.relative = drv->relative;
+            driveView.animReached = drv->reached;
+            for (int k = 0; k < 3; ++k) {
+                driveView.offset[k] = drv->offset[k];
+                driveView.euler[k] = drv->euler[k];
+            }
+            stt = &driveView;
+        }
+        // Nothing is posed or placed before the program's first
+        // body-animation step RUNS (`Started::animReached`): an
+        // object that opens with a wait leaves its actor where
+        // the world has him - Kay'l under the alley at address
+        // 654 for the 60 frames before his jump out of the portal.
+        sceneClip = stt->animReached ? stt->clip : -1;
+        scenePath = stt->animReached ? stt->path : -1;
+        // The frame of THAT clip, not of the program: a program
+        // walks its steps and each may name a different animation,
+        // so the clock the pose is sampled at counts from the step
+        // (`SceneRunner::programAnimClock`).
+        sceneFrame = drv ? drv->clock : run->programAnimClock(prog);
+        // THE FACING, from the step the pc is on - and from BOTH
+        // kinds of body animation, because both end in
+        // `Actor_SetEuler(node, p4, p5, p6)`. It is not sticky:
+        // the waiter's walk clips author 0 and turn him back to 0,
+        // and reading only the relative call's Euler rotated his
+        // whole route by the 145 his standing step had left.
+        static const bool stickyEuler =
+            omk::envFlag("OMK_STICKY_EULER");   // the old, wrong reading
+        if (stt->animReached && (!stickyEuler || stt->relative)) {
+            s.progYaw = stt->euler[1];
+            s.progYawKnown = true;
+        }
+    }
+}
+
+
+// A DEAD GUNMAN: his death clip's root, the vertical kept, from where his last walk put him (from `worldStaged`)
+void PlayState::worldStagedDeathRoot(Staged& s, float (&rootMove)[3]) {
+    if (s.deathType >= 0 && s.deathClip && !s.deathClip->root.empty() &&
+        s.deathClip->frames > 1) {
+        const long el = std::max<long>(static_cast<long>(gameClock - s.deathStart), 0);
+        const long upto = std::min<long>(el, static_cast<long>(s.deathClip->frames) - 1);
+        const auto bi = shootBrains.find(s.actor);
+        while (s.deathEl < upto) {
+            const float ta = 1.0f + static_cast<float>(s.deathEl);
+            float d[3] = {0.0f, 0.0f, 0.0f};
+            omk::pedRootDelta(*s.deathClip, ta, ta + 1.0f, nullptr, d);
+            float r[3];
+            omk::rotateYaw(s.facing, d, r);
+            bool wall = false;
+            if (bi != shootBrains.end() && shootMap.valid()) {
+                float snap[2];
+                wall = omk::shootWallTest(bi->second, shootMap,
+                                          s.at[0] + s.walkMove[0] + s.deathMove[0],
+                                          s.at[2] + s.walkMove[2] + s.deathMove[2],
+                                          r[0], r[2], 1, snap) != 0;
+            }
+            if (wall) {
+                ++s.deathWalls;
+            } else {
+                s.deathMove[0] += r[0];
+                s.deathMove[2] += r[2];
+            }
+            s.deathMove[1] += r[1];
+            ++s.deathEl;
+        }
+        for (int k = 0; k < 3; ++k) rootMove[k] += s.deathMove[k];
+        if (!s.deathFallTold && el >= static_cast<long>(s.deathClip->frames) - 1) {
+            s.deathFallTold = true;
+            std::printf("frame %ld: actor %d %s - death clip's root motion (sub_421770): "
+                        "%.1f %.1f %.1f over %d frames, down %.1f, %d ticks against a "
+                        "wall\n", frameNo, s.actor, s.model.c_str(), double(s.deathMove[0]),
+                        double(s.deathMove[1]), double(s.deathMove[2]),
+                        s.deathClip->frames, double(s.deathMove[1]), s.deathWalls);
+        }
+    }
+}
+
+
+// THE BODY TURNED: each mesh's pose by the body's yaw, the cos/sin pairs known up front (from `worldStaged`)
+void PlayState::worldStagedTurnPose(std::vector<omk::MeshPose>& pose, bool spins,
+                                    bool& aboutPelvis, float& bcs, float& bsn,
+                                    const float (&off)[3], float (&pelvis)[3], float scs,
+                                    float ssn, Staged& s) {
+    for (std::size_t mi = 0; mi < pose.size(); ++mi) {
+        float r[3];
+        if (spins && !aboutPelvis) {
+            // ...ON THE CORNERS' OWN TRANSFORM: a body turned
+            // about its MODEL origin is `R * pos + off` (the loop
+            // below). Adding `off` first and turning the sum about
+            // the WORLD origin would put every mesh of such a body -
+            // a gunman facing by his record - its own distance from
+            // the world origin away, rotated by his facing: the
+            // projectile sweep finding actor 240's pelvis at (2875,
+            // 4466) with him drawn at (4516, -2797), his shadow's
+            // bones there too.
+            omk::rotateYawCS(bcs, bsn, pose[mi].pos, r);
+            for (int k = 0; k < 3; ++k) r[k] += off[k];
+        } else {
+            const float mp[3] = {pose[mi].pos[0] - pelvis[0],
+                                 pose[mi].pos[1] - pelvis[1],
+                                 pose[mi].pos[2] - pelvis[2]};
+            omk::rotateYawCS(scs, ssn, mp, r);
+            for (int k = 0; k < 3; ++k) r[k] += pelvis[k] + off[k];
+        }
+        for (int k = 0; k < 3; ++k) s.meshAt[mi * 3 + static_cast<std::size_t>(k)] = r[k];
+        // its world rotation: the pose's own, then the body's yaw -
+        // the same yaw whichever point it turns about
+        if (s.meshRot.size() != pose.size() * 9) s.meshRot.assign(pose.size() * 9, 0.0f);
+        for (int ax = 0; ax < 3; ++ax) {
+            const float e[3] = {ax == 0 ? 1.0f : 0.0f, ax == 1 ? 1.0f : 0.0f,
+                                ax == 2 ? 1.0f : 0.0f};
+            float qv[3], wv[3];
+            omk::qrot(pose[mi].q, e, qv);
+            omk::rotateYawCS(scs, ssn, qv, wv);
+            for (int k = 0; k < 3; ++k)
+                s.meshRot[mi * 9 + static_cast<std::size_t>(ax * 3 + k)] = wv[k];
+        }
+    }
+}
+
 
 // A SCENE CLIP CHANGED for this body: its placement from the clip's root or the call's path (from `worldStaged`)
 void PlayState::worldStagedSceneClipChange(const omk::SceneRunner*& run, int& sceneClip, Staged& s,

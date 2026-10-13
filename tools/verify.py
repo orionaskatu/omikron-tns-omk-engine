@@ -15424,6 +15424,98 @@ def c_engine_draw_core():
         "the copies of it left (lightRamp, its own OMK_NO_TIE switch, a DepthTie bake, a Blend switch)"
 
 
+def c_engine_item_outline():
+    r"""`Ui_DrawItem`'s bank-B `0x80` arm - an item's OUTLINE - ported and
+    confirmed against the engine's own framebuffer.
+
+    `Ui_DrawItem` (0x004764A0), after the fill: `if (I2D_TestFlag(item,
+    0x40000080)) I2D_DrawRectOutline(x, y, w, h, +8/+9/+10, +11)` - four
+    mode-1 quads round the item, the same primitive the load panel's
+    selection box already used. Two items of the tree carry the bit:
+
+    * the SLOT PANEL's save picture (`0x004CEAB8`, list `0x004CEB50`), whose
+      record ships the (255, 0, 0) placeholder - the grey comes from the
+      START MENU's open callback (`0x00479D10`, no function in the
+      decompilation: nothing calls it), `sub_4296D0(0x004CEB50, 170, 170,
+      170)`. `traces/frames/loadpanel-mode2.png` is the original's own frame
+      of that panel, so the ring is compared pixel for pixel;
+    * the TERMINAL FAMILY's display box (`0x004E4000`), switched by its
+      builders - `sub_4AF2B0` clears the bit on the cover page, `sub_4AF2D0`
+      sets it in the dossier reader - in the item's own (254, 68, 20).
+
+    Rows: the 582 pixels of the picture's ring (one row above, two below,
+    a column each side - `fillQuad`'s half-open spans), how many are grey in
+    the capture and in the port, and how many of the port's are within 16 of
+    the capture's (the rest is the animated tile map under the half-blend);
+    then the 1504-pixel ring round the display box, orange on AREA 180's
+    archives cover page (frame 190) and in its dossier reader (frame 215).
+
+    SHOWN TO FAIL, 2026-10-13: the outline arm removed - 3 grey and 2 within
+    16 on the panel (the selection's connector bar, which crosses the ring's
+    left column), 0 orange in the reader; the start menu's colour removed -
+    the ring drawn in the placeholder red, 0 grey; the cover page's clear
+    removed - the box outlined on the cover page too (1504).
+    """
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import frame as F
+    import shutil, tempfile
+    play = _play_built()
+    if not play:
+        return _PLAY_UNBUILT
+    shot = os.path.join(ROOT, "traces", "frames", "loadpanel-mode2.png")
+    if not os.path.exists(shot):
+        return ("skipped",), ("skipped",), "traces/frames/loadpanel-mode2.png absent"
+    tmp = tempfile.mkdtemp()
+    try:
+        def dump(name, *flags, save="save-appart.bin"):
+            path = os.path.join(tmp, name + ".bin")
+            _play_out(play, "--software", "--res", "640x480", *flags, "--dump", path, save=save)
+            return open(path, "rb").read() if os.path.exists(path) else b""
+
+        def px(raw, x, y):
+            p = raw[2 * (y * 640 + x)] | raw[2 * (y * 640 + x) + 1] << 8
+            return ((p >> 11) << 3, ((p >> 5) & 63) << 2, (p & 31) << 3)
+
+        # the load panel, from the start menu with three saves (a copy: a run
+        # must never be able to write the committed file)
+        saves = os.path.join(tmp, "games.bin")
+        shutil.copy(os.path.join(ROOT, "traces", "games-resto.bin"), saves)
+        panel = dump("panel", "--saves", saves, "--frames", 160, "--nofmv", "--hold",
+                     hold(wait(20), press("DOWN", frames=2), wait(10), press("ENTER", frames=2),
+                          wait(40), press("DOWN", frames=2), wait(60)), save=None)
+        w, h, cap = F.read_png(shot)
+        capx = lambda x, y: tuple(cap[3 * (y * w + x):3 * (y * w + x) + 3])
+        ring = [(x, 139) for x in range(459, 589)] + \
+            [(x, y) for y in (236, 237) for x in range(459, 589)] + \
+            [(x, y) for y in range(140, 236) for x in (459, 588)]
+        grey = lambda c: c[0] > 60 and abs(c[0] - c[1]) < 25 and abs(c[1] - c[2]) < 30
+        near = lambda c, d: max(abs(c[i] - d[i]) for i in range(3)) <= 16
+        if len(panel) != 2 * 640 * 480:
+            return ("no panel frame",), ("panel frame",), "the load panel run wrote no dump"
+        pic = (len(ring), sum(grey(capx(x, y)) for x, y in ring),
+               sum(grey(px(panel, x, y)) for x, y in ring),
+               sum(near(px(panel, x, y), capx(x, y)) for x, y in ring))
+        # the archives: the cover page, then the dossier reader
+        steps = hold(wait(40), press("ENTER", frames=2), wait(80), press("RIGHT", frames=2), wait(4),
+                     press("RIGHT", frames=2), wait(10), press("ENTER", frames=2), wait(20),
+                     *([press("DOWN", frames=2), wait(4)] * 7))
+        box = [(x, 79) for x in range(39, 471)] + [(x, 400) for x in range(39, 471)] + \
+            [(39, y) for y in range(80, 400)] + [(470, y) for y in range(80, 400)]
+        orange = lambda c: c[0] > 100 and c[2] < 80
+        reader = []
+        for frames in (190, 215):
+            raw = dump("archives%d" % frames, "--area", 180, "--address", 565, "--frames", frames,
+                       "--nofmv", "--nodelay", "--no-crowd", "--hold", steps)
+            reader.append(sum(orange(px(raw, x, y)) for x, y in box) if raw else -1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return (pic, len(box), tuple(reader)), ((582, 580, 582, 515), 1504, (0, 1504)), \
+        "the save picture's ring: pixels, grey in the capture, grey in the port, the port's within " \
+        "16 of the capture; the display box's ring; orange on the archives cover page (frame 190) " \
+        "and in the dossier reader (frame 215)"
+
+
 def c_engine_close_button():
     r"""`omk-play`: the interface's generic CLOSE button closes its screen,
     and the screen answers as it leaves.
@@ -47611,6 +47703,7 @@ SLOW = [
     ("engine: delayed close", c_engine_delayed_close, "todo/scene-gameplay-audit.md 24; ui/widgets.h"),
     ("engine: dossier reader", c_engine_dossier_reader, "todo/scene-gameplay-audit.md 25; docs/UI.md"),
     ("engine: close button", c_engine_close_button, "tutorial/09-writing-a-check.md; ui/widgets.cpp"),
+    ("engine: item outline", c_engine_item_outline, "tutorial/11-capstone.md; docs/UI.md 3d; ui/screendraw.cpp"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

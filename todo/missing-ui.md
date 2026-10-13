@@ -192,12 +192,18 @@ panel 0x004E4170, whose body shows the string the cell's tag names and scrolls
 (`docs/UI.md` "the dossier reader"; `verify.py: engine: dossier reader`). The
 TERMINAL and FIGHT SIM opens also start oscillator 6, a 7000 ms start-up page.
 
-**Not drawn, and it is wider than this family**: an item's bank-B `0x80`
-OUTLINE (`I2D_DrawRectOutline`, `docs/UI.md`'s decoration table). The composer
-draws the load panel's selection box by hand and no item outline at all, so
-the reader's builder turning the body's outline on (and the cover page's
-turning it off), Den's wheels and every other `0x40000080` item draw without
-one. The builders' writes are labelled in `UiWalk::buildPage` and not stored.
+**DRAWN since 2026-10-13: an item's bank-B `0x80` OUTLINE** (`Ui_DrawItem`'s
+arm after the fill, `I2D_DrawRectOutline` round the item in its `+8/+9/+10`).
+Two items of the tree carry the bit: this family's display box, which the
+reader's builder switches on and the cover page's off (`setItemFlagB`), and
+the slot panel's save picture, grey from the start menu's open callback
+(`0x00479D10`'s `sub_4296D0(0x004CEB50, 170, 170, 170)`) - confirmed ring for
+ring against `traces/frames/loadpanel-mode2.png`, 515 of 582 pixels within 16
+(`verify.py: engine: item outline`). It was the course's capstone
+(`tutorial/11-capstone.md`).
+
+**Seen on the way, not yet looked at**: the port's load panel draws no
+*Charger une partie* title at the top, where the same capture has one.
 
 ## 5. The special screens — surveyed, not yet built
 

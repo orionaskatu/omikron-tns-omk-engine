@@ -447,6 +447,10 @@ public:
     void setScaling(int f) { filter_ = f; }
     int  scaling() const { return filter_; }
     int  scaleX(int v) const { return v * dw_ / 640; }
+    // `I2D_DrawRectOutline` (0x004777A0): four mode-1 quads of thickness
+    // `I2D_ScaleX(1)` round the 640-space rectangle (x, y, w, h) - the load
+    // panel's selection box and `Ui_DrawItem`'s bank-B `0x80` outline.
+    void rectOutline(Surface& fb, int x, int y, int w, int h, std::uint16_t colour) const;
     int  scaleY(int v) const { return v * dh_ / 480; }
 
     ScreenComposer(const DataFs& fs, const UiWidgets& w, const TextLayout& lay)

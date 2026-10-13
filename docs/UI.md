@@ -2968,7 +2968,8 @@ three lists as 0x004E4108 and differs in five fields:
 | `+72` | 0x20000030 | 0x20000020 | no 0x10: BACK on the reader does not close |
 
 The builders toggle the body's bank-B `0x80` outline (on in the reader, off on
-the cover page) and write its `+30` to -1; the leave hook rewrites the input
+the cover page; drawn since 2026-10-13 - `Ui_DrawItem`'s arm after the fill,
+`verify.py: engine: item outline`) and write its `+30` to -1; the leave hook rewrites the input
 mask to its usual 0x203F. The body (430x320, bank C `0x80000202`) scrolls
 through `Ui_ItemTextStyle`'s generic `0x80000002` arm - measure, clamp
 `dword_6A5090` into `height - box` floored at 0, use it as the origin - which

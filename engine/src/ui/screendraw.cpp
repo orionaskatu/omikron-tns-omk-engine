@@ -709,6 +709,7 @@ void ScreenComposer::drawItem(const omk::UiItem& itAuthored, int layer, omk::Sur
     // which is what makes it flash while its page is up. This has to
     // land BEFORE the lit/unlit ladder below reads `eff0[1]`.
     eff0[1] |= walk.itemFlagsOn(it.addr) & 0x1FFFFFFFu;
+    eff0[1] &= ~(walk.itemFlagsOff(it.addr) & 0x1FFFFFFFu);
     // The item's own draw gate, the same `0x40000001` the list has -
     // from the record, and from the RUNTIME for the lists whose
     // widgets are a window onto something longer (`sub_42AAE0`).
@@ -1218,6 +1219,36 @@ void ScreenComposer::drawItemCursor(std::uint32_t (&eff0)[3], bool isSel, bool i
     // from two places, which is why it is a lambda: the row hook
     // below makes it and so does the bank-B bit under that.
     drawRowMarkAndFill(rgb, eff0, it, q, fb, walk, out);
+    // ---- THE OUTLINE: `Ui_DrawItem`'s next arm (0x004764A0) -----
+    //
+    //     if (I2D_TestFlag(item, 0x40000080))
+    //         I2D_DrawRectOutline(x, y, w, h, +8/+9/+10 | alpha << 24, +11);
+    //
+    // the alpha oscillator 2's when bank B `0x400000` is set, else 0 - which
+    // a mode-1 quad does not read. Two items carry the bit: the terminal
+    // family's display box, which its builders switch on in the dossier
+    // reader and off on the cover page, and the slot panel's save picture,
+    // grey from the start menu's open - confirmed ring for ring against
+    // `traces/frames/loadpanel-mode2.png` (`engine: item outline`).
+    if (eff0[1] & 0x80u)
+        rectOutline(fb, it.x + q->offsetX, it.y + q->offsetY, it.w, it.h,
+                    rgb565(rgb[0], rgb[1], rgb[2]));
+}
+
+void ScreenComposer::rectOutline(Surface& fb, int a1, int a2, int a3, int a4,
+                                 std::uint16_t c) const {
+    const int v7 = 1;                         // `I2D_ScaleX(1)` at 640
+    const int quads[4][8] = {
+        {a1-v7, a2-v7, a1+a3+v7, a2-v7, a1+a3+v7, a2,       a1-v7, a2},
+        {a1-v7, a2+a4, a1+a3+v7, a2+a4, a1+a3+v7, a2+a4+v7, a1-v7, a2+a4+v7},
+        {a1-v7, a2,    a1,       a2,    a1,       a2+a4,    a1-v7, a2+a4},
+        {a1+a3, a2,    a1+a3+v7, a2,    a1+a3+v7, a2+a4,    a1+a3, a2+a4},
+    };
+    for (const auto& qd : quads) {
+        const int xs[4] = {scaleX(qd[0]), scaleX(qd[2]), scaleX(qd[4]), scaleX(qd[6])};
+        const int ys[4] = {scaleY(qd[1]), scaleY(qd[3]), scaleY(qd[5]), scaleY(qd[7])};
+        fillQuad(fb, xs, ys, c, quadMode(4));
+    }
 }
 
 
@@ -1503,17 +1534,7 @@ void ScreenComposer::drawLoadSelection(const omk::LoadPanel& lp, const omk::UiIt
         const int a2 = f.y + q->offsetY + slot * (lp.row + 1) + 33 - slot;
         const int a4 = 16;
         const std::uint16_t c = rgb565(255, 255, 255);
-        const int quads[4][8] = {
-            {a1-v7, a2-v7, a1+a3+v7, a2-v7, a1+a3+v7, a2,       a1-v7, a2},
-            {a1-v7, a2+a4, a1+a3+v7, a2+a4, a1+a3+v7, a2+a4+v7, a1-v7, a2+a4+v7},
-            {a1-v7, a2,    a1,       a2,    a1,       a2+a4,    a1-v7, a2+a4},
-            {a1+a3, a2,    a1+a3+v7, a2,    a1+a3+v7, a2+a4,    a1+a3, a2+a4},
-        };
-        for (const auto& qd : quads) {
-            const int xs[4] = {scaleX(qd[0]), scaleX(qd[2]), scaleX(qd[4]), scaleX(qd[6])};
-            const int ys[4] = {scaleY(qd[1]), scaleY(qd[3]), scaleY(qd[5]), scaleY(qd[7])};
-            fillQuad(fb, xs, ys, c, quadMode(4));
-        }
+        rectOutline(fb, a1, a2, a3, a4, c);
         // the CONNECTOR to the picture - not a line: `Ui_DrawItem`'s
         // vocabulary has no line at all, and the captured bar is two
         // rows by sixty-nine columns, a mode-1 quad's signature.

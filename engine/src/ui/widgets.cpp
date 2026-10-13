@@ -1222,18 +1222,20 @@ void UiWalk::buildPage(const UiPanel& p) {
     // installer leaves its shipped `+24 = 1` standing, so the BODY is current
     // and UP / DOWN reach the scroller. Its builder `sub_4AF2D0` and the main
     // panel's `sub_4AF2B0` / the reader's leave hook `sub_4AF2F0`, read from
-    // the image, write three things this does not model, labelled:
+    // the image:
     //
     //     sub_4AF2B0  sub_428FF0(0x004E4000, 0x40000080, 0); sub_42B5C0(1)
     //     sub_4AF2D0  sub_428FF0(0x004E4000, 0x40000080, 1); word_4E401E = -1
     //     sub_4AF2F0  sub_42B5C0(1)
     //
     // - the body's bank-B `0x80` OUTLINE on in the reader and off on the main
-    // panel (this composer draws no `I2D_DrawRectOutline` for an item at all,
-    // `todo/missing-ui.md`); `sub_42B5C0(1)`, which writes the input mask
+    // panel, modelled (`setItemFlagB`; `ScreenComposer::drawItem` draws it).
+    // Not modelled, labelled: `sub_42B5C0(1)`, which writes the input mask
     // `dword_4E9720 = 0x203F` that is already its value; and the body's `+30`
     // printf argument, which no string of the family uses.
+    if (p.addr == kPanelTerminal) setItemFlagB(kItemTerminalBody, 0x80u, false);   // sub_4AF2B0
     if (p.addr == kPanelTerminalDossier) {
+        setItemFlagB(kItemTerminalBody, 0x80u, true);                             // sub_4AF2D0
         curFromBuilder_ = 1;
         return;
     }
@@ -1377,6 +1379,14 @@ bool UiWalk::open(int screenId) {
         log_.push_back("oscillator 6: the banner, 7000 ms");
     }
     if (screenId == screen::Terminal) termRow3_ = termRow4_ = false;
+    // THE START MENU's open (0x00479D10, read from the image) builds its
+    // children's records too, and one write reaches the slot panel:
+    // `sub_4296D0(0x004CEB50, 170, 170, 170)`, the save picture's list - the
+    // grey its outline is drawn in (`traces/frames/loadpanel-mode2.png`). The
+    // list is not in this panel, so it is found in the tree, not `colourList`.
+    if (screenId == 29)
+        if (const UiList* l = w_->listAt(kListLoadPicture))
+            for (const auto& it : l->items) colourItem(it.addr, 170, 170, 170);
     // GANDHAR'S DOOR's open (0x004AFDF0, read from the image): the count
     // `byte_68A608` and the mask `byte_68A60C` go to 0, the cursor's `+3C` to
     // cell 0, and `sub_428FF0(marker, 0x40000001, 1)` hides all four markers

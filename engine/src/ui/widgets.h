@@ -165,6 +165,7 @@ inline constexpr std::uint32_t kHookTerminalPad      = 0x004AF300u;
 // (tags 0..4), the four police files on the archives (6..9).
 inline constexpr std::uint32_t kPanelTerminal        = 0x004E4108u;
 inline constexpr std::uint32_t kPanelTerminalDossier = 0x004E4170u;
+inline constexpr std::uint32_t kItemTerminalBody     = 0x004E4000u;   // the display box
 // THE GANDHAR DOOR (screen 12), a 6x6 combination grid: `sub_4AFE90` walks a
 // cursor over it and `sub_4AFF90` stamps the cell it is on.
 // DEN'S LOCKER (screen 13): four digit wheels on one hook, which both moves
@@ -752,6 +753,9 @@ struct UiListState {
     // `Ui_ItemTextStyle` (0x004769A0) reads bank B `0x2` as "blink when this
     // item is selected", and the verb list still selects it.
     std::map<std::uint32_t, std::uint32_t> flagOn;
+    // ...and bank-B bits a builder CLEARED that the record carries -
+    // `sub_428FF0(item, flag, 0)`.
+    std::map<std::uint32_t, std::uint32_t> flagOff;
     // The verb a confirm just fired, for a caller to act on: 0 "Utiliser",
     // 1 "Utiliser sur", -1 none. The walk cannot carry out either - they end
     // in `Game_HandleEvent` - so it records which was chosen and the caller
@@ -1308,6 +1312,16 @@ public:
         const auto it = state_->flagOn.find(addr);
         return it == state_->flagOn.end() ? 0u : it->second;
     }
+    // ...and the record's bank-B bits a builder cleared.
+    std::uint32_t itemFlagsOff(std::uint32_t addr) const {
+        const auto it = state_->flagOff.find(addr);
+        return it == state_->flagOff.end() ? 0u : it->second;
+    }
+    // `sub_428FF0(item, 0x40000000 | bits, on)` - set or clear bank-B bits.
+    void setItemFlagB(std::uint32_t item, std::uint32_t bits, bool on) {
+        if (on) { state_->flagOn[item] |= bits; state_->flagOff[item] &= ~bits; }
+        else    { state_->flagOff[item] |= bits; state_->flagOn[item] &= ~bits; }
+    }
 
     // Lists a builder made NOT SELECTABLE - `sub_4290D0(list, 0x20000004, 1)`,
     // which sets the bit on every item of the list at once.
@@ -1709,6 +1723,7 @@ inline constexpr std::uint32_t kCbConfirmYes = 0x0047BA30u;
 // a whole profile is in 0x0047BA30's screen-29 arm, not here.
 inline constexpr std::uint32_t kCbDestroyYes   = 0x0047B800u;
 inline constexpr std::uint32_t kPanelLoadSlots   = 0x004CF2E8u;
+inline constexpr std::uint32_t kListLoadPicture  = 0x004CEB50u;   // the slots panel's save picture
 inline constexpr std::uint32_t kListLoadRows     = 0x004CEA98u;   // the load/save panel's row list
 inline constexpr std::uint32_t kPanelSaveRoot    = 0x004E2ED8u;   // screen 30's root panel
 inline constexpr std::uint32_t kPanelStartTree   = 0x004CF218u;   // screen 29's tree, which owns the load panel there

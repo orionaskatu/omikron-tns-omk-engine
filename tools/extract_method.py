@@ -281,7 +281,7 @@ def declared_type(before, bm, x):
         st = mm.start()
         while st > 0 and not (bm[st - 1] and before[st - 1] in ";{}"):
             st -= 1
-        prefix = before[st:mm.start()]
+        prefix = "".join(c if bm[k] else " " for k, c in enumerate(before[st:mm.start()], st))
         prefix = re.sub(r"^\s*(?:for\s*\()?", "", prefix)
         one = re.match(r"^(static\s+|constexpr\s+)*(const\s+)?([\w:]+(?:\s*<[^;{}()]*>)?)"
                        r"\s*([*&]*)\s*(const\s*)?$", prefix)
@@ -512,13 +512,32 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
         body = text.split("\n")
         m = code_mask(text)
     ind = len(body[0]) - len(body[0].lstrip(" "))
-    heads = [i for i in range(A - 1) if re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[i])]
-    if not heads:
-        return "refused: no enclosing method"
-    fstart = max(heads)
-    cls, encl = re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[fstart]).groups()
-    rtype = re.sub(r"^(static|inline|virtual|constexpr)\s+", "",
-                   L[fstart][:L[fstart].index(cls + "::")].strip())
+    # THE ENCLOSING FUNCTION: the column-0 definition whose body holds the
+    # range - a method `Cls::name(` or, in free mode, a function `name(`
+    fstart = None
+    whole = "\n".join(L)
+    wm = code_mask(whole)
+    for i in range(A - 2, -1, -1):
+        if not re.match(r"^(?!namespace\b|struct\b|class\b|enum\b|union\b|template\b|"
+                        r"static_assert|using\b|#|//|\})[A-Za-z_][^;]*\b~?\w+\(", L[i]):
+            continue
+        b0 = whole.find("{", offset_of_line(L, i + 1))
+        try:
+            e0 = match_close(whole, wm, b0)
+        except ValueError:
+            continue
+        if whole[:b0].count("\n") + 1 < A and whole[:e0].count("\n") + 1 > B:
+            fstart = i
+            break
+    if fstart is None:
+        return "refused: no enclosing function"
+    head = re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[fstart])
+    if head:
+        cls, encl = head.groups()
+    else:
+        cls, encl = None, re.match(r"^\S[^;(]*?\b(\w+)\(", L[fstart]).group(1)
+    cut = L[fstart].index(cls + "::") if cls else L[fstart].index(encl + "(")
+    rtype = re.sub(r"^(static|inline|virtual|constexpr)\s+", "", L[fstart][:cut].strip())
     if returns:
         # every `return` of the range that is not a lambda's: it left the
         # enclosing method, so it now says so - `{ retVal = X; return true; }`
@@ -560,7 +579,7 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
         m = code_mask(text)
     sig = "\n".join(L[fstart:A])
     is_const = bool(re.search(r"\)\s*const\s*\{", sig[:sig.index("{") + 1]))
-    hdr_path = header_of(cls)
+    hdr_path = header_of(cls) if cls else path
     hdr = open(hdr_path).read()
     newbody = [l[ind - 4:] if l.startswith(" " * ind) else l for l in body]
 
@@ -579,6 +598,16 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
             call = [" " * ind + "if (%s retVal{}; " % rtype + wrap(name, list(args) + ["retVal"], ind)
                     + ") return retVal;"]
         out = L[:A - 1] + call + L[B:]
+        if cls is None:
+            fn = (["// " + c for c in comment.split("\n")] if comment else []) + \
+                [wrap("static %s %s" % ("bool" if returns else "void", name), params + retp, 0, ") {")] + \
+                newbody + ["}", ""]
+            top = fstart                          # above its comment block
+            while top > 0 and L[top - 1].lstrip().startswith("//"):
+                top -= 1
+            out = out[:top] + fn + out[top:]
+            open(path, "w").write("\n".join(out))
+            return
         fn = (["// " + c for c in comment.split("\n")] if comment else []) + \
             [wrap("%s %s::%s" % ("bool" if returns else "void", cls, name), params + retp, 0,
                   ") const {" if is_const else ") {")] + \
@@ -654,7 +683,7 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=Fa
     # A local that shares a member FUNCTION's name is not caught by -Wshadow:
     # moved, `name(...)` would call the method. Declared before the range and
     # used in it, it is passed like any other local.
-    members = set(re.findall(r"^\s+(?:[\w:<>,]+[\s&*]+)+(\w+)\([^;{]*\)\s*(?:const\s*)?(?:override\s*)?;",
+    members = set() if cls is None else set(re.findall(r"^\s+(?:[\w:<>,]+[\s&*]+)+(\w+)\([^;{]*\)\s*(?:const\s*)?(?:override\s*)?;",
                              hdr, re.M))
     used = set(re.findall(r"\b([A-Za-z_]\w*)\b", "".join(c for c, k in zip(text, m) if k)))
     before = "\n".join(L[fstart:A - 1])
@@ -711,9 +740,9 @@ def inline(path, name):
     removed. For a cut that read worse than what it replaced."""
     s = open(path).read()
     m = code_mask(s)
-    dm = re.search(r"^void (\w+)::%s\(" % re.escape(name), s, re.M)
+    dm = re.search(r"^(?:static )?void (?:(\w+)::)?%s\(" % re.escape(name), s, re.M)
     if not dm:
-        return "no void method %s in %s" % (name, path)
+        return "no void function %s in %s" % (name, path)
     b = s.index("{", dm.end())
     e = match_close(s, m, b)
     c0 = dm.start()
@@ -737,6 +766,8 @@ def inline(path, name):
     ind = len(cm.group(1))
     inl = "\n".join((" " * (ind - 4) + l) if l.strip() else l for l in body) + "\n"
     open(path, "w").write(s2[:cm.start()] + inl + s2[cm.end():])
+    if not dm.group(1):
+        return "inlined %s: %d lines" % (name, len(body))
     hdr_path = header_of(dm.group(1))
     t = open(hdr_path).read()
     d2 = re.search(r"^ *void %s\([^;]*\)( const)?;[^\n]*\n" % re.escape(name), t, re.M)
@@ -750,9 +781,18 @@ def batch(path, jobs_file):
         if line.strip() and not line.startswith("#"):
             ln, name, comment = line.rstrip("\n").split("|", 2)
             jobs.append((int(ln), name, comment.replace("\\n", "\n")))
-    for ln, name, comment in sorted(jobs, reverse=True):
+    # each job's start line by its TEXT and which occurrence of it: a free
+    # function's piece goes ABOVE it, so line numbers do not survive a cut
+    L0 = open(path).read().split("\n")
+    keyed = []
+    for ln, name, comment in jobs:
+        text = L0[ln - 1]
+        keyed.append((ln, text, sum(1 for l in L0[:ln - 1] if l == text), name, comment))
+    for _, text, nth, name, comment in sorted(keyed, reverse=True):
         s = open(path).read()
-        end = statement_end(s, code_mask(s), s.split("\n"), ln)
+        L = s.split("\n")
+        ln = [i + 1 for i, l in enumerate(L) if l == text][nth]
+        end = statement_end(s, code_mask(s), L, ln)
         # a tidy deletes lines ABOVE the cuts still to come: once, at the end
         print("%d-%d %s" % (ln, end, extract(path, ln, end, name, comment, tidy=False)))
     n = drop_unused_aliases(path)

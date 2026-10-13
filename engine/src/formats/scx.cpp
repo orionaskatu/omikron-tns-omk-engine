@@ -117,23 +117,14 @@ ScxScene readScx(std::span<const std::byte> d) {
     return s;
 }
 
-ScxStream readScxStream(std::span<const std::byte> d) {
-    ScxStream st;
-    if (d.size() < 16) return st;
-    if (u32(d, 0) != 0x00DEAD00u || u32(d, 4) != 5u) return st;
-    const std::size_t blockSize = u32(d, 12);
-    if (16 + std::uint64_t{blockSize} > d.size()) return st;   // in 64 bits: 16 + u32 wraps
-    const auto b = d.subspan(16, blockSize);
-
-    // walk the block for the chunk ORDER and the registries chunk 1/3/4 hold
-    const auto scene = readScx(d);
-    if (!scene.valid) return st;
-
-    std::vector<int> order{2};
-    std::map<int, std::uint32_t> counts;
-    std::vector<std::string> animNames, spriteNames, wavNames;
-    std::vector<std::int32_t> animIds, spriteIds;
-    std::vector<int> wavIds;
+// THE BLOCK RE-WALKED for the stream's order and the in-block registry rows - names and ids of the clips, sprites and sounds (from `readScxStream`)
+static void readScxStreamOrder(const std::span<const std::byte>& b, std::vector<int>& order,
+                               std::map<int, std::uint32_t>& counts,
+                               std::vector<std::string>& animNames,
+                               std::vector<std::int32_t>& animIds,
+                               std::vector<std::string>& wavNames, std::vector<int>& wavIds,
+                               std::vector<std::string>& spriteNames,
+                               std::vector<std::int32_t>& spriteIds) {
     {
         // re-walk to recover the order and the in-block registry rows
         const auto n = u32(b, 4);
@@ -188,6 +179,27 @@ ScxStream readScxStream(std::span<const std::byte> d) {
             o += 4u + it->second * c;
         }
     }
+}
+
+ScxStream readScxStream(std::span<const std::byte> d) {
+    ScxStream st;
+    if (d.size() < 16) return st;
+    if (u32(d, 0) != 0x00DEAD00u || u32(d, 4) != 5u) return st;
+    const std::size_t blockSize = u32(d, 12);
+    if (16 + std::uint64_t{blockSize} > d.size()) return st;   // in 64 bits: 16 + u32 wraps
+    const auto b = d.subspan(16, blockSize);
+
+    // walk the block for the chunk ORDER and the registries chunk 1/3/4 hold
+    const auto scene = readScx(d);
+    if (!scene.valid) return st;
+
+    std::vector<int> order{2};
+    std::map<int, std::uint32_t> counts;
+    std::vector<std::string> animNames, spriteNames, wavNames;
+    std::vector<std::int32_t> animIds, spriteIds;
+    std::vector<int> wavIds;
+    readScxStreamOrder(b, order, counts, animNames, animIds, wavNames, wavIds, spriteNames,
+                       spriteIds);
 
     // every record's first word is its own offset - so a mismatch is either a
     // bug or a record whose size did not cover its payload

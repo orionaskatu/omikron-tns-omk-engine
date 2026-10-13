@@ -30,6 +30,113 @@ std::string name12(std::span<const std::byte> d, std::size_t o, bool upper) {
 
 }  // namespace
 
+// ENTRY +28 - the effect records, in entry order: 8 bytes of header, then 32 each (`Cef_TickEffects`) (from `readCtl`)
+static void readCtlEffects(std::vector<std::size_t>& ents, std::span<const std::byte>& d,
+                           std::size_t& pos, std::vector<std::vector<omk::CtlEffect>>& effectsOf) {
+    for (std::size_t ei = 0; ei < ents.size(); ++ei) {
+        const auto e = ents[ei];
+        if (!(u8(d, e + 76) & 8u)) continue;
+        const auto n = u32(d, pos);
+        auto& st = effectsOf[ei];
+        st.reserve(std::min<std::size_t>(n, pos + 8 < d.size() ? (d.size() - pos - 8) / 32 : 0));
+        for (std::uint32_t k = 0; k < n; ++k) {
+            const auto r = pos + 8u + 32u * k;
+            if (r + 32 > d.size()) break;
+            CtlEffect fx;
+            fx.duration = f32(d, r);
+            fx.from     = f32(d, r + 4);
+            fx.to       = f32(d, r + 8);
+            fx.soundAt  = f32(d, r + 12);
+            fx.spriteParam = u32(d, r + 16);
+            fx.sprite   = u16(d, r + 20);
+            fx.sound    = u16(d, r + 22);
+            fx.attach   = u8(d, r + 24);
+            fx.flags    = u8(d, r + 25);
+            fx.scale    = f32(d, r + 28);
+            st.push_back(fx);
+        }
+        pos = 32u * n + pos + 8u;
+    }
+}
+
+// THE FIGHT AI's input words, a second pass: they live after EVERY slot's item records (from `readCtl`)
+static void readCtlAiWords(std::size_t& cursor, unsigned int tableCount,
+                           std::vector<std::pair<std::uint32_t, std::size_t>>& slots, CtlFile& f,
+                           std::span<const std::byte>& d) {
+    // item records - the file is laid out level by level, not profile by
+    // profile, so the words cannot be read while the slots are being counted.
+    {
+        std::size_t ip = cursor + 156u * tableCount;
+        for (const auto& [cnt, blk] : slots) (void)blk, ip += 16u * cnt;
+        std::size_t si = 0;
+        for (auto& p : f.ai)
+            for (auto& sl : p.slots) {
+                const auto [cnt, blk] = slots[si++];
+                for (std::uint32_t j = 0; j < cnt; ++j) {
+                    // a count is a file word: no more words than the file
+                    // has left (in the shipped seven, every one fits)
+                    const std::size_t left = ip < d.size() ? (d.size() - ip) / 4 : 0;
+                    const auto n = static_cast<std::uint32_t>(
+                        std::min<std::size_t>(u32(d, blk + 16u * j + 4u), left));
+                    std::vector<std::uint32_t> mv;
+                    mv.reserve(n);
+                    for (std::uint32_t t = 0; t < n; ++t) mv.push_back(u32(d, ip + 4u * t));
+                    ip += 4u * n;
+                    sl.moves.push_back(std::move(mv));
+                }
+            }
+    }
+}
+
+// THE FIGHT AI: 156 bytes a profile, twelve situation slots of {count, ptr, _}, then each slot's items (from `readCtl`)
+static void readCtlAiProfiles(unsigned int tableCount, std::size_t& cursor,
+                              std::span<const std::byte>& d,
+                              std::vector<std::pair<std::uint32_t, std::size_t>>& slots,
+                              std::size_t& pos, CtlFile& f) {
+    for (std::uint32_t i = 0; i < tableCount; ++i) {
+        const auto rec = cursor + 156u * i;
+        CtlAiProfile p;
+        p.id = u32(d, rec);
+        for (int k = 0; k < 2; ++k) {
+            p.enterDelay[k] = u16(d, rec + 4u + 2u * static_cast<std::size_t>(k));
+            p.moveDelay[k]  = u16(d, rec + 8u + 2u * static_cast<std::size_t>(k));
+        }
+        for (int k = 0; k < 12; ++k) {
+            // The slot is {weight, count, moves} at +12+12k, so the count sits
+            // at +16+12k. The weight is a percentage in the low byte and is
+            // the whole of how `Fight_TickAI` chooses - see ctl.h.
+            p.slots[k].weight =
+                u32(d, rec + 12u + 12u * static_cast<std::size_t>(k)) & 0xFFu;
+            const auto cnt = u32(d, rec + 16u + 12u * static_cast<std::size_t>(k));
+            slots.push_back({cnt, pos});
+            pos += 16u * cnt;
+        }
+        f.ai.push_back(std::move(p));
+    }
+}
+// THE CLIPS: one per DISTINCT name, in entry order (from `readCtl`)
+static void readCtlClips(std::vector<std::size_t>& ents, std::map<std::size_t, std::size_t>& named,
+                         std::span<const std::byte>& d, std::set<std::string>& seen,
+                         std::size_t& pos, std::map<std::string, int>& clipOf, CtlFile& f) {
+    for (auto e : ents) {
+        const auto it = named.find(e);
+        if (it == named.end()) continue;
+        const auto nm = name12(d, it->second, true);
+        if (nm.empty() || seen.count(nm)) continue;
+        seen.insert(nm);
+        if (pos + 4 > d.size()) break;
+        const auto length = u32(d, pos);
+        if (length == 0 || pos + 4 + length > d.size()) break;
+        clipOf[nm] = static_cast<int>(f.clips.size());
+        CtlClip c{nm, pos + 4, length, 0};
+        // A `.CTL` clip is a bare `.ani` descriptor - no "3.0V" wrapper - so
+        // its frame count comes from the same reader the libraries use.
+        if (const auto desc = animDescriptor(d, pos + 4)) c.frames = desc->frames;
+        f.clips.push_back(std::move(c));
+        pos += 4u + length;
+    }
+}
+
 CtlFile readCtl(std::span<const std::byte> d) {
     CtlFile f;
     f.size = d.size();
@@ -90,104 +197,24 @@ CtlFile readCtl(std::span<const std::byte> d) {
     const auto tableCount = u32(d, 76);
     std::size_t pos = cursor + 156u * tableCount;
     std::vector<std::pair<std::uint32_t, std::size_t>> slots;
-    for (std::uint32_t i = 0; i < tableCount; ++i) {
-        const auto rec = cursor + 156u * i;
-        CtlAiProfile p;
-        p.id = u32(d, rec);
-        for (int k = 0; k < 2; ++k) {
-            p.enterDelay[k] = u16(d, rec + 4u + 2u * static_cast<std::size_t>(k));
-            p.moveDelay[k]  = u16(d, rec + 8u + 2u * static_cast<std::size_t>(k));
-        }
-        for (int k = 0; k < 12; ++k) {
-            // The slot is {weight, count, moves} at +12+12k, so the count sits
-            // at +16+12k. The weight is a percentage in the low byte and is
-            // the whole of how `Fight_TickAI` chooses - see ctl.h.
-            p.slots[k].weight =
-                u32(d, rec + 12u + 12u * static_cast<std::size_t>(k)) & 0xFFu;
-            const auto cnt = u32(d, rec + 16u + 12u * static_cast<std::size_t>(k));
-            slots.push_back({cnt, pos});
-            pos += 16u * cnt;
-        }
-        f.ai.push_back(std::move(p));
-    }
+    readCtlAiProfiles(tableCount, cursor, d, slots, pos, f);
     for (const auto& [cnt, blk] : slots)
         for (std::uint32_t j = 0; j < cnt; ++j)
             pos += 4u * u32(d, blk + 16u * j + 4u);
 
     // A second pass, because a move's own input words live after EVERY slot's
-    // item records - the file is laid out level by level, not profile by
-    // profile, so the words cannot be read while the slots are being counted.
-    {
-        std::size_t ip = cursor + 156u * tableCount;
-        for (const auto& [cnt, blk] : slots) (void)blk, ip += 16u * cnt;
-        std::size_t si = 0;
-        for (auto& p : f.ai)
-            for (auto& sl : p.slots) {
-                const auto [cnt, blk] = slots[si++];
-                for (std::uint32_t j = 0; j < cnt; ++j) {
-                    // a count is a file word: no more words than the file
-                    // has left (in the shipped seven, every one fits)
-                    const std::size_t left = ip < d.size() ? (d.size() - ip) / 4 : 0;
-                    const auto n = static_cast<std::uint32_t>(
-                        std::min<std::size_t>(u32(d, blk + 16u * j + 4u), left));
-                    std::vector<std::uint32_t> mv;
-                    mv.reserve(n);
-                    for (std::uint32_t t = 0; t < n; ++t) mv.push_back(u32(d, ip + 4u * t));
-                    ip += 4u * n;
-                    sl.moves.push_back(std::move(mv));
-                }
-            }
-    }
+    readCtlAiWords(cursor, tableCount, slots, f, d);
 
     // entry +28 - the effect records, in entry order, 8 bytes of header and
     // then 32 each. Walked past before; read now, because they are what makes
     // a state carry its own sound (`Cef_TickEffects`).
     std::vector<std::vector<CtlEffect>> effectsOf(ents.size());
-    for (std::size_t ei = 0; ei < ents.size(); ++ei) {
-        const auto e = ents[ei];
-        if (!(u8(d, e + 76) & 8u)) continue;
-        const auto n = u32(d, pos);
-        auto& st = effectsOf[ei];
-        st.reserve(std::min<std::size_t>(n, pos + 8 < d.size() ? (d.size() - pos - 8) / 32 : 0));
-        for (std::uint32_t k = 0; k < n; ++k) {
-            const auto r = pos + 8u + 32u * k;
-            if (r + 32 > d.size()) break;
-            CtlEffect fx;
-            fx.duration = f32(d, r);
-            fx.from     = f32(d, r + 4);
-            fx.to       = f32(d, r + 8);
-            fx.soundAt  = f32(d, r + 12);
-            fx.spriteParam = u32(d, r + 16);
-            fx.sprite   = u16(d, r + 20);
-            fx.sound    = u16(d, r + 22);
-            fx.attach   = u8(d, r + 24);
-            fx.flags    = u8(d, r + 25);
-            fx.scale    = f32(d, r + 28);
-            st.push_back(fx);
-        }
-        pos = 32u * n + pos + 8u;
-    }
+    readCtlEffects(ents, d, pos, effectsOf);
 
     // the clips: one per DISTINCT name, in entry order
     std::set<std::string> seen;
     std::map<std::string, int> clipOf;
-    for (auto e : ents) {
-        const auto it = named.find(e);
-        if (it == named.end()) continue;
-        const auto nm = name12(d, it->second, true);
-        if (nm.empty() || seen.count(nm)) continue;
-        seen.insert(nm);
-        if (pos + 4 > d.size()) break;
-        const auto length = u32(d, pos);
-        if (length == 0 || pos + 4 + length > d.size()) break;
-        clipOf[nm] = static_cast<int>(f.clips.size());
-        CtlClip c{nm, pos + 4, length, 0};
-        // A `.CTL` clip is a bare `.ani` descriptor - no "3.0V" wrapper - so
-        // its frame count comes from the same reader the libraries use.
-        if (const auto desc = animDescriptor(d, pos + 4)) c.frames = desc->frames;
-        f.clips.push_back(std::move(c));
-        pos += 4u + length;
-    }
+    readCtlClips(ents, named, d, seen, pos, clipOf, f);
 
     f.end = pos;
     f.exact = (pos == d.size());

@@ -594,6 +594,16 @@ finding: a check that hashed a conversation frame would flicker.
   shared `thread_local`) - one platform's tool each, left where they are
   read. Guard 0 of 14; the profiler checks and `engine: release build`
   green; 3DS and Vita build; `licence headers` 626.
+* step 13d - the WALKERS one function per section where a section stands
+  alone: `readCtl` 276 -> 196 (the fight AI's profiles and its input words,
+  the effect records, the clips - a fifth, the state graph, refused at 15
+  parameters), `readScxStream` (the block re-walked for the stream's order
+  and registry rows; the payload walk refused at 15). The tool learned FREE
+  functions (a `static` function placed above the one it came from, no
+  header) and a batch now finds each job by its start line's TEXT - a cut
+  above the jobs still to come shifts them - and the declaration reader
+  masks the comment above a statement. Guard 0 of 14; the 13 `.CTL` and 21
+  `.SCX` checks green; 3DS and Vita build.
 
 ## 7. For the tutorial
 

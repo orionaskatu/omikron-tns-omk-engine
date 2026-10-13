@@ -8,7 +8,7 @@ viewer's stdout stays byte-identical. Done by hand, each cut means finding
 every local the block reads, its exact type and whether the block writes it.
 This makes the compiler do that:
 
-    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT] [--loop-body]
+    python3 tools/extract_method.py extract <file.cpp> A B <name> [--comment TEXT] [--loop-body] [--returns]
     python3 tools/extract_method.py batch <file.cpp> <jobs.txt>
     python3 tools/extract_method.py candidates <file.cpp> <method> [--min N] [--depth D]
     python3 tools/extract_method.py sizes [--over N]
@@ -39,6 +39,12 @@ method, and moved it would leave only the new one, which compiles silently.
 `--loop-body` is for a range that is exactly a loop's body: a `continue` of
 that loop becomes `return;` (the same thing there), and a `break` that would
 leave it, or a brace-less inner loop, refuses.
+
+`--returns` moves a range that RETURNS from the enclosing method (a dispatch
+arm): the new method returns `bool`, each `return X;` that is not a lambda's
+becomes `{ retVal = X; return true; }` with `retVal` an out-parameter, falling
+off the end is `false`, and the call is `if (T retVal{}; name(..., retVal))
+return retVal;` (for a void method, `if (name(...)) return;`).
 
 `batch` runs `extract` over `start|name|comment` lines, bottom-up so the line
 numbers above each cut stay valid, finding each statement's end (an `else`
@@ -365,7 +371,7 @@ def header_of(cls):
 
 # ---- extract -----------------------------------------------------------------
 
-def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
+def extract(path, A, B, name, comment="", tidy=True, loop_body=False, returns=False):
     src = open(path).read()
     L = src.split("\n")
     body = L[A - 1:B]
@@ -386,7 +392,7 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
         t = mm.group(0)
         if t in "{}":
             d += 1 if t == "{" else -1
-        elif d == 0 and not (loop_body and t == "continue"):
+        elif d == 0 and not (loop_body and t == "continue") and not (returns and t == "return"):
             return "refused: a top-level `%s` in the range" % t
     # A BARE `return;` nested in the range left the ENCLOSING method; moved, it
     # would leave only the new one and the caller would carry on - silently,
@@ -398,7 +404,9 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
         if owner:
             continue
         if word == "return":
-            return "refused: a bare `return;` would leave only the new method"
+            if returns:
+                continue                     # rewritten below
+            return "refused: a bare `return;` would leave only the new method (--returns)"
         if word == "continue" and loop_body:
             to_return.append(pos)
         elif loop_body:
@@ -419,6 +427,47 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
         return "refused: no enclosing method"
     fstart = max(heads)
     cls, encl = re.match(r"^\S[^;]*?\b(\w+)::(~?\w+)\(", L[fstart]).groups()
+    rtype = re.sub(r"^(static|inline|virtual|constexpr)\s+", "",
+                   L[fstart][:L[fstart].index(cls + "::")].strip())
+    if returns:
+        # every `return` of the range that is not a lambda's: it left the
+        # enclosing method, so it now says so - `{ retVal = X; return true; }`
+        # - and the caller returns retVal; falling off the end is `false`
+        if "&" in rtype:
+            return "refused: --returns with a reference return type (%s)" % rtype
+        if re.search(r"\bretVal\b", text):
+            return "refused: the range already names `retVal`"
+        kinds = brace_kinds(text, m)
+        lam = []
+        for b0, k in kinds.items():
+            if k == "lambda":
+                lam.append((b0, match_close(text, m, b0)))
+        edits = []
+        for rm in re.finditer(r"\breturn\b", text):
+            if not m[rm.start()] or any(a < rm.start() < z for a, z in lam):
+                continue
+            d2, k = 0, rm.end()
+            while k < len(text):
+                if m[k] and text[k] in "([{":
+                    d2 += 1
+                elif m[k] and text[k] in ")]}":
+                    d2 -= 1
+                elif m[k] and text[k] == ";" and d2 == 0:
+                    break
+                k += 1
+            expr = text[rm.end():k].strip()
+            if rtype == "void":
+                rep = "return true;" if not expr else "{ %s; return true; }" % expr
+            else:
+                rep = "{ retVal = %s; return true; }" % expr
+            edits.append((rm.start(), k + 1, rep))
+        if not edits:
+            return "refused: --returns, but the range has no return"
+        for a0, z0, rep in sorted(edits, reverse=True):
+            text = text[:a0] + rep + text[z0:]
+        body = text.split("\n") + [" " * ind + "return false;"]
+        text = "\n".join(body)
+        m = code_mask(text)
     sig = "\n".join(L[fstart:A])
     is_const = bool(re.search(r"\)\s*const\s*\{", sig[:sig.index("{") + 1]))
     hdr_path = header_of(cls)
@@ -429,10 +478,20 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
         open(path, "w").write(src)
         open(hdr_path, "w").write(hdr)
 
+    retp = ["%s& retVal" % rtype] if returns and rtype != "void" else []
+
     def write(params, args, aliases):
-        out = L[:A - 1] + [" " * ind + wrap(name, list(args), ind) + ";"] + L[B:]
+        if not returns:
+            call = [" " * ind + wrap(name, list(args), ind) + ";"]
+        elif rtype == "void":
+            call = [" " * ind + "if (" + wrap(name, list(args), ind + 4) + ") return;"]
+        else:
+            call = [" " * ind + "if (%s retVal{}; " % rtype + wrap(name, list(args) + ["retVal"], ind)
+                    + ") return retVal;"]
+        out = L[:A - 1] + call + L[B:]
         fn = (["// " + c for c in comment.split("\n")] if comment else []) + \
-            [wrap("void %s::%s" % (cls, name), params, 0, ") const {" if is_const else ") {")] + \
+            [wrap("%s %s::%s" % ("bool" if returns else "void", cls, name), params + retp, 0,
+                  ") const {" if is_const else ") {")] + \
             aliases + newbody + ["}", ""]
         s2 = "\n".join(out)
         mk = code_mask(s2)
@@ -443,7 +502,7 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
         mm = re.search(r"^( *)[^\n;]*\b%s\([^;]*\)( const)?;[^\n]*\n" % re.escape(encl), hdr, re.M)
         if not mm:
             raise RuntimeError("no declaration of %s in %s" % (encl, hdr_path))
-        decl = mm.group(1) + wrap("void " + name, params, len(mm.group(1)),
+        decl = mm.group(1) + wrap(("bool " if returns else "void ") + name, params + retp, len(mm.group(1)),
                                   ") const;" if is_const else ");") + \
             "   // from `%s`\n" % encl
         open(hdr_path, "w").write(hdr[:mm.end()] + decl + hdr[mm.end():])
@@ -473,8 +532,15 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
                 x = re.search(r"decltype\((\w+)\)::omkprobe_", probe[ln - 1]).group(1)
                 types[x] = n.group(1)
         out = []
-        for x in need:
+        for x in list(need):
             t = types.get(x)
+            if t is None and x in forced:
+                # the guard's regex saw a declaration in another, closed scope:
+                # no local of that name is visible here, so the range's use
+                # means the member, as it did in place
+                need.remove(x)
+                missing.remove(x)
+                continue
             if t is None:
                 raise ValueError("no type for " + x)
             if "lambda at" in t:
@@ -494,6 +560,7 @@ def extract(path, A, B, name, comment="", tidy=True, loop_body=False):
     missing = [n for n in sorted(members & used)
                if re.search(r"(?:\bauto|[\w>\]])\s*[&*]?\s+(?<![:.>])%s\s*(?:=|\{|;)" % re.escape(n),
                             before)]
+    forced = set(missing)
     renames = {}   # an unqualified type clang printed -> the name it suggests
     for _ in range(10):
         aliases = [ALIASES[x] for x in ALIASES if x in missing and cls == "PlayState"]
@@ -626,7 +693,7 @@ def main(argv):
         return argv[argv.index(flag) + 1] if flag in argv else default
     if len(argv) >= 5 and argv[0] == "extract":
         r = extract(argv[1], int(argv[2]), int(argv[3]), argv[4], opt("--comment", ""),
-                    loop_body="--loop-body" in argv)
+                    loop_body="--loop-body" in argv, returns="--returns" in argv)
         print(r)
         return 1 if r.startswith("refused") else 0
     if len(argv) == 3 and argv[0] == "batch":

@@ -1706,32 +1706,7 @@ bool UiWalk::confirm() {
         //
         // NOT ported, labelled: the sound. The 4000 ms oscillator 5 is the
         // screen's delayed close (`startCloseTimer`), ported.
-        if (it->callback == kCbXachenCartridge) {
-            const UiList* l = curList();
-            int idx = -1;
-            if (l)
-                for (std::size_t k = 0; k < l->items.size(); ++k)
-                    if (l->items[k].addr == it->addr) idx = static_cast<int>(k);
-            if (idx < 0 || idx > 3) return false;
-            int& v = xachen_[idx];
-            int at = -1;
-            for (int k = 0; k < 14; ++k)
-                if (kXachenRing[k] == v) { at = k; break; }
-            const int next = kXachenRing[(at + 1) % 14];
-            // `cmp eax, 0Eh / jg` and `cmp eax, 0 / jle` - the ring holds only
-            // 1..14, so this can never refuse, and it is transcribed because
-            // it is what makes 0 and 15 mean "no symbol" in the sprite table.
-            if (next > 0 && next <= 14) v = next;
-            log_.push_back("xachen: cartridge " + std::to_string(idx) + " = " +
-                           std::to_string(v));
-            if (xachenSolved()) {
-                answer_ = 1;
-                log_.push_back("xachen: 10 14 7 9 - the door opens");
-                // `Ui_StartOscillator(5, 4000, screen)` (0x004AFAFE)
-                startCloseTimer(4000.0, "xachen");
-            }
-            return true;
-        }
+        if (bool retVal{}; confirmXachenCartridge(it, retVal)) return retVal;
         // `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image.
         // It counts the press (`byte_68A608`), stamps a marker widget taken
         // from `off_4E4C80[count]` at the cell, and ORs one bit of
@@ -1746,47 +1721,7 @@ bool UiWalk::confirm() {
         // 0x0F it writes the ANSWER 1 - the door opens - and plays 0x27. The
         // bits are ORed, so the symbols may be pressed in any order and the
         // same one twice does not count twice. NOT ported: the two sounds.
-        if (it->callback == kCbGandharCell) {
-            const unsigned cell = (unsigned(gandRow_) << 16) | unsigned(gandCol_);
-            ++gandPresses_;
-            unsigned bit = 0;
-            if (cell == 0x5u)          bit = 1;
-            else if (cell == 0x10003u) bit = 2;
-            else if (cell == 0x40002u) bit = 4;
-            else if (cell == 0x50004u) bit = 8;
-            gandMask_ |= bit;
-            // THE MARKER. `off_4E4C80[count]` is the widget this press stamps:
-            // its x/y are written from the cell the same way the cursor's are,
-            // and `sub_428FF0(marker, 0x40000001, 0)` clears the not-drawn bit
-            // its record ships with. The table is the list's own items after
-            // the cursor - four markers for four presses - and beyond the
-            // fourth the engine walks off the end of it, which this does not
-            // follow: it stamps nothing.
-            // Its unlit source is written with its position, as the cursor's.
-            if (const UiList* gl = curList()) {
-                const std::size_t mk = static_cast<std::size_t>(gandPresses_);
-                if (mk < gl->items.size() && gandPresses_ <= 4) {
-                    const int x = gandCol_ * 63 + 135, y = gandRow_ * 63 + 61;
-                    state_->itemPlace[gl->items[mk].addr] = {x, y, x, y};
-                    setItemOff(gl->items[mk].addr, false);
-                }
-            }
-            log_.push_back("gandhar: press " + std::to_string(gandPresses_) +
-                           (bit ? " - one of the four" : " - not in the code"));
-            // THE FOURTH PRESS ENDS IT EITHER WAY. `cmp byte_68A608, cl` with
-            // `cl = 4`: on the fourth press `Ui_StartOscillator(5, 1500,
-            // screen)` and sound 0x26 - a wrong code closes 1.5 s later and
-            // answers nothing - then, all four bits set, the answer 1, a
-            // RESTART at 4000 ms and sound 0x27 (0x004B0067, 0x004B0094). The
-            // sounds are not ported.
-            if (gandPresses_ == 4) startCloseTimer(1500.0, "gandhar door, the fourth press");
-            if (gandMask_ == 0x0Fu) {
-                answer_ = 1;
-                log_.push_back("gandhar: the door opens");
-                startCloseTimer(4000.0, "gandhar door, the code");
-            }
-            return true;
-        }
+        if (bool retVal{}; confirmGandharCell(it, retVal)) return retVal;
         // ---- THE TERMINAL FAMILY (`docs/UI.md` "a second `Ui_OpenShop`") --
         //
         // One callback, 0x004AF410, for seven screens - TERMINAL, FIGHT SIM,
@@ -1810,60 +1745,7 @@ bool UiWalk::confirm() {
         //     0 TERMINAL    the dossier reader on rows 0..4; its answer is
         //                   written on CLOSE by 0x004AF0E0 (`closeNow`) off
         //                   the two globals rows 3 and 4 set
-        if (it->callback == kCbTerminalCell) {
-            // the CELL's index in its own list - `Ui_ConfirmSelection` hands
-            // the callback the item, and the engine's arms test the list's
-            // selection word, not a row tag
-            const int row = selection();
-            int a = -1;
-            // case 0, the TERMINAL (0x004AF428): cells 0..4 open the dossier
-            // reader and answer nothing - it REMEMBERS which protected dossier
-            // was opened, `dword_68A5FC` for cell 4 and `dword_68A600` for 3,
-            // and reports them on close (`closeNow`). Cells 5..9 `return 0`.
-            if (screen_ == screen::Terminal) {
-                if (row < 0 || row >= 5) return false;
-                if (row == 4) termRow4_ = true;
-                if (row == 3) termRow3_ = true;
-                if (row == 3 || row == 4)
-                    log_.push_back("terminal: dossier " + std::to_string(row + 1) + " opened");
-                openDossier(row);
-                return true;
-            }
-            // case 3, the ARCHIVES (0x004AF4F7): the same reader for cells
-            // 0..3, and cell 2 - the `Meurtres` file - writes `dword_930750 =
-            // 1`. No oscillator and no close, so the answer WAITS: the screen
-            // stays on the file and the parked script hears 1 when the player
-            // closes it (`closeAnswer_`), not on the frame the cell is
-            // confirmed.
-            if (screen_ == screen::Archives) {
-                if (row < 0 || row >= 4) return false;
-                if (row == 2) {
-                    closeAnswer_ = 1;
-                    log_.push_back("archives: cell 2 - answer 1, held until the close");
-                }
-                openDossier(row);
-                return true;
-            }
-            // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms):
-            // FIGHT SIM 4500 ms after its answer, MORGUE
-            // 2000, and the three SURV screens 2000 - SURV ERROR and SURV KIT
-            // on ANY cell (no row limit; the answer is written only for row
-            // 0), SURV NO KIT with no answer at all, so it closes on -1.
-            // ARCHIVES starts none (it goes to panel 0x004E4170, above).
-            double closeMs = 0.0;
-            switch (screen_) {
-                case screen::FightSim: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
-                case screen::Morgue: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
-                case screen::SurvError: case screen::SurvKit: if (row == 0) a = 1; closeMs = 2000.0; break;
-                case screen::SurvNoKit: closeMs = 2000.0; break;
-                default: break;
-            }
-            if (closeMs > 0.0) startCloseTimer(closeMs, "terminal cell");
-            if (a < 0 && closeMs <= 0.0) { log_.push_back("terminal cell: no answer"); return false; }
-            if (a >= 0) answer_ = a;
-            log_.push_back(a >= 0 ? "terminal cell: answer" : "terminal cell: no answer, closing");
-            return true;
-        }
+        if (bool retVal{}; confirmTerminalCell(it, retVal)) return retVal;
         // THE SHOP'S THREE BUTTONS - Acheter, Vente, Examiner (0x004AED00,
         // 0x004AED30, 0x004AED60), one body each:
         //
@@ -1920,27 +1802,7 @@ bool UiWalk::confirm() {
         //
         // The purchase ends in `Game_HandleEvent`, which the walk does not
         // own, so it is RECORDED for the caller (`takeShop`) as the verbs are.
-        if (it->callback == kCbShopRow) {
-            const int tag = rowOf(it->addr);
-            int button = -1;
-            if (const UiList* b = w_->listAt(kListShopButtons)) button = selectionOf(*b);
-            if (button == 1) {
-                log_.push_back("shop row: Vente -> the confirm");
-                return installPanel(kPanelShopSellConfirm);
-            }
-            if (tag < 0) return false;
-            if (button == 0) {
-                state_->pendingShopKind = 0;
-                state_->pendingShopRow  = tag;
-                log_.push_back("shop row: Acheter -> events 41, 38");
-                return true;
-            }
-            if (button == 2) {
-                log_.push_back("shop row: Examiner -> the page");
-                return installPanel(kPanelShopExamine);
-            }
-            return false;
-        }
+        if (bool retVal{}; confirmShopRow(it, retVal)) return retVal;
         // MULTIPLAN's ROW (0x004B05C0) - a jump table on the BUTTON list's
         // selection `word_4E53A2`:
         //
@@ -1952,37 +1814,7 @@ bool UiWalk::confirm() {
         //
         // Both transfers end in `Game_HandleEvent`, so they are RECORDED for
         // the caller (`takeMultiplan`), as the shop's purchase is.
-        if (it->callback == kCbMultiplanRow) {
-            const int tag = rowOf(it->addr);
-            int button = -1;
-            if (const UiList* b = w_->listAt(kListMultiplanButtons)) button = selectionOf(*b);
-            if ((button == 0 || button == 1) && tag >= 0) {
-                state_->pendingMultiplanRequest = button == 0 ? 7 : 8;
-                state_->pendingMultiplanRow = tag;
-                log_.push_back(button == 0 ? "multiplan row: event 36 request 7"
-                                           : "multiplan row: event 36 request 8");
-                return true;
-            }
-            // 2: `dword_4E581C = tag` (the page's box item's own +0x3C),
-            // `sub_42A370(screen, 0x004E5998)`, `sub_42B420(tag, 4)` - event
-            // 30 then 43, which posts world MESSAGE 4 with the object. The
-            // message is the caller's (`takeMultiplan`, request 4).
-            if (button == 2 && tag >= 0) {
-                state_->pendingMultiplanRequest = 4;
-                state_->pendingMultiplanRow = tag;
-                // the page's builder `0x004B0510` opens `mov dword_6A5090, 0`:
-                // a new object is read from the top
-                state_->textScroll = 0;
-                log_.push_back("multiplan row: Examiner -> the page, message 4");
-                return installPanel(kPanelMultiplanExamine);
-            }
-            // 3: `sub_42A370(screen, 0x004E5A00)` - no tag test on this arm.
-            if (button == 3) {
-                log_.push_back("multiplan row: Detruire -> the confirm");
-                return installPanel(kPanelMultiplanDestroy);
-            }
-            return false;
-        }
+        if (bool retVal{}; confirmMultiplanRow(it, retVal)) return retVal;
         // THE DESTROY CONFIRM's two answers (0x004B08C0 / 0x004B0980):
         //
         //     Oui: tag = sub_428EF0(0x004E5670)+0x3C   the SELECTED row's tag
@@ -2000,54 +1832,12 @@ bool UiWalk::confirm() {
         // see because the source test comes first). As on the shop's
         // confirm, `sub_42A370` leaves the parent's +24 alone, so the kiosk
         // comes back on its rows.
-        if (it->callback == kCbMultiplanDestroyYes || it->callback == kCbMultiplanDestroyNo) {
-            if (it->callback == kCbMultiplanDestroyYes) {
-                int tag = -1;
-                if (const UiList* r = w_->listAt(kListMultiplanRows)) {
-                    const int s = selectionOf(*r);
-                    if (s >= 0 && static_cast<std::size_t>(s) < r->items.size())
-                        tag = rowOf(r->items[static_cast<std::size_t>(s)].addr);
-                }
-                state_->pendingMultiplanRequest = 6;
-                state_->pendingMultiplanRow = tag;
-                log_.push_back("multiplan confirm: Oui -> event 36 request 6");
-            } else {
-                log_.push_back("multiplan confirm: Non");
-            }
-            const bool back = installPanel(kPanelMultiplan);
-            if (back) focusList(kListMultiplanRows);
-            return back;
-        }
+        if (bool retVal{}; confirmMultiplanDestroy(it, retVal)) return retVal;
         // `Oui` on the Vente confirm (0x004AEC00): the SELECTED STOCK ROW's tag
         // (`sub_428EF0(0x004E3640)+0x3C`), the sale through event 36 request
         // 10, the price and event 39 - recorded for the caller - and then the
         // shop panel again, whatever the channel answered.
-        if (it->callback == kCbShopSellYes || it->callback == kCbShopSellNo) {
-            if (it->callback == kCbShopSellYes) {
-                int tag = -1;
-                if (const UiList* r = w_->listAt(kListShopRows)) {
-                    const int s = selectionOf(*r);
-                    if (s >= 0 && static_cast<std::size_t>(s) < r->items.size())
-                        tag = rowOf(r->items[static_cast<std::size_t>(s)].addr);
-                }
-                if (tag >= 0) {
-                    state_->pendingShopKind = 1;
-                    state_->pendingShopRow  = tag;
-                }
-                log_.push_back("shop confirm: Oui -> events 36, 39");
-            } else {
-                log_.push_back("shop confirm: Non");
-            }
-            // ...and the shop panel comes back on the ROWS. `sub_42A370` never
-            // writes the incoming panel's `+24`, which still holds the 1 the
-            // button's confirm wrote before Vente was chosen; only the sale
-            // clears it, and only when the list is left empty (the caller's
-            // `focusList`). `installPanel` re-settles on the lifted `current`,
-            // the open callback's 0, so the rows are put back here.
-            const bool back = installPanel(kPanelShop);
-            if (back) focusList(kListShopRows);
-            return back;
-        }
+        if (bool retVal{}; confirmShopSell(it, retVal)) return retVal;
         // `Charger une partie` (0x0047AC90).  It does NOT load: it resolves
         // the row to a slot, refuses an empty one, stores the index in
         // `dword_4C09B4` and closes the screen (`screen[+8] = 3`).  The load
@@ -2106,29 +1896,7 @@ bool UiWalk::confirm() {
         // `Acheter` (0x004AE480). The event is the PAYMENT and its refusal
         // arm is a plain `return 1` with nothing changed, so a purchase the
         // player cannot afford leaves the confirm exactly as it was.
-        if (it->callback == kCbHintBuy) {
-            if (!panel_) return false;
-            if (rings_ < hintPrice_) {
-                log_.push_back("indices: the purchase is refused - " +
-                               std::to_string(rings_) + " anneaux");
-                return true;
-            }
-            rings_ -= hintPrice_;          // `u16(player + 174) -= price`
-            hintPaid_ = hintPrice_;        // ...for the caller to write back
-            hintSection_ = 1;              // `word_4E2B2E = 1` - THE CLUE
-            for (const auto& l : panel_->lists) {
-                if (l.addr != kListHintBuy) continue;
-                for (const auto& b : l.items) setItemOff(b.addr, true);
-            }
-            setItemOff(kItemHintBody, false);
-            setItemOff(kItemHintFoot, true);
-            setItemOff(kItemHintPrice, true);
-            setItemOff(kItemHintDone, false);
-            cur_ = 1;                      // `[screen->panel + 0x18] = 1`
-            log_.push_back("indices: bought for " + std::to_string(hintPrice_) +
-                           ", " + std::to_string(rings_) + " anneaux left");
-            return true;
-        }
+        if (bool retVal{}; confirmHintBuy(it, retVal)) return retVal;
         // `Annuler` on the save screen (0x0042A990): it closes.
         // Its whole body is `screen+8 = 3` - so it is also the terminal
         // family's big button, `Quitter le terminal`, and takes the screen's
@@ -2166,30 +1934,7 @@ bool UiWalk::confirm() {
         // arm - screen 29's `Detruire` - is read and not modelled: it calls
         // `SaveDir_Delete`, which empties every slot of a profile, and that
         // is not a thing to wire on a guess.
-        if (it->callback == kCbConfirmYes) {
-            if (!load_ || !panel_) return false;
-            // THE SCREEN, not the panel's - the confirm and the slot panel
-            // are both CHILD panels and carry `screen == -1`, so testing the
-            // panel sent every confirm down the delete arm and `Oui` did
-            // nothing. `sub_47BA30` tests `*a1`, the screen the walk was
-            // opened with.
-            if (screen_ != screen::SaveGame) {
-                approx_ = true;
-                log_.push_back("oui: the DELETE arm is not modelled");
-                return true;
-            }
-            const auto rows = load_->rows();
-            const int row = overwriteRow_ >= 0 ? overwriteRow_ : load_->row;
-            if (row < 0 || row >= static_cast<int>(rows.size())) {
-                log_.push_back("oui: no row to overwrite");
-                return true;
-            }
-            pendingSave_ = rows[static_cast<std::size_t>(row)].slot;
-            overwriteRow_ = -1;
-            log_.push_back("oui: overwriting slot " + std::to_string(pendingSave_));
-            panel_ = nullptr;
-            return true;
-        }
+        if (bool retVal{}; confirmYesSave(it, retVal)) return retVal;
         // ---- SCREEN 31, `PAUSE GAME` ---------------------------------
         //
         // Four callbacks, each four instructions, all read out of the image
@@ -2303,66 +2048,8 @@ bool UiWalk::confirm() {
         //
         // So a NEW save writes at once into the first free slot and closes;
         // an EXISTING row goes through the overwrite confirm first.
-        if (it->callback == kCbSaveDo) {
-            if (!load_) { approx_ = true; log_.push_back("save: no directory"); return false; }
-            const auto rows = load_->rows();
-            const int n = static_cast<int>(rows.size());
-            if (load_->row < 0) { log_.push_back("save: no row chosen"); return true; }
-            if (load_->row < n) {
-                // an EXISTING row is confirmed before it is overwritten:
-                // `off_4CF3B8`, the screen's `Ecraser ce fichier ?`
-                pendingSave_ = -1;
-                overwriteRow_ = load_->row;
-                log_.push_back("save: row " + std::to_string(load_->row) +
-                               " -> the overwrite confirm");
-                return installPanel(kPanelSaveOverwrite);
-            }
-            // the `Nouvelle sauvegarde` row: `sub_408AA0`'s first free slot
-            int slot = -1;
-            for (int k = 0; k < 256; ++k) {          // `sub_408AA0`'s 256
-                bool used = false;
-                for (const auto& e : load_->dir) if (e.slot == k) { used = true; break; }
-                if (!used) { slot = k; break; }
-            }
-            if (slot < 0) { log_.push_back("save: every slot is taken"); return true; }
-            pendingSave_ = slot;
-            log_.push_back("save: slot " + std::to_string(slot) + " requested");
-            panel_ = nullptr;                  // `screen[+8] = 3`
-            return true;
-        }
-        if (it->callback == kCbLoadCharger) {
-            if (!load_) { approx_ = true; log_.push_back("charger: no directory"); return false; }
-            const int slot = loadPanelCharger(*load_);
-            if (slot < 0) {
-                // the callback's own `if (!dl) return` - nothing chosen, or
-                // an empty slot: the frame is consumed and the screen stays
-                log_.push_back("charger: no slot on this row");
-                return true;
-            }
-            pendingLoad_ = slot;
-            // ...AND IT ANSWERS 0. `mov dword_930750, 0` sits between the
-            // slot store and the close, so the parked script resumes with
-            // **0** and not with the -1 a plain close leaves.
-            //
-            // That is the whole loading sequence. AREA 118's startup script
-            // is parked at `ui.open 29, -1, -> var 19`, and its next act is
-            // `if (var19 == 0)`: that arm is `fade.from_color`, cameras
-            // 2152/2153/2154/2158 over `scx.play 20` (`Wait5sec`) and a
-            // `media.play 753`, and then it ENDS - no dialogue, no
-            // `area.goto`. The other arm, which -1 takes, shows character
-            // 310, runs `dialog.start 272` and walks on into the Impasse.
-            //
-            // So the engine plays the Grid fly-through over a load by
-            // ANSWERING A DIFFERENT NUMBER, and a port that closes the
-            // screen without one gets the new game's opening instead. A
-            // reader saw exactly that - the Kay'l dialogue before the
-            // apartment - and it is what sent me back to this callback.
-            answer_ = 0;
-            log_.push_back("charger: slot " + std::to_string(slot) +
-                           " requested, answering 0");
-            panel_ = nullptr;                  // `screen[+8] = 3` - it closes
-            return true;
-        }
+        if (bool retVal{}; confirmSaveDo(it, retVal)) return retVal;
+        if (bool retVal{}; confirmLoadCharger(it, retVal)) return retVal;
         // TWO CALLBACKS THAT DESCEND. `Ui_ConfirmSelection` normally follows
         // an item's `+44`, but a callback can install a panel itself with
         // `sub_42A370(screen, panel)` - and the sneak's object flow is built
@@ -2424,23 +2111,7 @@ bool UiWalk::confirm() {
         // of A/B `sub_42B520` chose. The caller does the combine itself -
         // the recipe table and the lists are the Session's - and then calls
         // `endCombine`.
-        if (it->callback == kCbSneakRowConfirm && state_->combining) {
-            // The slots hold ROW INDICES, not object ids: `sub_49BC60`
-            // reads `[edi+3Ch]` - the widget's row tag - and case 37 maps it
-            // through `ObjectList_Header`. So the caller resolves them.
-            const int obj = rowOf(it->addr);
-            if (obj < 0) { log_.push_back("combine: no row there"); return true; }
-            if (state_->combineB == -1) {
-                state_->combineB = obj;
-                log_.push_back("combine: second slot filled, waiting");
-                return true;
-            }
-            state_->combineC = obj;
-            state_->readyA = state_->combineB;
-            state_->readyB = obj;
-            log_.push_back("combine: due");
-            return true;
-        }
+        if (bool retVal{}; confirmSneakCombine(it, retVal)) return retVal;
         // ---- THE SLIDER PAGE'S DESTINATION -----------------------
         //
         // `sub_49BC60`'s kind-4 arm, and it reads the ROW TAG like every
@@ -2485,37 +2156,7 @@ bool UiWalk::confirm() {
             panel_ = nullptr;
             return true;
         }
-        if (it->callback == kCbSneakRowConfirm && state_->rowKind == 4) {
-            const int row = rowOf(it->addr);
-            if (row < 0) { log_.push_back("slider: no destination there");
-                           return true; }
-            // WHICH OF THE PAGE'S TWO MEANINGS, and it is the slot's `+4`:
-            //
-            //     if (screen[+4] == 1) { rec = sub_40E630(tag);        // TRAVEL
-            //                            point = rec[0], rec[4], rec[8]; }
-            //     else                 { point = player[+0xF4/F8/FC]; } // CALL
-            //
-            // and that field is the screen record's own `param`, which
-            // `UI_LoadScreen` copies in. Screen **7 SLIDER** carries 1 and
-            // screen **9 SNEAK** carries 0 - so the same page TRAVELS from
-            // inside the vehicle and CALLS one to where he stands from the
-            // device. `MDSLIDIN` is what opens screen 7 (`UI_OpenScreen(7,
-            // -1, -1, -1)`, "cant find slider interface !"), so a journey is
-            // something you ask for once you are ABOARD.
-            //
-            // Teleporting on this row whatever the screen is the arrive arm
-            // and belongs to neither: calling a slider from the sneak would
-            // teleport the player.
-            state_->pendingTravel = row;
-            state_->travelToDestination = w_->screenParam(screen_) == 1;
-            log_.push_back(state_->travelToDestination
-                           ? "slider: travel to destination row " + std::to_string(row)
-                           : "slider: CALL one here, remembering row " + std::to_string(row));
-            // `screen[+8] = 3` on success only - a CALL is closed (or refused
-            // with string 42) by the caller; the journey closes here as before
-            if (state_->travelToDestination) panel_ = nullptr;
-            return true;
-        }
+        if (bool retVal{}; confirmSliderCall(it, retVal)) return retVal;
         // ---- THE MEMO READER, `sub_49BC60`'s KIND-2 ARM ------------------
         //
         // Two instructions:
@@ -2537,46 +2178,13 @@ bool UiWalk::confirm() {
         // which the leave clears. Those two bits are NOT modelled: the word
         // appears at exactly two sites in the image, this builder and that
         // leave, so nothing tests it by literal and what it gates is unread.
-        if (it->callback == kCbSneakRowConfirm && state_->rowKind == 2) {
-            const auto* kid = w_->at(kPanelSneakReader, screen_);
-            if (!kid) {                       // not lifted: say so, don't guess
-                approx_ = true;
-                log_.push_back("memo reader: 0x004DEFF0 is not in the table");
-                return true;
-            }
-            leavePage(*panel_);
-            panel_ = kid;
-            state_->textScroll = 0;           // `mov dword_6A5090, 0`
-            buildPage(*panel_);
-            settle();
-            log_.push_back("enter memo reader");
-            return true;
-        }
+        if (bool retVal{}; confirmMemoReader(it, retVal)) return retVal;
         if (it->callback == kCbSneakRowConfirm && state_->rowKind != 0) {
             approx_ = true;
             log_.push_back("row confirm: this source kind's arm is not modelled");
             return true;
         }
-        if (it->callback == kCbSneakRowConfirm ||
-            it->callback == kCbSneakExamine) {
-            const std::uint32_t to = it->callback == kCbSneakExamine
-                                   ? kPanelSneakExamine : kPanelSneakVerbs;
-            if (const auto* kid = w_->at(to, screen_)) {
-                leavePage(*panel_);
-                panel_ = kid;
-                // `sub_49B950`'s first instruction is `mov dword_6A5090, 0` -
-                // a new object is read from the TOP, whatever the last one
-                // was scrolled to.
-                if (it->callback == kCbSneakExamine) state_->textScroll = 0;
-                // ...and its last call, `sub_42B420(tag, 4)`: message 4.
-                if (it->callback == kCbSneakExamine) state_->pendingExamineMessage = true;
-                buildPage(*panel_);
-                settle();
-                log_.push_back(it->callback == kCbSneakExamine
-                               ? "enter examine page" : "enter verb panel");
-                return true;
-            }
-        }
+        if (bool retVal{}; confirmSneakExamine(it, retVal)) return retVal;
         for (const auto& a : w_->answers())
             if (a.callback == it->callback) {
                 if (a.needsName && name_.empty()) {
@@ -2616,6 +2224,503 @@ bool UiWalk::confirm() {
     }
     return false;
 }
+
+// THE TERMINAL FAMILY's keypad cell - a second `Ui_OpenShop` (from `confirm`)
+bool UiWalk::confirmTerminalCell(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbTerminalCell) {
+        // the CELL's index in its own list - `Ui_ConfirmSelection` hands
+        // the callback the item, and the engine's arms test the list's
+        // selection word, not a row tag
+        const int row = selection();
+        int a = -1;
+        // case 0, the TERMINAL (0x004AF428): cells 0..4 open the dossier
+        // reader and answer nothing - it REMEMBERS which protected dossier
+        // was opened, `dword_68A5FC` for cell 4 and `dword_68A600` for 3,
+        // and reports them on close (`closeNow`). Cells 5..9 `return 0`.
+        if (screen_ == screen::Terminal) {
+            if (row < 0 || row >= 5) { retVal = false; return true; }
+            if (row == 4) termRow4_ = true;
+            if (row == 3) termRow3_ = true;
+            if (row == 3 || row == 4)
+                log_.push_back("terminal: dossier " + std::to_string(row + 1) + " opened");
+            openDossier(row);
+            { retVal = true; return true; }
+        }
+        // case 3, the ARCHIVES (0x004AF4F7): the same reader for cells
+        // 0..3, and cell 2 - the `Meurtres` file - writes `dword_930750 =
+        // 1`. No oscillator and no close, so the answer WAITS: the screen
+        // stays on the file and the parked script hears 1 when the player
+        // closes it (`closeAnswer_`), not on the frame the cell is
+        // confirmed.
+        if (screen_ == screen::Archives) {
+            if (row < 0 || row >= 4) { retVal = false; return true; }
+            if (row == 2) {
+                closeAnswer_ = 1;
+                log_.push_back("archives: cell 2 - answer 1, held until the close");
+            }
+            openDossier(row);
+            { retVal = true; return true; }
+        }
+        // ...and which arms START OSCILLATOR 5 (0x004AF410's own arms):
+        // FIGHT SIM 4500 ms after its answer, MORGUE
+        // 2000, and the three SURV screens 2000 - SURV ERROR and SURV KIT
+        // on ANY cell (no row limit; the answer is written only for row
+        // 0), SURV NO KIT with no answer at all, so it closes on -1.
+        // ARCHIVES starts none (it goes to panel 0x004E4170, above).
+        double closeMs = 0.0;
+        switch (screen_) {
+            case screen::FightSim: if (row >= 0 && row <= 2) { a = row + 1; closeMs = 4500.0; } break;
+            case screen::Morgue: if (row >= 0 && row <= 4) { a = row + 1; closeMs = 2000.0; } break;
+            case screen::SurvError: case screen::SurvKit: if (row == 0) a = 1; closeMs = 2000.0; break;
+            case screen::SurvNoKit: closeMs = 2000.0; break;
+            default: break;
+        }
+        if (closeMs > 0.0) startCloseTimer(closeMs, "terminal cell");
+        if (a < 0 && closeMs <= 0.0) { log_.push_back("terminal cell: no answer"); { retVal = false; return true; } }
+        if (a >= 0) answer_ = a;
+        log_.push_back(a >= 0 ? "terminal cell: answer" : "terminal cell: no answer, closing");
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// The confirm panel's `Oui` (0x0047BA30), the save arm (from `confirm`)
+bool UiWalk::confirmYesSave(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbConfirmYes) {
+        if (!load_ || !panel_) { retVal = false; return true; }
+        // THE SCREEN, not the panel's - the confirm and the slot panel
+        // are both CHILD panels and carry `screen == -1`, so testing the
+        // panel sent every confirm down the delete arm and `Oui` did
+        // nothing. `sub_47BA30` tests `*a1`, the screen the walk was
+        // opened with.
+        if (screen_ != screen::SaveGame) {
+            approx_ = true;
+            log_.push_back("oui: the DELETE arm is not modelled");
+            { retVal = true; return true; }
+        }
+        const auto rows = load_->rows();
+        const int row = overwriteRow_ >= 0 ? overwriteRow_ : load_->row;
+        if (row < 0 || row >= static_cast<int>(rows.size())) {
+            log_.push_back("oui: no row to overwrite");
+            { retVal = true; return true; }
+        }
+        pendingSave_ = rows[static_cast<std::size_t>(row)].slot;
+        overwriteRow_ = -1;
+        log_.push_back("oui: overwriting slot " + std::to_string(pendingSave_));
+        panel_ = nullptr;
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// `Sauvegarde` on the slot panel (0x0047ADB0) (from `confirm`)
+bool UiWalk::confirmSaveDo(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbSaveDo) {
+        if (!load_) { approx_ = true; log_.push_back("save: no directory"); { retVal = false; return true; } }
+        const auto rows = load_->rows();
+        const int n = static_cast<int>(rows.size());
+        if (load_->row < 0) { log_.push_back("save: no row chosen"); { retVal = true; return true; } }
+        if (load_->row < n) {
+            // an EXISTING row is confirmed before it is overwritten:
+            // `off_4CF3B8`, the screen's `Ecraser ce fichier ?`
+            pendingSave_ = -1;
+            overwriteRow_ = load_->row;
+            log_.push_back("save: row " + std::to_string(load_->row) +
+                           " -> the overwrite confirm");
+            { retVal = installPanel(kPanelSaveOverwrite); return true; }
+        }
+        // the `Nouvelle sauvegarde` row: `sub_408AA0`'s first free slot
+        int slot = -1;
+        for (int k = 0; k < 256; ++k) {          // `sub_408AA0`'s 256
+            bool used = false;
+            for (const auto& e : load_->dir) if (e.slot == k) { used = true; break; }
+            if (!used) { slot = k; break; }
+        }
+        if (slot < 0) { log_.push_back("save: every slot is taken"); { retVal = true; return true; } }
+        pendingSave_ = slot;
+        log_.push_back("save: slot " + std::to_string(slot) + " requested");
+        panel_ = nullptr;                  // `screen[+8] = 3`
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// THE MEMO READER, `sub_49BC60`'s kind-2 arm (from `confirm`)
+bool UiWalk::confirmMemoReader(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbSneakRowConfirm && state_->rowKind == 2) {
+        const auto* kid = w_->at(kPanelSneakReader, screen_);
+        if (!kid) {                       // not lifted: say so, don't guess
+            approx_ = true;
+            log_.push_back("memo reader: 0x004DEFF0 is not in the table");
+            { retVal = true; return true; }
+        }
+        leavePage(*panel_);
+        panel_ = kid;
+        state_->textScroll = 0;           // `mov dword_6A5090, 0`
+        buildPage(*panel_);
+        settle();
+        log_.push_back("enter memo reader");
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// `Examiner` - the sneak's examine, from a row or its button (from `confirm`)
+bool UiWalk::confirmSneakExamine(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbSneakRowConfirm ||
+        it->callback == kCbSneakExamine) {
+        const std::uint32_t to = it->callback == kCbSneakExamine
+                               ? kPanelSneakExamine : kPanelSneakVerbs;
+        if (const auto* kid = w_->at(to, screen_)) {
+            leavePage(*panel_);
+            panel_ = kid;
+            // `sub_49B950`'s first instruction is `mov dword_6A5090, 0` -
+            // a new object is read from the TOP, whatever the last one
+            // was scrolled to.
+            if (it->callback == kCbSneakExamine) state_->textScroll = 0;
+            // ...and its last call, `sub_42B420(tag, 4)`: message 4.
+            if (it->callback == kCbSneakExamine) state_->pendingExamineMessage = true;
+            buildPage(*panel_);
+            settle();
+            log_.push_back(it->callback == kCbSneakExamine
+                           ? "enter examine page" : "enter verb panel");
+            { retVal = true; return true; }
+        }
+    }
+    return false;
+}
+
+
+// XACHEN'S CARTRIDGES (`sub_4AF9D0`), read from the image (from `confirm`)
+bool UiWalk::confirmXachenCartridge(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbXachenCartridge) {
+        const UiList* l = curList();
+        int idx = -1;
+        if (l)
+            for (std::size_t k = 0; k < l->items.size(); ++k)
+                if (l->items[k].addr == it->addr) idx = static_cast<int>(k);
+        if (idx < 0 || idx > 3) { retVal = false; return true; }
+        int& v = xachen_[idx];
+        int at = -1;
+        for (int k = 0; k < 14; ++k)
+            if (kXachenRing[k] == v) { at = k; break; }
+        const int next = kXachenRing[(at + 1) % 14];
+        // `cmp eax, 0Eh / jg` and `cmp eax, 0 / jle` - the ring holds only
+        // 1..14, so this can never refuse, and it is transcribed because
+        // it is what makes 0 and 15 mean "no symbol" in the sprite table.
+        if (next > 0 && next <= 14) v = next;
+        log_.push_back("xachen: cartridge " + std::to_string(idx) + " = " +
+                       std::to_string(v));
+        if (xachenSolved()) {
+            answer_ = 1;
+            log_.push_back("xachen: 10 14 7 9 - the door opens");
+            // `Ui_StartOscillator(5, 4000, screen)` (0x004AFAFE)
+            startCloseTimer(4000.0, "xachen");
+        }
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// `sub_4AFF90` - THE GANDHAR DOOR'S PRESS, transcribed from the image (from `confirm`)
+bool UiWalk::confirmGandharCell(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbGandharCell) {
+        const unsigned cell = (unsigned(gandRow_) << 16) | unsigned(gandCol_);
+        ++gandPresses_;
+        unsigned bit = 0;
+        if (cell == 0x5u)          bit = 1;
+        else if (cell == 0x10003u) bit = 2;
+        else if (cell == 0x40002u) bit = 4;
+        else if (cell == 0x50004u) bit = 8;
+        gandMask_ |= bit;
+        // THE MARKER. `off_4E4C80[count]` is the widget this press stamps:
+        // its x/y are written from the cell the same way the cursor's are,
+        // and `sub_428FF0(marker, 0x40000001, 0)` clears the not-drawn bit
+        // its record ships with. The table is the list's own items after
+        // the cursor - four markers for four presses - and beyond the
+        // fourth the engine walks off the end of it, which this does not
+        // follow: it stamps nothing.
+        // Its unlit source is written with its position, as the cursor's.
+        if (const UiList* gl = curList()) {
+            const std::size_t mk = static_cast<std::size_t>(gandPresses_);
+            if (mk < gl->items.size() && gandPresses_ <= 4) {
+                const int x = gandCol_ * 63 + 135, y = gandRow_ * 63 + 61;
+                state_->itemPlace[gl->items[mk].addr] = {x, y, x, y};
+                setItemOff(gl->items[mk].addr, false);
+            }
+        }
+        log_.push_back("gandhar: press " + std::to_string(gandPresses_) +
+                       (bit ? " - one of the four" : " - not in the code"));
+        // THE FOURTH PRESS ENDS IT EITHER WAY. `cmp byte_68A608, cl` with
+        // `cl = 4`: on the fourth press `Ui_StartOscillator(5, 1500,
+        // screen)` and sound 0x26 - a wrong code closes 1.5 s later and
+        // answers nothing - then, all four bits set, the answer 1, a
+        // RESTART at 4000 ms and sound 0x27 (0x004B0067, 0x004B0094). The
+        // sounds are not ported.
+        if (gandPresses_ == 4) startCloseTimer(1500.0, "gandhar door, the fourth press");
+        if (gandMask_ == 0x0Fu) {
+            answer_ = 1;
+            log_.push_back("gandhar: the door opens");
+            startCloseTimer(4000.0, "gandhar door, the code");
+        }
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// THE STOCK ROW (0x004AEAA0): one callback for the nine rows (from `confirm`)
+bool UiWalk::confirmShopRow(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbShopRow) {
+        const int tag = rowOf(it->addr);
+        int button = -1;
+        if (const UiList* b = w_->listAt(kListShopButtons)) button = selectionOf(*b);
+        if (button == 1) {
+            log_.push_back("shop row: Vente -> the confirm");
+            { retVal = installPanel(kPanelShopSellConfirm); return true; }
+        }
+        if (tag < 0) { retVal = false; return true; }
+        if (button == 0) {
+            state_->pendingShopKind = 0;
+            state_->pendingShopRow  = tag;
+            log_.push_back("shop row: Acheter -> events 41, 38");
+            { retVal = true; return true; }
+        }
+        if (button == 2) {
+            log_.push_back("shop row: Examiner -> the page");
+            { retVal = installPanel(kPanelShopExamine); return true; }
+        }
+        { retVal = false; return true; }
+    }
+    return false;
+}
+
+
+// MULTIPLAN's ROW (0x004B05C0): a jump table on the button list's state (from `confirm`)
+bool UiWalk::confirmMultiplanRow(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbMultiplanRow) {
+        const int tag = rowOf(it->addr);
+        int button = -1;
+        if (const UiList* b = w_->listAt(kListMultiplanButtons)) button = selectionOf(*b);
+        if ((button == 0 || button == 1) && tag >= 0) {
+            state_->pendingMultiplanRequest = button == 0 ? 7 : 8;
+            state_->pendingMultiplanRow = tag;
+            log_.push_back(button == 0 ? "multiplan row: event 36 request 7"
+                                       : "multiplan row: event 36 request 8");
+            { retVal = true; return true; }
+        }
+        // 2: `dword_4E581C = tag` (the page's box item's own +0x3C),
+        // `sub_42A370(screen, 0x004E5998)`, `sub_42B420(tag, 4)` - event
+        // 30 then 43, which posts world MESSAGE 4 with the object. The
+        // message is the caller's (`takeMultiplan`, request 4).
+        if (button == 2 && tag >= 0) {
+            state_->pendingMultiplanRequest = 4;
+            state_->pendingMultiplanRow = tag;
+            // the page's builder `0x004B0510` opens `mov dword_6A5090, 0`:
+            // a new object is read from the top
+            state_->textScroll = 0;
+            log_.push_back("multiplan row: Examiner -> the page, message 4");
+            { retVal = installPanel(kPanelMultiplanExamine); return true; }
+        }
+        // 3: `sub_42A370(screen, 0x004E5A00)` - no tag test on this arm.
+        if (button == 3) {
+            log_.push_back("multiplan row: Detruire -> the confirm");
+            { retVal = installPanel(kPanelMultiplanDestroy); return true; }
+        }
+        { retVal = false; return true; }
+    }
+    return false;
+}
+
+
+// THE DESTROY CONFIRM's two answers (0x004B08C0 / 0x004B0980) (from `confirm`)
+bool UiWalk::confirmMultiplanDestroy(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbMultiplanDestroyYes || it->callback == kCbMultiplanDestroyNo) {
+        if (it->callback == kCbMultiplanDestroyYes) {
+            int tag = -1;
+            if (const UiList* r = w_->listAt(kListMultiplanRows)) {
+                const int s = selectionOf(*r);
+                if (s >= 0 && static_cast<std::size_t>(s) < r->items.size())
+                    tag = rowOf(r->items[static_cast<std::size_t>(s)].addr);
+            }
+            state_->pendingMultiplanRequest = 6;
+            state_->pendingMultiplanRow = tag;
+            log_.push_back("multiplan confirm: Oui -> event 36 request 6");
+        } else {
+            log_.push_back("multiplan confirm: Non");
+        }
+        const bool back = installPanel(kPanelMultiplan);
+        if (back) focusList(kListMultiplanRows);
+        { retVal = back; return true; }
+    }
+    return false;
+}
+
+
+// `Oui` / `Non` on the Vente confirm (0x004AEC00): the selected stock row sold, or not (from `confirm`)
+bool UiWalk::confirmShopSell(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbShopSellYes || it->callback == kCbShopSellNo) {
+        if (it->callback == kCbShopSellYes) {
+            int tag = -1;
+            if (const UiList* r = w_->listAt(kListShopRows)) {
+                const int s = selectionOf(*r);
+                if (s >= 0 && static_cast<std::size_t>(s) < r->items.size())
+                    tag = rowOf(r->items[static_cast<std::size_t>(s)].addr);
+            }
+            if (tag >= 0) {
+                state_->pendingShopKind = 1;
+                state_->pendingShopRow  = tag;
+            }
+            log_.push_back("shop confirm: Oui -> events 36, 39");
+        } else {
+            log_.push_back("shop confirm: Non");
+        }
+        // ...and the shop panel comes back on the ROWS. `sub_42A370` never
+        // writes the incoming panel's `+24`, which still holds the 1 the
+        // button's confirm wrote before Vente was chosen; only the sale
+        // clears it, and only when the list is left empty (the caller's
+        // `focusList`). `installPanel` re-settles on the lifted `current`,
+        // the open callback's 0, so the rows are put back here.
+        const bool back = installPanel(kPanelShop);
+        if (back) focusList(kListShopRows);
+        { retVal = back; return true; }
+    }
+    return false;
+}
+
+
+// `Acheter` (0x004AE480): the payment, and its refusal (from `confirm`)
+bool UiWalk::confirmHintBuy(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbHintBuy) {
+        if (!panel_) { retVal = false; return true; }
+        if (rings_ < hintPrice_) {
+            log_.push_back("indices: the purchase is refused - " +
+                           std::to_string(rings_) + " anneaux");
+            { retVal = true; return true; }
+        }
+        rings_ -= hintPrice_;          // `u16(player + 174) -= price`
+        hintPaid_ = hintPrice_;        // ...for the caller to write back
+        hintSection_ = 1;              // `word_4E2B2E = 1` - THE CLUE
+        for (const auto& l : panel_->lists) {
+            if (l.addr != kListHintBuy) continue;
+            for (const auto& b : l.items) setItemOff(b.addr, true);
+        }
+        setItemOff(kItemHintBody, false);
+        setItemOff(kItemHintFoot, true);
+        setItemOff(kItemHintPrice, true);
+        setItemOff(kItemHintDone, false);
+        cur_ = 1;                      // `[screen->panel + 0x18] = 1`
+        log_.push_back("indices: bought for " + std::to_string(hintPrice_) +
+                       ", " + std::to_string(rings_) + " anneaux left");
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// `Charger` on the load panel: the load is asked for, and the screen closes only if `sub_452570` accepts (from `confirm`)
+bool UiWalk::confirmLoadCharger(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbLoadCharger) {
+        if (!load_) { approx_ = true; log_.push_back("charger: no directory"); { retVal = false; return true; } }
+        const int slot = loadPanelCharger(*load_);
+        if (slot < 0) {
+            // the callback's own `if (!dl) return` - nothing chosen, or
+            // an empty slot: the frame is consumed and the screen stays
+            log_.push_back("charger: no slot on this row");
+            { retVal = true; return true; }
+        }
+        pendingLoad_ = slot;
+        // ...AND IT ANSWERS 0. `mov dword_930750, 0` sits between the
+        // slot store and the close, so the parked script resumes with
+        // **0** and not with the -1 a plain close leaves.
+        //
+        // That is the whole loading sequence. AREA 118's startup script
+        // is parked at `ui.open 29, -1, -> var 19`, and its next act is
+        // `if (var19 == 0)`: that arm is `fade.from_color`, cameras
+        // 2152/2153/2154/2158 over `scx.play 20` (`Wait5sec`) and a
+        // `media.play 753`, and then it ENDS - no dialogue, no
+        // `area.goto`. The other arm, which -1 takes, shows character
+        // 310, runs `dialog.start 272` and walks on into the Impasse.
+        //
+        // So the engine plays the Grid fly-through over a load by
+        // ANSWERING A DIFFERENT NUMBER, and a port that closes the
+        // screen without one gets the new game's opening instead. A
+        // reader saw exactly that - the Kay'l dialogue before the
+        // apartment - and it is what sent me back to this callback.
+        answer_ = 0;
+        log_.push_back("charger: slot " + std::to_string(slot) +
+                       " requested, answering 0");
+        panel_ = nullptr;                  // `screen[+8] = 3` - it closes
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// COMBINING: `sub_49BC60`'s `loc_49BDD6`, before the descent into the row's kind (from `confirm`)
+bool UiWalk::confirmSneakCombine(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbSneakRowConfirm && state_->combining) {
+        // The slots hold ROW INDICES, not object ids: `sub_49BC60`
+        // reads `[edi+3Ch]` - the widget's row tag - and case 37 maps it
+        // through `ObjectList_Header`. So the caller resolves them.
+        const int obj = rowOf(it->addr);
+        if (obj < 0) { log_.push_back("combine: no row there"); { retVal = true; return true; } }
+        if (state_->combineB == -1) {
+            state_->combineB = obj;
+            log_.push_back("combine: second slot filled, waiting");
+            { retVal = true; return true; }
+        }
+        state_->combineC = obj;
+        state_->readyA = state_->combineB;
+        state_->readyB = obj;
+        log_.push_back("combine: due");
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
+
+// THE SLIDER'S ROW (kind 4): "Automatique" or "Manuelle" - the call or the manual drive (from `confirm`)
+bool UiWalk::confirmSliderCall(const omk::UiItem*& it, bool& retVal) {
+    if (it->callback == kCbSneakRowConfirm && state_->rowKind == 4) {
+        const int row = rowOf(it->addr);
+        if (row < 0) { log_.push_back("slider: no destination there");
+                       { retVal = true; return true; } }
+        // WHICH OF THE PAGE'S TWO MEANINGS, and it is the slot's `+4`:
+        //
+        //     if (screen[+4] == 1) { rec = sub_40E630(tag);        // TRAVEL
+        //                            point = rec[0], rec[4], rec[8]; }
+        //     else                 { point = player[+0xF4/F8/FC]; } // CALL
+        //
+        // and that field is the screen record's own `param`, which
+        // `UI_LoadScreen` copies in. Screen **7 SLIDER** carries 1 and
+        // screen **9 SNEAK** carries 0 - so the same page TRAVELS from
+        // inside the vehicle and CALLS one to where he stands from the
+        // device. `MDSLIDIN` is what opens screen 7 (`UI_OpenScreen(7,
+        // -1, -1, -1)`, "cant find slider interface !"), so a journey is
+        // something you ask for once you are ABOARD.
+        //
+        // Teleporting on this row whatever the screen is the arrive arm
+        // and belongs to neither: calling a slider from the sneak would
+        // teleport the player.
+        state_->pendingTravel = row;
+        state_->travelToDestination = w_->screenParam(screen_) == 1;
+        log_.push_back(state_->travelToDestination
+                       ? "slider: travel to destination row " + std::to_string(row)
+                       : "slider: CALL one here, remembering row " + std::to_string(row));
+        // `screen[+8] = 3` on success only - a CALL is closed (or refused
+        // with string 42) by the caller; the journey closes here as before
+        if (state_->travelToDestination) panel_ = nullptr;
+        { retVal = true; return true; }
+    }
+    return false;
+}
+
 
 bool UiWalk::press(std::uint32_t bits) {
     if (!panel_) return false;

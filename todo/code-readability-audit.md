@@ -481,6 +481,18 @@ finding: a check that hashed a conversation frame would flicker.
   every build but its own target - `engine: texture filter` was red for it;
   `make build/gles_probe build/vita_bench` belongs beside `make play` from
   here on. Guard 0 of 14; 46 screen checks green.
+* step 12h - `UiWalk::confirm` (947): fifteen of its callback arms are
+  methods (`confirmXachenCartridge`, `confirmGandharCell`,
+  `confirmTerminalCell`, the shop's row and sale, Multiplan's row and
+  destroy, the hint purchase, the save, the load, the sneak's combine, its
+  slider row, memo reader and examine), still tried in the SAME ORDER - the
+  order the audit warned about is now a list of calls one can read down. By
+  the tool's new `--returns`: an arm that returns from `confirm` becomes a
+  `bool` method whose every non-lambda `return X;` is `{ retVal = X; return
+  true; }`, called as `if (bool retVal{}; confirmX(it, retVal)) return
+  retVal;`. The member-name guard drops a name it forced in when no local of
+  it is visible at the range (another arm's, out of scope). Guard 0 of 14;
+  83 screen, UI and walk checks green.
 
 ## 7. For the tutorial
 

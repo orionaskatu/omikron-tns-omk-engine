@@ -1428,6 +1428,21 @@ private:
     // lists with UP and DOWN, not left and right.
     bool startConfirm(std::uint32_t bits);
     bool confirm();
+    bool confirmTerminalCell(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmYesSave(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmSaveDo(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmMemoReader(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmSneakExamine(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmXachenCartridge(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmGandharCell(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmShopRow(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmMultiplanRow(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmMultiplanDestroy(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmShopSell(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmHintBuy(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmLoadCharger(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmSneakCombine(const omk::UiItem*& it, bool& retVal);   // from `confirm`
+    bool confirmSliderCall(const omk::UiItem*& it, bool& retVal);   // from `confirm`
     bool usable(const UiList& l) const;
     const UiList* curList() const;
 

@@ -903,6 +903,8 @@ struct PlayState {
     void worldGuns();   // the gun in his hand, each gunman's gun
     void worldBolts();   // the bolts
     void worldStaged();   // every staged body, posed by whatever drives it
+    void worldStagedShoot(Staged& s, const omk::NodeTracks*& shootTracks, int& shootFrame,
+                          const omk::AstarothActor*& astGrid);   // its shoot-mode tick
     void worldCrowd();   // the pedestrians, the vehicles, the player
     void worldDrawLists();   // the particles, the visible set, the lights and the shadows into the frame's draw lists
     void worldMirror();   // the mirror and the present pass

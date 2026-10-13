@@ -379,6 +379,18 @@ finding: a check that hashed a conversation frame would flicker.
   numbers and the headers say so, and `Fight_ResolveHit`'s `inStateN`
   booleans keep the decompiled function's own shape. `fight.o`
   byte-identical before and after.
+* step 12a - THE GIANT FUNCTIONS, innermost first (§6): `worldStaged`'s
+  shoot-mode block - the gunman's brain, move, fire and clip, Astaroth's
+  and Gandhar's ticks, lines 505-2490 - is `PlayState::worldStagedShoot`
+  in `playframe_world_staged_shoot.cpp`, moved verbatim (dedented, nothing
+  reordered). It needed only the session alias from the enclosing loop and
+  hands back the three things the pose reads (`shootTracks`, `shootFrame`,
+  `astGrid`); every `return`/`break`/`continue` in it was inner, which the
+  compiler confirms (a stray one does not compile in a void method), and
+  step 4's `-Wshadow` at zero is what proves no former local now binds to
+  a member of the same name. `worldStaged` 3572 -> 1594 lines. Guard 0 of
+  14; 3DS and Vita build (the Vita's CMake lists the viewer's files by
+  name - added).
 
 ## 7. For the tutorial
 

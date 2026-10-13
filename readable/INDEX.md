@@ -610,7 +610,7 @@ Regenerate this file with `python3 tools/index.py`.
 | `0x0049B1F0` | `Fight_ResolveBoth` | named | 26_ole.c | 1 | name established, body still as generated |
 | `0x0049B220` | `Fight_RecordFrame` | named | 26_ole.c | 2 | name established, body still as generated |
 | `0x0049B400` | `Ui_OpenSneakFamily` | named | 26_ole.c | 0 | name established, body still as generated |
-| `0x0049B610` | `Ui_CloseSneakFamily` | named | 26_ole.c | 0 | The sneak family's close - the one close in the game that can REFUSE. `screen+4` distinguishes the three screens sharing this pair: 0 VIDEOPHONE,… |
+| `0x0049B610` | `Ui_CloseSneakFamily` | named | 26_ole.c | 0 | The sneak family's close - the one close in the game that can REFUSE. `screen+4` distinguishes the three screens sharing this pair: 0 SNEAK, 1… |
 | `0x0049ECE0` | `Cam_PlayEditing` | named | 27_sys.c | 1 | name established, body still as generated |
 | `0x0049EEF0` | `Cam_LoadCameraFile` | named | 27_sys.c | 1 | name established, body still as generated |
 | `0x0049FCA0` | `Path_Read3DP` | named | 27_sys.c | 1 | name established, body still as generated |

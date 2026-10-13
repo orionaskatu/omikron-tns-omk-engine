@@ -147,8 +147,9 @@ are already available to test against.
   open question; node slots 0/1 narrowed to "unbound, not rotations".
 * ~~the world chunks' unexplained bytes~~ — **accounted for** (2026-08-29,
   `tools/chunkmap.py`): header + eight tables + character strings + scripts
-  claim everything in all 330 `AREA`/`SCENE` chunks bar **97 bytes** of
-  unreferenced bytecode in three runs, with **0 table overlaps**. Two fields
+  claim everything in all 330 `AREA`/`SCENE` chunks bar **65 bytes** of
+  unreferenced bytecode in two runs (97 in three until op 142's length was
+  corrected on 2026-10-11, which reached the third), with **0 table overlaps**. Two fields
   settled on the way (the object/prop `+8` is intra-record, not a table
   header; character `+0`/`+4` are the two strings). See
   [FILE_FORMATS](FILE_FORMATS.md), "Every byte of an AREA / SCENE chunk".

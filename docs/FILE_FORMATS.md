@@ -2027,14 +2027,14 @@ Scripts are marked by **reachability**, not by a linear decode — a script can
 jump forward over its own `end`, and stopping at the first `op3` leaves the
 tail looking unclaimed (AREA 59 did exactly that on the first run).
 
-**The result.** 330 chunks leave **three** unclaimed runs, **97 bytes**, and
-all three decode clean and land exactly on their own boundary on a terminator,
-which random bytes do not do three times:
+**The result.** 330 chunks leave **two** unclaimed runs, **65 bytes**, and
+both decode clean and land exactly on their own boundary on a terminator.
+**65 bytes in two since 2026-10-11** (`d845dec`): the third, AREA 59 [13413, 13445), was the TAIL of a highscore script that op 142 read at four operand bytes had cut in half (`docs/SCRIPT_VM.md`, op 142); at six the script runs on into it and the bytes are claimed. They were three, 97 bytes, when this was written:
 
 ```
 AREA 0   [21859, 21913)  54 B   a variable countdown, actor.stat.set (named `hud.show_var` until 2026-09-02), player.move.wait
 AREA 45  [836, 847)      11 B   player.move.wait; ui.open 2; end
-AREA 59  [13413, 13445)  32 B   a highscore computation, ending in a jmp
+AREA 59  [13413, 13445)  32 B   a highscore computation, ending in a jmp  (claimed since 2026-10-11)
 ```
 
 None is reached by any jump from any script, and only AREA 45's is named by a
@@ -2043,8 +2043,8 @@ empty-table-based-at-the-code coincidence as AREA 118 (`verify.py: intro
 script`). That chunk's `+4` is also 0, so it reads as a startup script that was
 **unhooked**, not one that is hidden.
 
-So the script inventory is complete to within 97 bytes of unreferenced
-bytecode. It also settled the then-open `OBJECTS/314` residue in `verify.py:
+So the script inventory is complete to within 65 bytes of unreferenced
+bytecode (97 before op 142's length was corrected). It also settled the then-open `OBJECTS/314` residue in `verify.py:
 trace agreement` — **not** a missing script, since none of the three announces
 it. That was right, and the conclusion drawn alongside it (that the emitter
 must therefore lie outside the corpus) was wrong: it turned out to be

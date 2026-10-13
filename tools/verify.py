@@ -10300,9 +10300,12 @@ def c_engine_used_object():
     # ...and the SESSION's own narration since 2026-09-30 (`session: IAM/X kept
     # in memory`, `session: area N's load completed - ...`, optimization
     # steps 35/36) - diagnostics the same way, and red on noise again until
-    # this said so
+    # this said so - and a THIRD time on 2026-10-13, the mirror ops' `frame N:
+    # set.mirror.off ...` (61163b3). So the rows are now chosen by what they
+    # ARE - the probe's five record kinds - not by what the noise is: a new
+    # diagnostic cannot turn this red, and a record that changes still does
     got = [ln.split() for ln in r.stdout.strip().splitlines()
-           if not ln.lstrip().startswith("[") and not ln.startswith("session:")]
+           if ln.split()[:1] in (["hand"], ["take"], ["insert"], ["probe"], ["used"])]
     want = [
         "hand slot 0 held 0 id_in_slot 6 in_bag_before 2 in_bag_after 1".split(),
         # TAKING one off the floor: `Game_HandleEvent` case 10, which
@@ -40468,6 +40471,12 @@ def c_chunk_accounting():
       line, `Neant.` where there is none. 990 of the 1032 records leave both
       at 0, and claiming them removes all 34 text runs.
 
+    RE-PINNED 2026-10-13, 97 -> 65 bytes and three runs -> two, at `d845dec`
+    (op 142 at six operand bytes): AREA 59's [13413, 13445) was the tail of a
+    highscore script the four-byte reading cut in half, and the uncut script
+    runs on into it - tested at `d845dec^` (97) and `d845dec` (65), nothing
+    between. The paragraph below is the 2026-08-29 result as written.
+
     THE RESULT: 330 chunks leave **three** unclaimed runs, **97 bytes**, and
     all three decode clean and land exactly on their own boundary on a
     terminator - which random bytes do not do three times. None is reached by
@@ -40501,9 +40510,8 @@ def c_chunk_accounting():
     return (chunks, overlaps, len(runs), sum(e - s for _a, _k, s, e, _c in runs),
             sorted({c for _a, _k, _s, _e, c in runs}),
             [(a, k, s, e) for a, k, s, e, _c in runs]), \
-           (330, 0, 3, 97, ["bytecode"],
-            [("AREA", 0, 21859, 21913), ("AREA", 45, 836, 847),
-             ("AREA", 59, 13413, 13445)]), \
+           (330, 0, 2, 65, ["bytecode"],
+            [("AREA", 0, 21859, 21913), ("AREA", 45, 836, 847)]), \
            "chunks walked; table overlaps (must be 0 - the test the layout " \
            "could fail); unclaimed runs of >=8 bytes and their total size; " \
            "what they are; and exactly where"
@@ -41148,6 +41156,11 @@ def c_sim_vm():
         after the 16-bit operand, before the label byte, and counting the label
         in put 4 slots on an unknown opcode and 41 `drop`s onto an empty stack.
 
+    RE-PINNED 2026-10-13, 120 -> 118 distinct opcodes, at `d845dec` (op 142
+    at six operand bytes): `dbg.dump_code` and `nop` never execute any more -
+    they were only ever decoded out of op 142's four surplus bytes, the phantom
+    `docs/SCRIPT_VM.md` records for the disassembler. Tested at `d845dec^`
+    (120) and `d845dec` (118); the sets differ by exactly those two.
     Fewer instructions execute (33918) than the disassembler walks (58644;
     58428 with op 62 at 6 since 2026-09-02),
     which is the point: execution follows branches and skips the untaken arms.
@@ -41157,7 +41170,7 @@ def c_sim_vm():
     r = SIM.run_corpus()
     return (r["slots"], r["ended"] + r["dialog"], r["failed"], r["strayed"],
             len(r["trace"].ops)), \
-           (5958, 5958, 0, 0, 120), \
+           (5958, 5958, 0, 0, 118), \
            "world-script slots executed; stopping at `end` or dialog.start; " \
            "failures; slots whose pc left their own instruction stream; " \
            "distinct opcodes executed"

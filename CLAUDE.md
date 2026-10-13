@@ -795,7 +795,7 @@ tools/                 readers, the pipeline, and the viewer
                        stride at once
   chunkmap.py          byte-accounting for IAM\AREA / IAM\SCENE: claims every
                        byte a documented structure explains and reports the
-                       rest. 97 bytes left in 330 chunks (FILE_FORMATS)
+                       rest. 65 bytes left in 330 chunks, 97 until op 142 (FILE_FORMATS)
   vm_announce.py       which OPERAND each VM handler announces to the tag
                        logger, read from the assembly. 49 handlers, 0
                        disagreements (SCRIPT_VM)

@@ -763,7 +763,6 @@ void PlayState::worldCrowdPlayer() {
 }
 
 
-
 // THE WALKERS on the circuit, each bound to its clip, posed and placed (from `worldCrowd`)
 void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool circuitShown,
                                   float reach, int& pedModelSwapped, int& pedRebound,

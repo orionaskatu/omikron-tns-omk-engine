@@ -248,111 +248,7 @@ int PlayState::setupSession() {
         for (const auto& k : ini.unknown) std::printf(" %s", k.c_str());
         std::printf("\n");
     }
-    if (!saveBytes.empty()) {
-        const int slotNo = slotArg >= 0 ? slotArg : 0;
-        const auto slot = omk::readSaveSlot(saveBytes, slotNo);
-        if (!slot) { std::fprintf(stderr, "%s: not a save file, or it has no slot %d\n",
-                                  saveFrom.c_str(), slotNo); return 1; }
-        // AN EMPTY SLOT IS NOT A SAVE.  `SaveDir_Build` skips a slot whose
-        // name begins with a zero and the load panel never offers one, so
-        // loading it would put the player in area 0 out of a zeroed DB and
-        // read as a fault in the port.  The distinction worth keeping is
-        // between a slot that was CLEARED - `SaveDir_ClearSlot` writes one
-        // byte and leaves the DB on disk - and one that was never written,
-        // where there is nothing behind the name either.
-        if (slot->name.empty()) {
-            bool anything = false;
-            for (const auto b : slot->state.raw())
-                if (b != std::byte{0}) { anything = true; break; }
-            if (!anything) {
-                std::fprintf(stderr, "%s: slot %d is empty. Occupied slots:",
-                             saveFrom.c_str(), slotNo);
-                int shown = 0;
-                for (int k = 0; k < static_cast<int>(omk::kSaveSlots); ++k) {
-                    const auto o = omk::readSaveSlot(saveBytes, k);
-                    if (!o || o->name.empty()) continue;
-                    if (shown++ < 12) std::fprintf(stderr, " %d (%s)", k, o->name.c_str());
-                }
-                std::fprintf(stderr, shown ? "\n" : " none\n");
-                return 1;
-            }
-            std::printf("save: slot %d's name is empty - `SaveDir_ClearSlot` "
-                        "writes one byte and leaves the rest, so this slot was "
-                        "DELETED and its game is still on disk. Loading it\n",
-                        slotNo);
-        }
-        state = slot->state;
-        // THE CLOCK COMES FROM THE SLOT, and this used only to print it.
-        //
-        // `gamestate.h`: the clock and the timer are engine globals and NOT
-        // part of the 8192-byte image, so restoring the DB restores
-        // everything EXCEPT the date and time - and the slot header is the
-        // only place they exist. Loading a save therefore left the game at
-        // day 0, 00:00:00 while the loader printed the save's real date one
-        // line above.
-        //
-        // Nothing noticed because nothing DREW the clock. The sneak's own
-        // clock row (`sub_0049E090`) is the first thing in this port to show
-        // it, and it showed "1 Aqed 7216 - 0:00:00" against a save the same
-        // function had just printed as a different date.
-        harnessNewWorld();
-        state.setClockDay(slot->day);
-        state.setClock(slot->time);
-        // `State_Apply`'s FIRST use of the header pair, and the port had only
-        // ever read its second:
-        //
-        //     u16(u32(g_GameDB, 12), 2 * i16(g_GameDB, 1414)) = u16(g_GameDB, 1416);
-        //     result = Area_Load(i16(g_GameDB, 1414), 0);
-        //
-        // `+12` is the scene-per-area table, so the header's scene is copied
-        // INTO it for the header's area before the area is loaded - and
-        // `Area_Load` reads exactly that entry at its top (`v35 = i16(u32(
-        // g_GameDB, 12), 2 * a1)`) and ends `Scene_Load(slot, v35)`.  So the
-        // header is what decides which SCENE goes over the area a save
-        // resumes in, and the table merely carries it there.
-        //
-        // In all four save slots this tree has the two already agree, which
-        // is why nothing has broken; they can disagree, because they have
-        // different writers - the table is written by opcode 71 `scene.load`
-        // and the header by `State_Save` out of the live resident slot - and
-        // when they do, the engine's answer is the HEADER's.
-        // `verify.py: engine: save write` measures the agreement so a
-        // divergence cannot pass unnoticed.
-        state.setSceneOfArea(state.currentArea(), state.currentScene());
-        // WHERE THE SAVE SAYS HE WAS.  `State_Apply` converts +44..+56 back to
-        // world units and stands the player there; the port had never read
-        // those four fields at all, so a loaded save came up wherever the
-        // harness put him.  Kept here and applied at the hand-over, because
-        // that is when there is a player to place.
-        state.placementWorld(savedAt, savedYaw);
-        // ...and `State_Apply`'s own guard on it.  The whole spawn half -
-        // the model, the bank list, `Player_SetActor` and the placement with
-        // them - sits inside `if (u16(g_PlayerRecord, 272) != 0xFFFF)`, so a
-        // block whose player record names no actor has a placement that means
-        // nothing and the engine never applies it.  `IAM\START` is exactly
-        // that block, which is why a new game stands wherever the opening
-        // puts him.
-        loadedName = slot->name;
-        haveSavedPlacement = state.playerActorId() != -1;
-        if (!haveSavedPlacement)
-            std::printf("save: slot %d's player record names no actor (+272 "
-                        "is 0xFFFF), so its placement is not applied - which "
-                        "is `State_Apply`'s own guard\n", slotNo);
-        // The row the load panel would draw for this slot, which is the
-        // directory's four fields in the order the original puts them
-        // (GAME_STATE 8): the character name, the date, the time - over a
-        // heading that is the profile name.
-        std::printf("save: the load panel's row for it is \"%s - %s - %s\" "
-                    "under \"Joueur : %s\"\n",
-                    state.characterName().c_str(),
-                    omk::formatDate(slot->day).c_str(),
-                    omk::formatTime(slot->time).c_str(), slot->name.c_str());
-        std::printf("save: slot %d '%s', %s %s, area %d scene %d, standing at "
-                    "%.0f %.0f %.0f facing %.0f\n", slotNo, slot->name.c_str(),
-                    omk::formatDate(slot->day).c_str(), omk::formatTime(slot->time).c_str(),
-                    state.currentArea(), state.currentScene(),
-                    savedAt[0], savedAt[1], savedAt[2], savedYaw);
-    }
+    if (int retVal{}; setupSessionLoadSave(retVal)) return retVal;
     // Asking for a SLOT is asking to resume: adventure mode in the save's own
     // area, at its own placement, which is what `Game_LoadSave` does.  A bare
     // `--save FILE` keeps its old meaning - the DB as a starting state, the
@@ -430,54 +326,7 @@ int PlayState::setupSession() {
                     "runs, which is what SHOWS an area's props\n",
                     sceneChunk, startArea);
     }
-    if (forceAdventure) {
-        const auto& rs = session.residentSlot(session.activeSlot());
-        for (const auto& ad : rs.addresses)
-            std::printf("address %d at %.0f %.0f %.0f yaw %.0f\n", ad.id, ad.pos[0], ad.pos[1], ad.pos[2], ad.yaw);
-        // THE PRECEDENCE, the save's own placement in it: an explicit
-        // `--stand` or `--address` is the command line's word and wins;
-        // otherwise a save that was made IN THIS AREA says where he stood;
-        // otherwise the area's first ADDRESSES record, which is the harness
-        // default.  The area test matters -
-        // `--save X --area 0` deliberately drops a save's player record into
-        // a city he was never in, and his apartment coordinates mean nothing
-        // there.
-        const bool useSaved = haveSavedPlacement && !haveStand && addressArg < 0 &&
-                              state.currentArea() == startArea;
-        if (useSaved) {
-            session.setPlayerPosition(savedAt, savedYaw);
-            std::printf("save: the player stands where the save left him, "
-                        "%.0f %.0f %.0f facing %.0f\n",
-                        savedAt[0], savedAt[1], savedAt[2], savedYaw);
-        }
-        if (!useSaved && addressArg < 0 && !rs.addresses.empty())
-            addressArg = rs.addresses.front().id;
-        if (addressArg < 0 && haveStand) {
-            // an area with no ADDRESSES table (the Impasse airlock, 142):
-            // `--stand` is the only placement there is, so it is the one
-            session.setPlayerPosition(standAt, standAt[3]);
-            std::printf("street start: no address in area %d - --stand places the player at "
-                        "%.0f %.0f %.0f facing %.0f\n", startArea, standAt[0], standAt[1], standAt[2], standAt[3]);
-        }
-        if (addressArg >= 0) {
-            if (session.placeActorAt(addressArg))
-                std::printf("street start: the player at address %d, %.0f %.0f %.0f facing %.0f\n",
-                            addressArg, session.playerPos()[0], session.playerPos()[1],
-                            session.playerPos()[2], session.playerYaw());
-            else
-                std::printf("street start: address %d is not in area %d\n", addressArg, startArea);
-        }
-        harnessRide();
-        // ...and the camera a hand-over ends on: `Camera Player` (0), the
-        // follow preset, which the intro's scripts request and this has to.
-        session.requestCamera(0, 0);
-        const auto& pd = session.sliders();
-        std::string models;
-        for (const auto& m : pd.models()) { if (!models.empty()) models += ","; models += m.name; }
-        std::printf("street life: circuit %s, %d walkers at density %d (%s)\n",
-                    rs.opt.empty() ? "none" : rs.opt.c_str(), pd.liveCount(), pd.streetActivity(),
-                    models.empty() ? "no models" : models.c_str());
-    }
+    setupSessionPlacement();
     // The area's own `.SCX`, so `scx.play*` has objects to start - and so the
     // WAITING variants (46, 58, 60) have something to wait ON. Without it
     // AREA 118's `character.show 310` + `scx.play.actor.wait 310, 1` starts
@@ -692,3 +541,168 @@ int PlayState::setupSession() {
     OMK_HEAPCHECK("before adventure mode");
     return phase::Continue;
 }
+
+// A SAVE GIVEN (`--save`, `--slot`): its slot read, an empty one refused, and its state applied (from `setupSession`)
+bool PlayState::setupSessionLoadSave(int& retVal) {
+    if (!saveBytes.empty()) {
+        const int slotNo = slotArg >= 0 ? slotArg : 0;
+        const auto slot = omk::readSaveSlot(saveBytes, slotNo);
+        if (!slot) { std::fprintf(stderr, "%s: not a save file, or it has no slot %d\n",
+                                  saveFrom.c_str(), slotNo); { retVal = 1; return true; } }
+        // AN EMPTY SLOT IS NOT A SAVE.  `SaveDir_Build` skips a slot whose
+        // name begins with a zero and the load panel never offers one, so
+        // loading it would put the player in area 0 out of a zeroed DB and
+        // read as a fault in the port.  The distinction worth keeping is
+        // between a slot that was CLEARED - `SaveDir_ClearSlot` writes one
+        // byte and leaves the DB on disk - and one that was never written,
+        // where there is nothing behind the name either.
+        if (slot->name.empty()) {
+            bool anything = false;
+            for (const auto b : slot->state.raw())
+                if (b != std::byte{0}) { anything = true; break; }
+            if (!anything) {
+                std::fprintf(stderr, "%s: slot %d is empty. Occupied slots:",
+                             saveFrom.c_str(), slotNo);
+                int shown = 0;
+                for (int k = 0; k < static_cast<int>(omk::kSaveSlots); ++k) {
+                    const auto o = omk::readSaveSlot(saveBytes, k);
+                    if (!o || o->name.empty()) continue;
+                    if (shown++ < 12) std::fprintf(stderr, " %d (%s)", k, o->name.c_str());
+                }
+                std::fprintf(stderr, shown ? "\n" : " none\n");
+                { retVal = 1; return true; }
+            }
+            std::printf("save: slot %d's name is empty - `SaveDir_ClearSlot` "
+                        "writes one byte and leaves the rest, so this slot was "
+                        "DELETED and its game is still on disk. Loading it\n",
+                        slotNo);
+        }
+        state = slot->state;
+        // THE CLOCK COMES FROM THE SLOT, and this used only to print it.
+        //
+        // `gamestate.h`: the clock and the timer are engine globals and NOT
+        // part of the 8192-byte image, so restoring the DB restores
+        // everything EXCEPT the date and time - and the slot header is the
+        // only place they exist. Loading a save therefore left the game at
+        // day 0, 00:00:00 while the loader printed the save's real date one
+        // line above.
+        //
+        // Nothing noticed because nothing DREW the clock. The sneak's own
+        // clock row (`sub_0049E090`) is the first thing in this port to show
+        // it, and it showed "1 Aqed 7216 - 0:00:00" against a save the same
+        // function had just printed as a different date.
+        harnessNewWorld();
+        state.setClockDay(slot->day);
+        state.setClock(slot->time);
+        // `State_Apply`'s FIRST use of the header pair, and the port had only
+        // ever read its second:
+        //
+        //     u16(u32(g_GameDB, 12), 2 * i16(g_GameDB, 1414)) = u16(g_GameDB, 1416);
+        //     result = Area_Load(i16(g_GameDB, 1414), 0);
+        //
+        // `+12` is the scene-per-area table, so the header's scene is copied
+        // INTO it for the header's area before the area is loaded - and
+        // `Area_Load` reads exactly that entry at its top (`v35 = i16(u32(
+        // g_GameDB, 12), 2 * a1)`) and ends `Scene_Load(slot, v35)`.  So the
+        // header is what decides which SCENE goes over the area a save
+        // resumes in, and the table merely carries it there.
+        //
+        // In all four save slots this tree has the two already agree, which
+        // is why nothing has broken; they can disagree, because they have
+        // different writers - the table is written by opcode 71 `scene.load`
+        // and the header by `State_Save` out of the live resident slot - and
+        // when they do, the engine's answer is the HEADER's.
+        // `verify.py: engine: save write` measures the agreement so a
+        // divergence cannot pass unnoticed.
+        state.setSceneOfArea(state.currentArea(), state.currentScene());
+        // WHERE THE SAVE SAYS HE WAS.  `State_Apply` converts +44..+56 back to
+        // world units and stands the player there; the port had never read
+        // those four fields at all, so a loaded save came up wherever the
+        // harness put him.  Kept here and applied at the hand-over, because
+        // that is when there is a player to place.
+        state.placementWorld(savedAt, savedYaw);
+        // ...and `State_Apply`'s own guard on it.  The whole spawn half -
+        // the model, the bank list, `Player_SetActor` and the placement with
+        // them - sits inside `if (u16(g_PlayerRecord, 272) != 0xFFFF)`, so a
+        // block whose player record names no actor has a placement that means
+        // nothing and the engine never applies it.  `IAM\START` is exactly
+        // that block, which is why a new game stands wherever the opening
+        // puts him.
+        loadedName = slot->name;
+        haveSavedPlacement = state.playerActorId() != -1;
+        if (!haveSavedPlacement)
+            std::printf("save: slot %d's player record names no actor (+272 "
+                        "is 0xFFFF), so its placement is not applied - which "
+                        "is `State_Apply`'s own guard\n", slotNo);
+        // The row the load panel would draw for this slot, which is the
+        // directory's four fields in the order the original puts them
+        // (GAME_STATE 8): the character name, the date, the time - over a
+        // heading that is the profile name.
+        std::printf("save: the load panel's row for it is \"%s - %s - %s\" "
+                    "under \"Joueur : %s\"\n",
+                    state.characterName().c_str(),
+                    omk::formatDate(slot->day).c_str(),
+                    omk::formatTime(slot->time).c_str(), slot->name.c_str());
+        std::printf("save: slot %d '%s', %s %s, area %d scene %d, standing at "
+                    "%.0f %.0f %.0f facing %.0f\n", slotNo, slot->name.c_str(),
+                    omk::formatDate(slot->day).c_str(), omk::formatTime(slot->time).c_str(),
+                    state.currentArea(), state.currentScene(),
+                    savedAt[0], savedAt[1], savedAt[2], savedYaw);
+    }
+    return false;
+}
+
+
+// THE PLAYER PLACED for a forced adventure start: `--stand` or `--address` first, then a save made in this area, then the area's first address (from `setupSession`)
+void PlayState::setupSessionPlacement() {
+    auto& session = *session_;
+    if (forceAdventure) {
+        const auto& rs = session.residentSlot(session.activeSlot());
+        for (const auto& ad : rs.addresses)
+            std::printf("address %d at %.0f %.0f %.0f yaw %.0f\n", ad.id, ad.pos[0], ad.pos[1], ad.pos[2], ad.yaw);
+        // THE PRECEDENCE, the save's own placement in it: an explicit
+        // `--stand` or `--address` is the command line's word and wins;
+        // otherwise a save that was made IN THIS AREA says where he stood;
+        // otherwise the area's first ADDRESSES record, which is the harness
+        // default.  The area test matters -
+        // `--save X --area 0` deliberately drops a save's player record into
+        // a city he was never in, and his apartment coordinates mean nothing
+        // there.
+        const bool useSaved = haveSavedPlacement && !haveStand && addressArg < 0 &&
+                              state.currentArea() == startArea;
+        if (useSaved) {
+            session.setPlayerPosition(savedAt, savedYaw);
+            std::printf("save: the player stands where the save left him, "
+                        "%.0f %.0f %.0f facing %.0f\n",
+                        savedAt[0], savedAt[1], savedAt[2], savedYaw);
+        }
+        if (!useSaved && addressArg < 0 && !rs.addresses.empty())
+            addressArg = rs.addresses.front().id;
+        if (addressArg < 0 && haveStand) {
+            // an area with no ADDRESSES table (the Impasse airlock, 142):
+            // `--stand` is the only placement there is, so it is the one
+            session.setPlayerPosition(standAt, standAt[3]);
+            std::printf("street start: no address in area %d - --stand places the player at "
+                        "%.0f %.0f %.0f facing %.0f\n", startArea, standAt[0], standAt[1], standAt[2], standAt[3]);
+        }
+        if (addressArg >= 0) {
+            if (session.placeActorAt(addressArg))
+                std::printf("street start: the player at address %d, %.0f %.0f %.0f facing %.0f\n",
+                            addressArg, session.playerPos()[0], session.playerPos()[1],
+                            session.playerPos()[2], session.playerYaw());
+            else
+                std::printf("street start: address %d is not in area %d\n", addressArg, startArea);
+        }
+        harnessRide();
+        // ...and the camera a hand-over ends on: `Camera Player` (0), the
+        // follow preset, which the intro's scripts request and this has to.
+        session.requestCamera(0, 0);
+        const auto& pd = session.sliders();
+        std::string models;
+        for (const auto& m : pd.models()) { if (!models.empty()) models += ","; models += m.name; }
+        std::printf("street life: circuit %s, %d walkers at density %d (%s)\n",
+                    rs.opt.empty() ? "none" : rs.opt.c_str(), pd.liveCount(), pd.streetActivity(),
+                    models.empty() ? "no models" : models.c_str());
+    }
+}
+

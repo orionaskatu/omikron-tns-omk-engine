@@ -519,6 +519,31 @@ finding: a check that hashed a conversation frame would flicker.
   code sharing a dozen locals - the set's lights section was refused at 13
   parameters - which wants restructuring, not cutting. Guard 0 of 14; 19
   staging checks green.
+* step 12k - the shoot brain's three arms by STRUCTURE (Astaroth's tick,
+  Gandhar's, the generic brain - a first attempt that searched for the
+  `else` text matched one inside Astaroth's own arm and was inlined back),
+  and `setupSession`'s save load (`--returns`: it can `return 1`) and
+  placement. Runs of blank lines the inlines left collapsed
+  (`comments_only.py`: 0 code changes). Guard 0 of 14; 42 shoot, boss and
+  session checks green.
+* **STEP 12 MEASURED** (brace-matched function bodies over `engine/src` and
+  `engine/backends`), before it and after:
+
+  | | largest | >1000 | >600 | >400 | >300 | lines in functions >300 |
+  |---|---|---|---|---|---|---|
+  | before (`21cf6d6`) | 3550 | 5 | 16 | 19 | 32 | 23772 |
+  | after | 829 | 0 | 3 | 15 | 36 | 15338 |
+
+  The count over 300 ROSE while everything else fell: each giant left
+  pieces in the 300s. **What is left over 600, and why**:
+  `Interpreter::resume` (829) - a fetch-dispatch loop whose arms `continue`
+  the loop or `return` from the interpreter; splitting it wants a per-opcode
+  handler returning next / return / fall through, which is the table the
+  audit filed as its own change. `worldStagedBody` (686) - straight code
+  sharing a dozen locals (the lights section refused at 13 parameters);
+  it wants a per-body state struct. `PlayOptions::parse` (635) - one flat
+  `else if (a == "--flag")` chain, as readable as a table of the same rows.
+  `Session::onCall` (428) stays a switch: its largest arm is 36 lines.
 
 ## 7. For the tutorial
 

@@ -670,6 +670,8 @@ def inline(path, name):
             c0 = p
         else:
             break
+    if s[c0 - 2:c0] == "\n\n":              # the blank line `extract` put before it
+        c0 -= 1
     aliases = {a.strip() for a in ALIASES.values()}
     body = [l for l in s[b + 1:e].strip("\n").split("\n") if l.strip() not in aliases]
     dend = e + 1

@@ -2574,7 +2574,6 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
 }
 
 
-
 // THE TAKE: the object taken, and its NAME shown as the take's subtitle (`sub_4083F0(46, ...)`, `Subtitle_Show`) (from `adventureActionMove`)
 void PlayState::adventureTakeObject() {
     auto& session = *session_;
@@ -2613,8 +2612,6 @@ void PlayState::adventureTakeObject() {
         std::printf("take: camera mode 1 requested - preset 1 over 30 frames\n");
     }
 }
-
-
 
 
 // A SHOT REQUESTED with a row: the arm's angles toward the look, and the bolt (from `adventureShot`)

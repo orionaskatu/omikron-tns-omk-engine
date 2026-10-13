@@ -1197,10 +1197,6 @@ void ScreenComposer::drawItemPreviews(const omk::UiList& l, const omk::UiItem& i
 }
 
 
-
-
-
-
 // THE CURSOR: `Ui_DrawItemCursor` (`sub_479920`) (from `drawItem`)
 void ScreenComposer::drawItemCursor(unsigned int (&eff0)[3], bool isSel, bool isFocus,
                                     const omk::UiItem& it, const omk::UiPanel*& q,
@@ -1788,7 +1784,6 @@ void ScreenComposer::drawIdentity(const omk::UiItem& it, const omk::UiPanel*& q,
         block(both, false);
     }
 }
-
 
 
 // The sneak's CHARACTERISTICS page: the player sheet's statistics (from `draw`)

@@ -2060,7 +2060,6 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
 }
 
 
-
 int PlayState::modesQuitLoad() {
     OMK_ZONE("modes: quit load");   // the profiler (todo/debug-tools.md 6)
     auto& session = *session_;

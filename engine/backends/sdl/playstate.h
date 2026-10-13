@@ -997,6 +997,10 @@ struct PlayState {
     void worldStagedShootEnterProps(bool astThinks, Staged& s, omk::ShootRecord& rec, int act);   // from `worldStagedShoot`
     void worldStagedShootBrain(omk::ShootRecord& rec, Staged& s, float astDt,
                                   omk::AstarothBand& astBand, int act);   // from `worldStagedShoot`
+    void worldStagedShootAstaroth(Staged& s, omk::ShootRecord& rec, float& astDt,
+                                  omk::AstarothBand& astBand);   // from `worldStagedShootBrain`
+    void worldStagedShootGandhar(Staged& s, omk::ShootRecord& rec, float& astDt);   // from `worldStagedShootBrain`
+    void worldStagedShootGeneric(omk::ShootRecord& rec, Staged& s, int& act);   // from `worldStagedShootBrain`
     void worldStagedShootMoveDecision(omk::ShootRecord& rec, int gunFloor, omk::ShootFrameIn& fin,
                                       float& yaw);   // from `worldStagedShoot`
     void worldStagedShootPatrol(omk::ShootRecord& rec, int patrolFloor, omk::ShootFrameIn& fin,
@@ -1168,6 +1172,8 @@ struct PlayState {
     int setupOptions(int argc, char** argv);   // the command line, the game's state, the slider's door clips
     int setupBoot();   // the boot chain
     int setupSession();   // the live Session, the settings, the save, the sneak call
+    bool setupSessionLoadSave(int& retVal);   // from `setupSession`
+    void setupSessionPlacement();   // from `setupSession`
     int setupAdventure();   // adventure mode
     int setupDevices();   // the interface sounds, the renderer, the GLES window, the music, the world
     int setupBodies();   // the speaker, every staged body, melee, the effect sprites

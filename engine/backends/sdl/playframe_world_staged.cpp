@@ -1365,7 +1365,6 @@ void PlayState::worldStagedSceneClipChange(const omk::SceneRunner*& run, int& sc
 }
 
 
-
 // THE CONVERSATION LINE drives the pose: the line's tracks, faded into and out of the idle (from `worldStaged`)
 void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, float lineT,
                                     Staged& s, int& sceneClip, float& sceneFrame,

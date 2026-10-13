@@ -13,7 +13,6 @@ namespace omk::vr {
 namespace {
 
 
-
 bool isIdentity(const float q[4]) {
     return q[0] == 0.0f && q[1] == 0.0f && q[2] == 0.0f && (q[3] == 1.0f || q[3] == -1.0f);
 }

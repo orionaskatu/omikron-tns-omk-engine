@@ -44742,8 +44742,9 @@ def c_licence_headers():
     # 621: + `engine/src/platform/hostfs.h` and `datafs_{posix,vita,classic}.cpp`
     # (the host file system, one file per platform)
     # 625: + `engine/src/platform/hostthread.h` and `threads_{std,vita,none}.cpp`
+    # 626: + `engine/src/platform/sync.h` (a lock that costs nothing without threads)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (625, [], 1, []), \
+           (626, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

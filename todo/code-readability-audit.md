@@ -584,6 +584,16 @@ finding: a check that hashed a conversation frame would flicker.
   shown to fail with the include moved back below the `#if`. The header's
   claim that the Vita half had never been compiled or run is gone; it is
   both. Guard 0 of 14; 3DS and Vita build; `licence headers` 625.
+* step 13c - `profile.cpp`'s forks: most were `#if OMK_THREADS` around a
+  lock or a thread id, and `platform/sync.h` now holds that fork ONCE -
+  `Mutex`, `ScopedLock`, `ThreadId`, `thisThread()`, empty stand-ins
+  without threads (the 3DS compiles that half). 19 `#if` lines -> 11; the
+  rest are not threads-or-not but the CPU (the counters' atomic width,
+  64-bit where lock-free, 32 on PowerPC) and per-platform diagnostics (the
+  Mac's frame-chain walk, the 3DS's return-address words, the Vita's
+  shared `thread_local`) - one platform's tool each, left where they are
+  read. Guard 0 of 14; the profiler checks and `engine: release build`
+  green; 3DS and Vita build; `licence headers` 626.
 
 ## 7. For the tutorial
 

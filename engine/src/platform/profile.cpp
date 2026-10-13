@@ -6,6 +6,7 @@
 
 #include "platform/datafs.h"
 #include "platform/threads.h"
+#include "platform/sync.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -46,11 +47,11 @@ const std::thread::id g_main = std::this_thread::get_id();   // static init runs
 #  else
 thread_local int t_tag = 0;
 #  endif
-std::mutex g_tagLock;
 #else
 using Count = long long;
 int t_tag = 0;
 #endif
+omk::Mutex g_tagLock;
 Count g_live[kTags] = {};
 Count g_blocks[kTags] = {};
 Count g_total{0}, g_peak{0}, g_framePeak{0}, g_totalBlocks{0};
@@ -286,9 +287,7 @@ namespace omk::prof {
 
 int memTag(const char* name) {
     using namespace mem;
-#if OMK_THREADS
-    std::lock_guard<std::mutex> lk(g_tagLock);
-#endif
+    omk::ScopedLock lk(g_tagLock);
     for (int i = 0; i < g_count; ++i)
         if (g_names[i] == name || std::strcmp(g_names[i], name) == 0) return i;
     if (g_count >= kTags) return 0;              // full: counted as untagged
@@ -316,9 +315,7 @@ int workersTag() {
 namespace {
 struct GpuRes { int tag; std::uint64_t bytes; };
 struct Gpu {
-#if OMK_THREADS
-    std::mutex lock;
-#endif
+    omk::Mutex lock;
     std::unordered_map<std::uint64_t, GpuRes> res;
     long long live[mem::kTags] = {};
     long count[mem::kTags] = {};
@@ -333,9 +330,7 @@ Gpu& gpu() {                              // made on first use, never destroyed
 void gpuAlloc(const char* tag, std::uint64_t key, std::uint64_t bytes) {
     const int id = memTag(tag);
     Gpu& g = gpu();
-#if OMK_THREADS
-    std::lock_guard<std::mutex> lk(g.lock);
-#endif
+    omk::ScopedLock lk(g.lock);
     auto it = g.res.find(key);
     if (it != g.res.end()) {              // re-specified: the old storage goes
         g.live[it->second.tag] -= static_cast<long long>(it->second.bytes);
@@ -352,9 +347,7 @@ void gpuAlloc(const char* tag, std::uint64_t key, std::uint64_t bytes) {
 
 void gpuFree(std::uint64_t key) {
     Gpu& g = gpu();
-#if OMK_THREADS
-    std::lock_guard<std::mutex> lk(g.lock);
-#endif
+    omk::ScopedLock lk(g.lock);
     auto it = g.res.find(key);
     if (it == g.res.end()) return;
     g.live[it->second.tag] -= static_cast<long long>(it->second.bytes);
@@ -390,9 +383,7 @@ struct State {
     std::uint32_t dropped = 0;
     std::unordered_map<const char*, std::uint32_t> names;
     std::vector<unsigned char> out;
-#if OMK_THREADS
-    std::thread::id owner;
-#endif
+    omk::ThreadId owner;
     // the control (step 3)
     std::string base;                   // the capture's path, the three files beside it
     long seenSeq = -1;
@@ -416,11 +407,7 @@ State& st() {                            // made on first use, never destroyed
 bool g_on = false;
 
 bool mine() {
-#if OMK_THREADS
-    return std::this_thread::get_id() == st().owner;
-#else
-    return true;
-#endif
+    return omk::thisThread() == st().owner;   // always, without threads
 }
 
 void put8(unsigned v) { st().out.push_back(static_cast<unsigned char>(v)); }
@@ -487,9 +474,7 @@ bool open(const std::string& path) {
         if (std::fscanf(c, "%ld", &q) == 1) s.seenSeq = q;
         std::fclose(c);
     }
-#if OMK_THREADS
-    s.owner = std::this_thread::get_id();
-#endif
+    s.owner = omk::thisThread();
     s.zones.reserve(kZones);
     s.names.clear();
     s.out.clear();
@@ -637,9 +622,7 @@ void endFrame() {
     // THE GPU MEMORY at the frame's end, as the renderers reported it
     {
         Gpu& g = gpu();
-#if OMK_THREADS
-        std::lock_guard<std::mutex> lk(g.lock);
-#endif
+        omk::ScopedLock lk(g.lock);
         const int n = mem::g_count;
         const std::size_t m = beginChunk(5);
         put32(static_cast<std::uint32_t>(s.frame));

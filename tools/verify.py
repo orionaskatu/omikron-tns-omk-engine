@@ -15424,6 +15424,58 @@ def c_engine_draw_core():
         "the copies of it left (lightRamp, its own OMK_NO_TIE switch, a DepthTie bake, a Blend switch)"
 
 
+def c_engine_close_button():
+    r"""`omk-play`: the interface's generic CLOSE button closes its screen,
+    and the screen answers as it leaves.
+
+    `0x0042A990` is four instructions - `mov eax, [esp+4]; mov dword ptr
+    [eax+8], 3; xor eax, eax; ret`, the screen's state set to 3, *closing* -
+    and it is the last item of every terminal-family keypad (`Quitter le
+    terminal`), of every shop (`Quitter`), of the save screen (`Annuler`) and
+    the whole of the high-score board. It has no function in the
+    decompilation (nothing calls it; its address is only stored in the widget
+    table) and `tools/asmfn.py` prints the function AFTER it, which is
+    `tutorial/03-reading-the-original.md`'s lesson; its port is the
+    `kCbSaveAnnuler` arm of `UiWalk::confirm`, which calls `closeNow`.
+
+    Until 2026-10-13 NOTHING exercised it: with that `closeNow` deleted, the
+    thirteen terminal, shop, save, dossier, close and pause checks stayed
+    green and so did the refactor guard's fourteen runs. This walks AREA
+    179's police terminal (screen 5) to cell 10 - DOWN from cell 0 visits 0,
+    3, 6, 9, 10 - and confirms it, then reads the `ui.answer` record the
+    viewer prints beside its answer line: the screen, the answer, the
+    variable as the SESSION stored it, and how the walk closed (`closeNow`'s
+    own reason, so the button is told apart from a TAB, which closes the same
+    screen with the same answer). Written as `tutorial/09-writing-a-check.md`
+    walks through it.
+
+    The first value is whether the run printed ANY record: without it, a log
+    that was never read (`OMK_EVENTS` not passed, the viewer not run) would
+    report "no answer" exactly as a broken button does.
+
+    SHOWN TO FAIL, 2026-10-13: the `closeNow` line deleted - `(True, ())`, no
+    answer at all; the run's last ENTER replaced by TAB - the same answer,
+    `how` 'close (TAB)'; and the `OMK_EVENTS` switch dropped - `(False, ())`.
+    """
+    play = _play_built()
+    if not play:
+        return _PLAY_UNBUILT
+    keypad = [press("DOWN", frames=2), wait(4)] * 4           # cell 0 -> 3 -> 6 -> 9 -> 10
+    steps = [wait(40), press("ENTER", frames=2), wait(300)] + keypad + \
+        [press("ENTER", frames=2), wait(40)]
+    out = _play_out(play, "--area", 179, "--stand", "5468,336,-12118,120", "--frames", 420,
+                    "--nofmv", "--nodelay", "--no-crowd", "--hold", hold(*steps),
+                    env={"OMK_EVENTS": "1"})
+    events = _events(out)
+    answers = tuple((e["screen"], e["value"], e["stored"], e["how"])
+                    for name, e in events if name == "ui.answer")
+    # the run's other records first: with none at all, "no answer" would only
+    # mean the log was not read (the switch not passed, the viewer not run)
+    return (len(events) > 0, answers), (True, (("5", "0", "0", "close (0x0042A990)"),)), \
+        "the run printed records at all; then the terminal's answers: (screen, the answer, " \
+        "variable 19 as stored, how the walk closed) - one, from the close button"
+
+
 def c_engine_dossier_reader():
     r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
 
@@ -47558,6 +47610,7 @@ SLOW = [
     ("engine: call close", c_engine_call_close, "todo/scene-gameplay-audit.md 12; docs/UI.md 3i"),
     ("engine: delayed close", c_engine_delayed_close, "todo/scene-gameplay-audit.md 24; ui/widgets.h"),
     ("engine: dossier reader", c_engine_dossier_reader, "todo/scene-gameplay-audit.md 25; docs/UI.md"),
+    ("engine: close button", c_engine_close_button, "tutorial/09-writing-a-check.md; ui/widgets.cpp"),
     ("engine: impasse fx", c_engine_impasse_fx, "todo/omk-play"),
     ("engine: stop sound", c_engine_stop_sound, "todo/omk-play"),
     ("engine: scene sprites", c_engine_scene_sprites, "todo/omk-play"),

@@ -2028,6 +2028,12 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
         std::printf("screen %d answered %d -> the script resumes"
                     " (variable %d now %d)\n", openScreen, walk->answer(),
                     uiVar, uiVar >= 0 ? int(state.var(uiVar)) : -1);
+        // ...and as a record (`verify.py: engine: close button`): the
+        // variable as STORED, and how the walk closed - `closeNow` logs its
+        // reason last ("close (TAB)", "close (0x0042A990)")
+        omk::event("ui.answer", {{"screen", openScreen}, {"value", walk->answer()},
+                                 {"var", uiVar}, {"stored", uiVar >= 0 ? int(state.var(uiVar)) : -1},
+                                 {"how", walk->log().empty() ? std::string() : walk->log().back()}});
         walk.reset();
         openScreen = -1;
     } else if (walk->closed()) {

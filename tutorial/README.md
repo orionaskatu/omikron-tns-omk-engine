@@ -52,8 +52,8 @@ quietly go stale.
 | 5 | [The frame loop](05-the-frame-loop.md) | the frame's clock and phases, measured; an `@evt` line a check can read, invisible to every other |
 | 6 | [The interface walk](06-the-interface-walk.md) | a screen as data, a key through `UiWalk::press`, a button by its callback address, and an answer held until the close |
 | 7 | [Bodies](07-bodies.md) | model, clips, the `.CTL` machine and the walker; the machine read as it runs; the step limit changed and the one check that sees it |
-| 8 | The renderer boundary | the software reference against a GPU backend; compare two frames |
-| 9 | Writing a check | build the right binaries, print what the consumer produced, show it fail |
+| 8 | [The renderer boundary](08-the-renderer-boundary.md) | one frame through the software reference and Vulkan, measured honestly; the light law all four GPU backends share, broken |
+| 9 | [Writing a check](09-writing-a-check.md) | the check for lesson 3's untested button, decision by decision - then its sibling for the shops, yours to write |
 | 10 | The traps | reproduce three of the repository's classic mistakes on purpose |
 | 11 | Capstone | port one small thing end to end |
 

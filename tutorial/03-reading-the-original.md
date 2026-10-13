@@ -177,11 +177,23 @@ python3 tools/verify.py --jobs 6 --only "terminal family" "ui highscore" "engine
 13 checks, 0 failed
 ```
 
-**None does.** Thirteen checks over the terminals, the shops, the saves and
-every close path stay green, and so does `tools/refactor_guard.py`, the
-fourteen-run regression recorder - none of them presses this button. A
-behaviour every terminal, shop and save screen depends on has no test. That
-is a finding, and lesson 9 is where you write its check.
+**None of them does.** Thirteen checks over the terminals, the shops, the
+saves and every close path stay green, and so does `tools/refactor_guard.py`,
+the fourteen-run regression recorder - none of them presses this button.
+That was true of the whole repository until this course was written: a
+behaviour every terminal, shop and save screen depends on had no test. The
+check that closes the gap is `engine: close button`, and lesson 9 is how it
+was written. Run it now, with the line still deleted:
+
+```
+python3 tools/verify.py --only "engine: close button"
+```
+
+```
+engine: close button FAIL (True, ()) != (True, (('5', '0', '0', 'close (0x0042A990)'),))
+```
+
+No answer at all, where one was expected from this button.
 
 Put the `closeNow` line back, `touch src/ui/widgets.cpp`, `make play`, and
 run the terminal once more to see it close.

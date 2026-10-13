@@ -569,6 +569,21 @@ finding: a check that hashed a conversation frame would flicker.
   Retro68 on this machine): `engine: classic build` is what will. Guard 0 of
   14; `DataFs`, `hostile files`, `hostile save`, `archive chunks`,
   `settings resolve` green; 3DS and Vita build; `licence headers` 621.
+* step 13b - `threads.cpp`'s three pools in their own files
+  (`threads_std.cpp`, `threads_vita.cpp`, `threads_none.cpp`), and
+  `FileFetch`/`BackgroundJob` one code over `platform/hostthread.h`'s
+  `spawnDetached` and `sleepMs`: `threads.cpp` 465 -> 100 lines, 15 `#if`
+  lines -> 0. **A fault the split made and the guard caught**: each file
+  tested `OMK_THREADS` BEFORE including `threads.h`, which defines it, so
+  on the desktop (and the Vita) the no-threads pool compiled and linked in
+  place of the real one - everything built, every frame was right, the
+  pool had NO workers. The guard's `bodies: posed over 8 runners` line went
+  to 1 in 11 of its 14 runs; `engine: threaded bodies` and `thread_probe`'s
+  mismatch count stayed green, one runner being correct too. Fixed (the
+  header first), and `thread pool` (fast list) now asserts the workers -
+  shown to fail with the include moved back below the `#if`. The header's
+  claim that the Vita half had never been compiled or run is gone; it is
+  both. Guard 0 of 14; 3DS and Vita build; `licence headers` 625.
 
 ## 7. For the tutorial
 

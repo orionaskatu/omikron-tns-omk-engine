@@ -15206,6 +15206,37 @@ def c_env_switches():
         "%d switches: every one read is listed, every one listed is read, none read raw" % len(table)
 
 
+def c_thread_pool():
+    r"""The desktop build's `Threads` pool HAS workers, and its tiling is exact.
+
+    `threads.cpp`'s three implementations live in `threads_std.cpp`,
+    `threads_vita.cpp` and `threads_none.cpp`, each compiled only where it
+    applies - by `OMK_THREADS`, which `threads.h` defines. The first cut of
+    that split tested the macro BEFORE including the header, so on the
+    desktop the `std::thread` file compiled empty and the no-threads one
+    linked in its place: everything built, every frame was right, and the
+    pool had no workers. Only the refactor guard's `posed over N runners`
+    line saw it; `engine: threaded bodies` and `thread_probe`'s own
+    mismatch count did not, since one runner is also correct.
+
+    SHOWN TO FAIL: `#include "platform/threads.h"` moved below the
+    `#if` in `threads_std.cpp` and `threads_none.cpp` - workers 0.
+    """
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "build/thread_probe"], cwd=eng, capture_output=True)
+    exe = os.path.join(eng, "build", "thread_probe")
+    if b.returncode != 0 or not os.path.exists(exe):
+        return ("build failed",), ("built",), "thread_probe must build"
+    out = subprocess.run([exe], capture_output=True, text=True).stdout
+    m = re.search(r"workers (\d+) \(runners (\d+)\), OMK_THREADS (\d)", out)
+    mm = re.search(r"mismatches (\d+)", out)
+    multi = (os.cpu_count() or 1) > 1
+    return (bool(m), m and m.group(3) == "1", m and (int(m.group(1)) > 0 or not multi),
+            mm and int(mm.group(1))), (True, True, True, 0), \
+        "thread_probe read; OMK_THREADS 1; workers > 0 on a host with more than one core " \
+        "(%s); the tiling's mismatches" % (m.group(0) if m else "no line")
+
+
 def c_engine_dossier_reader():
     r"""`omk-play`: the terminal family's DOSSIER READER - the file stays up, scrolls, and the archives answer only at the close.
 
@@ -44710,8 +44741,9 @@ def c_licence_headers():
     # step 12a's commit) and `tools/extract_method.py` (the giant functions split)
     # 621: + `engine/src/platform/hostfs.h` and `datafs_{posix,vita,classic}.cpp`
     # (the host file system, one file per platform)
+    # 625: + `engine/src/platform/hostthread.h` and `threads_{std,vita,none}.cpp`
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (621, [], 1, []), \
+           (625, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -47148,6 +47180,7 @@ CHECKS = [
     ("opcode table fresh", c_vm_doc,            "SCRIPT_VM"),
     ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
     ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
+    ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
     ("vm table sources",   c_vm_table_sources,  "CLAUDE.md 2"),
     ("input paths",        c_input_paths,       "CLAUDE.md 2"),
     ("licence headers",    c_licence_headers,   "LICENSING.md"),

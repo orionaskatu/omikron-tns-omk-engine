@@ -3,6 +3,7 @@
 #include "actor/player.h"
 #include "o3de/camobstruct.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -48,7 +49,7 @@ float wrap180(float a) {
 }  // namespace
 
 void yawSinCos(float yawDeg, float& cs, float& sn) {
-    const float t = yawDeg * 0.0174532925199433f;
+    const float t = yawDeg * kDegToRadF;
     cs = std::cos(t);
     sn = std::sin(t);
 }
@@ -111,7 +112,7 @@ float headingFromClipRoot(std::span<const std::byte> clip, int frame) {
         const float fwd[3] = {0.0f, 0.0f, -1.0f};
         float v[3];
         qrot(rot, fwd, v);
-        return wrap360(std::atan2(v[2], v[0]) * 57.29577951308232f + 90.0f);
+        return wrap360(std::atan2(v[2], v[0]) * kRadToDegF + 90.0f);
     }
     return 0.0f;
 }
@@ -217,7 +218,7 @@ bool PlayerController::jumpPrepare() {
     if (st < 0 || st >= static_cast<int>(ctl_->states.size())) return false;
     const double n = static_cast<double>(ctl_->states[static_cast<std::size_t>(st)].flags12);
     if (!(n > 0.0)) return false;             // no hang time authored: not a jump entry
-    const double yaw = euler_[1] * 3.14159265358979323846 / 180.0;
+    const double yaw = euler_[1] * kPi / 180.0;
     // `Matrix3x3_RotateVector(0, 0, -L)` by the facing: the engine's forward is
     // -Z and maps to (sin y, 0, -cos y) (`sub_456530` case 7 tests exactly
     // that against the actor's own +420).
@@ -1160,7 +1161,7 @@ void PlayerController::tick(float dt, std::uint32_t word) {
         // the request itself.
         const double mx = dx, mz = dz;
         if (std::fabs(dx) > 0.0001 && std::fabs(mx) > 0.0001) {
-            double turn = (std::atan2(mz, mx) - std::atan2(dz, dx)) * 57.29577951308232;
+            double turn = (std::atan2(mz, mx) - std::atan2(dz, dx)) * kRadToDeg;
             if (turn < -180.0) turn += 360.0;
             if (turn > 180.0) turn -= 360.0;
             euler_[1] = wrap360(euler_[1] + static_cast<float>(turn * 0.125));

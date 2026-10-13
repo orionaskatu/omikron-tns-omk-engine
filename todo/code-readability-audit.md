@@ -330,6 +330,26 @@ finding: a check that hashed a conversation frame would flicker.
   byte for byte), `checkpoint_probe` (its output identical before and
   after, its usage exit 2 kept). Those checks and `inventory checkpoint`
   green; `licence headers` 614.
+* step 10a - ONE `kDegToRad`, ONE `vec3`: `src/o3de/vecmath.h` holds
+  `kPi`, `kDegToRad` (= `dbl_4BCF00`'s pi/180, 0x1.1df46a2529d39p-6),
+  `kRadToDeg` and their float forms, and `sub3`/`dot3`/`cross3`/`len3`/
+  `norm3`. Measured first: the factors were spelled ten ways, and every FLOAT
+  spelling rounds to the same float, while the double `0.0174532925199433`
+  (17 sites), `3.14159265358979` (9) and `3.1415927` (3) are NOT the engine's
+  number - so this step moves only the BIT-IDENTICAL sites (67 literals and
+  ten local aliases - `fight.cpp`'s `kDegToRad`, `pose.cpp`'s `kDeg`, the
+  address-named `kRad`/`kD2R`...), and keeps `x * kPiF / 180.0f` as that
+  shape (it rounds differently from `x * kDegToRadF`). The helpers' copies in
+  `render.cpp`, `raster.cpp`, `xrspace.cpp`, the VR camera and
+  `pedestrians.cpp` (whose `len3` was an out-of-line `omk::len3` the
+  vehicles shared through `sliders.h`) are gone; `particles.cpp`'s `norm`
+  stays its own, its threshold differs. Proof: every object built at HEAD
+  and after - 385 of 392 byte-identical, three with identical machine code
+  (data and symbols moved), and `pedestrians.o`/`vehicles.o` re-laid by
+  `len3` now inlining (the same expression); the guard 0 of 14 and the
+  crowd, traffic and slider checks (`pedestrians`, `city crowd`, `road
+  traffic`, `traffic frame`, `crowd push`, `slider fly`) green. 3DS and Vita
+  build; `licence headers` 615.
 
 ## 7. For the tutorial
 

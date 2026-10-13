@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // The follow camera's offsets, first-person aim
 void PlayState::adventureAim() {
@@ -108,7 +109,7 @@ void PlayState::adventureAim() {
         // `camera_presets.json` row 4: eye (0,0,0) on the player,
         // target (0, 0, 787.4016) - 20.00 m in front. Pitching it
         // swings that target up and down about the eye.
-        const float rad = shootPitch * 3.14159265f / 180.0f;
+        const float rad = shootPitch * omk::kPiF / 180.0f;
         const float eye[3] = {0.0f, 0.0f, 0.0f};
         const float at[3]  = {0.0f, 787.4016f * std::sin(rad),
                               787.4016f * std::cos(rad)};
@@ -1494,8 +1495,8 @@ void PlayState::adventureSeated() {
                     if (x.id == static_cast<int>(journeyAddr)) ad = &x;
                 if (ad && haveFrame) {
                     for (int k = 0; k < 3; ++k) sliderCamAddr[k] = ad->pos[k];
-                    const double b = std::atan2(ad->pos[2] - sat[2], ad->pos[0] - sat[0]) * 57.29577951308232 + 90.0;
-                    const double h = std::atan2(-sz[2], -sz[0]) * 57.29577951308232 + 90.0;
+                    const double b = std::atan2(ad->pos[2] - sat[2], ad->pos[0] - sat[0]) * omk::kRadToDeg + 90.0;
+                    const double h = std::atan2(-sz[2], -sz[0]) * omk::kRadToDeg + 90.0;
                     double dd = b - h;
                     if (dd > 180.0) dd -= 360.0;
                     if (dd < -180.0) dd += 360.0;
@@ -2316,7 +2317,7 @@ void PlayState::adventureShot() {
                     // the port's facing convention, as before:
                     // `headingFromClipRoot` ends `atan2(z, x) + 90`
                     const float bearing = std::atan2(dz, dx) *
-                                          57.29577951308232f + 90.0f;
+                                          omk::kRadToDegF + 90.0f;
                     float rel = bearing - player->facing();
                     while (rel < -180.0f) rel += 360.0f;
                     while (rel >  180.0f) rel -= 360.0f;
@@ -2333,7 +2334,7 @@ void PlayState::adventureShot() {
                     // across two steps - because the quadrant
                     // table is fed the mirrored sign.
                     angle = -rel;
-                    const float cosA = std::cos(rel * 0.017453292f);
+                    const float cosA = std::cos(rel * omk::kDegToRadF);
                     low = dyP > kTakeHigh;
                     if (low) { angle -= 10.0f; target = kReachLow / cosA;
                                second = dyP - kTakeHigh; }
@@ -2353,7 +2354,7 @@ void PlayState::adventureShot() {
                         mz = dz - target * dz / D;
                         if (!low)
                             second = std::asin(-dyP / std::sqrt(target * target + dyP * dyP)) *
-                                     57.29577951308232f;
+                                     omk::kRadToDegF;
                         if (!takeNow) {
                             // **PORT SHORTCUT, labelled**: the
                             // engine PROBES the move (Actor_Move,
@@ -2574,7 +2575,7 @@ void PlayState::adventureShot() {
                 float sat[3], sx[3], sz[3];
                 if (session.sliders().calledFrame(sat, sx, sz)) {
                     const float was = player->facing();
-                    player->setFacing(static_cast<float>(std::atan2(-sz[0], sz[2]) * 57.29577951308232));
+                    player->setFacing(static_cast<float>(std::atan2(-sz[0], sz[2]) * omk::kRadToDeg));
                     std::printf("MDSLIDOU: his facing %.1f -> %.1f, the slider's frame "
                                 "H_SLDOUT ended in\n", double(was), double(player->facing()));
                 }

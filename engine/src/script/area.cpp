@@ -15,6 +15,7 @@
 #include "script/opcodes.h"
 #include "script/ctxstatus.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 #include <chrono>
 #include <cmath>
@@ -2122,7 +2123,7 @@ float Session::cameraShakeStep(float dt) {
     const double t = double(shakeDur_) - shakeElapsed_;     // kept on the x87 stack
     const float phase = static_cast<float>(t * 80.0);       // `fstps 0x8(%ebp)`
     const float fade = static_cast<float>(t / shakeDur_);   // `fstps -0x4(%ebp)`
-    const float dy = static_cast<float>(std::sin(double(phase) * 0.017453292519943295) *
+    const float dy = static_cast<float>(std::sin(double(phase) * kDegToRad) *
                                         (double(shakeAmp_) * fade) * double(dt));
     shakeElapsed_ = shakeElapsed_ + dt;
     if (!(shakeElapsed_ < shakeDur_)) shakeDur_ = shakeElapsed_ = shakeAmp_ = 0.0f;

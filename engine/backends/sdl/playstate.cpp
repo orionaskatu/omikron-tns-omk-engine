@@ -5,6 +5,7 @@
 // it first under its original name.
 #include "playstate.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // THE THREE VOLUME ROWS (10..12) - ATTENUATIONS, and one law for all
 // three: `-10000 * a / 100` hundredths of a dB, so `a` dB. Read where the
@@ -85,7 +86,7 @@ void PlayState::takeCamRequest(int phase) {
 void PlayState::sliderCamLag(const float at[3], float fx, float fz, const float eyeOff[3],
                              const float atOff[3], int f42, int f44, int f46,
                              float eye[3], float tat[3]) {
-    const float yawNow = static_cast<float>(std::atan2(fx, fz) * 57.29577951308232);
+    const float yawNow = static_cast<float>(std::atan2(fx, fz) * omk::kRadToDeg);
     const float dtl = static_cast<float>(frameSec * 30.0);
     const auto wrap = [](float d) { while (d > 180.0f) d -= 360.0f; while (d < -180.0f) d += 360.0f; return d; };
     const int k46 = f46 == 1 ? 2 : f46, k44 = f44 == 1 ? 2 : f44, k42 = f42 == 1 ? 2 : f42;
@@ -95,7 +96,7 @@ void PlayState::sliderCamLag(const float at[3], float fx, float fz, const float 
         if (std::fabs(d) <= 0.1f) sliderCamLagYaw = yawNow;
         else sliderCamLagYaw += d * std::min(1.0f, dtl / static_cast<float>(k46));
     }
-    const float t = sliderCamLagYaw * 0.0174532925199433f;
+    const float t = sliderCamLagYaw * omk::kDegToRadF;
     const float gx = std::sin(t), gz = std::cos(t);
     const float r0[3] = {-gz, 0.0f, gx}, r2[3] = {-gx, 0.0f, -gz};
     float e[3], a[3];

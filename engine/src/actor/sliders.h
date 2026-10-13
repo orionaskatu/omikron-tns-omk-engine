@@ -35,6 +35,7 @@
 #pragma once
 
 #include "formats/opt.h"
+#include "o3de/vecmath.h"   // len3, shared with the vehicles' drive
 
 #include <cstddef>
 #include <cstdint>
@@ -413,7 +414,6 @@ struct Pedestrian {
 // `sub_453330`: the orientation from a direction, stored as the unit forward
 // (and the facing kept beside it). Shared with the vehicles' drive.
 void setHeading(Pedestrian& m, float x, float y, float z);
-float len3(const float v[3]);
 
 class Sliders {
 public:

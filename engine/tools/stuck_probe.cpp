@@ -31,6 +31,7 @@
 // refusal, so a port carrying that branch descends every ledge this counts.
 #include "actor/walk.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +43,6 @@
 #include <vector>
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         bool ledge = false, wentDown = false, movedAnywhere = false;
         double drop = 0.0;
         for (int d = 0; d < 16; ++d) {
-            const double a  = 2.0 * kPi * d / 16.0;
+            const double a  = 2.0 * omk::kPi * d / 16.0;
             const double dx = stride * std::cos(a);
             const double dz = stride * std::sin(a);
             // What is under the destination, measured from the FEET rather

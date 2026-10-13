@@ -4,6 +4,7 @@
 #include "actor/pose.h"
 
 #include "formats/morph.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <array>
@@ -829,8 +830,7 @@ void turnSubtree(std::vector<MeshPose>& pose, const std::vector<char>& under,
 // multiplied after its +56 (`sub_4942A0`). Yaw about the local Y (turning -Z
 // toward +X), then pitch about the turned local X (nose up positive, Y down).
 Quatf headLookRot(const Quatf& base, float pitchDeg, float yawDeg) {
-    const float kDeg = 57.29577951308232f;
-    const float hy = yawDeg / kDeg * 0.5f, hp = pitchDeg / kDeg * 0.5f;
+    const float hy = yawDeg / kRadToDegF * 0.5f, hp = pitchDeg / kRadToDegF * 0.5f;
     const Quatf qy{std::cos(hy), 0.0f, -std::sin(hy), 0.0f};
     const Quatf qx{std::cos(hp), -std::sin(hp), 0.0f, 0.0f};
     const Quatf local = qmul(qy, qx);
@@ -852,7 +852,6 @@ void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int h
              const float target[3], HeadLook& look, float dt, bool snap,
              float* wantedPitch, float* wantedYaw) {
     if (head < 0 || static_cast<std::size_t>(head) >= pose.size()) return;
-    const float kDeg = 57.29577951308232f;
     const std::vector<char> under = headSubtree(pose.size(), meshes, head);
     const float origin[3] = {pose[static_cast<std::size_t>(head)].pos[0],
                              pose[static_cast<std::size_t>(head)].pos[1],
@@ -895,9 +894,9 @@ void aimHead(std::vector<MeshPose>& pose, const std::vector<Mesh>& meshes, int h
     // target, positive turning -Z toward +X (rotateYaw's sense)
     float yaw = 0.0f;
     if (fh > 1e-6f && th > 1e-6f)
-        yaw = std::atan2(f[0] * to[2] - f[2] * to[0], f[0] * to[0] + f[2] * to[2]) * kDeg;
+        yaw = std::atan2(f[0] * to[2] - f[2] * to[0], f[0] * to[0] + f[2] * to[2]) * kRadToDegF;
     // pitch: the target's elevation less the forward's (Y down: up is -y)
-    const float pitch = (std::atan2(-to[1], th) - std::atan2(-f[1], fh)) * kDeg;
+    const float pitch = (std::atan2(-to[1], th) - std::atan2(-f[1], fh)) * kRadToDegF;
     if (wantedPitch) *wantedPitch = pitch;
     if (wantedYaw) *wantedYaw = yaw;
     float p = pitch, y = yaw;

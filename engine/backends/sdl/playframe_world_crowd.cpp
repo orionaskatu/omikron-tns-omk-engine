@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // The pedestrians, the vehicles, the player
 void PlayState::worldCrowd() {
@@ -648,7 +649,7 @@ void PlayState::worldCrowd() {
             // leans into a turn, up to `kBankLimit` (11), only while he flies it.
             float bcr = 1.0f, bsr = 0.0f;
             if (mine && ride && ride->roll != 0.0) {
-                const double rr = ride->roll * 0.017453292519943295;
+                const double rr = ride->roll * omk::kDegToRad;
                 bcr = static_cast<float>(std::cos(rr));
                 bsr = static_cast<float>(std::sin(rr));
             }
@@ -697,7 +698,7 @@ void PlayState::worldCrowd() {
             }
             if (measureBank && latHi > latLo) {
                 const double dx = hiW[0] - loW[0], dz = hiW[2] - loW[2];
-                const double tilt = std::atan2(-(hiW[1] - loW[1]), std::sqrt(dx * dx + dz * dz)) * 57.29577951308232;
+                const double tilt = std::atan2(-(hiW[1] - loW[1]), std::sqrt(dx * dx + dz * dz)) * omk::kRadToDeg;
                 static double tiltMax = 0.0;
                 if (std::fabs(tilt) > tiltMax + 2.0) {
                     tiltMax = std::fabs(tilt);
@@ -1091,7 +1092,7 @@ void PlayState::worldCrowd() {
             float bat[3], bx[3], bz[3];
             if (session.sliders().calledFrame(bat, bx, bz))
                 yaw = static_cast<float>(
-                    std::atan2(-bz[0], bz[2]) * 57.29577951308232);
+                    std::atan2(-bz[0], bz[2]) * omk::kRadToDeg);
         }
         // THE WHOLE EULER, not the yaw: the node's `+156` is actor+288,
         // `Matrix3x3_FromEulerAngles(+416, +420, +424)` rebuilt each

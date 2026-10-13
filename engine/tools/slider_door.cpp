@@ -20,6 +20,7 @@
 #include "formats/anim.h"
 #include "actor/pose.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -121,7 +122,7 @@ int main(int argc, char** argv) {
             const float tx = 2 * (y * vz - z * vy), ty = 2 * (z * vx - x * vz), tz = 2 * (x * vy - y * vx);
             const float rx = vx + w * tx + (y * tz - z * ty);
             const float rz = vz + w * tz + (x * ty - y * tx);
-            return static_cast<float>(std::atan2(rz, rx) * 57.29577951308232 + 90.0);
+            return static_cast<float>(std::atan2(rz, rx) * omk::kRadToDeg + 90.0);
         }
         return 0.0f;
     };

@@ -3,6 +3,7 @@
 #include "o3de/particles.h"
 
 #include "formats/mesh3do.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <map>
@@ -77,7 +78,7 @@ void ParticleField::emit(Emitter& e) {
         } else {
             float theta = e.fx.cone;
             if (e.fx.flags & kFxRndCone) theta += rnd() * e.fx.cone;
-            const float th = theta * 0.0174532925199433f;
+            const float th = theta * kDegToRadF;
             const float phi = rnd() * 6.2831853071795864f;
             const float st = std::sin(th);
             const float local[3] = {std::cos(phi) * st * speed,
@@ -123,7 +124,7 @@ void ParticleField::emit(Emitter& e) {
         p.angle = (e.fx.flags & kFxAngle) ? rnd() * 6.2831853f : 0.0f;
         // `+64` is DEGREES a frame - the engine multiplies it by pi/180 on
         // its way into the instance.
-        p.spin = e.fx.spin * 0.0174532925199433f;
+        p.spin = e.fx.spin * kDegToRadF;
         // The colour ramp: `+48` at birth, `+52` at death, each 0x00RRGGBB
         // taken high byte to low. The engine only builds the rate when the
         // two dwords differ, which is the same arithmetic as a zero rate.

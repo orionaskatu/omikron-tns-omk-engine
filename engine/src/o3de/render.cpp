@@ -1,28 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "o3de/render.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 
 namespace omk {
-namespace {
-
-void sub3(const float a[3], const float b[3], float o[3]) {
-    for (int k = 0; k < 3; ++k) o[k] = a[k] - b[k];
-}
-float dot3(const float a[3], const float b[3]) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-void cross3(const float a[3], const float b[3], float o[3]) {
-    o[0] = a[1] * b[2] - a[2] * b[1];
-    o[1] = a[2] * b[0] - a[0] * b[2];
-    o[2] = a[0] * b[1] - a[1] * b[0];
-}
-void norm3(float v[3]) {
-    const float l = std::sqrt(dot3(v, v));
-    if (l > 0.0f) for (int k = 0; k < 3; ++k) v[k] /= l;
-}
-
-}  // namespace
 
 Plane4 planeThroughPoints(const float p1[3], const float p2[3],
                           const float p3[3]) {
@@ -99,7 +81,7 @@ Frustum frustumFromFov(const float eye[3], const float at[3],
     // The vertical scale is taken so square pixels give the same angle per
     // pixel on both axes - which is what the engine's two independent scales
     // do when the viewport is not stretched.
-    const float halfH = fovDegrees * 0.5f * 3.14159265358979f / 180.0f;
+    const float halfH = fovDegrees * 0.5f * kPiF / 180.0f;
     const float projX = static_cast<float>(width) / (2.0f * std::tan(halfH));
     return frustumFromCamera(eye, at, projX, projX, width, height, farDist);
 }

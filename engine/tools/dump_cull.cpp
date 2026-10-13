@@ -24,6 +24,7 @@
 #include "formats/mesh3do.h"
 #include "o3de/render.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -111,7 +112,7 @@ int main(int argc, char** argv) {
         return true;
     };
     const float axis[3] = {eye[0] + 100.0f, eye[1], eye[2]};
-    const float t = std::tan(30.0f * 3.14159265358979f / 180.0f);
+    const float t = std::tan(30.0f * omk::kPiF / 180.0f);
     const float offR[3] = {eye[0] + 100.0f, eye[1], eye[2] + 100.0f * t * 1.05f};
     const int axisInside = inside(axis) ? 1 : 0;
     const int offOutside = inside(offR) ? 0 : 1;

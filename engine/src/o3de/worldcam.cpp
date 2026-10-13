@@ -2,6 +2,7 @@
 // The world camera table. See `worldcam.h` for where every offset comes from.
 #include "formats/bytes.h"
 #include "o3de/worldcam.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 
@@ -27,7 +28,7 @@ ResolvedCamera resolveCamera(const WorldCamera& c, const float p[3], float yaw) 
     // The game's facing convention, the one the ADDRESSES table uses:
     // forward is `(sin y, -cos y)` in (x, z), so yaw 0 faces -Z. That makes
     // the rotation about Y the ordinary one.
-    const float t = yaw * 0.0174532925199433f;
+    const float t = yaw * kDegToRadF;
     const float cs = std::cos(t), sn = std::sin(t);
     const auto place = [&](const float off[3], int subject, float out[3]) {
         if (subject == -1) {                 // an absolute point, taken as is

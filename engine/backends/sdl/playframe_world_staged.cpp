@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // THE MORPH ROOT TURNED BY A WORLD YAW, the engine's own composition.
 // `08_wave.c` 963-965: `sub_442B50(v40, 0, X, 0)` builds the yaw and
@@ -15,7 +16,7 @@
 // From frame `from` on: a line still streaming is turned as its frames arrive.
 static void turnRootBy(omk::NodeTracks& t, float yawDeg, int from) {
     if (!t.valid() || t.rootTrack < 0) return;
-    const float h = yawDeg * 0.0174532925199433f * 0.5f;
+    const float h = yawDeg * omk::kDegToRadF * 0.5f;
     const omk::Quatf ry{std::cos(h), 0.0f, std::sin(h), 0.0f};
     for (std::size_t f = static_cast<std::size_t>(std::max(0, from)); f < t.quats.size(); ++f) {
         auto& frame = t.quats[f];
@@ -2234,7 +2235,7 @@ void PlayState::worldStaged() {
                             const double bx = rs.muzzle[0] - s.meshAt[hh * 3],
                                          bz = rs.muzzle[2] - s.meshAt[hh * 3 + 2];
                             const double tx = pp[0] - rs.muzzle[0], tz = pp[2] - rs.muzzle[2];
-                            double dd = (std::atan2(bx, bz) - std::atan2(tx, tz)) * 57.29577951308232;
+                            double dd = (std::atan2(bx, bz) - std::atan2(tx, tz)) * omk::kRadToDeg;
                             while (dd > 180.0) dd -= 360.0;
                             while (dd < -180.0) dd += 360.0;
                             std::printf("frame %ld: actor %d %s - HIS BARREL points %.1f degrees off "
@@ -3490,7 +3491,7 @@ void PlayState::worldStaged() {
             std::printf("  [body] frame %ld actor %d  at %.1f %.1f %.1f"
                         "  yaw %.1f  vertsMoved %.2f  src %s\n",
                         frameNo, s.actor, s.drawAt[0], s.drawAt[1], s.drawAt[2],
-                        bodyYaw * 57.2957795f, moved, src ? src : "-");
+                        bodyYaw * omk::kRadToDegF, moved, src ? src : "-");
         }
         // ON THE FLOOR? A scene program's body walks its clip's root
         // motion, and the one invariant that motion has to satisfy is

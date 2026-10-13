@@ -28,6 +28,7 @@
 // advances `speed * dt / 256`.
 #include "actor/sliders.h"
 #include "actor/slider.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -299,7 +300,7 @@ void Sliders::tickVehicles(float dt) {
                 const float dx = riderPos_[0] - m.body[0];
                 const float dz = riderPos_[2] - m.body[2];
                 toPlayer = std::sqrt(dx * dx + dz * dz);
-                const float t = riderFacing_ * 0.0174532925199433f;
+                const float t = riderFacing_ * kDegToRadF;
                 ahead = dx * std::sin(t) - dz * std::cos(t) > 0.0f;
             }
             callRide_.tick(dt, d, toPlayer, ahead);
@@ -935,7 +936,7 @@ float Sliders::calledYaw() const {
     if (!v.live || v.mover < 0) return 0.0f;
     const Pedestrian& m = movers_[static_cast<std::size_t>(v.mover)];
     // the inverse of `setHeading(m, sin t, 0, cos t)`
-    return static_cast<float>(std::atan2(m.dir[0], m.dir[2]) * 57.29577951308232);
+    return static_cast<float>(std::atan2(m.dir[0], m.dir[2]) * kRadToDeg);
 }
 
 bool Sliders::calledFrame(float pos[3], float localX[3], float localZ[3]) const {
@@ -1055,7 +1056,7 @@ void Sliders::placeCalled(const float pos[3], float yawDeg) {
     Pedestrian& m = movers_[static_cast<std::size_t>(v.mover)];
     for (int k = 0; k < 3; ++k) { m.prev[k] = m.pos[k]; m.pos[k] = pos[k]; }
     for (int k = 0; k < 3; ++k) m.body[k] = pos[k];
-    const float t = yawDeg * 0.0174532925199433f;
+    const float t = yawDeg * kDegToRadF;
     setHeading(m, std::sin(t), 0.0f, std::cos(t));
 }
 

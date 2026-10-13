@@ -19,6 +19,7 @@
 
 #include "../sdl/playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
 #endif
@@ -42,10 +43,7 @@ const char* vrKindName(VrKind k) {
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-constexpr float kDegToRad = kPi / 180.0f;
 
-float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 bool normH(float v[3]) {   // horizontal unit vector: the game's Y is the vertical
     v[1] = 0.0f;
     const float l = std::sqrt(v[0] * v[0] + v[2] * v[2]);
@@ -78,11 +76,11 @@ void simPose(const VrState& v, omk::vr::HeadPose& p) {
         if (v.questFov) {
             // NOMINAL, not measured: an eye wider on its outer side, the shape
             // a Quest 2 reports. The left eye's outer side is its left.
-            const float outer = 52.0f * kDegToRad, inner = 44.0f * kDegToRad;
+            const float outer = 52.0f * omk::kDegToRadF, inner = 44.0f * omk::kDegToRadF;
             p.fov[e].left = -(e == 0 ? outer : inner);
             p.fov[e].right = e == 0 ? inner : outer;
-            p.fov[e].up = 48.0f * kDegToRad;
-            p.fov[e].down = -52.0f * kDegToRad;
+            p.fov[e].up = 48.0f * omk::kDegToRadF;
+            p.fov[e].down = -52.0f * omk::kDegToRadF;
         }
     }
     // the fake RIGHT CONTROLLER: held below and to the right of where the
@@ -130,11 +128,11 @@ bool isCut(const omk::RCamera& a, const omk::RCamera& b) {
         fa[k] = a.at[k] - a.eye[k];
         fb[k] = b.at[k] - b.eye[k];
     }
-    const float jump = std::sqrt(dot3(d, d));
-    const float la = std::sqrt(dot3(fa, fa)), lb = std::sqrt(dot3(fb, fb));
+    const float jump = std::sqrt(omk::dot3(d, d));
+    const float la = std::sqrt(omk::dot3(fa, fa)), lb = std::sqrt(omk::dot3(fb, fb));
     if (la < 1e-6f || lb < 1e-6f) return jump > 39.37f;
-    const float c = dot3(fa, fb) / (la * lb);
-    return jump > 39.37f || c < std::cos(20.0f * kDegToRad);
+    const float c = omk::dot3(fa, fb) / (la * lb);
+    return jump > 39.37f || c < std::cos(20.0f * omk::kDegToRadF);
 }
 
 }  // namespace
@@ -240,7 +238,7 @@ void PlayState::vrAfterWorldCamera() {
         // ...and the RIGHT STICK pushed sideways past 600 (a Touch controller)
         const bool l = down(0x4F) || host.pad.rx < -600, r = down(0x51) || host.pad.rx > 600;
         if ((l || r) && !vr.snapHeld) {
-            const float a = (r ? 30.0f : -30.0f) * kDegToRad;
+            const float a = (r ? 30.0f : -30.0f) * omk::kDegToRadF;
             float rt[3];
             rightOf(vr.fpFwd, rt);
             for (int k = 0; k < 3; ++k) vr.fpFwd[k] = vr.fpFwd[k] * std::cos(a) + rt[k] * std::sin(a);
@@ -266,7 +264,7 @@ void PlayState::vrAfterWorldCamera() {
         // also slows the throw swing and the steady orbit
         float d[3];
         for (int k = 0; k < 3; ++k) d[k] = authored.eye[k] - authored.at[k];
-        const float l = std::sqrt(dot3(d, d));
+        const float l = std::sqrt(omk::dot3(d, d));
         if (l > 1e-3f) {
             for (float& x : d) x /= l;
             if (!vr.fightInit || kindChanged) {
@@ -274,9 +272,9 @@ void PlayState::vrAfterWorldCamera() {
                 for (int k = 0; k < 3; ++k) vr.fightDir[k] = d[k];
                 vr.fightInit = true;
             } else {
-                const float c = std::max(-1.0f, std::min(1.0f, dot3(vr.fightDir, d)));
+                const float c = std::max(-1.0f, std::min(1.0f, omk::dot3(vr.fightDir, d)));
                 const float ang = std::acos(c);
-                const float maxA = vr.fightTurnDeg * kDegToRad * static_cast<float>(frameSec * 30.0);
+                const float maxA = vr.fightTurnDeg * omk::kDegToRadF * static_cast<float>(frameSec * 30.0);
                 if (ang > 1e-5f) {
                     const float t = ang <= maxA ? 1.0f : maxA / ang;
                     // slerp from fightDir toward d by t

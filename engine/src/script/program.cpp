@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "formats/anim.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cstring>
@@ -485,7 +486,7 @@ bool Program::tick(float dt) {
                             const auto& kk = back ? pa->keys.back() : pa->keys.front();
                             for (int c = 0; c < 3; ++c) pivot[c] = kk.pos[c];
                         }
-                        const float th = eul[1] * 0.0174532925199433f;
+                        const float th = eul[1] * kDegToRadF;
                         const float cs = std::cos(th), sn = std::sin(th);
                         const auto turn = [&](float v[3]) {
                             const float x = v[0] - pivot[0], z = v[2] - pivot[2];
@@ -581,7 +582,7 @@ bool Program::tick(float dt) {
                         // then advances by dt * (end - start) / duration
                         const float v = cur + since * (end - start) / dur;
                         op.fvalue = op.kind == SpriteOp::Kind::Roll
-                                  ? v * 0.017453292f : v;
+                                  ? v * kDegToRadF : v;
                     } else {
                         // finished: `end` outright - and for the roll, RAW,
                         // degrees into the radians field (the engine's quirk)

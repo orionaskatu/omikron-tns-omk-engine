@@ -19,6 +19,7 @@
 #include "actor/pose.h"
 #include "formats/mesh3do.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstdio>
@@ -49,7 +50,7 @@ int main(int argc, char** argv) {
                 const omk::Quatf& q = t.quats[static_cast<std::size_t>(f)][static_cast<std::size_t>(k)];
                 double dot = q0.w * q.w + q0.x * q.x + q0.y * q.y + q0.z * q.z;
                 dot = dot < -1.0 ? -1.0 : (dot > 1.0 ? 1.0 : dot);
-                const double a = 2.0 * std::acos(std::fabs(dot)) * 57.29577951308232;
+                const double a = 2.0 * std::acos(std::fabs(dot)) * omk::kRadToDeg;
                 if (a > worst) worst = a;
             }
             const int id = k < static_cast<int>(t.ids.size()) ? t.ids[static_cast<std::size_t>(k)] : -1;
@@ -68,8 +69,8 @@ int main(int argc, char** argv) {
             const int id = k < static_cast<int>(t.ids.size()) ? t.ids[static_cast<std::size_t>(k)] : -1;
             const omk::Quatf& a0 = t.quats[0][static_cast<std::size_t>(k)];
             const omk::Quatf& a1 = t.quats[static_cast<std::size_t>(t.frames - 1)][static_cast<std::size_t>(k)];
-            const double d0 = 2.0 * std::acos(std::min(1.0, std::fabs((double)a0.w))) * 57.29577951308232;
-            const double d1 = 2.0 * std::acos(std::min(1.0, std::fabs((double)a1.w))) * 57.29577951308232;
+            const double d0 = 2.0 * std::acos(std::min(1.0, std::fabs((double)a0.w))) * omk::kRadToDeg;
+            const double d1 = 2.0 * std::acos(std::min(1.0, std::fabs((double)a1.w))) * omk::kRadToDeg;
             std::printf("   track %d id %d (by id: %-9s)  |rot| frame0 %6.1f  last %6.1f  axis0 (%.2f %.2f %.2f) axisLast (%.2f %.2f %.2f)\n",
                         k, id, (id >= 0 && id < 5) ? kById[id] : "?", d0, d1, a0.x, a0.y, a0.z, a1.x, a1.y, a1.z);
         }

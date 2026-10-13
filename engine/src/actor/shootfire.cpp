@@ -4,6 +4,7 @@
 #include "actor/shoot.h"
 #include "actor/state.h"
 #include "platform/json.h"
+#include "o3de/vecmath.h"
 
 #include <cctype>
 #include <cmath>
@@ -169,8 +170,8 @@ GunmanAim shootGunmanAim(const float target[3], const float muzzle[3], float rad
     // `v54 = asin(v70 / v32); v29 = atan2(v69, v71) * 57.29577951308232 - -90.0`
     const double pitch = a.dist > 0.0 ? std::asin(double(a.d[1]) / a.dist) : 0.0;
     a.yawDeg = static_cast<float>(std::atan2(double(a.d[2]), double(a.d[0])) *
-                                  57.29577951308232 - -90.0);
-    a.pitchDeg = static_cast<float>(-pitch * 57.29577951308232);
+                                  kRadToDeg - -90.0);
+    a.pitchDeg = static_cast<float>(-pitch * kRadToDeg);
     return a;
 }
 

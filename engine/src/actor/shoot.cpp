@@ -3,6 +3,7 @@
 
 #include "formats/map2d.h"
 #include "platform/json.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstring>
@@ -891,7 +892,7 @@ ShootStep shootGenericStep(ShootRecord& r, const ShootFrameIn& in, float& eulerY
                 out.swapOccupancy = true;
                 // `a1[105] = atan2(dz, dx) * 180/pi + 90` - the heading, in
                 // degrees, with the engine's own quarter-turn offset.
-                out.headingDeg = static_cast<float>(std::atan2(dz, dx) * 57.29577951308232 + 90.0);
+                out.headingDeg = static_cast<float>(std::atan2(dz, dx) * kRadToDeg + 90.0);
                 out.stepLength = static_cast<float>(std::sqrt(dx * dx + dz * dz));
                 r.stepRemaining = out.stepLength;
                 eulerY = out.headingDeg;
@@ -1176,7 +1177,7 @@ int shootMoveDecision(const ShootRecord& r, const float self[4],
         const double step = 10.0 * dt;
         double y = self[3];
         const auto bearing = [&] {
-            return std::atan2(dz, dx) * 57.29577951308232 + 90.0;
+            return std::atan2(dz, dx) * kRadToDeg + 90.0;
         };
         const auto lateralAt = [&](double deg) {
             const double rr = deg * 3.14159265358979 / 180.0;

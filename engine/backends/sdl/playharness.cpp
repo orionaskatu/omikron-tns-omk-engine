@@ -13,6 +13,7 @@
 // the flags still parse and do nothing, and the run says so once.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // --newgame-world: a new game's world under the save's player
 void PlayState::harnessNewWorld() {
@@ -316,7 +317,7 @@ void PlayState::harnessBoard(float (&at)[3], float (&door)[3]) {
     if (boardArg && !boarded && !boarding) {
         float feet[3] = {door[0], door[1] + player->cameraLift(), door[2]};
         const float yaw = static_cast<float>(
-            std::atan2(at[0] - door[0], -(at[2] - door[2])) * 57.29577951308232);
+            std::atan2(at[0] - door[0], -(at[2] - door[2])) * omk::kRadToDeg);
         player->placeAt(feet, yaw);
         session.setPlayerPosition(player->pos(), yaw);
         boardPress = true;
@@ -343,7 +344,7 @@ void PlayState::harnessFight() {
         // (sin yaw, -cos yaw) - `rotateYaw`'s convention.
         for (auto& up : staged) {
             if (up->actor != fightArg) continue;
-            const float rad = player->facing() * 3.14159265f / 180.0f;
+            const float rad = player->facing() * omk::kPiF / 180.0f;
             up->at[0] = player->pos()[0] + std::sin(rad) * 78.74f;
             up->at[1] = player->pos()[1];
             up->at[2] = player->pos()[2] - std::cos(rad) * 78.74f;

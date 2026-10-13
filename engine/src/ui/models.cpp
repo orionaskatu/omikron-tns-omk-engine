@@ -3,6 +3,7 @@
 
 #include "formats/mesh3do.h"
 #include "formats/tex3dt.h"
+#include "o3de/vecmath.h"
 
 #include <cctype>
 #include <cmath>
@@ -248,7 +249,7 @@ bool UiModels::draw(Surface& dst, int k, int x, int y, int w, int h,
     // by the distance, fov 50. The SPIN is the camera turning about the
     // model - see the header for why that is the same picture.
     RCamera cam;
-    const float pi = 3.14159265358979323846f;
+    const float pi = kPiF;
     const float a = angleDeg * pi / 180.0f;
     // THE FIT ARM of `sub_478DE0`, and which arm runs is decided by the sign
     // of the distance argument the caller passes. The item previews pass

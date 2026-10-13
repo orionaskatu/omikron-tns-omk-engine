@@ -11,6 +11,7 @@
 // `name value` lines for the check to assert; a build without OMK_VR says so.
 #include "o3de/raster.h"
 #include "vr/xrspace.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstdio>
@@ -19,7 +20,6 @@
 
 namespace {
 
-constexpr float kDeg = 3.14159265358979323846f / 180.0f;
 
 omk::RCamera authored() {
     omk::RCamera c;
@@ -108,8 +108,8 @@ int main() {
     // 5. THE OFF-AXIS EYE: a point on each edge of the eye's own field of view
     // lands on that edge of its picture
     omk::vr::EyeFov fov;
-    fov.left = -52.0f * kDeg; fov.right = 44.0f * kDeg;
-    fov.up = 48.0f * kDeg;    fov.down = -52.0f * kDeg;
+    fov.left = -52.0f * omk::kDegToRadF; fov.right = 44.0f * omk::kDegToRadF;
+    fov.up = 48.0f * omk::kDegToRadF;    fov.down = -52.0f * omk::kDegToRadF;
     {
         const omk::vr::Pose id;
         const omk::RCamera c = omk::vr::composeEye(a, id, &fov, 400, 600);

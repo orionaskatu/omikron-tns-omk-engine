@@ -7,6 +7,7 @@
 #include "ui/iamtext.h"
 #include "ui/options.h"
 #include "ui/screens.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1128,10 +1129,9 @@ ScreenFrame ScreenComposer::draw(Surface& fb, int screenId,
                                ox, oy, it.w, it.h, &px, &py);
                 {
                     const double base = 90.0 - cityMap_->playerFacing;
-                    const double kRad = 0.017453292519943295;  // dbl_4BCF00
                     const double kArm = 40.0;                  // dbl_4BCF08
-                    const double a1 = (base + 30.0) * kRad;     // flt_4BCEFC = -30
-                    const double a2 = (base - 30.0) * kRad;     // flt_4BCF10 = +30
+                    const double a1 = (base + 30.0) * kDegToRad;     // flt_4BCEFC = -30
+                    const double a2 = (base - 30.0) * kDegToRad;     // flt_4BCF10 = +30
                     const int sx = scaleX(px), sy = scaleY(py);
                     const int xy[6] = {
                         sx, sy,

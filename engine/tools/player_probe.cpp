@@ -35,6 +35,7 @@
 #include "input/bindings.h"
 #include "o3de/collision.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <cctype>
 #include <algorithm>
@@ -259,7 +260,7 @@ int main(int argc, char** argv) {
     double walkHeading = -1.0;
     if (pc.distanceWalked() > 1.0) {
         walkHeading = std::atan2(pc.pos()[2] - startPos[2], pc.pos()[0] - startPos[0])
-                      * 57.29577951308232 + 90.0;
+                      * omk::kRadToDeg + 90.0;
         while (walkHeading < 0.0) walkHeading += 360.0;
         while (walkHeading >= 360.0) walkHeading -= 360.0;
     }

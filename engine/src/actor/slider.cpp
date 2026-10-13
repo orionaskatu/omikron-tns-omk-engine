@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "actor/slider.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -437,7 +438,7 @@ void SliderRide::roadEdges(const RideWorld& w) {
     z += edgeZ;
     // ...and turned along it, by a rate clamped to +-2.5
     double want = (uz == 0.0) ? (ux < 0.0 ? 270.0 : 90.0)
-                              : std::atan2(ux / uz, 1.0) * 57.29577951308232;
+                              : std::atan2(ux / uz, 1.0) * kRadToDeg;
     double cur = yaw > 180.0 ? yaw - 360.0 : yaw;
     if (std::fabs(cur - want) > 90.0) want = want <= 0.0 ? want + 180.0 : want - 180.0;
     const double dyaw = want - cur;

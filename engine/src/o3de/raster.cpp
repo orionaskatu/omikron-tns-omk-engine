@@ -5,6 +5,7 @@
 #include "o3de/shimmer.h"
 #include "ui/surface.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,21 +15,6 @@
 namespace omk {
 namespace {
 
-void sub3(const float a[3], const float b[3], float o[3]) {
-    for (int k = 0; k < 3; ++k) o[k] = a[k] - b[k];
-}
-void cross3(const float a[3], const float b[3], float o[3]) {
-    o[0] = a[1] * b[2] - a[2] * b[1];
-    o[1] = a[2] * b[0] - a[0] * b[2];
-    o[2] = a[0] * b[1] - a[1] * b[0];
-}
-float dot3(const float a[3], const float b[3]) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-void norm3(float v[3]) {
-    const float m = std::sqrt(dot3(v, v));
-    if (m > 0) { v[0] /= m; v[1] /= m; v[2] /= m; }
-}
 
 struct Basis {
     float f[3], s[3], u[3];
@@ -48,7 +34,7 @@ Basis basisOf(const RCamera& c) {
     // `RCamera::rollDeg` for where that sense comes from. Both axes turn; the
     // third term of Rodrigues drops out because each is perpendicular to `f`.
     if (c.rollDeg != 0.0f) {
-        const float a = c.rollDeg * 3.14159265358979323846f / 180.0f;
+        const float a = c.rollDeg * kPiF / 180.0f;
         const float ca = std::cos(a), sa = std::sin(a);
         float fs[3], fu[3];
         cross3(b.f, b.s, fs);
@@ -61,7 +47,7 @@ Basis basisOf(const RCamera& c) {
     }
     // AFTER `u`, so only x flips - see `RCamera::flipX`.
     if (c.flipX) for (int k = 0; k < 3; ++k) b.s[k] = -b.s[k];
-    b.tanh_ = std::tan(c.hfovDeg * 3.14159265358979323846f / 180.0f / 2.0f);
+    b.tanh_ = std::tan(c.hfovDeg * kPiF / 180.0f / 2.0f);
     // camshot.py: tanv = tanh / (W/H). The horizontal fov is the record's, and
     // the vertical follows from the frame's shape - reading angle[1] as
     // vertical is one of the two errors laying this over a screenshot found.

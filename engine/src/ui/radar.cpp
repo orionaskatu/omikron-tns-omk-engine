@@ -4,6 +4,7 @@
 
 #include "formats/le.h"
 #include "ui/hudbar.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -166,10 +167,9 @@ RadarFrame Radar::draw(Surface& fb, const RadarView& v, const std::vector<RadarA
     // caller's to test (the Session holds it)
     if (!wire_.valid()) return out;
 
-    constexpr double kD2R = 0.017453292519943295;     // 0x4BC2E8
-    const float yaw = static_cast<float>((double(v.facingDeg) + 180.0) * kD2R);
+    const float yaw = static_cast<float>((double(v.facingDeg) + 180.0) * kDegToRad);
     float m[9];
-    euler(static_cast<float>(90.0 * kD2R), yaw, 0.0f, m);
+    euler(static_cast<float>(90.0 * kDegToRad), yaw, 0.0f, m);
 
     // the local camera: the live one's focal lengths scaled to the box
     const int boxW = (v.right - v.left) & 0xFFFF, boxH = (v.bottom - v.top) & 0xFFFF;

@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // The letterbox, the camera, the instrument override
 void PlayState::worldCamera() {
@@ -448,7 +449,7 @@ void PlayState::worldCamera() {
         // `(-f.z, 0, f.x)` and row 2 = `-f` - so the eye is 7.00 m
         // behind the way it flies. Rotating the offset by the yaw put it
         // ahead or beside on every heading but one.
-        const float t = static_cast<float>(ride->yaw) * 0.0174532925199433f;
+        const float t = static_cast<float>(ride->yaw) * omk::kDegToRadF;
         const float fx = -std::sin(t), fz = -std::cos(t);
         const float r0[3] = {-fz, 0.0f, fx}, r2[3] = {-fx, 0.0f, -fz};
         const float sub[3] = {static_cast<float>(ride->x),
@@ -609,7 +610,7 @@ void PlayState::worldCamera() {
         // already uses it (`todo/omk-play.md` 69, 97i).
         omk::FollowCamera fc = player->followCamera();
         if (shootMode && shootCameraLive) {
-            const float rad = shootPitch * 3.14159265f / 180.0f;
+            const float rad = shootPitch * omk::kPiF / 180.0f;
             // Y POINTS DOWN, so raising the eye is a NEGATIVE offset -
             // the same sign `cameraLift` uses. 0 is the preset's own
             // value and the faithful one; `--shoot-eye` departs from

@@ -24,6 +24,7 @@
 //   * the screen fade, the camera and the gauges: steps 3, 4 and 5.
 #include "actor/fight.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -35,7 +36,6 @@ namespace omk {
 
 namespace {
 
-constexpr float kDegPerRad = 57.29577951308232f;
 // The two distances `sub_4452A0` switches banks at, in the engine's inches:
 // 118.11024 is three metres and 59.055119 is one and a half.
 constexpr float kFarSwitch  = 118.11024f;
@@ -98,7 +98,6 @@ int Fight::entryByLow16(const FightContext& c, int id) const {
 // = 2.5 m, 59.055119 = 1.5 m, 39.370079 = 1 m, 19.68504 = 0.5 m, 9.8425198 =
 // 0.25 m, 7.8740158 = 0.2 m.
 namespace {
-constexpr float kDegToRad = 0.0174532925199433f;
 // The two float constants the decompilation prints as integer bit patterns.
 float bits(std::int32_t v) { float f = 0.0f; std::memcpy(&f, &v, 4); return f; }
 }  // namespace
@@ -129,9 +128,9 @@ void Fight::camOrbit(bool ease, float angleOff, float height, float atLift) {
     float mid[3]; camMidpoint(mid);
     const float lift = 5.9055123f + (a_.body->y + b_.body->y) * 0.5f;
     const float deg = std::atan2(b_.body->z - a_.body->z,
-                                 b_.body->x - a_.body->x) * kDegPerRad
+                                 b_.body->x - a_.body->x) * kRadToDegF
                       + 90.0f + angleOff;
-    const float rad = deg * kDegToRad;
+    const float rad = deg * kDegToRadF;
     const float ex = mid[0] - std::cos(rad) * radius;
     const float ez = mid[2] - std::sin(rad) * radius;
     const float eyeK = 0.5f, atK = 0.1f;        // flt_530C60 / flt_530C6C
@@ -188,7 +187,7 @@ void Fight::camThrow(float height, float dt) {
     // `flt_530C84 * flt_4C30D8 + flt_530C20`: the swing BY THE DELTA, so the
     // half-turn ends with the clip at any frame rate (todo/sixty-fps.md 4)
     cam_.heading += cam_.swing * dt;
-    const float rad = cam_.heading * kDegToRad;
+    const float rad = cam_.heading * kDegToRadF;
     cam_.eye[0] = mid[0] - std::cos(rad) * radius;
     cam_.eye[2] = mid[2] - std::sin(rad) * radius;
     cam_.at[0]  = mid[0];
@@ -205,7 +204,7 @@ void Fight::camSteady(float degPerFrame, float eyeUp, float atUp, float dt) {
     const float radius = (separation_ + 157.48032f) * 0.65161264f;
     float mid[3]; camMidpoint(mid);
     cam_.heading += degPerFrame * dt;
-    const float rad = cam_.heading * kDegToRad;
+    const float rad = cam_.heading * kDegToRadF;
     cam_.eye[0] = mid[0] - std::cos(rad) * radius;
     cam_.eye[2] = mid[2] - std::sin(rad) * radius;
     cam_.eye[1] = b_.body->y + eyeUp;
@@ -245,7 +244,7 @@ void Fight::camPlace(float radius, float headingDeg, float height,
                      float atLift, bool moveTarget) {
     if (cam_.placed) return;
     float mid[3]; camMidpoint(mid);
-    const float rad = headingDeg * kDegToRad;
+    const float rad = headingDeg * kDegToRadF;
     cam_.eye[0] = mid[0] - std::cos(rad) * radius;
     cam_.eye[2] = mid[2] - std::sin(rad) * radius;
     cam_.eye[1] = mid[1] + height;
@@ -298,7 +297,7 @@ void Fight::camShake(float dt, FightContext& c) {
     cam_.shake -= 0.39370081f;
     if (cam_.shake < 0.0f) return;
     cam_.shakePhase += dt * 80.0f;
-    const float d = std::sin(cam_.shakePhase * kDegToRad) * 7.8740158f;
+    const float d = std::sin(cam_.shakePhase * kDegToRadF) * 7.8740158f;
     cam_.eye[1] = cam_.shakeFrom[0] - d;
     cam_.at[1]  = cam_.shakeFrom[1] - d;
 }
@@ -565,7 +564,7 @@ void Fight::faceOpponent(FightContext& c, const FightContext& other, bool ease) 
         if (static_cast<std::uint32_t>(c.stateD) & 0x20u) return;
     }
     float yaw = std::atan2(c.body->x - other.body->x,
-                           other.body->z - c.body->z) * kDegPerRad + 180.0f;
+                           other.body->z - c.body->z) * kRadToDegF + 180.0f;
     if (ease) yaw = c.body->yaw * 0.25f + yaw * 0.75f;
     c.body->yaw = yaw;
 }
@@ -796,7 +795,7 @@ void Fight::resolveHit(FightContext& att, FightContext& def) {
         // carries only the yaw, which is the component a standing fighter
         // ever has; the pitch and roll are LABELLED as not carried here and
         // come with the actor record in step 2.
-        const float rad = def.body->yaw / kDegPerRad;
+        const float rad = def.body->yaw / kRadToDegF;
         const float kx = reactE->combat.raw[7], ky = reactE->combat.raw[8],
                     kz = reactE->combat.raw[9];
         const float rx = kx * std::cos(rad) + kz * std::sin(rad);

@@ -3,6 +3,7 @@
 // Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
 #include "playframe.h"
 #include "platform/env.h"
+#include "o3de/vecmath.h"
 
 // A world-less frame the menu's cloud will cover (`fbCloudOwed`): a screen
 // open with no player, the cloud loaded, and the composer's table holding the
@@ -676,7 +677,7 @@ int PlayState::phaseWorld() {
                         for (int k = 0; k < 3; ++k) out[k] = off[k];
                         return true;
                     }
-                    const float t = yaw * 0.0174532925199433f;
+                    const float t = yaw * omk::kDegToRadF;
                     const float cs = std::cos(t), sn = std::sin(t);
                     const float rx = off[0] * cs - off[2] * sn;
                     const float rz = off[0] * sn + off[2] * cs;

@@ -4,6 +4,7 @@
 
 #include "formats/anim.h"
 #include "formats/le.h"
+#include "o3de/vecmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,13 +14,11 @@
 namespace omk {
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
 
 float len2(float x, float z) { return std::sqrt(x * x + z * z); }
 
 }  // namespace
 
-float len3(const float v[3]) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
 
 // `sub_453330`: the orientation from a direction. Stored as the unit forward.
 // Not file-local: the vehicles' drive (`sub_456C70`, actor/vehicles.cpp) aims
@@ -167,11 +166,11 @@ void pedRootDelta(const PedClip& c, float t0, float t1, const float* heading, fl
 }
 
 float pedFacingOf(const float heading[3]) {
-    return std::atan2(heading[2], heading[0]) * 180.0f / kPi + 90.0f;
+    return std::atan2(heading[2], heading[0]) * 180.0f / kPiF + 90.0f;
 }
 
 void pedHeadingOf(float facingDeg, float heading[3]) {
-    const float a = facingDeg * kPi / 180.0f;
+    const float a = facingDeg * kPiF / 180.0f;
     heading[0] = std::sin(a); heading[1] = 0.0f; heading[2] = -std::cos(a);
 }
 
@@ -972,7 +971,7 @@ int Sliders::nearestInFront(const float pos[3], float facingDeg) const {
     // (dot > 0.2 with his facing) and turned toward him (< -0.2)
     float best = kCarrotBehind;
     int found = -1;
-    const float a = facingDeg * kPi / 180.0f;
+    const float a = facingDeg * kPiF / 180.0f;
     const float fs = -std::sin(a), fc = std::cos(a);
     for (int i = 0; i < static_cast<int>(movers_.size()); ++i) {
         const auto& w = movers_[static_cast<std::size_t>(i)];
@@ -986,7 +985,7 @@ int Sliders::nearestInFront(const float pos[3], float facingDeg) const {
         if (d > best) continue;
         if (d == 0.0f) d = 1.0f;
         const float nx = dx / d, nz = dz / d;
-        const float wa = w.facing * kPi / 180.0f;
+        const float wa = w.facing * kPiF / 180.0f;
         const float ws = -std::sin(wa), wc = std::cos(wa);
         if (wc * nz + ws * nx > 0.2f && fs * nx + fc * nz < -0.2f) { found = i; best = d; }
     }

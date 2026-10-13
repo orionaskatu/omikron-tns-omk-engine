@@ -12,6 +12,7 @@
 #include "actor/pose.h"
 #include "formats/mesh3do.h"
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstdio>
@@ -31,7 +32,6 @@ int main(int argc, char** argv) {
                 head >= 0 ? meshes[static_cast<std::size_t>(head)].name : "-");
     if (head < 0) return 1;
     const auto rest = omk::composePose(meshes, omk::NodeTracks{}, 0, false);
-    const float kDeg = 57.29577951308232f;
     auto forwardOf = [&](const std::vector<omk::MeshPose>& pose, float out[3]) {
         const float l[3] = {0, 0, -1};
         omk::qrot(pose[static_cast<std::size_t>(head)].q, l, out);
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         // rest forward by the azimuth, lift by the elevation (Y down)
         const float fh = std::sqrt(f0[0] * f0[0] + f0[2] * f0[2]);
         const float fx = f0[0] / fh, fz = f0[2] / fh;
-        const float a = c.az / kDeg, e = c.el / kDeg;
+        const float a = c.az / omk::kRadToDegF, e = c.el / omk::kRadToDegF;
         const float dx = fx * std::cos(a) + fz * std::sin(a), dz = -fx * std::sin(a) + fz * std::cos(a);
         const float t[3] = {hp[0] + 200.0f * std::cos(e) * dx, hp[1] - 200.0f * std::sin(e), hp[2] + 200.0f * std::cos(e) * dz};
         auto pose = rest;
@@ -56,8 +56,8 @@ int main(int argc, char** argv) {
         float f1[3]; forwardOf(pose, f1);
         // the turn the head actually made, measured on its forward
         const float f1h = std::sqrt(f1[0] * f1[0] + f1[2] * f1[2]);
-        const float turned = std::atan2(fx * f1[2] / f1h - fz * f1[0] / f1h, fx * f1[0] / f1h + fz * f1[2] / f1h) * kDeg;
-        const float lifted = (std::atan2(-f1[1], f1h) - std::atan2(-f0[1], fh)) * kDeg;
+        const float turned = std::atan2(fx * f1[2] / f1h - fz * f1[0] / f1h, fx * f1[0] / f1h + fz * f1[2] / f1h) * omk::kRadToDegF;
+        const float lifted = (std::atan2(-f1[1], f1h) - std::atan2(-f0[1], fh)) * omk::kRadToDegF;
         // and eased from rest over one frame, then eight
         auto pose2 = rest; omk::HeadLook look2;
         omk::aimHead(pose2, meshes, head, t, look2, 1.0f, false);

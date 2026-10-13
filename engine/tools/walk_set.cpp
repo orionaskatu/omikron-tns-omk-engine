@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include "platform/datafs.h"
+#include "o3de/vecmath.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -54,7 +55,7 @@ int main(int argc, char** argv) {
     // the reference's own spiral: 2*pi*i/64 with a 25-unit stride, slow
     // enough that the walk stays inside the room
     for (int i = 0; i < steps; ++i) {
-        const double a = 2.0 * 3.14159265358979323846 * i / 64.0;
+        const double a = 2.0 * omk::kPi * i / 64.0;
         const double r = 25.0;
         switch (w.step(r * std::cos(a), r * std::sin(a))) {
             case omk::StepResult::Moved:    ++moved; break;

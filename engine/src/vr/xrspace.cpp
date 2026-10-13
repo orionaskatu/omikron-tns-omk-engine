@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The headset's space and the game's - see `xrspace.h`. Empty unless OMK_VR.
 #include "vr/xrspace.h"
+#include "o3de/vecmath.h"
 
 #if OMK_VR
 
@@ -11,15 +12,7 @@ namespace omk::vr {
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
 
-float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-void cross3(const float a[3], const float b[3], float o[3]) {
-    o[0] = a[1] * b[2] - a[2] * b[1];
-    o[1] = a[2] * b[0] - a[0] * b[2];
-    o[2] = a[0] * b[1] - a[1] * b[0];
-}
-float len3(const float a[3]) { return std::sqrt(dot3(a, a)); }
 
 bool isIdentity(const float q[4]) {
     return q[0] == 0.0f && q[1] == 0.0f && q[2] == 0.0f && (q[3] == 1.0f || q[3] == -1.0f);
@@ -45,7 +38,7 @@ void rotate(const float q[4], const float v[3], float out[3]) {
 }
 
 void quatFromYawPitchRoll(float yawDeg, float pitchDeg, float rollDeg, float q[4]) {
-    const float y = yawDeg * kPi / 360.0f, p = pitchDeg * kPi / 360.0f, r = rollDeg * kPi / 360.0f;
+    const float y = yawDeg * kPiF / 360.0f, p = pitchDeg * kPiF / 360.0f, r = rollDeg * kPiF / 360.0f;
     const float qy[4] = {0.0f, std::sin(y), 0.0f, std::cos(y)};
     const float qp[4] = {std::sin(p), 0.0f, 0.0f, std::cos(p)};
     const float qr[4] = {0.0f, 0.0f, std::sin(r), std::cos(r)};
@@ -107,13 +100,13 @@ RCamera composeEye(const RCamera& origin, const Pose& local, const EyeFov* fov, 
         unrolled.flipX = false;
         float s0[3], u0[3], f0[3], th = 0.0f, tv = 0.0f;
         cameraBasis(unrolled, s0, u0, f0, th, tv);
-        c.rollDeg = std::atan2(dot3(uw, s0), dot3(uw, u0)) * 180.0f / kPi;
+        c.rollDeg = std::atan2(dot3(uw, s0), dot3(uw, u0)) * 180.0f / kPiF;
     }
     if (fov && fov->set()) {
         const float tl = std::tan(fov->left), tr = std::tan(fov->right);
         const float tu = std::tan(fov->up), td = std::tan(fov->down);
         const float th = 0.5f * (tr - tl);
-        c.hfovDeg = 2.0f * std::atan(th) * 180.0f / kPi;
+        c.hfovDeg = 2.0f * std::atan(th) * 180.0f / kPiF;
         c.lensX = 0.5f * (tr + tl);
         c.tanHalfV = 0.5f * (tu - td);
         c.lensY = 0.5f * (tu + td);
@@ -139,7 +132,7 @@ RCamera cullCamera(const RCamera& left, const RCamera& right, int w, int h) {
     // ...as a horizontal half-tangent whose derived vertical (w/h) holds it too
     const float aspect = static_cast<float>(w) / static_cast<float>(h);
     const float tanH = r * std::max(1.0f, aspect);
-    c.hfovDeg = 2.0f * std::atan(tanH) * 180.0f / kPi;
+    c.hfovDeg = 2.0f * std::atan(tanH) * 180.0f / kPiF;
     // stand back from the eyes' midpoint so the cone also holds both apexes
     float mid[3], half[3];
     for (int k = 0; k < 3; ++k) {

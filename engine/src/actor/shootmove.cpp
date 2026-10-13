@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "actor/shootmove.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 
@@ -177,7 +178,7 @@ ShootMoveStep shootMoveTick(ShootMover& m, float facingDeg, float dt,
             *eulerRoll  -= m.shoveRoll * dt;
         }
     }
-    const double t = static_cast<double>(turnBy) * 0.017453292519943295;
+    const double t = static_cast<double>(turnBy) * kDegToRad;
     const double c = std::cos(t), sn = std::sin(t);
     s.dx = static_cast<float>((c * m.side - sn * m.fwd) * dt);
     s.dz = static_cast<float>((c * m.fwd + sn * m.side) * dt);

@@ -23,6 +23,7 @@
 #include "o3de/collision.h"
 #include "platform/datafs.h"
 #include "script/objects.h"
+#include "o3de/vecmath.h"
 
 #include <cmath>
 #include <cstddef>
@@ -143,7 +144,7 @@ int main(int argc, char** argv) {
         for (int yaw = -180; yaw <= 180; yaw += 15) {
             float d[3], m[9], fwd[3];
             omk::shootShotDirection(float(yaw), 0.0f, d);
-            omk::shootEulerMatrix(0.0f, float(yaw) * 0.0174532925f, 0.0f, m);
+            omk::shootEulerMatrix(0.0f, float(yaw) * omk::kDegToRadF, 0.0f, m);
             const float mz[3] = {0.0f, 0.0f, -1.0f};
             omk::shootRotateRow(mz, m, fwd);
             for (int k = 0; k < 3; ++k) {
@@ -360,8 +361,8 @@ int main(int argc, char** argv) {
             return 2.0 * std::acos(std::fabs(double(q.w)) > 1.0 ? 1.0 : std::fabs(double(q.w)))
                    * 180.0 / 3.14159265358979;
         };
-        const float r15 = 15.0f * 0.0174532925f, r45 = 45.0f * 0.0174532925f,
-                    r30 = 30.0f * 0.0174532925f;
+        const float r15 = 15.0f * omk::kDegToRadF, r45 = 45.0f * omk::kDegToRadF,
+                    r30 = 30.0f * omk::kDegToRadF;
         const omk::Quatf up15 = omk::shootAimBone(keys, 0.0f, r15);
         const omk::Quatf dn15 = omk::shootAimBone(keys, 0.0f, -r15);
         const omk::Quatf up45 = omk::shootAimBone(keys, 0.0f, r45);

@@ -399,7 +399,7 @@ void PlayerController::waterTick(double dx, double dy, double dz, float dt) {
         bool under = true, done = false;
         if (omk::envFlag("OMK_SWIMTRACE"))
             std::printf("  waterprobe: head at %.1f %.1f %.1f -> %s y %.1f flags %08x\n", hx, node, hz,
-                        h ? "hit" : "NOTHING", h ? *h : 0.0, fl);
+                        h ? "hit" : "NOTHING", h ? *h : 0.0, static_cast<unsigned>(fl));
         if (h && (fl & 0x20000000u)) {
             const double d = *h - node;
             if (d <= 0.0) { done = true; }

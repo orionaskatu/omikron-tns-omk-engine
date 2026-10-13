@@ -109,7 +109,10 @@ struct SiteLock {
     ~SiteLock() { g_siteLock.clear(std::memory_order_release); }
 };
 #else
-struct SiteLock {};
+struct SiteLock {
+    SiteLock() {}     // user-provided: a guard nothing reads is not "unused"
+    ~SiteLock() {}
+};
 #endif
 
 struct Chain { const void* at[kDepth]; };

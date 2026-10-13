@@ -716,6 +716,24 @@ finding: a check that hashed a conversation frame would flicker.
   Guard 0 of 14; 30 GPU checks green (GLES, Vulkan, GL1 backend, ties,
   shadows, mirror, per-pixel light); 3DS and Vita build with no warning;
   `licence headers` 631.
+* step 15b - THE CONSOLES' WARNINGS ON. Step 4 left `-Wshadow` off in the
+  console build files; the Vita's CMakeLists now has it, and the 3DS
+  Makefile, which had NO warning flags at all, has `-Wall -Wextra -Wshadow`.
+  What that showed, from clean builds of both: four shadowed locals gcc sees
+  and clang does not (a lambda's `r` under an outer `r`, a loop's `y` in a
+  lambda capturing one, a bench's `t0`, the smoke test's `tex`), renamed in
+  their own scope; three unused-variable warnings on `profile.cpp`'s
+  threadless `SiteLock` (an empty struct - now with a user-provided
+  constructor, as the threaded one has); and 37 `-Wformat` mismatches,
+  every one the same thing - devkitARM's newlib makes `uint32_t` an
+  `unsigned long` and `int32_t` a `long`, so `%u`/`%x`/`%d` over them is
+  wrong there and right on the Mac. Each argument is cast to the type its
+  format names (`tools`-free: located from gcc's own "argument N" by a
+  scratch script that walks the call's arguments), an identity cast on the
+  Mac. Both consoles build clean with no warning; the guard 0 of 14; `3ds
+  build`, `vita build`, `vita bench` and `vita printf` green. The PowerPC
+  makefile and the classic build stay without `-Wshadow`: neither can be
+  built here, and GL1's two sources are clean under clang's.
 
 ## 7. For the tutorial
 

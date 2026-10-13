@@ -533,8 +533,8 @@ int PlayState::modesShoot() {
             for (std::size_t k = 0; k < t.size(); ++k) highScores[k] = {t[k].name, t[k].ms};
             if (row >= 0)
                 std::printf("frame %ld: HighScore_Insert - '%s' %d'%02d\"%02d into table %d "
-                            "row %d\n", frameNo, h.name.c_str(), (h.score / 60000) % 60,
-                            (h.score / 1000) % 60, (h.score % 1000) / 10, h.table, row + 1);
+                            "row %d\n", frameNo, h.name.c_str(), static_cast<int>((h.score / 60000) % 60),
+                            static_cast<int>((h.score / 1000) % 60), static_cast<int>((h.score % 1000) / 10), h.table, row + 1);
             else
                 std::printf("frame %ld: HighScore_Insert - %d ms makes no row of table %d\n",
                             frameNo, static_cast<int>(h.score), h.table);
@@ -929,7 +929,7 @@ void PlayState::modesShootEnterLeave(omk::Input& in) {
                 shootField = omk::ShootField{};   // its field belongs to the old grid
                 if (!mp.empty() && shootMap.load(fs.read("MAP2D/" + mp + ".MPT")))
                     std::printf("frame %ld: MAP2D %s.MPT - %zu floors, cell %u\n", frameNo,
-                                mp.c_str(), shootMap.floors().size(), shootMap.scale());
+                                mp.c_str(), shootMap.floors().size(), static_cast<unsigned>(shootMap.scale()));
                 // ...AND `Shoot_Enter`'S LAST CALL, `Shoot_TickPlayer(player)`:
                 // the player's record thinks ONCE, here, before any gunman's
                 // brain runs. The per-frame think above ran before this frame's

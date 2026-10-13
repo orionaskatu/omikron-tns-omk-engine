@@ -338,7 +338,7 @@ void Session::areaLoad(int area, int slot) {
         std::printf("session: AREA %d's chunk is %zu bytes, %zu of them nonzero, "
                     "with no set and no startup script - %s/AREA is %zu bytes, "
                     "FNV-1a 0x%08x\n", area, s.areaChunk.size(), nz, iam_.c_str(),
-                    file.size(), h);
+                    file.size(), static_cast<unsigned>(h));
     }
     s.scene = sceneOverArea(state_, area);
     if (s.scene != -1) {
@@ -2728,7 +2728,7 @@ void Session::tickClock() {
     if (state_.timerCheckExpiry()) {
         const bool handled = postMessage(18, -1);
         std::printf("frame %ld: script timer expired at clock %d - message 18 %s\n",
-                    frameNo_, state_.clock(), handled ? "handled" : "unsubscribed");
+                    frameNo_, static_cast<int>(state_.clock()), handled ? "handled" : "unsubscribed");
     }
     state_.clockTick(static_cast<float>(frameDelta()));
 }
@@ -4331,7 +4331,7 @@ std::vector<Session::PropInstance> Session::props() const {
 void Session::setSessionSeed(std::uint32_t seed) {
     sessionSeed_ = seed;
     if (seed) Interpreter::seedRandom(seed);
-    std::printf("session: randomness seeded %u (srand at the boot pump, T5)\n", seed);
+    std::printf("session: randomness seeded %u (srand at the boot pump, T5)\n", static_cast<unsigned>(seed));
 }
 
 void Session::loadTraffic(const std::string& gamedataRoot) {

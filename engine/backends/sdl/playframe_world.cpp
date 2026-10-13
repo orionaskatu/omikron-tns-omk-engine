@@ -296,7 +296,7 @@ int PlayState::phaseWorld() {
             std::printf("frame %ld: editing %d '%s' takes the camera (mode 13): object %d '%s', "
                         "%u frames, travel %.0f%s\n",
                         frameNo, edit->editing, edit->editingName.c_str(), edit->object,
-                        edit->objectName.c_str(), edit->duration, edit->travel,
+                        edit->objectName.c_str(), static_cast<unsigned>(edit->duration), edit->travel,
                         editFromKnown ? "" : " (nothing on screen to travel from: a cut)");
         } else if (!edit && editingShown >= 0) {
             editingShown = -1;

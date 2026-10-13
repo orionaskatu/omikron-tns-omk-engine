@@ -131,13 +131,13 @@ int main() {
         const int TW = scaled ? kWinW : kW, TH = scaled ? kWinH : kH;
         const int dw = scaled ? kWinH * kW / kH : kW;          // the fitted width
         const int dx0 = (TW - dw) / 2;
-        GLuint tex = 0, fbo = 0;
-        glGenTextures(1, &tex);
-        glBindTexture(GL_TEXTURE_2D, tex);
+        GLuint winTex = 0, fbo = 0;
+        glGenTextures(1, &winTex);
+        glBindTexture(GL_TEXTURE_2D, winTex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, TW, TH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glGenFramebuffers(1, &fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, winTex, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         std::vector<unsigned char> win(static_cast<std::size_t>(TW) * TH * 4);
         std::vector<unsigned char> raw(static_cast<std::size_t>(kW) * kH * 4);
@@ -200,7 +200,7 @@ int main() {
                 sum[1][0] / compared, sum[1][1] / compared, sum[1][2] / compared);
         }
         glDeleteFramebuffers(1, &fbo);
-        glDeleteTextures(1, &tex);
+        glDeleteTextures(1, &winTex);
     }
     // heading and pitch from the start camera, so the stick flies from there
     float dir[3] = {kAt[0] - kEye[0], kAt[1] - kEye[1], kAt[2] - kEye[2]};

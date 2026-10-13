@@ -1330,7 +1330,7 @@ void PlayState::shootNoise(long frame, int from, const float at[3], const char* 
                     "actor %d %s (hearing %d cells of %u), his floor %d, action %d\n",
                     frame, what, double(at[0]), double(at[1]), double(at[2]), nf, actor,
                     h.alerted ? "ALERTED" : "heard it from another floor",
-                    int(cells), shootMap.scale(), sf, h.act ? h.action : -99);
+                    int(cells), static_cast<unsigned>(shootMap.scale()), sf, h.act ? h.action : -99);
     }
     std::printf("frame %ld: NOISE (sub_4246E0) - %s at %.0f %.0f %.0f, floor %d: %d "
                 "records - %d dead, %d not entered, %d already alerted, %d out of "
@@ -1511,7 +1511,7 @@ void PlayState::shotSound(long frame, int effectId, const float at[3],
     const int w = shootRt->wavBydId(e->sound);
     if (w < 0) {
         std::printf("frame %ld: SHOT SOUND %s - effect %d's sound %d is not in shoot2.scx\n",
-                    frame, what, effectId, e->sound);
+                    frame, what, effectId, static_cast<int>(e->sound));
         return;
     }
     float d = 0.0f;
@@ -1523,7 +1523,7 @@ void PlayState::shotSound(long frame, int effectId, const float at[3],
     const float gain = d <= 78.0f ? 1.0f : 78.0f / std::min(d, 584.0f);
     const SfxSample& sm = sfxPcm(shootRt->wavData(w));
     std::printf("frame %ld: SHOT SOUND %s - effect %d sound %d '%s', %.0f from him, "
-                "gain %.2f\n", frame, what, effectId, e->sound,
+                "gain %.2f\n", frame, what, effectId, static_cast<int>(e->sound),
                 shootRt->wavName(w).c_str(), double(d), double(gain));
     if (sm.pcm->size) front.playSound(sm.pcm, false, gain * fxGain());
 }

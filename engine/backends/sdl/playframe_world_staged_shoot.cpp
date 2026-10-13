@@ -580,7 +580,7 @@ void PlayState::worldStagedShootEnter(std::map<int, omk::ShootRecord>::iterator&
                         "%d, +88 %d, flags 0x%x, AstDos mesh %d, %d of %d souls found "
                         "and shown at %d hits, difficulty %.1f, the world-hit "
                         "callback armed\n", frameNo, s.actor, s.model.c_str(), fresh.state,
-                        fresh.actionCounter, fresh.flags, backMesh, shown,
+                        fresh.actionCounter, static_cast<unsigned>(fresh.flags), backMesh, shown,
                         omk::kAstarothSouls, omk::kAstarothSoulHits,
                         double(astaroth.difficulty));
         }
@@ -1035,7 +1035,7 @@ void PlayState::worldStagedShootGeneric(omk::ShootRecord& rec, Staged& s, int& a
                             s.model.c_str(), ein.link, gunFloor,
                             double(L.from[0]), double(L.from[1]),
                             double(L.from[2]), double(L.to[0]),
-                            double(L.to[1]), double(L.to[2]), L.destFloor);
+                            double(L.to[1]), double(L.to[2]), static_cast<unsigned>(L.destFloor));
         }
     }
     ein.targetAlive = true;

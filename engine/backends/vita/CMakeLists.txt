@@ -56,7 +56,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # float loops. `-ffp-contract=off` keeps FMA contraction from changing a
 # float result against the host's - the bench's hash is only comparable across
 # machines if both compute the same operations (`bench_main.cpp`).
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -mfpu=neon -mfloat-abi=hard -ffp-contract=off")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -Wall -Wextra -Wshadow -mfpu=neon -mfloat-abi=hard -ffp-contract=off")
 # `-DOMK_VITA_ASSERTS=ON`: libstdc++'s bounds checks (vector / string / span
 # indexing), so an out-of-range write ABORTS at its line with a message instead
 # of corrupting newlib's heap silently - the Vita has no sanitizer.

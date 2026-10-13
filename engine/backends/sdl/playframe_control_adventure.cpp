@@ -696,7 +696,7 @@ void PlayState::adventureScreenInput() {
                     image.mask = image.last = bits;
                     std::printf("frame %ld: Image_Show - IMAGES\\%s, %dx%d, ACTOR_STATE 10 "
                                 "(mask 0x%x)\n", frameNo, nm.c_str(), image.shown.w, image.shown.h,
-                                bits);
+                                static_cast<unsigned>(bits));
                 } else {
                     std::printf("frame %ld: Image_Show - IMAGES\\%s %s\n", frameNo, nm.c_str(),
                                 image.shown.valid() ? "refused by the state table"
@@ -714,7 +714,7 @@ void PlayState::adventureScreenInput() {
                     image.shown = omk::Surface{};
                     image.mask = 0;
                     std::printf("frame %ld: Image_Show closed by a press (edge 0x%x) - "
-                                "ACTOR_STATE %d\n", frameNo, edges,
+                                "ACTOR_STATE %d\n", frameNo, static_cast<unsigned>(edges),
                                 static_cast<int>(player->state()));
                 }
                 tickBits = 0;
@@ -1138,7 +1138,7 @@ void PlayState::adventureShootMoverTick() {
         player->addShootMotion(st.dx, st.dz, -st.dy);
         if (st.dy != 0.0f)
             std::printf("frame %ld: SHOOT JUMP rises %.2f (flags 0x%x), y %.1f\n", frameNo,
-                        double(st.dy), shootMover.flags, double(player->pos()[1]));
+                        double(st.dy), static_cast<unsigned>(shootMover.flags), double(player->pos()[1]));
         const bool moving = st.dx != 0.0f || st.dz != 0.0f;
         if (moving && shootMoveFrames == 0) {
             for (int k = 0; k < 3; ++k) shootMoveFrom[k] = player->pos()[k];
@@ -1855,7 +1855,7 @@ void PlayState::adventureWalls() {
                 std::printf("  anim: frame %ld  .CTL state %d '%s'  clip '%s' "
                             "f %.1f  input %04x%s\n", frameNo, player->ctlState(),
                             player->ctlStateName().c_str(), c.c_str(),
-                            player->clipFrame(), bits,
+                            player->clipFrame(), static_cast<unsigned>(bits),
                             bits ? "" : "   <- NO INPUT");
                 // Stop only once the machine has LEFT the idle and
                 // come back. Testing for H_STAND alone ended the
@@ -2201,7 +2201,7 @@ void PlayState::adventureSpecialMove(const std::string& mv, omk::Input& in, omk:
     const omk::SpecialMoves::Row* row = specialMoves.find(mv);
     if (row)
         std::printf("special move: %s (tab_special_move[%d] = 0x%08x)\n",
-                    row->name.c_str(), row->index, row->handler);
+                    row->name.c_str(), row->index, static_cast<unsigned>(row->handler));
     // ...NOT in ACTOR_STATE 3: MDACTION scans (`sub_41C810`) and then
     // `cmp [esi+194h], 3; je 0x46AFF8` - a shoot phase takes nothing,
     // and the press goes on to the zones below (todo/drift-audit.md S7)

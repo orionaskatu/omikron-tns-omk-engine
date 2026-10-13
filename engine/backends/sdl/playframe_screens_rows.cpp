@@ -423,7 +423,7 @@ void PlayState::screensSneakVerbs(bool& useClosedSneak) {
                 std::printf("sneak: '%s' USED - property %d %d -> %d "
                             "(+%d, effect %d), and it leaves the bag "
                             "(case 35 result 2)\n",
-                            rec->name.c_str(), prop, before, after,
+                            rec->name.c_str(), prop, static_cast<int>(before), static_cast<int>(after),
                             rec->amount, rec->effect);
             else
                 std::printf("sneak: '%s' is a consumable on the VALUABLES "
@@ -556,7 +556,7 @@ void PlayState::screensSneakIdentity(const omk::UiPanel*& pn,
         if (!bioTold) {
             bioTold = true;
             std::printf("sneak: identity bio pointers as stored +0 %#x +4 %#x "
-                        "(State_Apply plants %d / %d)\n", u32at(rec + 0), u32at(rec + 4),
+                        "(State_Apply plants %d / %d)\n", static_cast<unsigned>(u32at(rec + 0)), static_cast<unsigned>(u32at(rec + 4)),
                         omk::GameState::kBio[0], omk::GameState::kBio[1]);
         }
         const auto i16at = [&](std::size_t at) {

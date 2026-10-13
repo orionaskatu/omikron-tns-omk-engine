@@ -108,7 +108,7 @@ std::vector<WorldSlot> worldSlots(std::span<const std::byte> areaFile,
             const auto at = u32(b, 4);
             if (at > 0 && at < b.size()) {
                 std::snprintf(buf, sizeof buf, "%s %zu rec -1 +4 @%u",
-                              names[a], c, at);
+                              names[a], c, static_cast<unsigned>(at));
                 out.push_back({buf, b, at});
             }
             for (const auto& s : chunkSlots(b, kinds[a])) {

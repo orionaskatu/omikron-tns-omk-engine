@@ -868,8 +868,8 @@ void PlayState::worldCameraScript() {
                 addrTold = wc->id * 10000 + ad->id;
                 std::printf("frame %ld: camera %d framed on ADDRESS %d (subject kind 9, "
                             "sub_415850) at %d %d %d heading %d - eye %.0f %.0f %.0f\n",
-                            frameNo, wc->id, ad->id, ad->memPos[0], ad->memPos[1],
-                            ad->memPos[2], ad->memYaw, double(rc.eye[0]),
+                            frameNo, wc->id, ad->id, static_cast<int>(ad->memPos[0]), static_cast<int>(ad->memPos[1]),
+                            static_cast<int>(ad->memPos[2]), static_cast<int>(ad->memYaw), double(rc.eye[0]),
                             double(rc.eye[1]), double(rc.eye[2]));
             }
         }
@@ -1226,7 +1226,7 @@ void PlayState::worldProps() {
                                 hp.q.w, hp.q.x, hp.q.y, hp.q.z,
                                 cx, cy, cz, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], cnt,
                                 pm->rest.batches.size(),
-                                pm->rest.batches.empty() ? -1 : pm->rest.batches[0].material, pm->texBase,
+                                static_cast<int>(pm->rest.batches.empty() ? -1 : pm->rest.batches[0].material), pm->texBase,
                                 flo[0], fhi[0], flo[1], fhi[1], flo[2], fhi[2], fc,
                                 pp[0], pp[1], pp[2], yaw, lastEye[0], lastEye[1], lastEye[2]);
                 }

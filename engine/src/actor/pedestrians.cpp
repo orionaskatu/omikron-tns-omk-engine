@@ -817,7 +817,7 @@ void Sliders::bodyStep(int wi, float dt) {
                         wi, m.model.c_str(), m.body[0], m.body[1], m.body[2],
                         m.pos[0], m.pos[1], m.pos[2], m.prev[0], m.prev[1], m.prev[2],
                         m.dir[0], m.dir[1], m.dir[2], to[0], to[1], to[2], dist, moved,
-                        d[0], d[1], d[2], m.speed, m.remaining, m.seg, m.lane, m.flags);
+                        d[0], d[1], d[2], m.speed, m.remaining, m.seg, m.lane, static_cast<unsigned>(m.flags));
         }
     }
 }

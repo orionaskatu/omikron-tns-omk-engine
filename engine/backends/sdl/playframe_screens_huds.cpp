@@ -213,15 +213,15 @@ void drawSubtitle(omk::Surface& fb, const omk::TextLayout& lay,
             const int xa = dispW - 32, xb = dispW - 25, xm = dispW - 29;
             const int lo = apexY < baseY ? apexY : baseY;
             const int hi = apexY < baseY ? baseY : apexY;
-            for (int y = lo; y <= hi; ++y) {
-                if (y < 0 || y >= fb.h) continue;
+            for (int row = lo; row <= hi; ++row) {
+                if (row < 0 || row >= fb.h) continue;
                 const double t = hi == lo ? 0.0
-                    : static_cast<double>(y - apexY) / static_cast<double>(baseY - apexY);
+                    : static_cast<double>(row - apexY) / static_cast<double>(baseY - apexY);
                 const int x0t = static_cast<int>(xm + (xa - xm) * t);
                 const int x1t = static_cast<int>(xm + (xb - xm) * t);
                 for (int x = x0t; x <= x1t; ++x) {
                     if (x < 0 || x >= fb.w) continue;
-                    std::uint16_t& px = fb.px[static_cast<std::size_t>(y) *
+                    std::uint16_t& px = fb.px[static_cast<std::size_t>(row) *
                                               static_cast<std::size_t>(fb.w) +
                                               static_cast<std::size_t>(x)];
                     int r = ((px >> 11) & 31) << 3, g = ((px >> 5) & 63) << 2,
@@ -1091,7 +1091,7 @@ void PlayState::screensFps() {
             }
             if (showFps) {
                 std::printf("fps %.1f  (%d frames, worst %u ms)  %s%s\n",
-                            rate, fpsMeter.frames, fpsMeter.worst,
+                            rate, fpsMeter.frames, static_cast<unsigned>(fpsMeter.worst),
                             vkRen ? "vulkan" : glRen ? "gles" : "software",
                             drawWorld ? ", 3D" : ", 2D only");
                 std::fflush(stdout);

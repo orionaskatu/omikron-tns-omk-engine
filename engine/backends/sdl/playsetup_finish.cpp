@@ -96,7 +96,7 @@ int PlayState::finish() {
         std::int32_t vie = -1;
         omk::readActorProperty(playerRecordSpan(), 1, vie);
         std::printf("player: Vie %d (the DB player record's property 1); %ld run-overs posted\n",
-                    vie, session.runOvers());
+                    static_cast<int>(vie), session.runOvers());
     }
     std::printf("session: %d areas entered, %d ui answers, %d zones turned away by "
                 "the height band\n",

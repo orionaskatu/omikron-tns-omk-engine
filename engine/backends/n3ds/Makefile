@@ -56,7 +56,7 @@ DEFS     += -DOMK_PROFILE=0
 endif
 # The engine throws (`bad_alloc` is reported, not a silent abort) and uses
 # `dynamic_cast` in places; devkitPro's templates turn both off by default.
-CXXFLAGS := -std=gnu++20 -O2 -g $(ARCH) -mword-relocations -ffunction-sections -fdata-sections \
+CXXFLAGS := -std=gnu++20 -O2 -g -Wall -Wextra -Wshadow $(ARCH) -mword-relocations -ffunction-sections -fdata-sections \
             -fexceptions -frtti $(DEFS) -I$(ENGINE)/src -I$(ENGINE)/third_party -I$(CTRULIB)/include \
             -MMD -MP
 LDFLAGS  := -specs=3dsx.specs -g $(ARCH) -Wl,--gc-sections

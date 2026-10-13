@@ -649,11 +649,11 @@ void PlayState::inputMotion() {
                     restXyz = w.restXyzOfMesh.emplace(mi, std::move(r)).first;
                     const auto takeTris = [](const omk::TriangleSoup& soup,
                                              const std::vector<std::uint32_t>& tris) {
-                        std::vector<float> r;
-                        r.reserve(9 * tris.size());
+                        std::vector<float> out;
+                        out.reserve(9 * tris.size());
                         for (const std::uint32_t t : tris)
-                            r.insert(r.end(), soup.begin() + 9 * t, soup.begin() + 9 * t + 9);
-                        return r;
+                            out.insert(out.end(), soup.begin() + 9 * t, soup.begin() + 9 * t + 9);
+                        return out;
                     };
                     w.restSoupOfMesh.emplace(mi, takeTris(w.soup, meshSoupTris));
                     w.restSteepOfMesh.emplace(mi, takeTris(w.steep, meshSteepTris));

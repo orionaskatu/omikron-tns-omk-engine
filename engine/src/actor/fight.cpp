@@ -742,8 +742,8 @@ void Fight::applyDamage(FightContext& def, const FightContext& att,
                            ? S[(std::size_t)fromE].gotoIdx : -1,
                 (def.state == fight_role::Down || def.state == fight_role::GettingUp) ? "crouched"
                     : def.knockdown ? "knockdown" : "koEntry",
-                want, fl(want), w12(want), okF ? "ok" : "FAILED",
-                land, fl(land), w12(land), own, w12(own),
+                want, static_cast<unsigned>(fl(want)), static_cast<unsigned>(w12(want)), okF ? "ok" : "FAILED",
+                land, static_cast<unsigned>(fl(land)), static_cast<unsigned>(w12(land)), own, static_cast<unsigned>(w12(own)),
                 (int)(w12(land) & 0xFFu));
             koTraceLeft_ = 90; koTraceWho_ = &def;
         }

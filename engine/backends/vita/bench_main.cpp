@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
             ms = 0.0;
             std::uint64_t h = 1469598103934665603ull;
             for (int k = 0; k < passes; ++k) {
-                const auto t0 = Clock::now();
+                const auto tPass = Clock::now();
                 std::size_t at = 0;
                 for (const auto& x : tex) {
                     const std::size_t n = static_cast<std::size_t>(x.width) * x.height;
@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
                     else omk::rgbToRgbaKeyedGeneric(x.rgbCopy().data(), out.data() + 4 * at, n);
                     at += n;
                 }
-                ms += msSince(t0);
+                ms += msSince(tPass);
                 if (k == 0) h = fnv(out.data(), out.size(), h);
             }
             return h;

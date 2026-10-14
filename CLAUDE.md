@@ -311,6 +311,6 @@ build/omk-play ../gamedata ../tables --save ../traces/save-appart.bin --area 0 \
 
 The open questions, each with what has already been ruled out, are PRACTICE
 §6: the 105 conversations with no launch path (the CUT reading predicts the
-data), the `.3DM` `float[3]` and node slots 0/1, the voice-over audio (10 of
-561 ship), the scene-clip staging via `.3DP` paths in the web viewer, the
-mirror plane's normal. Grep there before re-searching anything.
+data), the `.3DM` `float[3]` and node slots 0/1, the scene-clip staging via
+`.3DP` paths in the web viewer, the mirror plane's normal. (The voice-over
+audio is closed: 520 of 561 play the engine's `JINGOFF3` placeholder.) Grep there before re-searching anything.

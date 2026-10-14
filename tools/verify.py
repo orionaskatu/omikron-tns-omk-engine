@@ -3730,8 +3730,22 @@ def c_engine_security_rail():
     a RECONSTRUCTION - `Sweep_PolygonKernel` is not transcribed, see its
     comment). This runs the route that fell: out of the lift, round, and a
     run at the rail with the turn held 70 frames.
-    SHOWN TO FAIL: the edge and corner tests skipped (`radius <= 0.0` read
-    as `radius >= 0.0`) - he FALLS from frame 501, as reported.
+    SHOWN TO FAIL (2026-09-18): the edge and corner tests skipped
+    (`radius <= 0.0` read as `radius >= 0.0`) - he FALLS from frame 501, as
+    reported. SINCE `71a53b3` (2026-10-01, the swept body's top no longer
+    raised by the step, `Actor_Move` read) that mutation ALONE no longer
+    fails: the body's spheres now hang at the model's heights and meet the
+    rail by its faces (bisected over 690 commits, mutation applied at each).
+    Neither does the body raised by the step alone. Shown to fail 2026-10-14
+    with BOTH - edge tests skipped and `bodyHit`'s `std::min(off[1], lowest)`
+    read as `off[1] - kStepUp`: falls 259.8 at frame 501, ends at y 606.3.
+    So the edge and corner tests have NO single-fault guard on this route,
+    and no other check uses that mutation.
+    A fall counts only if it drops more than a metre (39 units) or never
+    lands: since `0d5bf1e` (scene-gameplay-audit row 22) the adventure walker
+    no longer absorbs a small drop, as the original never does, and this route
+    runs off a 3.9-unit step at frame 294 (FALLS, LANDS tier 1, runs on) - the
+    red `(1, '346.5')` of the 2026-10-13 sweep, bisected to that commit.
     """
     import subprocess
     eng = os.path.join(ROOT, "engine")
@@ -3757,9 +3771,15 @@ def c_engine_security_rail():
     if not end:
         return ("no end line",), ("an end line",), "the run printed no final position"
     x, y, z = (float(v) for v in end.groups())
-    return (out.count("FALLS from"), "%.1f" % y), (0, "346.5"), \
-        ("level -2's running route at the handrail: falls, and the floor he "
-         "ends on (%.0f %.0f)" % (x, z))
+    falls = len(re.findall(r"the player FALLS from", out))
+    drops = [float(d) for d in
+             re.findall(r"the player LANDS at y -?[\d.]+ - dropped (-?[\d.]+)", out)]
+    short = [d for d in drops if d <= 39.0]
+    deep = falls - len(short)
+    return (deep, "%.1f" % y), (0, "346.5"), \
+        ("level -2's running route at the handrail: falls of more than a "
+         "metre or never landed, and the floor he ends on (%.0f %.0f); "
+         "short drops under a metre: %s" % (x, z, short or "none"))
 
 
 def c_engine_sneak_verbs():

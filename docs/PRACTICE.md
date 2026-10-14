@@ -1593,10 +1593,14 @@ Listed with what has already been ruled out, so nobody repeats the search.
   stairs). A golden trace from the original would settle it in one run.
   Related and untraced: what `Anim_RootDelta`'s optional 3x3 is for — rotating
   the deltas by the root's own quaternion sinks Kay'l 70 units over his walk.
-* **The voice-over audio is not in this tree.** `media.play` names a `ZVO …`
-  object whose `+14` stem is a `VOICEOFF\*.ADP`, and **10 of the 561** ship.
-  Not a gap in the reading — a property of the data, asserted in
-  `verify.py: cutscene music` so it stays explained.
+* ~~**The voice-over audio is not in this tree.**~~ — **closed: the engine
+  substitutes a placeholder.** `media.play` names a `ZVO …` object whose
+  `+14` stem is a `VOICEOFF\*.ADP`, and **10 of the 561** ship — but the
+  handler (`0x00404590`) overwrites any name starting `ZVOT`/`ZVOP` with
+  `"JINGOFF3.ADP"` (`0x004C0868`), which ships. So 10 play their own file,
+  520 the 2.08 s jingle, and 31 are silent: the game as shipped, not a gap.
+  CUTSCENES §5 has the reading; `verify.py: engine: voice over` and
+  `cutscene music` assert it.
 * ~~**`.CTL` entry flags**~~ — **closed.** Every flag-gated block now has its
   traced consumer (ASSETS has the full decode): the combat block
   (`Fight_ResolveHit` — damage, hit window, reaction by low-16 id,

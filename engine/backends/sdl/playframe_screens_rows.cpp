@@ -252,6 +252,9 @@ void PlayState::screensSneakRows() {
                         "%d, object list %d)\n", openScreen,
                         omk::kEventSneakClose, inv.openedList());
             inv.closeList();          // Game_RaiseEvent(26, 0)
+            // ...and the release presses action with the object in hand,
+            // which is what makes the key at the lift ride at once
+            releaseFromScreen(openScreen, "closed by the use");
             walk.reset();
             openScreen = -1;
             screenFromScript = true;

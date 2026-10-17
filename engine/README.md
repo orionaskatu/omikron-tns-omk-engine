@@ -3757,7 +3757,11 @@ security centre** - each with its record in `todo/` and its finding in `docs/`:
   reader`). Not ported: those screens' interface sounds, and any item's bank-B
   `0x80` outline (labelled in each source);
 * the sneak's verbs: `Object_ApplyEffect`'s consumable half and `Utiliser sur`
-  as a combine over carried-list rows. `engine: sneak verbs`;
+  as a combine over carried-list rows. `engine: sneak verbs`; and the
+  release of a screen's hold with an object in hand pressing action
+  (`sub_466B60`'s event 6), so the key used at the lift rides at once
+  (`docs/UI.md`, `engine: used object`). Not ported: the refused press's
+  put-away, `sub_41C770`;
 * a script plays objects in its own slot's pool, and a node stays where a
   program put it (`docs/SCRIPT_VM.md`). `engine: slot pool`, `engine: node
   rest`;

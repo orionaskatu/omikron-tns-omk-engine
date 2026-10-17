@@ -2008,6 +2008,7 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
         // event 26, no list - and `sub_466B60` again only if the
         // player is still held, which a level page already undid
         std::printf("screen 36 HIGH-SCORE closed - the generic close\n");
+        if (!highScore.released) releaseFromScreen(openScreen, "the high score's generic close");
         walk.reset();
         openScreen = -1;
         screenFromScript = true;
@@ -2017,6 +2018,7 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
                     "list %d\n", openScreen, omk::kEventSneakClose,
                     inv.openedList());
         inv.closeList();          // Game_RaiseEvent(26, 0)
+        releaseFromScreen(openScreen, "closed by the player");
         walk.reset();
         openScreen = -1;
         screenFromScript = true;
@@ -2034,6 +2036,7 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
         omk::event("ui.answer", {{"screen", openScreen}, {"value", walk->answer()},
                                  {"var", uiVar}, {"stored", uiVar >= 0 ? int(state.var(uiVar)) : -1},
                                  {"how", walk->log().empty() ? std::string() : walk->log().back()}});
+        releaseFromScreen(openScreen, "answered");
         walk.reset();
         openScreen = -1;
     } else if (walk->closed()) {
@@ -2062,6 +2065,7 @@ void PlayState::modesScreenClosing(bool screenLeaving, omk::Inventory& inv) {
                         openScreen, was, inv.openedList());
         }
         session.answerUi(-1);
+        releaseFromScreen(openScreen, "closed without an answer");
         walk.reset();
         openScreen = -1;
     }
@@ -2326,6 +2330,7 @@ void PlayState::closeAllScreens(const char* who) {
         videophoneCall = false;
         callWorldBack = true;
         callCloseLeftMs = 100.0;
+        releaseFromScreen(openScreen, "UI_CloseAllScreens, the videophone's sub_466B60");
         std::printf("frame %ld: UI_CloseAllScreens (%s) - screen 0 VIDEOPHONE REFUSES: "
                     "dword_670BF0 cleared, sub_466B60 (the world view back on), oscillator "
                     "5 started for 100 ms\n", frameNo, who);
@@ -2344,4 +2349,25 @@ void PlayState::closeAllScreens(const char* who) {
     openScreen = -1;
     screenFromScript = true;
     callWorldBack = false;
+}
+
+// THE RELEASE OF ACTOR_STATE 9 - `sub_466B60` / `Actor_TickUiHeld` case 3 -
+// and its held-object press (`Session::releaseFromScreen` has the reading).
+// Only a screen that HELD him releases him: `UI_LoadScreen` writes state 9
+// for every screen without the `0x40000` bit, and the three that carry it
+// (PAUSE GAME, the two SHOOT screens) leave him in his state. Called where a
+// screen closes, before `openScreen` forgets which one it was.
+void PlayState::releaseFromScreen(int screen, const char* who) {
+    auto& session = *session_;
+    if (screen < 0 || uiWidgets.worldBehind(screen)) return;
+    if (session.heldSlotOf(-1) == -1) return;      // `a1[41]`: empty hands
+    const bool pressed = session.releaseFromScreen();
+    std::printf("frame %ld: screen %d released the player (%s) holding object %d - "
+                "event 6 %s\n", frameNo, screen, who,
+                session.objectSlotId(session.heldSlotOf(-1)),
+                pressed ? "pressed: the armed zone's activate runs with it in hand"
+                        : "refused: no zone armed, it stays in his hand");
+    omk::event("ui.release.held", {{"screen", screen},
+                                   {"object", session.objectSlotId(session.heldSlotOf(-1))},
+                                   {"pressed", pressed ? 1 : 0}});
 }

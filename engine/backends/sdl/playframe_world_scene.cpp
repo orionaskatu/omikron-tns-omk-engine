@@ -1092,7 +1092,32 @@ void PlayState::worldProps() {
         }
     }
     {
-        const auto shown = session.props();
+        auto shown = session.props();
+        // THE OBJECT TAKEN IN HAND FROM THE SNEAK (`todo/sneak.md` 2g). The
+        // sneak's `Utiliser` reaches case 35's non-consumable arm: a slot is
+        // allocated, the object LEAVES the bag and `sub_41C490` links its
+        // model under the left hand - the same call MDGETOBJ makes for a
+        // prop. The port held the slot (`Session::useObject`, what opcode 75
+        // reads) but drew nothing, because the hand is drawn from the WORLD's
+        // props and an object out of the inventory is not one of them. So the
+        // session's held slot is the truth for both ways into the hand: when
+        // MDGETOBJ did not set `heldInHand`, the player's held slot names the
+        // object, and it rides the hand through the same path as a prop.
+        int heldId = heldInHand;
+        if (player && heldId < 0) {
+            const int hs = session.heldSlotOf(-1);
+            const int obj = hs >= 0 ? session.objectSlotId(hs) : -1;
+            if (obj >= 0) {
+                heldId = obj;
+                bool present = false;
+                for (const auto& pr : shown) if (pr.id == obj) { present = true; break; }
+                if (!present) {
+                    decltype(shown)::value_type pi;
+                    pi.id = obj;              // not shown in the world: drawn only in the hand
+                    shown.push_back(pi);
+                }
+            }
+        }
         for (const auto& pr : shown) {
             // THE OBJECT IN HIS HAND (omk-play 69). `sub_41C490`, the
             // MDGETOBJ hand-over, unlinks the prop's node from the
@@ -1111,7 +1136,7 @@ void PlayState::worldProps() {
             // set (the bank clears bit 0 later), so a held prop is
             // still "shown" - the engine simply draws its node where
             // the hierarchy now puts it, the hand, and so does this.
-            const bool held = player && heldInHand >= 0 && pr.id == heldInHand;
+            const bool held = player && heldId >= 0 && pr.id == heldId;
             if (!pr.shown && !held) continue;
             const auto& objs = voiceLib.objects();
             if (pr.id < 0 || static_cast<std::size_t>(pr.id) >= objs.size()) continue;

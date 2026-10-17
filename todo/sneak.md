@@ -442,11 +442,30 @@ Not ported. The composer draws a **labelled reconstruction** — greedy word
 wrap, clipped at the box height. Invisible on every earlier screen and obvious
 on the sneak's 50-pixel captions. `play.cpp:180` carries the note.
 
-### 2g. The object in the hand is invisible
+### 2g. The object in the hand is invisible — **DONE 2026-10-17 (Windows port, uncommitted)**
 
 `sub_41C490` writes `player[+0xA4]` and ALSO attaches the model
-(`sub_437400` / `sub_4374E0`). The port does the first and not the second, so
-`Utiliser` on a key works and shows nothing. A player reported exactly this.
+(`sub_437400` / `sub_4374E0`). The port did the first and not the second, so
+`Utiliser` on a key worked and showed nothing. A player reported exactly this.
+
+**Done**: the world pass (`playframe_world_scene.cpp`) drew the hand only from
+the WORLD's props, and an object out of the inventory is not one. It now takes
+the player's held slot (`Session::heldSlotOf(-1)` -> `objectSlotId`) whenever
+MDGETOBJ has not set `heldInHand`, and draws that object through the same
+left-hand path as a taken prop. Seen in a render: *MK400 Notice* in his hand
+after `Utiliser` from the sneak (`held 171: ... 36 corners`). Not covered by a
+check; the hand's placement is the prop path's existing reconstruction.
+
+**And it COMES BACK (2026-10-17).** A player: *"when I Use an item it disappears
+from the list and isn't selectable anymore, even if it couldn't be used"*. The
+original's TAB handler `MDSNEAK0` (0x0046ADF0, read through Ghidra) opens with
+`if (Actor_HeldObjectSlot(player) != -1) { sub_41C720(player); return; }` -
+event 10 banks the held object back into list 0 and the sneak does NOT open;
+the next TAB opens it. The port's comment had it as "not modelled, so the
+sneak always opens"; it now runs `Session::bankHeldObject` (event 10's arm, the
+one MDPUTSNK takes) there. Seen in a run: *Utiliser* MK400 Notice -> in hand ->
+TAB banks it (`MDSNEAK0: holding object 171 ... banked`) -> TAB opens the sneak
+with it back at the top (3 / 18).
 
 ### 2h. `Object_ApplyEffect` (0x00409780)
 

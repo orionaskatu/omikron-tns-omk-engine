@@ -2564,6 +2564,32 @@ bool PlayState::adventureActionMove(const std::string& mv, omk::Inventory& inv) 
         // opening object list 0 on the way in, and event 26
         // if the open fails or when the close comes.
         if (walk || playerScreen >= 0) return true;   // already up
+        // THE GATE, now modelled (2026-10-17, read from the image
+        // through Ghidra): 0x0046ADF0 opens with
+        //
+        //     if (Actor_HeldObjectSlot(player) != -1) {   // 0x0041A350
+        //         sub_41C720(player);    // event 10: into the sack, +164 = 0
+        //         return;                // and the sneak does NOT open
+        //     }
+        //
+        // so TAB with something in the hand puts it BACK - which is
+        // how an object `Utiliser` took out of the sneak returns when
+        // no zone wanted it (a player reported it "disappears from
+        // the list"). `bankHeldObject` is event 10's arm, the same
+        // one MDPUTSNK runs: `Inventory_Insert` at the front of list
+        // 0, the slot freed, the hand cleared.
+        if (const int hs = session.heldSlotOf(-1); hs != -1) {
+            const int obj = session.objectSlotId(hs);
+            const auto arm = session.bankHeldObject(obj);
+            if (heldInHand == obj) heldInHand = -1;
+            if (takeCandidate == obj) takeCandidate = -1;
+            std::printf("MDSNEAK0: holding object %d '%s' (slot %d) - event 10 "
+                        "puts it back in the sneak (%s); the sneak does not open\n",
+                        obj, session.objectName(obj).c_str(), hs,
+                        arm == omk::Session::Banked::Full ? "REFUSED, list 0 full"
+                                                          : "banked");
+            return false;
+        }
         inv.openList(0);          // Game_RaiseEvent(25, 0)
         playerScreen = omk::screen::Sneak;
         std::printf("MDSNEAK0: event %d opens object list 0, "

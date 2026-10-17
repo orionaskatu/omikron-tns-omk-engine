@@ -1333,6 +1333,18 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
         } else {
             screenOpenBits = 0;
         }
+        // ESC / BACKSPACE AS BACK (`[Enhancements] escapeback`): the edge the
+        // input pass took (`playframe_input_parts.cpp`) becomes the
+        // interface's BACK, the bit `Annuler / Sauter` carries - so it goes
+        // up a panel, out of the verb panel and the combine, and closes a top
+        // panel that takes BACK, exactly where SPACE does.
+        if (escBackEdge) {
+            uiBits |= omk::kUiBack;
+            if (escBackEdge == 2) escBackLatch = true;
+            std::printf("frame %ld: escape back: %s sent BACK to screen %d\n", frameNo,
+                        escBackEdge == 2 ? "ESC" : "BACKSPACE", openScreen);
+            escBackEdge = 0;
+        }
         // ...AND A PANEL CAN OPT OUT OF INPUT ALTOGETHER. `panel+72 & 8`,
         // which `Ui_ScreenInput` tests before it dispatches anything, and
         // the VIDEOPHONE's panel is the one in the tree that sets it. So

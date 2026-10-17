@@ -177,6 +177,13 @@ int PlayState::setupSession() {
     if (smoothAnim)
         std::printf("animation: smooth - an ENHANCEMENT: bodies are slerped between "
                     "two keys; the original truncates to one (`Anim_ApplyNodeFrame`'s _ftol)\n");
+    // ESC/BACKSPACE AS BACK (settings.h `escapeBack`), read by the screen
+    // input in playframe_modes_parts.cpp
+    escapeBack = enh(escapeBackFlag, settings.escapeBack ? 1 : 0, omk::kMaxEscapeBack) > 0;
+    if (escapeBack)
+        std::printf("escape back: on - an ENHANCEMENT: ESC and BACKSPACE also send BACK "
+                    "while a screen is up; the original's BACK is `Annuler / Sauter` "
+                    "(SPACE) alone\n");
     if (frameRate != 30)
         std::printf("framerate: %d - an ENHANCEMENT: the port presents at 30 by default; "
                     "the original had no cap and stepped on 30/fps, as this does\n", frameRate);

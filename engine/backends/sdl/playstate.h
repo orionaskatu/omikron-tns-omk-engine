@@ -93,6 +93,7 @@ struct PlayState {
     int & radarFlag = opt.radarFlag;
     int & frameRateFlag = opt.frameRateFlag;
     int & smoothAnimFlag = opt.smoothAnimFlag;
+    int & escapeBackFlag = opt.escapeBackFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -236,6 +237,10 @@ struct PlayState {
     bool radarAlways{};
     int frameRate{};
     bool smoothAnim{};
+    bool escapeBack{};       // [Enhancements] escapeback: ESC/Backspace send BACK under a screen
+    bool escBackLatch{};     // ESC was taken as BACK: it opens no pause until it is released
+    bool escBackPrevDown{};  // ESC or Backspace down last frame - BACK is sent on the edge
+    int  escBackEdge{};      // this frame's fresh press under a screen: 0 none, 1 Backspace, 2 ESC
     int uiScaling{};
     int textScaling{};
     char clipText[128]{};

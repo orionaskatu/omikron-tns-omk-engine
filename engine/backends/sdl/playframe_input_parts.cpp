@@ -202,7 +202,23 @@ void PlayState::inputPause() {
     // open is a screen nothing can check.
     const bool esc = std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x01)
                      != devices.keyboard.end();
-    if (esc && !walk && playerScreen < 0) {
+    // ESC / BACKSPACE AS BACK (`[Enhancements] escapeback`, off by default).
+    // The EDGE is taken here, every frame, so that a key already down when a
+    // screen opens is not a press - the ESC that opened the pause must not
+    // close it on the next frame - and only for a screen that was up before
+    // this frame's keys. BACKSPACE belongs to a focused name field, which
+    // edits with it. An ESC taken as BACK LATCHES: ESC is polled
+    // level-triggered for the pause (below), so without it the press that
+    // closed a screen would reopen the pause at once.
+    {
+        const bool bs = std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x0E)
+                        != devices.keyboard.end() && !(walk && walk->nameFieldFocused());
+        const bool down = esc || bs;
+        escBackEdge = (escapeBack && walk && down && !escBackPrevDown) ? (esc ? 2 : 1) : 0;
+        escBackPrevDown = down;
+        if (!esc) escBackLatch = false;
+    }
+    if (esc && !walk && playerScreen < 0 && !escBackLatch) {
         playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "
                     "(`Game_RunLoop`'s own GetAsyncKeyState(27), guarded "

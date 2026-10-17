@@ -230,3 +230,11 @@
 ; while its limbs step at 30; smooth slerps every bone between two keys.
 ; `todo/enhancements.md` 12.
 ;animation = game
+
+; ESCAPE / BACKSPACE AS BACK: off | on. The original's interface BACK is the
+; `Annuler / Sauter` binding alone - SPACE, or the pad's second button - and
+; ESC only opens the pause screen, so in the sneak's verb panel (after choosing
+; an object) ESC finds no way back to the tab column. `on` makes a fresh ESC or
+; BACKSPACE send BACK while a screen is up (BACKSPACE still edits a focused
+; name field). `todo/enhancements.md` 14.
+;escapeback = off

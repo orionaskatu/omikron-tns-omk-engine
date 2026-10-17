@@ -7060,7 +7060,8 @@ def c_enhance_all():
              "shadowquality": "ShadowQuality", "lighting": "Lighting",
              "uiscaling": "UiScaling", "textscaling": "TextScaling",
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
-             "framerate": "FrameRate", "animation": "Animation"}
+             "framerate": "FrameRate", "animation": "Animation",
+             "escapeback": "EscapeBack"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27309,6 +27310,53 @@ def c_engine_start_quit():
         got.append((int(m.group(1)) if m else None, "PostQuitMessage" in out))
     return got, [(101, True), (400, False)], \
            "frames presented and whether the quit was taken: Oui, then Non"
+
+
+def c_engine_escape_back():
+    r"""`[Enhancements] escapeback` - ESC and BACKSPACE as the interface's BACK.
+
+    `todo/enhancements.md` 14. The original's BACK (bit 0x20) is the binding
+    `Annuler / Sauter`, SPACE by default, and ESC is read by `Game_RunLoop`
+    for the pause screen alone, so from the sneak's verb panel - whose builder
+    0x0049B810 disables the tab column - ESC finds no way back
+    (`todo/sneak.md` 2g-bis). The enhancement sends BACK on a fresh ESC or
+    BACKSPACE while a screen is up.
+
+    Two runs of the same keys, read through the `ui.key` records: TAB, a row
+    confirmed (the verb panel 0x004DEEB8), ESC, RIGHT. OFF (the default) the
+    ESC sends nothing and RIGHT moves along the verbs; ON (`--escape-back`)
+    the ESC lands on the Inventaire panel 0x004DEE50's rows and RIGHT on the
+    tab column 0x004DE210. Shown to fail with the mapping removed (ON reads
+    as OFF) and with the setting on by default (OFF reads as ON).
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    fr, tb = omkpaths.data_root(), os.path.join(ROOT, "tables")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not os.path.isdir(eng) or not os.path.exists(save):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+    keys = "0*40,k15*3,0*30,k28*3,0*20,k1*3,0*20,k205*3,0*30"
+    def run(extra):
+        r = subprocess.run([play, fr, tb, "--software", "--res", "640x480", "--nofmv",
+                            "--no-crowd", "--save", save, "--area", "0",
+                            "--stand", "1804,0,-6890,336", "--give", "16,18",
+                            "--frames", "200", "--hold", keys] + extra,
+                           capture_output=True, text=True, env=env)
+        ev = [f for n, f in _events(r.stdout) if n == "ui.key"]
+        back = [f for f in ev if int(f.get("bits", 0)) & 0x20]
+        last = ev[-1] if ev else {}
+        return (len(back), "%x" % int(last.get("panel", 0)), "%x" % int(last.get("list", 0)))
+    off, on = run([]), run(["--escape-back"])
+    return (off, on), ((0, "4deeb8", "4de318"), (1, "4dee50", "4de210")), \
+        ("with the setting OFF and ON: how many keys carried BACK, then the panel and " \
+         "the current list after the last key - the verb panel's verb list when off, " \
+         "the Inventaire panel's tab column when on")
+
 
 
 def c_engine_close_flush():
@@ -47904,6 +47952,7 @@ SLOW = [
     ("engine: sneak quit", c_engine_sneak_quit, "UI; todo/sneak.md 5"),
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
+    ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

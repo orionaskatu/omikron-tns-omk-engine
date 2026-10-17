@@ -52,6 +52,8 @@ int main(int argc, char** argv) {
     std::printf("enh framerate %d %s\n", s.frameRate, omk::sourceName(s.frameRateSource));
     std::printf("enh animation %d %s\n", s.smoothAnimation ? 1 : 0,
                 omk::sourceName(s.smoothAnimationSource));
+    std::printf("enh escapeback %d %s\n", s.escapeBack ? 1 : 0,
+                omk::sourceName(s.escapeBackSource));
     std::printf("enh all %d\n", s.enhanceAll ? 1 : 0);
     std::printf("screen %dx%d %s\n", v.screenX, v.screenY, omk::sourceName(s.screen));
     std::printf("density %d %s\n", v.streetActivity, omk::sourceName(s.streetActivity));

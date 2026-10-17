@@ -283,6 +283,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --smooth-anim    ENHANCEMENT: bodies slerped between two keys by the clock's\n"
 "                   fraction; the original truncates to one. Seen above 30 fps;\n"
 "                   [Enhancements] animation=smooth\n"
+"  --escape-back    ENHANCEMENT: ESC and BACKSPACE also mean BACK while a screen\n"
+"                   is up (the original's BACK is SPACE alone - `Annuler /\n"
+"                   Sauter`); [Enhancements] escapeback=on\n"
 "  --software       force the software rasteriser\n"
 "  --profile F      write a profiler capture to F (tools/omkprof.py reads it;\n"
 "                   todo/debug-tools.md - absent from `make release`)\n"
@@ -493,6 +496,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--enhance-all") enhanceAll = true;
         else if (a == "--ssaa" && i + 1 < argc) ssaaFlag = std::atoi(argv[++i]);
         else if (a == "--smooth-anim") smoothAnimFlag = 1;
+        else if (a == "--escape-back") escapeBackFlag = 1;
         else if (a == "--framerate" && i + 1 < argc) {
             frameRateFlag = omk::frameRateValue(argv[++i]);
             if (frameRateFlag < 0) {

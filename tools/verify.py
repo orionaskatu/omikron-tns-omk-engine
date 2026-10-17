@@ -101,18 +101,60 @@ _MAKE_LOCK = os.path.join(ROOT, "engine", "build", ".verify-make.lock")
 def _viewer_run(args, *a, **k):
     if isinstance(args, (list, tuple)) and args and \
             os.path.basename(str(args[0])) in ("make", "cmake"):
-        import fcntl
         os.makedirs(os.path.dirname(_MAKE_LOCK), exist_ok=True)
         with open(_MAKE_LOCK, "w") as lk:
-            fcntl.flock(lk, fcntl.LOCK_EX)
+            # fcntl is POSIX-only; Windows takes the same exclusive lock
+            # through msvcrt (one byte, blocking - it retries until free).
+            try:
+                import fcntl
+                lock = lambda: fcntl.flock(lk, fcntl.LOCK_EX)
+                unlock = lambda: fcntl.flock(lk, fcntl.LOCK_UN)
+            except ImportError:
+                import msvcrt
+
+                def lock():
+                    while True:
+                        try:
+                            msvcrt.locking(lk.fileno(), msvcrt.LK_LOCK, 1)
+                            return
+                        except OSError:
+                            continue
+                unlock = lambda: msvcrt.locking(lk.fileno(), msvcrt.LK_UNLCK, 1)
+            lock()
             try:
                 return _subprocess_run(args, *a, **k)
             finally:
-                fcntl.flock(lk, fcntl.LOCK_UN)
+                unlock()
     return _subprocess_run(_viewer_args(args), *a, **k)
 
 
 subprocess.run = _viewer_run
+
+
+# WINDOWS: every binary the checks build carries `.exe`, and the checks name
+# them as on POSIX (`engine/build/omk-play`). Launching is fine - CreateProcess
+# appends `.exe` itself - so only the EXISTENCE tests need telling: a name with
+# no extension under engine/build/ exists when its `.exe` does. Without this,
+# every viewer check answers "omk-play did not build (no SDL?)" and skips.
+if os.name == "nt":
+    _BUILD_DIR = os.path.normcase(os.path.join(ROOT, "engine", "build"))
+
+    def _exe_aware(test):
+        def wrapped(p):
+            if test(p):
+                return True
+            try:
+                sp = os.fspath(p)
+            except TypeError:
+                return False
+            if not isinstance(sp, str) or os.path.splitext(sp)[1]:
+                return False
+            return (os.path.normcase(os.path.abspath(sp)).startswith(_BUILD_DIR)
+                    and test(sp + ".exe"))
+        return wrapped
+
+    os.path.exists = _exe_aware(os.path.exists)
+    os.path.isfile = _exe_aware(os.path.isfile)
 
 
 # THE VIEWER RUN - the preamble the engine checks repeat

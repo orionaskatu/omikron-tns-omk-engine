@@ -26587,8 +26587,11 @@ def c_engine_sneak_identity():
     return (len(lines), lines), \
            (10, [
             "RIGHT panel 0x4dee50 list 0x4de210 tab -1 identity on characteristics on",
-            "UP panel 0x4dee50 list 0x4de210 tab -1 identity on characteristics on",
-            "UP panel 0x4dee50 list 0x4de210 tab -1 identity on characteristics on",
+            # the move installs the page (`sub_42A7E0`, bank A 0x40): UP onto
+            # the slider icon is the slider page, UP again the identity page,
+            # and ENTER confirms an icon whose page is already up (2026-10-17)
+            "UP panel 0x4dede8 list 0x4de210 tab -1 identity on characteristics on",
+            "UP panel 0x4ded80 list 0x4de210 tab 0 identity on characteristics off",
             "ENTER panel 0x4ded80 list 0x4de210 tab 0 identity on characteristics off",
             "RIGHT panel 0x4ded80 list 0x4de900 tab 0 identity on characteristics off",
             "RIGHT panel 0x4ded80 list 0x4de900 tab 1 identity off characteristics on",
@@ -27189,12 +27192,18 @@ def c_engine_sneak_quit():
     r = subprocess.run([tool, os.path.join(tb, "ui_widgets.json"), os.path.join(tb, "ui.json")],
                        capture_output=True, text=True)
     lines = [" ".join(ln.split()) for ln in r.stdout.splitlines() if " panel 0x" in ln]
+    # 2026-10-17: the move down the tab column INSTALLS each page
+    # (`sub_42A7E0`, bank A 0x40) - Memoire, Options, then the quit page
+    # 0x004DF0C0, whose builder 0x0049D980 hides the Oui/Non pair; the ENTER
+    # callback then shows it and focuses ITS list 1. Until then this asserted
+    # every page staying on the Inventaire panel and the pair shown on a page
+    # nothing drew - the quit tab did nothing.
     return (len(lines), lines), \
            (5, ["RIGHT panel 0x4dee50 list 0 tab 2 quitlist shown sel -1 approx 0 quit 0",
-                "DOWN panel 0x4dee50 list 0 tab 3 quitlist shown sel -1 approx 0 quit 0",
-                "DOWN panel 0x4dee50 list 0 tab 4 quitlist shown sel -1 approx 0 quit 0",
-                "DOWN panel 0x4dee50 list 0 tab 5 quitlist shown sel -1 approx 0 quit 0",
-                "ENTER panel 0x4dee50 list 1 tab 5 quitlist shown sel 1 approx 0 quit 0"]), \
+                "DOWN panel 0x4def88 list 0 tab 3 quitlist shown sel -1 approx 0 quit 0",
+                "DOWN panel 0x4df058 list 0 tab 4 quitlist shown sel -1 approx 0 quit 0",
+                "DOWN panel 0x4df0c0 list 0 tab 5 quitlist hidden sel 0 approx 0 quit 0",
+                "ENTER panel 0x4df0c0 list 1 tab 5 quitlist shown sel 1 approx 0 quit 0"]), \
            "reports read (a parse that reads none fails AS a parse); then after " \
            "each key - onto the tab column, down to 'Quitter le jeu', and the " \
            "confirm - the panel, the current list index, the tab's selection, the " \
@@ -32486,7 +32495,13 @@ def c_sim_options():
             o.press(DOWN)
         o.press(CONFIRM)
         page, first = o.page, o.rows()[0][1]
-        while o.label() != "Retour":
+        # the page's `Retour` row is found by its TYPE (6, "back"), not by its
+        # French text, and the walk is bounded: matched by text, an English
+        # install ("Return") looped here for ever and pinned a CPU core
+        for _ in range(64):
+            sel = o.selected()
+            if sel is not None and o.opt[sel]["kind"] == "back":
+                break
             o.press(DOWN)
         o.press(CONFIRM)
         tree.append((page, o.opt[first]["label"], o.page))

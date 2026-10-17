@@ -252,6 +252,10 @@ void PlayState::screensSneakRows() {
                         "%d, object list %d)\n", openScreen,
                         omk::kEventSneakClose, inv.openedList());
             inv.closeList();          // Game_RaiseEvent(26, 0)
+            // `screen+8 = 3` closes through `Ui_ScreenInput`, which runs the
+            // current panel's leave hook - the verb panel's, re-enabling the
+            // lists its builder disabled (`UiWalk::closeNow`).
+            walk->closeNow("close (0x0049BEA0: the use)");
             walk.reset();
             openScreen = -1;
             screenFromScript = true;

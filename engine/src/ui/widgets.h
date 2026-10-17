@@ -268,6 +268,9 @@ inline constexpr std::uint32_t kHookSneakSliderLists = 0x0049D4D0u;
 // `list 0x004DE6F0 + 4` - the sneak's row list hook, a wrapper over the
 // WINDOWED selection mover `sub_42AFF0`.
 inline constexpr std::uint32_t kHookSneakRows = 0x0049C050u;
+// The OPTIONS page's panel hook (0x004DF058): `if (!(input & 3)) return 0;
+// UI_FocusScreen(35); return 1;` - LEFT/RIGHT hand the keys to screen 35.
+inline constexpr std::uint32_t kHookSneakOptionsPage = 0x0049D960u;
 // `panel 0x004DEF88 + 16` - THE MEMORY PAGE'S OWN PANEL HOOK, and it is a
 // wrapper the way the identity page's is: it shows or hides the body box by
 // whether the CURRENT list is the rows, then tail-calls `sub_42A710`, the

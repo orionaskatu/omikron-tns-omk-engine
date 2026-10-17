@@ -567,6 +567,14 @@ void UiWalk::closeNow(const char* how) {
         answer_ = close_.answer;
         log_.push_back("close: the answer written earlier, " + std::to_string(answer_));
     }
+    // THE CURRENT PANEL'S LEAVE HOOK RUNS ON THE CLOSE. `Ui_ScreenInput`
+    // (0x0042A0F0), after the dispatch: `if (screen+8 == 3) panel+8(screen,
+    // panel)`. Skipped, the verb panel's leave never re-enabled the tab column,
+    // the tiles and the rows it had disabled - those flags are static records -
+    // so after `Utiliser` closed the sneak from the verb panel, the next open
+    // was stuck on the rows: LEFT and RIGHT found no other usable list (a
+    // player reported exactly that).
+    if (panel_) leavePage(*panel_);
     panel_ = nullptr;
     log_.push_back(how);
 }
@@ -1121,6 +1129,17 @@ void UiWalk::buildPage(const UiPanel& p) {
         selMap()[kListSneakIdentity] = 0;
         identitySwap(0);
     }
+    // `0x0049D980`, the QUIT page's builder (read from the image): the Oui/Non
+    // pair hidden (`sub_429140(0x004DEBA0, 0x40000001, 1)`), its selection
+    // `word_4DEBA2 = 0`, the page's `+24` `dword_4DF0D8 = 0` - the tab column -
+    // and the echo bar / clock colour pushes (not modelled, as for the other
+    // page builders, `todo/sneak.md` 2e). The move onto the quit icon installs
+    // this page (`move`), so the pair is always hidden until ENTER shows it.
+    if (p.addr == kPanelSneakQuit) {
+        setListOff(kListSneakQuit, true);
+        selMap()[kListSneakQuit] = 0;
+        curFromBuilder_ = 0;
+    }
     if (p.addr == kPanelSneakVerbs) {
         setListOff(kListSneakVerbs, false);
         setListOff(kListSneakTabs, true);
@@ -1462,8 +1481,32 @@ bool UiWalk::move(const UiList& l, std::uint32_t bits,
             else if (j >= n) j = l.noWrap() ? n - 1 : 0;
             if (pickable(l, l.items[static_cast<std::size_t>(j)])) break;
         }
+        const int was = selMap()[l.addr];
         selMap()[l.addr] = j;
         log_.push_back("move");
+        // THE PAGE FOLLOWS THE SELECTION. `sub_42A7E0`'s tail (read from the
+        // image through Ghidra): when the selection CHANGED and the new item
+        // has a `+44` child and bank A `0x40`, the child panel is installed
+        // there and then - leave hook, `+1C`/`+20`, build hook - without a
+        // confirm. The sneak's six tab icons are the only items in the tree
+        // with both, so moving down the tab column switches the page, and the
+        // quit icon's callback (`0x0049DBF0`) runs on ENTER against the quit
+        // page 0x004DF0C0 it already installed - whose list 1 is the Oui/Non
+        // pair it focuses. Installed on ENTER instead, that callback wrote the
+        // previous page's `+24` and showed a list nothing draws.
+        if (j != was && j >= 0 && j < n) {
+            const auto& it = l.items[static_cast<std::size_t>(j)];
+            if (it.child && (it.flags[0] & 0x40u)) {
+                const auto* kid = w_->at(it.child, screen_);
+                if (kid && kid != panel_) {
+                    leavePage(*panel_);
+                    panel_ = kid;
+                    buildPage(*panel_);
+                    settle();
+                    log_.push_back("enter child panel (on the move, bank A 0x40)");
+                }
+            }
+        }
         return true;
     }
     if (bits & kUiConfirm) return confirm();
@@ -1989,12 +2032,12 @@ bool UiWalk::confirm() {
         //                 screen->panel[+24] = 0
         //     0x0049DBA0  sub_409090() then screen[+8] = 3       the request
         //
-        // `+24` is written on WHATEVER PANEL IS CURRENT - the icon's own page
-        // `0x004DF0C0` is never installed (`Ui_ConfirmSelection` prefers a
-        // callback over a `+44` child, and nothing else installs it), and the
-        // Oui/Non list belongs to that page alone, so on the inventory page
-        // this shows a list nothing draws and moves the focus to the page's
-        // own list 1. Transcribed as it is, including that.
+        // `+24` is written on WHATEVER PANEL IS CURRENT - and that is the
+        // icon's own page `0x004DF0C0`: the MOVE onto the icon installed it
+        // (`sub_42A7E0`'s bank A 0x40 tail, ported in `move`), so list 1 is
+        // the Oui/Non pair and the confirm focuses it. (Read 2026-09-16 as
+        // "never installed", with pages installed on the confirm; corrected
+        // 2026-10-17 from the mover's own bytes - the quit tab works.)
         // `Lire plan`, the third inventory tile - `sub_42A370(screen,
         // off_4DF190)`, seven instructions, and then the PANEL'S OWN `+4`
         // decides whether the page survives. `sub_49D9E0` bounces straight
@@ -2212,6 +2255,13 @@ bool UiWalk::confirm() {
         approx_ = true;
         log_.push_back("unmodelled item callback");
         return true;
+    }
+    // `sub_42A750`: a child with bank A `0x40` is NEVER entered on the
+    // confirm - `(item+0x30 & 0x40) == 0` is part of its test, because the
+    // move installed that page already (`move`). The confirm returns 0.
+    if (it->child && (it->flags[0] & 0x40u)) {
+        log_.push_back("confirm: the page came with the move (bank A 0x40)");
+        return false;
     }
     if (it->child) {
         if (const auto* kid = w_->at(it->child, screen_)) {
@@ -2900,6 +2950,17 @@ bool UiWalk::press(std::uint32_t bits) {
             // screen moves - its one item is a draw hook.
             if (bits & kUiLeft)  { if (--hsPage_ < 0) hsPage_ = 3; return true; }
             if (bits & kUiRight) { if (++hsPage_ == 4) hsPage_ = 0; return true; }
+        } else if (panel_->hook == kHookSneakOptionsPage) {
+            // `0x0049D960`, whole: LEFT/RIGHT give screen 35 the focus (the
+            // viewer does that half - `optMenu.focus()` - before the walk
+            // sees the key), anything else returns 0 and reaches the tab
+            // column's own mover. Now that the move down the column installs
+            // each page (`move`), UP/DOWN pass THROUGH this page and must not
+            // read as an unmodelled hook.
+            if (bits & (kUiLeft | kUiRight)) {
+                log_.push_back("options page: screen 35 takes the keys");
+                return true;
+            }
         } else if (panel_->hook == w_->moveListsHook()) {
             // `sub_42A710(screen, panel) = sub_42A5C0(screen, panel, 1, 2)` -
             // `Ui_MoveBetweenLists` with LEFT stepping back and RIGHT

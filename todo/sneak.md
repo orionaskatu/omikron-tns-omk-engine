@@ -467,6 +467,27 @@ one MDPUTSNK takes) there. Seen in a run: *Utiliser* MK400 Notice -> in hand ->
 TAB banks it (`MDSNEAK0: holding object 171 ... banked`) -> TAB opens the sneak
 with it back at the top (3 / 18).
 
+### 2g-bis. "Sometimes I cannot change the category" - the navigation is FAITHFUL (2026-10-17)
+
+A player could not always reach the tab column. Walked with the new `ui.key`
+record (`OMK_EVENTS=1`: screen, input bits, panel, current list, selection after
+every key) and read against the image (Ghidra): every case is the original's.
+
+* `sub_42A5C0` (the pages' `sub_42A710`) steps to the previous (LEFT, bit 1) or
+  next (RIGHT, bit 2) list, wrapping, skipping a list flagged `&4` and a list
+  whose every item is. The Inventaire builder `0x0049B710` disables the verbs,
+  so from the rows RIGHT wraps onto the tab column and LEFT lands on the three
+  tiles `0x004DE420` (money, rings, `Lire plan`) first.
+* The VERB panel `0x004DEEB8` has NO panel hook and its builder `0x0049B810`
+  disables the tabs, the tiles and the rows: from there (and in `Utiliser sur`,
+  which re-enables only the rows) the column is unreachable until BACK -
+  `Annuler / Sauter`, SPACE by default (joystick button 49), not ESC, which the
+  main loop reads itself and opens the pause screen with.
+* Options: the column keeps the focus; LEFT/RIGHT hand it to screen 35
+  (`0x0049D960`) and LEFT/RIGHT on its root give it back.
+
+Verified: ENTER on a row, SPACE, RIGHT, DOWN, ENTER opens Memoire.
+
 ### 2h. `Object_ApplyEffect` (0x00409780)
 
 **NAMED, body as generated** — read enough to name and no further. The

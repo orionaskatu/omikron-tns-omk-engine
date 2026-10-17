@@ -1650,6 +1650,18 @@ void PlayState::modesOptionsInput(std::uint32_t& uiBits, bool optActive, bool at
         // clicks - RETURN in the name box plays the confirm sound and
         // presses nothing.
         if (!ate) walk->press(uiBits);
+        // The FOCUS after each key, as a record (OMK_EVENTS only): which
+        // panel, which of its lists and which row - what a player stuck on a
+        // screen cannot say and a scripted walk needs to see.
+        if (uiBits && omk::eventsOn() && walk->panel()) {
+            const int li = walk->currentList();
+            const auto& ls = walk->panel()->lists;
+            omk::event("ui.key", {{"screen", openScreen}, {"bits", static_cast<int>(uiBits)},
+                                  {"panel", static_cast<int>(walk->panel()->addr)},
+                                  {"list", li >= 0 && static_cast<std::size_t>(li) < ls.size()
+                                               ? static_cast<int>(ls[static_cast<std::size_t>(li)].addr) : -1},
+                                  {"sel", walk->selection()}, {"opt", optMenu.focused() ? 1 : 0}});
+        }
         // The MOVE sound fires when the selection actually MOVED, not
         // on every press: `Ui_MoveSelection` steps over unselectable
         // rows and a pinned list stops at its ends, so a key that

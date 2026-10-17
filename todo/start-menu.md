@@ -91,6 +91,21 @@ Ported as `kCbStartQuitYes`; the viewer ends its loop on it.
 3. QUIT, once read, is small: the port already ends its run for the pause
    menu's quit and says so.
 
+## 5. The captions were FRENCH on an English install - fixed 2026-10-17 (uncommitted)
+
+On the English (Steam) data the Options pages drew English LABELS beside French
+VALUES (*Clipping Distance - Proche*). The labels go through `labelId` into the
+player's own `IAM\Options`; the choice captions were baked into
+`tables/ui.json` as the lifting machine's text, and the row's `+52..` caption
+ids were dropped. `ui_tables.options()` now keeps the id as each choice's third
+element, `OptionRow::choiceIds` carries it and `OptionsWalk::widgets` draws
+`str(id)` (the text stays as a fallback for an older table). The ids were added
+to the committed `tables/ui.json` from the tool's own `options()` - the full
+`exetables.py` needs `clean/`, which this machine has not got - so the file's
+French text is untouched; a regeneration on the French tree will reproduce it.
+`engine: options menu` still asserts the French strings and fails on English
+data, as every text-reading check does.
+
 **Do not port either from the table alone** - the table is what says these two
 panels are empty, and a confirm whose buttons do nothing is exactly what
 building from it produces.

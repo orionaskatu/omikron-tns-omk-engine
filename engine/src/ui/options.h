@@ -43,6 +43,11 @@ struct OptionRow {
     int         type = 0;             // +0: 0 choice 1 slider 2 header 3 keybind 4 device 5 defaults 6 back
     int         labelId = -1;         // +24, an index into `IAM\Options`
     std::vector<std::pair<std::string, int>> choices;   // caption, value
+    // +52.., each caption's index into `IAM\Options` (-1 when the lifted table
+    // predates the ids). The caption TEXT above is whichever language lifted
+    // `tables/ui.json`; the engine draws the id from the player's own IAM, as
+    // it does `labelId` - so an English install no longer shows French values.
+    std::vector<int> choiceIds;
 };
 
 // {page -> {row -> (option index, page behind it)}}, plus the branch rows.

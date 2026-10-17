@@ -32,7 +32,8 @@ import omkpaths
 import os, sys, struct
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = omkpaths.data("Runtime 2.exe")
+# By size, not name (omkpaths.exe_path): the no-CD build may ship as Runtime.exe.
+EXE = omkpaths.exe_path(required=False, warn=False) or omkpaths.data("Runtime 2.exe")
 
 # Table bases and ends, each taken from the loop in the function that walks it.
 SCREENS = (0x004CB640, 92, 0x004CC38C)      # UI_LoadScreen, bound aNoOne_45
@@ -278,7 +279,10 @@ def options(e=None):
         n = _i(r, 4)
         ch = []
         if 0 < n <= 10:
-            ch = [(txt(_i(r, 52 + 4 * k)), _i(r, 92 + 4 * k)) for k in range(n)]
+            # (caption, value, caption id): the id is the `IAM\Options` index
+            # the engine draws from, so a replica shows the PLAYER's language
+            # - the caption text here is whichever language lifted the table.
+            ch = [(txt(_i(r, 52 + 4 * k)), _i(r, 92 + 4 * k), _i(r, 52 + 4 * k)) for k in range(n)]
         out.append(dict(
             index=i, type=_i(r, 0), kind=OPT_TYPE.get(_i(r, 0), "?"),
             label=txt(_i(r, 24)), label_id=_i(r, 24), choices=ch,

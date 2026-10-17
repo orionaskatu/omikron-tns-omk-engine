@@ -41,9 +41,11 @@ OptionTree OptionTree::loadJson(const std::string& widgets,
         r.type  = static_cast<int>(os[i]["type"].i64());
         r.labelId = static_cast<int>(os[i]["label_id"].i64(-1));
         const auto& ch = os[i]["choices"];
-        for (std::size_t k = 0; k < ch.size(); ++k)
+        for (std::size_t k = 0; k < ch.size(); ++k) {
             r.choices.push_back({ch[k][0].str(),
                                  static_cast<int>(ch[k][1].i64())});
+            r.choiceIds.push_back(ch[k].size() > 2 ? static_cast<int>(ch[k][2].i64(-1)) : -1);
+        }
         t.rows[r.index] = std::move(r);
     }
     return t;
@@ -613,8 +615,11 @@ std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
         w.selected = row == sel_;
         const auto& st = rows_[static_cast<std::size_t>(item)];
         if (o.type == 0 && st.current >= 0 &&
-            static_cast<std::size_t>(st.current) < o.choices.size())
-            w.value = latin1(o.choices[static_cast<std::size_t>(st.current)].first);
+            static_cast<std::size_t>(st.current) < o.choices.size()) {
+            const std::size_t k = static_cast<std::size_t>(st.current);
+            const int cid = k < o.choiceIds.size() ? o.choiceIds[k] : -1;
+            w.value = cid >= 0 && !str(cid).empty() ? str(cid) : latin1(o.choices[k].first);
+        }
         else if (o.type == 4) {
             const auto d = devices_.find(item);
             if (d != devices_.end() && st.current >= 0 &&

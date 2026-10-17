@@ -277,15 +277,17 @@ def options(e=None):
     out = []
     for i, r in enumerate(_walk(e, OPTIONS)):
         n = _i(r, 4)
-        ch = []
+        ch, ids = [], []
         if 0 < n <= 10:
-            # (caption, value, caption id): the id is the `IAM\Options` index
-            # the engine draws from, so a replica shows the PLAYER's language
-            # - the caption text here is whichever language lifted the table.
-            ch = [(txt(_i(r, 52 + 4 * k)), _i(r, 92 + 4 * k), _i(r, 52 + 4 * k)) for k in range(n)]
+            ch = [(txt(_i(r, 52 + 4 * k)), _i(r, 92 + 4 * k)) for k in range(n)]
+            # each caption's `IAM\Options` index, beside the pairs rather than
+            # inside them (every reader unpacks a choice as caption, value):
+            # the engine draws the id, so a replica shows the PLAYER's language
+            # - the caption text above is whichever language lifted the table.
+            ids = [_i(r, 52 + 4 * k) for k in range(n)]
         out.append(dict(
             index=i, type=_i(r, 0), kind=OPT_TYPE.get(_i(r, 0), "?"),
-            label=txt(_i(r, 24)), label_id=_i(r, 24), choices=ch,
+            label=txt(_i(r, 24)), label_id=_i(r, 24), choices=ch, choice_ids=ids,
             hooks=(_i(r, 12) & 0xFFFFFFFF, _i(r, 16) & 0xFFFFFFFF),
             seq=_i(r, 136)))
     return out

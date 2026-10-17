@@ -41,10 +41,11 @@ OptionTree OptionTree::loadJson(const std::string& widgets,
         r.type  = static_cast<int>(os[i]["type"].i64());
         r.labelId = static_cast<int>(os[i]["label_id"].i64(-1));
         const auto& ch = os[i]["choices"];
+        const auto& ids = os[i]["choice_ids"];   // absent in an older table
         for (std::size_t k = 0; k < ch.size(); ++k) {
             r.choices.push_back({ch[k][0].str(),
                                  static_cast<int>(ch[k][1].i64())});
-            r.choiceIds.push_back(ch[k].size() > 2 ? static_cast<int>(ch[k][2].i64(-1)) : -1);
+            r.choiceIds.push_back(k < ids.size() ? static_cast<int>(ids[k].i64(-1)) : -1);
         }
         t.rows[r.index] = std::move(r);
     }

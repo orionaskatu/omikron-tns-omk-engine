@@ -1282,6 +1282,7 @@
     "label": "Options",
     "label_id": 33,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1295,6 +1296,7 @@
     "label": "Vidéo",
     "label_id": 0,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1308,6 +1310,7 @@
     "label": "Résolution",
     "label_id": 1,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4782672,
      4782736
@@ -1323,29 +1326,31 @@
     "choices": [
      [
       "Très proche",
-      25,
-      7
+      25
      ],
      [
       "Proche",
-      50,
-      6
+      50
      ],
      [
       "Intermédiaire",
-      100,
-      5
+      100
      ],
      [
       "Loin",
-      150,
-      4
+      150
      ],
      [
       "Très loin",
-      200,
-      3
+      200
      ]
+    ],
+    "choice_ids": [
+     7,
+     6,
+     5,
+     4,
+     3
     ],
     "hooks": [
      4782784,
@@ -1362,14 +1367,16 @@
     "choices": [
      [
       "Non",
-      0,
-      60
+      0
      ],
      [
       "Oui",
-      1,
-      61
+      1
      ]
+    ],
+    "choice_ids": [
+     60,
+     61
     ],
     "hooks": [
      4782976,
@@ -1386,14 +1393,16 @@
     "choices": [
      [
       "Non",
-      0,
-      60
+      0
      ],
      [
       "Oui",
-      1,
-      61
+      1
      ]
+    ],
+    "choice_ids": [
+     60,
+     61
     ],
     "hooks": [
      4783072,
@@ -1410,29 +1419,31 @@
     "choices": [
      [
       "Très faible",
-      0,
-      15
+      0
      ],
      [
       "Faible",
-      1,
-      14
+      1
      ],
      [
       "Intermédiaire",
-      2,
-      13
+      2
      ],
      [
       "Important",
-      3,
-      12
+      3
      ],
      [
       "Très important",
-      4,
-      11
+      4
      ]
+    ],
+    "choice_ids": [
+     15,
+     14,
+     13,
+     12,
+     11
     ],
     "hooks": [
      4783168,
@@ -1449,19 +1460,21 @@
     "choices": [
      [
       "Faible",
-      0,
-      73
+      0
      ],
      [
       "Intermédiaire",
-      1,
-      65
+      1
      ],
      [
       "Important",
-      2,
-      75
+      2
      ]
+    ],
+    "choice_ids": [
+     73,
+     65,
+     75
     ],
     "hooks": [
      4783264,
@@ -1476,6 +1489,7 @@
     "label": "Accélération 3D",
     "label_id": 67,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4783360,
      4783584
@@ -1489,6 +1503,7 @@
     "label": "Audio",
     "label_id": 16,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1502,6 +1517,7 @@
     "label": "Volume des dialogues",
     "label_id": 17,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4783712,
      4783808
@@ -1515,6 +1531,7 @@
     "label": "Volume des musiques",
     "label_id": 18,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4783920,
      4784000
@@ -1528,6 +1545,7 @@
     "label": "Volume des effets sonores",
     "label_id": 19,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784112,
      4784192
@@ -1543,14 +1561,16 @@
     "choices": [
      [
       "Non",
-      0,
-      62
+      0
      ],
      [
       "Oui",
-      1,
-      63
+      1
      ]
+    ],
+    "choice_ids": [
+     62,
+     63
     ],
     "hooks": [
      4784304,
@@ -1565,6 +1585,7 @@
     "label": "Options",
     "label_id": 21,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1580,14 +1601,16 @@
     "choices": [
      [
       "Non",
-      0,
-      62
+      0
      ],
      [
       "Oui",
-      1,
-      63
+      1
      ]
+    ],
+    "choice_ids": [
+     62,
+     63
     ],
     "hooks": [
      4784544,
@@ -1604,19 +1627,21 @@
     "choices": [
      [
       "Facile",
-      0,
-      64
+      0
      ],
      [
       "Intermédiaire",
-      1,
-      65
+      1
      ],
      [
       "Difficile",
-      2,
-      66
+      2
      ]
+    ],
+    "choice_ids": [
+     64,
+     65,
+     66
     ],
     "hooks": [
      4784640,
@@ -1633,19 +1658,21 @@
     "choices": [
      [
       "Facile",
-      0,
-      64
+      0
      ],
      [
       "Intermédiaire",
-      1,
-      65
+      1
      ],
      [
       "Difficile",
-      2,
-      66
+      2
      ]
+    ],
+    "choice_ids": [
+     64,
+     65,
+     66
     ],
     "hooks": [
      4784736,
@@ -1662,14 +1689,16 @@
     "choices": [
      [
       "Vue de dos",
-      0,
-      23
+      0
      ],
      [
       "Vue de côté",
-      1,
-      24
+      1
      ]
+    ],
+    "choice_ids": [
+     23,
+     24
     ],
     "hooks": [
      4784448,
@@ -1684,6 +1713,7 @@
     "label": "Contrôles",
     "label_id": 28,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1697,6 +1727,7 @@
     "label": "Configuration du clavier et de la souris",
     "label_id": 77,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1710,6 +1741,7 @@
     "label": "Configuration de la manette",
     "label_id": 78,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1723,6 +1755,7 @@
     "label": "Configuration de la souris",
     "label_id": 69,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1738,14 +1771,16 @@
     "choices": [
      [
       null,
-      0,
-      -1
+      0
      ],
      [
       null,
-      0,
-      -1
+      0
      ]
+    ],
+    "choice_ids": [
+     -1,
+     -1
     ],
     "hooks": [
      4785024,
@@ -1762,14 +1797,16 @@
     "choices": [
      [
       null,
-      0,
-      -1
+      0
      ],
      [
       null,
-      0,
-      -1
+      0
      ]
+    ],
+    "choice_ids": [
+     -1,
+     -1
     ],
     "hooks": [
      4785024,
@@ -1786,14 +1823,16 @@
     "choices": [
      [
       "Non",
-      0,
-      62
+      0
      ],
      [
       "Oui",
-      1,
-      63
+      1
      ]
+    ],
+    "choice_ids": [
+     62,
+     63
     ],
     "hooks": [
      4785184,
@@ -1808,6 +1847,7 @@
     "label": "Configuration de la manette",
     "label_id": 70,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1823,14 +1863,16 @@
     "choices": [
      [
       "Non",
-      0,
-      62
+      0
      ],
      [
       "Oui",
-      1,
-      63
+      1
      ]
+    ],
+    "choice_ids": [
+     62,
+     63
     ],
     "hooks": [
      4785280,
@@ -1845,6 +1887,7 @@
     "label": "Contrôles Aventure",
     "label_id": 35,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -1858,6 +1901,7 @@
     "label": "Avancer",
     "label_id": 36,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1871,6 +1915,7 @@
     "label": "Reculer",
     "label_id": 37,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1884,6 +1929,7 @@
     "label": "Tourner à gauche",
     "label_id": 38,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1897,6 +1943,7 @@
     "label": "Tourner à droite",
     "label_id": 39,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1910,6 +1957,7 @@
     "label": "Pas de côté / Demi-tour",
     "label_id": 79,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1923,6 +1971,7 @@
     "label": "Action / Utiliser",
     "label_id": 42,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1936,6 +1985,7 @@
     "label": "Annuler / Sauter",
     "label_id": 43,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1949,6 +1999,7 @@
     "label": "Vue première personne",
     "label_id": 44,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1962,6 +2013,7 @@
     "label": "Courir",
     "label_id": 45,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1975,6 +2027,7 @@
     "label": "Ouvrir sneak",
     "label_id": 46,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -1988,6 +2041,7 @@
     "label": "Nager",
     "label_id": 47,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -2001,6 +2055,7 @@
     "label": "Avancer",
     "label_id": 36,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2014,6 +2069,7 @@
     "label": "Reculer",
     "label_id": 37,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2027,6 +2083,7 @@
     "label": "Tourner à gauche",
     "label_id": 38,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2040,6 +2097,7 @@
     "label": "Tourner à droite",
     "label_id": 39,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2053,6 +2111,7 @@
     "label": "Action / Utiliser",
     "label_id": 42,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2066,6 +2125,7 @@
     "label": "Plonger",
     "label_id": 48,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2079,6 +2139,7 @@
     "label": "Crawl",
     "label_id": 49,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2092,6 +2153,7 @@
     "label": "Tirer",
     "label_id": 50,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -2105,6 +2167,7 @@
     "label": "Avancer",
     "label_id": 36,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2118,6 +2181,7 @@
     "label": "Reculer",
     "label_id": 37,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2131,6 +2195,7 @@
     "label": "Glisser à gauche",
     "label_id": 40,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2144,6 +2209,7 @@
     "label": "Glisser à droite",
     "label_id": 41,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2157,6 +2223,7 @@
     "label": "Tir",
     "label_id": 51,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2170,6 +2237,7 @@
     "label": "Action / Utiliser",
     "label_id": 42,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2183,6 +2251,7 @@
     "label": "Sauter",
     "label_id": 52,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2196,6 +2265,7 @@
     "label": "S'accroupir",
     "label_id": 53,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2209,6 +2279,7 @@
     "label": "Arme",
     "label_id": 54,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2222,6 +2293,7 @@
     "label": "Tourner à gauche",
     "label_id": 38,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2235,6 +2307,7 @@
     "label": "Tourner à droite",
     "label_id": 39,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2248,6 +2321,7 @@
     "label": "Regarder En-Haut",
     "label_id": 82,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2261,6 +2335,7 @@
     "label": "Regarder En-Bas",
     "label_id": 83,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2274,6 +2349,7 @@
     "label": "Combat",
     "label_id": 55,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -2287,6 +2363,7 @@
     "label": "Avancer",
     "label_id": 36,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2300,6 +2377,7 @@
     "label": "Reculer",
     "label_id": 37,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2313,6 +2391,7 @@
     "label": "Glisser à gauche",
     "label_id": 40,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2326,6 +2405,7 @@
     "label": "Glisser à droite",
     "label_id": 41,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2339,6 +2419,7 @@
     "label": "Sauter",
     "label_id": 52,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2352,6 +2433,7 @@
     "label": "S'accroupir",
     "label_id": 53,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2365,6 +2447,7 @@
     "label": "Coup de poing 1",
     "label_id": 56,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2378,6 +2461,7 @@
     "label": "Coup de poing 2",
     "label_id": 57,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2391,6 +2475,7 @@
     "label": "Coup de pied 1",
     "label_id": 58,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2404,6 +2489,7 @@
     "label": "Coup de pied 2",
     "label_id": 59,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      4784832,
      4784928
@@ -2417,6 +2503,7 @@
     "label": "Retour",
     "label_id": 80,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0
@@ -2430,6 +2517,7 @@
     "label": "Revenir à la configuration par défaut",
     "label_id": 81,
     "choices": [],
+    "choice_ids": [],
     "hooks": [
      0,
      0

@@ -59,6 +59,8 @@
 // idiom, which `-Wmissing-field-initializers` reports once per struct.
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
+#include "platform/threads.h"
+#include <cmath>
 #include <vulkan/vulkan.h>
 #include "platform/profile.h"
 
@@ -550,6 +552,28 @@ bool VulkanRenderer::makeBuffer(VkDeviceSize n, VkBufferUsageFlags use,
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = memType(req.memoryTypeBits, props);
+    // A READBACK buffer (the GPU writes it, the CPU reads it) wants CACHED system
+    // memory. `memType` takes the first type that matches, and on a discrete card
+    // with Resizable BAR that is VRAM mapped over PCIe, uncached: every CPU read
+    // crosses the bus. On an RX 9070 XT (Windows, 2026-10-16) that made the
+    // compose-on-the-CPU path - any frame with a subtitle, a fade or the HUD over
+    // the world - take 0.7 to 1.7 s; unified-memory Macs never see it. So prefer
+    // HOST_CACHED and not DEVICE_LOCAL, and keep the old choice when none exists.
+    if ((props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && use == VK_BUFFER_USAGE_TRANSFER_DST_BIT) {
+        const VkMemoryPropertyFlags cached = props | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        int best = -1;
+        for (uint32_t i = 0; i < memProps_.memoryTypeCount && best < 0; ++i) {
+            const VkMemoryPropertyFlags f = memProps_.memoryTypes[i].propertyFlags;
+            if ((req.memoryTypeBits & (1u << i)) && (f & cached) == cached &&
+                !(f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+                best = static_cast<int>(i);
+        }
+        for (uint32_t i = 0; i < memProps_.memoryTypeCount && best < 0; ++i)
+            if ((req.memoryTypeBits & (1u << i)) &&
+                (memProps_.memoryTypes[i].propertyFlags & cached) == cached)
+                best = static_cast<int>(i);
+        if (best >= 0) ai.memoryTypeIndex = static_cast<uint32_t>(best);
+    }
     VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &m), "vkAllocateMemory");
     // the profiler's GPU memory (todo/debug-tools.md 5): a buffer's category
     // from what it is for
@@ -2675,20 +2699,29 @@ const omk::Surface& VulkanRenderer::readback() {
     // `present.frag` does the same resolve on the GPU for a frame nothing is
     // drawn over, so this loop runs only on the CPU path (and for
     // `OMK_VERIFY_GPU_PRESENT`, which compares the two).
+    // ROWS IN PARALLEL (Windows port, 2026-10-16): every output row reads its
+    // own source rows and writes only itself, so the chunks are disjoint and
+    // the frame is bit-identical to the inline loop (`platform/threads.h`).
+    // At 2x supersampling this loop walks a 3840x2160 buffer for a 1080p
+    // frame - 15 ms on one core, paid by every frame with a subtitle, a fade
+    // or the HUD over the world.
+    omk::Threads::shared().parallelFor(0, static_cast<std::size_t>(h_), 16,
+                                       [&](std::size_t rowFrom, std::size_t rowTo) {
+    const int y0 = static_cast<int>(rowFrom), y1 = static_cast<int>(rowTo);
     if (ss_ <= 1 && dither_) {
         // Row by row through the channel tables - the same bits as
         // `quantise888Dither` a pixel, without a division and a modulo for
         // every one of them (todo/optimization.md step 4).
-        for (int y = 0; y < h_; ++y)
+        for (int y = y0; y < y1; ++y)
             omk::quantise888DitherRow(src + 4 * static_cast<std::size_t>(y) * static_cast<std::size_t>(w_),
                                       w_, y, fb_.px.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_));
     } else if (ss_ <= 1) {
-        for (int i = 0; i < w_ * h_; ++i)
+        for (int i = y0 * w_; i < y1 * w_; ++i)
             fb_.px[static_cast<std::size_t>(i)] =
                 omk::rgb565(src[4 * i], src[4 * i + 1], src[4 * i + 2]);
     } else {
         const int n = ss_ * ss_;
-        for (int y = 0; y < h_; ++y)
+        for (int y = y0; y < y1; ++y)
             for (int x = 0; x < w_; ++x) {
                 int acc[3] = {0, 0, 0};
                 for (int sy = 0; sy < ss_; ++sy)
@@ -2708,6 +2741,7 @@ const omk::Surface& VulkanRenderer::readback() {
                                           static_cast<unsigned char>(ab));
             }
     }
+    });
     vkUnmapMemory(dev_, readMem_);
     return fb_;
 }

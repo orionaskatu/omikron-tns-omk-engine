@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "platform/threads.h"
 #include "formats/bytes.h"
 #include "ui/surface.h"
 #include "ui/overlay.h"
@@ -133,7 +134,19 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
             colX1[static_cast<std::size_t>(x)] = x1;
             colWx[static_cast<std::size_t>(x)] = wx;
         }
-        for (int y = 0; y < dh; ++y) {
+        // ROWS IN PARALLEL (Windows port, 2026-10-16): this loop is per-pixel
+        // double arithmetic over the whole destination - 29 ms a frame at
+        // 1920x1080 and 118 ms at 3840x2160 on one core, which made every
+        // interface screen crawl at 4K. Each row reads the source and writes
+        // only its own destination row, so the chunks are disjoint and the
+        // result is bit-identical to the inline loop (threads.h's rule).
+        const std::vector<int>& cX0 = colX0;
+        const std::vector<int>& cX1 = colX1;
+        const std::vector<double>& cWx = colWx;
+        const std::vector<int>& cNear = colNear;
+        Threads::shared().parallelFor(0, static_cast<std::size_t>(dh), 32,
+                                      [&](std::size_t rowFrom, std::size_t rowTo) {
+        for (int y = static_cast<int>(rowFrom); y < static_cast<int>(rowTo); ++y) {
             // Pixel CENTRES, which is what puts the resampled grid where the
             // nearest one is rather than half a texel off it.
             const double fy = (y + 0.5) * sh / dh - 0.5;
@@ -144,14 +157,14 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
             y1 = y1 < 0 ? 0 : y1 > sh - 1 ? sh - 1 : y1;
             const int ny = sh == dh ? y : y * sh / dh;   // the nearest path's row
             for (int x = 0; x < dw; ++x) {
-                const int nx = colNear[static_cast<std::size_t>(x)];
+                const int nx = cNear[static_cast<std::size_t>(x)];
                 const std::uint16_t nearest = src.at(sr.left + nx, sr.top + ny);
                 if (keySrc && nearest == srcKey) continue;
                 if (keyDest && dst.at(dr.left + x, dr.top + y) != dstKey) continue;
 
-                const int x0 = colX0[static_cast<std::size_t>(x)];
-                const int x1 = colX1[static_cast<std::size_t>(x)];
-                const double wx = colWx[static_cast<std::size_t>(x)];
+                const int x0 = cX0[static_cast<std::size_t>(x)];
+                const int x1 = cX1[static_cast<std::size_t>(x)];
+                const double wx = cWx[static_cast<std::size_t>(x)];
 
                 const std::uint16_t t[4] = {src.at(sr.left + x0, sr.top + y0),
                                             src.at(sr.left + x1, sr.top + y0),
@@ -183,6 +196,7 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
                         quantise888(q(r / tot), q(g / tot), q(b / tot)));
             }
         }
+        });
         return true;
     }
 

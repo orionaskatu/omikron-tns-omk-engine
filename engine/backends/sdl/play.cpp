@@ -95,6 +95,16 @@ int PlayState::run(int argc, char** argv) {
 // locals is `PlayState`'s members, and `main`'s body is `PlayState::run`. On
 // the heap, as its members are hundreds of containers and caches - the Vita's
 // main thread has a small stack.
+//
+// WINDOWS + SDL2: `sdl2-config --cflags` carries `-Dmain=SDL_main`, and SDL2's
+// `libSDL2main` calls `SDL_main` with C linkage. This file includes no SDL
+// header, so without SDL_main.h's declaration the renamed `main` would be a C++
+// function and the link fails ("undefined reference to `SDL_main'"). Declaring
+// it here gives the definition below C linkage; on every other host `main` is
+// not a macro and this is compiled out.
+#if defined(main) && !defined(OMK_SDL3)
+extern "C" int main(int argc, char** argv);
+#endif
 int main(int argc, char** argv) {
     const auto ps = std::make_unique<PlayState>();
     return ps->run(argc, argv);

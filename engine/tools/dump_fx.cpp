@@ -126,7 +126,7 @@ int main(int argc, char** argv) {
         std::map<std::uint16_t, int> sprites;      // sprite id -> stream index
         omk::SfxFile sfx;
         if (const auto it = sfxOf.find(stem); it != sfxOf.end()) {
-            sfx = omk::readSfx(omk::DataFs::readPath(it->second));
+            sfx = omk::readSfx(omk::DataFs::readPath(it->second.string()));
             for (const auto& b : sfx.bindings)
                 tags.emplace(std::string(b.tag, 4), &b);
         }

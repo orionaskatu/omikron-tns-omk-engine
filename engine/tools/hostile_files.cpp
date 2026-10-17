@@ -19,7 +19,14 @@
 #include "formats/opt.h"
 #include "formats/scx.h"
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <psapi.h>
+#else
 #include <sys/resource.h>
+#endif
 
 #include <climits>
 #include <cstdio>
@@ -90,9 +97,16 @@ int main(int argc, char** argv) {
         say("map2d.loaded", m.load(d));
         // refused either way - the old reader only after the resize - so
         // what tells them apart is this process's own peak memory
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS pmc{};
+        K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
+        const unsigned long long peak = static_cast<unsigned long long>(pmc.PeakWorkingSetSize);  // bytes
+#else
         rusage ru{};
         getrusage(RUSAGE_SELF, &ru);
-#ifdef __APPLE__
+#endif
+#if defined(_WIN32)
+#elif defined(__APPLE__)
         const unsigned long long peak = static_cast<unsigned long long>(ru.ru_maxrss);          // bytes
 #else
         const unsigned long long peak = static_cast<unsigned long long>(ru.ru_maxrss) * 1024;   // KB

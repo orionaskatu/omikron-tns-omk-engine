@@ -12,6 +12,7 @@
 #include "formats/tex3dt.h"
 #include "platform/datafs.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <filesystem>

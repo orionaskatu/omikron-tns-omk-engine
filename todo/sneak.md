@@ -511,6 +511,18 @@ Verified: ENTER on a row, SPACE, RIGHT, DOWN, ENTER opens Memoire.
 builder `0x0049D9E0` bounces back unless `Images\<set>.bmp` opens, and only the
 four cities' main streets ship one (in Kay'l's flat or the Impasse it bounces).
 
+**Which set, read whole (2026-10-17, a player's "the map does not open" with
+twelve saves, all indoors):** the name is the `.3DO` path at `+0x30` of
+`dword_93076C`'s node, cut at the last `\` and its 4-character extension, put
+through `"%s.bmp"` and `"Images\%s"` - and `dword_93076C` is the HEAD of the
+resident sets' list (`o3de_InsertScene` 0x00441170 appends at the tail;
+0x00441200 unlinks). `Game_HandleEvent` case 9 - the feet crossing into the
+other resident slot - reverses that list (`0x00419B50` -> `0x004412A0`) as it
+swaps `dword_69BC60`, so the head is always the set of the area the player
+stands in: the port's `session.setName()` is the same name. The city table at
+0x004DF1F8 (ANEKBAH 0, QALISAR 1, JAUNPUR 2, LAHOREH 3) only places the pin.
+A "map indoors" enhancement was offered and declined: kept original.
+
 ### 2h. `Object_ApplyEffect` (0x00409780)
 
 **NAMED, body as generated** — read enough to name and no further. The

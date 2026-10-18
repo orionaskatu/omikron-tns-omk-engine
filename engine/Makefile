@@ -161,10 +161,11 @@ D3D_ON      := $(if $(and $(VK_PKG),$(GLSLC),$(SPIRV_CROSS),$(DXC)),1)
 endif
 D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.frag \
                    ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag overlay.frag \
+                   bloom.frag post.frag post_ms.frag blit_hdr.frag \
                    scene_mv.vert scene_mv.frag                    scene_rt.frag scene_rt_mv.frag scene_rtc.frag scene_rtc_mv.frag                    ssao_rt.frag ssao_rt_ms.frag
 D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
 D3D_LIBS    := -ld3d12 -ldxgi -ldxguid
-.PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%.hlsl \
+.PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%_hdr.frag.spv build/shaders/dx/%.hlsl \
            build/shaders/dx/%_mv.vert.spv build/shaders/dx/%_mv.frag.spv            build/shaders/dx/%_rt.frag.spv build/shaders/dx/%_rt_mv.frag.spv build/shaders/dx/%_rt_ms.frag.spv            build/shaders/dx/%_rtc.frag.spv build/shaders/dx/%_rtc_mv.frag.spv
 
 build/shaders/dx/%.spv: backends/vulkan/shaders/%
@@ -207,6 +208,15 @@ build/shaders/dx/%_rtc_mv.frag.spv: backends/vulkan/shaders/%.frag backends/d3d1
 build/shaders/dx/%.spv: backends/d3d12/shaders/%
 	@mkdir -p $(@D)
 	$(GLSLC) -o $@ $<
+# ...and its own variants: THE POST CHAIN's final pass reading a multisampled
+# depth (-DOMK_MS), and the blit into an HDR (scRGB) swapchain (-DOMK_HDR),
+# `todo/enhancements.md` 22
+build/shaders/dx/%_ms.frag.spv: backends/d3d12/shaders/%.frag
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_MS -o $@ $<
+build/shaders/dx/%_hdr.frag.spv: backends/d3d12/shaders/%.frag
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_HDR -o $@ $<
 build/shaders/dx/%.hlsl: build/shaders/dx/%.spv
 	$(SPIRV_CROSS) $< --hlsl --shader-model $(if $(findstring _rt,$*),65,60) $(if $(filter %.vert,$*),--flip-vert-y) \
 	    | sed -e 's/^cbuffer \([A-Za-z_0-9]*\)\([^A-Za-z_0-9 :]*\)$$/cbuffer \1 : register(b0, space7)\2/' > $@

@@ -41,6 +41,7 @@ constexpr const char* kSwitches[] = {
     "OMK_GLES_NO_STATE_CACHE",  // GLES: the draw-state cache off (engine: gles state cache)
     "OMK_GLES_WINDUMP",         // =<path> GLES: the window's own picture written on the last frame (engine: gles overlay)
     "OMK_GPU_PRESENT_STATS",    // log: the GPU present's counts every 30 frames (engine: gpu present)
+    "OMK_HDR_FORCE",            // D3D12, hdr = on: the scRGB swapchain even on a display that reports no HDR (a test of the path)
     "OMK_HIDDEN_WINDOW",        // the GPU window created hidden, the present kept - for profiling (engine: gles overlay)
     "OMK_KOTRACE",              // =1 log: a knocked-out fighter's channel, tick by tick
     "OMK_LBLOG",                // =1 log: which term holds the letterbox bars, when it changes
@@ -80,6 +81,7 @@ constexpr const char* kSwitches[] = {
     "OMK_POOL_PAD",             // =<n> n spare copies of texture slot 0, to push the pool past 64 (engine: pool past 64)
     "OMK_POOL_TWICE",           // A/B: textures dropped and re-sent on an arrival, the old order
     "OMK_POST_MESSAGE",         // =<msg>@<frame> posts that message on that frame (engine: mirror park)
+    "OMK_POST_TIMING",          // log: the D3D12 post chain's GPU time (timestamps), every 60 frames
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned

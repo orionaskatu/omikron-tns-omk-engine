@@ -294,6 +294,16 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   channel, not quantised and dithered to RGB565 (16, the\n"
 "                   default, the original's look); the GPU backends' present,\n"
 "                   Direct3D 12's interface frames too; [Enhancements] colordepth=32\n"
+"  --bloom          ENHANCEMENT: light bleeding from the neon, lamps and fires\n"
+"                   (Direct3D 12); [Enhancements] bloom=on\n"
+"  --dof            ENHANCEMENT: depth of field on the letterboxed frames -\n"
+"                   conversations and cutscenes (Direct3D 12); [Enhancements] dof=on\n"
+"  --colorgrade off|cyber|warm|noir|filmic  ENHANCEMENT: a colour grade over the\n"
+"                   3D, not the interface (Direct3D 12); NOT part of --enhance-all;\n"
+"                   [Enhancements] colorgrade\n"
+"  --hdr            ENHANCEMENT: HDR10 output (scRGB) when the display reports HDR,\n"
+"                   else SDR with a line (Direct3D 12); NOT part of --enhance-all;\n"
+"                   [Enhancements] hdr=on\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
 "                   around them, shadow rays for their lamps, ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
@@ -527,6 +537,16 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--raytracing") raytracingFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--vehicle-shine") vehicleShineFlag = 1;
+        else if (a == "--bloom") bloomFlag = 1;
+        else if (a == "--dof") dofFlag = 1;
+        else if (a == "--hdr") hdrFlag = 1;
+        else if (a == "--colorgrade" && i + 1 < argc) {
+            colorGradeFlag = omk::colorGradeMode(argv[++i]);
+            if (colorGradeFlag < 0) {
+                std::fprintf(stderr, "--colorgrade %s: not a grade (off|cyber|warm|noir|filmic)\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--colordepth" && i + 1 < argc) {
             const std::string d = argv[++i];
             if (d != "16" && d != "32") {

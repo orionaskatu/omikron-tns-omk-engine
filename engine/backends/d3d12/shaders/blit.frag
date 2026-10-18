@@ -22,6 +22,8 @@ layout(push_constant) uniform Blit {
     vec4 dst;      // x0, y0, width, height of the destination rectangle
     vec4 srcSize;  // the source region's width, height; the texture's width, height
     int  linear;   // 1 LINEAR (supersampled), 0 NEAREST
+    float white;   // HDR (-DOMK_HDR): scRGB's value for paper white (nits / 80)
+    float peak;    // ...and for the display's peak, where it is clamped
 } pc;
 
 layout(location = 0) out vec4 o;
@@ -34,4 +36,13 @@ void main() {
     else
         o = texelFetch(src, ivec2(min(floor(s), pc.srcSize.xy - 1.0)), 0);
     o.a = 1.0;
+#ifdef OMK_HDR
+    // HDR OUTPUT (`hdr = on`, `todo/enhancements.md` 22): the swapchain is
+    // scRGB - FP16, linear, BT.709 primaries, 1.0 = 80 nits
+    // (DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709). Everything this blit is
+    // handed is gamma 2.2 with 1.0 = paper white - the 2D, a CPU frame, and
+    // the post chain's picture, whose highlights alone run past 1.0 - so it
+    // goes to linear light and is scaled to paper white's nits.
+    o.rgb = min(pow(max(o.rgb, vec3(0.0)), vec3(2.2)) * pc.white, vec3(pc.peak));
+#endif
 }

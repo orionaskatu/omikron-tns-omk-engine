@@ -139,6 +139,10 @@ struct PlayOptions {
     int raytracingFlag = -1; // --raytracing, [Enhancements] raytracing = on
     int vehicleShineFlag = -1; // --vehicle-shine, [Enhancements] vehicleshine = on
     int colourDepthFlag = -1;  // --colordepth 16|32, [Enhancements] colordepth
+    int bloomFlag = -1;        // --bloom, [Enhancements] bloom = on
+    int dofFlag = -1;          // --dof, [Enhancements] dof = on
+    int colorGradeFlag = -1;   // --colorgrade G, [Enhancements] colorgrade
+    int hdrFlag = -1;          // --hdr, [Enhancements] hdr = on
     int bestLodFlag = -1;    // --best-lod, [Enhancements] lod = best
     int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler
     int upscaleQualityFlag = -1; // --upscale-quality Q, [Enhancements] upscalequality

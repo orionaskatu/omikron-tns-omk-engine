@@ -188,6 +188,30 @@ Settings resolveSettings(const OptionsFile& ini,
             } else std::fprintf(stderr, "settings: colordepth = %s is not a depth "
                                         "(16|32) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "bloom")) {
+            const int m = escapeBackMode(*w);     // the same off|on words
+            if (m >= 0) { s.bloom = m > 0; s.bloomSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: bloom = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
+        if (const std::string* w = ini.find(kEnhancements, "dof")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.dof = m > 0; s.dofSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: dof = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
+        if (const std::string* w = ini.find(kEnhancements, "colorgrade")) {
+            const int m = colorGradeMode(*w);
+            if (m >= 0) { s.colorGrade = m; s.colorGradeSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: colorgrade = %s is not a grade "
+                                      "(off|cyber|warm|noir|filmic) - ignored\n", w->c_str());
+        }
+        if (const std::string* w = ini.find(kEnhancements, "hdr")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.hdr = m > 0; s.hdrSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: hdr = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

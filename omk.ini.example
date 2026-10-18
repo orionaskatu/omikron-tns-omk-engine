@@ -274,6 +274,28 @@
 ; `todo/enhancements.md` 21.
 ;colordepth = 16
 ;
+; THE POST-PROCESSING CHAIN - the Direct3D 12 backend's (`renderer = d3d12`);
+; Vulkan says so and leaves it off. Over the 3D only: the interface (HUD,
+; subtitles, screens) is laid over it untouched. `todo/enhancements.md` 22.
+;   bloom = on        light bleeding from the neon, the lamps and the fires -
+;                     a tight glow round what nears white, not a haze. In
+;                     `all = max`. `--bloom`.
+;   dof = on          depth of field on the LETTERBOXED frames alone
+;                     (conversations, cutscenes), focused where the camera
+;                     aims. In `all = max`. `--dof`.
+;   colorgrade = off|cyber|warm|noir|filmic   a colour grade: cyber (teal
+;                     shadows, magenta-orange highlights - Anekbah's neon
+;                     night), warm, noir (almost black and white), filmic (a
+;                     neutral S-curve). A look, so NOT in `all = max`.
+;                     `--colorgrade G`.
+;   hdr = on          HDR10 output (an scRGB swapchain) when Windows reports
+;                     the display as HDR, else a line and SDR. Asked for by
+;                     name only. `--hdr`.
+;bloom = off
+;dof = off
+;colorgrade = off
+;hdr = off
+;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only

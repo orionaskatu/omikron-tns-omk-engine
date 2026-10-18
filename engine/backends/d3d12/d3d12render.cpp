@@ -106,6 +106,10 @@ namespace {
 #include "dx/shadow.vert.h"
 #include "dx/present.frag.h"
 #include "dx/overlay.frag.h"
+#include "dx/bloom.frag.h"
+#include "dx/post.frag.h"
+#include "dx/post_ms.frag.h"
+#include "dx/blit_hdr.frag.h"
 #include "dx/ssao.frag.h"
 #include "dx/ssao_blur.frag.h"
 #include "dx/ssao_ms.frag.h"
@@ -133,7 +137,10 @@ struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
 // `scene.frag`'s `RtFrame` (-DOMK_RT, set 3 binding 2: a root CBV b2 space3)
 struct RtFrame { float sky[4]; float eye[4]; float params[4]; };
 // `blit.frag`'s, this backend's own: the swapchain's scaled copy
-struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; };
+struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, peak; };
+// THE POST CHAIN's (`bloom.frag`, `post.frag`, todo/enhancements.md 22)
+struct BloomPush { float texel[4]; float params[4]; float target[4]; };
+struct PostPush { float frame[4], depthAB[4], dof[4], tone[4], lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
 
 constexpr UINT kShadowSide = 2048;
 constexpr int kShadowLayers = 3;
@@ -220,7 +227,15 @@ constexpr UINT kSlotPres = 4;     // the present pass's output, for the blit
 constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
 constexpr UINT kSlotOvPic = 6;    // the OVERLAY's 565 colour plane (colour depth 32)...
 constexpr UINT kSlotOvMask = 7;   // ...and its mask plane, the next slot (one table)
-constexpr UINT kSlotFirstFree = 8;
+// THE POST CHAIN (todo/enhancements.md 22): `post.frag`'s ONE table - the
+// source, bloom level 0, the depth - then the chain's output and the levels
+constexpr UINT kSlotPostSrc = 8;
+constexpr UINT kSlotPostBloom = 9;
+constexpr UINT kSlotPostDepth = 10;
+constexpr UINT kSlotPostOut = 11;
+constexpr UINT kSlotBloom0 = 12;
+constexpr int kBloomLevels = 6;   // half the display size down to 1/64
+constexpr UINT kSlotFirstFree = kSlotBloom0 + kBloomLevels;
 constexpr UINT kSrvHeapSize = 4096;
 
 #define DXCHECK(x, what)                                                        \
@@ -365,6 +380,16 @@ public:
         return true;
     }
 
+    // THE POST CHAIN (`todo/enhancements.md` 22): asked for here, its passes
+    // made on first use (`makePost`), HDR decided with the swapchain
+    bool setPostProcess(const PostProcess& p) override {
+        if (dev_) return false;
+        postReq_ = p;
+        postReq_.grade = p.grade < 0 ? 0 : p.grade > 4 ? 4 : p.grade;
+        postWant_ = p.bloom || p.dof || postReq_.grade > 0 || p.hdr;
+        return true;
+    }
+
     int samples() const { return static_cast<int>(samples_); }
     int maxSamples() const;
     const char* device() const { return devName_.c_str(); }
@@ -451,6 +476,14 @@ private:
     bool makeUpscaler();
     void upscale();
     void motionStats();
+    // THE POST CHAIN: its passes and images, the chain itself (on the frame's
+    // list, after the upscaler), and what the display half reads once it ran
+    bool makePost();
+    void runPost();
+    bool outputIsHdr(float& peakNits);
+    Res& displaySource() { return postLive_ ? postImg_ : upscaleSource(); }
+    UINT displaySlot() const { return postLive_ ? kSlotPostOut : sourceSlot(); }
+    int displaySs() const { return postLive_ ? 1 : sourceSs(); }
 
     static void geometryGone(void* self, const omk::Geometry* g);
 
@@ -487,7 +520,8 @@ private:
     Res msColour_;           // MSAA: what the pipelines draw into, resolved into colour_
     Res depth_;              // D32S8, sampleable (SSAO, an upscaler)
     UINT rtvColour_ = 0, rtvMs_ = 1, rtvAo_ = 2, rtvPres_ = 3, rtvMotion_ = 4;   // fixed RTV slots
-    static constexpr UINT kRtvSwap = 5;                          // ...and the swapchain's, after them
+    UINT rtvPost_ = 5, rtvBloom0_ = 6;                           // the post chain's (6 levels)
+    static constexpr UINT kRtvSwap = 6 + kBloomLevels;           // ...and the swapchain's, after them
     UINT dsvDepth_ = 0;                                          // DSV 0; the shadow layers 1..3
     ID3D12Resource* readBuf_ = nullptr;
     UINT64 readPitch_ = 0;
@@ -522,6 +556,35 @@ private:
     float shimmerClock_ = 0.0f;
     bool dither_ = true;
     int colourDepth_ = 16;   // the View's colour depth: 32 = the present pass leaves the picture 8-bit
+
+    // ---- THE POST CHAIN (`todo/enhancements.md` 22) ----
+    PostProcess postReq_{};
+    bool postWant_ = false;            // anything asked at all
+    bool postLive_ = false;            // the chain ran on THIS frame: the display half reads `postImg_`
+    bool cine_ = false;                // the frame is cinematic: a full-width letterbox strip
+    float focus_ = 0.0f;               // the camera's eye-to-target distance
+    int postVw_ = 0, postVh_ = 0;      // the picture's rectangle, display pixels
+    Res postImg_;                      // display size, `presFmt_`
+    UINT64 postPitch_ = 0;
+    Res bloom_[kBloomLevels];          // R11G11B10_FLOAT, half size and down
+    int bloomW_[kBloomLevels] = {}, bloomH_[kBloomLevels] = {};
+    ID3D12RootSignature* bloomRs_ = nullptr;
+    ID3D12RootSignature* postRs_ = nullptr;
+    ID3D12PipelineState* bloomDownPipe_ = nullptr;
+    ID3D12PipelineState* bloomUpPipe_ = nullptr;
+    ID3D12PipelineState* postPipe_ = nullptr;
+    // HDR OUTPUT: an scRGB swapchain (FP16, linear, BT.709) when the display reports HDR
+    bool hdrOn_ = false;
+    float hdrPeak_ = 1000.0f;          // the display's MaxLuminance, nits
+    static constexpr float kPaperWhite = 200.0f;   // nits: where the SDR picture's white goes
+    DXGI_FORMAT swapFmt_ = DXGI_FORMAT_R8G8B8A8_UNORM;
+    DXGI_FORMAT presFmt_ = DXGI_FORMAT_R8G8B8A8_UNORM;   // the present image's, the overlay's, the chain's
+    // `OMK_POST_TIMING`: two timestamps around the chain, read after the frame
+    ID3D12QueryHeap* postQ_ = nullptr;
+    ID3D12Resource* postQBuf_ = nullptr;
+    double postMsSum_ = 0.0;
+    int postMsN_ = 0;
+    bool postTimed_ = false;
 
     // ---- the textures ----
     struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); };
@@ -652,7 +715,6 @@ private:
     HWND hwnd_ = nullptr;
     IDXGISwapChain3* swap_ = nullptr;
     static constexpr UINT kSwapBuffers = 3;
-    static constexpr DXGI_FORMAT kSwapFmt = DXGI_FORMAT_R8G8B8A8_UNORM;
     Res swapBuf_[kSwapBuffers];
     UINT swapW_ = 0, swapH_ = 0;
     ID3D12RootSignature* blitRs_ = nullptr;
@@ -1084,6 +1146,9 @@ void D3D12Renderer::killTarget() {
     freeRes(motion_.r);
     freeRes(upOut_.r);
     freeRes(motionRead_);
+    freeRes(postImg_.r);     // ...and the post chain's (`makePost`)
+    for (Res& b : bloom_) freeRes(b.r);
+    postLive_ = false;
 }
 
 ID3D12RootSignature* D3D12Renderer::makeRootSig(const D3D12_ROOT_SIGNATURE_DESC& d, const char* what) {
@@ -1408,21 +1473,53 @@ void D3D12Renderer::killSwapchainBuffers() {
 // `readback()` must keep working from the same offscreen target, and the
 // letterboxed picture is placed into a window-sized image.
 bool D3D12Renderer::makeSwapchain() {
-    DXGI_SWAP_CHAIN_DESC1 d{};
-    d.Width = 0; d.Height = 0;            // the window's client area
-    d.Format = kSwapFmt;
-    d.SampleDesc.Count = 1;
-    d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    d.BufferCount = kSwapBuffers;
-    d.Scaling = DXGI_SCALING_STRETCH;
-    d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    d.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-    IDXGISwapChain1* sc1 = nullptr;
-    DXCHECK(factory_->CreateSwapChainForHwnd(queue_, hwnd_, &d, nullptr, nullptr, &sc1),
-            "CreateSwapChainForHwnd");
-    const HRESULT hr = sc1->QueryInterface(IID_PPV_ARGS(&swap_));
-    sc1->Release();
-    DXCHECK(hr, "IDXGISwapChain3");
+    // HDR OUTPUT (`hdr = on`, todo/enhancements.md 22): only when the output
+    // the window is on reports an HDR colour space (ST.2084) - Windows' HDR
+    // switch on, an HDR display - else a line and the SDR swapchain.
+    // `OMK_HDR_FORCE=1` takes the HDR path on any display, to exercise it.
+    hdrOn_ = false;
+    if (postReq_.hdr) {
+        float peak = 0.0f;
+        const bool hdr = outputIsHdr(peak);
+        if (peak > 0.0f) hdrPeak_ = peak;
+        if (hdr || omk::envFlag("OMK_HDR_FORCE")) hdrOn_ = true;
+        else std::printf("hdr: the display reports no HDR (IDXGIOutput6::GetDesc1: not ST.2084) - "
+                         "the picture stays SDR\n");
+    }
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        swapFmt_ = hdrOn_ ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+        DXGI_SWAP_CHAIN_DESC1 d{};
+        d.Width = 0; d.Height = 0;            // the window's client area
+        d.Format = swapFmt_;
+        d.SampleDesc.Count = 1;
+        d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        d.BufferCount = kSwapBuffers;
+        d.Scaling = DXGI_SCALING_STRETCH;
+        d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        d.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+        IDXGISwapChain1* sc1 = nullptr;
+        DXCHECK(factory_->CreateSwapChainForHwnd(queue_, hwnd_, &d, nullptr, nullptr, &sc1),
+                "CreateSwapChainForHwnd");
+        const HRESULT hr = sc1->QueryInterface(IID_PPV_ARGS(&swap_));
+        sc1->Release();
+        DXCHECK(hr, "IDXGISwapChain3");
+        if (!hdrOn_) break;
+        // scRGB: linear, BT.709 primaries, 1.0 = 80 nits - the DWM composes it
+        // onto an HDR10 display itself (DXGI's "HDR and wide colour gamut")
+        UINT support = 0;
+        const DXGI_COLOR_SPACE_TYPE cs = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+        if (SUCCEEDED(swap_->CheckColorSpaceSupport(cs, &support)) &&
+            (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) && SUCCEEDED(swap_->SetColorSpace1(cs))) {
+            std::printf("hdr: on - an ENHANCEMENT: an scRGB (FP16) swapchain, paper white %.0f nits, the "
+                        "display's peak %.0f nits\n", static_cast<double>(kPaperWhite),
+                        static_cast<double>(hdrPeak_));
+            break;
+        }
+        std::printf("hdr: the swapchain refuses the scRGB colour space - the picture stays SDR\n");
+        release(swap_);
+        hdrOn_ = false;
+    }
+    presFmt_ = hdrOn_ ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
     // ALT+ENTER is the window layer's (F11, SDL's borderless fullscreen), not DXGI's
     factory_->MakeWindowAssociation(hwnd_, DXGI_MWA_NO_ALT_ENTER);
     if (!swapchainBuffers()) return false;
@@ -1442,7 +1539,8 @@ bool D3D12Renderer::makeSwapchain() {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = blitRs_;
     pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
-    pd.PS = rs::code(kDx_blit_frag, sizeof kDx_blit_frag);
+    pd.PS = hdrOn_ ? rs::code(kDx_blit_hdr_frag, sizeof kDx_blit_hdr_frag)
+                   : rs::code(kDx_blit_frag, sizeof kDx_blit_frag);
     pd.SampleMask = UINT_MAX;
     pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -1450,7 +1548,7 @@ bool D3D12Renderer::makeSwapchain() {
     pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pd.NumRenderTargets = 1;
-    pd.RTVFormats[0] = kSwapFmt;
+    pd.RTVFormats[0] = swapFmt_;
     pd.SampleDesc.Count = 1;
     blitPipe_ = makePso(pd, "blit");
     if (!blitPipe_) return false;
@@ -1497,7 +1595,7 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     if (cw != swapW_ || ch != swapH_) {
         flush();
         killSwapchainBuffers();
-        if (FAILED(swap_->ResizeBuffers(kSwapBuffers, cw, ch, kSwapFmt, 0)) || !swapchainBuffers())
+        if (FAILED(swap_->ResizeBuffers(kSwapBuffers, cw, ch, swapFmt_, 0)) || !swapchainBuffers())
             return false;
     }
     const UINT idx = swap_->GetCurrentBackBufferIndex();
@@ -1525,7 +1623,9 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     const BlitPush bp{{static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(dW), static_cast<float>(dH)},
                       {static_cast<float>(sw), static_cast<float>(sh), static_cast<float>(texW), static_cast<float>(texH)},
                       // LINEAR only when there is something to average
-                      ss_ > 1 ? 1 : 0};
+                      ss_ > 1 ? 1 : 0,
+                      // HDR (`blit.frag` -DOMK_HDR): paper white and the peak in scRGB
+                      kPaperWhite / 80.0f, hdrPeak_ / 80.0f};
     l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(srv));
     l->DrawInstanced(3, 1, 0, 0);
@@ -1558,11 +1658,27 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
         winPic_.resize(static_cast<std::size_t>(sW) * static_cast<std::size_t>(sH) * 4);
         void* p = nullptr;
         if (SUCCEEDED(capBuf->Map(0, nullptr, &p))) {
-            for (int y = 0; y < sH; ++y)
-                std::memcpy(winPic_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(sW) * 4,
-                            static_cast<const unsigned char*>(p) + capFp.Offset +
-                                static_cast<UINT64>(y) * capFp.Footprint.RowPitch,
-                            static_cast<std::size_t>(sW) * 4);
+            for (int y = 0; y < sH; ++y) {
+                const unsigned char* row = static_cast<const unsigned char*>(p) + capFp.Offset +
+                                           static_cast<UINT64>(y) * capFp.Footprint.RowPitch;
+                unsigned char* to = winPic_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(sW) * 4;
+                if (!hdrOn_) {
+                    std::memcpy(to, row, static_cast<std::size_t>(sW) * 4);
+                    continue;
+                }
+                // HDR: scRGB halves back to gamma 2.2 at paper white, clipped
+                const auto* h = reinterpret_cast<const std::uint16_t*>(row);
+                for (int x = 0; x < sW; ++x)
+                    for (int k = 0; k < 4; ++k) {
+                        const std::uint16_t v = h[4 * x + k];
+                        const std::uint32_t e = (v >> 10) & 31u, m = v & 1023u;
+                        float f = e == 0 ? std::ldexp(static_cast<float>(m), -24)
+                                         : std::ldexp(static_cast<float>(m | 1024u), static_cast<int>(e) - 25);
+                        if (v >> 15) f = 0.0f;
+                        f = k == 3 ? 1.0f : std::pow(std::min(f * 80.0f / kPaperWhite, 1.0f), 1.0f / 2.2f);
+                        to[4 * x + k] = static_cast<unsigned char>(f * 255.0f + 0.5f);
+                    }
+            }
             D3D12_RANGE none{0, 0};
             capBuf->Unmap(0, &none);
         }
@@ -1658,7 +1774,7 @@ bool D3D12Renderer::makePresentPass() {
         pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pd.NumRenderTargets = 1;
-        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pd.RTVFormats[0] = presFmt_;
         pd.SampleDesc.Count = 1;
         presPipe_ = makePso(pd, "present");
         if (!presPipe_) return false;
@@ -1666,7 +1782,7 @@ bool D3D12Renderer::makePresentPass() {
     if (presImg_.r) return true;
     // the DISPLAY-size picture, which the swapchain blit and the
     // verification copy both read
-    presImg_.r = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
+    presImg_.r = makeImage(presFmt_, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
                            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE,
                            nullptr, "present image");
     presImg_.st = D3D12_RESOURCE_STATE_COPY_SOURCE;
@@ -1686,7 +1802,8 @@ bool D3D12Renderer::makePresentPass() {
 // reads `upscaleSource()` at the RENDER size, `ss_` folding the supersample.
 bool D3D12Renderer::runPresentPass(int vy, int vh) {
     if (!makePresentPass()) return false;
-    Res& src = upscaleSource();
+    // the POST CHAIN's picture when it ran this frame (display size, folded)
+    Res& src = displaySource();
     ID3D12GraphicsCommandList* l = oneShotBegin();
     src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -1699,9 +1816,10 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
     l->SetGraphicsRootSignature(presRs_);
     l->SetPipelineState(presPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, sourceSs(), colourDepth_};
+    // (HDR: the picture passed through - its highlights run past 1.0)
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, displaySs(), hdrOn_ ? 32 : colourDepth_};
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
-    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(sourceSlot()));
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(displaySlot()));
     l->DrawInstanced(3, 1, 0, 0);
     presImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1760,7 +1878,7 @@ bool D3D12Renderer::makeOverlayPass() {
         b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         pd.NumRenderTargets = 1;
-        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pd.RTVFormats[0] = presFmt_;
         pd.SampleDesc.Count = 1;
         ovPipe_ = makePso(pd, "overlay");
         if (!ovPipe_) return false;
@@ -1835,6 +1953,7 @@ bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* ma
 }
 
 bool D3D12Renderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgba) {
+    if (hdrOn_) return false;   // an FP16 present image: not this RGBA8 copy's
     if (!runPresentPass(vy, vh)) return false;
     ID3D12GraphicsCommandList* l = oneShotBegin();
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -2344,6 +2463,18 @@ void D3D12Renderer::begin(const omk::View& view) {
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
+    // THE POST CHAIN's view: the picture's rectangle, whether the frame is
+    // CINEMATIC - a full-width strip shorter than the frame, the letterbox of
+    // conversations and cutscenes (`renderer.h`, THE LETTERBOX; a free walk
+    // is a strip of the frame's own height) - and the focus distance
+    postVw_ = view.letterboxed() ? std::min(view.vw, w_) : w_;
+    postVh_ = view.letterboxed() ? std::min(view.vh, h_) : h_;
+    cine_ = postVw_ >= w_ && postVh_ < h_;
+    {
+        const float dx = view.cam.at[0] - view.cam.eye[0], dy = view.cam.at[1] - view.cam.eye[1],
+                    dz = view.cam.at[2] - view.cam.eye[2];
+        focus_ = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};
@@ -3439,6 +3570,8 @@ void D3D12Renderer::end() {
     // the HUD and the rest of the 2D are composited over its OUTPUT later, at
     // the display size, on the CPU as ever.
     if (up_) upscale();
+    // THE POST CHAIN (todo/enhancements.md 22), display size, when asked
+    runPost();
     // It rests in COPY_SOURCE, where the readback copy and the present pass
     // expect it. The readback COPY itself is not recorded: a frame the GPU
     // presents never reads it (`readback()` does it when asked).
@@ -3460,6 +3593,23 @@ void D3D12Renderer::end() {
     ID3D12CommandList* l[] = {list_};
     queue_->ExecuteCommandLists(1, l);
     flush();
+    if (postTimed_) {
+        postTimed_ = false;
+        void* q = nullptr;
+        UINT64 hz = 0;
+        if (SUCCEEDED(queue_->GetTimestampFrequency(&hz)) && hz && SUCCEEDED(postQBuf_->Map(0, nullptr, &q))) {
+            const auto* t = static_cast<const UINT64*>(q);
+            postMsSum_ += static_cast<double>(t[1] - t[0]) * 1000.0 / static_cast<double>(hz);
+            D3D12_RANGE none{0, 0};
+            postQBuf_->Unmap(0, &none);
+            if (++postMsN_ == 60) {
+                std::printf("post: %.3f ms on the GPU a frame (mean of 60, %dx%d)\n", postMsSum_ / 60.0, w_, h_);
+                omk::event("post.timing", {{"ms", postMsSum_ / 60.0}, {"w", w_}, {"h", h_}});
+                postMsSum_ = 0.0;
+                postMsN_ = 0;
+            }
+        }
+    }
     if (rtRecorded_) {
         rtRecorded_ = false;
         rtAfter();
@@ -3479,6 +3629,313 @@ void D3D12Renderer::end() {
     }
 }
 
+// ---- THE POST-PROCESSING CHAIN (`todo/enhancements.md` 22) ----------------
+//
+// AN ENHANCEMENT, every part off unless asked: `bloom`, `dof`, `colorgrade`,
+// `hdr`. It runs on the frame's list after the scene, SSAO and the upscaler,
+// at the DISPLAY size: the 3D frame in (`upscaleSource`, the supersample
+// folded), one display-size picture out (`postImg_`), which everything the
+// display half reads from then on reads instead - the present pass (and its
+// colour-depth rule, `present.frag`), the overlay pass over it, and the
+// `readback()` a CPU composite starts from. So the 2D interface is laid over
+// the PROCESSED world and is never bloomed, blurred or graded. With nothing
+// asked - or only depth of field, on a frame that is not cinematic - the chain
+// does not run and the frame is byte-identical to one without it.
+//
+// The scene target stays RGBA8, deliberately: an FP16 one would change every
+// scene pipeline, the MSAA resolve, the upscaler's input contract and the
+// readback for light the scene shader never produces (the game's lighting
+// saturates at 1 like its device did). The headroom is made where it is used:
+// `expand` (`bloom.frag`, `post.frag`) maps the 8-bit picture into linear
+// light with the tone curve's inverse, so near-white neon stands for several
+// times a mid grey, bloom is added there, and the curve maps back - exactly
+// onto the original picture wherever nothing was added.
+
+namespace {
+// THE GRADES: lift (rgb) + saturation, gamma (rgb) + S-curve, gain (rgb) +
+// highlight desaturation, shadow tint + weight, highlight tint + weight.
+// Small numbers on purpose: a look, not a filter.
+struct Grade { float lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
+const Grade kGrades[5] = {
+    {},
+    // CYBER - Anekbah's neon night: teal into the shadows, a magenta-orange
+    // into the highlights, a mild S-curve and a little more colour
+    {{0.0f, 0.012f, 0.025f, 1.15f}, {1.0f, 1.0f, 1.0f, 0.22f}, {1.02f, 0.99f, 1.0f, 0.0f},
+     {0.0f, 0.62f, 0.72f, 0.08f}, {1.0f, 0.42f, 0.55f, 0.09f}},
+    // WARM - late sun: the gain toward amber, a soft curve
+    {{0.015f, 0.008f, 0.0f, 1.05f}, {1.0f, 1.0f, 1.03f, 0.10f}, {1.06f, 1.0f, 0.90f, 0.0f},
+     {0.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.78f, 0.5f, 0.05f}},
+    // NOIR - almost no colour, deeper blacks, more contrast, a cold shadow
+    {{-0.02f, -0.02f, -0.02f, 0.10f}, {1.06f, 1.06f, 1.06f, 0.40f}, {1.06f, 1.06f, 1.06f, 0.0f},
+     {0.35f, 0.5f, 0.75f, 0.04f}, {0.0f, 0.0f, 0.0f, 0.0f}},
+    // FILMIC - a neutral S-curve, the highlights a little desaturated
+    {{0.008f, 0.008f, 0.008f, 0.97f}, {1.0f, 1.0f, 1.0f, 0.20f}, {1.0f, 1.0f, 1.0f, 0.45f},
+     {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}},
+};
+const char* const kGradeNames[5] = {"off", "cyber", "warm", "noir", "filmic"};
+// the bloom's strength and threshold, in the expanded linear light
+constexpr float kBloomThreshold = 1.5f;   // ~ 247 of 255: only what nears white
+constexpr float kBloomKnee = 0.3f;
+constexpr float kBloomIntensity = 0.25f;  // of the levels' weighted sum
+// each wider level weighs this much of the one inside it: a tight glow round
+// a lamp, not a wash over the whole street (equal weights fogged the walls)
+constexpr float kBloomFalloff = 0.6f;
+}  // namespace
+
+// Which output the window is on, and whether it reports HDR: the output whose
+// desktop rectangle overlaps the window most, over every adapter (a laptop's
+// panel can hang off the other GPU). DXGI's `IDXGIOutput6::GetDesc1`.
+bool D3D12Renderer::outputIsHdr(float& peakNits) {
+    RECT wr{};
+    GetWindowRect(hwnd_, &wr);
+    long best = -1;
+    bool hdr = false;
+    IDXGIAdapter1* a = nullptr;
+    for (UINT i = 0; factory_->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+        IDXGIOutput* o = nullptr;
+        for (UINT j = 0; a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; ++j) {
+            IDXGIOutput6* o6 = nullptr;
+            if (SUCCEEDED(o->QueryInterface(IID_PPV_ARGS(&o6)))) {
+                DXGI_OUTPUT_DESC1 d{};
+                if (SUCCEEDED(o6->GetDesc1(&d))) {
+                    const RECT& r = d.DesktopCoordinates;
+                    const long ix = std::max(0L, std::min(wr.right, r.right) - std::max(wr.left, r.left));
+                    const long iy = std::max(0L, std::min(wr.bottom, r.bottom) - std::max(wr.top, r.top));
+                    if (ix * iy > best) {
+                        best = ix * iy;
+                        hdr = d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                        peakNits = d.MaxLuminance;
+                    }
+                }
+                o6->Release();
+            }
+            o->Release();
+        }
+        a->Release();
+    }
+    return hdr;
+}
+
+bool D3D12Renderer::makePost() {
+    if (!bloomRs_) {
+        // the bloom passes: one input (t0), a linear clamped sampler
+        const D3D12_DESCRIPTOR_RANGE r1 = rs::srvs(0, 0, 1);
+        D3D12_ROOT_PARAMETER p1[2] = {
+            rs::constants(0, kPushSpace, sizeof(BloomPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&r1, D3D12_SHADER_VISIBILITY_PIXEL)};
+        D3D12_STATIC_SAMPLER_DESC s[3] = {
+            rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(2, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+        D3D12_ROOT_SIGNATURE_DESC d{};
+        d.NumParameters = 2; d.pParameters = p1;
+        d.NumStaticSamplers = 1; d.pStaticSamplers = s;
+        bloomRs_ = makeRootSig(d, "bloom");
+        // the final pass: ONE table of three (source, bloom level 0, depth)
+        const D3D12_DESCRIPTOR_RANGE r3 = rs::srvs(0, 0, 3);
+        D3D12_ROOT_PARAMETER p3[2] = {
+            rs::constants(0, kPushSpace, sizeof(PostPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&r3, D3D12_SHADER_VISIBILITY_PIXEL)};
+        d.pParameters = p3;
+        d.NumStaticSamplers = 3;
+        postRs_ = makeRootSig(d, "post");
+        if (!bloomRs_ || !postRs_) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = bloomRs_;
+        pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
+        pd.PS = rs::code(kDx_bloom_frag, sizeof kDx_bloom_frag);
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
+        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.NumRenderTargets = 1;
+        pd.RTVFormats[0] = DXGI_FORMAT_R11G11B10_FLOAT;
+        pd.SampleDesc.Count = 1;
+        bloomDownPipe_ = makePso(pd, "bloom down");
+        // back up the chain: added onto the larger level
+        D3D12_RENDER_TARGET_BLEND_DESC& b = pd.BlendState.RenderTarget[0];
+        b.BlendEnable = TRUE;
+        b.SrcBlend = D3D12_BLEND_ONE; b.DestBlend = D3D12_BLEND_ONE; b.BlendOp = D3D12_BLEND_OP_ADD;
+        b.SrcBlendAlpha = D3D12_BLEND_ZERO; b.DestBlendAlpha = D3D12_BLEND_ONE; b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        b.LogicOp = D3D12_LOGIC_OP_NOOP;
+        bloomUpPipe_ = makePso(pd, "bloom up");
+        b = D3D12_RENDER_TARGET_BLEND_DESC{};
+        b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.pRootSignature = postRs_;
+        pd.PS = samples_ > 1 ? rs::code(kDx_post_ms_frag, sizeof kDx_post_ms_frag)
+                             : rs::code(kDx_post_frag, sizeof kDx_post_frag);
+        pd.RTVFormats[0] = presFmt_;
+        postPipe_ = makePso(pd, "post");
+        if (!bloomDownPipe_ || !bloomUpPipe_ || !postPipe_) return false;
+        if (omk::envFlag("OMK_POST_TIMING")) {
+            D3D12_QUERY_HEAP_DESC qd{};
+            qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+            qd.Count = 2;
+            if (FAILED(dev_->CreateQueryHeap(&qd, IID_PPV_ARGS(&postQ_)))) postQ_ = nullptr;
+            postQBuf_ = makeBuffer(2 * sizeof(UINT64), D3D12_HEAP_TYPE_READBACK, "readback");
+        }
+    }
+    if (postImg_.r) return true;
+    postImg_.r = makeImage(presFmt_, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
+                           D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                           nullptr, "post");
+    postImg_.st = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    if (!postImg_.r) return false;
+    dev_->CreateRenderTargetView(postImg_.r, nullptr, rtv_.cpu(rtvPost_));
+    dev_->CreateShaderResourceView(postImg_.r, nullptr, srv_.cpu(kSlotPostOut));
+    {
+        D3D12_RESOURCE_DESC cd = postImg_.r->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT64 total = 0;
+        dev_->GetCopyableFootprints(&cd, 0, 1, 0, &fp, nullptr, nullptr, &total);
+        postPitch_ = fp.Footprint.RowPitch;
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Texture2D.MipLevels = 1;
+    if (postReq_.bloom) {
+        int bw = w_, bh = h_;
+        for (int i = 0; i < kBloomLevels; ++i) {
+            bw = std::max(1, (bw + 1) / 2);
+            bh = std::max(1, (bh + 1) / 2);
+            bloomW_[i] = bw; bloomH_[i] = bh;
+            bloom_[i].r = makeImage(DXGI_FORMAT_R11G11B10_FLOAT, static_cast<UINT>(bw), static_cast<UINT>(bh), 1, 1,
+                                    1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, "post");
+            bloom_[i].st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            if (!bloom_[i].r) return false;
+            dev_->CreateRenderTargetView(bloom_[i].r, nullptr, rtv_.cpu(rtvBloom0_ + static_cast<UINT>(i)));
+            dev_->CreateShaderResourceView(bloom_[i].r, nullptr, srv_.cpu(kSlotBloom0 + static_cast<UINT>(i)));
+        }
+    }
+    // the final pass's table: the source (the upscaler's output or the
+    // scene's colour), bloom level 0 (a null view without bloom), the depth
+    sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dev_->CreateShaderResourceView(upscaleSource().r, &sv, srv_.cpu(kSlotPostSrc));
+    sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+    dev_->CreateShaderResourceView(postReq_.bloom ? bloom_[0].r : nullptr, &sv, srv_.cpu(kSlotPostBloom));
+    sv.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    sv.ViewDimension = samples_ > 1 ? D3D12_SRV_DIMENSION_TEXTURE2DMS : D3D12_SRV_DIMENSION_TEXTURE2D;
+    dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotPostDepth));
+    return true;
+}
+
+void D3D12Renderer::runPost() {
+    postLive_ = false;
+    if (!postWant_) return;
+    // DEPTH OF FIELD on cinematic frames only; the rest of the chain always
+    const bool dof = postReq_.dof && cine_ && focus_ > 1.0f;
+    if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof)) return;
+    if (!makePost()) {
+        static bool told = false;
+        if (!told) std::fprintf(stderr, "post: the chain could not be made - the frame without it\n");
+        told = true;
+        return;
+    }
+    ID3D12GraphicsCommandList* l = list_;
+    ID3D12DescriptorHeap* heaps[] = {srv_.heap};
+    l->SetDescriptorHeaps(1, heaps);
+    postTimed_ = postQ_ && postQBuf_;
+    if (postTimed_) l->EndQuery(postQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    Res& src = upscaleSource();
+    src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const float uvMax[2] = {static_cast<float>(postVw_) / static_cast<float>(w_),
+                            static_cast<float>(postVh_) / static_cast<float>(h_)};
+    const auto target = [&](Res& img, UINT rtv, int tw, int th) {
+        img.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        const D3D12_CPU_DESCRIPTOR_HANDLE h = rtv_.cpu(rtv);
+        l->OMSetRenderTargets(1, &h, FALSE, nullptr);
+        const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(tw), static_cast<float>(th), 0.0f, 1.0f};
+        const D3D12_RECT sr{0, 0, tw, th};
+        l->RSSetViewports(1, &vp);
+        l->RSSetScissorRects(1, &sr);
+    };
+    if (postReq_.bloom) {
+        l->SetGraphicsRootSignature(bloomRs_);
+        // DOWN: the bright pass into level 0 from the frame, then level by level
+        l->SetPipelineState(bloomDownPipe_);
+        for (int i = 0; i < kBloomLevels; ++i) {
+            const float iw = i == 0 ? static_cast<float>(w_) : static_cast<float>(bloomW_[i - 1]);
+            const float ih = i == 0 ? static_cast<float>(h_) : static_cast<float>(bloomH_[i - 1]);
+            if (i > 0) bloom_[i - 1].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            target(bloom_[i], rtvBloom0_ + static_cast<UINT>(i), bloomW_[i], bloomH_[i]);
+            const BloomPush bp{{1.0f / iw, 1.0f / ih, uvMax[0], uvMax[1]},
+                               {kBloomThreshold, kBloomKnee, i == 0 ? 0.0f : 1.0f, 1.0f},
+                               {1.0f / static_cast<float>(bloomW_[i]), 1.0f / static_cast<float>(bloomH_[i]), 0, 0}};
+            l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
+            l->SetGraphicsRootDescriptorTable(1, srv_.gpu(i == 0 ? kSlotPostSrc : kSlotBloom0 + static_cast<UINT>(i - 1)));
+            l->DrawInstanced(3, 1, 0, 0);
+        }
+        // UP: each level's tent added onto the next larger
+        l->SetPipelineState(bloomUpPipe_);
+        for (int i = kBloomLevels - 2; i >= 0; --i) {
+            bloom_[i + 1].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            target(bloom_[i], rtvBloom0_ + static_cast<UINT>(i), bloomW_[i], bloomH_[i]);
+            const BloomPush bp{{1.0f / static_cast<float>(bloomW_[i + 1]), 1.0f / static_cast<float>(bloomH_[i + 1]),
+                                uvMax[0], uvMax[1]},
+                               {0.0f, 0.0f, 2.0f, kBloomFalloff},
+                               {1.0f / static_cast<float>(bloomW_[i]), 1.0f / static_cast<float>(bloomH_[i]), 0, 0}};
+            l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
+            l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotBloom0 + static_cast<UINT>(i + 1)));
+            l->DrawInstanced(3, 1, 0, 0);
+        }
+        bloom_[0].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+    // THE FINAL PASS
+    depth_.to(l, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    target(postImg_, rtvPost_, w_, h_);
+    l->SetGraphicsRootSignature(postRs_);
+    l->SetPipelineState(postPipe_);
+    PostPush pp{};
+    pp.frame[0] = 1.0f / static_cast<float>(w_); pp.frame[1] = 1.0f / static_cast<float>(h_);
+    pp.frame[2] = uvMax[0]; pp.frame[3] = uvMax[1];
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    pp.depthAB[0] = static_cast<float>(rw_); pp.depthAB[1] = static_cast<float>(rh_);
+    pp.depthAB[2] = farP / (farP - nearP); pp.depthAB[3] = -farP * nearP / (farP - nearP);
+    if (dof) {
+        // the largest blur ~1.2% of the frame's height (9 px at 720p, 26 at
+        // 2160p), the spiral's step chosen for ~48 taps whatever the size
+        const float maxR = std::max(3.0f, 0.012f * static_cast<float>(h_));
+        pp.dof[0] = focus_; pp.dof[1] = maxR; pp.dof[2] = 0.25f;
+        pp.dof[3] = std::max(0.5f, maxR * maxR / 96.0f);
+    }
+    pp.tone[0] = postReq_.bloom ? kBloomIntensity : 0.0f;
+    pp.tone[1] = hdrOn_ ? std::max(1.0f, std::min(hdrPeak_, 1000.0f) / kPaperWhite) : 1.0f;
+    pp.tone[2] = postReq_.grade > 0 ? 1.0f : 0.0f;
+    pp.tone[3] = static_cast<float>(sourceSs());
+    const Grade& g = kGrades[postReq_.grade];
+    std::memcpy(pp.lift, g.lift, sizeof pp.lift);
+    std::memcpy(pp.gam, g.gam, sizeof pp.gam);
+    std::memcpy(pp.gain, g.gain, sizeof pp.gain);
+    std::memcpy(pp.tintS, g.tintS, sizeof pp.tintS);
+    std::memcpy(pp.tintH, g.tintH, sizeof pp.tintH);
+    if (postReq_.grade == 0) { pp.gam[0] = pp.gam[1] = pp.gam[2] = 1.0f; }
+    l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotPostSrc));
+    l->DrawInstanced(3, 1, 0, 0);
+    postImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    if (up_) upOut_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    if (postTimed_) {
+        l->EndQuery(postQ_, D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        l->ResolveQueryData(postQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, postQBuf_, 0);
+    }
+    bound_ = nullptr;
+    postLive_ = true;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        std::printf("post: the chain ran - bloom %s, depth of field %s, grade %s, %s\n",
+                    postReq_.bloom ? "on" : "off", postReq_.dof ? "on (cinematic frames)" : "off",
+                    kGradeNames[postReq_.grade], hdrOn_ ? "HDR (scRGB)" : "SDR");
+        omk::event("post", {{"bloom", postReq_.bloom ? 1 : 0}, {"dof", postReq_.dof ? 1 : 0},
+                            {"grade", kGradeNames[postReq_.grade]}, {"hdr", hdrOn_ ? 1 : 0}});
+    }
+}
+
 const omk::Surface& D3D12Renderer::readback() {
     // IDEMPOTENT, and that is a contract (renderer.h): converted once a frame
     if (!dirty_) return fb_;
@@ -3486,33 +3943,40 @@ const omk::Surface& D3D12Renderer::readback() {
     if (copyOwed_) {
         copyOwed_ = false;
         ID3D12GraphicsCommandList* l = oneShotBegin();
-        Res& img = upscaleSource();   // the scene's colour, or the upscaler's output
+        // the scene's colour, or the upscaler's output - or THE POST CHAIN's
+        // display-size picture when it ran (an SDR one: HDR's is FP16, and
+        // HDR's frames go out on the GPU, `colour depth 32`'s overlay)
+        const bool post = postLive_ && !hdrOn_;
+        Res& img = post ? postImg_ : upscaleSource();
         img.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         src.pResource = img.r;
         src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         dst.pResource = readBuf_;
         dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(sourceW()),
-                                         static_cast<UINT>(sourceH()), 1, static_cast<UINT>(readPitch_)};
+        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(post ? w_ : sourceW()),
+                                         static_cast<UINT>(post ? h_ : sourceH()), 1,
+                                         static_cast<UINT>(post ? postPitch_ : readPitch_)};
         l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         oneShotEnd();
     }
     void* p = nullptr;
     if (FAILED(readBuf_->Map(0, nullptr, &p))) return fb_;
     const auto* base = static_cast<const unsigned char*>(p);
-    const std::size_t pitch = static_cast<std::size_t>(readPitch_);
+    const bool post = postLive_ && !hdrOn_;
+    const std::size_t pitch = static_cast<std::size_t>(post ? postPitch_ : readPitch_);
+    const int ss = post ? 1 : ss_;   // the chain's picture is folded already
     // 888 -> 565 HERE, in software, and the SUPERSAMPLE RESOLVE on the 8-bit
     // side before it - `VulkanRenderer::readback`'s loop, rows at the copy's
     // pitch, rows in parallel (bit-identical to one core).
     omk::Threads::shared().parallelFor(0, static_cast<std::size_t>(h_), 16,
                                        [&](std::size_t rowFrom, std::size_t rowTo) {
         const int y0 = static_cast<int>(rowFrom), y1 = static_cast<int>(rowTo);
-        if (ss_ <= 1 && dither_) {
+        if (ss <= 1 && dither_) {
             for (int y = y0; y < y1; ++y)
                 omk::quantise888DitherRow(base + static_cast<std::size_t>(y) * pitch, w_, y,
                                           fb_.px.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_));
-        } else if (ss_ <= 1) {
+        } else if (ss <= 1) {
             for (int y = y0; y < y1; ++y) {
                 const unsigned char* row = base + static_cast<std::size_t>(y) * pitch;
                 for (int x = 0; x < w_; ++x)
@@ -3520,14 +3984,14 @@ const omk::Surface& D3D12Renderer::readback() {
                         omk::rgb565(row[4 * x], row[4 * x + 1], row[4 * x + 2]);
             }
         } else {
-            const int n = ss_ * ss_;
+            const int n = ss * ss;
             for (int y = y0; y < y1; ++y)
                 for (int x = 0; x < w_; ++x) {
                     int acc[3] = {0, 0, 0};
-                    for (int sy = 0; sy < ss_; ++sy)
-                        for (int sx = 0; sx < ss_; ++sx) {
-                            const std::size_t o = static_cast<std::size_t>(y * ss_ + sy) * pitch +
-                                                  static_cast<std::size_t>(x * ss_ + sx) * 4;
+                    for (int sy = 0; sy < ss; ++sy)
+                        for (int sx = 0; sx < ss; ++sx) {
+                            const std::size_t o = static_cast<std::size_t>(y * ss + sy) * pitch +
+                                                  static_cast<std::size_t>(x * ss + sx) * 4;
                             acc[0] += base[o]; acc[1] += base[o + 1]; acc[2] += base[o + 2];
                         }
                     const int ar = (acc[0] + n / 2) / n, ag = (acc[1] + n / 2) / n, ab = (acc[2] + n / 2) / n;
@@ -3596,6 +4060,13 @@ D3D12Renderer::~D3D12Renderer() {
     release(aoBlurPipe_);
     release(presPipe_);
     release(ovPipe_);
+    release(bloomDownPipe_);
+    release(bloomUpPipe_);
+    release(postPipe_);
+    release(bloomRs_);
+    release(postRs_);
+    release(postQ_);
+    release(postQBuf_);
     release(blitPipe_);
     release(sceneRs_);
     release(shRs_);

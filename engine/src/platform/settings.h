@@ -237,6 +237,22 @@ struct Settings {
     int    colourDepth = 16;
     Source colourDepthSource = Source::Default;
 
+    // THE POST-PROCESSING CHAIN (`todo/enhancements.md` 22), the Direct3D 12
+    // backend's: `bloom = off|on` (light bleeding from the neon, the lamps and
+    // the fires, in `all = max`), `dof = off|on` (depth of field on the
+    // letterboxed frames - conversations and cutscenes - in `all = max`),
+    // `colorgrade = off|cyber|warm|noir|filmic` and `hdr = off|on` (HDR10
+    // output on an HDR display), those two asked for BY NAME only: a grade is
+    // a look, not more of the picture, and HDR needs the display to say yes.
+    bool   bloom = false;
+    Source bloomSource = Source::Default;
+    bool   dof = false;
+    Source dofSource = Source::Default;
+    int    colorGrade = 0;        // 0 off, 1 cyber, 2 warm, 3 noir, 4 filmic
+    Source colorGradeSource = Source::Default;
+    bool   hdr = false;
+    Source hdrSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -419,6 +435,22 @@ inline int upscaleQualityMode(std::string w) {
     return -1;
 }
 
+// `colorgrade`: 0 off, 1 cyber, 2 warm, 3 noir, 4 filmic; -1 for anything else.
+inline int colorGradeMode(std::string w) {
+    for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
+    while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
+    if (w == "0" || w == "off" || w == "none" || w == "game") return 0;
+    if (w == "1" || w == "cyber" || w == "cyberpunk" || w == "neon") return 1;
+    if (w == "2" || w == "warm") return 2;
+    if (w == "3" || w == "noir" || w == "bw") return 3;
+    if (w == "4" || w == "filmic" || w == "film") return 4;
+    return -1;
+}
+inline const char* colorGradeName(int m) {
+    return m == 1 ? "cyber" : m == 2 ? "warm" : m == 3 ? "noir" : m == 4 ? "filmic" : "off";
+}
+
 // `escapeback`: 0 off (the original's BACK, SPACE alone), 1 on; -1 for
 // anything else.
 inline int escapeBackMode(std::string w) {
@@ -469,6 +501,10 @@ inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
 inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 bits a channel
+inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12)
+inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12)
+// NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
+// `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
@@ -505,6 +541,9 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
     takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
     take(s.colourDepth,   kMaxColourDepth,   s.colourDepthSource);
+    takeFlag(s.bloom, kMaxBloom, s.bloomSource);
+    takeFlag(s.dof, kMaxDof, s.dofSource);
+    // NOT `s.colorGrade` nor `s.hdr`: asked for by name only (above).
 }
 
 // Resolve the three sources in order.  Either may be absent.

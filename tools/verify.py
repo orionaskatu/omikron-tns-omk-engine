@@ -7031,7 +7031,9 @@ def c_enhance_all():
     # asked for by name only (the docstring) - and the UPSCALER (2026-10-18),
     # which needs the Direct3D 12 backend and the SDKs' DLLs: `all = max`
     # leaves it off, asserted below
-    SEPARATE = {"supersampling", "upscaler", "upscalequality"}
+    # ...and the post chain's GRADE and HDR (2026-10-19): a look, and a display
+    # that must say yes - asked for by name
+    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr"}
     keys = set(re.findall(r'k(?:Enhancements),\s*"([^"]+)"', cpp)) - {"all"} - SEPARATE
     body = hdr[hdr.index("inline void applyMaxEnhancements"):]
     body = body[:body.index("\n}")]
@@ -7067,20 +7069,22 @@ def c_enhance_all():
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
-             "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth"}
+             "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
+             "bloom": "Bloom", "dof": "Dof"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
     atMax = bool(want) and all(allMax.get(k) == v for k, v in want.items())
     got = (len(keys), takes, covered, atMax, allMax.get("all"), override.get("aniso"),
-           allMax.get("supersampling"), named_ss.get("supersampling"), allMax.get("upscaler"))
-    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0), \
+           allMax.get("supersampling"), named_ss.get("supersampling"), allMax.get("upscaler"),
+           allMax.get("colorgrade"), allMax.get("hdr"))
+    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0, 0, 0), \
            ("the %d `[Enhancements]` keys besides `all` and supersampling, the fields "
             "`applyMaxEnhancements` sets, that every enhancement the probe reports is "
             "one this check names, that one `all = max` puts every one at its top, "
             "that a specific key still beats it (anisotropy 4), and that `all = max` "
             "leaves supersampling OFF (1) while `supersampling = 4` beside it gives 4, and the "
-            "upscaler off (0)" % len(keys))
+            "upscaler, the colour grade and HDR off (0)" % len(keys))
 
 
 
@@ -27555,6 +27559,140 @@ def c_engine_colour_depth():
         ("16 by default; at 16 the D3D12 window holds exactly the 565 grid; at 32 the D3D12 and "
          "Vulkan windows hold more than 32/64/32 values a channel, most pixels off it; the fight's "
          "interface frames went out as D3D12 overlays, off the grid, within 16 of the CPU composite")
+
+
+def c_engine_post_chain():
+    r"""`omk-play --bloom / --dof / --colorgrade / --hdr`: the Direct3D 12 POST-PROCESSING CHAIN - enhancements, off by default.
+    `todo/enhancements.md` 22. A display-size chain after the scene, SSAO and
+    the upscaler and before the present pass (`bloom.frag`, `post.frag`), the
+    2D laid over it afterwards. Read from what the WINDOW was handed
+    (`OMK_WINDUMP`, D3D12's back buffer), 640x480, hidden windows:
+      * the four are off in the source and a plain run prints no `post:` line;
+        two plain runs are byte-identical (and, measured when it was written,
+        byte-identical to the tree before the chain: 1280x720 at 16, 640x480
+        at 32, the fight's frame 250 - all three `cmp`-equal);
+      * BLOOM brightens a plausible share of the street start (1-40% of the
+        pixels gain 3 or more over their three channels - measured 6.4%),
+        none is darker by more than 1 a channel, and the gainers lie near the
+        frame's bright pixels: 85% within four 16-pixel blocks of a block
+        holding a channel >= 250 (measured 92%; those blocks are 3.5% of the
+        frame). The street runs are at colour depth 32: at 16 the 565 step
+        turns a gain of a fraction of a level into a whole one;
+      * COLOUR GRADING moves the channel means as each grade is designed:
+        cyber red down and blue up, warm red up and blue down, noir the
+        chroma (|r-g| + |g-b|) to under half;
+      * DEPTH OF FIELD changes NOTHING on the street (a free walk is not
+        cinematic) and, on the supermarket fight's opening cutscene (frame 250,
+        letterboxed: 352 rows at 64), drops the local gradient energy of the
+        strip's second quarter (rows 152-240, the far ceiling behind the
+        fighter) below 75% (measured 55%) while the band above stays as it was;
+      * HDR on this display (no ST.2084 output) says so and stays the SDR
+        picture exactly; `OMK_HDR_FORCE=1` takes the scRGB path, says
+        `hdr: on`, and the back buffer read back at paper white is within a
+        mean 1 a channel of the SDR picture (its highlights clip in the dump).
+    SHOWN TO FAIL (2026-10-19), three mutations in one build, each failing
+    its own elements: the bloom intensity zeroed in `runPost` (0.0% moved),
+    the grade switched off in `post.frag` (`pc.tone.z > 2.0`: every mean
+    +0.0, the noir chroma unchanged), and `cine_` forced false in `begin`
+    (the cutscene's energy 100%); the rest stayed green.
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    defaults = all(t in src for t in ("bool   bloom = false;", "bool   dof = false;",
+                                      "int    colorGrade = 0;", "bool   hdr = false;"))
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    W, H = 640, 480
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name, frames="60", env=None):
+            win = os.path.join(tmp, name + ".rgba")
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
+                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", frames, "--d3d12"] + extra
+            e = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win)
+            e.update(env or {})
+            r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=e)
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
+        street = ["--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32"]
+        fight = ["--fight-supermarket", "--colordepth", "32"]
+        t0, p0 = run(street, "p0")
+        _, p0b = run(street, "p0b")
+        tb, pb = run(street + ["--bloom"], "pb")
+        _, pc = run(street + ["--colorgrade", "cyber"], "pc")
+        _, pw = run(street + ["--colorgrade", "warm"], "pw")
+        _, pn = run(street + ["--colorgrade", "noir"], "pn")
+        _, pds = run(street + ["--dof"], "pds")
+        _, f0 = run(fight, "f0", frames="250")
+        _, fd = run(fight + ["--dof"], "fd", frames="250")
+        th, ph = run(street + ["--hdr"], "ph")
+        tf, pf = run(street + ["--hdr"], "pf", env={"OMK_HDR_FORCE": "1"})
+    if "renderer: D3D12" not in t0:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    p32 = p0
+    if not all((p0, p0b, pb, pc, pw, pn, pds, f0, fd, ph, pf)):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    silent = "post:" not in t0
+    # BLOOM
+    moved = darker = near = 0
+    bright = set()
+    for i in range(n):
+        if max(p0[4 * i], p0[4 * i + 1], p0[4 * i + 2]) >= 250:
+            bright.add(((i % W) // 16, (i // W) // 16))
+    for i in range(n):
+        d = [pb[4 * i + c] - p0[4 * i + c] for c in range(3)]
+        if min(d) < -1:
+            darker += 1
+        if sum(d) >= 3:
+            moved += 1
+            bx, by = (i % W) // 16, (i // W) // 16
+            if any((bx + dx, by + dy) in bright for dx in range(-4, 5) for dy in range(-4, 5)):
+                near += 1
+    gain = sum(pb[i] for i in range(0, 4 * n) if i % 4 != 3) - sum(p0[i] for i in range(0, 4 * n) if i % 4 != 3)
+    # THE GRADES: channel means and chroma
+    def means(p):
+        return [sum(p[c::4]) / n for c in range(3)]
+    def chroma(p):
+        return sum(abs(p[4 * i] - p[4 * i + 1]) + abs(p[4 * i + 1] - p[4 * i + 2]) for i in range(n)) / n
+    m0, mc, mw = means(p0), means(pc), means(pw)
+    c0, cn = chroma(p0), chroma(pn)
+    # DEPTH OF FIELD: the strip's top quarter (the far ceiling), rows 64.. of 352
+    def energy(p, y0, y1):
+        e = 0
+        for y in range(y0, y1):
+            for x in range(W - 1):
+                i = 4 * (y * W + x)
+                e += sum(abs(p[i + c] - p[i + 4 + c]) + abs(p[i + c] - p[i + 4 * W + c]) for c in range(3))
+        return e
+    e0, ed = energy(f0, 152, 240), energy(fd, 152, 240)
+    bands = fd[:4 * W * 60] == f0[:4 * W * 60]
+    # HDR
+    hdrNo = "hdr: the display reports no HDR" in th
+    hdrForced = "hdr: on" in tf and "HDR (scRGB)" in tf
+    mad = sum(abs(pf[i] - p32[i]) for i in range(0, 4 * n) if i % 4 != 3) / (3 * n)
+    print("        bloom: %.1f%% moved, %d darker, %.1f%% near the bright, +%d in all; cyber %+.1f/%+.1f "
+          "(r/b), warm %+.1f/%+.1f, noir chroma %.1f -> %.1f; dof: street identical %s, ceiling energy "
+          "%.0f%%; hdr: refused %s, forced %s, mean %.2f off the SDR"
+          % (100.0 * moved / n, darker, 100.0 * near / max(1, moved), gain, mc[0] - m0[0], mc[2] - m0[2],
+             mw[0] - m0[0], mw[2] - m0[2], c0, cn, pds == p0, 100.0 * ed / max(1, e0), hdrNo, hdrForced, mad))
+    got = (defaults, silent, p0 == p0b,
+           0.01 * n < moved < 0.4 * n, darker, near >= 0.85 * moved, gain > 0,
+           mc[0] - m0[0] < -1.0 and mc[2] - m0[2] > 1.0, mw[0] - m0[0] > 1.0 and mw[2] - m0[2] < -1.0,
+           cn < 0.5 * c0,
+           pds == p0, ed < 0.75 * e0, bands,
+           hdrNo, ph == p32, hdrForced, mad < 1.0)
+    return got, (True, True, True, True, 0, True, True, True, True, True, True, True, True,
+                 True, True, True, True), \
+        ("off by default and silent, two plain runs identical; bloom moves 1-40% of the street, "
+         "brighter, near its bright pixels; cyber/warm/noir move the means as designed; depth of "
+         "field leaves the street alone and blurs the cutscene's far ceiling; HDR refused on an SDR "
+         "display, forced it stays the SDR picture")
 
 
 def c_engine_best_lod():
@@ -48670,6 +48808,7 @@ SLOW = [
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
+    ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

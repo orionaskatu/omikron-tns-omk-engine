@@ -468,6 +468,18 @@ public:
     // that backend's own state, so nothing on this boundary changes for the
     // others: they answer false and draw exactly as before.
     virtual bool setUpscaler(int /*kind*/, int /*quality*/) { return false; }
+    // THE POST-PROCESSING CHAIN (`todo/enhancements.md` 22): bloom, colour
+    // grading (`grade` 0 off, 1 cyber, 2 warm, 3 noir, 4 filmic), depth of
+    // field on cinematic (letterboxed) frames, and HDR10 output. Same contract
+    // as the rest: a request before `init()`. Only the Direct3D 12 backend
+    // takes it; the others answer false and draw exactly as before.
+    struct PostProcess {
+        bool bloom = false;
+        int  grade = 0;
+        bool dof = false;
+        bool hdr = false;
+    };
+    virtual bool setPostProcess(const PostProcess& /*p*/) { return false; }
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

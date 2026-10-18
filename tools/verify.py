@@ -7063,7 +7063,8 @@ def c_enhance_all():
              "uiscaling": "UiScaling", "textscaling": "TextScaling",
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
-             "escapeback": "EscapeBack", "ssao": "AmbientOcclusion"}
+             "escapeback": "EscapeBack", "ssao": "AmbientOcclusion",
+             "lod": "BestLod"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27380,6 +27381,49 @@ def c_engine_start_quit():
         got.append((int(m.group(1)) if m else None, "PostQuitMessage" in out))
     return got, [(101, True), (400, False)], \
            "frames presented and whether the quit was taken: Oui, then Non"
+
+
+def c_engine_best_lod():
+    r"""`omk-play --best-lod`: the crowd's LEVEL OF DETAIL kept at its best - an enhancement, off by default.
+    `todo/enhancements.md` 16. A pedestrian model holds four skeletons and
+    `sub_48D7F0` steps one down for every `kLodDistances` (10/20/30/40 m) of
+    view depth, so past 10 m every walker is a coarser body. With `lod = best`
+    the level is clamped to 0 - the path `OMK_PED_LOD_MAX=0` already proves
+    draws exactly what no LOD draws. Two runs of the street start with its
+    crowd: the default is `game` in the source and the plain run says nothing;
+    the `--best-lod` run reports a walker past 10 m drawn on the level the
+    clamp LEFT (printed after it, not a constant) where the game's chain would
+    have stepped down. SHOWN TO FAIL with `bestLod` taken out of the clamp: the
+    walker is drawn on the game's level and the check reads it.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "bool   bestLod = false;" in src
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    def run(extra):
+        r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                            "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                            "--software", "--nofmv", "--nodelay", "--frames", "60"] + extra,
+                           capture_output=True, env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+        return r.stdout.decode("latin-1")
+    plain = run([])
+    best = run(["--best-lod"])
+    m = re.search(r"lod: best - a walker at (\d+) view depth drawn on level (\d+) "
+                  r"\(the game's chain would give level (\d+)\)", best)
+    got = (default_off, "lod: best" in plain,
+           bool(m) and int(m.group(1)) >= 394, int(m.group(2)) if m else -1,
+           bool(m) and int(m.group(3)) > 0)
+    return got, (True, False, True, 0, True), \
+           ("off by default and silent; --best-lod draws a walker at %s view depth on "
+            "level %s where the game's chain gives %s"
+            % ((m.group(1), m.group(2), m.group(3)) if m else ("?", "?", "?")))
 
 
 def c_engine_ssao():
@@ -48109,6 +48153,7 @@ SLOW = [
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
+    ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

@@ -853,7 +853,18 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
                                 (w.body[2] - view.cam.eye[2]) * viewFwd[2];
             int level = std::min(shadowDetail <= 0 ? 1 : 0, nL - 1);
             while (level + 1 < nL && depth >= omk::kLodDistances[level]) ++level;
-            level = std::max(0, std::min(level, pedLodMax));
+            // `lod = best` (an ENHANCEMENT): no step down - the path
+            // `OMK_PED_LOD_MAX=0` already proves draws what no LOD draws
+            level = std::max(0, std::min(level, bestLod ? 0 : pedLodMax));
+            if (bestLod && !bestLodTold && depth >= omk::kLodDistances[0]) {
+                bestLodTold = true;
+                std::printf("lod: best - a walker at %.0f view depth drawn on level %d "
+                            "(the game's chain would give level %d)\n",
+                            static_cast<double>(depth), level,
+                            [&] { int g = std::min(shadowDetail <= 0 ? 1 : 0, nL - 1);
+                                  while (g + 1 < nL && depth >= omk::kLodDistances[g]) ++g;
+                                  return std::min(g, pedLodMax); }());
+            }
             job.level = level;
             job.only = p.mo->lodMask[level].data();
             if (level > 0) {

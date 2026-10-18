@@ -159,6 +159,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: escapeback = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "lod")) {
+            const int m = lodMode(*w);
+            if (m >= 0) { s.bestLod = m > 0; s.bestLodSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: lod = %s is not a mode "
+                                      "(game|best) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "ssao")) {
             const int m = escapeBackMode(*w);     // the same off|on words
             if (m >= 0) { s.ambientOcclusion = m > 0; s.ambientOcclusionSource = Settings::Source::Ini; }

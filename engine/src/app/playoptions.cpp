@@ -288,6 +288,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Sauter`); [Enhancements] escapeback=on\n"
 "  --ssao           ENHANCEMENT: screen-space ambient occlusion (Vulkan);\n"
 "                   [Enhancements] ssao=on\n"
+"  --best-lod       ENHANCEMENT: every pedestrian on its most detailed body at\n"
+"                   any distance (the game steps down every 10 m);\n"
+"                   [Enhancements] lod=best\n"
 "  --software       force the software rasteriser\n"
 "  --profile F      write a profiler capture to F (tools/omkprof.py reads it;\n"
 "                   todo/debug-tools.md - absent from `make release`)\n"
@@ -500,6 +503,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--smooth-anim") smoothAnimFlag = 1;
         else if (a == "--escape-back") escapeBackFlag = 1;
         else if (a == "--ssao") ssaoFlag = 1;
+        else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--framerate" && i + 1 < argc) {
             frameRateFlag = omk::frameRateValue(argv[++i]);
             if (frameRateFlag < 0) {

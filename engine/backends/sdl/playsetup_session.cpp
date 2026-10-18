@@ -184,6 +184,11 @@ int PlayState::setupSession() {
     // before its init (playgpu_vulkan.cpp); the backend reports whether it
     // could
     ssao = enh(ssaoFlag, settings.ambientOcclusion ? 1 : 0, omk::kMaxAmbientOcclusion) > 0;
+    // THE CROWD'S LOD (settings.h `bestLod`), read by `worldCrowdWalkers`
+    bestLod = enh(bestLodFlag, settings.bestLod ? 1 : 0, omk::kMaxBestLod) > 0;
+    if (bestLod)
+        std::printf("lod: best - an ENHANCEMENT: every pedestrian keeps its most detailed "
+                    "body at any distance; the original steps down a skeleton every 10 m\n");
     if (escapeBack)
         std::printf("escape back: on - an ENHANCEMENT: ESC and BACKSPACE also send BACK "
                     "while a screen is up; the original's BACK is `Annuler / Sauter` "

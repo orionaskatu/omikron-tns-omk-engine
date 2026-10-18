@@ -184,6 +184,14 @@ struct Settings {
     bool   ambientOcclusion = false;
     Source ambientOcclusionSource = Source::Default;
 
+    // `lod = game|best`: the crowd's LEVEL OF DETAIL. A pedestrian model holds
+    // four skeletons and `sub_48D7F0` steps down one every 10 m of view depth
+    // (`kLodDistances`), so past 10 m every walker is a coarser body. `best`
+    // keeps every walker on the first (largest) skeleton at any distance.
+    // `todo/enhancements.md` 16.
+    bool   bestLod = false;
+    Source bestLodSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -331,6 +339,16 @@ inline int animationMode(std::string w) {
     return -1;
 }
 
+// `lod`: 0 game (the four-level chain), 1 best; -1 for anything else.
+inline int lodMode(std::string w) {
+    for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
+    while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
+    if (w == "0" || w == "game" || w == "original" || w == "off") return 0;
+    if (w == "1" || w == "best" || w == "max" || w == "on") return 1;
+    return -1;
+}
+
 // `escapeback`: 0 off (the original's BACK, SPACE alone), 1 on; -1 for
 // anything else.
 inline int escapeBackMode(std::string w) {
@@ -378,6 +396,7 @@ inline constexpr int kMaxFrameRate     = 60;
 inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
+inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
 // "unlimited" replaces, and because a check quotes it.
@@ -409,6 +428,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.smoothAnimation, kMaxAnimation, s.smoothAnimationSource);
     takeFlag(s.escapeBack, kMaxEscapeBack, s.escapeBackSource);
     takeFlag(s.ambientOcclusion, kMaxAmbientOcclusion, s.ambientOcclusionSource);
+    takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
 }
 
 // Resolve the three sources in order.  Either may be absent.

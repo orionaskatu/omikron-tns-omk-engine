@@ -3886,7 +3886,9 @@ def c_engine_sneak_verbs():
                "k28*1,k*30,k208*1,k*20,k28*1,k*100", 380)
     vie = re.search(r"player: Vie (-?\d+)", heal)
     def counts(out):
-        return [int(n) for n in re.findall(r"echo bar - arm 6 .*?Inventaire  \((\d+) / 18\)", out)]
+        # the tab's NAME is the data's (Inventaire, Inventory, ...); the
+        # count after it is what this check reads
+        return [int(n) for n in re.findall(r"echo bar - arm 6 .*?\((\d+) / 18\)", out)]
     made = re.search(r"sneak: combine (-?\d+) .*?\+ (-?\d+) .*?-> (-?\d+)", comb)
     # ...and how the combine CLOSES: `loc_49BE51` puts `Utiliser sur`'s flash
     # out (`sub_428FF0(0x4DE278, 0x40000002, 0)`); left lit, the verb went on
@@ -26853,7 +26855,13 @@ def c_engine_sneak_map():
 
     city = run(["--area", "0", "--stand", "1804,0,-6890,336"])
     away = run(["--area", "222", "--address", "654"])
-    pick = lambda t: tuple(ln.strip() for ln in t.splitlines()
+    # LANGUAGE-INDEPENDENT: a marker's name is the data's own string (the
+    # French data says `Appartement de Kay'l`, the English `Kay'l 's
+    # Apartment`), so each is reduced to <name> - present and non-empty -
+    # and what is asserted is how many, where, and the rest of each line.
+    unname = lambda ln: re.sub(r"(markers: | \| )(\S.*?) at (\d+,\d+)",
+                               r"\1<name> at \3", ln)
+    pick = lambda t: tuple(unname(ln.strip()) for ln in t.splitlines()
                            if ln.startswith("sneak map:"))
     # The viewer also says, on opening the sneak, whether `Lire plan` will
     # open in this set at all - the line it added for the Impasse's bounce.
@@ -26864,7 +26872,7 @@ def c_engine_sneak_map():
              r"sneak map: set 'ANEKBAH' -> Images/ANEKBAH.bmp 640x480, "
              r"city ANEKBAH id 0, 2 markers, 0 unplaced",
              r"sneak map: the sheet blitted, the pin at 187,292, 2 markers: "
-             r"Appartement de Kay'l at 262,138 | Sas vers Qalisar at 311,356"),
+             r"<name> at 262,138 | <name> at 311,356"),
             (r"sneak map: standing in set 'AIMPASSE' - no Images/<set>.bmp, `Lire plan` "
              r"bounces back (only the four cities' main-street sets ship one)",)), \
            "the sneak's CITY MAP, drawn in Anekbah and bounced in the Impasse, " \
@@ -27009,20 +27017,43 @@ def c_engine_sneak_memos():
                         "--keydelay", "60"],
                        capture_output=True, env=env)
     text = r.stdout.decode("cp1252", "replace")
-    got = tuple(ln.strip() for ln in text.splitlines()
-                if ln.startswith("sneak: memory page")
-                or ln.startswith("sneak: memo body")
-                or ln.startswith("sneak: memo reader"))
+    lines = [ln.strip() for ln in text.splitlines()
+             if ln.startswith("sneak: memory page")
+             or ln.startswith("sneak: memo body")
+             or ln.startswith("sneak: memo reader")]
+    # LANGUAGE-INDEPENDENT: a memo's heading and body are the data's own text,
+    # so their lengths differ by language (the French 7-line Kay'l memo is 4
+    # lines in English). What is asserted: the page's list and ids, each body
+    # drawn (a heading, chars and lines > 0) at its frame stamp, the reader
+    # showing the SAME body as the last row selected - and its scroll, which
+    # stops at the overflow past the box's 4 lines: 3 for the French memo,
+    # no scroll line at all for one that fits.
+    bodies, reader, page = [], [], ()
+    for ln in lines:
+        m = re.match(r"sneak: memo body - row (\d+) id (\d+) '(.+)', (\d+) chars, "
+                     r"(\d+) lines drawn at frame (\d+)$", ln)
+        if m:
+            bodies.append((int(m.group(1)), int(m.group(2)), bool(m.group(3).strip()),
+                           int(m.group(4)), int(m.group(5)), int(m.group(6))))
+            continue
+        m = re.match(r"sneak: memo reader - list (\d+), scroll (\d+), (\d+) chars, "
+                     r"(\d+) lines drawn$", ln)
+        if m:
+            reader.append(tuple(int(g) for g in m.groups()))
+            continue
+        page = page + (ln,)
+    last = bodies[-1] if bodies else (0, 0, False, 0, 0, 0)
+    want_reader = [(2, 0, last[3], last[4])]
+    if last[4] > 4:
+        want_reader.append((2, last[4] - 4, last[3], last[4]))
+    got = (page,
+           tuple((b[0], b[1], b[2], b[3] > 0, b[4] > 0, b[5]) for b in bodies),
+           tuple(reader) == tuple(want_reader) and bool(reader))
     return got, \
-           ("sneak: memory page - object list 2, 3 rows: 913 915 336",
-            "sneak: memo body - row 0 id 913 'Moi :', "
-            "185 chars, 4 lines drawn at frame 301",
-            "sneak: memo body - row 1 id 915 'Panneau Bibliothèque :', "
-            "102 chars, 2 lines drawn at frame 361",
-            "sneak: memo body - row 2 id 336 'Kay'l :', "
-            "254 chars, 7 lines drawn at frame 421",
-            "sneak: memo reader - list 2, scroll 0, 254 chars, 7 lines drawn",
-            "sneak: memo reader - list 2, scroll 3, 254 chars, 7 lines drawn"), \
+           (("sneak: memory page - object list 2, 3 rows: 913 915 336",),
+            ((0, 913, True, True, True, 301), (1, 915, True, True, True, 361),
+             (2, 336, True, True, True, 421)),
+            True), \
            "the viewer's lines for the sneak's memory page after two memos are " \
            "given into object list 2 and the page is opened: which list the " \
            "rows bound to, how many and their ids - and the BODY the page's own " \
@@ -27143,15 +27174,30 @@ def c_engine_sneak_echo_bar():
                                   "k208*1,k*20,k205*1,k*20,k28*1,k*60"],
                        capture_output=True, env=env)
     text = r.stdout.decode("cp1252", "replace")
-    got = tuple(ln.strip() for ln in text.splitlines()
+    # LANGUAGE-INDEPENDENT: each arm's words are the data's own string
+    # (`Seteks en votre possession : 0` / `Seteks in your possession:  0`), so
+    # a line is reduced to its arm, whether it carries the `{TEXT ERROR!}`
+    # prefix, that its words are there, the NUMBERS in it - the counts this
+    # check is about - and the row marks.
+    def shape(ln):
+        m = re.match(r"sneak: echo bar - arm (\d+) '(.*)', (\d+) row marks(?: \(tags ([\d ]+)\))?$", ln)
+        if not m:
+            return (ln,)
+        t = m.group(2)
+        err = t.startswith("{TEXT ERROR!}")
+        words = t[len("{TEXT ERROR!}"):] if err else t
+        return (int(m.group(1)), err, bool(re.search(r"[^\W\d_]", words)),
+                tuple(int(n) for n in re.findall(r"\d+", words)),
+                int(m.group(3)), m.group(4) or "")
+    got = tuple(shape(ln.strip()) for ln in text.splitlines()
                 if ln.startswith("sneak: echo bar"))
     return got, \
-           ("sneak: echo bar - arm 6 '{TEXT ERROR!}Inventaire  (3 / 18)', 0 row marks",
-            "sneak: echo bar - arm 1 'Seteks en votre possession : 0', 0 row marks",
-            "sneak: echo bar - arm 2 'Anneaux en votre possession : 2', 0 row marks",
-            "sneak: echo bar - arm 3 'Lire plan', 0 row marks",
-            "sneak: echo bar - arm 6 '{TEXT ERROR!}Inventaire  (3 / 18)', 0 row marks",
-            "sneak: echo bar - arm 4 '{TEXT ERROR!}Utiliser', 1 row marks (tags 1)"), \
+           ((6, True, True, (3, 18), 0, ""),
+            (1, False, True, (0,), 0, ""),
+            (2, False, True, (2,), 0, ""),
+            (3, False, True, (), 0, ""),
+            (6, True, True, (3, 18), 0, ""),
+            (4, True, True, (), 1, "1")), \
            "the sneak's status line, composed by the port's transcription of " \
            "`sub_0049DC20` and read back out of the frame it drew: the " \
            "Inventaire tab with the row list's own `+24` after it, the two " \

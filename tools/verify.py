@@ -7033,7 +7033,9 @@ def c_enhance_all():
     # leaves it off, asserted below
     # ...and the post chain's GRADE and HDR (2026-10-19): a look, and a display
     # that must say yes - asked for by name
-    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr"}
+    # ...and the TEXTURE PACK (2026-10-19): it names a directory, nothing a
+    # level can be the top of - asserted empty under `all = max`
+    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr", "texturepack"}
     keys = set(re.findall(r'k(?:Enhancements),\s*"([^"]+)"', cpp)) - {"all"} - SEPARATE
     body = hdr[hdr.index("inline void applyMaxEnhancements"):]
     body = body[:body.index("\n}")]
@@ -7078,14 +7080,14 @@ def c_enhance_all():
     atMax = bool(want) and all(allMax.get(k) == v for k, v in want.items())
     got = (len(keys), takes, covered, atMax, allMax.get("all"), override.get("aniso"),
            allMax.get("supersampling"), named_ss.get("supersampling"), allMax.get("upscaler"),
-           allMax.get("colorgrade"), allMax.get("hdr"))
-    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0, 0, 0), \
+           allMax.get("colorgrade"), allMax.get("hdr"), allMax.get("texturepack"))
+    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0, 0, 0, 0), \
            ("the %d `[Enhancements]` keys besides `all` and supersampling, the fields "
             "`applyMaxEnhancements` sets, that every enhancement the probe reports is "
             "one this check names, that one `all = max` puts every one at its top, "
             "that a specific key still beats it (anisotropy 4), and that `all = max` "
             "leaves supersampling OFF (1) while `supersampling = 4` beside it gives 4, and the "
-            "upscaler, the colour grade and HDR off (0)" % len(keys))
+            "upscaler, the colour grade, HDR and the texture pack off (0)" % len(keys))
 
 
 
@@ -28377,6 +28379,165 @@ def c_engine_escape_back():
 
 
 
+def c_engine_texture_pack():
+    r"""`omk-play --texturepack DIR`: a TEXTURE OVERRIDE PACK - an enhancement, off by default.
+    `todo/enhancements.md` 25, `o3de/texpack.h`, `tools/texpack.py`. A pack's PNG
+    replaces a `.3DT` page for the Vulkan and Direct3D 12 uploads at k x its size
+    (matched by the original's pixels), the UVs staying in the original's texel
+    units: `scene.frag` divides by the image's size over k (k in the cutout
+    word), `rt.glsl` the same (k in the record's texture word). Built here in a
+    temp directory from the road slider `SLI_FN` (one page, `SLIDER`) by
+    `tools/texpack.py`, and rendered on the Direct3D 12 world backend, the ride
+    camera framing the traffic, `--filter nearest`, 960x540:
+      * off in the source (an empty path) and a plain run prints no pack line
+        and no `texpack` event; two plain runs are identical;
+      * a pack of the UNMODIFIED originals (`extract`, 1x - rewritten here as
+        RGBA, every scanline filter in turn, zlib level 9, as a real tool's PNG
+        comes) is indexed, put on the pool's slot, and the frame is IDENTICAL
+        to no pack - the loader, the PNG reader (inflate, the five filters,
+        RGBA) and the colour key reproduce the upload byte for byte;
+      * the same page replicated 2x (`upscale --method nearest`) is IDENTICAL
+        too: under the nearest sampler a 2x replica draws the same texel only if
+        the UVs are divided by the ORIGINAL size - this is the UV scale;
+      * the street set's own twenty pages (`ANEKBAH`, tiled by REPEAT, some
+        cutout) replicated 2x: identical as well - and with hybrid ray tracing
+        on (where the device has DXR 1.1) still identical, `rt.glsl`'s hit
+        shading of the set reading each slot with the same scale;
+      * a solid-magenta replacement (the key kept) marks the slider's
+        footprint; the built-in Lanczos 2x upscale changes the frame there and
+        NOWHERE else (within 2 px of it), and a few hundred pixels at least;
+      * `texpack.py check` reports the pack's two overrides (the page ships
+        twice, MISC/ and PERSOS/, the same pixels - indexed once).
+    SHOWN TO FAIL (2026-10-19) with `scene.frag`'s `texSz /= float(packK)`
+    removed (the slider's 2x replica differs in 3276 pixels), and with
+    `rt.glsl`'s `/ float((word >> 24) + 1u)` removed (the ray-traced run with
+    the set's 2x replica differs in ~1200: the characters' indirect light
+    samples the set's pages at the wrong texels).
+    """
+    import subprocess, tempfile, struct
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "std::string texturePack;" in src
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    tool = os.path.join(ROOT, "tools", "texpack.py")
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import texpack
+    W, H = 960, 540
+    with tempfile.TemporaryDirectory() as tmp:
+        def py(*a):
+            return subprocess.run([sys.executable, "-I", tool] + list(a), capture_output=True, text=True)
+        p1, n2, l2, mg, s1, s2 = (os.path.join(tmp, n) for n in ("p1", "n2", "l2", "mg", "s1", "s2"))
+        py("extract", p1, "--model", "sli_fn")
+        py("extract", s1, "--model", "anekbah")
+        py("upscale", s1, s2, "--factor", "2", "--method", "nearest", "--jobs", "2")
+        py("upscale", p1, n2, "--factor", "2", "--method", "nearest", "--jobs", "1")
+        py("upscale", p1, l2, "--factor", "2", "--jobs", "2")
+        # ...and the 1x pack rewritten the way a real tool's PNG comes: RGBA
+        # (alpha 255), every scanline filter in turn (0 none .. 4 Paeth) and
+        # zlib at level 9 - so the engine's reader is held to all five
+        import zlib
+        def filtered(path):
+            w, h, ch, px = texpack.png_read(path)
+            rgba = bytearray()
+            for k in range(w * h):
+                rgba += bytes(px[ch * k:ch * k + 3]) + b"\xff"
+            st, raw, prev = 4 * w, bytearray(), bytearray(4 * w)
+            for y in range(h):
+                ln, ft = rgba[y * st:(y + 1) * st], y % 5
+                raw.append(ft)
+                for i in range(st):
+                    a = ln[i - 4] if i >= 4 else 0
+                    b, c = prev[i], (prev[i - 4] if i >= 4 else 0)
+                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                    pr = (0, a, b, (a + b) >> 1,
+                          a if pa <= pb and pa <= pc else (b if pb <= pc else c))[ft]
+                    raw.append((ln[i] - pr) & 255)
+                prev = ln
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+                                   + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+        for d, _, files in os.walk(p1):
+            for fn in files:
+                filtered(os.path.join(d, fn))
+        chk = py("check", l2).stdout
+        # magenta wherever the page is not the key, at 2x
+        for d, _, files in os.walk(p1):
+            for fn in files:
+                w, h, ch, px = texpack.png_read(os.path.join(d, fn))
+                rgb, key = texpack.keyed_rgb(w, h, ch, px)
+                out = bytearray(3 * w * h)
+                for k in range(w * h):
+                    if not key[k]:
+                        out[3 * k:3 * k + 3] = b"\xff\x00\xff"
+                ww, hh, out2 = texpack.upscale_builtin(w, h, out, 2, "nearest")
+                dd = os.path.join(mg, os.path.relpath(d, p1))
+                os.makedirs(dd, exist_ok=True)
+                texpack.png_write(os.path.join(dd, fn), ww, hh, out2)
+
+        def run(name, extra):
+            dump = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--ride", "--world-d3d12", "--nofmv", "--nodelay", "--filter", "nearest",
+                                "--res", "%dx%d" % (W, H), "--frames", "90",
+                                "--eye", "4700,-170,-480", "--at", "4839,-90,-677",
+                                "--saves", os.path.join(tmp, "saves", "GAMES"), "--dump", dump] + extra,
+                               capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_SYNC_SETS="1",
+                                        OMK_EVENTS="1"))
+            data = open(dump, "rb").read() if os.path.exists(dump) else b""
+            return r.stdout + r.stderr, data if len(data) == 2 * W * H else b""
+        t_a, d_a = run("a", [])
+        if "world through D3D12" not in t_a or not d_a:
+            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+        t_b, d_b = run("b", [])
+        t_1, d_1 = run("p1", ["--texturepack", p1])
+        t_n, d_n = run("n2", ["--texturepack", n2])
+        t_m, d_m = run("mg", ["--texturepack", mg])
+        t_l, d_l = run("l2", ["--texturepack", l2])
+        t_s, d_s = run("s2", ["--texturepack", s2])
+        t_ra, d_ra = run("ra", ["--raytracing"])
+        t_rn, d_rn = run("rn", ["--raytracing", "--texturepack", s2])
+    silent = "texture pack" not in t_a and not any(n.startswith("texpack") for n, _ in _events(t_a))
+    def loaded(t):
+        ev = _events(t)
+        ind = max([int(f.get("indexed", "0")) for n, f in ev if n == "texpack.load"] or [0])
+        rep = max([int(f.get("replaced", "0")) for n, f in ev if n == "texpack.pool"] or [0])
+        return ind, rep
+    rt = "RAY TRACING on" in t_ra
+    n = W * H
+    def px(d):
+        return struct.unpack("<%dH" % n, d) if d else ()
+    a, m, l = px(d_a), px(d_m), px(d_l)
+    foot = [m[i] != a[i] for i in range(n)] if m else []
+    near = bytearray(n)
+    for i in range(n):
+        if foot and foot[i]:
+            x, y = i % W, i // W
+            for yy in range(max(0, y - 2), min(H, y + 3)):
+                near[yy * W + max(0, x - 2):yy * W + min(W, x + 3)] = b"\1" * (min(W, x + 3) - max(0, x - 2))
+    moved = sum(1 for i in range(n) if l and l[i] != a[i])
+    outside = sum(1 for i in range(n) if l and l[i] != a[i] and not near[i])
+    diff_n = sum(1 for x, y in zip(px(d_a), px(d_n)) if x != y)
+    print("        texture pack: footprint %d px, the Lanczos 2x moved %d (%d outside it); the 2x replica "
+          "differs in %d; ray tracing %s" % (sum(foot), moved, outside, diff_n, "on" if rt else "unavailable"))
+    got = (default_off, silent, d_a == d_b, loaded(t_1), d_1 == d_a, loaded(t_n), d_n == d_a,
+           loaded(t_s), d_s == d_a, (not rt) or d_rn == d_ra, sum(foot) > 200, moved >= 200, outside,
+           "check: 2 overrides (x2 2), 0 rejected" in chk)
+    return got, (True, True, True, (1, 1), True, (1, 1), True, (20, 20), True, True, True, True, 0, True), \
+        ("off by default and silent, two plain runs identical; the 1x pack of the originals and the "
+         "nearest 2x replicas (the slider's page, the set's twenty) indexed, on the pool and "
+         "pixel-identical to no pack (with ray tracing too); "
+         "the Lanczos 2x changes the slider's footprint and nothing outside it; `check` reports it")
+
+
 def c_engine_close_flush():
     r"""engine: a key held through the last screen's close does not reach the game.
 
@@ -46228,8 +46389,10 @@ def c_licence_headers():
     # (the GPU backends' shared pose, light, tie and blend)
     # 633: + `engine/backends/d3d12/d3d12render.{h,cpp}` (the Direct3D 12 backend)
     # 636: + `engine/backends/d3d12/upscale.h`, `upscale_fsr.cpp`, `upscale_dlss.cpp` (FSR / DLSS)
+    # 641: + `engine/src/formats/png.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}` and
+    # `tools/texpack.py` (the texture override packs)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (636, [], 1, []), \
+           (641, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48989,6 +49152,7 @@ SLOW = [
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
+    ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

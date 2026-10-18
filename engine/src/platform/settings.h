@@ -262,6 +262,14 @@ struct Settings {
     bool   volumetrics = false;
     Source volumetricsSource = Source::Default;
 
+    // `texturepack = <directory>`: a TEXTURE OVERRIDE PACK (`o3de/texpack.h`,
+    // `todo/enhancements.md` 25) - upscaled replacements of the `.3DT` pages,
+    // drawn by the Vulkan and Direct3D 12 renderers. Empty (the default) is
+    // off. A relative path is taken from the ini's own directory. It names a
+    // directory, so `all = max` cannot give it: asked for by name only.
+    std::string texturePack;
+    Source texturePackSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`

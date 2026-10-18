@@ -17,6 +17,7 @@
 #pragma once
 
 #include "playshared.h"
+#include "o3de/texpack.h"
 #include "platform/cacheline.h"   // clearFrame
 #include "platform/env.h"
 #if OMK_VR
@@ -72,6 +73,7 @@ struct PlayState {
     bool & boardArg = opt.boardArg;
     int & boardAfter = opt.boardAfter;
     std::string & configFile = opt.configFile;
+    std::string & texturePackArg = opt.texturePackArg;
     bool & densityFlag = opt.densityFlag;
     bool & clipFlag = opt.clipFlag;
     int & clipArg = opt.clipArg;
@@ -684,6 +686,10 @@ struct PlayState {
     // source palette -> {the source, held so its address cannot be reused
     // while the key names it; its grey}
     std::map<const std::uint8_t*, std::pair<omk::PixelBuffer, omk::PixelBuffer>> greyPalettes{};
+    // ...and a TEXTURE PACK's replacements, greyed by luma (`greyRgba`), the same way
+    std::map<const std::uint8_t*, std::pair<omk::PixelBuffer, omk::PixelBuffer>> greyPacks{};
+    // [Enhancements] texturepack (`o3de/texpack.h`): applied to the pool as it is handed over
+    omk::TexturePack texPack{};
     std::size_t playerTexBase{};
     struct Sprites {
         std::size_t texBase{};

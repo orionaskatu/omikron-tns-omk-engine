@@ -1630,6 +1630,10 @@ void PlayState::worldBolts() {
             std::printf("frame %ld: texture pool handed over %s (%zu slots)\n", frameNo,
                         session.renderGrey() ? "GREYED (sub_42FE80)" : "in colour (sub_42FC10)",
                         pool.size());
+        // THE TEXTURE PACK (`o3de/texpack.h`): a replacement rides on the
+        // slot's texture, matched by its colour pixels - so before the grey
+        // bank, which greys the replacement by luma as it greys the palette
+        if (texPack.active()) texPack.apply(pool);
         poolGrey = session.renderGrey();
         if (poolGrey)
             for (auto& t : pool) {
@@ -1639,9 +1643,18 @@ void PlayState::worldBolts() {
                     it = greyPalettes.emplace(t.pal.data(),
                                               std::make_pair(t.pal, omk::greyPalette(t.pal))).first;
                 t.pal = it->second.second;
+                if (t.hasPack()) {
+                    auto gp = greyPacks.find(t.packRgba.data());
+                    if (gp == greyPacks.end())
+                        gp = greyPacks.emplace(t.packRgba.data(),
+                                               std::make_pair(t.packRgba, omk::greyRgba(t.packRgba))).first;
+                    t.packRgba = gp->second.second;
+                }
             }
-        else
+        else {
             greyPalettes.clear();
+            greyPacks.clear();
+        }
         world.setTextures(pool);
         // The sprite section comes and goes with the effects, several
         // times a second; only a change of CAST is worth a line.

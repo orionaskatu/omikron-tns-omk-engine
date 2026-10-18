@@ -205,6 +205,14 @@ int PlayState::setupSession() {
     if (vehicleShine)
         std::printf("vehicle shine: on - an ENHANCEMENT: sliders and motos get lamp highlights "
                     "and a sky reflection; the original paints their shine into the texture\n");
+    // THE TEXTURE PACK (settings.h `texturePack`): `--texturepack` over the
+    // ini's key; indexed here, applied to the pool where it is handed over
+    // (playframe_world_scene.cpp). Named only - `--enhance-all` cannot name a
+    // directory.
+    {
+        const std::string pack = !texturePackArg.empty() ? texturePackArg : settings.texturePack;
+        if (!pack.empty()) texPack.open(pack, dataRoot);
+    }
     // COLOUR DEPTH (settings.h `colourDepth`), carried on the View to the present pass
     colourDepth = enh(colourDepthFlag, settings.colourDepth, omk::kMaxColourDepth) >= 32 ? 32 : 16;
     // THE POST CHAIN (settings.h `bloom`, `dof`, `colorGrade`, `hdr`), handed

@@ -648,11 +648,19 @@ private:
     bool volTimed_ = false;
 
     // ---- the textures ----
-    struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); };
+    // `scale`: THE TEXTURE PACK's k (`o3de/texpack.h`) - the image is k x the
+    // original, the UVs stay in the original's units (`scene.frag`, `rt.glsl`)
+    struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); int scale = 1; };
     std::vector<Tex> tex_;
     Tex white_;
-    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
-    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal, pack; bool used = false; };
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int, const std::uint8_t*>, Uploaded> uploaded_;
+    // a slot's texture word for a ray-tracing record: the heap index, and the
+    // pack's k - 1 in bits 24.. (`rt.glsl` `rtTexel`; the heap is 4096)
+    UINT rtTexWord(std::size_t slot) const {
+        if (slot >= tex_.size() || tex_[slot].srv == UINT(-1)) return white_.srv;
+        return tex_[slot].srv | (static_cast<UINT>(tex_[slot].scale - 1) << 24);
+    }
 
     // ---- the geometry: upload-heap buffers, mapped for their life ----
     struct Vbo { ID3D12Resource* res = nullptr; GpuVert* ptr = nullptr; std::size_t cap = 0; };
@@ -2131,8 +2139,11 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
     };
     if (!white_.img)
         queue([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
+    // ...and the TEXTURE PACK's replacement (`o3de/texpack.h`), when the slot
+    // has one: a different picture under the same indices
     const auto keyOf = [](const omk::Texture& x) {
-        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height,
+                               x.hasPack() ? x.packRgba.data() : nullptr);
     };
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
@@ -2156,8 +2167,16 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
+            if (x.hasPack()) u.pack = x.packRgba;
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
-            queue([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, hit->second.t);
+            if (x.hasPack()) {
+                // the pack's picture, already keyed as `toRgbaKeyed` keys
+                hit->second.t.scale = x.packScale;
+                queue([&](unsigned char* d) { std::memcpy(d, x.packRgba.data(), x.packRgba.size()); },
+                      x.width * x.packScale, x.height * x.packScale, hit->second.t);
+            } else {
+                queue([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, hit->second.t);
+            }
         }
         fresh.push_back({i, hit->first});
     }
@@ -2872,7 +2891,10 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     // a posed one
     if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress() + poseOff);
     push_.posed = posed ? 1 : 0;
-    push_.cutout = d.cutout ? 1 : 0;
+    // bit 0 the cutout; bits 8.. a TEXTURE PACK slot's k (`scene.frag`), 0 for none -
+    // in a word already there, because the root signature has no dword to spare
+    const int packK = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].scale : 1;
+    push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
     push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
@@ -3311,7 +3333,7 @@ D3D12Renderer::RtBlas* D3D12Renderer::rtSetFor(const omk::Geometry* g) {
 void D3D12Renderer::rtNote(const omk::Draw& d) {
     if (d.blend != omk::Blend::Opaque || d.start + d.count > d.geo->corners.size()) return;
     const std::size_t slot = omk::drawTextureSlot(d);
-    const UINT srv = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].srv : white_.srv;
+    const UINT srv = rtTexWord(slot);   // the heap index, with a pack's k
     const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
     if (posed || d.castsShadow || (d.lit & ~omk::kDrawSoft) != 0) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];

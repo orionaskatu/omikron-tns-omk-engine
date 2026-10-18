@@ -114,6 +114,7 @@ struct PlayOptions {
     // because a flag typed on the command line is the most recent word of
     // all; `densityFlag`/`clipFlag` record whether one was.
     std::string configFile;
+    std::string texturePackArg;   // --texturepack DIR, [Enhancements] texturepack
     bool densityFlag = false, clipFlag = false;
     int clipArg = 0;
     int skyFlag = -1;      // --sky 0|1, options row 4; -1 = take it from the settings

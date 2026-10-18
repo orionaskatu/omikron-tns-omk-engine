@@ -403,13 +403,16 @@ private:
     struct Tex {
         VkImage img = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE; VkDescriptorSet ds = VK_NULL_HANDLE;
+        // THE TEXTURE PACK's k (`o3de/texpack.h`): the image is k x the
+        // original, the UVs stay in the original's units (`scene.frag`)
+        int scale = 1;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
-    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
-    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal, pack; bool used = false; };
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int, const std::uint8_t*>, Uploaded> uploaded_;
 
     std::map<const omk::Geometry*, std::pair<VkBuffer, VkDeviceMemory>> vbo_;
     // THE POSE BUFFER (set 2): host-visible, written from the start at every
@@ -2125,8 +2128,11 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // and crashes.
     if (white_.img == VK_NULL_HANDLE)
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
+    // ...and the TEXTURE PACK's replacement (`o3de/texpack.h`), when the slot
+    // has one: a different picture under the same indices
     const auto keyOf = [](const omk::Texture& x) {
-        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height,
+                               x.hasPack() ? x.packRgba.data() : nullptr);
     };
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
@@ -2151,7 +2157,15 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
-            upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
+            if (x.hasPack()) {
+                // the pack's picture, already keyed as `toRgbaKeyed` keys
+                u.pack = x.packRgba;
+                upload([&](unsigned char* d) { std::memcpy(d, x.packRgba.data(), x.packRgba.size()); },
+                       x.width * x.packScale, x.height * x.packScale, u.t);
+                u.t.scale = x.packScale;
+            } else {
+                upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
+            }
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
         }
         tex_[i] = hit->second.t;
@@ -2701,7 +2715,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                                 &poseDs_, 1, &poseOff);
     push_.posed = posed ? 1 : 0;
 
-    push_.cutout = d.cutout ? 1 : 0;
+    // bit 0 the cutout; bits 8.. a TEXTURE PACK slot's k (`scene.frag`), 0 for none
+    const int packK = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot].scale : 1;
+    push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
     push_.caster = d.castsShadow ? 1 : 0;
     push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, applied here because this is where the bucket

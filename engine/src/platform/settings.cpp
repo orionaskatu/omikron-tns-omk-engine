@@ -224,6 +224,19 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: volumetrics = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "texturepack")) {
+            // relative to the ini's directory, so a pack beside the ini is
+            // found whatever directory the game is started from
+            std::string p = *w;
+            const bool absolute = !p.empty() && (p[0] == '/' || p[0] == '\\' ||
+                                                 (p.size() > 1 && p[1] == ':'));
+            if (!p.empty() && !absolute) {
+                const auto cut = ini.path.find_last_of("/\\");
+                if (cut != std::string::npos) p = ini.path.substr(0, cut + 1) + p;
+            }
+            s.texturePack = p;
+            s.texturePackSource = Settings::Source::Ini;
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

@@ -311,6 +311,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --volumetrics    ENHANCEMENT: the lamps' light scattered in the air round\n"
 "                   them, a halo near each lamp (Direct3D 12); [Enhancements]\n"
 "                   volumetrics=on\n"
+"  --texturepack DIR  ENHANCEMENT: a texture override pack - upscaled PNGs of\n"
+"                   the models' and sets' textures, DIR/<group>/<model>/<MAT>.png\n"
+"                   as `tools/texpack.py extract` lays them out (Vulkan and\n"
+"                   Direct3D 12); [Enhancements] texturepack=DIR\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
 "                   around them, shadow rays for their lamps, ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
@@ -521,6 +525,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--no-shadows") shadowFlag = 0;
         else if (a == "--detail" && i + 1 < argc) detailFlag = std::atoi(argv[++i]);
         else if (a == "--config" && i + 1 < argc) configFile = argv[++i];
+        else if (a == "--texturepack" && i + 1 < argc) texturePackArg = argv[++i];
         // `--clip 0` is the ENHANCEMENT, not a zero distance: the option's
         // five values stop at 200 m and 0 is outside them, so it says "no cap".
         else if (a == "--clip" && i + 1 < argc) { clipArg = std::atoi(argv[++i]); clipFlag = true; }

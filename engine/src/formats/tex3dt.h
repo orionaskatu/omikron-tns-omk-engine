@@ -64,6 +64,9 @@ public:
     std::uint8_t* mutableData() { detach(); return p_ ? p_->data() : nullptr; }
     // For the check: whether two buffers are the same storage.
     bool sharesWith(const PixelBuffer& o) const { return p_ && p_ == o.p_; }
+    // How many copies share the storage (0 for none) - a cache that holds one
+    // copy drops its entry when it is the only holder left (`o3de/texpack.cpp`).
+    long useCount() const { return p_ ? static_cast<long>(p_.use_count()) : 0; }
 
 private:
     void detach() {
@@ -91,6 +94,23 @@ struct Texture {
     // for every one of the 2534 textures shipped under gamedata/MESHES; kept because
     // this same reader is used on the .3DO files embedded in the SCX stream.
     bool exact = false;
+
+    // THE TEXTURE PACK's replacement (`o3de/texpack.h`, `todo/enhancements.md`
+    // 25), an ENHANCEMENT and for the GPU UPLOAD alone: `packScale` x width by
+    // `packScale` x height texels, RGBA, alpha the colour key exactly as
+    // `toRgbaKeyed` makes it (0 on a key texel, which is (0,0,0,0); 255
+    // elsewhere). Empty when the pack has none - the default. Everything else
+    // here stays the ORIGINAL's: width, height, the indices and the palette,
+    // which the software reference, the CPU samplers and the UVs (in the
+    // original's texel units) all go on reading; the Vulkan and Direct3D 12
+    // renderers upload this instead and divide the UVs by the original size.
+    PixelBuffer packRgba;
+    int packScale = 0;
+    bool hasPack() const {
+        return packScale >= 1 && packRgba.size() == static_cast<std::size_t>(width) *
+               static_cast<std::size_t>(height) * 4u * static_cast<std::size_t>(packScale) *
+               static_cast<std::size_t>(packScale);
+    }
 
     // Something to draw: the indices for every texel and a whole palette.
     bool hasPixels() const {

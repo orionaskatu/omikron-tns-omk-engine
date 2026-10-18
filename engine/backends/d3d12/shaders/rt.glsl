@@ -57,9 +57,13 @@ void rtSurface(int inst, int prim, int geom, vec2 b, out vec2 uv, out vec3 col, 
     tex = rtWord(ii.x, base + 15u);
 }
 
-// the texel, in the material's own pixel units as `scene.frag` samples it
-vec4 rtTexel(uint tex, vec2 uv) {
-    vec2 sz = vec2(textureSize(sampler2D(rtTex[nonuniformEXT(tex)], rtSmp), 0));
+// the texel, in the material's own pixel units as `scene.frag` samples it.
+// `word` is the record's texture word: the heap index in bits 0..23 and, for a
+// TEXTURE PACK's replacement (`o3de/texpack.h`), k - 1 in bits 24.. - the
+// image is k x the original and the UVs stay in the original's units
+vec4 rtTexel(uint word, vec2 uv) {
+    uint tex = word & 0xFFFFFFu;
+    vec2 sz = vec2(textureSize(sampler2D(rtTex[nonuniformEXT(tex)], rtSmp), 0)) / float((word >> 24) + 1u);
     return textureLod(sampler2D(rtTex[nonuniformEXT(tex)], rtSmp), uv / max(sz, vec2(1.0)), 0.0);
 }
 

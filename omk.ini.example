@@ -312,6 +312,18 @@
 ;softparticles = off
 ;volumetrics = off
 ;
+; TEXTURE PACK - a directory of replacement textures: upscaled (e.g. AI
+; upscaled) PNGs of the models' and the sets' small palettised pages, laid out
+; DIR/<group>/<model>/<MATERIAL>.png as `python3 tools/texpack.py extract DIR`
+; writes them (then `texpack.py upscale DIR DIR4 --factor 4 [--tool
+; realesrgan-ncnn-vulkan.exe]`, `texpack.py check DIR4`). Each replacement must
+; be a whole multiple of the original's size (2x, 4x...), 8-bit RGB or RGBA;
+; pure black stays the colour key. The game data is never touched. Empty (the
+; default) is off; a relative path is taken from this file's directory. The
+; Vulkan and Direct3D 12 renderers only. It names a directory, so `all = max`
+; does not give it. `--texturepack DIR`. `todo/enhancements.md` 25.
+;texturepack =
+;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only

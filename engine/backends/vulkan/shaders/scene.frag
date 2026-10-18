@@ -19,7 +19,8 @@
 //     already applied the bucket key's exclusions (`renderer.h`, the View).
 layout(push_constant) uniform Push {
     mat4  mvp;
-    int   cutout;      // flag 0x800: a colour key on black, never alpha
+    int   cutout;      // bit 0: flag 0x800, a colour key on black, never alpha;
+                       // bits 8..: a TEXTURE PACK slot's k (`o3de/texpack.h`), 0 for none
     float fogStart;    // 0 = no fog for this batch; see renderer.h's View
     float fogEnd;
     // A CASTER does not RECEIVE. The engine's shadow only ever darkens the
@@ -343,8 +344,18 @@ void main() {
     // key texels are (0,0,0,0), so the sample is premultiplied: a fragment
     // more than half key is discarded and the rest is un-premultiplied,
     // which is what keeps the cutout edge free of a dark fringe.
-    vec4 t = texture(tex, vUV / vec2(textureSize(tex, 0)));
-    if (pc.cutout != 0) {
+    //
+    // THE TEXTURE PACK (`todo/enhancements.md` 25, an ENHANCEMENT): a slot
+    // whose page a pack replaced holds an image k times the original's size,
+    // and the UVs are still in the ORIGINAL's texel units - so the size they
+    // are divided by is the image's over k (k rides in the cutout word's bits
+    // 8.., the push block having no room on Direct3D 12). Without a pack the
+    // arithmetic is the old one exactly.
+    vec2 texSz = vec2(textureSize(tex, 0));
+    int packK = pc.cutout >> 8;
+    if (packK > 1) texSz /= float(packK);
+    vec4 t = texture(tex, vUV / texSz);
+    if ((pc.cutout & 1) != 0) {
         if (t.a < 0.5) discard;
         t.rgb /= t.a;
     }

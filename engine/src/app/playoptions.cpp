@@ -304,6 +304,13 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --hdr            ENHANCEMENT: HDR10 output (scRGB) when the display reports HDR,\n"
 "                   else SDR with a line (Direct3D 12); NOT part of --enhance-all;\n"
 "                   [Enhancements] hdr=on\n"
+"  --soft-particles ENHANCEMENT: smoke, steam, fire and the lamps' glows fade\n"
+"                   where they meet a wall or the ground instead of cutting a\n"
+"                   hard line (Direct3D 12, not under MSAA); [Enhancements]\n"
+"                   softparticles=on\n"
+"  --volumetrics    ENHANCEMENT: the lamps' light scattered in the air round\n"
+"                   them, a halo near each lamp (Direct3D 12); [Enhancements]\n"
+"                   volumetrics=on\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
 "                   around them, shadow rays for their lamps, ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
@@ -540,6 +547,8 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--bloom") bloomFlag = 1;
         else if (a == "--dof") dofFlag = 1;
         else if (a == "--hdr") hdrFlag = 1;
+        else if (a == "--soft-particles") softParticlesFlag = 1;
+        else if (a == "--volumetrics") volumetricsFlag = 1;
         else if (a == "--colorgrade" && i + 1 < argc) {
             colorGradeFlag = omk::colorGradeMode(argv[++i]);
             if (colorGradeFlag < 0) {

@@ -92,6 +92,7 @@ constexpr const char* kSwitches[] = {
     "OMK_SHADOWLOG",            // log: the shadows' light, the player's feet and a walker's shadow, periodically (engine: character shadow)
     "OMK_SKIN_FAR",             // every staged body posed, in view or not
     "OMK_SKIP_EFFECT",          // =<n> set-piece effect n left unspawned
+    "OMK_SOFT_RANGE",           // =<units> soft particles: the fade's depth range (default 24), for judging
     "OMK_SSAO_VIEW",            // the SSAO occlusion itself written over the frame, grey on white
     "OMK_STAGE_PROBE",          // log: the staged bodies' placement every frame, every body posed (engine: scene facing)
     "OMK_STICKY_EULER",         // A/B: a scene call's Euler kept across steps - the old, wrong reading (engine: scene facing)
@@ -111,6 +112,8 @@ constexpr const char* kSwitches[] = {
     "OMK_VERIFY_PATCH",         // the full merge beside the in-place one, compared bit for bit (engine: patch index)
     "OMK_VERIFY_SPLIT",         // the two-layer grid against the linear scan every moving frame (engine: split grid)
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
+    "OMK_VOL_TIMING",           // log: the D3D12 volumetric lamp light's GPU time (timestamps), every 60 frames
+    "OMK_VOL_TUNE",             // =<density>,<core>,<glow> volumetrics: the air's density, a lamp's core and glow (shares of its reach), by eye
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
     "OMK_WINDUMP",              // =<path> D3D12/Vulkan: the window's picture (RGBA8; D3D12's back buffer) written on the last frame (engine: colour depth)

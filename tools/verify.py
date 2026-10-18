@@ -7070,7 +7070,8 @@ def c_enhance_all():
              "framerate": "FrameRate", "animation": "Animation",
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
              "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
-             "bloom": "Bloom", "dof": "Dof"}
+             "bloom": "Bloom", "dof": "Dof", "softparticles": "SoftParticles",
+             "volumetrics": "Volumetrics"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27693,6 +27694,183 @@ def c_engine_post_chain():
          "brighter, near its bright pixels; cyber/warm/noir move the means as designed; depth of "
          "field leaves the street alone and blurs the cutscene's far ceiling; HDR refused on an SDR "
          "display, forced it stays the SDR picture")
+
+
+def _d3d12_street_runs(runs, W=640, H=480):
+    """Runs of the street start through the Direct3D 12 window, hidden, each a
+    (name, extra args, extra env) - with the set loads on the frame's own thread
+    (`OMK_SYNC_SETS`: a job finishing a frame later between two configurations
+    moves the crowd) and the events on - and what each window was handed
+    (`OMK_WINDUMP`). Returns {name: (log, picture or b"")}, or a skip tuple."""
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    out = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, extra, env in runs:
+            win = os.path.join(tmp, name + ".rgba")
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
+                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", "60", "--d3d12",
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32"] + extra
+            e = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win, OMK_SYNC_SETS="1", OMK_EVENTS="1")
+            e.update(env)
+            r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=e)
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            out[name] = (r.stdout + r.stderr, pic if len(pic) == 4 * W * H else b"")
+    return out
+
+
+def c_engine_soft_particles():
+    r"""`omk-play --soft-particles`: SOFT PARTICLES on Direct3D 12 - an enhancement, off by default.
+    `todo/enhancements.md` 23. The effect sprites (`Render_SubmitSprites`'
+    billboards - smoke, steam, fire, the lamps' glows; marked `kDrawSoft` by
+    the frontend, additive or multiply) are drawn by `scene.frag` built
+    -DOMK_SOFT with the depth bound READ-ONLY and read through its view, each
+    fragment faded by its view-depth gap to the opaque surface behind it over
+    24 units. Read from what the WINDOW was handed (`OMK_WINDUMP`), 640x480,
+    the street start (its brazier fire, the steam against the wall, the wall
+    lamps' glows), colour depth 32:
+      * off in the source; a plain run prints no soft-particle line and two
+        plain runs are byte-identical (and, measured when it was written,
+        byte-identical to the tree before it);
+      * on, it says so, and the frame draws sprite batches soft (an event);
+      * THE FOOTPRINT: a run with the fade's range at 10^6 units
+        (`OMK_SOFT_RANGE`) fades every soft sprite to nothing, which marks
+        every pixel a sprite reaches (measured 1.7% of the frame);
+      * the soft run moves pixels (at least 30; measured 333, 0.11%), EVERY
+        one of them inside that footprint, at most half of it (measured 6%:
+        only where a sprite nears what is behind it), and none brighter (the
+        sprites here are all additive: a fade only takes light away);
+      * under 4x MSAA it declines, with a line and the event saying so.
+    SHOWN TO FAIL (2026-10-19) with the soft pipelines never chosen in
+    `submitOne` (`soft` forced false): no batch drawn soft, nothing moved.
+    """
+    src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
+    defaults = "bool   softParticles = false;" in src
+    r = _d3d12_street_runs([("p0", [], {}), ("p0b", [], {}), ("ps", ["--soft-particles"], {}),
+                            ("pg", ["--soft-particles"], {"OMK_SOFT_RANGE": "1000000"}),
+                            ("pm", ["--soft-particles", "--aa", "4"], {})])
+    if isinstance(r, tuple):
+        return r
+    t0 = r["p0"][0]
+    if "renderer: D3D12" not in t0:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    p0, p0b, ps, pg = r["p0"][1], r["p0b"][1], r["ps"][1], r["pg"][1]
+    if not all((p0, p0b, ps, pg, r["pm"][1])):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    silent = "soft particles" not in t0 and not any(n.startswith("softparticles") for n, _ in _events(t0))
+    ev = _events(r["ps"][0])
+    on = any(n == "softparticles" and f.get("on") == "1" for n, f in ev)
+    drawn = max([int(f.get("batches", "0")) for n, f in ev if n == "softparticles.drawn"] or [0])
+    n = len(p0) // 4
+    foot = moved = outside = brighter = 0
+    for i in range(n):
+        o = p0[4 * i:4 * i + 3]
+        f = pg[4 * i:4 * i + 3] != o
+        m = ps[4 * i:4 * i + 3] != o
+        foot += f
+        if m:
+            moved += 1
+            outside += not f
+            brighter += sum(ps[4 * i:4 * i + 3]) > sum(o)
+    evm = _events(r["pm"][0])
+    msaaOff = any(n == "softparticles" and f.get("on") == "0" and f.get("samples") == "4" for n, f in evm) \
+        and "off under 4x MSAA" in r["pm"][0]
+    print("        soft particles: %d batches soft; footprint %.2f%%, moved %d px (%.1f%% of it), %d outside "
+          "it, %d brighter; MSAA declined %s" % (drawn, 100.0 * foot / n, moved, 100.0 * moved / max(1, foot),
+                                                outside, brighter, msaaOff))
+    got = (defaults, silent, p0 == p0b, on, drawn > 0, 0.003 * n < foot < 0.2 * n, moved >= 30,
+           outside, moved <= 0.5 * foot, brighter, msaaOff)
+    return got, (True, True, True, True, True, True, True, 0, True, 0, True), \
+        ("off by default and silent, two plain runs identical; on, sprite batches drawn soft and the "
+         "pixels moved all inside the sprites' footprint, a minority of it, none brighter; declined "
+         "under MSAA")
+
+
+def c_engine_volumetrics():
+    r"""`omk-play --volumetrics`: VOLUMETRIC LAMP LIGHT on Direct3D 12 - an enhancement, off by default.
+    `todo/enhancements.md` 24. `vol.frag` marches each eye ray through the glow
+    spheres of the frame's lamps in the air (`View::airLights`: the set's lamp
+    records in front of the camera, nearest first, no sky fill) at half the
+    render size - inverse square with a core, a Henyey-Greenstein phase, the
+    scene's fog - and `volmix.frag` adds it over the scene before the upscaler
+    and the post chain. Read from what the WINDOW was handed (`OMK_WINDUMP`),
+    640x480, the street start, colour depth 32:
+      * off in the source; a plain run prints no volumetrics line and two plain
+        runs are byte-identical (and, measured when it was written,
+        byte-identical to the tree before it);
+      * on, lamps are in the air (an event) and 1-60% of the pixels brighten
+        by 3 or more over their channels (measured 8.1%), and NO channel of
+        any pixel is darker - the light is only ever added;
+      * ONLY NEAR THE LAMPS: the renderer says, for the frame, where each
+        lamp's glow sphere can reach the picture (`vol.lamp` events: the box
+        round its projected surface, the whole picture if the eye is inside
+        it); not one changed pixel lies outside every box (with an 8-pixel
+        margin for the half-size filter), and the boxes leave room to fail
+        (they cover under 90% of the frame - measured 40%);
+      * under 4x MSAA (`vol_ms.frag`, `volmix_ms.frag`) it brightens alike
+        and darkens nothing.
+    SHOWN TO FAIL (2026-10-19) twice: with `runVol` returning at once (no lamp
+    said, nothing brightened, here or under MSAA), and with every lamp's
+    centre moved 400 units in `vol.frag` alone (1671 pixels brightened outside
+    every box the renderer named).
+    """
+    src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
+    defaults = "bool   volumetrics = false;" in src
+    r = _d3d12_street_runs([("v0", [], {}), ("v0b", [], {}), ("vv", ["--volumetrics"], {}),
+                            ("m0", ["--aa", "4"], {}), ("mv", ["--aa", "4", "--volumetrics"], {})])
+    if isinstance(r, tuple):
+        return r
+    t0 = r["v0"][0]
+    if "renderer: D3D12" not in t0:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    v0, v0b, vv, m0, mv = (r[k][1] for k in ("v0", "v0b", "vv", "m0", "mv"))
+    if not all((v0, v0b, vv, m0, mv)):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    W, H = 640, 480
+    n = W * H
+    silent = "volumetric" not in t0 and not any(nm in ("vol", "vol.lamp", "vol.timing") for nm, _ in _events(t0))
+    ev = _events(r["vv"][0])
+    lamps = max([int(f.get("lamps", "0")) for nm, f in ev if nm == "vol"] or [0])
+    boxes = []
+    frames = [int(f["frame"]) for nm, f in ev if nm == "vol.lamp"]
+    if frames:
+        last = max(frames)
+        for nm, f in ev:
+            if nm == "vol.lamp" and int(f["frame"]) == last:
+                x0, y0, x1, y1 = (float(f[k]) for k in ("x0", "y0", "x1", "y1"))
+                if x0 <= x1:
+                    boxes.append((x0 - 8, y0 - 8, x1 + 8, y1 + 8))
+    def inside(x, y):
+        return any(a <= x <= c and b <= y <= d for a, b, c, d in boxes)
+    def compare(a, b, place):
+        up = darker = out = 0
+        for i in range(n):
+            d = [b[4 * i + c] - a[4 * i + c] for c in range(3)]
+            if min(d) < 0:
+                darker += 1
+            if sum(d) >= 3:
+                up += 1
+            if place and any(d) and not inside(i % W + 0.5, i // W + 0.5):
+                out += 1
+        return up, darker, out
+    up, darker, out = compare(v0, vv, True)
+    cover = sum(1 for y in range(0, H, 4) for x in range(0, W, 4) if inside(x + 0.5, y + 0.5)) / (n / 16.0)
+    mup, mdark, _ = compare(m0, mv, False)
+    print("        volumetrics: %d lamps, %d glow boxes covering %.0f%%; %.1f%% brighter, %d darker, %d changed "
+          "outside every box; MSAA %.1f%% brighter, %d darker"
+          % (lamps, len(boxes), 100.0 * cover, 100.0 * up / n, darker, out, 100.0 * mup / n, mdark))
+    got = (defaults, silent, v0 == v0b, lamps > 0, 0.01 * n < up < 0.6 * n, darker, len(boxes) > 0,
+           out, cover < 0.9, mup > 0.01 * n, mdark)
+    return got, (True, True, True, True, True, 0, True, 0, True, True, 0), \
+        ("off by default and silent, two plain runs identical; on, lamps in the air, 1-60% of the "
+         "street brighter and nothing darker, every change inside a lamp's glow box; the same under MSAA")
 
 
 def c_engine_best_lod():
@@ -48809,6 +48987,8 @@ SLOW = [
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
+    ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
+    ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

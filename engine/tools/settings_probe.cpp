@@ -68,6 +68,8 @@ int main(int argc, char** argv) {
     std::printf("enh dof %d %s\n", s.dof ? 1 : 0, omk::sourceName(s.dofSource));
     std::printf("enh colorgrade %d %s\n", s.colorGrade, omk::sourceName(s.colorGradeSource));
     std::printf("enh hdr %d %s\n", s.hdr ? 1 : 0, omk::sourceName(s.hdrSource));
+    std::printf("enh softparticles %d %s\n", s.softParticles ? 1 : 0, omk::sourceName(s.softParticlesSource));
+    std::printf("enh volumetrics %d %s\n", s.volumetrics ? 1 : 0, omk::sourceName(s.volumetricsSource));
     std::printf("enh upscaler %d %s\n", s.upscaler, omk::sourceName(s.upscalerSource));
     std::printf("enh upscalequality %d %s\n", s.upscaleQuality, omk::sourceName(s.upscaleQualitySource));
     std::printf("enh all %d\n", s.enhanceAll ? 1 : 0);

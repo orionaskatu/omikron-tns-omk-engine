@@ -102,7 +102,7 @@ void PlayState::gpuOpenWindow() {
                 if (texAniso > 1) dx->setAnisotropy(texAniso);
                 if (ssaa > 1) dx->setSupersample(ssaa);
                 if (upscaler > 0) dx->setUpscaler(upscaler, upscaleQuality);   // row 18
-                if (postFx.bloom || postFx.dof || postFx.grade || postFx.hdr) dx->setPostProcess(postFx);   // row 22
+                if (postFx.any()) dx->setPostProcess(postFx);   // rows 22-24
             }
             if (dx && omk::d3d12AttachWindow(dx, hwnd) && dx->init(dispW, dispH)) {
                 vkRen = dx;
@@ -143,9 +143,9 @@ void PlayState::gpuOpenWindow() {
             if (upscaler > 0 && !vkr->setUpscaler(upscaler, upscaleQuality))
                 std::printf("upscaler: %s is the Direct3D 12 backend's (--d3d12) - off on Vulkan\n",
                             omk::upscalerName(upscaler));
-            if ((postFx.bloom || postFx.dof || postFx.grade || postFx.hdr) && !vkr->setPostProcess(postFx))
-                std::printf("post: the post-processing chain is the Direct3D 12 backend's (--d3d12) "
-                            "- off on Vulkan\n");
+            if (postFx.any() && !vkr->setPostProcess(postFx))
+                std::printf("post: the post-processing chain, soft particles and volumetrics are the "
+                            "Direct3D 12 backend's (--d3d12) - off on Vulkan\n");
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
@@ -197,9 +197,9 @@ void PlayState::gpuOpenWorldHarness() {
             std::printf("upscaler: %s is the Direct3D 12 backend's (--world-d3d12) - off on Vulkan\n",
                         omk::upscalerName(upscaler));
         // THE POST CHAIN (row 22): likewise
-        if (wv && (postFx.bloom || postFx.dof || postFx.grade || postFx.hdr) && !wv->setPostProcess(postFx))
-            std::printf("post: the post-processing chain is the Direct3D 12 backend's (--world-d3d12) "
-                        "- off on Vulkan\n");
+        if (wv && postFx.any() && !wv->setPostProcess(postFx))
+            std::printf("post: the post-processing chain, soft particles and volumetrics are the "
+                        "Direct3D 12 backend's (--world-d3d12) - off on Vulkan\n");
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
             std::printf("renderer: the world through %s offscreen - %s "

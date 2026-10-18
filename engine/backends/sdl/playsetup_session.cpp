@@ -214,6 +214,14 @@ int PlayState::setupSession() {
     postFx.dof = enh(dofFlag, settings.dof ? 1 : 0, omk::kMaxDof) > 0;
     postFx.grade = colorGradeFlag >= 0 ? colorGradeFlag : settings.colorGrade;
     postFx.hdr = hdrFlag >= 0 ? hdrFlag > 0 : settings.hdr;
+    // SOFT PARTICLES and VOLUMETRIC LAMP LIGHT (settings.h, todo/enhancements.md
+    // 23 and 24), the same renderer's, handed over with the chain
+    postFx.softParticles = enh(softParticlesFlag, settings.softParticles ? 1 : 0, omk::kMaxSoftParticles) > 0;
+    postFx.volumetrics = enh(volumetricsFlag, settings.volumetrics ? 1 : 0, omk::kMaxVolumetrics) > 0;
+    if (postFx.softParticles || postFx.volumetrics)
+        std::printf("scene fx: soft particles %s, volumetric lamp light %s - ENHANCEMENTS: the Direct3D 12 "
+                    "backend's, the effect sprites faded against the depth and the lamps' light in the air\n",
+                    postFx.softParticles ? "on" : "off", postFx.volumetrics ? "on" : "off");
     if (postFx.bloom || postFx.dof || postFx.grade || postFx.hdr)
         std::printf("post: bloom %s, depth of field %s, colour grade %s, hdr %s - ENHANCEMENTS: the "
                     "Direct3D 12 backend's post-processing chain over the 3D (never the interface)\n",

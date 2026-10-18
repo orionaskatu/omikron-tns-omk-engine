@@ -296,6 +296,22 @@
 ;colorgrade = off
 ;hdr = off
 ;
+; SOFT PARTICLES and VOLUMETRIC LAMP LIGHT - the Direct3D 12 backend's too;
+; Vulkan says so and leaves them off. Both in `all = max`.
+;   softparticles = on   the effect sprites - smoke, steam, the fires, the
+;                     lamps' glows - fade where they meet a wall or the ground
+;                     (over ~0.6 m of depth) instead of cutting a hard line.
+;                     Needs a single-sample depth: off, with a line, under
+;                     MSAA (an upscaler turns MSAA off, so FSR/DLSS have it).
+;                     `todo/enhancements.md` 23. `--soft-particles`.
+;   volumetrics = on  the street lamps' light scattered in the air round them:
+;                     a soft warm halo near each lamp, not a haze (the set's
+;                     own fog is left as it is). Half-size, added before the
+;                     post chain; ~0.3 ms at 4K on an RX 9070 XT.
+;                     `todo/enhancements.md` 24. `--volumetrics`.
+;softparticles = off
+;volumetrics = off
+;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only

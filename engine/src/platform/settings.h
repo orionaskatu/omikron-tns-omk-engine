@@ -252,6 +252,15 @@ struct Settings {
     Source colorGradeSource = Source::Default;
     bool   hdr = false;
     Source hdrSource = Source::Default;
+    // SOFT PARTICLES (`todo/enhancements.md` 23) and VOLUMETRIC LAMP LIGHT (24),
+    // the Direct3D 12 backend's, both in `all = max`: `softparticles = off|on`
+    // (the effect sprites - smoke, steam, fire, the lamps' glows - faded where
+    // they meet a wall or the ground instead of cutting a hard line), and
+    // `volumetrics = off|on` (the lamps' light scattered in the air round them).
+    bool   softParticles = false;
+    Source softParticlesSource = Source::Default;
+    bool   volumetrics = false;
+    Source volumetricsSource = Source::Default;
 
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
@@ -503,6 +512,8 @@ inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 bits a channel
 inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12)
 inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12)
+inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12)
+inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12)
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
 // `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
@@ -543,6 +554,8 @@ inline void applyMaxEnhancements(Settings& s) {
     take(s.colourDepth,   kMaxColourDepth,   s.colourDepthSource);
     takeFlag(s.bloom, kMaxBloom, s.bloomSource);
     takeFlag(s.dof, kMaxDof, s.dofSource);
+    takeFlag(s.softParticles, kMaxSoftParticles, s.softParticlesSource);
+    takeFlag(s.volumetrics, kMaxVolumetrics, s.volumetricsSource);
     // NOT `s.colorGrade` nor `s.hdr`: asked for by name only (above).
 }
 

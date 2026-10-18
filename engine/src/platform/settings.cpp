@@ -212,6 +212,18 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: hdr = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "softparticles")) {
+            const int m = escapeBackMode(*w);     // the same off|on words
+            if (m >= 0) { s.softParticles = m > 0; s.softParticlesSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: softparticles = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
+        if (const std::string* w = ini.find(kEnhancements, "volumetrics")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.volumetrics = m > 0; s.volumetricsSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: volumetrics = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

@@ -203,6 +203,14 @@ struct View {
     // silently truncating in the middle of a street.
     static constexpr int kMaxGpuLights = 8;
     std::vector<GpuLight> lights;   // empty = light per vertex, as before
+    // ...and THE LAMPS IN THE AIR (`volumetrics`, `todo/enhancements.md` 24),
+    // an ENHANCEMENT: the same `.3DO` records, chosen for the CAMERA rather
+    // than the player - the ones whose reach is in front of the eye and
+    // nearest it, the sky fills left out - for the light the night air
+    // scatters round them. Empty unless the renderer draws it
+    // (`volumetricsLive`); nothing else reads it.
+    static constexpr int kMaxAirLights = 16;
+    std::vector<GpuLight> airLights;
 
     // ---------------------------------------------- THE SHIMMER's clock
     //
@@ -250,6 +258,12 @@ struct View {
 // 20) - lamp highlights and a sky reflection added in `scene.frag`. The low two
 // bits stay the lit mode (0, 1, 2); a backend hands `lit` to the shader whole.
 inline constexpr int kDrawShine = 4;
+// Bit 8: this batch is an EFFECT SPRITE (`Render_SubmitSprites`' billboards:
+// smoke, steam, fire, sparks, the lamps' glows) and is drawn SOFT - faded where
+// it nears the opaque depth behind it (`softparticles`, `todo/enhancements.md`
+// 23). Set by the frontend only for a renderer that answers
+// `softParticlesLive()`; a backend that does not fade ignores it.
+inline constexpr int kDrawSoft = 8;
 
 struct Draw {
     std::uint32_t   bucketKey = 0;
@@ -473,13 +487,26 @@ public:
     // field on cinematic (letterboxed) frames, and HDR10 output. Same contract
     // as the rest: a request before `init()`. Only the Direct3D 12 backend
     // takes it; the others answer false and draw exactly as before.
+    // ...and with it two passes on the SCENE, before the chain (`todo/
+    // enhancements.md` 23, 24): SOFT PARTICLES - the effect sprites
+    // (`kDrawSoft`) faded against the opaque depth behind them - and
+    // VOLUMETRIC LAMP LIGHT - the light of `View::airLights` scattered in the
+    // air, added over the scene before the chain blooms and grades it.
     struct PostProcess {
         bool bloom = false;
         int  grade = 0;
         bool dof = false;
         bool hdr = false;
+        bool softParticles = false;
+        bool volumetrics = false;
+        bool any() const { return bloom || dof || grade || hdr || softParticles || volumetrics; }
     };
     virtual bool setPostProcess(const PostProcess& /*p*/) { return false; }
+    // What the frontend asks before it marks the sprites soft and picks the
+    // air's lamps: true only once the renderer has the passes running (D3D12
+    // declines soft particles under MSAA, saying so).
+    virtual bool softParticlesLive() const { return false; }
+    virtual bool volumetricsLive() const { return false; }
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

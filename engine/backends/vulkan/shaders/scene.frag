@@ -100,7 +100,18 @@ layout(set = 1, binding = 2) uniform Lights {
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   pad2;
     vec4  eye;         // the camera, for vehicle shine's view vector
+#ifdef OMK_SOFT
+    vec4  soft;        // SOFT PARTICLES: x A, y B (view z = B / (depth - A)), z 1 / the fade's range
+#endif
 } lg;
+
+#ifdef OMK_SOFT
+// SOFT PARTICLES (`todo/enhancements.md` 23), an ENHANCEMENT: the Direct3D 12
+// backend's -DOMK_SOFT build, drawn for the effect sprites alone (`kDrawSoft`,
+// additive or multiply): the OPAQUE depth, read through a read-only depth view
+// of the very buffer the sprite is depth-tested against. Vulkan never defines it.
+layout(set = 6, binding = 0) uniform sampler2D sceneDepth;
+#endif
 
 #ifdef OMK_RT
 // The ray-traced frame's constants (`d3d12render.cpp` `RtFrame`) and the rays'
@@ -417,6 +428,18 @@ void main() {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
     }
+#ifdef OMK_SOFT
+    // the sprite FADES as it nears what is behind it: by the view-depth gap
+    // between this fragment and the opaque surface at its pixel, over the
+    // fade's range - so a puff of smoke meets the ground in a soft edge
+    // instead of a hard line. Both blends take it on the colour: an additive
+    // sprite adds less, a multiply one (`dst * (1 - c)`) darkens less.
+    {
+        float zs = lg.soft.y / (texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r - lg.soft.x);
+        float zf = lg.soft.y / (gl_FragCoord.z - lg.soft.x);
+        c *= clamp((zs - zf) * lg.soft.z, 0.0, 1.0);
+    }
+#endif
     outColour = vec4(c, 1.0);
 #ifdef OMK_MOTION
     // a corner behind the eye a frame ago has no previous screen position:

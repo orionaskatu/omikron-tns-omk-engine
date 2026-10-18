@@ -115,6 +115,14 @@ namespace {
 #include "dx/ssao_ms.frag.h"
 #include "dx/ssao_blur_ms.frag.h"
 #include "dx/blit.frag.h"
+// ...SOFT PARTICLES' scene pass (`scene.frag` -DOMK_SOFT) and VOLUMETRIC LAMP
+// LIGHT's two passes (`todo/enhancements.md` 23, 24)
+#include "dx/scene_soft.frag.h"
+#include "dx/scene_soft_mv.frag.h"
+#include "dx/vol.frag.h"
+#include "dx/vol_ms.frag.h"
+#include "dx/volmix.frag.h"
+#include "dx/volmix_ms.frag.h"
 // ...and the UPSCALERS' scene pass, the same two files built -DOMK_MOTION
 #include "dx/scene_mv.vert.h"
 #include "dx/scene_mv.frag.h"
@@ -141,6 +149,12 @@ struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, p
 // THE POST CHAIN's (`bloom.frag`, `post.frag`, todo/enhancements.md 22)
 struct BloomPush { float texel[4]; float params[4]; float target[4]; };
 struct PostPush { float frame[4], depthAB[4], dof[4], tone[4], lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
+// VOLUMETRIC LAMP LIGHT's (`vol.frag`, `volmix.frag`, todo/enhancements.md 24)
+struct VolPush { float proj[4], view[4], eye[4], s[4], u[4], f[4]; };
+struct VolMixPush { float proj[4], view[4]; };
+constexpr int kMaxVolLamps = 16;
+struct VolLamp { float posR[4], colI[4], shape[4]; };
+struct VolUbo { VolLamp l[kMaxVolLamps]; int32_t count[4]; };
 
 constexpr UINT kShadowSide = 2048;
 constexpr int kShadowLayers = 3;
@@ -157,6 +171,7 @@ struct LightUbo {
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151)
     int32_t pad;
     float   eye[4];    // the camera's position (vehicle shine's view vector)
+    float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
 struct ShadowUbo {
     float lightMvp[kShadowLayers][16];
@@ -235,7 +250,11 @@ constexpr UINT kSlotPostDepth = 10;
 constexpr UINT kSlotPostOut = 11;
 constexpr UINT kSlotBloom0 = 12;
 constexpr int kBloomLevels = 6;   // half the display size down to 1/64
-constexpr UINT kSlotFirstFree = kSlotBloom0 + kBloomLevels;
+// VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): its ONE table - the depth,
+// then the half-size light
+constexpr UINT kSlotVolDepth = kSlotBloom0 + kBloomLevels;
+constexpr UINT kSlotVol = kSlotVolDepth + 1;
+constexpr UINT kSlotFirstFree = kSlotVol + 1;
 constexpr UINT kSrvHeapSize = 4096;
 
 #define DXCHECK(x, what)                                                        \
@@ -387,8 +406,12 @@ public:
         postReq_ = p;
         postReq_.grade = p.grade < 0 ? 0 : p.grade > 4 ? 4 : p.grade;
         postWant_ = p.bloom || p.dof || postReq_.grade > 0 || p.hdr;
+        softWant_ = p.softParticles;   // decided in `makeTarget` (not under MSAA)
+        volWant_ = p.volumetrics;
         return true;
     }
+    bool softParticlesLive() const override { return softOn_; }
+    bool volumetricsLive() const override { return volOn_; }
 
     int samples() const { return static_cast<int>(samples_); }
     int maxSamples() const;
@@ -480,6 +503,11 @@ private:
     // list, after the upscaler), and what the display half reads once it ran
     bool makePost();
     void runPost();
+    // SOFT PARTICLES: the scene pass's depth bound read-only (and readable) or
+    // writable again; VOLUMETRIC LAMP LIGHT: its passes, made on first use
+    void depthReadOnly(bool ro);
+    bool makeVol();
+    void runVol();
     bool outputIsHdr(float& peakNits);
     Res& displaySource() { return postLive_ ? postImg_ : upscaleSource(); }
     UINT displaySlot() const { return postLive_ ? kSlotPostOut : sourceSlot(); }
@@ -585,6 +613,39 @@ private:
     double postMsSum_ = 0.0;
     int postMsN_ = 0;
     bool postTimed_ = false;
+
+    // ---- SOFT PARTICLES (`todo/enhancements.md` 23; off unless asked) ----
+    bool softWant_ = false, softOn_ = false;
+    bool depthRo_ = false;             // the scene pass's depth is bound read-only now
+    ID3D12PipelineState* pipeSoft_[3] = {};   // [1] additive, [2] multiply: `scene.frag` -DOMK_SOFT
+    UINT softParam_ = 0;               // the scene root's table holding the depth (t0 space6)
+    static constexpr UINT kDsvDepthRo = 1 + kShadowLayers;   // the depth's READ-ONLY view
+    float softRange_ = 24.0f;          // the fade's depth range, world units (~0.6 m)
+    long softDraws_ = 0;               // sprite batches drawn soft this frame
+    bool softTold_ = false;
+
+    // ---- VOLUMETRIC LAMP LIGHT (`todo/enhancements.md` 24; off unless asked) ----
+    bool volWant_ = false, volOn_ = false;
+    Res vol_;                          // half the render size, RGBA16F: the light, the depth / 1000
+    int volW_ = 0, volH_ = 0;
+    ID3D12RootSignature* volRs_ = nullptr;
+    ID3D12PipelineState* volPipe_ = nullptr;
+    ID3D12PipelineState* volMixPipe_ = nullptr;
+    ID3D12Resource* volUbo_ = nullptr; void* volUboPtr_ = nullptr;
+    int volCount_ = 0;                 // this frame's lamps
+    long volFrame_ = 0;
+    float volEye_[3] = {}, volS_[3] = {}, volU_[3] = {}, volF_[3] = {};
+    float volTanH_ = 1.0f, volTanV_ = 1.0f;
+    float volDensity_ = 0.0011f;       // the air's density
+    float volCore_ = 0.05f;            // a lamp's core radius, as a share of its reach
+    float volReach_ = 0.5f;            // ...and its glow's reach, likewise
+    bool volTold_ = false;
+    float volSig_ = -1.0f;             // the lamps and camera last said (`vol.lamp` events)
+    ID3D12QueryHeap* volQ_ = nullptr;  // `OMK_VOL_TIMING`
+    ID3D12Resource* volQBuf_ = nullptr;
+    double volMsSum_ = 0.0;
+    int volMsN_ = 0;
+    bool volTimed_ = false;
 
     // ---- the textures ----
     struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); };
@@ -954,8 +1015,8 @@ bool D3D12Renderer::pickDevice() {
     fenceEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent_) return false;
     if (!srv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvHeapSize, true, kSlotFirstFree) ||
-        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvSwap + kSwapBuffers, false, 0) ||
-        !dsv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1 + kShadowLayers, false, 0)) {
+        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvSwap + kSwapBuffers + 1, false, 0) ||
+        !dsv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvDepthRo + 1, false, 0)) {
         std::fprintf(stderr, "d3d12: descriptor heaps\n");
         return false;
     }
@@ -1025,6 +1086,33 @@ bool D3D12Renderer::makeTarget() {
                          &dc, "render targets");
     depth_.st = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     if (!depth_.r) return false;
+    // SOFT PARTICLES read the depth beside the test: a single-sample depth, so
+    // not under MSAA (an upscaler turns MSAA off, so FSR and DLSS have them)
+    softOn_ = softWant_ && !msaa;
+    if (softWant_ && !resizing_) {
+        if (softOn_) {
+            const char* r = omk::envStr("OMK_SOFT_RANGE");
+            if (r && std::atof(r) > 0.0) softRange_ = static_cast<float>(std::atof(r));
+            std::printf("d3d12: soft particles on - an ENHANCEMENT: the effect sprites fade over %.0f units "
+                        "where they meet the opaque depth\n", static_cast<double>(softRange_));
+        } else {
+            std::printf("d3d12: soft particles need a single-sample depth - off under %ux MSAA\n", samples_);
+        }
+        omk::event("softparticles", {{"on", softOn_ ? 1 : 0}, {"samples", static_cast<int>(samples_)}});
+    }
+    volOn_ = volWant_;
+    if (volWant_ && !resizing_) {
+        if (const char* t = omk::envStr("OMK_VOL_TUNE")) {
+            float a = 0.0f, b = 0.0f, c = 0.0f;
+            if (std::sscanf(t, "%f,%f,%f", &a, &b, &c) >= 1 && a >= 0.0f) volDensity_ = a;
+            if (b > 0.0f) volCore_ = b;
+            if (c > 0.0f) volReach_ = std::min(c, 1.0f);
+        }
+        std::printf("d3d12: volumetric lamp light on - an ENHANCEMENT: the lamps' light scattered in the air, "
+                    "half-size, added before the post chain (density %g, core %g and glow %g of the reach)\n",
+                    static_cast<double>(volDensity_), static_cast<double>(volCore_),
+                    static_cast<double>(volReach_));
+    }
     // (ray tracing runs the AO pass too, its rays in place of the hemisphere)
     ssaoOn_ = wantSsao_ || rtOn_;
     if (wantSsao_ && !rtOn_ && !resizing_)
@@ -1044,6 +1132,10 @@ bool D3D12Renderer::makeTarget() {
         dv.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
         dv.ViewDimension = msaa ? D3D12_DSV_DIMENSION_TEXTURE2DMS : D3D12_DSV_DIMENSION_TEXTURE2D;
         dev_->CreateDepthStencilView(depth_.r, &dv, dsv_.cpu(dsvDepth_));
+        // ...and its READ-ONLY twin, which SOFT PARTICLES test against while
+        // their shader reads the same depth through `kSlotDepth`
+        dv.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH | D3D12_DSV_FLAG_READ_ONLY_STENCIL;
+        dev_->CreateDepthStencilView(depth_.r, &dv, dsv_.cpu(kDsvDepthRo));
         D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
         sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -1121,6 +1213,13 @@ bool D3D12Renderer::makeTarget() {
     shUbo_ = makeBuffer(alignUp(sizeof(ShadowUbo), 256), D3D12_HEAP_TYPE_UPLOAD, "uniforms");
     litUbo_ = makeBuffer(alignUp(sizeof(LightUbo), 256), D3D12_HEAP_TYPE_UPLOAD, "uniforms");
     if (!shUbo_ || !litUbo_) return false;
+    // VOLUMETRICS: the air's lamps, a root CBV of the march
+    if (volOn_) {
+        volUbo_ = makeBuffer(alignUp(sizeof(VolUbo), 256), D3D12_HEAP_TYPE_UPLOAD, "uniforms");
+        D3D12_RANGE nr{0, 0};
+        if (!volUbo_ || FAILED(volUbo_->Map(0, &nr, &volUboPtr_))) volUboPtr_ = nullptr;
+        if (!volUboPtr_) { volOn_ = false; std::fprintf(stderr, "d3d12: no lamp buffer - volumetrics off\n"); }
+    }
     D3D12_RANGE none{0, 0};
     shUbo_->Map(0, &none, &shUboPtr_);
     litUbo_->Map(0, &none, &litUboPtr_);
@@ -1147,6 +1246,7 @@ void D3D12Renderer::killTarget() {
     freeRes(upOut_.r);
     freeRes(motionRead_);
     freeRes(postImg_.r);     // ...and the post chain's (`makePost`)
+    freeRes(vol_.r);         // ...and the volumetrics' (`makeVol`)
     for (Res& b : bloom_) freeRes(b.r);
     postLive_ = false;
 }
@@ -1241,7 +1341,7 @@ bool D3D12Renderer::makePipelines() {
         const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 1);
         const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, 1);
         // (44 root constants with an upscaler: `PushMv`)
-        D3D12_ROOT_PARAMETER p[12] = {
+        D3D12_ROOT_PARAMETER p[13] = {
             rs::constants(0, kPushSpace, up_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
             rs::table(&texRange, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 0, 1, D3D12_SHADER_VISIBILITY_PIXEL),
@@ -1278,9 +1378,20 @@ bool D3D12Renderer::makePipelines() {
             rs::sampler(1, 1, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
             // the rays' texel (s3 space3): NEAREST and WRAP, the original's
             rs::sampler(3, 3, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP, 0.0f)};
+        // SOFT PARTICLES' depth (`scene.frag` -DOMK_SOFT): t0 space6, one table -
+        // 63 of the 64 dwords with an upscaler and ray tracing - and its
+        // sampler (s0 space6; the shader fetches texels)
+        UINT nss = rtOn_ ? 3 : 2;
+        D3D12_STATIC_SAMPLER_DESC ssAll[4] = {ss[0], ss[1], ss[2], {}};
+        const D3D12_DESCRIPTOR_RANGE softRange = rs::srvs(0, 6, 1);
+        if (softOn_) {
+            softParam_ = np;
+            p[np++] = rs::table(&softRange, D3D12_SHADER_VISIBILITY_PIXEL);
+            ssAll[nss++] = rs::sampler(0, 6, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f);
+        }
         D3D12_ROOT_SIGNATURE_DESC d{};
         d.NumParameters = np; d.pParameters = p;
-        d.NumStaticSamplers = rtOn_ ? 3 : 2; d.pStaticSamplers = ss;
+        d.NumStaticSamplers = nss; d.pStaticSamplers = ssAll;
         d.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         sceneRs_ = makeRootSig(d, "scene");
         if (!sceneRs_) return false;
@@ -1369,6 +1480,16 @@ bool D3D12Renderer::makePipelines() {
                                                  ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
         pipe_[k] = makePso(d, "scene");
         if (!pipe_[k]) return false;
+        // SOFT PARTICLES' twin of the two blended pipelines: the -DOMK_SOFT
+        // build (the plain one even with ray tracing: a sprite takes none of
+        // its terms, and the RT root is a superset of what it binds)
+        if (softOn_ && k > 0) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC ds = d;
+            ds.PS = up_ ? rs::code(kDx_scene_soft_mv_frag, sizeof kDx_scene_soft_mv_frag)
+                        : rs::code(kDx_scene_soft_frag, sizeof kDx_scene_soft_frag);
+            pipeSoft_[k] = makePso(ds, "scene, soft");
+            if (!pipeSoft_[k]) return false;
+        }
         // RAY TRACING's counting twin (-DOMK_RT_COUNT), drawn one frame in 60
         if (rtOn_) {
             D3D12_GRAPHICS_PIPELINE_STATE_DESC dc = d;
@@ -2495,9 +2616,88 @@ void D3D12Renderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
+        if (softOn_) {
+            const float nearP = omk::kNearCut, farP = 200000.0f;
+            ub.soft[0] = farP / (farP - nearP);
+            ub.soft[1] = -farP * nearP / (farP - nearP);
+            ub.soft[2] = 1.0f / softRange_;
+        }
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
+    // VOLUMETRIC LAMP LIGHT: the air's lamps (`View::airLights`) and the main
+    // view's camera, for `runVol`
+    volCount_ = 0;
+    if (volOn_ && volUboPtr_) {
+        VolUbo ub{};
+        const int n = static_cast<int>(std::min<std::size_t>(view.airLights.size(),
+                                                             static_cast<std::size_t>(kMaxVolLamps)));
+        for (int i = 0; i < n; ++i) {
+            const auto& l = view.airLights[static_cast<std::size_t>(i)];
+            const float I = std::min(l.intensity, 2.0f);
+            for (int k = 0; k < 3; ++k) {
+                ub.l[i].posR[k] = l.pos[k];
+                ub.l[i].colI[k] = l.colour[k] * I;
+            }
+            ub.l[i].posR[3] = volReach_ * l.radiusA;
+            ub.l[i].shape[0] = std::max(8.0f, volCore_ * l.radiusA);
+        }
+        ub.count[0] = n;
+        std::memcpy(volUboPtr_, &ub, sizeof ub);
+        volCount_ = n;
+        omk::RCamera cam = view.cam;
+        cam.w = view.letterboxed() ? view.vw : w_;
+        cam.h = view.letterboxed() ? view.vh : h_;
+        omk::cameraBasis(cam, volS_, volU_, volF_, volTanH_, volTanV_);
+        for (int k = 0; k < 3; ++k) volEye_[k] = cam.eye[k];
+        // WHERE THE GLOW CAN BE, for a check (`verify.py: engine: volumetrics`):
+        // each lamp's glow sphere projected into the picture (display pixels):
+        // the box round the projections of points on its surface in front of
+        // the eye (a sphere straddling the eye's plane reaches the picture's
+        // edge), the whole picture when the eye is inside it, an empty box
+        // (x0 > x1) when it lies wholly behind. Said again whenever the lamps or
+        // the camera change.
+        if (omk::eventsOn()) {
+            float sig = static_cast<float>(n);
+            for (int k = 0; k < 3; ++k) sig += volEye_[k] * 0.37f + volF_[k] * 101.0f;
+            for (int i = 0; i < n; ++i) sig += ub.l[i].posR[0] + ub.l[i].posR[1] * 3.0f + ub.l[i].posR[2] * 7.0f;
+            if (sig != volSig_) {
+                volSig_ = sig;
+                const float W = static_cast<float>(cam.w), Hh = static_cast<float>(cam.h);
+                for (int i = 0; i < n; ++i) {
+                    const float R = ub.l[i].posR[3];
+                    float rel[3];
+                    for (int k = 0; k < 3; ++k) rel[k] = ub.l[i].posR[k] - volEye_[k];
+                    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+                    if (rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2] <= R * R) {
+                        x0 = 0.0f; y0 = 0.0f; x1 = W; y1 = Hh;
+                    } else {
+                        for (int a = 0; a < 48; ++a)
+                            for (int b = 0; b <= 24; ++b) {
+                                const float th = 6.2831853f * static_cast<float>(a) / 48.0f;
+                                const float ph = 3.1415927f * static_cast<float>(b) / 24.0f;
+                                const float q[3] = {rel[0] + R * std::sin(ph) * std::cos(th),
+                                                    rel[1] + R * std::cos(ph),
+                                                    rel[2] + R * std::sin(ph) * std::sin(th)};
+                                const float vz = q[0] * volF_[0] + q[1] * volF_[1] + q[2] * volF_[2];
+                                if (vz < omk::kNearCut) continue;
+                                const float vs = q[0] * volS_[0] + q[1] * volS_[1] + q[2] * volS_[2];
+                                const float vu = q[0] * volU_[0] + q[1] * volU_[1] + q[2] * volU_[2];
+                                const float x = (vs / (vz * volTanH_) + 1.0f) * 0.5f * W;
+                                const float y = (-vu / (vz * volTanV_) + 1.0f) * 0.5f * Hh;
+                                x0 = std::min(x0, x); x1 = std::max(x1, x);
+                                y0 = std::min(y0, y); y1 = std::max(y1, y);
+                            }
+                    }
+                    omk::event("vol.lamp", {{"frame", static_cast<int>(volFrame_ + 1)},
+                                            {"x0", std::max(x0, -1e5f)}, {"y0", std::max(y0, -1e5f)},
+                                            {"x1", std::min(x1, 1e5f)}, {"y1", std::min(y1, 1e5f)}});
+                }
+            }
+        }
+    }
+    softDraws_ = 0;
+    depthRo_ = false;
     openFrameList();
     // a frame with no shadow pass says so through the uniform
     if (!shadowLive_ && shUboPtr_) {
@@ -2533,6 +2733,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     list_->SetGraphicsRootDescriptorTable(3, srv_.gpu(kSlotShadow));
     list_->SetGraphicsRootConstantBufferView(4, litUbo_->GetGPUVirtualAddress());
     if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress());
+    if (softOn_) list_->SetGraphicsRootDescriptorTable(softParam_, srv_.gpu(kSlotDepth));
     if (rtOn_) rtBind(view);
     bound_ = nullptr;
     recording_ = true;
@@ -2633,7 +2834,7 @@ void D3D12Renderer::submit(const omk::Draw& d) {
     // game's shadows off (`caster` - no shadow then receives anyway)
     if (rtOn_) {
         rtNote(d);
-        rtBodyDraw_ = d.meshPose != nullptr || d.lit != 0;
+        rtBodyDraw_ = d.meshPose != nullptr || (d.lit & ~omk::kDrawSoft) != 0;
     }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         UINT64 off = 0;
@@ -2650,8 +2851,16 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     st_.triangles += static_cast<long>(d.count / 3);
 
     const int k = d.blend == omk::Blend::Opaque ? 0 : d.blend == omk::Blend::Add ? 1 : 2;
+    // SOFT PARTICLES: an effect sprite (`kDrawSoft`) is drawn by the soft
+    // twin with the depth bound READ-ONLY - so its shader can read the depth it
+    // is tested against - and the next draw that writes depth binds it
+    // writable again (the engine's order puts the sprites after the opaque)
+    const bool soft = softOn_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePso_ && !reflStencil_;
+    if (soft && !depthRo_) depthReadOnly(true);
+    else if (depthRo_ && (k == 0 || forcePso_)) depthReadOnly(false);
+    softDraws_ += soft;
     ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k]
-                             : rtCounting_ ? pipeCount_[k] : pipe_[k];
+                             : soft ? pipeSoft_[k] : rtCounting_ ? pipeCount_[k] : pipe_[k];
     if (use != bound_) { list_->SetPipelineState(use); bound_ = use; }
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
@@ -3104,7 +3313,7 @@ void D3D12Renderer::rtNote(const omk::Draw& d) {
     const std::size_t slot = omk::drawTextureSlot(d);
     const UINT srv = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].srv : white_.srv;
     const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
-    if (posed || d.castsShadow || d.lit != 0) {
+    if (posed || d.castsShadow || (d.lit & ~omk::kDrawSoft) != 0) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
         n.geo = d.geo;
         if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);
@@ -3565,6 +3774,15 @@ void D3D12Renderer::end() {
         list_->ResolveSubresource(colour_.r, 0, msColour_.r, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
     }
     if (ssaoOn_) runSsao();
+    // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): added over the scene,
+    // so the upscaler and the post chain take it with the rest
+    if (volOn_) runVol();
+    if (softOn_ && softDraws_ > 0 && !softTold_) {
+        softTold_ = true;
+        std::printf("d3d12: soft particles - %ld sprite batches faded against the depth on this frame\n",
+                    softDraws_);
+        omk::event("softparticles.drawn", {{"batches", static_cast<int>(softDraws_)}});
+    }
     // From here `colour_` is the scene's resolved colour at the RENDER size
     // and `depth_` its depth: the input the upscaler takes (the header), and
     // the HUD and the rest of the 2D are composited over its OUTPUT later, at
@@ -3610,6 +3828,24 @@ void D3D12Renderer::end() {
             }
         }
     }
+    if (volTimed_) {
+        volTimed_ = false;
+        void* q = nullptr;
+        UINT64 hz = 0;
+        if (SUCCEEDED(queue_->GetTimestampFrequency(&hz)) && hz && SUCCEEDED(volQBuf_->Map(0, nullptr, &q))) {
+            const auto* t = static_cast<const UINT64*>(q);
+            volMsSum_ += static_cast<double>(t[1] - t[0]) * 1000.0 / static_cast<double>(hz);
+            D3D12_RANGE none{0, 0};
+            volQBuf_->Unmap(0, &none);
+            if (++volMsN_ == 60) {
+                std::printf("volumetrics: %.3f ms on the GPU a frame (mean of 60, render %dx%d)\n",
+                            volMsSum_ / 60.0, rw_, rh_);
+                omk::event("vol.timing", {{"ms", volMsSum_ / 60.0}, {"w", rw_}, {"h", rh_}});
+                volMsSum_ = 0.0;
+                volMsN_ = 0;
+            }
+        }
+    }
     if (rtRecorded_) {
         rtRecorded_ = false;
         rtAfter();
@@ -3626,6 +3862,160 @@ void D3D12Renderer::end() {
         for (int k = 0; k < 3; ++k) { prevEye_[k] = frameEye_[k]; prevFwd_[k] = mainF_[k]; }
         havePrev_ = true;
         resetOwed_ = false;
+    }
+}
+
+// ---- SOFT PARTICLES (`todo/enhancements.md` 23) ---------------------------
+//
+// The depth is bound READ-ONLY (`kDsvDepthRo`, both planes) and in the read
+// state the shader's view needs too - the one state in which D3D12 lets a pass
+// test against a depth and sample it at once - for the run of soft sprites;
+// writable again before anything that writes it.
+void D3D12Renderer::depthReadOnly(bool ro) {
+    depth_.to(list_, ro ? D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+                        : D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv_.cpu(samples_ > 1 ? rtvMs_ : rtvColour_), rtv_.cpu(rtvMotion_)};
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_.cpu(ro ? kDsvDepthRo : dsvDepth_);
+    list_->OMSetRenderTargets(up_ ? 2 : 1, rtvs, FALSE, &dsv);
+    depthRo_ = ro;
+}
+
+// ---- VOLUMETRIC LAMP LIGHT (`todo/enhancements.md` 24) --------------------
+//
+// AN ENHANCEMENT, off unless asked. Two full-screen passes on the frame's list
+// after the MSAA resolve and SSAO, before the upscaler: `vol.frag` marches the
+// eye rays through the reach of the frame's lamps in the air (`View::airLights`)
+// at HALF the render size into an RGBA16F image, and `volmix.frag` brings it
+// up with a depth-aware filter and ADDS it over `colour_`. The upscaler and the
+// post chain then take the light with the rest of the frame. A frame with no
+// lamp in the air runs neither and is untouched.
+bool D3D12Renderer::makeVol() {
+    if (!volRs_) {
+        // the depth (t0) and the half-size light (t1) as ONE table, the lamps a
+        // root CBV (b2), and two point samplers (s0, s1) the fetches ignore
+        const D3D12_DESCRIPTOR_RANGE r = rs::srvs(0, 0, 2);
+        D3D12_ROOT_PARAMETER p[3] = {
+            rs::constants(0, kPushSpace, sizeof(VolPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&r, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 2, 0, D3D12_SHADER_VISIBILITY_PIXEL)};
+        D3D12_STATIC_SAMPLER_DESC s[2] = {
+            rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+        D3D12_ROOT_SIGNATURE_DESC d{};
+        d.NumParameters = 3; d.pParameters = p;
+        d.NumStaticSamplers = 2; d.pStaticSamplers = s;
+        volRs_ = makeRootSig(d, "volumetrics");
+        if (!volRs_) return false;
+        const bool ms = samples_ > 1;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = volRs_;
+        pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
+        pd.PS = ms ? rs::code(kDx_vol_ms_frag, sizeof kDx_vol_ms_frag) : rs::code(kDx_vol_frag, sizeof kDx_vol_frag);
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
+        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.NumRenderTargets = 1;
+        pd.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        pd.SampleDesc.Count = 1;
+        volPipe_ = makePso(pd, "volumetrics");
+        // the composite: ADDED to the scene's colour, its alpha left alone
+        pd.PS = ms ? rs::code(kDx_volmix_ms_frag, sizeof kDx_volmix_ms_frag)
+                   : rs::code(kDx_volmix_frag, sizeof kDx_volmix_frag);
+        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        D3D12_RENDER_TARGET_BLEND_DESC& b = pd.BlendState.RenderTarget[0];
+        b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN |
+                                  D3D12_COLOR_WRITE_ENABLE_BLUE;
+        b.BlendEnable = TRUE;
+        b.SrcBlend = D3D12_BLEND_ONE; b.DestBlend = D3D12_BLEND_ONE; b.BlendOp = D3D12_BLEND_OP_ADD;
+        b.SrcBlendAlpha = D3D12_BLEND_ZERO; b.DestBlendAlpha = D3D12_BLEND_ONE; b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        b.LogicOp = D3D12_LOGIC_OP_NOOP;
+        volMixPipe_ = makePso(pd, "volumetrics composite");
+        if (!volPipe_ || !volMixPipe_) return false;
+        if (omk::envFlag("OMK_VOL_TIMING")) {
+            D3D12_QUERY_HEAP_DESC qd{};
+            qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+            qd.Count = 2;
+            if (FAILED(dev_->CreateQueryHeap(&qd, IID_PPV_ARGS(&volQ_)))) volQ_ = nullptr;
+            volQBuf_ = makeBuffer(2 * sizeof(UINT64), D3D12_HEAP_TYPE_READBACK, "readback");
+        }
+    }
+    if (!volPipe_ || !volMixPipe_) return false;
+    if (vol_.r) return true;
+    volW_ = (rw_ + 1) / 2;
+    volH_ = (rh_ + 1) / 2;
+    vol_.r = makeImage(DXGI_FORMAT_R16G16B16A16_FLOAT, static_cast<UINT>(volW_), static_cast<UINT>(volH_), 1, 1, 1,
+                       D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                       nullptr, "volumetrics");
+    vol_.st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    if (!vol_.r) return false;
+    dev_->CreateRenderTargetView(vol_.r, nullptr, rtv_.cpu(kRtvSwap + kSwapBuffers));
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    sv.ViewDimension = samples_ > 1 ? D3D12_SRV_DIMENSION_TEXTURE2DMS : D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Texture2D.MipLevels = 1;
+    dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotVolDepth));
+    dev_->CreateShaderResourceView(vol_.r, nullptr, srv_.cpu(kSlotVol));
+    return true;
+}
+
+void D3D12Renderer::runVol() {
+    ++volFrame_;
+    if (volCount_ <= 0 || aoVw_ <= 0 || aoVh_ <= 0) return;
+    if (!makeVol()) {
+        static bool told = false;
+        if (!told) std::fprintf(stderr, "volumetrics: the passes could not be made - the frame without them\n");
+        told = true;
+        return;
+    }
+    ID3D12GraphicsCommandList* l = list_;
+    volTimed_ = volQ_ && volQBuf_;
+    if (volTimed_) l->EndQuery(volQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    depth_.to(l, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    vol_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const int hw = (aoVw_ + 1) / 2, hh = (aoVh_ + 1) / 2;
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    const float A = farP / (farP - nearP), B = -farP * nearP / (farP - nearP);
+    VolPush vp{{volTanH_, volTanV_, A, B},
+               {static_cast<float>(aoVw_), static_cast<float>(aoVh_), static_cast<float>(volFrame_ % 64), nearP},
+               {volEye_[0], volEye_[1], volEye_[2], volDensity_},
+               {volS_[0], volS_[1], volS_[2], fog_ ? fogStart_ : 0.0f},
+               {volU_[0], volU_[1], volU_[2], fog_ ? fogEnd_ : 0.0f},
+               {volF_[0], volF_[1], volF_[2], 40000.0f}};
+    l->SetGraphicsRootSignature(volRs_);
+    l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const auto pass = [&](D3D12_CPU_DESCRIPTOR_HANDLE rtv, ID3D12PipelineState* pl, int vw, int vh,
+                          const void* push, UINT dwords) {
+        const D3D12_VIEWPORT v{0.0f, 0.0f, static_cast<float>(vw), static_cast<float>(vh), 0.0f, 1.0f};
+        const D3D12_RECT sr{0, 0, vw, vh};
+        l->RSSetViewports(1, &v);
+        l->RSSetScissorRects(1, &sr);
+        l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        l->SetPipelineState(pl);
+        l->SetGraphicsRoot32BitConstants(0, dwords, push, 0);
+        l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotVolDepth));
+        l->SetGraphicsRootConstantBufferView(2, volUbo_->GetGPUVirtualAddress());
+        l->DrawInstanced(3, 1, 0, 0);
+    };
+    pass(rtv_.cpu(kRtvSwap + kSwapBuffers), volPipe_, hw, hh, &vp, sizeof vp / 4);
+    vol_.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    colour_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const VolMixPush mp{{volTanH_, volTanV_, A, B},
+                        {static_cast<float>(aoVw_), static_cast<float>(aoVh_), static_cast<float>(hw),
+                         static_cast<float>(hh)}};
+    pass(rtv_.cpu(rtvColour_), volMixPipe_, aoVw_, aoVh_, &mp, sizeof mp / 4);
+    if (volTimed_) {
+        l->EndQuery(volQ_, D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        l->ResolveQueryData(volQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, volQBuf_, 0);
+    }
+    bound_ = nullptr;
+    if (!volTold_) {
+        volTold_ = true;
+        std::printf("volumetrics: %d lamps in the air on this frame, marched at %dx%d\n", volCount_, hw, hh);
+        omk::event("vol", {{"lamps", volCount_}, {"w", hw}, {"h", hh}});
     }
 }
 
@@ -4067,6 +4457,13 @@ D3D12Renderer::~D3D12Renderer() {
     release(postRs_);
     release(postQ_);
     release(postQBuf_);
+    for (auto*& p : pipeSoft_) release(p);
+    release(volPipe_);
+    release(volMixPipe_);
+    release(volRs_);
+    release(volQ_);
+    freeRes(volQBuf_);
+    freeRes(volUbo_);
     release(blitPipe_);
     release(sceneRs_);
     release(shRs_);

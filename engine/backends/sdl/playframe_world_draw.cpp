@@ -227,6 +227,46 @@ void PlayState::worldDrawLists() {
                         "reach the player, nearest first\n", frameNo, view.lights.size());
         }
     }
+    // ---- THE LAMPS IN THE AIR (`volumetrics`, `todo/enhancements.md` 24) --
+    //
+    // An ENHANCEMENT, for a renderer that draws it. The same `.3DO` records,
+    // chosen for the CAMERA: a lamp whose reach lies in front of the eye and
+    // within 150 m of it, nearest first. Not the SKY FILLS - a reach past 8000
+    // units is the light a whole street is drawn under (Anekbah's two reach
+    // 35787 from 20-30 km up), not a lamp the air glows round (`scene.frag`
+    // leaves them out of its shadow rays for the same reason).
+    view.airLights.clear();
+    if (world_ && world_->volumetricsLive()) {
+        const float* e = view.cam.eye;
+        float fw[3] = {view.cam.at[0] - e[0], view.cam.at[1] - e[1], view.cam.at[2] - e[2]};
+        const float fl = std::sqrt(fw[0] * fw[0] + fw[1] * fw[1] + fw[2] * fw[2]);
+        for (float& c : fw) c = fl > 1e-3f ? c / fl : 0.0f;
+        std::vector<std::pair<float, const omk::Light3do*>> air;
+        for (const WorldSlot& ws2 : worldSlots)
+            for (const auto& l : ws2.lights) {
+                if (!(l.radiusA > l.radiusB) || l.radiusA > 8000.0f || !(l.f32 > 0.0f)) continue;
+                if ((l.colour & 0xFFFFFF) == 0) continue;
+                const float d[3] = {l.pos[0] - e[0], l.pos[1] - e[1], l.pos[2] - e[2]};
+                const float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (dist - l.radiusA > 6000.0f) continue;                        // too far to matter
+                if (d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2] < -l.radiusA) continue;   // behind the eye
+                air.emplace_back(dist, &l);
+            }
+        std::sort(air.begin(), air.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (air.size() > static_cast<std::size_t>(omk::View::kMaxAirLights))
+            air.resize(static_cast<std::size_t>(omk::View::kMaxAirLights));
+        for (const auto& [dist, l] : air) {
+            omk::View::GpuLight g{};
+            for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
+            g.radiusA = l->radiusA; g.radiusB = l->radiusB;
+            g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
+            g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
+            g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
+            g.intensity = l->f32;
+            view.airLights.push_back(g);
+        }
+    }
     // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
     //
     // An ENHANCEMENT: nothing in the engine casts a real shadow. What
@@ -456,6 +496,9 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(spriteSlotBase + sl)),
                              &fxGeo, b.start, b.count, b.blend, b.cutout});
+            // SOFT PARTICLES (`todo/enhancements.md` 23): an effect sprite is
+            // marked for the renderer that fades it against the depth
+            if (world_ && world_->softParticlesLive() && b.blend != omk::Blend::Opaque) draws.back().lit |= omk::kDrawSoft;
         }
     std::stable_sort(draws.begin(), draws.end(),
                      [](const omk::Draw& a, const omk::Draw& b) {

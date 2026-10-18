@@ -100,6 +100,7 @@ struct PlayState {
     int & upscaleQualityFlag = opt.upscaleQualityFlag;
     int & bestLodFlag = opt.bestLodFlag;
     int & vehicleShineFlag = opt.vehicleShineFlag;
+    int & bumpFlag = opt.bumpFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -252,6 +253,7 @@ struct PlayState {
     int upscaleQuality{1};   // [Enhancements] upscalequality: 0 native .. 4 ultra performance
     bool bestLod{};          // [Enhancements] lod = best: the crowd's first skeleton at any distance
     bool bestLodTold{};
+    int bumpMapping{};       // [Enhancements] bumpmapping: 0 off, 1 bump, 2 parallax (the GPU backends)
     bool vehicleShine{};     // [Enhancements] vehicleshine: sliders and motos shine (the GPU backends)
     bool escBackLatch{};     // ESC was taken as BACK: it opens no pause until it is released
     bool escBackPrevDown{};  // ESC or Backspace down last frame - BACK is sent on the edge

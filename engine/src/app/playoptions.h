@@ -137,6 +137,7 @@ struct PlayOptions {
     int escapeBackFlag = -1; // --escape-back, [Enhancements] escapeback = on
     int ssaoFlag = -1;       // --ssao, [Enhancements] ssao = on
     int raytracingFlag = -1; // --raytracing, [Enhancements] raytracing = on
+    int bumpFlag = -1;       // --bump / --parallax, [Enhancements] bumpmapping
     int vehicleShineFlag = -1; // --vehicle-shine, [Enhancements] vehicleshine = on
     int bestLodFlag = -1;    // --best-lod, [Enhancements] lod = best
     int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler

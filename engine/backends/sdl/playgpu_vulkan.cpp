@@ -94,6 +94,7 @@ void PlayState::gpuOpenWindow() {
             if (dx) {
                 if (aaSamples > 1) dx->setMultisample(aaSamples);   // the enhancements
                 if (ssao) dx->setAmbientOcclusion(true);
+                if (bumpMapping) dx->setSurfaceDetail(bumpMapping);   // row 21
                 if (raytracing) dx->setRaytracing(true);         // row 19
                 if (texFilter > 0) dx->setTextureFilter(texFilter);
                 if (texAniso > 1) dx->setAnisotropy(texAniso);
@@ -131,6 +132,7 @@ void PlayState::gpuOpenWindow() {
             omk::Renderer* vkr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
             if (ssao) vkr->setAmbientOcclusion(true);
+            if (bumpMapping) vkr->setSurfaceDetail(bumpMapping);
             if (raytracing && !vkr->setRaytracing(true))
                 std::printf("raytracing: the Direct3D 12 backend's (--d3d12, DXR 1.1) - off on Vulkan\n");
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
@@ -179,6 +181,7 @@ void PlayState::gpuOpenWorldHarness() {
         if (!wv) wv = omk::makeVulkanRenderer();
         if (wv && aaSamples > 1) wv->setMultisample(aaSamples);
         if (wv && ssao) wv->setAmbientOcclusion(true);
+        if (wv && bumpMapping) wv->setSurfaceDetail(bumpMapping);
         // HYBRID RAY TRACING (row 19): the D3D12 renderer takes it, Vulkan declines
         if (wv && raytracing && !wv->setRaytracing(true))
             std::printf("raytracing: the Direct3D 12 backend's (--world-d3d12, DXR 1.1) - off on Vulkan\n");

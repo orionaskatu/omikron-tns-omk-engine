@@ -200,6 +200,13 @@ int PlayState::setupSession() {
     if (bestLod)
         std::printf("lod: best - an ENHANCEMENT: every pedestrian keeps its most detailed "
                     "body at any distance; the original steps down a skeleton every 10 m\n");
+    // BUMP / PARALLAX MAPPING (settings.h `bumpMapping`), handed to the GPU
+    // renderers before their init (playgpu_vulkan.cpp)
+    bumpMapping = enh(bumpFlag, settings.bumpMapping, omk::kMaxBumpMapping);
+    if (bumpMapping)
+        std::printf("bump mapping: %s - an ENHANCEMENT: a height read off each texture tilts "
+                    "the surface normal under the lamps; the original's textures are flat colour\n",
+                    bumpMapping > 1 ? "parallax" : "bump");
     // VEHICLE SHINE (settings.h `vehicleShine`), carried on the vehicles' draws
     vehicleShine = enh(vehicleShineFlag, settings.vehicleShine ? 1 : 0, omk::kMaxVehicleShine) > 0;
     if (vehicleShine)

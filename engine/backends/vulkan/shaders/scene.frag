@@ -324,15 +324,97 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
 }
 #endif
 
+// ---- BUMP / PARALLAX MAPPING, `todo/enhancements.md` 21 - an ENHANCEMENT ----
+//
+// The textures are flat colour, so the height is read OFF the colour: the
+// texel's luminance. The tangent frame comes from the screen derivatives of the
+// world position and the UVs (no tangents in the vertex), the slope from a
+// central difference one texel either side, and the normal is tilted by it.
+// `bump` stops there. `parallax` first marches the view ray through the height
+// field (steep parallax, eight layers and a linear refine) and samples the
+// colour where it lands. Both fade out with distance: past ~2200 units a texel
+// is under a pixel and the relief is only noise. A set has no real-time light -
+// its colour is baked - so there the bump is a lamp-by-lamp RATIO of the
+// tilted normal's light to the true normal's, on the baked colour, with a weak
+// light from above so a wall under no lamp still shows its relief.
+vec2 gBts, gBgx, gBgy;
+float bumpH(vec2 uv) {
+    return dot(textureGrad(tex, uv / gBts, gBgx / gBts, gBgy / gBts).rgb, vec3(0.299, 0.587, 0.114));
+}
+
+float bumpLight(vec3 N, vec3 Nb) {
+    float w = 0.35, acc = 0.35 * (max(dot(Nb, vec3(0.0, -1.0, 0.0)), 0.0) - max(dot(N, vec3(0.0, -1.0, 0.0)), 0.0));
+    for (int i = 0; i < lg.count; ++i) {
+        vec3  p  = lg.l[i].posA.xyz;
+        float rA = lg.l[i].posA.w, rB = lg.l[i].dirB.w;
+        vec3  d  = p - vWorld;
+        float d2 = dot(d, d);
+        if (d2 > rA * rA || rA <= rB) continue;
+        float fall = min(1.0 - (sqrt(d2) - rB) / (rA - rB), 1.0);
+        float wi = fall * min(lg.l[i].colourI.a, 1.5);
+        vec3 L = normalize(d);
+        acc += wi * (max(dot(Nb, L), 0.0) - max(dot(N, L), 0.0));
+        w += wi;
+    }
+    return clamp(1.0 + 2.6 * acc / w, 0.45, 1.8);
+}
+
 void main() {
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
+    vec2 uvS = vUV;
+    vec3 N0 = vec3(0.0), Nb = vec3(0.0);
+    bool bumped = false;
+    const int bm = (pc.lit >> 3) & 3;
+    gBts = vec2(textureSize(tex, 0));
+    gBgx = dFdx(vUV);
+    gBgy = dFdy(vUV);
+    const float bfade = 1.0 - smoothstep(900.0, 2200.0, vDepth);
+    if (bm != 0 && bfade > 0.0) {
+        vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
+        vec3 ng = cross(dp1, dp2);
+        N0 = dot(vNrm, vNrm) > 1e-6 ? normalize(vNrm)
+           : (dot(ng, ng) > 1e-12 ? normalize(ng) : vec3(0.0, -1.0, 0.0));
+        vec3 dp2p = cross(dp2, N0), dp1p = cross(N0, dp1);
+        vec3 T = dp2p * gBgx.x + dp1p * gBgy.x;
+        vec3 B = dp2p * gBgx.y + dp1p * gBgy.y;
+        const float det = max(dot(T, T), dot(B, B));
+        if (det > 1e-20) {
+            vec3 Tn = normalize(T), Bn = normalize(B);
+            if (bm == 2) {
+                vec3 Vw = normalize(lg.eye.xyz - vWorld);
+                vec3 Vt = vec3(dot(Vw, Tn), dot(Vw, Bn), abs(dot(Vw, N0)));
+                // the world size of a texel, from how far the UVs run per pixel
+                const float wpt = max(length(dp1) / max(length(gBgx), 1e-4), 1e-3);
+                const float depthTex = min(3.0 / wpt, 6.0) * bfade;   // 3 units of relief, in texels
+                vec2 dUV = -Vt.xy / max(Vt.z, 0.3) * depthTex / 8.0;
+                vec2 cur = vUV;
+                float curD = 0.0, hh = bumpH(cur), hp = hh;
+                vec2 prv = cur;
+                for (int i = 0; i < 8; ++i) {
+                    if (curD >= 1.0 - hh) break;
+                    prv = cur; hp = hh;
+                    cur += dUV;
+                    hh = bumpH(cur);
+                    curD += 0.125;
+                }
+                const float aft = hh - (1.0 - curD);
+                const float bef = hp - (1.0 - (curD - 0.125));
+                uvS = mix(cur, prv, clamp(aft / max(aft - bef, 1e-4), 0.0, 1.0));
+            }
+            const float hx = 0.5 * (bumpH(uvS + vec2(1.0, 0.0)) - bumpH(uvS - vec2(1.0, 0.0)));
+            const float hy = 0.5 * (bumpH(uvS + vec2(0.0, 1.0)) - bumpH(uvS - vec2(0.0, 1.0)));
+            Nb = normalize(N0 - 3.0 * bfade * (hx * Tn + hy * Bn));
+            bumped = true;
+        }
+    }
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
     // Under the nearest sampler (the original's) this is exactly the old
     // `rgb == 0` test on the same texel. Under the bilinear ENHANCEMENT the
     // key texels are (0,0,0,0), so the sample is premultiplied: a fragment
     // more than half key is discarded and the rest is un-premultiplied,
     // which is what keeps the cutout edge free of a dark fringe.
-    vec4 t = texture(tex, vUV / vec2(textureSize(tex, 0)));
+    vec4 t = bm == 2 ? textureGrad(tex, uvS / gBts, gBgx / gBts, gBgy / gBts)
+                     : texture(tex, vUV / vec2(textureSize(tex, 0)));
     if (pc.cutout != 0) {
         if (t.a < 0.5) discard;
         t.rgb /= t.a;
@@ -360,9 +442,11 @@ void main() {
 #ifdef OMK_RT
     rtShadowed = pc.caster != 0;   // a lit character's lamps are traced
 #endif
-    vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
-               : (pc.lit & 3) == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))
+    const vec3 Nl = bumped ? Nb : normalize(vNrm);
+    vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(Nl, vWorld), vec3(1.0))
+               : (pc.lit & 3) == 2 ? min(vCol + litColour(Nl, vWorld), vec3(1.0))
                              : vCol + vec3(wave);
+    if (bumped && (pc.lit & 3) == 0) shade *= bumpLight(N0, Nb);
 #ifdef OMK_RT
     // a CHARACTER (a caster - the bodies) takes the traced terms; the set
     // keeps its baked light untouched, the artists' own
@@ -385,7 +469,7 @@ void main() {
     // reflection (a gradient from the scene's own ambient and fog colour,
     // darker below the horizon; the game's Y points DOWN) weighted by Fresnel.
     if ((pc.lit & 4) != 0) {
-        vec3 N = normalize(vNrm);
+        vec3 N = bumped ? Nb : normalize(vNrm);
         vec3 V = normalize(lg.eye.xyz - vWorld);
         if (dot(N, V) < 0.0) N = -N;
         float ndv = clamp(dot(N, V), 0.0, 1.0);

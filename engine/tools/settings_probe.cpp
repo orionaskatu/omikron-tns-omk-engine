@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.raytracingSource));
     std::printf("enh lod %d %s\n", s.bestLod ? 1 : 0,
                 omk::sourceName(s.bestLodSource));
+    std::printf("enh bumpmapping %d %s\n", s.bumpMapping, omk::sourceName(s.bumpMappingSource));
     std::printf("enh vehicleshine %d %s\n", s.vehicleShine ? 1 : 0,
                 omk::sourceName(s.vehicleShineSource));
     std::printf("enh upscaler %d %s\n", s.upscaler, omk::sourceName(s.upscalerSource));

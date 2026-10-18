@@ -7067,7 +7067,7 @@ def c_enhance_all():
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
-             "lod": "BestLod", "vehicleshine": "VehicleShine"}
+             "lod": "BestLod", "vehicleshine": "VehicleShine", "bumpmapping": "BumpMapping"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27455,6 +27455,78 @@ def c_engine_vehicle_shine():
     return got, (True, False, True, True, True, 0, True), \
            ("off by default and silent; --vehicle-shine says so; two plain frames identical; "
             "%d pixels brighten and %d darken (%.2f%% of the frame)" % (bright, dark, 100.0 * bright / n))
+
+
+def c_engine_bump_mapping():
+    r"""`omk-play --bump` / `--parallax`: BUMP and PARALLAX MAPPING - an enhancement, off by default.
+    `todo/enhancements.md` 21, `scene.frag`. The textures are flat colour, so a
+    height is read off each texel's luminance, the normal is tilted by its slope
+    in a tangent frame built from the screen derivatives (the vertex has no
+    tangent) and the lamps - per pixel on a body, a lamp-by-lamp ratio on a
+    set's baked colour - pick out the relief; `parallax` first marches the view
+    ray through the height. The backend sets the `lit` bits for an opaque,
+    non-cutout batch. Four runs of the street start on the Vulkan backend: off
+    twice (the frame is reproducible, so a difference is the flag's), `--bump`
+    and `--parallax`.
+    * the default is off in the source and the plain run says nothing;
+    * the two plain frames are identical;
+    * `--bump` changes a real share of the frame - more than 1% and under 80%,
+      so a pass that left everything alone fails and so does one that wrecked
+      every surface - and darkens as well as brightens (a tilt both ways);
+    * and `--parallax` differs from `--bump`.
+    SHOWN TO FAIL with the `bm != 0` block of `scene.frag` removed: the bump
+    frame equals the plain one.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "int    bumpMapping = 0;" in src
+    mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "no Vulkan or no glslc - the GPU backend is optional"
+    import tempfile, struct
+    W, H = 960, 540
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-vulkan", "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", "60",
+                                "--dump", out] + extra,
+                               capture_output=True, env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return r.stdout.decode("latin-1"), data
+        t_a, d_a = run([], "a")
+        t_b, d_b = run([], "b")
+        t_bump, d_bump = run(["--bump"], "bump")
+        t_par, d_par = run(["--parallax"], "par")
+    if "renderer: the world through VULKAN" not in t_a or len(d_a) != W * H * 2:
+        return ("skipped",), ("skipped",), "no Vulkan device"
+    n = W * H
+    def lum(v):
+        return ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+    def diff(d0, d1):
+        up = down = 0
+        if len(d0) == len(d1) == n * 2:
+            for va, vb in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+                if va != vb:
+                    a, b = lum(va), lum(vb)
+                    up += b > a + 1
+                    down += b < a - 1
+        return up, down
+    up, down = diff(d_a, d_bump)
+    changed = up + down
+    got = (default_off, "bump mapping" in t_a, d_a == d_b,
+           n // 100 < changed < n * 8 // 10, up > 0 and down > 0, d_par != d_bump)
+    return got, (True, False, True, True, True, True), \
+           ("off by default and silent; two plain frames identical; --bump brightens %d and darkens "
+            "%d pixels (%.1f%% of the frame); --parallax differs from --bump"
+            % (up, down, 100.0 * changed / n))
 
 
 def c_engine_best_lod():
@@ -48569,6 +48641,7 @@ SLOW = [
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
+    ("engine: bump mapping", c_engine_bump_mapping, "todo/enhancements.md 21; scene.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

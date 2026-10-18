@@ -316,11 +316,6 @@ public:
 
     // The enhancements (renderer.h): requests before `init`, honoured in
     // `makeTarget` where the device's own limits get the last word.
-    int bumpMode_ = 0;
-    bool setSurfaceDetail(int mode) override {
-        bumpMode_ = mode < 0 ? 0 : mode > 2 ? 2 : mode;
-        return true;
-    }
     bool setAmbientOcclusion(bool on) override {
         if (dev_) return false;
         wantSsao_ = on;
@@ -2351,9 +2346,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     push_.posed = posed ? 1 : 0;
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
-    push_.lit = (litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine)) |
-                (bumpMode_ > 0 && d.blend == omk::Blend::Opaque && !d.cutout
-                     ? bumpMode_ << omk::kBumpShift : 0);
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
     // software loop and Vulkan applies in `submitOne`: key bits 0x2080 not
     // fogged, key bit 0x800 doubles both ends.

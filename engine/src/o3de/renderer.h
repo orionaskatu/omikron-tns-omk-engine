@@ -241,10 +241,6 @@ struct View {
 // 20) - lamp highlights and a sky reflection added in `scene.frag`. The low two
 // bits stay the lit mode (0, 1, 2); a backend hands `lit` to the shader whole.
 inline constexpr int kDrawShine = 4;
-// Bits 8 and 16 of the shader's `lit`, set by a BACKEND (never by a Draw) for
-// an opaque, non-cutout batch when `setSurfaceDetail` asked for bump (1) or
-// parallax (2) mapping: `lit >> 3 & 3`.
-inline constexpr int kBumpShift = 3;
 
 struct Draw {
     std::uint32_t   bucketKey = 0;
@@ -421,10 +417,6 @@ public:
     // the depth buffer, multiplied over the frame. Same contract - a request
     // before `init()`; only the Vulkan backend does it.
     virtual bool setAmbientOcclusion(bool /*on*/) { return false; }
-
-    // BUMP / PARALLAX MAPPING (`todo/enhancements.md` 21): 0 off, 1 bump,
-    // 2 parallax. A request before `init()`; both GPU backends do it.
-    virtual bool setSurfaceDetail(int /*mode*/) { return false; }
 
     // HYBRID RAY TRACING (`todo/enhancements.md` 19): characters lit by the
     // set around them, shadow rays for their lamps, ray-traced AO in SSAO's

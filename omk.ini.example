@@ -263,12 +263,6 @@
 ; `todo/enhancements.md` 20.
 ;vehicleshine = off
 ;
-; BUMP MAPPING - a height read off each texture tilts the surface normal, so the
-; lamps pick out bricks, rivets and seams. `bump` is the safe level; `parallax`
-; also shifts the texture with the view (flat signs can tear). GPU backends.
-; `todo/enhancements.md` 21.
-;bumpmapping = off
-;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only

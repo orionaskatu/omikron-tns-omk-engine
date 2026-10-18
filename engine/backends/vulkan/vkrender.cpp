@@ -260,11 +260,6 @@ public:
     static void geometryGone(void* self, const omk::Geometry* g);
     // The enhancement (renderer.h). Recorded here and honoured in makeTarget,
     // where the device's own limits get the last word.
-    int bumpMode_ = 0;
-    bool setSurfaceDetail(int mode) override {
-        bumpMode_ = mode < 0 ? 0 : mode > 2 ? 2 : mode;
-        return true;
-    }
     bool setAmbientOcclusion(bool on) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSsao_ = on;
@@ -2706,9 +2701,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
 
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
-    push_.lit = (litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine)) |
-                (bumpMode_ > 0 && d.blend == omk::Blend::Opaque && !d.cutout
-                     ? bumpMode_ << omk::kBumpShift : 0);
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and
     // it MUST be the same rule or the two backends draw different pictures.

@@ -227,16 +227,6 @@ struct Settings {
     bool   vehicleShine = false;
     Source vehicleShineSource = Source::Default;
 
-    // `bumpmapping = off|bump|parallax`: SURFACE RELIEF, 0 / 1 / 2. The game's
-    // textures are flat colour; a height is read off each texture's luminance and
-    // the surface normal is tilted by its slope (`bump`, so the lamps pick out
-    // bricks, rivets and panel seams on a character, a vehicle and - through a
-    // lamp-by-lamp ratio on the baked colour - a set), and `parallax` also
-    // shifts the texture along the view by the height, so the relief moves with
-    // the eye. `todo/enhancements.md` 21.
-    int    bumpMapping = 0;
-    Source bumpMappingSource = Source::Default;
-
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -394,17 +384,6 @@ inline int lodMode(std::string w) {
     return -1;
 }
 
-// `bumpmapping`: 0 off, 1 bump, 2 parallax; -1 for anything else.
-inline int bumpMode(std::string w) {
-    for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
-    while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
-    while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
-    if (w == "0" || w == "off" || w == "none" || w == "game") return 0;
-    if (w == "1" || w == "bump" || w == "on") return 1;
-    if (w == "2" || w == "parallax") return 2;
-    return -1;
-}
-
 // `upscaler`: 0 off, 1 fsr, 2 dlss; -1 for anything else.
 inline int upscalerMode(std::string w) {
     for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
@@ -478,7 +457,6 @@ inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
-inline constexpr int kMaxBumpMapping = 1;         // bump; parallax is asked for by name
 inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
@@ -515,7 +493,6 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.raytracing, kMaxRaytracing, s.raytracingSource);
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
     takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
-    take(s.bumpMapping, kMaxBumpMapping, s.bumpMappingSource);
 }
 
 // Resolve the three sources in order.  Either may be absent.

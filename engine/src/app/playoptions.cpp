@@ -288,9 +288,6 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Sauter`); [Enhancements] escapeback=on\n"
 "  --ssao           ENHANCEMENT: screen-space ambient occlusion (Vulkan);\n"
 "                   [Enhancements] ssao=on\n"
-"  --bump           ENHANCEMENT: bump mapping - a height read off each texture tilts\n"
-"                   the surface normal under the lamps; --parallax adds the view\n"
-"                   shift (GPU backends); [Enhancements] bumpmapping=off|bump|parallax\n"
 "  --vehicle-shine  ENHANCEMENT: sliders and motos shine - lamp highlights and a\n"
 "                   sky reflection; [Enhancements] vehicleshine=on\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
@@ -526,8 +523,6 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--raytracing") raytracingFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--vehicle-shine") vehicleShineFlag = 1;
-        else if (a == "--bump") bumpFlag = 1;
-        else if (a == "--parallax") bumpFlag = 2;
         else if (a == "--framerate" && i + 1 < argc) {
             frameRateFlag = omk::frameRateValue(argv[++i]);
             if (frameRateFlag < 0) {

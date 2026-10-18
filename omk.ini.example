@@ -250,3 +250,14 @@
 ; keeps every walker on its most detailed body at any distance.
 ; `todo/enhancements.md` 16.
 ;lod = game
+;
+; UPSCALER - temporal upscaling: the frame drawn below the display size and
+; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
+; colour, depth and motion vectors. The Direct3D 12 renderer only
+; ([Preferences] renderer = d3d12); Vulkan ignores it and says so. A DLSS the
+; GPU cannot run falls back to FSR. Not part of `all = max`.
+; `todo/enhancements.md` 18.
+;upscaler = off
+; ...and its render size: native (1.0x), quality (1.5x), balanced (1.7x),
+; performance (2.0x), ultraperformance (3.0x).
+;upscalequality = quality

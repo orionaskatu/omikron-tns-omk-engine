@@ -137,6 +137,8 @@ struct PlayOptions {
     int escapeBackFlag = -1; // --escape-back, [Enhancements] escapeback = on
     int ssaoFlag = -1;       // --ssao, [Enhancements] ssao = on
     int bestLodFlag = -1;    // --best-lod, [Enhancements] lod = best
+    int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler
+    int upscaleQualityFlag = -1; // --upscale-quality Q, [Enhancements] upscalequality
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.

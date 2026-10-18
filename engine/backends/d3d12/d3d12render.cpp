@@ -33,7 +33,8 @@
 //     place), the supersample resolve on the 8-bit side before it.
 //
 // **The frame, and the seam a later UPSCALER goes into.** Two sizes are kept
-// apart throughout: the RENDER size `rw_ x rh_` (`w_ * ss_`), which the scene,
+// apart throughout: the RENDER size `rw_ x rh_` (`w_ * ss_`, or the upscaler's
+// answer for its quality), which the scene,
 // its depth and SSAO run at, and the DISPLAY size `w_ x h_`, which `readback`,
 // the present pass and the swapchain answer with. The scene pass draws into
 // `msColour_` (MSAA) or `colour_`; `end()` resolves into `colour_`, runs SSAO
@@ -41,12 +42,13 @@
 // size, R8G8B8A8, SRV at `kSlotColour`) IS "the scene's resolved colour" and
 // `depth_` (render size, D32S8, ALWAYS created sampleable - SRV at
 // `kSlotDepth`) the scene's depth. The display half - `runPresentPass`,
-// `readback`, `presentImage` - reads only `colour_` and the two sizes. An FSR
-// or DLSS stage is one more pass between the two: it reads `colour_` +
-// `depth_` (+ a motion-vector target the scene pass will have to write; there
-// is none yet, nothing produces motion), writes a display-size image, and the
-// present pass reads that with `ss_` 1 instead. `upscaleSource()` is where the
-// display half asks for its input, so that is the one line the stage changes.
+// `readback`, `presentImage` - reads only `upscaleSource()` and the two sizes.
+// THE UPSCALER (`upscale.h`, `todo/enhancements.md` 18, off unless asked) is
+// the one pass between the two: the scene pass then also writes `motion_`
+// (render size, R16G16_FLOAT - the shaders built -DOMK_MOTION, `PushMv`) over
+// a per-frame jitter, `upscale()` hands colour, depth and motion to FSR or
+// DLSS, which write the display-size `upOut_`, and `upscaleSource()` returns
+// that instead of `colour_` - the display half is otherwise unchanged.
 //
 // A8: optional and Windows-only. The `Makefile` builds this into the Vulkan
 // variant's `omk-play` only on Windows with glslc, spirv-cross and dxc found;
@@ -71,6 +73,7 @@
 #include <dxgi1_6.h>
 
 #include "d3d12render.h"
+#include "upscale.h"
 
 #include "platform/threads.h"
 #include "platform/profile.h"
@@ -79,6 +82,7 @@
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "platform/env.h"
+#include "platform/events.h"
 
 #include <algorithm>
 #include <cmath>
@@ -105,6 +109,9 @@ namespace {
 #include "dx/ssao_ms.frag.h"
 #include "dx/ssao_blur_ms.frag.h"
 #include "dx/blit.frag.h"
+// ...and the UPSCALERS' scene pass, the same two files built -DOMK_MOTION
+#include "dx/scene_mv.vert.h"
+#include "dx/scene_mv.frag.h"
 
 // ---- the blocks the shaders read, VERBATIM from `vkrender.cpp` ------------
 struct PresentPush { int32_t vy, vh, w, dither, ss; };
@@ -165,6 +172,17 @@ struct Push {
 };
 static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
 constexpr UINT kPushDwords = sizeof(Push) / 4;
+// ...and with an UPSCALER on (`scene.vert` built -DOMK_MOTION), the same 104
+// bytes and then the JITTER at 104 (clip units) and the PREVIOUS frame's
+// view-projection at 112 - 44 root constants, inside the 64 a root signature
+// holds with the rest of it.
+struct PushMv {
+    Push p;
+    float jitter[2];      // 104
+    float prevMvp[16];    // 112
+};
+static_assert(sizeof(PushMv) == 176, "the motion push block is 176 bytes");
+constexpr UINT kPushMvDwords = sizeof(PushMv) / 4;
 // Vulkan's `kCullSign`, and the same value is right here because the
 // Y-flipped vertex stage puts every triangle on the same pixels with the same
 // screen winding, and `FrontCounterClockwise` is Vulkan's CCW front face.
@@ -182,6 +200,7 @@ constexpr UINT kSlotDepth = 1;    // `depth_`'s depth plane (SSAO; an upscaler)
 constexpr UINT kSlotAo = 2;       // the AO factor
 constexpr UINT kSlotShadow = 3;   // the shadow map's three layers
 constexpr UINT kSlotPres = 4;     // the present pass's output, for the blit
+constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
 constexpr UINT kSlotFirstFree = 8;
 constexpr UINT kSrvHeapSize = 4096;
 
@@ -309,6 +328,15 @@ public:
         return true;
     }
     bool bakeDepthTie(const omk::Geometry* g, std::span<const omk::Draw> order) override;
+    // THE UPSCALER (`upscale.h`, `todo/enhancements.md` 18): asked for here,
+    // made in `init` once the device exists - DLSS falling back to FSR, FSR
+    // to the native frame, each with a line saying why.
+    bool setUpscaler(int kind, int quality) override {
+        if (dev_) return false;
+        upKind_ = kind < 0 ? 0 : kind > 2 ? 2 : kind;
+        upQuality_ = quality < 0 ? 0 : quality > 4 ? 4 : quality;
+        return true;
+    }
 
     int samples() const { return static_cast<int>(samples_); }
     int maxSamples() const;
@@ -358,9 +386,22 @@ private:
     bool makePresentPass();
     bool runPresentPass(int vy, int vh);
     bool presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH);
-    bool uploadToColour(const unsigned char* rgba);   // w_ x h_ RGBA8 into colour_'s top-left
-    // THE UPSCALER SEAM (the header): the image the display half reads.
-    Res& upscaleSource() { return colour_; }
+    bool uploadToColour(const unsigned char* rgba);   // w_ x h_ RGBA8 into the display image's top-left
+    // THE UPSCALER SEAM (the header): the image the display half reads - the
+    // upscaler's display-size output when one runs, else the scene's colour
+    // at the render size - with its view, its size and the supersample the
+    // display half still has to fold.
+    Res& upscaleSource() { return up_ ? upOut_ : colour_; }
+    UINT sourceSlot() const { return up_ ? kSlotUpOut : kSlotColour; }
+    int sourceW() const { return up_ ? w_ : rw_; }
+    int sourceH() const { return up_ ? h_ : rh_; }
+    int sourceSs() const { return up_ ? 1 : ss_; }
+    // a display-size length at the RENDER size (the letterbox, SSAO's viewport)
+    int toRenderX(int v) const { return w_ > 0 ? v * rw_ / w_ : v; }
+    int toRenderY(int v) const { return h_ > 0 ? v * rh_ / h_ : v; }
+    bool makeUpscaler();
+    void upscale();
+    void motionStats();
 
     static void geometryGone(void* self, const omk::Geometry* g);
 
@@ -396,8 +437,8 @@ private:
     Res colour_;             // single-sample, every consumer reads it
     Res msColour_;           // MSAA: what the pipelines draw into, resolved into colour_
     Res depth_;              // D32S8, sampleable (SSAO, an upscaler)
-    UINT rtvColour_ = 0, rtvMs_ = 1, rtvAo_ = 2, rtvPres_ = 3;   // fixed RTV slots
-    static constexpr UINT kRtvSwap = 4;                          // ...and the swapchain's, after them
+    UINT rtvColour_ = 0, rtvMs_ = 1, rtvAo_ = 2, rtvPres_ = 3, rtvMotion_ = 4;   // fixed RTV slots
+    static constexpr UINT kRtvSwap = 5;                          // ...and the swapchain's, after them
     UINT dsvDepth_ = 0;                                          // DSV 0; the shadow layers 1..3
     ID3D12Resource* readBuf_ = nullptr;
     UINT64 readPitch_ = 0;
@@ -514,6 +555,30 @@ private:
     bool dirty_ = false;
     bool copyOwed_ = false;
     bool flipX_ = false;
+
+    // ---- THE UPSCALER (`upscale.h`; off unless asked) ----
+    int upKind_ = 0, upQuality_ = 1;          // asked: 0 off, 1 FSR, 2 DLSS
+    std::unique_ptr<omk::d3dup::Upscaler> up_;   // ...and running
+    Res motion_;               // render size, R16G16_FLOAT: the scene pass's second target
+    Res upOut_;                // display size, R8G8B8A8, UAV: the upscaler's output
+    PushMv pm_{};              // the push block with the jitter and the previous camera
+    float curMain_[16] = {};   // this frame's main view-projection (unjittered)
+    float prevMain_[16] = {};  // ...and the last frame's
+    bool havePrev_ = false;
+    float frameEye_[3] = {}, prevEye_[3] = {}, prevFwd_[3] = {};
+    float mainS_[3] = {}, mainU_[3] = {}, mainF_[3] = {};   // the frame's camera basis
+    float mainA_ = 1.0f, mainB_ = 0.0f;
+    int jitterIndex_ = 0;
+    float jitterPx_[2] = {};   // this frame's, in render pixels
+    bool resetOwed_ = true;    // a camera cut, a new area, a resize: drop the history
+    long upFrames_ = 0;
+    // a POSED body's affines, by its `meshPose` pointer (stable frame to
+    // frame): this frame's, and the last frame's that `writePose` puts after
+    // the current ones for `scene.vert`'s previous position
+    std::map<const float*, std::vector<float>> curAffines_, prevAffines_;
+    // `OMK_MOTION_STATS`: the motion target read back, for a check
+    ID3D12Resource* motionRead_ = nullptr;
+    UINT64 motionPitch_ = 0;
 };
 
 // ============================================================ the device
@@ -663,8 +728,16 @@ bool D3D12Renderer::pickDevice() {
         if (FAILED(hr)) break;
         DXGI_ADAPTER_DESC1 ad{};
         a->GetDesc1(&ad);
-        if (!(ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
-            SUCCEEDED(D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_)))) {
+        HRESULT made = E_FAIL;
+        if (!(ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+            made = D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_));
+            // a hardware adapter passed over is said, with why: which GPU drew
+            // the frame is the first thing a reader of a log needs
+            if (FAILED(made))
+                std::fprintf(stderr, "d3d12: adapter %u (%ls) passed over - D3D12CreateDevice 0x%08lx\n", i,
+                             ad.Description, static_cast<unsigned long>(made));
+        }
+        if (SUCCEEDED(made)) {
             adapter_ = a;
             char name[256] = {};
             WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name, sizeof name, nullptr, nullptr);
@@ -804,9 +877,30 @@ bool D3D12Renderer::makeTarget() {
         dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotDepth));
     }
 
-    // the readback, at the copy's own row pitch (256-aligned)
+    // ---- THE UPSCALER's two targets (`upscale.h`), only with one running:
+    // the MOTION VECTORS at the render size - the scene pass's second target,
+    // cleared to no motion - and the display-size OUTPUT the upscaler writes
+    // through an unordered-access view, which the display half then reads in
+    // place of `colour_` (`upscaleSource`).
+    if (up_) {
+        D3D12_CLEAR_VALUE mc{};
+        mc.Format = DXGI_FORMAT_R16G16_FLOAT;
+        motion_.r = makeImage(DXGI_FORMAT_R16G16_FLOAT, rw, rh, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                              D3D12_RESOURCE_STATE_RENDER_TARGET, &mc, "render targets");
+        motion_.st = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        upOut_.r = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
+                             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                             nullptr, "render targets");
+        upOut_.st = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        if (!motion_.r || !upOut_.r) return false;
+        dev_->CreateRenderTargetView(motion_.r, nullptr, rtv_.cpu(rtvMotion_));
+        dev_->CreateShaderResourceView(upOut_.r, nullptr, srv_.cpu(kSlotUpOut));
+    }
+
+    // the readback, at the copy's own row pitch (256-aligned), of the image
+    // the display half reads (`upscaleSource`)
     {
-        D3D12_RESOURCE_DESC cd = colour_.r->GetDesc();
+        D3D12_RESOURCE_DESC cd = upscaleSource().r->GetDesc();
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
         UINT64 total = 0;
         dev_->GetCopyableFootprints(&cd, 0, 1, 0, &fp, nullptr, nullptr, &total);
@@ -868,6 +962,9 @@ void D3D12Renderer::killTarget() {
     freeRes(ao_.r);          // remade at the new size on first use (`makeSsao`)
     freeRes(presImg_.r);     // ...and the present pass's (`makePresentPass`)
     freeRes(presRead_);
+    freeRes(motion_.r);
+    freeRes(upOut_.r);
+    freeRes(motionRead_);
 }
 
 ID3D12RootSignature* D3D12Renderer::makeRootSig(const D3D12_ROOT_SIGNATURE_DESC& d, const char* what) {
@@ -959,8 +1056,9 @@ bool D3D12Renderer::makePipelines() {
     {
         const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 1);
         const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, 1);
+        // (44 root constants with an upscaler: `PushMv`)
         D3D12_ROOT_PARAMETER p[6] = {
-            rs::constants(0, kPushSpace, kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
+            rs::constants(0, kPushSpace, up_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
             rs::table(&texRange, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 0, 1, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&shRange, D3D12_SHADER_VISIBILITY_PIXEL),
@@ -1012,6 +1110,17 @@ bool D3D12Renderer::makePipelines() {
     base.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     base.NumRenderTargets = 1;
     base.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    // THE UPSCALER's scene pass: the -DOMK_MOTION build of the same shaders and
+    // the motion vectors as a second target. Only OPAQUE geometry writes them
+    // (the mask, below): an additive glow or a multiply decal over a wall
+    // leaves the wall's motion, which is what the history should follow.
+    if (up_) {
+        base.VS = rs::code(kDx_scene_mv_vert, sizeof kDx_scene_mv_vert);
+        base.PS = rs::code(kDx_scene_mv_frag, sizeof kDx_scene_mv_frag);
+        base.NumRenderTargets = 2;
+        base.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT;
+        base.BlendState.IndependentBlendEnable = TRUE;
+    }
     base.DSVFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
     base.SampleDesc.Count = samples_;
     base.DepthStencilState.DepthEnable = TRUE;
@@ -1051,6 +1160,8 @@ bool D3D12Renderer::makePipelines() {
     for (int k = 0; k < 3; ++k) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d = base;
         d.BlendState.RenderTarget[0] = blendState(k);
+        d.BlendState.RenderTarget[1].RenderTargetWriteMask =
+            k == 0 ? (D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN) : 0;
         d.DepthStencilState.DepthWriteMask = omk::blendRule(kModes[k]).depthWrite
                                                  ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
         pipe_[k] = makePso(d, "scene");
@@ -1207,7 +1318,13 @@ bool D3D12Renderer::resize(int w, int h) {
     killTarget();
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
-    srcW_ = rw_; srcH_ = rh_;
+    // the upscaler is made for ONE display size: made again at the new one,
+    // and its history dropped (a resize is a discontinuity like a cut)
+    if (up_) {
+        up_.reset();
+        if (!makeUpscaler()) std::printf("upscaler: off after the resize - the native frame\n");
+    }
+    srcW_ = sourceW(); srcH_ = sourceH();
     resizing_ = true;
     const bool ok = makeTarget();
     resizing_ = false;
@@ -1217,7 +1334,8 @@ bool D3D12Renderer::resize(int w, int h) {
 }
 
 bool D3D12Renderer::presentDirect() {
-    return presentImage(colour_, kSlotColour, srcW_ ? srcW_ : rw_, srcH_ ? srcH_ : rh_, rw_, rh_);
+    return presentImage(upscaleSource(), sourceSlot(), srcW_ ? srcW_ : sourceW(), srcH_ ? srcH_ : sourceH(),
+                        sourceW(), sourceH());
 }
 
 // The swapchain half of every present: `src`'s top-left `sw x sh`, fitted
@@ -1288,10 +1406,13 @@ bool D3D12Renderer::uploadToColour(const unsigned char* rgba) {
                     rgba + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_) * 4,
                     static_cast<std::size_t>(w_) * 4);
     upBuf_->Unmap(0, nullptr);
+    // into the DISPLAY image - `colour_` natively, the upscaler's output
+    // (display-sized, where `colour_` is smaller) with one on
+    Res& img = upscaleSource();
     ID3D12GraphicsCommandList* l = oneShotBegin();
-    colour_.to(l, D3D12_RESOURCE_STATE_COPY_DEST);
+    img.to(l, D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_TEXTURE_COPY_LOCATION dst{}, srcL{};
-    dst.pResource = colour_.r;
+    dst.pResource = img.r;
     dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     dst.SubresourceIndex = 0;
     srcL.pResource = upBuf_;
@@ -1302,7 +1423,7 @@ bool D3D12Renderer::uploadToColour(const unsigned char* rgba) {
     srcL.PlacedFootprint.Footprint.Depth = 1;
     srcL.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(upPitch_);
     l->CopyTextureRegion(&dst, 0, 0, 0, &srcL, nullptr);
-    colour_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    img.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     oneShotEnd();
     return true;
 }
@@ -1389,9 +1510,9 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
     l->SetGraphicsRootSignature(presRs_);
     l->SetPipelineState(presPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, ss_};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, sourceSs()};
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
-    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotColour));
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(sourceSlot()));
     l->DrawInstanced(3, 1, 0, 0);
     presImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1434,8 +1555,10 @@ bool D3D12Renderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgb
 bool D3D12Renderer::init(int w, int h) {
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
-    srcW_ = rw_; srcH_ = rh_;
     if (!pickDevice()) return false;
+    // THE UPSCALER, once there is a device to ask - it decides the render size
+    if (upKind_ != omk::d3dup::kOff) makeUpscaler();
+    srcW_ = sourceW(); srcH_ = sourceH();
     if (!makeTarget()) return false;
     if (!makePipelines()) return false;
     if (hwnd_ && !makeSwapchain()) return false;
@@ -1688,9 +1811,11 @@ void D3D12Renderer::resolveTies(const omk::Draw& d) {
 // ============================================================ the frame
 
 void D3D12Renderer::setViewport(const omk::View& view) {
-    // ...in RENDER pixels, so the letterbox's strip scales with the frame
-    const int vw = (view.letterboxed() ? view.vw : w_) * ss_;
-    const int vh = (view.letterboxed() ? view.vh : h_) * ss_;
+    // ...in RENDER pixels, so the letterbox's strip scales with the frame -
+    // by the supersample, or by the upscaler's ratio (`toRenderX` is `* ss_`
+    // exactly when there is no upscaler)
+    const int vw = toRenderX(view.letterboxed() ? view.vw : w_);
+    const int vh = toRenderY(view.letterboxed() ? view.vh : h_);
     const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(vw), static_cast<float>(vh), 0.0f, 1.0f};
     const D3D12_RECT sc{0, 0, vw, vh};
     list_->RSSetViewports(1, &vp);
@@ -1735,6 +1860,20 @@ void D3D12Renderer::pushView(const omk::View& view) {
     for (int c = 0; c < 4; ++c)
         for (int r = 0; r < 4; ++r)
             push_.mvp[c * 4 + r] = rows[r][c];
+    // THE UPSCALER's previous camera for the draws that follow. The frame's
+    // MAIN view (its eye is `begin`'s) moves from where the last frame's main
+    // view was; a mirror's reflected view is given no camera motion - its
+    // previous matrix is its current one - which only the reflection's own
+    // pixels carry.
+    if (up_) {
+        const bool mainView = cam.eye[0] == frameEye_[0] && cam.eye[1] == frameEye_[1] &&
+                              cam.eye[2] == frameEye_[2];
+        if (mainView) {
+            for (int k = 0; k < 3; ++k) { mainS_[k] = s[k]; mainU_[k] = u[k]; mainF_[k] = f[k]; }
+            mainA_ = A; mainB_ = B;
+        }
+        std::memcpy(pm_.prevMvp, mainView && havePrev_ ? prevMain_ : push_.mvp, sizeof pm_.prevMvp);
+    }
 }
 
 // THE DEPTH PASS FROM THE LIGHT - Vulkan's `shadowPass`, its matrices
@@ -1889,6 +2028,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     fogEnd_ = view.fogEnd;
     for (int i = 0; i < 3; ++i) fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
     for (int i = 0; i < 3; ++i) clearColour_[i] = static_cast<float>(view.clearColour[i]) / 255.0f;
+    for (int i = 0; i < 3; ++i) frameEye_[i] = view.cam.eye[i];   // the MAIN view's (`pushView`)
     pushView(view);
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
@@ -1927,7 +2067,14 @@ void D3D12Renderer::begin(const omk::View& view) {
     depth_.to(list_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(samples_ > 1 ? rtvMs_ : rtvColour_);
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_.cpu(dsvDepth_);
-    list_->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    // with an upscaler, the MOTION VECTORS beside the colour, cleared to none
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv, rtv_.cpu(rtvMotion_)};
+    if (up_) {
+        motion_.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        list_->ClearRenderTargetView(rtvs[1], zero, 0, nullptr);
+    }
+    list_->OMSetRenderTargets(up_ ? 2 : 1, rtvs, FALSE, &dsv);
     // the WHOLE render target, at the RENDER size (vkrender.cpp: a smaller
     // area would leave the supersample resolve averaging garbage); the engine
     // clears to the scene's fog colour (`View::clearColour`)
@@ -1945,8 +2092,38 @@ void D3D12Renderer::begin(const omk::View& view) {
     bound_ = nullptr;
     recording_ = true;
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
-    aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
-    aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
+    aoVw_ = toRenderX(view.letterboxed() ? view.vw : w_);
+    aoVh_ = toRenderY(view.letterboxed() ? view.vh : h_);
+    // ---- THE UPSCALER's per-frame half (`upscale.h`) ----
+    if (up_) {
+        std::memcpy(curMain_, push_.mvp, sizeof curMain_);
+        // THE CAMERA CUT: the engine's camera jumps - a cutscene's editing, an
+        // area load, a scripted placement - and the history from before the
+        // jump would smear the old picture over the new. More than five
+        // metres (200 inches) in a frame, or a turn of more than 30 degrees,
+        // is a jump; a first frame, a resize or a new set are too.
+        if (havePrev_) {
+            const float dx = frameEye_[0] - prevEye_[0], dy = frameEye_[1] - prevEye_[1],
+                        dz = frameEye_[2] - prevEye_[2];
+            const float turn = mainF_[0] * prevFwd_[0] + mainF_[1] * prevFwd_[1] + mainF_[2] * prevFwd_[2];
+            if (dx * dx + dy * dy + dz * dz > 200.0f * 200.0f || turn < 0.866f) resetOwed_ = true;
+        } else {
+            resetOwed_ = true;
+        }
+        // across a cut the vectors say "no motion": the history is dropped anyway
+        if (resetOwed_) std::memcpy(pm_.prevMvp, push_.mvp, sizeof pm_.prevMvp);
+        // THE JITTER: the SDK's sequence, one step a frame, in render pixels;
+        // into clip units over the VIEWPORT (the letterbox's strip, when there
+        // is one), Y in Vulkan's down-pointing clip space (`upscale.h`)
+        const int phases = up_->jitterPhases(rw_, w_);
+        up_->jitter(jitterIndex_ % phases, phases, jitterPx_[0], jitterPx_[1]);
+        ++jitterIndex_;
+        pm_.jitter[0] = 2.0f * jitterPx_[0] / static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_);
+        pm_.jitter[1] = 2.0f * jitterPx_[1] / static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_);
+        // the bodies' affines: last frame's become the previous ones
+        prevAffines_.swap(curAffines_);
+        curAffines_.clear();
+    }
 }
 
 // A POSED body's block in the pose buffer - Vulkan's `writePose`, the offset
@@ -1955,7 +2132,7 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
     const auto key = std::make_pair(d.meshPose, d.vertexLights);
     if (const auto it = poseCache_.find(key); it != poseCache_.end()) { off = it->second; return true; }
     const UINT64 at = alignUp(poseUsed_, kPoseAlign);
-    if (!posePtr_ || at + kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
+    if (!posePtr_ || at + (up_ ? 2 : 1) * kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
     float* f = reinterpret_cast<float*>(static_cast<unsigned char*>(posePtr_) + at);
     const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
     f[0] = static_cast<float>(nl);
@@ -1966,6 +2143,20 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));
     poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    // ...and with an upscaler, the body's PREVIOUS affines right after them
+    // (`scene.vert` -DOMK_MOTION), from the last frame's block of the same
+    // `meshPose` - or the current ones again for a body new this frame, which
+    // then shows only the camera's motion rather than a wrong one of its own
+    if (up_) {
+        const std::size_t n = d.meshPoses * 12;
+        const auto prev = prevAffines_.find(d.meshPose);
+        // (and across a cut, where nothing has a previous position)
+        const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
+                                ? prev->second.data() : d.meshPose;
+        std::memcpy(a + n, from, n * sizeof(float));
+        curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
+        poseUsed_ += 3 * d.meshPoses * 16;
+    }
     off = at;
     poseCache_.emplace(key, off);
     return true;
@@ -2049,7 +2240,12 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         std::size_t j = i;
         while (j < e && (haveCull ? g->cornerCull[j] : 0u) == c) ++j;
         push_.cull = c ? (flipX_ ? -kCullSign : kCullSign) : 0;
-        list_->SetGraphicsRoot32BitConstants(0, kPushDwords, &push_, 0);
+        if (up_) {
+            pm_.p = push_;
+            list_->SetGraphicsRoot32BitConstants(0, kPushMvDwords, &pm_, 0);
+        } else {
+            list_->SetGraphicsRoot32BitConstants(0, kPushDwords, &push_, 0);
+        }
         list_->DrawInstanced(static_cast<UINT>(j - i), 1, static_cast<UINT>(i), 0);
         i = j;
     }
@@ -2170,6 +2366,166 @@ void D3D12Renderer::runSsao() {
     bound_ = nullptr;
 }
 
+// ---- THE UPSCALER (`upscale.h`, `todo/enhancements.md` 18) ----------------
+//
+// Made once the device exists, for the display size: DLSS when asked and the
+// GPU runs it, else FSR, else nothing - each step said. With one running the
+// RENDER size is the SDK's answer for the quality, supersampling gives way
+// (both decide the render size; the upscaler is the one asked for), and so
+// does MSAA: the SDKs take a single-sampled colour and depth, and a temporal
+// upscaler's own accumulation IS the anti-aliasing.
+bool D3D12Renderer::makeUpscaler() {
+    namespace up = omk::d3dup;
+    if (upKind_ == up::kDlss) {
+        up_ = up::makeDlss(dev_, adapter_, w_, h_, upQuality_);
+        if (!up_) std::printf("upscaler: DLSS not available - trying FSR\n");
+    }
+    if (!up_) up_ = up::makeFsr(dev_, w_, h_, upQuality_);
+    if (!up_) {
+        std::printf("upscaler: none available - the native frame\n");
+        rw_ = w_ * ss_; rh_ = h_ * ss_;
+        return false;
+    }
+    if (ss_ > 1) {
+        std::printf("upscaler: supersampling x%d ignored - the upscaler decides the render size\n", ss_);
+        ss_ = 1;
+    }
+    if (wantSamples_ > 1) {
+        std::printf("upscaler: %dx MSAA off - the upscaler takes one sample a pixel, and its temporal "
+                    "resolve is the anti-aliasing\n", wantSamples_);
+        wantSamples_ = 1;
+    }
+    up_->renderSize(rw_, rh_);
+    rw_ = std::clamp(rw_, 1, w_);
+    rh_ = std::clamp(rh_, 1, h_);
+    std::printf("upscaler: %s %s - render %dx%d -> display %dx%d (ratio %.2f, %s)\n", up_->name(),
+                up_->version().c_str(), rw_, rh_, w_, h_, static_cast<double>(w_) / rw_,
+                up::qualityName(upQuality_));
+    omk::event("upscaler", {{"sdk", up_->name()}, {"version", up_->version()}, {"rw", rw_}, {"rh", rh_},
+                            {"dw", w_}, {"dh", h_}, {"quality", up::qualityName(upQuality_)}});
+    jitterIndex_ = 0;
+    havePrev_ = false;
+    resetOwed_ = true;
+    return true;
+}
+
+// The upscale itself, recorded on the frame's list after SSAO: the colour,
+// depth and motion at the render size in, the display-size image out.
+void D3D12Renderer::upscale() {
+    const D3D12_RESOURCE_STATES in = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE |
+                                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    colour_.to(list_, in);
+    depth_.to(list_, in);
+    motion_.to(list_, in);
+    upOut_.to(list_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    omk::d3dup::Frame f;
+    f.list = list_;
+    f.colour = colour_.r; f.depth = depth_.r; f.motion = motion_.r; f.output = upOut_.r;
+    f.inputState = in;
+    f.outputState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    f.rw = rw_; f.rh = rh_; f.dw = w_; f.dh = h_;
+    f.jitterX = jitterPx_[0]; f.jitterY = jitterPx_[1];
+    f.reset = resetOwed_;
+    f.frameMs = 1000.0f / 30.0f;   // the game's tick
+    // THE CAMERA, for the SDK that wants it (DLSS), in D3D's Y-UP clip space:
+    // this engine's matrices are Vulkan's Y-down ones, whose second row the
+    // vertex translation negates (`--flip-vert-y`), so it is negated here too.
+    omk::d3dup::Camera& c = f.cam;
+    c.nearP = omk::kNearCut;
+    c.farP = 200000.0f;
+    c.fovV = 2.0f * std::atan(aoTanV_);
+    c.aspect = aoTanH_ / aoTanV_;
+    const float* ax[3] = {mainS_, mainU_, mainF_};
+    std::memset(c.worldToView, 0, sizeof c.worldToView);
+    for (int r = 0; r < 3; ++r) {
+        float d = 0.0f;
+        for (int k = 0; k < 3; ++k) { c.worldToView[k * 4 + r] = ax[r][k]; d += ax[r][k] * frameEye_[k]; }
+        c.worldToView[12 + r] = -d;
+    }
+    c.worldToView[15] = 1.0f;
+    std::memset(c.viewToClip, 0, sizeof c.viewToClip);
+    c.viewToClip[0] = 1.0f / aoTanH_;
+    c.viewToClip[5] = 1.0f / aoTanV_;   // -(-1 / tanV): the flip
+    c.viewToClip[10] = mainA_;
+    c.viewToClip[14] = mainB_;
+    c.viewToClip[11] = 1.0f;
+    for (int i = 0; i < 16; ++i) {
+        const bool row1 = i % 4 == 1;
+        c.worldToClip[i] = row1 ? -curMain_[i] : curMain_[i];
+        const float pv = havePrev_ && !resetOwed_ ? prevMain_[i] : curMain_[i];
+        c.prevWorldToClip[i] = row1 ? -pv : pv;
+    }
+    for (int k = 0; k < 3; ++k) {
+        c.pos[k] = frameEye_[k]; c.right[k] = mainS_[k]; c.up[k] = mainU_[k]; c.fwd[k] = mainF_[k];
+    }
+    up_->dispatch(f);
+    // the SDK records with its own heaps and root signature: ours back
+    ID3D12DescriptorHeap* heaps[] = {srv_.heap};
+    list_->SetDescriptorHeaps(1, heaps);
+    bound_ = nullptr;
+    upOut_.to(list_, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    ++upFrames_;
+}
+
+// `OMK_MOTION_STATS=1`: the frame's motion target read back and summed up -
+// how much of the picture moves more than half a render pixel, the largest
+// and the mean vector - as a line and an `upscaler.motion` event, which is
+// what `verify.py: engine: upscaler` reads (the set standing still under a
+// still camera, the crowd walking across it).
+void D3D12Renderer::motionStats() {
+    if (!motion_.r) return;
+    if (!motionRead_) {
+        D3D12_RESOURCE_DESC md = motion_.r->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT64 total = 0;
+        dev_->GetCopyableFootprints(&md, 0, 1, 0, &fp, nullptr, nullptr, &total);
+        motionPitch_ = fp.Footprint.RowPitch;
+        motionRead_ = makeBuffer(total, D3D12_HEAP_TYPE_READBACK, "readback");
+        if (!motionRead_) return;
+    }
+    ID3D12GraphicsCommandList* l = oneShotBegin();
+    motion_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    src.pResource = motion_.r;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = motionRead_;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16_FLOAT, static_cast<UINT>(rw_), static_cast<UINT>(rh_), 1,
+                                     static_cast<UINT>(motionPitch_)};
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    oneShotEnd();
+    void* p = nullptr;
+    if (FAILED(motionRead_->Map(0, nullptr, &p))) return;
+    const auto half = [](std::uint16_t h) {
+        const std::uint32_t s = (h >> 15) & 1u, e = (h >> 10) & 31u, m = h & 1023u;
+        float v = e == 0 ? std::ldexp(static_cast<float>(m), -24)
+                : e == 31 ? 65504.0f : std::ldexp(static_cast<float>(m | 1024u), static_cast<int>(e) - 25);
+        return s ? -v : v;
+    };
+    long moving = 0;
+    double sum = 0.0, most = 0.0;
+    for (int y = 0; y < rh_; ++y) {
+        const auto* row = reinterpret_cast<const std::uint16_t*>(static_cast<const unsigned char*>(p) +
+                                                                 static_cast<UINT64>(y) * motionPitch_);
+        for (int x = 0; x < rw_; ++x) {
+            const double mx = half(row[2 * x]) * rw_, my = half(row[2 * x + 1]) * rh_;
+            const double len = std::sqrt(mx * mx + my * my);
+            sum += len;
+            most = std::max(most, len);
+            moving += len > 0.5;
+        }
+    }
+    D3D12_RANGE none{0, 0};
+    motionRead_->Unmap(0, &none);
+    const long n = static_cast<long>(rw_) * rh_;
+    const double share = n ? static_cast<double>(moving) / n : 0.0;
+    std::printf("d3d12 motion: frame %ld - %.2f%% of pixels move more than half a pixel, largest %.1f px, "
+                "mean %.3f px%s\n", upFrames_, 100.0 * share, most, n ? sum / n : 0.0,
+                resetOwed_ ? " (a cut: no motion)" : "");
+    omk::event("upscaler.motion", {{"frame", upFrames_}, {"moving", share}, {"max", most},
+                                   {"mean", n ? sum / n : 0.0}, {"reset", resetOwed_}});
+}
+
 void D3D12Renderer::end() {
     cpuPoseSlot_.clear();
     cpuPoseCount_.clear();
@@ -2190,13 +2546,16 @@ void D3D12Renderer::end() {
     }
     if (ssaoOn_) runSsao();
     // From here `colour_` is the scene's resolved colour at the RENDER size
-    // and `depth_` its depth: the input an upscaler would take (the header).
+    // and `depth_` its depth: the input the upscaler takes (the header), and
+    // the HUD and the rest of the 2D are composited over its OUTPUT later, at
+    // the display size, on the CPU as ever.
+    if (up_) upscale();
     // It rests in COPY_SOURCE, where the readback copy and the present pass
     // expect it. The readback COPY itself is not recorded: a frame the GPU
     // presents never reads it (`readback()` does it when asked).
     colour_.to(list_, D3D12_RESOURCE_STATE_COPY_SOURCE);
     copyOwed_ = true;
-    srcW_ = rw_; srcH_ = rh_;
+    srcW_ = sourceW(); srcH_ = sourceH();
     list_->Close();
     ID3D12CommandList* l[] = {list_};
     queue_->ExecuteCommandLists(1, l);
@@ -2205,6 +2564,15 @@ void D3D12Renderer::end() {
     listOpen_ = false;
     shadowLive_ = false;
     dirty_ = true;
+    if (up_) {
+        static const bool stats = omk::envFlag("OMK_MOTION_STATS");
+        if (stats) motionStats();
+        // this frame's camera is the next one's previous
+        std::memcpy(prevMain_, curMain_, sizeof prevMain_);
+        for (int k = 0; k < 3; ++k) { prevEye_[k] = frameEye_[k]; prevFwd_[k] = mainF_[k]; }
+        havePrev_ = true;
+        resetOwed_ = false;
+    }
 }
 
 const omk::Surface& D3D12Renderer::readback() {
@@ -2214,14 +2582,15 @@ const omk::Surface& D3D12Renderer::readback() {
     if (copyOwed_) {
         copyOwed_ = false;
         ID3D12GraphicsCommandList* l = oneShotBegin();
-        colour_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        Res& img = upscaleSource();   // the scene's colour, or the upscaler's output
+        img.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
-        src.pResource = colour_.r;
+        src.pResource = img.r;
         src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         dst.pResource = readBuf_;
         dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(rw_),
-                                         static_cast<UINT>(rh_), 1, static_cast<UINT>(readPitch_)};
+        dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(sourceW()),
+                                         static_cast<UINT>(sourceH()), 1, static_cast<UINT>(readPitch_)};
         l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         oneShotEnd();
     }
@@ -2283,6 +2652,8 @@ void D3D12Renderer::geometryGone(void* self, const omk::Geometry* g) {
     r->vboRev_.erase(g);
     had |= r->tie_.erase(g) > 0;
     had |= r->baked_.erase(g) > 0;
+    // a SET going (an area left) is a cut for the upscaler's history
+    if (had && g->corners.size() > 30000) r->resetOwed_ = true;
     if (had) ++r->released_;
 }
 
@@ -2290,6 +2661,8 @@ D3D12Renderer::~D3D12Renderer() {
     omk::removeGeometryListener(&D3D12Renderer::geometryGone, this);
     if (!dev_) { release(adapter_); release(factory_); return; }
     if (queue_ && fence_) flush();
+    up_.reset();   // the SDK's context before the device it was made on
+    freeRes(motionRead_);
     if (info_)
         std::printf("d3d12: debug layer - %ld errors, %ld warnings\n", dbgErrors_, dbgWarnings_);
     for (ID3D12Resource*& b : deadBufs_) freeRes(b);

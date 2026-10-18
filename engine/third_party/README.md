@@ -28,3 +28,15 @@ original did, not a substitute for code that could have been ported.
 
 `verify.py: engine movies` asserts the three streams' own headers and what the
 decoder gets out of them, so the claim is testable rather than a note.
+
+## Runtime libraries NOT in the tree: the upscalers' SDKs
+
+The Direct3D 12 backend's upscalers (`backends/d3d12/upscale*`,
+`todo/enhancements.md` 18) load signed binaries at RUN time that are **not**
+vendored: AMD's FidelityFX loader and upscaler DLLs (FSR) and NVIDIA's
+Streamline interposer, common and DLSS plugins and `nvngx_dlss.dll`. The
+`Makefile` reads the SDKs' headers from `deps/` and copies only those DLLs
+next to the viewer when the SDKs are there; nothing is committed. Their terms,
+which allow binary redistribution with the notices, are kept verbatim in
+`licenses/`: `AMD-FidelityFX-SDK-license.md`, `NVIDIA-Streamline-license.txt`
+and `NVIDIA-DLSS-license.txt` - text, never stamped with OMK's SPDX line.

@@ -192,6 +192,18 @@ struct Settings {
     bool   ambientOcclusion = false;
     Source ambientOcclusionSource = Source::Default;
 
+    // `upscaler = off|fsr|dlss` and `upscalequality = native|quality|balanced|
+    // performance|ultraperformance`: TEMPORAL UPSCALING (`todo/enhancements.md`
+    // 18) - the frame drawn below the display size and rebuilt by AMD FSR or
+    // NVIDIA DLSS from its colour, depth and motion vectors. The Direct3D 12
+    // backend's alone (`--d3d12`, `renderer = d3d12`); Vulkan says so and
+    // stays native. NOT in `all = max`: it needs that backend and the SDKs'
+    // DLLs, and it changes the picture's sharpness rather than adding to it.
+    int    upscaler = 0;          // 0 off, 1 FSR, 2 DLSS
+    Source upscalerSource = Source::Default;
+    int    upscaleQuality = 1;    // 0 native AA .. 4 ultra performance; quality by default
+    Source upscaleQualitySource = Source::Default;
+
     // `lod = game|best`: the crowd's LEVEL OF DETAIL. A pedestrian model holds
     // four skeletons and `sub_48D7F0` steps down one every 10 m of view depth
     // (`kLodDistances`), so past 10 m every walker is a coarser body. `best`
@@ -354,6 +366,31 @@ inline int lodMode(std::string w) {
     while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
     if (w == "0" || w == "game" || w == "original" || w == "off") return 0;
     if (w == "1" || w == "best" || w == "max" || w == "on") return 1;
+    return -1;
+}
+
+// `upscaler`: 0 off, 1 fsr, 2 dlss; -1 for anything else.
+inline int upscalerMode(std::string w) {
+    for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
+    while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
+    if (w == "0" || w == "off" || w == "none" || w == "native") return 0;
+    if (w == "1" || w == "fsr" || w == "fsr4" || w == "amd") return 1;
+    if (w == "2" || w == "dlss" || w == "nvidia") return 2;
+    return -1;
+}
+inline const char* upscalerName(int m) { return m == 1 ? "fsr" : m == 2 ? "dlss" : "off"; }
+// `upscalequality`: 0 native (AA at 1.0x) .. 4 ultra performance (3.0x), the
+// two SDKs' shared names; -1 for anything else.
+inline int upscaleQualityMode(std::string w) {
+    for (auto& c : w) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    while (!w.empty() && (w.back() == ' ' || w.back() == '\t')) w.pop_back();
+    while (!w.empty() && (w.front() == ' ' || w.front() == '\t')) w.erase(w.begin());
+    if (w == "0" || w == "native" || w == "nativeaa" || w == "dlaa") return 0;
+    if (w == "1" || w == "quality") return 1;
+    if (w == "2" || w == "balanced") return 2;
+    if (w == "3" || w == "performance") return 3;
+    if (w == "4" || w == "ultraperformance" || w == "ultra") return 4;
     return -1;
 }
 

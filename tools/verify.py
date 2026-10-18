@@ -7028,7 +7028,10 @@ def c_enhance_all():
         return ("skipped",), ("skipped",), "engine/ absent"
     cpp = open(os.path.join(eng, "src", "platform", "settings.cpp"), encoding="utf-8").read()
     hdr = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
-    SEPARATE = {"supersampling"}   # asked for by name only (the docstring)
+    # asked for by name only (the docstring) - and the UPSCALER (2026-10-18),
+    # which needs the Direct3D 12 backend and the SDKs' DLLs: `all = max`
+    # leaves it off, asserted below
+    SEPARATE = {"supersampling", "upscaler", "upscalequality"}
     keys = set(re.findall(r'k(?:Enhancements),\s*"([^"]+)"', cpp)) - {"all"} - SEPARATE
     body = hdr[hdr.index("inline void applyMaxEnhancements"):]
     body = body[:body.index("\n}")]
@@ -7070,13 +7073,14 @@ def c_enhance_all():
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
     atMax = bool(want) and all(allMax.get(k) == v for k, v in want.items())
     got = (len(keys), takes, covered, atMax, allMax.get("all"), override.get("aniso"),
-           allMax.get("supersampling"), named_ss.get("supersampling"))
-    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4), \
+           allMax.get("supersampling"), named_ss.get("supersampling"), allMax.get("upscaler"))
+    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0), \
            ("the %d `[Enhancements]` keys besides `all` and supersampling, the fields "
             "`applyMaxEnhancements` sets, that every enhancement the probe reports is "
             "one this check names, that one `all = max` puts every one at its top, "
             "that a specific key still beats it (anisotropy 4), and that `all = max` "
-            "leaves supersampling OFF (1) while `supersampling = 4` beside it gives 4" % len(keys))
+            "leaves supersampling OFF (1) while `supersampling = 4` beside it gives 4, and the "
+            "upscaler off (0)" % len(keys))
 
 
 
@@ -27614,6 +27618,121 @@ def c_engine_d3d12():
     return tuple(got), tuple(want), "; ".join(notes)
 
 
+def c_engine_upscaler():
+    r"""`omk-play --world-d3d12 --upscaler fsr|dlss`: TEMPORAL UPSCALING (`todo/enhancements.md` 18).
+
+    The Direct3D 12 backend draws the frame at a RENDER size below the display
+    size, over a per-frame sub-pixel jitter, writes MOTION VECTORS beside the
+    colour (`scene.vert`/`scene.frag` built -DOMK_MOTION: the previous camera,
+    and a posed body's previous affines in the pose buffer), and AMD FSR - the
+    FidelityFX loader's newest provider, FSR 4 on RDNA 4 - or NVIDIA DLSS
+    through Streamline rebuilds the display-size picture (`backends/d3d12/
+    upscale*`). Off by default and not in `all = max`. Asserted, on the street
+    start at 1280x720 through `--world-d3d12`:
+    * FSR LOADS and reports its version (`@evt upscaler`), and the render size
+      is the quality's ratio - `quality` 1.5x, 853x480 - with the output at the
+      display size;
+    * the upscaled frame is CLOSE to the native one (same frame, no crowd):
+      mean difference under 0.35 565 steps (0.233 measured, nearest filtering),
+      97% of pixels within two (98.6%), and no
+      D3D12 debug-layer error;
+    * the MOTION VECTORS (`OMK_MOTION_STATS`, `@evt upscaler.motion`): with no
+      crowd and the camera at rest, under 0.5% of the picture moves more than
+      half a pixel (the player's idle) in every frame after the first cut; with
+      the crowd walking, some frame has more than 1% moving and a vector of
+      more than 2 pixels;
+    * `--upscaler dlss` on a GPU DLSS does not run (this one: AMD) says so -
+      `DLSS unsupported on this GPU` or `DLSS unavailable` - and falls back to
+      FSR with the frame still dumped; on an NVIDIA GPU it must load instead;
+      and the DLSS_NR query is logged either way when Streamline is present;
+    * Vulkan declines the upscaler and says it is the D3D12 backend's.
+    Skipped without a D3D12 device or without the FSR DLLs next to the viewer.
+    SHOWN TO FAIL with the motion vectors forced to zero (`scene.frag`'s
+    `outMotion` made `vec2(0.0)` under OMK_MOTION): the walking crowd moves
+    nothing.
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "the viewer did not build"
+    if not os.path.exists(os.path.join(eng, "build", "amd_fidelityfx_loader_dx12.dll")):
+        return ("skipped",), ("skipped",), "no FSR DLLs next to the viewer (deps/fsr-sdk absent)"
+    W, H = 1280, 720
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(api, extra, name, frames=60, crowd=False):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_MOTION_STATS="1",
+                       OMK_D3D12_DEBUG="1")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-" + api, "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", str(frames),
+                                "--dump", out] + ([] if crowd else ["--no-crowd"]) + extra,
+                               capture_output=True, env=env)
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return text, data
+        t_nat, d_nat = run("d3d12", [], "native")
+        if "renderer: the world through D3D12" not in t_nat:
+            return ("skipped",), ("skipped",), "no D3D12 device"
+        t_fsr, d_fsr = run("d3d12", ["--upscaler", "fsr", "--upscale-quality", "quality"], "fsr")
+        t_crowd, _ = run("d3d12", ["--upscaler", "fsr"], "crowd", frames=40, crowd=True)
+        t_dlss, d_dlss = run("d3d12", ["--upscaler", "dlss"], "dlss", frames=10)
+        t_vk, _ = run("vulkan", ["--upscaler", "fsr"], "vulkan", frames=3)
+    evt_ok = bool(re.search(r"@evt upscaler sdk=FSR version=\S+ rw=\d+ rh=\d+ dw=%d dh=%d" % (W, H), t_fsr))
+    m = re.search(r"upscaler: (\w+) (\S+) - render (\d+)x(\d+) -> display (\d+)x(\d+)", t_fsr)
+    sdk, ver = (m.group(1), m.group(2)) if m else ("", "")
+    rw, rh, dw, dh = (int(m.group(k)) for k in range(3, 7)) if m else (0, 0, 0, 0)
+    def compare(d0, d1):
+        if not (len(d0) == len(d1) == n * 2):
+            return 99.0, 0.0
+        tot, within = 0.0, 0
+        for p, q in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+            if p == q:
+                within += 1
+                continue
+            dr = abs(((p >> 11) & 31) - ((q >> 11) & 31))
+            dg = abs(((p >> 5) & 63) - ((q >> 5) & 63)) / 2.0
+            db = abs((p & 31) - (q & 31))
+            tot += (dr + dg + db) / 3.0
+            within += max(dr, dg, db) <= 2
+        return tot / n, within / n
+    mean, within = compare(d_nat, d_fsr)
+    errs = sum(1 for l in t_fsr.splitlines() if "d3d12 debug [ERROR]" in l or "d3d12 debug [CORRUPTION]" in l)
+    def motion(text):
+        rows = re.findall(r"@evt upscaler\.motion frame=(\d+) moving=([\d.]+) max=([\d.]+) mean=([\d.]+) reset=(\d)",
+                          text)
+        return [(int(f), float(mv), float(mx)) for f, mv, mx, _, rs in rows if rs == "0"]
+    still = motion(t_fsr)
+    walk = motion(t_crowd)
+    still_max = max((mv for _, mv, _ in still), default=1.0)
+    walk_share = max((mv for _, mv, _ in walk), default=0.0)
+    walk_px = max((mx for _, _, mx in walk), default=0.0)
+    nvidia = "upscaler: DLSS loaded" in t_dlss
+    dlss_fell = (("DLSS unsupported on this GPU" in t_dlss or "DLSS unavailable" in t_dlss)
+                 and "trying FSR" in t_dlss and "upscaler: FSR" in t_dlss and len(d_dlss) == n * 2)
+    nr_logged = "DLSS NR" in t_dlss or "sl.interposer.dll" in t_dlss or "without the Streamline SDK" in t_dlss
+    got = (sdk, evt_ok, bool(re.match(r"\d", ver)), (abs(rw - 853) <= 1, abs(rh - 480) <= 1, dw, dh),
+           len(d_fsr) == n * 2, mean < 0.35, within > 0.97, errs,
+           len(still) > 10, still_max < 0.005, walk_share > 0.01, walk_px > 2.0,
+           nvidia or dlss_fell, nr_logged, "off on Vulkan" in t_vk)
+    want = ("FSR", True, True, (True, True, W, H), True, True, True, 0,
+            True, True, True, True, True, True, True)
+    return got, want, (
+        "FSR %s, render %dx%d -> %dx%d; against the native frame mean %.3f steps, %.2f%% within 2, "
+        "%d debug-layer errors; motion: still scene at most %.3f%% moving over %d frames, walking crowd "
+        "up to %.2f%% moving and %.1f px; dlss: %s" % (
+            ver, rw, rh, dw, dh, mean, 100.0 * within, errs, 100.0 * still_max, len(still),
+            100.0 * walk_share, walk_px, "loaded (NVIDIA)" if nvidia else
+            "fell back to FSR" if dlss_fell else "NO clean fallback"))
+
+
 def c_engine_escape_back():
     r"""`[Enhancements] escapeback` - ESC and BACKSPACE as the interface's BACK.
 
@@ -45511,8 +45630,9 @@ def c_licence_headers():
     # 631: + `engine/src/o3de/drawcore.{h,cpp}` and `engine/tools/drawcore_probe.cpp`
     # (the GPU backends' shared pose, light, tie and blend)
     # 633: + `engine/backends/d3d12/d3d12render.{h,cpp}` (the Direct3D 12 backend)
+    # 636: + `engine/backends/d3d12/upscale.h`, `upscale_fsr.cpp`, `upscale_dlss.cpp` (FSR / DLSS)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (633, [], 1, []), \
+           (636, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48264,6 +48384,7 @@ SLOW = [
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
+    ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

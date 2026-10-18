@@ -13,6 +13,15 @@ layout(push_constant) uniform Push {
     int   lit;         // 92, and it must come AFTER the vec3
     int   cull;        // 96, the back-face cull - see scene.frag
     int   posed;       // 100, a body POSED here from set 2
+#ifdef OMK_MOTION
+    // THE UPSCALER's two (`d3d12render.cpp`, built with -DOMK_MOTION for the
+    // Direct3D 12 backend only - Vulkan compiles this block without them, so
+    // its push block stays 104 bytes): the sub-pixel JITTER in clip units,
+    // added after the transform, and the PREVIOUS frame's view-projection,
+    // for the motion vectors. After `posed`, so nothing above moves.
+    vec2  jitter;      // 104
+    mat4  prevMvp;     // 112
+#endif
 } pc;
 
 // THE POSE BUFFER (`vkrender.cpp` `posesBodies`, 2026-10-11 - as GLES, GL1 and
@@ -42,9 +51,22 @@ layout(location = 2) out float vDepth;
 layout(location = 3) out vec3 vWorld;
 layout(location = 4) out vec3 vNrm;
 layout(location = 5) out float vPhase;
+#ifdef OMK_MOTION
+// THE MOTION VECTOR's two ends, in clip space, divided per FRAGMENT
+// (`scene.frag`): where the corner is now and where it was a frame ago -
+// unjittered both, so the vector carries motion and no jitter.
+layout(location = 6) out vec4 vCurClip;
+layout(location = 7) out vec4 vPrevClip;
+#endif
 
 void main() {
     vec3 pos = inPos, nrm = inNrm, col = inCol;
+#ifdef OMK_MOTION
+    // the corner's world position a frame ago: where it is now, unless a
+    // POSED body's previous affines say otherwise (below). The set does not
+    // move; only the camera did, which `prevMvp` carries.
+    vec3 prevPos = inPos;
+#endif
     if (pc.posed != 0) {
         // PLACED by its mesh's affine (a corner no mesh owns stays at rest),
         // the normal turned and not moved
@@ -55,6 +77,14 @@ void main() {
             vec4 r0 = pose.d[b], r1 = pose.d[b + 1], r2 = pose.d[b + 2];
             pos = vec3(dot(r0.xyz, inPos) + r0.w, dot(r1.xyz, inPos) + r1.w, dot(r2.xyz, inPos) + r2.w);
             nrm = vec3(dot(r0.xyz, inNrm), dot(r1.xyz, inNrm), dot(r2.xyz, inNrm));
+#ifdef OMK_MOTION
+            // ...and its PREVIOUS affines, which the D3D12 backend writes right
+            // after the current ones (the current again for a body it has not
+            // seen before: no object motion rather than a wrong one)
+            int pb = 1 + 2 * kLights + 3 * int(h.w) + 3 * m;
+            vec4 p0 = pose.d[pb], p1 = pose.d[pb + 1], p2 = pose.d[pb + 2];
+            prevPos = vec3(dot(p0.xyz, inPos) + p0.w, dot(p1.xyz, inPos) + p1.w, dot(p2.xyz, inPos) + p2.w);
+#endif
         }
         // ...and LIT, corner by corner as `applyLights` walks it: from the
         // scene's grey where the body starts black, else from its colour; t =
@@ -91,4 +121,11 @@ void main() {
     // the noise between the two triangulations: the band a later face must
     // beat under the engine's strict test on its quantised buffer (ASSETS 4b)
     gl_Position.z += tie * (2.0 / 65535.0) * gl_Position.w;
+#ifdef OMK_MOTION
+    vCurClip = pc.mvp * vec4(pos, 1.0);
+    vPrevClip = pc.prevMvp * vec4(prevPos, 1.0);
+    // THE JITTER, last: the rasterised picture moves by a sub-pixel, the
+    // motion vector's two ends do not
+    gl_Position.xy += pc.jitter * gl_Position.w;
+#endif
 }

@@ -58,6 +58,8 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.ambientOcclusionSource));
     std::printf("enh lod %d %s\n", s.bestLod ? 1 : 0,
                 omk::sourceName(s.bestLodSource));
+    std::printf("enh upscaler %d %s\n", s.upscaler, omk::sourceName(s.upscalerSource));
+    std::printf("enh upscalequality %d %s\n", s.upscaleQuality, omk::sourceName(s.upscaleQualitySource));
     std::printf("enh all %d\n", s.enhanceAll ? 1 : 0);
     std::printf("screen %dx%d %s\n", v.screenX, v.screenY, omk::sourceName(s.screen));
     std::printf("density %d %s\n", v.streetActivity, omk::sourceName(s.streetActivity));

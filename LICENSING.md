@@ -60,6 +60,10 @@ them conflicts with GPL-3.0.
 |---|---|---|---|
 | `engine/third_party/pl_mpeg.h` | MPEG-1 / MP2 decoder and PS demuxer | [phoboslab/pl_mpeg](https://github.com/phoboslab/pl_mpeg) | **MIT** (Dominic Szablewski) |
 
+The upscalers' SDK binaries (AMD FidelityFX / FSR, NVIDIA Streamline / DLSS)
+are loaded at run time and never committed; their redistribution notices sit
+verbatim in `engine/third_party/licenses/` (see `engine/third_party/README.md`).
+
 That is the only third-party file in the published tree, and it is **vendored
 deliberately** rather than found by the build: `docs/PORTING.md` A8 draws the
 line as a vendored dependency being checked in so `make` works without it

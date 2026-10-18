@@ -45,6 +45,15 @@ layout(push_constant) uniform Push {
     // software test in `Render_SubmitMesh`, which the device never sees.
     int   cull;         // 96
     int   posed;        // 100, a body posed in `scene.vert` (set 2)
+#ifdef OMK_MOTION
+    // THE UPSCALER's two (`d3d12render.cpp`, built with -DOMK_MOTION for the
+    // Direct3D 12 backend only - Vulkan compiles this block without them, so
+    // its push block stays 104 bytes): the sub-pixel JITTER in clip units,
+    // added after the transform, and the PREVIOUS frame's view-projection,
+    // for the motion vectors. After `posed`, so nothing above moves.
+    vec2  jitter;      // 104
+    mat4  prevMvp;     // 112
+#endif
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
@@ -117,6 +126,15 @@ layout(location = 3) in vec3 vWorld;
 layout(location = 4) in vec3 vNrm;
 layout(location = 5) in float vPhase;
 layout(location = 0) out vec4 outColour;
+#ifdef OMK_MOTION
+// THE MOTION VECTOR (`scene.vert`), into the scene pass's second target:
+// PREVIOUS minus CURRENT position in texture-UV units (y down, as the rows
+// run), which is the direction both upscalers read - `d3d12render.cpp` gives
+// FSR the render size as its scale and DLSS 1.
+layout(location = 6) in vec4 vCurClip;
+layout(location = 7) in vec4 vPrevClip;
+layout(location = 1) out vec2 outMotion;
+#endif
 
 // -> 1 fully lit, 0 fully shadowed. Outside the map's slab a fragment is LIT
 // by definition, which is what keeps a characters-only shadow from darkening
@@ -251,4 +269,11 @@ void main() {
         c = mix(pc.fogColour, c, f);
     }
     outColour = vec4(c, 1.0);
+#ifdef OMK_MOTION
+    // a corner behind the eye a frame ago has no previous screen position:
+    // no motion, rather than a vector to infinity
+    outMotion = vPrevClip.w > 1e-3
+              ? (vPrevClip.xy / vPrevClip.w - vCurClip.xy / vCurClip.w) * 0.5
+              : vec2(0.0);
+#endif
 }

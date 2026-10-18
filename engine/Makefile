@@ -160,10 +160,12 @@ DXC         := $(shell command -v dxc 2>/dev/null)
 D3D_ON      := $(if $(and $(VK_PKG),$(GLSLC),$(SPIRV_CROSS),$(DXC)),1)
 endif
 D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.frag \
-                   ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag
+                   ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag \
+                   scene_mv.vert scene_mv.frag
 D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
 D3D_LIBS    := -ld3d12 -ldxgi -ldxguid
-.PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%.hlsl
+.PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%.hlsl \
+           build/shaders/dx/%_mv.vert.spv build/shaders/dx/%_mv.frag.spv
 
 build/shaders/dx/%.spv: backends/vulkan/shaders/%
 	@mkdir -p $(@D)
@@ -171,6 +173,15 @@ build/shaders/dx/%.spv: backends/vulkan/shaders/%
 build/shaders/dx/%_ms.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
 	$(GLSLC) -DOMK_MS -o $@ $<
+# THE UPSCALERS' scene pass (`todo/enhancements.md` 18): the same two files
+# with -DOMK_MOTION - a jitter, the previous view-projection and a second
+# target for the motion vectors. Vulkan never compiles this arm.
+build/shaders/dx/%_mv.vert.spv: backends/vulkan/shaders/%.vert
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_MOTION -o $@ $<
+build/shaders/dx/%_mv.frag.spv: backends/vulkan/shaders/%.frag
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_MOTION -o $@ $<
 # the D3D12 backend's own (`blit.frag`, the swapchain's scaled copy)
 build/shaders/dx/%.spv: backends/d3d12/shaders/%
 	@mkdir -p $(@D)
@@ -181,6 +192,34 @@ build/shaders/dx/%.hlsl: build/shaders/dx/%.spv
 build/shaders/dx/%.h: build/shaders/dx/%.hlsl
 	$(DXC) -nologo -T $(if $(filter %.vert,$*),vs_6_0,ps_6_0) -E main \
 	    -Vn kDx_$(subst .,_,$*) -Fh $@ $<
+
+# ---- THE UPSCALERS (`todo/enhancements.md` 18; `backends/d3d12/upscale*`)
+#
+# AMD FSR (the FidelityFX API: a loader DLL that picks the provider - FSR 4
+# on RDNA 4) and NVIDIA DLSS through Streamline. Neither SDK is in the tree:
+# both are read from `deps/` when present - their HEADERS at compile time,
+# their signed DLLs copied next to the viewer - and the code loads the DLLs
+# at RUN time (LoadLibrary / GetProcAddress), so mingw never links an MSVC
+# import library and a viewer without them runs, and says the upscaler is
+# unavailable. Without an SDK its half compiles to a stub. Licences:
+# `engine/third_party/licenses/`.
+FSR_SDK ?= ../../deps/fsr-sdk-2.3.0/Kits/FidelityFX
+SL_SDK  ?= ../../deps/streamline-2.14.16/x
+FSR_ON  := $(if $(D3D_ON),$(if $(wildcard $(FSR_SDK)/api/include/ffx_api.h),1))
+SL_ON   := $(if $(D3D_ON),$(if $(wildcard $(SL_SDK)/include/sl.h),1))
+UPSCALE_FLAGS := $(if $(FSR_ON),-DOMK_FSR -isystem $(FSR_SDK)/api/include -isystem $(FSR_SDK)/upscalers/include) \
+                 $(if $(SL_ON),-DOMK_DLSS -isystem $(SL_SDK)/include)
+# only the DLLs the two paths load: FSR's loader and its upscaler provider;
+# Streamline's interposer, its common plugin, the DLSS plugin and NGX's DLSS
+UP_DLL_SRCS := $(if $(FSR_ON),$(wildcard $(FSR_SDK)/signedbin/amd_fidelityfx_loader_dx12.dll \
+                                          $(FSR_SDK)/signedbin/amd_fidelityfx_upscaler_dx12.dll)) \
+               $(if $(SL_ON),$(wildcard $(addprefix $(SL_SDK)/bin/x64/,sl.interposer.dll sl.common.dll \
+                                                    sl.dlss.dll nvngx_dlss.dll)))
+UP_DLL_DSTS := $(addprefix $(dir $(PLAY_BIN)),$(notdir $(UP_DLL_SRCS)))
+vpath %.dll $(sort $(dir $(UP_DLL_SRCS)))
+$(UP_DLL_DSTS): $(dir $(PLAY_BIN))%.dll: %.dll
+	@mkdir -p $(@D)
+	cp -f $< $@
 
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,
@@ -274,6 +313,9 @@ $(PLAY_VK_DIR)/vkrender.o: backends/vulkan/vkrender.cpp | $(VK_SHADERS)
 $(PLAY_VK_DIR)/d3d12render.o: backends/d3d12/d3d12render.cpp | $(D3D_SHADERS)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) -c -o $@ $<
+$(PLAY_VK_DIR)/upscale_%.o: backends/d3d12/upscale_%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) $(UPSCALE_FLAGS) -c -o $@ $<
 $(PLAY_GL_DIR)/%.o: backends/sdl/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_GL_FLAGS) -c -o $@ $<
@@ -288,11 +330,12 @@ $(PLAY_BIN): $(PLAY_SW_OBJS) $(SRCOBJS) $(INSTR_STAMP)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS)
 PLAY_WITH := $(SDL_PKG) (no Vulkan - software renderer only)
 else
-$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o $(if $(D3D_ON),$(PLAY_VK_DIR)/d3d12render.o) \
+$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o \
+             $(if $(D3D_ON),$(PLAY_VK_DIR)/d3d12render.o $(PLAY_VK_DIR)/upscale_fsr.o $(PLAY_VK_DIR)/upscale_dlss.o) \
              $(SRCOBJS) $(INSTR_STAMP)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(VK_LIBS) $(if $(D3D_ON),$(D3D_LIBS))
-PLAY_WITH := $(SDL_PKG) + $(VK_PKG)$(if $(D3D_ON), + d3d12)
+PLAY_WITH := $(SDL_PKG) + $(VK_PKG)$(if $(D3D_ON), + d3d12)$(if $(FSR_ON), + fsr)$(if $(SL_ON), + streamline)
 endif
 endif
 
@@ -343,7 +386,7 @@ build/hardened/%: $(OBJDIR)/tools/%.o $(SRCOBJS)
 .PHONY: hardened
 
 .PHONY: play
-play: $(if $(SDL_PKG),$(PLAY_BIN))
+play: $(if $(SDL_PKG),$(PLAY_BIN) $(UP_DLL_DSTS))
 ifeq ($(SDL_PKG),)
 	@echo "no SDL found (pkg-config sdl3 or sdl2) - the frontend is optional;"
 	@echo "everything else builds and the suite passes without it (PORTING A8)."

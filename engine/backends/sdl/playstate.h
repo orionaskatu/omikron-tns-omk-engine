@@ -95,6 +95,8 @@ struct PlayState {
     int & smoothAnimFlag = opt.smoothAnimFlag;
     int & escapeBackFlag = opt.escapeBackFlag;
     int & ssaoFlag = opt.ssaoFlag;
+    int & upscalerFlag = opt.upscalerFlag;
+    int & upscaleQualityFlag = opt.upscaleQualityFlag;
     int & bestLodFlag = opt.bestLodFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
@@ -243,6 +245,8 @@ struct PlayState {
     bool smoothAnim{};
     bool escapeBack{};       // [Enhancements] escapeback: ESC/Backspace send BACK under a screen
     bool ssao{};             // [Enhancements] ssao: screen-space ambient occlusion (Vulkan)
+    int upscaler{};          // [Enhancements] upscaler: 0 off, 1 FSR, 2 DLSS (the D3D12 backend)
+    int upscaleQuality{1};   // [Enhancements] upscalequality: 0 native .. 4 ultra performance
     bool bestLod{};          // [Enhancements] lod = best: the crowd's first skeleton at any distance
     bool bestLodTold{};
     bool escBackLatch{};     // ESC was taken as BACK: it opens no pause until it is released

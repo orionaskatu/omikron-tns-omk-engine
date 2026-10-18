@@ -435,6 +435,17 @@ public:
     // And anisotropic filtering, `n` samples along the footprint's long axis
     // (1 off, up to 16). Only meaningful with mode 2.
     virtual bool setAnisotropy(int /*n*/) { return false; }
+    // TEMPORAL UPSCALING (`todo/enhancements.md` row 18): render below the
+    // display size and let an upscaler rebuild it from the frame's colour,
+    // depth and motion vectors over a sub-pixel jitter. `kind` 1 is AMD FSR,
+    // 2 NVIDIA DLSS; `quality` 0 native AA (ratio 1.0), 1 quality (1.5),
+    // 2 balanced (1.7), 3 performance (2.0), 4 ultra performance (3.0). Same
+    // contract as the rest: a request before `init()`. Only the Direct3D 12
+    // backend takes it - the SDKs ship D3D12 libraries - and everything the
+    // upscaler needs (the jitter, the previous camera, the motion target) is
+    // that backend's own state, so nothing on this boundary changes for the
+    // others: they answer false and draw exactly as before.
+    virtual bool setUpscaler(int /*kind*/, int /*quality*/) { return false; }
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

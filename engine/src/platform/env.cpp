@@ -34,6 +34,7 @@ constexpr const char* kSwitches[] = {
     "OMK_FADELOG",              // =1 log: the screen fade's terms when they change (engine: fight letterbox)
     "OMK_FEETLOG",              // =<actor> log: that body's lowest drawn corner against the floor, every 30 frames (engine: astaroth floor)
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)
+    "OMK_FSR_DEBUG",            // the FSR context made with the SDK's own parameter checks (engine: upscaler)
     "OMK_GL1",                  // =0: the GL1 build draws with the software reference (engine: gl1 backend)
     "OMK_GL1_COMPOSITE",        // GL1: the interface composed on the CPU instead of drawn as an overlay
     "OMK_GL1_NO_SKIP",          // GL1: the whole-mesh frustum skip off, to show it changes no pixel (engine: gl1 backend)
@@ -48,6 +49,7 @@ constexpr const char* kSwitches[] = {
     "OMK_LOOK_ALL",             // every staged actor turns his head to the player
     "OMK_MARKS_MS",             // =<ms> a frame longer than this names its slowest sections (default 150)
     "OMK_MESH_AT",              // =<mesh> log: that mesh's corners as the set's buffer holds them; also keeps moving meshes on the CPU (engine: node rest)
+    "OMK_MOTION_STATS",         // log: the D3D12 upscaler's motion vectors summed up every frame (engine: upscaler)
     "OMK_MOVING_GRID",          // A/B: the ground grid rebuilt every moving frame instead of grouped per mesh
     "OMK_NOCLOUD",              // the start menu's cloud left out of a screen render (engine: screen scale)
     "OMK_NOUI",                 // the interface left out of the frame - the HUD, the bars, the fight gauges (engine: fight letterbox)

@@ -288,6 +288,12 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Sauter`); [Enhancements] escapeback=on\n"
 "  --ssao           ENHANCEMENT: screen-space ambient occlusion (Vulkan);\n"
 "                   [Enhancements] ssao=on\n"
+"  --upscaler off|fsr|dlss  ENHANCEMENT: temporal upscaling, AMD FSR or NVIDIA\n"
+"                   DLSS - the Direct3D 12 backend only (--d3d12, --world-d3d12);\n"
+"                   [Enhancements] upscaler=fsr\n"
+"  --upscale-quality native|quality|balanced|performance|ultraperformance\n"
+"                   the upscaler's render size (default quality, 1.5x);\n"
+"                   [Enhancements] upscalequality\n"
 "  --best-lod       ENHANCEMENT: every pedestrian on its most detailed body at\n"
 "                   any distance (the game steps down every 10 m);\n"
 "                   [Enhancements] lod=best\n"
@@ -528,6 +534,21 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--invert-y") mouseInvertY = true;
         else if (a == "--shoot-eye" && i + 1 < argc) { shootEyeLift = float(std::atof(argv[++i])); shootEyeSet = true; }
         else if (a == "--no-dither") dither = false;
+        else if (a == "--upscaler" && i + 1 < argc) {
+            upscalerFlag = omk::upscalerMode(argv[++i]);
+            if (upscalerFlag < 0) {
+                std::fprintf(stderr, "--upscaler %s: not a mode (off|fsr|dlss)\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--upscale-quality" && i + 1 < argc) {
+            upscaleQualityFlag = omk::upscaleQualityMode(argv[++i]);
+            if (upscaleQualityFlag < 0) {
+                std::fprintf(stderr, "--upscale-quality %s: not a mode (native|quality|balanced|"
+                                     "performance|ultraperformance)\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--lighting" && i + 1 < argc) {
             lightingFlag = omk::lightingMode(argv[++i]);
             if (lightingFlag < 0) {

@@ -175,6 +175,18 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: lod = %s is not a mode "
                                       "(game|best) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
+            const int m = upscalerMode(*w);
+            if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: upscaler = %s is not a mode "
+                                      "(off|fsr|dlss) - ignored\n", w->c_str());
+        }
+        if (const std::string* w = ini.find(kEnhancements, "upscalequality")) {
+            const int m = upscaleQualityMode(*w);
+            if (m >= 0) { s.upscaleQuality = m; s.upscaleQualitySource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: upscalequality = %s is not a mode (native|quality|"
+                                      "balanced|performance|ultraperformance) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "ssao")) {
             const int m = escapeBackMode(*w);     // the same off|on words
             if (m >= 0) { s.ambientOcclusion = m > 0; s.ambientOcclusionSource = Settings::Source::Ini; }

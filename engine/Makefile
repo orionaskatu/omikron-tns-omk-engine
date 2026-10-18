@@ -124,11 +124,16 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc \
-              build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc
+              build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
 	$(GLSLC) -mfmt=c -o $@ $<
+
+# SSAO's multisampled-depth builds (`sampler2DMS`), from the same sources
+build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_MS -mfmt=c -o $@ $<
 
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,

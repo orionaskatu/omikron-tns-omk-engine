@@ -27397,6 +27397,8 @@ def c_engine_ssao():
       so a brighter pixel would mean the pass wrote colour rather than a factor;
     * and the darkened share is bounded, so a pass that greyed the whole frame
       (a wrong normal makes every flat surface occlude itself) fails.
+    * and the same under 4x MSAA, where the depth is multisampled and read
+      through the `_ms` builds of the two shaders.
     SHOWN TO FAIL with `end()`'s `runSsao()` call removed: nothing darkens.
     """
     import subprocess
@@ -27426,29 +27428,37 @@ def c_engine_ssao():
             return text, data
         t_off, d_off = run([], "off")
         t_on, d_on = run(["--ssao"], "on")
+        # ...and under MSAA, where the depth is multisampled (`ssao_ms`): the
+        # first version refused it, and `all = max` turns MSAA on
+        t_moff, d_moff = run(["--aa", "4"], "msoff")
+        t_mon, d_mon = run(["--aa", "4", "--ssao"], "mson")
     if "renderer: the world through VULKAN" not in t_off or len(d_off) != W * H * 2:
         return ("skipped",), ("skipped",), "no Vulkan device"
     import struct
     n = W * H
-    dark = bright = 0
-    if len(d_on) == len(d_off):
-        a = struct.unpack("<%dH" % n, d_off)
-        b = struct.unpack("<%dH" % n, d_on)
-        for va, vb in zip(a, b):
-            if va == vb:
-                continue
-            sa = ((va >> 11) & 31) * 2 + ((va >> 5) & 63) + (va & 31) * 2
-            sb = ((vb >> 11) & 31) * 2 + ((vb >> 5) & 63) + (vb & 31) * 2
-            if sb < sa - 2:
-                dark += 1
-            elif sb > sa + 2:
-                bright += 1
+    def compare(d0, d1):
+        dark = bright = 0
+        if len(d0) == len(d1) == n * 2:
+            for va, vb in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+                if va == vb:
+                    continue
+                sa = ((va >> 11) & 31) * 2 + ((va >> 5) & 63) + (va & 31) * 2
+                sb = ((vb >> 11) & 31) * 2 + ((vb >> 5) & 63) + (vb & 31) * 2
+                if sb < sa - 2:
+                    dark += 1
+                elif sb > sa + 2:
+                    bright += 1
+        return dark, bright
+    dark, bright = compare(d_off, d_on)
+    mdark, mbright = compare(d_moff, d_mon)
     share = dark / n
     got = (default_off, "SSAO" in t_off, "vulkan: SSAO on" in t_on,
-           dark > n // 200, bright, share < 0.35)
-    return got, (True, False, True, True, 0, True), \
+           dark > n // 200, bright, share < 0.35,
+           "(multisampled depth)" in t_mon, mdark > n // 200, mbright)
+    return got, (True, False, True, True, 0, True, True, True, 0), \
            ("off by default and silent; --ssao reports the pass live; %d of %d pixels "
-            "darken (%.1f%%), none brightens" % (dark, n, 100.0 * share))
+            "darken (%.1f%%), none brightens; under 4x MSAA %d darken, %d brighten"
+            % (dark, n, 100.0 * share, mdark, mbright))
 
 
 def c_engine_escape_back():

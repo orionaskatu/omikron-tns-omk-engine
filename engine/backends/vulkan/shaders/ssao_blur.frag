@@ -5,7 +5,13 @@
 // (dst * src), so nothing but the darkening is touched.
 #version 450
 
+// Under MSAA the depth is MULTISAMPLED and read at its first sample (the
+// `_ms` build of this file, glslc -DOMK_MS); `texelFetch` reads both alike.
+#ifdef OMK_MS
+layout(set = 0, binding = 0) uniform sampler2DMS depthTex;
+#else
 layout(set = 0, binding = 0) uniform sampler2D depthTex;
+#endif
 layout(set = 0, binding = 1) uniform sampler2D aoTex;
 
 layout(push_constant) uniform Push {
@@ -29,10 +35,11 @@ void main() {
         for (int i = -2; i <= 1; ++i) {
             ivec2 q = clamp(px + ivec2(i, j), ivec2(0), lim);
             float zq = texelFetch(depthTex, q, 0).r;
-            float w = zq >= 0.99999 ? 0.0 : exp(-abs(viewZ(zq) - v0) / (0.03 * v0 + 1.0));
+            float w = zq >= 0.99999 ? 0.0 : exp(-abs(viewZ(zq) - v0) / (0.08 * v0 + 2.0));
             sum += texelFetch(aoTex, q, 0).r * w;
             wsum += w;
         }
     float ao = wsum > 0.0 ? sum / wsum : 1.0;
+    ao = ao * ao;   // contrast: open stays open, creases deepen
     outColour = vec4(vec3(ao), 1.0);
 }

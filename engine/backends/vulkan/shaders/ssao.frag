@@ -11,7 +11,13 @@
 // target and multiplied over the frame by the blur.
 #version 450
 
+// Under MSAA the depth is MULTISAMPLED and read at its first sample (the
+// `_ms` build of this file, glslc -DOMK_MS); `texelFetch` reads both alike.
+#ifdef OMK_MS
+layout(set = 0, binding = 0) uniform sampler2DMS depthTex;
+#else
 layout(set = 0, binding = 0) uniform sampler2D depthTex;
+#endif
 
 layout(push_constant) uniform Push {
     vec4 proj;   // tanH, tanV, A, B
@@ -59,16 +65,21 @@ void main() {
     vec3 Br = cross(N, Tr);
 
     float R = pc.view.z;
-    float occ = 0.0;
+    float occ = 0.0, wsum = 0.0;
     const int K = 16;
     for (int i = 0; i < K; ++i) {
         float t = (float(i) + 0.5) / float(K);
         float phi = float(i) * 2.3999632;                 // the golden angle
-        float cosT = sqrt(1.0 - t);                       // cosine-weighted
+        float cosT = sqrt(1.0 - 0.9 * t);                 // cosine-weighted, kept off the tangent
         float sinT = sqrt(t);
         vec3 h = vec3(cos(phi) * sinT, sin(phi) * sinT, cosT);
         float len = mix(0.15, 1.0, t * t);                // denser near P
         vec3 S = P + (Tr * h.x + Br * h.y + N * h.z) * (R * len);
+        // the near samples weigh most: a crease occludes them all, while a
+        // body standing a metre off only reaches the outer ones - so the
+        // architecture reads and a character's darkening stays at its feet
+        float w = 1.0 - 0.6 * len;
+        wsum += w;
         if (S.z <= 1.0) continue;
         vec2 ndc = vec2(S.x / (S.z * pc.proj.x), -S.y / (S.z * pc.proj.y));
         vec2 sp = (ndc * 0.5 + 0.5) * pc.view.xy;
@@ -76,15 +87,19 @@ void main() {
         float zs = texelFetch(depthTex, ivec2(sp), 0).r;
         if (zs >= 0.99999) continue;
         float sceneZ = viewZ(zs);
-        // occluded when the surface there is IN FRONT of the sample point;
-        // a surface much nearer than the radius is another object, faded out
-        float range = smoothstep(0.0, 1.0, R / max(abs(P.z - sceneZ), 1e-3));
+        // occluded when the surface there is IN FRONT of the sample point -
+        // but only by a surface within the radius IN 3D: depth alone takes a
+        // body as infinitely thick, and darkened the floor two metres in
+        // front of the player
+        vec2 qn = (floor(sp) + 0.5) / pc.view.xy * 2.0 - 1.0;
+        vec3 Q = vec3(qn.x * pc.proj.x * sceneZ, -qn.y * pc.proj.y * sceneZ, sceneZ);
+        float range = 1.0 - smoothstep(0.8 * R, 1.4 * R, length(Q - P));
         // the bias grows with distance: a standard (not reversed) depth
         // buffer resolves less the further it looks
-        occ += (sceneZ < S.z - (R * 0.04 + P.z * 0.004) ? 1.0 : 0.0) * range;
+        occ += (sceneZ < S.z - (R * 0.04 + P.z * 0.004) ? 1.0 : 0.0) * range * w;
     }
-    float ao = 1.0 - pc.view.w * occ / float(K);
+    float ao = 1.0 - pc.view.w * occ / max(wsum, 1e-3);
     // the far street is fogged black and its geometry coarse: let it go
-    ao = mix(ao, 1.0, smoothstep(1500.0, 4500.0, P.z));
+    ao = mix(ao, 1.0, smoothstep(3500.0, 8000.0, P.z));
     outAO = clamp(ao, 0.0, 1.0);
 }

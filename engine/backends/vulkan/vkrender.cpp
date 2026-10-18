@@ -113,6 +113,12 @@ const uint32_t kSsaoFrag[] =
 const uint32_t kSsaoBlurFrag[] =
 #include "ssao_blur.frag.inc"
 ;
+const uint32_t kSsaoMsFrag[] =        // the same two over a MULTISAMPLED depth
+#include "ssao_ms.frag.inc"
+;
+const uint32_t kSsaoBlurMsFrag[] =
+#include "ssao_blur_ms.frag.inc"
+;
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
 
 // The map's side. 1024 is a shadow of a handful of CHARACTERS over a slab a
@@ -852,12 +858,17 @@ bool VulkanRenderer::makeTarget() {
     if (wantSsao_) {
         VkFormatProperties fp{};
         vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
-        ssaoOn_ = !msaa && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        // under MSAA the multisampled depth is sampled as it is (its first
+        // sample), which the device must allow at this count
+        const bool msOk = !msaa || (props_.limits.sampledImageDepthSampleCounts & samples_);
+        ssaoOn_ = msOk && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
         if (!resizing_)
             std::printf(ssaoOn_ ? "vulkan: SSAO on - an ENHANCEMENT: ambient occlusion from the "
-                                  "depth buffer, multiplied over the frame\n"
+                                  "depth buffer, multiplied over the frame%s\n"
                                 : "vulkan: SSAO asked for but not available (%s)\n",
-                        msaa ? "multisampling is on" : "the depth format cannot be sampled");
+                        ssaoOn_ ? (msaa ? " (multisampled depth)" : "")
+                                : !msOk ? "the device cannot sample a multisampled depth"
+                                        : "the depth format cannot be sampled");
     }
     if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                    (ssaoOn_ ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
@@ -2892,7 +2903,13 @@ bool VulkanRenderer::makeSsao() {
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         VkPipelineColorBlendAttachmentState cba{};
-        if (multiply) {
+        // `OMK_SSAO_VIEW=1`: the occlusion ITSELF written over the frame, grey
+        // on white, to see what the pass found rather than its effect
+        static const bool aoView = omk::envFlag("OMK_SSAO_VIEW");
+        if (multiply && aoView) {
+            cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT;
+        } else if (multiply) {
             // dst * src: the grey darkens, white leaves the frame as it was
             cba.blendEnable = VK_TRUE;
             cba.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -2920,6 +2937,9 @@ bool VulkanRenderer::makeSsao() {
         if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: ssao pipeline\n"); return false; }
         return true;
     };
+    if (samples_ != VK_SAMPLE_COUNT_1_BIT)
+        return pipe(kSsaoMsFrag, sizeof(kSsaoMsFrag), aoPass_, false, aoPipe_) &&
+               pipe(kSsaoBlurMsFrag, sizeof(kSsaoBlurMsFrag), aoApplyPass_, true, aoBlurPipe_);
     return pipe(kSsaoFrag, sizeof(kSsaoFrag), aoPass_, false, aoPipe_) &&
            pipe(kSsaoBlurFrag, sizeof(kSsaoBlurFrag), aoApplyPass_, true, aoBlurPipe_);
 }
@@ -2954,10 +2974,11 @@ void VulkanRenderer::runSsao() {
                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          0, 1, &mb, 0, nullptr, 0, nullptr);
     // the scene's projection (`pushView`), the frame's viewport, and the
-    // look: a radius of about a forearm, three quarters dark at most
+    // look: a radius of about two metres (the units are inches), so the
+    // architecture's creases and corners read, not only a body's contact
     const float nearP = omk::kNearCut, farP = 200000.0f;
     const SsaoPush push{aoTanH_, aoTanV_, farP / (farP - nearP), -farP * nearP / (farP - nearP),
-                        static_cast<float>(aoVw_), static_cast<float>(aoVh_), 45.0f, 0.75f};
+                        static_cast<float>(aoVw_), static_cast<float>(aoVh_), 80.0f, 1.0f};
     const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pl) {
         VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         bi.renderPass = rp; bi.framebuffer = fb;

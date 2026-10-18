@@ -85,6 +85,7 @@
 #include "platform/events.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -112,10 +113,22 @@ namespace {
 // ...and the UPSCALERS' scene pass, the same two files built -DOMK_MOTION
 #include "dx/scene_mv.vert.h"
 #include "dx/scene_mv.frag.h"
+// ...and HYBRID RAY TRACING's (`todo/enhancements.md` 19): `scene.frag` and
+// `ssao.frag` built -DOMK_RT, shader model 6.5 (`backends/d3d12/shaders/rt.glsl`)
+#include "dx/scene_rt.frag.h"
+#include "dx/scene_rt_mv.frag.h"
+#include "dx/scene_rtc.frag.h"
+#include "dx/scene_rtc_mv.frag.h"
+#include "dx/ssao_rt.frag.h"
+#include "dx/ssao_rt_ms.frag.h"
 
 // ---- the blocks the shaders read, VERBATIM from `vkrender.cpp` ------------
 struct PresentPush { int32_t vy, vh, w, dither, ss; };
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
+// ...the RAY-TRACED AO's (`ssao.frag` -DOMK_RT): the camera in the world, after it
+struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
+// `scene.frag`'s `RtFrame` (-DOMK_RT, set 3 binding 2: a root CBV b2 space3)
+struct RtFrame { float sky[4]; float eye[4]; float params[4]; };
 // `blit.frag`'s, this backend's own: the swapchain's scaled copy
 struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; };
 
@@ -307,6 +320,14 @@ public:
         wantSsao_ = on;
         return true;
     }
+    // HYBRID RAY TRACING (`todo/enhancements.md` 19): honoured in `init` when
+    // the device has DXR 1.1 (`rtInit`)
+    bool setRaytracing(bool on) override {
+        if (dev_) return false;
+        wantRt_ = on;
+        return true;
+    }
+    bool raytracingLive() const override { return rtOn_; }
     bool setMultisample(int samples) override {
         if (dev_) return false;
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
@@ -383,6 +404,23 @@ private:
     void submitOne(const omk::Draw& d, bool posed, UINT64 poseOff);
     bool makeSsao();
     void runSsao();
+    // HYBRID RAY TRACING ("HYBRID RAY TRACING" below)
+    struct RtBlas;
+    ID3D12Resource* rtBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, bool uav, D3D12_RESOURCE_STATES st,
+                             const char* tag);
+    bool rtMapped(UINT64 bytes, ID3D12Resource*& r, void*& p, UINT64& cap);
+    bool rtInit();
+    void rtBind(const omk::View& view);
+    struct RtTri;
+    bool rtFill(RtBlas& b, const std::vector<RtTri>& tri);
+    RtBlas* rtSetFor(const omk::Geometry* g);
+    void rtNote(const omk::Draw& d);
+    void rtDrop(RtBlas& b);
+    void rtTallyCopy(ID3D12GraphicsCommandList* l);
+    void rtTallyRead();
+    void rtBuild();
+    void rtAfter();
+    void rtKill();
     bool makePresentPass();
     bool runPresentPass(int vy, int vh);
     bool presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH);
@@ -525,6 +563,60 @@ private:
     float viewTanH_ = 1.0f, viewTanV_ = 1.0f;
     float aoTanH_ = 1.0f, aoTanV_ = 1.0f;
     int aoVw_ = 0, aoVh_ = 0;
+
+    // ---- HYBRID RAY TRACING (`todo/enhancements.md` 19; off unless asked) ----
+    struct RtBlas {
+        ID3D12Resource* as = nullptr;  UINT64 asCap = 0;                                     // the BLAS
+        ID3D12Resource* pos = nullptr; float* posPtr = nullptr; UINT64 posCap = 0;           // corners, float3
+        ID3D12Resource* rec = nullptr; std::uint32_t* recPtr = nullptr; UINT64 recCap = 0;   // 16 words a triangle
+        UINT recSrv = UINT(-1);                     // the records' raw view, in the heap
+        std::uint32_t nOpaque = 0, nCut = 0;        // opaque triangles first, then the cutout ones
+        std::uint64_t rev = ~0ull;                  // a set's: the geometry's revision it was made from
+        std::vector<std::int32_t> triOf;            // a set's: corner / 3 -> its record, -1 none
+        std::map<std::size_t, std::pair<std::size_t, UINT>> texAt;   // draw start -> count, texture written
+        std::uint64_t texGen = 0;
+        long seen = 0;                              // the frame it was last drawn
+        bool built = false;
+    };
+    struct RtRun { std::size_t count; bool cutout; UINT srv; };
+    // a triangle going into a BLAS: its geometry, first corner, the affines
+    // that pose it (none for a set) and its texture's view
+    struct RtTri { const omk::Geometry* g; const float* aff; std::uint32_t poses, first; UINT tex; };
+    struct RtBodyNote {
+        const omk::Geometry* geo = nullptr;
+        std::vector<float> aff;                     // its affines, copied at submit
+        std::map<std::size_t, RtRun> runs;          // its opaque draws, by start
+    };
+    bool wantRt_ = false, rtOn_ = false;
+    bool rtBodyDraw_ = false;                       // the draw going to `submitOne` is a body
+    bool rtCounting_ = false;                       // this frame draws `pipeCount_` (one in 60)
+    long rtCounted_ = 0;                            // ...frames so drawn
+    ID3D12PipelineState* pipeCount_[3] = {};
+    ID3D12Device5* dev5_ = nullptr;
+    ID3D12CommandAllocator* rtAlloc_ = nullptr;     // the builds' own list, run just before the frame's
+    ID3D12GraphicsCommandList4* rtList_ = nullptr;
+    bool rtRecorded_ = false;
+    std::map<const omk::Geometry*, RtBlas> rtSet_;
+    RtBlas rtBodyAll_;                              // EVERY body of the frame, one BLAS
+    std::map<std::pair<const float*, const omk::Geometry*>, RtBodyNote> rtNotes_;
+    static constexpr UINT kRtMaxInst = 2048;
+    ID3D12Resource* rtTlas_ = nullptr;
+    UINT64 rtTlasScratch_ = 0;
+    ID3D12Resource* rtInstDesc_ = nullptr; void* rtInstDescPtr_ = nullptr;
+    ID3D12Resource* rtInstTab_ = nullptr;  void* rtInstTabPtr_ = nullptr;
+    ID3D12Resource* rtScratch_ = nullptr;  UINT64 rtScratchCap_ = 0;
+    ID3D12Resource* rtFrameCb_ = nullptr;  void* rtFramePtr_ = nullptr;
+    ID3D12Resource* rtCount_ = nullptr;
+    ID3D12Resource* rtCountRead_ = nullptr;
+    std::uint64_t texGen_ = 1;                      // bumped when a texture's view goes
+    long rtFrame_ = 0;
+    float rtEye_[3] = {}, rtS_[3] = {}, rtU_[3] = {}, rtF_[3] = {};
+    int rtInstances_ = 0, rtSets_ = 0, rtBodies_ = 0, rtBodyCount_ = 0, rtToldInst_ = -1, rtTold_ = 0;
+    long rtSetBuilds_ = 0, rtBodyBuilds_ = 0, rtBodyRefits_ = 0, rtBodyRebuilt_ = 0;
+    std::uint64_t rtBodySig_ = 0;
+    long long rtSetTris_ = 0, rtBodyTris_ = 0, rtAoRays_ = 0;
+    std::uint32_t rtCounts_[4] = {};
+    double rtCpuMs_ = 0.0;
 
     // ---- THE PRESENT PASS (todo/optimization.md step 4b) ----
     Res presImg_;
@@ -848,8 +940,9 @@ bool D3D12Renderer::makeTarget() {
                          &dc, "render targets");
     depth_.st = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     if (!depth_.r) return false;
-    ssaoOn_ = wantSsao_;
-    if (wantSsao_ && !resizing_)
+    // (ray tracing runs the AO pass too, its rays in place of the hemisphere)
+    ssaoOn_ = wantSsao_ || rtOn_;
+    if (wantSsao_ && !rtOn_ && !resizing_)
         std::printf("d3d12: SSAO on - an ENHANCEMENT: ambient occlusion from the depth buffer, "
                     "multiplied over the frame%s\n", msaa ? " (multisampled depth)" : "");
 
@@ -1057,13 +1150,28 @@ bool D3D12Renderer::makePipelines() {
         const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 1);
         const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, 1);
         // (44 root constants with an upscaler: `PushMv`)
-        D3D12_ROOT_PARAMETER p[6] = {
+        D3D12_ROOT_PARAMETER p[12] = {
             rs::constants(0, kPushSpace, up_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
             rs::table(&texRange, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 0, 1, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&shRange, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 2, 1, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_SRV, 0, 2, D3D12_SHADER_VISIBILITY_VERTEX)};
+        // HYBRID RAY TRACING's six (`rt.glsl`, `scene.frag` -DOMK_RT): 6 the TLAS
+        // (t0 space3), 7 the instance table (t1), 8 `RtFrame` (b2), 9 the rays'
+        // tally (u4), and two BINDLESS tables over the whole heap - 10 the
+        // records (t0 space4), 11 the textures (t0 space5) - 62 of the 64
+        // dwords with an upscaler's push block
+        UINT np = 6;
+        const D3D12_DESCRIPTOR_RANGE recAll = rs::srvs(0, 4, UINT_MAX), texAll = rs::srvs(0, 5, UINT_MAX);
+        if (rtOn_) {
+            p[np++] = rs::view(D3D12_ROOT_PARAMETER_TYPE_SRV, 0, 3, D3D12_SHADER_VISIBILITY_PIXEL);
+            p[np++] = rs::view(D3D12_ROOT_PARAMETER_TYPE_SRV, 1, 3, D3D12_SHADER_VISIBILITY_PIXEL);
+            p[np++] = rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 2, 3, D3D12_SHADER_VISIBILITY_PIXEL);
+            p[np++] = rs::view(D3D12_ROOT_PARAMETER_TYPE_UAV, 4, 3, D3D12_SHADER_VISIBILITY_PIXEL);
+            p[np++] = rs::table(&recAll, D3D12_SHADER_VISIBILITY_PIXEL);
+            p[np++] = rs::table(&texAll, D3D12_SHADER_VISIBILITY_PIXEL);
+        }
         // NEAREST and WRAP (the software rasterizer's `% t.width`), unless the
         // filtering ENHANCEMENT asked for bilinear or the trilinear chain.
         // Max LOD 0 below trilinear: one level, sampled exactly (Vulkan's
@@ -1072,14 +1180,16 @@ bool D3D12Renderer::makePipelines() {
                              : filter_ >= 2 ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
                              : filter_ >= 1 ? D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT
                                             : D3D12_FILTER_MIN_MAG_MIP_POINT;
-        D3D12_STATIC_SAMPLER_DESC ss[2] = {
+        D3D12_STATIC_SAMPLER_DESC ss[3] = {
             rs::sampler(0, 0, f, D3D12_TEXTURE_ADDRESS_MODE_WRAP, filter_ >= 2 ? D3D12_FLOAT32_MAX : 0.0f,
                         anisoOn_ ? static_cast<UINT>(aniso_) : 1),
             // NEAREST: the fragment shader compares depths itself
-            rs::sampler(1, 1, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+            rs::sampler(1, 1, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            // the rays' texel (s3 space3): NEAREST and WRAP, the original's
+            rs::sampler(3, 3, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP, 0.0f)};
         D3D12_ROOT_SIGNATURE_DESC d{};
-        d.NumParameters = 6; d.pParameters = p;
-        d.NumStaticSamplers = 2; d.pStaticSamplers = ss;
+        d.NumParameters = np; d.pParameters = p;
+        d.NumStaticSamplers = rtOn_ ? 3 : 2; d.pStaticSamplers = ss;
         d.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         sceneRs_ = makeRootSig(d, "scene");
         if (!sceneRs_) return false;
@@ -1097,7 +1207,8 @@ bool D3D12Renderer::makePipelines() {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC base{};
     base.pRootSignature = sceneRs_;
     base.VS = rs::code(kDx_scene_vert, sizeof kDx_scene_vert);
-    base.PS = rs::code(kDx_scene_frag, sizeof kDx_scene_frag);
+    base.PS = rtOn_ ? rs::code(kDx_scene_rt_frag, sizeof kDx_scene_rt_frag)
+                    : rs::code(kDx_scene_frag, sizeof kDx_scene_frag);
     base.SampleMask = UINT_MAX;
     // D3DCULL_NONE - `Raster_DrawTriangles` sets it; the engine's own cull is
     // in software, before the device: `push_.cull` and scene.frag's discard.
@@ -1116,7 +1227,8 @@ bool D3D12Renderer::makePipelines() {
     // leaves the wall's motion, which is what the history should follow.
     if (up_) {
         base.VS = rs::code(kDx_scene_mv_vert, sizeof kDx_scene_mv_vert);
-        base.PS = rs::code(kDx_scene_mv_frag, sizeof kDx_scene_mv_frag);
+        base.PS = rtOn_ ? rs::code(kDx_scene_rt_mv_frag, sizeof kDx_scene_rt_mv_frag)
+                        : rs::code(kDx_scene_mv_frag, sizeof kDx_scene_mv_frag);
         base.NumRenderTargets = 2;
         base.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT;
         base.BlendState.IndependentBlendEnable = TRUE;
@@ -1166,6 +1278,14 @@ bool D3D12Renderer::makePipelines() {
                                                  ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
         pipe_[k] = makePso(d, "scene");
         if (!pipe_[k]) return false;
+        // RAY TRACING's counting twin (-DOMK_RT_COUNT), drawn one frame in 60
+        if (rtOn_) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC dc = d;
+            dc.PS = up_ ? rs::code(kDx_scene_rtc_mv_frag, sizeof kDx_scene_rtc_mv_frag)
+                        : rs::code(kDx_scene_rtc_frag, sizeof kDx_scene_rtc_frag);
+            pipeCount_[k] = makePso(dc, "scene, counting rays");
+            if (!pipeCount_[k]) return false;
+        }
         // ...and the reflection's: the same with the stencil test EQUAL 1
         d.DepthStencilState.StencilEnable = TRUE;
         d.DepthStencilState.StencilReadMask = 0xFF;
@@ -1556,6 +1676,8 @@ bool D3D12Renderer::init(int w, int h) {
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     if (!pickDevice()) return false;
+    // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`)
+    if (wantRt_) rtInit();
     // THE UPSCALER, once there is a device to ask - it decides the render size
     if (upKind_ != omk::d3dup::kOff) makeUpscaler();
     srcW_ = sourceW(); srcH_ = sourceH();
@@ -1594,6 +1716,7 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
         if (!waited) { flush(); waited = true; }
         freeRes(it->second.t.img);
         srv_.free(it->second.t.srv);
+        ++texGen_;   // no ray-tracing record may name the view now
         it = uploaded_.erase(it);
     }
     tex_.assign(t.size(), Tex{});
@@ -2089,6 +2212,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     list_->SetGraphicsRootDescriptorTable(3, srv_.gpu(kSlotShadow));
     list_->SetGraphicsRootConstantBufferView(4, litUbo_->GetGPUVirtualAddress());
     if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress());
+    if (rtOn_) rtBind(view);
     bound_ = nullptr;
     recording_ = true;
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
@@ -2183,6 +2307,13 @@ omk::Draw D3D12Renderer::cpuPose(const omk::Draw& d) {
 
 void D3D12Renderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
+    // HYBRID RAY TRACING: the draw into the frame's acceleration structures,
+    // and a posed body takes the character's traced terms even with the
+    // game's shadows off (`caster` - no shadow then receives anyway)
+    if (rtOn_) {
+        rtNote(d);
+        rtBodyDraw_ = d.meshPose != nullptr || d.lit != 0;
+    }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         UINT64 off = 0;
         if (posePtr_ && writePose(d, off)) submitOne(d, true, off);
@@ -2198,7 +2329,8 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     st_.triangles += static_cast<long>(d.count / 3);
 
     const int k = d.blend == omk::Blend::Opaque ? 0 : d.blend == omk::Blend::Add ? 1 : 2;
-    ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k] : pipe_[k];
+    ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k]
+                             : rtCounting_ ? pipeCount_[k] : pipe_[k];
     if (use != bound_) { list_->SetPipelineState(use); bound_ = use; }
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
@@ -2211,7 +2343,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress() + poseOff);
     push_.posed = posed ? 1 : 0;
     push_.cutout = d.cutout ? 1 : 0;
-    push_.caster = d.castsShadow ? 1 : 0;
+    push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
     push_.lit = litCount_ > 0 ? d.lit : 0;
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
     // software loop and Vulkan applies in `submitOne`: key bits 0x2080 not
@@ -2280,23 +2412,34 @@ bool D3D12Renderer::makeSsao() {
     if (!ssaoOn_) return false;
     if (!aoRs_) {
         const D3D12_DESCRIPTOR_RANGE r = rs::srvs(0, 0, 2);   // depth (t0), the AO (t1)
-        D3D12_ROOT_PARAMETER p[2] = {
-            rs::constants(0, kPushSpace, sizeof(SsaoPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
-            rs::table(&r, D3D12_SHADER_VISIBILITY_PIXEL)};
-        D3D12_STATIC_SAMPLER_DESC s[2] = {
+        // ...and with RAY TRACING (`ssao.frag` -DOMK_RT) the camera in the push
+        // block, the TLAS, the instance table and the two bindless tables
+        const D3D12_DESCRIPTOR_RANGE recAll = rs::srvs(0, 4, UINT_MAX), texAll = rs::srvs(0, 5, UINT_MAX);
+        D3D12_ROOT_PARAMETER p[6] = {
+            rs::constants(0, kPushSpace, (rtOn_ ? sizeof(SsaoRtPush) : sizeof(SsaoPush)) / 4,
+                          D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&r, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::view(D3D12_ROOT_PARAMETER_TYPE_SRV, 0, 3, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::view(D3D12_ROOT_PARAMETER_TYPE_SRV, 1, 3, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&recAll, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&texAll, D3D12_SHADER_VISIBILITY_PIXEL)};
+        D3D12_STATIC_SAMPLER_DESC s[3] = {
             rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
-            rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+            rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(3, 3, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP, 0.0f)};
         D3D12_ROOT_SIGNATURE_DESC d{};
-        d.NumParameters = 2; d.pParameters = p;
-        d.NumStaticSamplers = 2; d.pStaticSamplers = s;
+        d.NumParameters = rtOn_ ? 6 : 2; d.pParameters = p;
+        d.NumStaticSamplers = rtOn_ ? 3 : 2; d.pStaticSamplers = s;
         aoRs_ = makeRootSig(d, "ssao");
         if (!aoRs_) return false;
         const bool ms = samples_ > 1;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
         pd.pRootSignature = aoRs_;
         pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
-        pd.PS = ms ? rs::code(kDx_ssao_ms_frag, sizeof kDx_ssao_ms_frag)
-                   : rs::code(kDx_ssao_frag, sizeof kDx_ssao_frag);
+        pd.PS = rtOn_ ? (ms ? rs::code(kDx_ssao_rt_ms_frag, sizeof kDx_ssao_rt_ms_frag)
+                            : rs::code(kDx_ssao_rt_frag, sizeof kDx_ssao_rt_frag))
+                      : ms ? rs::code(kDx_ssao_ms_frag, sizeof kDx_ssao_ms_frag)
+                           : rs::code(kDx_ssao_frag, sizeof kDx_ssao_frag);
         pd.SampleMask = UINT_MAX;
         pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
         pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -2352,10 +2495,23 @@ void D3D12Renderer::runSsao() {
     list_->RSSetScissorRects(1, &sr);
     list_->SetGraphicsRootSignature(aoRs_);
     list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    // RAY-TRACED: the same push block and the camera in the world after it,
+    // and the scene the rays see (`rtBind`'s, at the AO root's slots)
+    const float aoMask = 255.0f;   // every instance: the set and the bodies occlude
+    SsaoRtPush rp{push, {rtEye_[0], rtEye_[1], rtEye_[2], aoMask}, {rtS_[0], rtS_[1], rtS_[2], 0.0f},
+                  {rtU_[0], rtU_[1], rtU_[2], 0.0f}, {rtF_[0], rtF_[1], rtF_[2], 0.0f}};
+    if (rtOn_) {
+        list_->SetGraphicsRootShaderResourceView(2, rtTlas_->GetGPUVirtualAddress());
+        list_->SetGraphicsRootShaderResourceView(3, rtInstTab_->GetGPUVirtualAddress());
+        list_->SetGraphicsRootDescriptorTable(4, srv_.gpu(0));
+        list_->SetGraphicsRootDescriptorTable(5, srv_.gpu(0));
+        rtAoRays_ += 4LL * aoVw_ * aoVh_;   // at most: a sky pixel casts none
+    }
     const auto run = [&](D3D12_CPU_DESCRIPTOR_HANDLE rtv, ID3D12PipelineState* pl) {
         list_->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         list_->SetPipelineState(pl);
-        list_->SetGraphicsRoot32BitConstants(0, sizeof push / 4, &push, 0);
+        if (rtOn_) list_->SetGraphicsRoot32BitConstants(0, sizeof rp / 4, &rp, 0);
+        else list_->SetGraphicsRoot32BitConstants(0, sizeof push / 4, &push, 0);
         list_->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotDepth));
         list_->DrawInstanced(3, 1, 0, 0);
     };
@@ -2364,6 +2520,549 @@ void D3D12Renderer::runSsao() {
     colour_.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
     run(rtv_.cpu(rtvColour_), aoBlurPipe_);
     bound_ = nullptr;
+}
+
+// ---- HYBRID RAY TRACING, `todo/enhancements.md` 19 ------------------------
+//
+// AN ENHANCEMENT, off unless asked (`raytracing = on`, `--raytracing`), and
+// this backend's alone: DXR 1.1's INLINE ray queries (tier 1.1, shader model
+// 6.5) cast from the raster passes - no ray-tracing pipeline, no shader table.
+// Three effects, in `backends/d3d12/shaders/rt.glsl` and the -DOMK_RT arms of
+// `scene.frag` and `ssao.frag`:
+//   1. a CHARACTER LIT BY ITS SURROUNDINGS - six cosine-weighted rays into the
+//      set from each of its fragments, a hit returning what the eye sees there
+//      (the baked vertex colour times the texel), a miss the sky; the mean is
+//      added to its lamps' light and the near hits occlude its ambient;
+//   2. SHADOW RAYS for the lamps that light a character: a lamp the set hides
+//      gives it nothing (the mapped shadow still darkens the ground alone);
+//   3. RAY-TRACED AO in SSAO's place - the same pass, 4x4 blur and multiply,
+//      four short rays a pixel, the bodies occluding too.
+// The set keeps its baked light, the artists' own: only the AO term touches it.
+//
+// The scene the rays see is made HERE, from what the frame submits:
+//   * a SET geometry (no pose, not a caster) gets a BLAS once, from all of its
+//     opaque and cutout BATCHES - what is culled from the view still shades a
+//     character - remade when its revision moves; it stays in the TLAS while
+//     it was drawn in the last 120 frames;
+//   * the BODIES (posed by the pose buffer or on the CPU) share ONE BLAS rebuilt
+//     every frame from their drawn opaque runs, posed here on the CPU (on the
+//     shared threads) by the very affines `scene.vert` applies;
+//   * one TLAS a frame over them, identity transforms (every corner is in world
+//     space already), the sets mask 1, the bodies 2.
+// The builds go on the one-shot list, executed and waited for in `end()` before
+// the frame's list, which reads the TLAS through a root SRV at a fixed address.
+ID3D12Resource* D3D12Renderer::rtBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, bool uav,
+                                        D3D12_RESOURCE_STATES st, const char* tag) {
+    D3D12_HEAP_PROPERTIES hp{};
+    hp.Type = type;
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    d.Width = bytes ? bytes : 1;
+    d.Height = 1; d.DepthOrArraySize = 1; d.MipLevels = 1;
+    d.SampleDesc.Count = 1;
+    d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    d.Flags = uav ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
+    ID3D12Resource* r = nullptr;
+    if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, st, nullptr, IID_PPV_ARGS(&r)))) {
+        std::fprintf(stderr, "d3d12: ray tracing buffer of %llu bytes (%s) failed\n",
+                     static_cast<unsigned long long>(bytes), tag);
+        return nullptr;
+    }
+    OMK_GPU_ALLOC(tag, omk::prof::gpuKey(omk::prof::kD3dResource, r), bytes);
+    return r;
+}
+
+// an UPLOAD buffer of at least `bytes`, mapped for its life; a smaller one is
+// retired (the frame that used it has been waited for)
+bool D3D12Renderer::rtMapped(UINT64 bytes, ID3D12Resource*& r, void*& p, UINT64& cap) {
+    if (r && cap >= bytes) return true;
+    if (r) deadBufs_.push_back(r);
+    r = nullptr; p = nullptr; cap = 0;
+    const UINT64 want = alignUp(bytes + bytes / 4, 256);
+    r = rtBuffer(want, D3D12_HEAP_TYPE_UPLOAD, false, D3D12_RESOURCE_STATE_GENERIC_READ, "ray tracing");
+    if (!r) return false;
+    D3D12_RANGE none{0, 0};
+    if (FAILED(r->Map(0, &none, &p))) { freeRes(r); return false; }
+    cap = want;
+    return true;
+}
+
+bool D3D12Renderer::rtInit() {
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 o5{};
+    const bool tier = SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &o5, sizeof o5)) &&
+                      o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+    D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_5};
+    const bool model = SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm)) &&
+                       sm.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+    if (!tier || !model) {
+        std::printf("d3d12: ray tracing asked for, but this device has no DXR 1.1 inline ray queries "
+                    "(raytracing tier 0x%x, shader model 0x%x) - off\n",
+                    static_cast<unsigned>(o5.RaytracingTier), static_cast<unsigned>(sm.HighestShaderModel));
+        return false;
+    }
+    if (FAILED(dev_->QueryInterface(IID_PPV_ARGS(&dev5_))) ||
+        FAILED(dev_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&rtAlloc_))) ||
+        FAILED(dev_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, rtAlloc_, nullptr,
+                                       IID_PPV_ARGS(&rtList_)))) {
+        std::printf("d3d12: ray tracing asked for, but the device gives no ID3D12Device5 - off\n");
+        release(rtList_);
+        release(rtAlloc_);
+        release(dev5_);
+        return false;
+    }
+    rtList_->Close();
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in{};
+    in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    in.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    in.NumDescs = kRtMaxInst;
+    in.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO pi{};
+    dev5_->GetRaytracingAccelerationStructurePrebuildInfo(&in, &pi);
+    rtTlasScratch_ = alignUp(pi.ScratchDataSizeInBytes, 256);
+    rtTlas_ = rtBuffer(alignUp(pi.ResultDataMaxSizeInBytes, 256), D3D12_HEAP_TYPE_DEFAULT, true,
+                       D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, "ray tracing");
+    UINT64 c0 = 0, c1 = 0, c2 = 0;
+    const bool ok = rtTlas_ &&
+        rtMapped(kRtMaxInst * sizeof(D3D12_RAYTRACING_INSTANCE_DESC), rtInstDesc_, rtInstDescPtr_, c0) &&
+        rtMapped(kRtMaxInst * 16, rtInstTab_, rtInstTabPtr_, c1) &&
+        rtMapped(256, rtFrameCb_, rtFramePtr_, c2) &&
+        (rtCount_ = rtBuffer(256, D3D12_HEAP_TYPE_DEFAULT, true, D3D12_RESOURCE_STATE_COMMON, "ray tracing")) &&
+        (rtCountRead_ = rtBuffer(256, D3D12_HEAP_TYPE_READBACK, false, D3D12_RESOURCE_STATE_COPY_DEST, "ray tracing"));
+    if (!ok) {
+        std::printf("d3d12: ray tracing - its buffers could not be made - off\n");
+        rtKill();
+        return false;
+    }
+    rtOn_ = true;
+    std::printf("d3d12: RAY TRACING on - an ENHANCEMENT: DXR 1.1 inline ray queries (tier 0x%x, shader "
+                "model 6.5): characters lit by the set around them, shadow rays for their lamps, "
+                "ray-traced AO in place of SSAO\n", static_cast<unsigned>(o5.RaytracingTier));
+    omk::event("rt_on", {{"tier", static_cast<unsigned>(o5.RaytracingTier)}});
+    return true;
+}
+
+// The frame's constants and the scene pass's six ray-tracing roots (bound
+// after the scene's root signature in `begin`).
+void D3D12Renderer::rtBind(const omk::View& view) {
+    ++rtFrame_;
+    rtCounting_ = rtFrame_ % 60 == 2;
+    rtCounted_ += rtCounting_;
+    rtNotes_.clear();
+    omk::RCamera cam = view.cam;
+    cam.w = view.letterboxed() ? view.vw : w_;
+    cam.h = view.letterboxed() ? view.vh : h_;
+    float tH = 0.0f, tV = 0.0f;
+    omk::cameraBasis(cam, rtS_, rtU_, rtF_, tH, tV);
+    for (int k = 0; k < 3; ++k) rtEye_[k] = cam.eye[k];
+    // `OMK_RT_NO_INDIRECT=1`: the indirect term and the near occlusion off -
+    // the control `verify.py: engine: raytracing` shows its check failing with
+    static const bool noIndirect = omk::envFlag("OMK_RT_NO_INDIRECT");
+    static const bool noShadowRays = omk::envFlag("OMK_RT_NO_SHADOW_RAYS");   // ...and the lamps' rays
+    RtFrame f{};
+    const float* sky = fog_ ? fogColour_ : clearColour_;
+    for (int k = 0; k < 3; ++k) { f.sky[k] = sky[k]; f.eye[k] = rtEye_[k]; }
+    // the indirect term's strength: 1, a Lambertian's - the texel times the
+    // cosine-weighted mean of the radiance arriving, which is what the baked
+    // colour times its texel IS where the ray lands
+    f.sky[3] = noIndirect ? 0.0f : 1.0f;
+    f.eye[3] = noIndirect ? 0.0f : 0.3f;     // the near occlusion's
+    f.params[0] = 1500.0f;                   // indirect reach: 38 m, the street fogs beyond
+    f.params[1] = 400.0f;                    // occlusion reach: 10 m - an arch overhead
+    f.params[2] = 8.0f;                      // the lamp's radius (soft shadow rays)
+    f.params[3] = noShadowRays ? -1.0f : 24.0f;   // ...and the margin a ray stops short of it
+    // `OMK_RT_TUNE="indirect,occlusion,reach,occlusion reach,lamp radius,margin"`
+    // replaces the six numbers above, for judging them by eye
+    static float tune[6] = {-1, -1, -1, -1, -1, -1};
+    static const bool tuned = [] {
+        const char* t = omk::envStr("OMK_RT_TUNE");
+        return t && std::sscanf(t, "%f,%f,%f,%f,%f,%f", &tune[0], &tune[1], &tune[2], &tune[3], &tune[4],
+                                &tune[5]) == 6;
+    }();
+    if (tuned) {
+        f.sky[3] = tune[0]; f.eye[3] = tune[1];
+        for (int k = 0; k < 4; ++k) f.params[k] = tune[2 + k];
+    }
+    std::memcpy(rtFramePtr_, &f, sizeof f);
+    list_->SetGraphicsRootShaderResourceView(6, rtTlas_->GetGPUVirtualAddress());
+    list_->SetGraphicsRootShaderResourceView(7, rtInstTab_->GetGPUVirtualAddress());
+    list_->SetGraphicsRootConstantBufferView(8, rtFrameCb_->GetGPUVirtualAddress());
+    list_->SetGraphicsRootUnorderedAccessView(9, rtCount_->GetGPUVirtualAddress());
+    list_->SetGraphicsRootDescriptorTable(10, srv_.gpu(0));
+    list_->SetGraphicsRootDescriptorTable(11, srv_.gpu(0));
+}
+
+// A BLAS's triangles - opaque ones first - into its two upload buffers: the
+// corners' positions (posed by the triangle's affines when it has them, the
+// rows of a 3x4 a mesh as `scene.vert` reads them) and the records. On the
+// shared threads: a frame's bodies are tens of thousands of triangles.
+bool D3D12Renderer::rtFill(RtBlas& b, const std::vector<RtTri>& tri) {
+    const std::size_t n = tri.size();
+    void* pp = b.posPtr;
+    void* rp = b.recPtr;
+    ID3D12Resource* recWas = b.rec;
+    if (!rtMapped(n * 36, b.pos, pp, b.posCap) || !rtMapped(n * 64, b.rec, rp, b.recCap)) return false;
+    b.posPtr = static_cast<float*>(pp);
+    b.recPtr = static_cast<std::uint32_t*>(rp);
+    if (b.recSrv == UINT(-1)) b.recSrv = srv_.alloc();
+    if (b.recSrv == UINT(-1)) return false;
+    if (b.rec != recWas) {
+        D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+        v.Format = DXGI_FORMAT_R32_TYPELESS;
+        v.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        v.Buffer.NumElements = static_cast<UINT>(b.recCap / 4);
+        v.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        dev_->CreateShaderResourceView(b.rec, &v, srv_.cpu(b.recSrv));
+    }
+    float* P = b.posPtr;
+    std::uint32_t* R = b.recPtr;
+    omk::Threads::shared().parallelFor(0, n, 2048, [&](std::size_t from, std::size_t to) {
+        for (std::size_t t = from; t < to; ++t) {
+            const RtTri& q = tri[t];
+            const omk::Geometry& g = *q.g;
+            const bool skin = q.aff && g.cornerMesh.size() == g.corners.size();
+            for (std::size_t k = 0; k < 3; ++k) {
+                const std::size_t c = q.first + k;
+                const omk::Corner& v = g.corners[c];
+                float x = v.x, y = v.y, z = v.z;
+                if (skin) {
+                    const std::int32_t m = g.cornerMesh[c];
+                    if (m >= 0 && static_cast<std::uint32_t>(m) < q.poses) {
+                        const float* a = q.aff + 12 * m;
+                        const float px = x, py = y, pz = z;
+                        x = a[0] * px + a[1] * py + a[2] * pz + a[3];
+                        y = a[4] * px + a[5] * py + a[6] * pz + a[7];
+                        z = a[8] * px + a[9] * py + a[10] * pz + a[11];
+                    }
+                }
+                P[9 * t + 3 * k] = x; P[9 * t + 3 * k + 1] = y; P[9 * t + 3 * k + 2] = z;
+                const float rec[5] = {v.u, v.v, v.r, v.g, v.b};
+                std::memcpy(R + 16 * t + 5 * k, rec, sizeof rec);
+            }
+            R[16 * t + 15] = q.tex;
+        }
+    });
+    return true;
+}
+
+// A SET geometry's BLAS inputs, made on first sight and again when its corners
+// move: every opaque and cutout batch (a blended one is a glow or a decal, not
+// a wall). -> null when it has none.
+D3D12Renderer::RtBlas* D3D12Renderer::rtSetFor(const omk::Geometry* g) {
+    const auto it = rtSet_.find(g);
+    if (it != rtSet_.end() && it->second.rev == g->revision)
+        return it->second.nOpaque + it->second.nCut ? &it->second : nullptr;
+    RtBlas& b = rtSet_[g];
+    b.rev = g->revision;
+    b.built = false;
+    b.texAt.clear();
+    b.texGen = texGen_;
+    std::vector<std::uint32_t> opq, cut;
+    for (const auto& bt : g->batches) {
+        if (bt.blend != omk::Blend::Opaque) continue;
+        for (std::size_t c = bt.start; c + 3 <= bt.start + bt.count && c + 3 <= g->corners.size(); c += 3)
+            (bt.cutout ? cut : opq).push_back(static_cast<std::uint32_t>(c));
+    }
+    b.nOpaque = static_cast<std::uint32_t>(opq.size());
+    b.nCut = static_cast<std::uint32_t>(cut.size());
+    opq.insert(opq.end(), cut.begin(), cut.end());
+    std::vector<RtTri> tris;
+    tris.reserve(opq.size());
+    for (const std::uint32_t c : opq) tris.push_back(RtTri{g, nullptr, 0, c, white_.srv});
+    if (opq.empty() || !rtFill(b, tris)) { b.nOpaque = b.nCut = 0; return nullptr; }
+    b.triOf.assign(g->corners.size() / 3, -1);
+    for (std::size_t t = 0; t < opq.size(); ++t) b.triOf[opq[t] / 3] = static_cast<std::int32_t>(t);
+    return &b;
+}
+
+// Every opaque draw, as it is submitted: a body's run noted for this frame's
+// BLAS (its affines copied while the pointer is good), a set's texture slots
+// written into its records when they changed.
+void D3D12Renderer::rtNote(const omk::Draw& d) {
+    if (d.blend != omk::Blend::Opaque || d.start + d.count > d.geo->corners.size()) return;
+    const std::size_t slot = omk::drawTextureSlot(d);
+    const UINT srv = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].srv : white_.srv;
+    const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
+    if (posed || d.castsShadow || d.lit != 0) {
+        RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
+        n.geo = d.geo;
+        if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);
+        n.runs[d.start] = RtRun{d.count, d.cutout, srv};
+        return;
+    }
+    RtBlas* b = rtSetFor(d.geo);
+    if (!b) return;
+    b->seen = rtFrame_;
+    if (b->texGen != texGen_) {   // a texture went: no record may name its slot
+        b->texGen = texGen_;
+        b->texAt.clear();
+        for (std::uint32_t t = 0; t < b->nOpaque + b->nCut; ++t) b->recPtr[16 * t + 15] = white_.srv;
+    }
+    const auto at = b->texAt.find(d.start);
+    if (at != b->texAt.end() && at->second.first == d.count && at->second.second == srv) return;
+    b->texAt[d.start] = {d.count, srv};
+    for (std::size_t c = d.start; c + 3 <= d.start + d.count; c += 3) {
+        const std::int32_t t = c / 3 < b->triOf.size() ? b->triOf[c / 3] : -1;
+        if (t >= 0) b->recPtr[16 * t + 15] = srv;
+    }
+}
+
+void D3D12Renderer::rtDrop(RtBlas& b) {
+    if (b.as) deadBufs_.push_back(b.as);
+    if (b.pos) deadBufs_.push_back(b.pos);
+    if (b.rec) deadBufs_.push_back(b.rec);
+    srv_.free(b.recSrv);
+    b = RtBlas{};
+}
+
+// the rays' tally (`scene.frag`'s RtCount) copied out on a one-shot list. A
+// buffer rests in COMMON between lists and is PROMOTED to what a list does
+// with it (a copy source here, a UAV in the scene pass, the builds' scratch),
+// decaying back at the list's end - so no barrier is written for it.
+void D3D12Renderer::rtTallyCopy(ID3D12GraphicsCommandList* l) {
+    l->CopyBufferRegion(rtCountRead_, 0, rtCount_, 0, 16);
+}
+void D3D12Renderer::rtTallyRead() {
+    void* p = nullptr;
+    const D3D12_RANGE rr{0, 16};
+    if (FAILED(rtCountRead_->Map(0, &rr, &p))) return;
+    std::memcpy(rtCounts_, p, sizeof rtCounts_);
+    const D3D12_RANGE none{0, 0};
+    rtCountRead_->Unmap(0, &none);
+}
+
+// The frame's acceleration structures, built and waited for before the
+// frame's list runs: the bodies' BLAS (rebuilt), any set BLAS not built yet,
+// then the TLAS over the sets drawn lately and this frame's bodies.
+void D3D12Renderer::rtBuild() {
+    struct Job {
+        RtBlas* b;
+        bool body;
+        bool refit;
+        D3D12_RAYTRACING_GEOMETRY_DESC gd[2];
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in;
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO pi;
+    };
+    std::vector<Job> jobs;
+    rtRecorded_ = false;
+    const auto tStart = std::chrono::steady_clock::now();
+    // 1. this frame's bodies, posed and recorded
+    // ...ALL of them in ONE BLAS: a build has a fixed cost, and a street's
+    // crowd is a couple of hundred bodies of a few hundred triangles
+    {
+        std::vector<RtTri> tri, cut;
+        int bodies = 0;
+        std::uint64_t sig = 1469598103934665603ull;   // FNV-1a over the runs taken
+        const auto mix = [&](std::uint64_t v) { sig = (sig ^ v) * 1099511628211ull; };
+        for (auto& [key, n] : rtNotes_) {
+            // a body further than 4500 units (115 m) from the eye is left out:
+            // its AO has faded (`ssao.frag`, 3500..8000 of view depth) and a
+            // character's rays see the set alone
+            const omk::Corner& c0 = n.geo->corners[n.runs.begin()->first];
+            const float at[3] = {n.aff.empty() ? c0.x : n.aff[3], n.aff.empty() ? c0.y : n.aff[7],
+                                 n.aff.empty() ? c0.z : n.aff[11]};
+            const float dx = at[0] - rtEye_[0], dy = at[1] - rtEye_[1], dz = at[2] - rtEye_[2];
+            if (dx * dx + dy * dy + dz * dz > 4500.0f * 4500.0f) continue;
+            const std::size_t was = tri.size() + cut.size();
+            const std::uint32_t poses = static_cast<std::uint32_t>(n.aff.size() / 12);
+            for (const auto& [start, r] : n.runs) {
+                mix(reinterpret_cast<std::uintptr_t>(n.geo));
+                mix((static_cast<std::uint64_t>(start) << 33) ^ (static_cast<std::uint64_t>(r.count) << 1) ^ r.cutout);
+                for (std::size_t c = start; c + 3 <= start + r.count && c + 3 <= n.geo->corners.size(); c += 3)
+                    (r.cutout ? cut : tri).push_back(RtTri{n.geo, n.aff.empty() ? nullptr : n.aff.data(), poses,
+                                                           static_cast<std::uint32_t>(c), r.srv});
+            }
+            bodies += tri.size() + cut.size() > was;
+        }
+        RtBlas& b = rtBodyAll_;
+        b.nOpaque = static_cast<std::uint32_t>(tri.size());
+        b.nCut = static_cast<std::uint32_t>(cut.size());
+        b.built = false;
+        rtBodyCount_ = bodies;
+        tri.insert(tri.end(), cut.begin(), cut.end());
+        ID3D12Resource* const posWas = b.pos;
+        if (!tri.empty() && rtFill(b, tri)) {
+            b.seen = rtFrame_;
+            // REFITTED in place while the same runs of the same bodies make it
+            // (only their poses moved), rebuilt when that changes and every
+            // 30 frames - a refit's tree loosens as the limbs travel
+            const bool refit = b.as && sig == rtBodySig_ && b.pos == posWas && rtFrame_ - rtBodyRebuilt_ < 30;
+            if (!refit) { rtBodySig_ = sig; rtBodyRebuilt_ = rtFrame_; }
+            jobs.push_back(Job{&b, true, refit, {}, {}, {}});
+        } else {
+            b.nOpaque = b.nCut = 0;
+        }
+    }
+    // 2. a set's, once
+    for (auto& [g, b] : rtSet_)
+        if (!b.built && b.nOpaque + b.nCut && rtFrame_ - b.seen <= 120) jobs.push_back(Job{&b, false, false, {}, {}, {}});
+    // their inputs and sizes, and one scratch for all of them and the TLAS
+    UINT64 scratch = rtTlasScratch_;
+    for (Job& j : jobs) {
+        RtBlas& b = *j.b;
+        const D3D12_GPU_VIRTUAL_ADDRESS va = b.pos->GetGPUVirtualAddress();
+        UINT ng = 0;
+        const auto geom = [&](D3D12_GPU_VIRTUAL_ADDRESS at, std::uint32_t tris, bool opaque) {
+            D3D12_RAYTRACING_GEOMETRY_DESC& g = j.gd[ng++];
+            g = D3D12_RAYTRACING_GEOMETRY_DESC{};
+            g.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+            // a CUTOUT geometry is non-opaque: `rtTrace` reads its colour key
+            g.Flags = opaque ? D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE : D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+            g.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+            g.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
+            g.Triangles.VertexCount = 3 * tris;
+            g.Triangles.VertexBuffer.StartAddress = at;
+            g.Triangles.VertexBuffer.StrideInBytes = 12;
+        };
+        if (b.nOpaque) geom(va, b.nOpaque, true);
+        if (b.nCut) geom(va + 36ull * b.nOpaque, b.nCut, false);
+        j.in = D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS{};
+        j.in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        j.in.Flags = j.body ? D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD |
+                                  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE
+                            : D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        if (j.refit) j.in.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+        j.in.NumDescs = ng;
+        j.in.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+        j.in.pGeometryDescs = j.gd;
+        dev5_->GetRaytracingAccelerationStructurePrebuildInfo(&j.in, &j.pi);
+        scratch += alignUp(j.refit ? j.pi.UpdateScratchDataSizeInBytes : j.pi.ScratchDataSizeInBytes, 256);
+        const UINT64 need = alignUp(j.pi.ResultDataMaxSizeInBytes, 256);
+        if (!j.refit && (!b.as || b.asCap < need)) {
+            if (b.as) deadBufs_.push_back(b.as);
+            const UINT64 cap = j.body ? alignUp(need + need / 4, 256) : need;
+            b.as = rtBuffer(cap, D3D12_HEAP_TYPE_DEFAULT, true,
+                            D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, "ray tracing");
+            b.asCap = b.as ? cap : 0;
+        }
+    }
+    if (rtScratchCap_ < scratch) {
+        if (rtScratch_) deadBufs_.push_back(rtScratch_);
+        const UINT64 cap = alignUp(scratch + scratch / 4, 256);
+        rtScratch_ = rtBuffer(cap, D3D12_HEAP_TYPE_DEFAULT, true, D3D12_RESOURCE_STATE_COMMON,
+                              "ray tracing");
+        rtScratchCap_ = rtScratch_ ? cap : 0;
+        if (!rtScratch_) return;
+    }
+    rtAlloc_->Reset();
+    rtList_->Reset(rtAlloc_, nullptr);
+    ID3D12GraphicsCommandList4* l = rtList_;
+    const D3D12_GPU_VIRTUAL_ADDRESS sva = rtScratch_->GetGPUVirtualAddress();
+    UINT64 so = 0;
+    for (Job& j : jobs) {
+        if (!j.b->as) continue;
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bd{};
+        bd.Inputs = j.in;
+        bd.DestAccelerationStructureData = j.b->as->GetGPUVirtualAddress();
+        bd.ScratchAccelerationStructureData = sva + so;
+        if (j.refit) bd.SourceAccelerationStructureData = bd.DestAccelerationStructureData;
+        l->BuildRaytracingAccelerationStructure(&bd, 0, nullptr);
+        so += alignUp(j.refit ? j.pi.UpdateScratchDataSizeInBytes : j.pi.ScratchDataSizeInBytes, 256);
+        j.b->built = true;
+        ++(j.refit ? rtBodyRefits_ : j.body ? rtBodyBuilds_ : rtSetBuilds_);
+    }
+    D3D12_RESOURCE_BARRIER uav{};
+    uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    l->ResourceBarrier(1, &uav);
+    // 3. the TLAS: an instance a BLAS, its custom index the row of the table
+    auto* inst = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(rtInstDescPtr_);
+    auto* tab = static_cast<std::uint32_t*>(rtInstTabPtr_);
+    UINT ni = 0;
+    int sets = 0, bodies = 0;
+    long long setTris = 0, bodyTris = 0;
+    const auto add = [&](const RtBlas& b, UINT mask) {
+        if (ni >= kRtMaxInst || !b.built || !b.as) return false;
+        D3D12_RAYTRACING_INSTANCE_DESC& d = inst[ni];
+        std::memset(&d, 0, sizeof d);
+        d.Transform[0][0] = d.Transform[1][1] = d.Transform[2][2] = 1.0f;
+        d.InstanceID = ni;
+        d.InstanceMask = mask;
+        d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
+        d.AccelerationStructure = b.as->GetGPUVirtualAddress();
+        tab[4 * ni] = b.recSrv;
+        tab[4 * ni + 1] = b.nOpaque;
+        tab[4 * ni + 2] = mask;
+        tab[4 * ni + 3] = 0;
+        ++ni;
+        return true;
+    };
+    for (const auto& [g, b] : rtSet_)
+        if (rtFrame_ - b.seen <= 120 && add(b, 1)) { ++sets; setTris += b.nOpaque + b.nCut; }
+    if (rtBodyAll_.seen == rtFrame_ && add(rtBodyAll_, 2)) {
+        bodies = rtBodyCount_;
+        bodyTris = rtBodyAll_.nOpaque + rtBodyAll_.nCut;
+    }
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC td{};
+    td.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    td.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    td.Inputs.NumDescs = ni;
+    td.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    td.Inputs.InstanceDescs = rtInstDesc_->GetGPUVirtualAddress();
+    td.DestAccelerationStructureData = rtTlas_->GetGPUVirtualAddress();
+    td.ScratchAccelerationStructureData = sva + so;
+    l->BuildRaytracingAccelerationStructure(&td, 0, nullptr);
+    l->ResourceBarrier(1, &uav);
+    l->Close();
+    rtRecorded_ = true;
+    // the CPU's share (the bodies posed, the inputs recorded), for the log
+    rtCpuMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
+    rtInstances_ = static_cast<int>(ni); rtSets_ = sets; rtBodies_ = bodies;
+    rtSetTris_ = setTris; rtBodyTris_ = bodyTris;
+}
+
+// After the frame ran: the rays' tally read back (copied at the end of the
+// frame's list), and the log.
+void D3D12Renderer::rtAfter() {
+    rtTallyRead();
+    const UINT ni = static_cast<UINT>(rtInstances_);
+    const int sets = rtSets_, bodies = rtBodies_;
+    const long long setTris = rtSetTris_, bodyTris = rtBodyTris_;
+    if ((static_cast<int>(ni) != rtToldInst_ && rtTold_ < 6) || rtFrame_ % 60 == 30) {
+        rtToldInst_ = static_cast<int>(ni);
+        ++rtTold_;
+        // the tally covers every COUNTING frame so far (`rtBind`)
+        const long cf = std::max(1L, rtCounted_);
+        const unsigned shadowRays = static_cast<unsigned>(rtCounts_[0] / cf);
+        const unsigned indirectRays = static_cast<unsigned>(rtCounts_[1] / cf);
+        std::printf("d3d12: ray tracing live (frame %ld) - TLAS of %u instances: %d set BLAS (%lld triangles), "
+                    "%d bodies in one BLAS (%lld triangles); ~%u lamp shadow rays and ~%u indirect rays a frame; "
+                    "builds %.2f ms CPU a frame, the bodies' BLAS built %ld times and refitted %ld\n", rtFrame_,
+                    ni, sets, setTris, bodies, bodyTris,
+                    shadowRays, indirectRays, rtCpuMs_ / rtFrame_, rtBodyBuilds_, rtBodyRefits_);
+        omk::event("rt_tlas", {{"frame", rtFrame_}, {"instances", static_cast<unsigned>(ni)}, {"sets", sets},
+                               {"bodies", bodies}, {"set_tris", static_cast<long>(setTris)},
+                               {"body_tris", static_cast<long>(bodyTris)},
+                               {"shadow_rays", shadowRays}, {"indirect_rays", indirectRays}});
+    }
+}
+
+void D3D12Renderer::rtKill() {
+    if (rtOn_ && rtCount_ && rtCountRead_ && queue_) {
+        // the last frames' tally, for the summary
+        rtTallyCopy(oneShotBegin());
+        oneShotEnd();
+        rtTallyRead();
+        std::printf("d3d12: ray tracing - %ld frames; the last TLAS %d instances (%d set BLAS, %d bodies); "
+                    "%ld set BLAS builds, %ld body BLAS builds; ~%u lamp shadow rays, ~%u indirect rays in %ld "
+                    "counted frames, %lld AO rays\n", rtFrame_, rtInstances_, rtSets_, rtBodies_, rtSetBuilds_, rtBodyBuilds_,
+                    rtCounts_[0], rtCounts_[1], rtCounted_, rtAoRays_);
+        omk::event("rt_summary", {{"frames", rtFrame_}, {"instances", rtInstances_}, {"sets", rtSets_},
+                                  {"bodies", rtBodies_}, {"set_builds", rtSetBuilds_},
+                                  {"body_builds", rtBodyBuilds_}, {"shadow_rays", rtCounts_[0]},
+                                  {"indirect_rays", rtCounts_[1]}, {"ao_rays", static_cast<long>(rtAoRays_)}});
+    }
+    for (auto& [g, b] : rtSet_) rtDrop(b);
+    rtDrop(rtBodyAll_);
+    rtSet_.clear();
+    rtNotes_.clear();
+    for (ID3D12Resource** r : {&rtTlas_, &rtInstDesc_, &rtInstTab_, &rtScratch_, &rtFrameCb_, &rtCount_,
+                               &rtCountRead_})
+        freeRes(*r);
+    rtInstDescPtr_ = rtInstTabPtr_ = rtFramePtr_ = nullptr;
+    release(rtList_);
+    release(rtAlloc_);
+    release(dev5_);
+    rtOn_ = false;
 }
 
 // ---- THE UPSCALER (`upscale.h`, `todo/enhancements.md` 18) ----------------
@@ -2556,10 +3255,25 @@ void D3D12Renderer::end() {
     colour_.to(list_, D3D12_RESOURCE_STATE_COPY_SOURCE);
     copyOwed_ = true;
     srcW_ = sourceW(); srcH_ = sourceH();
+    // HYBRID RAY TRACING: the frame's acceleration structures, on their own
+    // list submitted just before the frame's (which reads them; the list ends
+    // on a UAV barrier), and the rays' tally copied out at the frame's end
+    if (rtOn_) {
+        rtBuild();
+        rtTallyCopy(list_);
+    }
     list_->Close();
+    if (rtRecorded_) {
+        ID3D12CommandList* b[] = {rtList_};
+        queue_->ExecuteCommandLists(1, b);
+    }
     ID3D12CommandList* l[] = {list_};
     queue_->ExecuteCommandLists(1, l);
     flush();
+    if (rtRecorded_) {
+        rtRecorded_ = false;
+        rtAfter();
+    }
     recording_ = false;
     listOpen_ = false;
     shadowLive_ = false;
@@ -2641,6 +3355,11 @@ const omk::Surface& D3D12Renderer::readback() {
 
 void D3D12Renderer::geometryGone(void* self, const omk::Geometry* g) {
     auto* r = static_cast<D3D12Renderer*>(self);
+    // the RAY TRACING scene keys on the pointer too, released or not: a new
+    // geometry at the same address must not inherit this one's BLAS
+    if (auto it = r->rtSet_.find(g); it != r->rtSet_.end()) { r->rtDrop(it->second); r->rtSet_.erase(it); }
+    for (auto it = r->rtNotes_.begin(); it != r->rtNotes_.end();)
+        it = it->first.second == g ? r->rtNotes_.erase(it) : std::next(it);
     if (!r->releaseOn_) return;
     bool had = false;
     if (auto it = r->vbo_.find(g); it != r->vbo_.end()) {
@@ -2665,6 +3384,7 @@ D3D12Renderer::~D3D12Renderer() {
     freeRes(motionRead_);
     if (info_)
         std::printf("d3d12: debug layer - %ld errors, %ld warnings\n", dbgErrors_, dbgWarnings_);
+    rtKill();
     for (ID3D12Resource*& b : deadBufs_) freeRes(b);
     for (auto& [g, b] : vbo_) freeRes(b.res);
     for (auto& [key, u] : uploaded_) freeRes(u.t.img);
@@ -2678,6 +3398,7 @@ D3D12Renderer::~D3D12Renderer() {
     release(swap_);
     for (auto*& p : pipe_) release(p);
     for (auto*& p : pipeRefl_) release(p);
+    for (auto*& p : pipeCount_) release(p);
     release(pipeStencil_);
     release(pipeDepthReset_);
     release(shPipe_);

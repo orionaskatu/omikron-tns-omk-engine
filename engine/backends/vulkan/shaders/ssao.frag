@@ -10,6 +10,13 @@
 // averages out exactly. The result is a factor, 1 = open, written to an R8
 // target and multiplied over the frame by the blur.
 #version 450
+#ifdef OMK_RT
+// RAY-TRACED AO (`todo/enhancements.md` 19): the Direct3D 12 backend's -DOMK_RT
+// build replaces the depth-buffer hemisphere with a few short rays against the
+// frame's TLAS (`backends/d3d12/shaders/rt.glsl`) - the set AND the bodies,
+// on screen or not. Vulkan never defines it.
+#include "rt.glsl"
+#endif
 
 // Under MSAA the depth is MULTISAMPLED and read at its first sample (the
 // `_ms` build of this file, glslc -DOMK_MS); `texelFetch` reads both alike.
@@ -22,6 +29,12 @@ layout(set = 0, binding = 0) uniform sampler2D depthTex;
 layout(push_constant) uniform Push {
     vec4 proj;   // tanH, tanV, A, B
     vec4 view;   // viewport w, h (render pixels), radius (world units), strength
+#ifdef OMK_RT
+    vec4 eye;    // the camera in WORLD space: xyz the eye, w the rays' instance mask
+    vec4 s;      // ...and its basis (`cameraBasis`): view x = s, view y = u,
+    vec4 u;      //    view z = f, so world = eye + s x + u y + f z
+    vec4 f;
+#endif
 } pc;
 
 layout(location = 0) out float outAO;
@@ -58,6 +71,26 @@ void main() {
     const float bayer[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6.,
                                       3., 11., 1., 9., 15., 7., 13., 5.);
     float a = bayer[(px.y & 3) * 4 + (px.x & 3)] / 16.0 * 6.2831853;
+#ifdef OMK_RT
+    {
+        // the pixel and its normal in the world, four rays as long as SSAO's
+        // radius, the 4x4 pattern turning them as it turns the hemisphere
+        // (and `ssao_blur.frag` averaging it out); a near hit occludes most
+        vec3 Pw = pc.eye.xyz + pc.s.xyz * P.x + pc.u.xyz * P.y + pc.f.xyz * P.z;
+        vec3 Nw = normalize(pc.s.xyz * N.x + pc.u.xyz * N.y + pc.f.xyz * N.z);
+        float Rr = pc.view.z;
+        vec3 o = Pw + Nw * (0.5 + P.z * 0.002);
+        const int KR = 4;
+        float occR = 0.0;
+        for (int i = 0; i < KR; ++i)
+            if (rtTrace(o, rtCosine(Nw, i, KR, a, rtNoise(gl_FragCoord.xy)), Rr, uint(pc.eye.w), true))
+                occR += 1.0 - smoothstep(0.3 * Rr, Rr, rtT);
+        float aoR = 1.0 - pc.view.w * occR / float(KR);
+        aoR = mix(aoR, 1.0, smoothstep(3500.0, 8000.0, P.z));
+        outAO = clamp(aoR, 0.0, 1.0);
+        return;
+    }
+#endif
     vec3 helper = abs(N.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0);
     vec3 T = normalize(cross(helper, N));
     vec3 B = cross(N, T);

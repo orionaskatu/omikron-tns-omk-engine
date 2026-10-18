@@ -1,4 +1,9 @@
 #version 450
+#ifdef OMK_RT
+// HYBRID RAY TRACING (`todo/enhancements.md` 19): the Direct3D 12 backend's
+// -DOMK_RT build only (`backends/d3d12/shaders/rt.glsl`); Vulkan never defines it.
+#include "rt.glsl"
+#endif
 // The scene fragment shader, and it is a transcription of `raster.cpp`'s inner
 // loop rather than a rendering choice:
 //
@@ -96,6 +101,41 @@ layout(set = 1, binding = 2) uniform Lights {
     int   pad2;
 } lg;
 
+#ifdef OMK_RT
+// The ray-traced frame's constants (`d3d12render.cpp` `RtFrame`) and the rays'
+// tally - one atomic per 8x8 pixels, scaled, for the log - in the -DOMK_RT_COUNT
+// build alone, drawn one frame in 60: a shader that writes a UAV loses the
+// EARLY depth test, and every hidden body fragment would cast its rays.
+layout(set = 3, binding = 2) uniform RtFrame {
+    vec4 sky;      // rgb what a ray leaving the set sees; a the indirect term's strength (0 off)
+    vec4 eye;      // xyz the eye; w the near occlusion's strength
+    vec4 params;   // x indirect reach, y occlusion reach, z lamp radius, w lamp margin (< 0: no shadow rays)
+} rtf;
+#ifdef OMK_RT_COUNT
+layout(std430, set = 3, binding = 4) buffer RtCount { uint n[]; } rtCount;
+#endif
+bool rtShadowed = false;   // `litColour` traces its lamps (a character's fragment)
+uint rtLampRays = 0u;
+// SHADOW RAYS FOR THE LAMPS: the lamp at p is hidden from w when the SET is
+// in the way - one ray to a point jittered over a small lamp radius, stopped
+// short of the lamp by a margin (a lamp record sits inside its fixture). A
+// record whose reach spans the city (Anekbah's two reach 35787 units from
+// 20-30 km up) is the set's SKY FILL, the light every street is drawn under -
+// not a lamp, and not traced: shadowing it would put the whole player in the
+// shade of whichever block stands between him and the sky.
+bool rtLampHidden(vec3 w, vec3 n, vec3 p, float reach) {
+    if (reach > 8000.0) return false;
+    float a = rtNoise(gl_FragCoord.xy + vec2(7.0, 13.0));
+    vec3 j = vec3(fract(a * 7.31) , fract(a * 3.17), fract(a * 5.73)) * 2.0 - 1.0;
+    vec3 o = w + n * 2.0;
+    vec3 d = p + j * rtf.params.z - o;
+    float L = length(d);
+    if (rtf.params.w < 0.0 || L <= rtf.params.w + 1.0) return false;
+    ++rtLampRays;
+    return rtTrace(o, d / L, L - rtf.params.w, kRtSet, true);
+}
+#endif
+
 vec3 litColour(vec3 n, vec3 w) {
     vec3 c = vec3(0.0);
     for (int i = 0; i < lg.count; ++i) {
@@ -113,6 +153,9 @@ vec3 litColour(vec3 n, vec3 w) {
         // folds `v46` in before the dot.
         float t = -dot(n, lg.l[i].dirB.xyz * k);
         if (t <= 0.0) continue;
+#ifdef OMK_RT
+        if (rtShadowed && rtLampHidden(w, n, p, rA)) continue;   // the light went through a wall
+#endif
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
         c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
@@ -212,6 +255,74 @@ float litness() {
     return l;
 }
 
+#ifdef OMK_RT
+// the mean over the pixel's 2x2 quad, read from the fine derivatives: four
+// pixels' rays for the price of one - the cheap spatial filter that keeps a
+// few rays a pixel from reading as grain
+vec4 rtQuad(vec4 v) {
+    float sx = (int(gl_FragCoord.x) & 1) == 0 ? 1.0 : -1.0;
+    float sy = (int(gl_FragCoord.y) & 1) == 0 ? 1.0 : -1.0;
+    vec4 vx = v + dFdxFine(v) * sx;
+    vec4 vy = v + dFdyFine(v) * sy;
+    vec4 vxy = vx + dFdyFine(vx) * sy;
+    return 0.25 * (v + vx + vy + vxy);
+}
+
+// A CHARACTER LIT BY ITS SURROUNDINGS. `shade` is what the game gave the
+// fragment (its lamps, from the scene's grey); to it:
+//   1. a vertex-lit body (the engine's default) loses the share of its lamps
+//      the shadow rays find behind the set - the vertex light cannot be
+//      traced itself (`writePose` hands it as directions), so the frame's
+//      lamps are evaluated twice, open and traced, and the ratio scales it;
+//   2. the INDIRECT light: cosine-weighted rays into the set, each hit giving
+//      what the eye sees there - the baked vertex colour times its texel -
+//      and a miss the sky; their mean added, and the rays stopped OVERHEAD
+//      within the occlusion reach taken from his ambient (under an arch).
+vec3 rtCharacter(vec3 shade, vec3 nIn) {
+    vec3 ng = cross(dFdx(vWorld), dFdy(vWorld));
+    ng = dot(ng, ng) > 1e-12 ? normalize(ng) : vec3(0.0, -1.0, 0.0);
+    if (dot(ng, rtf.eye.xyz - vWorld) < 0.0) ng = -ng;
+    vec3 N = dot(nIn, nIn) > 1e-6 ? normalize(nIn) : ng;
+    if (dot(N, ng) < -0.25) N = -N;
+    if (pc.lit == 0 && lg.count > 0) {
+        rtShadowed = false;
+        vec3 open = litColour(N, vWorld);
+        rtShadowed = true;
+        vec3 seen = litColour(N, vWorld);
+        vec3 b = vec3(lg.base);
+        shade *= (b + seen) / max(b + open, vec3(1e-3));
+    }
+    const int K = 6;
+    vec3 sum = vec3(0.0);
+    float near = 0.0;
+    if (rtf.sky.a > 0.0) {
+        float a = 6.2831853 * rtNoise(gl_FragCoord.xy);
+        vec3 o = vWorld + N * 2.0;
+        for (int i = 0; i < K; ++i) {
+            vec3 d = rtCosine(N, i, K, a, rtNoise(gl_FragCoord.yx + vec2(3.0, 11.0)));
+            vec3 rad = rtf.sky.rgb;
+            if (rtTrace(o, d, rtf.params.x, kRtSet, false)) {
+                vec2 uv; vec3 col; uint tex;
+                rtSurface(rtI, rtP, rtG, rtB, uv, col, tex);
+                rad = mix(col * rtTexel(tex, uv).rgb, rtf.sky.rgb, smoothstep(0.5, 1.0, rtT / rtf.params.x));
+                // an occluder OVERHEAD (the game's Y points down): the ground
+                // under his feet is where he stands, not a roof
+                if (d.y < -0.3) near += 1.0 - smoothstep(0.5 * rtf.params.y, rtf.params.y, rtT);
+            }
+            sum += rad;
+        }
+    }
+    vec4 q = rtQuad(vec4(sum, near) / float(K));
+#ifdef OMK_RT_COUNT
+    if (((int(gl_FragCoord.x) | int(gl_FragCoord.y)) & 7) == 0) {
+        if (rtLampRays > 0u) atomicAdd(rtCount.n[0], rtLampRays * 64u);
+        if (rtf.sky.a > 0.0) atomicAdd(rtCount.n[1], uint(K) * 64u);
+    }
+#endif
+    return shade * (1.0 - rtf.eye.w * q.w) + rtf.sky.a * q.rgb;
+}
+#endif
+
 void main() {
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
@@ -245,9 +356,17 @@ void main() {
             -64.0, -56.0, -48.0, -32.0, -28.0, -18.0, -13.0, -10.0);
         wave = tbl[wi] / 255.0;
     }
+#ifdef OMK_RT
+    rtShadowed = pc.caster != 0;   // a lit character's lamps are traced
+#endif
     vec3 shade = pc.lit == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
                : pc.lit == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))
                              : vCol + vec3(wave);
+#ifdef OMK_RT
+    // a CHARACTER (a caster - the bodies) takes the traced terms; the set
+    // keeps its baked light untouched, the artists' own
+    if (pc.caster != 0) shade = rtCharacter(shade, vNrm);
+#endif
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): `sub_42FF80`
     // writes each vertex colour as its luma, `(299 R + 587 G + 114 B) / 1000`
     // on the BYTES, truncated - here on the colour the batch ends with, after

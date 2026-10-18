@@ -288,6 +288,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Sauter`); [Enhancements] escapeback=on\n"
 "  --ssao           ENHANCEMENT: screen-space ambient occlusion (Vulkan);\n"
 "                   [Enhancements] ssao=on\n"
+"  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
+"                   around them, shadow rays for their lamps, ray-traced AO; the\n"
+"                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
+"                   raytracing=on\n"
 "  --upscaler off|fsr|dlss  ENHANCEMENT: temporal upscaling, AMD FSR or NVIDIA\n"
 "                   DLSS - the Direct3D 12 backend only (--d3d12, --world-d3d12);\n"
 "                   [Enhancements] upscaler=fsr\n"
@@ -514,6 +518,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--smooth-anim") smoothAnimFlag = 1;
         else if (a == "--escape-back") escapeBackFlag = 1;
         else if (a == "--ssao") ssaoFlag = 1;
+        else if (a == "--raytracing") raytracingFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--framerate" && i + 1 < argc) {
             frameRateFlag = omk::frameRateValue(argv[++i]);

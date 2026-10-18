@@ -192,6 +192,14 @@ struct Settings {
     bool   ambientOcclusion = false;
     Source ambientOcclusionSource = Source::Default;
 
+    // `raytracing = off|on`: HYBRID RAY TRACING (`todo/enhancements.md` 19) -
+    // characters lit by the set around them (rays returning its baked colour),
+    // shadow rays for their lamps, and ray-traced AO in SSAO's place. The
+    // Direct3D 12 backend's alone, on a DXR 1.1 device (inline ray queries);
+    // Vulkan and the software reference say so and stay off.
+    bool   raytracing = false;
+    Source raytracingSource = Source::Default;
+
     // `upscaler = off|fsr|dlss` and `upscalequality = native|quality|balanced|
     // performance|ultraperformance`: TEMPORAL UPSCALING (`todo/enhancements.md`
     // 18) - the frame drawn below the display size and rebuilt by AMD FSR or
@@ -441,6 +449,7 @@ inline constexpr int kMaxFrameRate     = 60;
 inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
+inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
@@ -473,6 +482,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.smoothAnimation, kMaxAnimation, s.smoothAnimationSource);
     takeFlag(s.escapeBack, kMaxEscapeBack, s.escapeBackSource);
     takeFlag(s.ambientOcclusion, kMaxAmbientOcclusion, s.ambientOcclusionSource);
+    takeFlag(s.raytracing, kMaxRaytracing, s.raytracingSource);
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
 }
 

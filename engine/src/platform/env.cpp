@@ -84,6 +84,9 @@ constexpr const char* kSwitches[] = {
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned
     "OMK_ROOTSPIN_NEG",         // diagnostic: a scene clip's root delta turned the other way, the body left alone
+    "OMK_RT_NO_INDIRECT",       // A/B: raytracing without the indirect light on characters (engine: raytracing)
+    "OMK_RT_NO_SHADOW_RAYS",    // A/B: raytracing without the lamps' shadow rays
+    "OMK_RT_TUNE",              // raytracing: six numbers replacing the indirect/occlusion/lamp tuning, by eye
     "OMK_SHADOWLOG",            // log: the shadows' light, the player's feet and a walker's shadow, periodically (engine: character shadow)
     "OMK_SKIN_FAR",             // every staged body posed, in view or not
     "OMK_SKIP_EFFECT",          // =<n> set-piece effect n left unspawned

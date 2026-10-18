@@ -7066,7 +7066,7 @@ def c_enhance_all():
              "uiscaling": "UiScaling", "textscaling": "TextScaling",
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
-             "escapeback": "EscapeBack", "ssao": "AmbientOcclusion",
+             "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
              "lod": "BestLod"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
@@ -27733,6 +27733,117 @@ def c_engine_upscaler():
             "fell back to FSR" if dlss_fell else "NO clean fallback"))
 
 
+def c_engine_raytracing():
+    r"""`omk-play --world-d3d12 --raytracing`: HYBRID RAY TRACING (`todo/enhancements.md` 19).
+
+    The Direct3D 12 backend on a DXR 1.1 device builds acceleration structures
+    from what the frame submits - a BLAS per set geometry (once), one BLAS for
+    every posed body (rebuilt or refitted each frame), one TLAS - and casts
+    INLINE ray queries from the raster passes (`backends/d3d12/shaders/rt.glsl`,
+    the -DOMK_RT builds of `scene.frag` and `ssao.frag`): a character's
+    fragments take the set's baked light around them (rays returning vertex
+    colour x texel) and lose the lamps the set hides (shadow rays), and the AO
+    pass traces four short rays a pixel in place of SSAO's depth hemisphere.
+    Runs of the street start (no crowd, the mapped shadow, 60 frames, 640x480),
+    every D3D12 one with the debug layer on:
+    * the default is off in the source, and a plain run says nothing of it;
+    * `--raytracing` reports DXR live (`@evt rt_on`) and the TLAS (`@evt
+      rt_tlas`): a set BLAS and a body BLAS with triangles, and the lamp
+      shadow rays and indirect rays the scene pass counted, both > 0;
+    * no debug-layer error in any ray-traced run (also under `--upscaler fsr`
+      when FSR loads, the -DOMK_MOTION build of the shader);
+    * against the plain frame, `OMK_RT_NO_INDIRECT=1` (the AO and the shadow
+      rays alone) only DARKENS - the set keeps its baked light, the AO pass
+      multiplies a factor in, a hidden lamp takes light away - and darkens
+      more than 0.5% of the pixels;
+    * the INDIRECT term then BRIGHTENS pixels (more than 0.1% of the frame,
+      the player's) and touches under 15% of it - characters only, the set's
+      own pixels are not lit by it;
+    * Vulkan declines it with a line saying it is the D3D12 backend's.
+    Skipped without a D3D12 backend, a device, or DXR 1.1 on it.
+    SHOWN TO FAIL with the indirect term removed (`rtCharacter`'s
+    `+ rtf.sky.a * q.rgb` made `+ 0.0 * q.rgb`): no pixel brightens.
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "bool   raytracing = false;" in src
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "the viewer did not build"
+    W, H = 640, 480
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name, api="d3d12", env_extra=None):
+            out = os.path.join(tmp, name + ".bin")
+            os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_D3D12_DEBUG="1")
+            env.update(env_extra or {})
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-" + api, "--no-crowd", "--nofmv", "--nodelay",
+                                "--shadow-quality", "mapped", "--res", "%dx%d" % (W, H),
+                                "--frames", "60", "--saves", os.path.join(tmp, "saves-" + name),
+                                "--dump", out] + extra,
+                               capture_output=True, env=env)
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return text, data
+        t_off, d_off = run([], "off")
+        if "renderer: the world through D3D12" not in t_off:
+            why = "this viewer has no D3D12 backend" if "without Direct3D 12" in t_off else "no D3D12 device"
+            return ("skipped",), ("skipped",), why
+        t_on, d_on = run(["--raytracing"], "on")
+        if "no DXR 1.1" in t_on:
+            return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+        t_noi, d_noi = run(["--raytracing"], "noind", env_extra={"OMK_RT_NO_INDIRECT": "1"})
+        t_fsr, _ = run(["--raytracing", "--upscaler", "fsr"], "fsr")
+        t_vk, _ = run(["--raytracing"], "vk", api="vulkan")
+    def errors(t):
+        return sum(1 for l in t.splitlines()
+                   if "d3d12 debug [ERROR]" in l or "d3d12 debug [CORRUPTION]" in l)
+    def compare(d0, d1):
+        dark = bright = 0
+        if len(d0) == len(d1) == n * 2:
+            for va, vb in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+                if va == vb:
+                    continue
+                sa = ((va >> 11) & 31) * 2 + ((va >> 5) & 63) + (va & 31) * 2
+                sb = ((vb >> 11) & 31) * 2 + ((vb >> 5) & 63) + (vb & 31) * 2
+                if sb < sa - 2:
+                    dark += 1
+                elif sb > sa + 2:
+                    bright += 1
+        return dark, bright
+    ev = _events(t_on)
+    live = any(name == "rt_on" for name, _ in ev)
+    tlas = [f for name, f in ev if name == "rt_tlas"]
+    last = tlas[-1] if tlas else {}
+    num = lambda k: int(last.get(k, "0"))
+    ao_dark, ao_bright = compare(d_off, d_noi)
+    ind_dark, ind_bright = compare(d_noi, d_on)
+    fsr_ok = "upscaler: FSR" not in t_fsr or ("@evt rt_tlas" in t_fsr and errors(t_fsr) == 0)
+    got = (default_off, "ray tracing" in t_off.lower(), live,
+           num("sets") >= 1 and num("set_tris") > 0, num("bodies") >= 1 and num("body_tris") > 0,
+           num("shadow_rays") > 0, num("indirect_rays") > 0,
+           errors(t_on) + errors(t_noi), fsr_ok,
+           ao_bright, ao_dark > n // 200,
+           ind_bright > n // 1000, ind_dark + ind_bright < n * 15 // 100,
+           "off on Vulkan" in t_vk)
+    want = (True, False, True, True, True, True, True, 0, True, 0, True, True, True, True)
+    return got, want, \
+        ("off by default and silent; DXR live, TLAS %s instances (%s set BLAS of %s triangles, %s bodies "
+         "of %s), ~%s lamp shadow rays and ~%s indirect rays a frame; AO + shadow rays darken %d pixels, "
+         "brighten %d; the indirect term brightens %d, darkens %d (of %d)"
+         % (last.get("instances"), last.get("sets"), last.get("set_tris"), last.get("bodies"),
+            last.get("body_tris"), last.get("shadow_rays"), last.get("indirect_rays"),
+            ao_dark, ao_bright, ind_bright, ind_dark, n))
+
+
 def c_engine_escape_back():
     r"""`[Enhancements] escapeback` - ESC and BACKSPACE as the interface's BACK.
 
@@ -48385,6 +48496,7 @@ SLOW = [
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
+    ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

@@ -245,6 +245,13 @@
 ; Vulkan only. `todo/enhancements.md` 15.
 ;ssao = off
 ;
+; RAYTRACING - hybrid ray tracing: characters lit by the set around them (rays
+; that pick up the set's baked colour - red beside a red neon, darker under an
+; arch), shadow rays so a lamp behind a wall stops lighting them, and
+; ray-traced ambient occlusion in place of SSAO. The Direct3D 12 renderer on a
+; GPU with DXR 1.1 only (`renderer = d3d12`). `todo/enhancements.md` 19.
+;raytracing = off
+;
 ; LOD - a pedestrian model carries four bodies of falling detail and the game
 ; steps down one every 10 m, so past 10 m every walker is a coarser one. `best`
 ; keeps every walker on its most detailed body at any distance.

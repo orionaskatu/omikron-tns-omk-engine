@@ -161,11 +161,11 @@ D3D_ON      := $(if $(and $(VK_PKG),$(GLSLC),$(SPIRV_CROSS),$(DXC)),1)
 endif
 D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.frag \
                    ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag \
-                   scene_mv.vert scene_mv.frag
+                   scene_mv.vert scene_mv.frag                    scene_rt.frag scene_rt_mv.frag scene_rtc.frag scene_rtc_mv.frag                    ssao_rt.frag ssao_rt_ms.frag
 D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
 D3D_LIBS    := -ld3d12 -ldxgi -ldxguid
 .PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%.hlsl \
-           build/shaders/dx/%_mv.vert.spv build/shaders/dx/%_mv.frag.spv
+           build/shaders/dx/%_mv.vert.spv build/shaders/dx/%_mv.frag.spv            build/shaders/dx/%_rt.frag.spv build/shaders/dx/%_rt_mv.frag.spv build/shaders/dx/%_rt_ms.frag.spv            build/shaders/dx/%_rtc.frag.spv build/shaders/dx/%_rtc_mv.frag.spv
 
 build/shaders/dx/%.spv: backends/vulkan/shaders/%
 	@mkdir -p $(@D)
@@ -182,15 +182,36 @@ build/shaders/dx/%_mv.vert.spv: backends/vulkan/shaders/%.vert
 build/shaders/dx/%_mv.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
 	$(GLSLC) -DOMK_MOTION -o $@ $<
+# HYBRID RAY TRACING (`todo/enhancements.md` 19): `scene.frag` and `ssao.frag`
+# with -DOMK_RT, which includes `backends/d3d12/shaders/rt.glsl` - DXR 1.1's
+# inline ray queries, so GLSL 460 and Vulkan 1.2 SPIR-V, shader model 6.5 below.
+# Vulkan never compiles this arm.
+RT_GLSL := -std=460 --target-env=vulkan1.2 -DOMK_RT -Ibackends/d3d12/shaders
+build/shaders/dx/%_rt.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+	@mkdir -p $(@D)
+	$(GLSLC) $(RT_GLSL) -o $@ $<
+build/shaders/dx/%_rt_mv.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+	@mkdir -p $(@D)
+	$(GLSLC) $(RT_GLSL) -DOMK_MOTION -o $@ $<
+build/shaders/dx/%_rt_ms.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+	@mkdir -p $(@D)
+	$(GLSLC) $(RT_GLSL) -DOMK_MS -o $@ $<
+# ...and the scene pass's COUNTING build (-DOMK_RT_COUNT: the rays' tally, a UAV)
+build/shaders/dx/%_rtc.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+	@mkdir -p $(@D)
+	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -o $@ $<
+build/shaders/dx/%_rtc_mv.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+	@mkdir -p $(@D)
+	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -DOMK_MOTION -o $@ $<
 # the D3D12 backend's own (`blit.frag`, the swapchain's scaled copy)
 build/shaders/dx/%.spv: backends/d3d12/shaders/%
 	@mkdir -p $(@D)
 	$(GLSLC) -o $@ $<
 build/shaders/dx/%.hlsl: build/shaders/dx/%.spv
-	$(SPIRV_CROSS) $< --hlsl --shader-model 60 $(if $(filter %.vert,$*),--flip-vert-y) \
+	$(SPIRV_CROSS) $< --hlsl --shader-model $(if $(findstring _rt,$*),65,60) $(if $(filter %.vert,$*),--flip-vert-y) \
 	    | sed -e 's/^cbuffer \([A-Za-z_0-9]*\)\([^A-Za-z_0-9 :]*\)$$/cbuffer \1 : register(b0, space7)\2/' > $@
 build/shaders/dx/%.h: build/shaders/dx/%.hlsl
-	$(DXC) -nologo -T $(if $(filter %.vert,$*),vs_6_0,ps_6_0) -E main \
+	$(DXC) -nologo -T $(if $(filter %.vert,$*),vs_6_0,$(if $(findstring _rt,$*),ps_6_5,ps_6_0)) -E main \
 	    -Vn kDx_$(subst .,_,$*) -Fh $@ $<
 
 # ---- THE UPSCALERS (`todo/enhancements.md` 18; `backends/d3d12/upscale*`)

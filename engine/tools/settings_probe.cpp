@@ -56,6 +56,8 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.escapeBackSource));
     std::printf("enh ssao %d %s\n", s.ambientOcclusion ? 1 : 0,
                 omk::sourceName(s.ambientOcclusionSource));
+    std::printf("enh raytracing %d %s\n", s.raytracing ? 1 : 0,
+                omk::sourceName(s.raytracingSource));
     std::printf("enh lod %d %s\n", s.bestLod ? 1 : 0,
                 omk::sourceName(s.bestLodSource));
     std::printf("enh upscaler %d %s\n", s.upscaler, omk::sourceName(s.upscalerSource));

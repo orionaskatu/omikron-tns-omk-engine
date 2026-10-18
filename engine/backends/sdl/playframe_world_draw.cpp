@@ -183,7 +183,11 @@ void PlayState::worldDrawLists() {
     const int litStaged = litPerPixel ? 1 : 0;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
     view.lights.clear();
-    if (litPerPixel) {
+    // HYBRID RAY TRACING (`todo/enhancements.md` 19) traces these lamps from a
+    // vertex-lit character too, to find the ones a wall hides - so it is handed
+    // them whatever the lighting; a batch not lit per pixel ignores them else
+    const bool rtLamps = world_ && world_->raytracingLive();
+    if (litPerPixel || rtLamps) {
         float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};
         if (drawPlayer && !playerBody.posed.corners.empty()) {
             at[0] = playerBody.posed.corners.front().x;
@@ -214,7 +218,7 @@ void PlayState::worldDrawLists() {
             g.intensity = l->f32;
             view.lights.push_back(g);
         }
-        if (!lightsTold) {
+        if (!lightsTold && litPerPixel) {
             lightsTold = true;
             std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
                         "reach the player, nearest first\n", frameNo, view.lights.size());

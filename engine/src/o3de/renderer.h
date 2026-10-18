@@ -413,6 +413,14 @@ public:
     // before `init()`; only the Vulkan backend does it.
     virtual bool setAmbientOcclusion(bool /*on*/) { return false; }
 
+    // HYBRID RAY TRACING (`todo/enhancements.md` 19): characters lit by the
+    // set around them, shadow rays for their lamps, ray-traced AO in SSAO's
+    // place. Same contract - a request before `init()`; only the Direct3D 12
+    // backend does it, and only on a DXR 1.1 device, which `raytracingLive`
+    // answers once `init()` has run.
+    virtual bool setRaytracing(bool /*on*/) { return false; }
+    virtual bool raytracingLive() const { return false; }
+
     // The second enhancement: texture filtering, `mode` 0 nearest (the
     // original: MAG/MIN POINT, MIP NONE), 1 bilinear, 2 trilinear - a mip
     // chain the backend generates at upload, the original shipping one level.

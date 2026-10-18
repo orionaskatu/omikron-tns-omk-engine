@@ -165,6 +165,10 @@ struct View {
         float strength = 0.6f;        // how dark the shadow is, 0..1
     };
     ShadowLight shadow;
+    // ...and up to two MORE mapped shadows, from the next lights reaching the
+    // casters (the Vulkan backend only; every other backend draws `shadow`).
+    static constexpr int kExtraShadows = 2;
+    ShadowLight extraShadows[kExtraShadows];
 
     // ------------------------------------------- PER-PIXEL LIGHTING
     //

@@ -54,14 +54,17 @@ layout(set = 0, binding = 0) uniform sampler2D tex;
 // Set 1 is per FRAME, not per texture: the light's transform and the depth
 // map it filled. `strength` of 0 means the frame has no shadow light, which is
 // the default and every classic and fitted frame.
+// Up to THREE maps (layers), one per light reaching the casters, each with
+// its own strength - 0 for a layer with no light this frame.
 layout(set = 1, binding = 0) uniform Shadow {
-    mat4  lightMvp;
-    float strength;    // 0 = no shadow this frame
+    mat4  lightMvp[3];
+    vec4  strength;    // per layer; 0 = no shadow from that layer
     float texel;       // 1 / the map's side, for the PCF tap spacing
     float bias;        // depth slop, in the map's own 0..1 units
     float shimmer;     // THE SHIMMER's clock - see the note below
+    float pad;
 } sh;
-layout(set = 1, binding = 1) uniform sampler2D shadowMap;
+layout(set = 1, binding = 1) uniform sampler2DArray shadowMap;
 
 // ---- PER-PIXEL LIGHTING, `todo/enhancements.md` row 7 ----------------------
 //
@@ -116,9 +119,8 @@ layout(location = 0) out vec4 outColour;
 // -> 1 fully lit, 0 fully shadowed. Outside the map's slab a fragment is LIT
 // by definition, which is what keeps a characters-only shadow from darkening
 // the far end of a street: the slab is fitted to the casters and nothing else.
-float litness() {
-    if (sh.strength <= 0.0 || pc.caster != 0) return 1.0;
-    vec4 lp = sh.lightMvp * vec4(vWorld, 1.0);
+float layerLit(int L, float strength) {
+    vec4 lp = sh.lightMvp[L] * vec4(vWorld, 1.0);
     if (lp.w <= 0.0) return 1.0;
     vec3 p = lp.xyz / lp.w;
     vec2 uv = p.xy * 0.5 + 0.5;
@@ -128,10 +130,20 @@ float litness() {
     float lit = 0.0;
     for (int j = -1; j <= 1; ++j)
         for (int i = -1; i <= 1; ++i) {
-            float d = texture(shadowMap, uv + vec2(i, j) * sh.texel).r;
+            float d = texture(shadowMap, vec3(uv + vec2(i, j) * sh.texel, float(L))).r;
             lit += (p.z - sh.bias <= d) ? 1.0 : 0.0;
         }
-    return mix(1.0 - sh.strength, 1.0, lit / 9.0);
+    return mix(1.0 - strength, 1.0, lit / 9.0);
+}
+
+// -> 1 fully lit, 0 fully shadowed: the layers' attenuations multiplied, so
+// two lights casting over the same ground darken it more than either alone.
+float litness() {
+    if (pc.caster != 0) return 1.0;
+    float l = 1.0;
+    for (int L = 0; L < 3; ++L)
+        if (sh.strength[L] > 0.0) l *= layerLit(L, sh.strength[L]);
+    return l;
 }
 
 void main() {

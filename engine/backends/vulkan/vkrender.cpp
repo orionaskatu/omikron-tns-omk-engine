@@ -127,15 +127,20 @@ struct LightUbo {
     int32_t pad;
 };
 
+// Up to three mapped shadows a frame, one per LAYER of the shadow image: the
+// strongest lights reaching the casters (`View::shadow` + `extraShadows`).
+constexpr int kShadowLayers = 3;
+
 struct ShadowUbo {
-    float lightMvp[16];
-    float strength;    // 0 = no shadow this frame, which is the default
+    float lightMvp[kShadowLayers][16];
+    float strength[4]; // per layer; 0 = no shadow from it (the default)
     float texel;       // 1 / kShadowSide
     float bias;
     // THE SHIMMER's clock (`o3de/shimmer.h`), which is per FRAME like the rest
     // of this block and had a spare float sitting here for the std140
     // alignment. Not the shadow's business, but this is the frame's uniform.
     float shimmer;
+    float pad;
 };
 
 #define VKCHECK(x, what)                                                     \
@@ -354,6 +359,8 @@ private:
     VkImageView     shView_ = VK_NULL_HANDLE; VkSampler      shSampler_ = VK_NULL_HANDLE;
     VkFormat        shFmt_ = VK_FORMAT_UNDEFINED;
     VkRenderPass    shPass_ = VK_NULL_HANDLE;  VkFramebuffer shFbuf_ = VK_NULL_HANDLE;
+    // one depth view and framebuffer per shadow layer; shFbuf_ is layer 0's
+    VkImageView     shLayerView_[3] = {};      VkFramebuffer shLayerFbuf_[3] = {};
     VkPipeline      shPipe_ = VK_NULL_HANDLE;  VkPipelineLayout shPlo_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout dsl1_ = VK_NULL_HANDLE;
     VkDescriptorSet       ds1_  = VK_NULL_HANDLE;
@@ -880,7 +887,7 @@ bool VulkanRenderer::makeTarget() {
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ii.imageType = VK_IMAGE_TYPE_2D; ii.format = shFmt_;
         ii.extent = {kShadowSide, kShadowSide, 1};
-        ii.mipLevels = 1; ii.arrayLayers = 1;
+        ii.mipLevels = 1; ii.arrayLayers = kShadowLayers;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -894,9 +901,18 @@ bool VulkanRenderer::makeTarget() {
             OMK_GPU_ALLOC("shadow map", omk::prof::gpuKey(omk::prof::kVkMemory, shMem_), ai.allocationSize);
             vkBindImageMemory(dev_, shImg_, shMem_, 0);
             VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            vi.image = shImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = shFmt_;
-            vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+            // the SAMPLED view spans every layer (`sampler2DArray`)...
+            vi.image = shImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; vi.format = shFmt_;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowLayers};
             vkCreateImageView(dev_, &vi, nullptr, &shView_);
+            // ...and each layer is rendered through a view of its own
+            for (int L = 0; L < kShadowLayers; ++L) {
+                VkImageViewCreateInfo lv = vi;
+                lv.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                lv.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1,
+                                       static_cast<uint32_t>(L), 1};
+                vkCreateImageView(dev_, &lv, nullptr, &shLayerView_[L]);
+            }
 
             VkAttachmentDescription da{};
             da.format = shFmt_; da.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -930,9 +946,13 @@ bool VulkanRenderer::makeTarget() {
             vkCreateRenderPass(dev_, &shadowRpi, nullptr, &shPass_);
 
             VkFramebufferCreateInfo shadowFi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            shadowFi.renderPass = shPass_; shadowFi.attachmentCount = 1; shadowFi.pAttachments = &shView_;
+            shadowFi.renderPass = shPass_; shadowFi.attachmentCount = 1;
             shadowFi.width = kShadowSide; shadowFi.height = kShadowSide; shadowFi.layers = 1;
-            vkCreateFramebuffer(dev_, &shadowFi, nullptr, &shFbuf_);
+            for (int L = 0; L < kShadowLayers; ++L) {
+                shadowFi.pAttachments = &shLayerView_[L];
+                vkCreateFramebuffer(dev_, &shadowFi, nullptr, &shLayerFbuf_[L]);
+            }
+            shFbuf_ = shLayerFbuf_[0];
 
             // NEAREST, because the fragment shader compares depths itself and
             // a linear filter would average DEPTHS rather than the comparison.
@@ -2281,12 +2301,15 @@ void VulkanRenderer::pushView(const omk::View& view) {
 // cancels between the two.
 void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> casters) {
     if (shPipe_ == VK_NULL_HANDLE || !v.shadow.on || casters.empty()) return;
-    const float R = v.shadow.radius > 1.0f ? v.shadow.radius : 1.0f;
+    // ONE MAP PER LIGHT: layer 0 is `v.shadow`, layers 1..2 `v.extraShadows`,
+    // each an orthographic slab around the casters as before.
+    const auto lightMatrix = [](const omk::View::ShadowLight& sl, float m[16]) -> bool {
+    const float R = sl.radius > 1.0f ? sl.radius : 1.0f;
 
     // the light's basis: forward along its direction, any stable up
-    float f[3] = {v.shadow.dir[0], v.shadow.dir[1], v.shadow.dir[2]};
+    float f[3] = {sl.dir[0], sl.dir[1], sl.dir[2]};
     const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
-    if (fl < 1e-6f) return;
+    if (fl < 1e-6f) return false;
     for (float& c : f) c /= fl;
     float up[3] = {0.0f, -1.0f, 0.0f};
     if (std::fabs(f[0] * up[0] + f[1] * up[1] + f[2] * up[2]) > 0.99f) {
@@ -2302,11 +2325,11 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
     // by the near plane however the light is angled.
     const float back = R * 2.0f;
     float eye[3];
-    for (int k = 0; k < 3; ++k) eye[k] = v.shadow.centre[k] - f[k] * back;
+    for (int k = 0; k < 3; ++k) eye[k] = sl.centre[k] - f[k] * back;
     const float far = back + R * 2.0f;
 
     // column-major, the way `pushView` writes the scene's
-    float m[16] = {};
+    for (int k = 0; k < 16; ++k) m[k] = 0.0f;
     const float* ax[3] = {r, u, f};
     const float sc[3] = {1.0f / R, 1.0f / R, 1.0f / far};
     for (int row = 0; row < 3; ++row) {
@@ -2318,6 +2341,16 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         m[12 + row] = -d * sc[row];
     }
     m[15] = 1.0f;
+    return true;
+    };
+    const omk::View::ShadowLight* lights[kShadowLayers] = {
+        &v.shadow, &v.extraShadows[0], &v.extraShadows[1]};
+    float mats[kShadowLayers][16] = {};
+    bool live[kShadowLayers] = {};
+    for (int L = 0; L < kShadowLayers; ++L)
+        live[L] = lights[L]->on && lights[L]->strength > 0.0f &&
+                  lightMatrix(*lights[L], mats[L]);
+    if (!live[0]) return;
 
     if (!cbStarted_) {
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -2337,13 +2370,17 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
 
     VkClearValue clear{};
     clear.depthStencil = {1.0f, 0};
+    // EVERY layer is passed through each frame - an unlit one only cleared -
+    // so all three sit in SHADER_READ_ONLY for the sampled array view.
+    for (int L = 0; L < kShadowLayers; ++L) {
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp.renderPass = shPass_; rp.framebuffer = shFbuf_;
+    rp.renderPass = shPass_; rp.framebuffer = shLayerFbuf_[L];
     rp.renderArea = {{0, 0}, {kShadowSide, kShadowSide}};
     rp.clearValueCount = 1; rp.pClearValues = &clear;
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    if (live[L]) {
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, shPipe_);
-    vkCmdPushConstants(cb_, shPlo_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof m, m);
+    vkCmdPushConstants(cb_, shPlo_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof mats[L], mats[L]);
     for (const auto& d : placed) {
         if (!d.geo || !d.count) continue;
         const auto it = vbo_.find(d.geo);
@@ -2353,12 +2390,16 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         vkCmdDraw(cb_, static_cast<uint32_t>(d.count), 1,
                   static_cast<uint32_t>(d.start), 0);
     }
+    }
     vkCmdEndRenderPass(cb_);
+    }
 
     if (shUboPtr_) {
         ShadowUbo ub{};
-        std::memcpy(ub.lightMvp, m, sizeof m);
-        ub.strength = v.shadow.strength;
+        for (int L = 0; L < kShadowLayers; ++L) {
+            std::memcpy(ub.lightMvp[L], mats[L], sizeof mats[L]);
+            ub.strength[L] = live[L] ? lights[L]->strength : 0.0f;
+        }
         ub.texel = 1.0f / static_cast<float>(kShadowSide);
         // In the slab's own 0..1 depth, one map texel of slope at the worst
         // angle - enough to stop the ground shadowing itself.

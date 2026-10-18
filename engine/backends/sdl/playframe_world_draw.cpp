@@ -5,6 +5,13 @@
 #include "playframe.h"
 #include "platform/env.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <map>
+#include <span>
+#include <string>
+
 // -> true when the sphere is wholly outside one side plane
 bool PlayState::outsideView(const float c[3], float r, bool bodies) {
         if (!(bodies ? sideCullBodies : sideCullSet)) return false;
@@ -1093,39 +1100,93 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             // steep light; this port's number, and the resolution is
             // its width (1024 texels over the slab).
             float rad = 220.0f;
-            const omk::Light3do* best = nullptr;
-            float bestK = 0.0f;
+            // ---- SEVERAL LIGHTS, FADED (2026-10-18) -------------------
+            //
+            // One map from the single strongest light made the shadow JUMP
+            // when another lamp became the strongest, and dropped every
+            // other lamp's shadow. Now the lights reaching the casters are
+            // ranked by the engine's own reach law (`strongestLightAt`, one
+            // light at a time), the strongest three within a quarter of the
+            // first cast (`View::shadow` + `extraShadows`), each as dark as
+            // its share of the strongest - so the shadows stay translucent
+            // and overlap darker - and each strength EASES towards its target
+            // over ~0.35 s, so a light taking over fades in while the old one
+            // fades out instead of switching on the frame.
+            constexpr float kShadowOpacity = 0.5f;   // the darkest one, 0..1
+            constexpr float kFadeSeconds = 0.35f;
+            const int maxLights = 1 + omk::View::kExtraShadows;
+            struct Cand { const omk::Light3do* l; float k; };
+            std::vector<Cand> cands;
             for (const WorldSlot& ws2 : worldSlots)
-                if (!ws2.lights.empty()) {
+                for (const omk::Light3do& l : ws2.lights) {
                     float k = 0.0f;
-                    const omk::Light3do* l =
-                        omk::strongestLightAt(centre, ws2.lights, &k);
-                    if (l && k > bestK) { bestK = k; best = l; }
+                    if (omk::strongestLightAt(centre, std::span<const omk::Light3do>(&l, 1), &k) &&
+                        k > 0.0f)
+                        cands.push_back({&l, k});
                 }
-            if (best) {
-                view.shadow.on = true;
-                for (int k = 0; k < 3; ++k) {
-                    view.shadow.dir[k] = best->dir[k];
-                    view.shadow.centre[k] = centre[k];
+            std::sort(cands.begin(), cands.end(),
+                      [](const Cand& a, const Cand& b) { return a.k > b.k; });
+            const float kMax = cands.empty() ? 0.0f : cands.front().k;
+            struct Fade { float dir[3] = {0, -1, 0}; float cur = 0.0f, target = 0.0f; std::string name; };
+            static std::map<std::string, Fade> fades;
+            for (auto& kv : fades) kv.second.target = 0.0f;
+            for (int c = 0; c < static_cast<int>(cands.size()) && c < maxLights; ++c) {
+                if (cands[static_cast<std::size_t>(c)].k < kMax * 0.25f) break;
+                const omk::Light3do* l = cands[static_cast<std::size_t>(c)].l;
+                char key[192];
+                std::snprintf(key, sizeof key, "%s@%.0f,%.0f,%.0f", l->name.c_str(),
+                              static_cast<double>(l->pos[0]), static_cast<double>(l->pos[1]),
+                              static_cast<double>(l->pos[2]));
+                Fade& f = fades[key];
+                f.name = l->name;
+                for (int q = 0; q < 3; ++q) f.dir[q] = l->dir[q];
+                f.target = kShadowOpacity * cands[static_cast<std::size_t>(c)].k / kMax;
+            }
+            static auto lastTick = std::chrono::steady_clock::now();
+            const auto nowTick = std::chrono::steady_clock::now();
+            float dt = std::chrono::duration<float>(nowTick - lastTick).count();
+            lastTick = nowTick;
+            dt = std::clamp(dt, 0.0f, 0.25f);
+            const float ease = 1.0f - std::exp(-dt / kFadeSeconds);
+            for (auto it = fades.begin(); it != fades.end();) {
+                Fade& f = it->second;
+                f.cur += (f.target - f.cur) * ease;
+                if (f.target <= 0.0f && f.cur < 0.005f) it = fades.erase(it);
+                else ++it;
+            }
+            std::vector<const Fade*> act;
+            for (const auto& kv : fades) act.push_back(&kv.second);
+            std::sort(act.begin(), act.end(),
+                      [](const Fade* a, const Fade* b) { return a->cur > b->cur; });
+            view.shadow.on = false;
+            for (auto& x : view.extraShadows) x.on = false;
+            for (int c = 0; c < static_cast<int>(act.size()) && c < maxLights; ++c) {
+                omk::View::ShadowLight& sl = c == 0 ? view.shadow : view.extraShadows[c - 1];
+                sl.on = true;
+                for (int q = 0; q < 3; ++q) {
+                    sl.dir[q] = act[static_cast<std::size_t>(c)]->dir[q];
+                    sl.centre[q] = centre[q];
                 }
-                view.shadow.radius = rad;
-                view.shadow.strength = 0.6f;
+                sl.radius = rad;
+                sl.strength = act[static_cast<std::size_t>(c)]->cur;
+            }
+            if (!act.empty()) {
                 static const bool shLog = omk::envFlag("OMK_SHADOWLOG");
                 if (!shadow.lightTold || (shLog && (frameNo % 30) == 0)) {
                     shadow.lightTold = true;
-                    std::printf("frame %ld: mapped shadows - light '%s' at "
-                                "%.0f %.0f %.0f, direction %.2f %.2f %.2f, "
-                                "slab radius %.0f over %d bodies, asked at "
-                                "%.0f %.0f %.0f\n", frameNo, best->name.c_str(),
-                                static_cast<double>(best->pos[0]),
-                                static_cast<double>(best->pos[1]),
-                                static_cast<double>(best->pos[2]),
-                                static_cast<double>(best->dir[0]),
-                                static_cast<double>(best->dir[1]),
-                                static_cast<double>(best->dir[2]),
+                    std::string list;
+                    for (int c = 0; c < static_cast<int>(act.size()) && c < maxLights; ++c) {
+                        char one[96];
+                        std::snprintf(one, sizeof one, "%s'%s' %.2f", c ? ", " : "",
+                                      act[static_cast<std::size_t>(c)]->name.c_str(),
+                                      static_cast<double>(act[static_cast<std::size_t>(c)]->cur));
+                        list += one;
+                    }
+                    std::printf("frame %ld: mapped shadows - %d light(s): %s; slab radius %.0f "
+                                "over %d bodies, asked at %.0f %.0f %.0f\n", frameNo,
+                                std::min(static_cast<int>(act.size()), maxLights), list.c_str(),
                                 static_cast<double>(rad), bodies,
-                                static_cast<double>(centre[0]),
-                                static_cast<double>(centre[1]),
+                                static_cast<double>(centre[0]), static_cast<double>(centre[1]),
                                 static_cast<double>(centre[2]));
                 }
             } else if (!shadow.lightTold) {

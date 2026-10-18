@@ -256,6 +256,9 @@ void PlayState::screensSneakRows() {
             // current panel's leave hook - the verb panel's, re-enabling the
             // lists its builder disabled (`UiWalk::closeNow`).
             walk->closeNow("close (0x0049BEA0: the use)");
+            // ...and the release presses action with the object in hand,
+            // which is what makes the key at the lift ride at once
+            releaseFromScreen(openScreen, "closed by the use");
             walk.reset();
             openScreen = -1;
             screenFromScript = true;

@@ -1243,6 +1243,7 @@ struct PlayState {
     void harnessHoldAndCall();   // --anim-hold and --call: a held player, the sneak call, fired once
     void harnessShootEnd();   // --shoot-end: shoot.end 1 at a frame
     void closeAllScreens(const char* who);   // UI_CloseAllScreens 0x0042A340
+    void releaseFromScreen(int screen, const char* who);   // sub_466B60 / Actor_TickUiHeld 3: the held-object press
     void harnessBoard(float (&at)[3], float (&door)[3]);   // --board: put at the called slider's door and the action pressed
     void harnessFight();   // --fight: op 62's entry by hand
     void harnessShootHealth(std::int32_t& hp);

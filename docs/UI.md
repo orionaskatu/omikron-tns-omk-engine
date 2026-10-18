@@ -837,6 +837,27 @@ to a door or a lift — and a player reported exactly that: *"I tried using the
 Kay'l apartment key on the lift leading to his apartment, it doesn't work."*
 The port had the two arms the wrong way round and beeped instead.
 
+#### ...and the release of the hold IS the action press (2026-10-17)
+
+The player does not press action a second time. Both releases of ACTOR_STATE
+9 — `sub_466B60` (0x00466B60) and `Actor_TickUiHeld`'s case 3 (0x00466CC0),
+`readable/src/21_d3d.c:3437/:3483` — put him back in state 1 and then test
+`a1[41]`, the actor's `+164`: the very field `sub_41C490` writes when the
+object goes in hand. When it is set they raise **`Game_RaiseEvent(6, 4)`**,
+the action button's own event (case 6 sets `dword_4E6C90`, refusing when no
+prompt slot is taken). So `Utiliser` at the lift closes the sneak
+(`sub_49BEA0`'s state 3), the release presses, and the pump's held-object arm
+(`Script_RunToOpcode75`, SCRIPT_VM) queues the lift's activate script, which
+finds object 6 and rides — a player's report: *"the first time you use the
+key the lift moves directly; afterwards you only interact with it"*. The port
+left the key in the hand until the player pressed action himself. When no zone
+is armed event 6 refuses, and the refused arm's `dword_91068C = -1` (state ≠
+3) hands the object to `Game_Tick`'s `sub_41C770` put-away through `.CTL`
+group 150 — still not ported, so a key used away from any lock stays in the
+port's invisible hand. Ported as `Session::releaseFromScreen`, called where
+the frontend closes a screen without the `0x40000` bit (`engine: used
+object`'s `release` row).
+
 #### ...and the consumable arm HEALS, and `Utiliser sur` is not a use at all (2026-09-18)
 
 Three faults a player found in one session (*"Utiliser sur does not work

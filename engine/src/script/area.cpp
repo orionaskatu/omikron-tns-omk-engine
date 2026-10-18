@@ -3634,6 +3634,13 @@ bool Session::pressAction(bool talkFirst) {
     return true;
 }
 
+// The declaration carries the evidence. The press is case 6's alone - the
+// release raises event 6 directly, never the `.CTL` action's pedestrian talk.
+bool Session::releaseFromScreen() {
+    if (!heldObject_) return false;                // `if (a1[41])`
+    return pressAction(false);                     // `Game_RaiseEvent(6, 4)`
+}
+
 // `Script_Pump(1)`, steps 1 and 2 (0x00407DC0; readable/src/01_file.c:2072).
 //
 //     dword_4E61E0 = 0;  dword_4E66B8 = 1;

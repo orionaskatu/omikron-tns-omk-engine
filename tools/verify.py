@@ -10336,6 +10336,13 @@ def c_engine_used_object():
       and the script reaches `area.goto 237`; with the wrong object it is that
       object's id and the lift says 'Marche Pas'. The door opening is not a
       special case in the port - it is the script's own compare.
+    * `release` - the key used and NO button pressed still rides. Closing a
+      screen that held the player (`sub_466B60`, `Actor_TickUiHeld` case 3,
+      `readable/src/21_d3d.c:3437/:3483`) does `if (a1[41])
+      Game_RaiseEvent(6, 4)` - `+164` is the hand `sub_41C490` fills - so
+      `Utiliser` at the lift IS the action press: the player's report was
+      "the first time you use the key the lift moves directly", and the port
+      made him press action a second time until 2026-10-17.
 
     Nothing here is a claim about the model in his hand: `sub_41C490`'s
     `sub_437400`/`sub_4374E0` attach is the renderer's half and is NOT ported,
@@ -10368,7 +10375,8 @@ def c_engine_used_object():
     # ARE - the probe's five record kinds - not by what the noise is: a new
     # diagnostic cannot turn this red, and a record that changes still does
     got = [ln.split() for ln in r.stdout.strip().splitlines()
-           if ln.split()[:1] in (["hand"], ["take"], ["insert"], ["probe"], ["used"])]
+           if ln.split()[:1] in (["hand"], ["take"], ["insert"], ["probe"], ["used"],
+                                  ["release"])]
     want = [
         "hand slot 0 held 0 id_in_slot 6 in_bag_before 2 in_bag_after 1".split(),
         # TAKING one off the floor: `Game_HandleEvent` case 10, which
@@ -10400,6 +10408,13 @@ def c_engine_used_object():
         "used arm empty zone 3887 var13 -1 goto237 no voice 170".split(),
         "used arm key zone 3887 var13 6 goto237 yes voice -1".split(),
         "used arm wrong zone 3887 var13 5 goto237 no voice 112".split(),
+        # the key used and NO button: the sneak's close (`sub_466B60` /
+        # `Actor_TickUiHeld` case 3) presses action itself for a player with
+        # something in his hand, so the lift rides on the use alone. Before
+        # 2026-10-17 the port left it in the hand: `pressed 0`, var13 0, no
+        # ride - shown by stubbing `Session::releaseFromScreen` to false.
+        "release pressed 1".split(),
+        "used arm release zone 3887 var13 6 goto237 yes voice -1".split(),
     ]
     return got, want, \
         "case 35 putting the key in the hand and out of the bag; then TAKING " \

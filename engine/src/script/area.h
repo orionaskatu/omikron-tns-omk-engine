@@ -811,6 +811,28 @@ public:
     // the zone press - which MDACTION's ACTOR_STATE 3 arm skips, going
     // straight to `sub_467950`'s event 6 (0x46B281: `je 0x46B296`)
     bool pressAction(bool talkFirst = true);
+    // THE SCREEN LETTING GO OF A PLAYER WITH SOMETHING IN HIS HAND. Both
+    // releases of ACTOR_STATE 9 - `sub_466B60` (0x00466B60) and
+    // `Actor_TickUiHeld`'s case 3 (0x00466CC0), readable/src/21_d3d.c:3437,
+    // :3483 - put him back in state 1 and then
+    //
+    //     if (a1[41] && !Game_RaiseEvent(6, 4)) { ...nothing armed... }
+    //
+    // `a1[41]` is `+164`, the field `sub_41C490` writes when `Utiliser`
+    // takes an object IN HAND - so closing a screen with something held IS
+    // an action press (event 6, the same `dword_4E6C90` the button sets,
+    // with case 6's own refusal when no prompt slot is taken). That is why
+    // the key, used at the lift, rides AT ONCE: `sub_49BEA0` closes the
+    // sneak, the release presses, and the pump's held arm
+    // (`Script_RunToOpcode75`) queues the lift's activate script, which
+    // finds object 6. Without it the key sat in the hand until the player
+    // pressed action himself.
+    //
+    // NOT modelled, labelled: the refused arm's `dword_91068C = -1` (when
+    // state != 3), which `Game_Tick` turns into `sub_41C770`'s put-away
+    // through `.CTL` group 150 - the same put-away `pumpZoneSlots` labels.
+    // -> what event 6 returned; false with empty hands, as `a1[41] == 0`.
+    bool releaseFromScreen();
     // `Actor_HeldObjectSlot(Actor_Player()) != -1`: the player has something
     // in his hands, which sends pump case 2 down `Script_RunToOpcode75` and
     // the unconsumed press to `sub_41C770`. Neither is modelled (labelled in

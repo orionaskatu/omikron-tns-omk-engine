@@ -182,7 +182,14 @@ int main(int argc, char** argv) {
 
     // ---- 4: the three outcomes at one of those zones ----------------------
     // Each on its own GameState, so one run's save bits do not spend another's.
-    for (int arm = 0; arm < 3; ++arm) {
+    //
+    // ...and a FOURTH, `release`: the key used and NO button pressed. The
+    // sneak's close is `sub_466B60` / `Actor_TickUiHeld` case 3, whose
+    // `if (a1[41]) Game_RaiseEvent(6, 4)` presses action for a player with
+    // something in his hand - so the lift rides on the use alone, which is
+    // the original's behaviour and was the port's bug (the key sat in the
+    // hand until the player pressed action).
+    for (int arm = 0; arm < 4; ++arm) {
         auto state = omk::GameState::fromFile(iam + "/START");
         omk::Session s(iam, state, table);
         s.loadAnnounceMap(tb + "/vm_announce.json");
@@ -203,6 +210,7 @@ int main(int argc, char** argv) {
         const char* what = "empty";
         if (arm == 1) { state.debugPutObject(0, 6); s.useObject(6); what = "key"; }
         if (arm == 2) { state.debugPutObject(0, 5); s.useObject(5); what = "wrong"; }
+        if (arm == 3) { state.debugPutObject(0, 6); s.useObject(6); what = "release"; }
         // `lift` points INTO the zone registry, and using an object can change
         // it: keep the id, look the zone up again. Reading the stale pointer
         // printed the right id on the Mac by luck and 21075 on PowerPC (Mac OS
@@ -213,7 +221,19 @@ int main(int argc, char** argv) {
         stand(s, lift);
         const std::size_t from = s.announced().size();
         s.frame();                                   // arm
-        for (int f = 0; f < 8; ++f) { s.pressAction(); s.frame(); }
+        if (arm == 3) {
+            // the screen lets him go: one press, the release's own. He
+            // has stood there while the sneak was open, so the slot is
+            // past New (`Script_Pump` case 1) and armed by the scan -
+            // a press on the frame the slot is born finds case 1 and
+            // is spent on nothing, which is the button's rule too.
+            for (int f = 0; f < 4; ++f) s.frame();
+            const bool pressed = s.releaseFromScreen();
+            std::printf("release pressed %d\n", pressed ? 1 : 0);
+            s.frame();
+        } else {
+            for (int f = 0; f < 8; ++f) { s.pressAction(); s.frame(); }
+        }
         for (int f = 0; f < 40; ++f) s.frame();
 
         long gotoArea = -1, voice = -1;

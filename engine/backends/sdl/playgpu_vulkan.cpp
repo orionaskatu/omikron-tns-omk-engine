@@ -3,19 +3,115 @@
 // (`todo/play-split.md` S5). Each body is the `#if defined(OMK_VULKAN)` arm it
 // replaces, moved unchanged; the game code calls these, and each build links
 // exactly one of `playgpu_vulkan.cpp`, `playgpu_gles.cpp`, `playgpu_none.cpp`.
+//
+// ...and, on Windows, DIRECT3D 12 beside it (`backends/d3d12/`, `OMK_D3D12`):
+// the same two slots - `vkRen`, the renderer that owns the window, and
+// `worldVk`, the offscreen harness - filled by the other backend when
+// `--d3d12` / `[Preferences] renderer = d3d12` or `--world-d3d12` ask. The
+// slots keep Vulkan's names because every caller already reads them as "the
+// GPU window" and "the harness"; which backend is in one is its `name()`,
+// and the presents below go to that backend's entry points. Vulkan stays
+// the default.
 #include "playframe.h"
 #include "playgpu_vulkan.h"
 #include "platform/env.h"
+#if defined(OMK_D3D12)
+#  include "../d3d12/d3d12render.h"
+#endif
+
+#include <cstring>
 
 // The Vulkan window - this glue's, not the game's (the gateway: game code
-// holds no host handle). One viewer a process, so one window.
+// holds no host handle). One viewer a process, so one window - D3D12's too.
 static SDL_Window* vkWin = nullptr;
+
+// The window's Win32 handle, for DXGI (defined at the end of this file, where
+// SDL's window-manager header - which brings in <windows.h> and its macros -
+// cannot reach the code above).
+[[maybe_unused]] static void* nativeWindowHandle(SDL_Window* w);
+
+// Which backend a GPU slot holds. Without the D3D12 backend built in, never it.
+static bool onD3d12(omk::Renderer* r) {
+#if defined(OMK_D3D12)
+    return r && std::strcmp(r->name(), "d3d12") == 0;
+#else
+    (void)r;
+    return false;
+#endif
+}
+
+// The four presents and the resize, to whichever backend `r` is.
+static bool gpuPresentSurfaceOn(omk::Renderer* r, const omk::Surface& s) {
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) return omk::d3d12PresentSurface(r, s);
+#endif
+    return omk::vulkanPresentSurface(r, s);
+}
+static bool gpuPresentWorldOn(omk::Renderer* r, int vy, int vh) {
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) return omk::d3d12PresentWorld(r, vy, vh);
+#endif
+    return omk::vulkanPresentWorld(r, vy, vh);
+}
+static bool gpuWorldPictureOn(omk::Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba) {
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) return omk::d3d12WorldPicture(r, vy, vh, rgba);
+#endif
+    return omk::vulkanWorldPicture(r, vy, vh, rgba);
+}
+static bool gpuResizeOn(omk::Renderer* r, int w, int h) {
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) return omk::d3d12Resize(r, w, h);
+#endif
+    return omk::vulkanResize(r, w, h);
+}
+static const char* gpuDeviceName(omk::Renderer* r) {
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) return omk::d3d12DeviceName(r);
+#endif
+    return omk::vulkanDeviceName(r);
+}
 
 bool PlayState::gpuWindowBuild() const { return true; }
 
 // Vulkan when the machine has it (see THE RENDERER in `playsetup_devices.cpp`)
 void PlayState::gpuOpenWindow() {
     if (!forceSoftware && !worldVulkan) {
+        // DIRECT3D 12 FIRST WHEN ASKED - a plain window (no Vulkan surface on
+        // it) and a DXGI swapchain on its HWND. A device that does not come
+        // up falls back to Vulkan below, then to the software reference, as
+        // every other missing backend does.
+        const bool wantD3d12 = d3d12Flag || settings.renderer == 1;
+#if defined(OMK_D3D12)
+        if (wantD3d12 && SDL_Init(SDL_INIT_VIDEO) == 0) {
+            vkWin = SDL_CreateWindow("OMK Engine (d3d12)",
+                                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                     dispW, dispH,
+                                     omk::envFlag("OMK_HIDDEN_WINDOW") ? static_cast<Uint32>(SDL_WINDOW_HIDDEN)
+                                                                      : omk::sdlFrontend(front).windowFlags());
+            void* hwnd = vkWin ? nativeWindowHandle(vkWin) : nullptr;
+            omk::Renderer* dx = hwnd ? omk::makeD3d12Renderer() : nullptr;
+            if (dx) {
+                if (aaSamples > 1) dx->setMultisample(aaSamples);   // the enhancements
+                if (ssao) dx->setAmbientOcclusion(true);
+                if (texFilter > 0) dx->setTextureFilter(texFilter);
+                if (texAniso > 1) dx->setAnisotropy(texAniso);
+                if (ssaa > 1) dx->setSupersample(ssaa);
+            }
+            if (dx && omk::d3d12AttachWindow(dx, hwnd) && dx->init(dispW, dispH)) {
+                vkRen = dx;
+                omk::sdlFrontend(front).attachWindow(vkWin);   // F11 and row 2 act on it
+                std::printf("renderer: D3D12 - %s\n", omk::d3d12DeviceName(dx));
+                return;
+            }
+            delete dx;
+            if (vkWin) { SDL_DestroyWindow(vkWin); vkWin = nullptr; }
+            std::printf("renderer: no Direct3D 12 device - trying Vulkan\n");
+        }
+#else
+        if (wantD3d12)
+            std::printf("renderer: Direct3D 12 asked for, but this viewer was built without it - Vulkan\n");
+#endif
         if (SDL_Init(SDL_INIT_VIDEO) == 0) {
             vkWin = SDL_CreateWindow("OMK Engine (vulkan)",
                                      SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -59,9 +155,21 @@ void PlayState::gpuOpenWindow() {
 void PlayState::gpuOpenWorldHarness() {
     // ...and the harness: a Vulkan renderer with no surface, for the WORLD
     // alone. `run_vulkan` and `shadow_probe` already prove the backend comes
-    // up offscreen; this is the same thing inside the viewer.
+    // up offscreen; this is the same thing inside the viewer. `--world-d3d12`
+    // fills the same slot with the Direct3D 12 renderer, offscreen likewise -
+    // which is what `verify.py: engine: d3d12` differences against Vulkan.
     if (!vkRen && worldVulkan) {
-        omk::Renderer* wv = omk::makeVulkanRenderer();
+        omk::Renderer* wv = nullptr;
+        const char* api = "VULKAN";
+#if defined(OMK_D3D12)
+        if (worldD3d12) { wv = omk::makeD3d12Renderer(); api = "D3D12"; }
+#else
+        if (worldD3d12) {
+            std::printf("--world-d3d12: this viewer was built without Direct3D 12\n");
+            return;
+        }
+#endif
+        if (!wv) wv = omk::makeVulkanRenderer();
         if (wv && aaSamples > 1) wv->setMultisample(aaSamples);
         if (wv && ssao) wv->setAmbientOcclusion(true);
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
@@ -69,15 +177,18 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
-            std::printf("renderer: the world through VULKAN offscreen - %s "
+            std::printf("renderer: the world through %s offscreen - %s "
                         "(a harness; the frame is still presented on the CPU)\n",
-                        omk::vulkanDeviceName(wv));
-        } else { delete wv; std::printf("--world-vulkan: no offscreen device\n"); }
+                        api, gpuDeviceName(wv));
+        } else {
+            delete wv;
+            std::printf("%s: no offscreen device\n", worldD3d12 ? "--world-d3d12" : "--world-vulkan");
+        }
     }
 }
 
 bool PlayState::gpuPresentSurface(const omk::Surface& pic) {
-    if (vkRen) { omk::vulkanPresentSurface(vkRen, pic); return true; }
+    if (vkRen) { gpuPresentSurfaceOn(vkRen, pic); return true; }
     return false;
 }
 
@@ -85,7 +196,7 @@ void PlayState::gpuPresentVerify(bool&) {}
 void PlayState::gpuPresentOverlay(bool&) {}
 
 void PlayState::gpuPresentWorld(bool& presentedWorld) {
-    if (vkRen) presentedWorld = omk::vulkanPresentWorld(vkRen, gpuVy, gpuVh);
+    if (vkRen) presentedWorld = gpuPresentWorldOn(vkRen, gpuVy, gpuVh);
 }
 
 bool PlayState::gpuWorldOnWindow() {
@@ -99,12 +210,15 @@ bool PlayState::gpuWorldOnWindow() {
 void PlayState::gpuOverlayDecision(const char*&) {}
 
 void PlayState::gpuResize(int nw, int nh, bool& ok) {
-    if (vkRen) ok = omk::vulkanResize(vkRen, nw, nh);
-    if (ok && worldVk) ok = omk::vulkanResize(worldVk, nw, nh);
+    if (vkRen) ok = gpuResizeOn(vkRen, nw, nh);
+    if (ok && worldVk) ok = gpuResizeOn(worldVk, nw, nh);
 }
 
 bool PlayState::gpuDriverRow(std::vector<std::string>& drivers) {
-    if (vkRen) { drivers.push_back(std::string("Vulkan - ") + omk::vulkanDeviceName(vkRen)); return true; }
+    if (vkRen) {
+        drivers.push_back(std::string(onD3d12(vkRen) ? "Direct3D 12 - " : "Vulkan - ") + gpuDeviceName(vkRen));
+        return true;
+    }
     return false;
 }
 
@@ -119,7 +233,7 @@ void PlayState::gpuVerifyWorldPicture() {
         // expand it - every byte of every pixel
         static std::vector<unsigned char> gpuPic;
         static long compared = 0, differing = 0, badPixels = 0;
-        if (omk::vulkanWorldPicture(&world, gpuVy, gpuVh, gpuPic) &&
+        if (gpuWorldPictureOn(&world, gpuVy, gpuVh, gpuPic) &&
             gpuPic.size() == fb.px.size() * 4) {
             const unsigned char* lut = omk::expand565Rgba();
             long diff = 0;
@@ -137,3 +251,28 @@ void PlayState::gpuVerifyWorldPicture() {
                         frameNo, compared, differing, badPixels);
     }
 }
+
+// ---- the native window handle, LAST (see the declaration above) -----------
+#if defined(OMK_D3D12)
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  if defined(OMK_SDL3)
+static void* nativeWindowHandle(SDL_Window* w) {
+    return SDL_GetPointerProperty(SDL_GetWindowProperties(w), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+}
+#  else
+#    include <SDL_syswm.h>
+static void* nativeWindowHandle(SDL_Window* w) {
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(w, &info) || info.subsystem != SDL_SYSWM_WINDOWS) return nullptr;
+    return info.info.win.window;
+}
+#  endif
+#else
+static void* nativeWindowHandle(SDL_Window*) { return nullptr; }
+#endif

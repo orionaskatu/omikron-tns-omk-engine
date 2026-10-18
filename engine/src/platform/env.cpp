@@ -27,6 +27,7 @@ constexpr const char* kSwitches[] = {
     "OMK_CPU_MOTION",           // A/B: the moving meshes posed on the CPU on a renderer that poses them (engine: dirty corners)
     "OMK_CPU_PLAYER",           // A/B: the player posed on the CPU on a renderer that poses bodies
     "OMK_CPU_SKY",              // A/B: the sky moved on the CPU on a renderer that moves it
+    "OMK_D3D12_DEBUG",          // the D3D12 debug layer on, every message printed (engine: d3d12)
     "OMK_DIRTY_AUDIT",          // GLES: checks the dirty-corner list is complete on every partial upload
     "OMK_EAGER_SOUPS",          // A/B: every collision soup built at the load instead of when first asked (engine: lazy collision)
     "OMK_EVENTS",               // the `@evt` lines beside the prose (`platform/events.h`): machine-readable records for the checks
@@ -84,6 +85,7 @@ constexpr const char* kSwitches[] = {
     "OMK_SHADOWLOG",            // log: the shadows' light, the player's feet and a walker's shadow, periodically (engine: character shadow)
     "OMK_SKIN_FAR",             // every staged body posed, in view or not
     "OMK_SKIP_EFFECT",          // =<n> set-piece effect n left unspawned
+    "OMK_SSAO_VIEW",            // the SSAO occlusion itself written over the frame, grey on white
     "OMK_STAGE_PROBE",          // log: the staged bodies' placement every frame, every body posed (engine: scene facing)
     "OMK_STICKY_EULER",         // A/B: a scene call's Euler kept across steps - the old, wrong reading (engine: scene facing)
     "OMK_STREAM",               // GLES: the streamed upload on where it is off by default

@@ -292,6 +292,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   any distance (the game steps down every 10 m);\n"
 "                   [Enhancements] lod=best\n"
 "  --software       force the software rasteriser\n"
+"  --d3d12          the window on the Direct3D 12 backend instead of Vulkan\n"
+"                   (Windows); [Preferences] renderer = vulkan|d3d12\n"
+"  --world-d3d12    --world-vulkan's offscreen harness, on Direct3D 12\n"
 "  --profile F      write a profiler capture to F (tools/omkprof.py reads it;\n"
 "                   todo/debug-tools.md - absent from `make release`)\n"
 "  --gl1-composite  the classic Mac's GL1: compose the frame on the CPU, not\n"
@@ -360,6 +363,8 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--software") forceSoftware = true;
         else if (a == "--gl1-composite") gl1Composite = true;
         else if (a == "--world-vulkan") worldVulkan = true;
+        else if (a == "--d3d12") d3d12 = true;
+        else if (a == "--world-d3d12") worldVulkan = worldD3d12 = true;
         // The frame rate, reported once a second on stdout. Off by default:
         // it is a diagnostic, and a game that prints every second when nobody
         // asked is a game with a line of noise under it.

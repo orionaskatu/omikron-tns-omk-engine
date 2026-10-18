@@ -77,6 +77,14 @@ struct Settings {
     bool   fullscreen = false;
     Source fullscreenSource = Source::Default;
 
+    // `[Preferences] renderer = vulkan|d3d12`: WHICH live backend draws the
+    // window - this port's key, not the game's (the original had one device
+    // path, D3D's, and chose its driver in a dialog). 0 Vulkan, the default;
+    // 1 Direct3D 12 (Windows, `backends/d3d12/`). `--d3d12` asks the same.
+    // A build without the D3D12 backend reads it and keeps Vulkan.
+    int    renderer = 0;
+    Source rendererSource = Source::Default;
+
     // ---- [Enhancements] - OFF unless the file or a flag says so ----------
     // (all but `texturefiltering`'s bilinear, which is the original's own -
     // see below; the key lives here because its other two values do not)

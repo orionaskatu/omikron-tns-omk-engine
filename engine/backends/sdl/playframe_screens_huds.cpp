@@ -1095,7 +1095,7 @@ void PlayState::screensFps() {
             if (showFps) {
                 std::printf("fps %.1f  (%d frames, worst %u ms)  %s%s\n",
                             rate, fpsMeter.frames, static_cast<unsigned>(fpsMeter.worst),
-                            vkRen ? "vulkan" : glRen ? "gles" : "software",
+                            vkRen ? vkRen->name() : glRen ? "gles" : "software",
                             drawWorld ? ", 3D" : ", 2D only");
                 std::fflush(stdout);
             }

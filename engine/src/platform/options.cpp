@@ -107,6 +107,10 @@ OptionsFile loadOptionsFile(const std::string& path) {
             bool known = false;
             for (const auto& k : preferenceKeys())
                 if (lower(k) == kv.first) { known = true; break; }
+            // ...nor is one of this PORT's own keys there (`settings.h`):
+            // `renderer`, which live backend draws the window. Not in
+            // `preferenceKeys()`, which is the BINARY's 65 and stays so.
+            if (kv.first == "renderer") known = true;
             if (!known) o.unknown.push_back(kv.first);
         }
         std::sort(o.unknown.begin(), o.unknown.end());

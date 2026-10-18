@@ -54,6 +54,16 @@ Settings resolveSettings(const OptionsFile& ini,
             s.fullscreen = ini.integer(kPrefs, "window", 1) == 0;
             s.fullscreenSource = Settings::Source::Ini;
         }
+        if (const std::string* w = ini.find(kPrefs, "renderer")) {
+            std::string v = *w;
+            for (auto& c : v) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
+            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+            if (v == "vulkan" || v == "0") { s.renderer = 0; s.rendererSource = Settings::Source::Ini; }
+            else if (v == "d3d12" || v == "1") { s.renderer = 1; s.rendererSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: renderer = %s is not vulkan|d3d12 - ignored\n",
+                              w->c_str());
+        }
         takeInt (kPrefs, "MouseSensX",     s.v.mouseSensitivityX, s.mouseSensitivity);
         takeInt (kPrefs, "MouseSensY",     s.v.mouseSensitivityY, s.mouseSensitivity);
         // The three volumes are ATTENUATIONS in the ini (0 full, 100 silent),

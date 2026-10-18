@@ -27505,6 +27505,115 @@ def c_engine_ssao():
             % (dark, n, 100.0 * share, mdark, mbright))
 
 
+def c_engine_d3d12():
+    r"""`omk-play --world-d3d12`: the DIRECT3D 12 backend draws what Vulkan draws.
+
+    `engine/backends/d3d12/d3d12render.cpp` is a second live renderer beside
+    Vulkan (Windows only, chosen by `--d3d12` / `--world-d3d12` /
+    `[Preferences] renderer = d3d12`; Vulkan stays the default). Its shaders are
+    NOT a second transcription: the Makefile takes the very GLSL Vulkan runs
+    through glslc -> spirv-cross -> dxc, and the per-draw block, the per-frame
+    uniforms and the pose buffer are Vulkan's bytes in root constants and root
+    descriptors. So the two backends are compared directly, frame against
+    frame, with no tolerance for a different picture - only for the drivers'
+    rounding: the street start (no crowd, 60 frames, 640x480, nearest
+    filtering) through `--world-vulkan` and through `--world-d3d12`, three
+    times - plain, `--shadow-quality mapped` (the three-layer shadow map and
+    PCSS) and `--ssao` (the depth read back as a texture, two passes, the
+    multiply) - and for each:
+    * the mean per-pixel difference, in 565 steps (green's 6-bit step halved),
+      under 0.05, and at least 99% of pixels within two steps - tight on
+      purpose: the same DXIL-from-SPIR-V shaders on the same inputs measured
+      0.000-0.001 and 100% (an RX 9070 XT, 2026-10-18), while a backend
+      leaving the fog out is only 0.21 and 96.9% off, because the street's
+      fog is confined to its far end;
+    * the D3D12 run with its debug layer on (`OMK_D3D12_DEBUG=1`) reports no
+      error - when the machine has the layer; without it the run says so and
+      the count is simply zero;
+    * and each enhancement CHANGES the D3D12 frame (more than 0.5% of pixels
+      against the plain one), so a backend that ignored `--ssao` or the
+      shadow pass cannot pass by matching a Vulkan run that ignored it too.
+    Skipped where the viewer has no D3D12 backend (not Windows, or no
+    spirv-cross/dxc) or the machine no D3D12 device.
+    SHOWN TO FAIL with the D3D12 fog disabled (`submitOne`'s `if (fog_ && ...)`
+    made `if (false && ...)`): the street's far end goes unfogged - mean 0.207
+    steps, 96.85% within two, in all three runs - which a looser bound (0.25 /
+    95%, the first draft) let through.
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "the viewer did not build"
+    W, H = 640, 480
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(api, extra, name):
+            out = os.path.join(tmp, "%s-%s.bin" % (name, api))
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+            if api == "d3d12":
+                env["OMK_D3D12_DEBUG"] = "1"
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-" + api, "--no-crowd", "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", "60",
+                                "--dump", out] + extra,
+                               capture_output=True, env=env)
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return text, data
+        runs = {}
+        for name, extra in (("plain", []), ("mapped", ["--shadow-quality", "mapped"]),
+                            ("ssao", ["--ssao"])):
+            runs[name] = (run("vulkan", extra, name), run("d3d12", extra, name))
+            if name == "plain":
+                t_dx = runs[name][1][0]
+                if "renderer: the world through D3D12" not in t_dx:
+                    why = ("this viewer has no D3D12 backend" if "without Direct3D 12" in t_dx
+                           else "no D3D12 device")
+                    return ("skipped",), ("skipped",), why
+                if "renderer: the world through VULKAN" not in runs[name][0][0]:
+                    return ("skipped",), ("skipped",), "no Vulkan device to compare against"
+    def compare(d0, d1):
+        if not (len(d0) == len(d1) == n * 2):
+            return 99.0, 0.0, 0.0
+        tot = 0.0
+        within = same = 0
+        for p, q in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+            if p == q:
+                same += 1
+                within += 1
+                continue
+            dr = abs(((p >> 11) & 31) - ((q >> 11) & 31))
+            dg = abs(((p >> 5) & 63) - ((q >> 5) & 63)) / 2.0
+            db = abs((p & 31) - (q & 31))
+            tot += (dr + dg + db) / 3.0
+            within += max(dr, dg, db) <= 2
+        return tot / n, within / n, 1.0 - same / n
+    got, want, notes = [], [], []
+    for name in ("plain", "mapped", "ssao"):
+        (t_vk, d_vk), (t_dx, d_dx) = runs[name]
+        mean, within, _ = compare(d_vk, d_dx)
+        errs = sum(1 for l in t_dx.splitlines()
+                   if "d3d12 debug [ERROR]" in l or "d3d12 debug [CORRUPTION]" in l)
+        got += [mean < 0.05, within > 0.99, errs]
+        want += [True, True, 0]
+        notes.append("%s: mean %.3f steps, %.2f%% within 2, %d debug-layer errors"
+                     % (name, mean, 100.0 * within, errs))
+    d_plain = runs["plain"][1][1]
+    _, _, mapped_moved = compare(d_plain, runs["mapped"][1][1])
+    _, _, ssao_moved = compare(d_plain, runs["ssao"][1][1])
+    got += [mapped_moved > 0.005, ssao_moved > 0.005, "d3d12: SSAO on" in runs["ssao"][1][0]]
+    want += [True, True, True]
+    notes.append("the D3D12 frame moved by the shadow map in %.1f%% of pixels, by SSAO in %.1f%%"
+                 % (100.0 * mapped_moved, 100.0 * ssao_moved))
+    return tuple(got), tuple(want), "; ".join(notes)
+
+
 def c_engine_escape_back():
     r"""`[Enhancements] escapeback` - ESC and BACKSPACE as the interface's BACK.
 
@@ -45401,8 +45510,9 @@ def c_licence_headers():
     # 628: + `tools/group_members.py` (fields gathered into owned components)
     # 631: + `engine/src/o3de/drawcore.{h,cpp}` and `engine/tools/drawcore_probe.cpp`
     # (the GPU backends' shared pose, light, tie and blend)
+    # 633: + `engine/backends/d3d12/d3d12render.{h,cpp}` (the Direct3D 12 backend)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (631, [], 1, []), \
+           (633, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48153,6 +48263,7 @@ SLOW = [
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
+    ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

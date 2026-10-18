@@ -173,6 +173,8 @@ struct PlayState {
     bool & gl1Composite = opt.gl1Composite;
     bool & showFps = opt.showFps;
     bool & worldVulkan = opt.worldVulkan;
+    bool & d3d12Flag = opt.d3d12;           // --d3d12 (playgpu_vulkan.cpp)
+    bool & worldD3d12 = opt.worldD3d12;     // --world-d3d12
     omk::Game game{};
     bool boardPress{};
     bool mountSpent{};   // the action button is edged, not held

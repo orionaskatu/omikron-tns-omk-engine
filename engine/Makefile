@@ -135,6 +135,53 @@ build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -DOMK_MS -mfmt=c -o $@ $<
 
+# ------------------------------------------------------------ DIRECT3D 12
+#
+# A SECOND live backend beside Vulkan, Windows only (`backends/d3d12/`), and
+# optional by the same rule: a machine without the tools builds exactly what it
+# built before. It rides in the Vulkan variant's `omk-play` - `--d3d12` and
+# `--world-d3d12` pick it at run time, Vulkan stays the default.
+#
+# ONE SOURCE OF TRUTH FOR THE SHADERS: the very GLSL Vulkan compiles is taken
+# to SPIR-V by glslc, translated to HLSL by spirv-cross (shader model 6.0) and
+# compiled to DXIL by dxc, which writes a C array the backend embeds - the
+# `.inc` files' arrangement. The registers are DETERMINISTIC, which is what the
+# root signatures in `d3d12render.cpp` are written against: spirv-cross maps
+# GLSL `set = S, binding = B` to `register(xB, spaceS)` itself, and the one
+# block with no binding - the push constants - is given `b0, space7` by the
+# `sed` below (spirv-cross's command line has no option for it; it would leave
+# the register to dxc's own choice). A vertex shader is translated with
+# `--flip-vert-y`, Vulkan's clip space being Y-down and D3D's Y-up, so the
+# rasterised picture lands on the same pixels with the same winding.
+D3D_ON :=
+ifeq ($(OS),Windows_NT)
+SPIRV_CROSS := $(shell command -v spirv-cross 2>/dev/null)
+DXC         := $(shell command -v dxc 2>/dev/null)
+D3D_ON      := $(if $(and $(VK_PKG),$(GLSLC),$(SPIRV_CROSS),$(DXC)),1)
+endif
+D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.frag \
+                   ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag
+D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
+D3D_LIBS    := -ld3d12 -ldxgi -ldxguid
+.PRECIOUS: build/shaders/dx/%.spv build/shaders/dx/%_ms.frag.spv build/shaders/dx/%.hlsl
+
+build/shaders/dx/%.spv: backends/vulkan/shaders/%
+	@mkdir -p $(@D)
+	$(GLSLC) -o $@ $<
+build/shaders/dx/%_ms.frag.spv: backends/vulkan/shaders/%.frag
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_MS -o $@ $<
+# the D3D12 backend's own (`blit.frag`, the swapchain's scaled copy)
+build/shaders/dx/%.spv: backends/d3d12/shaders/%
+	@mkdir -p $(@D)
+	$(GLSLC) -o $@ $<
+build/shaders/dx/%.hlsl: build/shaders/dx/%.spv
+	$(SPIRV_CROSS) $< --hlsl --shader-model 60 $(if $(filter %.vert,$*),--flip-vert-y) \
+	    | sed -e 's/^cbuffer \([A-Za-z_0-9]*\)\([^A-Za-z_0-9 :]*\)$$/cbuffer \1 : register(b0, space7)\2/' > $@
+build/shaders/dx/%.h: build/shaders/dx/%.hlsl
+	$(DXC) -nologo -T $(if $(filter %.vert,$*),vs_6_0,ps_6_0) -E main \
+	    -Vn kDx_$(subst .,_,$*) -Fh $@ $<
+
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,
 # so a header change that alters a struct's layout - `Geometry` growing a field
@@ -175,7 +222,8 @@ PLAY_SW_DIR := $(OBJDIR)/play-sw
 PLAY_VK_DIR := $(OBJDIR)/play-vk
 PLAY_GL_DIR := $(OBJDIR)/play-gles
 PLAY_SW_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS)
-PLAY_VK_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) $(VK_CFLAGS) -DOMK_VULKAN -Ibuild/shaders
+PLAY_VK_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) $(VK_CFLAGS) -DOMK_VULKAN -Ibuild/shaders \
+                 $(if $(D3D_ON),-DOMK_D3D12)
 PLAY_GL_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) -DOMK_GLES
 PLAY_DEPS := $(wildcard $(PLAY_SW_DIR)/*.d $(PLAY_VK_DIR)/*.d $(PLAY_GL_DIR)/*.d)
 
@@ -223,6 +271,9 @@ $(PLAY_VK_DIR)/%.o: backends/sdl/%.cpp | $(VK_SHADERS)
 $(PLAY_VK_DIR)/vkrender.o: backends/vulkan/vkrender.cpp | $(VK_SHADERS)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) -c -o $@ $<
+$(PLAY_VK_DIR)/d3d12render.o: backends/d3d12/d3d12render.cpp | $(D3D_SHADERS)
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) -c -o $@ $<
 $(PLAY_GL_DIR)/%.o: backends/sdl/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_GL_FLAGS) -c -o $@ $<
@@ -237,10 +288,11 @@ $(PLAY_BIN): $(PLAY_SW_OBJS) $(SRCOBJS) $(INSTR_STAMP)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS)
 PLAY_WITH := $(SDL_PKG) (no Vulkan - software renderer only)
 else
-$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o $(SRCOBJS) $(INSTR_STAMP)
+$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o $(if $(D3D_ON),$(PLAY_VK_DIR)/d3d12render.o) \
+             $(SRCOBJS) $(INSTR_STAMP)
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(VK_LIBS)
-PLAY_WITH := $(SDL_PKG) + $(VK_PKG)
+	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(VK_LIBS) $(if $(D3D_ON),$(D3D_LIBS))
+PLAY_WITH := $(SDL_PKG) + $(VK_PKG)$(if $(D3D_ON), + d3d12)
 endif
 endif
 

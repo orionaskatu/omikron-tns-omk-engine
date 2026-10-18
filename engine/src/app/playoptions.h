@@ -284,6 +284,15 @@ struct PlayOptions {
     // display, so nothing that only the GPU backend does - the mapped shadow,
     // the MSAA, the filters - can otherwise be measured headlessly.
     bool worldVulkan = false;
+    // DIRECT3D 12 (Windows; `backends/d3d12/`), the second live backend.
+    // `--d3d12` puts the WINDOW on it instead of Vulkan (as `[Preferences]
+    // renderer = d3d12` does); `--world-d3d12` is `--world-vulkan`'s harness
+    // on it - it sets `worldVulkan` too, because that flag names the HARNESS
+    // slot (`worldVk`) every path already checks, and this says which backend
+    // fills it. Vulkan stays the default; a build without the backend says so
+    // and keeps Vulkan.
+    bool d3d12 = false;
+    bool worldD3d12 = false;
 
     // The whole command line, in `main`'s order. Returns -1 to go on, or the
     // exit code `main` returns: 0 after `--help`, 2 for a bad argument.

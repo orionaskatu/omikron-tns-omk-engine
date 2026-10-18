@@ -89,7 +89,8 @@ namespace omk::prof {
 
 // A GPU resource's key (step 5), in every build so a renderer's helpers
 // compile the same either way: a domain (the kind of handle) folded into it.
-enum GpuDomain : std::uint64_t { kVkMemory = 1, kGlTexture = 2, kGlBuffer = 3, kGlRenderbuffer = 4 };
+enum GpuDomain : std::uint64_t { kVkMemory = 1, kGlTexture = 2, kGlBuffer = 3, kGlRenderbuffer = 4,
+                                 kD3dResource = 5 };
 template <class H>
 std::uint64_t gpuKey(GpuDomain d, H h) {
     std::uint64_t v;

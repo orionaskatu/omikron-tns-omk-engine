@@ -180,6 +180,10 @@ int PlayState::setupSession() {
     // ESC/BACKSPACE AS BACK (settings.h `escapeBack`), read by the screen
     // input in playframe_modes_parts.cpp
     escapeBack = enh(escapeBackFlag, settings.escapeBack ? 1 : 0, omk::kMaxEscapeBack) > 0;
+    // SSAO (settings.h `ambientOcclusion`), handed to the Vulkan renderer
+    // before its init (playgpu_vulkan.cpp); the backend reports whether it
+    // could
+    ssao = enh(ssaoFlag, settings.ambientOcclusion ? 1 : 0, omk::kMaxAmbientOcclusion) > 0;
     if (escapeBack)
         std::printf("escape back: on - an ENHANCEMENT: ESC and BACKSPACE also send BACK "
                     "while a screen is up; the original's BACK is `Annuler / Sauter` "

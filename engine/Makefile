@@ -123,7 +123,8 @@ GLSLC     := $(shell command -v glslc 2>/dev/null)
 VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
-              build/shaders/present.frag.inc
+              build/shaders/present.frag.inc \
+              build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders

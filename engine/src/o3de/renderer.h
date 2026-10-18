@@ -408,6 +408,11 @@ public:
     // does, because it stands where D3D stood and D3D was told not to.
     virtual bool setMultisample(int /*samples*/) { return false; }
 
+    // SSAO (`todo/enhancements.md` 15): screen-space ambient occlusion from
+    // the depth buffer, multiplied over the frame. Same contract - a request
+    // before `init()`; only the Vulkan backend does it.
+    virtual bool setAmbientOcclusion(bool /*on*/) { return false; }
+
     // The second enhancement: texture filtering, `mode` 0 nearest (the
     // original: MAG/MIN POINT, MIP NONE), 1 bilinear, 2 trilinear - a mip
     // chain the backend generates at upload, the original shipping one level.

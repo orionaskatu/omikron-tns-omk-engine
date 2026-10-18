@@ -7063,7 +7063,7 @@ def c_enhance_all():
              "uiscaling": "UiScaling", "textscaling": "TextScaling",
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
-             "escapeback": "EscapeBack"}
+             "escapeback": "EscapeBack", "ssao": "AmbientOcclusion"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27380,6 +27380,75 @@ def c_engine_start_quit():
         got.append((int(m.group(1)) if m else None, "PostQuitMessage" in out))
     return got, [(101, True), (400, False)], \
            "frames presented and whether the quit was taken: Oui, then Non"
+
+
+def c_engine_ssao():
+    r"""`omk-play --ssao`: SCREEN-SPACE AMBIENT OCCLUSION - an enhancement, off by default.
+    `todo/enhancements.md` 15. The Vulkan backend keeps the frame's depth and
+    runs two passes over it in `end()`: `ssao.frag` rebuilds each pixel's
+    view-space position through `pushView`'s projection and tests a 16-point
+    hemisphere, `ssao_blur.frag` averages it 4x4 and MULTIPLIES it into the
+    frame through the blend. Two runs of the same street start, without and
+    with `--ssao` (no crowd, classic shadows, so nothing else moves):
+    * the default is off in the source and the plain run says nothing;
+    * the `--ssao` run reports the pass live;
+    * some pixels darken (contact: the player's legs and the ground at his
+      feet) and none brightens beyond the 565 rounding - the blend is dst * src,
+      so a brighter pixel would mean the pass wrote colour rather than a factor;
+    * and the darkened share is bounded, so a pass that greyed the whole frame
+      (a wrong normal makes every flat surface occlude itself) fails.
+    SHOWN TO FAIL with `end()`'s `runSsao()` call removed: nothing darkens.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "bool   ambientOcclusion = false;" in src
+    mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "no Vulkan or no glslc - the GPU backend is optional"
+    import tempfile
+    W, H = 640, 480
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-vulkan", "--no-crowd", "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", "60",
+                                "--dump", out] + extra,
+                               capture_output=True, env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+            text = r.stdout.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return text, data
+        t_off, d_off = run([], "off")
+        t_on, d_on = run(["--ssao"], "on")
+    if "renderer: the world through VULKAN" not in t_off or len(d_off) != W * H * 2:
+        return ("skipped",), ("skipped",), "no Vulkan device"
+    import struct
+    n = W * H
+    dark = bright = 0
+    if len(d_on) == len(d_off):
+        a = struct.unpack("<%dH" % n, d_off)
+        b = struct.unpack("<%dH" % n, d_on)
+        for va, vb in zip(a, b):
+            if va == vb:
+                continue
+            sa = ((va >> 11) & 31) * 2 + ((va >> 5) & 63) + (va & 31) * 2
+            sb = ((vb >> 11) & 31) * 2 + ((vb >> 5) & 63) + (vb & 31) * 2
+            if sb < sa - 2:
+                dark += 1
+            elif sb > sa + 2:
+                bright += 1
+    share = dark / n
+    got = (default_off, "SSAO" in t_off, "vulkan: SSAO on" in t_on,
+           dark > n // 200, bright, share < 0.35)
+    return got, (True, False, True, True, 0, True), \
+           ("off by default and silent; --ssao reports the pass live; %d of %d pixels "
+            "darken (%.1f%%), none brightens" % (dark, n, 100.0 * share))
 
 
 def c_engine_escape_back():
@@ -48029,6 +48098,7 @@ SLOW = [
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
+    ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

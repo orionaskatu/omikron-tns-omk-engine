@@ -106,6 +106,14 @@ struct PresentPush { int32_t vy, vh, w, dither, ss; };
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
 ;
+// SSAO (`todo/enhancements.md` 15): the occlusion, then its blur multiplied in.
+const uint32_t kSsaoFrag[] =
+#include "ssao.frag.inc"
+;
+const uint32_t kSsaoBlurFrag[] =
+#include "ssao_blur.frag.inc"
+;
+struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
 
 // The map's side. 1024 is a shadow of a handful of CHARACTERS over a slab a
 // few metres across, so a texel is centimetres.
@@ -245,6 +253,11 @@ public:
     static void geometryGone(void* self, const omk::Geometry* g);
     // The enhancement (renderer.h). Recorded here and honoured in makeTarget,
     // where the device's own limits get the last word.
+    bool setAmbientOcclusion(bool on) override {
+        if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
+        wantSsao_ = on;
+        return true;
+    }
     bool setMultisample(int samples) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
@@ -412,6 +425,26 @@ private:
     std::map<std::pair<const omk::Geometry*, int>, omk::Geometry> cpuPosed_;
     std::map<std::pair<const float*, const omk::Geometry*>, int> cpuPoseSlot_;   // (pose, geometry) -> ordinal, this frame
     std::map<const omk::Geometry*, int> cpuPoseCount_;           // bodies per geometry, this frame
+
+    // SSAO (`todo/enhancements.md` 15). Asked for before init; LIVE when the
+    // target allows it (single-sampled, a sampleable depth format). The main
+    // pass then keeps its depth, `end()` runs the two passes over it.
+    bool wantSsao_ = false, ssaoOn_ = false;
+    VkImageView depthSampleView_ = VK_NULL_HANDLE;   // depth aspect alone
+    VkImage aoImg_ = VK_NULL_HANDLE; VkDeviceMemory aoMem_ = VK_NULL_HANDLE;
+    VkImageView aoView_ = VK_NULL_HANDLE;
+    VkRenderPass aoPass_ = VK_NULL_HANDLE, aoApplyPass_ = VK_NULL_HANDLE;
+    VkFramebuffer aoFbuf_ = VK_NULL_HANDLE, aoApplyFbuf_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout aoDsl_ = VK_NULL_HANDLE;
+    VkDescriptorPool aoPool_ = VK_NULL_HANDLE; VkDescriptorSet aoDs_ = VK_NULL_HANDLE;
+    VkSampler aoSampler_ = VK_NULL_HANDLE; VkPipelineLayout aoPlo_ = VK_NULL_HANDLE;
+    VkPipeline aoPipe_ = VK_NULL_HANDLE, aoBlurPipe_ = VK_NULL_HANDLE;
+    float viewTanH_ = 1.0f, viewTanV_ = 1.0f;        // the last pushView's
+    float aoTanH_ = 1.0f, aoTanV_ = 1.0f;            // the frame's own (begin)
+    int aoVw_ = 0, aoVh_ = 0;
+    bool makeSsao();
+    void killSsao();
+    void runSsao();
     std::uint64_t cpuPoseRev_ = 0;
     bool writePose(const omk::Draw& d, uint32_t& off);
     omk::Draw cpuPose(const omk::Draw& d);
@@ -815,9 +848,27 @@ bool VulkanRenderer::makeTarget() {
     if (dsFmt_ == VK_FORMAT_UNDEFINED) {
         std::fprintf(stderr, "vulkan: no depth+stencil format\n"); return false;
     }
-    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    ssaoOn_ = false;
+    if (wantSsao_) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        ssaoOn_ = !msaa && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        if (!resizing_)
+            std::printf(ssaoOn_ ? "vulkan: SSAO on - an ENHANCEMENT: ambient occlusion from the "
+                                  "depth buffer, multiplied over the frame\n"
+                                : "vulkan: SSAO asked for but not available (%s)\n",
+                        msaa ? "multisampling is on" : "the depth format cannot be sampled");
+    }
+    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                   (ssaoOn_ ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
+    if (ssaoOn_) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &depthSampleView_), "depth sample view");
+    }
 
     // Attachment 0 is what the pipelines rasterise into: `colour_` itself
     // without MSAA, `msColour_` with it - in which case it is not kept
@@ -837,11 +888,12 @@ bool VulkanRenderer::makeTarget() {
     att[1].format = dsFmt_;
     att[1].samples = samples_;
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].storeOp = ssaoOn_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    att[1].finalLayout = ssaoOn_ ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                 : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     att[2].format = VK_FORMAT_R8G8B8A8_UNORM;
     att[2].samples = VK_SAMPLE_COUNT_1_BIT;
     att[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1508,6 +1560,8 @@ bool VulkanRenderer::resize(int w, int h) {
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
+    killSsao();
+    if (depthSampleView_) { vkDestroyImageView(dev_, depthSampleView_, nullptr); depthSampleView_ = VK_NULL_HANDLE; }
     img(depthView_, depth_, depthMem_);
     buf(readBuf_, readMem_);
     buf(upBuf_, upMem_);
@@ -2262,6 +2316,7 @@ void VulkanRenderer::pushView(const omk::View& view) {
     cam.h = view.letterboxed() ? view.vh : h_;
     float s[3], u[3], f[3], tanH = 0, tanV = 0;
     omk::cameraBasis(cam, s, u, f, tanH, tanV);
+    viewTanH_ = tanH; viewTanV_ = tanV;
 
     // Vulkan clip space already has Y DOWN and Z in [0,1], which happens to
     // suit a game whose own Y points down. Screen x = w/2*(1 + (vx/vz)/tanH)
@@ -2537,6 +2592,9 @@ void VulkanRenderer::begin(const omk::View& view) {
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     setViewport(view);
     recording_ = true;
+    aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
+    aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
+    aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
 }
 
 // A POSED body's block in the pose buffer (`posesBodies`): written once a
@@ -2704,6 +2762,222 @@ bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
     return true;
 }
 
+// ---- SSAO, `todo/enhancements.md` 15 ---------------------------------------
+//
+// Two full-screen passes after the frame's own, over its depth: `ssao.frag`
+// into an R8 target, then `ssao_blur.frag` averaging it 4x4 (depth-aware) and
+// MULTIPLYING it into `colour_` through the blend, so the frame is only ever
+// darkened. Built on first use at the target's size; `killSsao` on a resize.
+bool VulkanRenderer::makeSsao() {
+    if (aoBlurPipe_ != VK_NULL_HANDLE) return true;
+    if (!ssaoOn_ || depthSampleView_ == VK_NULL_HANDLE) return false;
+    {
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8_UNORM;
+        ii.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
+        ii.mipLevels = 1; ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &aoImg_), "ssao image");
+        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, aoImg_, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &aoMem_), "ssao memory");
+        OMK_GPU_ALLOC("ssao", omk::prof::gpuKey(omk::prof::kVkMemory, aoMem_), ai.allocationSize);
+        VKCHECK(vkBindImageMemory(dev_, aoImg_, aoMem_, 0), "ssao bind");
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = aoImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R8_UNORM;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &aoView_), "ssao view");
+    }
+    const auto pass = [&](VkFormat fmt, VkAttachmentLoadOp load, VkImageLayout from,
+                          VkImageLayout to, VkImageView view, VkRenderPass& rp,
+                          VkFramebuffer& fb) -> bool {
+        VkAttachmentDescription a{};
+        a.format = fmt; a.samples = VK_SAMPLE_COUNT_1_BIT;
+        a.loadOp = load; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a.initialLayout = from; a.finalLayout = to;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = 1; rpi.pAttachments = &a;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &rp), "ssao render pass");
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = rp; fi.attachmentCount = 1; fi.pAttachments = &view;
+        fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fb), "ssao framebuffer");
+        return true;
+    };
+    if (!pass(VK_FORMAT_R8_UNORM, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, aoView_, aoPass_, aoFbuf_)) return false;
+    // the frame itself, loaded and handed back where the readback and the
+    // present pass expect it
+    if (!pass(VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_LOAD,
+              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+              colourView_, aoApplyPass_, aoApplyFbuf_)) return false;
+    {
+        VkDescriptorSetLayoutBinding b[2]{};
+        for (int k = 0; k < 2; ++k) {
+            b[k].binding = static_cast<uint32_t>(k); b[k].descriptorCount = 1;
+            b[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 2; dli.pBindings = b;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &aoDsl_), "ssao set layout");
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 1; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &aoPool_), "ssao pool");
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = aoPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &aoDsl_;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &aoDs_), "ssao set");
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VKCHECK(vkCreateSampler(dev_, &si, nullptr, &aoSampler_), "ssao sampler");
+        VkDescriptorImageInfo ii[2] = {
+            {aoSampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+            {aoSampler_, aoView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet wr[2]{};
+        for (int k = 0; k < 2; ++k) {
+            wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr[k].dstSet = aoDs_; wr[k].dstBinding = static_cast<uint32_t>(k);
+            wr[k].descriptorCount = 1;
+            wr[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            wr[k].pImageInfo = &ii[k];
+        }
+        vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
+    }
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SsaoPush)};
+    VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &aoDsl_;
+    pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+    VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &aoPlo_), "ssao pipeline layout");
+    const auto module = [&](const uint32_t* code, size_t bytes) {
+        VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        si.codeSize = bytes; si.pCode = code;
+        VkShaderModule m = VK_NULL_HANDLE;
+        vkCreateShaderModule(dev_, &si, nullptr, &m);
+        return m;
+    };
+    const auto pipe = [&](const uint32_t* frag, size_t bytes, VkRenderPass rp, bool multiply,
+                          VkPipeline& out) -> bool {
+        VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule qf = module(frag, bytes);
+        if (!qv || !qf) { std::fprintf(stderr, "vulkan: ssao shader module\n"); return false; }
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkViewport vp{0, 0, static_cast<float>(rw_), static_cast<float>(rh_), 0.0f, 1.0f};
+        VkRect2D sc{{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState cba{};
+        if (multiply) {
+            // dst * src: the grey darkens, white leaves the frame as it was
+            cba.blendEnable = VK_TRUE;
+            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cba.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+            cba.colorBlendOp = VK_BLEND_OP_ADD;
+            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.alphaBlendOp = VK_BLEND_OP_ADD;
+            cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT;
+        } else {
+            cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+        }
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = st;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &ms; gp.pColorBlendState = &cb;
+        gp.layout = aoPlo_; gp.renderPass = rp;
+        const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &out);
+        vkDestroyShaderModule(dev_, qv, nullptr);
+        vkDestroyShaderModule(dev_, qf, nullptr);
+        if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: ssao pipeline\n"); return false; }
+        return true;
+    };
+    return pipe(kSsaoFrag, sizeof(kSsaoFrag), aoPass_, false, aoPipe_) &&
+           pipe(kSsaoBlurFrag, sizeof(kSsaoBlurFrag), aoApplyPass_, true, aoBlurPipe_);
+}
+
+void VulkanRenderer::killSsao() {
+    if (aoBlurPipe_) { vkDestroyPipeline(dev_, aoBlurPipe_, nullptr); aoBlurPipe_ = VK_NULL_HANDLE; }
+    if (aoPipe_) { vkDestroyPipeline(dev_, aoPipe_, nullptr); aoPipe_ = VK_NULL_HANDLE; }
+    if (aoPlo_) { vkDestroyPipelineLayout(dev_, aoPlo_, nullptr); aoPlo_ = VK_NULL_HANDLE; }
+    if (aoSampler_) { vkDestroySampler(dev_, aoSampler_, nullptr); aoSampler_ = VK_NULL_HANDLE; }
+    if (aoPool_) { vkDestroyDescriptorPool(dev_, aoPool_, nullptr); aoPool_ = VK_NULL_HANDLE; aoDs_ = VK_NULL_HANDLE; }
+    if (aoDsl_) { vkDestroyDescriptorSetLayout(dev_, aoDsl_, nullptr); aoDsl_ = VK_NULL_HANDLE; }
+    if (aoApplyFbuf_) { vkDestroyFramebuffer(dev_, aoApplyFbuf_, nullptr); aoApplyFbuf_ = VK_NULL_HANDLE; }
+    if (aoFbuf_) { vkDestroyFramebuffer(dev_, aoFbuf_, nullptr); aoFbuf_ = VK_NULL_HANDLE; }
+    if (aoApplyPass_) { vkDestroyRenderPass(dev_, aoApplyPass_, nullptr); aoApplyPass_ = VK_NULL_HANDLE; }
+    if (aoPass_) { vkDestroyRenderPass(dev_, aoPass_, nullptr); aoPass_ = VK_NULL_HANDLE; }
+    if (aoView_) { vkDestroyImageView(dev_, aoView_, nullptr); aoView_ = VK_NULL_HANDLE; }
+    if (aoImg_) { vkDestroyImage(dev_, aoImg_, nullptr); aoImg_ = VK_NULL_HANDLE; }
+    if (aoMem_) { freeDeviceMemory(aoMem_); aoMem_ = VK_NULL_HANDLE; }
+}
+
+void VulkanRenderer::runSsao() {
+    if (!makeSsao() || aoVw_ <= 0 || aoVh_ <= 0) return;
+    // the frame's depth and colour writes, before the passes read them
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         0, 1, &mb, 0, nullptr, 0, nullptr);
+    // the scene's projection (`pushView`), the frame's viewport, and the
+    // look: a radius of about a forearm, three quarters dark at most
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    const SsaoPush push{aoTanH_, aoTanV_, farP / (farP - nearP), -farP * nearP / (farP - nearP),
+                        static_cast<float>(aoVw_), static_cast<float>(aoVh_), 45.0f, 0.75f};
+    const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pl) {
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+        vkCmdBeginRenderPass(cb_, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, aoPlo_, 0, 1, &aoDs_, 0, nullptr);
+        vkCmdPushConstants(cb_, aoPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+        vkCmdDraw(cb_, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb_);
+    };
+    run(aoPass_, aoFbuf_, aoPipe_);
+    VkMemoryBarrier mb2{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb2.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    mb2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb2, 0, nullptr, 0, nullptr);
+    run(aoApplyPass_, aoApplyFbuf_, aoBlurPipe_);
+}
+
 void VulkanRenderer::end() {
     cpuPoseSlot_.clear();
     cpuPoseCount_.clear();
@@ -2742,6 +3016,7 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
+    if (ssaoOn_) runSsao();
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -2900,6 +3175,8 @@ VulkanRenderer::~VulkanRenderer() {
     if (msColourView_) vkDestroyImageView(dev_, msColourView_, nullptr);
     if (msColour_) vkDestroyImage(dev_, msColour_, nullptr);
     if (msColourMem_) freeDeviceMemory(msColourMem_);
+    killSsao();
+    if (depthSampleView_) vkDestroyImageView(dev_, depthSampleView_, nullptr);
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);
     if (depthMem_) freeDeviceMemory(depthMem_);

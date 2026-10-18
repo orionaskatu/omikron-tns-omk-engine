@@ -177,6 +177,13 @@ struct Settings {
     bool   escapeBack = false;
     Source escapeBackSource = Source::Default;
 
+    // `ssao = off|on`: SCREEN-SPACE AMBIENT OCCLUSION, the contact darkening
+    // of creases, corners and where a body meets the ground, from the depth
+    // buffer (the Vulkan backend). The original has none; the sets' baked
+    // vertex colours carry the artists' own. `todo/enhancements.md` 15.
+    bool   ambientOcclusion = false;
+    Source ambientOcclusionSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -370,6 +377,7 @@ inline constexpr int kMaxRadar         = 1;   // always
 inline constexpr int kMaxFrameRate     = 60;
 inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
+inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
 // "unlimited" replaces, and because a check quotes it.
@@ -400,6 +408,7 @@ inline void applyMaxEnhancements(Settings& s) {
     take(s.frameRate,     kMaxFrameRate,     s.frameRateSource);
     takeFlag(s.smoothAnimation, kMaxAnimation, s.smoothAnimationSource);
     takeFlag(s.escapeBack, kMaxEscapeBack, s.escapeBackSource);
+    takeFlag(s.ambientOcclusion, kMaxAmbientOcclusion, s.ambientOcclusionSource);
 }
 
 // Resolve the three sources in order.  Either may be absent.

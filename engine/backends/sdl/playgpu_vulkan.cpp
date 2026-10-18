@@ -32,6 +32,7 @@ void PlayState::gpuOpenWindow() {
             SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, ext.data());
             omk::Renderer* vkr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
+            if (ssao) vkr->setAmbientOcclusion(true);
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
@@ -62,6 +63,7 @@ void PlayState::gpuOpenWorldHarness() {
     if (!vkRen && worldVulkan) {
         omk::Renderer* wv = omk::makeVulkanRenderer();
         if (wv && aaSamples > 1) wv->setMultisample(aaSamples);
+        if (wv && ssao) wv->setAmbientOcclusion(true);
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);

@@ -54,6 +54,9 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.smoothAnimationSource));
     std::printf("enh escapeback %d %s\n", s.escapeBack ? 1 : 0,
                 omk::sourceName(s.escapeBackSource));
+    std::printf("enh ssao %d %s
+", s.ambientOcclusion ? 1 : 0,
+                omk::sourceName(s.ambientOcclusionSource));
     std::printf("enh all %d\n", s.enhanceAll ? 1 : 0);
     std::printf("screen %dx%d %s\n", v.screenX, v.screenY, omk::sourceName(s.screen));
     std::printf("density %d %s\n", v.streetActivity, omk::sourceName(s.streetActivity));

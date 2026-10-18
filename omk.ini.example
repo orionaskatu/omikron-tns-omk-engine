@@ -238,3 +238,9 @@
 ; BACKSPACE send BACK while a screen is up (BACKSPACE still edits a focused
 ; name field). `todo/enhancements.md` 14.
 ;escapeback = off
+;
+; SSAO - screen-space ambient occlusion: the soft darkening of creases,
+; corners and where a body meets the ground, from the depth buffer. The
+; original has none (the sets' baked colours carry the artists' own shading).
+; Vulkan only, and not together with antialiasing = msaa. `todo/enhancements.md` 15.
+;ssao = off

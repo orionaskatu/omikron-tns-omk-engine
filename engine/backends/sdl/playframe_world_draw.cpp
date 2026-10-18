@@ -1113,27 +1113,55 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             // and overlap darker - and each strength EASES towards its target
             // over ~0.35 s, so a light taking over fades in while the old one
             // fades out instead of switching on the frame.
-            constexpr float kShadowOpacity = 0.6f;   // the darkest one, 0..1
+            // Each shadow is as dark as its lamp's SHARE of all the light
+            // reaching the casters (plus an ambient floor): under one lamp
+            // the shadow is deep, while two equal lamps either side fill
+            // each other's in and cast two faint ones - not two full-dark
+            // twins. Lamps casting from nearly the same direction merge into
+            // one shadow, and a lamp whose share is small casts none.
+            constexpr float kShadowOpacity = 0.9f;   // a lone lamp's, before the floor
+            constexpr float kAmbientShare = 0.15f;   // of the strongest lamp's reach
+            constexpr float kMinShare = 0.12f;
+            constexpr float kMergeCos = 0.94f;       // ~20 degrees apart
             constexpr float kFadeSeconds = 0.35f;
             const int maxLights = 1 + omk::View::kExtraShadows;
-            struct Cand { const omk::Light3do* l; float k; };
+            struct Cand { const omk::Light3do* l; float k; float d[3]; };
             std::vector<Cand> cands;
+            float kSum = 0.0f;
             for (const WorldSlot& ws2 : worldSlots)
                 for (const omk::Light3do& l : ws2.lights) {
                     float k = 0.0f;
-                    if (omk::strongestLightAt(centre, std::span<const omk::Light3do>(&l, 1), &k) &&
-                        k > 0.0f)
-                        cands.push_back({&l, k});
+                    if (!omk::strongestLightAt(centre, std::span<const omk::Light3do>(&l, 1), &k) ||
+                        k <= 0.0f)
+                        continue;
+                    Cand c{&l, k, {centre[0] - l.pos[0], centre[1] - l.pos[1], centre[2] - l.pos[2]}};
+                    const float dl = std::sqrt(c.d[0] * c.d[0] + c.d[1] * c.d[1] + c.d[2] * c.d[2]);
+                    if (dl < 1e-3f) for (int q = 0; q < 3; ++q) c.d[q] = l.dir[q];
+                    else for (float& v : c.d) v /= dl;
+                    kSum += k;
+                    cands.push_back(c);
                 }
             std::sort(cands.begin(), cands.end(),
                       [](const Cand& a, const Cand& b) { return a.k > b.k; });
             const float kMax = cands.empty() ? 0.0f : cands.front().k;
+            // fold each lamp into a stronger one casting the same way
+            std::vector<Cand> kept;
+            for (const Cand& c : cands) {
+                bool merged = false;
+                for (Cand& k2 : kept)
+                    if (c.d[0] * k2.d[0] + c.d[1] * k2.d[1] + c.d[2] * k2.d[2] > kMergeCos) {
+                        k2.k += c.k; merged = true; break;
+                    }
+                if (!merged) kept.push_back(c);
+            }
+            const float total = kSum + kAmbientShare * kMax;
             struct Fade { float dir[3] = {0, -1, 0}; float pos[3] = {0, 0, 0}; float cur = 0.0f, target = 0.0f; std::string name; };
             static std::map<std::string, Fade> fades;
             for (auto& kv : fades) kv.second.target = 0.0f;
-            for (int c = 0; c < static_cast<int>(cands.size()) && c < maxLights; ++c) {
-                if (cands[static_cast<std::size_t>(c)].k < kMax * 0.25f) break;
-                const omk::Light3do* l = cands[static_cast<std::size_t>(c)].l;
+            for (int c = 0; c < static_cast<int>(kept.size()) && c < maxLights; ++c) {
+                const float share = kept[static_cast<std::size_t>(c)].k / total;
+                if (share < kMinShare) break;
+                const omk::Light3do* l = kept[static_cast<std::size_t>(c)].l;
                 char key[192];
                 std::snprintf(key, sizeof key, "%s@%.0f,%.0f,%.0f", l->name.c_str(),
                               static_cast<double>(l->pos[0]), static_cast<double>(l->pos[1]),
@@ -1141,7 +1169,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
                 Fade& f = fades[key];
                 f.name = l->name;
                 for (int q = 0; q < 3; ++q) { f.dir[q] = l->dir[q]; f.pos[q] = l->pos[q]; }
-                f.target = kShadowOpacity * cands[static_cast<std::size_t>(c)].k / kMax;
+                f.target = kShadowOpacity * std::min(share, 1.0f);
             }
             static auto lastTick = std::chrono::steady_clock::now();
             const auto nowTick = std::chrono::steady_clock::now();

@@ -237,6 +237,11 @@ struct View {
 //     order - opaque, then additive, then multiply, by material within each.
 //     A backend that sorted differently would draw a different picture
 //     wherever anything overlaps.
+// Bit 4 of `Draw::lit`: this batch SHINES (`vehicleshine`, `todo/enhancements.md`
+// 20) - lamp highlights and a sky reflection added in `scene.frag`. The low two
+// bits stay the lit mode (0, 1, 2); a backend hands `lit` to the shader whole.
+inline constexpr int kDrawShine = 4;
+
 struct Draw {
     std::uint32_t   bucketKey = 0;
     const Geometry* geo       = nullptr;

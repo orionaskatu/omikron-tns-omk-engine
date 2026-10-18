@@ -7067,7 +7067,7 @@ def c_enhance_all():
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
-             "lod": "BestLod"}
+             "lod": "BestLod", "vehicleshine": "VehicleShine"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27385,6 +27385,76 @@ def c_engine_start_quit():
         got.append((int(m.group(1)) if m else None, "PostQuitMessage" in out))
     return got, [(101, True), (400, False)], \
            "frames presented and whether the quit was taken: Oui, then Non"
+
+
+def c_engine_vehicle_shine():
+    r"""`omk-play --vehicle-shine`: the sliders and motos SHINE - an enhancement, off by default.
+    `todo/enhancements.md` 20, `scene.frag`. The game gives a vehicle no
+    reflection: its paint's highlights are painted into `SLI_FN.3DT` (all eight
+    meshes carry flags 0, white vertex colours). A draw carrying
+    `omk::kDrawShine` gets, added to its lighting, a Blinn-Phong highlight from
+    each lamp in reach and a sky reflection under a Fresnel weight. Three runs
+    of the same street camera on the Vulkan backend, traffic and crowd as the
+    game has them: off twice (the frame is reproducible, so a difference is the
+    flag's) and on.
+    * the default is off in the source and the plain run says nothing;
+    * the `--vehicle-shine` run says so;
+    * the two plain frames are identical;
+    * the shine frame differs from them - and only by ADDING light: pixels
+      brighten, none darkens beyond the 565 rounding;
+    * and the changed share is bounded, so a pass that lit the whole frame
+      (the flag read off every draw) fails.
+    SHOWN TO FAIL with the `(pc.lit & 4)` block of `scene.frag` removed: the
+    shine frame equals the plain one.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "bool   vehicleShine = false;" in src
+    mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "no Vulkan or no glslc - the GPU backend is optional"
+    import tempfile, struct
+    W, H = 960, 540
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--ride", "--world-vulkan", "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", "90",
+                                "--eye", "4700,-170,-480", "--at", "4839,-90,-677",
+                                "--dump", out] + extra,
+                               capture_output=True, env=dict(os.environ, SDL_VIDEODRIVER="dummy"))
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return r.stdout.decode("latin-1"), data
+        t_a, d_a = run([], "a")
+        t_b, d_b = run([], "b")
+        t_on, d_on = run(["--vehicle-shine"], "on")
+    if "renderer: the world through VULKAN" not in t_a or len(d_a) != W * H * 2:
+        return ("skipped",), ("skipped",), "no Vulkan device"
+    n = W * H
+    same = d_a == d_b
+    bright = dark = 0
+    if len(d_on) == len(d_a):
+        for va, vb in zip(struct.unpack("<%dH" % n, d_a), struct.unpack("<%dH" % n, d_on)):
+            if va == vb:
+                continue
+            sa = ((va >> 11) & 31) * 2 + ((va >> 5) & 63) + (va & 31) * 2
+            sb = ((vb >> 11) & 31) * 2 + ((vb >> 5) & 63) + (vb & 31) * 2
+            if sb > sa + 2:
+                bright += 1
+            elif sb < sa - 2:
+                dark += 1
+    got = (default_off, "vehicle shine" in t_a, "vehicle shine: on" in t_on, same,
+           bright > 200, dark, bright < n // 20)
+    return got, (True, False, True, True, True, 0, True), \
+           ("off by default and silent; --vehicle-shine says so; two plain frames identical; "
+            "%d pixels brighten and %d darken (%.2f%% of the frame)" % (bright, dark, 100.0 * bright / n))
 
 
 def c_engine_best_lod():
@@ -48498,6 +48568,7 @@ SLOW = [
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
+    ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

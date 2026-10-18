@@ -200,6 +200,11 @@ int PlayState::setupSession() {
     if (bestLod)
         std::printf("lod: best - an ENHANCEMENT: every pedestrian keeps its most detailed "
                     "body at any distance; the original steps down a skeleton every 10 m\n");
+    // VEHICLE SHINE (settings.h `vehicleShine`), carried on the vehicles' draws
+    vehicleShine = enh(vehicleShineFlag, settings.vehicleShine ? 1 : 0, omk::kMaxVehicleShine) > 0;
+    if (vehicleShine)
+        std::printf("vehicle shine: on - an ENHANCEMENT: sliders and motos get lamp highlights "
+                    "and a sky reflection; the original paints their shine into the texture\n");
     if (escapeBack)
         std::printf("escape back: on - an ENHANCEMENT: ESC and BACKSPACE also send BACK "
                     "while a screen is up; the original's BACK is `Annuler / Sauter` "

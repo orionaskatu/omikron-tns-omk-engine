@@ -139,6 +139,7 @@ struct LightUbo {
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
     int32_t pad;
+    float   eye[4];    // the camera's position (vehicle shine's view vector)
 };
 
 // Up to three mapped shadows a frame, one per LAYER of the shadow image: the
@@ -2568,6 +2569,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.count = n;
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
+        for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
@@ -2699,7 +2701,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
 
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
-    push_.lit = litCount_ > 0 ? d.lit : 0;
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and
     // it MUST be the same rule or the two backends draw different pictures.

@@ -3,6 +3,8 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include <cstring>
+#include <cctype>
 #include "platform/env.h"
 
 #include <algorithm>
@@ -266,6 +268,21 @@ void PlayState::worldDrawLists() {
     // EVERY staged body, each with its own model's base - the change
     // issue 41 asks for. One geometry per actor, so two bodies wearing
     // the same model still draw at their own two places.
+    // VEHICLE SHINE (`vehicleshine`): a slider or a moto draws with `kDrawShine`
+    // set. The vehicles are told by their model's name - the two tables
+    // `vehModelTable` reads out of the image (`sli_fn`, `moto`).
+    const auto shine = [&](const auto& up) {
+        if (!vehicleShine) return 0;
+        const std::string& m = up->model;
+        const auto is = [&](const char* n) {
+            const std::size_t k = std::strlen(n);
+            if (m.size() < k) return false;
+            for (std::size_t i = 0; i < k; ++i)
+                if (std::tolower(static_cast<unsigned char>(m[i])) != n[i]) return false;
+            return true;
+        };
+        return is("sli_fn") || is("moto") ? omk::kDrawShine : 0;
+    };
     for (const auto& up : staged) {
         if (!up->drawn || !up->mo) continue;
         const int base = static_cast<int>(up->mo->texBase);
@@ -274,7 +291,7 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litStaged, castShadows});
+                                 litStaged | shine(up), castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
                 draws.back().vertexLights = up->lightCount ? up->lights.data() : nullptr;
@@ -288,7 +305,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litStaged | shine(up), castShadows});
     }
     for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -323,7 +340,7 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->atRest, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
+                                 litCrowd | shine(up), castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
             }
@@ -333,7 +350,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
+                             litCrowd | shine(up), castShadows});
     }
     // which path drew him, said when it changes - and counted, for the
     // runs that compare the two

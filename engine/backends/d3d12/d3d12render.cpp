@@ -146,6 +146,7 @@ struct LightUbo {
     float   base;      // View::litBase
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151)
     int32_t pad;
+    float   eye[4];    // the camera's position (vehicle shine's view vector)
 };
 struct ShadowUbo {
     float lightMvp[kShadowLayers][16];
@@ -2174,6 +2175,7 @@ void D3D12Renderer::begin(const omk::View& view) {
         ub.count = n;
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
+        for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
@@ -2344,7 +2346,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     push_.posed = posed ? 1 : 0;
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
-    push_.lit = litCount_ > 0 ? d.lit : 0;
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
     // software loop and Vulkan applies in `submitOne`: key bits 0x2080 not
     // fogged, key bit 0x800 doubles both ends.

@@ -220,6 +220,13 @@ struct Settings {
     bool   bestLod = false;
     Source bestLodSource = Source::Default;
 
+    // `vehicleshine = off|on`: the sliders and the motos SHINE - a Blinn-Phong
+    // highlight from the set's lamps and a cheap sky reflection with a Fresnel
+    // rim, added to the body's own lighting. The game gives them neither: the
+    // paint's highlights are painted into the texture. `todo/enhancements.md` 20.
+    bool   vehicleShine = false;
+    Source vehicleShineSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -450,6 +457,7 @@ inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
+inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
@@ -484,6 +492,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.ambientOcclusion, kMaxAmbientOcclusion, s.ambientOcclusionSource);
     takeFlag(s.raytracing, kMaxRaytracing, s.raytracingSource);
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
+    takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
 }
 
 // Resolve the three sources in order.  Either may be absent.

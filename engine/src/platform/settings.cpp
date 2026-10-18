@@ -175,6 +175,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: lod = %s is not a mode "
                                       "(game|best) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "vehicleshine")) {
+            const int m = escapeBackMode(*w);     // the same off|on words
+            if (m >= 0) { s.vehicleShine = m > 0; s.vehicleShineSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: vehicleshine = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

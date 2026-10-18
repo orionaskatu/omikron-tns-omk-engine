@@ -258,6 +258,11 @@
 ; `todo/enhancements.md` 16.
 ;lod = game
 ;
+; VEHICLE SHINE - the sliders and motos get lamp highlights and a sky reflection.
+; The game gives them none (their shine is painted into the texture).
+; `todo/enhancements.md` 20.
+;vehicleshine = off
+;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only

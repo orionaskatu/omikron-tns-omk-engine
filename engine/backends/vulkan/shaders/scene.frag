@@ -99,6 +99,7 @@ layout(set = 1, binding = 2) uniform Lights {
     float base;        // View::litBase - the scene's +416, what a lit batch starts from
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   pad2;
+    vec4  eye;         // the camera, for vehicle shine's view vector
 } lg;
 
 #ifdef OMK_RT
@@ -284,7 +285,7 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
     if (dot(ng, rtf.eye.xyz - vWorld) < 0.0) ng = -ng;
     vec3 N = dot(nIn, nIn) > 1e-6 ? normalize(nIn) : ng;
     if (dot(N, ng) < -0.25) N = -N;
-    if (pc.lit == 0 && lg.count > 0) {
+    if ((pc.lit & 3) == 0 && lg.count > 0) {
         rtShadowed = false;
         vec3 open = litColour(N, vWorld);
         rtShadowed = true;
@@ -359,8 +360,8 @@ void main() {
 #ifdef OMK_RT
     rtShadowed = pc.caster != 0;   // a lit character's lamps are traced
 #endif
-    vec3 shade = pc.lit == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
-               : pc.lit == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))
+    vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
+               : (pc.lit & 3) == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))
                              : vCol + vec3(wave);
 #ifdef OMK_RT
     // a CHARACTER (a caster - the bodies) takes the traced terms; the set
@@ -378,6 +379,35 @@ void main() {
         shade = vec3(y / 255.0);
     }
     vec3 c = clamp(t.rgb * shade * litness(), 0.0, 1.0);
+    // VEHICLE SHINE (`vehicleshine`, `todo/enhancements.md` 20), an ENHANCEMENT:
+    // the paint gets what the original painted into the texture and never
+    // lit - a Blinn-Phong highlight from each lamp in reach, and a sky
+    // reflection (a gradient from the scene's own ambient and fog colour,
+    // darker below the horizon; the game's Y points DOWN) weighted by Fresnel.
+    if ((pc.lit & 4) != 0) {
+        vec3 N = normalize(vNrm);
+        vec3 V = normalize(lg.eye.xyz - vWorld);
+        if (dot(N, V) < 0.0) N = -N;
+        float ndv = clamp(dot(N, V), 0.0, 1.0);
+        float fres = 0.22 + 0.78 * pow(1.0 - ndv, 4.0);
+        vec3 R = reflect(-V, N);
+        vec3 amb = vec3(lg.base) * 1.4 + pc.fogColour + vec3(0.12);
+        vec3 env = mix(amb * 0.35, amb * 1.8, smoothstep(-0.25, 0.55, -R.y));
+        vec3 spec = vec3(0.0);
+        for (int i = 0; i < lg.count; ++i) {
+            vec3  p  = lg.l[i].posA.xyz;
+            float rA = lg.l[i].posA.w, rB = lg.l[i].dirB.w;
+            vec3  d  = p - vWorld;
+            float d2 = dot(d, d);
+            if (d2 > rA * rA || rA <= rB) continue;
+            float fall = min(1.0 - (sqrt(d2) - rB) / (rA - rB), 1.0);
+            vec3 Hh = normalize(normalize(d) + V);
+            float s = pow(max(dot(N, Hh), 0.0), 40.0) * smoothstep(0.0, 0.2, dot(N, normalize(d)));
+            spec += lg.l[i].colourI.rgb * min(lg.l[i].colourI.a, 1.5) * fall * s;
+        }
+        float paint = mix(0.55, 1.0, dot(t.rgb, vec3(0.299, 0.587, 0.114)));
+        c = clamp(c + (env * fres * 1.0 + spec * 1.2) * paint, 0.0, 1.0);
+    }
     // THE FOG, and it is raster.cpp's line transcribed. Linear -
     // `FOGTABLEMODE` 3 at density 1.0, the only mode the engine sets - over
     // the range the clip distance sizes. The CPU side has already applied the

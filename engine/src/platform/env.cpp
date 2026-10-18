@@ -111,6 +111,7 @@ constexpr const char* kSwitches[] = {
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
+    "OMK_WINDUMP",              // =<path> D3D12/Vulkan: the window's picture (RGBA8; D3D12's back buffer) written on the last frame (engine: colour depth)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);
 

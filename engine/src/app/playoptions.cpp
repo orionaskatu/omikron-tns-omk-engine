@@ -290,6 +290,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   [Enhancements] ssao=on\n"
 "  --vehicle-shine  ENHANCEMENT: sliders and motos shine - lamp highlights and a\n"
 "                   sky reflection; [Enhancements] vehicleshine=on\n"
+"  --colordepth 16|32  ENHANCEMENT at 32: the window's picture at 8 bits a\n"
+"                   channel, not quantised and dithered to RGB565 (16, the\n"
+"                   default, the original's look); the GPU backends' present,\n"
+"                   Direct3D 12's interface frames too; [Enhancements] colordepth=32\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
 "                   around them, shadow rays for their lamps, ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
@@ -523,6 +527,14 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--raytracing") raytracingFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--vehicle-shine") vehicleShineFlag = 1;
+        else if (a == "--colordepth" && i + 1 < argc) {
+            const std::string d = argv[++i];
+            if (d != "16" && d != "32") {
+                std::fprintf(stderr, "--colordepth %s: 16 or 32\n", d.c_str());
+                return 2;
+            }
+            colourDepthFlag = d == "32" ? 32 : 16;
+        }
         else if (a == "--framerate" && i + 1 < argc) {
             frameRateFlag = omk::frameRateValue(argv[++i]);
             if (frameRateFlag < 0) {

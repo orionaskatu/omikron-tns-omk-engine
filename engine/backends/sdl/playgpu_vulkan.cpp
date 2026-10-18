@@ -19,7 +19,10 @@
 #  include "../d3d12/d3d12render.h"
 #endif
 
+#include "platform/datafs.h"
+
 #include <cstring>
+#include <fstream>
 
 // The Vulkan window - this glue's, not the game's (the gateway: game code
 // holds no host handle). One viewer a process, so one window - D3D12's too.
@@ -201,16 +204,97 @@ void PlayState::gpuOpenWorldHarness() {
     }
 }
 
+// THE WINDOW'S OWN PICTURE (`OMK_WINDUMP=<path>`): on the last frame of a
+// `--frames` run, what the window was handed, RGBA8 top row first, written
+// raw. The `--dump` is the software reference's RGB565 and cannot show colour
+// depth 32 (`verify.py: engine: colour depth`); this can. On Direct3D 12 it is
+// the swapchain's BACK BUFFER, copied out by the present itself (the window's
+// size); on Vulkan the image the present blits 1:1 into the window - the
+// present pass's picture, read again, or the uploaded `fb` on a CPU frame.
+// Armed in `gpuPresentVerify` (the present phase's first call), written after
+// whichever present ran.
+static const char* winDumpPath() {
+    static const char* path = omk::envStr("OMK_WINDUMP");
+    return path;
+}
+static bool winDumpArmed = false;
+static void writeWindowDump(const std::vector<unsigned char>& pic, int w, int h, const char* api) {
+    winDumpArmed = false;
+    if (!omk::safeOutputPath(winDumpPath())) return;
+    std::ofstream o(winDumpPath(), std::ios::binary);
+    o.write(reinterpret_cast<const char*>(pic.data()), static_cast<std::streamsize>(pic.size()));
+    std::printf("window dump (%s): %dx%d RGBA8 -> %s\n", api, w, h, winDumpPath());
+}
+// after a present: `world` says it was the present pass's (`vy`, `vh`), else `surf`'s
+static void windowDumpAfterPresent(omk::Renderer* r, bool world, int vy, int vh, const omk::Surface* surf) {
+    if (!winDumpArmed || !r) return;
+    std::vector<unsigned char> pic;
+    int w = 0, h = 0;
+#if defined(OMK_D3D12)
+    if (onD3d12(r)) {
+        if (omk::d3d12WindowPicture(r, pic, w, h)) writeWindowDump(pic, w, h, "d3d12 back buffer");
+        return;
+    }
+#endif
+    if (world && surf && omk::vulkanWorldPicture(r, vy, vh, pic) &&
+        pic.size() == static_cast<std::size_t>(surf->w) * static_cast<std::size_t>(surf->h) * 4) {
+        writeWindowDump(pic, surf->w, surf->h, "vulkan present image");
+    } else if (!world && surf) {
+        const unsigned char* lut = omk::expand565Rgba();
+        pic.resize(surf->px.size() * 4);
+        for (std::size_t i = 0; i < surf->px.size(); ++i) std::memcpy(&pic[4 * i], lut + 4 * surf->px[i], 4);
+        writeWindowDump(pic, surf->w, surf->h, "vulkan uploaded frame");
+    }
+}
+
 bool PlayState::gpuPresentSurface(const omk::Surface& pic) {
-    if (vkRen) { gpuPresentSurfaceOn(vkRen, pic); return true; }
+    if (vkRen) {
+        gpuPresentSurfaceOn(vkRen, pic);
+        windowDumpAfterPresent(vkRen, false, 0, 0, &pic);
+        return true;
+    }
     return false;
 }
 
-void PlayState::gpuPresentVerify(bool&) {}
-void PlayState::gpuPresentOverlay(bool&) {}
+void PlayState::gpuPresentVerify(bool&) {
+    if (!winDumpPath() || !vkRen || !frames || frameNo + 1 < frames) return;
+    winDumpArmed = true;
+#if defined(OMK_D3D12)
+    if (onD3d12(vkRen)) omk::d3d12CaptureWindow(vkRen);
+#endif
+}
+
+// COLOUR DEPTH 32 ON DIRECT3D 12 (`todo/enhancements.md` 21): a frame with an
+// interface over the world - a soft gate (`gpuOverlayDecision`) - is the GLES
+// window's overlay frame here too: the 2D composed over the KEY, its planes
+// resolved (`omk::resolveOverlayPlanes`, as GL1, GLES and the 3DS do) and
+// blended on the GPU over the present pass's full-precision world - so the
+// HUD, the subtitles, the fades and the screens no longer pull the 3D back
+// through a 565 readback. Vulkan keeps the CPU composite (its present is a
+// `vkCmdBlitImage`; an overlay pass there is not written).
+void PlayState::gpuPresentOverlay(bool& presentedWorld) {
+#if defined(OMK_D3D12)
+    if (!overlayFrame || presentedWorld || !onD3d12(vkRen)) return;
+    static std::vector<std::uint8_t> ovMask, ovMaskRow;
+    static std::vector<std::uint64_t> ovMaskBlocks;
+    omk::resolveOverlayPlanes(fb.px.data(), fb.w, fb.h, g_ov, ovMask, ovMaskRow, ovMaskBlocks);
+    presentedWorld = omk::d3d12PresentOverlay(vkRen, fb, ovMask.data(), ovFade, gpuVy, gpuVh);
+    if (!presentedWorld) {
+        static bool told = false;
+        if (!told) std::printf("colour depth: the Direct3D 12 overlay present failed - the frame on the CPU\n");
+        told = true;
+    }
+    else windowDumpAfterPresent(vkRen, true, gpuVy, gpuVh, &fb);
+#else
+    (void)presentedWorld;
+#endif
+}
 
 void PlayState::gpuPresentWorld(bool& presentedWorld) {
-    if (vkRen) presentedWorld = gpuPresentWorldOn(vkRen, gpuVy, gpuVh);
+    if (vkRen) {
+        presentedWorld = gpuPresentWorldOn(vkRen, gpuVy, gpuVh);
+        if (presentedWorld) windowDumpAfterPresent(vkRen, true, gpuVy, gpuVh, &fb);
+    }
 }
 
 bool PlayState::gpuWorldOnWindow() {
@@ -221,7 +305,22 @@ bool PlayState::gpuWorldOnWindow() {
     return onVulkan;
 }
 
-void PlayState::gpuOverlayDecision(const char*&) {}
+void PlayState::gpuOverlayDecision(const char*& keep) {
+#if defined(OMK_D3D12)
+    // the soft gates' frames go out as an OVERLAY on the Direct3D 12 window at
+    // colour depth 32 (`gpuPresentOverlay`); at 16 the CPU composite, as before
+    static const bool noOverlay = omk::envFlag("OMK_NO_OVERLAY");
+    overlayFrame = softGate && !noOverlay && !verifyGpuPresent && colourDepth == 32 &&
+                   onD3d12(vkRen) && world_ == vkRen;
+    if (overlayFrame) {
+        static std::string overlayWhy;
+        overlayWhy = std::string("overlay (") + keep + ")";
+        keep = overlayWhy.c_str();
+    }
+#else
+    (void)keep;
+#endif
+}
 
 void PlayState::gpuResize(int nw, int nh, bool& ok) {
     if (vkRen) ok = gpuResizeOn(vkRen, nw, nh);

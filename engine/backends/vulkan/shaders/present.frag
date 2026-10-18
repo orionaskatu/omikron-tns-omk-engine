@@ -24,6 +24,11 @@
 //     PICTURE's (x, y). That loop used to run on the CPU after reading the whole
 //     oversized attachment back: 530 MB a frame at 4K with 4x4.
 //
+//   * COLOUR DEPTH 32 (`depth` = 32, `colordepth = 32`, todo/enhancements.md
+//     21): the mean above goes out AS IT IS, 8 bits a channel - no dither, no
+//     565 quantisation, no bit replication. Any other value is the 16-bit
+//     arithmetic above, unchanged.
+//
 // `engine/tools/present_probe.cpp` checks it against the tables over every
 // colour at every matrix cell, and `OMK_VERIFY_GPU_PRESENT` against the real
 // framebuffer in play (`verify.py: engine: gpu present`).
@@ -34,6 +39,7 @@ layout(push_constant) uniform Present {
     int w;        // unused by the arithmetic, kept for the probe's sanity
     int dither;   // the View's DITHERENABLE
     int ss;       // the supersample factor, 1 off
+    int depth;    // the colour depth: 32 passes the picture through, else 565
 } pc;
 layout(location = 0) out vec4 o;
 
@@ -61,6 +67,10 @@ void main() {
     r = (r + n / 2) / n;
     g = (g + n / 2) / n;
     b = (b + n / 2) / n;
+    if (pc.depth == 32) {
+        o = vec4(float(r), float(g), float(b), 255.0) / 255.0;
+        return;
+    }
     int r5, g6, b5;
     if (pc.dither != 0) {
         int t = kBayer4[(wy & 3) * 4 + (p.x & 3)] - 8;

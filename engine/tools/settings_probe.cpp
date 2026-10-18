@@ -62,6 +62,8 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.bestLodSource));
     std::printf("enh vehicleshine %d %s\n", s.vehicleShine ? 1 : 0,
                 omk::sourceName(s.vehicleShineSource));
+    std::printf("enh colordepth %d %s\n", s.colourDepth,
+                omk::sourceName(s.colourDepthSource));
     std::printf("enh upscaler %d %s\n", s.upscaler, omk::sourceName(s.upscalerSource));
     std::printf("enh upscalequality %d %s\n", s.upscaleQuality, omk::sourceName(s.upscaleQualitySource));
     std::printf("enh all %d\n", s.enhanceAll ? 1 : 0);

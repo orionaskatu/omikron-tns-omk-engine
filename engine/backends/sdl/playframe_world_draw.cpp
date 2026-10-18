@@ -165,6 +165,7 @@ void PlayState::worldDrawLists() {
     while (shimmerClock >= omk::kShimmerWrap) shimmerClock -= omk::kShimmerWrap;
     view.shimmerClock = shimmerClock;
     view.dither = dither;
+    view.colourDepth = colourDepth;
     const bool litPerPixel = lighting > 0;
     // TWO BASES, and the difference is a property of the models.
     //

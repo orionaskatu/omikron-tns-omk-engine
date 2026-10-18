@@ -160,7 +160,7 @@ DXC         := $(shell command -v dxc 2>/dev/null)
 D3D_ON      := $(if $(and $(VK_PKG),$(GLSLC),$(SPIRV_CROSS),$(DXC)),1)
 endif
 D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.frag \
-                   ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag \
+                   ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag overlay.frag \
                    scene_mv.vert scene_mv.frag                    scene_rt.frag scene_rt_mv.frag scene_rtc.frag scene_rtc_mv.frag                    ssao_rt.frag ssao_rt_ms.frag
 D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
 D3D_LIBS    := -ld3d12 -ldxgi -ldxguid

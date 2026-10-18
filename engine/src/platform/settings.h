@@ -227,6 +227,16 @@ struct Settings {
     bool   vehicleShine = false;
     Source vehicleShineSource = Source::Default;
 
+    // `colordepth = 16|32`: the COLOUR DEPTH OF WHAT REACHES THE WINDOW. The
+    // 3D is drawn into 8-bit-a-channel targets either way; 16 (the default,
+    // the original's look) quantises the finished picture to RGB565 with the
+    // 4x4 dither in the present pass, as the game's 16-bit device did; 32
+    // passes the picture through at 8 bits a channel, and on Direct3D 12 a
+    // frame with an interface over it composites the (565) 2D over that
+    // full-precision world on the GPU too. `todo/enhancements.md` 21.
+    int    colourDepth = 16;
+    Source colourDepthSource = Source::Default;
+
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
     // Row 3 is a CAP in metres and its five values stop at 200 (`clipInches`
@@ -458,6 +468,7 @@ inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
 inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
+inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 bits a channel
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
 // The top of row 3's five values, and the furthest the ENGINE ever puts the
 // clip distance. Kept as a named number because `all = max` has to say what
@@ -493,6 +504,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.raytracing, kMaxRaytracing, s.raytracingSource);
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
     takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
+    take(s.colourDepth,   kMaxColourDepth,   s.colourDepthSource);
 }
 
 // Resolve the three sources in order.  Either may be absent.

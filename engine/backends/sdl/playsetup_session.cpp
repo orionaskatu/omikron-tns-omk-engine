@@ -205,6 +205,11 @@ int PlayState::setupSession() {
     if (vehicleShine)
         std::printf("vehicle shine: on - an ENHANCEMENT: sliders and motos get lamp highlights "
                     "and a sky reflection; the original paints their shine into the texture\n");
+    // COLOUR DEPTH (settings.h `colourDepth`), carried on the View to the present pass
+    colourDepth = enh(colourDepthFlag, settings.colourDepth, omk::kMaxColourDepth) >= 32 ? 32 : 16;
+    if (colourDepth == 32)
+        std::printf("colour depth: 32 - an ENHANCEMENT: the GPU window's picture at 8 bits a channel; "
+                    "the original's device quantised it to 16-bit RGB565 with a dither\n");
     if (escapeBack)
         std::printf("escape back: on - an ENHANCEMENT: ESC and BACKSPACE also send BACK "
                     "while a screen is up; the original's BACK is `Annuler / Sauter` "

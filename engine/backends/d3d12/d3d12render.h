@@ -31,6 +31,17 @@ bool d3d12Present(Renderer* r);
 bool d3d12PresentSurface(Renderer* r, const Surface& s);
 bool d3d12PresentWorld(Renderer* r, int vy, int vh);
 bool d3d12WorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba);
+// COLOUR DEPTH 32 (`todo/enhancements.md` 21): a frame with an interface over
+// the world, presented by blending its planes (`omk::resolveOverlayPlanes`: C
+// in `s`, M in `mask`, the colour fade) over the present pass's
+// full-precision world - the GLES window's `glesPresentOverlay`. False when
+// the frame is not the renderer's size, or the pass cannot be made.
+bool d3d12PresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
+                         int vy, int vh);
+// THE WINDOW'S OWN PICTURE (`OMK_WINDUMP`): ask, and the next present
+// copies its back buffer out (RGBA8, top row first, the window's size).
+void d3d12CaptureWindow(Renderer* r);
+bool d3d12WindowPicture(Renderer* r, std::vector<unsigned char>& rgba, int& w, int& h);
 // options row 2: the frame's size changed (and the window's, with it)
 bool d3d12Resize(Renderer* r, int w, int h);
 // what the frame is drawn with: MSAA samples (1 off) and the device's most

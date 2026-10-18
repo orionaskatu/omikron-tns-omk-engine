@@ -181,6 +181,13 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: vehicleshine = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "colordepth")) {
+            if (*w == "16" || *w == "32") {
+                s.colourDepth = *w == "32" ? 32 : 16;
+                s.colourDepthSource = Settings::Source::Ini;
+            } else std::fprintf(stderr, "settings: colordepth = %s is not a depth "
+                                        "(16|32) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

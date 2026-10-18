@@ -221,6 +221,15 @@ struct View {
     // is a reconstruction - see `ui/surface.h`. `--dither 0` turns it off,
     // which is for laying two frames side by side, not for play.
     bool dither = true;
+
+    // ---------------------------------------------------- THE COLOUR DEPTH
+    //
+    // What the GPU backends' present pass hands the window (`present.frag`):
+    // 16, the original's look - every pixel quantised to RGB565 (with the
+    // dither above) and re-expanded - or 32, the picture at 8 bits a channel,
+    // neither quantised nor dithered (`colordepth = 32`, `todo/enhancements.md`
+    // 21). The CPU readback (`readback()`) is 565 either way.
+    int colourDepth = 16;
 };
 
 // One submission. This is the whole vocabulary a backend gets, and every field

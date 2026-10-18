@@ -7067,7 +7067,7 @@ def c_enhance_all():
              "clipdistance": "UnlimitedDraw", "radar": "Radar",
              "framerate": "FrameRate", "animation": "Animation",
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
-             "lod": "BestLod", "vehicleshine": "VehicleShine"}
+             "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27455,6 +27455,106 @@ def c_engine_vehicle_shine():
     return got, (True, False, True, True, True, 0, True), \
            ("off by default and silent; --vehicle-shine says so; two plain frames identical; "
             "%d pixels brighten and %d darken (%.2f%% of the frame)" % (bright, dark, 100.0 * bright / n))
+
+
+def c_engine_colour_depth():
+    r"""`omk-play --colordepth 32`: the WINDOW'S picture at 8 bits a channel - an enhancement, off by default.
+    `todo/enhancements.md` 21. The 3D is drawn into RGBA8 targets either way;
+    what made the game look 16-bit was the present: `present.frag` quantised
+    every pixel to RGB565 (the 4x4 dither) and re-expanded it, and a frame with
+    an interface over it was composed on the CPU over a 565 readback of the 3D.
+    At 32 the present pass hands the supersample/upscaler mean on untouched,
+    and on Direct3D 12 the interface frames are blended on the GPU over that
+    full-precision world (`overlay.frag`, the GLES window's overlay) instead.
+    `--dump` is the software reference's RGB565 and cannot see any of it, so
+    this reads what the window was handed (`OMK_WINDUMP`: D3D12's swapchain
+    back buffer, copied out by the present; Vulkan's present image), on a
+    hidden window:
+      * the default is 16 in the source;
+      * the street start on D3D12 at 16: exactly 32/64/32 distinct values per
+        channel and no pixel off the 565 expansion's grid;
+      * at 32 on D3D12 and on Vulkan: more than 32/64/32 distinct values, and
+        most pixels off that grid;
+      * the supermarket fight to frame 660 on D3D12 at 32: its fades and its
+        media line went out as OVERLAY frames (counted in the present
+        statistics), the last frame among them, most of its pixels are off the
+        grid, and every pixel is within 16 a channel of the same frame composed
+        on the CPU at 16 (the 565 step and the dither; measured 11 at most).
+    SHOWN TO FAIL (2026-10-18) with the `pc.depth == 32` arm of `present.frag`
+    disabled (the 32 runs show 32/64/32 and no pixel off the grid - and the
+    overlay fight frame, its world then 565 too, equals the CPU composite
+    exactly: worst 0, which is the overlay's own correctness) and with the
+    overlay decision disabled in `playgpu_vulkan.cpp` (no overlay frame, the
+    fight frame on the grid).
+    """
+    import subprocess, tempfile, struct
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default16 = "int    colourDepth = 16;" in src
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    W, H = 640, 480
+    n = W * H
+    g5 = {(v << 3) | (v >> 2) for v in range(32)}
+    g6 = {(v << 2) | (v >> 4) for v in range(64)}
+    g5b = {(v << 3) | (v >> 3) for v in range(32)}
+    def stats(pic):
+        if len(pic) != 4 * n:
+            return (0, 0, 0), -1
+        r, g, b = set(pic[0::4]), set(pic[1::4]), set(pic[2::4])
+        off = sum(1 for i in range(0, 4 * n, 4)
+                  if pic[i] not in g5 or pic[i + 1] not in g6 or pic[i + 2] not in g5b)
+        return (len(r), len(g), len(b)), off
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name, frames="60", dump=False):
+            win = os.path.join(tmp, name + ".rgba")
+            cpu = os.path.join(tmp, name + ".bin")
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
+                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", frames] + extra
+            if dump:
+                args += ["--dump", cpu]
+            r = subprocess.run(args, capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win))
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            raw = open(cpu, "rb").read() if os.path.exists(cpu) else b""
+            return r.stdout + r.stderr, pic, raw
+        street = ["--area", "0", "--stand", "1804,0,-6890,336"]
+        fight = ["--fight-supermarket"]
+        t16, p16, _ = run(street + ["--d3d12", "--colordepth", "16"], "d16")
+        t32, p32, _ = run(street + ["--d3d12", "--colordepth", "32"], "d32")
+        tv, pv, _ = run(street + ["--colordepth", "32"], "v32")
+        tf, pf, _ = run(fight + ["--d3d12", "--colordepth", "32"], "f32", frames="660")
+        tc, _, cf = run(fight + ["--d3d12", "--colordepth", "16"], "f16", frames="660", dump=True)
+    if "renderer: D3D12" not in t16:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    (d16, off16), (d32, off32), (dv, offv), (df, offf) = stats(p16), stats(p32), stats(pv), stats(pf)
+    deep = lambda d: d[0] > 32 and d[1] > 64 and d[2] > 32
+    # the overlay frames, from the present statistics (every 60 frames)
+    lines = re.findall(r"^frame (\d+) present: \d+ of 60 straight from the GPU; on the CPU:(.*)$", tf, re.M)
+    overlay = sum(int(c) for _, rest in lines for c in re.findall(r"overlay \([a-z ]+\) (\d+)", rest))
+    lastAll = bool(lines) and lines[-1][0] == "659" and \
+        sum(int(c) for c in re.findall(r"overlay \([a-z ]+\) (\d+)", lines[-1][1])) == 60
+    worst = -1
+    if len(cf) == 2 * n and len(pf) == 4 * n:
+        worst = 0
+        for i, v in enumerate(struct.unpack("<%dH" % n, cf)):
+            r5, g6_, b5 = v >> 11, (v >> 5) & 63, v & 31
+            e = ((r5 << 3) | (r5 >> 2), (g6_ << 2) | (g6_ >> 4), (b5 << 3) | (b5 >> 3))
+            worst = max(worst, abs(pf[4 * i] - e[0]), abs(pf[4 * i + 1] - e[1]), abs(pf[4 * i + 2] - e[2]))
+    print("        D3D12 16: distinct %s, %d off the grid; D3D12 32: %s, %d; Vulkan 32: %s, %d; "
+          "fight 32: %s, %d off, %d overlay frames, worst %d against the CPU at 16"
+          % (d16, off16, d32, off32, dv, offv, df, offf, overlay, worst))
+    got = (default16, d16, off16, deep(d32), off32 > n // 2, deep(dv), offv > n // 2,
+           overlay > 60, lastAll, offf > n // 3, 0 <= worst <= 16)
+    return got, (True, (32, 64, 32), 0, True, True, True, True, True, True, True, True), \
+        ("16 by default; at 16 the D3D12 window holds exactly the 565 grid; at 32 the D3D12 and "
+         "Vulkan windows hold more than 32/64/32 values a channel, most pixels off it; the fight's "
+         "interface frames went out as D3D12 overlays, off the grid, within 16 of the CPU composite")
 
 
 def c_engine_best_lod():
@@ -48569,6 +48669,7 @@ SLOW = [
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
+    ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

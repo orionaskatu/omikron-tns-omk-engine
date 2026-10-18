@@ -105,6 +105,7 @@ namespace {
 #include "dx/fsq.frag.h"
 #include "dx/shadow.vert.h"
 #include "dx/present.frag.h"
+#include "dx/overlay.frag.h"
 #include "dx/ssao.frag.h"
 #include "dx/ssao_blur.frag.h"
 #include "dx/ssao_ms.frag.h"
@@ -123,7 +124,9 @@ namespace {
 #include "dx/ssao_rt_ms.frag.h"
 
 // ---- the blocks the shaders read, VERBATIM from `vkrender.cpp` ------------
-struct PresentPush { int32_t vy, vh, w, dither, ss; };
+struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
+// the overlay pass's (`overlay.frag`, colour depth 32): the colour fade
+struct OverlayPush { float fade[4]; };
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
 // ...the RAY-TRACED AO's (`ssao.frag` -DOMK_RT): the camera in the world, after it
 struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
@@ -215,6 +218,8 @@ constexpr UINT kSlotAo = 2;       // the AO factor
 constexpr UINT kSlotShadow = 3;   // the shadow map's three layers
 constexpr UINT kSlotPres = 4;     // the present pass's output, for the blit
 constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
+constexpr UINT kSlotOvPic = 6;    // the OVERLAY's 565 colour plane (colour depth 32)...
+constexpr UINT kSlotOvMask = 7;   // ...and its mask plane, the next slot (one table)
 constexpr UINT kSlotFirstFree = 8;
 constexpr UINT kSrvHeapSize = 4096;
 
@@ -370,6 +375,11 @@ public:
     bool presentSurface(const omk::Surface& s);
     bool presentWorld(int vy, int vh);
     bool worldPicture(int vy, int vh, std::vector<unsigned char>& rgba);
+    bool presentOverlay(const omk::Surface& s, const std::uint8_t* mask, const float fade[4], int vy, int vh);
+    // THE WINDOW'S OWN PICTURE (`OMK_WINDUMP`): the next present copies
+    // the swapchain's back buffer - what the window shows - out before it goes
+    bool windowPicture(std::vector<unsigned char>& rgba, int& w, int& h);
+    void captureWindow() { winCapture_ = true; }
     bool resize(int w, int h);
 
 private:
@@ -511,6 +521,7 @@ private:
     int litCount_ = 0;
     float shimmerClock_ = 0.0f;
     bool dither_ = true;
+    int colourDepth_ = 16;   // the View's colour depth: 32 = the present pass leaves the picture 8-bit
 
     // ---- the textures ----
     struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); };
@@ -625,6 +636,17 @@ private:
     ID3D12PipelineState* presPipe_ = nullptr;
     ID3D12Resource* presRead_ = nullptr;
     UINT64 presPitch_ = 0;
+    // ---- THE OVERLAY at colour depth 32 (`overlay.frag`, todo/enhancements.md 21) ----
+    Res ovPic_, ovMask_;               // R16_UINT (the 565 words), R8_UNORM
+    ID3D12Resource* ovBuf_ = nullptr;  // both planes going up, at the copy's row pitch
+    UINT64 ovPicPitch_ = 0, ovMaskPitch_ = 0, ovMaskOff_ = 0;
+    ID3D12RootSignature* ovRs_ = nullptr;
+    ID3D12PipelineState* ovPipe_ = nullptr;
+    bool makeOverlayPass();
+    // ---- the window's picture, read back on request (`captureWindow`) ----
+    bool winCapture_ = false;
+    std::vector<unsigned char> winPic_;
+    int winPicW_ = 0, winPicH_ = 0;
 
     // ---- the swapchain ----
     HWND hwnd_ = nullptr;
@@ -1056,6 +1078,9 @@ void D3D12Renderer::killTarget() {
     freeRes(ao_.r);          // remade at the new size on first use (`makeSsao`)
     freeRes(presImg_.r);     // ...and the present pass's (`makePresentPass`)
     freeRes(presRead_);
+    freeRes(ovPic_.r);       // ...and the overlay's planes (`makeOverlayPass`)
+    freeRes(ovMask_.r);
+    freeRes(ovBuf_);
     freeRes(motion_.r);
     freeRes(upOut_.r);
     freeRes(motionRead_);
@@ -1504,11 +1529,54 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(srv));
     l->DrawInstanced(3, 1, 0, 0);
+    // THE WINDOW'S PICTURE, when asked (`captureWindow`): the back buffer as
+    // it will be shown, copied out before it is handed to the swapchain
+    ID3D12Resource* capBuf = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT capFp{};
+    if (winCapture_) {
+        D3D12_RESOURCE_DESC cd = bb.r->GetDesc();
+        UINT64 total = 0;
+        dev_->GetCopyableFootprints(&cd, 0, 1, 0, &capFp, nullptr, nullptr, &total);
+        capBuf = makeBuffer(total, D3D12_HEAP_TYPE_READBACK, "readback");
+        if (capBuf) {
+            bb.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            D3D12_TEXTURE_COPY_LOCATION dst{}, srcL{};
+            srcL.pResource = bb.r;
+            srcL.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.pResource = capBuf;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            dst.PlacedFootprint = capFp;
+            l->CopyTextureRegion(&dst, 0, 0, 0, &srcL, nullptr);
+        }
+    }
     bb.to(l, D3D12_RESOURCE_STATE_PRESENT);
     src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     oneShotEnd();
+    if (capBuf) {
+        winCapture_ = false;
+        winPicW_ = sW; winPicH_ = sH;
+        winPic_.resize(static_cast<std::size_t>(sW) * static_cast<std::size_t>(sH) * 4);
+        void* p = nullptr;
+        if (SUCCEEDED(capBuf->Map(0, nullptr, &p))) {
+            for (int y = 0; y < sH; ++y)
+                std::memcpy(winPic_.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(sW) * 4,
+                            static_cast<const unsigned char*>(p) + capFp.Offset +
+                                static_cast<UINT64>(y) * capFp.Footprint.RowPitch,
+                            static_cast<std::size_t>(sW) * 4);
+            D3D12_RANGE none{0, 0};
+            capBuf->Unmap(0, &none);
+        }
+        freeRes(capBuf);
+    }
     // FIFO, v-synced - what a 30 Hz game wants (Vulkan's FIFO)
     swap_->Present(1, 0);
+    return true;
+}
+
+bool D3D12Renderer::windowPicture(std::vector<unsigned char>& rgba, int& w, int& h) {
+    if (winPic_.empty()) return false;
+    rgba = winPic_;
+    w = winPicW_; h = winPicH_;
     return true;
 }
 
@@ -1631,7 +1699,7 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
     l->SetGraphicsRootSignature(presRs_);
     l->SetPipelineState(presPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, sourceSs()};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, sourceSs(), colourDepth_};
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(sourceSlot()));
     l->DrawInstanced(3, 1, 0, 0);
@@ -1644,6 +1712,125 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
 bool D3D12Renderer::presentWorld(int vy, int vh) {
     if (!swap_) return false;
     if (!runPresentPass(vy, vh)) return false;
+    return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
+}
+
+// ---- THE OVERLAY AT COLOUR DEPTH 32 (`todo/enhancements.md` 21) -----------
+//
+// The GLES window's overlay present (`GlesRenderer::presentOverlay`,
+// `todo/vita-port.md` G6 step 2) on this backend: the present pass writes the
+// world into `presImg_` at full precision, then `overlay.frag` blends the
+// interface's two planes over it - C (the 565 frame, R16_UINT) and M (R8) -
+// as `C + world * M` with the colour fade, and the result goes to the window
+// like any present. No readback, no 565 world under the HUD.
+
+bool D3D12Renderer::makeOverlayPass() {
+    if (!ovRs_) {
+        const D3D12_DESCRIPTOR_RANGE r = rs::srvs(0, 0, 2);   // t0 C, t1 M
+        D3D12_ROOT_PARAMETER p[2] = {
+            rs::constants(0, kPushSpace, sizeof(OverlayPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&r, D3D12_SHADER_VISIBILITY_PIXEL)};
+        // (both read by texelFetch; the samplers spirv-cross declares for them)
+        D3D12_STATIC_SAMPLER_DESC s[2] = {
+            rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+        D3D12_ROOT_SIGNATURE_DESC d{};
+        d.NumParameters = 2; d.pParameters = p;
+        d.NumStaticSamplers = 2; d.pStaticSamplers = s;
+        ovRs_ = makeRootSig(d, "overlay");
+        if (!ovRs_) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = ovRs_;
+        pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
+        pd.PS = rs::code(kDx_overlay_frag, sizeof kDx_overlay_frag);
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
+        // new = overlay + world x weight (GL_ONE, GL_SRC_ALPHA); alpha stays the world's
+        D3D12_RENDER_TARGET_BLEND_DESC& b = pd.BlendState.RenderTarget[0];
+        b.BlendEnable = TRUE;
+        b.SrcBlend = D3D12_BLEND_ONE;
+        b.DestBlend = D3D12_BLEND_SRC_ALPHA;
+        b.BlendOp = D3D12_BLEND_OP_ADD;
+        b.SrcBlendAlpha = D3D12_BLEND_ZERO;
+        b.DestBlendAlpha = D3D12_BLEND_ONE;
+        b.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        b.LogicOp = D3D12_LOGIC_OP_NOOP;
+        b.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.NumRenderTargets = 1;
+        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pd.SampleDesc.Count = 1;
+        ovPipe_ = makePso(pd, "overlay");
+        if (!ovPipe_) return false;
+    }
+    if (ovPic_.r) return true;
+    ovPic_.r = makeImage(DXGI_FORMAT_R16_UINT, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
+                         D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, "overlay colour");
+    ovPic_.st = D3D12_RESOURCE_STATE_COPY_DEST;
+    ovMask_.r = makeImage(DXGI_FORMAT_R8_UNORM, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
+                          D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, "overlay mask");
+    ovMask_.st = D3D12_RESOURCE_STATE_COPY_DEST;
+    if (!ovPic_.r || !ovMask_.r) return false;
+    dev_->CreateShaderResourceView(ovPic_.r, nullptr, srv_.cpu(kSlotOvPic));
+    dev_->CreateShaderResourceView(ovMask_.r, nullptr, srv_.cpu(kSlotOvMask));
+    ovPicPitch_ = alignUp(static_cast<UINT64>(w_) * 2, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+    ovMaskPitch_ = alignUp(static_cast<UINT64>(w_), D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
+    ovMaskOff_ = alignUp(ovPicPitch_ * static_cast<UINT64>(h_), D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+    ovBuf_ = makeBuffer(ovMaskOff_ + ovMaskPitch_ * static_cast<UINT64>(h_), D3D12_HEAP_TYPE_UPLOAD, "staging");
+    return ovBuf_ != nullptr;
+}
+
+bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* mask, const float fade[4],
+                                   int vy, int vh) {
+    if (!swap_ || s.w != w_ || s.h != h_ || !mask) return false;
+    if (!makeOverlayPass() || !runPresentPass(vy, vh)) return false;
+    // both planes up, whole: ~3 bytes a pixel against the CPU path's readback,
+    // dither and RGBA upload of the entire frame
+    void* p = nullptr;
+    if (FAILED(ovBuf_->Map(0, nullptr, &p))) return false;
+    unsigned char* up = static_cast<unsigned char*>(p);
+    for (int y = 0; y < h_; ++y) {
+        std::memcpy(up + static_cast<UINT64>(y) * ovPicPitch_,
+                    s.px.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_),
+                    static_cast<std::size_t>(w_) * 2);
+        std::memcpy(up + ovMaskOff_ + static_cast<UINT64>(y) * ovMaskPitch_,
+                    mask + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_),
+                    static_cast<std::size_t>(w_));
+    }
+    ovBuf_->Unmap(0, nullptr);
+    ID3D12GraphicsCommandList* l = oneShotBegin();
+    const auto copy = [&](Res& img, DXGI_FORMAT f, UINT64 off, UINT64 pitch) {
+        img.to(l, D3D12_RESOURCE_STATE_COPY_DEST);
+        D3D12_TEXTURE_COPY_LOCATION dst{}, srcL{};
+        dst.pResource = img.r;
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        srcL.pResource = ovBuf_;
+        srcL.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        srcL.PlacedFootprint.Offset = off;
+        srcL.PlacedFootprint.Footprint = {f, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, static_cast<UINT>(pitch)};
+        l->CopyTextureRegion(&dst, 0, 0, 0, &srcL, nullptr);
+        img.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    };
+    copy(ovPic_, DXGI_FORMAT_R16_UINT, 0, ovPicPitch_);
+    copy(ovMask_, DXGI_FORMAT_R8_UNORM, ovMaskOff_, ovMaskPitch_);
+    presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(rtvPres_);
+    l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(w_), static_cast<float>(h_), 0.0f, 1.0f};
+    const D3D12_RECT sr{0, 0, w_, h_};
+    l->RSSetViewports(1, &vp);
+    l->RSSetScissorRects(1, &sr);
+    l->SetGraphicsRootSignature(ovRs_);
+    l->SetPipelineState(ovPipe_);
+    l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const OverlayPush op{{fade[0], fade[1], fade[2], fade[3]}};
+    l->SetGraphicsRoot32BitConstants(0, sizeof op / 4, &op, 0);
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotOvPic));
+    l->DrawInstanced(3, 1, 0, 0);
+    presImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    oneShotEnd();
     return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
 }
 
@@ -2156,6 +2343,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     pushView(view);
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
+    colourDepth_ = view.colourDepth;
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};
@@ -3407,11 +3595,13 @@ D3D12Renderer::~D3D12Renderer() {
     release(aoPipe_);
     release(aoBlurPipe_);
     release(presPipe_);
+    release(ovPipe_);
     release(blitPipe_);
     release(sceneRs_);
     release(shRs_);
     release(aoRs_);
     release(presRs_);
+    release(ovRs_);
     release(blitRs_);
     release(srv_.heap);
     release(rtv_.heap);
@@ -3461,6 +3651,18 @@ bool d3d12PresentWorld(Renderer* r, int vy, int vh) {
 bool d3d12WorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba) {
     auto* d = dynamic_cast<D3D12Renderer*>(r);
     return d && d->worldPicture(vy, vh, rgba);
+}
+bool d3d12PresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
+                         int vy, int vh) {
+    auto* d = dynamic_cast<D3D12Renderer*>(r);
+    return d && d->presentOverlay(s, mask, fade, vy, vh);
+}
+void d3d12CaptureWindow(Renderer* r) {
+    if (auto* d = dynamic_cast<D3D12Renderer*>(r)) d->captureWindow();
+}
+bool d3d12WindowPicture(Renderer* r, std::vector<unsigned char>& rgba, int& w, int& h) {
+    auto* d = dynamic_cast<D3D12Renderer*>(r);
+    return d && d->windowPicture(rgba, w, h);
 }
 bool d3d12Resize(Renderer* r, int w, int h) {
     auto* d = dynamic_cast<D3D12Renderer*>(r);

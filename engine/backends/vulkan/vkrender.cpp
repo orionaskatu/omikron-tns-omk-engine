@@ -101,7 +101,7 @@ const uint32_t kFsqFrag[] =
 const uint32_t kPresentFrag[] =
 #include "present.frag.inc"
 ;
-struct PresentPush { int32_t vy, vh, w, dither, ss; };
+struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -398,6 +398,7 @@ private:
     int             litCount_ = 0;         // lights uploaded for this frame
     float           shimmerClock_ = 0.0f;  // the View's, held for the uniform
     bool            dither_ = true;        // the engine's DITHERENABLE, see surface.h
+    int             colourDepth_ = 16;           // the View's colour depth: 32 = no 565 in the present
 
     struct Tex {
         VkImage img = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -1906,7 +1907,7 @@ bool VulkanRenderer::runPresentPass(int vy, int vh) {
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &presDs_, 0, nullptr);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, ss_};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, ss_, colourDepth_};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
@@ -2550,6 +2551,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
+    colourDepth_ = view.colourDepth;
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};

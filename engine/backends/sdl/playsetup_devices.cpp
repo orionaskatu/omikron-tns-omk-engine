@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include <cstring>
 
 int PlayState::setupDevices() {
     const auto& fs = *fs_;
@@ -67,10 +68,15 @@ int PlayState::setupDevices() {
         std::printf("fullscreen: on - the %dx%d frame scaled to the desktop at its aspect "
                     "(F11 toggles)\n", dispW, dispH);
     gpuOpenWorldHarness();   // --world-vulkan
-    if (aaSamples > 1)
+    if (aaSamples > 1) {
+        // `vkRen` holds whichever GPU backend opened the window (Vulkan or
+        // D3D12), and on D3D12 an upscaler switches MSAA off (its own line)
+        const bool d3d = vkRen && std::strcmp(vkRen->name(), "d3d12") == 0;
         std::printf("aa: %dx MSAA - an ENHANCEMENT the original never had; %s\n", aaSamples,
-                    vkRen ? "drawn by the Vulkan backend"
-                          : "the software reference has none, --vulkan for it");
+                    !vkRen ? "the software reference has none, --vulkan for it"
+                    : d3d && upscaler > 0 ? "not drawn - the upscaler's temporal resolve replaces it"
+                    : d3d ? "drawn by the D3D12 backend" : "drawn by the Vulkan backend");
+    }
     // The filter is the DEVICE's (docs/ASSETS.md 4): bilinear is what the
     // original's hardware arm set and the default, nearest its software
     // devices', trilinear an enhancement. The software reference stands for

@@ -59,6 +59,8 @@ layout(set = 0, binding = 0) uniform sampler2D tex;
 layout(set = 1, binding = 0) uniform Shadow {
     mat4  lightMvp[3];
     vec4  strength;    // per layer; 0 = no shadow from that layer
+    vec4  lightPos[3]; // xyz lamp position (w 1) or travel direction (w 0)
+    vec4  params[3];   // near, far, penumbra scale, 1 = perspective
     float texel;       // 1 / the map's side, for the PCF tap spacing
     float bias;        // depth slop, in the map's own 0..1 units
     float shimmer;     // THE SHIMMER's clock - see the note below
@@ -119,6 +121,22 @@ layout(location = 0) out vec4 outColour;
 // -> 1 fully lit, 0 fully shadowed. Outside the map's slab a fragment is LIT
 // by definition, which is what keeps a characters-only shadow from darkening
 // the far end of a street: the slab is fitted to the casters and nothing else.
+// SOFT SHADOWS (PCSS): a blocker search finds how far the occluder is from
+// the receiver, the penumbra widens with that gap - sharp at the feet, soft
+// and fading further out, as under a real lamp of some size - and a rotated
+// Poisson disc filters it without banding. A receiver facing away from the
+// light is not lit by it, so it takes no shadow from it either.
+const vec2 kDisc[16] = vec2[16](
+    vec2(-0.942, -0.399), vec2( 0.946, -0.769), vec2(-0.094, -0.929), vec2( 0.345,  0.294),
+    vec2(-0.916,  0.458), vec2(-0.815, -0.879), vec2(-0.383,  0.277), vec2( 0.975,  0.756),
+    vec2( 0.443, -0.975), vec2( 0.537, -0.474), vec2(-0.265, -0.419), vec2( 0.792,  0.191),
+    vec2(-0.242,  0.997), vec2(-0.814,  0.914), vec2( 0.200,  0.786), vec2( 0.144, -0.141));
+
+float linDepth(int L, float z) {
+    vec4 q = sh.params[L];
+    return q.w > 0.5 ? q.x * q.y / (q.y - z * (q.y - q.x)) : z * q.y;
+}
+
 float layerLit(int L, float strength) {
     vec4 lp = sh.lightMvp[L] * vec4(vWorld, 1.0);
     if (lp.w <= 0.0) return 1.0;
@@ -126,14 +144,44 @@ float layerLit(int L, float strength) {
     vec2 uv = p.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
     if (p.z < 0.0 || p.z > 1.0) return 1.0;
-    // 3x3 PCF, so the edge is not a staircase of map texels.
+    bool persp = sh.params[L].w > 0.5;
+    vec3 toL = persp ? sh.lightPos[L].xyz - vWorld : -sh.lightPos[L].xyz;
+    float facing = 1.0, slope = 0.0;
+    float nl = length(vNrm);
+    if (nl > 1e-3) {
+        float ndl = dot(vNrm / nl, normalize(toL));
+        facing = smoothstep(-0.05, 0.25, ndl);
+        slope = 1.0 - clamp(ndl, 0.0, 1.0);
+    }
+    if (facing <= 0.0) return 1.0;
+    float zR = linDepth(L, p.z);
+    float bias = sh.bias * (1.0 + 3.0 * slope);
+    float a = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+    // 1. the blockers' mean depth
+    float search = persp ? clamp(sh.params[L].z * (zR - sh.params[L].x) / (sh.params[L].x * zR), 3.0 * sh.texel, 0.04)
+                         : 0.03;
+    float zB = 0.0, nB = 0.0;
+    for (int k = 0; k < 16; ++k) {
+        float d = linDepth(L, texture(shadowMap, vec3(uv + rot * kDisc[k] * search, float(L))).r);
+        if (d < zR - bias) { zB += d; nB += 1.0; }
+    }
+    if (nB < 1.0) return 1.0;
+    zB /= nB;
+    float gap = zR - zB;
+    // 2. the penumbra, by similar triangles from the lamp's size
+    float pen = persp ? sh.params[L].z * gap / (zB * zR) : sh.params[L].z * gap;
+    pen = clamp(pen, 1.5 * sh.texel, 0.05);
     float lit = 0.0;
-    for (int j = -1; j <= 1; ++j)
-        for (int i = -1; i <= 1; ++i) {
-            float d = texture(shadowMap, vec3(uv + vec2(i, j) * sh.texel, float(L))).r;
-            lit += (p.z - sh.bias <= d) ? 1.0 : 0.0;
-        }
-    return mix(1.0 - strength, 1.0, lit / 9.0);
+    for (int k = 0; k < 16; ++k) {
+        float d = linDepth(L, texture(shadowMap, vec3(uv + rot * kDisc[k] * pen, float(L))).r);
+        lit += (zR - bias <= d) ? 1.0 : 0.0;
+    }
+    lit /= 16.0;
+    // 3. darkest at contact, thinning as the occluder gets further away
+    float fade = mix(1.0, 0.3, smoothstep(0.0, 260.0, gap));
+    float edge = smoothstep(0.0, 0.05, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+    return mix(1.0 - strength * fade * facing * edge, 1.0, lit);
 }
 
 // -> 1 fully lit, 0 fully shadowed: the layers' attenuations multiplied, so

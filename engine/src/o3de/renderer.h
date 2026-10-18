@@ -163,6 +163,12 @@ struct View {
         float centre[3] = {0, 0, 0};  // the casters' centre
         float radius  = 0.0f;         // ...and the sphere around them
         float strength = 0.6f;        // how dark the shadow is, 0..1
+        // A POINT light (a lamp): the map is a perspective one from `pos`,
+        // so the shadow points away from the lamp and lengthens near it.
+        // Without one (or with the lamp inside the casters' sphere) the map
+        // is the orthographic slab along `dir`.
+        bool  point = false;
+        float pos[3] = {0, 0, 0};
     };
     ShadowLight shadow;
     // ...and up to two MORE mapped shadows, from the next lights reaching the

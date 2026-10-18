@@ -109,7 +109,7 @@ const uint32_t kShadowVert[] =
 
 // The map's side. 1024 is a shadow of a handful of CHARACTERS over a slab a
 // few metres across, so a texel is centimetres.
-constexpr uint32_t kShadowSide = 1024;
+constexpr uint32_t kShadowSide = 2048;
 
 // Set 1, binding 0 - per FRAME, and it must match `scene.frag`'s block.
 // Set 1, binding 2 - the LIGHTS, per frame. std140: an array of structs
@@ -134,6 +134,8 @@ constexpr int kShadowLayers = 3;
 struct ShadowUbo {
     float lightMvp[kShadowLayers][16];
     float strength[4]; // per layer; 0 = no shadow from it (the default)
+    float lightPos[kShadowLayers][4]; // xyz = lamp position (w 1) or travel direction (w 0)
+    float params[kShadowLayers][4];   // near, far, penumbra scale, 1 = perspective
     float texel;       // 1 / kShadowSide
     float bias;
     // THE SHIMMER's clock (`o3de/shimmer.h`), which is per FRAME like the rest
@@ -403,7 +405,13 @@ private:
     VkDescriptorSet poseDs_ = VK_NULL_HANDLE;
     VkDeviceSize poseUsed_ = 0, poseAlign_ = 256;
     std::map<std::pair<const float*, const float*>, uint32_t> poseCache_;   // a body's block this frame
-    std::map<const omk::Geometry*, omk::Geometry> cpuPosed_;   // `cpuPose`'s corners
+    // `cpuPose`'s corners, one per BODY: keyed by the rest geometry AND the
+    // body's ordinal among this frame's bodies sharing it. Keyed by the
+    // geometry alone, every passer-by of one model shared a single posed copy
+    // and only the last one posed cast a shadow (or drew, past its room).
+    std::map<std::pair<const omk::Geometry*, int>, omk::Geometry> cpuPosed_;
+    std::map<std::pair<const float*, const omk::Geometry*>, int> cpuPoseSlot_;   // (pose, geometry) -> ordinal, this frame
+    std::map<const omk::Geometry*, int> cpuPoseCount_;           // bodies per geometry, this frame
     std::uint64_t cpuPoseRev_ = 0;
     bool writePose(const omk::Draw& d, uint32_t& off);
     omk::Draw cpuPose(const omk::Draw& d);
@@ -2303,11 +2311,24 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
     if (shPipe_ == VK_NULL_HANDLE || !v.shadow.on || casters.empty()) return;
     // ONE MAP PER LIGHT: layer 0 is `v.shadow`, layers 1..2 `v.extraShadows`,
     // each an orthographic slab around the casters as before.
-    const auto lightMatrix = [](const omk::View::ShadowLight& sl, float m[16]) -> bool {
+    // A LAMP close enough gets a PERSPECTIVE map from its own position: the
+    // frustum is the cone that just holds the casters' sphere, so everything
+    // behind them - however long the shadow on the ground - is in it. A lamp
+    // on top of the casters (or a light without a position) falls back to
+    // the orthographic slab along its direction.
+    constexpr float kLampSize = 30.0f;     // world units: the penumbra's source
+    constexpr float kOrthoSpread = 0.06f;  // penumbra growth per unit, the slab's
+    const auto lightMatrix = [](const omk::View::ShadowLight& sl, float m[16],
+                                float lpos[4], float prm[4]) -> bool {
     const float R = sl.radius > 1.0f ? sl.radius : 1.0f;
-
-    // the light's basis: forward along its direction, any stable up
     float f[3] = {sl.dir[0], sl.dir[1], sl.dir[2]};
+    float D = 0.0f;
+    if (sl.point) {
+        float t[3] = {sl.centre[0] - sl.pos[0], sl.centre[1] - sl.pos[1], sl.centre[2] - sl.pos[2]};
+        D = std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+        if (D > 40.0f) for (int k = 0; k < 3; ++k) f[k] = t[k];
+        else D = 0.0f;
+    }
     const float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
     if (fl < 1e-6f) return false;
     for (float& c : f) c /= fl;
@@ -2321,16 +2342,40 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
     for (float& c : r) c /= rl;
     float u[3] = {f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2],
                   f[0] * r[1] - f[1] * r[0]};
+    for (int k = 0; k < 16; ++k) m[k] = 0.0f;
+    const float* ax[3] = {r, u, f};
+    if (D > 0.0f) {
+        // column-major P * V, Vulkan's 0..1 depth
+        // a lamp among the casters keeps a 60-degree half-angle cone
+        // towards the player: what lies outside it casts nothing
+        const float n = std::max((D - R) * 0.9f, 8.0f), fa = D + R * 4.0f;
+        const float sn = std::min(R / D, 0.866f);
+        const float s = std::sqrt(1.0f - sn * sn) / sn;     // 1 / tan(half angle)
+        const float A = fa / (fa - n), B = -fa * n / (fa - n);
+        float d[3];
+        for (int row = 0; row < 3; ++row) {
+            d[row] = 0.0f;
+            for (int c = 0; c < 3; ++c) d[row] += ax[row][c] * sl.pos[c];
+        }
+        for (int c = 0; c < 3; ++c) {
+            m[c * 4 + 0] = r[c] * s;
+            m[c * 4 + 1] = u[c] * s;
+            m[c * 4 + 2] = f[c] * A;
+            m[c * 4 + 3] = f[c];
+        }
+        m[12] = -d[0] * s; m[13] = -d[1] * s;
+        m[14] = -d[2] * A + B; m[15] = -d[2];
+        for (int k = 0; k < 3; ++k) lpos[k] = sl.pos[k];
+        lpos[3] = 1.0f;
+        prm[0] = n; prm[1] = fa; prm[2] = kLampSize * s * 0.5f; prm[3] = 1.0f;
+        return true;
+    }
     // The eye sits a slab's depth behind the casters, so nothing is clipped
     // by the near plane however the light is angled.
     const float back = R * 2.0f;
     float eye[3];
     for (int k = 0; k < 3; ++k) eye[k] = sl.centre[k] - f[k] * back;
     const float far = back + R * 2.0f;
-
-    // column-major, the way `pushView` writes the scene's
-    for (int k = 0; k < 16; ++k) m[k] = 0.0f;
-    const float* ax[3] = {r, u, f};
     const float sc[3] = {1.0f / R, 1.0f / R, 1.0f / far};
     for (int row = 0; row < 3; ++row) {
         float d = 0.0f;
@@ -2341,15 +2386,19 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         m[12 + row] = -d * sc[row];
     }
     m[15] = 1.0f;
+    for (int k = 0; k < 3; ++k) lpos[k] = f[k];
+    lpos[3] = 0.0f;
+    prm[0] = 0.0f; prm[1] = far; prm[2] = kOrthoSpread / (2.0f * R); prm[3] = 0.0f;
     return true;
     };
     const omk::View::ShadowLight* lights[kShadowLayers] = {
         &v.shadow, &v.extraShadows[0], &v.extraShadows[1]};
     float mats[kShadowLayers][16] = {};
+    float lposs[kShadowLayers][4] = {}, prms[kShadowLayers][4] = {};
     bool live[kShadowLayers] = {};
     for (int L = 0; L < kShadowLayers; ++L)
         live[L] = lights[L]->on && lights[L]->strength > 0.0f &&
-                  lightMatrix(*lights[L], mats[L]);
+                  lightMatrix(*lights[L], mats[L], lposs[L], prms[L]);
     if (!live[0]) return;
 
     if (!cbStarted_) {
@@ -2399,11 +2448,13 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         for (int L = 0; L < kShadowLayers; ++L) {
             std::memcpy(ub.lightMvp[L], mats[L], sizeof mats[L]);
             ub.strength[L] = live[L] ? lights[L]->strength : 0.0f;
+            std::memcpy(ub.lightPos[L], lposs[L], sizeof lposs[L]);
+            std::memcpy(ub.params[L], prms[L], sizeof prms[L]);
         }
         ub.texel = 1.0f / static_cast<float>(kShadowSide);
-        // In the slab's own 0..1 depth, one map texel of slope at the worst
-        // angle - enough to stop the ground shadowing itself.
-        ub.bias = 0.0015f;
+        // In WORLD units now (the shader compares linear depths), widened by
+        // the receiver's slope there.
+        ub.bias = 1.5f;
         ub.shimmer = shimmerClock_;
         std::memcpy(shUboPtr_, &ub, sizeof ub);
     }
@@ -2517,7 +2568,10 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
 // pose buffer does not reach: a body past its room, and every caster of the
 // shadow map, whose depth-only pipeline has no set 2.
 omk::Draw VulkanRenderer::cpuPose(const omk::Draw& d) {
-    omk::Geometry& cp = cpuPosed_[d.geo];
+    auto slot = cpuPoseSlot_.find({d.meshPose, d.geo});
+    if (slot == cpuPoseSlot_.end())
+        slot = cpuPoseSlot_.emplace(std::make_pair(d.meshPose, d.geo), cpuPoseCount_[d.geo]++).first;
+    omk::Geometry& cp = cpuPosed_[{d.geo, slot->second}];
     omk::poseGeometry(d, cp, omk::PoseParts{true, true, kPoseLights});   // o3de/drawcore.h
     cp.revision = d.geo->revision + (++cpuPoseRev_ << 32);
     omk::Draw out = d;
@@ -2651,6 +2705,8 @@ bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
 }
 
 void VulkanRenderer::end() {
+    cpuPoseSlot_.clear();
+    cpuPoseCount_.clear();
     // `OMK_TIE_STATS=1`: every 30 frames, how each large geometry's revisions
     // were answered - replayed from the dirty corners, walked, or a replay
     // abandoned part way (`engine: dirty corners`).

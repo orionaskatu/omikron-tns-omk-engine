@@ -1098,8 +1098,9 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             }
             // Enough for a body and the throw of its shadow under a
             // steep light; this port's number, and the resolution is
-            // its width (1024 texels over the slab).
-            float rad = 220.0f;
+            // its width (2048 texels over the slab). Wide enough that
+            // the passers-by around the player cast too.
+            float rad = 600.0f;
             // ---- SEVERAL LIGHTS, FADED (2026-10-18) -------------------
             //
             // One map from the single strongest light made the shadow JUMP
@@ -1112,7 +1113,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             // and overlap darker - and each strength EASES towards its target
             // over ~0.35 s, so a light taking over fades in while the old one
             // fades out instead of switching on the frame.
-            constexpr float kShadowOpacity = 0.5f;   // the darkest one, 0..1
+            constexpr float kShadowOpacity = 0.6f;   // the darkest one, 0..1
             constexpr float kFadeSeconds = 0.35f;
             const int maxLights = 1 + omk::View::kExtraShadows;
             struct Cand { const omk::Light3do* l; float k; };
@@ -1127,7 +1128,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             std::sort(cands.begin(), cands.end(),
                       [](const Cand& a, const Cand& b) { return a.k > b.k; });
             const float kMax = cands.empty() ? 0.0f : cands.front().k;
-            struct Fade { float dir[3] = {0, -1, 0}; float cur = 0.0f, target = 0.0f; std::string name; };
+            struct Fade { float dir[3] = {0, -1, 0}; float pos[3] = {0, 0, 0}; float cur = 0.0f, target = 0.0f; std::string name; };
             static std::map<std::string, Fade> fades;
             for (auto& kv : fades) kv.second.target = 0.0f;
             for (int c = 0; c < static_cast<int>(cands.size()) && c < maxLights; ++c) {
@@ -1139,7 +1140,7 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
                               static_cast<double>(l->pos[2]));
                 Fade& f = fades[key];
                 f.name = l->name;
-                for (int q = 0; q < 3; ++q) f.dir[q] = l->dir[q];
+                for (int q = 0; q < 3; ++q) { f.dir[q] = l->dir[q]; f.pos[q] = l->pos[q]; }
                 f.target = kShadowOpacity * cands[static_cast<std::size_t>(c)].k / kMax;
             }
             static auto lastTick = std::chrono::steady_clock::now();
@@ -1163,7 +1164,9 @@ void PlayState::worldDrawShadowLight(bool castShadows) {
             for (int c = 0; c < static_cast<int>(act.size()) && c < maxLights; ++c) {
                 omk::View::ShadowLight& sl = c == 0 ? view.shadow : view.extraShadows[c - 1];
                 sl.on = true;
+                sl.point = true;
                 for (int q = 0; q < 3; ++q) {
+                    sl.pos[q] = act[static_cast<std::size_t>(c)]->pos[q];
                     sl.dir[q] = act[static_cast<std::size_t>(c)]->dir[q];
                     sl.centre[q] = centre[q];
                 }

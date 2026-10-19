@@ -329,7 +329,12 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
             sum += rad;
         }
     }
-    vec4 q = rtQuad(vec4(sum, near) / float(K));
+    // The quad mean counts only the lanes that really traced: a HELPER lane (a
+    // pixel of the quad outside this triangle, run only for the derivatives)
+    // may run no ray query and answers nothing, and averaged in it drew a
+    // dark line along every triangle edge of a face. The reflections do the same.
+    float w = gl_HelperInvocation ? 0.0 : 1.0;
+    vec4 q = rtQuad(vec4(sum, near) / float(K) * w) / max(rtQuad(vec4(w)).x, 1e-3);
 #ifdef OMK_RT_COUNT
     if (((int(gl_FragCoord.x) | int(gl_FragCoord.y)) & 7) == 0) {
         if (rtLampRays > 0u) atomicAdd(rtCount.n[0], rtLampRays * 64u);

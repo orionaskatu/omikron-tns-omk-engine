@@ -28200,6 +28200,86 @@ def c_engine_dof_focus():
             "the far walkers %.0f%%" % (100 * player, 100 * walkers))
 
 
+def c_engine_face_lines():
+    r"""`omk-play --d3d12 --raytracing`: NO LINES ALONG A FACE'S TRIANGLE EDGES.
+
+    The ray-traced indirect light (`rtCharacter` in `scene.frag`) smooths its
+    few rays a pixel with the pixel quad's mean, read from the fine derivatives.
+    A pixel on a triangle's edge shares its 2x2 quad with pixels the triangle
+    does not cover - HELPER lanes, run for the derivatives only - and a ray
+    query there answers nothing, so the mean was dragged toward black along
+    every edge: the faceted face of a conversation showed its mesh as dark
+    thin lines (the player's report: "triangles/vertex lines on faces"). The
+    quad mean now counts only the lanes that traced (`gl_HelperInvocation`),
+    as the wet-floor reflection already did.
+    Conversation 386 from the restaurant save (1280x720, hidden window, the
+    window's picture): in the forehead of the speaker's face, the count of
+    pixels darker than both sides, two pixels away along some direction, by
+    more than 3/255 after a 3x3 blur (the blur takes the ray grain and the
+    dither away, a line survives it):
+    * with `--raytracing` the count stays under 75 (a line-free face about
+      40, the old shader 120);
+    * the same frame without ray tracing stays under 10 - the measure sees no
+      line in the face's own texture.
+    Skipped without a D3D12 device with DXR 1.1.
+    SHOWN TO FAIL with `float w = gl_HelperInvocation ? 0.0 : 1.0;` made
+    `float w = 1.0;` in `rtCharacter`: about 120.
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    W, H = 1280, 720
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            win = os.path.join(tmp, name + ".rgba")
+            os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--slot", "2", "--call", "386", "--nofmv",
+                                "--no-crowd", "--shadow-quality", "mapped", "--res", "%dx%d" % (W, H),
+                                "--frames", "150", "--d3d12", "--saves", os.path.join(tmp, "saves-" + name)] + extra,
+                               capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win))
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
+        t_off, p_off = run([], "off")
+        if "renderer: D3D12" not in t_off:
+            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+        t_on, p_on = run(["--raytracing"], "on")
+    if "no DXR 1.1" in t_on:
+        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+    if not (p_off and p_on):
+        return ("a window dump missing",), ("both dumps",), "every run must write OMK_WINDUMP"
+    x0, y0, x1, y1 = 635, 160, 725, 215
+    def ridges(d):
+        luma = lambda x, y: (d[4 * (y * W + x)] * 54 + d[4 * (y * W + x) + 1] * 183
+                             + d[4 * (y * W + x) + 2] * 19) / 256.0
+        blur = {}
+        for y in range(y0 - 3, y1 + 3):
+            for x in range(x0 - 3, x1 + 3):
+                blur[(x, y)] = sum(luma(x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)) / 9.0
+        c = 0
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                v = blur[(x, y)]
+                for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):
+                    if blur[(x + 2 * dx, y + 2 * dy)] - v > 3 and blur[(x - 2 * dx, y - 2 * dy)] - v > 3:
+                        c += 1
+                        break
+        return c
+    r_on, r_off = ridges(p_on), ridges(p_off)
+    got = (r_on < 75, r_off < 10)
+    return got, (True, True), \
+        ("the forehead's line pixels: %d with ray tracing (under 75), %d without (under 10)"
+         % (r_on, r_off))
+
+
 def c_engine_best_lod():
     r"""`omk-play --best-lod`: the crowd's LEVEL OF DETAIL kept at its best - an enhancement, off by default.
     `todo/enhancements.md` 16. A pedestrian model holds four skeletons and
@@ -49472,6 +49552,7 @@ SLOW = [
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
+    ("engine: face lines", c_engine_face_lines, "todo/enhancements.md 19; scene.frag rtCharacter"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: dof focus", c_engine_dof_focus, "todo/enhancements.md 22; d3d12render.cpp noteFocusBody"),

@@ -92,6 +92,10 @@ const uint32_t kVert[] =
 const uint32_t kFrag[] =
 #include "scene.frag.inc"
 ;
+// SOFT PARTICLES' variant of the scene fragment shader (-DOMK_SOFT, the depth as set 3)
+const uint32_t kFragSoft[] =
+#include "scene_soft.frag.inc"
+;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
 ;
@@ -168,6 +172,7 @@ struct LightUbo {
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
     int32_t pad;
     float   eye[4];    // the camera's position (vehicle shine's view vector)
+    float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
 
 // Up to three mapped shadows a frame, one per LAYER of the shadow image: the
@@ -301,19 +306,21 @@ public:
     // THE POST CHAIN (`todo/enhancements.md` 22): bloom, colour grading, depth
     // of field on cinematic frames - the Direct3D 12 backend's chain, the same
     // GLSL and the same numbers (`o3de/postfx.h`). Asked for here before
-    // `init`, made on first use (`makePost`). Soft particles and volumetric
-    // lamp light are that backend's still (part 2 of the parity work).
+    // `init`, made on first use (`makePost`). Soft particles ride on it (the
+    // scene pass itself); volumetric lamp light is that backend's still.
     bool setPostProcess(const PostProcess& p) override {
         if (dev_ != VK_NULL_HANDLE) return false;
         postReq_ = p;
         postReq_.grade = p.grade < 0 ? 0 : p.grade > 4 ? 4 : p.grade;
-        postReq_.softParticles = postReq_.volumetrics = false;
+        postReq_.volumetrics = false;
+        softWant_ = p.softParticles;   // decided in `makeTarget` (not under MSAA)
         postWant_ = p.bloom || p.dof || postReq_.grade > 0 || p.hdr;
-        if (p.softParticles || p.volumetrics)
-            std::printf("post: soft particles and volumetric lamp light are the Direct3D 12 backend's "
+        if (p.volumetrics)
+            std::printf("post: volumetric lamp light is the Direct3D 12 backend's "
                         "(--d3d12) - off on Vulkan\n");
         return true;
     }
+    bool softParticlesLive() const override { return softOn_; }
     // HDR OUTPUT: what the window layer knows of the display before `init`
     // (`known`: 1 reports HDR, 0 does not, -1 not asked - then the surface's
     // offer of scRGB is all there is) and its peak luminance in nits (0: unknown)
@@ -411,6 +418,24 @@ private:
     VkFormat       dsFmt_ = VK_FORMAT_UNDEFINED;
     VkImageView    depthView_ = VK_NULL_HANDLE;
     VkRenderPass   pass_ = VK_NULL_HANDLE;
+    // SOFT PARTICLES (`todo/enhancements.md` 23; off unless asked): the frame's pass is cut where
+    // the first effect sprite comes - the sprites are drawn in a CONTINUATION of the pass (LOAD, the
+    // frame's final layouts as its own initial and final ones: any number of cuts) whose depth is
+    // READ-ONLY, so the fragment shader can sample the depth it is tested against; the next draw
+    // that writes depth opens a writable continuation. Single-sample only, like Direct3D 12's.
+    bool softWant_ = false, softOn_ = false, softNoUbo_ = false;
+    VkRenderPass passCont_[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};   // [0] writable depth, [1] read-only
+    VkDescriptorSetLayout dsl3_ = VK_NULL_HANDLE;
+    VkDescriptorPool softPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet softDs_ = VK_NULL_HANDLE;                       // set 3: the depth, sampled
+    VkSampler softSampler_ = VK_NULL_HANDLE;
+    VkPipeline pipeSoft_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // [1] additive, [2] multiply
+    bool depthRo_ = false;             // the open pass segment's depth is read-only
+    float softRange_ = 24.0f;          // the fade's depth range, world units (~0.6 m)
+    long softDraws_ = 0;               // sprite batches drawn soft this frame
+    bool softTold_ = false;
+    void softSegment(bool readOnly);
+    void writeSoftSet();
     VkFramebuffer  fbuf_ = VK_NULL_HANDLE;
     VkBuffer       readBuf_ = VK_NULL_HANDLE; VkDeviceMemory readMem_ = VK_NULL_HANDLE;
 
@@ -1051,7 +1076,24 @@ bool VulkanRenderer::makeTarget() {
                               : !pushOk ? "the push constants are too small for the final pass"
                                         : "the depth format cannot be sampled");
     }
-    const bool depthKept = ssaoOn_ || dofOn_;
+    // SOFT PARTICLES read the depth beside the test: a single-sample depth that can be sampled
+    // (what Direct3D 12 needs too), and a fourth descriptor set
+    softOn_ = false;
+    if (softWant_ && !softNoUbo_) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        softOn_ = !msaa && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
+                  props_.limits.maxBoundDescriptorSets >= 4;
+        if (!softOn_ && !resizing_) {
+            if (msaa)
+                std::printf("vulkan: soft particles need a single-sample depth - off under %ux MSAA\n",
+                            static_cast<unsigned>(samples_));
+            else
+                std::printf("vulkan: soft particles asked for but not available (the depth cannot be sampled)\n");
+            omk::event("softparticles", {{"on", 0}, {"samples", static_cast<int>(samples_)}});
+        }
+    }
+    const bool depthKept = ssaoOn_ || dofOn_ || softOn_;
     if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                    (depthKept ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
@@ -1116,7 +1158,45 @@ bool VulkanRenderer::makeTarget() {
     VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rpi.attachmentCount = msaa ? 3 : 2; rpi.pAttachments = att;
     rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+    // (with soft particles the pass has its dependencies written out - the continuations below carry
+    // the very same, so their pipelines stay compatible - the frame's writes before the next
+    // segment's reads and tests, and out)
+    VkSubpassDependency softDep[2]{};
+    if (softOn_) {
+        const VkPipelineStageFlags all = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkAccessFlags wr = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        const VkAccessFlags rw = wr | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+        softDep[0] = {VK_SUBPASS_EXTERNAL, 0, all, all, wr, rw, 0};
+        softDep[1] = {0, VK_SUBPASS_EXTERNAL, all, all, wr, rw, 0};
+        rpi.dependencyCount = 2; rpi.pDependencies = softDep;
+    }
     VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &pass_), "vkCreateRenderPass");
+    if (softOn_) {
+        // the continuations: what the first segment left is loaded; the final layouts are the
+        // initial ones, so a frame may be cut as often as it likes
+        VkAttachmentDescription ca[2] = {att[0], att[1]};
+        ca[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ca[0].initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        ca[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ca[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ca[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        ca[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        ca[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        for (int ro = 0; ro < 2; ++ro) {
+            VkAttachmentReference cd{1, ro ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                           : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription cs = sub;
+            cs.pResolveAttachments = nullptr;
+            cs.pDepthStencilAttachment = &cd;
+            VkRenderPassCreateInfo ci = rpi;
+            ci.attachmentCount = 2; ci.pAttachments = ca;
+            ci.pSubpasses = &cs;
+            VKCHECK(vkCreateRenderPass(dev_, &ci, nullptr, &passCont_[ro]), "soft continuation pass");
+        }
+    }
 
     VkImageView views[3] = {msaa ? msColourView_ : colourView_, depthView_, colourView_};
     VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -1130,6 +1210,7 @@ bool VulkanRenderer::makeTarget() {
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                     readBuf_, readMem_)) return false;
     fb_ = omk::Surface(w_, h_, 0);
+    writeSoftSet();   // (the depth was remade: a resize points the set at the new one)
     // a RESIZE stops here: what follows is sized once and kept
     if (resizing_) return true;
 
@@ -1239,6 +1320,19 @@ bool VulkanRenderer::makeTarget() {
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
         }
     }
+    // soft particles' scene shader reads the fade's constants from the lights' uniform block
+    if (softOn_ && !litUboPtr_) {
+        softOn_ = false; softNoUbo_ = true;
+        std::printf("vulkan: soft particles asked for but not available (no per-frame uniform block)\n");
+        omk::event("softparticles", {{"on", 0}, {"samples", static_cast<int>(samples_)}});
+    }
+    if (softWant_ && softOn_) {
+        if (const char* r = omk::envStr("OMK_SOFT_RANGE"))
+            if (std::atof(r) > 0.0) softRange_ = static_cast<float>(std::atof(r));
+        std::printf("vulkan: soft particles on - an ENHANCEMENT: the effect sprites fade over %.0f units "
+                    "where they meet the opaque depth\n", static_cast<double>(softRange_));
+        omk::event("softparticles", {{"on", 1}, {"samples", static_cast<int>(samples_)}});
+    }
     if (shFbuf_ == VK_NULL_HANDLE)
         std::fprintf(stderr, "vulkan: no shadow map here - `--shadow-quality mapped` "
                              "will draw the fitted blobs instead\n");
@@ -1283,9 +1377,32 @@ bool VulkanRenderer::makePipelines() {
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                             0, sizeof(Push)};
-    const VkDescriptorSetLayout sets[3] = {dsl_, dsl1_, dsl2_};
+    // SET 3, with soft particles: the scene's depth, sampled (`scene.frag` -DOMK_SOFT)
+    if (softOn_) {
+        VkDescriptorSetLayoutBinding b3{};
+        b3.binding = 0; b3.descriptorCount = 1;
+        b3.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b3.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo dli3{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli3.bindingCount = 1; dli3.pBindings = &b3;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli3, nullptr, &dsl3_), "descriptorSetLayout3");
+        // a pool of its own: `setTextures` resets the texture pool, and this set must outlive that
+        const VkDescriptorPoolSize sp{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        VkDescriptorPoolCreateInfo spi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        spi.maxSets = 1; spi.poolSizeCount = 1; spi.pPoolSizes = &sp;
+        VKCHECK(vkCreateDescriptorPool(dev_, &spi, nullptr, &softPool_), "soft descriptorPool");
+        VkDescriptorSetAllocateInfo sai3{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        sai3.descriptorPool = softPool_; sai3.descriptorSetCount = 1; sai3.pSetLayouts = &dsl3_;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &sai3, &softDs_), "soft descriptor set");
+        VkSamplerCreateInfo ssi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        ssi.magFilter = ssi.minFilter = VK_FILTER_NEAREST;   // (the shader only texel-fetches)
+        ssi.addressModeU = ssi.addressModeV = ssi.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VKCHECK(vkCreateSampler(dev_, &ssi, nullptr, &softSampler_), "soft sampler");
+        writeSoftSet();
+    }
+    const VkDescriptorSetLayout sets[4] = {dsl_, dsl1_, dsl2_, dsl3_};
     VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pli.setLayoutCount = 3; pli.pSetLayouts = sets;
+    pli.setLayoutCount = softOn_ ? 4 : 3; pli.pSetLayouts = sets;
     pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
     VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &plo_), "pipelineLayout");
 
@@ -1298,7 +1415,8 @@ bool VulkanRenderer::makePipelines() {
     };
     VkShaderModule vs = module(kVert, sizeof(kVert));
     VkShaderModule fs = module(kFrag, sizeof(kFrag));
-    if (!vs || !fs) { std::fprintf(stderr, "vulkan: shader module\n"); return false; }
+    VkShaderModule fsSoft = softOn_ ? module(kFragSoft, sizeof(kFragSoft)) : VK_NULL_HANDLE;
+    if (!vs || !fs || (softOn_ && !fsSoft)) { std::fprintf(stderr, "vulkan: shader module\n"); return false; }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
@@ -1392,6 +1510,18 @@ bool VulkanRenderer::makePipelines() {
         gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = pass_;
         VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe_[k]),
                 "vkCreateGraphicsPipelines");
+        // SOFT PARTICLES' twin of the two blended pipelines: the -DOMK_SOFT shader, no depth write
+        // (the pass segment it draws in holds the depth read-only), no stencil
+        if (softOn_ && k > 0) {
+            VkPipelineShaderStageCreateInfo ss2[2] = {stages[0], stages[1]};
+            ss2[1].module = fsSoft;
+            VkPipelineDepthStencilStateCreateInfo sd = ds;
+            sd.depthWriteEnable = VK_FALSE;
+            gp.pStages = ss2; gp.pDepthStencilState = &sd;
+            VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeSoft_[k]),
+                    "soft pipeline");
+            gp.pStages = stages; gp.pDepthStencilState = &ds;
+        }
         // DEPTH OF FIELD'S TRANSLUCENT SUBJECT: a blended body (a hologram, a
         // ghost) writes no depth, so the post pass saw the wall behind it and
         // blurred it. On a frame that will take depth of field the blended
@@ -1509,6 +1639,7 @@ bool VulkanRenderer::makePipelines() {
 
     vkDestroyShaderModule(dev_, vs, nullptr);
     vkDestroyShaderModule(dev_, fs, nullptr);
+    if (fsSoft) vkDestroyShaderModule(dev_, fsSoft, nullptr);
 
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
@@ -1852,6 +1983,7 @@ bool VulkanRenderer::resize(int w, int h) {
     };
     if (fbuf_) { vkDestroyFramebuffer(dev_, fbuf_, nullptr); fbuf_ = VK_NULL_HANDLE; }
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
+    for (auto& cp : passCont_) if (cp) { vkDestroyRenderPass(dev_, cp, nullptr); cp = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     killSsao();
@@ -3646,6 +3778,12 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
+        if (softOn_) {
+            const float nearP = omk::kNearCut, farP = 200000.0f;
+            ub.soft[0] = farP / (farP - nearP);
+            ub.soft[1] = -farP * nearP / (farP - nearP);
+            ub.soft[2] = 1.0f / softRange_;
+        }
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
@@ -3681,6 +3819,8 @@ void VulkanRenderer::begin(const omk::View& view) {
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     setViewport(view);
     recording_ = true;
+    depthRo_ = false;
+    softDraws_ = 0;
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
     aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
     aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
@@ -3744,6 +3884,29 @@ void VulkanRenderer::submit(const omk::Draw& d) {
     submitOne(d, false, 0);
 }
 
+// SOFT PARTICLES: the open pass segment ends and a continuation begins, its depth read-only or
+// writable (`passCont_`; everything the frame drew so far is loaded). Pipelines, descriptor sets
+// and the dynamic viewport stay bound across the cut.
+void VulkanRenderer::softSegment(bool readOnly) {
+    vkCmdEndRenderPass(cb_);
+    VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp.renderPass = passCont_[readOnly ? 1 : 0]; rp.framebuffer = fbuf_;
+    rp.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+    vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    depthRo_ = readOnly;
+}
+
+// the depth image, as the sprites' shader samples it (set 3)
+void VulkanRenderer::writeSoftSet() {
+    if (softDs_ == VK_NULL_HANDLE || depthSampleView_ == VK_NULL_HANDLE) return;
+    const VkDescriptorImageInfo di{softSampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = softDs_; wr.dstBinding = 0; wr.descriptorCount = 1;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.pImageInfo = &di;
+    vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+}
+
 void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff) {
     if (!uploadGeometry(d.geo)) return;
     resolveTies(d);
@@ -3756,10 +3919,20 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // drawing the reflection. The DRAWS are unchanged, which is the point -
     // the backend is choosing how, not what.
     // a translucent body on a frame with depth of field: its twin, which marks the stencil
-    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !forcePipeline_ && !reflStencil_ &&
+    // SOFT PARTICLES: an effect sprite (`kDrawSoft`) is drawn by the soft twin in a pass segment whose
+    // depth is READ-ONLY - so its shader can sample the depth it is tested against - and the next draw
+    // that writes depth (or the stencil) opens a writable segment again (the engine's order puts the
+    // sprites after the opaque)
+    const bool soft = softOn_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePipeline_ && !reflStencil_ &&
+                      pipeSoft_[k] != VK_NULL_HANDLE;
+    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !soft && !forcePipeline_ && !reflStencil_ &&
                       pipeSubj_[k] != VK_NULL_HANDLE;
+    if (soft && !depthRo_) softSegment(true);
+    else if (depthRo_ && (k == 0 || forcePipeline_ || subj)) softSegment(false);
+    softDraws_ += soft;
     VkPipeline use = forcePipeline_ ? forcePipeline_
                    : reflStencil_   ? pipeRefl_[k]
+                   : soft           ? pipeSoft_[k]
                    : subj           ? pipeSubj_[k]
                                     : pipe_[k];
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
@@ -3774,6 +3947,8 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     if (ds1_ != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 1, 1,
                                 &ds1_, 0, nullptr);
+    if (soft)
+        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 3, 1, &softDs_, 0, nullptr);
     // set 2, the pose buffer - bound for every draw (the shader declares it),
     // at the body's block for a posed one
     if (poseDs_ != VK_NULL_HANDLE)
@@ -4124,6 +4299,12 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
+    if (softOn_ && softDraws_ > 0 && !softTold_) {
+        softTold_ = true;
+        std::printf("vulkan: soft particles - %ld sprite batches faded against the depth on this frame\n",
+                    softDraws_);
+        omk::event("softparticles.drawn", {{"batches", static_cast<int>(softDraws_)}});
+    }
     if (ssaoOn_) runSsao();
     runPost();   // bloom, depth of field, grade - when asked and due
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
@@ -4284,6 +4465,11 @@ VulkanRenderer::~VulkanRenderer() {
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);
     if (pass_) vkDestroyRenderPass(dev_, pass_, nullptr);
+    for (auto& cp : passCont_) if (cp) vkDestroyRenderPass(dev_, cp, nullptr);
+    for (auto& pp : pipeSoft_) if (pp) vkDestroyPipeline(dev_, pp, nullptr);
+    if (softSampler_) vkDestroySampler(dev_, softSampler_, nullptr);
+    if (softPool_) vkDestroyDescriptorPool(dev_, softPool_, nullptr);
+    if (dsl3_) vkDestroyDescriptorSetLayout(dev_, dsl3_, nullptr);
     if (colourView_) vkDestroyImageView(dev_, colourView_, nullptr);
     if (colour_) vkDestroyImage(dev_, colour_, nullptr);
     if (colourMem_) freeDeviceMemory(colourMem_);

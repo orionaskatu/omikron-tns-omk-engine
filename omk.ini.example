@@ -303,8 +303,7 @@
 ;colordepth = 16
 ;
 ; THE POST-PROCESSING CHAIN - on Direct3D 12 and on Vulkan (one GLSL source,
-; the same numbers - HDR output too; soft particles and volumetrics are still
-; Direct3D 12's).
+; the same numbers - HDR output too; volumetrics are still Direct3D 12's).
 ; Over the 3D only: the interface (HUD,
 ; subtitles, screens) is laid over it untouched. `todo/enhancements.md` 22.
 ;   bloom = on        light bleeding from the neon, the lamps and the fires -
@@ -327,8 +326,8 @@
 ;colorgrade = off
 ;hdr = off
 ;
-; SOFT PARTICLES and VOLUMETRIC LAMP LIGHT - the Direct3D 12 backend's too;
-; Vulkan says so and leaves them off. Both in `all = max`.
+; SOFT PARTICLES (Direct3D 12 and Vulkan) and VOLUMETRIC LAMP LIGHT (Direct3D 12;
+; Vulkan says so and leaves it off). Both in `all = max`.
 ;   softparticles = on   the effect sprites - smoke, steam, the fires, the
 ;                     lamps' glows - fade where they meet a wall or the ground
 ;                     (over ~0.6 m of depth) instead of cutting a hard line.

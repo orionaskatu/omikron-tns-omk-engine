@@ -527,7 +527,7 @@ public:
     virtual bool setPostProcess(const PostProcess& /*p*/) { return false; }
     // What the frontend asks before it marks the sprites soft and picks the
     // air's lamps: true only once the renderer has the passes running (D3D12
-    // declines soft particles under MSAA, saying so).
+    // and Vulkan decline soft particles under MSAA, saying so).
     virtual bool softParticlesLive() const { return false; }
     virtual bool volumetricsLive() const { return false; }
     // FRAME GENERATION (`todo/enhancements.md` 27): between two rendered

@@ -242,8 +242,9 @@ int PlayState::setupSession() {
     postFx.softParticles = enh(softParticlesFlag, settings.softParticles ? 1 : 0, omk::kMaxSoftParticles) > 0;
     postFx.volumetrics = enh(volumetricsFlag, settings.volumetrics ? 1 : 0, omk::kMaxVolumetrics) > 0;
     if (postFx.softParticles || postFx.volumetrics)
-        std::printf("scene fx: soft particles %s, volumetric lamp light %s - ENHANCEMENTS: the Direct3D 12 "
-                    "backend's, the effect sprites faded against the depth and the lamps' light in the air\n",
+        std::printf("scene fx: soft particles %s, volumetric lamp light %s - ENHANCEMENTS: the GPU "
+                    "backends' (Direct3D 12, Vulkan), the effect sprites faded against the depth and the lamps' "
+                    "light in the air\n",
                     postFx.softParticles ? "on" : "off", postFx.volumetrics ? "on" : "off");
     if (postFx.bloom || postFx.dof || postFx.grade || postFx.hdr)
         std::printf("post: bloom %s, depth of field %s, colour grade %s, hdr %s - ENHANCEMENTS: the "

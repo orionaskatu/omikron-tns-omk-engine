@@ -111,7 +111,12 @@ layout(set = 1, binding = 2) uniform Lights {
 // backend's -DOMK_SOFT build, drawn for the effect sprites alone (`kDrawSoft`,
 // additive or multiply): the OPAQUE depth, read through a read-only depth view
 // of the very buffer the sprite is depth-tested against. Vulkan never defines it.
-layout(set = 6, binding = 0) uniform sampler2D sceneDepth;
+// (a descriptor SET of its own: Direct3D 12 spaces it as 6, Vulkan, with fewer sets
+// to spare, as 3 - `-DOMK_SOFT_SET=3`)
+#ifndef OMK_SOFT_SET
+#define OMK_SOFT_SET 6
+#endif
+layout(set = OMK_SOFT_SET, binding = 0) uniform sampler2D sceneDepth;
 #endif
 
 #ifdef OMK_RT

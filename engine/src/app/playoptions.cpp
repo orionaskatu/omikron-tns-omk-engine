@@ -312,7 +312,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   [Enhancements] hdr=on\n"
 "  --soft-particles ENHANCEMENT: smoke, steam, fire and the lamps' glows fade\n"
 "                   where they meet a wall or the ground instead of cutting a\n"
-"                   hard line (Direct3D 12, not under MSAA); [Enhancements]\n"
+"                   hard line (Direct3D 12, Vulkan; not under MSAA); [Enhancements]\n"
 "                   softparticles=on\n"
 "  --volumetrics    ENHANCEMENT: the lamps' light scattered in the air round\n"
 "                   them, a halo near each lamp (Direct3D 12); [Enhancements]\n"

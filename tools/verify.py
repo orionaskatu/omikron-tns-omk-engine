@@ -27700,8 +27700,9 @@ def c_engine_post_chain():
          "display, forced it stays the SDR picture")
 
 
-def _d3d12_street_runs(runs, W=640, H=480):
-    """Runs of the street start through the Direct3D 12 window, hidden, each a
+def _d3d12_street_runs(runs, W=640, H=480, backend="d3d12"):
+    """Runs of the street start through the Direct3D 12 window (`backend="vulkan"`: the default Vulkan
+    one), hidden, each a
     (name, extra args, extra env) - with the set loads on the frame's own thread
     (`OMK_SYNC_SETS`: a job finishing a frame later between two configurations
     moves the crowd) and the events on - and what each window was handed
@@ -27720,8 +27721,9 @@ def _d3d12_street_runs(runs, W=640, H=480):
         for name, extra, env in runs:
             win = os.path.join(tmp, name + ".rgba")
             args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
-                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", "60", "--d3d12",
-                    "--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32"] + extra
+                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", "60"] + \
+                   (["--d3d12"] if backend == "d3d12" else []) + \
+                   ["--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32"] + extra
             e = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win, OMK_SYNC_SETS="1", OMK_EVENTS="1")
             e.update(env)
             r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=e)
@@ -27806,7 +27808,7 @@ def c_engine_rt_reflections():
 
 
 def c_engine_soft_particles():
-    r"""`omk-play --soft-particles`: SOFT PARTICLES on Direct3D 12 - an enhancement, off by default.
+    r"""`omk-play --soft-particles`: SOFT PARTICLES on Direct3D 12 and on Vulkan - an enhancement, off by default.
     `todo/enhancements.md` 23. The effect sprites (`Render_SubmitSprites`'
     billboards - smoke, steam, fire, the lamps' glows; marked `kDrawSoft` by
     the frontend, additive or multiply) are drawn by `scene.frag` built
@@ -27827,22 +27829,84 @@ def c_engine_soft_particles():
         only where a sprite nears what is behind it), and none brighter (the
         sprites here are all additive: a fade only takes light away);
       * under 4x MSAA it declines, with a line and the event saying so.
+    ONE SOURCE FOR BOTH (`scene.frag -DOMK_SOFT`; Vulkan reads the depth as descriptor set 3 in a
+    continuation of the frame's render pass with a read-only depth attachment): every element above runs
+    on the default Vulkan window too, plus the two windows' pictures agree - on the street, with 2x
+    supersampling, and with bloom and SSAO - to within mean 0.05 and 0.03% of the pixels more than 8
+    off (the fade moves 0.07%: a looser bound would not see it; measured byte-identical on an RX 9070
+    XT, one pixel set 13 off under bloom).
     SHOWN TO FAIL (2026-10-19) with the soft pipelines never chosen in
-    `submitOne` (`soft` forced false): no batch drawn soft, nothing moved.
+    `submitOne` (`soft` forced false): no batch drawn soft, nothing moved - on Direct3D 12; on
+    Vulkan (`soft` forced false in `VulkanRenderer::submitOne`) no batch soft, nothing moved, and the
+    Vulkan pictures disagreed with Direct3D 12's (0.07% of the pixels more than 8 off, worst 217).
     """
     src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
     defaults = "bool   softParticles = false;" in src
-    r = _d3d12_street_runs([("p0", [], {}), ("p0b", [], {}), ("ps", ["--soft-particles"], {}),
-                            ("pg", ["--soft-particles"], {"OMK_SOFT_RANGE": "1000000"}),
-                            ("pm", ["--soft-particles", "--aa", "4"], {})])
-    if isinstance(r, tuple):
-        return r
-    t0 = r["p0"][0]
-    if "renderer: D3D12" not in t0:
-        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    runs = [("p0", [], {}), ("p0b", [], {}), ("ps", ["--soft-particles"], {}),
+            ("pg", ["--soft-particles"], {"OMK_SOFT_RANGE": "1000000"}),
+            ("pm", ["--soft-particles", "--aa", "4"], {}),
+            ("pss", ["--soft-particles", "--ssaa", "2"], {}),
+            ("pbl", ["--soft-particles", "--bloom", "--ssao"], {})]
+    outs = {}
+    for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+        r = _d3d12_street_runs(runs, backend=backend)
+        if isinstance(r, tuple):
+            return r
+        if tag in r["p0"][0]:
+            outs[backend] = r
+    if not outs:
+        return ("skipped",), ("skipped",), "no Direct3D 12 or Vulkan device - the backends are optional"
+    got, want = [defaults], [True]
+    for backend, r in outs.items():
+        g, w = _soft_particles_eval(r, backend)
+        got += g
+        want += w
+    if len(outs) == 2:
+        # THE TWO BACKENDS DRAW IT ALIKE: one GLSL source, the same fade
+        for name in ("p0", "ps", "pss", "pbl"):
+            a, b = outs["d3d12"][name][1], outs["vulkan"][name][1]
+            d = _pic_diff(a, b) if a and b else (9e9, 1.0, 255, 1.0)
+            print("        soft particles, Vulkan against Direct3D 12 (%s): mean %.3f, >8 %.2f%%, worst %d"
+                  % (name, d[0], 100 * d[1], d[2]))
+            # (tight on purpose: the fade moves 0.07% of the pixels, which the parity check's looser
+            # bounds would not see; the two measured byte-identical on an RX 9070 XT)
+            got.append(d[0] <= 0.05 and d[1] < 0.0003)
+            want.append(True)
+    return tuple(got), tuple(want), \
+        ("off by default and silent, two plain runs identical; on, sprite batches drawn soft and the "
+         "pixels moved all inside the sprites' footprint, a minority of it, none brighter; declined "
+         "under MSAA - on Direct3D 12 and on Vulkan, whose pictures agree")
+
+
+def _pic_diff(a, b):
+    """Two RGBA pictures of one size: (the largest per-channel MEAN absolute difference, the share of
+    pixels more than 8 levels off, the largest single difference, the share more than 1 off)."""
+    if a == b:
+        return 0.0, 0.0, 0, 0.0
+    sa = [0, 0, 0]
+    big = off1 = mx = 0
+    n = len(a) // 4
+    for i in range(n):
+        o = 4 * i
+        m = 0
+        for c in range(3):
+            d = abs(a[o + c] - b[o + c])
+            sa[c] += d
+            if d > m:
+                m = d
+        mx = max(mx, m)
+        big += m > 8
+        off1 += m > 1
+    return max(sa) / n, big / n, mx, off1 / n
+
+
+def _soft_particles_eval(r, backend):
+    """The soft-particle elements of `engine: soft particles` for one backend's street runs."""
     p0, p0b, ps, pg = r["p0"][1], r["p0b"][1], r["ps"][1], r["pg"][1]
-    if not all((p0, p0b, ps, pg, r["pm"][1])):
-        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    t0 = r["p0"][0]
+    if not all((p0, p0b, ps, pg, r["pm"][1], r["pss"][1], r["pbl"][1])):
+        print("        soft particles (%s): a window dump is missing" % backend)
+        return [False], [True]
     silent = "soft particles" not in t0 and not any(n.startswith("softparticles") for n, _ in _events(t0))
     ev = _events(r["ps"][0])
     on = any(n == "softparticles" and f.get("on") == "1" for n, f in ev)
@@ -27861,15 +27925,12 @@ def c_engine_soft_particles():
     evm = _events(r["pm"][0])
     msaaOff = any(n == "softparticles" and f.get("on") == "0" and f.get("samples") == "4" for n, f in evm) \
         and "off under 4x MSAA" in r["pm"][0]
-    print("        soft particles: %d batches soft; footprint %.2f%%, moved %d px (%.1f%% of it), %d outside "
-          "it, %d brighter; MSAA declined %s" % (drawn, 100.0 * foot / n, moved, 100.0 * moved / max(1, foot),
-                                                outside, brighter, msaaOff))
-    got = (defaults, silent, p0 == p0b, on, drawn > 0, 0.003 * n < foot < 0.2 * n, moved >= 30,
+    print("        soft particles (%s): %d batches soft; footprint %.2f%%, moved %d px (%.1f%% of it), %d "
+          "outside it, %d brighter; MSAA declined %s" % (backend, drawn, 100.0 * foot / n, moved,
+                                                         100.0 * moved / max(1, foot), outside, brighter, msaaOff))
+    got = (silent, p0 == p0b, on, drawn > 0, 0.003 * n < foot < 0.2 * n, moved >= 30,
            outside, moved <= 0.5 * foot, brighter, msaaOff)
-    return got, (True, True, True, True, True, True, True, 0, True, 0, True), \
-        ("off by default and silent, two plain runs identical; on, sprite batches drawn soft and the "
-         "pixels moved all inside the sprites' footprint, a minority of it, none brighter; declined "
-         "under MSAA")
+    return list(got), [True, True, True, True, True, True, 0, True, 0, True]
 
 
 def c_engine_framegen():

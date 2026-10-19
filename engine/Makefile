@@ -124,7 +124,8 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
-              build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc
+              build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc \
+              build/shaders/scene_soft.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
@@ -135,6 +136,13 @@ build/shaders/%.inc: backends/vulkan/shaders/%
 build/shaders/%_hdr.frag.inc: backends/vulkan/shaders/%.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -DOMK_HDR -mfmt=c -o $@ $<
+
+# SOFT PARTICLES' scene pass (`todo/enhancements.md` 23): `scene.frag` with -DOMK_SOFT, the
+# opaque depth read beside the depth test, as descriptor set 3 here (Direct3D 12's is a
+# separate build of the same source, `scene_soft.frag`, with the set left at 6)
+build/shaders/scene_soft.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_SOFT -DOMK_SOFT_SET=3 -mfmt=c -o $@ $<
 
 # SSAO's multisampled-depth builds (`sampler2DMS`), from the same sources
 build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag

@@ -28045,7 +28045,7 @@ def c_engine_framegen():
 
 
 def c_engine_volumetrics():
-    r"""`omk-play --volumetrics`: VOLUMETRIC LAMP LIGHT on Direct3D 12 - an enhancement, off by default.
+    r"""`omk-play --volumetrics`: VOLUMETRIC LAMP LIGHT on Direct3D 12 and on Vulkan - an enhancement, off by default.
     `todo/enhancements.md` 24. `vol.frag` marches each eye ray through the glow
     spheres of the frame's lamps in the air (`View::airLights`: the set's lamp
     records in front of the camera, nearest first, no sky fill) at half the
@@ -28067,6 +28067,12 @@ def c_engine_volumetrics():
         (they cover under 90% of the frame - measured 40%);
       * under 4x MSAA (`vol_ms.frag`, `volmix_ms.frag`) it brightens alike
         and darkens nothing.
+    ONE SOURCE FOR BOTH (`vol.frag`, `volmix.frag` in `backends/vulkan/shaders/`, the lamp table and the
+    glow boxes `o3de/postfx.h`'s): every element above runs on the default Vulkan window too (the same
+    composition point: after the resolve and SSAO, before the post chain), plus the two windows' pictures
+    agree - the street, under MSAA, with 2x supersampling, and with bloom, a grade and SSAO - within mean
+    0.1 and 0.1% of the pixels more than 8 off (measured: mean 0.000, never more than one level, on an
+    RX 9070 XT; a window without the light: mean 0.57, 2% of the pixels more than 8 off).
     SHOWN TO FAIL (2026-10-19) twice: with `runVol` returning at once (no lamp
     said, nothing brightened, here or under MSAA), and with every lamp's
     centre moved 400 units in `vol.frag` alone (1671 pixels brightened outside
@@ -28074,16 +28080,49 @@ def c_engine_volumetrics():
     """
     src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
     defaults = "bool   volumetrics = false;" in src
-    r = _d3d12_street_runs([("v0", [], {}), ("v0b", [], {}), ("vv", ["--volumetrics"], {}),
-                            ("m0", ["--aa", "4"], {}), ("mv", ["--aa", "4", "--volumetrics"], {})])
-    if isinstance(r, tuple):
-        return r
-    t0 = r["v0"][0]
-    if "renderer: D3D12" not in t0:
-        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    runs = [("v0", [], {}), ("v0b", [], {}), ("vv", ["--volumetrics"], {}),
+            ("m0", ["--aa", "4"], {}), ("mv", ["--aa", "4", "--volumetrics"], {}),
+            ("vs", ["--volumetrics", "--ssaa", "2"], {}),
+            ("vb", ["--volumetrics", "--bloom", "--colorgrade", "cyber", "--ssao"], {})]
+    outs = {}
+    for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+        r = _d3d12_street_runs(runs, backend=backend)
+        if isinstance(r, tuple):
+            return r
+        if tag in r["v0"][0]:
+            outs[backend] = r
+    if not outs:
+        return ("skipped",), ("skipped",), "no Direct3D 12 or Vulkan device - the backends are optional"
+    got, want = [defaults], [True]
+    for backend, r in outs.items():
+        g, w = _volumetrics_eval(r, backend)
+        got += g
+        want += w
+    if len(outs) == 2:
+        # THE TWO BACKENDS DRAW IT ALIKE: one GLSL source for the march and the composite, one lamp
+        # table (`o3de/postfx.h`). Tight on purpose - the halo moves 8% of the pixels; on an RX 9070 XT
+        # the pictures are within one level of each other (mean 0.000), where a backend without the
+        # light is 0.57 off on average, 2% of the pixels by more than 8.
+        for name in ("v0", "vv", "mv", "vs", "vb"):
+            a, b = outs["d3d12"][name][1], outs["vulkan"][name][1]
+            d = _pic_diff(a, b) if a and b else (9e9, 1.0, 255, 1.0)
+            print("        volumetrics, Vulkan against Direct3D 12 (%s): mean %.3f, >8 %.3f%%, worst %d"
+                  % (name, d[0], 100 * d[1], d[2]))
+            got.append(d[0] <= 0.1 and d[1] < 0.001)
+            want.append(True)
+    return tuple(got), tuple(want), \
+        ("off by default and silent, two plain runs identical; on, lamps in the air, 1-60% of the "
+         "street brighter and nothing darker, every change inside a lamp's glow box; the same under MSAA "
+         "- on Direct3D 12 and on Vulkan, whose pictures agree")
+
+
+def _volumetrics_eval(r, backend):
+    """The volumetric-light elements of `engine: volumetrics` for one backend's street runs."""
     v0, v0b, vv, m0, mv = (r[k][1] for k in ("v0", "v0b", "vv", "m0", "mv"))
-    if not all((v0, v0b, vv, m0, mv)):
-        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    t0 = r["v0"][0]
+    if not all((v0, v0b, vv, m0, mv, r["vs"][1], r["vb"][1])):
+        print("        volumetrics (%s): a window dump is missing" % backend)
+        return [False], [True]
     W, H = 640, 480
     n = W * H
     silent = "volumetric" not in t0 and not any(nm in ("vol", "vol.lamp", "vol.timing") for nm, _ in _events(t0))
@@ -28114,14 +28153,12 @@ def c_engine_volumetrics():
     up, darker, out = compare(v0, vv, True)
     cover = sum(1 for y in range(0, H, 4) for x in range(0, W, 4) if inside(x + 0.5, y + 0.5)) / (n / 16.0)
     mup, mdark, _ = compare(m0, mv, False)
-    print("        volumetrics: %d lamps, %d glow boxes covering %.0f%%; %.1f%% brighter, %d darker, %d changed "
-          "outside every box; MSAA %.1f%% brighter, %d darker"
-          % (lamps, len(boxes), 100.0 * cover, 100.0 * up / n, darker, out, 100.0 * mup / n, mdark))
-    got = (defaults, silent, v0 == v0b, lamps > 0, 0.01 * n < up < 0.6 * n, darker, len(boxes) > 0,
+    print("        volumetrics (%s): %d lamps, %d glow boxes covering %.0f%%; %.1f%% brighter, %d darker, %d "
+          "changed outside every box; MSAA %.1f%% brighter, %d darker"
+          % (backend, lamps, len(boxes), 100.0 * cover, 100.0 * up / n, darker, out, 100.0 * mup / n, mdark))
+    got = (silent, v0 == v0b, lamps > 0, 0.01 * n < up < 0.6 * n, darker, len(boxes) > 0,
            out, cover < 0.9, mup > 0.01 * n, mdark)
-    return got, (True, True, True, True, True, 0, True, 0, True, True, 0), \
-        ("off by default and silent, two plain runs identical; on, lamps in the air, 1-60% of the "
-         "street brighter and nothing darker, every change inside a lamp's glow box; the same under MSAA")
+    return list(got), [True, True, True, True, 0, True, 0, True, True, 0]
 
 
 def c_engine_anim_blend():

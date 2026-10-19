@@ -268,7 +268,7 @@ struct Settings {
     bool   hdr = false;
     Source hdrSource = Source::Default;
     // SOFT PARTICLES (`todo/enhancements.md` 23) and VOLUMETRIC LAMP LIGHT (24),
-    // the GPU backends' (soft particles: Direct3D 12 and Vulkan), both in `all = max`: `softparticles = off|on`
+    // the GPU backends' (Direct3D 12 and Vulkan), both in `all = max`: `softparticles = off|on`
     // (the effect sprites - smoke, steam, fire, the lamps' glows - faded where
     // they meet a wall or the ground instead of cutting a hard line), and
     // `volumetrics = off|on` (the lamps' light scattered in the air round them).
@@ -545,7 +545,7 @@ inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 b
 inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12, Vulkan)
 inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12, Vulkan)
 inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12, Vulkan)
-inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12)
+inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12, Vulkan)
 inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12 window)
 inline constexpr int kMaxAnimBlend = 1;           // a clip change eased out over 0.2 s
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):

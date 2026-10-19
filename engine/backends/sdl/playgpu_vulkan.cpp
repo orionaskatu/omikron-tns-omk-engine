@@ -147,9 +147,9 @@ void PlayState::gpuOpenWindow() {
             if (upscaler > 0 && !vkr->setUpscaler(upscaler, upscaleQuality))
                 std::printf("upscaler: %s is the Direct3D 12 backend's (--d3d12) - off on Vulkan\n",
                             omk::upscalerName(upscaler));
-            // the chain (bloom, depth of field, grade, hdr) runs on Vulkan; soft
-            // particles and volumetrics are still the D3D12 backend's, which the
-            // renderer says when it takes the request
+            // the chain (bloom, depth of field, grade, hdr) and the two scene effects
+            // (soft particles, volumetric lamp light) run on Vulkan; the renderer says
+            // so, or why not, when it takes the request
             if (postFx.any() && !vkr->setPostProcess(postFx))
                 std::printf("post: the post-processing chain could not be set up - off on Vulkan\n");
             if (frameGen && !vkr->setFrameGeneration(true))

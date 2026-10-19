@@ -125,7 +125,9 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
               build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc \
-              build/shaders/scene_soft.frag.inc
+              build/shaders/scene_soft.frag.inc \
+              build/shaders/vol.frag.inc build/shaders/vol_ms.frag.inc \
+              build/shaders/volmix.frag.inc build/shaders/volmix_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders

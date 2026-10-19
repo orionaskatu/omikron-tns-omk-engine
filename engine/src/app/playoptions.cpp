@@ -315,7 +315,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   hard line (Direct3D 12, Vulkan; not under MSAA); [Enhancements]\n"
 "                   softparticles=on\n"
 "  --volumetrics    ENHANCEMENT: the lamps' light scattered in the air round\n"
-"                   them, a halo near each lamp (Direct3D 12); [Enhancements]\n"
+"                   them, a halo near each lamp (Direct3D 12, Vulkan); [Enhancements]\n"
 "                   volumetrics=on\n"
 "  --framegen       ENHANCEMENT: frame generation - an in-between picture warped\n"
 "                   along the motion vectors between every two rendered frames,\n"

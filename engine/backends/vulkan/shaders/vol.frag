@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // VOLUMETRIC LAMP LIGHT, the march (`todo/enhancements.md` 24), for the
-// Direct3D 12 backend: an ENHANCEMENT, off unless `volumetrics = on`.
+// Direct3D 12 and Vulkan backends (one source): an ENHANCEMENT, off unless `volumetrics = on`.
 //
 // At HALF the render size, for each pixel: the eye ray to the opaque surface
 // (rebuilt from the depth through the scene's own projection - `ssao.frag`'s

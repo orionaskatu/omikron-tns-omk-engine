@@ -162,11 +162,10 @@ struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, p
 using omk::postfx::BloomPush;   // `o3de/postfx.h`: shared with the Vulkan backend
 using omk::postfx::PostPush;
 // VOLUMETRIC LAMP LIGHT's (`vol.frag`, `volmix.frag`, todo/enhancements.md 24)
-struct VolPush { float proj[4], view[4], eye[4], s[4], u[4], f[4]; };
-struct VolMixPush { float proj[4], view[4]; };
-constexpr int kMaxVolLamps = 16;
-struct VolLamp { float posR[4], colI[4], shape[4]; };
-struct VolUbo { VolLamp l[kMaxVolLamps]; int32_t count[4]; };
+using omk::postfx::VolPush;     // `o3de/postfx.h`: shared with the Vulkan backend
+using omk::postfx::VolMixPush;
+using omk::postfx::kMaxVolLamps;
+using omk::postfx::VolUbo;
 // FRAME GENERATION's (`fg_cap.frag`; `fg_splat.frag`, `fg_resolve.frag`)
 struct FgCapPush { float pic[4], toRender[4], depthAB[4]; };
 struct FgPush { float pic[4], k[4]; };
@@ -1249,12 +1248,9 @@ bool D3D12Renderer::makeTarget() {
     }
     volOn_ = volWant_;
     if (volWant_ && !resizing_) {
-        if (const char* t = omk::envStr("OMK_VOL_TUNE")) {
-            float a = 0.0f, b = 0.0f, c = 0.0f;
-            if (std::sscanf(t, "%f,%f,%f", &a, &b, &c) >= 1 && a >= 0.0f) volDensity_ = a;
-            if (b > 0.0f) volCore_ = b;
-            if (c > 0.0f) volReach_ = std::min(c, 1.0f);
-        }
+        omk::postfx::VolTune vt{volDensity_, volCore_, volReach_};
+        vt.fromEnv();
+        volDensity_ = vt.density; volCore_ = vt.core; volReach_ = vt.reach;
         std::printf("d3d12: volumetric lamp light on - an ENHANCEMENT: the lamps' light scattered in the air, "
                     "half-size, added before the post chain (density %g, core %g and glow %g of the reach)\n",
                     static_cast<double>(volDensity_), static_cast<double>(volCore_),
@@ -2873,75 +2869,16 @@ void D3D12Renderer::begin(const omk::View& view) {
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
     // VOLUMETRIC LAMP LIGHT: the air's lamps (`View::airLights`) and the main
-    // view's camera, for `runVol`
+    // view's camera, for `runVol` (`o3de/postfx.h`: one build for both backends)
     volCount_ = 0;
     if (volOn_ && volUboPtr_) {
-        VolUbo ub{};
-        const int n = static_cast<int>(std::min<std::size_t>(view.airLights.size(),
-                                                             static_cast<std::size_t>(kMaxVolLamps)));
-        for (int i = 0; i < n; ++i) {
-            const auto& l = view.airLights[static_cast<std::size_t>(i)];
-            const float I = std::min(l.intensity, 2.0f);
-            for (int k = 0; k < 3; ++k) {
-                ub.l[i].posR[k] = l.pos[k];
-                ub.l[i].colI[k] = l.colour[k] * I;
-            }
-            ub.l[i].posR[3] = volReach_ * l.radiusA;
-            ub.l[i].shape[0] = std::max(8.0f, volCore_ * l.radiusA);
-        }
-        ub.count[0] = n;
-        std::memcpy(volUboPtr_, &ub, sizeof ub);
-        volCount_ = n;
-        omk::RCamera cam = view.cam;
-        cam.w = view.letterboxed() ? view.vw : w_;
-        cam.h = view.letterboxed() ? view.vh : h_;
-        omk::cameraBasis(cam, volS_, volU_, volF_, volTanH_, volTanV_);
-        for (int k = 0; k < 3; ++k) volEye_[k] = cam.eye[k];
-        // WHERE THE GLOW CAN BE, for a check (`verify.py: engine: volumetrics`):
-        // each lamp's glow sphere projected into the picture (display pixels):
-        // the box round the projections of points on its surface in front of
-        // the eye (a sphere straddling the eye's plane reaches the picture's
-        // edge), the whole picture when the eye is inside it, an empty box
-        // (x0 > x1) when it lies wholly behind. Said again whenever the lamps or
-        // the camera change.
-        if (omk::eventsOn()) {
-            float sig = static_cast<float>(n);
-            for (int k = 0; k < 3; ++k) sig += volEye_[k] * 0.37f + volF_[k] * 101.0f;
-            for (int i = 0; i < n; ++i) sig += ub.l[i].posR[0] + ub.l[i].posR[1] * 3.0f + ub.l[i].posR[2] * 7.0f;
-            if (sig != volSig_) {
-                volSig_ = sig;
-                const float W = static_cast<float>(cam.w), Hh = static_cast<float>(cam.h);
-                for (int i = 0; i < n; ++i) {
-                    const float R = ub.l[i].posR[3];
-                    float rel[3];
-                    for (int k = 0; k < 3; ++k) rel[k] = ub.l[i].posR[k] - volEye_[k];
-                    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-                    if (rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2] <= R * R) {
-                        x0 = 0.0f; y0 = 0.0f; x1 = W; y1 = Hh;
-                    } else {
-                        for (int a = 0; a < 48; ++a)
-                            for (int b = 0; b <= 24; ++b) {
-                                const float th = 6.2831853f * static_cast<float>(a) / 48.0f;
-                                const float ph = 3.1415927f * static_cast<float>(b) / 24.0f;
-                                const float q[3] = {rel[0] + R * std::sin(ph) * std::cos(th),
-                                                    rel[1] + R * std::cos(ph),
-                                                    rel[2] + R * std::sin(ph) * std::sin(th)};
-                                const float vz = q[0] * volF_[0] + q[1] * volF_[1] + q[2] * volF_[2];
-                                if (vz < omk::kNearCut) continue;
-                                const float vs = q[0] * volS_[0] + q[1] * volS_[1] + q[2] * volS_[2];
-                                const float vu = q[0] * volU_[0] + q[1] * volU_[1] + q[2] * volU_[2];
-                                const float x = (vs / (vz * volTanH_) + 1.0f) * 0.5f * W;
-                                const float y = (-vu / (vz * volTanV_) + 1.0f) * 0.5f * Hh;
-                                x0 = std::min(x0, x); x1 = std::max(x1, x);
-                                y0 = std::min(y0, y); y1 = std::max(y1, y);
-                            }
-                    }
-                    omk::event("vol.lamp", {{"frame", static_cast<int>(volFrame_ + 1)},
-                                            {"x0", std::max(x0, -1e5f)}, {"y0", std::max(y0, -1e5f)},
-                                            {"x1", std::min(x1, 1e5f)}, {"y1", std::min(y1, 1e5f)}});
-                }
-            }
-        }
+        omk::postfx::VolFrame vf;
+        omk::postfx::buildVolFrame(view, w_, h_, omk::postfx::VolTune{volDensity_, volCore_, volReach_}, vf);
+        std::memcpy(volUboPtr_, &vf.ubo, sizeof vf.ubo);
+        volCount_ = vf.count;
+        for (int k = 0; k < 3; ++k) { volEye_[k] = vf.eye[k]; volS_[k] = vf.s[k]; volU_[k] = vf.u[k]; volF_[k] = vf.f[k]; }
+        volTanH_ = vf.tanH; volTanV_ = vf.tanV;
+        omk::postfx::volLampEvents(vf, volSig_, volFrame_);
     }
     softDraws_ = 0;
     depthRo_ = false;

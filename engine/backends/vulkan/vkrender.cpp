@@ -96,6 +96,20 @@ const uint32_t kFrag[] =
 const uint32_t kFragSoft[] =
 #include "scene_soft.frag.inc"
 ;
+// VOLUMETRIC LAMP LIGHT's march and composite (one GLSL source with Direct3D 12), and their
+// multisampled-depth builds
+const uint32_t kVolFrag[] =
+#include "vol.frag.inc"
+;
+const uint32_t kVolMsFrag[] =
+#include "vol_ms.frag.inc"
+;
+const uint32_t kVolMixFrag[] =
+#include "volmix.frag.inc"
+;
+const uint32_t kVolMixMsFrag[] =
+#include "volmix_ms.frag.inc"
+;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
 ;
@@ -307,20 +321,18 @@ public:
     // of field on cinematic frames - the Direct3D 12 backend's chain, the same
     // GLSL and the same numbers (`o3de/postfx.h`). Asked for here before
     // `init`, made on first use (`makePost`). Soft particles ride on it (the
-    // scene pass itself); volumetric lamp light is that backend's still.
+    // scene pass itself), and volumetric lamp light (two passes before the chain).
     bool setPostProcess(const PostProcess& p) override {
         if (dev_ != VK_NULL_HANDLE) return false;
         postReq_ = p;
         postReq_.grade = p.grade < 0 ? 0 : p.grade > 4 ? 4 : p.grade;
-        postReq_.volumetrics = false;
         softWant_ = p.softParticles;   // decided in `makeTarget` (not under MSAA)
+        volWant_ = p.volumetrics;      // ...and this one there too (the depth must be sampleable)
         postWant_ = p.bloom || p.dof || postReq_.grade > 0 || p.hdr;
-        if (p.volumetrics)
-            std::printf("post: volumetric lamp light is the Direct3D 12 backend's "
-                        "(--d3d12) - off on Vulkan\n");
         return true;
     }
     bool softParticlesLive() const override { return softOn_; }
+    bool volumetricsLive() const override { return volOn_; }
     // HDR OUTPUT: what the window layer knows of the display before `init`
     // (`known`: 1 reports HDR, 0 does not, -1 not asked - then the surface's
     // offer of scRGB is all there is) and its peak luminance in nits (0: unknown)
@@ -435,6 +447,28 @@ private:
     long softDraws_ = 0;               // sprite batches drawn soft this frame
     bool softTold_ = false;
     void softSegment(bool readOnly);
+    // VOLUMETRIC LAMP LIGHT (`todo/enhancements.md` 24; off unless asked): the half-size march of
+    // the frame's lamps and the composite over `colour_`, after SSAO and before the post chain.
+    bool volWant_ = false, volOn_ = false, volNoBuf_ = false;
+    VkImage volImg_ = VK_NULL_HANDLE; VkDeviceMemory volMem_ = VK_NULL_HANDLE; VkImageView volView_ = VK_NULL_HANDLE;
+    int volW_ = 0, volH_ = 0;
+    VkRenderPass volPass_ = VK_NULL_HANDLE, volMixPass_ = VK_NULL_HANDLE;
+    VkFramebuffer volFbuf_ = VK_NULL_HANDLE, volMixFbuf_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout volDsl_ = VK_NULL_HANDLE; VkDescriptorPool volPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet volDs_ = VK_NULL_HANDLE; VkSampler volSampler_ = VK_NULL_HANDLE;
+    VkPipelineLayout volPlo_ = VK_NULL_HANDLE;
+    VkPipeline volPipe_ = VK_NULL_HANDLE, volMixPipe_ = VK_NULL_HANDLE;
+    VkBuffer volUbo_ = VK_NULL_HANDLE; VkDeviceMemory volUboMem_ = VK_NULL_HANDLE; void* volUboPtr_ = nullptr;
+    int volCount_ = 0;                 // this frame's lamps
+    long volFrame_ = 0;
+    float volEye_[3] = {}, volS_[3] = {}, volU_[3] = {}, volF_[3] = {};
+    float volTanH_ = 1.0f, volTanV_ = 1.0f;
+    omk::postfx::VolTune volTune_;     // density, core, glow (`OMK_VOL_TUNE`)
+    bool volTold_ = false;
+    float volSig_ = -1.0f;             // the lamps and camera last said (`vol.lamp` events)
+    bool makeVol();
+    void killVol();
+    void runVol();
     void writeSoftSet();
     VkFramebuffer  fbuf_ = VK_NULL_HANDLE;
     VkBuffer       readBuf_ = VK_NULL_HANDLE; VkDeviceMemory readMem_ = VK_NULL_HANDLE;
@@ -1093,7 +1127,19 @@ bool VulkanRenderer::makeTarget() {
             omk::event("softparticles", {{"on", 0}, {"samples", static_cast<int>(samples_)}});
         }
     }
-    const bool depthKept = ssaoOn_ || dofOn_ || softOn_;
+    // VOLUMETRIC LAMP LIGHT reads the depth too, per sample under MSAA like SSAO
+    volOn_ = false;
+    if (volWant_ && !volNoBuf_) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        const bool msOk = !msaa || (props_.limits.sampledImageDepthSampleCounts & samples_);
+        volOn_ = msOk && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        if (!volOn_ && !resizing_) {
+            std::printf("vulkan: volumetric lamp light asked for but not available (%s)\n",
+                        !msOk ? "the device cannot sample a multisampled depth" : "the depth format cannot be sampled");
+        }
+    }
+    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_;
     if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                    (depthKept ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
@@ -1318,6 +1364,22 @@ bool VulkanRenderer::makeTarget() {
                        litUbo_, litUboMem_);
             vkMapMemory(dev_, litUboMem_, 0, sizeof(LightUbo), 0, &litUboPtr_);
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
+        }
+    }
+    // volumetrics: the lamps' uniform block, written every frame
+    if (volOn_) {
+        if (!makeBuffer(sizeof(omk::postfx::VolUbo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        volUbo_, volUboMem_) ||
+            vkMapMemory(dev_, volUboMem_, 0, sizeof(omk::postfx::VolUbo), 0, &volUboPtr_) != VK_SUCCESS) {
+            volOn_ = false; volNoBuf_ = true;
+            std::fprintf(stderr, "vulkan: no lamp buffer - volumetrics off\n");
+        } else {
+            volTune_.fromEnv();
+            std::printf("vulkan: volumetric lamp light on - an ENHANCEMENT: the lamps' light scattered in the air, "
+                        "half-size, added before the post chain (density %g, core %g and glow %g of the reach)\n",
+                        static_cast<double>(volTune_.density), static_cast<double>(volTune_.core),
+                        static_cast<double>(volTune_.reach));
         }
     }
     // soft particles' scene shader reads the fade's constants from the lights' uniform block
@@ -1987,6 +2049,7 @@ bool VulkanRenderer::resize(int w, int h) {
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     killSsao();
+    killVol();
     if (depthSampleView_) { vkDestroyImageView(dev_, depthSampleView_, nullptr); depthSampleView_ = VK_NULL_HANDLE; }
     img(depthView_, depth_, depthMem_);
     buf(readBuf_, readMem_);
@@ -3758,6 +3821,17 @@ void VulkanRenderer::begin(const omk::View& view) {
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
     foc_.begin(view, w_, h_, dofOn_);   // the post chain's view and depth of field's focus
+    // VOLUMETRIC LAMP LIGHT: the air's lamps (`View::airLights`) and the main view's camera, for `runVol`
+    volCount_ = 0;
+    if (volOn_ && volUboPtr_) {
+        omk::postfx::VolFrame vf;
+        omk::postfx::buildVolFrame(view, w_, h_, volTune_, vf);
+        std::memcpy(volUboPtr_, &vf.ubo, sizeof vf.ubo);
+        volCount_ = vf.count;
+        for (int k = 0; k < 3; ++k) { volEye_[k] = vf.eye[k]; volS_[k] = vf.s[k]; volU_[k] = vf.u[k]; volF_[k] = vf.f[k]; }
+        volTanH_ = vf.tanH; volTanV_ = vf.tanV;
+        omk::postfx::volLampEvents(vf, volSig_, volFrame_);
+    }
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};
@@ -4260,6 +4334,252 @@ void VulkanRenderer::runSsao() {
     run(aoApplyPass_, aoApplyFbuf_, aoBlurPipe_);
 }
 
+// ---- VOLUMETRIC LAMP LIGHT, `todo/enhancements.md` 24 -----------------------
+//
+// Two passes after the frame's own (and SSAO), the Direct3D 12 backend's: `vol.frag`
+// marches each eye ray through the glow spheres of the frame's lamps in the air at HALF the
+// render size into an R16G16B16A16 target (the light, and the surface's depth for the filter),
+// and `volmix.frag` ADDS it back over `colour_` through a 4x4 joint-bilateral gather (the blend:
+// one + one). One GLSL source for both backends; the push blocks and the lamps' block are
+// `o3de/postfx.h`'s. Built on first use at the target's size; `killVol` on a resize.
+bool VulkanRenderer::makeVol() {
+    if (volMixPipe_ != VK_NULL_HANDLE) return true;
+    if (!volOn_ || depthSampleView_ == VK_NULL_HANDLE || volUbo_ == VK_NULL_HANDLE) return false;
+    volW_ = (rw_ + 1) / 2;
+    volH_ = (rh_ + 1) / 2;
+    {
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        ii.extent = {static_cast<uint32_t>(volW_), static_cast<uint32_t>(volH_), 1};
+        ii.mipLevels = 1; ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &volImg_), "volumetrics image");
+        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, volImg_, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &volMem_), "volumetrics memory");
+        OMK_GPU_ALLOC("volumetrics", omk::prof::gpuKey(omk::prof::kVkMemory, volMem_), ai.allocationSize);
+        VKCHECK(vkBindImageMemory(dev_, volImg_, volMem_, 0), "volumetrics bind");
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = volImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &volView_), "volumetrics view");
+    }
+    const auto pass = [&](VkFormat fmt, VkAttachmentLoadOp load, VkImageLayout from, VkImageLayout to,
+                          VkImageView view, int fw, int fh, VkRenderPass& rp, VkFramebuffer& fb) -> bool {
+        VkAttachmentDescription a{};
+        a.format = fmt; a.samples = VK_SAMPLE_COUNT_1_BIT;
+        a.loadOp = load; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a.initialLayout = from; a.finalLayout = to;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = 1; rpi.pAttachments = &a;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &rp), "volumetrics render pass");
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = rp; fi.attachmentCount = 1; fi.pAttachments = &view;
+        fi.width = static_cast<uint32_t>(fw); fi.height = static_cast<uint32_t>(fh); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fb), "volumetrics framebuffer");
+        return true;
+    };
+    if (!pass(VK_FORMAT_R16G16B16A16_SFLOAT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, volView_, volW_, volH_, volPass_, volFbuf_)) return false;
+    // the frame itself, loaded and handed back where the readback and the present pass expect it
+    if (!pass(VK_FORMAT_R8G8B8A8_UNORM, VK_ATTACHMENT_LOAD_OP_LOAD, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colourView_, rw_, rh_, volMixPass_, volMixFbuf_)) return false;
+    {
+        // the depth (0), the half-size light (1), the lamps (2): one set for both passes
+        VkDescriptorSetLayoutBinding b[3]{};
+        for (int k = 0; k < 3; ++k) {
+            b[k].binding = static_cast<uint32_t>(k); b[k].descriptorCount = 1;
+            b[k].descriptorType = k == 2 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                         : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 3; dli.pBindings = b;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &volDsl_), "volumetrics set layout");
+        const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
+                                            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 1; pi.poolSizeCount = 2; pi.pPoolSizes = ps;
+        VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &volPool_), "volumetrics pool");
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = volPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &volDsl_;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &volDs_), "volumetrics set");
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;   // (the shaders only texel-fetch)
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VKCHECK(vkCreateSampler(dev_, &si, nullptr, &volSampler_), "volumetrics sampler");
+        const VkDescriptorImageInfo ii[2] = {
+            {volSampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+            {volSampler_, volView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        const VkDescriptorBufferInfo bi{volUbo_, 0, sizeof(omk::postfx::VolUbo)};
+        VkWriteDescriptorSet wr[3]{};
+        for (int k = 0; k < 3; ++k) {
+            wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr[k].dstSet = volDs_; wr[k].dstBinding = static_cast<uint32_t>(k);
+            wr[k].descriptorCount = 1;
+            wr[k].descriptorType = b[k].descriptorType;
+            if (k < 2) wr[k].pImageInfo = &ii[k]; else wr[k].pBufferInfo = &bi;
+        }
+        vkUpdateDescriptorSets(dev_, 3, wr, 0, nullptr);
+    }
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(omk::postfx::VolPush)};
+    VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &volDsl_;
+    pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+    VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &volPlo_), "volumetrics pipeline layout");
+    const auto module = [&](const uint32_t* code, size_t bytes) {
+        VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        si.codeSize = bytes; si.pCode = code;
+        VkShaderModule m = VK_NULL_HANDLE;
+        vkCreateShaderModule(dev_, &si, nullptr, &m);
+        return m;
+    };
+    const auto pipe = [&](const uint32_t* frag, size_t bytes, VkRenderPass rp, bool mix,
+                          VkPipeline& out) -> bool {
+        VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule qf = module(frag, bytes);
+        if (!qv || !qf) { std::fprintf(stderr, "vulkan: volumetrics shader module\n"); return false; }
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.scissorCount = 1;   // dynamic: the march covers the picture's rectangle
+        const VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dsi.dynamicStateCount = 2; dsi.pDynamicStates = dyn;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.colorWriteMask = 0xF;
+        if (mix) {
+            // ADDED to the scene's colour, its alpha left alone
+            cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+            cba.blendEnable = VK_TRUE;
+            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.colorBlendOp = VK_BLEND_OP_ADD;
+            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = st;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dsi;
+        gp.layout = volPlo_; gp.renderPass = rp;
+        const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &out);
+        vkDestroyShaderModule(dev_, qv, nullptr);
+        vkDestroyShaderModule(dev_, qf, nullptr);
+        if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: volumetrics pipeline\n"); return false; }
+        return true;
+    };
+    if (samples_ != VK_SAMPLE_COUNT_1_BIT)
+        return pipe(kVolMsFrag, sizeof(kVolMsFrag), volPass_, false, volPipe_) &&
+               pipe(kVolMixMsFrag, sizeof(kVolMixMsFrag), volMixPass_, true, volMixPipe_);
+    return pipe(kVolFrag, sizeof(kVolFrag), volPass_, false, volPipe_) &&
+           pipe(kVolMixFrag, sizeof(kVolMixFrag), volMixPass_, true, volMixPipe_);
+}
+
+void VulkanRenderer::killVol() {
+    if (volMixPipe_) { vkDestroyPipeline(dev_, volMixPipe_, nullptr); volMixPipe_ = VK_NULL_HANDLE; }
+    if (volPipe_) { vkDestroyPipeline(dev_, volPipe_, nullptr); volPipe_ = VK_NULL_HANDLE; }
+    if (volPlo_) { vkDestroyPipelineLayout(dev_, volPlo_, nullptr); volPlo_ = VK_NULL_HANDLE; }
+    if (volSampler_) { vkDestroySampler(dev_, volSampler_, nullptr); volSampler_ = VK_NULL_HANDLE; }
+    if (volPool_) { vkDestroyDescriptorPool(dev_, volPool_, nullptr); volPool_ = VK_NULL_HANDLE; volDs_ = VK_NULL_HANDLE; }
+    if (volDsl_) { vkDestroyDescriptorSetLayout(dev_, volDsl_, nullptr); volDsl_ = VK_NULL_HANDLE; }
+    if (volMixFbuf_) { vkDestroyFramebuffer(dev_, volMixFbuf_, nullptr); volMixFbuf_ = VK_NULL_HANDLE; }
+    if (volFbuf_) { vkDestroyFramebuffer(dev_, volFbuf_, nullptr); volFbuf_ = VK_NULL_HANDLE; }
+    if (volMixPass_) { vkDestroyRenderPass(dev_, volMixPass_, nullptr); volMixPass_ = VK_NULL_HANDLE; }
+    if (volPass_) { vkDestroyRenderPass(dev_, volPass_, nullptr); volPass_ = VK_NULL_HANDLE; }
+    if (volView_) { vkDestroyImageView(dev_, volView_, nullptr); volView_ = VK_NULL_HANDLE; }
+    if (volImg_) { vkDestroyImage(dev_, volImg_, nullptr); volImg_ = VK_NULL_HANDLE; }
+    if (volMem_) { freeDeviceMemory(volMem_); volMem_ = VK_NULL_HANDLE; }
+}
+
+void VulkanRenderer::runVol() {
+    ++volFrame_;
+    if (volCount_ <= 0 || aoVw_ <= 0 || aoVh_ <= 0) return;
+    if (!makeVol()) {
+        static bool told = false;
+        if (!told) std::fprintf(stderr, "volumetrics: the passes could not be made - the frame without them\n");
+        told = true;
+        return;
+    }
+    // the frame's colour and depth writes (and SSAO's multiply), before the passes read them
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                  VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         0, 1, &mb, 0, nullptr, 0, nullptr);
+    const int hw = (aoVw_ + 1) / 2, hh = (aoVh_ + 1) / 2;
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    const float A = farP / (farP - nearP), B = -farP * nearP / (farP - nearP);
+    const omk::postfx::VolPush vp{{volTanH_, volTanV_, A, B},
+        {static_cast<float>(aoVw_), static_cast<float>(aoVh_), static_cast<float>(volFrame_ % 64), nearP},
+        {volEye_[0], volEye_[1], volEye_[2], volTune_.density},
+        {volS_[0], volS_[1], volS_[2], fog_ ? fogStart_ : 0.0f},
+        {volU_[0], volU_[1], volU_[2], fog_ ? fogEnd_ : 0.0f},
+        {volF_[0], volF_[1], volF_[2], 40000.0f}};
+    const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pl, int fw, int fh, int vw, int vh,
+                         const void* push, uint32_t bytes) {
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderArea = {{0, 0}, {static_cast<uint32_t>(fw), static_cast<uint32_t>(fh)}};
+        vkCmdBeginRenderPass(cb_, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        const VkViewport v{0.0f, 0.0f, static_cast<float>(vw), static_cast<float>(vh), 0.0f, 1.0f};
+        const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(vw), static_cast<uint32_t>(vh)}};
+        vkCmdSetViewport(cb_, 0, 1, &v);
+        vkCmdSetScissor(cb_, 0, 1, &sc);
+        vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, volPlo_, 0, 1, &volDs_, 0, nullptr);
+        vkCmdPushConstants(cb_, volPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, bytes, push);
+        vkCmdDraw(cb_, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb_);
+    };
+    run(volPass_, volFbuf_, volPipe_, volW_, volH_, hw, hh, &vp, sizeof vp);
+    VkMemoryBarrier mb2{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb2.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    mb2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb2, 0, nullptr, 0, nullptr);
+    const omk::postfx::VolMixPush mp{{volTanH_, volTanV_, A, B},
+        {static_cast<float>(aoVw_), static_cast<float>(aoVh_), static_cast<float>(hw), static_cast<float>(hh)}};
+    run(volMixPass_, volMixFbuf_, volMixPipe_, rw_, rh_, aoVw_, aoVh_, &mp, sizeof mp);
+    if (!volTold_) {
+        volTold_ = true;
+        std::printf("volumetrics: %d lamps in the air on this frame, marched at %dx%d\n", volCount_, hw, hh);
+        omk::event("vol", {{"lamps", volCount_}, {"w", hw}, {"h", hh}});
+    }
+}
+
 void VulkanRenderer::end() {
     postLive_ = false;
     cpuPoseSlot_.clear();
@@ -4306,6 +4626,9 @@ void VulkanRenderer::end() {
         omk::event("softparticles.drawn", {{"batches", static_cast<int>(softDraws_)}});
     }
     if (ssaoOn_) runSsao();
+    // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): added over the scene, so the post chain takes it
+    // with the rest
+    if (volOn_) runVol();
     runPost();   // bloom, depth of field, grade - when asked and due
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
@@ -4477,6 +4800,9 @@ VulkanRenderer::~VulkanRenderer() {
     if (msColour_) vkDestroyImage(dev_, msColour_, nullptr);
     if (msColourMem_) freeDeviceMemory(msColourMem_);
     killSsao();
+    killVol();
+    if (volUbo_) vkDestroyBuffer(dev_, volUbo_, nullptr);
+    if (volUboMem_) freeDeviceMemory(volUboMem_);
     if (depthSampleView_) vkDestroyImageView(dev_, depthSampleView_, nullptr);
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);

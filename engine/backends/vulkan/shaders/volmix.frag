@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // VOLUMETRIC LAMP LIGHT, the composite (`todo/enhancements.md` 24), for the
-// Direct3D 12 backend: `vol.frag`'s half-size in-scattered light brought up to
+// Direct3D 12 and Vulkan backends (one source): `vol.frag`'s half-size in-scattered light brought up to
 // the render size and ADDED over the scene's colour (the blend: one + one),
 // before the upscaler and the post chain - so the halo is upscaled, bloomed and
 // graded with the rest of the frame.

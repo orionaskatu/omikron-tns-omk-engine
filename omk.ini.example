@@ -264,9 +264,10 @@
 ; test, so a passer-by or a car is moved rather than doubled), presented half an
 ; interval before the second - the window shows about twice the frames. The 2D
 ; is never interpolated (each frame's own over both). It adds half a frame of
-; latency and changes neither the simulation nor any rendered frame; it pays
-; only when the display refreshes at about twice the rendered rate (the
-; `framerate` cap, or a long GPU frame). The Direct3D 12 window only, off under
+; latency and changes neither the simulation nor any rendered frame. An
+; in-between frame goes out only while a frame takes about two refreshes or
+; more (60 Hz: 30 fps or fewer; 144 Hz: 72 or fewer) - with less the display
+; has no refresh to show it in, and it is skipped rather than slow the game. The Direct3D 12 window only, off under
 ; MSAA (an upscaler turns MSAA off). In `all = max`. `todo/enhancements.md` 27.
 ; `--framegen`.
 ;framegen = off

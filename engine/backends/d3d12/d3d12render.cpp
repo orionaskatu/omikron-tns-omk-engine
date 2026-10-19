@@ -911,6 +911,15 @@ private:
     // thread waits for it - `fgSettle` - before it touches the swapchain again)
     double fgLastCall_ = 0.0, fgInterval_ = 0.0, fgLatSum_ = 0.0;
     double fgLateSum_ = 0.0;           // ...the deferred blit's lateness against its due time
+    // THE DISPLAY'S ROOM: the frame's own work (from the last present's return
+    // to this present's call - pacer, simulation, drawing; not the presents),
+    // and whether it spans enough refreshes for an in-between frame to have
+    // one of its own. Without the room a v-synced in-between present only
+    // blocks, and slows the real frames (`fgMidFrame`).
+    double fgCallAt_ = 0.0, fgPresentDone_ = 0.0, fgWork_ = 0.0;
+    bool fgRoom_ = false;
+    bool fgAlways_ = false;            // `OMK_FRAMEGEN_ALWAYS`: the harness's, whatever the room
+    long fgNoRoom_ = 0;
     long fgOnTime_ = 0;
     long fgReal_ = 0, fgMids_ = 0, fgCuts_ = 0, fgStale_ = 0, fgCpu_ = 0, fgDeferred_ = 0, fgHurried_ = 0;
     int fgRefresh_ = 0;
@@ -4643,6 +4652,7 @@ static double qpcNow() {
 }
 
 bool D3D12Renderer::fgStart() {
+    fgAlways_ = omk::envFlag("OMK_FRAMEGEN_ALWAYS");
     fgProbe_ = omk::envStr("OMK_FRAMEGEN_PROBE");
     if (fgProbe_ && !*fgProbe_) fgProbe_ = nullptr;
     fgSlots_ = fgProbe_ ? 3 : 2;
@@ -4669,8 +4679,11 @@ bool D3D12Renderer::fgStart() {
                 "every rendered frame (%s); the display refreshes at %d Hz. The real frame goes out half an "
                 "interval after its in-between one - that half interval is the latency it adds - and it pays "
                 "only when the display can show about twice the rendered rate (or the GPU's frame is long); "
-                "the simulation is unchanged\n", up_ ? "the upscaler's vectors" : "motion vectors on for it",
-                fgRefresh_);
+                "the simulation is unchanged. An in-between frame goes out only while a frame's work spans "
+                "about two refreshes (%.0f ms here) - with less, the display has no refresh to show it in and "
+                "a v-synced present would only slow the real frames\n",
+                up_ ? "the upscaler's vectors" : "motion vectors on for it", fgRefresh_,
+                fgRefresh_ > 0 ? 1900.0 / fgRefresh_ : 0.0);
     omk::event("framegen", {{"on", 1}, {"refresh", fgRefresh_}});
     return true;
 }
@@ -4828,7 +4841,11 @@ void D3D12Renderer::fgTick() {
         const double dt = std::min(now - fgLastCall_, 0.1);
         fgInterval_ = fgInterval_ > 0.0 ? 0.8 * fgInterval_ + 0.2 * dt : dt;
     }
-    fgLastCall_ = now;
+    if (fgPresentDone_ > 0.0) {
+        const double w = std::min(now - fgPresentDone_, 0.1);
+        fgWork_ = fgWork_ > 0.0 ? 0.8 * fgWork_ + 0.2 * w : w;
+    }
+    fgLastCall_ = fgCallAt_ = now;
 }
 
 // At a world present: whether an in-between frame goes out first - and if so
@@ -4847,8 +4864,23 @@ bool D3D12Renderer::fgMidFrame() {
             return !fgCut_[a] && !fgCut_[b] && fgPicW_[a] == fgPicW_[b] && fgPicH_[a] == fgPicH_[b];
         };
         const int n = static_cast<int>((fgSeq_ - 1) % S), p = static_cast<int>((fgSeq_ + S - 2) % S);
+        // THE DISPLAY'S ROOM, with a margin each way so it does not flicker on
+        // and off: an in-between frame only when the frame's work spans about
+        // two refreshes (a 60 Hz display: 33 ms, 30 real fps or fewer; 144 Hz:
+        // 14 ms). Measured (2026-10-19, 4K, 60 Hz, ~21 ms of work): without it
+        // every in-between present blocked 22-25 ms on the v-sync and the loop
+        // went from 21 ms to 57 ms - the real frames at 17 a second, the
+        // player, whom the eye follows, visibly stepping.
+        if (fgRefresh_ > 0 && !fgAlways_) {
+            const double V = 1.0 / static_cast<double>(fgRefresh_);
+            fgRoom_ = fgRoom_ ? fgWork_ > 1.7 * V : fgWork_ > 1.9 * V;
+        } else {
+            fgRoom_ = true;
+        }
         if (fgSeq_ < 2 || !fgMid_.r || !pairs(n, p)) {
             ++fgCuts_;   // a first frame, a cut on either side, a new picture size
+        } else if (!fgRoom_) {
+            ++fgNoRoom_;   // the display could not show it without slowing the real frames
         } else {
             // THE PROBE: frames N-2 and N with the vectors doubled, against the real N-1
             if (fgProbe_ && S == 3 && fgSeq_ >= 3) {
@@ -4872,6 +4904,7 @@ void D3D12Renderer::fgCpuFrame() {
     ++fgReal_;
     ++fgCpu_;
     fgShownSeq_ = fgSeq_;
+    fgPresentDone_ = qpcNow() + 0.002;   // (its present follows, ~2 ms)
     static bool told = false;
     if (!told) {
         told = true;
@@ -5028,17 +5061,25 @@ void D3D12Renderer::fgProbe(int n, int p, int m) {
 bool D3D12Renderer::fgPresentReal(bool mid) {
     // at once without an in-between frame, or when the window's picture is
     // asked for (`OMK_WINDUMP`: the real frame's, taken by the present itself)
-    if (!mid || winCapture_ || !fgThread_.joinable()) return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
+    if (!mid || winCapture_ || !fgThread_.joinable()) {
+        const bool ok = presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
+        fgPresentDone_ = qpcNow();
+        return ok;
+    }
+    // half the interval after the CALL - when the frame was ready - not after
+    // the in-between frame's present returned (a blocked present would push
+    // the real frame onto the next one's heels)
     const double half = std::clamp(0.5 * fgInterval_, 0.0, 0.05);
     {
         std::lock_guard<std::mutex> lk(fgMu_);
-        fgDue_ = qpcNow() + half;
+        fgDue_ = std::max(fgCallAt_ + half, qpcNow() + 0.001);
         fgPending_ = true;
         fgHurry_ = false;
     }
     fgCv_.notify_all();
     ++fgDeferred_;
     fgLatSum_ += half;
+    fgPresentDone_ = qpcNow();
     return true;
 }
 
@@ -5128,12 +5169,14 @@ void D3D12Renderer::fgReport() {
     const double lat = fgDeferred_ ? 1000.0 * fgLatSum_ / static_cast<double>(fgDeferred_) : 0.0;
     omk::event("framegen.stats", {{"real", fgReal_}, {"interp", fgMids_}, {"cut", fgCuts_}, {"stale", fgStale_},
                                   {"cpu", fgCpu_}, {"hurried", hurried}, {"interval", 1000.0 * fgInterval_},
-                                  {"latency", lat}, {"late", late}});
+                                  {"latency", lat}, {"late", late}, {"noroom", fgNoRoom_},
+                                  {"work", 1000.0 * fgWork_}});
     if (fgReal_ % 300 != 0) return;
     std::printf("framegen: %ld real frames presented, %ld in-between ones (%ld firsts or cuts, %ld with nothing new "
-                "rendered, %ld composed on the CPU); a frame every %.1f ms, the real one shown %.1f ms after its "
+                "rendered, %ld composed on the CPU, %ld with no refresh to spare - %.1f ms of work a frame); a frame every %.1f ms, the real one shown %.1f ms after its "
                 "in-between one (the latency added; the blit done %.1f ms after it was due), %ld sent early by the "
-                "next\n", fgReal_, fgMids_, fgCuts_, fgStale_, fgCpu_, 1000.0 * fgInterval_, lat, late, hurried);
+                "next\n", fgReal_, fgMids_, fgCuts_, fgStale_, fgCpu_, fgNoRoom_, 1000.0 * fgWork_,
+                1000.0 * fgInterval_, lat, late, hurried);
 }
 
 const omk::Surface& D3D12Renderer::readback() {

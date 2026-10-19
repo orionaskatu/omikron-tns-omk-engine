@@ -34,6 +34,7 @@ constexpr const char* kSwitches[] = {
     "OMK_FADELOG",              // =1 log: the screen fade's terms when they change (engine: fight letterbox)
     "OMK_FEETLOG",              // =<actor> log: that body's lowest drawn corner against the floor, every 30 frames (engine: astaroth floor)
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)
+    "OMK_FRAMEGEN_ALWAYS",      // D3D12 framegen: an in-between frame whatever the display's room (engine: framegen)
     "OMK_FRAMEGEN_PROBE",       // =<prefix> D3D12 framegen: frames N-2 and N interpolated and laid against N-1, a line a frame (engine: framegen)
     "OMK_FRAMEGEN_TIMING",      // log: the D3D12 frame generation's GPU time (timestamps), every 60 frames
     "OMK_FSR_DEBUG",            // the FSR context made with the SDK's own parameter checks (engine: upscaler)

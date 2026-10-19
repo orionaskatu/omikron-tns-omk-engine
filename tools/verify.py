@@ -27897,8 +27897,21 @@ def c_engine_framegen():
         picture below it - with no upscaler, and with FSR at native quality
         (the jittered, upscaled frame, the user's setup);
       * under MSAA it says it is off (single-sample vectors) and presents
-        nothing extra.
-    SHOWN TO FAIL (2026-10-19): with the motion vectors zeroed in
+        nothing extra;
+      * THE DISPLAY'S ROOM (the user's stutter, 2026-10-19): an in-between
+        frame only while a frame's work spans about two refreshes. Measured
+        first, paced, 4K, the user's ini, 60 Hz: every in-between present
+        blocked 22-25 ms on the v-sync and the loop went from 21 ms to 57 ms
+        (17 real frames a second - the player, whom the eye follows, stepping);
+        with the room test it is 21 ms again. Here, 640x480 frames are far
+        shorter than two refreshes: framegen as shipped presents NO in-between
+        frame (every pair "no room") and its present phase stays within 3 ms of
+        the plain run's, while forced (`OMK_FRAMEGEN_ALWAYS`, which the runs
+        above use) the present phase grows by over 8 ms - the blocking the
+        test avoids.
+    SHOWN TO FAIL (2026-10-19): with the room test removed (always room) the
+    shipped run interpolated and its present phase grew - both room elements
+    failed. With the motion vectors zeroed in
     `fg_splat.frag` (both frames splatted in place - the warp collapses to a
     depth-tested blend) the moving error rose to the blend's and both probe
     elements failed; with `fgMidFrame` never asking for an in-between frame,
@@ -27908,12 +27921,14 @@ def c_engine_framegen():
     src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
     defaults = "bool   frameGen = false;" in src
     with tempfile.TemporaryDirectory() as tmp:
-        probe = {"OMK_FRAMEGEN_PROBE": os.path.join(tmp, "p_")}
+        always = {"OMK_FRAMEGEN_ALWAYS": "1"}
+        probe = dict(always, OMK_FRAMEGEN_PROBE=os.path.join(tmp, "p_"))
         fsr = ["--upscaler", "fsr", "--upscale-quality", "native"]
-        r = _d3d12_street_runs([("f0", [], {}), ("f0b", [], {}), ("fon", ["--framegen"], {}),
+        r = _d3d12_street_runs([("f0", [], {}), ("f0b", [], {}), ("fon", ["--framegen"], always),
                                 ("ride", ["--ride", "--framegen"], probe),
                                 ("rfsr", ["--ride", "--framegen"] + fsr, probe),
-                                ("ms", ["--aa", "4", "--framegen"], {})])
+                                ("ms", ["--aa", "4", "--framegen"], {}),
+                                ("room", ["--framegen"], {})])
     if isinstance(r, tuple):
         return r
     t0 = r["f0"][0]
@@ -27939,18 +27954,32 @@ def c_engine_framegen():
     msEv = [f for nm, f in _events(r["ms"][0]) if nm == "framegen"]
     msOff = bool(msEv) and msEv[-1].get("on") == "0" and "off under 4x MSAA" in r["ms"][0] \
         and stats("ms")[1] == 0
+    def stat(name, key):
+        ev = [f for nm, f in _events(r[name][0]) if nm == "framegen.stats"]
+        return float(ev[-1].get(key, "0")) if ev else -1.0
+    def presentMs(name):
+        m = re.findall(r"phases \(ms, mean of 60\):.*present ([0-9.]+)", r[name][0])
+        return float(m[-1]) if m else -1.0
+    refresh = max([int(f.get("refresh", "0")) for nm, f in _events(r["room"][0]) if nm == "framegen"] or [0])
+    pPlain, pRoom, pAlways = presentMs("f0"), presentMs("room"), presentMs("fon")
+    roomInterp, noRoom = stat("room", "interp"), stat("room", "noroom")
+    print("        room: %d Hz; shipped %d in-between, %d no room, present %.1f ms against the plain %.1f; "
+          "forced %.1f ms" % (refresh, roomInterp, noRoom, pRoom, pPlain, pAlways))
     print("        framegen: %d real, %d in-between presents; riding: %d probes, moving error %.2f warped "
           "against %.2f blended (%.0f%%), whole %.2f / %.2f; with FSR native%s: %d probes, %.2f / %.2f "
           "(%.0f%%), whole %.2f / %.2f; MSAA off %s"
           % (real, interp, pn, mw, mb, 100.0 * mw / max(mb, 1e-9), w, b, "" if upFsr else " (NO FSR)",
              qn, qmw, qmb, 100.0 * qmw / max(qmb, 1e-9), qw, qb, msOff))
     got = (defaults, silent, f0 == f0b, fon == f0, real, interp >= 50 and interp < real,
-           pn >= 40, mw < 0.6 * mb, w < b, upFsr, qn >= 40, qmw < 0.6 * qmb, qw < qb, msOff)
-    return got, (True, True, True, True, 60, True, True, True, True, True, True, True, True, True), \
+           pn >= 40, mw < 0.6 * mb, w < b, upFsr, qn >= 40, qmw < 0.6 * qmb, qw < qb, msOff,
+           refresh > 0 and roomInterp == 0 and noRoom >= 50,
+           pPlain >= 0 and 0 <= pRoom < pPlain + 3.0 and pAlways > pPlain + 8.0)
+    return got, (True, True, True, True, 60, True, True, True, True, True, True, True, True, True,
+                 True, True), \
         ("off by default and silent, two plain runs identical; on, the real frames unchanged, 60 real and "
          "50+ in-between presents; riding the street the warped in-between frame is closer to the real "
          "one than a blend (under 60% of its error where the picture moves), native and with FSR; off "
-         "under MSAA")
+         "under MSAA; no in-between frame without a refresh to spare, the present not slowed")
 
 
 def c_engine_volumetrics():

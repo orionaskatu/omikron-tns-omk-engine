@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE POST-PROCESSING CHAIN's final pass, for the Direct3D 12 backend
+// THE POST-PROCESSING CHAIN's final pass, for the Direct3D 12 and Vulkan backends
 // (`todo/enhancements.md` 22): the finished 3D frame - the scene's colour, or
 // the upscaler's display-size output - in, a display-size picture out, which
 // the present pass then hands to the window with its colour-depth rule
@@ -27,7 +27,7 @@
 //      display's peak over paper white (`hdr = on`), back to gamma 2.2 - so
 //      added light rolls off instead of clipping;
 //   6. COLOUR GRADING, parametric (`colorgrade = cyber|warm|noir|filmic`, the
-//      numbers in `d3d12render.cpp`'s `gradePreset`): lift / gamma / gain per
+//      numbers in `o3de/postfx.h`'s `kGrades`): lift / gamma / gain per
 //      channel, an S-curve, saturation (less in the highlights for filmic),
 //      and a split tone - a tint into the shadows and another into the
 //      highlights, each with no luma of its own.

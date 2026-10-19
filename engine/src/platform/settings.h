@@ -253,7 +253,7 @@ struct Settings {
     Source colourDepthSource = Source::Default;
 
     // THE POST-PROCESSING CHAIN (`todo/enhancements.md` 22), the Direct3D 12
-    // backend's: `bloom = off|on` (light bleeding from the neon, the lamps and
+    // and Vulkan backends': `bloom = off|on` (light bleeding from the neon, the lamps and
     // the fires, in `all = max`), `dof = off|on` (depth of field on the
     // letterboxed frames - conversations and cutscenes - in `all = max`),
     // `colorgrade = off|cyber|warm|noir|filmic` and `hdr = off|on` (HDR10
@@ -542,8 +542,8 @@ inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 +
 inline constexpr int kMaxRtReflections = 1;       // ray-traced reflections on the wet ground (with raytracing)
 inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 bits a channel
-inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12)
-inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12)
+inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12, Vulkan)
+inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12, Vulkan)
 inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12)
 inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12)
 inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12 window)

@@ -231,7 +231,7 @@ int PlayState::setupSession() {
     // COLOUR DEPTH (settings.h `colourDepth`), carried on the View to the present pass
     colourDepth = enh(colourDepthFlag, settings.colourDepth, omk::kMaxColourDepth) >= 32 ? 32 : 16;
     // THE POST CHAIN (settings.h `bloom`, `dof`, `colorGrade`, `hdr`), handed
-    // to the D3D12 renderer before its init (playgpu_vulkan.cpp). The grade
+    // to the GPU renderer (D3D12 or Vulkan) before its init (playgpu_vulkan.cpp). The grade
     // and HDR are asked for by name only - `--enhance-all` leaves them off.
     postFx.bloom = enh(bloomFlag, settings.bloom ? 1 : 0, omk::kMaxBloom) > 0;
     postFx.dof = enh(dofFlag, settings.dof ? 1 : 0, omk::kMaxDof) > 0;
@@ -247,7 +247,7 @@ int PlayState::setupSession() {
                     postFx.softParticles ? "on" : "off", postFx.volumetrics ? "on" : "off");
     if (postFx.bloom || postFx.dof || postFx.grade || postFx.hdr)
         std::printf("post: bloom %s, depth of field %s, colour grade %s, hdr %s - ENHANCEMENTS: the "
-                    "Direct3D 12 backend's post-processing chain over the 3D (never the interface)\n",
+                    "GPU backends' (Direct3D 12, Vulkan) post-processing chain over the 3D (never the interface)\n",
                     postFx.bloom ? "on" : "off", postFx.dof ? "on (cinematic frames)" : "off",
                     omk::colorGradeName(postFx.grade), postFx.hdr ? "asked" : "off");
     // FRAME GENERATION (settings.h `frameGen`), handed to the D3D12 window's

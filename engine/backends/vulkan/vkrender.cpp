@@ -68,7 +68,9 @@
 #include "o3de/depthtie.h"
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
+#include "o3de/postfx.h"
 #include "platform/env.h"
+#include "platform/events.h"
 
 #include <algorithm>
 #include <array>
@@ -108,6 +110,18 @@ const uint32_t kOverlayFrag[] =
 #include "overlay.frag.inc"
 ;
 struct OverlayPush { float fade[4]; };
+// THE POST CHAIN (`todo/enhancements.md` 22): `bloom.frag`'s three jobs and
+// `post.frag`'s final pass, the Direct3D 12 backend's own GLSL (the
+// multisampled-depth build for a frame whose depth is read per sample)
+const uint32_t kBloomFrag[] =
+#include "bloom.frag.inc"
+;
+const uint32_t kPostFrag[] =
+#include "post.frag.inc"
+;
+const uint32_t kPostMsFrag[] =
+#include "post_ms.frag.inc"
+;
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -274,6 +288,22 @@ public:
     bool setMultisample(int samples) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
+        return true;
+    }
+    // THE POST CHAIN (`todo/enhancements.md` 22): bloom, colour grading, depth
+    // of field on cinematic frames - the Direct3D 12 backend's chain, the same
+    // GLSL and the same numbers (`o3de/postfx.h`). Asked for here before
+    // `init`, made on first use (`makePost`). Soft particles and volumetric
+    // lamp light are that backend's still (part 2 of the parity work).
+    bool setPostProcess(const PostProcess& p) override {
+        if (dev_ != VK_NULL_HANDLE) return false;
+        postReq_ = p;
+        postReq_.grade = p.grade < 0 ? 0 : p.grade > 4 ? 4 : p.grade;
+        postReq_.softParticles = postReq_.volumetrics = false;
+        postWant_ = p.bloom || p.dof || postReq_.grade > 0 || p.hdr;
+        if (p.softParticles || p.volumetrics)
+            std::printf("post: soft particles and volumetric lamp light are the Direct3D 12 backend's "
+                        "(--d3d12) - off on Vulkan\n");
         return true;
     }
     int samples() const { return static_cast<int>(samples_); }
@@ -462,6 +492,49 @@ private:
     bool makeSsao();
     void killSsao();
     void runSsao();
+
+    // ---- THE POST CHAIN (`todo/enhancements.md` 22) ----------------------
+    //
+    // A display-size chain after the scene and SSAO, before the present pass:
+    // the 3D frame (`colour_`, the supersample folded in the shader) in, one
+    // display-size picture out (`postImg_`), which the present pass and the
+    // CPU readback read instead of `colour_` on a frame it ran. So the 2D is
+    // laid over the PROCESSED world and never bloomed, blurred or graded. With
+    // nothing asked - or only depth of field on a frame that is not cinematic -
+    // it does not run and the frame is byte-identical to one without it.
+    // Depth of field reads the scene's depth AND the stencil mark of a
+    // translucent body (`pipeSubj_`), so the depth image is kept and
+    // sampleable on a frame that may take it (`dofOn_`).
+    Renderer::PostProcess postReq_{};
+    bool postWant_ = false;            // anything asked at all
+    bool postLive_ = false;            // the chain ran on THIS frame
+    bool postFailed_ = false;          // `makePost` could not: the frame without it
+    bool dofOn_ = false;               // the depth and stencil can be sampled
+    bool hdrOn_ = false;               // HDR output (an FP16 scRGB swapchain)
+    float hdrPeak_ = 1000.0f;          // the display's peak luminance, nits
+    omk::postfx::Focus foc_;           // the frame's picture rectangle and depth of field's focus
+    bool curBody_ = false;             // the draw being submitted is a posed body's
+    VkImageView stencilSampleView_ = VK_NULL_HANDLE;   // the depth image's stencil plane (a hologram's mark)
+    VkPipeline pipeSubj_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // the blended pipelines' stencil-marking twins
+    VkImage postImg_ = VK_NULL_HANDLE; VkDeviceMemory postMem_ = VK_NULL_HANDLE; VkImageView postView_ = VK_NULL_HANDLE;
+    VkImage bloomImg_[omk::postfx::kBloomLevels] = {}; VkDeviceMemory bloomMem_[omk::postfx::kBloomLevels] = {};
+    VkImageView bloomView_[omk::postfx::kBloomLevels] = {}; VkFramebuffer bloomFbuf_[omk::postfx::kBloomLevels] = {};
+    int bloomW_[omk::postfx::kBloomLevels] = {}, bloomH_[omk::postfx::kBloomLevels] = {};
+    VkImage dummyDepth_ = VK_NULL_HANDLE, dummyStencil_ = VK_NULL_HANDLE;   // bound where no depth of field samples
+    VkDeviceMemory dummyDepthMem_ = VK_NULL_HANDLE, dummyStencilMem_ = VK_NULL_HANDLE;
+    VkImageView dummyDepthView_ = VK_NULL_HANDLE, dummyStencilView_ = VK_NULL_HANDLE;
+    VkRenderPass bloomDownPass_ = VK_NULL_HANDLE, bloomUpPass_ = VK_NULL_HANDLE, postPass_ = VK_NULL_HANDLE;
+    VkFramebuffer postFbuf_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout bloomDsl_ = VK_NULL_HANDLE, postDsl_ = VK_NULL_HANDLE;
+    VkDescriptorPool postPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet bloomSrcDs_ = VK_NULL_HANDLE, bloomLvlDs_[omk::postfx::kBloomLevels] = {}, postDs_ = VK_NULL_HANDLE;
+    VkDescriptorSet presDsPost_ = VK_NULL_HANDLE;      // the present pass reading `postImg_`
+    VkSampler postLin_ = VK_NULL_HANDLE, postNear_ = VK_NULL_HANDLE;
+    VkPipelineLayout bloomPlo_ = VK_NULL_HANDLE, postPlo_ = VK_NULL_HANDLE;
+    VkPipeline bloomDownPipe_ = VK_NULL_HANDLE, bloomUpPipe_ = VK_NULL_HANDLE, postPipe_ = VK_NULL_HANDLE;
+    bool makePost();
+    void killPost();
+    void runPost();
     std::uint64_t cpuPoseRev_ = 0;
     bool writePose(const omk::Draw& d, uint32_t& off);
     omk::Draw cpuPose(const omk::Draw& d);
@@ -908,15 +981,43 @@ bool VulkanRenderer::makeTarget() {
                                 : !msOk ? "the device cannot sample a multisampled depth"
                                         : "the depth format cannot be sampled");
     }
+    // DEPTH OF FIELD (`todo/enhancements.md` 22) reads the depth and, for a
+    // translucent body, the stencil plane's mark: sampleable at this sample
+    // count, the final pass's 144-byte push block within the device's limit
+    dofOn_ = false;
+    if (postReq_.dof) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        const bool msOk = !msaa || ((props_.limits.sampledImageDepthSampleCounts & samples_) &&
+                                    (props_.limits.sampledImageStencilSampleCounts & samples_));
+        const bool pushOk = props_.limits.maxPushConstantsSize >= sizeof(omk::postfx::PostPush);
+        dofOn_ = msOk && pushOk && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        if (!dofOn_ && !resizing_)
+            std::printf("vulkan: depth of field asked for but not available (%s)\n",
+                        !msOk ? "the device cannot sample a multisampled depth and stencil"
+                              : !pushOk ? "the push constants are too small for the final pass"
+                                        : "the depth format cannot be sampled");
+    }
+    const bool depthKept = ssaoOn_ || dofOn_;
     if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                   (ssaoOn_ ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
+                   (depthKept ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
-    if (ssaoOn_) {
+    if (depthKept) {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
         vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &depthSampleView_), "depth sample view");
+    }
+    if (dofOn_) {
+        // the stencil plane as the shader reads it: `post.frag` takes the mark
+        // from `.g` (Direct3D's X32_TYPELESS_G8X24_UINT view), a Vulkan stencil
+        // view holds it in `.r` - so every channel is swizzled to it
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
+        vi.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R};
+        vi.subresourceRange = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &stencilSampleView_), "stencil sample view");
     }
 
     // Attachment 0 is what the pipelines rasterise into: `colour_` itself
@@ -937,11 +1038,11 @@ bool VulkanRenderer::makeTarget() {
     att[1].format = dsFmt_;
     att[1].samples = samples_;
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].storeOp = ssaoOn_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].storeOp = depthKept ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    att[1].finalLayout = ssaoOn_ ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+    att[1].finalLayout = depthKept ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                                  : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     att[2].format = VK_FORMAT_R8G8B8A8_UNORM;
     att[2].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1238,6 +1339,24 @@ bool VulkanRenderer::makePipelines() {
         gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = pass_;
         VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe_[k]),
                 "vkCreateGraphicsPipelines");
+        // DEPTH OF FIELD'S TRANSLUCENT SUBJECT: a blended body (a hologram, a
+        // ghost) writes no depth, so the post pass saw the wall behind it and
+        // blurred it. On a frame that will take depth of field the blended
+        // pipelines' twins mark such a body's pixels in the STENCIL
+        // (`kSubjectStencil`) - the picture and the depth untouched - and
+        // `post.frag` keeps them at the focus.
+        if (dofOn_ && k > 0) {
+            VkPipelineDepthStencilStateCreateInfo sd = ds;
+            sd.stencilTestEnable = VK_TRUE;
+            VkStencilOpState o{};
+            o.failOp = VK_STENCIL_OP_KEEP; o.depthFailOp = VK_STENCIL_OP_KEEP;
+            o.passOp = VK_STENCIL_OP_REPLACE; o.compareOp = VK_COMPARE_OP_ALWAYS;
+            o.compareMask = 0xFF; o.writeMask = 0xFF; o.reference = omk::postfx::kSubjectStencil;
+            sd.front = sd.back = o;
+            gp.pDepthStencilState = &sd;
+            VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeSubj_[k]),
+                    "subject pipeline");
+        }
     }
     // ---- the mirror pass's pipelines.
     //
@@ -1626,6 +1745,8 @@ bool VulkanRenderer::resize(int w, int h) {
     img(presView_, presImg_, presMem_);
     buf(presRead_, presReadMem_);
     killOverlay();   // sized to the frame
+    killPost();
+    if (stencilSampleView_) { vkDestroyImageView(dev_, stencilSampleView_, nullptr); stencilSampleView_ = VK_NULL_HANDLE; }
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     srcW_ = rw_; srcH_ = rh_;
@@ -1852,9 +1973,10 @@ bool VulkanRenderer::makePresentPass() {
         VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &presDsl_), "present set layout");
         // its OWN pool: `setTextures` resets the scene's, and this set must
         // survive a texture reload
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        // (a second set for the post chain's picture, `makePost`)
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
         VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pi.maxSets = 1; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        pi.maxSets = 2; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
         VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &presPool_), "present pool");
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool = presPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &presDsl_;
@@ -1926,12 +2048,17 @@ bool VulkanRenderer::makePresentPass() {
 // present shader into `presImg_`, and back to TRANSFER_SRC.
 bool VulkanRenderer::runPresentPass(int vy, int vh) {
     if (!makePresentPass()) return false;
+    // THE POST CHAIN's display-size picture when it ran this frame (the
+    // supersample folded already), else the scene's colour
+    const bool post = postLive_ && postImg_ != VK_NULL_HANDLE && presDsPost_ != VK_NULL_HANDLE;
+    const VkImage srcImg = post ? postImg_ : colour_;
+    const VkDescriptorSet srcDs = post ? presDsPost_ : presDs_;
     VkCommandBuffer cb = oneShotBegin();
     const auto layout = [&](VkImageLayout from, VkImageLayout to) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.oldLayout = from; b.newLayout = to;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = colour_;
+        b.image = srcImg;
         b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         b.srcAccessMask = 0; b.dstAccessMask = 0;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -1943,8 +2070,8 @@ bool VulkanRenderer::runPresentPass(int vy, int vh) {
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPipe_);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &presDs_, 0, nullptr);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, ss_, colourDepth_};
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &srcDs, 0, nullptr);
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, post ? 1 : ss_, hdrOn_ ? 32 : colourDepth_};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
@@ -1980,6 +2107,361 @@ bool VulkanRenderer::copyPresentOut(std::vector<unsigned char>& rgba) {
     std::memcpy(rgba.data(), p, bytes);
     vkUnmapMemory(dev_, presReadMem_);
     return true;
+}
+
+// ---- THE POST-PROCESSING CHAIN (`todo/enhancements.md` 22) ----------------
+//
+// The Direct3D 12 backend's chain (`D3D12Renderer::runPost`) on this one, the
+// same GLSL (`bloom.frag`, `post.frag`) and the same numbers (`o3de/postfx.h`),
+// recorded on the frame's own command buffer after the scene and SSAO:
+//
+//   1. BLOOM, when asked: the bright pass into level 0 from the frame (half
+//      the display size), then level by level down, then back UP the chain with
+//      each tent added onto the larger level - six R11G11B10 levels;
+//   2. THE FINAL PASS into `postImg_` (display size): the supersample folded,
+//      depth of field on a cinematic frame, linear light with the tone curve's
+//      expansion, the bloom added, the shoulder, the grade.
+//
+// The scene target stays RGBA8 (the headroom is made where it is used: `expand`
+// in the shaders), so the pictures agree with Direct3D 12's wherever both run
+// the same arithmetic.
+
+namespace {
+// the render passes' ordering, generous: a pass reads what the last wrote
+// (a sampled level, the frame), and what it wrote is read by the next
+const VkSubpassDependency kPostDeps[2] = {
+    {VK_SUBPASS_EXTERNAL, 0,
+     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT,
+     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0},
+    {0, VK_SUBPASS_EXTERNAL,
+     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT, 0}};
+}  // namespace
+
+bool VulkanRenderer::makePost() {
+    if (postPipe_ != VK_NULL_HANDLE) return true;
+    if (!makePresentPass()) return false;   // the descriptor set layout and pool the chain's picture is presented through
+    const VkFormat fmtBloom = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+    const VkFormat fmtOut = VK_FORMAT_R8G8B8A8_UNORM;
+    const auto fail = [&](const char* what) { std::fprintf(stderr, "vulkan: post chain: %s\n", what); killPost(); return false; };
+    {
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (vkCreateSampler(dev_, &si, nullptr, &postLin_) != VK_SUCCESS) return fail("sampler");
+        si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+        if (vkCreateSampler(dev_, &si, nullptr, &postNear_) != VK_SUCCESS) return fail("sampler");
+    }
+    // the images: the display-size picture, the bloom's levels, and - where no
+    // depth of field samples - a 1x1 depth and stencil for the table's two slots
+    if (!makeImage2d(fmtOut, w_, h_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT, postImg_, postMem_, postView_, "post")) return fail("image");
+    if (postReq_.bloom) {
+        int bw = w_, bh = h_;
+        for (int i = 0; i < omk::postfx::kBloomLevels; ++i) {
+            bw = std::max(1, (bw + 1) / 2);
+            bh = std::max(1, (bh + 1) / 2);
+            bloomW_[i] = bw; bloomH_[i] = bh;
+            if (!makeImage2d(fmtBloom, bw, bh, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                             bloomImg_[i], bloomMem_[i], bloomView_[i], "post")) return fail("bloom level");
+        }
+    }
+    if (!dofOn_) {
+        if (!makeImage2d(VK_FORMAT_R32_SFLOAT, 1, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         dummyDepth_, dummyDepthMem_, dummyDepthView_, "post") ||
+            !makeImage2d(VK_FORMAT_R8_UINT, 1, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         dummyStencil_, dummyStencilMem_, dummyStencilView_, "post")) return fail("image");
+        VkCommandBuffer cb = oneShotBegin();
+        for (VkImage img : {dummyDepth_, dummyStencil_}) {
+            VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &b);
+        }
+        oneShotEnd(cb);
+    }
+    // the render passes: a bloom level down (written whole), up (blended onto), the picture
+    const auto pass = [&](VkFormat f, VkAttachmentLoadOp load, VkImageLayout initial, VkImageLayout final_,
+                          VkRenderPass& out) {
+        VkAttachmentDescription a{};
+        a.format = f; a.samples = VK_SAMPLE_COUNT_1_BIT;
+        a.loadOp = load; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a.initialLayout = initial; a.finalLayout = final_;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = 1; rpi.pAttachments = &a;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        rpi.dependencyCount = 2; rpi.pDependencies = kPostDeps;
+        return vkCreateRenderPass(dev_, &rpi, nullptr, &out) == VK_SUCCESS;
+    };
+    if (!pass(fmtOut, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, postPass_))
+        return fail("render pass");
+    if (postReq_.bloom &&
+        (!pass(fmtBloom, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, bloomDownPass_) ||
+         !pass(fmtBloom, VK_ATTACHMENT_LOAD_OP_LOAD, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, bloomUpPass_)))
+        return fail("render pass");
+    const auto fbuf = [&](VkRenderPass rp, VkImageView v, int fw, int fh, VkFramebuffer& out) {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = rp; fi.attachmentCount = 1; fi.pAttachments = &v;
+        fi.width = static_cast<uint32_t>(fw); fi.height = static_cast<uint32_t>(fh); fi.layers = 1;
+        return vkCreateFramebuffer(dev_, &fi, nullptr, &out) == VK_SUCCESS;
+    };
+    if (!fbuf(postPass_, postView_, w_, h_, postFbuf_)) return fail("framebuffer");
+    if (postReq_.bloom)
+        for (int i = 0; i < omk::postfx::kBloomLevels; ++i)
+            if (!fbuf(bloomDownPass_, bloomView_[i], bloomW_[i], bloomH_[i], bloomFbuf_[i])) return fail("framebuffer");
+    // the descriptors: the bloom passes read one image; the final pass four
+    {
+        VkDescriptorSetLayoutBinding b[4]{};
+        for (uint32_t i = 0; i < 4; ++i) {
+            b[i].binding = i; b[i].descriptorCount = 1;
+            b[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 1; dli.pBindings = b;
+        if (vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &bloomDsl_) != VK_SUCCESS) return fail("set layout");
+        dli.bindingCount = 4;
+        if (vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &postDsl_) != VK_SUCCESS) return fail("set layout");
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 16; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        if (vkCreateDescriptorPool(dev_, &pi, nullptr, &postPool_) != VK_SUCCESS) return fail("pool");
+        const auto alloc = [&](VkDescriptorSetLayout l, VkDescriptorSet& out) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            ai.descriptorPool = postPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &l;
+            return vkAllocateDescriptorSets(dev_, &ai, &out) == VK_SUCCESS;
+        };
+        const auto write = [&](VkDescriptorSet ds, uint32_t binding, VkSampler s, VkImageView v, VkImageLayout lay) {
+            const VkDescriptorImageInfo ii{s, v, lay};
+            VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr.dstSet = ds; wr.dstBinding = binding; wr.descriptorCount = 1;
+            wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
+            vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        };
+        const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (postReq_.bloom) {
+            if (!alloc(bloomDsl_, bloomSrcDs_)) return fail("set");
+            write(bloomSrcDs_, 0, postLin_, colourView_, ro);
+            for (int i = 0; i < omk::postfx::kBloomLevels; ++i) {
+                if (!alloc(bloomDsl_, bloomLvlDs_[i])) return fail("set");
+                write(bloomLvlDs_[i], 0, postLin_, bloomView_[i], ro);
+            }
+        }
+        if (!alloc(postDsl_, postDs_)) return fail("set");
+        write(postDs_, 0, postLin_, colourView_, ro);                               // the frame
+        // bloom level 0 (the frame again where there is no bloom: never read)
+        write(postDs_, 1, postLin_, postReq_.bloom ? bloomView_[0] : colourView_, ro);
+        if (dofOn_) {
+            write(postDs_, 2, postNear_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            write(postDs_, 3, postNear_, stencilSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        } else {
+            write(postDs_, 2, postNear_, dummyDepthView_, ro);
+            write(postDs_, 3, postNear_, dummyStencilView_, ro);
+        }
+        // the present pass reading the chain's picture
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = presPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &presDsl_;
+        if (vkAllocateDescriptorSets(dev_, &ai, &presDsPost_) != VK_SUCCESS) return fail("set");
+        write(presDsPost_, 0, presSampler_, postView_, ro);
+    }
+    // the pipelines: viewport and scissor are dynamic - six sizes of target
+    {
+        const VkPushConstantRange pb{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(omk::postfx::BloomPush)};
+        const VkPushConstantRange pp{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(omk::postfx::PostPush)};
+        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pli.setLayoutCount = 1; pli.pSetLayouts = &bloomDsl_;
+        pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pb;
+        if (vkCreatePipelineLayout(dev_, &pli, nullptr, &bloomPlo_) != VK_SUCCESS) return fail("pipeline layout");
+        pli.pSetLayouts = &postDsl_; pli.pPushConstantRanges = &pp;
+        if (vkCreatePipelineLayout(dev_, &pli, nullptr, &postPlo_) != VK_SUCCESS) return fail("pipeline layout");
+        const bool ms = dofOn_ && samples_ != VK_SAMPLE_COUNT_1_BIT;   // the depth read per sample
+        VkShaderModule qv = shaderModule(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule bf = postReq_.bloom ? shaderModule(kBloomFrag, sizeof(kBloomFrag)) : VK_NULL_HANDLE;
+        VkShaderModule pf = ms ? shaderModule(kPostMsFrag, sizeof(kPostMsFrag)) : shaderModule(kPostFrag, sizeof(kPostFrag));
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.scissorCount = 1;
+        const VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dsi.dynamicStateCount = 2; dsi.pDynamicStates = dyn;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo msi{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        msi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState none{};
+        none.colorWriteMask = 0xF;
+        VkPipelineColorBlendAttachmentState add = none;   // back up the chain: added onto the larger level
+        add.blendEnable = VK_TRUE;
+        add.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; add.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        add.colorBlendOp = VK_BLEND_OP_ADD;
+        add.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; add.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        add.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1;
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, VK_NULL_HANDLE, "main", nullptr};
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = st;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &msi; gp.pColorBlendState = &cb; gp.pDynamicState = &dsi;
+        bool ok = qv && pf;
+        if (ok && postReq_.bloom) {
+            ok = bf != VK_NULL_HANDLE;
+            st[1].module = bf; cb.pAttachments = &none;
+            gp.layout = bloomPlo_; gp.renderPass = bloomDownPass_;
+            ok = ok && vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &bloomDownPipe_) == VK_SUCCESS;
+            cb.pAttachments = &add; gp.renderPass = bloomUpPass_;
+            ok = ok && vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &bloomUpPipe_) == VK_SUCCESS;
+        }
+        st[1].module = pf; cb.pAttachments = &none;
+        gp.layout = postPlo_; gp.renderPass = postPass_;
+        ok = ok && vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &postPipe_) == VK_SUCCESS;
+        if (qv) vkDestroyShaderModule(dev_, qv, nullptr);
+        if (bf) vkDestroyShaderModule(dev_, bf, nullptr);
+        if (pf) vkDestroyShaderModule(dev_, pf, nullptr);
+        if (!ok) return fail("pipeline");
+    }
+    return true;
+}
+
+void VulkanRenderer::killPost() {
+    if (!dev_) return;
+    vkDeviceWaitIdle(dev_);
+    if (postPipe_) { vkDestroyPipeline(dev_, postPipe_, nullptr); postPipe_ = VK_NULL_HANDLE; }
+    if (bloomUpPipe_) { vkDestroyPipeline(dev_, bloomUpPipe_, nullptr); bloomUpPipe_ = VK_NULL_HANDLE; }
+    if (bloomDownPipe_) { vkDestroyPipeline(dev_, bloomDownPipe_, nullptr); bloomDownPipe_ = VK_NULL_HANDLE; }
+    if (postPlo_) { vkDestroyPipelineLayout(dev_, postPlo_, nullptr); postPlo_ = VK_NULL_HANDLE; }
+    if (bloomPlo_) { vkDestroyPipelineLayout(dev_, bloomPlo_, nullptr); bloomPlo_ = VK_NULL_HANDLE; }
+    if (postPool_) { vkDestroyDescriptorPool(dev_, postPool_, nullptr); postPool_ = VK_NULL_HANDLE; }
+    bloomSrcDs_ = postDs_ = VK_NULL_HANDLE;
+    for (auto& d : bloomLvlDs_) d = VK_NULL_HANDLE;
+    presDsPost_ = VK_NULL_HANDLE;   // freed with the present pass's pool, which `resize` destroys first
+    if (postDsl_) { vkDestroyDescriptorSetLayout(dev_, postDsl_, nullptr); postDsl_ = VK_NULL_HANDLE; }
+    if (bloomDsl_) { vkDestroyDescriptorSetLayout(dev_, bloomDsl_, nullptr); bloomDsl_ = VK_NULL_HANDLE; }
+    if (postFbuf_) { vkDestroyFramebuffer(dev_, postFbuf_, nullptr); postFbuf_ = VK_NULL_HANDLE; }
+    for (auto& f : bloomFbuf_) if (f) { vkDestroyFramebuffer(dev_, f, nullptr); f = VK_NULL_HANDLE; }
+    if (postPass_) { vkDestroyRenderPass(dev_, postPass_, nullptr); postPass_ = VK_NULL_HANDLE; }
+    if (bloomDownPass_) { vkDestroyRenderPass(dev_, bloomDownPass_, nullptr); bloomDownPass_ = VK_NULL_HANDLE; }
+    if (bloomUpPass_) { vkDestroyRenderPass(dev_, bloomUpPass_, nullptr); bloomUpPass_ = VK_NULL_HANDLE; }
+    for (int i = 0; i < omk::postfx::kBloomLevels; ++i) freeImage2d(bloomImg_[i], bloomMem_[i], bloomView_[i]);
+    freeImage2d(postImg_, postMem_, postView_);
+    freeImage2d(dummyDepth_, dummyDepthMem_, dummyDepthView_);
+    freeImage2d(dummyStencil_, dummyStencilMem_, dummyStencilView_);
+    if (postLin_) { vkDestroySampler(dev_, postLin_, nullptr); postLin_ = VK_NULL_HANDLE; }
+    if (postNear_) { vkDestroySampler(dev_, postNear_, nullptr); postNear_ = VK_NULL_HANDLE; }
+    postLive_ = false;
+}
+
+void VulkanRenderer::runPost() {
+    postLive_ = false;
+    if (!postWant_ || postFailed_) return;
+    // DEPTH OF FIELD on cinematic frames only; the rest of the chain always
+    const bool dof = dofOn_ && foc_.dofLive(postReq_.dof);
+    if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof)) return;
+    if (!makePost()) {
+        std::fprintf(stderr, "post: the chain could not be made - the frame without it\n");
+        postFailed_ = true;
+        return;
+    }
+    VkCommandBuffer cb = cb_;
+    // the frame (TRANSFER_SRC, as the scene pass and SSAO leave it) to a
+    // sampled image, and the depth and stencil the scene pass wrote
+    {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = colour_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0, nullptr, 1, &b);
+    }
+    const float uvMax[2] = {static_cast<float>(foc_.vw) / static_cast<float>(w_),
+                            static_cast<float>(foc_.vh) / static_cast<float>(h_)};
+    const auto begin = [&](VkRenderPass rp, VkFramebuffer fb, int tw, int th) {
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderArea = {{0, 0}, {static_cast<uint32_t>(tw), static_cast<uint32_t>(th)}};
+        vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        const VkViewport vp{0.0f, 0.0f, static_cast<float>(tw), static_cast<float>(th), 0.0f, 1.0f};
+        const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(tw), static_cast<uint32_t>(th)}};
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        vkCmdSetScissor(cb, 0, 1, &sc);
+    };
+    if (postReq_.bloom) {
+        // DOWN: the bright pass into level 0 from the frame, then level by level
+        for (int i = 0; i < omk::postfx::kBloomLevels; ++i) {
+            const float iw = i == 0 ? static_cast<float>(w_) : static_cast<float>(bloomW_[i - 1]);
+            const float ih = i == 0 ? static_cast<float>(h_) : static_cast<float>(bloomH_[i - 1]);
+            begin(bloomDownPass_, bloomFbuf_[i], bloomW_[i], bloomH_[i]);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomDownPipe_);
+            const VkDescriptorSet ds = i == 0 ? bloomSrcDs_ : bloomLvlDs_[i - 1];
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomPlo_, 0, 1, &ds, 0, nullptr);
+            const omk::postfx::BloomPush bp = omk::postfx::bloomDown(i, iw, ih, bloomW_[i], bloomH_[i], uvMax);
+            vkCmdPushConstants(cb, bloomPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof bp, &bp);
+            vkCmdDraw(cb, 3, 1, 0, 0);
+            vkCmdEndRenderPass(cb);
+        }
+        // UP: each level's tent added onto the next larger
+        for (int i = omk::postfx::kBloomLevels - 2; i >= 0; --i) {
+            begin(bloomUpPass_, bloomFbuf_[i], bloomW_[i], bloomH_[i]);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomUpPipe_);
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomPlo_, 0, 1, &bloomLvlDs_[i + 1], 0, nullptr);
+            const omk::postfx::BloomPush bp = omk::postfx::bloomUp(bloomW_[i + 1], bloomH_[i + 1], bloomW_[i], bloomH_[i], uvMax);
+            vkCmdPushConstants(cb, bloomPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof bp, &bp);
+            vkCmdDraw(cb, 3, 1, 0, 0);
+            vkCmdEndRenderPass(cb);
+        }
+    }
+    // THE FINAL PASS
+    begin(postPass_, postFbuf_, w_, h_);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipe_);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &postDs_, 0, nullptr);
+    const omk::postfx::PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, ss_,
+                                                            hdrOn_ ? hdrPeak_ : 0.0f);
+    vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cb);
+    // the frame back to where the rest of the backend expects it
+    {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = colour_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &b);
+    }
+    postLive_ = true;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        std::printf("post: the chain ran - bloom %s, depth of field %s, grade %s, %s\n",
+                    postReq_.bloom ? "on" : "off", postReq_.dof ? "on (cinematic frames)" : "off",
+                    omk::postfx::kGradeNames[postReq_.grade], hdrOn_ ? "HDR (scRGB)" : "SDR");
+        omk::event("post", {{"bloom", postReq_.bloom ? 1 : 0}, {"dof", postReq_.dof ? 1 : 0},
+                            {"grade", omk::postfx::kGradeNames[postReq_.grade]}, {"hdr", hdrOn_ ? 1 : 0}});
+    }
 }
 
 bool VulkanRenderer::makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use, VkImage& img,
@@ -2839,6 +3321,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
+    foc_.begin(view, w_, h_, dofOn_);   // the post chain's view and depth of field's focus
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};
@@ -2945,6 +3428,8 @@ omk::Draw VulkanRenderer::cpuPose(const omk::Draw& d) {
 }
 
 void VulkanRenderer::submit(const omk::Draw& d) {
+    if (dofOn_) foc_.note(d);
+    curBody_ = (d.meshPose && d.meshPoses) || d.castsShadow;
     if (!recording_ || !d.geo || !d.count) return;
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         uint32_t off = 0;
@@ -2966,8 +3451,12 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // marker while it is marking, the stencil-tested variants while it is
     // drawing the reflection. The DRAWS are unchanged, which is the point -
     // the backend is choosing how, not what.
+    // a translucent body on a frame with depth of field: its twin, which marks the stencil
+    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !forcePipeline_ && !reflStencil_ &&
+                      pipeSubj_[k] != VK_NULL_HANDLE;
     VkPipeline use = forcePipeline_ ? forcePipeline_
                    : reflStencil_   ? pipeRefl_[k]
+                   : subj           ? pipeSubj_[k]
                                     : pipe_[k];
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
@@ -3293,6 +3782,7 @@ void VulkanRenderer::runSsao() {
 }
 
 void VulkanRenderer::end() {
+    postLive_ = false;
     cpuPoseSlot_.clear();
     cpuPoseCount_.clear();
     // `OMK_TIE_STATS=1`: every 30 frames, how each large geometry's revisions
@@ -3331,6 +3821,7 @@ void VulkanRenderer::end() {
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
     if (ssaoOn_) runSsao();
+    runPost();   // bloom, depth of field, grade - when asked and due
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -3367,8 +3858,10 @@ const omk::Surface& VulkanRenderer::readback() {
         VkCommandBuffer cb = oneShotBegin();
         VkBufferImageCopy cp{};
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        cp.imageExtent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
-        vkCmdCopyImageToBuffer(cb, colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        // the scene's colour, or THE POST CHAIN's display-size picture when it
+        // ran (its supersample folded already)
+        cp.imageExtent = {static_cast<uint32_t>(postLive_ ? w_ : rw_), static_cast<uint32_t>(postLive_ ? h_ : rh_), 1};
+        vkCmdCopyImageToBuffer(cb, postLive_ ? postImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readBuf_, 1, &cp);
         oneShotEnd(cb);              // submitted and waited: the bytes are there
     }
@@ -3391,31 +3884,33 @@ const omk::Surface& VulkanRenderer::readback() {
     // At 2x supersampling this loop walks a 3840x2160 buffer for a 1080p
     // frame - 15 ms on one core, paid by every frame with a subtitle, a fade
     // or the HUD over the world.
+    const int ss = postLive_ ? 1 : ss_;   // the chain's picture is folded already
+    const int srcW = postLive_ ? w_ : rw_;
     omk::Threads::shared().parallelFor(0, static_cast<std::size_t>(h_), 16,
                                        [&](std::size_t rowFrom, std::size_t rowTo) {
     const int y0 = static_cast<int>(rowFrom), y1 = static_cast<int>(rowTo);
-    if (ss_ <= 1 && dither_) {
+    if (ss <= 1 && dither_) {
         // Row by row through the channel tables - the same bits as
         // `quantise888Dither` a pixel, without a division and a modulo for
         // every one of them (todo/optimization.md step 4).
         for (int y = y0; y < y1; ++y)
             omk::quantise888DitherRow(src + 4 * static_cast<std::size_t>(y) * static_cast<std::size_t>(w_),
                                       w_, y, fb_.px.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_));
-    } else if (ss_ <= 1) {
+    } else if (ss <= 1) {
         for (int i = y0 * w_; i < y1 * w_; ++i)
             fb_.px[static_cast<std::size_t>(i)] =
                 omk::rgb565(src[4 * i], src[4 * i + 1], src[4 * i + 2]);
     } else {
-        const int n = ss_ * ss_;
+        const int n = ss * ss;
         for (int y = y0; y < y1; ++y)
             for (int x = 0; x < w_; ++x) {
                 int acc[3] = {0, 0, 0};
-                for (int sy = 0; sy < ss_; ++sy)
-                    for (int sx = 0; sx < ss_; ++sx) {
+                for (int sy = 0; sy < ss; ++sy)
+                    for (int sx = 0; sx < ss; ++sx) {
                         const std::size_t o =
-                            (static_cast<std::size_t>(y * ss_ + sy) *
-                                 static_cast<std::size_t>(rw_) +
-                             static_cast<std::size_t>(x * ss_ + sx)) * 4;
+                            (static_cast<std::size_t>(y * ss + sy) *
+                                 static_cast<std::size_t>(srcW) +
+                             static_cast<std::size_t>(x * ss + sx)) * 4;
                         acc[0] += src[o]; acc[1] += src[o + 1]; acc[2] += src[o + 2];
                     }
                 const int ar = (acc[0] + n / 2) / n, ag = (acc[1] + n / 2) / n,
@@ -3507,6 +4002,9 @@ VulkanRenderer::~VulkanRenderer() {
     if (presRead_) vkDestroyBuffer(dev_, presRead_, nullptr);
     if (presReadMem_) freeDeviceMemory(presReadMem_);
     killOverlay();
+    killPost();
+    if (stencilSampleView_) vkDestroyImageView(dev_, stencilSampleView_, nullptr);
+    for (auto& pp : pipeSubj_) if (pp) vkDestroyPipeline(dev_, pp, nullptr);
     if (upBuf_) vkDestroyBuffer(dev_, upBuf_, nullptr);
     if (upMem_) freeDeviceMemory(upMem_);
     if (pipeStencil_) vkDestroyPipeline(dev_, pipeStencil_, nullptr);

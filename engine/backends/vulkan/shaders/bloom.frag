@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE BLOOM CHAIN of the Direct3D 12 post-processing passes (`bloom = on`,
+// THE BLOOM CHAIN of the post-processing passes (shared by the Direct3D 12 and Vulkan backends) (`bloom = on`,
 // `todo/enhancements.md` 22) - one shader, three jobs, drawn level by level
 // into a chain of R11G11B10_FLOAT images at half, quarter... of the display
 // size (`D3D12Renderer::runPost`):

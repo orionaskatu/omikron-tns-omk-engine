@@ -147,9 +147,11 @@ void PlayState::gpuOpenWindow() {
             if (upscaler > 0 && !vkr->setUpscaler(upscaler, upscaleQuality))
                 std::printf("upscaler: %s is the Direct3D 12 backend's (--d3d12) - off on Vulkan\n",
                             omk::upscalerName(upscaler));
+            // the chain (bloom, depth of field, grade, hdr) runs on Vulkan; soft
+            // particles and volumetrics are still the D3D12 backend's, which the
+            // renderer says when it takes the request
             if (postFx.any() && !vkr->setPostProcess(postFx))
-                std::printf("post: the post-processing chain, soft particles and volumetrics are the "
-                            "Direct3D 12 backend's (--d3d12) - off on Vulkan\n");
+                std::printf("post: the post-processing chain could not be set up - off on Vulkan\n");
             if (frameGen && !vkr->setFrameGeneration(true))
                 std::printf("framegen: frame generation is the Direct3D 12 window's (--d3d12) - off on Vulkan\n");
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
@@ -206,8 +208,7 @@ void PlayState::gpuOpenWorldHarness() {
                         omk::upscalerName(upscaler));
         // THE POST CHAIN (row 22): likewise
         if (wv && postFx.any() && !wv->setPostProcess(postFx))
-            std::printf("post: the post-processing chain, soft particles and volumetrics are the "
-                        "Direct3D 12 backend's (--world-d3d12) - off on Vulkan\n");
+            std::printf("post: the post-processing chain could not be set up - off in the harness\n");
         // FRAME GENERATION (row 27) is a way of presenting: a harness has no window
         if (wv && frameGen)
             std::printf("framegen: a way of presenting, the Direct3D 12 WINDOW's (--d3d12) - off in the "

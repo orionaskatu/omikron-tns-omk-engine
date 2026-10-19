@@ -81,6 +81,7 @@
 #include "o3de/depthtie.h"
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
+#include "o3de/postfx.h"
 #include "platform/env.h"
 #include "platform/events.h"
 #include "platform/datafs.h"
@@ -158,8 +159,8 @@ struct RtFrame { float sky[4]; float eye[4]; float params[4]; float refl[4]; flo
 // `blit.frag`'s, this backend's own: the swapchain's scaled copy
 struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, peak; };
 // THE POST CHAIN's (`bloom.frag`, `post.frag`, todo/enhancements.md 22)
-struct BloomPush { float texel[4]; float params[4]; float target[4]; };
-struct PostPush { float frame[4], depthAB[4], dof[4], tone[4], lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
+using omk::postfx::BloomPush;   // `o3de/postfx.h`: shared with the Vulkan backend
+using omk::postfx::PostPush;
 // VOLUMETRIC LAMP LIGHT's (`vol.frag`, `volmix.frag`, todo/enhancements.md 24)
 struct VolPush { float proj[4], view[4], eye[4], s[4], u[4], f[4]; };
 struct VolMixPush { float proj[4], view[4]; };
@@ -266,8 +267,8 @@ constexpr UINT kSlotPostStencil = 11;
 constexpr UINT kSlotPostOut = 12;
 constexpr UINT kSlotBloom0 = 13;
 // the stencil value a TRANSLUCENT BODY's pixels take for depth of field
-constexpr UINT kSubjectStencil = 2;
-constexpr int kBloomLevels = 6;   // half the display size down to 1/64
+constexpr UINT kSubjectStencil = omk::postfx::kSubjectStencil;
+constexpr int kBloomLevels = omk::postfx::kBloomLevels;   // half the display size down to 1/64
 // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): its ONE table - the depth,
 // then the half-size light
 constexpr UINT kSlotVolDepth = kSlotBloom0 + kBloomLevels;
@@ -631,7 +632,6 @@ private:
     // and the depth untouched - and `post.frag` keeps them at the focus.
     ID3D12PipelineState* pipeSubj_[3] = {};
     ID3D12PipelineState* pipeCountSubj_[3] = {};
-    bool subjStencil_ = false;         // this frame marks them
     bool curBody_ = false;             // the draw being submitted is a posed body's
     // The mirror's stencil states, made as Vulkan makes them (`pipeStencil_`,
     // `pipeDepthReset_`, `pipeRefl_`). `drawMirrorScene` draws the ORIGINAL's
@@ -663,43 +663,10 @@ private:
     PostProcess postReq_{};
     bool postWant_ = false;            // anything asked at all
     bool postLive_ = false;            // the chain ran on THIS frame: the display half reads `postImg_`
-    bool cine_ = false;                // the frame is cinematic: a full-width letterbox strip
-    float focus_ = 0.0f;               // the camera's eye-to-target distance
-    // DEPTH OF FIELD FOCUSES ON A CHARACTER: the posed body nearest the camera
-    // among those near the picture's middle (`noteFocusBody`, per draw), as a
-    // view depth. The camera's own target is often a point in the air, and the
-    // middle of the picture is often the wall behind two people talking.
-    float focEye_[3] = {}, focFwd_[3] = {}, focRight_[3] = {}, focTan_ = 1.0f;
-    float focBodyZ_ = 0.0f, focBodyScore_ = 1e30f;
-    float focSm_ = 0.0f;               // the smoothed focus depth, 0 = none yet
-    float focSubjZ_ = 0.0f;            // the depth of the View's named subject (`View::focusAt`), 0 = none in view
-    void noteFocusBody(const omk::Draw& d) {
-        float c[3] = {0, 0, 0};
-        if (d.meshPose && d.meshPoses) {
-            for (std::size_t m = 0; m < d.meshPoses; ++m)
-                for (int k = 0; k < 3; ++k) c[k] += d.meshPose[12 * m + 4 * k + 3];
-            for (int k = 0; k < 3; ++k) c[k] /= static_cast<float>(d.meshPoses);
-        } else if (d.castsShadow && d.geo && d.count && d.start + d.count <= d.geo->corners.size()) {
-            // a body posed on the CPU (the player's, when drawn that way): its corners
-            const std::size_t step = std::max<std::size_t>(1, d.count / 64);
-            std::size_t n = 0;
-            for (std::size_t i = d.start; i < d.start + d.count; i += step, ++n) {
-                const auto& v = d.geo->corners[i];
-                c[0] += v.x; c[1] += v.y; c[2] += v.z;
-            }
-            for (int k = 0; k < 3; ++k) c[k] /= static_cast<float>(n);
-        } else {
-            return;
-        }
-        for (int k = 0; k < 3; ++k) c[k] -= focEye_[k];
-        const float z = c[0] * focFwd_[0] + c[1] * focFwd_[1] + c[2] * focFwd_[2];
-        if (z < 8.0f || z > 4000.0f) return;   // a close-up's face is a few tens of units from the lens
-        const float x = (c[0] * focRight_[0] + c[1] * focRight_[1] + c[2] * focRight_[2]) / (z * focTan_);
-        if (std::fabs(x) > 0.85f) return;
-        const float score = z * (1.0f + 2.0f * std::fabs(x));
-        if (score < focBodyScore_) { focBodyScore_ = score; focBodyZ_ = z; }
-    }
-    int postVw_ = 0, postVh_ = 0;      // the picture's rectangle, display pixels
+    // (`omk::postfx::Focus`: the frame's picture rectangle, cinematic or not, the
+    // depth of field's focus - the nearest body, the View's named subjects -
+    // shared with the Vulkan backend)
+    omk::postfx::Focus foc_;
     Res postImg_;                      // display size, `presFmt_`
     UINT64 postPitch_ = 0;
     Res bloom_[kBloomLevels];          // R11G11B10_FLOAT, half size and down
@@ -2875,57 +2842,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
-    // THE POST CHAIN's view: the picture's rectangle, whether the frame is
-    // CINEMATIC - a full-width strip shorter than the frame, the letterbox of
-    // conversations and cutscenes (`renderer.h`, THE LETTERBOX; a free walk
-    // is a strip of the frame's own height) - and the focus distance
-    postVw_ = view.letterboxed() ? std::min(view.vw, w_) : w_;
-    postVh_ = view.letterboxed() ? std::min(view.vh, h_) : h_;
-    static const bool forceCine = omk::envFlag("OMK_FORCE_CINE");   // a test switch: depth of field on any frame
-    cine_ = forceCine || (postVw_ >= w_ && postVh_ < h_);
-    {
-        const float dx = view.cam.at[0] - view.cam.eye[0], dy = view.cam.at[1] - view.cam.eye[1],
-                    dz = view.cam.at[2] - view.cam.eye[2];
-        focus_ = std::sqrt(dx * dx + dy * dy + dz * dz);
-        subjStencil_ = postReq_.dof && cine_ && focus_ > 1.0f;
-        // the frame's camera frame for `noteFocusBody` (the world's Y is DOWN)
-        for (int k = 0; k < 3; ++k) focEye_[k] = view.cam.eye[k];
-        const float il = focus_ > 1e-3f ? 1.0f / focus_ : 0.0f;
-        focFwd_[0] = dx * il; focFwd_[1] = dy * il; focFwd_[2] = dz * il;
-        float rx = focFwd_[1] * 0.0f - focFwd_[2] * -1.0f, ry = focFwd_[2] * 0.0f - focFwd_[0] * 0.0f,
-              rz = focFwd_[0] * -1.0f - focFwd_[1] * 0.0f;
-        const float rl = std::sqrt(rx * rx + ry * ry + rz * rz);
-        focRight_[0] = rl > 1e-4f ? rx / rl : 1.0f; focRight_[1] = rl > 1e-4f ? ry / rl : 0.0f;
-        focRight_[2] = rl > 1e-4f ? rz / rl : 0.0f;
-        focTan_ = std::tan(0.5f * view.cam.hfovDeg * 3.14159265f / 180.0f);
-        focBodyZ_ = 0.0f; focBodyScore_ = 1e30f;
-        // THE VIEW'S NAMED SUBJECTS (a conversation's heads) as depths along the
-        // camera's axis - the same planar view depth the shader reads. Those
-        // inside the picture count; with both in it and close in depth the
-        // focus goes between them, else the first (the speaker), else the other.
-        focSubjZ_ = 0.0f;
-        {
-            const float uxv = focFwd_[1] * focRight_[2] - focFwd_[2] * focRight_[1],
-                        uyv = focFwd_[2] * focRight_[0] - focFwd_[0] * focRight_[2],
-                        uzv = focFwd_[0] * focRight_[1] - focFwd_[1] * focRight_[0];
-            const float tanV = focTan_ * static_cast<float>(postVh_) / static_cast<float>(std::max(1, postVw_));
-            float zs[2] = {0, 0};
-            bool vis[2] = {false, false};
-            for (int i = 0; i < std::min(view.focusN, 2); ++i) {
-                const float cx = view.focusAt[i][0] - focEye_[0], cy = view.focusAt[i][1] - focEye_[1],
-                            cz = view.focusAt[i][2] - focEye_[2];
-                zs[i] = cx * focFwd_[0] + cy * focFwd_[1] + cz * focFwd_[2];
-                if (zs[i] < 8.0f || zs[i] > 4000.0f) continue;
-                const float x = (cx * focRight_[0] + cy * focRight_[1] + cz * focRight_[2]) / (zs[i] * focTan_);
-                const float y = (cx * uxv + cy * uyv + cz * uzv) / (zs[i] * tanV);
-                vis[i] = std::fabs(x) < 0.95f && std::fabs(y) < 0.95f;
-            }
-            if (vis[0] && vis[1] && std::max(zs[0], zs[1]) < 1.4f * std::min(zs[0], zs[1]))
-                focSubjZ_ = 0.5f * (zs[0] + zs[1]);
-            else if (vis[0]) focSubjZ_ = zs[0];
-            else if (vis[1]) focSubjZ_ = zs[1];
-        }
-    }
+    foc_.begin(view, w_, h_, postReq_.dof);   // the post chain's view and depth of field's focus
     litCount_ = 0;
     if (litUboPtr_) {
         LightUbo ub{};
@@ -3162,7 +3079,7 @@ omk::Draw D3D12Renderer::cpuPose(const omk::Draw& d) {
 
 void D3D12Renderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
-    noteFocusBody(d);
+    foc_.note(d);
     curBody_ = (d.meshPose && d.meshPoses) || d.castsShadow;
     // HYBRID RAY TRACING: the draw into the frame's acceleration structures,
     // and a posed body takes the character's traced terms even with the
@@ -3198,7 +3115,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k]
                              : soft ? pipeSoft_[k] : rtCounting_ ? pipeCount_[k] : pipe_[k];
     // a translucent body on a frame with depth of field: its twin, which marks the stencil
-    const bool subj = subjStencil_ && k > 0 && curBody_ && !soft && !forcePso_ && !reflStencil_ &&
+    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !soft && !forcePso_ && !reflStencil_ &&
                       (rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k]) != nullptr;
     if (subj) use = rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k];
     if (use != bound_) { list_->SetPipelineState(use); bound_ = use; }
@@ -4431,36 +4348,6 @@ void D3D12Renderer::runVol() {
 // times a mid grey, bloom is added there, and the curve maps back - exactly
 // onto the original picture wherever nothing was added.
 
-namespace {
-// THE GRADES: lift (rgb) + saturation, gamma (rgb) + S-curve, gain (rgb) +
-// highlight desaturation, shadow tint + weight, highlight tint + weight.
-// Small numbers on purpose: a look, not a filter.
-struct Grade { float lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
-const Grade kGrades[5] = {
-    {},
-    // CYBER - Anekbah's neon night: teal into the shadows, a magenta-orange
-    // into the highlights, a mild S-curve and a little more colour
-    {{0.0f, 0.012f, 0.025f, 1.15f}, {1.0f, 1.0f, 1.0f, 0.22f}, {1.02f, 0.99f, 1.0f, 0.0f},
-     {0.0f, 0.62f, 0.72f, 0.08f}, {1.0f, 0.42f, 0.55f, 0.09f}},
-    // WARM - late sun: the gain toward amber, a soft curve
-    {{0.015f, 0.008f, 0.0f, 1.05f}, {1.0f, 1.0f, 1.03f, 0.10f}, {1.06f, 1.0f, 0.90f, 0.0f},
-     {0.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.78f, 0.5f, 0.05f}},
-    // NOIR - almost no colour, deeper blacks, more contrast, a cold shadow
-    {{-0.02f, -0.02f, -0.02f, 0.10f}, {1.06f, 1.06f, 1.06f, 0.40f}, {1.06f, 1.06f, 1.06f, 0.0f},
-     {0.35f, 0.5f, 0.75f, 0.04f}, {0.0f, 0.0f, 0.0f, 0.0f}},
-    // FILMIC - a neutral S-curve, the highlights a little desaturated
-    {{0.008f, 0.008f, 0.008f, 0.97f}, {1.0f, 1.0f, 1.0f, 0.20f}, {1.0f, 1.0f, 1.0f, 0.45f},
-     {0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}},
-};
-const char* const kGradeNames[5] = {"off", "cyber", "warm", "noir", "filmic"};
-// the bloom's strength and threshold, in the expanded linear light
-constexpr float kBloomThreshold = 1.5f;   // ~ 247 of 255: only what nears white
-constexpr float kBloomKnee = 0.3f;
-constexpr float kBloomIntensity = 0.25f;  // of the levels' weighted sum
-// each wider level weighs this much of the one inside it: a tight glow round
-// a lamp, not a wash over the whole street (equal weights fogged the walls)
-constexpr float kBloomFalloff = 0.6f;
-}  // namespace
 
 // Which output the window is on, and whether it reports HDR: the output whose
 // desktop rectangle overlaps the window most, over every adapter (a laptop's
@@ -4612,7 +4499,7 @@ void D3D12Renderer::runPost() {
     postLive_ = false;
     if (!postWant_) return;
     // DEPTH OF FIELD on cinematic frames only; the rest of the chain always
-    const bool dof = postReq_.dof && cine_ && focus_ > 1.0f;
+    const bool dof = foc_.dofLive(postReq_.dof);
     if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof)) return;
     if (!makePost()) {
         static bool told = false;
@@ -4628,8 +4515,8 @@ void D3D12Renderer::runPost() {
     Res& src = upscaleSource();
     src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    const float uvMax[2] = {static_cast<float>(postVw_) / static_cast<float>(w_),
-                            static_cast<float>(postVh_) / static_cast<float>(h_)};
+    const float uvMax[2] = {static_cast<float>(foc_.vw) / static_cast<float>(w_),
+                            static_cast<float>(foc_.vh) / static_cast<float>(h_)};
     const auto target = [&](Res& img, UINT rtv, int tw, int th) {
         img.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
         const D3D12_CPU_DESCRIPTOR_HANDLE h = rtv_.cpu(rtv);
@@ -4648,9 +4535,7 @@ void D3D12Renderer::runPost() {
             const float ih = i == 0 ? static_cast<float>(h_) : static_cast<float>(bloomH_[i - 1]);
             if (i > 0) bloom_[i - 1].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             target(bloom_[i], rtvBloom0_ + static_cast<UINT>(i), bloomW_[i], bloomH_[i]);
-            const BloomPush bp{{1.0f / iw, 1.0f / ih, uvMax[0], uvMax[1]},
-                               {kBloomThreshold, kBloomKnee, i == 0 ? 0.0f : 1.0f, 1.0f},
-                               {1.0f / static_cast<float>(bloomW_[i]), 1.0f / static_cast<float>(bloomH_[i]), 0, 0}};
+            const BloomPush bp = omk::postfx::bloomDown(i, iw, ih, bloomW_[i], bloomH_[i], uvMax);
             l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
             l->SetGraphicsRootDescriptorTable(1, srv_.gpu(i == 0 ? kSlotPostSrc : kSlotBloom0 + static_cast<UINT>(i - 1)));
             l->DrawInstanced(3, 1, 0, 0);
@@ -4660,10 +4545,7 @@ void D3D12Renderer::runPost() {
         for (int i = kBloomLevels - 2; i >= 0; --i) {
             bloom_[i + 1].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             target(bloom_[i], rtvBloom0_ + static_cast<UINT>(i), bloomW_[i], bloomH_[i]);
-            const BloomPush bp{{1.0f / static_cast<float>(bloomW_[i + 1]), 1.0f / static_cast<float>(bloomH_[i + 1]),
-                                uvMax[0], uvMax[1]},
-                               {0.0f, 0.0f, 2.0f, kBloomFalloff},
-                               {1.0f / static_cast<float>(bloomW_[i]), 1.0f / static_cast<float>(bloomH_[i]), 0, 0}};
+            const BloomPush bp = omk::postfx::bloomUp(bloomW_[i + 1], bloomH_[i + 1], bloomW_[i], bloomH_[i], uvMax);
             l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
             l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotBloom0 + static_cast<UINT>(i + 1)));
             l->DrawInstanced(3, 1, 0, 0);
@@ -4675,51 +4557,8 @@ void D3D12Renderer::runPost() {
     target(postImg_, rtvPost_, w_, h_);
     l->SetGraphicsRootSignature(postRs_);
     l->SetPipelineState(postPipe_);
-    PostPush pp{};
-    pp.frame[0] = 1.0f / static_cast<float>(w_); pp.frame[1] = 1.0f / static_cast<float>(h_);
-    pp.frame[2] = uvMax[0]; pp.frame[3] = uvMax[1];
-    const float nearP = omk::kNearCut, farP = 200000.0f;
-    pp.depthAB[0] = static_cast<float>(rw_); pp.depthAB[1] = static_cast<float>(rh_);
-    pp.depthAB[2] = farP / (farP - nearP); pp.depthAB[3] = -farP * nearP / (farP - nearP);
-    if (dof) {
-        // the largest blur ~1.2% of the frame's height (9 px at 720p, 26 at
-        // 2160p), the spiral's step chosen for ~48 taps whatever the size
-        const float maxR = std::max(3.0f, 0.012f * static_cast<float>(h_));
-        // a character in the picture's middle third: its depth, smoothed (a
-        // negative `dof[0]` tells the shader this focus is EXPLICIT); else the
-        // camera's own, as before
-        // (the frontend's named subject first, else the nearest body)
-        float fx = focus_;
-        const float want = focSubjZ_ > 0.0f ? focSubjZ_ : focBodyZ_;
-        if (want > 0.0f) {
-            const float r = focSm_ > 0.0f ? want / focSm_ : 1.0f;
-            focSm_ = (focSm_ <= 0.0f || r > 1.6f || r < 0.6f) ? want : focSm_ + 0.3f * (want - focSm_);
-            fx = -focSm_;
-        } else {
-            focSm_ = 0.0f;
-        }
-        // the in-focus band: a quarter of the focus depth, but never thinner than
-        // ~35 cm (14 units) - a close-up's nose and ears are not a blur apart
-        pp.dof[0] = fx; pp.dof[1] = maxR;
-        pp.dof[2] = fx < 0.0f ? std::max(0.25f, 14.0f / std::fabs(fx)) : 0.25f;
-        static const bool dofLog = omk::envFlag("OMK_DOF_LOG");
-        if (dofLog)
-            std::printf("dof: focus %.1f (%s), camera target %.1f, nearest centred body %.1f, named subject %.1f, max radius %.1f px\n",
-                        std::fabs(fx), fx < 0.0f ? (focSubjZ_ > 0.0f ? "a speaker" : "a character") : "the picture centre",
-                        focus_, focBodyZ_, focSubjZ_, maxR);
-        pp.dof[3] = std::max(0.5f, maxR * maxR / 96.0f);
-    }
-    pp.tone[0] = postReq_.bloom ? kBloomIntensity : 0.0f;
-    pp.tone[1] = hdrOn_ ? std::max(1.0f, std::min(hdrPeak_, 1000.0f) / kPaperWhite) : 1.0f;
-    pp.tone[2] = postReq_.grade > 0 ? 1.0f : 0.0f;
-    pp.tone[3] = static_cast<float>(sourceSs());
-    const Grade& g = kGrades[postReq_.grade];
-    std::memcpy(pp.lift, g.lift, sizeof pp.lift);
-    std::memcpy(pp.gam, g.gam, sizeof pp.gam);
-    std::memcpy(pp.gain, g.gain, sizeof pp.gain);
-    std::memcpy(pp.tintS, g.tintS, sizeof pp.tintS);
-    std::memcpy(pp.tintH, g.tintH, sizeof pp.tintH);
-    if (postReq_.grade == 0) { pp.gam[0] = pp.gam[1] = pp.gam[2] = 1.0f; }
+    const PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, sourceSs(),
+                                               hdrOn_ ? hdrPeak_ : 0.0f);
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotPostSrc));
     l->DrawInstanced(3, 1, 0, 0);
@@ -4736,9 +4575,9 @@ void D3D12Renderer::runPost() {
         told = true;
         std::printf("post: the chain ran - bloom %s, depth of field %s, grade %s, %s\n",
                     postReq_.bloom ? "on" : "off", postReq_.dof ? "on (cinematic frames)" : "off",
-                    kGradeNames[postReq_.grade], hdrOn_ ? "HDR (scRGB)" : "SDR");
+                    omk::postfx::kGradeNames[postReq_.grade], hdrOn_ ? "HDR (scRGB)" : "SDR");
         omk::event("post", {{"bloom", postReq_.bloom ? 1 : 0}, {"dof", postReq_.dof ? 1 : 0},
-                            {"grade", kGradeNames[postReq_.grade]}, {"hdr", hdrOn_ ? 1 : 0}});
+                            {"grade", omk::postfx::kGradeNames[postReq_.grade]}, {"hdr", hdrOn_ ? 1 : 0}});
     }
 }
 
@@ -4946,7 +4785,7 @@ void D3D12Renderer::fgCapture() {
     l->SetGraphicsRootSignature(fgRs_);
     l->SetPipelineState(fgCapPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    const float pw = static_cast<float>(std::max(postVw_, 1)), ph = static_cast<float>(std::max(postVh_, 1));
+    const float pw = static_cast<float>(std::max(foc_.vw, 1)), ph = static_cast<float>(std::max(foc_.vh, 1));
     const float nearP = omk::kNearCut, farP = 200000.0f;
     const FgCapPush cp{{pw, ph, static_cast<float>(displaySs()), 0.0f},
                        {static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_) / pw, static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_) / ph,
@@ -4964,8 +4803,8 @@ void D3D12Renderer::fgCapture() {
     }
     bound_ = nullptr;
     fgCut_[s] = resetOwed_;
-    fgPicW_[s] = postVw_;
-    fgPicH_[s] = postVh_;
+    fgPicW_[s] = foc_.vw;
+    fgPicH_[s] = foc_.vh;
     ++fgSeq_;
 }
 

@@ -302,8 +302,9 @@
 ; `todo/enhancements.md` 21.
 ;colordepth = 16
 ;
-; THE POST-PROCESSING CHAIN - the Direct3D 12 backend's (`renderer = d3d12`);
-; Vulkan says so and leaves it off. Over the 3D only: the interface (HUD,
+; THE POST-PROCESSING CHAIN - on Direct3D 12 and on Vulkan (one GLSL source,
+; the same numbers; HDR output and soft particles are still Direct3D 12's).
+; Over the 3D only: the interface (HUD,
 ; subtitles, screens) is laid over it untouched. `todo/enhancements.md` 22.
 ;   bloom = on        light bleeding from the neon, the lamps and the fires -
 ;                     a tight glow round what nears white, not a haze. In

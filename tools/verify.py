@@ -28624,59 +28624,104 @@ def c_engine_ssao():
 def c_engine_vulkan_parity():
     r"""The VULKAN window renders what the DIRECT3D 12 window renders: every enhancement that runs on D3D12 and
     is not the ray tracer or an upscaler. `todo/enhancements.md` 21, 22 (PART 1 of the parity effort). The
-    same launch line on `--d3d12` and on the default Vulkan window, hidden, 640x480, read from what the window
-    was handed (`OMK_WINDUMP`: D3D12's back buffer, Vulkan's present image), compared pixel by pixel:
-    mean absolute difference per channel and the share of pixels more than 8 levels off. Both backends run
-    ONE GLSL source for the present pass, the overlay and the post chain (`backends/vulkan/shaders/`) over the
-    same scene shaders, so on the machine this was written on (an AMD Radeon RX 9070 XT, both APIs) the
-    pictures are BYTE-IDENTICAL; the tolerance here (mean <= 0.5, under 1% of pixels more than 8 off) is for
-    another driver's rounding of `pow`, `exp` and `log`, not a difference of method.
+    same launch line on `--d3d12` and on the default Vulkan window, hidden, read from what the window was
+    handed (`OMK_WINDUMP`: D3D12's back buffer, Vulkan's present image), compared pixel by pixel: the
+    largest per-channel MEAN absolute difference and the share of pixels more than 8 levels off. Both
+    backends run ONE GLSL source for the present pass, the overlay and the post chain
+    (`backends/vulkan/shaders/`) over the same scene shaders and one set of numbers (`o3de/postfx.h`), so on
+    the machine this was written on (an AMD Radeon RX 9070 XT, both APIs) the pictures are within ONE LEVEL
+    of each other, mostly byte-identical; the tolerance here (mean <= 0.5, under 1% of pixels more than 8
+    off, under 2% more than 1 off) is for another driver's rounding of `pow`, `exp` and `log`, not a
+    difference of method. For each
+    feature the picture must also really differ from the same frame with it off, on each backend:
       * COLOUR DEPTH 32 (`colordepth = 32`): the street start and the supermarket fight's last frame (660, a
         MEDIA LINE over the world, its fades before it) agree across the two backends; on Vulkan the fight's
         interface frames went out as GPU OVERLAY frames (counted in the present statistics, the last frame
         among them - `overlay.frag` over the present pass, no 565 world under the HUD), and the picture
         really differs from the same frame composed on the CPU (`OMK_NO_OVERLAY=1`) while staying within 16
-        a channel of it.
-    SHOWN TO FAIL (2026-10-19) with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no overlay
-    frame counted; the fight frame equal to the CPU composite).
+        a channel of it;
+      * BLOOM (`--bloom`, the street start): 1-40% of the pixels gain 3 or more over their three channels,
+        none is darker by more than 1;
+      * COLOUR GRADE (`--colorgrade cyber|noir`): cyber moves the channel means red down and blue up, noir
+        takes the chroma (|r-g| + |g-b|) to under half;
+      * DEPTH OF FIELD (`--dof`): in a CONVERSATION (frame 700 of Telis's greeting, the speaker named by the
+        frontend) the speaker keeps >= 90% of her sharpness (gradient energy on / off) and the room behind
+        under 60%, the log names a SPEAKER; on the TRANSCAN's advert (frame 150, the hologram that speaks is
+        drawn blended and marked in the stencil, `pipeSubj_`) the hologram keeps >= 90% and the room under
+        60%; on the supermarket fight's opening cutscene (frame 250) the picture changes;
+      * all of them under 4x MSAA (the depth read per sample, `post_ms.frag`) and 2x supersampling.
+    SHOWN TO FAIL (2026-10-19): with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no
+    overlay frame counted; the fight frame equal to the CPU composite); with the Vulkan bloom's intensity
+    zeroed (no pixel gains, and the picture no longer agrees with D3D12's); with the Vulkan grade switched off;
+    with the stencil mark of translucent bodies disabled on Vulkan (`pipeSubj_` unused: the hologram keeps
+    about a third of its sharpness).
     """
     import subprocess, tempfile
     eng = os.path.join(ROOT, "engine")
-    save = os.path.join(ROOT, "traces", "save-appart.bin")
-    if not (os.path.isdir(eng) and os.path.exists(save)):
-        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    appart = os.path.join(ROOT, "traces", "save-appart.bin")
+    resto = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(appart) and os.path.exists(resto)):
+        return ("skipped",), ("skipped",), "engine/ or the saves absent"
     play = os.path.join(eng, "build", "omk-play")
     if not (os.path.exists(play) or os.path.exists(play + ".exe")):
         return ("skipped",), ("skipped",), "omk-play is not built"
-    W, H = 640, 480
-    n = W * H
+    street = ["--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32"]
+    fight = ["--fight-supermarket", "--colordepth", "32"]
+    dlg = ["--slot", "0", "--stand", "3572,1071,-991,181", "--shadow-quality", "mapped", "--colordepth", "32"]
+    trans = ["--slot", "0", "--stand", "3429,1079,-674,132", "--hold", "0*30,k28*4,0*300", "--nodelay",
+             "--shadow-quality", "mapped", "--colordepth", "32"]
+    # name: (save, resolution, frames, arguments, environment)
+    RUNS = {
+        "street": (appart, (640, 480), "60", street, {}),
+        "bloom": (appart, (640, 480), "60", street + ["--bloom"], {}),
+        "cyber": (appart, (640, 480), "60", street + ["--colorgrade", "cyber"], {}),
+        "noir": (appart, (640, 480), "60", street + ["--colorgrade", "noir"], {}),
+        "fight": (appart, (640, 480), "660", fight, {}),
+        "fightcpu": (appart, (640, 480), "660", fight, {"OMK_NO_OVERLAY": "1"}),
+        "cut": (appart, (640, 480), "250", fight, {}),
+        "cutdof": (appart, (640, 480), "250", fight + ["--dof"], {}),
+        "cutall": (appart, (640, 480), "250", fight + ["--dof", "--bloom", "--colorgrade", "filmic"], {}),
+        "dlg": (resto, (960, 540), "700", dlg, {}),
+        "dlgdof": (resto, (960, 540), "700", dlg + ["--dof"], {"OMK_DOF_LOG": "1"}),
+        "tc": (resto, (960, 540), "150", trans, {}),
+        "tcdof": (resto, (960, 540), "150", trans + ["--dof"], {"OMK_DOF_LOG": "1"}),
+        "msaa": (appart, (640, 480), "60", street + ["--aa", "4", "--bloom", "--colorgrade", "cyber"], {}),
+        "msaadof": (appart, (640, 480), "250", fight + ["--aa", "4", "--dof"], {}),
+        "ssaa": (appart, (640, 480), "60", street + ["--ssaa", "2", "--bloom"], {}),
+    }
+    res = {}
     with tempfile.TemporaryDirectory() as tmp:
-        def run(backend, extra, name, frames="60", env=None):
-            win = os.path.join(tmp, name + ".rgba")
-            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
-                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", frames] + \
+        def run(backend, name):
+            save, (W, H), frames, extra, env = RUNS[name]
+            win = os.path.join(tmp, backend + "-" + name + ".rgba")
+            saves = os.path.join(tmp, "saves-" + backend + "-" + name)
+            os.makedirs(saves, exist_ok=True)
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save, "--nofmv",
+                    "--res", "%dx%d" % (W, H), "--frames", frames, "--saves", saves] + \
                    (["--d3d12"] if backend == "d3d12" else []) + extra
             e = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win)
-            e.update(env or {})
+            e.update(env)
             r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=e)
             pic = open(win, "rb").read() if os.path.exists(win) else b""
-            return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
-        street = ["--area", "0", "--stand", "1804,0,-6890,336"]
-        fight = ["--fight-supermarket"]
-        res = {}
-        res["sd"] = run("d3d12", street + ["--colordepth", "32"], "sd")
-        res["sv"] = run("vulkan", street + ["--colordepth", "32"], "sv")
-        res["fd"] = run("d3d12", fight + ["--colordepth", "32"], "fd", frames="660")
-        res["fv"] = run("vulkan", fight + ["--colordepth", "32"], "fv", frames="660")
-        res["fn"] = run("vulkan", fight + ["--colordepth", "32"], "fn", frames="660", env={"OMK_NO_OVERLAY": "1"})
-    if "renderer: D3D12" not in res["sd"][0] or "renderer: VULKAN" not in res["sv"][0]:
-        return ("skipped",), ("skipped",), "no Direct3D 12 or no Vulkan device - the backends are optional"
+            res[(backend, name)] = (r.stdout + r.stderr, pic if len(pic) == 4 * W * H else b"")
+        run("d3d12", "street")
+        run("vulkan", "street")
+        if "renderer: D3D12" not in res[("d3d12", "street")][0] or "renderer: VULKAN" not in res[("vulkan", "street")][0]:
+            return ("skipped",), ("skipped",), "no Direct3D 12 or no Vulkan device - the backends are optional"
+        for name in RUNS:
+            if name != "street":
+                run("vulkan", name)
+                if name != "fightcpu":
+                    run("d3d12", name)
     if not all(p for _, p in res.values()):
         return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
 
+    def size(name):
+        return RUNS[name][1]
     def diff(a, b):
         sa = [0, 0, 0]
-        big = mx = 0
+        big = off1 = mx = 0
+        n = len(a) // 4
         for i in range(n):
             o = 4 * i
             m = 0
@@ -28687,27 +28732,94 @@ def c_engine_vulkan_parity():
                     m = d
             mx = max(mx, m)
             big += m > 8
-        return max(sa) / n, big / n, mx
-    def agree(d):
-        return d[0] <= 0.5 and d[1] < 0.01
-    log = []
-    got = []
+            off1 += m > 1
+        return max(sa) / n, big / n, mx, off1 / n
+    def agree(name):
+        d = diff(res[("d3d12", name)][1], res[("vulkan", name)][1])
+        return d
+    # (the third term: bloom's glow moves a few percent of the pixels by a level or two, which the mean
+    # alone would not see - fewer than 2% of the pixels may differ by more than one level)
+    ok = lambda d: d[0] <= 0.5 and d[1] < 0.01 and d[3] < 0.02
+    pic = lambda b, name: res[(b, name)][1]
+    log, got, want = [], [], []
+    def check(label, cond, note=""):
+        got.append(bool(cond))
+        want.append(True)
+        log.append("%s: %s%s" % (label, "ok" if cond else "NO", " (" + note + ")" if note else ""))
     # COLOUR DEPTH 32
-    ds = diff(res["sd"][1], res["sv"][1])
-    df = diff(res["fd"][1], res["fv"][1])
-    dn = diff(res["fv"][1], res["fn"][1])
-    lines = re.findall(r"^frame (\d+) present: \d+ of 60 straight from the GPU; on the CPU:(.*)$", res["fv"][0], re.M)
+    ds, df = agree("street"), agree("fight")
+    dn = diff(pic("vulkan", "fight"), pic("vulkan", "fightcpu"))
+    lines = re.findall(r"^frame (\d+) present: \d+ of 60 straight from the GPU; on the CPU:(.*)$",
+                       res[("vulkan", "fight")][0], re.M)
     overlay = sum(int(c) for _, rest in lines for c in re.findall(r"overlay \([a-z ]+\) (\d+)", rest))
     lastAll = bool(lines) and lines[-1][0] == "659" and \
         sum(int(c) for c in re.findall(r"overlay \([a-z ]+\) (\d+)", lines[-1][1])) == 60
-    got += [agree(ds), agree(df), overlay > 60, lastAll, dn[0] > 0.5 and dn[2] <= 16]
-    log.append("colour depth 32: street mean %.3f, >8 %.2f%%; fight 660 mean %.3f, >8 %.2f%%, %d Vulkan overlay frames "
-               "(last frame all overlay: %s); overlay against the CPU composite mean %.2f, worst %d"
-               % (ds[0], 100 * ds[1], df[0], 100 * df[1], overlay, lastAll, dn[0], dn[2]))
+    check("colour depth 32 street", ok(ds), "mean %.3f, >8 %.2f%%" % (ds[0], 100 * ds[1]))
+    check("colour depth 32 fight 660", ok(df), "mean %.3f, >8 %.2f%%" % (df[0], 100 * df[1]))
+    check("Vulkan overlay frames", overlay > 60 and lastAll, "%d, last frame all overlay: %s" % (overlay, lastAll))
+    check("overlay vs CPU composite", dn[0] > 0.5 and dn[2] <= 16, "mean %.2f, worst %d" % (dn[0], dn[2]))
+    # BLOOM
+    def bloomShare(b, name, base):
+        a, o = pic(b, name), pic(b, base)
+        n = len(a) // 4
+        moved = darker = 0
+        for i in range(n):
+            d = [a[4 * i + c] - o[4 * i + c] for c in range(3)]
+            moved += sum(d) >= 3
+            darker += min(d) < -1
+        return moved / n, darker
+    for b in ("d3d12", "vulkan"):
+        mv, dk = bloomShare(b, "bloom", "street")
+        check("bloom on " + b, 0.01 <= mv <= 0.40 and dk == 0, "%.1f%% of the pixels gain, %d darker" % (100 * mv, dk))
+    db = agree("bloom")
+    check("bloom agrees", ok(db), "mean %.3f, >8 %.2f%%" % (db[0], 100 * db[1]))
+    # COLOUR GRADE
+    def means(p):
+        n = len(p) // 4
+        return [sum(p[c::4]) / n for c in range(3)]
+    def chroma(p):
+        n = len(p) // 4
+        return sum(abs(p[4 * i] - p[4 * i + 1]) + abs(p[4 * i + 1] - p[4 * i + 2]) for i in range(n)) / n
+    for b in ("d3d12", "vulkan"):
+        m0, mc = means(pic(b, "street")), means(pic(b, "cyber"))
+        c0, cn = chroma(pic(b, "street")), chroma(pic(b, "noir"))
+        check("grade on " + b, mc[0] < m0[0] - 0.5 and mc[2] > m0[2] + 0.5 and cn < 0.5 * c0,
+              "cyber red %+.1f blue %+.1f, noir chroma %.0f%%" % (mc[0] - m0[0], mc[2] - m0[2], 100 * cn / c0))
+    for name in ("cyber", "noir"):
+        d = agree(name)
+        check("%s agrees" % name, ok(d), "mean %.3f, >8 %.2f%%" % (d[0], 100 * d[1]))
+    # DEPTH OF FIELD
+    def energy(p, W, x0, x1, y0, y1):
+        lum = lambda x, y: (p[4 * (y * W + x)] * 3 + p[4 * (y * W + x) + 1] * 6 + p[4 * (y * W + x) + 2]) / 10.0
+        return sum(abs(lum(x + 1, y) - lum(x, y)) for y in range(y0, y1) for x in range(x0, x1 - 1))
+    def keeps(b, on, off, boxes):
+        W = size(on)[0]
+        out = []
+        for box in boxes:
+            e0 = energy(pic(b, off), W, *box)
+            out.append(energy(pic(b, on), W, *box) / e0 if e0 else 1.0)
+        return out
+    for b in ("d3d12", "vulkan"):
+        sp = keeps(b, "dlgdof", "dlg", [(455, 555, 160, 290), (400, 620, 340, 440)])
+        room = keeps(b, "dlgdof", "dlg", [(720, 960, 60, 420)])
+        last = [l for l in res[(b, "dlgdof")][0].splitlines() if l.startswith("dof: focus")]
+        check("dof conversation " + b, min(sp) >= 0.9 and room[0] < 0.6 and bool(last) and "(a speaker)" in last[-1],
+              "speaker keeps %.0f%%, room %.0f%%" % (100 * min(sp), 100 * room[0]))
+        ho = keeps(b, "tcdof", "tc", [(380, 600, 200, 370), (450, 545, 65, 190)])
+        rm = keeps(b, "tcdof", "tc", [(8, 300, 30, 285), (700, 950, 45, 320)])
+        last = [l for l in res[(b, "tcdof")][0].splitlines() if l.startswith("dof: focus")]
+        check("dof transcan " + b, min(ho) >= 0.9 and max(rm) < 0.6 and bool(last) and "(a speaker)" in last[-1],
+              "hologram keeps %.0f%%, room %.0f%%" % (100 * min(ho), 100 * max(rm)))
+        cut = diff(pic(b, "cutdof"), pic(b, "cut"))
+        check("dof cutscene " + b, cut[0] > 0.5, "mean change %.2f" % cut[0])
+    for name in ("dlgdof", "tcdof", "cutdof", "cutall", "msaa", "msaadof", "ssaa"):
+        d = agree(name)
+        check("%s agrees" % name, ok(d), "mean %.3f, >8 %.2f%%" % (d[0], 100 * d[1]))
     print("        " + "\n        ".join(log))
-    return tuple(got), (True,) * len(got), \
-        ("Vulkan and Direct3D 12 agree at colour depth 32 (street, fight 660); Vulkan's interface frames are GPU "
-         "overlays, within 16 of the CPU composite and not equal to it")
+    return tuple(got), tuple(want), \
+        ("Vulkan and Direct3D 12 agree at colour depth 32 (street, fight 660, GPU overlay frames), with bloom, "
+         "the grades, depth of field (a conversation, the Transcan hologram, a cutscene), under MSAA and "
+         "supersampling; each feature changes the picture on both")
 
 
 def c_engine_d3d12():

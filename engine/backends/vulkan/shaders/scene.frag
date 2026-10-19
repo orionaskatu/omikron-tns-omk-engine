@@ -131,8 +131,9 @@ layout(set = 3, binding = 2) uniform RtFrame {
 #ifdef OMK_RT_COUNT
 layout(std430, set = 3, binding = 4) buffer RtCount { uint n[]; } rtCount;
 #endif
-bool rtShadowed = false;   // `litColour` traces its lamps (a character's fragment)
+bool rtShadowed = false;   // `litColour` scales its lamps by `rtVis` (a character's fragment)
 uint rtLampRays = 0u;
+float rtVis[8] = float[8](1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);   // each lamp's share that reaches this fragment
 // SHADOW RAYS FOR THE LAMPS: the lamp at p is hidden from w when the SET is
 // in the way - one ray to a point jittered over a small lamp radius, stopped
 // short of the lamp by a margin (a lamp record sits inside its fixture). A
@@ -171,10 +172,12 @@ vec3 litColour(vec3 n, vec3 w) {
         float t = -dot(n, lg.l[i].dirB.xyz * k);
         if (t <= 0.0) continue;
 #ifdef OMK_RT
-        if (rtShadowed && rtLampHidden(w, n, p, rA)) continue;   // the light went through a wall
+        float vis = rtShadowed ? rtVis[i] : 1.0;   // a wall in the way took its share
+#else
+        const float vis = 1.0;
 #endif
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
-        c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
+        c += vis * min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
     return min(c, vec3(1.0));
 }
@@ -285,6 +288,42 @@ vec4 rtQuad(vec4 v) {
     return 0.25 * (v + vx + vy + vxy);
 }
 
+// The character's smooth normal for its rays: the vertex normal, turned to
+// face the eye by the fragment's own geometric normal - never the geometric
+// normal itself, which is a low-poly face's flat triangle.
+vec3 rtCharNormal(vec3 nIn) {
+    vec3 ng = cross(dFdx(vWorld), dFdy(vWorld));
+    ng = dot(ng, ng) > 1e-12 ? normalize(ng) : vec3(0.0, -1.0, 0.0);
+    if (dot(ng, rtf.eye.xyz - vWorld) < 0.0) ng = -ng;
+    vec3 N = dot(nIn, nIn) > 1e-6 ? normalize(nIn) : ng;
+    if (dot(N, ng) < -0.25) N = -N;
+    return N;
+}
+
+// THE LAMPS' VISIBILITY, `rtVis`, from one shadow ray a lamp a pixel to a point
+// jittered over the lamp's radius. A binary cut a pixel is a blocky edge on a
+// body of few big triangles, so it is made SOFT: the 2x2 quad's mean (the
+// lanes that traced alone) gives five levels and the jitter blurs between
+// them, and a lamp the set hides is never quite dark - kRtLampFloor of it
+// still reaches the character (bounce light, a window, the lamp's glow), the
+// way a penumbra, not a hard shadow, falls across a face. Run in uniform
+// control flow, as the derivatives want.
+const float kRtLampFloor = 0.3;
+void rtLampVisibility(vec3 nIn) {
+    vec3 N = rtCharNormal(nIn);
+    float w = gl_HelperInvocation ? 0.0 : 1.0;
+    for (int i = 0; i < lg.count; ++i) {
+        vec3  p  = lg.l[i].posA.xyz;
+        float rA = lg.l[i].posA.w;
+        vec3  d  = vWorld - p;
+        float seen = 1.0;
+        if (dot(d, d) <= rA * rA && -dot(N, lg.l[i].dirB.xyz) > 0.0 && rtLampHidden(vWorld, N, p, rA)) seen = 0.0;
+        vec4 q = rtQuad(vec4(seen * w, w, 0.0, 0.0));
+        float v = q.y > 1e-3 ? q.x / q.y : seen;
+        rtVis[i] = mix(kRtLampFloor, 1.0, v);
+    }
+}
+
 // A CHARACTER LIT BY ITS SURROUNDINGS. `shade` is what the game gave the
 // fragment (its lamps, from the scene's grey); to it:
 //   1. a vertex-lit body (the engine's default) loses the share of its lamps
@@ -296,11 +335,7 @@ vec4 rtQuad(vec4 v) {
 //      and a miss the sky; their mean added, and the rays stopped OVERHEAD
 //      within the occlusion reach taken from his ambient (under an arch).
 vec3 rtCharacter(vec3 shade, vec3 nIn) {
-    vec3 ng = cross(dFdx(vWorld), dFdy(vWorld));
-    ng = dot(ng, ng) > 1e-12 ? normalize(ng) : vec3(0.0, -1.0, 0.0);
-    if (dot(ng, rtf.eye.xyz - vWorld) < 0.0) ng = -ng;
-    vec3 N = dot(nIn, nIn) > 1e-6 ? normalize(nIn) : ng;
-    if (dot(N, ng) < -0.25) N = -N;
+    vec3 N = rtCharNormal(nIn);
     if ((pc.lit & 3) == 0 && lg.count > 0) {
         rtShadowed = false;
         vec3 open = litColour(N, vWorld);
@@ -477,6 +512,7 @@ void main() {
     }
 #ifdef OMK_RT
     rtShadowed = pc.caster != 0;   // a lit character's lamps are traced
+    if (rtShadowed && lg.count > 0) rtLampVisibility(vNrm);
 #endif
     vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
                : (pc.lit & 3) == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))

@@ -78,6 +78,17 @@ void main() {
         // (and `ssao_blur.frag` averaging it out); a near hit occludes most
         vec3 Pw = pc.eye.xyz + pc.s.xyz * P.x + pc.u.xyz * P.y + pc.f.xyz * P.z;
         vec3 Nw = normalize(pc.s.xyz * N.x + pc.u.xyz * N.y + pc.f.xyz * N.z);
+        // A CHARACTER is not shaded here. Its few big triangles gave this pass
+        // the depth buffer's FACETED normal, and the rays - bodies included -
+        // darkened a face in its triangles' own shapes (a brow shadowing a
+        // cheek, a patch per triangle, dark stripes): the body's occlusion is
+        // `rtCharacter`'s, from the smooth vertex normal. One ray from the eye
+        // to this pixel against the bodies says whether it is one.
+        {
+            vec3 toP = Pw - pc.eye.xyz;
+            float dist = length(toP);
+            if (rtTrace(pc.eye.xyz, toP / dist, dist + 6.0 + dist * 0.004, kRtBody, true)) { outAO = 1.0; return; }
+        }
         float Rr = pc.view.z;
         vec3 o = Pw + Nw * (0.5 + P.z * 0.002);
         const int KR = 4;

@@ -28351,6 +28351,82 @@ def c_engine_face_lines():
          % (r_on, r_off))
 
 
+def c_engine_character_shadows():
+    r"""`omk-play --d3d12 --raytracing`: NO BLOCKY SHADOWS ON A CHARACTER'S FACE.
+
+    The player's report: the characters are a few polygons and ray tracing
+    "adds a lot of shadows on their faces that do not look good". Measured on
+    the faces, the culprit was NOT the lamps' shadow rays nor the near
+    occlusion of `rtCharacter` but the ray-traced AO pass (`ssao.frag`,
+    -DOMK_RT): it rebuilds each pixel's normal from the depth buffer - for a
+    face of a dozen big triangles, the FLAT triangle - and shoots its four
+    rays at the bodies as well, so a face was shaded by its own faceted shape
+    (a patch a triangle, a brow shadowing a cheek, dark stripes) and came out
+    a quarter darker than without ray tracing. A character is now left out of
+    that pass (one ray from the eye to the pixel says it is a body); its
+    occlusion is `rtCharacter`'s, from the smooth vertex normal. The lamps'
+    shadow rays, a binary cut a pixel (speckles along a penumbra), are now a
+    visibility filtered over the pixel quad, never below `kRtLampFloor`.
+    The first conversation line's close-up (restaurant save slot 0, frame 700,
+    Telis fills the middle, 1280x720, the window's picture), the face's region
+    after a 3x3 blur (the ray grain and the dither go, a patch survives), the
+    same frame with and without `--raytracing`:
+    * the share of face pixels more than 20% darker than without ray
+      tracing stays under 10% (the AO's face: about 40%; now about 2%);
+    * the face's mean luminance stays within 0.9 .. 1.3 of the plain frame's
+      (the indirect light may brighten it, nothing may shade it down by a
+      quarter).
+    Skipped without a D3D12 device with DXR 1.1.
+    SHOWN TO FAIL with the `rtTrace(... kRtBody ...)` early-out of `ssao.frag`
+    removed.
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    W, H = 1280, 720
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            win = os.path.join(tmp, name + ".rgba")
+            os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--slot", "0", "--stand", "3572,1071,-991,181",
+                                "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
+                                "--res", "%dx%d" % (W, H), "--frames", "700", "--shadow-quality", "mapped",
+                                "--saves", os.path.join(tmp, "saves-" + name)] + extra,
+                               capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win))
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
+        t_off, p_off = run([], "off")
+        if "renderer: D3D12" not in t_off:
+            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+        t_on, p_on = run(["--raytracing"], "on")
+    if "no DXR 1.1" in t_on:
+        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+    if not (p_off and p_on):
+        return ("a window dump missing",), ("both dumps",), "every run must write OMK_WINDUMP"
+    x0, y0, x1, y1 = 600, 150, 760, 330
+    def blur(d):
+        luma = lambda x, y: (d[4 * (y * W + x)] * 54 + d[4 * (y * W + x) + 1] * 183
+                             + d[4 * (y * W + x) + 2] * 19) / 256.0
+        return {(x, y): sum(luma(x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)) / 9.0
+                for y in range(y0, y1) for x in range(x0, x1)}
+    b_on, b_off = blur(p_on), blur(p_off)
+    dark = sum(1 for k in b_on if b_off[k] > 8 and b_on[k] < 0.8 * b_off[k]) / float(len(b_on))
+    mean = sum(b_on.values()) / sum(b_off.values())
+    got = (dark < 0.10, 0.9 < mean < 1.3)
+    return got, (True, True), \
+        ("the face's pixels over 20%% darker than without ray tracing: %.1f%% (under 10%%), its mean "
+         "luminance %.2f of the plain frame's (0.9 .. 1.3)" % (100.0 * dark, mean))
+
+
 def c_engine_best_lod():
     r"""`omk-play --best-lod`: the crowd's LEVEL OF DETAIL kept at its best - an enhancement, off by default.
     `todo/enhancements.md` 16. A pedestrian model holds four skeletons and
@@ -49624,6 +49700,7 @@ SLOW = [
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: face lines", c_engine_face_lines, "todo/enhancements.md 19; scene.frag rtCharacter"),
+    ("engine: character shadows", c_engine_character_shadows, "todo/enhancements.md 19; ssao.frag, scene.frag rtCharacter"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: dof focus", c_engine_dof_focus, "todo/enhancements.md 22; d3d12render.cpp noteFocusBody"),

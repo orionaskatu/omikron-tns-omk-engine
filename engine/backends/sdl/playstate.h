@@ -95,6 +95,7 @@ struct PlayState {
     int & radarFlag = opt.radarFlag;
     int & frameRateFlag = opt.frameRateFlag;
     int & smoothAnimFlag = opt.smoothAnimFlag;
+    int & animBlendFlag = opt.animBlendFlag;
     int & escapeBackFlag = opt.escapeBackFlag;
     int & ssaoFlag = opt.ssaoFlag;
     int & raytracingFlag = opt.raytracingFlag;
@@ -256,7 +257,10 @@ struct PlayState {
     bool radarAlways{};
     int frameRate{};
     bool smoothAnim{};
-    bool escapeBack{};       // [Enhancements] escapeback: ESC/Backspace send BACK under a screen
+    bool animBlend{};        // [Enhancements] animblend: a clip change eased over 0.2 s (actor/pose.h)
+    omk::PoseBlend playerBlend;   // ...the player's, and a melee opponent's
+    omk::PoseBlend foeBlend;
+    bool escapeBack{};      // [Enhancements] escapeback: ESC/Backspace send BACK under a screen
     bool ssao{};             // [Enhancements] ssao: screen-space ambient occlusion (Vulkan)
     bool raytracing{};       // [Enhancements] raytracing: hybrid ray tracing (D3D12, DXR 1.1)
     bool rtReflections{};    // [Enhancements] rtreflections: the wet ground mirrors (with raytracing)

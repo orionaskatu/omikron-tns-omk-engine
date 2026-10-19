@@ -435,6 +435,8 @@ struct PedStaged {
     omk::Geometry posed;
     const omk::NodeTracks* tracks = nullptr;
     const omk::PedClip* clipWas = nullptr;
+    omk::PoseBlend blend;            // [Enhancements] animblend: the walk/idle swap eased
+    int blendLevel = -1;             // ...on the LOD level it was drawn at (a step starts over)
     float feet = 0.0f;               // this frame's level's
     float feetLevel0 = 0.0f;         // level 0's, once `feetKnown`
     bool  feetKnown = false;

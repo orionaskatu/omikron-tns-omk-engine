@@ -18,7 +18,8 @@ namespace {
 // "log" prints lines and changes nothing else.
 constexpr const char* kSwitches[] = {
     "OMK_ACTIVE_POOL_ONLY",     // A/B: a staged body's program looked up in the active pool alone - the old, wrong lookup (engine: walk-in scene)
-    "OMK_BODYLOG",              // log: every staged body's line every frame, culled or not (engine: beat handover)
+    "OMK_ANIMBLEND_LOG",        // log: the player's drawn pose every frame - state, clip, frame, the largest mesh rotation since the last frame, the blend (engine: anim blend)
+    "OMK_BODYLOG",            // log: every staged body's line every frame, culled or not (engine: beat handover)
     "OMK_CAMEYE",               // log: the resolved camera eye every frame (camera travel)
     "OMK_CAMLOG",               // =1 log: transitions, camera requests and moves, scene ops, zone prunes, and the camera as drawn (engine: player move)
     "OMK_CAM_OBSTRUCT_PROBE",   // log: one line a frame from the camera obstruction test, `sub_417070` (engine: camera obstruction)

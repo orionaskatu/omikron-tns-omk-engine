@@ -367,6 +367,83 @@ void composePoseAt(const std::vector<Mesh>& meshes, const NodeTracks& t, int fra
 void setPoseSmoothing(bool on) { gPoseSmoothing = on; }
 bool poseSmoothing() { return gPoseSmoothing; }
 
+// ---- the clip-change blend (`todo/enhancements.md` 28; pose.h has the why)
+namespace {
+bool gPoseBlend = false;
+Quatf qconj(const Quatf& q) { return {q.w, -q.x, -q.y, -q.z}; }
+float qangleDeg(const Quatf& d) {
+    const float w = std::min(1.0f, std::fabs(d.w));
+    return 2.0f * std::acos(w) * 57.29578f;
+}
+}  // namespace
+
+void setPoseBlend(bool on) { gPoseBlend = on; }
+bool poseBlend() { return gPoseBlend; }
+
+float poseMaxAngle(const std::vector<MeshPose>& a, const std::vector<MeshPose>& b) {
+    float m = 0.0f;
+    const std::size_t n = std::min(a.size(), b.size());
+    for (std::size_t i = 0; i < n; ++i)
+        m = std::max(m, qangleDeg(qmul(a[i].q, qconj(b[i].q))));
+    return m;
+}
+
+bool blendPose(PoseBlend& b, std::vector<MeshPose>& pose, std::int64_t key, long frameNo,
+               float dt, const std::uint8_t* only) {
+    if (!gPoseBlend) return false;
+    bool started = false;
+    const bool cont = b.frame >= 0 && frameNo == b.frame + 1 && b.last.size() == pose.size();
+    if (!cont) b.left = 0.0f;                       // not drawn last frame: no blend
+    else if (key != b.key) {
+        // THE CHANGE: freeze what separates last frame's pose from this one
+        b.off.resize(pose.size());
+        b.maxOff = 0.0f;
+        for (std::size_t i = 0; i < pose.size(); ++i) {
+            if (only && !only[i]) { b.off[i] = MeshPose{}; continue; }
+            Quatf d = qmul(b.last[i].q, qconj(pose[i].q));
+            if (d.w < 0.0f) { d.w = -d.w; d.x = -d.x; d.y = -d.y; d.z = -d.z; }
+            b.off[i].q = d;
+            for (int k = 0; k < 3; ++k) b.off[i].pos[k] = b.last[i].pos[k] - pose[i].pos[k];
+            b.maxOff = std::max(b.maxOff, qangleDeg(d));
+        }
+        b.left = kPoseBlendFrames;
+        started = true;
+    }
+    if (b.left > 0.0f && b.off.size() == pose.size()) {
+        b.left -= dt > 0.0f ? dt : 0.0f;
+        if (b.left > 0.0f) {
+            // the share of the frozen difference still shown, eased in and out
+            const float s = b.left / kPoseBlendFrames;
+            const float w = s * s * (3.0f - 2.0f * s);
+            const Quatf id{};
+            for (std::size_t i = 0; i < pose.size(); ++i) {
+                if (only && !only[i]) continue;
+                const MeshPose& o = b.off[i];
+                // slerp(identity, d, w) - unquantised, unlike `qslerp`
+                const float dot = std::min(1.0f, o.q.w);
+                Quatf r;
+                if (dot > 0.9995f) {
+                    r = {id.w + (o.q.w - id.w) * w, o.q.x * w, o.q.y * w, o.q.z * w};
+                } else {
+                    const float th = std::acos(dot), sn = std::sin(th);
+                    const float wa = std::sin((1.0f - w) * th) / sn, wb = std::sin(w * th) / sn;
+                    r = {wa + o.q.w * wb, o.q.x * wb, o.q.y * wb, o.q.z * wb};
+                }
+                const float n = std::sqrt(r.w * r.w + r.x * r.x + r.y * r.y + r.z * r.z);
+                if (n > 1e-6f) { r.w /= n; r.x /= n; r.y /= n; r.z /= n; }
+                pose[i].q = qmul(r, pose[i].q);
+                for (int k = 0; k < 3; ++k) pose[i].pos[k] += o.pos[k] * w;
+            }
+        } else {
+            b.left = 0.0f;
+        }
+    }
+    b.last = pose;
+    b.key = key;
+    b.frame = frameNo;
+    return started;
+}
+
 void composePose(const std::vector<Mesh>& meshes, const NodeTracks& t, int frame,
                  bool upright, std::vector<MeshPose>& out, const std::uint8_t* only) {
     composePoseAt(meshes, t, frame, 0.0f, upright, out, only);

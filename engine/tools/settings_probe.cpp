@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     std::printf("enh softparticles %d %s\n", s.softParticles ? 1 : 0, omk::sourceName(s.softParticlesSource));
     std::printf("enh volumetrics %d %s\n", s.volumetrics ? 1 : 0, omk::sourceName(s.volumetricsSource));
     std::printf("enh framegen %d %s\n", s.frameGen ? 1 : 0, omk::sourceName(s.frameGenSource));
+    std::printf("enh animblend %d %s\n", s.animBlend ? 1 : 0, omk::sourceName(s.animBlendSource));
     std::printf("enh texturepack %d %s\n", s.texturePack.empty() ? 0 : 1,
                 omk::sourceName(s.texturePackSource));
     std::printf("texturepack %s\n", s.texturePack.c_str());

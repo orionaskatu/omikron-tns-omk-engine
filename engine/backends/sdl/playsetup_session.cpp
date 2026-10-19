@@ -177,6 +177,14 @@ int PlayState::setupSession() {
     if (smoothAnim)
         std::printf("animation: smooth - an ENHANCEMENT: bodies are slerped between "
                     "two keys; the original truncates to one (`Anim_ApplyNodeFrame`'s _ftol)\n");
+    // Row 28, the clip-change blend (`omk::blendPose`), the drawn pose only
+    animBlend = enh(animBlendFlag, settings.animBlend ? 1 : 0, omk::kMaxAnimBlend) > 0;
+    omk::setPoseBlend(animBlend);
+    if (animBlend)
+        std::printf("anim blend: on - an ENHANCEMENT: a clip change (the player's and a fighter's "
+                    ".CTL state, a walker's walk/idle) is eased over %.2f s; the port draws the "
+                    "new clip at once. The drawn pose only - no clock, transition or hit moves\n",
+                    static_cast<double>(omk::kPoseBlendFrames) / 30.0);
     // ESC/BACKSPACE AS BACK (settings.h `escapeBack`), read by the screen
     // input in playframe_modes_parts.cpp
     escapeBack = enh(escapeBackFlag, settings.escapeBack ? 1 : 0, omk::kMaxEscapeBack) > 0;

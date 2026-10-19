@@ -1538,6 +1538,10 @@ void PlayState::worldStagedLinePose(const omk::SceneRunner*& run, bool useLine, 
         if (ff < 0) ff = 0;
         if (ff >= fightRun.foePose.frames) ff = fightRun.foePose.frames - 1;
         omk::composePose(s.mo->meshes, fightRun.foePose, ff, false, pose);
+        // [Enhancements] animblend: his `.CTL` state change eased, the
+        // drawn pose only - his channel, its clock and his hits untouched
+        omk::blendPose(foeBlend, pose, fightRun.foeChannel->state(), frameNo,
+                       static_cast<float>(session.frameDelta()));
         src = "the fight channel's own clip";
     } else if (s.inertAfterFight && !s.lastPose.empty()) {
         pose = s.lastPose;

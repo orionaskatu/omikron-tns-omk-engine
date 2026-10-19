@@ -135,6 +135,7 @@ struct PlayOptions {
     int radarFlag = -1;    // --radar game|always, [Enhancements] radar
     int frameRateFlag = -1; // --framerate N, [Enhancements] framerate
     int smoothAnimFlag = -1; // --smooth-anim, [Enhancements] animation = smooth
+    int animBlendFlag = -1;  // --anim-blend, [Enhancements] animblend = on
     int escapeBackFlag = -1; // --escape-back, [Enhancements] escapeback = on
     int ssaoFlag = -1;       // --ssao, [Enhancements] ssao = on
     int raytracingFlag = -1; // --raytracing, [Enhancements] raytracing = on

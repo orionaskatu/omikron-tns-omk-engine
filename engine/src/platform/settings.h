@@ -175,6 +175,14 @@ struct Settings {
     bool   smoothAnimation = false;
     Source smoothAnimationSource = Source::Default;
 
+    // `animblend = off|on`: where a body's CLIP CHANGES (the player's and a
+    // melee opponent's `.CTL` state, a walker's walk/idle swap) the jump
+    // between the pose drawn last frame and the new clip's is eased out over
+    // 0.2 s instead of drawn at once - the VISUAL pose only, never a clock or
+    // a transition (`todo/enhancements.md` 28, `actor/pose.h`).
+    bool   animBlend = false;
+    Source animBlendSource = Source::Default;
+
     // `escapeback = off|on`: ESCAPE and BACKSPACE also send the interface's
     // BACK (bit 0x20) while a screen is up. The original's BACK is the
     // `Annuler / Sauter` binding alone - SPACE, joystick button 49 - and ESC
@@ -539,6 +547,7 @@ inline constexpr int kMaxDof = 1;                 // depth of field on cinematic
 inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12)
 inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12)
 inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12 window)
+inline constexpr int kMaxAnimBlend = 1;           // a clip change eased out over 0.2 s
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
 // `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
@@ -583,6 +592,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.softParticles, kMaxSoftParticles, s.softParticlesSource);
     takeFlag(s.volumetrics, kMaxVolumetrics, s.volumetricsSource);
     takeFlag(s.frameGen, kMaxFrameGen, s.frameGenSource);
+    takeFlag(s.animBlend, kMaxAnimBlend, s.animBlendSource);
     // NOT `s.colorGrade` nor `s.hdr`: asked for by name only (above).
 }
 

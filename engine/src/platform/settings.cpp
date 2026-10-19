@@ -224,6 +224,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: volumetrics = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "animblend")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.animBlend = m > 0; s.animBlendSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: animblend = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "framegen")) {
             const int m = escapeBackMode(*w);
             if (m >= 0) { s.frameGen = m > 0; s.frameGenSource = Settings::Source::Ini; }

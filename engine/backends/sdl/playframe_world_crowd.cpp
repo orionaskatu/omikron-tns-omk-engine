@@ -6,6 +6,8 @@
 #include "platform/env.h"
 #include "o3de/vecmath.h"
 
+#include <atomic>
+
 // The pedestrians, the vehicles, the player
 void PlayState::worldCrowd() {
     OMK_ZONE("world: crowd");   // the profiler (todo/debug-tools.md 6)
@@ -145,6 +147,7 @@ void PlayState::worldCrowdPedestrians() {
                                       : "on the CPU");
             }
         }
+        const float pedBlendDt = static_cast<float>(session.frameDelta());
         const auto pedBodies = [&](std::size_t from, std::size_t to) {
             for (std::size_t k = from; k < to; ++k) {
                 PedJob& j = crowd.jobs[k];
@@ -159,6 +162,22 @@ void PlayState::worldCrowdPedestrians() {
                 std::vector<omk::MeshPose>& pose = p.pose;
                 if (j.tracks) omk::composePose(p.mo->meshes, *j.tracks, frame, false, pose, j.only);
                 else omk::composePose(p.mo->meshes, omk::NodeTracks{}, 0, false, pose, j.only);
+                // [Enhancements] animblend: a walk/idle swap (`sub_455E20`
+                // restarts the clock on the new clip) eased over 0.2 s; a LOD
+                // step changes the meshes composed, and starts over
+                if (animBlend) {
+                    if (p.blendLevel != j.level) p.blend.frame = -1;
+                    p.blendLevel = j.level;
+                    if (omk::blendPose(p.blend, pose, static_cast<std::int64_t>(
+                                           reinterpret_cast<std::intptr_t>(w.clip)),
+                                       frameNo, pedBlendDt, j.only)) {
+                        static std::atomic<bool> told{false};
+                        if (!told.exchange(true))
+                            std::printf("anim blend: frame %ld - a walker's clip change eased "
+                                        "(%.1f degrees at the swap)\n", frameNo,
+                                        static_cast<double>(p.blend.maxOff));
+                    }
+                }
                 const double tc1 = phaseNow();
                 // THE GPU PATH (todo/gpu-skinning.md step 3): where the
                 // renderer poses bodies and the lights that reach this
@@ -423,6 +442,37 @@ void PlayState::worldCrowdPlayer() {
                                           player->state() == omk::ActorState::Shoot,
                             *pt, player->poseFrameF())
             : omk::composePose(playerBody.meshes, omk::NodeTracks{}, 0, false);
+        // [Enhancements] animblend: a change of `.CTL` state or clip eased
+        // over 0.2 s - this pose only, before the head look; off, untouched
+        {
+            const std::int64_t key = pt ? (static_cast<std::int64_t>(player->ctlState()) << 20) ^
+                                          static_cast<std::int64_t>(player->clip() & 0xFFFFF)
+                                        : -1;
+            static const bool logBlend = omk::envFlag("OMK_ANIMBLEND_LOG");
+            omk::blendPose(playerBlend, pose, key, frameNo, static_cast<float>(session.frameDelta()));
+            if (logBlend) {
+                static std::vector<omk::MeshPose> was;   // the log's own, key on or off
+                // the largest mesh rotation since the frame before, as DRAWN
+                // (blended or not), so a snap reads as one large step
+                const float* pp = player->pos();
+                double sum = 0.0;          // the pose's fingerprint, for "the same pose"
+                for (const auto& m : pose)
+                    sum += m.q.w + 2.0 * m.q.x + 3.0 * m.q.y + 4.0 * m.q.z +
+                           0.01 * (m.pos[0] + m.pos[1] + m.pos[2]);
+                std::printf("animblend: frame %ld state %d %s clip %s f %.2f step %.3f "
+                            "blend %.2f off %.2f pos %.3f %.3f %.3f face %.3f sum %.6f\n",
+                            frameNo, player->ctlState(),
+                            player->ctlStateName().empty() ? "-" : player->ctlStateName().c_str(),
+                            player->clipName().c_str(), static_cast<double>(player->poseFrameF()),
+                            static_cast<double>(was.size() == pose.size()
+                                                    ? omk::poseMaxAngle(was, pose) : -1.0f),
+                            static_cast<double>(playerBlend.left),
+                            static_cast<double>(playerBlend.maxOff),
+                            static_cast<double>(pp[0]), static_cast<double>(pp[1]),
+                            static_cast<double>(pp[2]), static_cast<double>(player->facing()), sum);
+                was = pose;
+            }
+        }
         // THE FREE LOOK's head turn, `+324` on the head with no reset
         // (`omk::turnHeadBy`) - on while he looks and while it eases back
         omk::turnHeadBy(pose, playerBody.meshes, playerBody.headMesh, player->headPitch(), player->headYaw());

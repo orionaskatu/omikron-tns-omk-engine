@@ -7074,7 +7074,7 @@ def c_enhance_all():
              "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
              "bloom": "Bloom", "dof": "Dof", "softparticles": "SoftParticles",
              "volumetrics": "Volumetrics", "rtreflections": "RtReflections",
-             "framegen": "FrameGen"}
+             "framegen": "FrameGen", "animblend": "AnimBlend"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -28060,6 +28060,88 @@ def c_engine_volumetrics():
     return got, (True, True, True, True, True, 0, True, 0, True, True, 0), \
         ("off by default and silent, two plain runs identical; on, lamps in the air, 1-60% of the "
          "street brighter and nothing darker, every change inside a lamp's glow box; the same under MSAA")
+
+
+def c_engine_anim_blend():
+    r"""`omk-play --anim-blend`: a CLIP CHANGE eased over 0.2 s - an enhancement, off by default.
+    `todo/enhancements.md` 28, `actor/pose.h` (`omk::blendPose`). Where the
+    player's `.CTL` state changes the port draws the new clip's frame at once;
+    walking and letting go of UP is the worst of it: `H_WALK` mid-stride ->
+    the stop junction 258, whose clip `H_WK-SD` starts feet together (a 56
+    degree jump of one mesh in one frame), and 7 frames later the landing on
+    259 RESTARTS `H_WK-SD` at f1 (19 degrees back). On, the difference at the
+    change is frozen per mesh and eased out (smoothstep, 6 frames at 30 Hz)
+    on top of the new clip as it plays - the drawn pose only. Three runs of
+    the same scripted walk (`--hold 0*20,k200*50,0*50`, software renderer,
+    `OMK_ANIMBLEND_LOG` printing the drawn pose's largest mesh rotation since
+    the frame before and a fingerprint of the pose):
+    * the default is off in the source, and the plain run says nothing;
+    * two plain runs give the same log and the same picture;
+    * the `--anim-blend` run says so, and its SIMULATION is the plain run's
+      in every frame - state, clip frame, position, facing;
+    * at the stop the plain run's largest one-frame step is a snap (> 30
+      degrees), and blended it is at most half of it, spread over the
+      frames after the change;
+    * once a blend has run out the pose is the plain run's exactly (the
+      fingerprints agree on every frame with no blend left past the first
+      blend's end), and before the first change they agree too.
+    SHOWN TO FAIL with `blendPose`'s blend start disabled: the stop's step
+    stays the snap.
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
+    default_off = "bool   animBlend = false;" in src
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0:
+        return ("build failed",), ("built",), "engine/ must build"
+    row = re.compile(r"animblend: frame (\d+) state (-?\d+) (\S+) clip (\S*) f ([\d.]+) "
+                     r"step (-?[\d.]+) blend ([\d.]+) off ([\d.]+) pos (\S+) (\S+) (\S+) "
+                     r"face (\S+) sum (\S+)")
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--nofmv", "--res", "320x240", "--frames", "130",
+                                "--hold", "0*20,k200*50,0*50", "--dump", out] + extra,
+                               capture_output=True,
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_ANIMBLEND_LOG="1"))
+            t = r.stdout.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return t, data, [m.groups() for m in row.finditer(t)]
+        t_a, d_a, r_a = run([], "a")
+        t_b, d_b, r_b = run([], "b")
+        t_on, _, r_on = run(["--anim-blend"], "on")
+    if len(r_a) < 100 or len(r_on) != len(r_a):
+        return ("no rows",), ("rows",), "the log printed %d / %d rows" % (len(r_a), len(r_on))
+    sim = lambda r: (r[0], r[1], r[4], r[8], r[9], r[10], r[11])
+    same_sim = [sim(x) for x in r_a] == [sim(x) for x in r_on]
+    # the stop: H_WALK (2) -> the junction 258, the first change out of the walk
+    sw = next((i for i in range(1, len(r_a)) if r_a[i - 1][1] == "2" and r_a[i][1] != "2"), -1)
+    if sw < 0:
+        return ("no stop",), ("stop",), "the walk never stopped"
+    win = range(sw, min(sw + 8, len(r_a)))
+    snap = max(float(r_a[i][5]) for i in win)
+    eased = max(float(r_on[i][5]) for i in win)
+    # the first frame a blend runs (none: the blend never started - a failure
+    # the step above already shows, and the two below say too)
+    first = next((i for i in range(len(r_on)) if float(r_on[i][6]) > 0.0), -1)
+    before = first > 0 and all(r_a[i][12] == r_on[i][12] for i in range(1, first))
+    after = [i for i in range(first + 6, len(r_on)) if float(r_on[i][6]) == 0.0] if first > 0 else []
+    ends = len(after) > 40 and all(r_a[i][12] == r_on[i][12] for i in after)
+    got = (default_off, "anim blend" in t_a, "anim blend: on" in t_on,
+           r_a == r_b and d_a == d_b and len(d_a) > 0, same_sim,
+           snap > 30.0, eased <= 0.5 * snap, before, ends)
+    return got, (True, False, True, True, True, True, True, True, True), \
+           ("off by default and silent; two plain runs identical; the simulation unchanged "
+            "in all %d frames; the stop at frame %s: a %.1f degree one-frame step plain, "
+            "at most %.1f blended; the pose the plain run's on the %d frames past the blends"
+            % (len(r_a), r_a[sw][0], snap, eased, len(after)))
 
 
 def c_engine_best_lod():
@@ -49336,6 +49418,7 @@ SLOW = [
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
+    ("engine: anim blend", c_engine_anim_blend, "todo/enhancements.md 28; actor/pose.h"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),

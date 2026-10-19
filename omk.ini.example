@@ -272,6 +272,14 @@
 ; `--framegen`.
 ;framegen = off
 ;
+; ANIMBLEND - where a body's clip changes (the player starting, stopping and
+; turning, a fighter's moves, a walker stopping to idle) the jump to the new
+; clip's first frame is eased out over 0.2 s instead of drawn at once. The
+; drawn pose only: no timing, transition or hit changes. Cutscene clips and
+; conversation lines are left alone. In `all = max`. `todo/enhancements.md` 28.
+; `--anim-blend`.
+;animblend = off
+;
 ; LOD - a pedestrian model carries four bodies of falling detail and the game
 ; steps down one every 10 m, so past 10 m every walker is a coarser one. `best`
 ; keeps every walker on its most detailed body at any distance.

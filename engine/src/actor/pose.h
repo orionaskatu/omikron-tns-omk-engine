@@ -204,6 +204,46 @@ void composePose(const std::vector<Mesh>& meshes, const NodeTracks& t, float fra
                  bool upright, std::vector<MeshPose>& out,
                  const std::uint8_t* only = nullptr);
 
+// --------------------------------------- THE CLIP-CHANGE BLEND (ENHANCEMENT)
+//
+// `todo/enhancements.md` 28, `animblend = off|on`, OFF by default. Where a
+// body's CLIP CHANGES the port draws the new clip's frame at once: the
+// player's `.CTL` channel lands on a new state, a melee opponent's channel
+// does the same, a walker of the crowd swaps walk and idle (`sub_455E20`
+// restarts the clock at 1). The engine itself blends some of these for the
+// actors it gives a bank (`Actor_BlendToClip` over the entry's `+78` frames,
+// FILE_FORMATS 5), which the port does not draw: during a junction it plays
+// the target clip's first frames and then restarts it at the landing - the
+// stop `H_WALK` -> junction 258 -> `H_WK-SD` shows `H_WK-SD` f1..f7 and then
+// f1 again. This blends the VISUAL pose only, never a clock, a transition or
+// the simulation: at the change the difference between the pose drawn last
+// frame and the new one is frozen per mesh (a rotation and an offset, model
+// space, composed), and it is eased out over `kPoseBlendFrames` 30 Hz frames
+// (smoothstep) on top of the new clip as it plays - so the new clip's own
+// motion is never slowed, poses that already match (an authored hand-over)
+// are left as they are, and once the blend has run out the pose is the
+// clip's exactly. A body not drawn on the previous frame, or whose mesh set
+// changed (a LOD step), starts over with no blend. Off, `blendPose` returns
+// before touching anything.
+inline constexpr float kPoseBlendFrames = 6.0f;   // 0.2 s at 30 Hz
+void setPoseBlend(bool on);
+bool poseBlend();
+struct PoseBlend {
+    std::vector<MeshPose> last;    // the pose drawn last time
+    std::vector<MeshPose> off;     // the frozen difference: last x new^-1, last - new
+    std::int64_t key = 0;          // what produced `last` (a clip, a state...)
+    long frame = -1;               // the render frame `last` was drawn on
+    float left = 0.0f;             // 30 Hz frames of the blend still to run
+    float maxOff = 0.0f;           // degrees, the largest rotation frozen (the log)
+};
+// `pose` was produced by `key` on render frame `frameNo`, `dt` 30 Hz frames
+// after the last; `only` as composePose's. Rewrites `pose` while a blend runs.
+// -> true on the frame a blend STARTS.
+bool blendPose(PoseBlend& b, std::vector<MeshPose>& pose, std::int64_t key, long frameNo,
+               float dt, const std::uint8_t* only = nullptr);
+// The largest rotation, degrees, between two poses' meshes (the log's step).
+float poseMaxAngle(const std::vector<MeshPose>& a, const std::vector<MeshPose>& b);
+
 // ------------------------------------------------- BLENDING TWO POSES
 //
 // THE FADE AT A LINE'S TWO ENDS, read out of the morph player: the character

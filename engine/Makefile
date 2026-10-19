@@ -163,6 +163,7 @@ D3D_SRC_SHADERS := scene.vert scene.frag fsq.vert fsq.frag shadow.vert present.f
                    ssao.frag ssao_blur.frag ssao_ms.frag ssao_blur_ms.frag blit.frag overlay.frag \
                    bloom.frag post.frag post_ms.frag blit_hdr.frag \
                    vol.frag vol_ms.frag volmix.frag volmix_ms.frag scene_soft.frag scene_soft_mv.frag \
+                   fg_cap.frag fg_splat.frag fg_resolve.frag \
                    scene_mv.vert scene_mv.frag                    scene_rt.frag scene_rt_mv.frag scene_rtc.frag scene_rtc_mv.frag                    ssao_rt.frag ssao_rt_ms.frag
 D3D_SHADERS := $(D3D_SRC_SHADERS:%=build/shaders/dx/%.h)
 D3D_LIBS    := -ld3d12 -ldxgi -ldxguid

@@ -311,6 +311,11 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --volumetrics    ENHANCEMENT: the lamps' light scattered in the air round\n"
 "                   them, a halo near each lamp (Direct3D 12); [Enhancements]\n"
 "                   volumetrics=on\n"
+"  --framegen       ENHANCEMENT: frame generation - an in-between picture warped\n"
+"                   along the motion vectors between every two rendered frames,\n"
+"                   so the window shows about twice the frames (the Direct3D 12\n"
+"                   window only; half a frame of latency; the simulation and a\n"
+"                   --frames run's N frames unchanged); [Enhancements] framegen=on\n"
 "  --texturepack DIR  ENHANCEMENT: a texture override pack - upscaled PNGs of\n"
 "                   the models' and sets' textures, DIR/<group>/<model>/<MAT>.png\n"
 "                   as `tools/texpack.py extract` lays them out (Vulkan and\n"
@@ -558,6 +563,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--hdr") hdrFlag = 1;
         else if (a == "--soft-particles") softParticlesFlag = 1;
         else if (a == "--volumetrics") volumetricsFlag = 1;
+        else if (a == "--framegen") frameGenFlag = 1;
         else if (a == "--colorgrade" && i + 1 < argc) {
             colorGradeFlag = omk::colorGradeMode(argv[++i]);
             if (colorGradeFlag < 0) {

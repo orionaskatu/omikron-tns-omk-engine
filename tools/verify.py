@@ -7073,7 +7073,8 @@ def c_enhance_all():
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
              "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
              "bloom": "Bloom", "dof": "Dof", "softparticles": "SoftParticles",
-             "volumetrics": "Volumetrics", "rtreflections": "RtReflections"}
+             "volumetrics": "Volumetrics", "rtreflections": "RtReflections",
+             "framegen": "FrameGen"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27867,6 +27868,88 @@ def c_engine_soft_particles():
     return got, (True, True, True, True, True, True, True, 0, True, 0, True), \
         ("off by default and silent, two plain runs identical; on, sprite batches drawn soft and the "
          "pixels moved all inside the sprites' footprint, a minority of it, none brighter; declined "
+         "under MSAA")
+
+
+def c_engine_framegen():
+    r"""`omk-play --framegen`: FRAME GENERATION on the Direct3D 12 window - an enhancement, off by default.
+    `todo/enhancements.md` 27. At every rendered frame's end the finished world
+    picture is kept with its motion vectors and depth (`fg_cap.frag`); at the
+    present an IN-BETWEEN picture is splatted from frames N-1 and N half-way
+    along their motion with a depth test (`fg_splat.frag`) and resolved
+    (`fg_resolve.frag`), presented through the same present pass and overlay,
+    and the real frame follows half an interval later. Hidden windows, 640x480,
+    colour depth 32, 60 frames (`OMK_WINDUMP`, the events):
+      * off in the source; a plain run says nothing of it and two plain runs
+        are byte-identical;
+      * on, the window's last REAL frame is byte-identical to the plain run's
+        (frame generation turns the motion vectors on and adds presents; it
+        changes no rendered frame), and the counters say 60 real presents and
+        at least 50 in-between ones (measured 57: a first frame and the cuts
+        of the start - the set loading - go without);
+      * THE WARP BEATS A BLEND: `OMK_FRAMEGEN_PROBE` interpolates frames N-2
+        and N (the vectors doubled) and lays the result against the frame that
+        was really rendered between them, N-1, beside the plain half-and-half
+        blend of the two, riding a slider along the street (`--ride`: the
+        camera moves, the crowd walks). Over the pixels that move (N-2 and N
+        differ), the warp's mean error is under 60% of the blend's (measured
+        42%: 3.9 against 9.4 a channel; 27% with FSR) and over the whole
+        picture below it - with no upscaler, and with FSR at native quality
+        (the jittered, upscaled frame, the user's setup);
+      * under MSAA it says it is off (single-sample vectors) and presents
+        nothing extra.
+    SHOWN TO FAIL (2026-10-19): with the motion vectors zeroed in
+    `fg_splat.frag` (both frames splatted in place - the warp collapses to a
+    depth-tested blend) the moving error rose to the blend's and both probe
+    elements failed; with `fgMidFrame` never asking for an in-between frame,
+    the counters (0 in-between) failed; the rest stayed green.
+    """
+    import tempfile
+    src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
+    defaults = "bool   frameGen = false;" in src
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = {"OMK_FRAMEGEN_PROBE": os.path.join(tmp, "p_")}
+        fsr = ["--upscaler", "fsr", "--upscale-quality", "native"]
+        r = _d3d12_street_runs([("f0", [], {}), ("f0b", [], {}), ("fon", ["--framegen"], {}),
+                                ("ride", ["--ride", "--framegen"], probe),
+                                ("rfsr", ["--ride", "--framegen"] + fsr, probe),
+                                ("ms", ["--aa", "4", "--framegen"], {})])
+    if isinstance(r, tuple):
+        return r
+    t0 = r["f0"][0]
+    if "renderer: D3D12" not in t0:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    f0, f0b, fon = (r[k][1] for k in ("f0", "f0b", "fon"))
+    if not all((f0, f0b, fon)):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    silent = "framegen" not in t0 and not any(nm.startswith("framegen") for nm, _ in _events(t0))
+    def stats(name):
+        ev = [f for nm, f in _events(r[name][0]) if nm == "framegen.stats"]
+        return (int(ev[-1]["real"]), int(ev[-1]["interp"])) if ev else (0, 0)
+    real, interp = stats("fon")
+    def probed(name):
+        ev = [f for nm, f in _events(r[name][0]) if nm == "framegen.probe"]
+        if not ev:
+            return 0, 9e9, 0.0, 9e9, 0.0
+        mean = lambda k: sum(float(f[k]) for f in ev) / len(ev)
+        return len(ev), mean("mwarp"), mean("mblend"), mean("warp"), mean("blend")
+    pn, mw, mb, w, b = probed("ride")
+    qn, qmw, qmb, qw, qb = probed("rfsr")
+    upFsr = "upscaler: FSR" in r["rfsr"][0]
+    msEv = [f for nm, f in _events(r["ms"][0]) if nm == "framegen"]
+    msOff = bool(msEv) and msEv[-1].get("on") == "0" and "off under 4x MSAA" in r["ms"][0] \
+        and stats("ms")[1] == 0
+    print("        framegen: %d real, %d in-between presents; riding: %d probes, moving error %.2f warped "
+          "against %.2f blended (%.0f%%), whole %.2f / %.2f; with FSR native%s: %d probes, %.2f / %.2f "
+          "(%.0f%%), whole %.2f / %.2f; MSAA off %s"
+          % (real, interp, pn, mw, mb, 100.0 * mw / max(mb, 1e-9), w, b, "" if upFsr else " (NO FSR)",
+             qn, qmw, qmb, 100.0 * qmw / max(qmb, 1e-9), qw, qb, msOff))
+    got = (defaults, silent, f0 == f0b, fon == f0, real, interp >= 50 and interp < real,
+           pn >= 40, mw < 0.6 * mb, w < b, upFsr, qn >= 40, qmw < 0.6 * qmb, qw < qb, msOff)
+    return got, (True, True, True, True, 60, True, True, True, True, True, True, True, True, True), \
+        ("off by default and silent, two plain runs identical; on, the real frames unchanged, 60 real and "
+         "50+ in-between presents; riding the street the warped in-between frame is closer to the real "
+         "one than a blend (under 60% of its error where the picture moves), native and with FSR; off "
          "under MSAA")
 
 
@@ -49229,6 +49312,7 @@ SLOW = [
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),
+    ("engine: framegen", c_engine_framegen, "todo/enhancements.md 27; fg_cap.frag, fg_splat.frag, fg_resolve.frag"),
     ("engine: rt reflections", c_engine_rt_reflections, "todo/enhancements.md 26; scene.frag (OMK_RT), o3de/floormesh.h"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

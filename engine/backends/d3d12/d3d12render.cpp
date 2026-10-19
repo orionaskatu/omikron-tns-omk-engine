@@ -83,16 +83,20 @@
 #include "o3de/vertexlight.h"
 #include "platform/env.h"
 #include "platform/events.h"
+#include "platform/datafs.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <span>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -134,6 +138,11 @@ namespace {
 #include "dx/scene_rtc_mv.frag.h"
 #include "dx/ssao_rt.frag.h"
 #include "dx/ssao_rt_ms.frag.h"
+// ...and FRAME GENERATION's three (`todo/enhancements.md` 27): the capture at
+// the frame's end, the splat and the resolve of the in-between picture
+#include "dx/fg_cap.frag.h"
+#include "dx/fg_splat.frag.h"
+#include "dx/fg_resolve.frag.h"
 
 // ---- the blocks the shaders read, VERBATIM from `vkrender.cpp` ------------
 struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
@@ -157,6 +166,9 @@ struct VolMixPush { float proj[4], view[4]; };
 constexpr int kMaxVolLamps = 16;
 struct VolLamp { float posR[4], colI[4], shape[4]; };
 struct VolUbo { VolLamp l[kMaxVolLamps]; int32_t count[4]; };
+// FRAME GENERATION's (`fg_cap.frag`; `fg_splat.frag`, `fg_resolve.frag`)
+struct FgCapPush { float pic[4], toRender[4], depthAB[4]; };
+struct FgPush { float pic[4], k[4]; };
 
 constexpr UINT kShadowSide = 2048;
 constexpr int kShadowLayers = 3;
@@ -256,7 +268,15 @@ constexpr int kBloomLevels = 6;   // half the display size down to 1/64
 // then the half-size light
 constexpr UINT kSlotVolDepth = kSlotBloom0 + kBloomLevels;
 constexpr UINT kSlotVol = kSlotVolDepth + 1;
-constexpr UINT kSlotFirstFree = kSlotVol + 1;
+// FRAME GENERATION (todo/enhancements.md 27): the capture's ONE table - the
+// display source, the depth, the motion - then the in-between passes' - the
+// two frames' pictures and their motion-and-depth - then the two splat heads
+// (UAVs, one table) and the in-between picture
+constexpr UINT kSlotFgSrc = kSlotVol + 1;
+constexpr UINT kSlotFgIn = kSlotFgSrc + 3;
+constexpr UINT kSlotFgHead = kSlotFgIn + 4;
+constexpr UINT kSlotFgMid = kSlotFgHead + 2;
+constexpr UINT kSlotFirstFree = kSlotFgMid + 1;
 constexpr UINT kSrvHeapSize = 4096;
 
 #define DXCHECK(x, what)                                                        \
@@ -422,6 +442,13 @@ public:
     }
     bool softParticlesLive() const override { return softOn_; }
     bool volumetricsLive() const override { return volOn_; }
+    // FRAME GENERATION (`todo/enhancements.md` 27): asked for here, decided in
+    // `init` (a window, one sample a pixel), its passes made on first use
+    bool setFrameGeneration(bool on) override {
+        if (dev_) return false;
+        fgWant_ = on;
+        return true;
+    }
 
     int samples() const { return static_cast<int>(samples_); }
     int maxSamples() const;
@@ -449,9 +476,10 @@ private:
     void killSwapchainBuffers();
     bool swapchainBuffers();
     void flush();                       // signal, wait, report the debug layer
+    void flushQueue(ID3D12CommandQueue* q);
     void drainDebug();
     ID3D12GraphicsCommandList* oneShotBegin();
-    void oneShotEnd();
+    void oneShotEnd(ID3D12CommandQueue* q = nullptr);
     void openFrameList();
     ID3D12Resource* makeBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, const char* tag);
     ID3D12Resource* makeImage(DXGI_FORMAT fmt, UINT w, UINT h, UINT16 layers, UINT16 mips,
@@ -491,8 +519,27 @@ private:
     void rtAfter();
     void rtKill();
     bool makePresentPass();
-    bool runPresentPass(int vy, int vh);
-    bool presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH);
+    // (`over`: FRAME GENERATION's in-between picture in the display source's place)
+    bool runPresentPass(int vy, int vh, Res* over = nullptr);
+    // (`capture`: a real frame, which `OMK_WINDUMP`'s picture is taken from)
+    bool presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH, bool capture = true);
+    void recordBlit(ID3D12GraphicsCommandList* l, Res& src, UINT srv, int sw, int sh, int texW, int texH, UINT idx);
+    void ovDraw(const float fade[4]);
+    // FRAME GENERATION ("FRAME GENERATION" below)
+    bool fgStart();
+    bool makeFg();
+    void fgCapture();
+    void fgTick();
+    bool fgMidFrame();
+    void fgCpuFrame();
+    void fgInterpolate(int n, int p, float k);
+    void fgProbe(int n, int p, int m);
+    bool fgRead(Res& img, std::vector<unsigned char>& out);
+    bool fgPresentReal(bool mid);
+    void fgSettle();
+    void fgThreadMain();
+    void fgBlitPresent();
+    void fgReport();
     bool uploadToColour(const unsigned char* rgba);   // w_ x h_ RGBA8 into the display image's top-left
     // THE UPSCALER SEAM (the header): the image the display half reads - the
     // upscaler's display-size output when one runs, else the scene's colour
@@ -530,6 +577,10 @@ private:
     IDXGIAdapter1*             adapter_ = nullptr;
     ID3D12Device*              dev_ = nullptr;
     ID3D12CommandQueue*        queue_ = nullptr;
+    // FRAME GENERATION's PRESENT QUEUE: the swapchain's, high priority, so a
+    // deferred real frame's blit need not wait behind the next frame's work
+    ID3D12CommandQueue*        presQ_ = nullptr;
+    ID3D12CommandQueue* swapQueue() const { return presQ_ ? presQ_ : queue_; }
     ID3D12CommandAllocator*    alloc_ = nullptr;     // the frame's list
     ID3D12GraphicsCommandList* list_ = nullptr;
     ID3D12CommandAllocator*    oneAlloc_ = nullptr;  // one-shot work: uploads, copies, presents
@@ -837,6 +888,49 @@ private:
     // `OMK_MOTION_STATS`: the motion target read back, for a check
     ID3D12Resource* motionRead_ = nullptr;
     UINT64 motionPitch_ = 0;
+    bool mvOn_ = false;        // the scene pass writes `motion_`: an upscaler, or FRAME GENERATION
+
+    // ---- FRAME GENERATION (`todo/enhancements.md` 27; off unless asked) ----
+    bool fgWant_ = false, fgOn_ = false;
+    static constexpr int kFgMaxSlots = 3;
+    static constexpr UINT kRtvFg = kRtvSwap + kSwapBuffers + 1;   // the kept frames' RTVs, then the in-between's
+    int fgSlots_ = 2;                  // the frames kept (3 for the probe's N-2/N pair)
+    Res fgCol_[kFgMaxSlots];           // display size, `presFmt_`: a frame's finished world picture
+    Res fgAux_[kFgMaxSlots];           // display size, RGBA16F: its motion (display px), view depth / 4
+    Res fgHead_[2];                    // display size, R32_UINT, UAVs: the splat heads, frame N's and N-1's
+    Res fgMid_;                        // display size, `presFmt_`: the in-between picture
+    bool fgCut_[kFgMaxSlots] = {};     // the frame was a camera cut (no motion to its predecessor)
+    int fgPicW_[kFgMaxSlots] = {}, fgPicH_[kFgMaxSlots] = {};
+    long fgSeq_ = 0, fgShownSeq_ = 0;  // frames captured; the newest a present has used
+    ID3D12RootSignature* fgRs_ = nullptr;
+    ID3D12PipelineState* fgCapPipe_ = nullptr;
+    ID3D12PipelineState* fgSplatPipe_ = nullptr;
+    ID3D12PipelineState* fgResolvePipe_ = nullptr;
+    // the PACING: the interval between presents, and the real frame deferred to
+    // half of it on a thread of its own (its own list and fence; the frame's
+    // thread waits for it - `fgSettle` - before it touches the swapchain again)
+    double fgLastCall_ = 0.0, fgInterval_ = 0.0, fgLatSum_ = 0.0;
+    double fgLateSum_ = 0.0;           // ...the deferred blit's lateness against its due time
+    long fgOnTime_ = 0;
+    long fgReal_ = 0, fgMids_ = 0, fgCuts_ = 0, fgStale_ = 0, fgCpu_ = 0, fgDeferred_ = 0, fgHurried_ = 0;
+    int fgRefresh_ = 0;
+    std::thread fgThread_;
+    std::mutex fgMu_;
+    std::condition_variable fgCv_;
+    bool fgPending_ = false, fgHurry_ = false, fgQuit_ = false;
+    double fgDue_ = 0.0;
+    ID3D12CommandAllocator* fgAlloc_ = nullptr;
+    ID3D12GraphicsCommandList* fgList_ = nullptr;
+    ID3D12Fence* fgFence_ = nullptr;
+    UINT64 fgFenceVal_ = 0;
+    HANDLE fgEvent_ = nullptr;
+    // `OMK_FRAMEGEN_TIMING`: timestamps round the in-between passes [0, 1] and the capture [2, 3]
+    ID3D12QueryHeap* fgQ_ = nullptr;
+    ID3D12Resource* fgQBuf_ = nullptr;
+    double fgMsSum_ = 0.0, fgCapMsSum_ = 0.0;
+    int fgMsN_ = 0;
+    bool fgCapTimed_ = false;
+    const char* fgProbe_ = nullptr;    // `OMK_FRAMEGEN_PROBE`: the files' prefix
 };
 
 // ============================================================ the device
@@ -890,13 +984,18 @@ ID3D12Resource* D3D12Renderer::makeImage(DXGI_FORMAT fmt, UINT w, UINT h, UINT16
 // Every list is submitted and WAITED, as every Vulkan submit here is: the
 // frame is synchronous, which is what lets the CPU write the vertex, pose and
 // uniform buffers in place at the next `begin` with nothing in flight.
-void D3D12Renderer::flush() {
+void D3D12Renderer::flushQueue(ID3D12CommandQueue* q) {
     ++fenceVal_;
-    queue_->Signal(fence_, fenceVal_);
+    q->Signal(fence_, fenceVal_);
     if (fence_->GetCompletedValue() < fenceVal_) {
         fence_->SetEventOnCompletion(fenceVal_, fenceEvent_);
         WaitForSingleObject(fenceEvent_, INFINITE);
     }
+}
+
+void D3D12Renderer::flush() {
+    if (presQ_) flushQueue(presQ_);
+    flushQueue(queue_);
     const HRESULT why = dev_->GetDeviceRemovedReason();
     if (FAILED(why)) {
         static bool said = false;
@@ -938,11 +1037,16 @@ ID3D12GraphicsCommandList* D3D12Renderer::oneShotBegin() {
     return oneList_;
 }
 
-void D3D12Renderer::oneShotEnd() {
+void D3D12Renderer::oneShotEnd(ID3D12CommandQueue* q) {
     oneList_->Close();
     ID3D12CommandList* l[] = {oneList_};
-    queue_->ExecuteCommandLists(1, l);
-    flush();
+    (q ? q : queue_)->ExecuteCommandLists(1, l);
+    if (q && q != queue_) {
+        flushQueue(q);
+        drainDebug();
+    } else {
+        flush();
+    }
 }
 
 // The frame's list is opened ONCE, by whichever of `shadowPass` and `begin`
@@ -1035,7 +1139,7 @@ bool D3D12Renderer::pickDevice() {
     fenceEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent_) return false;
     if (!srv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvHeapSize, true, kSlotFirstFree) ||
-        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvSwap + kSwapBuffers + 1, false, 0) ||
+        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvFg + 2 * kFgMaxSlots + 1, false, 0) ||
         !dsv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvDepthRo + 1, false, 0)) {
         std::fprintf(stderr, "d3d12: descriptor heaps\n");
         return false;
@@ -1172,18 +1276,22 @@ bool D3D12Renderer::makeTarget() {
     // cleared to no motion - and the display-size OUTPUT the upscaler writes
     // through an unordered-access view, which the display half then reads in
     // place of `colour_` (`upscaleSource`).
-    if (up_) {
+    // (the motion vectors with FRAME GENERATION too, `mvOn_`, upscaler or not)
+    if (mvOn_) {
         D3D12_CLEAR_VALUE mc{};
         mc.Format = DXGI_FORMAT_R16G16_FLOAT;
         motion_.r = makeImage(DXGI_FORMAT_R16G16_FLOAT, rw, rh, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
                               D3D12_RESOURCE_STATE_RENDER_TARGET, &mc, "render targets");
         motion_.st = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        if (!motion_.r) return false;
+        dev_->CreateRenderTargetView(motion_.r, nullptr, rtv_.cpu(rtvMotion_));
+    }
+    if (up_) {
         upOut_.r = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(w_), static_cast<UINT>(h_), 1, 1, 1,
                              D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE,
                              nullptr, "render targets");
         upOut_.st = D3D12_RESOURCE_STATE_COPY_SOURCE;
-        if (!motion_.r || !upOut_.r) return false;
-        dev_->CreateRenderTargetView(motion_.r, nullptr, rtv_.cpu(rtvMotion_));
+        if (!upOut_.r) return false;
         dev_->CreateShaderResourceView(upOut_.r, nullptr, srv_.cpu(kSlotUpOut));
     }
 
@@ -1269,6 +1377,10 @@ void D3D12Renderer::killTarget() {
     freeRes(vol_.r);         // ...and the volumetrics' (`makeVol`)
     for (Res& b : bloom_) freeRes(b.r);
     postLive_ = false;
+    for (Res& f : fgCol_) freeRes(f.r);   // ...and frame generation's (`makeFg`)
+    for (Res& f : fgAux_) freeRes(f.r);
+    for (Res& f : fgHead_) freeRes(f.r);
+    freeRes(fgMid_.r);
 }
 
 ID3D12RootSignature* D3D12Renderer::makeRootSig(const D3D12_ROOT_SIGNATURE_DESC& d, const char* what) {
@@ -1360,9 +1472,9 @@ bool D3D12Renderer::makePipelines() {
     {
         const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 1);
         const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, 1);
-        // (44 root constants with an upscaler: `PushMv`)
+        // (44 root constants with an upscaler or frame generation: `PushMv`)
         D3D12_ROOT_PARAMETER p[13] = {
-            rs::constants(0, kPushSpace, up_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
+            rs::constants(0, kPushSpace, mvOn_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
             rs::table(&texRange, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::view(D3D12_ROOT_PARAMETER_TYPE_CBV, 0, 1, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&shRange, D3D12_SHADER_VISIBILITY_PIXEL),
@@ -1447,7 +1559,8 @@ bool D3D12Renderer::makePipelines() {
     // the motion vectors as a second target. Only OPAQUE geometry writes them
     // (the mask, below): an additive glow or a multiply decal over a wall
     // leaves the wall's motion, which is what the history should follow.
-    if (up_) {
+    // FRAME GENERATION warps along the same vectors, with or without an upscaler.
+    if (mvOn_) {
         base.VS = rs::code(kDx_scene_mv_vert, sizeof kDx_scene_mv_vert);
         base.PS = rtOn_ ? rs::code(kDx_scene_rt_mv_frag, sizeof kDx_scene_rt_mv_frag)
                         : rs::code(kDx_scene_mv_frag, sizeof kDx_scene_mv_frag);
@@ -1505,7 +1618,7 @@ bool D3D12Renderer::makePipelines() {
         // its terms, and the RT root is a superset of what it binds)
         if (softOn_ && k > 0) {
             D3D12_GRAPHICS_PIPELINE_STATE_DESC ds = d;
-            ds.PS = up_ ? rs::code(kDx_scene_soft_mv_frag, sizeof kDx_scene_soft_mv_frag)
+            ds.PS = mvOn_ ? rs::code(kDx_scene_soft_mv_frag, sizeof kDx_scene_soft_mv_frag)
                         : rs::code(kDx_scene_soft_frag, sizeof kDx_scene_soft_frag);
             pipeSoft_[k] = makePso(ds, "scene, soft");
             if (!pipeSoft_[k]) return false;
@@ -1513,7 +1626,7 @@ bool D3D12Renderer::makePipelines() {
         // RAY TRACING's counting twin (-DOMK_RT_COUNT), drawn one frame in 60
         if (rtOn_) {
             D3D12_GRAPHICS_PIPELINE_STATE_DESC dc = d;
-            dc.PS = up_ ? rs::code(kDx_scene_rtc_mv_frag, sizeof kDx_scene_rtc_mv_frag)
+            dc.PS = mvOn_ ? rs::code(kDx_scene_rtc_mv_frag, sizeof kDx_scene_rtc_mv_frag)
                         : rs::code(kDx_scene_rtc_frag, sizeof kDx_scene_rtc_frag);
             pipeCount_[k] = makePso(dc, "scene, counting rays");
             if (!pipeCount_[k]) return false;
@@ -1639,7 +1752,7 @@ bool D3D12Renderer::makeSwapchain() {
         d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         d.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
         IDXGISwapChain1* sc1 = nullptr;
-        DXCHECK(factory_->CreateSwapChainForHwnd(queue_, hwnd_, &d, nullptr, nullptr, &sc1),
+        DXCHECK(factory_->CreateSwapChainForHwnd(swapQueue(), hwnd_, &d, nullptr, nullptr, &sc1),
                 "CreateSwapChainForHwnd");
         const HRESULT hr = sc1->QueryInterface(IID_PPV_ARGS(&swap_));
         sc1->Release();
@@ -1699,6 +1812,7 @@ bool D3D12Renderer::makeSwapchain() {
 
 bool D3D12Renderer::resize(int w, int h) {
     if (!dev_ || w <= 0 || h <= 0) return false;
+    fgSettle();
     flush();
     killTarget();
     w_ = w; h_ = h;
@@ -1719,6 +1833,7 @@ bool D3D12Renderer::resize(int w, int h) {
 }
 
 bool D3D12Renderer::presentDirect() {
+    fgSettle();
     return presentImage(upscaleSource(), sourceSlot(), srcW_ ? srcW_ : sourceW(), srcH_ ? srcH_ : sourceH(),
                         sourceW(), sourceH());
 }
@@ -1726,22 +1841,11 @@ bool D3D12Renderer::presentDirect() {
 // The swapchain half of every present: `src`'s top-left `sw x sh`, fitted
 // into the window at the frame's own aspect over black - Vulkan's
 // `presentImage` rule, NEAREST unless supersampled (`blit.frag`).
-bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH) {
-    if (!swap_ || !blitPipe_) return false;
-    // THE WINDOW MAY HAVE CHANGED SIZE - fullscreen, a resize
-    RECT rc{};
-    GetClientRect(hwnd_, &rc);
-    const UINT cw = static_cast<UINT>(rc.right - rc.left), ch = static_cast<UINT>(rc.bottom - rc.top);
-    if (cw == 0 || ch == 0) return false;   // minimised
-    if (cw != swapW_ || ch != swapH_) {
-        flush();
-        killSwapchainBuffers();
-        if (FAILED(swap_->ResizeBuffers(kSwapBuffers, cw, ch, swapFmt_, 0)) || !swapchainBuffers())
-            return false;
-    }
-    const UINT idx = swap_->GetCurrentBackBufferIndex();
+// The blit itself, `src` scaled into back buffer `idx` - recorded on the
+// frame's thread's one-shot list, or on frame generation's own (`fgBlitPresent`).
+void D3D12Renderer::recordBlit(ID3D12GraphicsCommandList* l, Res& src, UINT srv, int sw, int sh, int texW,
+                               int texH, UINT idx) {
     Res& bb = swapBuf_[idx];
-    ID3D12GraphicsCommandList* l = oneShotBegin();
     bb.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
     src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(kRtvSwap + idx);
@@ -1770,11 +1874,32 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     l->SetGraphicsRoot32BitConstants(0, sizeof bp / 4, &bp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(srv));
     l->DrawInstanced(3, 1, 0, 0);
+}
+
+bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, int texH, bool capture) {
+    if (!swap_ || !blitPipe_) return false;
+    // THE WINDOW MAY HAVE CHANGED SIZE - fullscreen, a resize
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    const UINT cw = static_cast<UINT>(rc.right - rc.left), ch = static_cast<UINT>(rc.bottom - rc.top);
+    if (cw == 0 || ch == 0) return false;   // minimised
+    if (cw != swapW_ || ch != swapH_) {
+        flush();
+        killSwapchainBuffers();
+        if (FAILED(swap_->ResizeBuffers(kSwapBuffers, cw, ch, swapFmt_, 0)) || !swapchainBuffers())
+            return false;
+    }
+    const UINT idx = swap_->GetCurrentBackBufferIndex();
+    Res& bb = swapBuf_[idx];
+    ID3D12GraphicsCommandList* l = oneShotBegin();
+    recordBlit(l, src, srv, sw, sh, texW, texH, idx);
+    const int sW = static_cast<int>(swapW_), sH = static_cast<int>(swapH_);
     // THE WINDOW'S PICTURE, when asked (`captureWindow`): the back buffer as
-    // it will be shown, copied out before it is handed to the swapchain
+    // it will be shown, copied out before it is handed to the swapchain - a
+    // REAL frame's (frame generation's in-between ones are never the dump)
     ID3D12Resource* capBuf = nullptr;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT capFp{};
-    if (winCapture_) {
+    if (winCapture_ && capture) {
         D3D12_RESOURCE_DESC cd = bb.r->GetDesc();
         UINT64 total = 0;
         dev_->GetCopyableFootprints(&cd, 0, 1, 0, &capFp, nullptr, nullptr, &total);
@@ -1792,7 +1917,7 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     }
     bb.to(l, D3D12_RESOURCE_STATE_PRESENT);
     src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    oneShotEnd();
+    oneShotEnd(swapQueue());
     if (capBuf) {
         winCapture_ = false;
         winPicW_ = sW; winPicH_ = sH;
@@ -1831,6 +1956,7 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
 }
 
 bool D3D12Renderer::windowPicture(std::vector<unsigned char>& rgba, int& w, int& h) {
+    fgSettle();
     if (winPic_.empty()) return false;
     rgba = winPic_;
     w = winPicW_; h = winPicH_;
@@ -1876,7 +2002,9 @@ bool D3D12Renderer::uploadToColour(const unsigned char* rgba) {
 
 // Present a CPU-composited frame (the 2D over the world, the CPU mirror).
 bool D3D12Renderer::presentSurface(const omk::Surface& s) {
+    fgSettle();
     if (!swap_) return false;
+    fgCpuFrame();   // FRAME GENERATION: a frame composed on the CPU goes out as it is
     static std::vector<unsigned char> rgba;
     rgba.assign(static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_) * 4, 0);
     const int n = std::min<int>(w_ * h_, static_cast<int>(s.px.size()));
@@ -1941,10 +2069,11 @@ bool D3D12Renderer::makePresentPass() {
 
 // `colour_` through the present shader into `presImg_` - the display half
 // reads `upscaleSource()` at the RENDER size, `ss_` folding the supersample.
-bool D3D12Renderer::runPresentPass(int vy, int vh) {
+bool D3D12Renderer::runPresentPass(int vy, int vh, Res* over) {
     if (!makePresentPass()) return false;
-    // the POST CHAIN's picture when it ran this frame (display size, folded)
-    Res& src = displaySource();
+    // the POST CHAIN's picture when it ran this frame (display size, folded) -
+    // or FRAME GENERATION's in-between picture (display size)
+    Res& src = over ? *over : displaySource();
     ID3D12GraphicsCommandList* l = oneShotBegin();
     src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -1958,9 +2087,9 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
     l->SetPipelineState(presPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // (HDR: the picture passed through - its highlights run past 1.0)
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, displaySs(), hdrOn_ ? 32 : colourDepth_};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, over ? 1 : displaySs(), hdrOn_ ? 32 : colourDepth_};
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
-    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(displaySlot()));
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(over ? kSlotFgMid : displaySlot()));
     l->DrawInstanced(3, 1, 0, 0);
     presImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1969,9 +2098,14 @@ bool D3D12Renderer::runPresentPass(int vy, int vh) {
 }
 
 bool D3D12Renderer::presentWorld(int vy, int vh) {
+    fgSettle();
     if (!swap_) return false;
+    // FRAME GENERATION: the in-between picture first, through the same present
+    // pass, then the real frame - at once, or half an interval later
+    const bool mid = fgMidFrame();
+    if (mid && runPresentPass(vy, vh, &fgMid_)) presentImage(presImg_, kSlotPres, w_, h_, w_, h_, false);
     if (!runPresentPass(vy, vh)) return false;
-    return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
+    return fgPresentReal(mid);
 }
 
 // ---- THE OVERLAY AT COLOUR DEPTH 32 (`todo/enhancements.md` 21) -----------
@@ -2043,8 +2177,12 @@ bool D3D12Renderer::makeOverlayPass() {
 
 bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* mask, const float fade[4],
                                    int vy, int vh) {
+    fgSettle();
     if (!swap_ || s.w != w_ || s.h != h_ || !mask) return false;
-    if (!makeOverlayPass() || !runPresentPass(vy, vh)) return false;
+    if (!makeOverlayPass()) return false;
+    // FRAME GENERATION: an in-between world, if one is due, under the SAME
+    // interface (the 2D is never interpolated: this frame's, over both)
+    const bool mid = fgMidFrame();
     // both planes up, whole: ~3 bytes a pixel against the CPU path's readback,
     // dither and RGBA upload of the entire frame
     void* p = nullptr;
@@ -2074,6 +2212,19 @@ bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* ma
     };
     copy(ovPic_, DXGI_FORMAT_R16_UINT, 0, ovPicPitch_);
     copy(ovMask_, DXGI_FORMAT_R8_UNORM, ovMaskOff_, ovMaskPitch_);
+    oneShotEnd();
+    if (mid && runPresentPass(vy, vh, &fgMid_)) {
+        ovDraw(fade);
+        presentImage(presImg_, kSlotPres, w_, h_, w_, h_, false);
+    }
+    if (!runPresentPass(vy, vh)) return false;
+    ovDraw(fade);
+    return fgPresentReal(mid);
+}
+
+// The overlay's planes blended over the present pass's picture in `presImg_`.
+void D3D12Renderer::ovDraw(const float fade[4]) {
+    ID3D12GraphicsCommandList* l = oneShotBegin();
     presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(rtvPres_);
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
@@ -2090,10 +2241,10 @@ bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* ma
     l->DrawInstanced(3, 1, 0, 0);
     presImg_.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
     oneShotEnd();
-    return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
 }
 
 bool D3D12Renderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgba) {
+    fgSettle();
     if (hdrOn_) return false;   // an FP16 present image: not this RGBA8 copy's
     if (!runPresentPass(vy, vh)) return false;
     ID3D12GraphicsCommandList* l = oneShotBegin();
@@ -2140,10 +2291,34 @@ bool D3D12Renderer::init(int w, int h) {
     }
     // THE UPSCALER, once there is a device to ask - it decides the render size
     if (upKind_ != omk::d3dup::kOff) makeUpscaler();
+    // FRAME GENERATION (`todo/enhancements.md` 27): a way of PRESENTING, so the
+    // window's alone; it warps along single-sample motion vectors, so not under
+    // MSAA (an upscaler has turned MSAA off by now)
+    if (fgWant_) {
+        if (!hwnd_)
+            std::printf("framegen: a way of presenting - no window here (the offscreen harness), off\n");
+        else if (wantSamples_ > 1)
+            std::printf("framegen: it warps along single-sample motion vectors - off under %dx MSAA "
+                        "(aa = off, or an upscaler, lets it run)\n", wantSamples_);
+        else
+            fgOn_ = true;
+        if (!fgOn_) omk::event("framegen", {{"on", 0}, {"refresh", 0}});
+    }
+    mvOn_ = up_ != nullptr || fgOn_;
+    if (fgOn_) {
+        D3D12_COMMAND_QUEUE_DESC qd{};
+        qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        qd.Priority = D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+        if (FAILED(dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&presQ_)))) {
+            qd.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+            if (FAILED(dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&presQ_)))) presQ_ = nullptr;
+        }
+    }
     srcW_ = sourceW(); srcH_ = sourceH();
     if (!makeTarget()) return false;
     if (!makePipelines()) return false;
     if (hwnd_ && !makeSwapchain()) return false;
+    if (fgOn_ && !fgStart()) fgOn_ = false;
     return true;
 }
 
@@ -2459,7 +2634,7 @@ void D3D12Renderer::pushView(const omk::View& view) {
     // view was; a mirror's reflected view is given no camera motion - its
     // previous matrix is its current one - which only the reflection's own
     // pixels carry.
-    if (up_) {
+    if (mvOn_) {
         const bool mainView = cam.eye[0] == frameEye_[0] && cam.eye[1] == frameEye_[1] &&
                               cam.eye[2] == frameEye_[2];
         if (mainView) {
@@ -2756,12 +2931,12 @@ void D3D12Renderer::begin(const omk::View& view) {
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_.cpu(dsvDepth_);
     // with an upscaler, the MOTION VECTORS beside the colour, cleared to none
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv, rtv_.cpu(rtvMotion_)};
-    if (up_) {
+    if (mvOn_) {
         motion_.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
         const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         list_->ClearRenderTargetView(rtvs[1], zero, 0, nullptr);
     }
-    list_->OMSetRenderTargets(up_ ? 2 : 1, rtvs, FALSE, &dsv);
+    list_->OMSetRenderTargets(mvOn_ ? 2 : 1, rtvs, FALSE, &dsv);
     // the WHOLE render target, at the RENDER size (vkrender.cpp: a smaller
     // area would leave the supersample resolve averaging garbage); the engine
     // clears to the scene's fog colour (`View::clearColour`)
@@ -2783,8 +2958,9 @@ void D3D12Renderer::begin(const omk::View& view) {
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
     aoVw_ = toRenderX(view.letterboxed() ? view.vw : w_);
     aoVh_ = toRenderY(view.letterboxed() ? view.vh : h_);
-    // ---- THE UPSCALER's per-frame half (`upscale.h`) ----
-    if (up_) {
+    // ---- THE UPSCALER's per-frame half (`upscale.h`) - and FRAME GENERATION's,
+    // which needs the same motion, cuts and previous poses (not the jitter) ----
+    if (mvOn_) {
         std::memcpy(curMain_, push_.mvp, sizeof curMain_);
         // THE CAMERA CUT: the engine's camera jumps - a cutscene's editing, an
         // area load, a scripted placement - and the history from before the
@@ -2804,11 +2980,13 @@ void D3D12Renderer::begin(const omk::View& view) {
         // THE JITTER: the SDK's sequence, one step a frame, in render pixels;
         // into clip units over the VIEWPORT (the letterbox's strip, when there
         // is one), Y in Vulkan's down-pointing clip space (`upscale.h`)
-        const int phases = up_->jitterPhases(rw_, w_);
-        up_->jitter(jitterIndex_ % phases, phases, jitterPx_[0], jitterPx_[1]);
-        ++jitterIndex_;
-        pm_.jitter[0] = 2.0f * jitterPx_[0] / static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_);
-        pm_.jitter[1] = 2.0f * jitterPx_[1] / static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_);
+        if (up_) {
+            const int phases = up_->jitterPhases(rw_, w_);
+            up_->jitter(jitterIndex_ % phases, phases, jitterPx_[0], jitterPx_[1]);
+            ++jitterIndex_;
+            pm_.jitter[0] = 2.0f * jitterPx_[0] / static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_);
+            pm_.jitter[1] = 2.0f * jitterPx_[1] / static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_);
+        }
         // the bodies' affines: last frame's become the previous ones
         prevAffines_.swap(curAffines_);
         curAffines_.clear();
@@ -2821,7 +2999,7 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
     const auto key = std::make_pair(d.meshPose, d.vertexLights);
     if (const auto it = poseCache_.find(key); it != poseCache_.end()) { off = it->second; return true; }
     const UINT64 at = alignUp(poseUsed_, kPoseAlign);
-    if (!posePtr_ || at + (up_ ? 2 : 1) * kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
+    if (!posePtr_ || at + (mvOn_ ? 2 : 1) * kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
     float* f = reinterpret_cast<float*>(static_cast<unsigned char*>(posePtr_) + at);
     const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
     f[0] = static_cast<float>(nl);
@@ -2836,7 +3014,7 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
     // (`scene.vert` -DOMK_MOTION), from the last frame's block of the same
     // `meshPose` - or the current ones again for a body new this frame, which
     // then shows only the camera's motion rather than a wrong one of its own
-    if (up_) {
+    if (mvOn_) {
         const std::size_t n = d.meshPoses * 12;
         const auto prev = prevAffines_.find(d.meshPose);
         // (and across a cut, where nothing has a previous position)
@@ -2950,7 +3128,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         std::size_t j = i;
         while (j < e && (haveCull ? g->cornerCull[j] : 0u) == c) ++j;
         push_.cull = c ? (flipX_ ? -kCullSign : kCullSign) : 0;
-        if (up_) {
+        if (mvOn_) {
             pm_.p = push_;
             list_->SetGraphicsRoot32BitConstants(0, kPushMvDwords, &pm_, 0);
         } else {
@@ -3870,6 +4048,9 @@ void D3D12Renderer::end() {
     if (up_) upscale();
     // THE POST CHAIN (todo/enhancements.md 22), display size, when asked
     runPost();
+    // FRAME GENERATION (todo/enhancements.md 27): the finished world picture
+    // kept, with its motion and depth at the display size
+    if (fgOn_) fgCapture();
     // It rests in COPY_SOURCE, where the readback copy and the present pass
     // expect it. The readback COPY itself is not recorded: a frame the GPU
     // presents never reads it (`readback()` does it when asked).
@@ -3891,6 +4072,17 @@ void D3D12Renderer::end() {
     ID3D12CommandList* l[] = {list_};
     queue_->ExecuteCommandLists(1, l);
     flush();
+    if (fgCapTimed_) {
+        fgCapTimed_ = false;
+        void* q = nullptr;
+        UINT64 hz = 0;
+        if (SUCCEEDED(queue_->GetTimestampFrequency(&hz)) && hz && SUCCEEDED(fgQBuf_->Map(0, nullptr, &q))) {
+            const auto* t = static_cast<const UINT64*>(q);
+            fgCapMsSum_ += static_cast<double>(t[3] - t[2]) * 1000.0 / static_cast<double>(hz);
+            D3D12_RANGE none{0, 0};
+            fgQBuf_->Unmap(0, &none);
+        }
+    }
     if (postTimed_) {
         postTimed_ = false;
         void* q = nullptr;
@@ -3934,7 +4126,7 @@ void D3D12Renderer::end() {
     listOpen_ = false;
     shadowLive_ = false;
     dirty_ = true;
-    if (up_) {
+    if (mvOn_) {
         static const bool stats = omk::envFlag("OMK_MOTION_STATS");
         if (stats) motionStats();
         // this frame's camera is the next one's previous
@@ -3956,7 +4148,7 @@ void D3D12Renderer::depthReadOnly(bool ro) {
                         : D3D12_RESOURCE_STATE_DEPTH_WRITE);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv_.cpu(samples_ > 1 ? rtvMs_ : rtvColour_), rtv_.cpu(rtvMotion_)};
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_.cpu(ro ? kDsvDepthRo : dsvDepth_);
-    list_->OMSetRenderTargets(up_ ? 2 : 1, rtvs, FALSE, &dsv);
+    list_->OMSetRenderTargets(mvOn_ ? 2 : 1, rtvs, FALSE, &dsv);
     depthRo_ = ro;
 }
 
@@ -4406,6 +4598,544 @@ void D3D12Renderer::runPost() {
     }
 }
 
+// ---- FRAME GENERATION (`todo/enhancements.md` 27) -------------------------
+//
+// AN ENHANCEMENT, off unless asked, the Direct3D 12 WINDOW's: between every two
+// rendered frames an IN-BETWEEN picture, presented half an interval before the
+// second, so the window shows about twice the frames the game renders.
+//
+//   * THE CAPTURE (`fg_cap.frag`, on the frame's list after the post chain):
+//     the finished world picture (`displaySource`, before the present pass's
+//     quantisation and before the 2D) kept at the display size, and beside it
+//     the scene's motion vector (`motion_`, which the scene pass now writes for
+//     frame generation as for an upscaler - `mvOn_`; no jitter without one) in
+//     display pixels and its view depth. Two frames are kept, N-1 and N.
+//   * THE IN-BETWEEN (`fg_splat.frag`, `fg_resolve.frag`, at the present):
+//     both frames' pixels pushed half-way along their motion - N's back along
+//     its own vector, N-1's forward along its own turned round - into two
+//     32-bit heads with a depth test (`imageAtomicMin` of depth and source),
+//     and resolved: the front-most surface wins, blended with the other frame
+//     where that frame shows the same surface there, alone where it is hidden
+//     there (a disocclusion), cracks filled from the farthest neighbour.
+//   * THE PRESENT: the in-between picture through the SAME present pass and
+//     the SAME overlay (this frame's 2D - the interface is never interpolated;
+//     a fade is part of the world picture or of the overlay's colour fade) and
+//     out at once; the real frame composited behind it and presented half the
+//     measured interval later by a thread of the backend's own (its own list
+//     and fence; the frame's thread settles it before it touches the swapchain
+//     again). The swapchain is then made on a HIGH-PRIORITY queue of its own
+//     (`presQ_`), so that blit need not wait behind the next frame's work on
+//     the frame's queue (4K, GPU-bound: the loop's interval 48 ms against 79). One frame of the pair is always late by that half interval - the
+//     latency frame generation costs.
+//   * NOT INTERPOLATED: a first frame, a pair with a CAMERA CUT on either side
+//     (the upscaler's own test - a jump of 5 m or 30 degrees, a set released, a
+//     resize - kept per frame), a present with no new frame rendered since the
+//     last, a frame composed on the CPU. `--frames N` still renders and
+//     presents N real frames; the in-between ones are presents only, and the
+//     window dump (`OMK_WINDUMP`) is always a real frame's.
+
+static double qpcNow() {
+    static LARGE_INTEGER hz{};
+    if (!hz.QuadPart) QueryPerformanceFrequency(&hz);
+    LARGE_INTEGER c{};
+    QueryPerformanceCounter(&c);
+    return static_cast<double>(c.QuadPart) / static_cast<double>(hz.QuadPart);
+}
+
+bool D3D12Renderer::fgStart() {
+    fgProbe_ = omk::envStr("OMK_FRAMEGEN_PROBE");
+    if (fgProbe_ && !*fgProbe_) fgProbe_ = nullptr;
+    fgSlots_ = fgProbe_ ? 3 : 2;
+    if (FAILED(dev_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&fgAlloc_))) ||
+        FAILED(dev_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, fgAlloc_, nullptr, IID_PPV_ARGS(&fgList_))) ||
+        FAILED(dev_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fgFence_)))) {
+        std::fprintf(stderr, "framegen: no command list for the deferred present - off\n");
+        return false;
+    }
+    fgList_->Close();
+    fgEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!fgEvent_) return false;
+    // THE DISPLAY's refresh rate, for the line: what the in-between frames are
+    // shown at (a v-synced swapchain shows at most one picture a refresh)
+    HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof mi;
+    DEVMODEW dm{};
+    dm.dmSize = sizeof dm;
+    if (mon && GetMonitorInfoW(mon, &mi) && EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm))
+        fgRefresh_ = static_cast<int>(dm.dmDisplayFrequency);
+    fgThread_ = std::thread([this] { fgThreadMain(); });
+    std::printf("framegen: on - an ENHANCEMENT: an in-between picture warped along the motion vectors before "
+                "every rendered frame (%s); the display refreshes at %d Hz. The real frame goes out half an "
+                "interval after its in-between one - that half interval is the latency it adds - and it pays "
+                "only when the display can show about twice the rendered rate (or the GPU's frame is long); "
+                "the simulation is unchanged\n", up_ ? "the upscaler's vectors" : "motion vectors on for it",
+                fgRefresh_);
+    omk::event("framegen", {{"on", 1}, {"refresh", fgRefresh_}});
+    return true;
+}
+
+bool D3D12Renderer::makeFg() {
+    if (!fgRs_) {
+        // ONE root signature for the three: the push block, four pictures (t0..t3)
+        // and the two heads (u4, u5); the shaders fetch, so no sampler
+        const D3D12_DESCRIPTOR_RANGE srvR = rs::srvs(0, 0, 4);
+        D3D12_DESCRIPTOR_RANGE uavR{};
+        uavR.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        uavR.NumDescriptors = 2;
+        uavR.BaseShaderRegister = 4;
+        D3D12_ROOT_PARAMETER p[3] = {
+            rs::constants(0, kPushSpace, sizeof(FgCapPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&srvR, D3D12_SHADER_VISIBILITY_PIXEL),
+            rs::table(&uavR, D3D12_SHADER_VISIBILITY_PIXEL)};
+        D3D12_ROOT_SIGNATURE_DESC d{};
+        d.NumParameters = 3; d.pParameters = p;
+        fgRs_ = makeRootSig(d, "framegen");
+        if (!fgRs_) return false;
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = fgRs_;
+        pd.VS = rs::code(kDx_fsq_vert, sizeof kDx_fsq_vert);
+        pd.PS = rs::code(kDx_fg_cap_frag, sizeof kDx_fg_cap_frag);
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
+        pd.BlendState.IndependentBlendEnable = TRUE;
+        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.BlendState.RenderTarget[1].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.NumRenderTargets = 2;
+        pd.RTVFormats[0] = presFmt_;
+        pd.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        pd.SampleDesc.Count = 1;
+        fgCapPipe_ = makePso(pd, "framegen capture");
+        // the splat (and the heads' clear): no target, the heads are UAVs
+        pd.PS = rs::code(kDx_fg_splat_frag, sizeof kDx_fg_splat_frag);
+        pd.NumRenderTargets = 0;
+        pd.RTVFormats[0] = pd.RTVFormats[1] = DXGI_FORMAT_UNKNOWN;
+        fgSplatPipe_ = makePso(pd, "framegen splat");
+        pd.PS = rs::code(kDx_fg_resolve_frag, sizeof kDx_fg_resolve_frag);
+        pd.NumRenderTargets = 1;
+        pd.RTVFormats[0] = presFmt_;
+        fgResolvePipe_ = makePso(pd, "framegen resolve");
+        if (!fgCapPipe_ || !fgSplatPipe_ || !fgResolvePipe_) return false;
+        if (omk::envFlag("OMK_FRAMEGEN_TIMING")) {
+            D3D12_QUERY_HEAP_DESC qd{};
+            qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+            qd.Count = 4;
+            if (FAILED(dev_->CreateQueryHeap(&qd, IID_PPV_ARGS(&fgQ_)))) fgQ_ = nullptr;
+            fgQBuf_ = makeBuffer(4 * sizeof(UINT64), D3D12_HEAP_TYPE_READBACK, "readback");
+        }
+    }
+    if (fgMid_.r) return true;
+    const UINT w = static_cast<UINT>(w_), h = static_cast<UINT>(h_);
+    for (int i = 0; i < fgSlots_; ++i) {
+        fgCol_[i].r = makeImage(presFmt_, w, h, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, "framegen");
+        fgAux_[i].r = makeImage(DXGI_FORMAT_R16G16B16A16_FLOAT, w, h, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, "framegen");
+        fgCol_[i].st = fgAux_[i].st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        if (!fgCol_[i].r || !fgAux_[i].r) return false;
+        dev_->CreateRenderTargetView(fgCol_[i].r, nullptr, rtv_.cpu(kRtvFg + static_cast<UINT>(i)));
+        dev_->CreateRenderTargetView(fgAux_[i].r, nullptr, rtv_.cpu(kRtvFg + kFgMaxSlots + static_cast<UINT>(i)));
+    }
+    for (int i = 0; i < 2; ++i) {
+        fgHead_[i].r = makeImage(DXGI_FORMAT_R32_UINT, w, h, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, "framegen");
+        fgHead_[i].st = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        if (!fgHead_[i].r) return false;
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
+        uv.Format = DXGI_FORMAT_R32_UINT;
+        uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        dev_->CreateUnorderedAccessView(fgHead_[i].r, nullptr, &uv, srv_.cpu(kSlotFgHead + static_cast<UINT>(i)));
+    }
+    fgMid_.r = makeImage(presFmt_, w, h, 1, 1, 1, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET,
+                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, "framegen");
+    fgMid_.st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    if (!fgMid_.r) return false;
+    dev_->CreateRenderTargetView(fgMid_.r, nullptr, rtv_.cpu(kRtvFg + 2 * kFgMaxSlots));
+    dev_->CreateShaderResourceView(fgMid_.r, nullptr, srv_.cpu(kSlotFgMid));
+    // the capture's depth and motion, beside its source (written per frame)
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Texture2D.MipLevels = 1;
+    dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotFgSrc + 1));
+    dev_->CreateShaderResourceView(motion_.r, nullptr, srv_.cpu(kSlotFgSrc + 2));
+    fgSeq_ = fgShownSeq_ = 0;   // (re)made: nothing kept to pair with
+    return true;
+}
+
+// On the frame's list, after the post chain: the world picture, its motion
+// and depth, into the next slot.
+void D3D12Renderer::fgCapture() {
+    if (!motion_.r || !makeFg()) {
+        std::fprintf(stderr, "framegen: its targets could not be made - off\n");
+        fgOn_ = false;
+        return;
+    }
+    const int s = static_cast<int>(fgSeq_ % fgSlots_);
+    ID3D12GraphicsCommandList* l = list_;
+    ID3D12DescriptorHeap* heaps[] = {srv_.heap};
+    l->SetDescriptorHeaps(1, heaps);
+    fgCapTimed_ = fgQ_ && fgQBuf_;
+    if (fgCapTimed_) l->EndQuery(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2);
+    Res& src = displaySource();
+    dev_->CreateShaderResourceView(src.r, nullptr, srv_.cpu(kSlotFgSrc));
+    src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    depth_.to(l, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    motion_.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    fgCol_[s].to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    fgAux_[s].to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv_.cpu(kRtvFg + static_cast<UINT>(s)),
+                                                 rtv_.cpu(kRtvFg + kFgMaxSlots + static_cast<UINT>(s))};
+    l->OMSetRenderTargets(2, rtvs, FALSE, nullptr);
+    const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(w_), static_cast<float>(h_), 0.0f, 1.0f};
+    const D3D12_RECT sr{0, 0, w_, h_};
+    l->RSSetViewports(1, &vp);
+    l->RSSetScissorRects(1, &sr);
+    l->SetGraphicsRootSignature(fgRs_);
+    l->SetPipelineState(fgCapPipe_);
+    l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    const float pw = static_cast<float>(std::max(postVw_, 1)), ph = static_cast<float>(std::max(postVh_, 1));
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    const FgCapPush cp{{pw, ph, static_cast<float>(displaySs()), 0.0f},
+                       {static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_) / pw, static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_) / ph,
+                        0.0f, 0.0f},
+                       {farP / (farP - nearP), -farP * nearP / (farP - nearP), 0.0f, 0.0f}};
+    l->SetGraphicsRoot32BitConstants(0, sizeof cp / 4, &cp, 0);
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotFgSrc));
+    l->DrawInstanced(3, 1, 0, 0);
+    fgCol_[s].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    fgAux_[s].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    src.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);   // where the display half expects it
+    if (fgCapTimed_) {
+        l->EndQuery(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 3);
+        l->ResolveQueryData(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 2, 2, fgQBuf_, 2 * sizeof(UINT64));
+    }
+    bound_ = nullptr;
+    fgCut_[s] = resetOwed_;
+    fgPicW_[s] = postVw_;
+    fgPicH_[s] = postVh_;
+    ++fgSeq_;
+}
+
+// the interval between presents, smoothed: what "half an interval" is
+void D3D12Renderer::fgTick() {
+    const double now = qpcNow();
+    if (fgLastCall_ > 0.0) {
+        const double dt = std::min(now - fgLastCall_, 0.1);
+        fgInterval_ = fgInterval_ > 0.0 ? 0.8 * fgInterval_ + 0.2 * dt : dt;
+    }
+    fgLastCall_ = now;
+}
+
+// At a world present: whether an in-between frame goes out first - and if so
+// it is in `fgMid_`.
+bool D3D12Renderer::fgMidFrame() {
+    if (!fgOn_) return false;
+    fgTick();
+    ++fgReal_;
+    bool mid = false;
+    if (fgSeq_ == fgShownSeq_) {
+        ++fgStale_;   // nothing rendered since the last present: nothing to go between
+    } else {
+        fgShownSeq_ = fgSeq_;
+        const int S = fgSlots_;
+        const auto pairs = [&](int a, int b) {
+            return !fgCut_[a] && !fgCut_[b] && fgPicW_[a] == fgPicW_[b] && fgPicH_[a] == fgPicH_[b];
+        };
+        const int n = static_cast<int>((fgSeq_ - 1) % S), p = static_cast<int>((fgSeq_ + S - 2) % S);
+        if (fgSeq_ < 2 || !fgMid_.r || !pairs(n, p)) {
+            ++fgCuts_;   // a first frame, a cut on either side, a new picture size
+        } else {
+            // THE PROBE: frames N-2 and N with the vectors doubled, against the real N-1
+            if (fgProbe_ && S == 3 && fgSeq_ >= 3) {
+                const int m = static_cast<int>((fgSeq_ - 3) % S);
+                if (pairs(p, m)) fgProbe(n, p, m);
+            }
+            fgInterpolate(n, p, 1.0f);
+            ++fgMids_;
+            mid = true;
+        }
+    }
+    fgReport();
+    return mid;
+}
+
+// A frame composed on the CPU (`presentSurface`): no world picture of its own
+// to warp, so it goes out as it is.
+void D3D12Renderer::fgCpuFrame() {
+    if (!fgOn_) return;
+    fgTick();
+    ++fgReal_;
+    ++fgCpu_;
+    fgShownSeq_ = fgSeq_;
+    static bool told = false;
+    if (!told) {
+        told = true;
+        std::printf("framegen: a frame composed on the CPU (the 2D over the world at colour depth 16) goes out "
+                    "as it is - colordepth = 32 lets the in-between frames run under the interface\n");
+    }
+    fgReport();
+}
+
+// The in-between picture of kept frames `n` (the later) and `p`, vectors x `k`.
+void D3D12Renderer::fgInterpolate(int n, int p, float k) {
+    // the passes' table, in the shaders' order: the two pictures, then the two
+    // motion-and-depth images (rewritten here: the frames before were waited for)
+    Res* in[4] = {&fgCol_[n], &fgCol_[p], &fgAux_[n], &fgAux_[p]};
+    for (int i = 0; i < 4; ++i) dev_->CreateShaderResourceView(in[i]->r, nullptr, srv_.cpu(kSlotFgIn + static_cast<UINT>(i)));
+    ID3D12GraphicsCommandList* l = oneShotBegin();
+    const bool timed = fgQ_ && fgQBuf_;
+    if (timed) l->EndQuery(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0);
+    for (Res* r : in) r->to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    fgHead_[0].to(l, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    fgHead_[1].to(l, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(w_), static_cast<float>(h_), 0.0f, 1.0f};
+    const D3D12_RECT sr{0, 0, w_, h_};
+    l->RSSetViewports(1, &vp);
+    l->RSSetScissorRects(1, &sr);
+    l->SetGraphicsRootSignature(fgRs_);
+    l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotFgIn));
+    l->SetGraphicsRootDescriptorTable(2, srv_.gpu(kSlotFgHead));
+    D3D12_RESOURCE_BARRIER ub[2]{};
+    for (int i = 0; i < 2; ++i) {
+        ub[i].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        ub[i].UAV.pResource = fgHead_[i].r;
+    }
+    FgPush fp{{static_cast<float>(fgPicW_[n]), static_cast<float>(fgPicH_[n]), 0.0f, 0.0f}, {k, 1.0f, 0.0f, 0.0f}};
+    l->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    l->SetPipelineState(fgSplatPipe_);
+    l->SetGraphicsRoot32BitConstants(0, sizeof fp / 4, &fp, 0);
+    l->DrawInstanced(3, 1, 0, 0);                    // the heads emptied
+    l->ResourceBarrier(2, ub);
+    fp.k[1] = 0.0f;
+    l->SetGraphicsRoot32BitConstants(0, sizeof fp / 4, &fp, 0);
+    l->DrawInstanced(3, 1, 0, 0);                    // both frames splatted
+    l->ResourceBarrier(2, ub);
+    fgMid_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(kRtvFg + 2 * kFgMaxSlots);
+    l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    l->SetPipelineState(fgResolvePipe_);
+    l->DrawInstanced(3, 1, 0, 0);                    // resolved
+    fgMid_.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (timed) {
+        l->EndQuery(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 1);
+        l->ResolveQueryData(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, fgQBuf_, 0);
+    }
+    oneShotEnd();
+    if (!timed) return;
+    void* q = nullptr;
+    UINT64 hz = 0;
+    if (FAILED(queue_->GetTimestampFrequency(&hz)) || !hz || FAILED(fgQBuf_->Map(0, nullptr, &q))) return;
+    const auto* t = static_cast<const UINT64*>(q);
+    fgMsSum_ += static_cast<double>(t[1] - t[0]) * 1000.0 / static_cast<double>(hz);
+    D3D12_RANGE none{0, 0};
+    fgQBuf_->Unmap(0, &none);
+    if (++fgMsN_ == 60) {
+        std::printf("framegen: %.3f ms on the GPU an in-between frame (clear, splat, resolve) and %.3f ms a frame "
+                    "for the capture (mean of 60, %dx%d)\n", fgMsSum_ / 60.0, fgCapMsSum_ / 60.0, w_, h_);
+        omk::event("framegen.timing", {{"ms", fgMsSum_ / 60.0}, {"capture", fgCapMsSum_ / 60.0}, {"w", w_}, {"h", h_}});
+        fgMsSum_ = fgCapMsSum_ = 0.0;
+        fgMsN_ = 0;
+    }
+}
+
+// a display-size RGBA8 image read back (the probe's)
+bool D3D12Renderer::fgRead(Res& img, std::vector<unsigned char>& out) {
+    if (hdrOn_ || !makePresentPass()) return false;
+    ID3D12GraphicsCommandList* l = oneShotBegin();
+    const D3D12_RESOURCE_STATES was = img.st;
+    img.to(l, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    src.pResource = img.r;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = presRead_;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(w_), static_cast<UINT>(h_), 1,
+                                     static_cast<UINT>(presPitch_)};
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    img.to(l, was);
+    oneShotEnd();
+    out.resize(static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_) * 4);
+    void* p = nullptr;
+    if (FAILED(presRead_->Map(0, nullptr, &p))) return false;
+    for (int y = 0; y < h_; ++y)
+        std::memcpy(out.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(w_) * 4,
+                    static_cast<const unsigned char*>(p) + static_cast<UINT64>(y) * presPitch_,
+                    static_cast<std::size_t>(w_) * 4);
+    D3D12_RANGE none{0, 0};
+    presRead_->Unmap(0, &none);
+    return true;
+}
+
+// `OMK_FRAMEGEN_PROBE=<prefix>`: THE CHECK's instrument. Frames N-2 (`m`) and N
+// (`n`) interpolated with the vectors doubled, and laid against the frame that
+// really was rendered between them, N-1 (`p`) - beside the plain half-and-half
+// blend of the two and frame N repeated. The mean error over the picture (a
+// channel, 0..255) and over its MOVING part (where N-2 and N differ), a line and
+// a `framegen.probe` event a frame; the last frame's three pictures written to
+// `<prefix>warp.rgba`, `real.rgba`, `blend.rgba` (RGBA8, the display size).
+void D3D12Renderer::fgProbe(int n, int p, int m) {
+    fgInterpolate(n, m, 2.0f);
+    static std::vector<unsigned char> warp, real, a, b, blend;
+    if (!fgRead(fgMid_, warp) || !fgRead(fgCol_[p], real) || !fgRead(fgCol_[n], b) || !fgRead(fgCol_[m], a)) return;
+    const int W = fgPicW_[n], H = fgPicH_[n];
+    blend.assign(warp.size(), 255);
+    double eW = 0, eB = 0, eR = 0, mW = 0, mB = 0, mR = 0;
+    long moving = 0;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w_) + static_cast<std::size_t>(x)) * 4;
+            double dw = 0, db = 0, dr = 0;
+            int change = 0;
+            for (int c = 0; c < 3; ++c) {
+                const int bl = (a[i + c] + b[i + c] + 1) / 2;
+                blend[i + c] = static_cast<unsigned char>(bl);
+                dw += std::abs(warp[i + c] - real[i + c]);
+                db += std::abs(bl - real[i + c]);
+                dr += std::abs(b[i + c] - real[i + c]);
+                change += std::abs(a[i + c] - b[i + c]);
+            }
+            eW += dw; eB += db; eR += dr;
+            if (change > 24) { mW += dw; mB += db; mR += dr; ++moving; }
+        }
+    const double px = 3.0 * static_cast<double>(std::max(W * H, 1)), mpx = 3.0 * static_cast<double>(std::max(moving, 1L));
+    const double share = static_cast<double>(moving) / static_cast<double>(std::max(W * H, 1));
+    std::printf("framegen probe: frame %ld - N-2 and N in between, against the real N-1: mean error %.2f warped, "
+                "%.2f blended, %.2f repeated; %.1f%% of the picture moving: %.2f, %.2f, %.2f there\n", fgSeq_,
+                eW / px, eB / px, eR / px, 100.0 * share, mW / mpx, mB / mpx, mR / mpx);
+    omk::event("framegen.probe", {{"frame", fgSeq_}, {"warp", eW / px}, {"blend", eB / px}, {"repeat", eR / px},
+                                  {"moving", share}, {"mwarp", mW / mpx}, {"mblend", mB / mpx}, {"mrepeat", mR / mpx}});
+    const auto write = [&](const char* name, const std::vector<unsigned char>& pic) {
+        const std::string path = std::string(fgProbe_) + name;
+        if (!omk::safeOutputPath(path.c_str())) return;
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fwrite(pic.data(), 1, pic.size(), f);
+            std::fclose(f);
+        }
+    };
+    write("warp.rgba", warp);
+    write("real.rgba", real);
+    write("blend.rgba", blend);
+}
+
+// The real frame in `presImg_`: presented now - or, after an in-between one,
+// half the interval later by the backend's thread.
+bool D3D12Renderer::fgPresentReal(bool mid) {
+    // at once without an in-between frame, or when the window's picture is
+    // asked for (`OMK_WINDUMP`: the real frame's, taken by the present itself)
+    if (!mid || winCapture_ || !fgThread_.joinable()) return presentImage(presImg_, kSlotPres, w_, h_, w_, h_);
+    const double half = std::clamp(0.5 * fgInterval_, 0.0, 0.05);
+    {
+        std::lock_guard<std::mutex> lk(fgMu_);
+        fgDue_ = qpcNow() + half;
+        fgPending_ = true;
+        fgHurry_ = false;
+    }
+    fgCv_.notify_all();
+    ++fgDeferred_;
+    fgLatSum_ += half;
+    return true;
+}
+
+// The frame's thread waits for a deferred real frame to be out - early, if it
+// is not yet due - before it touches the swapchain or `presImg_` again.
+void D3D12Renderer::fgSettle() {
+    if (!fgThread_.joinable()) return;
+    std::unique_lock<std::mutex> lk(fgMu_);
+    if (!fgPending_) return;
+    fgHurry_ = true;
+    fgCv_.notify_all();
+    fgCv_.wait(lk, [this] { return !fgPending_; });
+}
+
+void D3D12Renderer::fgThreadMain() {
+    std::unique_lock<std::mutex> lk(fgMu_);
+    for (;;) {
+        fgCv_.wait(lk, [this] { return fgPending_ || fgQuit_; });
+        if (!fgPending_) return;   // asked to stop, nothing owed
+        // to the due time: a timed wait to ~1.5 ms short of it, then yields (the pacer's way)
+        while (!fgHurry_) {
+            const double left = fgDue_ - qpcNow();
+            if (left <= 0.0) break;
+            if (left > 0.002) {
+                fgCv_.wait_for(lk, std::chrono::microseconds(static_cast<long long>((left - 0.0015) * 1e6)));
+            } else {
+                lk.unlock();
+                std::this_thread::yield();
+                lk.lock();
+            }
+        }
+        if (fgHurry_) ++fgHurried_;   // the next frame came before it was due
+        lk.unlock();
+        fgBlitPresent();
+        lk.lock();
+        fgPending_ = false;
+        fgHurry_ = false;
+        fgCv_.notify_all();
+    }
+}
+
+// The deferred present, on this thread's own list and fence. A window whose
+// size changed meanwhile is left to the frame's thread (`presentImage` remakes
+// the buffers); this frame is then not shown.
+void D3D12Renderer::fgBlitPresent() {
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    const UINT cw = static_cast<UINT>(rc.right - rc.left), ch = static_cast<UINT>(rc.bottom - rc.top);
+    if (cw == 0 || ch == 0 || cw != swapW_ || ch != swapH_) return;
+    const UINT idx = swap_->GetCurrentBackBufferIndex();
+    fgAlloc_->Reset();
+    fgList_->Reset(fgAlloc_, nullptr);
+    ID3D12DescriptorHeap* heaps[] = {srv_.heap};
+    fgList_->SetDescriptorHeaps(1, heaps);
+    recordBlit(fgList_, presImg_, kSlotPres, w_, h_, w_, h_, idx);
+    swapBuf_[idx].to(fgList_, D3D12_RESOURCE_STATE_PRESENT);
+    presImg_.to(fgList_, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    fgList_->Close();
+    ID3D12CommandList* ls[] = {fgList_};
+    swapQueue()->ExecuteCommandLists(1, ls);
+    swap_->Present(1, 0);
+    ++fgFenceVal_;
+    swapQueue()->Signal(fgFence_, fgFenceVal_);
+    if (fgFence_->GetCompletedValue() < fgFenceVal_) {
+        fgFence_->SetEventOnCompletion(fgFenceVal_, fgEvent_);
+        WaitForSingleObject(fgEvent_, INFINITE);
+    }
+    // how late it reached the screen's queue against when it was due
+    // (hurried ones, sent early by the next frame, are not counted)
+    std::lock_guard<std::mutex> lk(fgMu_);
+    if (!fgHurry_) {
+        fgLateSum_ += qpcNow() - fgDue_;
+        ++fgOnTime_;
+    }
+}
+
+// THE COUNTERS, after every real present: an event (what `verify.py: engine:
+// framegen` reads) and, every 300, a line.
+void D3D12Renderer::fgReport() {
+    long hurried = 0;
+    double late = 0.0;
+    {
+        std::lock_guard<std::mutex> lk(fgMu_);
+        hurried = fgHurried_;
+        late = fgOnTime_ ? 1000.0 * fgLateSum_ / static_cast<double>(fgOnTime_) : 0.0;
+    }
+    const double lat = fgDeferred_ ? 1000.0 * fgLatSum_ / static_cast<double>(fgDeferred_) : 0.0;
+    omk::event("framegen.stats", {{"real", fgReal_}, {"interp", fgMids_}, {"cut", fgCuts_}, {"stale", fgStale_},
+                                  {"cpu", fgCpu_}, {"hurried", hurried}, {"interval", 1000.0 * fgInterval_},
+                                  {"latency", lat}, {"late", late}});
+    if (fgReal_ % 300 != 0) return;
+    std::printf("framegen: %ld real frames presented, %ld in-between ones (%ld firsts or cuts, %ld with nothing new "
+                "rendered, %ld composed on the CPU); a frame every %.1f ms, the real one shown %.1f ms after its "
+                "in-between one (the latency added; the blit done %.1f ms after it was due), %ld sent early by the "
+                "next\n", fgReal_, fgMids_, fgCuts_, fgStale_, fgCpu_, 1000.0 * fgInterval_, lat, late, hurried);
+}
+
 const omk::Surface& D3D12Renderer::readback() {
     // IDEMPOTENT, and that is a contract (renderer.h): converted once a frame
     if (!dirty_) return fb_;
@@ -4503,6 +5233,16 @@ void D3D12Renderer::geometryGone(void* self, const omk::Geometry* g) {
 D3D12Renderer::~D3D12Renderer() {
     omk::removeGeometryListener(&D3D12Renderer::geometryGone, this);
     if (!dev_) { release(adapter_); release(factory_); return; }
+    // FRAME GENERATION's thread: its last frame out, then stopped
+    if (fgThread_.joinable()) {
+        fgSettle();
+        {
+            std::lock_guard<std::mutex> lk(fgMu_);
+            fgQuit_ = true;
+        }
+        fgCv_.notify_all();
+        fgThread_.join();
+    }
     if (queue_ && fence_) flush();
     up_.reset();   // the SDK's context before the device it was made on
     freeRes(motionRead_);
@@ -4545,6 +5285,16 @@ D3D12Renderer::~D3D12Renderer() {
     freeRes(volQBuf_);
     freeRes(volUbo_);
     release(blitPipe_);
+    release(fgCapPipe_);
+    release(fgSplatPipe_);
+    release(fgResolvePipe_);
+    release(fgRs_);
+    release(fgQ_);
+    freeRes(fgQBuf_);
+    release(fgList_);
+    release(fgAlloc_);
+    release(fgFence_);
+    if (fgEvent_) CloseHandle(fgEvent_);
     release(sceneRs_);
     release(shRs_);
     release(aoRs_);
@@ -4560,6 +5310,7 @@ D3D12Renderer::~D3D12Renderer() {
     release(oneAlloc_);
     release(fence_);
     if (fenceEvent_) CloseHandle(fenceEvent_);
+    release(presQ_);
     release(queue_);
     release(info_);
     release(dev_);

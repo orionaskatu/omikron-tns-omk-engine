@@ -268,6 +268,14 @@ struct Settings {
     Source softParticlesSource = Source::Default;
     bool   volumetrics = false;
     Source volumetricsSource = Source::Default;
+    // `framegen = off|on`: FRAME GENERATION (`todo/enhancements.md` 27), the
+    // Direct3D 12 window's - an in-between picture warped along the motion
+    // vectors between every two rendered frames and presented half an
+    // interval before the second, so the window shows about twice the frames.
+    // It never changes the simulation or what a rendered frame shows; it adds
+    // half an interval of latency. In `all = max`; Vulkan says so and stays off.
+    bool   frameGen = false;
+    Source frameGenSource = Source::Default;
 
     // `texturepack = <directory>`: a TEXTURE OVERRIDE PACK (`o3de/texpack.h`,
     // `todo/enhancements.md` 25) - upscaled replacements of the `.3DT` pages,
@@ -530,6 +538,7 @@ inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D
 inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12)
 inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12)
 inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12)
+inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12 window)
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
 // `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)
 inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton at any distance
@@ -573,6 +582,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.dof, kMaxDof, s.dofSource);
     takeFlag(s.softParticles, kMaxSoftParticles, s.softParticlesSource);
     takeFlag(s.volumetrics, kMaxVolumetrics, s.volumetricsSource);
+    takeFlag(s.frameGen, kMaxFrameGen, s.frameGenSource);
     // NOT `s.colorGrade` nor `s.hdr`: asked for by name only (above).
 }
 

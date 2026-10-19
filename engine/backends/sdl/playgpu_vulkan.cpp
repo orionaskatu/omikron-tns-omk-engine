@@ -104,6 +104,7 @@ void PlayState::gpuOpenWindow() {
                 if (ssaa > 1) dx->setSupersample(ssaa);
                 if (upscaler > 0) dx->setUpscaler(upscaler, upscaleQuality);   // row 18
                 if (postFx.any()) dx->setPostProcess(postFx);   // rows 22-24
+                if (frameGen) dx->setFrameGeneration(true);     // row 27
             }
             if (dx && omk::d3d12AttachWindow(dx, hwnd) && dx->init(dispW, dispH)) {
                 vkRen = dx;
@@ -149,6 +150,8 @@ void PlayState::gpuOpenWindow() {
             if (postFx.any() && !vkr->setPostProcess(postFx))
                 std::printf("post: the post-processing chain, soft particles and volumetrics are the "
                             "Direct3D 12 backend's (--d3d12) - off on Vulkan\n");
+            if (frameGen && !vkr->setFrameGeneration(true))
+                std::printf("framegen: frame generation is the Direct3D 12 window's (--d3d12) - off on Vulkan\n");
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
@@ -205,6 +208,10 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && postFx.any() && !wv->setPostProcess(postFx))
             std::printf("post: the post-processing chain, soft particles and volumetrics are the "
                         "Direct3D 12 backend's (--world-d3d12) - off on Vulkan\n");
+        // FRAME GENERATION (row 27) is a way of presenting: a harness has no window
+        if (wv && frameGen)
+            std::printf("framegen: a way of presenting, the Direct3D 12 WINDOW's (--d3d12) - off in the "
+                        "offscreen harness\n");
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
             std::printf("renderer: the world through %s offscreen - %s "

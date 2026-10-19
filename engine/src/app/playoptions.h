@@ -147,6 +147,7 @@ struct PlayOptions {
     int hdrFlag = -1;          // --hdr, [Enhancements] hdr = on
     int softParticlesFlag = -1;  // --soft-particles, [Enhancements] softparticles = on
     int volumetricsFlag = -1;    // --volumetrics, [Enhancements] volumetrics = on
+    int frameGenFlag = -1;       // --framegen, [Enhancements] framegen = on
     int bestLodFlag = -1;    // --best-lod, [Enhancements] lod = best
     int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler
     int upscaleQualityFlag = -1; // --upscale-quality Q, [Enhancements] upscalequality

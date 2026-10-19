@@ -259,6 +259,18 @@
 ; renderer. In `all = max`. `todo/enhancements.md` 26. `--rt-reflections`.
 ;rtreflections = off
 ;
+; FRAMEGEN - frame generation: between every two rendered frames an in-between
+; picture, warped half-way along the motion vectors (both frames, with a depth
+; test, so a passer-by or a car is moved rather than doubled), presented half an
+; interval before the second - the window shows about twice the frames. The 2D
+; is never interpolated (each frame's own over both). It adds half a frame of
+; latency and changes neither the simulation nor any rendered frame; it pays
+; only when the display refreshes at about twice the rendered rate (the
+; `framerate` cap, or a long GPU frame). The Direct3D 12 window only, off under
+; MSAA (an upscaler turns MSAA off). In `all = max`. `todo/enhancements.md` 27.
+; `--framegen`.
+;framegen = off
+;
 ; LOD - a pedestrian model carries four bodies of falling detail and the game
 ; steps down one every 10 m, so past 10 m every walker is a coarser one. `best`
 ; keeps every walker on its most detailed body at any distance.

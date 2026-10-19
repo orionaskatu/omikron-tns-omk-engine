@@ -224,6 +224,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: volumetrics = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "framegen")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.frameGen = m > 0; s.frameGenSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: framegen = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kEnhancements, "texturepack")) {
             // relative to the ini's directory, so a pack beside the ini is
             // found whatever directory the game is started from

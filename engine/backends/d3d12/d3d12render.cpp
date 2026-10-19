@@ -257,12 +257,16 @@ constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
 constexpr UINT kSlotOvPic = 6;    // the OVERLAY's 565 colour plane (colour depth 32)...
 constexpr UINT kSlotOvMask = 7;   // ...and its mask plane, the next slot (one table)
 // THE POST CHAIN (todo/enhancements.md 22): `post.frag`'s ONE table - the
-// source, bloom level 0, the depth - then the chain's output and the levels
+// source, bloom level 0, the depth, its stencil plane - then the chain's output
+// and the levels
 constexpr UINT kSlotPostSrc = 8;
 constexpr UINT kSlotPostBloom = 9;
 constexpr UINT kSlotPostDepth = 10;
-constexpr UINT kSlotPostOut = 11;
-constexpr UINT kSlotBloom0 = 12;
+constexpr UINT kSlotPostStencil = 11;
+constexpr UINT kSlotPostOut = 12;
+constexpr UINT kSlotBloom0 = 13;
+// the stencil value a TRANSLUCENT BODY's pixels take for depth of field
+constexpr UINT kSubjectStencil = 2;
 constexpr int kBloomLevels = 6;   // half the display size down to 1/64
 // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): its ONE table - the depth,
 // then the half-size light
@@ -620,6 +624,15 @@ private:
     // ---- the pipelines ----
     ID3D12RootSignature* sceneRs_ = nullptr;
     ID3D12PipelineState* pipe_[3] = {};
+    // DEPTH OF FIELD'S TRANSLUCENT SUBJECT: a blended body (a hologram, a ghost)
+    // writes no depth, so the post pass saw the wall behind it and blurred it.
+    // On a frame that will take depth of field, the blended pipelines' twins
+    // mark such a body's pixels in the STENCIL (`kSubjectStencil`) - the picture
+    // and the depth untouched - and `post.frag` keeps them at the focus.
+    ID3D12PipelineState* pipeSubj_[3] = {};
+    ID3D12PipelineState* pipeCountSubj_[3] = {};
+    bool subjStencil_ = false;         // this frame marks them
+    bool curBody_ = false;             // the draw being submitted is a posed body's
     // The mirror's stencil states, made as Vulkan makes them (`pipeStencil_`,
     // `pipeDepthReset_`, `pipeRefl_`). `drawMirrorScene` draws the ORIGINAL's
     // way - reflected pass, then the real one over it, depth confining - as
@@ -1647,6 +1660,13 @@ bool D3D12Renderer::makePipelines() {
         o.StencilFunc = cmp;
         return o;
     };
+    const auto markSubject = [&](D3D12_GRAPHICS_PIPELINE_STATE_DESC& x) {
+        x.DepthStencilState.StencilEnable = TRUE;
+        x.DepthStencilState.StencilReadMask = 0xFF;
+        x.DepthStencilState.StencilWriteMask = 0xFF;
+        x.DepthStencilState.FrontFace = x.DepthStencilState.BackFace =
+            stencilOp(D3D12_STENCIL_OP_REPLACE, D3D12_COMPARISON_FUNC_ALWAYS);
+    };
     for (int k = 0; k < 3; ++k) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d = base;
         d.BlendState.RenderTarget[0] = blendState(k);
@@ -1673,6 +1693,16 @@ bool D3D12Renderer::makePipelines() {
                         : rs::code(kDx_scene_rtc_frag, sizeof kDx_scene_rtc_frag);
             pipeCount_[k] = makePso(dc, "scene, counting rays");
             if (!pipeCount_[k]) return false;
+            if (k > 0) {
+                D3D12_GRAPHICS_PIPELINE_STATE_DESC dcs = dc;
+                markSubject(dcs);
+                pipeCountSubj_[k] = makePso(dcs, "scene, counting rays, subject");
+            }
+        }
+        if (k > 0) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC dss = d;
+            markSubject(dss);
+            pipeSubj_[k] = makePso(dss, "scene, subject");
         }
         // ...and the reflection's: the same with the stencil test EQUAL 1
         d.DepthStencilState.StencilEnable = TRUE;
@@ -2857,6 +2887,7 @@ void D3D12Renderer::begin(const omk::View& view) {
         const float dx = view.cam.at[0] - view.cam.eye[0], dy = view.cam.at[1] - view.cam.eye[1],
                     dz = view.cam.at[2] - view.cam.eye[2];
         focus_ = std::sqrt(dx * dx + dy * dy + dz * dz);
+        subjStencil_ = postReq_.dof && cine_ && focus_ > 1.0f;
         // the frame's camera frame for `noteFocusBody` (the world's Y is DOWN)
         for (int k = 0; k < 3; ++k) focEye_[k] = view.cam.eye[k];
         const float il = focus_ > 1e-3f ? 1.0f / focus_ : 0.0f;
@@ -3132,6 +3163,7 @@ omk::Draw D3D12Renderer::cpuPose(const omk::Draw& d) {
 void D3D12Renderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
     noteFocusBody(d);
+    curBody_ = (d.meshPose && d.meshPoses) || d.castsShadow;
     // HYBRID RAY TRACING: the draw into the frame's acceleration structures,
     // and a posed body takes the character's traced terms even with the
     // game's shadows off (`caster` - no shadow then receives anyway)
@@ -3165,7 +3197,12 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     softDraws_ += soft;
     ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k]
                              : soft ? pipeSoft_[k] : rtCounting_ ? pipeCount_[k] : pipe_[k];
+    // a translucent body on a frame with depth of field: its twin, which marks the stencil
+    const bool subj = subjStencil_ && k > 0 && curBody_ && !soft && !forcePso_ && !reflStencil_ &&
+                      (rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k]) != nullptr;
+    if (subj) use = rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k];
     if (use != bound_) { list_->SetPipelineState(use); bound_ = use; }
+    if (subj) list_->OMSetStencilRef(kSubjectStencil);
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
     // or the pool's full index above them, past 64 (`drawTextureSlot`).
@@ -3219,6 +3256,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         list_->DrawInstanced(static_cast<UINT>(j - i), 1, static_cast<UINT>(i), 0);
         i = j;
     }
+    if (subj) list_->OMSetStencilRef(1);
     st_.drawn += static_cast<long>(d.count / 3);
 }
 
@@ -4465,21 +4503,22 @@ bool D3D12Renderer::makePost() {
         D3D12_ROOT_PARAMETER p1[2] = {
             rs::constants(0, kPushSpace, sizeof(BloomPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&r1, D3D12_SHADER_VISIBILITY_PIXEL)};
-        D3D12_STATIC_SAMPLER_DESC s[3] = {
+        D3D12_STATIC_SAMPLER_DESC s[4] = {
             rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
             rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
-            rs::sampler(2, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+            rs::sampler(2, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(3, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
         D3D12_ROOT_SIGNATURE_DESC d{};
         d.NumParameters = 2; d.pParameters = p1;
         d.NumStaticSamplers = 1; d.pStaticSamplers = s;
         bloomRs_ = makeRootSig(d, "bloom");
-        // the final pass: ONE table of three (source, bloom level 0, depth)
-        const D3D12_DESCRIPTOR_RANGE r3 = rs::srvs(0, 0, 3);
+        // the final pass: ONE table of four (source, bloom level 0, depth, its stencil)
+        const D3D12_DESCRIPTOR_RANGE r3 = rs::srvs(0, 0, 4);
         D3D12_ROOT_PARAMETER p3[2] = {
             rs::constants(0, kPushSpace, sizeof(PostPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&r3, D3D12_SHADER_VISIBILITY_PIXEL)};
         d.pParameters = p3;
-        d.NumStaticSamplers = 3;
+        d.NumStaticSamplers = 4;
         postRs_ = makeRootSig(d, "post");
         if (!bloomRs_ || !postRs_) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
@@ -4562,6 +4601,10 @@ bool D3D12Renderer::makePost() {
     sv.Format = DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
     sv.ViewDimension = samples_ > 1 ? D3D12_SRV_DIMENSION_TEXTURE2DMS : D3D12_SRV_DIMENSION_TEXTURE2D;
     dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotPostDepth));
+    // ...and the depth image's STENCIL plane (a translucent body's mark)
+    sv.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
+    if (samples_ <= 1) sv.Texture2D.PlaneSlice = 1;
+    dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotPostStencil));
     return true;
 }
 

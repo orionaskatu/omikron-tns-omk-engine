@@ -37,8 +37,10 @@ layout(set = 0, binding = 0) uniform sampler2D src;     // linear, clamped
 layout(set = 0, binding = 1) uniform sampler2D bloom;   // level 0 of the chain
 #ifdef OMK_MS
 layout(set = 0, binding = 2) uniform sampler2DMS depthTex;
+layout(set = 0, binding = 3) uniform usampler2DMS stencilTex;   // the depth image's stencil plane
 #else
 layout(set = 0, binding = 2) uniform sampler2D depthTex;
+layout(set = 0, binding = 3) uniform usampler2D stencilTex;     // the depth image's stencil plane
 #endif
 
 layout(push_constant) uniform Post {
@@ -81,6 +83,13 @@ float viewZ(vec2 uv) {
 #endif
     return pc.depthAB.w / min(d - pc.depthAB.z, -1e-7);
 }
+// A TRANSLUCENT BODY (a hologram, a ghost) writes no depth, so its pixels hold
+// the wall behind it; the scene pass marked them with stencil 2. Such a pixel
+// is as far as the focus - the subject of the picture, sharp.
+bool subjectAt(vec2 uv) {
+    ivec2 p = ivec2(min(uv * pc.depthAB.xy, pc.depthAB.xy - 1.0));
+    return texelFetch(stencilTex, p, 0).g == 2u;
+}
 // the circle of confusion's radius, in display pixels
 float coc(float z, float f) {
     float off = max(abs(z - f) - pc.dof.z * f, 0.0) / max(z, 1e-3);
@@ -120,7 +129,7 @@ void main() {
                 }
             focus = max(zs5[2], pc.dof.x);
         }
-        float zc = viewZ(uv);
+        float zc = subjectAt(uv) ? focus : viewZ(uv);
         float rc = coc(zc, focus);
         vec3 acc = c;
         float tot = 1.0;
@@ -130,7 +139,7 @@ void main() {
         for (int i = 0; i < 96 && radius < pc.dof.y; ++i) {
             vec2 t = min(uv + vec2(cos(ang), sin(ang)) * radius * pc.frame.xy, lim);
             vec3 sc = texture(src, t).rgb;
-            float zs = viewZ(t);
+            float zs = subjectAt(t) ? focus : viewZ(t);
             float rs = coc(zs, focus);
             if (zs > zc) rs = clamp(rs, 0.0, rc * 2.0);
             float m = smoothstep(radius - step_, radius + step_, rs);

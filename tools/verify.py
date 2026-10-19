@@ -28271,6 +28271,67 @@ def c_engine_dof_dialogue():
                                             "yes" if all(got) else "NO"))
 
 
+def c_engine_dof_transcan():
+    r"""`--dof` on the TRANSCAN's advert: the hologram that speaks is sharp, the room behind it soft.
+    `todo/enhancements.md` 22, `d3d12render.cpp` `kSubjectStencil` / `pipeSubj_`, `post.frag` `subjectAt`.
+    The Transcan in Kay'l's flat plays DIALOG 39, Chokovat's advert, spoken by a HOLOGRAM (`HMT_FNM`) in a
+    close-up (camera 73 hangs off the speaker). The focus was right - the log names the speaker, 45 units away -
+    but the whole picture came out soft, the hologram too: it is drawn BLENDED, a blended draw writes no depth,
+    so its pixels held the depth of the wall behind it and `post.frag` blurred them as that wall. On a frame that
+    takes depth of field the blended pipelines' twins now mark a posed body's pixels in the depth image's stencil
+    (the picture and the depth untouched) and the post pass takes a marked pixel to be at the focus.
+    The advert from the committed `traces/games-resto.bin` slot 0 standing at the Transcan (zone 4096, ENTER
+    held a few frames, 960x540, frame 150, the window picture), run with depth of field off and on:
+    * the hologram's chest and face keep their sharpness (gradient energy on / off >= 0.9);
+    * the room behind - the blinds on the left, the wall on the right - keeps under 0.6 of it;
+    * the log names a speaker as the focus (not a character's depth by luck).
+    Skipped without a D3D12 device. SHOWN TO FAIL with `subjectAt` made to return false: the hologram keeps
+    about 0.37 of its sharpness (the room 0.47).
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    play = os.path.join(eng, "build", "omk-play")
+    if not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play is not built"
+    W, H = 960, 540
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            win = os.path.join(tmp, name + ".rgba")
+            os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
+                                "--slot", "0", "--stand", "3429,1079,-674,132", "--hold", "0*30,k28*4,0*300",
+                                "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
+                                "--res", "%dx%d" % (W, H), "--frames", "150", "--shadow-quality", "mapped",
+                                "--saves", os.path.join(tmp, "saves-" + name)] + extra,
+                               capture_output=True,
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win, OMK_DOF_LOG="1"))
+            data = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout.decode("latin-1"), data
+        t0, d0 = run([], "off")
+        t1, d1 = run(["--dof"], "on")
+    if len(d0) != W * H * 4 or len(d1) != W * H * 4:
+        return ("skipped",), ("skipped",), "no Direct3D 12 window picture"
+    def lum(d):
+        return [(d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10.0 for i in range(0, len(d), 4)]
+    def energy(L, x0, x1, y0, y1):
+        return sum(abs(L[y * W + x + 1] - L[y * W + x]) for y in range(y0, y1) for x in range(x0, x1 - 1))
+    a, b = lum(d0), lum(d1)
+    def ratio(box):
+        e0 = energy(a, *box)
+        return energy(b, *box) / e0 if e0 else 1.0
+    holo = min(ratio((380, 600, 200, 370)), ratio((450, 545, 65, 190)))   # chest, face
+    room = max(ratio((8, 300, 30, 285)), ratio((700, 950, 45, 320)))      # blinds, right wall
+    last = [l for l in t1.splitlines() if l.startswith("dof: focus")]
+    named = bool(last) and "(a speaker)" in last[-1]
+    got = ("dof: focus" not in t0, named, holo >= 0.9, room < 0.6)
+    return got, (True, True, True, True), \
+           ("the hologram keeps %.0f%% of its sharpness (>= 90%%), the room behind %.0f%% (< 60%%); the log "
+            "names a speaker: %s" % (100 * holo, 100 * room, "yes" if named else "NO"))
+
+
 def c_engine_face_lines():
     r"""`omk-play --d3d12 --raytracing`: NO LINES ALONG A FACE'S TRIANGLE EDGES.
 
@@ -49715,6 +49776,7 @@ SLOW = [
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: dof focus", c_engine_dof_focus, "todo/enhancements.md 22; d3d12render.cpp noteFocusBody"),
     ("engine: dof dialogue", c_engine_dof_dialogue, "todo/enhancements.md 22; d3d12render.cpp focSubjZ_, playframe_world_scene.cpp worldFocusSubjects"),
+    ("engine: dof transcan", c_engine_dof_transcan, "todo/enhancements.md 22; d3d12render.cpp pipeSubj_, post.frag subjectAt"),
     ("engine: anim blend", c_engine_anim_blend, "todo/enhancements.md 28; actor/pose.h"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),

@@ -98,6 +98,7 @@ void PlayState::gpuOpenWindow() {
                 if (aaSamples > 1) dx->setMultisample(aaSamples);   // the enhancements
                 if (ssao) dx->setAmbientOcclusion(true);
                 if (raytracing) dx->setRaytracing(true);         // row 19
+                if (rtReflections) dx->setRtReflections(true);   // row 26
                 if (texFilter > 0) dx->setTextureFilter(texFilter);
                 if (texAniso > 1) dx->setAnisotropy(texAniso);
                 if (ssaa > 1) dx->setSupersample(ssaa);
@@ -137,6 +138,8 @@ void PlayState::gpuOpenWindow() {
             if (ssao) vkr->setAmbientOcclusion(true);
             if (raytracing && !vkr->setRaytracing(true))
                 std::printf("raytracing: the Direct3D 12 backend's (--d3d12, DXR 1.1) - off on Vulkan\n");
+            if (rtReflections && !vkr->setRtReflections(true))
+                std::printf("rt reflections: the Direct3D 12 backend's ray tracing - off on Vulkan\n");
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
@@ -189,6 +192,8 @@ void PlayState::gpuOpenWorldHarness() {
         // HYBRID RAY TRACING (row 19): the D3D12 renderer takes it, Vulkan declines
         if (wv && raytracing && !wv->setRaytracing(true))
             std::printf("raytracing: the Direct3D 12 backend's (--world-d3d12, DXR 1.1) - off on Vulkan\n");
+        if (wv && rtReflections && !wv->setRtReflections(true))
+            std::printf("rt reflections: the Direct3D 12 backend's ray tracing - off on Vulkan\n");
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);

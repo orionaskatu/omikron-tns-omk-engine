@@ -7073,7 +7073,7 @@ def c_enhance_all():
              "escapeback": "EscapeBack", "ssao": "AmbientOcclusion", "raytracing": "Raytracing",
              "lod": "BestLod", "vehicleshine": "VehicleShine", "colordepth": "ColourDepth",
              "bloom": "Bloom", "dof": "Dof", "softparticles": "SoftParticles",
-             "volumetrics": "Volumetrics"}
+             "volumetrics": "Volumetrics", "rtreflections": "RtReflections"}
     reported = {k for k in allMax if k != "all"} - SEPARATE
     covered = reported == set(named)
     want = {k: int(tops[v]) for k, v in named.items() if v in tops}
@@ -27728,6 +27728,81 @@ def _d3d12_street_runs(runs, W=640, H=480):
     return out
 
 
+def c_engine_rt_reflections():
+    r"""`omk-play --raytracing --rt-reflections`: RAY-TRACED REFLECTIONS on Direct3D 12 - an enhancement, off by default.
+    `todo/enhancements.md` 26. The set's GROUND meshes (`o3de/floormesh.h`:
+    60% of their area facing up, single-sided, not water, grass, snow, a canal
+    bottom or a roof) are drawn `kDrawFloor`, and `scene.frag`'s -DOMK_RT
+    build traces one reflection ray a pixel from their upward faces - the
+    set and the bodies, Fresnel, puddles from a world-space noise, bright
+    texels boosted, a miss the sky's mean colour - averaged over 2x2 pixels.
+    Read from what the WINDOW was handed (`OMK_WINDUMP`), 640x480, the street
+    start, colour depth 32:
+      * off in the source; a plain run says nothing of it, and asked for
+        WITHOUT the ray tracing it says so and the frame is the plain one
+        byte for byte (the key is inert);
+      * two ray-traced runs without it are byte-identical (and, measured when
+        it was written, byte-identical to the tree before it);
+      * on, it says so (`rt_refl` on), the frame draws ground runs and casts
+        reflection rays (`rt_refl.frame`);
+      * THE FOOTPRINT: a run with the strength at 40 (`OMK_RT_REFL_TUNE`)
+        saturates every pixel the reflection may touch - the ground; it lies
+        in the lower part of the picture (under 3% of it in the top third);
+      * the reflection moves 1-60% of the pixels, at least 97% of them inside
+        that footprint (the rest the 2x2 filter's and the bloom-free edge),
+        and brightens some (the lamps, the windows, the sky in the puddles:
+        at least 100 pixels by 12 or more over their channels).
+    SHOWN TO FAIL (2026-10-19) twice: with the `rtReflect` call removed from
+    `scene.frag`'s main (nothing moves), and with `floorMeshes` matching no
+    mesh (no ground draw, nothing moves).
+    """
+    src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
+    defaults = "bool   rtReflections = false;" in src
+    rt = ["--raytracing"]
+    r = _d3d12_street_runs([("p0", [], {}), ("pk", ["--rt-reflections"], {}),
+                            ("t0", rt, {}), ("t0b", rt, {}), ("tr", rt + ["--rt-reflections"], {}),
+                            ("tg", rt + ["--rt-reflections"], {"OMK_RT_REFL_TUNE": "40,1,2400,0.015,1,0"})])
+    if isinstance(r, tuple):
+        return r
+    t0 = r["p0"][0]
+    if "renderer: D3D12" not in t0:
+        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
+    if "no DXR 1.1" in r["t0"][0]:
+        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+    p0, pk, a, b, tr, tg = (r[k][1] for k in ("p0", "pk", "t0", "t0b", "tr", "tg"))
+    if not all((p0, pk, a, b, tr, tg)):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    W, H = 640, 480
+    n = W * H
+    silent = "rt reflections" not in t0.lower() and not any(nm.startswith("rt_refl") for nm, _ in _events(t0))
+    inert = "ray tracing is off" in r["pk"][0] and pk == p0
+    ev = _events(r["tr"][0])
+    on = any(nm == "rt_refl" and f.get("on") == "1" for nm, f in ev)
+    fr = [f for nm, f in ev if nm == "rt_refl.frame"]
+    draws = max([int(f.get("floor_draws", "0")) for f in fr] or [0])
+    rays = max([int(f.get("refl_rays", "0")) for f in fr] or [0])
+    foot = top = moved = outside = up = 0
+    for i in range(n):
+        o = a[4 * i:4 * i + 3]
+        f = tg[4 * i:4 * i + 3] != o
+        if f:
+            foot += 1
+            top += i // W < H // 3
+        m = tr[4 * i:4 * i + 3]
+        if m != o:
+            moved += 1
+            outside += not f
+            up += sum(m) - sum(o) >= 12
+    print("        rt reflections: %d ground draws, ~%d rays; footprint %.1f%% (%d px in the top third), moved "
+          "%.1f%% (%d outside the footprint), %d brighter" % (draws, rays, 100.0 * foot / n, top,
+                                                            100.0 * moved / n, outside, up))
+    got = (defaults, silent, inert, a == b, on, draws > 0, rays > 0, top < 0.03 * max(foot, 1),
+           0.01 * n <= moved <= 0.6 * n, outside <= 0.03 * max(moved, 1), up >= 100)
+    return got, (True,) * 11, \
+        ("off by default and silent, inert without the ray tracing, two ray-traced runs identical; on, "
+         "ground draws and reflection rays, the pixels moved inside the ground's footprint, some brighter")
+
+
 def c_engine_soft_particles():
     r"""`omk-play --soft-particles`: SOFT PARTICLES on Direct3D 12 - an enhancement, off by default.
     `todo/enhancements.md` 23. The effect sprites (`Render_SubmitSprites`'
@@ -46391,8 +46466,9 @@ def c_licence_headers():
     # 636: + `engine/backends/d3d12/upscale.h`, `upscale_fsr.cpp`, `upscale_dlss.cpp` (FSR / DLSS)
     # 641: + `engine/src/formats/png.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}` and
     # `tools/texpack.py` (the texture override packs)
+    # 642: + `engine/src/o3de/floormesh.h` (ray-traced reflections' ground)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (641, [], 1, []), \
+           (642, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -49153,6 +49229,7 @@ SLOW = [
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),
+    ("engine: rt reflections", c_engine_rt_reflections, "todo/enhancements.md 26; scene.frag (OMK_RT), o3de/floormesh.h"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),
     ("engine: sneak echo bar", c_engine_sneak_echo_bar,

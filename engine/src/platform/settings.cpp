@@ -261,6 +261,12 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: raytracing = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kEnhancements, "rtreflections")) {
+            const int m = escapeBackMode(*w);
+            if (m >= 0) { s.rtReflections = m > 0; s.rtReflectionsSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: rtreflections = %s is not a mode "
+                                      "(off|on) - ignored\n", w->c_str());
+        }
         // ...applied LAST, so every specific key above has already claimed its
         // field and `applyMaxEnhancements` leaves it alone. That is what makes
         // `all` a base rather than an override, whatever order the file is in.

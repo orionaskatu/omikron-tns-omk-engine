@@ -138,6 +138,7 @@ struct PlayOptions {
     int escapeBackFlag = -1; // --escape-back, [Enhancements] escapeback = on
     int ssaoFlag = -1;       // --ssao, [Enhancements] ssao = on
     int raytracingFlag = -1; // --raytracing, [Enhancements] raytracing = on
+    int rtReflectionsFlag = -1; // --rt-reflections, [Enhancements] rtreflections = on
     int vehicleShineFlag = -1; // --vehicle-shine, [Enhancements] vehicleshine = on
     int colourDepthFlag = -1;  // --colordepth 16|32, [Enhancements] colordepth
     int bloomFlag = -1;        // --bloom, [Enhancements] bloom = on

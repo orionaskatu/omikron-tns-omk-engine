@@ -199,6 +199,13 @@ struct Settings {
     // Vulkan and the software reference say so and stay off.
     bool   raytracing = false;
     Source raytracingSource = Source::Default;
+    // `rtreflections = off|on`: RAY-TRACED REFLECTIONS (`todo/enhancements.md`
+    // 26) - the ground of a set (its upward road, pavement and floor meshes,
+    // `o3de/floormesh.h`) wet in patches, one traced ray a pixel mirroring the
+    // set, the bodies and the neon. Only while `raytracing` is live (D3D12,
+    // DXR 1.1); otherwise it says so and stays off.
+    bool   rtReflections = false;
+    Source rtReflectionsSource = Source::Default;
 
     // `upscaler = off|fsr|dlss` and `upscalequality = native|quality|balanced|
     // performance|ultraperformance`: TEMPORAL UPSCALING (`todo/enhancements.md`
@@ -516,6 +523,7 @@ inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxEscapeBack    = 1;   // ESC/Backspace send BACK
 inline constexpr int kMaxAmbientOcclusion = 1;   // SSAO
 inline constexpr int kMaxRaytracing = 1;          // hybrid ray tracing (D3D12 + DXR 1.1 only)
+inline constexpr int kMaxRtReflections = 1;       // ray-traced reflections on the wet ground (with raytracing)
 inline constexpr int kMaxVehicleShine = 1;        // sliders and motos shine
 inline constexpr int kMaxColourDepth = 32;        // the window's picture at 8 bits a channel
 inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D12)
@@ -557,6 +565,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.escapeBack, kMaxEscapeBack, s.escapeBackSource);
     takeFlag(s.ambientOcclusion, kMaxAmbientOcclusion, s.ambientOcclusionSource);
     takeFlag(s.raytracing, kMaxRaytracing, s.raytracingSource);
+    takeFlag(s.rtReflections, kMaxRtReflections, s.rtReflectionsSource);
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
     takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
     take(s.colourDepth,   kMaxColourDepth,   s.colourDepthSource);

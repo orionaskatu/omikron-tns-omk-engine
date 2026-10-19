@@ -583,18 +583,29 @@ void PlayState::worldDrawSetRuns(float clipReach, std::size_t& runsCulled,
             return vis[static_cast<std::size_t>(mi)] == 3;
         };
         constexpr std::uint32_t kBridgeCorners = 300;
+        // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): a GROUND mesh's
+        // run is drawn marked `kDrawFloor`, so two runs merge only when both
+        // are ground or neither is. Without the reflections live no run is
+        // ground and the merging is the old one exactly.
+        const bool floorLive = !w.meshFloor.empty() && world.rtReflectionsLive();
+        const auto ground = [&](std::int32_t mi) -> bool {
+            return floorLive && mi >= 0 && static_cast<std::size_t>(mi) < w.meshFloor.size() &&
+                   w.meshFloor[static_cast<std::size_t>(mi)] != 0;
+        };
         // Emit, merging adjacent surviving runs so a fully visible
         // batch still costs one draw.
         std::size_t i = 0;
         while (i < w.runs.size()) {
             if (!visible(w.runs[i].mesh)) { ++runsCulled; ++i; continue; }
             const auto& first = w.runs[i];
+            const bool firstGround = ground(first.mesh);
             std::uint32_t start = first.start, count = first.count;
             std::size_t j = i + 1;
             std::size_t bridged = 0;
             for (;;) {
                 while (j < w.runs.size() && w.runs[j].batch == first.batch &&
-                       w.runs[j].start == start + count && visible(w.runs[j].mesh)) {
+                       w.runs[j].start == start + count && visible(w.runs[j].mesh) &&
+                       ground(w.runs[j].mesh) == firstGround) {
                     count += w.runs[j].count; ++j;
                 }
                 // a gap of side-culled runs, short, and a drawn run after it
@@ -606,7 +617,8 @@ void PlayState::worldDrawSetRuns(float clipReach, std::size_t& runsCulled,
                     gap += w.runs[k].count; ++k;
                 }
                 if (k == j || k >= w.runs.size() || w.runs[k].batch != first.batch ||
-                    w.runs[k].start != start + count + gap || !visible(w.runs[k].mesh))
+                    w.runs[k].start != start + count + gap || !visible(w.runs[k].mesh) ||
+                    ground(w.runs[k].mesh) != firstGround)
                     break;
                 count += gap; bridged += k - j; j = k;
             }
@@ -616,6 +628,7 @@ void PlayState::worldDrawSetRuns(float clipReach, std::size_t& runsCulled,
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material) + texBase),
                              &w.geo, start, count, b.blend, b.cutout});
+            if (firstGround) draws.back().lit |= omk::kDrawFloor;
             i = j;
         }
         // FLAG 2, as the walk just treated it: how many meshes are hidden
@@ -1027,6 +1040,35 @@ void PlayState::worldDrawParticles(bool scriptSprites, float fxNear, float fxFar
 // THE SKY, placed and submitted before anything else (from `worldDrawLists`)
 void PlayState::worldDrawSky() {
     omk::Renderer& world = *world_;
+    // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): the sky's mean
+    // colour, what an upward reflection ray that leaves the set sees - texel
+    // times vertex colour over its corners, every frame (the clock may
+    // recolour it; 864 corners)
+    view.skyMean[0] = view.skyMean[1] = view.skyMean[2] = -1.0f;
+    if (drawSky && world.rtReflectionsLive()) {
+        const omk::Geometry& sg = sky.rest.corners.empty() ? sky.geo : sky.rest;
+        double s[3] = {0.0, 0.0, 0.0};
+        std::size_t n = 0;
+        for (const auto& b : sg.batches) {
+            if (b.material < 0 || static_cast<std::size_t>(b.material) >= sky.tex.size()) continue;
+            const omk::Texture& t = sky.tex[static_cast<std::size_t>(b.material)];
+            if (t.width <= 0 || t.height <= 0 || t.pal.size() < 768 ||
+                t.idx.size() < static_cast<std::size_t>(t.width) * static_cast<std::size_t>(t.height)) continue;
+            for (std::size_t c = b.start; c < b.start + b.count && c < sg.corners.size(); ++c) {
+                const omk::Corner& k = sg.corners[c];
+                const int u = ((static_cast<int>(k.u) % t.width) + t.width) % t.width;
+                const int v = ((static_cast<int>(k.v) % t.height) + t.height) % t.height;
+                const std::size_t i = t.idx[static_cast<std::size_t>(v) * static_cast<std::size_t>(t.width) +
+                                            static_cast<std::size_t>(u)];
+                s[0] += t.pal[3 * i] / 255.0 * k.r;
+                s[1] += t.pal[3 * i + 1] / 255.0 * k.g;
+                s[2] += t.pal[3 * i + 2] / 255.0 * k.b;
+                ++n;
+            }
+        }
+        if (n)
+            for (int k = 0; k < 3; ++k) view.skyMean[k] = static_cast<float>(s[k] / static_cast<double>(n));
+    }
     if (drawSky && !sky.base.empty() && !sky.geo.batches.empty()) {
         const float sx = view.cam.eye[0], sz = view.cam.eye[2];
         const float sy = sky.origin[1] - kSkyLift;

@@ -58,6 +58,8 @@ int main(int argc, char** argv) {
                 omk::sourceName(s.ambientOcclusionSource));
     std::printf("enh raytracing %d %s\n", s.raytracing ? 1 : 0,
                 omk::sourceName(s.raytracingSource));
+    std::printf("enh rtreflections %d %s\n", s.rtReflections ? 1 : 0,
+                omk::sourceName(s.rtReflectionsSource));
     std::printf("enh lod %d %s\n", s.bestLod ? 1 : 0,
                 omk::sourceName(s.bestLodSource));
     std::printf("enh vehicleshine %d %s\n", s.vehicleShine ? 1 : 0,

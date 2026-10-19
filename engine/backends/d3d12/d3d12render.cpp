@@ -143,7 +143,9 @@ struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
 // ...the RAY-TRACED AO's (`ssao.frag` -DOMK_RT): the camera in the world, after it
 struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
 // `scene.frag`'s `RtFrame` (-DOMK_RT, set 3 binding 2: a root CBV b2 space3)
-struct RtFrame { float sky[4]; float eye[4]; float params[4]; };
+// (`refl`, `refl2`: RAY-TRACED REFLECTIONS', `todo/enhancements.md` 26 - after
+// the three, so nothing above moves)
+struct RtFrame { float sky[4]; float eye[4]; float params[4]; float refl[4]; float refl2[4]; float skyUp[4]; };
 // `blit.frag`'s, this backend's own: the swapchain's scaled copy
 struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, peak; };
 // THE POST CHAIN's (`bloom.frag`, `post.frag`, todo/enhancements.md 22)
@@ -368,6 +370,14 @@ public:
         return true;
     }
     bool raytracingLive() const override { return rtOn_; }
+    // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): honoured in `init`
+    // only when the ray tracing came up
+    bool setRtReflections(bool on) override {
+        if (dev_) return false;
+        wantRtRefl_ = on;
+        return true;
+    }
+    bool rtReflectionsLive() const override { return rtReflOn_; }
     bool setMultisample(int samples) override {
         if (dev_) return false;
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
@@ -732,6 +742,8 @@ private:
         std::map<std::size_t, RtRun> runs;          // its opaque draws, by start
     };
     bool wantRt_ = false, rtOn_ = false;
+    bool wantRtRefl_ = false, rtReflOn_ = false;   // RAY-TRACED REFLECTIONS (row 26)
+    long rtFloorDraws_ = 0;                        // ...the ground draws this frame, for the log
     bool rtBodyDraw_ = false;                       // the draw going to `submitOne` is a body
     bool rtCounting_ = false;                       // this frame draws `pipeCount_` (one in 60)
     long rtCounted_ = 0;                            // ...frames so drawn
@@ -2114,6 +2126,18 @@ bool D3D12Renderer::init(int w, int h) {
     if (!pickDevice()) return false;
     // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`)
     if (wantRt_) rtInit();
+    // ...and its REFLECTIONS on the ground (`todo/enhancements.md` 26)
+    if (wantRtRefl_) {
+        rtReflOn_ = rtOn_;
+        if (rtOn_) {
+            std::printf("d3d12: RT REFLECTIONS on - an ENHANCEMENT: the ground wet in patches, one traced "
+                        "ray a pixel mirroring the set, the bodies and the neon\n");
+            omk::event("rt_refl", {{"on", 1}});
+        } else {
+            std::printf("d3d12: rt reflections asked for, but the ray tracing is not live - off\n");
+            omk::event("rt_refl", {{"on", 0}});
+        }
+    }
     // THE UPSCALER, once there is a device to ask - it decides the render size
     if (upKind_ != omk::d3dup::kOff) makeUpscaler();
     srcW_ = sourceW(); srcH_ = sourceH();
@@ -2853,7 +2877,8 @@ void D3D12Renderer::submit(const omk::Draw& d) {
     // game's shadows off (`caster` - no shadow then receives anyway)
     if (rtOn_) {
         rtNote(d);
-        rtBodyDraw_ = d.meshPose != nullptr || (d.lit & ~omk::kDrawSoft) != 0;
+        rtBodyDraw_ = d.meshPose != nullptr || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0;
+        rtFloorDraws_ += (d.lit & omk::kDrawFloor) != 0;
     }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         UINT64 off = 0;
@@ -2896,7 +2921,8 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     const int packK = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].scale : 1;
     push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
-    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
+    if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
     // THE FOG's two exclusions, the same rule `renderer.cpp` applies for the
     // software loop and Vulkan applies in `submitOne`: key bits 0x2080 not
     // fogged, key bit 0x800 doubles both ends.
@@ -3234,6 +3260,30 @@ void D3D12Renderer::rtBind(const omk::View& view) {
         f.sky[3] = tune[0]; f.eye[3] = tune[1];
         for (int k = 0; k < 4; ++k) f.params[k] = tune[2 + k];
     }
+    // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): x the strength (0
+    // off), y F0 (Schlick), z the ray's reach, w a puddle's roughness (the
+    // cone's half-width); refl2 x the share of the ground wet, y the boost a
+    // bright (neon, lamp) texel takes, z a damp patch's roughness, w the
+    // strength a damp (not puddled) patch keeps
+    if (rtReflOn_) {
+        // the sky's mean colour (`View::skyMean`), w 1 when there is one
+        if (view.skyMean[0] >= 0.0f) {
+            for (int k = 0; k < 3; ++k) f.skyUp[k] = view.skyMean[k];
+            f.skyUp[3] = 1.0f;
+        }
+        f.refl[0] = 1.0f; f.refl[1] = 0.06f; f.refl[2] = 2400.0f; f.refl[3] = 0.015f;
+        f.refl2[0] = 0.45f; f.refl2[1] = 1.6f; f.refl2[2] = 0.08f; f.refl2[3] = 0.3f;
+        // `OMK_RT_REFL_TUNE="strength,F0,reach,roughness,wet share,boost"`, by eye
+        static float rt[6] = {-1, -1, -1, -1, -1, -1};
+        static const bool rtuned = [] {
+            const char* t = omk::envStr("OMK_RT_REFL_TUNE");
+            return t && std::sscanf(t, "%f,%f,%f,%f,%f,%f", &rt[0], &rt[1], &rt[2], &rt[3], &rt[4], &rt[5]) == 6;
+        }();
+        if (rtuned) {
+            for (int k = 0; k < 4; ++k) f.refl[k] = rt[k];
+            f.refl2[0] = rt[4]; f.refl2[1] = rt[5];
+        }
+    }
     std::memcpy(rtFramePtr_, &f, sizeof f);
     list_->SetGraphicsRootShaderResourceView(6, rtTlas_->GetGPUVirtualAddress());
     list_->SetGraphicsRootShaderResourceView(7, rtInstTab_->GetGPUVirtualAddress());
@@ -3335,7 +3385,7 @@ void D3D12Renderer::rtNote(const omk::Draw& d) {
     const std::size_t slot = omk::drawTextureSlot(d);
     const UINT srv = rtTexWord(slot);   // the heap index, with a pack's k
     const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
-    if (posed || d.castsShadow || (d.lit & ~omk::kDrawSoft) != 0) {
+    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
         n.geo = d.geo;
         if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);
@@ -3585,7 +3635,15 @@ void D3D12Renderer::rtAfter() {
                                {"bodies", bodies}, {"set_tris", static_cast<long>(setTris)},
                                {"body_tris", static_cast<long>(bodyTris)},
                                {"shadow_rays", shadowRays}, {"indirect_rays", indirectRays}});
+        if (rtReflOn_) {
+            const unsigned reflRays = static_cast<unsigned>(rtCounts_[2] / cf);
+            std::printf("d3d12: rt reflections (frame %ld) - %ld ground draws, ~%u reflection rays a frame\n",
+                        rtFrame_, rtFloorDraws_, reflRays);
+            omk::event("rt_refl.frame", {{"frame", rtFrame_}, {"floor_draws", rtFloorDraws_},
+                                         {"refl_rays", reflRays}});
+        }
     }
+    rtFloorDraws_ = 0;
 }
 
 void D3D12Renderer::rtKill() {

@@ -709,6 +709,9 @@ struct WorldSlot {
     // bolts' world ray does not (`sub_444460` never tests it). Astaroth's
     // souls are the one writer (`todo/astaroth.md`). Empty = none hidden.
     std::vector<std::uint8_t> meshHidden;
+    // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): one byte a mesh, 1 =
+    // GROUND (`o3de/floormesh.h`). Empty unless the reflections are asked for.
+    std::vector<std::uint8_t> meshFloor;
     // the shot soup's triangle -> mesh, as runs {first triangle, mesh}
     std::vector<std::pair<std::uint32_t, int>> shotMeshRuns;
     int shotMeshOf(std::int64_t tri) const {

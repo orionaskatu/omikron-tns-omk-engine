@@ -319,6 +319,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   around them, shadow rays for their lamps, ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
 "                   raytracing=on\n"
+"  --rt-reflections ENHANCEMENT: ray-traced reflections on the wet ground - the\n"
+"                   street mirrors the neon, the lamps and the passers-by (with\n"
+"                   --raytracing only); [Enhancements] rtreflections=on\n"
 "  --upscaler off|fsr|dlss  ENHANCEMENT: temporal upscaling, AMD FSR or NVIDIA\n"
 "                   DLSS - the Direct3D 12 backend only (--d3d12, --world-d3d12);\n"
 "                   [Enhancements] upscaler=fsr\n"
@@ -547,6 +550,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--escape-back") escapeBackFlag = 1;
         else if (a == "--ssao") ssaoFlag = 1;
         else if (a == "--raytracing") raytracingFlag = 1;
+        else if (a == "--rt-reflections") rtReflectionsFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--vehicle-shine") vehicleShineFlag = 1;
         else if (a == "--bloom") bloomFlag = 1;

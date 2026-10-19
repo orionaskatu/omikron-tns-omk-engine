@@ -128,6 +128,11 @@ struct View {
     // past the clip distance fades into it rather than into black
     // (`o3de/daynight.h`; todo/drift-audit.md L1 step 4).
     std::uint8_t clearColour[3] = {0, 0, 0};   // r, g, b
+    // ...and the SKY's mean colour, 0..1 (its texels times its vertex colours)
+    // - what a RAY-TRACED REFLECTION (`todo/enhancements.md` 26) leaving the
+    // set upward sees, the sky plane being far past any ray's reach. Negative
+    // = none; filled only for a renderer that answers `rtReflectionsLive()`.
+    float skyMean[3] = {-1.0f, -1.0f, -1.0f};
     // ...and the grey a PER-PIXEL-lit batch (`Draw::lit` 1, the enhancement of
     // row 7) starts from, 0..1: the active scene's `+416` - the set's ambient,
     // or the clock's in a day/night area - which is what the engine's own lit
@@ -264,6 +269,10 @@ inline constexpr int kDrawShine = 4;
 // 23). Set by the frontend only for a renderer that answers
 // `softParticlesLive()`; a backend that does not fade ignores it.
 inline constexpr int kDrawSoft = 8;
+// Bit 16: this SET run is GROUND (`o3de/floormesh.h`) - RAY-TRACED REFLECTIONS
+// (`todo/enhancements.md` 26) may wet it. Set by the frontend only for a
+// renderer that answers `rtReflectionsLive()`; not a body, not a lit mode.
+inline constexpr int kDrawFloor = 16;
 
 struct Draw {
     std::uint32_t   bucketKey = 0;
@@ -448,6 +457,11 @@ public:
     // answers once `init()` has run.
     virtual bool setRaytracing(bool /*on*/) { return false; }
     virtual bool raytracingLive() const { return false; }
+    // ...and RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26) on the draws
+    // the frontend marks `kDrawFloor`: the same contract, honoured only with
+    // the ray tracing live; `rtReflectionsLive` answers once `init()` has run.
+    virtual bool setRtReflections(bool /*on*/) { return false; }
+    virtual bool rtReflectionsLive() const { return false; }
 
     // The second enhancement: texture filtering, `mode` 0 nearest (the
     // original: MAG/MIN POINT, MIP NONE), 1 bilinear, 2 trilinear - a mip

@@ -190,6 +190,13 @@ int PlayState::setupSession() {
     if (raytracing)
         std::printf("raytracing: asked for - the Direct3D 12 backend's alone, on a DXR 1.1 GPU "
                     "(--d3d12, --world-d3d12); Vulkan and the software reference leave it off\n");
+    // RAY-TRACED REFLECTIONS (settings.h `rtReflections`): a part of the ray
+    // tracing, so nothing without it
+    rtReflections = enh(rtReflectionsFlag, settings.rtReflections ? 1 : 0, omk::kMaxRtReflections) > 0;
+    if (rtReflections && !raytracing) {
+        std::printf("rt reflections: asked for, but ray tracing is off (raytracing = on) - off\n");
+        rtReflections = false;
+    }
     // THE UPSCALER (settings.h `upscaler`), handed to the D3D12 renderer before
     // its init (playgpu_vulkan.cpp). Like supersampling it is asked for by
     // name only - `--enhance-all` leaves it off.

@@ -252,6 +252,13 @@
 ; GPU with DXR 1.1 only (`renderer = d3d12`). `todo/enhancements.md` 19.
 ;raytracing = off
 ;
+; RTREFLECTIONS - ray-traced reflections on the wet ground: the street's road,
+; pavement and floor meshes wet in patches, puddles mirroring the neon, the
+; lamps, the shop windows and the passers-by, damp and dull between. Only with
+; `raytracing = on` (it says so and stays off otherwise); the Direct3D 12
+; renderer. In `all = max`. `todo/enhancements.md` 26. `--rt-reflections`.
+;rtreflections = off
+;
 ; LOD - a pedestrian model carries four bodies of falling detail and the game
 ; steps down one every 10 m, so past 10 m every walker is a coarser one. `best`
 ; keeps every walker on its most detailed body at any distance.

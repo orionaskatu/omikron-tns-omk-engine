@@ -123,6 +123,10 @@ layout(set = 3, binding = 2) uniform RtFrame {
     vec4 sky;      // rgb what a ray leaving the set sees; a the indirect term's strength (0 off)
     vec4 eye;      // xyz the eye; w the near occlusion's strength
     vec4 params;   // x indirect reach, y occlusion reach, z lamp radius, w lamp margin (< 0: no shadow rays)
+    vec4 refl;     // RAY-TRACED REFLECTIONS: x strength (0 off), y F0, z reach, w a puddle's roughness
+    vec4 refl2;    // x the share of the ground wet, y a bright texel's boost, z a damp patch's
+                   // roughness, w the strength a damp patch keeps
+    vec4 skyUp;    // rgb the sky's mean colour (what an upward ray leaving the set sees), w 1 if any
 } rtf;
 #ifdef OMK_RT_COUNT
 layout(std430, set = 3, binding = 4) buffer RtCount { uint n[]; } rtCount;
@@ -334,6 +338,93 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
 #endif
     return shade * (1.0 - rtf.eye.w * q.w) + rtf.sky.a * q.rgb;
 }
+
+// RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26), an ENHANCEMENT: a
+// GROUND draw (`kDrawFloor` - the set's road, pavement and floor meshes,
+// `o3de/floormesh.h`) is wet in patches and mirrors what is above it.
+//   * THE WET: value noise over the world's XZ in three octaves (patches of
+//     ~18 m, puddles of a few), fixed to the ground - never the frame; a
+//     share `refl2.x` of it is puddled (near-mirror, the albedo darkened as
+//     wet stone darkens), the rest damp (rough, weak);
+//   * ONE RAY a pixel about the mirror direction, turned within a cone as wide
+//     as the roughness by a stable per-pixel angle (`rtNoise`), against the
+//     set AND the bodies (the passers-by, the traffic); a hit gives what the
+//     eye would see there - the baked colour times the texel, a body's texel
+//     under a middling light - and a bright texel (a neon tube, a lamp) is
+//     BOOSTED so the post chain's bloom picks its reflection up; a miss, or a
+//     hit far off, fades to the sky: the sky plane's mean colour (`View::skyMean`) overhead, the fog colour toward the horizon;
+//   * Schlick's Fresnel - weak looking down, strong at grazing - and the 2x2
+//     quad mean (`rtQuad`) over the ground pixels as the spatial filter.
+// Only an UPWARD face reflects (a kerb's side in a ground mesh does not).
+uint rrHash(ivec2 p) {
+    uint h = uint(p.x) * 1597334677u ^ uint(p.y) * 3812015801u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    return h ^ (h >> 13u);
+}
+float rrValue(vec2 x) {
+    vec2 i = floor(x), f = fract(x);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    ivec2 c = ivec2(i);
+    float a = float(rrHash(c) & 0xFFFFu), b = float(rrHash(c + ivec2(1, 0)) & 0xFFFFu);
+    float d = float(rrHash(c + ivec2(0, 1)) & 0xFFFFu), e = float(rrHash(c + ivec2(1, 1)) & 0xFFFFu);
+    return mix(mix(a, b, u.x), mix(d, e, u.x), u.y) / 65535.0;
+}
+// -> 0 damp .. 1 a puddle
+float rrWet(vec2 xz) {
+    float n = 0.55 * rrValue(xz / 700.0) + 0.3 * rrValue(xz / 230.0 + vec2(17.3, 5.1))
+            + 0.15 * rrValue(xz / 75.0 + vec2(3.7, 41.9));
+    float t = 1.0 - rtf.refl2.x;   // the noise's level the wet share starts above
+    return smoothstep(t - 0.035, t + 0.035, n);
+}
+uint rrRays = 0u;
+vec3 rtReflect(vec3 c) {
+    vec3 ng = cross(dFdx(vWorld), dFdy(vWorld));
+    ng = dot(ng, ng) > 1e-12 ? normalize(ng) : vec3(0.0, 1.0, 0.0);
+    if (ng.y > 0.0) ng = -ng;                    // up is -Y
+    vec3 V = normalize(rtf.eye.xyz - vWorld);
+    float use = (ng.y < -0.9 && dot(V, ng) > 0.0) ? 1.0 : 0.0;
+    float wet = rrWet(vWorld.xz);
+    float rough = mix(rtf.refl2.z, rtf.refl.w, wet);
+    vec3 R = reflect(-V, ng);
+    vec3 T = normalize(cross(abs(R.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), R));
+    vec3 B = cross(R, T);
+    float a = 6.2831853 * rtNoise(gl_FragCoord.xy + vec2(29.0, 5.0));
+    float r = rough * sqrt(rtNoise(gl_FragCoord.yx + vec2(17.0, 41.0)));
+    vec3 d = normalize(R + (T * cos(a) + B * sin(a)) * r);
+    if (dot(d, ng) < 0.02) d = normalize(d - ng * (dot(d, ng) - 0.02));
+    // a miss: the sky plane overhead (its mean colour), the fog toward the horizon
+    vec3 rad = rtf.skyUp.w > 0.0 ? mix(rtf.sky.rgb, rtf.skyUp.rgb, smoothstep(0.03, 0.35, -d.y)) : rtf.sky.rgb;
+    if (use > 0.0) {
+        ++rrRays;
+        float reach = rtf.refl.z;
+        if (rtTrace(vWorld + ng * 1.5, d, reach, kRtSet | kRtBody, false)) {
+            vec2 uv; vec3 col; uint tex;
+            rtSurface(rtI, rtP, rtG, rtB, uv, col, tex);
+            vec3 tx = rtTexel(tex, uv).rgb;
+            vec3 h = rtInst.i[rtI].z == kRtBody ? tx * clamp(col, 0.0, 1.0) * 0.4 : col * tx;
+            // a bright texel BOOSTED in the puddles alone, and a damp patch's
+            // scattered ray clamped - one lamp texel in a rough cone is a
+            // firefly, not a reflection
+            float m = max(h.r, max(h.g, h.b));
+            h *= 1.0 + rtf.refl2.y * wet * smoothstep(0.55, 0.95, m);
+            h = min(h, vec3(mix(0.35, 4.0, wet)));
+            rad = mix(h, rtf.sky.rgb, smoothstep(0.55, 1.0, rtT / reach));
+        }
+    }
+    float ndv = clamp(dot(ng, V), 0.0, 1.0);
+    float F = rtf.refl.y + (1.0 - rtf.refl.y) * pow(1.0 - ndv, 5.0);
+    float k = rtf.refl.x * mix(rtf.refl2.w, 1.0, wet) * F;
+    // a HELPER lane (the quad's pixel past the triangle's edge, run for the
+    // derivatives alone) traces nothing useful - its ray query may not run -
+    // so it takes no part in the mean, or every edge draws a seam of sky
+    float w = gl_HelperInvocation ? 0.0 : use;
+    vec4 q = rtQuad(vec4(rad * k * w, w));
+    vec3 add = q.a > 0.0 ? q.rgb / q.a : vec3(0.0);
+#ifdef OMK_RT_COUNT
+    if (((int(gl_FragCoord.x) | int(gl_FragCoord.y)) & 7) == 0 && rrRays > 0u) atomicAdd(rtCount.n[2], rrRays * 64u);
+#endif
+    return use > 0.0 ? c * (1.0 - 0.3 * wet * rtf.refl.x) * (1.0 - 0.6 * k) + add : c;
+}
 #endif
 
 void main() {
@@ -401,6 +492,9 @@ void main() {
         shade = vec3(y / 255.0);
     }
     vec3 c = clamp(t.rgb * shade * litness(), 0.0, 1.0);
+#ifdef OMK_RT
+    if ((pc.lit & 16) != 0 && rtf.refl.x > 0.0) c = clamp(rtReflect(c), 0.0, 1.0);
+#endif
     // VEHICLE SHINE (`vehicleshine`, `todo/enhancements.md` 20), an ENHANCEMENT:
     // the paint gets what the original painted into the texture and never
     // lit - a Blinn-Phong highlight from each lamp in reach, and a sky

@@ -6,6 +6,7 @@
 #include "playstate.h"
 #include "platform/events.h"
 #include "platform/env.h"
+#include "o3de/floormesh.h"
 #include "o3de/vecmath.h"
 
 // THE THREE VOLUME ROWS (10..12) - ATTENUATIONS, and one law for all
@@ -2144,6 +2145,14 @@ void PlayState::prepareSet(SetLoad& L) {
             static_cast<double>(mh->ambient) * 255.0));
         w.meshes = omk::readMeshes(d, *mh);
         w.meshHidden.clear();        // a fresh set: flag 2 as shipped
+        w.meshFloor.clear();
+        if (rtReflections) {         // RAY-TRACED REFLECTIONS: which meshes are the ground
+            w.meshFloor = omk::floorMeshes(w.geo, w.meshes);
+            std::size_t n = 0;
+            for (const std::uint8_t f : w.meshFloor) n += f;
+            std::printf("rt reflections: set %s - %zu of %zu meshes are ground\n", L.stem.c_str(), n,
+                        w.meshes.size());
+        }
     }
     // THE SET'S OWN EMITTERS - `Sfx_BindAmbientEffects`, the environment
     // family. Every mesh flagged 0x40000000 whose first four name bytes

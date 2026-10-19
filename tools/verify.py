@@ -27934,7 +27934,7 @@ def _soft_particles_eval(r, backend):
 
 
 def c_engine_framegen():
-    r"""`omk-play --framegen`: FRAME GENERATION on the Direct3D 12 window - an enhancement, off by default.
+    r"""`omk-play --framegen`: FRAME GENERATION on the Direct3D 12 and Vulkan windows - an enhancement, off by default.
     `todo/enhancements.md` 27. At every rendered frame's end the finished world
     picture is kept with its motion vectors and depth (`fg_cap.frag`); at the
     present an IN-BETWEEN picture is splatted from frames N-1 and N half-way
@@ -27971,7 +27971,19 @@ def c_engine_framegen():
         the plain run's, while forced (`OMK_FRAMEGEN_ALWAYS`, which the runs
         above use) the present phase grows by over 8 ms - the blocking the
         test avoids.
-    SHOWN TO FAIL (2026-10-19): with the room test removed (always room) the
+    ONE SOURCE FOR BOTH WINDOWS (`fg_cap.frag`, `fg_splat.frag`, `fg_resolve.frag` in
+    `backends/vulkan/shaders/`; the push blocks, the room rule, the cut test and the probe in
+    `o3de/framegen.h`; the scene's motion vectors are the `scene_mv` builds of the same two scene shaders):
+    every element above runs on the default Vulkan window too - except the FSR one, the upscalers being
+    Direct3D 12's - and the two windows agree: the real frame is byte-identical to the plain run's on both,
+    the probe's moving error is the same (3.92 warped against 9.38 blended, 42%, on an RX 9070 XT), and the
+    last warped picture of the riding run differs from Direct3D 12's by under 0.1 on average, at most a
+    few pixels more than 8 levels (measured: worst 20 of 255, mean 0.000).
+    SHOWN TO FAIL on Vulkan (2026-10-19): with the motion target's write mask zeroed (every vector
+    none: the warp collapses, 10.11 against the blend's 9.38 - the moving-error and agreement elements
+    failed); with `fgMidFrame` never asking for an in-between frame (0 presents of either kind in the
+    counters, no probes); with the room test removed on Vulkan, as below.
+    SHOWN TO FAIL on Direct3D 12 (2026-10-19): with the room test removed (always room) the
     shipped run interpolated and its present phase grew - both room elements
     failed. With the motion vectors zeroed in
     `fg_splat.frag` (both frames splatted in place - the warp collapses to a
@@ -27982,23 +27994,65 @@ def c_engine_framegen():
     import tempfile
     src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
     defaults = "bool   frameGen = false;" in src
+    outs = {}
     with tempfile.TemporaryDirectory() as tmp:
         always = {"OMK_FRAMEGEN_ALWAYS": "1"}
-        probe = dict(always, OMK_FRAMEGEN_PROBE=os.path.join(tmp, "p_"))
         fsr = ["--upscaler", "fsr", "--upscale-quality", "native"]
-        r = _d3d12_street_runs([("f0", [], {}), ("f0b", [], {}), ("fon", ["--framegen"], always),
-                                ("ride", ["--ride", "--framegen"], probe),
-                                ("rfsr", ["--ride", "--framegen"] + fsr, probe),
-                                ("ms", ["--aa", "4", "--framegen"], {}),
-                                ("room", ["--framegen"], {})])
-    if isinstance(r, tuple):
-        return r
+        for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+            probe = dict(always, OMK_FRAMEGEN_PROBE=os.path.join(tmp, backend + "_"))
+            runs = [("f0", [], {}), ("f0b", [], {}), ("fon", ["--framegen"], always),
+                    ("ride", ["--ride", "--framegen"], probe),
+                    ("ms", ["--aa", "4", "--framegen"], {}),
+                    ("room", ["--framegen"], {})]
+            if backend == "d3d12":   # (the upscalers are that backend's)
+                runs.insert(4, ("rfsr", ["--ride", "--framegen"] + fsr,
+                                dict(always, OMK_FRAMEGEN_PROBE=os.path.join(tmp, backend + "_fsr_"))))
+            r = _d3d12_street_runs(runs, backend=backend)
+            if isinstance(r, tuple):
+                return r
+            if tag in r["f0"][0]:
+                # the probe's last warped picture, kept (the temporary directory goes with this block)
+                r["warp"] = open(os.path.join(tmp, backend + "_warp.rgba"), "rb").read() \
+                    if os.path.exists(os.path.join(tmp, backend + "_warp.rgba")) else b""
+                outs[backend] = r
+    if not outs:
+        return ("skipped",), ("skipped",), "no Direct3D 12 or Vulkan device - the backends are optional"
+    got, want = [defaults], [True]
+    stats = {}
+    for backend, r in outs.items():
+        g, w, st = _framegen_eval(r, backend)
+        got += g
+        want += w
+        stats[backend] = st
+    if len(outs) == 2:
+        # THE TWO WINDOWS DO IT ALIKE: one GLSL source for the three passes, the rules in `o3de/framegen.h`
+        # (measured on an RX 9070 XT: the same moving error 3.79 / 8.14 warped / blended, the warped
+        # pictures within 8 levels of each other, the real frames byte-identical to the plain run's)
+        a, b = outs["d3d12"]["warp"], outs["vulkan"]["warp"]
+        d = _pic_diff(a, b) if a and len(a) == len(b) else (9e9, 1.0, 255, 1.0)
+        fa, fb = outs["d3d12"]["fon"][1], outs["vulkan"]["fon"][1]
+        df = _pic_diff(fa, fb) if fa and fb else (9e9, 1.0, 255, 1.0)
+        mwd, mbd = stats["d3d12"]["mwarp"], stats["vulkan"]["mwarp"]
+        print("        framegen, Vulkan against Direct3D 12: the warped picture mean %.3f, >8 %.3f%%, worst %d; "
+              "the real frame mean %.3f; the moving error %.2f against %.2f" % (d[0], 100 * d[1], d[2], df[0], mbd, mwd))
+        got += [d[0] <= 0.1 and d[1] < 0.001, df[0] <= 0.05 and df[1] < 0.001, abs(mbd - mwd) < 0.5]
+        want += [True, True, True]
+    return tuple(got), tuple(want), \
+        ("off by default and silent, two plain runs identical; on, the real frames unchanged, 60 real and "
+         "50+ in-between presents; riding the street the warped in-between frame is closer to the real "
+         "one than a blend (under 60% of its error where the picture moves) - and, on Direct3D 12, with FSR "
+         "native; off under MSAA; no in-between frame without a refresh to spare, the present not slowed - on "
+         "Direct3D 12 and on Vulkan, whose warped pictures agree")
+
+
+def _framegen_eval(r, backend):
+    """The frame-generation elements of `engine: framegen` for one backend's street runs: (got, want, the
+    probe's moving error under `mwarp`)."""
     t0 = r["f0"][0]
-    if "renderer: D3D12" not in t0:
-        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
     f0, f0b, fon = (r[k][1] for k in ("f0", "f0b", "fon"))
     if not all((f0, f0b, fon)):
-        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+        print("        framegen (%s): a window dump is missing" % backend)
+        return [False], [True], {"mwarp": 9e9}
     silent = "framegen" not in t0 and not any(nm.startswith("framegen") for nm, _ in _events(t0))
     def stats(name):
         ev = [f for nm, f in _events(r[name][0]) if nm == "framegen.stats"]
@@ -28011,8 +28065,6 @@ def c_engine_framegen():
         mean = lambda k: sum(float(f[k]) for f in ev) / len(ev)
         return len(ev), mean("mwarp"), mean("mblend"), mean("warp"), mean("blend")
     pn, mw, mb, w, b = probed("ride")
-    qn, qmw, qmb, qw, qb = probed("rfsr")
-    upFsr = "upscaler: FSR" in r["rfsr"][0]
     msEv = [f for nm, f in _events(r["ms"][0]) if nm == "framegen"]
     msOff = bool(msEv) and msEv[-1].get("on") == "0" and "off under 4x MSAA" in r["ms"][0] \
         and stats("ms")[1] == 0
@@ -28025,23 +28077,24 @@ def c_engine_framegen():
     refresh = max([int(f.get("refresh", "0")) for nm, f in _events(r["room"][0]) if nm == "framegen"] or [0])
     pPlain, pRoom, pAlways = presentMs("f0"), presentMs("room"), presentMs("fon")
     roomInterp, noRoom = stat("room", "interp"), stat("room", "noroom")
-    print("        room: %d Hz; shipped %d in-between, %d no room, present %.1f ms against the plain %.1f; "
-          "forced %.1f ms" % (refresh, roomInterp, noRoom, pRoom, pPlain, pAlways))
-    print("        framegen: %d real, %d in-between presents; riding: %d probes, moving error %.2f warped "
-          "against %.2f blended (%.0f%%), whole %.2f / %.2f; with FSR native%s: %d probes, %.2f / %.2f "
-          "(%.0f%%), whole %.2f / %.2f; MSAA off %s"
-          % (real, interp, pn, mw, mb, 100.0 * mw / max(mb, 1e-9), w, b, "" if upFsr else " (NO FSR)",
-             qn, qmw, qmb, 100.0 * qmw / max(qmb, 1e-9), qw, qb, msOff))
-    got = (defaults, silent, f0 == f0b, fon == f0, real, interp >= 50 and interp < real,
-           pn >= 40, mw < 0.6 * mb, w < b, upFsr, qn >= 40, qmw < 0.6 * qmb, qw < qb, msOff,
-           refresh > 0 and roomInterp == 0 and noRoom >= 50,
-           pPlain >= 0 and 0 <= pRoom < pPlain + 3.0 and pAlways > pPlain + 8.0)
-    return got, (True, True, True, True, 60, True, True, True, True, True, True, True, True, True,
-                 True, True), \
-        ("off by default and silent, two plain runs identical; on, the real frames unchanged, 60 real and "
-         "50+ in-between presents; riding the street the warped in-between frame is closer to the real "
-         "one than a blend (under 60% of its error where the picture moves), native and with FSR; off "
-         "under MSAA; no in-between frame without a refresh to spare, the present not slowed")
+    print("        room (%s): %d Hz; shipped %d in-between, %d no room, present %.1f ms against the plain %.1f; "
+          "forced %.1f ms" % (backend, refresh, roomInterp, noRoom, pRoom, pPlain, pAlways))
+    print("        framegen (%s): %d real, %d in-between presents; riding: %d probes, moving error %.2f warped "
+          "against %.2f blended (%.0f%%), whole %.2f / %.2f; MSAA off %s"
+          % (backend, real, interp, pn, mw, mb, 100.0 * mw / max(mb, 1e-9), w, b, msOff))
+    got = [silent, f0 == f0b, fon == f0, real, interp >= 50 and interp < real, pn >= 40, mw < 0.6 * mb, w < b]
+    want = [True, True, True, 60, True, True, True, True]
+    if "rfsr" in r:   # with FSR at native quality (the jittered, upscaled frame, the user's setup)
+        qn, qmw, qmb, qw, qb = probed("rfsr")
+        upFsr = "upscaler: FSR" in r["rfsr"][0]
+        print("        framegen (%s) with FSR native%s: %d probes, %.2f / %.2f (%.0f%%), whole %.2f / %.2f"
+              % (backend, "" if upFsr else " (NO FSR)", qn, qmw, qmb, 100.0 * qmw / max(qmb, 1e-9), qw, qb))
+        got += [upFsr, qn >= 40, qmw < 0.6 * qmb, qw < qb]
+        want += [True] * 4
+    got += [msOff, refresh > 0 and roomInterp == 0 and noRoom >= 50,
+            pPlain >= 0 and 0 <= pRoom < pPlain + 3.0 and pAlways > pPlain + 8.0]
+    want += [True, True, True]
+    return got, want, {"mwarp": mw}
 
 
 def c_engine_volumetrics():
@@ -28754,6 +28807,10 @@ def c_engine_vulkan_parity():
         from the SDR picture (more than 1% of the pixels by more than 2 levels) by a mean of at most 1 a
         channel, and both backends say `hdr:` on the log; without the force a display that reports no HDR
         leaves the Vulkan picture EXACTLY the SDR one.
+    PART 2 of the parity effort - soft particles, volumetric lamp light and frame generation - compares
+    the two windows in each feature's own check (`engine: soft particles`, `engine: volumetrics`,
+    `engine: framegen`: the same runs on both, the pictures against each other, each feature's effect on
+    each backend).
     SHOWN TO FAIL (2026-10-19): (HDR: with the Vulkan HDR passes given no peak, the white of the shoulder
     left at 1 - the forced picture no longer agrees with D3D12's); with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no
     overlay frame counted; the fight frame equal to the CPU composite); with the Vulkan bloom's intensity

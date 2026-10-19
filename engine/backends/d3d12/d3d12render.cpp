@@ -82,6 +82,7 @@
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "o3de/postfx.h"
+#include "o3de/framegen.h"
 #include "platform/env.h"
 #include "platform/events.h"
 #include "platform/datafs.h"
@@ -167,8 +168,8 @@ using omk::postfx::VolMixPush;
 using omk::postfx::kMaxVolLamps;
 using omk::postfx::VolUbo;
 // FRAME GENERATION's (`fg_cap.frag`; `fg_splat.frag`, `fg_resolve.frag`)
-struct FgCapPush { float pic[4], toRender[4], depthAB[4]; };
-struct FgPush { float pic[4], k[4]; };
+using FgCapPush = omk::framegen::CapPush;   // `o3de/framegen.h`: shared with the Vulkan window
+using FgPush = omk::framegen::Push;
 
 constexpr UINT kShadowSide = 2048;
 constexpr int kShadowLayers = 3;
@@ -2934,10 +2935,8 @@ void D3D12Renderer::begin(const omk::View& view) {
         // metres (200 inches) in a frame, or a turn of more than 30 degrees,
         // is a jump; a first frame, a resize or a new set are too.
         if (havePrev_) {
-            const float dx = frameEye_[0] - prevEye_[0], dy = frameEye_[1] - prevEye_[1],
-                        dz = frameEye_[2] - prevEye_[2];
             const float turn = mainF_[0] * prevFwd_[0] + mainF_[1] * prevFwd_[1] + mainF_[2] * prevFwd_[2];
-            if (dx * dx + dy * dy + dz * dz > 200.0f * 200.0f || turn < 0.866f) resetOwed_ = true;
+            if (omk::framegen::cameraCut(frameEye_, prevEye_, turn)) resetOwed_ = true;
         } else {
             resetOwed_ = true;
         }
@@ -4787,12 +4786,7 @@ bool D3D12Renderer::fgMidFrame() {
         // every in-between present blocked 22-25 ms on the v-sync and the loop
         // went from 21 ms to 57 ms - the real frames at 17 a second, the
         // player, whom the eye follows, visibly stepping.
-        if (fgRefresh_ > 0 && !fgAlways_) {
-            const double V = 1.0 / static_cast<double>(fgRefresh_);
-            fgRoom_ = fgRoom_ ? fgWork_ > 1.7 * V : fgWork_ > 1.9 * V;
-        } else {
-            fgRoom_ = true;
-        }
+        fgRoom_ = omk::framegen::roomFor(fgRoom_, fgWork_, fgRefresh_, fgAlways_);
         if (fgSeq_ < 2 || !fgMid_.r || !pairs(n, p)) {
             ++fgCuts_;   // a first frame, a cut on either side, a new picture size
         } else if (!fgRoom_) {
@@ -4930,46 +4924,9 @@ bool D3D12Renderer::fgRead(Res& img, std::vector<unsigned char>& out) {
 // `<prefix>warp.rgba`, `real.rgba`, `blend.rgba` (RGBA8, the display size).
 void D3D12Renderer::fgProbe(int n, int p, int m) {
     fgInterpolate(n, m, 2.0f);
-    static std::vector<unsigned char> warp, real, a, b, blend;
+    static std::vector<unsigned char> warp, real, a, b;
     if (!fgRead(fgMid_, warp) || !fgRead(fgCol_[p], real) || !fgRead(fgCol_[n], b) || !fgRead(fgCol_[m], a)) return;
-    const int W = fgPicW_[n], H = fgPicH_[n];
-    blend.assign(warp.size(), 255);
-    double eW = 0, eB = 0, eR = 0, mW = 0, mB = 0, mR = 0;
-    long moving = 0;
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x) {
-            const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w_) + static_cast<std::size_t>(x)) * 4;
-            double dw = 0, db = 0, dr = 0;
-            int change = 0;
-            for (int c = 0; c < 3; ++c) {
-                const int bl = (a[i + c] + b[i + c] + 1) / 2;
-                blend[i + c] = static_cast<unsigned char>(bl);
-                dw += std::abs(warp[i + c] - real[i + c]);
-                db += std::abs(bl - real[i + c]);
-                dr += std::abs(b[i + c] - real[i + c]);
-                change += std::abs(a[i + c] - b[i + c]);
-            }
-            eW += dw; eB += db; eR += dr;
-            if (change > 24) { mW += dw; mB += db; mR += dr; ++moving; }
-        }
-    const double px = 3.0 * static_cast<double>(std::max(W * H, 1)), mpx = 3.0 * static_cast<double>(std::max(moving, 1L));
-    const double share = static_cast<double>(moving) / static_cast<double>(std::max(W * H, 1));
-    std::printf("framegen probe: frame %ld - N-2 and N in between, against the real N-1: mean error %.2f warped, "
-                "%.2f blended, %.2f repeated; %.1f%% of the picture moving: %.2f, %.2f, %.2f there\n", fgSeq_,
-                eW / px, eB / px, eR / px, 100.0 * share, mW / mpx, mB / mpx, mR / mpx);
-    omk::event("framegen.probe", {{"frame", fgSeq_}, {"warp", eW / px}, {"blend", eB / px}, {"repeat", eR / px},
-                                  {"moving", share}, {"mwarp", mW / mpx}, {"mblend", mB / mpx}, {"mrepeat", mR / mpx}});
-    const auto write = [&](const char* name, const std::vector<unsigned char>& pic) {
-        const std::string path = std::string(fgProbe_) + name;
-        if (!omk::safeOutputPath(path.c_str())) return;
-        if (FILE* f = std::fopen(path.c_str(), "wb")) {
-            std::fwrite(pic.data(), 1, pic.size(), f);
-            std::fclose(f);
-        }
-    };
-    write("warp.rgba", warp);
-    write("real.rgba", real);
-    write("blend.rgba", blend);
+    omk::framegen::probeCompare(warp, real, a, b, fgPicW_[n], fgPicH_[n], w_, fgSeq_, fgProbe_);
 }
 
 // The real frame in `presImg_`: presented now - or, after an in-between one,

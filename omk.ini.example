@@ -267,8 +267,9 @@
 ; latency and changes neither the simulation nor any rendered frame. An
 ; in-between frame goes out only while a frame takes about two refreshes or
 ; more (60 Hz: 30 fps or fewer; 144 Hz: 72 or fewer) - with less the display
-; has no refresh to show it in, and it is skipped rather than slow the game. The Direct3D 12 window only, off under
-; MSAA (an upscaler turns MSAA off). In `all = max`. `todo/enhancements.md` 27.
+; has no refresh to show it in, and it is skipped rather than slow the game. On the Direct3D 12 and Vulkan
+; windows (one GLSL source), off under MSAA (an upscaler turns MSAA off). In `all = max`.
+; `todo/enhancements.md` 27.
 ; `--framegen`.
 ;framegen = off
 ;

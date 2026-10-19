@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FRAME GENERATION's SPLAT (`todo/enhancements.md` 27), the Direct3D 12
+// FRAME GENERATION's SPLAT (`todo/enhancements.md` 27), the Direct3D 12 and Vulkan
 // backend's own. Every pixel of the two kept frames is pushed half-way along
 // its motion to where it stands at the IN-BETWEEN time - frame N's back along
 // its own vector (N -> N-1), frame N-1's forward along its own vector negated

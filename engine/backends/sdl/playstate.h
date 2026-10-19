@@ -271,7 +271,7 @@ struct PlayState {
     bool vehicleShine{};     // [Enhancements] vehicleshine: sliders and motos shine (the GPU backends)
     int  colourDepth{16};    // [Enhancements] colordepth: 32 = the window's picture at 8 bits a channel
     omk::Renderer::PostProcess postFx{};   // [Enhancements] bloom, dof, colorgrade, hdr, softparticles, volumetrics (D3D12)
-    bool frameGen{};         // [Enhancements] framegen: an in-between frame on the motion vectors (D3D12 window)
+    bool frameGen{};         // [Enhancements] framegen: an in-between frame on the motion vectors (D3D12, Vulkan windows)
     bool escBackLatch{};     // ESC was taken as BACK: it opens no pause until it is released
     bool escBackPrevDown{};  // ESC or Backspace down last frame - BACK is sent on the edge
     int  escBackEdge{};      // this frame's fresh press under a screen: 0 none, 1 Backspace, 2 ESC

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FRAME GENERATION's RESOLVE (`todo/enhancements.md` 27), the Direct3D 12
+// FRAME GENERATION's RESOLVE (`todo/enhancements.md` 27), the Direct3D 12 and Vulkan
 // backend's own: the in-between picture from the two splat heads
 // (`fg_splat.frag`). At each pixel the front-most surface either frame put
 // there decides:

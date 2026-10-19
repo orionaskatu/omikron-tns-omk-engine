@@ -533,8 +533,8 @@ public:
     // FRAME GENERATION (`todo/enhancements.md` 27): between two rendered
     // frames an in-between picture, warped along the frame's motion vectors,
     // presented half an interval before the second. Same contract: a request
-    // before `init()`. Only the Direct3D 12 backend takes it, and only on its
-    // WINDOW (it is a way of presenting); the others answer false. It never
+    // before `init()`. The Direct3D 12 and Vulkan backends take it, and only on
+    // their WINDOW (it is a way of presenting); the others answer false. It never
     // changes a rendered frame, `readback()` or the simulation.
     virtual bool setFrameGeneration(bool /*on*/) { return false; }
 };

@@ -127,7 +127,9 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc \
               build/shaders/scene_soft.frag.inc \
               build/shaders/vol.frag.inc build/shaders/vol_ms.frag.inc \
-              build/shaders/volmix.frag.inc build/shaders/volmix_ms.frag.inc
+              build/shaders/volmix.frag.inc build/shaders/volmix_ms.frag.inc \
+              build/shaders/scene_mv.vert.inc build/shaders/scene_mv.frag.inc build/shaders/scene_soft_mv.frag.inc \
+              build/shaders/fg_cap.frag.inc build/shaders/fg_splat.frag.inc build/shaders/fg_resolve.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
@@ -145,6 +147,19 @@ build/shaders/%_hdr.frag.inc: backends/vulkan/shaders/%.frag
 build/shaders/scene_soft.frag.inc: backends/vulkan/shaders/scene.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -DOMK_SOFT -DOMK_SOFT_SET=3 -mfmt=c -o $@ $<
+
+# FRAME GENERATION's scene pass (`todo/enhancements.md` 27): the same two files built -DOMK_MOTION - the
+# previous view-projection and the bodies' previous poses, and a second target for the motion vectors
+# (Direct3D 12's `scene_mv` builds are these very sources)
+build/shaders/%_mv.vert.inc: backends/vulkan/shaders/%.vert
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_MOTION -mfmt=c -o $@ $<
+build/shaders/%_mv.frag.inc: backends/vulkan/shaders/%.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_MOTION -mfmt=c -o $@ $<
+build/shaders/scene_soft_mv.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_SOFT -DOMK_SOFT_SET=3 -DOMK_MOTION -mfmt=c -o $@ $<
 
 # SSAO's multisampled-depth builds (`sampler2DMS`), from the same sources
 build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag

@@ -69,11 +69,16 @@
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "o3de/postfx.h"
+#include "o3de/framegen.h"
 #include "platform/env.h"
 #include "platform/events.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <set>
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +114,25 @@ const uint32_t kVolMixFrag[] =
 ;
 const uint32_t kVolMixMsFrag[] =
 #include "volmix_ms.frag.inc"
+;
+// FRAME GENERATION's scene pass (-DOMK_MOTION: the motion vectors) and its three passes
+const uint32_t kVertMv[] =
+#include "scene_mv.vert.inc"
+;
+const uint32_t kFragMv[] =
+#include "scene_mv.frag.inc"
+;
+const uint32_t kFragSoftMv[] =
+#include "scene_soft_mv.frag.inc"
+;
+const uint32_t kFgCapFrag[] =
+#include "fg_cap.frag.inc"
+;
+const uint32_t kFgSplatFrag[] =
+#include "fg_splat.frag.inc"
+;
+const uint32_t kFgResolveFrag[] =
+#include "fg_resolve.frag.inc"
 ;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
@@ -259,6 +283,14 @@ struct Push {
     int32_t posed;     // 100 a body POSED HERE: set 2 holds its affines and lights
 };
 static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
+// ...and with FRAME GENERATION on (`scene.vert` built -DOMK_MOTION), the same 104 bytes and then the
+// JITTER at 104 (clip units - zero here: no upscaler) and the PREVIOUS frame's view-projection at 112
+struct PushMv {
+    Push p;
+    float jitter[2];      // 104
+    float prevMvp[16];    // 112
+};
+static_assert(sizeof(PushMv) == 176, "the motion push block is 176 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -332,6 +364,14 @@ public:
         return true;
     }
     bool softParticlesLive() const override { return softOn_; }
+    // FRAME GENERATION (`todo/enhancements.md` 27): the window's alone; decided in `makeTarget`
+    bool setFrameGeneration(bool on) override {
+        if (dev_ != VK_NULL_HANDLE) return false;
+        fgWant_ = on;
+        return true;
+    }
+    // the display's refresh rate, Hz, which the window layer knows (0: unknown)
+    void setRefresh(int hz) { fgRefresh_ = hz; }
     bool volumetricsLive() const override { return volOn_; }
     // HDR OUTPUT: what the window layer knows of the display before `init`
     // (`known`: 1 reports HDR, 0 does not, -1 not asked - then the surface's
@@ -447,6 +487,71 @@ private:
     long softDraws_ = 0;               // sprite batches drawn soft this frame
     bool softTold_ = false;
     void softSegment(bool readOnly);
+    // ---- FRAME GENERATION (`todo/enhancements.md` 27; off unless asked) ----
+    //
+    // The scene pass writes MOTION VECTORS (`mvOn_`, `scene.vert/frag` built -DOMK_MOTION) beside the
+    // colour; at each frame's end the finished world picture is kept with them and the depth
+    // (`fg_cap.frag`); at the present an in-between picture is splatted from frames N-1 and N half-way
+    // along their motion with a depth test (`fg_splat.frag`) and resolved (`fg_resolve.frag`), goes out
+    // through the same present pass and overlay, and the real frame follows half an interval later - its
+    // present (the blit is done) deferred to a thread of the backend's own on a second queue. One source
+    // with the Direct3D 12 window; the pacing rules (`o3de/framegen.h`) are shared.
+    bool fgWant_ = false, fgOn_ = false, fgFeat_ = false, mvOn_ = false;
+    VkImage motion_ = VK_NULL_HANDLE; VkDeviceMemory motionMem_ = VK_NULL_HANDLE; VkImageView motionView_ = VK_NULL_HANDLE;
+    VkQueue presQ_ = VK_NULL_HANDLE;   // a second queue of the family, for the deferred present
+    PushMv pm_{};
+    float curMain_[16] = {}, prevMain_[16] = {};
+    bool havePrev_ = false;
+    float frameEye_[3] = {}, prevEye_[3] = {}, prevFwd_[3] = {};
+    float mainS_[3] = {}, mainU_[3] = {}, mainF_[3] = {};
+    bool resetOwed_ = true;            // a camera cut, a new area, a resize: no history
+    std::map<const float*, std::vector<float>> curAffines_, prevAffines_;
+    static constexpr int kFgMaxSlots = 3;
+    int fgSlots_ = 2;                  // the frames kept (3 for the probe's N-2/N pair)
+    VkImage fgColImg_[kFgMaxSlots] = {}, fgAuxImg_[kFgMaxSlots] = {}, fgHeadImg_[2] = {}, fgMidImg_ = VK_NULL_HANDLE;
+    VkDeviceMemory fgColMem_[kFgMaxSlots] = {}, fgAuxMem_[kFgMaxSlots] = {}, fgHeadMem_[2] = {}, fgMidMem_ = VK_NULL_HANDLE;
+    VkImageView fgColView_[kFgMaxSlots] = {}, fgAuxView_[kFgMaxSlots] = {}, fgHeadView_[2] = {}, fgMidView_ = VK_NULL_HANDLE;
+    VkFramebuffer fgCapFbuf_[kFgMaxSlots] = {}, fgMidFbuf_ = VK_NULL_HANDLE, fgSplatFbuf_ = VK_NULL_HANDLE;
+    VkRenderPass fgCapPass_ = VK_NULL_HANDLE, fgSplatPass_ = VK_NULL_HANDLE, fgResolvePass_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout fgDsl_ = VK_NULL_HANDLE; VkDescriptorPool fgPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet fgCapDs_ = VK_NULL_HANDLE, fgIntDs_ = VK_NULL_HANDLE, fgMidDs_ = VK_NULL_HANDLE;
+    VkPipelineLayout fgPlo_ = VK_NULL_HANDLE;
+    VkPipeline fgCapPipe_ = VK_NULL_HANDLE, fgSplatPipe_ = VK_NULL_HANDLE, fgResolvePipe_ = VK_NULL_HANDLE;
+    bool fgCut_[kFgMaxSlots] = {};     // the frame was a camera cut (no motion to its predecessor)
+    int fgPicW_[kFgMaxSlots] = {}, fgPicH_[kFgMaxSlots] = {};
+    long fgSeq_ = 0, fgShownSeq_ = 0;  // frames captured; the newest a present has used
+    bool fgHeadsReady_ = false;
+    // the PACING (the interval between presents; the real frame deferred to half of it) and the counters
+    double fgLastCall_ = 0.0, fgInterval_ = 0.0, fgLatSum_ = 0.0, fgLateSum_ = 0.0;
+    double fgCallAt_ = 0.0, fgPresentDone_ = 0.0, fgWork_ = 0.0;   // the display's room (`fgMidFrame`)
+    bool fgRoom_ = false, fgAlways_ = false;
+    long fgNoRoom_ = 0, fgOnTime_ = 0;
+    long fgReal_ = 0, fgMids_ = 0, fgCuts_ = 0, fgStale_ = 0, fgCpu_ = 0, fgDeferred_ = 0, fgHurried_ = 0;
+    int fgRefresh_ = 0;
+    std::thread fgThread_;
+    std::mutex fgMu_;
+    std::condition_variable fgCv_;
+    bool fgPending_ = false, fgHurry_ = false, fgQuit_ = false;
+    double fgDue_ = 0.0, fgDeferDue_ = 0.0;
+    uint32_t fgPendIdx_ = 0;           // the swapchain image whose present is deferred
+    const char* fgProbe_ = nullptr;    // `OMK_FRAMEGEN_PROBE`: the files' prefix
+    bool fgStart();
+    bool makeFg();
+    void killFg();
+    void fgCapture();
+    bool fgMidFrame();
+    void fgCpuFrame();
+    void fgInterpolate(int n, int p, float k);
+    bool fgRead(VkImage img, std::vector<unsigned char>& out);
+    void fgProbeRun(int n, int p, int m);
+    bool fgPresentReal(bool mid);
+    void fgSettle();
+    void fgThreadMain();
+    void fgTick();
+    void fgReport();
+    static double nowSec() {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
     // VOLUMETRIC LAMP LIGHT (`todo/enhancements.md` 24; off unless asked): the half-size march of
     // the frame's lamps and the composite over `colour_`, after SSAO and before the post chain.
     bool volWant_ = false, volOn_ = false, volNoBuf_ = false;
@@ -532,6 +637,9 @@ private:
     static constexpr int kPoseLights = 16, kPoseMaxMeshes = 256;
     static constexpr VkDeviceSize kPoseBytes = 8u << 20;
     static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
+    // ...and with motion vectors the previous affines follow the current ones
+    static constexpr VkDeviceSize kPoseRangeMv = (1 + 2 * kPoseLights + 6 * kPoseMaxMeshes) * 16;
+    VkDeviceSize poseRange_ = kPoseRange;
     VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
     VkBuffer poseBuf_ = VK_NULL_HANDLE;
     VkDeviceMemory poseMem_ = VK_NULL_HANDLE;
@@ -731,8 +839,8 @@ private:
     VkSampler        presSampler_ = VK_NULL_HANDLE;
     VkBuffer         presRead_ = VK_NULL_HANDLE; VkDeviceMemory presReadMem_ = VK_NULL_HANDLE;
     bool makePresentPass();
-    bool runPresentPass(int vy, int vh);
-    bool presentImage(VkImage src, int sw, int sh);
+    bool runPresentPass(int vy, int vh, bool mid = false);   // `mid`: the in-between picture (frame generation)
+    bool presentImage(VkImage src, int sw, int sh, bool defer = false);   // `defer`: its present is the pacing thread's
     // a 2D colour image of the given format (device-local) with its view; and
     // the reverse
     bool makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use, VkImage& img, VkDeviceMemory& mem,
@@ -969,15 +1077,24 @@ bool VulkanRenderer::pickDevice() {
                 hdrMeta_ = true;
             }
 
-    const float pri = 1.0f;
+    const float pri[2] = {1.0f, 1.0f};
     VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    qi.queueFamilyIndex = qfam_; qi.queueCount = 1; qi.pQueuePriorities = &pri;
+    qi.queueFamilyIndex = qfam_; qi.queueCount = 1; qi.pQueuePriorities = pri;
     // Anisotropic filtering is a device FEATURE, asked for at creation and
     // only when the enhancement wants it AND the device has it; the base
     // renderer enables no feature at all.
     VkPhysicalDeviceFeatures have{};
     vkGetPhysicalDeviceFeatures(phys_, &have);
     VkPhysicalDeviceFeatures enable{};
+    // FRAME GENERATION's in-between pass stores to storage images from a fragment shader, and the
+    // deferred real-frame present goes out on a second queue of the family (a window's alone)
+    // (and the motion target's own blend state, which the opaque and the blended pipelines set apart)
+    fgFeat_ = fgWant_ && surface_ != VK_NULL_HANDLE && have.fragmentStoresAndAtomics && have.independentBlend;
+    if (fgFeat_) {
+        enable.fragmentStoresAndAtomics = VK_TRUE;
+        enable.independentBlend = VK_TRUE;
+        if (qs[qfam_].queueCount >= 2) qi.queueCount = 2;
+    }
     if (aniso_ > 1 && filter_ >= 2 && have.samplerAnisotropy) {
         enable.samplerAnisotropy = VK_TRUE; anisoOn_ = true;
     } else if (aniso_ > 1) {
@@ -992,6 +1109,7 @@ bool VulkanRenderer::pickDevice() {
     di.ppEnabledExtensionNames = want.empty() ? nullptr : want.data();
     VKCHECK(vkCreateDevice(phys_, &di, nullptr, &dev_), "vkCreateDevice");
     vkGetDeviceQueue(dev_, qfam_, 0, &queue_);
+    if (qi.queueCount > 1) vkGetDeviceQueue(dev_, qfam_, 1, &presQ_);
 
     VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pi.queueFamilyIndex = qfam_;
@@ -1139,11 +1257,44 @@ bool VulkanRenderer::makeTarget() {
                         !msOk ? "the device cannot sample a multisampled depth" : "the depth format cannot be sampled");
         }
     }
-    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_;
+    // FRAME GENERATION (`todo/enhancements.md` 27): a way of PRESENTING, so the window's alone; it warps along
+    // single-sample motion vectors, so not under MSAA
+    fgOn_ = false;
+    if (fgWant_) {
+        const char* why = nullptr;
+        if (surface_ == VK_NULL_HANDLE)
+            why = "framegen: a way of presenting - no window here (the offscreen harness), off";
+        else if (wantSamples_ > 1)
+            why = nullptr;   // said below with the sample count
+        else if (!fgFeat_)
+            why = "framegen: the device cannot store to an image from a fragment shader or blend its targets apart - off";
+        else if (props_.limits.maxPushConstantsSize < sizeof(PushMv))
+            why = "framegen: the device's push constants are too small for the motion block - off";
+        else {
+            VkFormatProperties fp{};
+            vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+            if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+                why = "framegen: the depth cannot be sampled - off";
+        }
+        fgOn_ = surface_ != VK_NULL_HANDLE && wantSamples_ <= 1 && !why;
+        if (!fgOn_ && !resizing_) {
+            if (why) std::printf("%s\n", why);
+            else if (surface_ != VK_NULL_HANDLE)
+                std::printf("framegen: it warps along single-sample motion vectors - off under %dx MSAA "
+                            "(aa = off lets it run)\n", wantSamples_);
+            omk::event("framegen", {{"on", 0}, {"refresh", 0}});
+        }
+    }
+    mvOn_ = fgOn_;
+    poseRange_ = mvOn_ ? kPoseRangeMv : kPoseRange;
+    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_ || fgOn_;
     if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                    (depthKept ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
+    if (mvOn_ && !makeImage2d(VK_FORMAT_R16G16_SFLOAT, rw_, rh_,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              motion_, motionMem_, motionView_, "motion vectors")) return false;
     if (depthKept) {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
@@ -1193,16 +1344,29 @@ bool VulkanRenderer::makeTarget() {
     att[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att[2].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    VkAttachmentReference cref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    if (mvOn_) {
+        // FRAME GENERATION's second target: the motion vectors (cleared to none), kept for the capture pass
+        att[2] = {};
+        att[2].format = VK_FORMAT_R16G16_SFLOAT;
+        att[2].samples = VK_SAMPLE_COUNT_1_BIT;
+        att[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        att[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        att[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        att[2].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    const VkAttachmentReference crefs[2] = {{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                                            {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
     VkAttachmentReference dref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkAttachmentReference rref{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription sub{};
     sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    sub.colorAttachmentCount = 1; sub.pColorAttachments = &cref;
+    sub.colorAttachmentCount = mvOn_ ? 2 : 1; sub.pColorAttachments = crefs;
     sub.pResolveAttachments = msaa ? &rref : nullptr;
     sub.pDepthStencilAttachment = &dref;
     VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-    rpi.attachmentCount = msaa ? 3 : 2; rpi.pAttachments = att;
+    rpi.attachmentCount = (msaa || mvOn_) ? 3 : 2; rpi.pAttachments = att;
     rpi.subpassCount = 1; rpi.pSubpasses = &sub;
     // (with soft particles the pass has its dependencies written out - the continuations below carry
     // the very same, so their pipelines stay compatible - the frame's writes before the next
@@ -1223,7 +1387,9 @@ bool VulkanRenderer::makeTarget() {
     if (softOn_) {
         // the continuations: what the first segment left is loaded; the final layouts are the
         // initial ones, so a frame may be cut as often as it likes
-        VkAttachmentDescription ca[2] = {att[0], att[1]};
+        VkAttachmentDescription ca[3] = {att[0], att[1], att[2]};
+        ca[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;                      // (the motion vectors, when asked)
+        ca[2].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         ca[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         ca[0].initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         ca[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -1238,15 +1404,15 @@ bool VulkanRenderer::makeTarget() {
             cs.pResolveAttachments = nullptr;
             cs.pDepthStencilAttachment = &cd;
             VkRenderPassCreateInfo ci = rpi;
-            ci.attachmentCount = 2; ci.pAttachments = ca;
+            ci.attachmentCount = mvOn_ ? 3 : 2; ci.pAttachments = ca;
             ci.pSubpasses = &cs;
             VKCHECK(vkCreateRenderPass(dev_, &ci, nullptr, &passCont_[ro]), "soft continuation pass");
         }
     }
 
-    VkImageView views[3] = {msaa ? msColourView_ : colourView_, depthView_, colourView_};
+    VkImageView views[3] = {msaa ? msColourView_ : colourView_, depthView_, mvOn_ ? motionView_ : colourView_};
     VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
+    fi.renderPass = pass_; fi.attachmentCount = (msaa || mvOn_) ? 3 : 2; fi.pAttachments = views;
     fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_);
     fi.layers = 1;
     VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fbuf_), "vkCreateFramebuffer");
@@ -1438,7 +1604,7 @@ bool VulkanRenderer::makePipelines() {
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli2, nullptr, &dsl2_), "descriptorSetLayout2");
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                            0, sizeof(Push)};
+                            0, mvOn_ ? sizeof(PushMv) : sizeof(Push)};
     // SET 3, with soft particles: the scene's depth, sampled (`scene.frag` -DOMK_SOFT)
     if (softOn_) {
         VkDescriptorSetLayoutBinding b3{};
@@ -1475,9 +1641,17 @@ bool VulkanRenderer::makePipelines() {
         vkCreateShaderModule(dev_, &si, nullptr, &m);
         return m;
     };
-    VkShaderModule vs = module(kVert, sizeof(kVert));
-    VkShaderModule fs = module(kFrag, sizeof(kFrag));
-    VkShaderModule fsSoft = softOn_ ? module(kFragSoft, sizeof(kFragSoft)) : VK_NULL_HANDLE;
+    VkShaderModule vs = mvOn_ ? module(kVertMv, sizeof(kVertMv)) : module(kVert, sizeof(kVert));
+    VkShaderModule fs = mvOn_ ? module(kFragMv, sizeof(kFragMv)) : module(kFrag, sizeof(kFrag));
+    VkShaderModule fsSoft = !softOn_ ? VK_NULL_HANDLE
+                          : mvOn_ ? module(kFragSoftMv, sizeof(kFragSoftMv)) : module(kFragSoft, sizeof(kFragSoft));
+    // FRAME GENERATION: the pass's second target takes the motion of OPAQUE geometry only - an additive glow
+    // or a multiply decal over a wall leaves the wall's motion, which is what the warp should follow
+    const auto mvAtt = [](bool write) {
+        VkPipelineColorBlendAttachmentState a{};
+        a.colorWriteMask = write ? (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT) : 0;
+        return a;
+    };
     if (!vs || !fs || (softOn_ && !fsSoft)) { std::fprintf(stderr, "vulkan: shader module\n"); return false; }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -1560,8 +1734,9 @@ bool VulkanRenderer::makePipelines() {
         const VkPipelineColorBlendAttachmentState cba = blendState(k);
         ds.depthWriteEnable = omk::blendRule(kModes[k]).depthWrite ? VK_TRUE : VK_FALSE;
 
+        const VkPipelineColorBlendAttachmentState cbas[2] = {cba, mvAtt(k == 0)};
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        cb.attachmentCount = mvOn_ ? 2 : 1; cb.pAttachments = cbas;
 
         VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         gp.stageCount = 2; gp.pStages = stages;
@@ -1635,8 +1810,9 @@ bool VulkanRenderer::makePipelines() {
         VkPipelineColorBlendAttachmentState none{};
         none.blendEnable = VK_FALSE;
         none.colorWriteMask = 0;              // marks the stencil, draws nothing
+        const VkPipelineColorBlendAttachmentState nones[2] = {none, mvAtt(false)};
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        cb.attachmentCount = 1; cb.pAttachments = &none;
+        cb.attachmentCount = mvOn_ ? 2 : 1; cb.pAttachments = nones;
 
         VkPipelineDepthStencilStateCreateInfo sd{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         sd.depthTestEnable = VK_TRUE;
@@ -1687,8 +1863,9 @@ bool VulkanRenderer::makePipelines() {
         rd.depthCompareOp = VK_COMPARE_OP_LESS;
         rd.stencilTestEnable = VK_TRUE;
         rd.front = rd.back = stencilOp(VK_STENCIL_OP_KEEP, VK_COMPARE_OP_EQUAL, 0);
+        const VkPipelineColorBlendAttachmentState cbas[2] = {cba, mvAtt(k == 0)};
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        cb.attachmentCount = mvOn_ ? 2 : 1; cb.pAttachments = cbas;
         VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         gp.stageCount = 2; gp.pStages = stages;
         gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
@@ -1746,7 +1923,7 @@ bool VulkanRenderer::makePipelines() {
         VkDescriptorSetAllocateInfo sai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         sai.descriptorPool = dpool_; sai.descriptorSetCount = 1; sai.pSetLayouts = &dsl2_;
         if (vkAllocateDescriptorSets(dev_, &sai, &poseDs_) == VK_SUCCESS) {
-            VkDescriptorBufferInfo bufi{poseBuf_, 0, kPoseRange};
+            VkDescriptorBufferInfo bufi{poseBuf_, 0, poseRange_};
             VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
             wr.dstSet = poseDs_; wr.dstBinding = 0; wr.descriptorCount = 1;
             wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
@@ -2024,6 +2201,7 @@ void VulkanRenderer::killSwapchain() {
 
 bool VulkanRenderer::remakeSwapchain() {
     if (!dev_ || surface_ == VK_NULL_HANDLE) return false;
+    fgSettle();
     vkDeviceWaitIdle(dev_);
     killSwapchain();
     return makeSwapchain(w_, h_);
@@ -2031,6 +2209,7 @@ bool VulkanRenderer::remakeSwapchain() {
 
 bool VulkanRenderer::resize(int w, int h) {
     if (!dev_ || w <= 0 || h <= 0) return false;
+    fgSettle();
     vkDeviceWaitIdle(dev_);
     const auto img = [&](VkImageView& v, VkImage& i, VkDeviceMemory& m) {
         if (v) vkDestroyImageView(dev_, v, nullptr);
@@ -2043,11 +2222,14 @@ bool VulkanRenderer::resize(int w, int h) {
         if (m) freeDeviceMemory(m);
         b = VK_NULL_HANDLE; m = VK_NULL_HANDLE;
     };
+    killFg();   // sized to the picture
+    resetOwed_ = true; havePrev_ = false;
     if (fbuf_) { vkDestroyFramebuffer(dev_, fbuf_, nullptr); fbuf_ = VK_NULL_HANDLE; }
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
     for (auto& cp : passCont_) if (cp) { vkDestroyRenderPass(dev_, cp, nullptr); cp = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
+    img(motionView_, motion_, motionMem_);
     killSsao();
     killVol();
     if (depthSampleView_) { vkDestroyImageView(dev_, depthSampleView_, nullptr); depthSampleView_ = VK_NULL_HANDLE; }
@@ -2086,7 +2268,8 @@ bool VulkanRenderer::presentDirect() {
 
 // The swapchain half of every present: `src`'s top-left `sw x sh`, in
 // TRANSFER_SRC layout, blitted into the window's middle rows.
-bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
+bool VulkanRenderer::presentImage(VkImage src, int sw, int sh, bool defer) {
+    fgSettle();   // a deferred real frame is out before the swapchain is touched again
     if (swap_ == VK_NULL_HANDLE) return false;
     // THE WINDOW MAY HAVE CHANGED SIZE - fullscreen, a resize - and a
     // swapchain at the old extent would present stretched or not at all.
@@ -2177,6 +2360,20 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
     vkResetFences(dev_, 1, &pfence_);
     vkQueueSubmit(queue_, 1, &si, pfence_);
 
+    if (defer && fgThread_.joinable()) {
+        // FRAME GENERATION's real frame: blitted (waited for - the command buffer is reused), its present
+        // handed to the pacing thread, which sends it half an interval after its in-between frame
+        vkWaitForFences(dev_, 1, &pfence_, VK_TRUE, UINT64_MAX);
+        {
+            std::lock_guard<std::mutex> lk(fgMu_);
+            fgPendIdx_ = idx;
+            fgDue_ = fgDeferDue_;
+            fgPending_ = true;
+            fgHurry_ = false;
+        }
+        fgCv_.notify_all();
+        return true;
+    }
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = &drawn_;
     pi.swapchainCount = 1; pi.pSwapchains = &swap_;
@@ -2196,7 +2393,9 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
 // frame is the slow one, and a GPU composite (a stencil pass) is the named
 // next step rather than something quietly pretended away.
 bool VulkanRenderer::presentSurface(const omk::Surface& s) {
+    fgSettle();
     if (swap_ == VK_NULL_HANDLE) return false;
+    fgCpuFrame();   // FRAME GENERATION: a frame composed on the CPU goes out as it is
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(w_) * h_ * 4;
     if (upBuf_ == VK_NULL_HANDLE &&
         !makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2372,13 +2571,15 @@ bool VulkanRenderer::makePresentPass() {
 
 // `colour_` (TRANSFER_SRC, as `end()` and `presentSurface` leave it) through the
 // present shader into `presImg_`, and back to TRANSFER_SRC.
-bool VulkanRenderer::runPresentPass(int vy, int vh) {
+bool VulkanRenderer::runPresentPass(int vy, int vh, bool mid) {
     if (!makePresentPass()) return false;
+    if (mid && fgMidDs_ == VK_NULL_HANDLE) return false;
     // THE POST CHAIN's display-size picture when it ran this frame (the
     // supersample folded already), else the scene's colour
     const bool post = postLive_ && postImg_ != VK_NULL_HANDLE && presDsPost_ != VK_NULL_HANDLE;
+    // ...or, `mid`, FRAME GENERATION's in-between picture (already in the sampled layout: no transitions)
     const VkImage srcImg = post ? postImg_ : colour_;
-    const VkDescriptorSet srcDs = post ? presDsPost_ : presDs_;
+    const VkDescriptorSet srcDs = mid ? fgMidDs_ : post ? presDsPost_ : presDs_;
     VkCommandBuffer cb = oneShotBegin();
     const auto layout = [&](VkImageLayout from, VkImageLayout to) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -2390,26 +2591,30 @@ bool VulkanRenderer::runPresentPass(int vy, int vh) {
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
-    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (!mid) layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = presPass_; rp.framebuffer = presFbuf_;
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &srcDs, 0, nullptr);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, post ? 1 : ss_, hdrOn_ ? 32 : colourDepth_};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, (post || mid) ? 1 : ss_, hdrOn_ ? 32 : colourDepth_};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
-    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    if (!mid) layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     oneShotEnd(cb);
     return true;
 }
 
 bool VulkanRenderer::presentWorld(int vy, int vh) {
     if (swap_ == VK_NULL_HANDLE) return false;
+    // FRAME GENERATION: the in-between picture first, through the same present pass, then the real frame -
+    // at once, or half an interval later
+    const bool mid = fgMidFrame();
+    if (mid && runPresentPass(vy, vh, true)) presentImage(presImg_, w_, h_);
     if (!runPresentPass(vy, vh)) return false;
-    return presentImage(presImg_, w_, h_);
+    return fgPresentReal(mid);
 }
 
 bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgba) {
@@ -3143,6 +3348,9 @@ bool VulkanRenderer::presentOverlay(const omk::Surface& s, const std::uint8_t* m
                                     int vy, int vh) {
     if (swap_ == VK_NULL_HANDLE || s.w != w_ || s.h != h_ || !mask) return false;
     if (!makeOverlayPass()) return false;
+    // FRAME GENERATION: an in-between world, if one is due, under the SAME interface (the 2D is never
+    // interpolated: this frame's, over both)
+    const bool mid = fgMidFrame();
     // both planes up, whole: ~3 bytes a pixel against the CPU path's readback,
     // dither and RGBA upload of the entire frame
     const std::size_t n = static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_);
@@ -3175,9 +3383,13 @@ bool VulkanRenderer::presentOverlay(const omk::Surface& s, const std::uint8_t* m
         up(ovMask_, ovMaskOff_);
         oneShotEnd(cb);
     }
+    if (mid && runPresentPass(vy, vh, true)) {
+        ovDraw(fade);
+        presentImage(presImg_, w_, h_);
+    }
     if (!runPresentPass(vy, vh)) return false;
     ovDraw(fade);
-    return presentImage(presImg_, w_, h_);
+    return fgPresentReal(mid);
 }
 
 // The overlay's planes blended over the present pass's picture in `presImg_`.
@@ -3241,6 +3453,7 @@ bool VulkanRenderer::init(int w, int h) {
     if (!makePipelines()) return false;
     // The window is 640x480 while the 3D target is the letterboxed 640x352.
     if (surface_ != VK_NULL_HANDLE && !makeSwapchain(w, 480)) return false;
+    if (fgOn_ && !fgStart()) fgOn_ = false;
     return true;
 }
 
@@ -3634,6 +3847,16 @@ void VulkanRenderer::pushView(const omk::View& view) {
     for (int c = 0; c < 4; ++c)
         for (int r = 0; r < 4; ++r)
             push_.mvp[c * 4 + r] = rows[r][c];
+    // FRAME GENERATION's previous camera for the draws that follow. The frame's MAIN view (its eye is
+    // `begin`'s) moves from where the last frame's main view was; a mirror's reflected view is given no
+    // camera motion - its previous matrix is its current one - which only the reflection's own pixels carry.
+    if (mvOn_) {
+        const bool mainView = cam.eye[0] == frameEye_[0] && cam.eye[1] == frameEye_[1] &&
+                              cam.eye[2] == frameEye_[2];
+        if (mainView)
+            for (int k = 0; k < 3; ++k) { mainS_[k] = s[k]; mainU_[k] = u[k]; mainF_[k] = f[k]; }
+        std::memcpy(pm_.prevMvp, mainView && havePrev_ ? prevMain_ : push_.mvp, sizeof pm_.prevMvp);
+    }
 }
 
 // THE DEPTH PASS FROM THE LIGHT - `todo/enhancements.md` row 6.
@@ -3815,6 +4038,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
     for (int i = 0; i < 3; ++i)
         clearColour_[i] = static_cast<float>(view.clearColour[i]) / 255.0f;
+    for (int i = 0; i < 3; ++i) frameEye_[i] = view.cam.eye[i];   // the MAIN view's (`pushView`)
     pushView(view);
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
@@ -3879,7 +4103,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.shimmer = shimmerClock_;   // the shimmer runs with or without a shadow
         std::memcpy(shUboPtr_, &ub, sizeof ub);
     }
-    VkClearValue clear[2]{};
+    VkClearValue clear[3]{};   // [2]: the motion vectors, cleared to none (the zero)
     // the engine clears to the scene's fog colour (`View::clearColour`)
     clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
@@ -3889,7 +4113,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     // attachment leaves the rest of it undefined, and with supersampling on
     // the resolve then averages four blocks of uninitialised memory.
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
-    rp.clearValueCount = 2; rp.pClearValues = clear;
+    rp.clearValueCount = mvOn_ ? 3 : 2; rp.pClearValues = clear;
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     setViewport(view);
     recording_ = true;
@@ -3898,6 +4122,24 @@ void VulkanRenderer::begin(const omk::View& view) {
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
     aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
     aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
+    // ---- FRAME GENERATION's per-frame half: the motion, the cuts and the bodies' previous poses ----
+    if (mvOn_) {
+        std::memcpy(curMain_, push_.mvp, sizeof curMain_);
+        // THE CAMERA CUT (`o3de/framegen.h`): a jump of the engine's camera - a first frame, a resize or a new
+        // set are cuts too
+        if (havePrev_) {
+            const float turn = mainF_[0] * prevFwd_[0] + mainF_[1] * prevFwd_[1] + mainF_[2] * prevFwd_[2];
+            if (omk::framegen::cameraCut(frameEye_, prevEye_, turn)) resetOwed_ = true;
+        } else {
+            resetOwed_ = true;
+        }
+        // across a cut the vectors say "no motion": the history is dropped anyway
+        if (resetOwed_) std::memcpy(pm_.prevMvp, push_.mvp, sizeof pm_.prevMvp);
+        pm_.jitter[0] = pm_.jitter[1] = 0.0f;   // (no upscaler, no jitter)
+        // the bodies' affines: last frame's become the previous ones
+        prevAffines_.swap(curAffines_);
+        curAffines_.clear();
+    }
 }
 
 // A POSED body's block in the pose buffer (`posesBodies`): written once a
@@ -3907,7 +4149,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
     const auto key = std::make_pair(d.meshPose, d.vertexLights);
     if (const auto it = poseCache_.find(key); it != poseCache_.end()) { off = it->second; return true; }
     const VkDeviceSize at = (poseUsed_ + poseAlign_ - 1) / poseAlign_ * poseAlign_;
-    if (!posePtr_ || at + kPoseRange > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
+    if (!posePtr_ || at + poseRange_ > kPoseBytes || d.meshPoses > kPoseMaxMeshes) return false;
     float* f = reinterpret_cast<float*>(static_cast<unsigned char*>(posePtr_) + at);
     const int nl = d.vertexLights ? std::min(d.vertexLightCount, kPoseLights) : 0;
     f[0] = static_cast<float>(nl);
@@ -3918,6 +4160,19 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));   // three vec4 an affine
     poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    // ...and with motion vectors, the body's PREVIOUS affines right after them (`scene.vert` -DOMK_MOTION),
+    // from the last frame's block of the same `meshPose` - or the current ones again for a body new this
+    // frame, which then shows only the camera's motion rather than a wrong one of its own
+    if (mvOn_) {
+        const std::size_t n = d.meshPoses * 12;
+        const auto prev = prevAffines_.find(d.meshPose);
+        // (and across a cut, where nothing has a previous position)
+        const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
+                                ? prev->second.data() : d.meshPose;
+        std::memcpy(a + n, from, n * sizeof(float));
+        curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
+        poseUsed_ += 3 * d.meshPoses * 16;
+    }
     off = static_cast<uint32_t>(at);
     poseCache_.emplace(key, off);
     return true;
@@ -4066,8 +4321,14 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         std::size_t j = i;
         while (j < e && (haveCull ? g->cornerCull[j] : 0u) == c) ++j;
         push_.cull = c ? (flipX_ ? -kCullSign : kCullSign) : 0;
-        vkCmdPushConstants(cb_, plo_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(Push), &push_);
+        if (mvOn_) {
+            pm_.p = push_;
+            vkCmdPushConstants(cb_, plo_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(PushMv), &pm_);
+        } else {
+            vkCmdPushConstants(cb_, plo_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(Push), &push_);
+        }
         vkCmdDraw(cb_, static_cast<uint32_t>(j - i), 1, static_cast<uint32_t>(i), 0);
         i = j;
     }
@@ -4332,6 +4593,545 @@ void VulkanRenderer::runSsao() {
     vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb2, 0, nullptr, 0, nullptr);
     run(aoApplyPass_, aoApplyFbuf_, aoBlurPipe_);
+}
+
+// ---- FRAME GENERATION, `todo/enhancements.md` 27 ---------------------------
+//
+// AN ENHANCEMENT, off unless asked; the Direct3D 12 window's, on Vulkan. The same three passes from one
+// GLSL source (`fg_cap.frag`, `fg_splat.frag`, `fg_resolve.frag`) and the same rules (`o3de/framegen.h`):
+//
+//   * THE SCENE writes motion vectors (`mvOn_`: `scene.vert/frag` built -DOMK_MOTION - the previous
+//     view-projection in the push block, the bodies' previous poses after the current ones in the pose
+//     buffer - into a second target, R16G16_SFLOAT, opaque geometry only).
+//   * THE CAPTURE (`fg_cap.frag`), on the frame's command buffer after the post chain: the finished world
+//     picture at display size (the supersample folded), its motion in display pixels and its view depth;
+//     two frames kept.
+//   * THE SPLAT (`fg_splat.frag`): frame N's pixels half-way back along their vectors, N-1's half-way
+//     forward along theirs turned round, into two R32 heads by `imageAtomicMin` of depth and source - a
+//     depth-tested forward warp - and the RESOLVE (`fg_resolve.frag`): the front-most surface wins,
+//     blended with the other frame where it shows the same surface there, alone where it is hidden
+//     there (a disocclusion), cracks filled from the farthest neighbour.
+//   * THE PRESENT: the in-between picture through the SAME present pass and the SAME overlay (this
+//     frame's 2D - the interface is never interpolated) and out at once; the real frame follows half the
+//     measured interval later - its blit is done on the frame's thread, its vkQueuePresentKHR deferred to
+//     a thread of the backend's own on a second queue of the family (`presQ_`; without one the real
+//     frame goes out at once, after the in-between one). A v-synced swapchain shows one picture a
+//     refresh, so the pair costs two refreshes: hence the display's ROOM rule (`fgMidFrame`).
+//   * NOT INTERPOLATED: a first frame, a pair with a CAMERA CUT on either side, a present with no new
+//     frame rendered since the last, a frame composed on the CPU. `--frames N` still renders and presents
+//     N real frames; the in-between ones are presents only, and the window dump (`OMK_WINDUMP`) is always
+//     a real frame's (it reads `presImg_`, which the real frame's present pass writes last).
+
+bool VulkanRenderer::fgStart() {
+    fgAlways_ = omk::envFlag("OMK_FRAMEGEN_ALWAYS");
+    fgProbe_ = omk::envStr("OMK_FRAMEGEN_PROBE");
+    if (fgProbe_ && !*fgProbe_) fgProbe_ = nullptr;
+    fgSlots_ = fgProbe_ ? 3 : 2;
+    if (presQ_ != VK_NULL_HANDLE) fgThread_ = std::thread([this] { fgThreadMain(); });
+    std::printf("framegen: on - an ENHANCEMENT: an in-between picture warped along the motion vectors before "
+                "every rendered frame (motion vectors on for it); the display refreshes at %d Hz. The real "
+                "frame goes out half an interval after its in-between one%s - that half interval is the "
+                "latency it adds - and it pays only when the display can show about twice the rendered rate "
+                "(or the GPU's frame is long); the simulation is unchanged. An in-between frame goes out only "
+                "while a frame's work spans about two refreshes (%.0f ms here) - with less, the display has "
+                "no refresh to show it in and a v-synced present would only slow the real frames\n",
+                fgRefresh_, presQ_ != VK_NULL_HANDLE ? "" : " (no second queue here: right after it)",
+                fgRefresh_ > 0 ? 1900.0 / fgRefresh_ : 0.0);
+    omk::event("framegen", {{"on", 1}, {"refresh", fgRefresh_}});
+    return true;
+}
+
+void VulkanRenderer::killFg() {
+    for (VkPipeline* p : {&fgCapPipe_, &fgSplatPipe_, &fgResolvePipe_})
+        if (*p) { vkDestroyPipeline(dev_, *p, nullptr); *p = VK_NULL_HANDLE; }
+    if (fgPlo_) { vkDestroyPipelineLayout(dev_, fgPlo_, nullptr); fgPlo_ = VK_NULL_HANDLE; }
+    if (fgPool_) { vkDestroyDescriptorPool(dev_, fgPool_, nullptr); fgPool_ = VK_NULL_HANDLE; }
+    fgCapDs_ = fgIntDs_ = fgMidDs_ = VK_NULL_HANDLE;
+    if (fgDsl_) { vkDestroyDescriptorSetLayout(dev_, fgDsl_, nullptr); fgDsl_ = VK_NULL_HANDLE; }
+    for (VkFramebuffer& f : fgCapFbuf_) if (f) { vkDestroyFramebuffer(dev_, f, nullptr); f = VK_NULL_HANDLE; }
+    for (VkFramebuffer* f : {&fgMidFbuf_, &fgSplatFbuf_})
+        if (*f) { vkDestroyFramebuffer(dev_, *f, nullptr); *f = VK_NULL_HANDLE; }
+    for (VkRenderPass* r : {&fgCapPass_, &fgSplatPass_, &fgResolvePass_})
+        if (*r) { vkDestroyRenderPass(dev_, *r, nullptr); *r = VK_NULL_HANDLE; }
+    for (int i = 0; i < kFgMaxSlots; ++i) {
+        freeImage2d(fgColImg_[i], fgColMem_[i], fgColView_[i]);
+        freeImage2d(fgAuxImg_[i], fgAuxMem_[i], fgAuxView_[i]);
+    }
+    for (int i = 0; i < 2; ++i) freeImage2d(fgHeadImg_[i], fgHeadMem_[i], fgHeadView_[i]);
+    freeImage2d(fgMidImg_, fgMidMem_, fgMidView_);
+    fgHeadsReady_ = false;
+}
+
+// the targets, the passes and the pipelines, made on the first capture
+bool VulkanRenderer::makeFg() {
+    if (fgMidView_ != VK_NULL_HANDLE) return true;
+    if (!mvOn_ || motionView_ == VK_NULL_HANDLE || depthSampleView_ == VK_NULL_HANDLE) return false;
+    if (!makePresentPass()) return false;   // its sampler, its read-back buffer, the present image's format
+    const VkFormat pf = presFmt_;
+    const VkImageUsageFlags colUse = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    for (int i = 0; i < fgSlots_; ++i)
+        if (!makeImage2d(pf, w_, h_, colUse, fgColImg_[i], fgColMem_[i], fgColView_[i], "framegen") ||
+            !makeImage2d(VK_FORMAT_R16G16B16A16_SFLOAT, w_, h_,
+                         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                         fgAuxImg_[i], fgAuxMem_[i], fgAuxView_[i], "framegen")) return false;
+    for (int i = 0; i < 2; ++i)
+        if (!makeImage2d(VK_FORMAT_R32_UINT, w_, h_, VK_IMAGE_USAGE_STORAGE_BIT,
+                         fgHeadImg_[i], fgHeadMem_[i], fgHeadView_[i], "framegen")) return false;
+    if (!makeImage2d(pf, w_, h_, colUse, fgMidImg_, fgMidMem_, fgMidView_, "framegen")) return false;
+    // the passes: the capture (two targets), the splat (none: the heads are storage images), the resolve (one)
+    const auto pass = [&](int n, const VkFormat* fmts, VkRenderPass& rp) -> bool {
+        VkAttachmentDescription a[2]{};
+        VkAttachmentReference ref[2]{};
+        for (int i = 0; i < n; ++i) {
+            a[i].format = fmts[i]; a[i].samples = VK_SAMPLE_COUNT_1_BIT;
+            a[i].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            a[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            a[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            a[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;   // (every pixel is written)
+            a[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ref[i] = {static_cast<uint32_t>(i), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        }
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = static_cast<uint32_t>(n); sub.pColorAttachments = n ? ref : nullptr;
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = static_cast<uint32_t>(n); rpi.pAttachments = n ? a : nullptr;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &rp), "framegen render pass");
+        return true;
+    };
+    const VkFormat capFmts[2] = {pf, VK_FORMAT_R16G16B16A16_SFLOAT};
+    if (!pass(2, capFmts, fgCapPass_) || !pass(0, nullptr, fgSplatPass_) || !pass(1, &pf, fgResolvePass_)) return false;
+    const auto fbuf = [&](VkRenderPass rp, const VkImageView* views, uint32_t n, VkFramebuffer& out) -> bool {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = rp; fi.attachmentCount = n; fi.pAttachments = views;
+        fi.width = static_cast<uint32_t>(w_); fi.height = static_cast<uint32_t>(h_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &out), "framegen framebuffer");
+        return true;
+    };
+    for (int i = 0; i < fgSlots_; ++i) {
+        const VkImageView v[2] = {fgColView_[i], fgAuxView_[i]};
+        if (!fbuf(fgCapPass_, v, 2, fgCapFbuf_[i])) return false;
+    }
+    if (!fbuf(fgSplatPass_, nullptr, 0, fgSplatFbuf_) || !fbuf(fgResolvePass_, &fgMidView_, 1, fgMidFbuf_)) return false;
+    // ONE set layout for the three: four pictures (0..3) and the two heads (4, 5); the shaders fetch, so no sampler
+    {
+        VkDescriptorSetLayoutBinding b[6]{};
+        for (int k = 0; k < 6; ++k) {
+            b[k].binding = static_cast<uint32_t>(k); b[k].descriptorCount = 1;
+            b[k].descriptorType = k < 4 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            b[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 6; dli.pBindings = b;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &fgDsl_), "framegen set layout");
+        // (two sets of the six-binding layout, whole: four sampled and two storage each)
+        const VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8},
+                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4},
+                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 3; pi.poolSizeCount = 3; pi.pPoolSizes = ps;
+        VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &fgPool_), "framegen pool");
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = fgPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &fgDsl_;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &fgCapDs_), "framegen set");
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &fgIntDs_), "framegen set");
+        // the in-between picture as the PRESENT pass reads it (the present pass's own layout)
+        ai.pSetLayouts = &presDsl_;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &fgMidDs_), "framegen present set");
+        const VkDescriptorImageInfo mi{presSampler_, fgMidView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr.dstSet = fgMidDs_; wr.dstBinding = 0; wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &mi;
+        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        // the heads, once: always in GENERAL (the splat both stores and fetches them)
+        const VkDescriptorImageInfo hi[2] = {{VK_NULL_HANDLE, fgHeadView_[0], VK_IMAGE_LAYOUT_GENERAL},
+                                             {VK_NULL_HANDLE, fgHeadView_[1], VK_IMAGE_LAYOUT_GENERAL}};
+        VkWriteDescriptorSet hw[2]{};
+        for (int k = 0; k < 2; ++k) {
+            hw[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            hw[k].dstSet = fgIntDs_; hw[k].dstBinding = 4u + static_cast<uint32_t>(k); hw[k].descriptorCount = 1;
+            hw[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; hw[k].pImageInfo = &hi[k];
+        }
+        vkUpdateDescriptorSets(dev_, 2, hw, 0, nullptr);
+    }
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(omk::framegen::CapPush)};
+    VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &fgDsl_;
+    pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+    VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &fgPlo_), "framegen pipeline layout");
+    const auto pipe = [&](const uint32_t* frag, size_t bytes, VkRenderPass rp, uint32_t targets,
+                          VkPipeline& out) -> bool {
+        VkShaderModule qv = shaderModule(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule qf = shaderModule(frag, bytes);
+        if (!qv || !qf) { std::fprintf(stderr, "vulkan: framegen shader module\n"); return false; }
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkViewport vp{0, 0, static_cast<float>(w_), static_cast<float>(h_), 0.0f, 1.0f};
+        VkRect2D sc{{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState cba[2]{};
+        cba[0].colorWriteMask = cba[1].colorWriteMask = 0xF;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = targets; cb.pAttachments = targets ? cba : nullptr;
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = st;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &ms; gp.pColorBlendState = &cb;
+        gp.layout = fgPlo_; gp.renderPass = rp;
+        const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &out);
+        vkDestroyShaderModule(dev_, qv, nullptr);
+        vkDestroyShaderModule(dev_, qf, nullptr);
+        if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: framegen pipeline\n"); return false; }
+        return true;
+    };
+    if (!pipe(kFgCapFrag, sizeof(kFgCapFrag), fgCapPass_, 2, fgCapPipe_) ||
+        !pipe(kFgSplatFrag, sizeof(kFgSplatFrag), fgSplatPass_, 0, fgSplatPipe_) ||
+        !pipe(kFgResolveFrag, sizeof(kFgResolveFrag), fgResolvePass_, 1, fgResolvePipe_)) return false;
+    // the heads into GENERAL, where they stay
+    VkCommandBuffer cb = oneShotBegin();
+    for (int i = 0; i < 2; ++i) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = fgHeadImg_[i]; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &b);
+    }
+    oneShotEnd(cb);
+    fgHeadsReady_ = true;
+    fgSeq_ = fgShownSeq_ = 0;   // (re)made: nothing kept to pair with
+    return true;
+}
+
+// On the frame's command buffer, after the post chain: the world picture, its motion and depth, into the
+// next slot.
+void VulkanRenderer::fgCapture() {
+    if (!makeFg()) {
+        std::fprintf(stderr, "framegen: its targets could not be made - off\n");
+        fgOn_ = false;
+        return;
+    }
+    const int s = static_cast<int>(fgSeq_ % fgSlots_);
+    // the display source: the post chain's picture if it ran (the supersample folded), else the scene's colour
+    const bool post = postLive_ && postImg_ != VK_NULL_HANDLE;
+    const VkImage srcImg = post ? postImg_ : colour_;
+    const VkImageView srcView = post ? postView_ : colourView_;
+    const VkDescriptorImageInfo ii[3] = {{VK_NULL_HANDLE, srcView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                         {VK_NULL_HANDLE, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
+                                         {VK_NULL_HANDLE, motionView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    VkWriteDescriptorSet wr[3]{};
+    for (int k = 0; k < 3; ++k) {
+        wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[k].dstSet = fgCapDs_; wr[k].dstBinding = static_cast<uint32_t>(k); wr[k].descriptorCount = 1;
+        wr[k].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; wr[k].pImageInfo = &ii[k];
+    }
+    vkUpdateDescriptorSets(dev_, 3, wr, 0, nullptr);
+    // what the frame wrote (the picture, the depth, the motion) before the capture reads it; the picture
+    // from TRANSFER_SRC (where the display half expects it) to a sampled layout and back
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                       VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                  VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags srcA, VkAccessFlags dstA,
+                            VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from; b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = srcImg; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb_, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, VK_ACCESS_SHADER_READ_BIT,
+           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp.renderPass = fgCapPass_; rp.framebuffer = fgCapFbuf_[s];
+    rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
+    vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, fgCapPipe_);
+    vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, fgPlo_, 0, 1, &fgCapDs_, 0, nullptr);
+    const float pw = static_cast<float>(std::max(foc_.vw, 1)), ph = static_cast<float>(std::max(foc_.vh, 1));
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    const omk::framegen::CapPush cp{{pw, ph, static_cast<float>(post ? 1 : ss_), 0.0f},
+                                    {static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_) / pw,
+                                     static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_) / ph, 0.0f, 0.0f},
+                                    {farP / (farP - nearP), -farP * nearP / (farP - nearP), 0.0f, 0.0f}};
+    vkCmdPushConstants(cb_, fgPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof cp, &cp);
+    vkCmdDraw(cb_, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cb_);
+    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, VK_ACCESS_TRANSFER_READ_BIT,
+           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    fgCut_[s] = resetOwed_;
+    fgPicW_[s] = foc_.vw;
+    fgPicH_[s] = foc_.vh;
+    ++fgSeq_;
+}
+
+// the interval between presents, smoothed: what "half an interval" is
+void VulkanRenderer::fgTick() {
+    const double now = nowSec();
+    if (fgLastCall_ > 0.0) {
+        const double dt = std::min(now - fgLastCall_, 0.1);
+        fgInterval_ = fgInterval_ > 0.0 ? 0.8 * fgInterval_ + 0.2 * dt : dt;
+    }
+    if (fgPresentDone_ > 0.0) {
+        const double w = std::min(now - fgPresentDone_, 0.1);
+        fgWork_ = fgWork_ > 0.0 ? 0.8 * fgWork_ + 0.2 * w : w;
+    }
+    fgLastCall_ = fgCallAt_ = now;
+}
+
+// At a world present: whether an in-between frame goes out first - and if so it is in `fgMidImg_`.
+bool VulkanRenderer::fgMidFrame() {
+    if (!fgOn_) return false;
+    fgTick();
+    ++fgReal_;
+    bool mid = false;
+    if (fgSeq_ == fgShownSeq_) {
+        ++fgStale_;   // nothing rendered since the last present: nothing to go between
+    } else {
+        fgShownSeq_ = fgSeq_;
+        const int S = fgSlots_;
+        const auto pairs = [&](int a, int b) {
+            return !fgCut_[a] && !fgCut_[b] && fgPicW_[a] == fgPicW_[b] && fgPicH_[a] == fgPicH_[b];
+        };
+        const int n = static_cast<int>((fgSeq_ - 1) % S), p = static_cast<int>((fgSeq_ + S - 2) % S);
+        // THE DISPLAY'S ROOM, the self-limiting rule (`o3de/framegen.h`)
+        fgRoom_ = omk::framegen::roomFor(fgRoom_, fgWork_, fgRefresh_, fgAlways_);
+        if (fgSeq_ < 2 || fgMidView_ == VK_NULL_HANDLE || !pairs(n, p)) {
+            ++fgCuts_;   // a first frame, a cut on either side, a new picture size
+        } else if (!fgRoom_) {
+            ++fgNoRoom_;   // the display could not show it without slowing the real frames
+        } else {
+            // THE PROBE: frames N-2 and N with the vectors doubled, against the real N-1
+            if (fgProbe_ && S == 3 && fgSeq_ >= 3) {
+                const int m = static_cast<int>((fgSeq_ - 3) % S);
+                if (pairs(p, m)) fgProbeRun(n, p, m);
+            }
+            fgInterpolate(n, p, 1.0f);
+            ++fgMids_;
+            mid = true;
+        }
+    }
+    fgReport();
+    return mid;
+}
+
+// A frame composed on the CPU (`presentSurface`): no world picture of its own to warp, so it goes out as it is.
+void VulkanRenderer::fgCpuFrame() {
+    if (!fgOn_) return;
+    fgTick();
+    ++fgReal_;
+    ++fgCpu_;
+    fgShownSeq_ = fgSeq_;
+    fgPresentDone_ = nowSec() + 0.002;   // (its present follows, ~2 ms)
+    static bool told = false;
+    if (!told) {
+        told = true;
+        std::printf("framegen: a frame composed on the CPU (the 2D over the world at colour depth 16) goes out "
+                    "as it is - colordepth = 32 lets the in-between frames run under the interface\n");
+    }
+    fgReport();
+}
+
+// The in-between picture of kept frames `n` (the later) and `p`, vectors x `k`: the heads emptied, both frames
+// splatted, resolved - on a one-shot command buffer.
+void VulkanRenderer::fgInterpolate(int n, int p, float k) {
+    // the passes' table, in the shaders' order: the two pictures, then the two motion-and-depth images
+    // (rewritten here: the frames before were waited for)
+    const VkImageView in[4] = {fgColView_[n], fgColView_[p], fgAuxView_[n], fgAuxView_[p]};
+    VkDescriptorImageInfo ii[4];
+    VkWriteDescriptorSet wr[4]{};
+    for (int i = 0; i < 4; ++i) {
+        ii[i] = {VK_NULL_HANDLE, in[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        wr[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[i].dstSet = fgIntDs_; wr[i].dstBinding = static_cast<uint32_t>(i); wr[i].descriptorCount = 1;
+        wr[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; wr[i].pImageInfo = &ii[i];
+    }
+    vkUpdateDescriptorSets(dev_, 4, wr, 0, nullptr);
+    VkCommandBuffer cb = oneShotBegin();
+    const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pl, const omk::framegen::Push& push) {
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
+        vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, fgPlo_, 0, 1, &fgIntDs_, 0, nullptr);
+        vkCmdPushConstants(cb, fgPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb);
+    };
+    // the heads' stores and atomics of one draw before the next draw's fetches and atomics
+    const auto fence = [&]() {
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             1, &mb, 0, nullptr, 0, nullptr);
+    };
+    omk::framegen::Push fp{{static_cast<float>(fgPicW_[n]), static_cast<float>(fgPicH_[n]), 0.0f, 0.0f},
+                           {k, 1.0f, 0.0f, 0.0f}};
+    run(fgSplatPass_, fgSplatFbuf_, fgSplatPipe_, fp);   // the heads emptied
+    fence();
+    fp.k[1] = 0.0f;
+    run(fgSplatPass_, fgSplatFbuf_, fgSplatPipe_, fp);   // both frames splatted
+    fence();
+    run(fgResolvePass_, fgMidFbuf_, fgResolvePipe_, fp);  // resolved
+    oneShotEnd(cb);
+}
+
+// a display-size RGBA8 image (in the sampled layout) read back (the probe's)
+bool VulkanRenderer::fgRead(VkImage img, std::vector<unsigned char>& out) {
+    if (hdrOn_ || !makePresentPass() || presRead_ == VK_NULL_HANDLE) return false;
+    VkCommandBuffer cb = oneShotBegin();
+    const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags srcA, VkAccessFlags dstA,
+                            VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from; b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, VK_ACCESS_TRANSFER_READ_BIT,
+           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy cp{};
+    cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.imageExtent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
+    vkCmdCopyImageToBuffer(cb, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, presRead_, 1, &cp);
+    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, 0,
+           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    oneShotEnd(cb);
+    const std::size_t bytes = static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_) * 4;
+    out.resize(bytes);
+    void* p = nullptr;
+    if (vkMapMemory(dev_, presReadMem_, 0, bytes, 0, &p) != VK_SUCCESS) return false;
+    std::memcpy(out.data(), p, bytes);
+    vkUnmapMemory(dev_, presReadMem_);
+    return true;
+}
+
+// `OMK_FRAMEGEN_PROBE=<prefix>`: THE CHECK's instrument (`o3de/framegen.h`)
+void VulkanRenderer::fgProbeRun(int n, int p, int m) {
+    fgInterpolate(n, m, 2.0f);
+    static std::vector<unsigned char> warp, real, a, b;
+    if (!fgRead(fgMidImg_, warp) || !fgRead(fgColImg_[p], real) || !fgRead(fgColImg_[n], b) ||
+        !fgRead(fgColImg_[m], a)) return;
+    omk::framegen::probeCompare(warp, real, a, b, fgPicW_[n], fgPicH_[n], w_, fgSeq_, fgProbe_);
+}
+
+// The real frame in `presImg_`: presented now - or, after an in-between one, half the interval later by the
+// backend's thread (the blit itself is done here: `presentImage` with `defer`).
+bool VulkanRenderer::fgPresentReal(bool mid) {
+    if (!mid || !fgThread_.joinable()) {
+        const bool ok = presentImage(presImg_, w_, h_);
+        if (fgOn_) fgPresentDone_ = nowSec();
+        return ok;
+    }
+    // half the interval after the CALL - when the frame was ready - not after the in-between frame's
+    // present returned (a blocked present would push the real frame onto the next one's heels)
+    const double half = std::clamp(0.5 * fgInterval_, 0.0, 0.05);
+    fgDeferDue_ = std::max(fgCallAt_ + half, nowSec() + 0.001);
+    ++fgDeferred_;
+    fgLatSum_ += half;
+    const bool ok = presentImage(presImg_, w_, h_, true);
+    fgPresentDone_ = nowSec();
+    return ok;
+}
+
+// The frame's thread waits for a deferred real frame to be out - early, if it is not yet due - before it
+// touches the swapchain again.
+void VulkanRenderer::fgSettle() {
+    if (!fgThread_.joinable()) return;
+    std::unique_lock<std::mutex> lk(fgMu_);
+    if (!fgPending_) return;
+    fgHurry_ = true;
+    fgCv_.notify_all();
+    fgCv_.wait(lk, [this] { return !fgPending_; });
+}
+
+void VulkanRenderer::fgThreadMain() {
+    std::unique_lock<std::mutex> lk(fgMu_);
+    for (;;) {
+        fgCv_.wait(lk, [this] { return fgPending_ || fgQuit_; });
+        if (!fgPending_) return;   // asked to stop, nothing owed
+        // to the due time: a timed wait to ~1.5 ms short of it, then yields (the pacer's way)
+        while (!fgHurry_) {
+            const double left = fgDue_ - nowSec();
+            if (left <= 0.0) break;
+            if (left > 0.002) {
+                fgCv_.wait_for(lk, std::chrono::microseconds(static_cast<long long>((left - 0.0015) * 1e6)));
+            } else {
+                lk.unlock();
+                std::this_thread::yield();
+                lk.lock();
+            }
+        }
+        if (fgHurry_) ++fgHurried_;   // the next frame came before it was due
+        const bool quit = fgQuit_;
+        const uint32_t idx = fgPendIdx_;
+        lk.unlock();
+        if (!quit) {
+            // the blit was done on the frame's thread; this is the queue present alone, on the second queue
+            VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+            pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = &drawn_;
+            pi.swapchainCount = 1; pi.pSwapchains = &swap_;
+            pi.pImageIndices = &idx;
+            vkQueuePresentKHR(presQ_, &pi);
+        }
+        lk.lock();
+        // how late it reached the screen's queue against when it was due (hurried ones, sent early by the
+        // next frame, are not counted)
+        if (!fgHurry_) {
+            fgLateSum_ += nowSec() - fgDue_;
+            ++fgOnTime_;
+        }
+        fgPending_ = false;
+        fgHurry_ = false;
+        fgCv_.notify_all();
+    }
+}
+
+// THE COUNTERS, after every real present: an event (what `verify.py: engine: framegen` reads) and, every
+// 300, a line.
+void VulkanRenderer::fgReport() {
+    long hurried = 0;
+    double late = 0.0;
+    {
+        std::lock_guard<std::mutex> lk(fgMu_);
+        hurried = fgHurried_;
+        late = fgOnTime_ ? 1000.0 * fgLateSum_ / static_cast<double>(fgOnTime_) : 0.0;
+    }
+    const double lat = fgDeferred_ ? 1000.0 * fgLatSum_ / static_cast<double>(fgDeferred_) : 0.0;
+    omk::event("framegen.stats", {{"real", fgReal_}, {"interp", fgMids_}, {"cut", fgCuts_}, {"stale", fgStale_},
+                                  {"cpu", fgCpu_}, {"hurried", hurried}, {"interval", 1000.0 * fgInterval_},
+                                  {"latency", lat}, {"late", late}, {"noroom", fgNoRoom_},
+                                  {"work", 1000.0 * fgWork_}});
+    if (fgReal_ % 300 != 0) return;
+    std::printf("framegen: %ld real frames presented, %ld in-between ones (%ld firsts or cuts, %ld with nothing new "
+                "rendered, %ld composed on the CPU, %ld with no refresh to spare - %.1f ms of work a frame); a frame "
+                "every %.1f ms, the real one shown %.1f ms after its in-between one (the latency added; the present "
+                "done %.1f ms after it was due), %ld sent early by the next\n", fgReal_, fgMids_, fgCuts_, fgStale_,
+                fgCpu_, fgNoRoom_, 1000.0 * fgWork_, 1000.0 * fgInterval_, lat, late, hurried);
 }
 
 // ---- VOLUMETRIC LAMP LIGHT, `todo/enhancements.md` 24 -----------------------
@@ -4630,6 +5430,8 @@ void VulkanRenderer::end() {
     // with the rest
     if (volOn_) runVol();
     runPost();   // bloom, depth of field, grade - when asked and due
+    // FRAME GENERATION: the finished world picture, with its motion and depth, kept for the present
+    if (fgOn_) fgCapture();
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -4649,6 +5451,13 @@ void VulkanRenderer::end() {
     cbStarted_ = false;
     shadowLive_ = false;
     dirty_ = true;
+    if (mvOn_) {
+        // this frame's camera is the next one's previous
+        std::memcpy(prevMain_, curMain_, sizeof prevMain_);
+        for (int k = 0; k < 3; ++k) { prevEye_[k] = frameEye_[k]; prevFwd_[k] = mainF_[k]; }
+        havePrev_ = true;
+        resetOwed_ = false;
+    }
 }
 
 const omk::Surface& VulkanRenderer::readback() {
@@ -4751,13 +5560,25 @@ void VulkanRenderer::geometryGone(void* self, const omk::Geometry* g) {
     r->vboRev_.erase(g);
     had |= r->tie_.erase(g) > 0;
     had |= r->baked_.erase(g) > 0;
+    // a SET going (an area left) is a cut for frame generation's history
+    if (had && g->corners.size() > 30000) r->resetOwed_ = true;
     if (had) ++r->released_;
 }
 
 VulkanRenderer::~VulkanRenderer() {
     omk::removeGeometryListener(&VulkanRenderer::geometryGone, this);
     if (!dev_) return;
+    if (fgThread_.joinable()) {   // the pacing thread first: it presents on the swapchain
+        {
+            std::lock_guard<std::mutex> lk(fgMu_);
+            fgQuit_ = true;
+            fgHurry_ = true;
+        }
+        fgCv_.notify_all();
+        fgThread_.join();
+    }
     vkDeviceWaitIdle(dev_);
+    killFg();
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);
@@ -4799,6 +5620,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (msColourView_) vkDestroyImageView(dev_, msColourView_, nullptr);
     if (msColour_) vkDestroyImage(dev_, msColour_, nullptr);
     if (msColourMem_) freeDeviceMemory(msColourMem_);
+    freeImage2d(motion_, motionMem_, motionView_);
     killSsao();
     killVol();
     if (volUbo_) vkDestroyBuffer(dev_, volUbo_, nullptr);
@@ -4886,6 +5708,10 @@ bool vulkanResize(Renderer* r, int w, int h) {
 bool vulkanPresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
                           int vy, int vh) {
     return static_cast<VulkanRenderer*>(r)->presentOverlay(s, mask, fade, vy, vh);
+}
+
+void vulkanSetRefresh(Renderer* r, int hz) {
+    static_cast<VulkanRenderer*>(r)->setRefresh(hz);
 }
 
 void vulkanSetHdrDisplay(Renderer* r, int known, float peakNits) {

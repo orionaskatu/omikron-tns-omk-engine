@@ -29,5 +29,7 @@ bool  vulkanWorldPicture(Renderer*, int vy, int vh, std::vector<unsigned char>&)
 bool  vulkanPresentOverlay(Renderer*, const Surface&, const std::uint8_t* mask, const float fade[4], int vy, int vh);
 bool  vulkanWindowPicture(Renderer*, std::vector<unsigned char>&);
 void  vulkanSetHdrDisplay(Renderer*, int known, float peakNits);
+// the display's refresh rate in Hz (0: unknown), for frame generation's room rule
+void  vulkanSetRefresh(Renderer*, int hz);
 bool  vulkanResize(Renderer*, int w, int h);
 }

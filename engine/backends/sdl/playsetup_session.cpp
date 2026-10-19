@@ -251,13 +251,13 @@ int PlayState::setupSession() {
                     "GPU backends' (Direct3D 12, Vulkan) post-processing chain over the 3D (never the interface)\n",
                     postFx.bloom ? "on" : "off", postFx.dof ? "on (cinematic frames)" : "off",
                     omk::colorGradeName(postFx.grade), postFx.hdr ? "asked" : "off");
-    // FRAME GENERATION (settings.h `frameGen`), handed to the D3D12 window's
-    // renderer before its init (playgpu_vulkan.cpp); it changes no simulation
+    // FRAME GENERATION (settings.h `frameGen`), handed to the D3D12 or the Vulkan
+    // window's renderer before its init (playgpu_vulkan.cpp); it changes no simulation
     frameGen = enh(frameGenFlag, settings.frameGen ? 1 : 0, omk::kMaxFrameGen) > 0;
     if (frameGen)
         std::printf("framegen: asked for - an ENHANCEMENT: an in-between picture warped along the motion "
                     "vectors between every two rendered frames, presented half an interval before the "
-                    "second (the Direct3D 12 window only). It does not change the simulation; it pays "
+                    "second (the Direct3D 12 and Vulkan windows). It does not change the simulation; it pays "
                     "only when the display refreshes at about twice the pacer's cap (%d) or the GPU's "
                     "frame is long\n", frameRate);
     // HDR goes out through the GPU's own overlay present (colour depth 32's,

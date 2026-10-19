@@ -277,11 +277,11 @@ struct Settings {
     bool   volumetrics = false;
     Source volumetricsSource = Source::Default;
     // `framegen = off|on`: FRAME GENERATION (`todo/enhancements.md` 27), the
-    // Direct3D 12 window's - an in-between picture warped along the motion
+    // Direct3D 12 and Vulkan windows' - an in-between picture warped along the motion
     // vectors between every two rendered frames and presented half an
     // interval before the second, so the window shows about twice the frames.
     // It never changes the simulation or what a rendered frame shows; it adds
-    // half an interval of latency. In `all = max`; Vulkan says so and stays off.
+    // half an interval of latency. In `all = max`.
     bool   frameGen = false;
     Source frameGenSource = Source::Default;
 
@@ -546,7 +546,7 @@ inline constexpr int kMaxBloom = 1;               // the post chain's bloom (D3D
 inline constexpr int kMaxDof = 1;                 // depth of field on cinematic frames (D3D12, Vulkan)
 inline constexpr int kMaxSoftParticles = 1;       // effect sprites faded against the depth (D3D12, Vulkan)
 inline constexpr int kMaxVolumetrics = 1;         // the lamps' light in the air (D3D12, Vulkan)
-inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12 window)
+inline constexpr int kMaxFrameGen = 1;            // an in-between frame on the motion vectors (D3D12, Vulkan windows)
 inline constexpr int kMaxAnimBlend = 1;           // a clip change eased out over 0.2 s
 // NOT in `all = max`, asked for by name (`colorgrade = ...`, `hdr = on`):
 // `colorGrade` and `hdr` (verify.py: enhance all's SEPARATE)

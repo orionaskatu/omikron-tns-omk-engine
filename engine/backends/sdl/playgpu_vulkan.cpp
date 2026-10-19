@@ -152,8 +152,15 @@ void PlayState::gpuOpenWindow() {
             // so, or why not, when it takes the request
             if (postFx.any() && !vkr->setPostProcess(postFx))
                 std::printf("post: the post-processing chain could not be set up - off on Vulkan\n");
+            // FRAME GENERATION: asked for here, decided at the device (a window, no MSAA, the features); the
+            // display's refresh rate is the window layer's to say
             if (frameGen && !vkr->setFrameGeneration(true))
-                std::printf("framegen: frame generation is the Direct3D 12 window's (--d3d12) - off on Vulkan\n");
+                std::printf("framegen: frame generation could not be set up - off on Vulkan\n");
+            if (frameGen) {
+                SDL_DisplayMode dm{};
+                const int di = SDL_GetWindowDisplayIndex(vkWin);
+                omk::vulkanSetRefresh(vkr, di >= 0 && SDL_GetCurrentDisplayMode(di, &dm) == 0 ? dm.refresh_rate : 0);
+            }
             // HDR OUTPUT: whether the display reports HDR and its peak, as DXGI says
             // it where the build has DXGI (the surface's own offer of scRGB is the
             // rest of the answer, `VulkanRenderer::makeSwapchain`)
@@ -222,7 +229,7 @@ void PlayState::gpuOpenWorldHarness() {
             std::printf("post: the post-processing chain could not be set up - off in the harness\n");
         // FRAME GENERATION (row 27) is a way of presenting: a harness has no window
         if (wv && frameGen)
-            std::printf("framegen: a way of presenting, the Direct3D 12 WINDOW's (--d3d12) - off in the "
+            std::printf("framegen: a way of presenting, a WINDOW's (Direct3D 12, Vulkan) - off in the "
                         "offscreen harness\n");
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // FRAME GENERATION's CAPTURE (`todo/enhancements.md` 27), the Direct3D 12
-// backend's own: at the end of every rendered frame the finished WORLD picture
+// and Vulkan windows' (one source): at the end of every rendered frame the finished WORLD picture
 // (the post chain's, the upscaler's or the scene's - `displaySource`, the
 // supersample folded) is kept at the display size, and beside it what the
 // in-between frame needs of the scene - the MOTION VECTOR in display pixels and

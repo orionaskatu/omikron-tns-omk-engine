@@ -324,7 +324,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   as `tools/texpack.py extract` lays them out (Vulkan and\n"
 "                   Direct3D 12); [Enhancements] texturepack=DIR\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
-"                   around them, shadow rays for their lamps, ray-traced AO; the\n"
+"                   around them (no ray-traced shadow on them), ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
 "                   raytracing=on\n"
 "  --rt-reflections ENHANCEMENT: ray-traced reflections on the wet ground - the\n"

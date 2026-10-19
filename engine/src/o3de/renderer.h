@@ -460,7 +460,7 @@ public:
     virtual bool setAmbientOcclusion(bool /*on*/) { return false; }
 
     // HYBRID RAY TRACING (`todo/enhancements.md` 19): characters lit by the
-    // set around them, shadow rays for their lamps, ray-traced AO in SSAO's
+    // set around them (they receive no ray-traced shadow), ray-traced AO in SSAO's
     // place. Same contract - a request before `init()`; only the Direct3D 12
     // backend does it, and only on a DXR 1.1 device, which `raytracingLive`
     // answers once `init()` has run.

@@ -246,9 +246,9 @@
 ;ssao = off
 ;
 ; RAYTRACING - hybrid ray tracing: characters lit by the set around them (rays
-; that pick up the set's baked colour - red beside a red neon, darker under an
-; arch), shadow rays so a lamp behind a wall stops lighting them, and
-; ray-traced ambient occlusion in place of SSAO. The Direct3D 12 renderer on a
+; that pick up the set's baked colour - red beside a red neon; they receive no
+; ray-traced shadow, their light stays the game's own), and ray-traced
+; ambient occlusion in place of SSAO. The Direct3D 12 renderer on a
 ; GPU with DXR 1.1 only (`renderer = d3d12`). `todo/enhancements.md` 19.
 ;raytracing = off
 ;

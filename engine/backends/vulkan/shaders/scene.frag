@@ -121,8 +121,8 @@ layout(set = 6, binding = 0) uniform sampler2D sceneDepth;
 // EARLY depth test, and every hidden body fragment would cast its rays.
 layout(set = 3, binding = 2) uniform RtFrame {
     vec4 sky;      // rgb what a ray leaving the set sees; a the indirect term's strength (0 off)
-    vec4 eye;      // xyz the eye; w the near occlusion's strength
-    vec4 params;   // x indirect reach, y occlusion reach, z lamp radius, w lamp margin (< 0: no shadow rays)
+    vec4 eye;      // xyz the eye; w unused
+    vec4 params;   // x indirect reach; y, z, w unused
     vec4 refl;     // RAY-TRACED REFLECTIONS: x strength (0 off), y F0, z reach, w a puddle's roughness
     vec4 refl2;    // x the share of the ground wet, y a bright texel's boost, z a damp patch's
                    // roughness, w the strength a damp patch keeps
@@ -131,27 +131,6 @@ layout(set = 3, binding = 2) uniform RtFrame {
 #ifdef OMK_RT_COUNT
 layout(std430, set = 3, binding = 4) buffer RtCount { uint n[]; } rtCount;
 #endif
-bool rtShadowed = false;   // `litColour` scales its lamps by `rtVis` (a character's fragment)
-uint rtLampRays = 0u;
-float rtVis[8] = float[8](1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);   // each lamp's share that reaches this fragment
-// SHADOW RAYS FOR THE LAMPS: the lamp at p is hidden from w when the SET is
-// in the way - one ray to a point jittered over a small lamp radius, stopped
-// short of the lamp by a margin (a lamp record sits inside its fixture). A
-// record whose reach spans the city (Anekbah's two reach 35787 units from
-// 20-30 km up) is the set's SKY FILL, the light every street is drawn under -
-// not a lamp, and not traced: shadowing it would put the whole player in the
-// shade of whichever block stands between him and the sky.
-bool rtLampHidden(vec3 w, vec3 n, vec3 p, float reach) {
-    if (reach > 8000.0) return false;
-    float a = rtNoise(gl_FragCoord.xy + vec2(7.0, 13.0));
-    vec3 j = vec3(fract(a * 7.31) , fract(a * 3.17), fract(a * 5.73)) * 2.0 - 1.0;
-    vec3 o = w + n * 2.0;
-    vec3 d = p + j * rtf.params.z - o;
-    float L = length(d);
-    if (rtf.params.w < 0.0 || L <= rtf.params.w + 1.0) return false;
-    ++rtLampRays;
-    return rtTrace(o, d / L, L - rtf.params.w, kRtSet, true);
-}
 #endif
 
 vec3 litColour(vec3 n, vec3 w) {
@@ -171,13 +150,8 @@ vec3 litColour(vec3 n, vec3 w) {
         // folds `v46` in before the dot.
         float t = -dot(n, lg.l[i].dirB.xyz * k);
         if (t <= 0.0) continue;
-#ifdef OMK_RT
-        float vis = rtShadowed ? rtVis[i] : 1.0;   // a wall in the way took its share
-#else
-        const float vis = 1.0;
-#endif
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
-        c += vis * min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
+        c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
     return min(c, vec3(1.0));
 }
@@ -300,53 +274,19 @@ vec3 rtCharNormal(vec3 nIn) {
     return N;
 }
 
-// THE LAMPS' VISIBILITY, `rtVis`, from one shadow ray a lamp a pixel to a point
-// jittered over the lamp's radius. A binary cut a pixel is a blocky edge on a
-// body of few big triangles, so it is made SOFT: the 2x2 quad's mean (the
-// lanes that traced alone) gives five levels and the jitter blurs between
-// them, and a lamp the set hides is never quite dark - kRtLampFloor of it
-// still reaches the character (bounce light, a window, the lamp's glow), the
-// way a penumbra, not a hard shadow, falls across a face. Run in uniform
-// control flow, as the derivatives want.
-const float kRtLampFloor = 0.3;
-void rtLampVisibility(vec3 nIn) {
-    vec3 N = rtCharNormal(nIn);
-    float w = gl_HelperInvocation ? 0.0 : 1.0;
-    for (int i = 0; i < lg.count; ++i) {
-        vec3  p  = lg.l[i].posA.xyz;
-        float rA = lg.l[i].posA.w;
-        vec3  d  = vWorld - p;
-        float seen = 1.0;
-        if (dot(d, d) <= rA * rA && -dot(N, lg.l[i].dirB.xyz) > 0.0 && rtLampHidden(vWorld, N, p, rA)) seen = 0.0;
-        vec4 q = rtQuad(vec4(seen * w, w, 0.0, 0.0));
-        float v = q.y > 1e-3 ? q.x / q.y : seen;
-        rtVis[i] = mix(kRtLampFloor, 1.0, v);
-    }
-}
-
 // A CHARACTER LIT BY ITS SURROUNDINGS. `shade` is what the game gave the
-// fragment (its lamps, from the scene's grey); to it:
-//   1. a vertex-lit body (the engine's default) loses the share of its lamps
-//      the shadow rays find behind the set - the vertex light cannot be
-//      traced itself (`writePose` hands it as directions), so the frame's
-//      lamps are evaluated twice, open and traced, and the ratio scales it;
-//   2. the INDIRECT light: cosine-weighted rays into the set, each hit giving
-//      what the eye sees there - the baked vertex colour times its texel -
-//      and a miss the sky; their mean added, and the rays stopped OVERHEAD
-//      within the occlusion reach taken from his ambient (under an arch).
+// fragment (its lamps, from the scene's grey) and it KEEPS it: a character
+// receives no ray-traced SHADOW - no lamp shadow ray, no near occlusion, and
+// `ssao.frag` leaves its pixels out - because on a body of a few big
+// triangles every such term read as a weird dark patch on the face. Its
+// light is the game's own law, what `raytracing = off` gives it. To it the
+// INDIRECT light alone is ADDED: cosine-weighted rays into the set, each
+// hit giving what the eye sees there - the baked vertex colour times its
+// texel - and a miss the sky; their mean. Light only ever added, never taken.
 vec3 rtCharacter(vec3 shade, vec3 nIn) {
     vec3 N = rtCharNormal(nIn);
-    if ((pc.lit & 3) == 0 && lg.count > 0) {
-        rtShadowed = false;
-        vec3 open = litColour(N, vWorld);
-        rtShadowed = true;
-        vec3 seen = litColour(N, vWorld);
-        vec3 b = vec3(lg.base);
-        shade *= (b + seen) / max(b + open, vec3(1e-3));
-    }
     const int K = 6;
     vec3 sum = vec3(0.0);
-    float near = 0.0;
     if (rtf.sky.a > 0.0) {
         float a = 6.2831853 * rtNoise(gl_FragCoord.xy);
         vec3 o = vWorld + N * 2.0;
@@ -357,9 +297,6 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
                 vec2 uv; vec3 col; uint tex;
                 rtSurface(rtI, rtP, rtG, rtB, uv, col, tex);
                 rad = mix(col * rtTexel(tex, uv).rgb, rtf.sky.rgb, smoothstep(0.5, 1.0, rtT / rtf.params.x));
-                // an occluder OVERHEAD (the game's Y points down): the ground
-                // under his feet is where he stands, not a roof
-                if (d.y < -0.3) near += 1.0 - smoothstep(0.5 * rtf.params.y, rtf.params.y, rtT);
             }
             sum += rad;
         }
@@ -369,14 +306,13 @@ vec3 rtCharacter(vec3 shade, vec3 nIn) {
     // may run no ray query and answers nothing, and averaged in it drew a
     // dark line along every triangle edge of a face. The reflections do the same.
     float w = gl_HelperInvocation ? 0.0 : 1.0;
-    vec4 q = rtQuad(vec4(sum, near) / float(K) * w) / max(rtQuad(vec4(w)).x, 1e-3);
+    vec3 q = rtQuad(vec4(sum / float(K) * w, 0.0)).rgb / max(rtQuad(vec4(w)).x, 1e-3);
 #ifdef OMK_RT_COUNT
     if (((int(gl_FragCoord.x) | int(gl_FragCoord.y)) & 7) == 0) {
-        if (rtLampRays > 0u) atomicAdd(rtCount.n[0], rtLampRays * 64u);
         if (rtf.sky.a > 0.0) atomicAdd(rtCount.n[1], uint(K) * 64u);
     }
 #endif
-    return shade * (1.0 - rtf.eye.w * q.w) + rtf.sky.a * q.rgb;
+    return shade + rtf.sky.a * q;
 }
 
 // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26), an ENHANCEMENT: a
@@ -511,8 +447,6 @@ void main() {
         wave = tbl[wi] / 255.0;
     }
 #ifdef OMK_RT
-    rtShadowed = pc.caster != 0;   // a lit character's lamps are traced
-    if (rtShadowed && lg.count > 0) rtLampVisibility(vNrm);
 #endif
     vec3 shade = (pc.lit & 3) == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
                : (pc.lit & 3) == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))

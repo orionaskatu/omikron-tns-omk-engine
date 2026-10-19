@@ -28352,35 +28352,36 @@ def c_engine_face_lines():
 
 
 def c_engine_character_shadows():
-    r"""`omk-play --d3d12 --raytracing`: NO BLOCKY SHADOWS ON A CHARACTER'S FACE.
+    r"""`omk-play --d3d12 --raytracing`: A CHARACTER RECEIVES NO RAY-TRACED SHADOW.
 
     The player's report: the characters are a few polygons and ray tracing
-    "adds a lot of shadows on their faces that do not look good". Measured on
-    the faces, the culprit was NOT the lamps' shadow rays nor the near
-    occlusion of `rtCharacter` but the ray-traced AO pass (`ssao.frag`,
-    -DOMK_RT): it rebuilds each pixel's normal from the depth buffer - for a
-    face of a dozen big triangles, the FLAT triangle - and shoots its four
-    rays at the bodies as well, so a face was shaded by its own faceted shape
-    (a patch a triangle, a brow shadowing a cheek, dark stripes) and came out
-    a quarter darker than without ray tracing. A character is now left out of
-    that pass (one ray from the eye to the pixel says it is a body); its
-    occlusion is `rtCharacter`'s, from the smooth vertex normal. The lamps'
-    shadow rays, a binary cut a pixel (speckles along a penumbra), are now a
-    visibility filtered over the pixel quad, never below `kRtLampFloor`.
-    The first conversation line's close-up (restaurant save slot 0, frame 700,
-    Telis fills the middle, 1280x720, the window's picture), the face's region
-    after a 3x3 blur (the ray grain and the dither go, a patch survives), the
-    same frame with and without `--raytracing`:
-    * the share of face pixels more than 20% darker than without ray
-      tracing stays under 10% (the AO's face: about 40%; now about 2%);
-    * the face's mean luminance stays within 0.9 .. 1.3 of the plain frame's
-      (the indirect light may brighten it, nothing may shade it down by a
-      quarter).
+    "adds a lot of shadows on their faces that do not look good". Every
+    ray-traced SHADOWING term read as a weird patch on a body of big
+    triangles - the AO pass (`ssao.frag`, which rebuilt a face's FLAT
+    triangle from the depth buffer; it now leaves a body's pixels out), the
+    lamps' shadow rays and the near occlusion of `rtCharacter` (a ceiling
+    or a wall above taking a share of the body's light). A character now
+    takes NEITHER: no lamp shadow ray, no near occlusion - its light is the
+    game's own law, what `raytracing = off` gives it - and ray tracing only
+    ADDS to it the indirect bounce light (`rtCharacter`, the set's baked
+    colour around the body), light given, never taken.
+    The first conversation line's close-up (restaurant save slot 0, frame
+    700, Telis fills the middle, 1280x720, the window's picture); the skin
+    region (forehead, eyes, nose), the frame without `--raytracing`, with it,
+    and with it and `OMK_RT_NO_INDIRECT=1` (the bounce light off):
+    * with the bounce light off the skin is the plain frame's, pixel for
+      pixel (mean absolute difference under 1.5 of 255, none above 12): no
+      ray-traced term is left on a face but the bounce;
+    * with it on, no part of the skin (3x3 blurred) is darker than the plain
+      frame's (the lowest local ratio is 1.0 or more; the near occlusion's
+      face: 0.98) and the ratio's spread over the skin stays under 0.025
+      (a patch, a stripe or a shadowed cheek raise it; the near occlusion's
+      face: 0.034, now 0.016).
     Skipped without a D3D12 device with DXR 1.1.
-    SHOWN TO FAIL with the `rtTrace(... kRtBody ...)` early-out of `ssao.frag`
-    removed.
+    SHOWN TO FAIL with the shadow ratio and the near occlusion of
+    `rtCharacter` restored (`shade * (1.0 - rtf.eye.w * q.w)`).
     """
-    import subprocess, tempfile
+    import subprocess, tempfile, math
     eng = os.path.join(ROOT, "engine")
     save = os.path.join(ROOT, "traces", "games-resto.bin")
     if not (os.path.isdir(eng) and os.path.exists(save)):
@@ -28392,39 +28393,48 @@ def c_engine_character_shadows():
     W, H = 1280, 720
     n = W * H
     with tempfile.TemporaryDirectory() as tmp:
-        def run(extra, name):
+        def run(extra, name, env_extra=None):
             win = os.path.join(tmp, name + ".rgba")
             os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            env = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win)
+            env.update(env_extra or {})
             r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
                                 "--save", save, "--slot", "0", "--stand", "3572,1071,-991,181",
                                 "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
                                 "--res", "%dx%d" % (W, H), "--frames", "700", "--shadow-quality", "mapped",
                                 "--saves", os.path.join(tmp, "saves-" + name)] + extra,
-                               capture_output=True, text=True, errors="replace",
-                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win))
+                               capture_output=True, text=True, errors="replace", env=env)
             pic = open(win, "rb").read() if os.path.exists(win) else b""
             return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
         t_off, p_off = run([], "off")
         if "renderer: D3D12" not in t_off:
             return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
         t_on, p_on = run(["--raytracing"], "on")
-    if "no DXR 1.1" in t_on:
-        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
-    if not (p_off and p_on):
-        return ("a window dump missing",), ("both dumps",), "every run must write OMK_WINDUMP"
-    x0, y0, x1, y1 = 600, 150, 760, 330
-    def blur(d):
-        luma = lambda x, y: (d[4 * (y * W + x)] * 54 + d[4 * (y * W + x) + 1] * 183
-                             + d[4 * (y * W + x) + 2] * 19) / 256.0
-        return {(x, y): sum(luma(x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)) / 9.0
-                for y in range(y0, y1) for x in range(x0, x1)}
-    b_on, b_off = blur(p_on), blur(p_off)
-    dark = sum(1 for k in b_on if b_off[k] > 8 and b_on[k] < 0.8 * b_off[k]) / float(len(b_on))
-    mean = sum(b_on.values()) / sum(b_off.values())
-    got = (dark < 0.10, 0.9 < mean < 1.3)
-    return got, (True, True), \
-        ("the face's pixels over 20%% darker than without ray tracing: %.1f%% (under 10%%), its mean "
-         "luminance %.2f of the plain frame's (0.9 .. 1.3)" % (100.0 * dark, mean))
+        if "no DXR 1.1" in t_on:
+            return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+        _, p_noi = run(["--raytracing"], "noind", {"OMK_RT_NO_INDIRECT": "1"})
+    if not (p_off and p_on and p_noi):
+        return ("a window dump missing",), ("all dumps",), "every run must write OMK_WINDUMP"
+    x0, y0, x1, y1 = 600, 200, 730, 340
+    luma = lambda d, x, y: (d[4 * (y * W + x)] * 54 + d[4 * (y * W + x) + 1] * 183
+                            + d[4 * (y * W + x) + 2] * 19) / 256.0
+    blur = lambda d, x, y: sum(luma(d, x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)) / 9.0
+    pts = [(x, y) for y in range(y0, y1) for x in range(x0, x1)]
+    sad = big = 0
+    for x, y in pts:
+        o = 4 * (y * W + x)
+        dm = max(abs(p_noi[o + c] - p_off[o + c]) for c in range(3))
+        sad += dm
+        big += dm > 12
+    ratio = [blur(p_on, x, y) / max(blur(p_off, x, y), 1.0) for x, y in pts]
+    mean = sum(ratio) / len(ratio)
+    spread = math.sqrt(sum((v - mean) ** 2 for v in ratio) / len(ratio))
+    mad = sad / float(len(pts))
+    got = (mad < 1.5 and big == 0, min(ratio) >= 1.0, spread < 0.025)
+    return got, (True, True, True), \
+        ("the skin without the bounce light differs from the plain frame by %.2f on average (%d pixels over "
+         "12; under 1.5, none); with it the lowest local ratio to the plain frame is %.3f (1.0 or more), its "
+         "mean %.3f, spread %.3f (under 0.025)" % (mad, big, min(ratio), mean, spread))
 
 
 def c_engine_best_lod():
@@ -28782,27 +28792,27 @@ def c_engine_raytracing():
     INLINE ray queries from the raster passes (`backends/d3d12/shaders/rt.glsl`,
     the -DOMK_RT builds of `scene.frag` and `ssao.frag`): a character's
     fragments take the set's baked light around them (rays returning vertex
-    colour x texel) and lose the lamps the set hides (shadow rays), and the AO
-    pass traces four short rays a pixel in place of SSAO's depth hemisphere.
+    colour x texel) and NOTHING taken away (no shadow ray, no near occlusion:
+    `engine: character shadows`), and the AO pass traces four short rays a
+    pixel in place of SSAO's depth hemisphere (a body's own pixels left out).
     Runs of the street start (no crowd, the mapped shadow, 60 frames, 640x480),
     every D3D12 one with the debug layer on:
     * the default is off in the source, and a plain run says nothing of it;
     * `--raytracing` reports DXR live (`@evt rt_on`) and the TLAS (`@evt
-      rt_tlas`): a set BLAS and a body BLAS with triangles, and the lamp
-      shadow rays and indirect rays the scene pass counted, both > 0;
+      rt_tlas`): a set BLAS and a body BLAS with triangles, and the indirect
+      rays the scene pass counted, > 0;
     * no debug-layer error in any ray-traced run (also under `--upscaler fsr`
       when FSR loads, the -DOMK_MOTION build of the shader);
-    * against the plain frame, `OMK_RT_NO_INDIRECT=1` (the AO and the shadow
-      rays alone) only DARKENS - the set keeps its baked light, the AO pass
-      multiplies a factor in, a hidden lamp takes light away - and darkens
-      more than 0.5% of the pixels;
+    * against the plain frame, `OMK_RT_NO_INDIRECT=1` (the AO alone) only
+      DARKENS - the set keeps its baked light, the AO pass multiplies a factor
+      in - and darkens more than 0.5% of the pixels;
     * the INDIRECT term then BRIGHTENS pixels (more than 0.1% of the frame,
       the player's) and touches under 15% of it - characters only, the set's
       own pixels are not lit by it;
     * Vulkan declines it with a line saying it is the D3D12 backend's.
     Skipped without a D3D12 backend, a device, or DXR 1.1 on it.
     SHOWN TO FAIL with the indirect term removed (`rtCharacter`'s
-    `+ rtf.sky.a * q.rgb` made `+ 0.0 * q.rgb`): no pixel brightens.
+    `+ rtf.sky.a * q` made `+ 0.0 * q`): no pixel brightens.
     """
     import subprocess, struct, tempfile
     eng = os.path.join(ROOT, "engine")
@@ -28869,18 +28879,18 @@ def c_engine_raytracing():
     fsr_ok = "upscaler: FSR" not in t_fsr or ("@evt rt_tlas" in t_fsr and errors(t_fsr) == 0)
     got = (default_off, "ray tracing" in t_off.lower(), live,
            num("sets") >= 1 and num("set_tris") > 0, num("bodies") >= 1 and num("body_tris") > 0,
-           num("shadow_rays") > 0, num("indirect_rays") > 0,
+           num("indirect_rays") > 0,
            errors(t_on) + errors(t_noi), fsr_ok,
            ao_bright, ao_dark > n // 200,
            ind_bright > n // 1000, ind_dark + ind_bright < n * 15 // 100,
            "off on Vulkan" in t_vk)
-    want = (True, False, True, True, True, True, True, 0, True, 0, True, True, True, True)
+    want = (True, False, True, True, True, True, 0, True, 0, True, True, True, True)
     return got, want, \
         ("off by default and silent; DXR live, TLAS %s instances (%s set BLAS of %s triangles, %s bodies "
-         "of %s), ~%s lamp shadow rays and ~%s indirect rays a frame; AO + shadow rays darken %d pixels, "
-         "brighten %d; the indirect term brightens %d, darkens %d (of %d)"
+         "of %s), ~%s indirect rays a frame; the AO darkens %d pixels, "
+         "brightens %d; the indirect term brightens %d, darkens %d (of %d)"
          % (last.get("instances"), last.get("sets"), last.get("set_tris"), last.get("bodies"),
-            last.get("body_tris"), last.get("shadow_rays"), last.get("indirect_rays"),
+            last.get("body_tris"), last.get("indirect_rays"),
             ao_dark, ao_bright, ind_bright, ind_dark, n))
 
 

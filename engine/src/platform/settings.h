@@ -202,7 +202,7 @@ struct Settings {
 
     // `raytracing = off|on`: HYBRID RAY TRACING (`todo/enhancements.md` 19) -
     // characters lit by the set around them (rays returning its baked colour),
-    // shadow rays for their lamps, and ray-traced AO in SSAO's place. The
+    // (no ray-traced shadow on them), and ray-traced AO in SSAO's place. The
     // Direct3D 12 backend's alone, on a DXR 1.1 device (inline ray queries);
     // Vulkan and the software reference say so and stay off.
     bool   raytracing = false;

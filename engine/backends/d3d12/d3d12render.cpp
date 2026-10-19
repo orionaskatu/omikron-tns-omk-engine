@@ -3473,7 +3473,7 @@ bool D3D12Renderer::rtInit() {
     }
     rtOn_ = true;
     std::printf("d3d12: RAY TRACING on - an ENHANCEMENT: DXR 1.1 inline ray queries (tier 0x%x, shader "
-                "model 6.5): characters lit by the set around them, shadow rays for their lamps, "
+                "model 6.5): characters lit by the set around them (no ray-traced shadow on them), "
                 "ray-traced AO in place of SSAO\n", static_cast<unsigned>(o5.RaytracingTier));
     omk::event("rt_on", {{"tier", static_cast<unsigned>(o5.RaytracingTier)}});
     return true;
@@ -3492,10 +3492,9 @@ void D3D12Renderer::rtBind(const omk::View& view) {
     float tH = 0.0f, tV = 0.0f;
     omk::cameraBasis(cam, rtS_, rtU_, rtF_, tH, tV);
     for (int k = 0; k < 3; ++k) rtEye_[k] = cam.eye[k];
-    // `OMK_RT_NO_INDIRECT=1`: the indirect term and the near occlusion off -
-    // the control `verify.py: engine: raytracing` shows its check failing with
+    // `OMK_RT_NO_INDIRECT=1`: the indirect term off - the control `verify.py:
+    // engine: raytracing` and `engine: character shadows` show their checks with
     static const bool noIndirect = omk::envFlag("OMK_RT_NO_INDIRECT");
-    static const bool noShadowRays = omk::envFlag("OMK_RT_NO_SHADOW_RAYS");   // ...and the lamps' rays
     RtFrame f{};
     const float* sky = fog_ ? fogColour_ : clearColour_;
     for (int k = 0; k < 3; ++k) { f.sky[k] = sky[k]; f.eye[k] = rtEye_[k]; }
@@ -3503,11 +3502,11 @@ void D3D12Renderer::rtBind(const omk::View& view) {
     // cosine-weighted mean of the radiance arriving, which is what the baked
     // colour times its texel IS where the ray lands
     f.sky[3] = noIndirect ? 0.0f : 1.0f;
-    f.eye[3] = noIndirect ? 0.0f : 0.3f;     // the near occlusion's
+    f.eye[3] = 0.0f;                         // (unused: a character takes no near occlusion)
     f.params[0] = 1500.0f;                   // indirect reach: 38 m, the street fogs beyond
     f.params[1] = 400.0f;                    // occlusion reach: 10 m - an arch overhead
-    f.params[2] = 8.0f;                      // the lamp's radius (soft shadow rays)
-    f.params[3] = noShadowRays ? -1.0f : 24.0f;   // ...and the margin a ray stops short of it
+    f.params[2] = 0.0f;                      // (unused: a character takes no lamp shadow ray)
+    f.params[3] = -1.0f;
     // `OMK_RT_TUNE="indirect,occlusion,reach,occlusion reach,lamp radius,margin"`
     // replaces the six numbers above, for judging them by eye
     static float tune[6] = {-1, -1, -1, -1, -1, -1};
@@ -3884,17 +3883,16 @@ void D3D12Renderer::rtAfter() {
         ++rtTold_;
         // the tally covers every COUNTING frame so far (`rtBind`)
         const long cf = std::max(1L, rtCounted_);
-        const unsigned shadowRays = static_cast<unsigned>(rtCounts_[0] / cf);
         const unsigned indirectRays = static_cast<unsigned>(rtCounts_[1] / cf);
         std::printf("d3d12: ray tracing live (frame %ld) - TLAS of %u instances: %d set BLAS (%lld triangles), "
-                    "%d bodies in one BLAS (%lld triangles); ~%u lamp shadow rays and ~%u indirect rays a frame; "
+                    "%d bodies in one BLAS (%lld triangles); ~%u indirect rays a frame; "
                     "builds %.2f ms CPU a frame, the bodies' BLAS built %ld times and refitted %ld\n", rtFrame_,
                     ni, sets, setTris, bodies, bodyTris,
-                    shadowRays, indirectRays, rtCpuMs_ / rtFrame_, rtBodyBuilds_, rtBodyRefits_);
+                    indirectRays, rtCpuMs_ / rtFrame_, rtBodyBuilds_, rtBodyRefits_);
         omk::event("rt_tlas", {{"frame", rtFrame_}, {"instances", static_cast<unsigned>(ni)}, {"sets", sets},
                                {"bodies", bodies}, {"set_tris", static_cast<long>(setTris)},
                                {"body_tris", static_cast<long>(bodyTris)},
-                               {"shadow_rays", shadowRays}, {"indirect_rays", indirectRays}});
+                               {"indirect_rays", indirectRays}});
         if (rtReflOn_) {
             const unsigned reflRays = static_cast<unsigned>(rtCounts_[2] / cf);
             std::printf("d3d12: rt reflections (frame %ld) - %ld ground draws, ~%u reflection rays a frame\n",
@@ -3913,12 +3911,12 @@ void D3D12Renderer::rtKill() {
         oneShotEnd();
         rtTallyRead();
         std::printf("d3d12: ray tracing - %ld frames; the last TLAS %d instances (%d set BLAS, %d bodies); "
-                    "%ld set BLAS builds, %ld body BLAS builds; ~%u lamp shadow rays, ~%u indirect rays in %ld "
+                    "%ld set BLAS builds, %ld body BLAS builds; ~%u indirect rays in %ld "
                     "counted frames, %lld AO rays\n", rtFrame_, rtInstances_, rtSets_, rtBodies_, rtSetBuilds_, rtBodyBuilds_,
-                    rtCounts_[0], rtCounts_[1], rtCounted_, rtAoRays_);
+                    rtCounts_[1], rtCounted_, rtAoRays_);
         omk::event("rt_summary", {{"frames", rtFrame_}, {"instances", rtInstances_}, {"sets", rtSets_},
                                   {"bodies", rtBodies_}, {"set_builds", rtSetBuilds_},
-                                  {"body_builds", rtBodyBuilds_}, {"shadow_rays", rtCounts_[0]},
+                                  {"body_builds", rtBodyBuilds_},
                                   {"indirect_rays", rtCounts_[1]}, {"ao_rays", static_cast<long>(rtAoRays_)}});
     }
     for (auto& [g, b] : rtSet_) rtDrop(b);

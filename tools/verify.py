@@ -28144,6 +28144,62 @@ def c_engine_anim_blend():
             % (len(r_a), r_a[sw][0], snap, eased, len(after)))
 
 
+def c_engine_dof_focus():
+    r"""`--dof` focuses on a CHARACTER. `todo/enhancements.md` 22 (the post chain), `d3d12render.cpp`
+    `noteFocusBody`. The camera's own target is often a point in the air and the picture's middle is
+    often the wall behind two people talking, so the first version focused on a wall in dialogues.
+    The focus is now the view depth of the nearest body (a posed body, or a character drawn from
+    CPU-posed corners) within the middle of the picture, smoothed, snapping across a cut. A test
+    switch, `OMK_FORCE_CINE`, makes a free-roaming frame cinematic so a street shot can carry the
+    effect: the player behind the camera is the nearest body, the walkers across the street are far.
+    Two runs of the same shot, depth of field off and on, read from the real window picture
+    (`OMK_WINDUMP`): the player's region keeps its sharpness (the gradient energy within 10%), the
+    far walkers lose more than a third, and the log names a character as the focus.
+    SHOWN TO FAIL with `noteFocusBody` returning at once: the focus falls back to the picture's
+    centre and the player's region blurs.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    play = os.path.join(eng, "build", "omk-play")
+    if not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play is not built"
+    import tempfile
+    W, H = 960, 540
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name):
+            win = os.path.join(tmp, name + ".rgba")
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--ride", "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
+                                "--res", "%dx%d" % (W, H), "--frames", "90"] + extra,
+                               capture_output=True,
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win,
+                                        OMK_FORCE_CINE="1", OMK_DOF_LOG="1"))
+            data = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout.decode("latin-1"), data
+        t_off, d_off = run([], "off")
+        t_on, d_on = run(["--dof"], "on")
+    if len(d_off) != W * H * 4 or len(d_on) != W * H * 4:
+        return ("skipped",), ("skipped",), "no Direct3D 12 window picture"
+    def lum(d):
+        return [(d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10.0 for i in range(0, len(d), 4)]
+    a, b = lum(d_off), lum(d_on)
+    def energy(L, x0, x1, y0, y1):
+        return sum(abs(L[y * W + x + 1] - L[y * W + x]) for y in range(y0, y1) for x in range(x0, x1 - 1))
+    def ratio(box):
+        e0 = energy(a, *box)
+        return energy(b, *box) / e0 if e0 else 1.0
+    player = ratio((400, 580, 100, 500))
+    walkers = ratio((100, 260, 40, 230))
+    got = ("dof: focus" not in t_off, "(a character)" in t_on, player >= 0.9, walkers < 0.66)
+    return got, (True, True, True, True), \
+           ("the log names a character as the focus; the player's region keeps %.0f%% of its sharpness, "
+            "the far walkers %.0f%%" % (100 * player, 100 * walkers))
+
+
 def c_engine_best_lod():
     r"""`omk-play --best-lod`: the crowd's LEVEL OF DETAIL kept at its best - an enhancement, off by default.
     `todo/enhancements.md` 16. A pedestrian model holds four skeletons and
@@ -49418,6 +49474,7 @@ SLOW = [
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
+    ("engine: dof focus", c_engine_dof_focus, "todo/enhancements.md 22; d3d12render.cpp noteFocusBody"),
     ("engine: anim blend", c_engine_anim_blend, "todo/enhancements.md 28; actor/pose.h"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),

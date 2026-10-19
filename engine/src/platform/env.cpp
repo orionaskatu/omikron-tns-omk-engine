@@ -30,11 +30,13 @@ constexpr const char* kSwitches[] = {
     "OMK_CPU_SKY",              // A/B: the sky moved on the CPU on a renderer that moves it
     "OMK_D3D12_DEBUG",          // the D3D12 debug layer on, every message printed (engine: d3d12)
     "OMK_DIRTY_AUDIT",          // GLES: checks the dirty-corner list is complete on every partial upload
+    "OMK_DOF_LOG",              // =1 D3D12: the depth of field's focus each frame (a character or the picture centre) (engine: post chain)
     "OMK_EAGER_SOUPS",          // A/B: every collision soup built at the load instead of when first asked (engine: lazy collision)
     "OMK_EVENTS",               // the `@evt` lines beside the prose (`platform/events.h`): machine-readable records for the checks
     "OMK_FADELOG",              // =1 log: the screen fade's terms when they change (engine: fight letterbox)
     "OMK_FEETLOG",              // =<actor> log: that body's lowest drawn corner against the floor, every 30 frames (engine: astaroth floor)
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)
+    "OMK_FORCE_CINE",           // =1 D3D12: the post chain treats every frame as cinematic, so depth of field runs on it (engine: post chain)
     "OMK_FRAMEGEN_ALWAYS",      // D3D12 framegen: an in-between frame whatever the display's room (engine: framegen)
     "OMK_FRAMEGEN_PROBE",       // =<prefix> D3D12 framegen: frames N-2 and N interpolated and laid against N-1, a line a frame (engine: framegen)
     "OMK_FRAMEGEN_TIMING",      // log: the D3D12 frame generation's GPU time (timestamps), every 60 frames

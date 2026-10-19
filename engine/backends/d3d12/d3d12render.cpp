@@ -652,6 +652,39 @@ private:
     bool postLive_ = false;            // the chain ran on THIS frame: the display half reads `postImg_`
     bool cine_ = false;                // the frame is cinematic: a full-width letterbox strip
     float focus_ = 0.0f;               // the camera's eye-to-target distance
+    // DEPTH OF FIELD FOCUSES ON A CHARACTER: the posed body nearest the camera
+    // among those near the picture's middle (`noteFocusBody`, per draw), as a
+    // view depth. The camera's own target is often a point in the air, and the
+    // middle of the picture is often the wall behind two people talking.
+    float focEye_[3] = {}, focFwd_[3] = {}, focRight_[3] = {}, focTan_ = 1.0f;
+    float focBodyZ_ = 0.0f, focBodyScore_ = 1e30f;
+    float focSm_ = 0.0f;               // the smoothed focus depth, 0 = none yet
+    void noteFocusBody(const omk::Draw& d) {
+        float c[3] = {0, 0, 0};
+        if (d.meshPose && d.meshPoses) {
+            for (std::size_t m = 0; m < d.meshPoses; ++m)
+                for (int k = 0; k < 3; ++k) c[k] += d.meshPose[12 * m + 4 * k + 3];
+            for (int k = 0; k < 3; ++k) c[k] /= static_cast<float>(d.meshPoses);
+        } else if (d.castsShadow && d.geo && d.count && d.start + d.count <= d.geo->corners.size()) {
+            // a body posed on the CPU (the player's, when drawn that way): its corners
+            const std::size_t step = std::max<std::size_t>(1, d.count / 64);
+            std::size_t n = 0;
+            for (std::size_t i = d.start; i < d.start + d.count; i += step, ++n) {
+                const auto& v = d.geo->corners[i];
+                c[0] += v.x; c[1] += v.y; c[2] += v.z;
+            }
+            for (int k = 0; k < 3; ++k) c[k] /= static_cast<float>(n);
+        } else {
+            return;
+        }
+        for (int k = 0; k < 3; ++k) c[k] -= focEye_[k];
+        const float z = c[0] * focFwd_[0] + c[1] * focFwd_[1] + c[2] * focFwd_[2];
+        if (z < 40.0f || z > 4000.0f) return;
+        const float x = (c[0] * focRight_[0] + c[1] * focRight_[1] + c[2] * focRight_[2]) / (z * focTan_);
+        if (std::fabs(x) > 0.85f) return;
+        const float score = z * (1.0f + 2.0f * std::fabs(x));
+        if (score < focBodyScore_) { focBodyScore_ = score; focBodyZ_ = z; }
+    }
     int postVw_ = 0, postVh_ = 0;      // the picture's rectangle, display pixels
     Res postImg_;                      // display size, `presFmt_`
     UINT64 postPitch_ = 0;
@@ -2817,11 +2850,23 @@ void D3D12Renderer::begin(const omk::View& view) {
     // is a strip of the frame's own height) - and the focus distance
     postVw_ = view.letterboxed() ? std::min(view.vw, w_) : w_;
     postVh_ = view.letterboxed() ? std::min(view.vh, h_) : h_;
-    cine_ = postVw_ >= w_ && postVh_ < h_;
+    static const bool forceCine = omk::envFlag("OMK_FORCE_CINE");   // a test switch: depth of field on any frame
+    cine_ = forceCine || (postVw_ >= w_ && postVh_ < h_);
     {
         const float dx = view.cam.at[0] - view.cam.eye[0], dy = view.cam.at[1] - view.cam.eye[1],
                     dz = view.cam.at[2] - view.cam.eye[2];
         focus_ = std::sqrt(dx * dx + dy * dy + dz * dz);
+        // the frame's camera frame for `noteFocusBody` (the world's Y is DOWN)
+        for (int k = 0; k < 3; ++k) focEye_[k] = view.cam.eye[k];
+        const float il = focus_ > 1e-3f ? 1.0f / focus_ : 0.0f;
+        focFwd_[0] = dx * il; focFwd_[1] = dy * il; focFwd_[2] = dz * il;
+        float rx = focFwd_[1] * 0.0f - focFwd_[2] * -1.0f, ry = focFwd_[2] * 0.0f - focFwd_[0] * 0.0f,
+              rz = focFwd_[0] * -1.0f - focFwd_[1] * 0.0f;
+        const float rl = std::sqrt(rx * rx + ry * ry + rz * rz);
+        focRight_[0] = rl > 1e-4f ? rx / rl : 1.0f; focRight_[1] = rl > 1e-4f ? ry / rl : 0.0f;
+        focRight_[2] = rl > 1e-4f ? rz / rl : 0.0f;
+        focTan_ = std::tan(0.5f * view.cam.hfovDeg * 3.14159265f / 180.0f);
+        focBodyZ_ = 0.0f; focBodyScore_ = 1e30f;
     }
     litCount_ = 0;
     if (litUboPtr_) {
@@ -3059,6 +3104,7 @@ omk::Draw D3D12Renderer::cpuPose(const omk::Draw& d) {
 
 void D3D12Renderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
+    noteFocusBody(d);
     // HYBRID RAY TRACING: the draw into the frame's acceleration structures,
     // and a posed body takes the character's traced terms even with the
     // game's shadows off (`caster` - no shadow then receives anyway)
@@ -4571,7 +4617,22 @@ void D3D12Renderer::runPost() {
         // the largest blur ~1.2% of the frame's height (9 px at 720p, 26 at
         // 2160p), the spiral's step chosen for ~48 taps whatever the size
         const float maxR = std::max(3.0f, 0.012f * static_cast<float>(h_));
-        pp.dof[0] = focus_; pp.dof[1] = maxR; pp.dof[2] = 0.25f;
+        // a character in the picture's middle third: its depth, smoothed (a
+        // negative `dof[0]` tells the shader this focus is EXPLICIT); else the
+        // camera's own, as before
+        float fx = focus_;
+        if (focBodyZ_ > 0.0f) {
+            const float r = focSm_ > 0.0f ? focBodyZ_ / focSm_ : 1.0f;
+            focSm_ = (focSm_ <= 0.0f || r > 1.6f || r < 0.6f) ? focBodyZ_ : focSm_ + 0.3f * (focBodyZ_ - focSm_);
+            fx = -focSm_;
+        } else {
+            focSm_ = 0.0f;
+        }
+        pp.dof[0] = fx; pp.dof[1] = maxR; pp.dof[2] = 0.25f;
+        static const bool dofLog = omk::envFlag("OMK_DOF_LOG");
+        if (dofLog)
+            std::printf("dof: focus %.1f (%s), camera target %.1f, nearest centred body %.1f, max radius %.1f px\n",
+                        std::fabs(fx), fx < 0.0f ? "a character" : "the picture centre", focus_, focBodyZ_, maxR);
         pp.dof[3] = std::max(0.5f, maxR * maxR / 96.0f);
     }
     pp.tone[0] = postReq_.bloom ? kBloomIntensity : 0.0f;

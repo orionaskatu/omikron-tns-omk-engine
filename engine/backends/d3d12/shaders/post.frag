@@ -98,7 +98,7 @@ void main() {
             c += texelFetch(src, ivec2(p.x * ss + sx, p.y * ss + sy), 0).rgb;
     c /= float(ss * ss);
     // 2. depth of field
-    if (pc.dof.x > 0.0) {
+    if (pc.dof.x != 0.0) {
         vec2 lim = pc.frame.zw - 0.5 * pc.frame.xy;
         // THE FOCUS: where the camera AIMS - its target projects to the
         // strip's centre - at the distance of what is there: the median of
@@ -107,17 +107,19 @@ void main() {
         // the air before the subject (143 units in the supermarket fight's
         // opening shot, the fighter several times further).
         vec2 cc = 0.5 * pc.frame.zw, dd = 0.04 * pc.frame.zw;
-        float z0 = viewZ(cc), z1 = viewZ(cc + vec2(dd.x, 0.0)), z2 = viewZ(cc - vec2(dd.x, 0.0));
-        float z3 = viewZ(cc + vec2(0.0, dd.y)), z4 = viewZ(cc - vec2(0.0, dd.y));
-        // the median of five
-        float zs5[5] = float[5](z0, z1, z2, z3, z4);
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4 - i; ++j) {
-                float lo = min(zs5[j], zs5[j + 1]), hi = max(zs5[j], zs5[j + 1]);
-                zs5[j] = lo; zs5[j + 1] = hi;
-            }
-        float fz = zs5[2];
-        float focus = max(fz, pc.dof.x);
+        float focus = -pc.dof.x;   // an EXPLICIT focus (a character's depth): negative
+        if (pc.dof.x > 0.0) {
+            float z0 = viewZ(cc), z1 = viewZ(cc + vec2(dd.x, 0.0)), z2 = viewZ(cc - vec2(dd.x, 0.0));
+            float z3 = viewZ(cc + vec2(0.0, dd.y)), z4 = viewZ(cc - vec2(0.0, dd.y));
+            // the median of five
+            float zs5[5] = float[5](z0, z1, z2, z3, z4);
+            for (int i = 0; i < 4; ++i)
+                for (int j = 0; j < 4 - i; ++j) {
+                    float lo = min(zs5[j], zs5[j + 1]), hi = max(zs5[j], zs5[j + 1]);
+                    zs5[j] = lo; zs5[j + 1] = hi;
+                }
+            focus = max(zs5[2], pc.dof.x);
+        }
         float zc = viewZ(uv);
         float rc = coc(zc, focus);
         vec3 acc = c;

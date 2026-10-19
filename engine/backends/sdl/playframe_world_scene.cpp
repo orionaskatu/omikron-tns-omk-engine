@@ -1714,3 +1714,35 @@ void PlayState::feedCameraHead() {
     session.setCameraHeadAnchors(head, yaw, h3, yaw);
     cameraHeadFrom = asPlayer ? " (a program's body)" : "";
 }
+
+// WHO THE PICTURE IS ABOUT (`View::focusAt`), for the depth of field. While a
+// conversation is open its two people are named: the conversation's speaker
+// first - the character whose line plays (`Morph_Play` runs on him) - then the
+// player, both by the HEAD the staged body was last posed with (the face is
+// what a viewer looks at, and the lip-synced head is that body's). The
+// renderer keeps those inside the picture, so a reverse shot that shows only
+// Kay'l focuses on Kay'l; with nobody named it falls back to the nearest body
+// near the picture's middle. After `worldStaged` (the heads are this frame's).
+void PlayState::worldFocusSubjects() {
+    view.focusN = 0;
+    auto& session = *session_;
+    if (!session.dialogOpen()) return;
+    const int sp = session.dialogue().conversation().speaker;
+    if (sp >= 0)
+        for (const auto& up : staged)
+            if (up->actor == sp && up->headKnown && up->placed) {
+                for (int k = 0; k < 3; ++k) view.focusAt[view.focusN][k] = up->headAt[k];
+                ++view.focusN;
+                break;
+            }
+    const int pid = session.playerActor();
+    const Staged* asPlayer = nullptr;
+    if (pid >= 0 && pid != sp)
+        for (const auto& up : staged)
+            if (up->actor == pid && up->headKnown && up->placed) { asPlayer = up.get(); break; }
+    if (asPlayer || (pid < 0 && playerHeadKnown)) {
+        for (int k = 0; k < 3; ++k)
+            view.focusAt[view.focusN][k] = asPlayer ? asPlayer->headAt[k] : playerHeadAt[k];
+        ++view.focusN;
+    }
+}

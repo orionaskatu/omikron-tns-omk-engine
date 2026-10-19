@@ -1122,6 +1122,7 @@ struct PlayState {
     void worldCrowdVehicles(const std::vector<omk::Vehicle>& vs, const omk::Sliders& pd,
                             bool circuitShown, float vreach, int& vehPastLod);   // from `worldCrowd`
     void worldCrowdPlayerRootDrop(const omk::NodeTracks*& pt, float& rootDrop);   // from `worldCrowd`
+    void worldFocusSubjects();   // who the picture is about, for the depth of field (`View::focusAt`)
     void worldDrawLists();   // the particles, the visible set, the lights and the shadows into the frame's draw lists
     void worldDrawSetRuns(float clipReach, std::size_t& runsCulled, std::size_t& runsDrawn,
                           std::size_t& hiddenMeshes, std::size_t& hiddenDrawn,

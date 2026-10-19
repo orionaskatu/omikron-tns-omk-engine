@@ -28200,6 +28200,77 @@ def c_engine_dof_focus():
             "the far walkers %.0f%%" % (100 * player, 100 * walkers))
 
 
+def c_engine_dof_dialogue():
+    r"""`--dof` in a CONVERSATION: the speaker is sharp, the room behind is soft. `todo/enhancements.md` 22,
+    `d3d12render.cpp` `noteFocusBody` / `focSubjZ_`, `playframe_world_scene.cpp` `worldFocusSubjects`.
+    The first conversation with Telis (dialog 402, the committed `traces/games-resto.bin` slot 0 standing
+    where the greeting starts) was focused on the far wall: a close-up's head is 25-35 units from the lens
+    and `noteFocusBody` ignored every body nearer than 40, so the only body it saw was a far character and
+    Telis, the one speaking, was a blur. The frontend now NAMES the conversation's heads to the renderer
+    (`View::focusAt`: the speaker first, then the player) and the renderer focuses on the one in the picture
+    (both, between them, when they are close in depth); the 40-unit floor is 8, and the in-focus band is never
+    thinner than 10 units.
+    Two conversation frames, each run with depth of field off and on (the window picture, `OMK_WINDUMP`):
+    frame 700, the first line's close-up (Telis fills the middle), and frame 920 with ENTER pressed every 80 frames
+    (a later line, another camera, Telis leaning in). In both, the speaker's face and chest keep their
+    sharpness (gradient energy on / off >= 0.9), the far room to the right keeps less than 0.6 of it, and the
+    log names a SPEAKER as the focus.
+    SHOWN TO FAIL with `worldFocusSubjects` returning at once and the floor put back to 40: the focus is the far
+    character and Telis keeps a third of her sharpness.
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    play = os.path.join(eng, "build", "omk-play")
+    if not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play is not built"
+    W, H = 960, 540
+    enter = ",".join(["0x1C"] * 12)
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(frames, keys, extra, name):
+            win = os.path.join(tmp, name + ".rgba")
+            os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save, "--slot", "0",
+                    "--stand", "3572,1071,-991,181", "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
+                    "--res", "%dx%d" % (W, H), "--frames", str(frames), "--shadow-quality", "mapped",
+                    "--saves", os.path.join(tmp, "saves-" + name)]
+            if keys:
+                args += ["--keys", keys, "--keydelay", "80"]
+            r = subprocess.run(args + extra, capture_output=True,
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win, OMK_DOF_LOG="1"))
+            data = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout.decode("latin-1"), data
+        runs = {}
+        for tag, frames, keys in (("a", 700, ""), ("b", 920, enter)):
+            runs[tag] = (run(frames, keys, [], tag + "off"), run(frames, keys, ["--dof"], tag + "on"))
+    for tag in runs:
+        (t0, d0), (t1, d1) = runs[tag]
+        if len(d0) != W * H * 4 or len(d1) != W * H * 4:
+            return ("skipped",), ("skipped",), "no Direct3D 12 window picture"
+    def lum(d):
+        return [(d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10.0 for i in range(0, len(d), 4)]
+    def energy(L, x0, x1, y0, y1):
+        return sum(abs(L[y * W + x + 1] - L[y * W + x]) for y in range(y0, y1) for x in range(x0, x1 - 1))
+    got, speaker, room = [], [], []
+    for tag in ("a", "b"):
+        (t0, d0), (t1, d1) = runs[tag]
+        a, b = lum(d0), lum(d1)
+        def ratio(box):
+            e0 = energy(a, *box)
+            return energy(b, *box) / e0 if e0 else 1.0
+        speaker.append(min(ratio((455, 555, 160, 290)), ratio((400, 620, 340, 440))))   # face, chest
+        room.append(ratio((720, 960, 60, 420)))
+        last = [l for l in t1.splitlines() if l.startswith("dof: focus")]
+        got += ["dof: focus" not in t0, bool(last) and "(a speaker)" in last[-1]]
+    ok = (all(got) and min(speaker) >= 0.9 and max(room) < 0.6)
+    return (ok,), (True,), \
+           ("frames 700 / 920: the speaker keeps %.0f%% / %.0f%% of her sharpness, the far room %.0f%% / %.0f%%; "
+            "the log names a speaker: %s" % (100 * speaker[0], 100 * speaker[1], 100 * room[0], 100 * room[1],
+                                            "yes" if all(got) else "NO"))
+
+
 def c_engine_face_lines():
     r"""`omk-play --d3d12 --raytracing`: NO LINES ALONG A FACE'S TRIANGLE EDGES.
 
@@ -49556,6 +49627,7 @@ SLOW = [
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
     ("engine: vehicle shine", c_engine_vehicle_shine, "todo/enhancements.md 20; scene.frag"),
     ("engine: dof focus", c_engine_dof_focus, "todo/enhancements.md 22; d3d12render.cpp noteFocusBody"),
+    ("engine: dof dialogue", c_engine_dof_dialogue, "todo/enhancements.md 22; d3d12render.cpp focSubjZ_, playframe_world_scene.cpp worldFocusSubjects"),
     ("engine: anim blend", c_engine_anim_blend, "todo/enhancements.md 28; actor/pose.h"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),

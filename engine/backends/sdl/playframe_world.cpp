@@ -452,6 +452,7 @@ int PlayState::phaseWorld() {
             worldGuns();
             worldBolts();
             worldStaged();
+            worldFocusSubjects();
             worldCrowd();
             worldDrawLists();
             worldMirror();

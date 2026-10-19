@@ -92,6 +92,15 @@ struct View {
     int vx = 0, vy = 0, vw = 0, vh = 0;
     bool letterboxed() const { return vw > 0 && vh > 0; }
 
+    // DEPTH OF FIELD'S SUBJECT, set by a frontend that KNOWS who the picture is
+    // about: the heads of the people in a conversation, the one who speaks
+    // first (world points, the game's Y down). `focusN` is 0 when nobody is
+    // named, and the renderer then focuses on the nearest body near the
+    // picture's middle (`D3D12Renderer::noteFocusBody`). A renderer without a
+    // depth of field ignores them.
+    float focusAt[2][3] = {{0, 0, 0}, {0, 0, 0}};
+    int focusN = 0;
+
     // THE FOG, and it is a ported decision like everything else here.
     //
     // `20_ddraw.c` 1921-1936 sets `D3DRENDERSTATE_FOGENABLE`, `FOGTABLEMODE`

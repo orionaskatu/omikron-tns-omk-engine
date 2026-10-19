@@ -659,6 +659,7 @@ private:
     float focEye_[3] = {}, focFwd_[3] = {}, focRight_[3] = {}, focTan_ = 1.0f;
     float focBodyZ_ = 0.0f, focBodyScore_ = 1e30f;
     float focSm_ = 0.0f;               // the smoothed focus depth, 0 = none yet
+    float focSubjZ_ = 0.0f;            // the depth of the View's named subject (`View::focusAt`), 0 = none in view
     void noteFocusBody(const omk::Draw& d) {
         float c[3] = {0, 0, 0};
         if (d.meshPose && d.meshPoses) {
@@ -679,7 +680,7 @@ private:
         }
         for (int k = 0; k < 3; ++k) c[k] -= focEye_[k];
         const float z = c[0] * focFwd_[0] + c[1] * focFwd_[1] + c[2] * focFwd_[2];
-        if (z < 40.0f || z > 4000.0f) return;
+        if (z < 8.0f || z > 4000.0f) return;   // a close-up's face is a few tens of units from the lens
         const float x = (c[0] * focRight_[0] + c[1] * focRight_[1] + c[2] * focRight_[2]) / (z * focTan_);
         if (std::fabs(x) > 0.85f) return;
         const float score = z * (1.0f + 2.0f * std::fabs(x));
@@ -2867,6 +2868,32 @@ void D3D12Renderer::begin(const omk::View& view) {
         focRight_[2] = rl > 1e-4f ? rz / rl : 0.0f;
         focTan_ = std::tan(0.5f * view.cam.hfovDeg * 3.14159265f / 180.0f);
         focBodyZ_ = 0.0f; focBodyScore_ = 1e30f;
+        // THE VIEW'S NAMED SUBJECTS (a conversation's heads) as depths along the
+        // camera's axis - the same planar view depth the shader reads. Those
+        // inside the picture count; with both in it and close in depth the
+        // focus goes between them, else the first (the speaker), else the other.
+        focSubjZ_ = 0.0f;
+        {
+            const float uxv = focFwd_[1] * focRight_[2] - focFwd_[2] * focRight_[1],
+                        uyv = focFwd_[2] * focRight_[0] - focFwd_[0] * focRight_[2],
+                        uzv = focFwd_[0] * focRight_[1] - focFwd_[1] * focRight_[0];
+            const float tanV = focTan_ * static_cast<float>(postVh_) / static_cast<float>(std::max(1, postVw_));
+            float zs[2] = {0, 0};
+            bool vis[2] = {false, false};
+            for (int i = 0; i < std::min(view.focusN, 2); ++i) {
+                const float cx = view.focusAt[i][0] - focEye_[0], cy = view.focusAt[i][1] - focEye_[1],
+                            cz = view.focusAt[i][2] - focEye_[2];
+                zs[i] = cx * focFwd_[0] + cy * focFwd_[1] + cz * focFwd_[2];
+                if (zs[i] < 8.0f || zs[i] > 4000.0f) continue;
+                const float x = (cx * focRight_[0] + cy * focRight_[1] + cz * focRight_[2]) / (zs[i] * focTan_);
+                const float y = (cx * uxv + cy * uyv + cz * uzv) / (zs[i] * tanV);
+                vis[i] = std::fabs(x) < 0.95f && std::fabs(y) < 0.95f;
+            }
+            if (vis[0] && vis[1] && std::max(zs[0], zs[1]) < 1.4f * std::min(zs[0], zs[1]))
+                focSubjZ_ = 0.5f * (zs[0] + zs[1]);
+            else if (vis[0]) focSubjZ_ = zs[0];
+            else if (vis[1]) focSubjZ_ = zs[1];
+        }
     }
     litCount_ = 0;
     if (litUboPtr_) {
@@ -4620,19 +4647,25 @@ void D3D12Renderer::runPost() {
         // a character in the picture's middle third: its depth, smoothed (a
         // negative `dof[0]` tells the shader this focus is EXPLICIT); else the
         // camera's own, as before
+        // (the frontend's named subject first, else the nearest body)
         float fx = focus_;
-        if (focBodyZ_ > 0.0f) {
-            const float r = focSm_ > 0.0f ? focBodyZ_ / focSm_ : 1.0f;
-            focSm_ = (focSm_ <= 0.0f || r > 1.6f || r < 0.6f) ? focBodyZ_ : focSm_ + 0.3f * (focBodyZ_ - focSm_);
+        const float want = focSubjZ_ > 0.0f ? focSubjZ_ : focBodyZ_;
+        if (want > 0.0f) {
+            const float r = focSm_ > 0.0f ? want / focSm_ : 1.0f;
+            focSm_ = (focSm_ <= 0.0f || r > 1.6f || r < 0.6f) ? want : focSm_ + 0.3f * (want - focSm_);
             fx = -focSm_;
         } else {
             focSm_ = 0.0f;
         }
-        pp.dof[0] = fx; pp.dof[1] = maxR; pp.dof[2] = 0.25f;
+        // the in-focus band: a quarter of the focus depth, but never thinner than
+        // ~35 cm (14 units) - a close-up's nose and ears are not a blur apart
+        pp.dof[0] = fx; pp.dof[1] = maxR;
+        pp.dof[2] = fx < 0.0f ? std::max(0.25f, 14.0f / std::fabs(fx)) : 0.25f;
         static const bool dofLog = omk::envFlag("OMK_DOF_LOG");
         if (dofLog)
-            std::printf("dof: focus %.1f (%s), camera target %.1f, nearest centred body %.1f, max radius %.1f px\n",
-                        std::fabs(fx), fx < 0.0f ? "a character" : "the picture centre", focus_, focBodyZ_, maxR);
+            std::printf("dof: focus %.1f (%s), camera target %.1f, nearest centred body %.1f, named subject %.1f, max radius %.1f px\n",
+                        std::fabs(fx), fx < 0.0f ? (focSubjZ_ > 0.0f ? "a speaker" : "a character") : "the picture centre",
+                        focus_, focBodyZ_, focSubjZ_, maxR);
         pp.dof[3] = std::max(0.5f, maxR * maxR / 96.0f);
     }
     pp.tone[0] = postReq_.bloom ? kBloomIntensity : 0.0f;

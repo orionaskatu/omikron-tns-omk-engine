@@ -102,6 +102,12 @@ const uint32_t kPresentFrag[] =
 #include "present.frag.inc"
 ;
 struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
+// THE INTERFACE AS AN OVERLAY at colour depth 32 (`overlay.frag`, shared with
+// the Direct3D 12 backend; `todo/enhancements.md` 21): C and M over the world
+const uint32_t kOverlayFrag[] =
+#include "overlay.frag.inc"
+;
+struct OverlayPush { float fade[4]; };
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -560,6 +566,31 @@ private:
     bool makePresentPass();
     bool runPresentPass(int vy, int vh);
     bool presentImage(VkImage src, int sw, int sh);
+    // a 2D colour image of the given format (device-local) with its view; and
+    // the reverse
+    bool makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use, VkImage& img, VkDeviceMemory& mem,
+                     VkImageView& view, const char* label);
+    void freeImage2d(VkImage& img, VkDeviceMemory& mem, VkImageView& view);
+    VkShaderModule shaderModule(const uint32_t* code, size_t bytes);
+    // ---- THE OVERLAY at colour depth 32 (`overlay.frag`, `todo/enhancements.md` 21) ----
+    // C (the 565 words, R16_UINT) and M (R8_UNORM) up each frame, blended over
+    // the present pass's full-precision world in `presImg_` as `C + world * M`
+    // with the colour fade - the Direct3D 12 backend's `presentOverlay`, the
+    // GLES window's before it. No readback, no 565 world under the HUD.
+    VkImage ovPic_ = VK_NULL_HANDLE, ovMask_ = VK_NULL_HANDLE;
+    VkDeviceMemory ovPicMem_ = VK_NULL_HANDLE, ovMaskMem_ = VK_NULL_HANDLE;
+    VkImageView ovPicView_ = VK_NULL_HANDLE, ovMaskView_ = VK_NULL_HANDLE;
+    VkBuffer ovBuf_ = VK_NULL_HANDLE; VkDeviceMemory ovBufMem_ = VK_NULL_HANDLE;
+    VkDeviceSize ovMaskOff_ = 0;
+    VkRenderPass ovPass_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout ovDsl_ = VK_NULL_HANDLE;
+    VkDescriptorPool ovPool_ = VK_NULL_HANDLE; VkDescriptorSet ovDs_ = VK_NULL_HANDLE;
+    VkPipelineLayout ovPlo_ = VK_NULL_HANDLE; VkPipeline ovPipe_ = VK_NULL_HANDLE;
+    VkSampler ovSampler_ = VK_NULL_HANDLE;
+    bool makeOverlayPass();
+    void killOverlay();
+    void ovDraw(const float fade[4]);
+    bool copyPresentOut(std::vector<unsigned char>& rgba);
 
 public:
     void needExtensions(const char* const* names, unsigned n) {
@@ -589,6 +620,8 @@ public:
     // as the picture's first row `vy` and height `vh` in a `w_ x h_` window.
     bool presentWorld(int vy, int vh);
     bool worldPicture(int vy, int vh, std::vector<unsigned char>& rgba);
+    bool presentOverlay(const omk::Surface& s, const std::uint8_t* mask, const float fade[4], int vy, int vh);
+    bool windowPicture(std::vector<unsigned char>& rgba) { return copyPresentOut(rgba); }
     bool probeUpload(const unsigned char* rgba);
     void setDitherForProbe(bool on) { dither_ = on; }
 };
@@ -1592,6 +1625,7 @@ bool VulkanRenderer::resize(int w, int h) {
     if (presPass_) { vkDestroyRenderPass(dev_, presPass_, nullptr); presPass_ = VK_NULL_HANDLE; }
     img(presView_, presImg_, presMem_);
     buf(presRead_, presReadMem_);
+    killOverlay();   // sized to the frame
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     srcW_ = rw_; srcH_ = rh_;
@@ -1927,6 +1961,12 @@ bool VulkanRenderer::presentWorld(int vy, int vh) {
 
 bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgba) {
     if (!runPresentPass(vy, vh)) return false;
+    return copyPresentOut(rgba);
+}
+
+// `presImg_` (TRANSFER_SRC, as the present pass and the overlay leave it) read back
+bool VulkanRenderer::copyPresentOut(std::vector<unsigned char>& rgba) {
+    if (presImg_ == VK_NULL_HANDLE || presRead_ == VK_NULL_HANDLE) return false;
     VkCommandBuffer cb = oneShotBegin();
     VkBufferImageCopy cp{};
     cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -1940,6 +1980,239 @@ bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rg
     std::memcpy(rgba.data(), p, bytes);
     vkUnmapMemory(dev_, presReadMem_);
     return true;
+}
+
+bool VulkanRenderer::makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use, VkImage& img,
+                                 VkDeviceMemory& mem, VkImageView& view, const char* label) {
+    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ii.imageType = VK_IMAGE_TYPE_2D; ii.format = f;
+    ii.extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = use; ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VKCHECK(vkCreateImage(dev_, &ii, nullptr, &img), label);
+    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &mem), label);
+    OMK_GPU_ALLOC(label, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
+    VKCHECK(vkBindImageMemory(dev_, img, mem, 0), label);
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &view), label);
+    return true;
+}
+
+void VulkanRenderer::freeImage2d(VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+    if (view) vkDestroyImageView(dev_, view, nullptr);
+    if (img) vkDestroyImage(dev_, img, nullptr);
+    if (mem) freeDeviceMemory(mem);
+    view = VK_NULL_HANDLE; img = VK_NULL_HANDLE; mem = VK_NULL_HANDLE;
+}
+
+VkShaderModule VulkanRenderer::shaderModule(const uint32_t* code, size_t bytes) {
+    VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    si.codeSize = bytes; si.pCode = code;
+    VkShaderModule m = VK_NULL_HANDLE;
+    vkCreateShaderModule(dev_, &si, nullptr, &m);
+    return m;
+}
+
+// ---- THE OVERLAY AT COLOUR DEPTH 32 (`todo/enhancements.md` 21) -----------
+//
+// The Direct3D 12 backend's overlay present on this one: the present pass
+// writes the world into `presImg_`, then `overlay.frag` blends the interface's
+// two planes over it - C (the 565 frame, R16_UINT) and M (R8) - as
+// `C + world * M` with the colour fade, (ONE, SRC_ALPHA), and the result goes
+// to the window like any present. The same GLSL as D3D12 compiles to this
+// SPIR-V directly.
+
+bool VulkanRenderer::makeOverlayPass() {
+    if (ovPipe_ == VK_NULL_HANDLE) {
+        if (!makePresentPass()) return false;   // `presImg_`, its framebuffer
+        {
+            // loaded, blended over, left where the present's blit reads it
+            VkAttachmentDescription a{};
+            a.format = VK_FORMAT_R8G8B8A8_UNORM; a.samples = VK_SAMPLE_COUNT_1_BIT;
+            a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            a.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            a.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkSubpassDescription sub{};
+            sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+            VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            rpi.attachmentCount = 1; rpi.pAttachments = &a;
+            rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+            VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &ovPass_), "overlay render pass");
+        }
+        {
+            VkDescriptorSetLayoutBinding b[2]{};
+            for (uint32_t i = 0; i < 2; ++i) {
+                b[i].binding = i; b[i].descriptorCount = 1;
+                b[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            }
+            VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            dli.bindingCount = 2; dli.pBindings = b;
+            VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &ovDsl_), "overlay set layout");
+            VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+            VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            pi.maxSets = 1; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+            VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &ovPool_), "overlay pool");
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            ai.descriptorPool = ovPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &ovDsl_;
+            VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &ovDs_), "overlay set");
+            VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+            si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+            si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VKCHECK(vkCreateSampler(dev_, &si, nullptr, &ovSampler_), "overlay sampler");
+        }
+        {
+            VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(OverlayPush)};
+            VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            pli.setLayoutCount = 1; pli.pSetLayouts = &ovDsl_;
+            pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+            VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &ovPlo_), "overlay pipeline layout");
+            VkShaderModule qv = shaderModule(kFsqVert, sizeof(kFsqVert));
+            VkShaderModule qf = shaderModule(kOverlayFrag, sizeof(kOverlayFrag));
+            if (!qv || !qf) { std::fprintf(stderr, "vulkan: overlay shader module\n"); return false; }
+            VkPipelineShaderStageCreateInfo st[2]{};
+            st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                     VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+            st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                     VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+            VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            VkViewport vp{0, 0, static_cast<float>(w_), static_cast<float>(h_), 0.0f, 1.0f};
+            VkRect2D sc{{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
+            VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+            vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+            VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+            rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+            VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            // new = overlay + world x weight (ONE, SRC_ALPHA); alpha stays the world's
+            VkPipelineColorBlendAttachmentState cba{};
+            cba.blendEnable = VK_TRUE;
+            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            cba.colorBlendOp = VK_BLEND_OP_ADD;
+            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.alphaBlendOp = VK_BLEND_OP_ADD;
+            cba.colorWriteMask = 0xF;
+            VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            cb.attachmentCount = 1; cb.pAttachments = &cba;
+            VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            gp.stageCount = 2; gp.pStages = st;
+            gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+            gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+            gp.pMultisampleState = &ms; gp.pColorBlendState = &cb;
+            gp.layout = ovPlo_; gp.renderPass = ovPass_;
+            const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &ovPipe_);
+            vkDestroyShaderModule(dev_, qv, nullptr);
+            vkDestroyShaderModule(dev_, qf, nullptr);
+            if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: overlay pipeline\n"); return false; }
+        }
+    }
+    if (ovPic_ != VK_NULL_HANDLE) return true;
+    if (!makeImage2d(VK_FORMAT_R16_UINT, w_, h_, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     ovPic_, ovPicMem_, ovPicView_, "overlay colour") ||
+        !makeImage2d(VK_FORMAT_R8_UNORM, w_, h_, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                     ovMask_, ovMaskMem_, ovMaskView_, "overlay mask")) return false;
+    const VkDescriptorImageInfo ii[2] = {
+        {ovSampler_, ovPicView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {ovSampler_, ovMaskView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    VkWriteDescriptorSet wr[2]{};
+    for (uint32_t i = 0; i < 2; ++i) {
+        wr[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr[i].dstSet = ovDs_; wr[i].dstBinding = i; wr[i].descriptorCount = 1;
+        wr[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr[i].pImageInfo = &ii[i];
+    }
+    vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
+    ovMaskOff_ = (static_cast<VkDeviceSize>(w_) * h_ * 2 + 15) & ~static_cast<VkDeviceSize>(15);
+    return makeBuffer(ovMaskOff_ + static_cast<VkDeviceSize>(w_) * h_, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      ovBuf_, ovBufMem_);
+}
+
+void VulkanRenderer::killOverlay() {
+    if (!dev_) return;
+    if (ovPipe_) { vkDestroyPipeline(dev_, ovPipe_, nullptr); ovPipe_ = VK_NULL_HANDLE; }
+    if (ovPlo_) { vkDestroyPipelineLayout(dev_, ovPlo_, nullptr); ovPlo_ = VK_NULL_HANDLE; }
+    if (ovSampler_) { vkDestroySampler(dev_, ovSampler_, nullptr); ovSampler_ = VK_NULL_HANDLE; }
+    if (ovPool_) { vkDestroyDescriptorPool(dev_, ovPool_, nullptr); ovPool_ = VK_NULL_HANDLE; ovDs_ = VK_NULL_HANDLE; }
+    if (ovDsl_) { vkDestroyDescriptorSetLayout(dev_, ovDsl_, nullptr); ovDsl_ = VK_NULL_HANDLE; }
+    if (ovPass_) { vkDestroyRenderPass(dev_, ovPass_, nullptr); ovPass_ = VK_NULL_HANDLE; }
+    freeImage2d(ovPic_, ovPicMem_, ovPicView_);
+    freeImage2d(ovMask_, ovMaskMem_, ovMaskView_);
+    if (ovBuf_) { vkDestroyBuffer(dev_, ovBuf_, nullptr); ovBuf_ = VK_NULL_HANDLE; }
+    if (ovBufMem_) { freeDeviceMemory(ovBufMem_); ovBufMem_ = VK_NULL_HANDLE; }
+}
+
+bool VulkanRenderer::presentOverlay(const omk::Surface& s, const std::uint8_t* mask, const float fade[4],
+                                    int vy, int vh) {
+    if (swap_ == VK_NULL_HANDLE || s.w != w_ || s.h != h_ || !mask) return false;
+    if (!makeOverlayPass()) return false;
+    // both planes up, whole: ~3 bytes a pixel against the CPU path's readback,
+    // dither and RGBA upload of the entire frame
+    const std::size_t n = static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_);
+    void* p = nullptr;
+    if (vkMapMemory(dev_, ovBufMem_, 0, ovMaskOff_ + n, 0, &p) != VK_SUCCESS) return false;
+    std::memcpy(p, s.px.data(), n * 2);
+    std::memcpy(static_cast<unsigned char*>(p) + ovMaskOff_, mask, n);
+    vkUnmapMemory(dev_, ovBufMem_);
+    {
+        VkCommandBuffer cb = oneShotBegin();
+        const auto up = [&](VkImage img, VkDeviceSize off) {
+            VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &b);
+            VkBufferImageCopy cp{};
+            cp.bufferOffset = off;
+            cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            cp.imageExtent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
+            vkCmdCopyBufferToImage(cb, ovBuf_, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+            b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                 0, nullptr, 0, nullptr, 1, &b);
+        };
+        up(ovPic_, 0);
+        up(ovMask_, ovMaskOff_);
+        oneShotEnd(cb);
+    }
+    if (!runPresentPass(vy, vh)) return false;
+    ovDraw(fade);
+    return presentImage(presImg_, w_, h_);
+}
+
+// The overlay's planes blended over the present pass's picture in `presImg_`.
+void VulkanRenderer::ovDraw(const float fade[4]) {
+    VkCommandBuffer cb = oneShotBegin();
+    VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp.renderPass = ovPass_; rp.framebuffer = presFbuf_;   // render-pass COMPATIBLE with the present's
+    rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
+    vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ovPipe_);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ovPlo_, 0, 1, &ovDs_, 0, nullptr);
+    const OverlayPush op{{fade[0], fade[1], fade[2], fade[3]}};
+    vkCmdPushConstants(cb, ovPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof op, &op);
+    vkCmdDraw(cb, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cb);
+    oneShotEnd(cb);
 }
 
 // Load `colour_` with a `w_ x h_` RGBA8 picture - the probe's way of asking the
@@ -3233,6 +3506,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (presMem_) freeDeviceMemory(presMem_);
     if (presRead_) vkDestroyBuffer(dev_, presRead_, nullptr);
     if (presReadMem_) freeDeviceMemory(presReadMem_);
+    killOverlay();
     if (upBuf_) vkDestroyBuffer(dev_, upBuf_, nullptr);
     if (upMem_) freeDeviceMemory(upMem_);
     if (pipeStencil_) vkDestroyPipeline(dev_, pipeStencil_, nullptr);
@@ -3292,6 +3566,15 @@ bool vulkanResize(Renderer* r, int w, int h) {
     auto* v = dynamic_cast<VulkanRenderer*>(r);
     return v && v->resize(w, h);
 }
+bool vulkanPresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
+                          int vy, int vh) {
+    return static_cast<VulkanRenderer*>(r)->presentOverlay(s, mask, fade, vy, vh);
+}
+
+bool vulkanWindowPicture(Renderer* r, std::vector<unsigned char>& rgba) {
+    return static_cast<VulkanRenderer*>(r)->windowPicture(rgba);
+}
+
 bool vulkanWorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba) {
     auto* v = dynamic_cast<VulkanRenderer*>(r);
     return v && v->worldPicture(vy, vh, rgba);

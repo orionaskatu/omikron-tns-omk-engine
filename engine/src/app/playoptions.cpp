@@ -296,7 +296,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --colordepth 16|32  ENHANCEMENT at 32: the window's picture at 8 bits a\n"
 "                   channel, not quantised and dithered to RGB565 (16, the\n"
 "                   default, the original's look); the GPU backends' present,\n"
-"                   Direct3D 12's interface frames too; [Enhancements] colordepth=32\n"
+"                   their interface frames too; [Enhancements] colordepth=32\n"
 "  --bloom          ENHANCEMENT: light bleeding from the neon, lamps and fires\n"
 "                   (Direct3D 12); [Enhancements] bloom=on\n"
 "  --dof            ENHANCEMENT: depth of field on the letterboxed frames -\n"

@@ -295,10 +295,10 @@
 ; original's look - the 16-bit device's RGB565 with its 4x4 dither, which the
 ; GPU backends' present pass reproduces from the 8-bit-a-channel 3D; 32 hands
 ; the 3D over at 8 bits a channel, no quantisation, no dither (smooth skies and
-; fog). On Direct3D 12 the frames with an interface over the 3D (HUD,
-; subtitles, fades, screens) stay 32-bit too - the 2D, the game's own 565 art,
-; blended over the full-precision 3D on the GPU; on Vulkan those frames are
-; still composed on the CPU in 565. `all = max` gives 32. `--colordepth 16|32`.
+; fog). On Direct3D 12 and Vulkan the frames with an interface over the 3D
+; (HUD, subtitles, fades, screens) stay 32-bit too - the 2D, the game's own 565
+; art, blended over the full-precision 3D on the GPU.
+; `all = max` gives 32. `--colordepth 16|32`.
 ; `todo/enhancements.md` 21.
 ;colordepth = 16
 ;

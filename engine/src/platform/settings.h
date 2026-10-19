@@ -246,8 +246,8 @@ struct Settings {
     // 3D is drawn into 8-bit-a-channel targets either way; 16 (the default,
     // the original's look) quantises the finished picture to RGB565 with the
     // 4x4 dither in the present pass, as the game's 16-bit device did; 32
-    // passes the picture through at 8 bits a channel, and on Direct3D 12 a
-    // frame with an interface over it composites the (565) 2D over that
+    // passes the picture through at 8 bits a channel, and on Direct3D 12 and
+    // Vulkan a frame with an interface over it composites the (565) 2D over that
     // full-precision world on the GPU too. `todo/enhancements.md` 21.
     int    colourDepth = 16;
     Source colourDepthSource = Source::Default;

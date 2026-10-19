@@ -27472,8 +27472,9 @@ def c_engine_colour_depth():
     every pixel to RGB565 (the 4x4 dither) and re-expanded it, and a frame with
     an interface over it was composed on the CPU over a 565 readback of the 3D.
     At 32 the present pass hands the supersample/upscaler mean on untouched,
-    and on Direct3D 12 the interface frames are blended on the GPU over that
-    full-precision world (`overlay.frag`, the GLES window's overlay) instead.
+    and on Direct3D 12 and Vulkan the interface frames are blended on the GPU over that
+    full-precision world (`overlay.frag`, the GLES window's overlay) instead
+    (`engine: vulkan parity` holds the Vulkan half to D3D12's picture).
     `--dump` is the software reference's RGB565 and cannot see any of it, so
     this reads what the window was handed (`OMK_WINDUMP`: D3D12's swapchain
     back buffer, copied out by the present; Vulkan's present image), on a
@@ -28618,6 +28619,95 @@ def c_engine_ssao():
            ("off by default and silent; --ssao reports the pass live; %d of %d pixels "
             "darken (%.1f%%), none brightens; under 4x MSAA %d darken, %d brighten"
             % (dark, n, 100.0 * share, mdark, mbright))
+
+
+def c_engine_vulkan_parity():
+    r"""The VULKAN window renders what the DIRECT3D 12 window renders: every enhancement that runs on D3D12 and
+    is not the ray tracer or an upscaler. `todo/enhancements.md` 21, 22 (PART 1 of the parity effort). The
+    same launch line on `--d3d12` and on the default Vulkan window, hidden, 640x480, read from what the window
+    was handed (`OMK_WINDUMP`: D3D12's back buffer, Vulkan's present image), compared pixel by pixel:
+    mean absolute difference per channel and the share of pixels more than 8 levels off. Both backends run
+    ONE GLSL source for the present pass, the overlay and the post chain (`backends/vulkan/shaders/`) over the
+    same scene shaders, so on the machine this was written on (an AMD Radeon RX 9070 XT, both APIs) the
+    pictures are BYTE-IDENTICAL; the tolerance here (mean <= 0.5, under 1% of pixels more than 8 off) is for
+    another driver's rounding of `pow`, `exp` and `log`, not a difference of method.
+      * COLOUR DEPTH 32 (`colordepth = 32`): the street start and the supermarket fight's last frame (660, a
+        MEDIA LINE over the world, its fades before it) agree across the two backends; on Vulkan the fight's
+        interface frames went out as GPU OVERLAY frames (counted in the present statistics, the last frame
+        among them - `overlay.frag` over the present pass, no 565 world under the HUD), and the picture
+        really differs from the same frame composed on the CPU (`OMK_NO_OVERLAY=1`) while staying within 16
+        a channel of it.
+    SHOWN TO FAIL (2026-10-19) with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no overlay
+    frame counted; the fight frame equal to the CPU composite).
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    play = os.path.join(eng, "build", "omk-play")
+    if not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play is not built"
+    W, H = 640, 480
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(backend, extra, name, frames="60", env=None):
+            win = os.path.join(tmp, name + ".rgba")
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save,
+                    "--nofmv", "--res", "%dx%d" % (W, H), "--frames", frames] + \
+                   (["--d3d12"] if backend == "d3d12" else []) + extra
+            e = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win)
+            e.update(env or {})
+            r = subprocess.run(args, capture_output=True, text=True, errors="replace", env=e)
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
+        street = ["--area", "0", "--stand", "1804,0,-6890,336"]
+        fight = ["--fight-supermarket"]
+        res = {}
+        res["sd"] = run("d3d12", street + ["--colordepth", "32"], "sd")
+        res["sv"] = run("vulkan", street + ["--colordepth", "32"], "sv")
+        res["fd"] = run("d3d12", fight + ["--colordepth", "32"], "fd", frames="660")
+        res["fv"] = run("vulkan", fight + ["--colordepth", "32"], "fv", frames="660")
+        res["fn"] = run("vulkan", fight + ["--colordepth", "32"], "fn", frames="660", env={"OMK_NO_OVERLAY": "1"})
+    if "renderer: D3D12" not in res["sd"][0] or "renderer: VULKAN" not in res["sv"][0]:
+        return ("skipped",), ("skipped",), "no Direct3D 12 or no Vulkan device - the backends are optional"
+    if not all(p for _, p in res.values()):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+
+    def diff(a, b):
+        sa = [0, 0, 0]
+        big = mx = 0
+        for i in range(n):
+            o = 4 * i
+            m = 0
+            for c in range(3):
+                d = abs(a[o + c] - b[o + c])
+                sa[c] += d
+                if d > m:
+                    m = d
+            mx = max(mx, m)
+            big += m > 8
+        return max(sa) / n, big / n, mx
+    def agree(d):
+        return d[0] <= 0.5 and d[1] < 0.01
+    log = []
+    got = []
+    # COLOUR DEPTH 32
+    ds = diff(res["sd"][1], res["sv"][1])
+    df = diff(res["fd"][1], res["fv"][1])
+    dn = diff(res["fv"][1], res["fn"][1])
+    lines = re.findall(r"^frame (\d+) present: \d+ of 60 straight from the GPU; on the CPU:(.*)$", res["fv"][0], re.M)
+    overlay = sum(int(c) for _, rest in lines for c in re.findall(r"overlay \([a-z ]+\) (\d+)", rest))
+    lastAll = bool(lines) and lines[-1][0] == "659" and \
+        sum(int(c) for c in re.findall(r"overlay \([a-z ]+\) (\d+)", lines[-1][1])) == 60
+    got += [agree(ds), agree(df), overlay > 60, lastAll, dn[0] > 0.5 and dn[2] <= 16]
+    log.append("colour depth 32: street mean %.3f, >8 %.2f%%; fight 660 mean %.3f, >8 %.2f%%, %d Vulkan overlay frames "
+               "(last frame all overlay: %s); overlay against the CPU composite mean %.2f, worst %d"
+               % (ds[0], 100 * ds[1], df[0], 100 * df[1], overlay, lastAll, dn[0], dn[2]))
+    print("        " + "\n        ".join(log))
+    return tuple(got), (True,) * len(got), \
+        ("Vulkan and Direct3D 12 agree at colour depth 32 (street, fight 660); Vulkan's interface frames are GPU "
+         "overlays, within 16 of the CPU composite and not equal to it")
 
 
 def c_engine_d3d12():
@@ -49780,6 +49870,7 @@ SLOW = [
     ("engine: anim blend", c_engine_anim_blend, "todo/enhancements.md 28; actor/pose.h"),
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
+    ("engine: vulkan parity", c_engine_vulkan_parity, "todo/enhancements.md 21, 22; vkrender.cpp, playgpu_vulkan.cpp"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),

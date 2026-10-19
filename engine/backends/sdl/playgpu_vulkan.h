@@ -26,5 +26,7 @@ bool  vulkanPresent(Renderer*);
 bool  vulkanPresentSurface(Renderer*, const Surface&);
 bool  vulkanPresentWorld(Renderer*, int vy, int vh);
 bool  vulkanWorldPicture(Renderer*, int vy, int vh, std::vector<unsigned char>&);
+bool  vulkanPresentOverlay(Renderer*, const Surface&, const std::uint8_t* mask, const float fade[4], int vy, int vh);
+bool  vulkanWindowPicture(Renderer*, std::vector<unsigned char>&);
 bool  vulkanResize(Renderer*, int w, int h);
 }

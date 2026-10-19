@@ -154,6 +154,17 @@ void PlayState::gpuOpenWindow() {
                 std::printf("post: the post-processing chain could not be set up - off on Vulkan\n");
             if (frameGen && !vkr->setFrameGeneration(true))
                 std::printf("framegen: frame generation is the Direct3D 12 window's (--d3d12) - off on Vulkan\n");
+            // HDR OUTPUT: whether the display reports HDR and its peak, as DXGI says
+            // it where the build has DXGI (the surface's own offer of scRGB is the
+            // rest of the answer, `VulkanRenderer::makeSwapchain`)
+            if (postFx.hdr) {
+                int known = -1;
+                float peak = 0.0f;
+#if defined(OMK_D3D12)
+                if (void* hwnd = nativeWindowHandle(vkWin)) known = omk::d3d12OutputHdr(hwnd, peak);
+#endif
+                omk::vulkanSetHdrDisplay(vkr, known, peak);
+            }
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};

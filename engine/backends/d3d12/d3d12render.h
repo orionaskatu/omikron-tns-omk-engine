@@ -44,6 +44,9 @@ void d3d12CaptureWindow(Renderer* r);
 bool d3d12WindowPicture(Renderer* r, std::vector<unsigned char>& rgba, int& w, int& h);
 // options row 2: the frame's size changed (and the window's, with it)
 bool d3d12Resize(Renderer* r, int w, int h);
+// whether the output a window (an HWND, of any backend) is on reports HDR
+// (ST.2084), as DXGI says it: 1 yes, 0 no, -1 not known; `peakNits` its peak
+int d3d12OutputHdr(void* hwnd, float& peakNits);
 // what the frame is drawn with: MSAA samples (1 off) and the device's most
 int d3d12Samples(Renderer* r);
 int d3d12MaxSamples(Renderer* r);

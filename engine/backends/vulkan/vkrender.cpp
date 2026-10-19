@@ -110,6 +110,14 @@ const uint32_t kOverlayFrag[] =
 #include "overlay.frag.inc"
 ;
 struct OverlayPush { float fade[4]; };
+// HDR OUTPUT (`hdr = on`, `todo/enhancements.md` 22): `blit.frag` built with
+// -DOMK_HDR - the picture (gamma 2.2, 1.0 = paper white, its highlights past
+// 1.0) to scRGB's linear light - drawn into an FP16 swapchain. The Direct3D 12
+// backend's blit, from the same GLSL.
+const uint32_t kBlitHdrFrag[] =
+#include "blit_hdr.frag.inc"
+;
+struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, peak; };
 // THE POST CHAIN (`todo/enhancements.md` 22): `bloom.frag`'s three jobs and
 // `post.frag`'s final pass, the Direct3D 12 backend's own GLSL (the
 // multisampled-depth build for a frame whose depth is read per sample)
@@ -305,6 +313,13 @@ public:
             std::printf("post: soft particles and volumetric lamp light are the Direct3D 12 backend's "
                         "(--d3d12) - off on Vulkan\n");
         return true;
+    }
+    // HDR OUTPUT: what the window layer knows of the display before `init`
+    // (`known`: 1 reports HDR, 0 does not, -1 not asked - then the surface's
+    // offer of scRGB is all there is) and its peak luminance in nits (0: unknown)
+    void setHdrDisplay(int known, float peak) {
+        hdrKnown_ = known;
+        if (peak > 0.0f) hdrPeak_ = peak;
     }
     int samples() const { return static_cast<int>(samples_); }
     bool setTextureFilter(int mode) override {
@@ -510,8 +525,28 @@ private:
     bool postLive_ = false;            // the chain ran on THIS frame
     bool postFailed_ = false;          // `makePost` could not: the frame without it
     bool dofOn_ = false;               // the depth and stencil can be sampled
-    bool hdrOn_ = false;               // HDR output (an FP16 scRGB swapchain)
+    // HDR OUTPUT (`hdr = on`): the HDR passes (an FP16 post picture and present
+    // image, the shoulder's white at the display's peak over paper white) run
+    // when `hdrOn_`; they reach the window through an FP16 scRGB swapchain
+    // (`hdrSwap_`: VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, 1.0 = 80 nits, the
+    // blit `blit.frag -DOMK_HDR` draws), or - `OMK_HDR_FORCE` on a surface that
+    // offers no scRGB, a test of the passes - through a plain blit that clips
+    // the picture to SDR.
+    bool hdrOn_ = false, hdrSwap_ = false, hdrDecided_ = false, hdrMeta_ = false;
+    int hdrKnown_ = -1;
+    bool hdrToldSwap_ = false;
     float hdrPeak_ = 1000.0f;          // the display's peak luminance, nits
+    static constexpr float kPaperWhite = omk::postfx::kPaperWhite;   // nits: where the SDR picture's white goes
+    VkFormat presFmt_ = VK_FORMAT_R8G8B8A8_UNORM;   // the present image's, the overlay's, the chain's
+    std::vector<VkImageView> swapViews_; std::vector<VkFramebuffer> swapFbufs_;
+    VkRenderPass hdrPass_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout blitDsl_ = VK_NULL_HANDLE; VkDescriptorPool blitPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet blitDs_[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};   // [0] `colour_`, [1] `presImg_`
+    VkSampler blitSampler_ = VK_NULL_HANDLE;
+    VkPipelineLayout blitPlo_ = VK_NULL_HANDLE; VkPipeline blitPipe_ = VK_NULL_HANDLE;
+    bool makeHdrBlit();
+    void killHdrBlit();
+    bool presentImageHdr(VkImage src, int sw, int sh, uint32_t idx, int x0, int y0, int dW, int dH);
     omk::postfx::Focus foc_;           // the frame's picture rectangle and depth of field's focus
     bool curBody_ = false;             // the draw being submitted is a posed body's
     VkImageView stencilSampleView_ = VK_NULL_HANDLE;   // the depth image's stencil plane (a hologram's mark)
@@ -786,6 +821,17 @@ void* VulkanRenderer::createInstanceOnly() {
     // rather than "not asked for".
     std::vector<const char*> iexts = {"VK_KHR_portability_enumeration"};
     for (const auto& e : wantInstExts_) iexts.push_back(e.c_str());
+    // HDR OUTPUT needs the surface to offer more than sRGB: the colour-space
+    // extension, when the loader has it
+    if (postReq_.hdr) {
+        uint32_t ne = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, nullptr);
+        std::vector<VkExtensionProperties> ex(ne);
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, ex.data());
+        for (const auto& e : ex)
+            if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0)
+                iexts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+    }
     VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ci.pApplicationInfo = &app;
     ci.enabledExtensionCount = static_cast<uint32_t>(iexts.size());
@@ -856,6 +902,13 @@ bool VulkanRenderer::pickDevice() {
         if (std::strcmp(e.extensionName, "VK_KHR_portability_subset") == 0)
             want.push_back("VK_KHR_portability_subset");
     if (surface_ != VK_NULL_HANDLE) want.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    // ...and the display's metadata (its peak, paper white) for an HDR swapchain
+    if (surface_ != VK_NULL_HANDLE && postReq_.hdr)
+        for (const auto& e : exts)
+            if (std::strcmp(e.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0) {
+                want.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+                hdrMeta_ = true;
+            }
 
     const float pri = 1.0f;
     VkDeviceQueueCreateInfo qi{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -1645,9 +1698,44 @@ bool VulkanRenderer::makeSwapchain(int w, int h) {
     if (!nf) { std::fprintf(stderr, "vulkan: no surface format\n"); return false; }
     VkSurfaceFormatKHR pick = fmts[0];
     for (const auto& f : fmts)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) {
+        if ((f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) &&
+            f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             pick = f; break;
         }
+    // HDR OUTPUT (`hdr = on`, todo/enhancements.md 22), decided once: when the
+    // surface offers scRGB (FP16, linear, BT.709 primaries, 1.0 = 80 nits -
+    // `VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT`, which Windows' drivers list
+    // only with the display's HDR switch on) AND the window layer's own look
+    // at the output does not say SDR (DXGI, where the build has it); else a
+    // line and the SDR swapchain. `OMK_HDR_FORCE=1` takes the HDR passes on
+    // any display, to exercise them.
+    if (postReq_.hdr && !hdrDecided_) {
+        hdrDecided_ = true;
+        bool scRgb = false;
+        for (const auto& f : fmts)
+            if (f.format == VK_FORMAT_R16G16B16A16_SFLOAT && f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)
+                scRgb = true;
+        const bool force = omk::envFlag("OMK_HDR_FORCE");
+        const bool usable = (props_.limits.maxPushConstantsSize >= sizeof(BlitPush)) && scRgb;
+        if (usable && (hdrKnown_ != 0 || force)) {
+            hdrOn_ = hdrSwap_ = true;
+        } else if (force) {
+            hdrOn_ = true;
+            std::printf("hdr: OMK_HDR_FORCE on a surface that offers no scRGB swapchain (VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) - "
+                        "the HDR passes run, the window gets the picture clipped to SDR\n");
+        } else if (scRgb) {
+            std::printf("hdr: the display reports no HDR (not ST.2084) - the picture stays SDR\n");
+        } else {
+            std::printf("hdr: the surface offers no scRGB swapchain (VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT, "
+                        "VK_EXT_swapchain_colorspace) - the picture stays SDR\n");
+        }
+        presFmt_ = hdrOn_ ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    }
+    if (hdrSwap_)
+        for (const auto& f : fmts)
+            if (f.format == VK_FORMAT_R16G16B16A16_SFLOAT && f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
+                pick = f; break;
+            }
     swapFmt_ = pick.format;
     swapExt_ = caps.currentExtent.width != 0xFFFFFFFFu
              ? caps.currentExtent
@@ -1663,8 +1751,9 @@ bool VulkanRenderer::makeSwapchain(int w, int h) {
     sc.imageExtent = swapExt_;
     sc.imageArrayLayers = 1;
     // TRANSFER_DST, not COLOR_ATTACHMENT: nothing renders into these, the
-    // finished frame is blitted in.
-    sc.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // finished frame is blitted in - except an scRGB swapchain's, which the
+    // HDR blit draws (the picture is gamma 2.2, the swapchain linear light)
+    sc.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | (hdrSwap_ ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) : 0u);
     sc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sc.preTransform = caps.currentTransform;
     sc.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -1678,6 +1767,35 @@ bool VulkanRenderer::makeSwapchain(int w, int h) {
     vkGetSwapchainImagesKHR(dev_, swap_, &ni, nullptr);
     swapImgs_.resize(ni);
     vkGetSwapchainImagesKHR(dev_, swap_, &ni, swapImgs_.data());
+    if (hdrSwap_) {
+        if (!makeHdrBlit()) return false;
+        for (uint32_t i = 0; i < ni; ++i) {
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = swapImgs_[i]; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = swapFmt_;
+            vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            VkImageView v = VK_NULL_HANDLE;
+            VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &v), "swapchain view");
+            swapViews_.push_back(v);
+            VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+            fi.renderPass = hdrPass_; fi.attachmentCount = 1; fi.pAttachments = &v;
+            fi.width = swapExt_.width; fi.height = swapExt_.height; fi.layers = 1;
+            VkFramebuffer fb = VK_NULL_HANDLE;
+            VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fb), "swapchain framebuffer");
+            swapFbufs_.push_back(fb);
+        }
+        if (hdrMeta_) {
+            // BT.709 primaries and D65 (scRGB's), the display's peak and the paper white
+            auto set = reinterpret_cast<PFN_vkSetHdrMetadataEXT>(vkGetDeviceProcAddr(dev_, "vkSetHdrMetadataEXT"));
+            if (set) {
+                VkHdrMetadataEXT m{VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
+                m.displayPrimaryRed = {0.640f, 0.330f}; m.displayPrimaryGreen = {0.300f, 0.600f};
+                m.displayPrimaryBlue = {0.150f, 0.060f}; m.whitePoint = {0.3127f, 0.3290f};
+                m.maxLuminance = hdrPeak_; m.minLuminance = 0.001f;
+                m.maxContentLightLevel = hdrPeak_; m.maxFrameAverageLightLevel = kPaperWhite;
+                set(dev_, 1, &swap_, &m);
+            }
+        }
+    }
 
     VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VKCHECK(vkCreateSemaphore(dev_, &si, nullptr, &acquired_), "semaphore");
@@ -1690,11 +1808,19 @@ bool VulkanRenderer::makeSwapchain(int w, int h) {
     VKCHECK(vkCreateFence(dev_, &fi, nullptr, &pfence_), "present fence");
     std::printf("vulkan: swapchain %ux%u, %u images, format %d\n",
                 swapExt_.width, swapExt_.height, ni, static_cast<int>(swapFmt_));
+    if (hdrSwap_ && !hdrToldSwap_) {
+        hdrToldSwap_ = true;
+        std::printf("hdr: on - an ENHANCEMENT: an scRGB (FP16) swapchain, paper white %.0f nits, the "
+                    "display's peak %.0f nits\n", static_cast<double>(kPaperWhite), static_cast<double>(hdrPeak_));
+    }
     return true;
 }
 
 void VulkanRenderer::killSwapchain() {
     if (!dev_) return;
+    for (auto f : swapFbufs_) vkDestroyFramebuffer(dev_, f, nullptr);
+    for (auto v : swapViews_) vkDestroyImageView(dev_, v, nullptr);
+    swapFbufs_.clear(); swapViews_.clear();
     if (pcb_) { vkFreeCommandBuffers(dev_, pool_, 1, &pcb_); pcb_ = VK_NULL_HANDLE; }
     if (pfence_) { vkDestroyFence(dev_, pfence_, nullptr); pfence_ = VK_NULL_HANDLE; }
     if (acquired_) { vkDestroySemaphore(dev_, acquired_, nullptr); acquired_ = VK_NULL_HANDLE; }
@@ -1746,6 +1872,7 @@ bool VulkanRenderer::resize(int w, int h) {
     buf(presRead_, presReadMem_);
     killOverlay();   // sized to the frame
     killPost();
+    killHdrBlit();
     if (stencilSampleView_) { vkDestroyImageView(dev_, stencilSampleView_, nullptr); stencilSampleView_ = VK_NULL_HANDLE; }
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
@@ -1824,6 +1951,9 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
     if (sW == w_ && h_ <= sH) { dW = w_; dH = h_; }
     const int x0 = (sW - dW) / 2;
     const int y0 = (sH - dH) / 2;
+    if (hdrSwap_ && presentImageHdr(src, sw, sh, idx, x0, y0, dW, dH)) {
+        // drawn by the HDR blit (`blit.frag -DOMK_HDR`), which left the image presentable
+    } else {
     VkImageBlit blit{};
     blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     blit.srcOffsets[0] = {0, 0, 0};
@@ -1840,9 +1970,10 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
     barrier(swapImgs_[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    }
     vkEndCommandBuffer(pcb_);
 
-    const VkPipelineStageFlags wait = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkPipelineStageFlags wait = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = 1; si.pWaitSemaphores = &acquired_;
     si.pWaitDstStageMask = &wait;
@@ -1917,14 +2048,14 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
 
 bool VulkanRenderer::makePresentPass() {
     if (presPipe_ != VK_NULL_HANDLE) return true;
-    const VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat fmt = presFmt_;   // FP16 under HDR: the highlights run past 1.0
     {
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
         ii.extent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VKCHECK(vkCreateImage(dev_, &ii, nullptr, &presImg_), "present image");
@@ -2039,7 +2170,7 @@ bool VulkanRenderer::makePresentPass() {
         vkDestroyShaderModule(dev_, qf, nullptr);
         if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: present pipeline\n"); return false; }
     }
-    return makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    return makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * (hdrOn_ ? 8 : 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       presRead_, presReadMem_);
 }
@@ -2100,12 +2231,185 @@ bool VulkanRenderer::copyPresentOut(std::vector<unsigned char>& rgba) {
     cp.imageExtent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
     vkCmdCopyImageToBuffer(cb, presImg_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, presRead_, 1, &cp);
     oneShotEnd(cb);
-    const std::size_t bytes = static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_) * 4;
-    rgba.resize(bytes);
+    const std::size_t n = static_cast<std::size_t>(w_) * static_cast<std::size_t>(h_);
+    rgba.resize(n * 4);
     void* p = nullptr;
-    if (vkMapMemory(dev_, presReadMem_, 0, bytes, 0, &p) != VK_SUCCESS) return false;
-    std::memcpy(rgba.data(), p, bytes);
+    if (vkMapMemory(dev_, presReadMem_, 0, n * (hdrOn_ ? 8 : 4), 0, &p) != VK_SUCCESS) return false;
+    if (!hdrOn_) {
+        std::memcpy(rgba.data(), p, n * 4);
+    } else {
+        // HDR: the FP16 picture is gamma 2.2 with 1.0 = paper white and its highlights
+        // past 1.0 - clipped to 8 bits, as the Direct3D 12 back buffer's dump is
+        const auto* h = static_cast<const std::uint16_t*>(p);
+        const auto half = [](std::uint16_t v) {
+            const int e = (v >> 10) & 31, m = v & 1023;
+            float f = e == 0 ? std::ldexp(static_cast<float>(m), -24)
+                    : e == 31 ? 65504.0f : std::ldexp(static_cast<float>(m + 1024), e - 25);
+            return (v & 0x8000) ? -f : f;
+        };
+        for (std::size_t i = 0; i < n; ++i) {
+            for (int c = 0; c < 3; ++c)
+                rgba[4 * i + static_cast<std::size_t>(c)] = static_cast<unsigned char>(
+                    std::lround(std::min(std::max(half(h[4 * i + static_cast<std::size_t>(c)]), 0.0f), 1.0f) * 255.0f));
+            rgba[4 * i + 3] = 255;
+        }
+    }
     vkUnmapMemory(dev_, presReadMem_);
+    return true;
+}
+
+// ---- HDR OUTPUT's blit (`todo/enhancements.md` 22) --------------------------
+//
+// The Direct3D 12 backend's `blit_hdr`, from the same GLSL: everything this
+// backend hands the window - the present pass's picture, a CPU frame, the post
+// chain's picture - is gamma 2.2 with 1.0 = paper white, its highlights alone
+// running past 1.0, and an scRGB swapchain is linear light with 1.0 = 80 nits.
+// So the frame goes to the swapchain through a draw (the viewport the
+// destination rectangle, as `vkCmdBlitImage`'s was) that converts it: to linear
+// light, scaled to paper white's nits, clamped at the display's peak.
+
+bool VulkanRenderer::makeHdrBlit() {
+    if (blitPipe_ != VK_NULL_HANDLE) return true;
+    if (!makePresentPass()) return false;   // `presImg_` and its view, at the present image's format
+    {
+        // the swapchain's image, as the clear before it left it; presentable after
+        VkAttachmentDescription a{};
+        a.format = swapFmt_; a.samples = VK_SAMPLE_COUNT_1_BIT;
+        a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; a.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        VkSubpassDependency dep{VK_SUBPASS_EXTERNAL, 0, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0};
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = 1; rpi.pAttachments = &a;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        rpi.dependencyCount = 1; rpi.pDependencies = &dep;
+        VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &hdrPass_), "hdr render pass");
+    }
+    {
+        VkDescriptorSetLayoutBinding b{};
+        b.binding = 0; b.descriptorCount = 1;
+        b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 1; dli.pBindings = &b;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &blitDsl_), "hdr set layout");
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 2; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &blitPool_), "hdr pool");
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VKCHECK(vkCreateSampler(dev_, &si, nullptr, &blitSampler_), "hdr sampler");
+        const VkImageView views[2] = {colourView_, presView_};
+        for (int i = 0; i < 2; ++i) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            ai.descriptorPool = blitPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &blitDsl_;
+            VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &blitDs_[i]), "hdr set");
+            const VkDescriptorImageInfo ii{blitSampler_, views[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr.dstSet = blitDs_[i]; wr.dstBinding = 0; wr.descriptorCount = 1;
+            wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
+            vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        }
+    }
+    {
+        const VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BlitPush)};
+        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pli.setLayoutCount = 1; pli.pSetLayouts = &blitDsl_;
+        pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+        VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &blitPlo_), "hdr pipeline layout");
+        VkShaderModule qv = shaderModule(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule qf = shaderModule(kBlitHdrFrag, sizeof(kBlitHdrFrag));
+        if (!qv || !qf) { std::fprintf(stderr, "vulkan: hdr shader module\n"); return false; }
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.scissorCount = 1;
+        const VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dsi.dynamicStateCount = 2; dsi.pDynamicStates = dyn;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.colorWriteMask = 0xF;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = st;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dsi;
+        gp.layout = blitPlo_; gp.renderPass = hdrPass_;
+        const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &blitPipe_);
+        vkDestroyShaderModule(dev_, qv, nullptr);
+        vkDestroyShaderModule(dev_, qf, nullptr);
+        if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: hdr pipeline\n"); return false; }
+    }
+    return true;
+}
+
+void VulkanRenderer::killHdrBlit() {
+    if (!dev_) return;
+    if (blitPipe_) { vkDestroyPipeline(dev_, blitPipe_, nullptr); blitPipe_ = VK_NULL_HANDLE; }
+    if (blitPlo_) { vkDestroyPipelineLayout(dev_, blitPlo_, nullptr); blitPlo_ = VK_NULL_HANDLE; }
+    if (blitSampler_) { vkDestroySampler(dev_, blitSampler_, nullptr); blitSampler_ = VK_NULL_HANDLE; }
+    if (blitPool_) { vkDestroyDescriptorPool(dev_, blitPool_, nullptr); blitPool_ = VK_NULL_HANDLE; }
+    blitDs_[0] = blitDs_[1] = VK_NULL_HANDLE;
+    if (blitDsl_) { vkDestroyDescriptorSetLayout(dev_, blitDsl_, nullptr); blitDsl_ = VK_NULL_HANDLE; }
+    if (hdrPass_) { vkDestroyRenderPass(dev_, hdrPass_, nullptr); hdrPass_ = VK_NULL_HANDLE; }
+}
+
+// recorded on `pcb_` in `presentImage`, the swapchain's image cleared and in
+// TRANSFER_DST: `src` (TRANSFER_SRC, whole) drawn into the destination
+// rectangle, the image left presentable. -> false: no HDR blit made (a plain blit follows)
+bool VulkanRenderer::presentImageHdr(VkImage src, int sw, int sh, uint32_t idx, int x0, int y0, int dW, int dH) {
+    if (blitPipe_ == VK_NULL_HANDLE || idx >= swapFbufs_.size()) return false;
+    const bool isPres = src == presImg_;
+    const VkDescriptorSet ds = isPres ? blitDs_[1] : blitDs_[0];
+    const float texW = static_cast<float>(isPres ? w_ : rw_), texH = static_cast<float>(isPres ? h_ : rh_);
+    const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags sa, VkAccessFlags da,
+                            VkPipelineStageFlags ss, VkPipelineStageFlags ds_) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from; b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = src; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = sa; b.dstAccessMask = da;
+        vkCmdPipelineBarrier(pcb_, ss, ds_, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, VK_ACCESS_SHADER_READ_BIT,
+           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp.renderPass = hdrPass_; rp.framebuffer = swapFbufs_[idx];
+    rp.renderArea = {{0, 0}, swapExt_};
+    vkCmdBeginRenderPass(pcb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    const VkViewport vp{static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(dW), static_cast<float>(dH), 0.0f, 1.0f};
+    const VkRect2D sc{{x0, y0}, {static_cast<uint32_t>(dW), static_cast<uint32_t>(dH)}};
+    vkCmdSetViewport(pcb_, 0, 1, &vp);
+    vkCmdSetScissor(pcb_, 0, 1, &sc);
+    vkCmdBindPipeline(pcb_, VK_PIPELINE_BIND_POINT_GRAPHICS, blitPipe_);
+    vkCmdBindDescriptorSets(pcb_, VK_PIPELINE_BIND_POINT_GRAPHICS, blitPlo_, 0, 1, &ds, 0, nullptr);
+    const BlitPush bp{{static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(dW), static_cast<float>(dH)},
+                      {static_cast<float>(sw), static_cast<float>(sh), texW, texH},
+                      ss_ > 1 ? 1 : 0, kPaperWhite / 80.0f, hdrPeak_ / 80.0f};
+    vkCmdPushConstants(pcb_, blitPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof bp, &bp);
+    vkCmdDraw(pcb_, 3, 1, 0, 0);
+    vkCmdEndRenderPass(pcb_);
+    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, VK_ACCESS_TRANSFER_READ_BIT,
+           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     return true;
 }
 
@@ -2145,7 +2449,7 @@ bool VulkanRenderer::makePost() {
     if (postPipe_ != VK_NULL_HANDLE) return true;
     if (!makePresentPass()) return false;   // the descriptor set layout and pool the chain's picture is presented through
     const VkFormat fmtBloom = VK_FORMAT_B10G11R11_UFLOAT_PACK32;
-    const VkFormat fmtOut = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat fmtOut = presFmt_;   // the present image's format: FP16 under HDR
     const auto fail = [&](const char* what) { std::fprintf(stderr, "vulkan: post chain: %s\n", what); killPost(); return false; };
     {
         VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -2518,7 +2822,7 @@ bool VulkanRenderer::makeOverlayPass() {
         {
             // loaded, blended over, left where the present's blit reads it
             VkAttachmentDescription a{};
-            a.format = VK_FORMAT_R8G8B8A8_UNORM; a.samples = VK_SAMPLE_COUNT_1_BIT;
+            a.format = presFmt_; a.samples = VK_SAMPLE_COUNT_1_BIT;
             a.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
             a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -3860,8 +4164,9 @@ const omk::Surface& VulkanRenderer::readback() {
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         // the scene's colour, or THE POST CHAIN's display-size picture when it
         // ran (its supersample folded already)
-        cp.imageExtent = {static_cast<uint32_t>(postLive_ ? w_ : rw_), static_cast<uint32_t>(postLive_ ? h_ : rh_), 1};
-        vkCmdCopyImageToBuffer(cb, postLive_ ? postImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        const bool postRead = postLive_ && !hdrOn_;   // (HDR's is FP16, and HDR's frames go out on the GPU)
+        cp.imageExtent = {static_cast<uint32_t>(postRead ? w_ : rw_), static_cast<uint32_t>(postRead ? h_ : rh_), 1};
+        vkCmdCopyImageToBuffer(cb, postRead ? postImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readBuf_, 1, &cp);
         oneShotEnd(cb);              // submitted and waited: the bytes are there
     }
@@ -3884,8 +4189,9 @@ const omk::Surface& VulkanRenderer::readback() {
     // At 2x supersampling this loop walks a 3840x2160 buffer for a 1080p
     // frame - 15 ms on one core, paid by every frame with a subtitle, a fade
     // or the HUD over the world.
-    const int ss = postLive_ ? 1 : ss_;   // the chain's picture is folded already
-    const int srcW = postLive_ ? w_ : rw_;
+    const bool postRead = postLive_ && !hdrOn_;
+    const int ss = postRead ? 1 : ss_;   // the chain's picture is folded already
+    const int srcW = postRead ? w_ : rw_;
     omk::Threads::shared().parallelFor(0, static_cast<std::size_t>(h_), 16,
                                        [&](std::size_t rowFrom, std::size_t rowTo) {
     const int y0 = static_cast<int>(rowFrom), y1 = static_cast<int>(rowTo);
@@ -4003,6 +4309,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (presReadMem_) freeDeviceMemory(presReadMem_);
     killOverlay();
     killPost();
+    killHdrBlit();
     if (stencilSampleView_) vkDestroyImageView(dev_, stencilSampleView_, nullptr);
     for (auto& pp : pipeSubj_) if (pp) vkDestroyPipeline(dev_, pp, nullptr);
     if (upBuf_) vkDestroyBuffer(dev_, upBuf_, nullptr);
@@ -4067,6 +4374,10 @@ bool vulkanResize(Renderer* r, int w, int h) {
 bool vulkanPresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
                           int vy, int vh) {
     return static_cast<VulkanRenderer*>(r)->presentOverlay(s, mask, fade, vy, vh);
+}
+
+void vulkanSetHdrDisplay(Renderer* r, int known, float peakNits) {
+    static_cast<VulkanRenderer*>(r)->setHdrDisplay(known, peakNits);
 }
 
 bool vulkanWindowPicture(Renderer* r, std::vector<unsigned char>& rgba) {

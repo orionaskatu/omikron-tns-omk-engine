@@ -303,7 +303,8 @@
 ;colordepth = 16
 ;
 ; THE POST-PROCESSING CHAIN - on Direct3D 12 and on Vulkan (one GLSL source,
-; the same numbers; HDR output and soft particles are still Direct3D 12's).
+; the same numbers - HDR output too; soft particles and volumetrics are still
+; Direct3D 12's).
 ; Over the 3D only: the interface (HUD,
 ; subtitles, screens) is laid over it untouched. `todo/enhancements.md` 22.
 ;   bloom = on        light bleeding from the neon, the lamps and the fires -
@@ -318,8 +319,9 @@
 ;                     neutral S-curve). A look, so NOT in `all = max`.
 ;                     `--colorgrade G`.
 ;   hdr = on          HDR10 output (an scRGB swapchain) when Windows reports
-;                     the display as HDR, else a line and SDR. Asked for by
-;                     name only. `--hdr`.
+;                     the display as HDR (on Vulkan: the surface offers scRGB,
+;                     VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT), else a line
+;                     and SDR. Asked for by name only. `--hdr`.
 ;bloom = off
 ;dof = off
 ;colorgrade = off

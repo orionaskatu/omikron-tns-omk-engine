@@ -28649,8 +28649,15 @@ def c_engine_vulkan_parity():
         under 60%, the log names a SPEAKER; on the TRANSCAN's advert (frame 150, the hologram that speaks is
         drawn blended and marked in the stencil, `pipeSubj_`) the hologram keeps >= 90% and the room under
         60%; on the supermarket fight's opening cutscene (frame 250) the picture changes;
-      * all of them under 4x MSAA (the depth read per sample, `post_ms.frag`) and 2x supersampling.
-    SHOWN TO FAIL (2026-10-19): with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no
+      * all of them under 4x MSAA (the depth read per sample, `post_ms.frag`) and 2x supersampling;
+      * HDR (`--hdr`): `OMK_HDR_FORCE=1` runs the FP16 HDR passes on both backends (on Vulkan, with no scRGB
+        swapchain on this display, the picture then clipped to SDR for the window - a test of the passes; the
+        scRGB swapchain itself cannot be seen without an HDR display): the window pictures agree, each differs
+        from the SDR picture (more than 1% of the pixels by more than 2 levels) by a mean of at most 1 a
+        channel, and both backends say `hdr:` on the log; without the force a display that reports no HDR
+        leaves the Vulkan picture EXACTLY the SDR one.
+    SHOWN TO FAIL (2026-10-19): (HDR: with the Vulkan HDR passes given no peak, the white of the shoulder
+    left at 1 - the forced picture no longer agrees with D3D12's); with the overlay decision disabled for Vulkan in `playgpu_vulkan.cpp` (no
     overlay frame counted; the fight frame equal to the CPU composite); with the Vulkan bloom's intensity
     zeroed (no pixel gains, and the picture no longer agrees with D3D12's); with the Vulkan grade switched off;
     with the stencil mark of translucent bodies disabled on Vulkan (`pipeSubj_` unused: the hologram keeps
@@ -28688,6 +28695,8 @@ def c_engine_vulkan_parity():
         "msaa": (appart, (640, 480), "60", street + ["--aa", "4", "--bloom", "--colorgrade", "cyber"], {}),
         "msaadof": (appart, (640, 480), "250", fight + ["--aa", "4", "--dof"], {}),
         "ssaa": (appart, (640, 480), "60", street + ["--ssaa", "2", "--bloom"], {}),
+        "hdr": (appart, (640, 480), "60", street + ["--hdr"], {"OMK_HDR_FORCE": "1"}),
+        "hdrplain": (appart, (640, 480), "60", street + ["--hdr"], {}),
     }
     res = {}
     with tempfile.TemporaryDirectory() as tmp:
@@ -28815,6 +28824,19 @@ def c_engine_vulkan_parity():
     for name in ("dlgdof", "tcdof", "cutdof", "cutall", "msaa", "msaadof", "ssaa"):
         d = agree(name)
         check("%s agrees" % name, ok(d), "mean %.3f, >8 %.2f%%" % (d[0], 100 * d[1]))
+    # HDR
+    dh = agree("hdr")
+    check("hdr (forced) agrees", ok(dh), "mean %.3f, >8 %.2f%%" % (dh[0], 100 * dh[1]))
+    for b in ("d3d12", "vulkan"):
+        dd = diff(pic(b, "hdr"), pic(b, "street"))
+        said = re.search(r"^hdr: ", res[(b, "hdr")][0], re.M) is not None
+        check("hdr changes the picture on " + b, dd[0] <= 1.0 and dd[3] > 0.01 and said,
+              "mean %.2f against SDR, %.1f%% of the pixels by more than 1, says so: %s" % (dd[0], 100 * dd[3], said))
+    plain = res[("vulkan", "hdrplain")][0]
+    if re.search(r"^hdr: .*stays SDR", plain, re.M):
+        check("hdr on a display with no HDR leaves Vulkan SDR", diff(pic("vulkan", "hdrplain"), pic("vulkan", "street"))[2] == 0)
+    else:
+        log.append("hdr on a display with no HDR: not measured (this display reports HDR)")
     print("        " + "\n        ".join(log))
     return tuple(got), tuple(want), \
         ("Vulkan and Direct3D 12 agree at colour depth 32 (street, fight 660, GPU overlay frames), with bloom, "

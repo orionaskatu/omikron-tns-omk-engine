@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE WINDOW BLIT, for the Direct3D 12 backend's swapchain present.
+// THE WINDOW BLIT, for the Direct3D 12 backend's swapchain present - and, built
+// with -DOMK_HDR, the Vulkan backend's blit into an scRGB swapchain.
 //
 // Vulkan presents with `vkCmdBlitImage`: the finished `w x h` frame (or the
 // present pass's picture) scaled into the window at its own aspect, centred,

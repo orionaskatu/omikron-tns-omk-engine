@@ -123,12 +123,18 @@ GLSLC     := $(shell command -v glslc 2>/dev/null)
 VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
-              build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc \
+              build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
               build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
 	$(GLSLC) -mfmt=c -o $@ $<
+
+# HDR OUTPUT's blit into an scRGB swapchain (`blit.frag -DOMK_HDR`), the same GLSL
+# the Direct3D 12 backend cross-compiles
+build/shaders/%_hdr.frag.inc: backends/vulkan/shaders/%.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -DOMK_HDR -mfmt=c -o $@ $<
 
 # SSAO's multisampled-depth builds (`sampler2DMS`), from the same sources
 build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag
@@ -225,7 +231,7 @@ build/shaders/dx/%.spv: backends/d3d12/shaders/%
 build/shaders/dx/%_ms.frag.spv: backends/d3d12/shaders/%.frag
 	@mkdir -p $(@D)
 	$(GLSLC) -DOMK_MS -o $@ $<
-build/shaders/dx/%_hdr.frag.spv: backends/d3d12/shaders/%.frag
+build/shaders/dx/%_hdr.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
 	$(GLSLC) -DOMK_HDR -o $@ $<
 build/shaders/dx/%.hlsl: build/shaders/dx/%.spv

@@ -4352,13 +4352,14 @@ void D3D12Renderer::runVol() {
 // Which output the window is on, and whether it reports HDR: the output whose
 // desktop rectangle overlaps the window most, over every adapter (a laptop's
 // panel can hang off the other GPU). DXGI's `IDXGIOutput6::GetDesc1`.
-bool D3D12Renderer::outputIsHdr(float& peakNits) {
+// -1: no output found, 0: SDR, 1: HDR (ST.2084); `peakNits` its MaxLuminance
+static int outputHdrOf(IDXGIFactory1* factory, HWND hwnd, float& peakNits) {
     RECT wr{};
-    GetWindowRect(hwnd_, &wr);
+    GetWindowRect(hwnd, &wr);
     long best = -1;
     bool hdr = false;
     IDXGIAdapter1* a = nullptr;
-    for (UINT i = 0; factory_->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
+    for (UINT i = 0; factory->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; ++i) {
         IDXGIOutput* o = nullptr;
         for (UINT j = 0; a->EnumOutputs(j, &o) != DXGI_ERROR_NOT_FOUND; ++j) {
             IDXGIOutput6* o6 = nullptr;
@@ -4380,7 +4381,11 @@ bool D3D12Renderer::outputIsHdr(float& peakNits) {
         }
         a->Release();
     }
-    return hdr;
+    return best < 0 ? -1 : hdr ? 1 : 0;
+}
+
+bool D3D12Renderer::outputIsHdr(float& peakNits) {
+    return outputHdrOf(factory_, hwnd_, peakNits) == 1;
 }
 
 bool D3D12Renderer::makePost() {
@@ -5368,6 +5373,17 @@ bool d3d12WorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& 
     auto* d = dynamic_cast<D3D12Renderer*>(r);
     return d && d->worldPicture(vy, vh, rgba);
 }
+// the same look at the output a window is on, for a window of ANOTHER backend (the
+// Vulkan one: DXGI is the one place Windows says whether the display is in HDR
+// and what its peak is)
+int d3d12OutputHdr(void* hwnd, float& peakNits) {
+    IDXGIFactory1* f = nullptr;
+    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&f)))) return -1;
+    const int r = outputHdrOf(f, static_cast<HWND>(hwnd), peakNits);
+    f->Release();
+    return r;
+}
+
 bool d3d12PresentOverlay(Renderer* r, const Surface& s, const std::uint8_t* mask, const float fade[4],
                          int vy, int vh) {
     auto* d = dynamic_cast<D3D12Renderer*>(r);

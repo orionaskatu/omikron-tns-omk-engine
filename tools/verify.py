@@ -13837,6 +13837,52 @@ def c_engine_bank_swap():
             "collides; the swap must reach the poser and the swap back must "
             "restore exactly what was there")
 
+def c_engine_blend_hold():
+    r"""`engine/`: a blended `.CTL` transition HOLDS two fixed keys.
+
+    **Tier 6 (read and explained)** - `Actor_BlendToClip` (0x0045C510) and
+    `sub_471820` read: a blend slerps the key the old clip was LEFT on toward
+    the target clip's START key by frame/blendFrames (in 255ths); no capture
+    of the original shows it.
+
+    H1Avnt's group 111, which `player.move 111` installs before the sneak call
+    at the Telis lunch (SCENE 53 pc 1148), is H_SNKON (19 frames) then a
+    pass-through blending 40 frames into H_SNKON AT FRAME 19 - its own last
+    pose - so the engine holds the raised wrist. The port played the clip
+    behind the pass-through on the blend counter, from frame 1, and a reader
+    saw Kay'l look at his sneak twice.
+
+    `build/blend_hold` puts a `PlayerController` on group 111 and prints, per
+    phase, the ticks and the largest bone angle between the pose handed to
+    the poser and H_SNKON's last frame. The RISE must move (so the measure
+    sees motion at all); the BLEND and the HOLD must stay under 1 degree (the
+    0.1 left is the weight's 255/256).
+
+    SHOWN TO FAIL: `PlayerController::transBlendTracks` returning nullptr
+    (the old reading) puts the blend at 96.1 degrees - the whole rise again.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "ANIMS"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    b = subprocess.run(["make", "-s", "build/blend_hold"], cwd=eng,
+                       capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "blend_hold")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run([binp, fr], capture_output=True, text=True).stdout
+    rows = dict((m.group(1), (int(m.group(2)), float(m.group(3)))) for m in
+                re.finditer(r"^(rise|blend|hold) ticks (\d+) dev ([\d.]+)$", out, re.M))
+    if len(rows) != 3:
+        return (len(rows),), (3,), "the probe must print its three phases"
+    return (rows["rise"][0], rows["blend"][0], rows["rise"][1] > 45.0,
+            rows["blend"][1] < 1.0, rows["hold"][1] < 1.0), \
+           (19, 40, True, True, True), \
+           ("H1Avnt group 111: the rise's ticks and the blend's; the rise moves "
+            "over 45 degrees from H_SNKON's last frame; the blend and the hold "
+            "after it stay within 1 degree of it")
+
 def c_engine_fight_letterbox():
     r"""`omk-play`: a FIGHT is full-frame, and the approach cutscene is not.
 
@@ -45475,8 +45521,9 @@ def c_licence_headers():
     # 637: + `engine/src/platform/pngread.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}`,
     # `engine/tools/texpack_tool.cpp` and `tools/omktexpack.py` (the remaster's
     # texture pack, todo/remaster.md B4)
+    # 638: + `engine/tools/blend_hold.cpp` (engine: blend hold)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (637, [], 1, []), \
+           (638, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48018,6 +48065,7 @@ SLOW = [
     ("engine: fight AI",   c_engine_fight_ai,   "engine/README"),
     ("engine: melee",      c_engine_melee,      "engine/README"),
     ("engine: bank swap",  c_engine_bank_swap,  "todo/fight-mode 15.6; actor/player.h"),
+    ("engine: blend hold", c_engine_blend_hold, "actor/player.h TransBlend; UI 3i"),
     ("engine: fight letterbox", c_engine_fight_letterbox, "todo/fight-mode 15.4"),
     ("engine: fight separation", c_engine_fight_separation, "todo/fight-mode 15.8d"),
     ("engine: fight collision", c_engine_fight_collision, "todo/fight-mode 15.8a"),

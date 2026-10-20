@@ -120,7 +120,7 @@ VK_PKG    := $(shell pkg-config --exists vulkan && echo vulkan)
 VK_CFLAGS := $(if $(VK_PKG),$(shell pkg-config --cflags vulkan))
 VK_LIBS   := $(if $(VK_PKG),$(shell pkg-config --libs vulkan))
 GLSLC     := $(shell command -v glslc 2>/dev/null)
-VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
+VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/shaders/scene_tiled.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc \
@@ -129,6 +129,12 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
 	$(GLSLC) -mfmt=c -o $@ $<
+
+# the scene's fragment shader again, with the remaster's TILED point lights
+# (`o3de/lighttiles.h`) - its own module, bound only when the tiles are on
+build/shaders/scene_tiled.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_TILED -fshader-stage=frag -o $@ $<
 
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,

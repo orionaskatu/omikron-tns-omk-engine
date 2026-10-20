@@ -203,6 +203,11 @@ struct View {
     // says it has the room
     static constexpr int kOwnGpuLights = 8;
     std::vector<GpuLight> lights;   // empty = light per vertex, as before
+    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): on a
+    // renderer that says `tilesLights`, EVERY emitters' point light the frame
+    // keeps, binned to screen tiles there - `lights` then holds the set's own
+    // alone. Empty unless the remaster's emitters' light is on.
+    std::vector<GpuLight> points;
 
     // ---------------------------------------------- THE SHIMMER's clock
     //
@@ -421,6 +426,8 @@ public:
     virtual bool drawsEmitterLights() const { return false; }
     // how many of `View::lights` the per-pixel lighting reads
     virtual int maxPixelLights() const { return View::kOwnGpuLights; }
+    // whether it bins `View::points` to tiles itself (`o3de/lighttiles.h`)
+    virtual bool tilesLights() const { return false; }
     // `planeY`: the water's height. The reflection pass DISCARDS what lies
     // below it per fragment - the CPU clip cannot see a posed body's place,
     // and a swimmer's legs were reflected above the water (a reader's play

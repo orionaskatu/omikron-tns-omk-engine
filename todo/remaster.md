@@ -640,6 +640,65 @@ distance, is the next step; the light maps' decode adds ~110 ms to a set's
 load; the other cities' lists; without per-pixel lighting the lights reach
 only the bodies; flicker (a flame's light is steady).
 
+## Step 3, A5c - the tiled point lights: as built (2026-10-20)
+
+The reader's "go" on the per-tile light lists, after "the neons look turned
+off" and the light popping (the frame's point lights were the 56 nearest the
+camera). `o3de/lighttiles`; Vulkan only for now - GLES keeps the nearest-slots
+way.
+
+* **What.** On a renderer that `tilesLights`, EVERY emitters' point light
+  within the game's CLIP DISTANCE (the reader: "set it depending of the game
+  distance culling setting"; 200 m at most, the unlimited clip's) goes to
+  `View::points`, faded over the distance's last fifth - no slots, no cut;
+  `View::lights` keeps the set's own 8. Vulkan writes them to a storage
+  buffer (set 1, binding 3) and BINS them each frame: the screen in tiles
+  (32 render pixels, growing so that no more than 64 lie across), each tile
+  in 16 depth slices (exponential, 50 to 20000 units), a light joining a
+  CLUSTER only where its sphere reaches the cluster's own box of view space
+  (the tile's rays between the slice's depths); the lists (binding 4,
+  16 MB) at most 64 a cluster, the nearest IT. `scene.frag` reads its own
+  cluster's list (`vDepth` its slice) - every light within reach, at the cost
+  of the ones that can reach it.
+* **The steps the reader's play tests took it through:**
+  1. 2D tiles alone: 880 of 880 tiles at their cap - a near light covers most
+     of the screen and crowded the far ones out again. Depth slices: still
+     7920 of 14080 clusters full.
+  2. "The lights disappear when I put a resolution higher than 1512x982":
+     the lists grow with the resolution and overflowed the 4 MB buffer,
+     and the frame dropped every point light silently. Tiles now grow with
+     the resolution (64 across at most - 60 px at 4K), the buffer is 16 MB,
+     and an overflow is SAID.
+  3. "Some kind of flickering big shadows": full clusters dropped lights as
+     the camera moved, a block of street at a time. The cluster BOX test and
+     the ranking by distance to the cluster: 0 clusters full in Qalisar, the
+     lists 8x shorter (50883 entries against 421104 at 1280x960), and the
+     frame byte-identical to `OMK_TILES_LOOSE=1` (no test, no cap: 725870
+     entries) - a light the box test leaves out reaches none of the cluster's
+     fragments. "It looks good now."
+  4. Found on the way: the tiled loop PRESENT in `scene.frag`, never run,
+     changed a plain frame through MoltenVK - a cutout sign's keyed texels
+     drew dark (4317 pixels in Qalisar; bisected to the loop alone). So the
+     shader is compiled TWICE (`scene_tiled.frag.inc`, -DOMK_TILED) and the
+     tiled pipelines bound only on a frame whose tiles are on; the default
+     module is the commit before's.
+* **Off is the original:** byte-identical to `18da7d4d` on the software
+  reference, Vulkan and GLES, plain, `--remaster` and `--enhance-all` (fx
+  off), by Anekbah's burner and in Qalisar - 14 of 14.
+* **Cost** (M3, 4K, Qalisar, `--enhance-all` and the preset): 48 fps (the
+  nearest-56 way 50, 32-px tiles before the box test 56 but with half the
+  clusters full).
+* `engine: emitter light` part 5 (more than 200 lights tiled, 0 clusters
+  full, tight == loose byte for byte), shown to fail (the box's vertical
+  bounds' sign flipped - tight and loose part); its backends' agreement sets
+  Vulkan beside GLES with `OMK_NO_TILES=1` (GLES does not tile yet).
+  `licence headers` 644 -> 646.
+
+**CONFIRMED IN PLAY** ("it looks good now", 2026-10-20, `--enhance-all`).
+**Open**: GLES tiles (float textures for the lists, desktop and Quest); the
+CPU binning's per-frame allocations; a light's own shadow (none - a lamp
+lights through walls within its reach).
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

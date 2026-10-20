@@ -70,6 +70,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_SWEEP_GRID",        // A/B: the body and camera sweeps as a linear scan instead of through the grids
     "OMK_NO_TIE",               // the coincident-face depth tie off (engine: sign tie)
     "OMK_NO_TIE_BAKE",          // A/B: the depth tie per frame instead of baked (engine: gles tie bake)
+    "OMK_NO_TILES",             // the tiled point lights off: the nearest 60 instead (engine: emitter light)
     "OMK_NO_ZONE_BAND",         // a trigger zone's height band not tested
     "OMK_PANEL_CHECK",          // 3DS: the bottom-screen panel checks what it draws
     "OMK_PED_LOD_MAX",          // =<n> no walker skeleton past level n (default 3)
@@ -92,6 +93,7 @@ constexpr const char* kSwitches[] = {
     "OMK_TEXTURE_MEMORY",       // =<bytes> GL1: the free texture memory to size the textures by (engine: gl1 backend)
     "OMK_TIE_LOG",              // log: the depth tie's decisions per upload (engine: gles tie bake)
     "OMK_TIE_STATS",            // log: how each large geometry's revisions were answered, every 30 frames (engine: dirty corners)
+    "OMK_TILES_LOOSE",          // the tiled lights binned without their box test or cap (engine: emitter light)
     "OMK_TRACE_ACTOR",          // =<actor> log: that body's placement and pose source every frame (program placement)
     "OMK_TRACE_MOTION",         // log: each moving mesh's motion as it is applied
     "OMK_TRANSIENT_MOTIONS",    // A/B: a scene's mesh motions per tick - the old, wrong reading (engine: node rest)

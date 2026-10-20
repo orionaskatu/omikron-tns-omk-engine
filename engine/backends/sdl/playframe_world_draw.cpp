@@ -2,6 +2,7 @@
 // THE WORLD DRAWN: the particles, the visible set, the lights, the shadows, the mirror and the present pass.
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
+#include "o3de/lighttiles.h"
 #include "o3de/colourgrade.h"
 #include "o3de/emitterlight.h"
 #include "playframe.h"
@@ -213,11 +214,20 @@ void PlayState::worldDrawLists() {
                         "lights (`night.txt`)\n", frameNo, static_cast<double>(view.setDim), worldSet.c_str());
             omk::event("remaster.night", {{"set", worldSet}, {"dim", static_cast<double>(view.setDim)}});
         }
-        constexpr float kFxView = 3000.0f;
+        // ...and on a renderer that TILES them (`o3de/lighttiles.h`), every
+        // one within the game's CLIP DISTANCE (the reader, 2026-10-20: "set
+        // it depending of the game distance culling setting"; 200 m at most,
+        // the unlimited clip's), faded over its last fifth - no slots, no cut
+        // (`OMK_NO_TILES=1`, an instrument: the nearest-slots way on a
+        // renderer that tiles - to set Vulkan beside GLES, which does not yet)
+        static const bool noTiles = omk::envFlag("OMK_NO_TILES");
+        const bool tiled = fxPix && world_->tilesLights() && !noTiles;
+        const float kFxView = tiled ? std::min(20000.0f, static_cast<float>(clipInches)) : 3000.0f;
+        view.points.clear();
         // the point lights' slots: what the renderer has past four of the
         // set's own (60 of 64 on Vulkan and the GLES variant - 12 of 16 left
         // most of a neon street's signs unlit, "as if turned off", 2026-10-20)
-        const int kFxSlots = std::max(0, world_->maxPixelLights() - 4);
+        const int kFxSlots = tiled ? 0 : std::max(0, world_->maxPixelLights() - 4);
         std::vector<std::pair<float, const omk::Light3do*>> near, fx;
         for (const WorldSlot& ws2 : worldSlots)
             for (const auto& l : ws2.lights) {
@@ -238,6 +248,20 @@ void PlayState::worldDrawLists() {
         const auto byDistance = [](const auto& a, const auto& b) { return a.first < b.first; };
         std::sort(near.begin(), near.end(), byDistance);
         std::sort(fx.begin(), fx.end(), byDistance);
+        if (tiled) {
+            for (const auto& [e2, l] : fx) {
+                if (view.points.size() >= static_cast<std::size_t>(omk::kMaxPoints)) break;
+                omk::View::GpuLight g{};
+                for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
+                g.radiusA = l->radiusA; g.radiusB = l->radiusB;
+                g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
+                g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
+                g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
+                g.intensity = l->f32 * std::clamp((kFxView - std::sqrt(e2)) / (0.2f * kFxView), 0.0f, 1.0f);
+                if (g.intensity > 0.0f) view.points.push_back(g);
+            }
+            fx.clear();
+        }
         // THE CUT, without a pop: a light fades by its distance against the
         // FIRST ONE LEFT OUT - that distance moves continuously with the
         // camera, so a light leaving the nearest `kFxSlots` has faded to
@@ -277,6 +301,11 @@ void PlayState::worldDrawLists() {
         if (!fxLightsTold) {
             int points = 0;
             for (const auto& [d2, l] : near) points += omk::pointLight(*l) ? 1 : 0;
+            // ...or, TILED, those of `View::points` whose reach takes in the player
+            for (const auto& g : view.points) {
+                const float dx = at[0] - g.pos[0], dy = at[1] - g.pos[1], dz = at[2] - g.pos[2];
+                points += dx * dx + dy * dy + dz * dz <= g.radiusA * g.radiusA ? 1 : 0;
+            }
             if (points > 0) {
                 fxLightsTold = true;
                 std::printf("frame %ld: per-pixel lighting - %d of the %zu are emitters' lights\n",

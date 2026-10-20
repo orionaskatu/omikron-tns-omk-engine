@@ -101,9 +101,44 @@ layout(set = 1, binding = 2) uniform Lights {
     int   count;
     float base;        // View::litBase - the scene's +416, what a lit batch starts from
     int   grey;        // View::grey - the greyscale bank, ops 150/151
-    int   pad2;
+    int   tiles;       // 1: the TILED point lights below are bound (`o3de/lighttiles.h`)
     vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
 } lg;
+
+// THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
+// light of the frame, and the screen's 32-pixel tiles cut in 16 depth slices -
+// [0] across, [1] down, [2] slices, [3] the tile's size, two words a cluster
+// (its list's offset, its count), then the lists
+//
+// COMPILED TWICE (the Makefile's `scene_tiled.frag.inc`, -DOMK_TILED): these
+// buffers and the loop that reads them only in the TILED module, which the
+// backend binds only on a frame whose tiles are on. Present but never run,
+// they still changed a plain frame through MoltenVK - a cutout sign's keyed
+// texels drew dark (4317 pixels in Qalisar, 2026-10-20) - so the default
+// module is the one without them.
+#ifdef OMK_TILED
+layout(std430, set = 1, binding = 3) readonly buffer Points { GpuLight p[]; } pts;
+layout(std430, set = 1, binding = 4) readonly buffer Tiles { uint t[]; } tl;
+#endif
+// (the fragment's VIEW depth, the fog's - declared here for the tiles' slice)
+layout(location = 2) in float vDepth;
+
+// one POINT light (a negative inner radius, `o3de/emitterlight.h`): from the
+// light to the fragment, the falloff from |inner| squared, nothing at its own
+// housing (30 to 90 units), 0.3 wrapped round the far side
+vec3 pointLit(vec3 n, vec3 w, GpuLight L) {
+    vec3  d  = w - L.posA.xyz;
+    float d2 = dot(d, d);
+    float rA = L.posA.w, rB = abs(L.dirB.w);
+    if (d2 > rA * rA || rA <= rB) return vec3(0.0);
+    float fall = min(1.0 - (sqrt(d2) - rB) / (rA - rB), 1.0);
+    float k = L.colourI.a * 256.0 * fall;
+    if (k <= 0.0 || d2 <= 0.0) return vec3(0.0);
+    vec3 dir = d / sqrt(d2);
+    float t = k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0));
+    if (t <= 0.0) return vec3(0.0);
+    return min(t * L.colourI.rgb / 256.0, vec3(1.0));
+}
 
 // `pointsOnly`: the remaster's mode 3 - a SET lit by the emitters' point
 // lights alone (its own lights are already in its baked colour)
@@ -139,12 +174,27 @@ vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
         c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
+    // ...and the frame's TILED point lights, this fragment's tile's alone (not
+    // in the water's reflection pass: the tiles are the frame's camera's)
+#ifdef OMK_TILED
+    if (lg.tiles != 0 && pc.water != 2) {
+        uint across = tl.t[0], down = tl.t[1];
+        uvec2 tc = uvec2(gl_FragCoord.xy) / max(tl.t[3], 1u);   // the tile's size, by resolution
+        // the depth slice: `depthSlice` in `o3de/lighttiles.cpp`, the same
+        // log spacing from 50 to 20000 units
+        int sl = vDepth > 50.0 ? clamp(int(log(vDepth / 50.0) / log(400.0) * 16.0), 0, 15) : 0;
+        if (tc.x < across && tc.y < down) {
+            uint h = 4u + 2u * ((uint(sl) * down + tc.y) * across + tc.x);
+            uint off = tl.t[h], cnt = tl.t[h + 1u];
+            for (uint q = 0u; q < cnt; ++q) c += pointLit(n, w, pts.p[tl.t[off + q]]);
+        }
+    }
+#endif
     return min(c, vec3(1.0));
 }
 
 layout(location = 0) in vec2 vUV;
 layout(location = 1) in vec3 vCol;
-layout(location = 2) in float vDepth;
 layout(location = 3) in vec3 vWorld;
 layout(location = 4) in vec3 vNrm;
 layout(location = 5) in float vPhase;

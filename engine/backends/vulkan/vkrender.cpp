@@ -67,6 +67,7 @@
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "o3de/texpack.h"
+#include "o3de/lighttiles.h"
 #include "platform/events.h"
 #include "platform/env.h"
 
@@ -89,6 +90,11 @@ const uint32_t kVert[] =
 ;
 const uint32_t kFrag[] =
 #include "scene.frag.inc"
+;
+// ...and with the TILED point lights (`o3de/lighttiles.h`): its own module,
+// bound only on a frame whose tiles are on (`scene.frag`, -DOMK_TILED)
+const uint32_t kFragTiled[] =
+#include "scene_tiled.frag.inc"
 ;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
@@ -129,7 +135,7 @@ struct LightUbo {
     int32_t count;
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
-    int32_t pad;
+    int32_t tiles;     // 1: the TILED point lights (`o3de/lighttiles.h`) are bound - padding once
     // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 400. Written by
     // every `begin`, and the frame's own pass is the last one - the only one
     // that reads it (the reflection pass draws no water)
@@ -242,6 +248,9 @@ public:
     bool setEmitterLights(bool) override { return true; }   // scene.frag takes a point light always
     bool drawsEmitterLights() const override { return true; }
     int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
+    bool tilesLights() const override {
+        return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;
+    }
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
                         float strength, float planeY) override;
@@ -391,6 +400,8 @@ private:
     VkDescriptorPool      dpool_ = VK_NULL_HANDLE;
     VkPipelineLayout      plo_ = VK_NULL_HANDLE;
     VkPipeline            pipe_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    VkPipeline            pipeTiled_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // the tiled module's
+    bool                  tilesNow_ = false;   // this frame's tiles are on: the tiled pipelines
     // The mirror pass's three extra states. `pipeStencil_` marks the mirror's
     // pixels, `pipeDepthReset_` clears depth inside that mark, and `pipeRefl_`
     // is `pipe_` again with the stencil TEST on so the reflection lands only
@@ -412,6 +423,17 @@ private:
     void*           shUboPtr_ = nullptr;
     VkBuffer        litUbo_ = VK_NULL_HANDLE;  VkDeviceMemory litUboMem_ = VK_NULL_HANDLE;
     void*           litUboPtr_ = nullptr;
+    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`), set 1's bindings 3 and 4:
+    // every point light of the frame, then the tiles' lists - host-visible,
+    // written each frame as the lights UBO is
+    static constexpr VkDeviceSize kPointsBytes = omk::kMaxPoints * sizeof(GpuLightStd140);
+    static constexpr VkDeviceSize kTileWordsMax = 1u << 22;   // 16 MB: 64 x 40-odd tiles x 16 slices x 48, and room
+    VkBuffer        pointsBuf_ = VK_NULL_HANDLE; VkDeviceMemory pointsMem_ = VK_NULL_HANDLE;
+    void*           pointsPtr_ = nullptr;
+    VkBuffer        tilesBuf_ = VK_NULL_HANDLE;  VkDeviceMemory tilesMem_ = VK_NULL_HANDLE;
+    void*           tilesPtr_ = nullptr;
+    omk::LightTiles tiles_;
+    bool            tilesTold_ = false, tilesOverTold_ = false;
     // The command buffer is opened by whichever of `shadowPass` and `begin`
     // runs first, and only once - the depth pass has to be recorded BEFORE the
     // frame's own render pass begins.
@@ -1042,6 +1064,15 @@ bool VulkanRenderer::makeTarget() {
                        litUbo_, litUboMem_);
             vkMapMemory(dev_, litUboMem_, 0, sizeof(LightUbo), 0, &litUboPtr_);
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
+            makeBuffer(kPointsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       pointsBuf_, pointsMem_);
+            vkMapMemory(dev_, pointsMem_, 0, kPointsBytes, 0, &pointsPtr_);
+            makeBuffer(kTileWordsMax * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       tilesBuf_, tilesMem_);
+            vkMapMemory(dev_, tilesMem_, 0, kTileWordsMax * 4, 0, &tilesPtr_);
+            if (tilesPtr_) std::memset(tilesPtr_, 0, 16);
         }
     }
     if (shFbuf_ == VK_NULL_HANDLE)
@@ -1067,7 +1098,7 @@ bool VulkanRenderer::makePipelines() {
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
     // whether or not a shadow is drawn, because a pipeline layout is fixed at
     // creation and `strength = 0` is how a frame says it has no shadow.
-    VkDescriptorSetLayoutBinding b1[3]{};
+    VkDescriptorSetLayoutBinding b1[5]{};
     b1[0].binding = 0; b1[0].descriptorCount = 1;
     b1[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1077,8 +1108,14 @@ bool VulkanRenderer::makePipelines() {
     b1[2].binding = 2; b1[2].descriptorCount = 1;
     b1[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // ...3 the frame's point lights and 4 their TILES (`o3de/lighttiles.h`)
+    for (uint32_t k = 3; k < 5; ++k) {
+        b1[k].binding = k; b1[k].descriptorCount = 1;
+        b1[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        b1[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
     VkDescriptorSetLayoutCreateInfo dli1{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli1.bindingCount = 3; dli1.pBindings = b1;
+    dli1.bindingCount = 5; dli1.pBindings = b1;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli1, nullptr, &dsl1_), "descriptorSetLayout1");
 
     // SET 2 is the POSE BUFFER (`posesBodies`): one dynamic storage buffer,
@@ -1108,6 +1145,7 @@ bool VulkanRenderer::makePipelines() {
     };
     VkShaderModule vs = module(kVert, sizeof(kVert));
     VkShaderModule fs = module(kFrag, sizeof(kFrag));
+    VkShaderModule fsTiled = module(kFragTiled, sizeof(kFragTiled));
     if (!vs || !fs) { std::fprintf(stderr, "vulkan: shader module\n"); return false; }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -1202,6 +1240,15 @@ bool VulkanRenderer::makePipelines() {
         gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = pass_;
         VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe_[k]),
                 "vkCreateGraphicsPipelines");
+        // ...and the same with the TILED fragment module
+        if (fsTiled) {
+            VkPipelineShaderStageCreateInfo st2[2] = {stages[0], stages[1]};
+            st2[1].module = fsTiled;
+            gp.pStages = st2;
+            if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled_[k]) != VK_SUCCESS)
+                pipeTiled_[k] = VK_NULL_HANDLE;
+            gp.pStages = stages;
+        }
     }
     // ---- the mirror pass's pipelines.
     //
@@ -1301,6 +1348,7 @@ bool VulkanRenderer::makePipelines() {
 
     vkDestroyShaderModule(dev_, vs, nullptr);
     vkDestroyShaderModule(dev_, fs, nullptr);
+    if (fsTiled) vkDestroyShaderModule(dev_, fsTiled, nullptr);
 
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
@@ -1327,11 +1375,12 @@ bool VulkanRenderer::makePipelines() {
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
     // two samplers a texture's set since the light map (binding 1)
-    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 390},
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 390},
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1},
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};   // set 1's tiled lights
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    dpi.maxSets = 131; dpi.poolSizeCount = 3; dpi.pPoolSizes = ps;
+    dpi.maxSets = 131; dpi.poolSizeCount = 4; dpi.pPoolSizes = ps;
     // a texture's set is freed on its own when it leaves the pool (`setTextures`)
     dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
@@ -1450,7 +1499,9 @@ void VulkanRenderer::makeShadowSet() {
     VkDescriptorImageInfo imgi{shSampler_, shView_,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorBufferInfo lbufi{litUbo_, 0, sizeof(LightUbo)};
-    VkWriteDescriptorSet wr[3]{};
+    VkDescriptorBufferInfo pbufi{pointsBuf_, 0, kPointsBytes};
+    VkDescriptorBufferInfo tbufi{tilesBuf_, 0, kTileWordsMax * 4};
+    VkWriteDescriptorSet wr[5]{};
     wr[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     wr[0].dstSet = ds1_; wr[0].dstBinding = 0; wr[0].descriptorCount = 1;
     wr[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1463,7 +1514,13 @@ void VulkanRenderer::makeShadowSet() {
     wr[2].dstSet = ds1_; wr[2].dstBinding = 2; wr[2].descriptorCount = 1;
     wr[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     wr[2].pBufferInfo = &lbufi;
-    vkUpdateDescriptorSets(dev_, 3, wr, 0, nullptr);
+    for (uint32_t k = 3; k < 5; ++k) {
+        wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[k].dstSet = ds1_; wr[k].dstBinding = k; wr[k].descriptorCount = 1;
+        wr[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        wr[k].pBufferInfo = k == 3 ? &pbufi : &tbufi;
+    }
+    vkUpdateDescriptorSets(dev_, pointsBuf_ && tilesBuf_ ? 5 : 3, wr, 0, nullptr);
 }
 
 // The swapchain, and the presentation path.
@@ -2914,6 +2971,43 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
+        // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
+        // keeps, and their tiles binned for THIS camera at the render size.
+        // The reflection pass begins first and the frame's pass last - the
+        // last binning is the one both read, and the reflection skips them.
+        ub.tiles = 0;
+        tilesNow_ = false;
+        if (!view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
+            const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
+            auto* gp = static_cast<GpuLightStd140*>(pointsPtr_);
+            for (std::size_t i = 0; i < np; ++i) {
+                const auto& l = view.points[i];
+                for (int k = 0; k < 3; ++k) { gp[i].posA[k] = l.pos[k]; gp[i].dirB[k] = l.dir[k]; gp[i].colourI[k] = l.colour[k]; }
+                gp[i].posA[3] = l.radiusA; gp[i].dirB[3] = l.radiusB; gp[i].colourI[3] = l.intensity;
+            }
+            omk::RCamera bc = view.cam;
+            bc.w = view.letterboxed() ? view.vw : w_;
+            bc.h = view.letterboxed() ? view.vh : h_;
+            omk::binLights(bc, bc.w * ss_, bc.h * ss_, std::span<const omk::View::GpuLight>(view.points.data(), np), tiles_);
+            if (tiles_.words.size() <= kTileWordsMax) {
+                std::memcpy(tilesPtr_, tiles_.words.data(), tiles_.words.size() * 4);
+                ub.tiles = 1;
+                tilesNow_ = true;
+            } else if (!tilesOverTold_) {
+                tilesOverTold_ = true;   // said, never silent: every point light goes with it
+                std::fprintf(stderr, "vulkan: the tiled lights' lists (%zu words) past the buffer's %llu - "
+                             "the point lights off this frame\n", tiles_.words.size(),
+                             static_cast<unsigned long long>(kTileWordsMax));
+            }
+            if (!tilesTold_) {
+                tilesTold_ = true;
+                omk::event("remaster.tiles", {{"lights", static_cast<long>(np)}, {"listed", tiles_.listed},
+                                              {"full", tiles_.full}, {"tile", tiles_.tile}});
+                std::printf("vulkan: the tiled point lights - %zu lights over %dx%d tiles of %d px, %ld listed, "
+                            "%d tiles full (a REMASTER feature)\n", np, tiles_.across, tiles_.down, tiles_.tile,
+                            tiles_.listed, tiles_.full);
+            }
+        }
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }
@@ -3019,6 +3113,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // the backend is choosing how, not what.
     VkPipeline use = forcePipeline_ ? forcePipeline_
                    : reflStencil_   ? pipeRefl_[k]
+                   : tilesNow_ && pipeTiled_[k] ? pipeTiled_[k]
                                     : pipe_[k];
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
@@ -3439,11 +3534,16 @@ VulkanRenderer::~VulkanRenderer() {
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (plo_) vkDestroyPipelineLayout(dev_, plo_, nullptr);
     if (dsl_) vkDestroyDescriptorSetLayout(dev_, dsl_, nullptr);
     if (dsl2_) vkDestroyDescriptorSetLayout(dev_, dsl2_, nullptr);
     if (poseBuf_) vkDestroyBuffer(dev_, poseBuf_, nullptr);
     if (poseMem_) freeDeviceMemory(poseMem_);
+    if (pointsBuf_) vkDestroyBuffer(dev_, pointsBuf_, nullptr);
+    if (pointsMem_) freeDeviceMemory(pointsMem_);
+    if (tilesBuf_) vkDestroyBuffer(dev_, tilesBuf_, nullptr);
+    if (tilesMem_) freeDeviceMemory(tilesMem_);
     if (readBuf_) vkDestroyBuffer(dev_, readBuf_, nullptr);
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);

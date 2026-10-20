@@ -32180,7 +32180,14 @@ def c_engine_emitter_light():
          with `--remaster`'s grades folder, Qalisar's surface lights come
          from `lights.txt` (`world.fxsurfaces` curated, and some) and its
          night is 0.5 (`remaster.night`); Anekbah, named by neither, keeps
-         the automatic rules and no night.
+         the automatic rules and no night;
+      5. THE TILES (`o3de/lighttiles.h`, "go" on the per-tile lists,
+         2026-10-20): on Vulkan, Qalisar's every point light within the clip
+         distance is binned to 32-pixel tiles x 16 depth slices (more than
+         200 lights), no cluster at its cap (a full one dropped lights as the
+         camera moved - "flickering big shadows"), and the TIGHT box test draws
+         the frame byte-identical to `OMK_TILES_LOOSE=1` (no test, no cap) -
+         13118 entries against 182000-odd at 640x480.
 
     Measured once, outside the check (2026-10-20, M3): with it off, frames
     byte-identical to `26e042ff` on the software reference, Vulkan and GLES,
@@ -32261,6 +32268,26 @@ def c_engine_emitter_light():
             a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--enhance-all")[0])
             curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("0", "false", False), a[2] == [])
             print(f"        qalisar {q}; anekbah {a}")
+        # THE TILES (`o3de/lighttiles.h`): Qalisar's every point light binned
+        # on Vulkan, no cluster full, and the tight box test drawing the same
+        # frame byte for byte as the loose instrument (every light in every
+        # cluster it might touch, no cap) - a light it leaves out reaches none
+        # of the cluster's fragments
+        tiles = ("skipped",)
+        if os.path.isdir(pack):
+            ev, tight = run(vk, os.path.join(tmp, "tight.bin"), "101", "15300,0,-10050,270",
+                            "--remaster", pack, "--enhance-all", "--filter", "trilinear")
+            os.environ["OMK_TILES_LOOSE"] = "1"
+            try:
+                _, loose = run(vk, os.path.join(tmp, "loose.bin"), "101", "15300,0,-10050,270",
+                               "--remaster", pack, "--enhance-all", "--filter", "trilinear")
+            finally:
+                del os.environ["OMK_TILES_LOOSE"]
+            tl = [f for n_, f in ev if n_ == "remaster.tiles"]
+            t0 = tl[0] if tl else {}
+            tiles = (int(t0.get("lights", 0)) > 200, int(t0.get("full", -1)) == 0,
+                     tight is not None and tight == loose)
+            print(f"        tiles {t0}; tight == loose {tight == loose if tight else None}")
         res, frames = {}, {}
         lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
         for kind, binary in (("vulkan", vk), ("gles", os.path.join(eng, "build", "omk-play-gles"))):
@@ -32275,11 +32302,20 @@ def c_engine_emitter_light():
                          "--remaster", pack, "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
             if off is None or on is None:
                 res[kind] = ("no frame",); continue
+            # the backends' AGREEMENT with Vulkan's lights as GLES's: GLES does
+            # not tile yet, so Vulkan is set beside it the nearest-slots way
+            if kind == "vulkan":
+                os.environ["OMK_NO_TILES"] = "1"
+                try:
+                    _, same = run(binary, os.path.join(tmp, "same.bin"), "0", "1780,0,-7380,336",
+                                  "--remaster", pack, "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+                finally:
+                    del os.environ["OMK_NO_TILES"]
             moved = sum(1 for x, y in zip(off, on) if x != y)
             darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
             reach = any(n == "remaster.fxlight" for n, _ in ev)
             res[kind] = (reach, moved > 100000, darker < len(on) // 1000)
-            frames[kind] = on
+            frames[kind] = same if kind == "vulkan" and same is not None else on
             print(f"        {kind}: the emitters' light moves {moved} pixels, {darker} darker; reaches {reach}")
         agree = ("skipped",)
         if len(frames) == 2:
@@ -32294,9 +32330,10 @@ def c_engine_emitter_light():
     print(f"        rule {rule}")
     vres, gres = res.get("vulkan"), res.get("gles")
     want = (True, True, True)
-    return (src_ok, rule, curate, vres, gres, agree), \
+    return (src_ok, rule, curate, tiles, vres, gres, agree), \
            ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
             curate if len(curate) == 1 else (True,) * 5,
+            tiles if len(tiles) == 1 else (True,) * 3,
             vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
@@ -46260,8 +46297,9 @@ def c_licence_headers():
     # 642: + `engine/src/o3de/lightprobe.{h,cpp}` (the remaster's body light,
     # todo/remaster.md A5)
     # 644: + `engine/src/o3de/emitterlight.{h,cpp}` (the emitters' light, A5b)
+    # 646: + `engine/src/o3de/lighttiles.{h,cpp}` (its tiled point lights)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (644, [], 1, []), \
+           (646, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

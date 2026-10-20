@@ -102,6 +102,7 @@ layout(set = 1, binding = 2) uniform Lights {
     float base;        // View::litBase - the scene's +416, what a lit batch starts from
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   pad2;
+    vec4  eye;         // the camera, for the water's Fresnel (xyz)
 } lg;
 
 vec3 litColour(vec3 n, vec3 w) {
@@ -215,7 +216,13 @@ void main() {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
     }
-    if (pc.water == 1)
-        c += texture(refl, gl_FragCoord.xy / vec2(textureSize(refl, 0))).rgb * pc.waterStrength;
+    // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
+    // looked down into and nearly all at grazing, so `waterStrength` is the
+    // GRAZING strength. The plane is level: cos theta is the eye ray's height.
+    if (pc.water == 1) {
+        float ct = abs(normalize(lg.eye.xyz - vWorld).y);
+        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
+        c += texture(refl, gl_FragCoord.xy / vec2(textureSize(refl, 0))).rgb * pc.waterStrength * f;
+    }
     outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
 }

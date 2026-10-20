@@ -238,7 +238,7 @@ engine/build/omk-play ../fr ../tables --save ../traces/save-appart.bin --area 10
 `--remaster DIR` / `[Remaster] dir = DIR` turns on all of it from one
 folder - the texture pack in `DIR/pack` (or `DIR/full/pack`, which
 `omktexpack.py export DIR/full` makes), the bloom at 1.3, the grades in
-`DIR/grades`, the water at 0.35. A BASE, as `all = max` is for `[Enhancements]`: `--bloom 0`,
+`DIR/grades`, the water at 0.6 (0.35 until the Fresnel). A BASE, as `all = max` is for `[Enhancements]`: `--bloom 0`,
 `--texture-pack`, `--grade` or their keys beat it. With the reader's folder:
 
 ```bash
@@ -312,7 +312,7 @@ would be a further step, one plane per window.
 ### A3, as built (2026-10-20)
 
 `[Remaster] water = S` / `--water S` (0..1), and `--remaster DIR` turns it
-on at **0.35**; off unless named, never `all = max`, Vulkan and GLES.
+on at **0.35** (**0.6** since the Fresnel); off unless named, never `all = max`, Vulkan and GLES.
 
 * **The plane** (`o3de/renderer.h` `waterPlane`) is the set's own data: the
   height carrying the most area of horizontal additive faces, a plane past
@@ -357,7 +357,7 @@ on at **0.35**; off unless named, never `all = max`, Vulkan and GLES.
   scene handed over, `OMK_WATER_NO_CPU_CLIP=1`) is 77 pixels from the CPU
   clip; with no clip at all 2861. Part of `engine: water reflection` now,
   shown to fail on each backend. **CONFIRMED IN PLAY** (the reader, 2026-10-20: "Player reflect is fixed").
-* **The water near the camera mirrored too strongly** (the reader's screenshot, 2026-10-20: the quay's own reflection at a steep angle). The geometry is right - the reflection meets the quay at its waterline - but one strength everywhere is not water: it reflects ~2% looking straight down and nearly all at grazing. Next: a Fresnel term (Schlick), the strength its grazing maximum.
+* **The water near the camera mirrored too strongly** (the reader's screenshot, 2026-10-20: the quay's own reflection at a steep angle). The geometry is right - the reflection meets the quay at its waterline - but one strength everywhere is not water: it reflects ~2% looking straight down and nearly all at grazing. Done: a Fresnel term (Schlick, F0 0.02) on both backends - `strength` is now the GRAZING strength, cos theta the eye ray's height over the level plane (Vulkan: the eye in the lights UBO at 400, since the push block is full; GLES: `uEye`, the ray made in the vertex stage). On the canal at strength 1 the reflection's added light per moved pixel falls from 31.2 to 20.7 (upper half, far) and from 43.0 to 19.8 (lower half, near), so lower/upper goes 1.38 -> 0.96; `engine: water reflection` part 4 asserts it under 1.15. The reflection was fainter overall and 0.35 read too weak (the reader, in play); the preset is now **0.6** - "it seems good now" (2026-10-20) - CONFIRMED IN PLAY.
 * **Found looking for a surface swim: Jaunpur has water at MORE THAN ONE
   height.** The finder takes the height with the most area (y 4); the canal
   the player swims in after the bank at 10524,-40,10284 has its surface

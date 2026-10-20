@@ -31821,7 +31821,7 @@ def c_engine_remaster_preset():
 
 def c_engine_water_reflection():
     r"""THE WATER REFLECTS - the remaster's A3 (`todo/remaster.md`), `[Remaster]
-    water = S` / `--water S` (and `--remaster DIR`'s 0.35), OFF unless named.
+    water = S` / `--water S` (and `--remaster DIR`'s 0.6), OFF unless named.
 
     The plane is the SET's own data (`o3de/renderer.h` waterPlane): the height
     carrying the most area of HORIZONTAL faces drawn ADDITIVELY - the game's
@@ -31856,6 +31856,13 @@ def c_engine_water_reflection():
          reflection (posed bodies are never CPU-clipped; the reader's play
          test, 2026-10-20, showed his legs reflected above his head). Measured
          77 pixels apart on Vulkan; with the clip disabled 2861.
+      4. THE FRESNEL (Schlick, F0 0.02): the strength is the GRAZING one, and
+         the water looked down into - the frame's lower half, nearer the
+         camera - mirrors less. At strength 1 the light the reflection adds
+         per moved pixel, lower half over upper, is under 1.15: measured 0.96
+         (Vulkan and GLES alike); with the term mutated to 1 on both, 1.38.
+         The reader's screenshot of 2026-10-20 (the quay's own reflection
+         right under the camera, too strong) is what it answers.
 
     Measured too, once, outside the check (2026-10-20, M3): with the water
     off every frame tried is byte-identical to the build before (Vulkan and
@@ -31928,9 +31935,9 @@ def c_engine_water_reflection():
             if kind == "gles" and platform.system() != "Darwin":
                 res[kind] = ("skipped",); continue
             off, _ = frame(binary, os.path.join(tmp, "off.bin"), *canal, "--water", "0")
-            on, live = frame(binary, os.path.join(tmp, "on.bin"), *canal, "--water", "0.35")
+            on, live = frame(binary, os.path.join(tmp, "on.bin"), *canal, "--water", "0.6")
             soff, _ = frame(binary, os.path.join(tmp, "soff.bin"), *street, "--water", "0")
-            son, _ = frame(binary, os.path.join(tmp, "son.bin"), *street, "--water", "0.35")
+            son, _ = frame(binary, os.path.join(tmp, "son.bin"), *street, "--water", "0.6")
             if None in (off, on, soff, son):
                 res[kind] = ("no frame",); continue
             moved = sum(1 for x, y in zip(off, on) if x != y)
@@ -31946,7 +31953,18 @@ def c_engine_water_reflection():
             finally:
                 del os.environ["OMK_WATER_NO_CPU_CLIP"]
             clip = sum(1 for x, y in zip(cpu, shd) if x != y) < 500 if cpu and shd else None
-            res[kind] = (live == "1", moved > 2000, darker, soff == son, clip)
+            # the FRESNEL: the light added per moved pixel, lower half (near,
+            # looked down into) over upper (far, grazing), at strength 1
+            fres = None
+            if cpu:
+                half = len(off) // 2
+                def added(a, z):
+                    d = [lum(cpu[i]) - lum(off[i]) for i in range(a, z) if cpu[i] != off[i]]
+                    return sum(d) / len(d) if d else None
+                lo, hi = added(half, len(off)), added(0, half)
+                fres = lo / hi < 1.15 if lo and hi else None
+                print(f"        {kind} fresnel: added light lower/upper half {lo / hi if lo and hi else None}")
+            res[kind] = (live == "1", moved > 2000, darker, soff == son, clip, fres)
             res[kind + "_on"] = on
         agree = ("skipped",)
         if "gles_on" in res and "vulkan_on" in res:
@@ -31958,14 +31976,15 @@ def c_engine_water_reflection():
         shutil.rmtree(tmp, ignore_errors=True)
     vres, gres = res.get("vulkan"), res.get("gles")
     print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
-    want = (True, True, 0, True, True)
+    want = (True, True, 0, True, True, True)
     return (src_ok, finder, vres, gres, agree), \
            ((True,) * 4, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only " \
            "when asked); the plane finder (Jaunpur at 4, Lahoreh at 12, none in Anekbah or the " \
            "apartment); on Vulkan and GLES the canal's water only brightens, Anekbah with the " \
-           "water on is byte-identical to off, and the two backends agree within 1%"
+           "water on is byte-identical to off, the shader's clip matches the CPU's, the Fresnel " \
+           "dims the near water, and the two backends agree within 1%"
 
 
 def c_engine_text_scaling():

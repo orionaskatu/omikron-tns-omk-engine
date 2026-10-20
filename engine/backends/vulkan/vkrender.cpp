@@ -130,6 +130,10 @@ struct LightUbo {
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
     int32_t pad;
+    // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 400. Written by
+    // every `begin`, and the frame's own pass is the last one - the only one
+    // that reads it (the reflection pass draws no water)
+    float   eye[4];
 };
 
 struct ShadowUbo {
@@ -2903,6 +2907,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.count = n;
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
+        for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }

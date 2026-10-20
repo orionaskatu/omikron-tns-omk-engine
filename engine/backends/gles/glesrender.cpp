@@ -418,10 +418,16 @@ std::string bloomVariant(const char* frag) {
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\n"
-                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\n" + frag;
+                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" + frag;
+    // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
+    // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
     if (at != std::string::npos)
-        s.insert(at, "if (uWater > 0.0) c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater;\n    ");
+        s.insert(at, "if (uWater > 0.0) {\n"
+                     "        float ct = abs(normalize(vToEye).y);\n"
+                     "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
+                     "        c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater * f;\n"
+                     "    }\n    ");
     // the REFLECTION pass discards what lies below the water (Y is down) - a
     // posed body's place is the GPU's, so the CPU clip cannot do it
     const std::string m = "void main() {";
@@ -431,16 +437,17 @@ std::string waterVariant(const std::string& frag) {
 }
 
 // ...and its VERTEX side: the world height handed down as `vWy`, taken from
-// whatever the program transforms - `aPos` for a set, `wp` for a posed body.
+// whatever the program transforms - `aPos` for a set, `wp` for a posed body -
+// and the ray to the eye as `vToEye`, made here where the floats are highp
 std::string waterVertVariant(const char* vert) {
-    std::string s = std::string("varying float vWy;\n") + vert;
+    std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\n") + vert;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
     if (at == std::string::npos) return s;
     const auto end = s.find(", 1.0);", at);
     if (end == std::string::npos) return s;
     const std::string expr = s.substr(at + key.size(), end - at - key.size());
-    s.insert(at, "vWy = (" + expr + ").y;\n    ");
+    s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    ");
     return s;
 }
 
@@ -1336,7 +1343,7 @@ private:
         GLint lit = -1, caster = -1, pl = -1, plCount = -1, shadow = -1, lightMvp = -1,
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
-        GLint water = -1, reflInv = -1, clip = -1, clipY = -1;   // the water variant's
+        GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1496,6 +1503,7 @@ private:
     bool   waterNow_ = false;            // the draws being submitted are WATER
     bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
+    float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
@@ -1794,6 +1802,7 @@ bool GlesRenderer::init(int w, int h) {
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
+        L.eye = glGetUniformLocation(p, "uEye");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -2803,6 +2812,7 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     for (const auto& d : scene) submit(d);
     waterNow_ = true;
     waterStrength_ = strength;
+    for (int k = 0; k < 3; ++k) waterEye_[k] = v.cam.eye[k];
     for (const auto& d : water) submit(d);
     waterNow_ = false;
     end();
@@ -3190,7 +3200,10 @@ void GlesRenderer::submit(const Draw& d) {
     // THE WATER's two uniforms, only with the water variant built
     if (waterWant_ > 0.0f && L.water >= 0) {
         glUniform1f(L.water, waterNow_ ? waterStrength_ : 0.0f);
-        if (waterNow_) glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+        if (waterNow_) {
+            glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+            glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
+        }
         glUniform1i(L.clip, reflectingNow_ ? 1 : 0);
         if (reflectingNow_) glUniform1f(L.clipY, waterY_);
     }

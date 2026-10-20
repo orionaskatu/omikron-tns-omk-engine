@@ -196,7 +196,7 @@ int PlayState::setupSession() {
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.3",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
-                        waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.35");
+                        waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.6");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -211,10 +211,10 @@ int PlayState::setupSession() {
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",
                         static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
-        // the WATER reflection: its flag, its key, then the preset's 0.35
+        // the WATER reflection: its flag, its key, then the preset's 0.6 (0.35 before the Fresnel, 2026-10-20)
         waterStrength = waterFlag >= 0.0f ? waterFlag
                       : settings.waterSource == omk::Settings::Source::Ini ? settings.water
-                      : !preset.empty() ? 0.35f : 0.0f;
+                      : !preset.empty() ? 0.6f : 0.0f;
         if (waterStrength > 0.0f)
             std::printf("water: %.2f - a REMASTER feature: the water reflects the scene, drawn by "
                         "Vulkan and GLES only\n", static_cast<double>(waterStrength));

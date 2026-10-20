@@ -291,7 +291,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.3, the grades in\n"
-"                   DIR/grades, --water 0.35; a specific flag or key beats it;\n"
+"                   DIR/grades, --water 0.6; a specific flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
 "                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"

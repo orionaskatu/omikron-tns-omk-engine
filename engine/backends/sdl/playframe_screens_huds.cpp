@@ -1178,7 +1178,15 @@ void PlayState::screensFades() {
             }
         }
         if (bf.running() && fb.h > 0) {
-            const int band = (fb.h * 64) / 480;
+            // THE BAND IS THE LETTERBOX STRIP. `(h << 6) / 480` is the
+            // ticker's, and on every display the original ran - all 4:3 -
+            // it IS the strip `worldCamera` leaves round a 1.818:1 picture
+            // (64 at 640x480, 80 at 800x600). On a wide frame the two part:
+            // at 1920x1080 the strip is 12 rows and `h*64/480` is 144, so a
+            // fade drew 4:3 bars over the picture and faded them off. Sized
+            // from the width like the strip, it is the same rows at 4:3.
+            const int stripH = static_cast<int>(fb.w / 1.8181818 + 0.5);
+            const int band = stripH < fb.h ? (fb.h - stripH) / 2 : 0;
             const int inner = bf.bandGrey(false), outer = bf.bandGrey(true);
             if (band > 0 && (inner < 255 || outer < 255)) {
                 for (int y = 0; y < fb.h; ++y) {

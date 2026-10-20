@@ -3083,6 +3083,13 @@ vignette quads `v3 = (HIWORD(g_ScreenSize) << 6) / 480` tall, which is 64 at
 fade vignette are the same two bands, and a script's `fade.to_black` darkens
 exactly the strip that is already there.
 
+**On a wide frame the two part, and the port keeps the strip** (2026-10-20).
+Every display the original ran was 4:3, where `h*64/480` and the strip round a
+1.818:1 picture are the same rows (64 at 480, 80 at 600). At 1920x1080 the
+strip is 12 rows and `h*64/480` is 144, so a fade drew 4:3 bars over the
+picture and faded them off - a reader's report. The fade's bands are sized
+from the WIDTH like the strip (`playframe_screens_huds.cpp`), identical at 4:3.
+
 **What turns it on is whether the player has control**, not the shape of the
 camera. `intro-75` is a cutscene on a scripted world camera and it is
 letterboxed; free roaming is not, whatever camera is installed — and a great

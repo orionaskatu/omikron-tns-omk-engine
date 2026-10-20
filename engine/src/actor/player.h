@@ -852,6 +852,20 @@ private:
         NodeTracks tracks;
         int   clip = -1, gen = -1;
     } gridBlend_{};
+    // THE BLEND A TRANSITION RUNS (`Actor_BlendToClip`, 0x0045C510), baked
+    // one row a channel frame: the engine slerps two FIXED keys - the clip
+    // being left at the frame it was left on (or, with no clip of its own, a
+    // snapshot of the pose shown) toward the target clip at its start frame -
+    // by `frame / blendFrames` (`sub_471820`, its +12/+16 key indices and +8
+    // weight). Valid while the channel is still in the transition that made
+    // it: `transitions` is the channel's count right after it, `state` the
+    // entry it left the channel in.
+    struct TransBlend {
+        NodeTracks tracks;
+        long  transitions = -1;
+        int   state = -1;
+    } transBlend_{};
+    const NodeTracks* transBlendTracks() const;
     struct TakeApproach {
         float angle = 0.0f, second = 0.0f;
         int   gen = 0;

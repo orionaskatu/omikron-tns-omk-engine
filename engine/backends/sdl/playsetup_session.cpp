@@ -193,13 +193,14 @@ int PlayState::setupSession() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
                         waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.6",
                         bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1");
+                        fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
+                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "1");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -229,6 +230,14 @@ int PlayState::setupSession() {
         fxLight = fxLightFlag >= 0.0f ? fxLightFlag
                 : settings.fxLightSource == omk::Settings::Source::Ini ? settings.fxLight
                 : !preset.empty() ? 1.0f : 0.0f;
+        // the RELIEF (`View::relief`): its flag, its key, the preset's 1 (the
+        // reader's, 2026-10-21, beside 0, 2 and 4)
+        relief = reliefFlag >= 0.0f ? reliefFlag
+               : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
+               : !preset.empty() ? 1.0f : 0.0f;
+        if (relief > 0.0f)
+            std::printf("relief: %.2f - a REMASTER feature: the textures' brightness read as height under the "
+                        "emitters' lights, drawn by Vulkan only\n", static_cast<double>(relief));
         if (fxLight > 0.0f)
             std::printf("fx light: %.2f - a REMASTER feature: the set's flames and glows light the bodies "
                         "near them, drawn by Vulkan and GLES only\n", static_cast<double>(fxLight));

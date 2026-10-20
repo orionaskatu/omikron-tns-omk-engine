@@ -303,6 +303,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --fx-light S     REMASTER, off by default: the set's flames and glows light\n"
 "                   the bodies near them, strength S (0..4); Vulkan and GLES\n"
 "                   only; [Remaster] fxlight=S\n"
+"  --relief S       REMASTER, off by default: the textures' relief under the\n"
+"                   emitters' lights, strength S (0..4); Vulkan only;\n"
+"                   [Remaster] relief=S\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -540,6 +543,13 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--relief" && i + 1 < argc) {
+            reliefFlag = static_cast<float>(std::atof(argv[++i]));
+            if (reliefFlag < 0.0f || reliefFlag > 4.0f) {
+                std::fprintf(stderr, "--relief %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--fx-light" && i + 1 < argc) {
             fxLightFlag = static_cast<float>(std::atof(argv[++i]));
             if (fxLightFlag < 0.0f || fxLightFlag > 4.0f) {

@@ -100,6 +100,7 @@ struct PlayState {
     float & waterFlag = opt.waterFlag;
     float & bodyLightFlag = opt.bodyLightFlag;
     float & fxLightFlag = opt.fxLightFlag;
+    float & reliefFlag = opt.reliefFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -696,6 +697,7 @@ struct PlayState {
     float waterStrength{};   // the water reflection's, 0 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
     float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
+    float relief{};          // the relief's (`View::relief`), 0 off
     bool waterLive{};        // the frame drew through the water pass (for the log)
     std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`

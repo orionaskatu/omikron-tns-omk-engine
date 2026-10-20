@@ -716,6 +716,39 @@ way.
 CPU binning's per-frame allocations; a light's own shadow (none - a lamp
 lights through walls within its reach).
 
+## Step 3, B3 - the relief (normal maps): first cut (2026-10-21)
+
+The reader's "go with the normal maps". No generated maps yet: the first cut
+reads the texture's own BRIGHTNESS as height in the shader, so it needs no
+asset, no pack format and no tangents, and shows whether relief is worth the
+pack's maps (DeepBump and the like, the plan above) at all.
+
+* `[Remaster] relief = S` / `--relief S`, 0..4, **0 by default**; the
+  `--remaster` preset's **1** - the reader's "ok" (2026-10-21) on a sheet of
+  0, 1, 2 and 4 by Anekbah's burner and in Qalisar (4 too harsh; Qalisar's
+  wide pink light shows little at any strength; the lit floor brightens a
+  little as it grows - a bias to correct if a higher strength is wanted). `View::relief` ->
+  the Lights UBO's `fx.x` (Vulkan).
+* `scene.frag` `relief()`: four taps a texel apart on the BOUND texture (the
+  pack's 4x where there is one), the slope x8 a texel, tilting the normal in
+  the COTANGENT frame of the surface's screen derivatives (world position,
+  UV) - the sets carry no tangents.
+* Only the POINT lights see it (the painted light, the bake, has no
+  direction), so it needs the emitters' light and per-pixel lighting
+  (`--enhance-all`); only on the SET (mode 3) - Kay'l's shoulder pad and arms
+  took grain from their painted texture; only in Vulkan's TILED module
+  (`#ifdef OMK_TILED`, the MoltenVK lesson of A5c). GLES has none.
+* x4 was barely seen: the median moved pixel 8 of 255 at 1, a crop at full
+  size showed the wall's grain only at 2-4. x8 makes 1 what 2 was.
+* Off: byte-identical to `e0b586b1` on the software reference and Vulkan,
+  plain, `--remaster` and `--enhance-all`, by Anekbah's burner and in Qalisar
+  (12 of 12). `verify.py: engine: relief` - the source, relief 1 moving the
+  frame by the burner (81875 pixels at 640x480), and nothing without the
+  point lights or the tiles; shown to fail three ways.
+* Open: the strength and the sign (bright reads as raised - true of stone
+  and mortar, not of a lit window); whether generated maps are worth it
+  after this; GLES.
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

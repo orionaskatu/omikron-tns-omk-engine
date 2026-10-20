@@ -103,6 +103,9 @@ layout(set = 1, binding = 2) uniform Lights {
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   tiles;       // 1: the TILED point lights below are bound (`o3de/lighttiles.h`)
     vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
+#ifdef OMK_TILED
+    vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone
+#endif
 } lg;
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
@@ -221,6 +224,37 @@ float litness() {
     return mix(1.0 - sh.strength, 1.0, lit / 9.0);
 }
 
+#ifdef OMK_TILED
+// THE RELIEF (the remaster's B3, `[Remaster] relief = S`): the texture's own
+// BRIGHTNESS read as height - four taps a texel apart, at the bound texture's
+// size (the pack's 4x where there is one) - tilting the normal the lights see.
+// The sets carry no tangents, so the frame is the COTANGENT frame of the
+// surface's screen derivatives (world position and UV). Only the point lights
+// see it (the painted light has no direction), and only on the SET (mode 3):
+// a body's painted cloth and face read as grain. 0, the default, leaves `n`.
+vec3 relief(vec3 n, vec3 w, vec2 uv) {
+    float s = lg.fx.x;
+    if (s <= 0.0) return n;
+    vec2 px = 1.0 / vec2(textureSize(tex, 0));
+    const vec3 Y = vec3(0.299, 0.587, 0.114);
+    float hl = dot(texture(tex, uv - vec2(px.x, 0.0)).rgb, Y);
+    float hr = dot(texture(tex, uv + vec2(px.x, 0.0)).rgb, Y);
+    float hu = dot(texture(tex, uv - vec2(0.0, px.y)).rgb, Y);
+    float hd = dot(texture(tex, uv + vec2(0.0, px.y)).rgb, Y);
+    vec2 g = vec2(hr - hl, hd - hu) * s;
+    vec3 dp1 = dFdx(w), dp2 = dFdy(w);
+    vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+    vec3 p2 = cross(dp2, n), p1 = cross(n, dp1);
+    vec3 T = p2 * du1.x + p1 * du2.x, B = p2 * du1.y + p1 * du2.y;
+    float m = max(dot(T, T), dot(B, B));
+    if (m <= 0.0) return n;
+    float inv = inversesqrt(m);
+    // the slope a texel, x8: a brightness step of 0.1 tilts the normal ~0.8 at 1
+    // (x4 was barely seen at 1 - the median pixel moved 8 of 255)
+    return normalize(n - (T * inv) * g.x * 8.0 - (B * inv) * g.y * 8.0);
+}
+#endif
+
 void main() {
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
     if (pc.water == 2 && vWorld.y > pc.waterStrength) discard;   // below the water (Y is down)
@@ -260,9 +294,13 @@ void main() {
     // (the remaster's NIGHT, `lg.eye.w`, dims the painted and the start light
     // under the point lights; 1 - a multiply by one - everywhere else)
     float night = lg.eye.w;
-    vec3 shade = pc.lit == 1 ? min(vec3(lg.base) * night + litColour(normalize(vNrm), vWorld, false), vec3(1.0))
-               : pc.lit == 2 ? min(vCol * night + litColour(normalize(vNrm), vWorld, false), vec3(1.0))
-               : pc.lit == 3 ? min((vCol + vec3(wave)) * night + litColour(normalize(vNrm), vWorld, true), vec3(1.0))
+    vec3 nL = normalize(vNrm);
+#ifdef OMK_TILED
+    if (pc.lit == 3) nL = relief(nL, vWorld, vUV / texels);
+#endif
+    vec3 shade = pc.lit == 1 ? min(vec3(lg.base) * night + litColour(nL, vWorld, false), vec3(1.0))
+               : pc.lit == 2 ? min(vCol * night + litColour(nL, vWorld, false), vec3(1.0))
+               : pc.lit == 3 ? min((vCol + vec3(wave)) * night + litColour(nL, vWorld, true), vec3(1.0))
                              : vCol + vec3(wave);
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): `sub_42FF80`
     // writes each vertex colour as its luma, `(299 R + 587 G + 114 B) / 1000`

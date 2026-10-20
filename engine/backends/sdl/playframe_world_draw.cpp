@@ -222,6 +222,7 @@ void PlayState::worldDrawLists() {
         // renderer that tiles - to set Vulkan beside GLES, which does not yet)
         static const bool noTiles = omk::envFlag("OMK_NO_TILES");
         const bool tiled = fxPix && world_->tilesLights() && !noTiles;
+        view.relief = tiled ? relief : 0.0f;   // the relief rides the tiled module
         const float kFxView = tiled ? std::min(20000.0f, static_cast<float>(clipInches)) : 3000.0f;
         view.points.clear();
         // the point lights' slots: what the renderer has past four of the

@@ -138,6 +138,10 @@ struct View {
     // light (mode 3) and of a lit body's start that stays - the point lights
     // add on top whole. 1 unless the remaster says otherwise.
     float setDim = 1.0f;
+    // THE RELIEF (the remaster's B3, `[Remaster] relief = S`): the texture's
+    // brightness read as height, tilting the normal the POINT lights see -
+    // Vulkan's tiled module (`scene.frag`); 0 nothing.
+    float relief = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed

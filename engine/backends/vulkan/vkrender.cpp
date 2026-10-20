@@ -140,6 +140,8 @@ struct LightUbo {
     // every `begin`, and the frame's own pass is the last one - the only one
     // that reads it (the reflection pass draws no water)
     float   eye[4];
+    // THE RELIEF (`View::relief`), at 416: read by the TILED module alone
+    float   fx[4];
 };
 
 struct ShadowUbo {
@@ -2971,6 +2973,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
+        ub.fx[0] = view.relief;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
         // keeps, and their tiles binned for THIS camera at the render size.
         // The reflection pass begins first and the frame's pass last - the

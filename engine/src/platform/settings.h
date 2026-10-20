@@ -236,6 +236,10 @@ struct Settings {
     // and GLES only.
     float  fxLight = 0.0f;
     Source fxLightSource = Source::Default;
+    // `relief = S`: the RELIEF - the textures' brightness read as height under
+    // the emitters' point lights (`View::relief`), S its strength, 0 off.
+    float  relief = 0.0f;
+    Source reliefSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

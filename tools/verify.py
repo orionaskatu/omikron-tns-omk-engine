@@ -32343,6 +32343,106 @@ def c_engine_emitter_light():
            "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
            "light reaches the player, lights the set, only adds, and Vulkan and GLES agree"
 
+def c_engine_relief():
+    r"""THE RELIEF - the remaster's B3 (`todo/remaster.md`), `[Remaster]
+    relief = S` / `--relief S` (0..4), OFF unless named, and `--remaster
+    DIR`'s 1 (the reader's, 2026-10-21, from a sheet of 0, 1, 2 and 4).
+
+    The sets carry no normal maps and no tangents. Under the emitters' point
+    lights the texture's own BRIGHTNESS is read as height - four taps a texel
+    apart on the bound texture (the pack's where there is one) - and tilts
+    the normal in the COTANGENT frame of the surface's screen derivatives
+    (`scene.frag` `relief()`). Only the point lights see it (the painted light
+    has no direction), only on the SET (mode 3 - a body's painted cloth read
+    as grain), and only in Vulkan's TILED module. NOT A PORT, no oracle
+    (tier 6).
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1; in the shader inside `#ifdef OMK_TILED` and on mode 3;
+      2. by Anekbah's burner (1780, 0, -7380) with the preset and
+         `--enhance-all` on Vulkan: relief 1 moves more than 50000 pixels;
+      3. ...and NOTHING where the point lights are not: relief 1 with
+         `--fx-light 0`, and relief 1 under `OMK_NO_TILES=1` (the
+         nearest-slots path), each byte-identical to its relief-0 frame.
+
+    Measured once, outside the check (2026-10-21, M3): with it off, frames
+    byte-identical to `e0b586b1` on the software reference and Vulkan, plain,
+    `--remaster` and `--remaster --enhance-all`, by the burner and in Qalisar
+    (12 of 12). At x4 the slope was barely seen (the median moved pixel 8 of
+    255 at 1); x8 now.
+
+    Shown to fail (2026-10-21), one at a time: the strength never read - 0
+    pixels move (part 2); the mode-3 guard dropped, the bodies grained too -
+    part 1 (the frame moves 83677, the bodies' share); the uniform always 1 -
+    the relief-0 frame relieved too, 0 move (part 2).
+
+    NOT CHECKED, judged by eye: the strength, and whether bright reads as
+    raised.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("relief = reliefFlag"):]
+    pre = pre[:pre.index(";")] + ";"
+    tiled = fs[fs.index("#ifdef OMK_TILED\n// THE RELIEF"):]
+    tiled = tiled[:tiled.index("#endif")]
+    src_ok = (bool(re.search(r"float\s+relief\s*=\s*0\.0f;", sh)),
+              'kRemaster, "relief"' in sc and 'kEnhancements, "relief"' not in sc,
+              "relief" not in max_body,
+              "!preset.empty() ? 1.0f : 0.0f;" in pre,
+              "vec3 relief(" in tiled and fs.count("relief(") == 2,
+              bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(pc\.lit == 3\) nL = relief\(", fs)))
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack"
+    tmp = tempfile.mkdtemp()
+    vk = os.path.join(eng, "build", "omk-play")
+    try:
+        def run(name, env_extra, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", **env_extra)
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
+                    "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
+            subprocess.run([vk] + args, capture_output=True, text=True, env=env, timeout=240)
+            if not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        f = {}
+        f["off"] = run("off", {}, "--relief", "0")
+        f["on"] = run("on", {}, "--relief", "1")
+        f["nofx0"] = run("nofx0", {}, "--relief", "0", "--fx-light", "0")
+        f["nofx1"] = run("nofx1", {}, "--relief", "1", "--fx-light", "0")
+        f["slot0"] = run("slot0", {"OMK_NO_TILES": "1"}, "--relief", "0")
+        f["slot1"] = run("slot1", {"OMK_NO_TILES": "1"}, "--relief", "1")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if any(v is None for v in f.values()):
+        return (src_ok, ("no frame",)), ((True,) * 6, ("frames",)), "a run wrote no frame"
+    moved = sum(1 for x, y in zip(f["off"], f["on"]) if x != y)
+    nofx = sum(1 for x, y in zip(f["nofx0"], f["nofx1"]) if x != y)
+    slot = sum(1 for x, y in zip(f["slot0"], f["slot1"]) if x != y)
+    print(f"        relief 1 moves {moved} pixels; without the point lights {nofx}; untiled {slot}")
+    return (src_ok, moved > 50000, nofx, slot), ((True,) * 6, True, 0, 0), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1, the tiled module and " \
+        "mode 3 alone); by Anekbah's burner relief 1 moves the frame, and nothing without the point lights " \
+        "or the tiles"
+
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -49099,6 +49199,7 @@ SLOW = [
     ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),
     ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
     ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
+    ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

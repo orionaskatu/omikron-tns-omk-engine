@@ -225,8 +225,14 @@ run headless.
    the grey pool replaced 34 of 36 on Vulkan and GLES (1 without the alias),
    the nearest pack byte-identical to none, the full pack 0 colourful pixels;
    `engine: texture pack` part 6.
-4. **Textures not under MESHES** - the SCX stream's embedded effect sprites
-   (`sprite_fx.py`) are not exported.
+4. ~~**Textures not under MESHES**~~ - **DONE 2026-10-20**: `export` also
+   walks the 26 effect sprites stored whole inside the .SCX files
+   (`sprite_fx.library()`, `SCX:<name>` in the index, `--match SCX:`) - 6
+   unique atlases, 2 of them also under MESHES. Area 237: 36 of 36 replaced
+   (34 before), the nearest pack still byte-identical to none. Added to the
+   full pack (1259 files). Judged on the atlases only: shapes and colours
+   kept; the sprites draw ADDITIVELY, so the near-black rims a cutout view
+   shows add nothing - to confirm in play on a fire or an explosion.
 5. Curation: an exclusion list for anything the upscaler hurts, and B3's
    material maps from the same images.
 

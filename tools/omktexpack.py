@@ -12,7 +12,9 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
     omktexpack.py build   OUT [--no-anchor] [--grain F] [--nearest N | --solid R,G,B N] [--match S ...]
                                                   -> OUT/pack, the directory to hand the viewer
 
-`export` writes, under OUT:
+`export` covers every .3DO/.3DT pair under MESHES and the 26 effect sprites
+stored inside the .SCX files (`SCX:<name>` in the index; `--match SCX:` for
+them alone). It writes, under OUT:
     index.json        key -> {name, model, material, w, h, keyed}
     src/<key>.png     the texture as shipped (RGB), for looking at
     in/<key>.png      the UPSCALER'S input: wrapped by PAD texels on every
@@ -112,8 +114,31 @@ def safe_out(out):
 
 
 # ---- the shipped textures ----------------------------------------------------
+_SPRITES = None
+
+
+def sprite_library():
+    """The effect sprites stored WHOLE inside the .SCX files (sprite_fx.py):
+    {name: {model, texture, used_by}}, read once."""
+    global _SPRITES
+    if _SPRITES is None:
+        import sprite_fx
+        _SPRITES = sprite_fx.library()
+    return _SPRITES
+
+
+def source_textures(model):
+    """The decoded textures of an index entry's `model`: a path under the data
+    tree, or `SCX:<name>` for an effect sprite."""
+    if model.startswith("SCX:"):
+        e = sprite_library()[model[4:]]
+        return tex3dt.textures_bytes(e["model"], e["texture"])
+    return tex3dt.textures(os.path.join(omkpaths.data_root(), model))
+
+
 def shipped(match=()):
-    """-> {key: entry} over every .3DO/.3DT pair under MESHES, first model wins."""
+    """-> {key: entry} over every .3DO/.3DT pair under MESHES, then the effect
+    sprites inside the .SCX files (`SCX:<name>`); the first model wins."""
     data = omkpaths.data_root()
     meshes = next((os.path.join(data, d) for d in os.listdir(data) if d.lower() == "meshes"), None)
     if not meshes:
@@ -124,11 +149,13 @@ def shipped(match=()):
         for f in fn:
             if f.lower().endswith(".3do"):
                 models.append(os.path.join(dp, f))
-    for m in sorted(models):
-        rel = os.path.relpath(m, data).replace(os.sep, "/")
+    sources = [os.path.relpath(m, data).replace(os.sep, "/") for m in sorted(models)]
+    if not match or any(s.upper().startswith("SCX:") for s in match):
+        sources += ["SCX:" + n for n in sorted(sprite_library())]
+    for rel in sources:
         if match and not any(s.lower() in rel.lower() for s in match):
             continue
-        for i, tx in enumerate(tex3dt.textures(m)):
+        for i, tx in enumerate(source_textures(rel)):
             w, h = tx["w"], tx["h"]
             if w <= 0 or h <= 0:
                 continue
@@ -370,7 +397,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
         rgb[0::3] = c[0::4]; rgb[1::3] = c[1::4]; rgb[2::3] = c[2::4]
         n = w * s * h * s
         if anchored or grain > 0:
-            src = tex3dt.textures(os.path.join(omkpaths.data_root(), e["model"]))[e["material"]]["rgb"]
+            src = source_textures(e["model"])[e["material"]]["rgb"]
         if anchored:
             rgb = bytearray(anchor(bytes(rgb), src, w, h, s))
         if grain > 0:
@@ -385,7 +412,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
                 mc = crop(mr, mw, pad * s, pad * s, w * s, h * s, 4)
                 alpha = mc[0::4].translate(bytes(255 if v >= 128 else 0 for v in range(256)))
             else:
-                src = tex3dt.textures(os.path.join(omkpaths.data_root(), e["model"]))[e["material"]]["rgb"]
+                src = source_textures(e["model"])[e["material"]]["rgb"]
                 alpha = nearest(bytes(0 if kk else 255 for kk in key_mask(src, w * h)), w, h, 1, s)
         else:
             alpha = b"\xff" * n

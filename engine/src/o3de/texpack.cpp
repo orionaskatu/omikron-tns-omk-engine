@@ -90,7 +90,7 @@ bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba,
     return true;
 }
 
-std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts) const {
+std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts, bool colour) const {
     std::vector<PackImage> out(ts.size());
     if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
@@ -131,7 +131,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                     for (std::size_t q = 0; q < o.emissive.size(); ++q) o.emissive[q] = li.rgba[4 * q];
                 }
             }
-            if (!jb.file) continue;
+            if (!jb.file || !colour) continue;
             const auto bytes = readWholeFile(*jb.file);
             PngImage img;
             if (bytes.empty()) { jb.why = "unreadable"; continue; }
@@ -161,7 +161,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         });
     // the refusals, here, once per key
     for (const Job& jb : jobs) {
-        if (out[jb.at].ok || !jb.file) continue;
+        if (out[jb.at].ok || !jb.file || !colour) continue;
         std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", jb.file->c_str(),
                      jb.why.c_str(), ts[jb.at]->name.c_str());
         refused_.insert(jb.key);

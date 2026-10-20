@@ -558,8 +558,12 @@ never `all = max`, Vulkan and GLES (`o3de/emitterlight.h`).
   Summed by area into 3 m cells; a cell with 300 square units of light is a
   point light at its centroid, its colour the lit texels' pushed 1.6 from
   grey (a tube's core is near white), 7 m reach, `S x min(1, sqrt(area) /
-  120)`. Anekbah ~390, Qalisar 304, Jaunpur ~320. Decoding the light maps
-  adds ~110 ms to a set's load (M3) - to cache. And the frame's light slots
+  120)`. Anekbah ~390, Qalisar 304, Jaunpur ~320. Decoding the pack for
+  them added ~110 ms to a set's load (M3) - the colour PNGs, 1024x1024 each,
+  decoded beside the GPU's own decode; now `replacements(ts, false)` reads
+  the light maps alone and the colours are the shipped palette's: Qalisar's
+  load 131 -> 53 ms (21 with the emitters' light off), 217 -> 216 lights
+  (2026-10-21). And the frame's light slots
   are 16 now (`View::kMaxGpuLights`; the set's own still 8,
   `kOwnGpuLights`): up to 12 point lights, nearest the camera, where the
   renderer has the room (`maxPixelLights` - Vulkan always, GLES in its
@@ -636,8 +640,8 @@ never `all = max`, Vulkan and GLES (`o3de/emitterlight.h`).
 the LIGHT POPPING - the frame's point lights are the 56 nearest the camera,
 so a far neon lights nothing round it and seems turned off ("set it by the
 game's distance culling"): per-TILE light lists, every light within the clip
-distance, is the next step; the light maps' decode adds ~110 ms to a set's
-load; the other cities' lists; without per-pixel lighting the lights reach
+distance, is the next step (done, A5c); the light maps' decode at a set's
+load (done: 131 -> 53 ms); the other cities' lists (drafted); without per-pixel lighting the lights reach
 only the bodies; flicker (a flame's light is steady).
 
 ## Step 3, A5c - the tiled point lights: as built (2026-10-20)

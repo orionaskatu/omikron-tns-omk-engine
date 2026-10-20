@@ -2158,7 +2158,8 @@ void PlayState::prepareSet(SetLoad& L) {
             omk::texturePack().lightMaps() > 0) {
             std::vector<const omk::Texture*> ptrs;
             for (const auto& wt : w.tex) ptrs.push_back(&wt);
-            const auto packs = omk::texturePack().replacements(ptrs);
+            // the LIGHT MAPS alone: the colours are the shipped palette's
+            const auto packs = omk::texturePack().replacements(ptrs, false);
             int cells = 0;
             w.fxSurface = omk::surfaceLights(w.geo, w.tex, packs, fxLight, &cells, L.stem, &omk::surfaceCuration());
             w.lights.insert(w.lights.end(), w.fxSurface.begin(), w.fxSurface.end());

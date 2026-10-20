@@ -76,7 +76,10 @@ public:
     // the lookups and the refusals on the caller's thread. A null entry is
     // skipped. What a backend calls when a pool reaches it: decoding 31
     // replacements one after another took 634 ms on the street (M3).
-    std::vector<PackImage> replacements(std::span<const Texture* const> ts) const;
+    // `colour` false: the LIGHT MAPS alone (and the hook) - the colour PNGs, a
+    // texture's 1024x1024, are not decoded. The surface lights' way
+    // (`o3de/emitterlight.h`): a set's load had cost ~110 ms more for them.
+    std::vector<PackImage> replacements(std::span<const Texture* const> ts, bool colour = true) const;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the viewer greys a
     // pool's PALETTES, which makes each texture another key. Told which colour
     // texture a grey one came from, the pack answers the grey key with the

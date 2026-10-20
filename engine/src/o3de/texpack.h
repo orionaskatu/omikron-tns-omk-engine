@@ -50,6 +50,12 @@ struct PackImage {
     bool ok = false;
     int w = 0, h = 0;
     std::vector<std::uint8_t> rgba;
+    // THE LIGHT MAP (`<key>_e.png`, `todo/remaster.md` step 2): how much of
+    // each texel is light, 0..255, `ew x eh` (the original's size times a
+    // power of two). Present with or without a colour replacement; empty
+    // when the pack has none. Only the BLOOM reads it.
+    int ew = 0, eh = 0;
+    std::vector<std::uint8_t> emissive;
 };
 
 class TexturePack {
@@ -59,6 +65,7 @@ public:
     bool open(const std::string& dir);
     bool active() const { return opened_; }
     std::size_t size() const { return files_.size(); }
+    std::size_t lightMaps() const { return lights_.size(); }
     const std::string& dir() const { return dir_; }
     // t's replacement, decoded: RGBA8 of w x h. False when the pack has none,
     // or when the file is unusable (not a PNG this reads, not a power-of-two
@@ -82,6 +89,7 @@ private:
     std::string dir_;
     bool opened_ = false;
     std::unordered_map<std::uint64_t, std::string> files_;
+    std::unordered_map<std::uint64_t, std::string> lights_;   // `<key>_e.png`
     std::unordered_map<std::uint64_t, std::uint64_t> greyOf_;   // grey key -> colour key
     mutable std::unordered_set<std::uint64_t> refused_;
 };

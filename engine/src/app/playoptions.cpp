@@ -286,6 +286,12 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --texture-pack DIR  REMASTER, off by default: replace textures with the\n"
 "                   pack in DIR (<key>.png files, tools/omktexpack.py makes\n"
 "                   them); Vulkan and GLES only; [Remaster] texturepack=DIR\n"
+"  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
+"                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
+"                   Vulkan and GLES only; [Remaster] bloom=S\n"
+"  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
+"                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
+"                   Vulkan and GLES only; [Remaster] grade=DIR\n"
 "  --software       force the software rasteriser\n"
 "  --profile F      write a profiler capture to F (tools/omkprof.py reads it;\n"
 "                   todo/debug-tools.md - absent from `make release`)\n"
@@ -511,6 +517,14 @@ int PlayOptions::parse(int argc, char** argv) {
             }
         }
         else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
+        else if (a == "--bloom" && i + 1 < argc) {
+            bloomFlag = static_cast<float>(std::atof(argv[++i]));
+            if (bloomFlag < 0.0f || bloomFlag > 4.0f) {
+                std::fprintf(stderr, "--bloom %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--dither" && i + 1 < argc) dither = std::atoi(argv[++i]) != 0;
         else if (a == "--invert-x") mouseInvertX = true;
         else if (a == "--invert-y") mouseInvertY = true;

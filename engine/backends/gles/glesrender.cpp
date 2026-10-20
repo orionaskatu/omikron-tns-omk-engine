@@ -335,6 +335,84 @@ void main() {
 }
 )";
 
+// THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) - `post.frag`'s four
+// steps in GLSL ES 1.0: DOWN (the light, `src.rgb * src.a`, the alpha the
+// light map the bloom variant of the scene program wrote), BLUR (21 taps,
+// sigma 4), FINAL (the glow screen-blended, then the city grade from an
+// N*N x N strip). Linked only when the bloom or a grade is asked for.
+constexpr const char* kPostVert = R"(
+attribute vec2 aPos;
+varying vec2 vUv;
+void main() {
+    vUv = aPos;
+    gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+constexpr const char* kPostFrag = R"(
+uniform sampler2D uSrc;
+uniform sampler2D uGlow;
+uniform sampler2D uLut;
+uniform vec2  uSrcInv;
+uniform vec2  uDir;
+uniform float uStrength;
+uniform int   uMode;
+uniform float uLutN;
+varying vec2 vUv;
+vec3 graded(vec3 c) {
+    float n = uLutN;
+    c = clamp(c, 0.0, 1.0);
+    float bs = c.b * (n - 1.0);
+    float b0 = floor(bs);
+    float b1 = min(b0 + 1.0, n - 1.0);
+    float t = bs - b0;
+    vec2 inv = vec2(1.0 / (n * n), 1.0 / n);
+    vec2 rg = c.rg * (n - 1.0) + 0.5;
+    vec3 a = texture2D(uLut, (vec2(b0 * n, 0.0) + rg) * inv).rgb;
+    vec3 b = texture2D(uLut, (vec2(b1 * n, 0.0) + rg) * inv).rgb;
+    return mix(a, b, t);
+}
+void main() {
+    if (uMode == 0) {
+        vec3 acc = vec3(0.0);
+        for (int j = -1; j <= 1; j += 2)
+            for (int i = -1; i <= 1; i += 2) {
+                vec4 s = texture2D(uSrc, vUv + vec2(float(i), float(j)) * uSrcInv);
+                acc += s.rgb * s.a;
+            }
+        gl_FragColor = vec4(acc * 0.25, 1.0);
+    } else if (uMode == 1) {
+        vec3 acc = vec3(0.0);
+        float wsum = 0.0;
+        for (int k = -10; k <= 10; ++k) {
+            float w = exp(-float(k * k) / 32.0);
+            acc += texture2D(uSrc, vUv + uDir * uSrcInv * float(k)).rgb * w;
+            wsum += w;
+        }
+        gl_FragColor = vec4(acc / wsum, 1.0);
+    } else {
+        vec3 c = texture2D(uSrc, vUv).rgb;
+        if (uStrength > 0.0) {
+            vec3 g = min(texture2D(uGlow, vUv).rgb * uStrength, vec3(1.0));
+            c = 1.0 - (1.0 - c) * (1.0 - g);
+        }
+        if (uLutN > 1.5) c = graded(c);
+        gl_FragColor = vec4(c, 1.0);
+    }
+}
+)";
+
+// The BLOOM variant of a scene fragment program: the same source, with the
+// alpha written as the texel's LIGHT (the pack's light map on unit 3). Made
+// from the default text at `init`, so the default programs - and the Vita's
+// shader cache, keyed by source - are untouched.
+std::string bloomVariant(const char* frag) {
+    std::string s = std::string("uniform sampler2D uEmis;\n") + frag;
+    const std::string from = "gl_FragColor = vec4(c, 1.0);";
+    const auto at = s.rfind(from);
+    if (at != std::string::npos) s.replace(at, from.size(), "gl_FragColor = vec4(c, texture2D(uEmis, vUV).r);");
+    return s;
+}
+
 // THE PRESENT PASS: a picture onto the window, NEAREST, scaled into `uDst`.
 // Used for both the world target (`uDither` 1: the 888 -> 565 rule applied
 // here, `present.frag`'s arithmetic in float) and an RGB565 surface the CPU
@@ -976,6 +1054,28 @@ public:
         aniso_ = n < 1 ? 1 : n > 16 ? 16 : n;
         return true;
     }
+    // THE REMASTER's bloom: BEFORE `init` - its scene programs are linked
+    // there (`bloomVariant`)
+    bool setBloom(float s) override {
+        if (prog_) return false;
+        bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
+        return true;
+    }
+    // ...and the city grade, any time: n^3 RGB 0..1, red fastest
+    bool setGrade(const float* rgb, int n) override {
+        if (!rgb || n < 2) { lutN_ = 0; return true; }
+        lutData_.assign(static_cast<std::size_t>(n) * n * n * 4, 255);
+        for (int b = 0; b < n; ++b)
+            for (int gg = 0; gg < n; ++gg)
+                for (int r = 0; r < n; ++r) {
+                    const float* src = rgb + 3 * ((static_cast<std::size_t>(b) * n + gg) * n + r);
+                    unsigned char* d = &lutData_[4 * (static_cast<std::size_t>(gg) * n * n + b * n + r)];
+                    for (int c = 0; c < 3; ++c)
+                        d[c] = static_cast<unsigned char>(std::clamp(src[c], 0.0f, 1.0f) * 255.0f + 0.5f);
+                }
+        lutN_ = n; lutDirty_ = true;
+        return true;
+    }
     int anisotropy() const { return anisoOn_; }
     // SUPERSAMPLING (`todo/enhancements.md` 9): the world drawn `n` times
     // larger each way and averaged down - in `readback` on the CPU and in the
@@ -1060,7 +1160,7 @@ public:
     }
 
 private:
-    struct Tex { GLuint id = 0; float w = 1, h = 1; };
+    struct Tex { GLuint id = 0; float w = 1, h = 1; GLuint em = 0; };   // em: the LIGHT MAP
     // THE UPLOADED TEXTURES, kept across pool changes and keyed by the pixel
     // STORAGE. A pool change - one character arriving or leaving, which every
     // cutscene hand-over does - must not delete and re-upload EVERY texture,
@@ -1071,7 +1171,8 @@ private:
     // other pixels while the GL texture exists. A NAME would not do: 182
     // names ship with different pixels in different files (CLAUDE.md 6).
     struct Uploaded { GLuint id = 0; int w = 0, h = 0; PixelBuffer keep; bool used = false;
-                      bool packed = false; };   // from the TEXTURE PACK (o3de/texpack.h)
+                      bool packed = false;      // from the TEXTURE PACK (o3de/texpack.h)
+                      GLuint em = 0; };         // its light map, 0 for none
     // keyed by the storage AND the size: two slots may share one storage at
     // different sizes, and a key on the storage alone let the second upload
     // delete the texture the first slot still drew with
@@ -1339,6 +1440,16 @@ private:
           pDither_ = -1, pQuant_ = -1;
     GLuint fbo_ = 0, colour_ = 0, depth_ = 0;
     GLuint bayer_ = 0, quad_ = 0, surfTex_ = 0;
+    // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) ------------
+    float  bloom_ = 0.0f;
+    GLuint lightBlack_ = 0;              // the light map of a texture with none
+    GLuint lastEmis_ = 0;
+    std::string bloomFrag_;              // the bloom variant's source, kept for `link`
+    GLuint postProg_ = 0, postSrc_ = 0, glowTex_[2] = {0, 0}, glowFbo_[2] = {0, 0}, lutTex_ = 0;
+    int    postW_ = 0, postH_ = 0, lutN_ = 0;
+    std::vector<unsigned char> lutData_;
+    bool   lutDirty_ = false;
+    void   runPost();
     int surfW_ = 0, surfH_ = 0;
 
     std::vector<Tex> tex_;
@@ -1391,6 +1502,106 @@ GlesRenderer::~GlesRenderer() {
     if (shFbo_) glDeleteFramebuffers(1, &shFbo_);
     if (shProg_) glDeleteProgram(shProg_);
     if (shPosed_) glDeleteProgram(shPosed_);
+    if (postProg_) glDeleteProgram(postProg_);
+    if (postSrc_) deleteTextures(1, &postSrc_);
+    for (int k = 0; k < 2; ++k) {
+        if (glowTex_[k]) deleteTextures(1, &glowTex_[k]);
+        if (glowFbo_[k]) glDeleteFramebuffers(1, &glowFbo_[k]);
+    }
+    if (lutTex_) deleteTextures(1, &lutTex_);
+    if (lightBlack_) deleteTextures(1, &lightBlack_);
+}
+
+// THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): `colour_` copied to
+// `postSrc_`; the glow down / blur / blur at a quarter; the final pass back
+// into `colour_` (`fbo_`) with the glow screen-blended and the grade applied.
+void GlesRenderer::runPost() {
+    if (!postProg_) {
+        postProg_ = link(kPostVert, kPostFrag, {{0, "aPos"}});
+        if (!postProg_) {
+            std::printf("gles: the post-pass program did not build - bloom and grade refused\n");
+            bloom_ = 0.0f; lutN_ = 0;
+            return;
+        }
+        std::printf("gles: the remaster's post-pass - bloom %.2f, grade %s\n",
+                    static_cast<double>(bloom_), lutN_ > 1 ? "on" : "off");
+        omk::event("remaster.post", {{"backend", "gles"}, {"bloom", static_cast<double>(bloom_)},
+                                     {"grade", lutN_}});
+    }
+    const auto texture = [](GLuint& id, int w, int h) {
+        if (!id) glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    };
+    const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
+    if (postW_ != rw_ || postH_ != rh_) {
+        texture(postSrc_, rw_, rh_);
+        for (int k = 0; k < 2; ++k) {
+            texture(glowTex_[k], gw, gh);
+            if (!glowFbo_[k]) glGenFramebuffers(1, &glowFbo_[k]);
+            glBindFramebuffer(GL_FRAMEBUFFER, glowFbo_[k]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glowTex_[k], 0);
+        }
+        postW_ = rw_; postH_ = rh_;
+    }
+    if (lutDirty_ && lutN_ > 1) {
+        if (!lutTex_) glGenTextures(1, &lutTex_);
+        glBindTexture(GL_TEXTURE_2D, lutTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, lutN_ * lutN_, lutN_, 0, GL_RGBA, GL_UNSIGNED_BYTE, lutData_.data());
+        lutDirty_ = false;
+    }
+    // the frame, copied out of the world target
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    glBindTexture(GL_TEXTURE_2D, postSrc_);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, rw_, rh_);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glUseProgram(postProg_);
+    curProg_ = postProg_;
+    const GLint lSrc = glGetUniformLocation(postProg_, "uSrc"), lGlow = glGetUniformLocation(postProg_, "uGlow"),
+                lLut = glGetUniformLocation(postProg_, "uLut"), lInv = glGetUniformLocation(postProg_, "uSrcInv"),
+                lDir = glGetUniformLocation(postProg_, "uDir"), lStr = glGetUniformLocation(postProg_, "uStrength"),
+                lMode = glGetUniformLocation(postProg_, "uMode"), lN = glGetUniformLocation(postProg_, "uLutN");
+    glUniform1i(lSrc, 0); glUniform1i(lGlow, 1); glUniform1i(lLut, 2);
+    glUniform1f(lStr, bloom_);
+    glUniform1f(lN, lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_);
+    for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    const auto pass = [&](GLuint fb, int w, int h, GLuint src, int srcW, int srcH, float dx, float dy, int mode) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fb);
+        glViewport(0, 0, w, h);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, src);
+        glUniform2f(lInv, 1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH));
+        glUniform2f(lDir, dx, dy);
+        glUniform1i(lMode, mode);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    };
+    if (bloom_ > 0.0f) {
+        pass(glowFbo_[0], gw, gh, postSrc_, rw_, rh_, 0, 0, 0);
+        pass(glowFbo_[1], gw, gh, glowTex_[0], gw, gh, 1, 0, 1);
+        pass(glowFbo_[0], gw, gh, glowTex_[1], gw, gh, 0, 1, 1);
+    }
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, glowTex_[0]);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, lutTex_ ? lutTex_ : glowTex_[0]);
+    glActiveTexture(GL_TEXTURE0);
+    pass(fbo_, rw_, rh_, postSrc_, rw_, rh_, 0, 0, 2);
+    glEnable(GL_DEPTH_TEST);
+    forgetState();
+    lastEmis_ = 0;
 }
 
 bool GlesRenderer::init(int w, int h) {
@@ -1424,12 +1635,15 @@ bool GlesRenderer::init(int w, int h) {
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
     bool enhanced = false;
+    if (bloom_ > 0.0f) bloomFrag_ = bloomVariant(wantPixLights_ || wantShadowMap_ ? kSceneFragX : kSceneFrag);
+    const char* const sceneFragX = bloom_ > 0.0f ? bloomFrag_.c_str() : kSceneFragX;
+    const char* const sceneFrag = bloom_ > 0.0f ? bloomFrag_.c_str() : kSceneFrag;
     if (wantPixLights_ || wantShadowMap_) {
-        prog_ = link(kSceneVertX, kSceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
+        prog_ = link(kSceneVertX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                                 {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
                                                 {kAttrNormal, "aNormal"}});
         if (prog_) {
-            posed_ = link(kPosedVertX, kSceneFragX,
+            posed_ = link(kPosedVertX, sceneFragX,
                           {{kAttrPos, "aPos"}, {kAttrUV, "aUV"}, {kAttrCol, "aCol"},
                            {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
             if (!posed_) std::fprintf(stderr, "gles: no enhanced posing program - bodies are posed on the CPU\n");
@@ -1440,7 +1654,7 @@ bool GlesRenderer::init(int w, int h) {
         }
     }
     if (!prog_)
-        prog_ = link(kSceneVert, kSceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
+        prog_ = link(kSceneVert, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                               {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"}});
     present_ = link(kPresentVert, kPresentFrag, {{0, "aPos"}});
     if (!prog_ || !present_) return false;
@@ -1451,10 +1665,21 @@ bool GlesRenderer::init(int w, int h) {
     if (!enhanced) {
         // at start with the others, for the shader cache (above); a context
         // that cannot build it simply poses on the CPU
-        posed_ = link(kPosedVert, kSceneFrag,
+        posed_ = link(kPosedVert, sceneFrag,
                       {{kAttrPos, "aPos"}, {kAttrUV, "aUV"}, {kAttrCol, "aCol"},
                        {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
         if (!posed_) std::fprintf(stderr, "gles: no posing program - bodies are posed on the CPU\n");
+    }
+    if (bloom_ > 0.0f) {
+        // the light maps on unit 3 (0 the texture, 1 the present's matrix, 2 the shadow map)
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1i(glGetUniformLocation(p, "uEmis"), 3);
+        }
+        glUseProgram(0);
+        std::printf("gles: bloom %.2f - the scene programs' bloom variant (light maps on unit 3)\n",
+                    static_cast<double>(bloom_));
     }
     uMvp_       = glGetUniformLocation(prog_, "uMvp");
     uTexSize_   = glGetUniformLocation(prog_, "uTexSize");
@@ -1890,7 +2115,7 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
     for (auto& [key, u] : uploaded_) u.used = false;
     tex_.assign(t.size(), Tex{});
     std::vector<unsigned char> px;
-    int reused = 0, fresh = 0, packed = 0;
+    int reused = 0, fresh = 0, packed = 0, lit = 0;
     // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened.
     // A replacement is uploaded at its own size and `out.w`/`out.h` stay the
     // ORIGINAL's: the UVs are in its texels and `texSize` divides by it.
@@ -1920,6 +2145,7 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         if (hit != uploaded_.end()) {
             hit->second.used = true;
             out.id = hit->second.id;
+            out.em = hit->second.em;
             packed += hit->second.packed ? 1 : 0;
             ++reused;
             continue;
@@ -1939,6 +2165,23 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
             s.toRgbaKeyed(px.data());
         }
         packed += fromPack ? 1 : 0;
+        // ...and its LIGHT MAP, with the bloom on and the pack holding one
+        GLuint em = 0;
+        if (bloom_ > 0.0f && pack.active() && !reps[i].emissive.empty()) {
+            const omk::PackImage& rep = reps[i];
+            std::vector<unsigned char> e(rep.emissive.size() * 4);
+            for (std::size_t q = 0; q < rep.emissive.size(); ++q)
+                e[4 * q] = e[4 * q + 1] = e[4 * q + 2] = rep.emissive[q], e[4 * q + 3] = 255;
+            glGenTextures(1, &em);
+            glBindTexture(GL_TEXTURE_2D, em);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rep.ew, rep.eh, 0, GL_RGBA, GL_UNSIGNED_BYTE, e.data());
+            ++lit;
+        }
+        out.em = em;
         // REPEAT is the engine's addressing (the sampler Vulkan builds), and
         // GLES2 allows it only on power-of-two textures. All 2534 shipped under
         // MESHES are (max 256x256); a texture that is not
@@ -1966,7 +2209,7 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
                      GL_UNSIGNED_BYTE, px.data());
         if (mips) glGenerateMipmap(GL_TEXTURE_2D);
 gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
-        uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true, fromPack};
+        uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true, fromPack, em};
         ++fresh;
     }
     // what no slot of this pool uses any more leaves the GPU
@@ -1974,6 +2217,7 @@ gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
     for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
         if (it->second.used) { ++it; continue; }
         deleteTextures(1, &it->second.id);
+        if (it->second.em) deleteTextures(1, &it->second.em);
         it = uploaded_.erase(it);
         ++dropped;
     }
@@ -1981,7 +2225,7 @@ gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
                 t.size(), reused, fresh, dropped, glesClockMs() - t0);
     if (pack.active())
         omk::event("texpack.pool", {{"backend", "gles"}, {"textures", static_cast<long>(t.size())},
-                                    {"replaced", packed}});
+                                    {"replaced", packed}, {"lights", lit}});
 }
 
 // A SMALL WRITE INTO THE BOUND ARRAY BUFFER. On a host it is glBufferSubData.
@@ -2874,6 +3118,27 @@ void GlesRenderer::submit(const Draw& d) {
         ds_.tex = t.id;
         ds_.texValid = true;
     }
+    // THE BLOOM's light map, on unit 3 - only with the bloom on
+    if (bloom_ > 0.0f) {
+        if (!lightBlack_) {
+            const unsigned char z[4] = {0, 0, 0, 255};
+            glGenTextures(1, &lightBlack_);
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, lightBlack_);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, z);
+            glActiveTexture(GL_TEXTURE0);
+            lastEmis_ = 0;
+        }
+        const GLuint em = t.em ? t.em : lightBlack_;
+        if (em != lastEmis_) {
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, em);
+            glActiveTexture(GL_TEXTURE0);
+            lastEmis_ = em;
+        }
+    }
     if (set(!uv || U.texW != t.w || U.texH != t.h)) {
         glUniform2f(L.texSize, t.w, t.h);
         U.texW = t.w; U.texH = t.h;
@@ -3008,6 +3273,7 @@ void GlesRenderer::end() {
         glBlitFramebuffer(0, 0, rw_, rh_, 0, 0, rw_, rh_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 #endif
+    if (bloom_ > 0.0f || lutN_ > 1) runPost();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     dirty_ = true;
     // Per geometry, once, as the Vulkan backend reports it.

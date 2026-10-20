@@ -58,6 +58,7 @@ std::string textureKeyHex(std::uint64_t key) {
 
 bool TexturePack::open(const std::string& dir) {
     files_.clear();
+    lights_.clear();
     refused_.clear();
     greyOf_.clear();
     opened_ = false;
@@ -68,11 +69,13 @@ bool TexturePack::open(const std::string& dir) {
         return false;
     }
     for (const auto& name : hostfs::listNames(dir)) {
-        if (name.size() != 20) continue;
-        const std::string ext = name.substr(16);
+        if (name.size() != 20 && name.size() != 22) continue;
+        const std::string ext = name.substr(name.size() - 4);
         if (ext != ".png" && ext != ".PNG") continue;
+        const bool light = name.size() == 22;
+        if (light && name.compare(16, 2, "_e") != 0) continue;
         std::uint64_t k;
-        if (hexKey(name.substr(0, 16), k)) files_[k] = dir + "/" + name;
+        if (hexKey(name.substr(0, 16), k)) (light ? lights_ : files_)[k] = dir + "/" + name;
     }
     opened_ = true;
     return true;
@@ -89,20 +92,23 @@ bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba,
 
 std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts) const {
     std::vector<PackImage> out(ts.size());
-    if (!opened_ || files_.empty()) return out;
+    if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
-    struct Job { std::size_t at; std::uint64_t key; const std::string* file; std::string why; bool grey; };
+    struct Job { std::size_t at; std::uint64_t key; const std::string* file; const std::string* light;
+                 std::string why; bool grey; };
     std::vector<Job> jobs;
     for (std::size_t i = 0; i < ts.size(); ++i) {
         const Texture* t = ts[i];
         if (!t || !t->hasPixels()) continue;
         std::uint64_t key = textureKey(*t);
         bool grey = false;
-        if (!files_.count(key))
+        if (!files_.count(key) && !lights_.count(key))
             if (const auto g = greyOf_.find(key); g != greyOf_.end()) { key = g->second; grey = true; }
         const auto it = files_.find(key);
-        if (it == files_.end() || refused_.count(key)) continue;
-        jobs.push_back({i, key, &it->second, {}, grey});
+        const auto lt = lights_.find(key);
+        if ((it == files_.end() && lt == lights_.end()) || refused_.count(key)) continue;
+        jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
+                        lt != lights_.end() ? &lt->second : nullptr, {}, grey});
     }
     // the reads and the decodes, on the pool: each job writes only its own
     // result and its own reason
@@ -110,6 +116,21 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         for (std::size_t j = from; j < to; ++j) {
             Job& jb = jobs[j];
             const Texture& t = *ts[jb.at];
+            PackImage& o = out[jb.at];
+            if (jb.light) {
+                // the light map: its red channel, any size the rule allows
+                const auto lb = readWholeFile(*jb.light);
+                PngImage li;
+                std::string lwhy;
+                if (!lb.empty() &&
+                    decodePng(reinterpret_cast<const std::uint8_t*>(lb.data()), lb.size(), li, &lwhy) &&
+                    powerOfTwoFactor(li.w, t.width) && powerOfTwoFactor(li.h, t.height)) {
+                    o.ew = li.w; o.eh = li.h;
+                    o.emissive.resize(static_cast<std::size_t>(li.w) * li.h);
+                    for (std::size_t q = 0; q < o.emissive.size(); ++q) o.emissive[q] = li.rgba[4 * q];
+                }
+            }
+            if (!jb.file) continue;
             const auto bytes = readWholeFile(*jb.file);
             PngImage img;
             if (bytes.empty()) { jb.why = "unreadable"; continue; }
@@ -130,13 +151,12 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                     if (y == 0) p[k + 3] = 0;
                 }
             }
-            PackImage& o = out[jb.at];
             o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
         }
     });
     // the refusals, here, once per key
     for (const Job& jb : jobs) {
-        if (out[jb.at].ok) continue;
+        if (out[jb.at].ok || !jb.file) continue;
         std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", jb.file->c_str(),
                      jb.why.c_str(), ts[jb.at]->name.c_str());
         refused_.insert(jb.key);
@@ -147,7 +167,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
 void TexturePack::aliasGrey(const Texture& colour, const Texture& grey) {
     if (!opened_ || !colour.hasPixels() || !grey.hasPixels()) return;
     const std::uint64_t c = textureKey(colour);
-    if (files_.count(c)) greyOf_[textureKey(grey)] = c;
+    if (files_.count(c) || lights_.count(c)) greyOf_[textureKey(grey)] = c;
 }
 
 TexturePack& texturePack() {
@@ -157,11 +177,12 @@ TexturePack& texturePack() {
 
 bool openTexturePack(const std::string& dir) {
     if (!texturePack().open(dir)) return false;
-    std::printf("texture pack: %s - %zu replacement textures. A REMASTER feature: it "
+    std::printf("texture pack: %s - %zu replacement textures, %zu light maps. A REMASTER feature: it "
                 "replaces the shipped pixels, drawn by Vulkan and GLES only (the software "
                 "reference draws what the original drew)\n",
-                dir.c_str(), texturePack().size());
-    event("texpack.open", {{"dir", dir}, {"entries", static_cast<long>(texturePack().size())}});
+                dir.c_str(), texturePack().size(), texturePack().lightMaps());
+    event("texpack.open", {{"dir", dir}, {"entries", static_cast<long>(texturePack().size())},
+                           {"lights", static_cast<long>(texturePack().lightMaps())}});
     return true;
 }
 

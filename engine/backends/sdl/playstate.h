@@ -94,6 +94,8 @@ struct PlayState {
     int & frameRateFlag = opt.frameRateFlag;
     int & smoothAnimFlag = opt.smoothAnimFlag;
     std::string & texturePackFlag = opt.texturePackFlag;
+    float & bloomFlag = opt.bloomFlag;
+    std::string & gradeFlag = opt.gradeFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -683,6 +685,10 @@ struct PlayState {
     bool worldReady{};
     std::array<WorldSlot, 2> worldSlots{};
     std::string worldSet{};   // the ACTIVE slot's stem - the set under his feet
+    // THE REMASTER's post-pass (`todo/remaster.md` step 2): the bloom's
+    // strength (0 off) and the set the city grade was last chosen for
+    float bloomStrength{};
+    std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie
     Sky sky{};

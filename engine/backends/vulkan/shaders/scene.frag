@@ -52,9 +52,15 @@ layout(push_constant) uniform Push {
     int   texScaled;    // 104
     float texScaleU;    // 108
     float texScaleV;    // 112
+    // THE BLOOM (`post.frag`): 0 off - alpha 1, as always; 1 on - the alpha
+    // is this texel's LIGHT, the texture pack's light map (binding 1)
+    int   bloomMode;    // 116
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
+// the texture's LIGHT MAP (`o3de/texpack.h`), black where the pack has none;
+// read only with the bloom on
+layout(set = 0, binding = 1) uniform sampler2D emis;
 
 // ---- the MAPPED shadow, `todo/enhancements.md` 6 - an ENHANCEMENT ----------
 //
@@ -199,5 +205,5 @@ void main() {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
     }
-    outColour = vec4(c, 1.0);
+    outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
 }

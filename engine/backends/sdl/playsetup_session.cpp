@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "o3de/colourgrade.h"
 #include "o3de/texpack.h"
 
 int PlayState::setupSession() {
@@ -181,6 +182,17 @@ int PlayState::setupSession() {
     {
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag : settings.texturePack;
         if (!packDir.empty()) omk::openTexturePack(packDir);
+        // ...and its post-pass: the bloom from the pack's light maps, the
+        // grade per city (`o3de/colourgrade.h`), each its own option
+        bloomStrength = bloomFlag >= 0.0f ? bloomFlag : settings.bloom;
+        if (bloomStrength > 0.0f)
+            std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
+                        "(%zu of them), drawn by Vulkan and GLES only\n",
+                        static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
+        const std::string gradeDir = !gradeFlag.empty() ? gradeFlag : settings.grade;
+        if (!gradeDir.empty() && omk::cityGrades().open(gradeDir))
+            std::printf("grade: %s - %zu city grades, a REMASTER feature, drawn by Vulkan and GLES only; "
+                        "off while the greyscale bank is on\n", gradeDir.c_str(), omk::cityGrades().size());
     }
     if (smoothAnim)
         std::printf("animation: smooth - an ENHANCEMENT: bodies are slerped between "

@@ -102,6 +102,11 @@ const uint32_t kPresentFrag[] =
 #include "present.frag.inc"
 ;
 struct PresentPush { int32_t vy, vh, w, dither, ss; };
+// THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): bloom and grade.
+const uint32_t kPostFrag[] =
+#include "post.frag.inc"
+;
+struct PostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; };
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -195,8 +200,11 @@ struct Push {
     int32_t texScaled; // 104
     float texScaleU;   // 108
     float texScaleV;   // 112
+    // THE BLOOM (`todo/remaster.md` step 2, `post.frag`): 0 off; 1 on - the
+    // alpha written is the texel's LIGHT, from the pack's light map
+    int32_t bloomMode; // 116
 };
-static_assert(sizeof(Push) == 116, "the push block is 116 bytes");
+static_assert(sizeof(Push) == 120, "the push block is 120 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -259,6 +267,24 @@ public:
     bool setAnisotropy(int n) override {
         if (dev_ != VK_NULL_HANDLE) return false;
         aniso_ = n < 1 ? 1 : n > 16 ? 16 : n;
+        return true;
+    }
+    // THE BLOOM's strength, 0 off; any time - it changes no pipeline
+    bool setBloom(float s) override { bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s; return true; }
+    // THE GRADE: `rgb` the LUT's N^3 entries, red fastest (a .cube's order),
+    // 0..1; n 0 turns it off. Any time - uploaded before the next frame's pass.
+    bool setGrade(const float* rgb, int n) override {
+        if (!rgb || n < 2) { lutN_ = 0; return true; }
+        lutData_.assign(static_cast<std::size_t>(n) * n * n * 4, 255);
+        for (int b = 0; b < n; ++b)
+            for (int g = 0; g < n; ++g)
+                for (int r = 0; r < n; ++r) {
+                    const float* src = rgb + 3 * ((static_cast<std::size_t>(b) * n + g) * n + r);
+                    unsigned char* d = &lutData_[4 * (static_cast<std::size_t>(g) * n * n + b * n + r)];
+                    for (int c = 0; c < 3; ++c)
+                        d[c] = static_cast<unsigned char>(std::clamp(src[c], 0.0f, 1.0f) * 255.0f + 0.5f);
+                }
+        lutN_ = n; lutDirty_ = true;
         return true;
     }
     bool setSupersample(int n) override {
@@ -383,9 +409,14 @@ private:
         // a TEXTURE PACK replacement's factor over the original (texpack.h)
         float su = 1.0f, sv = 1.0f;
         bool packed = false;
+        // its LIGHT MAP, the pack's `<key>_e.png` (binding 1; `lightBlack_`
+        // when there is none)
+        VkImage emImg = VK_NULL_HANDLE; VkDeviceMemory emMem = VK_NULL_HANDLE;
+        VkImageView emView = VK_NULL_HANDLE;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
+    Tex              lightBlack_;         // the light map of a texture that has none
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
     struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
@@ -513,6 +544,40 @@ private:
     VkBuffer         presRead_ = VK_NULL_HANDLE; VkDeviceMemory presReadMem_ = VK_NULL_HANDLE;
     bool makePresentPass();
     bool runPresentPass(int vy, int vh);
+
+    // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -----------
+    // The BLOOM from the texture pack's light maps and the city's colour
+    // GRADE, after the scene's render pass and before the readback and the
+    // present pass, so every way a frame leaves sees them. `colour_` is
+    // copied to `postSrc_`; two quarter-size half-float images take the glow
+    // (down, blur, blur); one pass writes the finished frame back into
+    // `colour_`. Made on first use for the target's size; `resize` drops it.
+    float            bloom_ = 0.0f;
+    VkImage          postSrc_ = VK_NULL_HANDLE;  VkDeviceMemory postSrcMem_ = VK_NULL_HANDLE;
+    VkImageView      postSrcView_ = VK_NULL_HANDLE;
+    VkImage          glowImg_[2] = {};  VkDeviceMemory glowMem_[2] = {};
+    VkImageView      glowView_[2] = {};
+    VkRenderPass     glowPass_ = VK_NULL_HANDLE, finalPass_ = VK_NULL_HANDLE;
+    VkFramebuffer    glowFb_[2] = {};   VkFramebuffer finalFb_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout postDsl_ = VK_NULL_HANDLE;
+    VkDescriptorPool postPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet  postDs_[4] = {};   // down, blur H, blur V, final
+    VkSampler        postSampler_ = VK_NULL_HANDLE;
+    VkPipelineLayout postPlo_ = VK_NULL_HANDLE;
+    VkPipeline       glowPipe_ = VK_NULL_HANDLE, finalPipe_ = VK_NULL_HANDLE;
+    int              glowW_ = 0, glowH_ = 0;
+    // the GRADE: an N*N x N RGBA8 strip, N 0 for none
+    int              lutN_ = 0;
+    std::vector<unsigned char> lutData_;
+    bool             lutDirty_ = false;
+    VkImage          lutImg_ = VK_NULL_HANDLE;  VkDeviceMemory lutMem_ = VK_NULL_HANDLE;
+    VkImageView      lutView_ = VK_NULL_HANDLE;
+    bool makePost();
+    void killPost();
+    void killLut();
+    bool uploadLut();
+    void bindPostSets();
+    void recordPost(VkCommandBuffer cb);
     bool presentImage(VkImage src, int sw, int sh);
 
 public:
@@ -952,12 +1017,16 @@ bool VulkanRenderer::makeTarget() {
 }
 
 bool VulkanRenderer::makePipelines() {
-    VkDescriptorSetLayoutBinding b{};
-    b.binding = 0; b.descriptorCount = 1;
-    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // binding 0 the texture, binding 1 its LIGHT MAP (the remaster's bloom;
+    // black unless the texture pack has one, read only with the bloom on)
+    VkDescriptorSetLayoutBinding b2tex[2]{};
+    for (uint32_t k = 0; k < 2; ++k) {
+        b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
+        b2tex[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b2tex[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
     VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli.bindingCount = 1; dli.pBindings = &b;
+    dli.bindingCount = 2; dli.pBindings = b2tex;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &dsl_), "descriptorSetLayout");
 
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
@@ -1222,7 +1291,8 @@ bool VulkanRenderer::makePipelines() {
 
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
-    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 130},
+    // two samplers a texture's set since the light map (binding 1)
+    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 260},
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1483,6 +1553,7 @@ bool VulkanRenderer::resize(int w, int h) {
     if (presPass_) { vkDestroyRenderPass(dev_, presPass_, nullptr); presPass_ = VK_NULL_HANDLE; }
     img(presView_, presImg_, presMem_);
     buf(presRead_, presReadMem_);
+    killPost();   // it reads `colour_` and is sized by the target
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     srcW_ = rw_; srcH_ = rh_;
@@ -1836,6 +1907,347 @@ bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rg
     return true;
 }
 
+// ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -------------------
+//
+// `colour_` -> copy `postSrc_` -> [down to glow A, blur A -> B, blur B -> A]
+// -> final: `postSrc_` + glow A screen-blended, then the grade, into `colour_`.
+// The bracket runs only with the bloom on; the grade only with a LUT.
+bool VulkanRenderer::makePost() {
+    const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
+    if (finalPipe_ != VK_NULL_HANDLE && gw == glowW_ && gh == glowH_) return true;
+    killPost();
+    glowW_ = gw; glowH_ = gh;
+    const auto image = [&](int w, int h, VkFormat f, VkImageUsageFlags use, VkImage& img,
+                           VkDeviceMemory& mem, VkImageView& view, const char* what) {
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = f;
+        ii.extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+        ii.mipLevels = 1; ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = use; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(dev_, &ii, nullptr, &img) != VK_SUCCESS) return false;
+        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (vkAllocateMemory(dev_, &ai, nullptr, &mem) != VK_SUCCESS) return false;
+        OMK_GPU_ALLOC(what, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
+        vkBindImageMemory(dev_, img, mem, 0);
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        return vkCreateImageView(dev_, &vi, nullptr, &view) == VK_SUCCESS;
+    };
+    const VkFormat half = VK_FORMAT_R16G16B16A16_SFLOAT;
+    if (!image(rw_, rh_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               postSrc_, postSrcMem_, postSrcView_, "post copy") ||
+        !image(gw, gh, half, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               glowImg_[0], glowMem_[0], glowView_[0], "glow image") ||
+        !image(gw, gh, half, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               glowImg_[1], glowMem_[1], glowView_[1], "glow image")) {
+        std::fprintf(stderr, "vulkan: post-pass images\n");
+        return false;
+    }
+    const auto pass = [&](VkFormat f, VkImageLayout initial, VkImageLayout final_, VkRenderPass& out) {
+        VkAttachmentDescription a{};
+        a.format = f; a.samples = VK_SAMPLE_COUNT_1_BIT;
+        a.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a.initialLayout = initial; a.finalLayout = final_;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rpi.attachmentCount = 1; rpi.pAttachments = &a;
+        rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        return vkCreateRenderPass(dev_, &rpi, nullptr, &out) == VK_SUCCESS;
+    };
+    // every pixel of each target is written, so nothing is loaded
+    if (!pass(half, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, glowPass_) ||
+        !pass(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, finalPass_)) {
+        std::fprintf(stderr, "vulkan: post-pass render passes\n");
+        return false;
+    }
+    for (int k = 0; k < 2; ++k) {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = glowPass_; fi.attachmentCount = 1; fi.pAttachments = &glowView_[k];
+        fi.width = static_cast<uint32_t>(gw); fi.height = static_cast<uint32_t>(gh); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &glowFb_[k]), "glow framebuffer");
+    }
+    {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = finalPass_; fi.attachmentCount = 1; fi.pAttachments = &colourView_;
+        fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &finalFb_), "post framebuffer");
+    }
+    {
+        VkDescriptorSetLayoutBinding b[3]{};
+        for (uint32_t k = 0; k < 3; ++k) {
+            b[k].binding = k; b[k].descriptorCount = 1;
+            b[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        dli.bindingCount = 3; dli.pBindings = b;
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &postDsl_), "post set layout");
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12};
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 4; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &postPool_), "post pool");
+        const VkDescriptorSetLayout l4[4] = {postDsl_, postDsl_, postDsl_, postDsl_};
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = postPool_; ai.descriptorSetCount = 4; ai.pSetLayouts = l4;
+        VKCHECK(vkAllocateDescriptorSets(dev_, &ai, postDs_), "post sets");
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR;
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VKCHECK(vkCreateSampler(dev_, &si, nullptr, &postSampler_), "post sampler");
+        bindPostSets();
+    }
+    {
+        VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PostPush)};
+        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pli.setLayoutCount = 1; pli.pSetLayouts = &postDsl_;
+        pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+        VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &postPlo_), "post pipeline layout");
+        const auto module = [&](const uint32_t* code, size_t bytes) {
+            VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            si.codeSize = bytes; si.pCode = code;
+            VkShaderModule m = VK_NULL_HANDLE;
+            vkCreateShaderModule(dev_, &si, nullptr, &m);
+            return m;
+        };
+        VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
+        VkShaderModule qf = module(kPostFrag, sizeof(kPostFrag));
+        if (!qv || !qf) { std::fprintf(stderr, "vulkan: post shader module\n"); return false; }
+        VkPipelineShaderStageCreateInfo st[2]{};
+        st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+        st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                 VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        const VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dsi.dynamicStateCount = 2; dsi.pDynamicStates = dyn;
+        VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+        vps.viewportCount = 1; vps.scissorCount = 1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineColorBlendAttachmentState cba{};
+        cba.blendEnable = VK_FALSE; cba.colorWriteMask = 0xF;
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &cba;
+        for (int fin = 0; fin < 2; ++fin) {
+            VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            gp.stageCount = 2; gp.pStages = st;
+            gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+            gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+            gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dsi;
+            gp.layout = postPlo_; gp.renderPass = fin ? finalPass_ : glowPass_;
+            if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr,
+                                          fin ? &finalPipe_ : &glowPipe_) != VK_SUCCESS) {
+                std::fprintf(stderr, "vulkan: post pipeline\n");
+                vkDestroyShaderModule(dev_, qv, nullptr); vkDestroyShaderModule(dev_, qf, nullptr);
+                return false;
+            }
+        }
+        vkDestroyShaderModule(dev_, qv, nullptr);
+        vkDestroyShaderModule(dev_, qf, nullptr);
+    }
+    std::printf("vulkan: the remaster's post-pass - bloom %.2f, grade %s, glow images %dx%d\n",
+                static_cast<double>(bloom_), lutN_ > 1 ? "on" : "off", gw, gh);
+    omk::event("remaster.post", {{"backend", "vulkan"}, {"bloom", static_cast<double>(bloom_)},
+                                 {"grade", lutN_}, {"glow_w", gw}, {"glow_h", gh}});
+    return true;
+}
+
+// The four sets: what each pass samples. A binding a pass does not read is
+// still bound to a valid image (the copy), as Vulkan requires.
+void VulkanRenderer::bindPostSets() {
+    if (!postPool_) return;
+    const VkImageView lut = lutView_ ? lutView_ : postSrcView_;
+    const VkImageView views[4][3] = {{postSrcView_, glowView_[0], lut},     // down
+                                     {glowView_[0], glowView_[0], lut},     // blur H: A -> B
+                                     {glowView_[1], glowView_[0], lut},     // blur V: B -> A
+                                     {postSrcView_, glowView_[0], lut}};    // final
+    for (int s = 0; s < 4; ++s)
+        for (uint32_t k = 0; k < 3; ++k) {
+            VkDescriptorImageInfo ii{postSampler_, views[s][k], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            wr.dstSet = postDs_[s]; wr.dstBinding = k; wr.descriptorCount = 1;
+            wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
+            vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        }
+}
+
+void VulkanRenderer::killPost() {
+    if (!dev_) return;
+    if (finalPipe_) vkDestroyPipeline(dev_, finalPipe_, nullptr);
+    if (glowPipe_) vkDestroyPipeline(dev_, glowPipe_, nullptr);
+    if (postPlo_) vkDestroyPipelineLayout(dev_, postPlo_, nullptr);
+    if (postSampler_) vkDestroySampler(dev_, postSampler_, nullptr);
+    if (postPool_) vkDestroyDescriptorPool(dev_, postPool_, nullptr);
+    if (postDsl_) vkDestroyDescriptorSetLayout(dev_, postDsl_, nullptr);
+    if (finalFb_) vkDestroyFramebuffer(dev_, finalFb_, nullptr);
+    for (int k = 0; k < 2; ++k) {
+        if (glowFb_[k]) vkDestroyFramebuffer(dev_, glowFb_[k], nullptr);
+        if (glowView_[k]) vkDestroyImageView(dev_, glowView_[k], nullptr);
+        if (glowImg_[k]) vkDestroyImage(dev_, glowImg_[k], nullptr);
+        if (glowMem_[k]) freeDeviceMemory(glowMem_[k]);
+        glowFb_[k] = VK_NULL_HANDLE; glowView_[k] = VK_NULL_HANDLE;
+        glowImg_[k] = VK_NULL_HANDLE; glowMem_[k] = VK_NULL_HANDLE;
+    }
+    if (postSrcView_) vkDestroyImageView(dev_, postSrcView_, nullptr);
+    if (postSrc_) vkDestroyImage(dev_, postSrc_, nullptr);
+    if (postSrcMem_) freeDeviceMemory(postSrcMem_);
+    if (finalPass_) vkDestroyRenderPass(dev_, finalPass_, nullptr);
+    if (glowPass_) vkDestroyRenderPass(dev_, glowPass_, nullptr);
+    finalPipe_ = glowPipe_ = VK_NULL_HANDLE; postPlo_ = VK_NULL_HANDLE;
+    postSampler_ = VK_NULL_HANDLE; postPool_ = VK_NULL_HANDLE; postDsl_ = VK_NULL_HANDLE;
+    finalFb_ = VK_NULL_HANDLE; finalPass_ = glowPass_ = VK_NULL_HANDLE;
+    postSrcView_ = VK_NULL_HANDLE; postSrc_ = VK_NULL_HANDLE; postSrcMem_ = VK_NULL_HANDLE;
+    for (auto& d : postDs_) d = VK_NULL_HANDLE;
+    glowW_ = glowH_ = 0;
+}
+
+void VulkanRenderer::killLut() {
+    if (!dev_) return;
+    if (lutView_) vkDestroyImageView(dev_, lutView_, nullptr);
+    if (lutImg_) vkDestroyImage(dev_, lutImg_, nullptr);
+    if (lutMem_) freeDeviceMemory(lutMem_);
+    lutView_ = VK_NULL_HANDLE; lutImg_ = VK_NULL_HANDLE; lutMem_ = VK_NULL_HANDLE;
+}
+
+// The grade's strip onto the device, on its own one-shot command buffer -
+// called between the scene's render pass and the post-pass, never inside one.
+bool VulkanRenderer::uploadLut() {
+    lutDirty_ = false;
+    vkDeviceWaitIdle(dev_);
+    killLut();
+    const int w = lutN_ * lutN_, h = lutN_;
+    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(dev_, &ii, nullptr, &lutImg_) != VK_SUCCESS) return false;
+    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, lutImg_, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(dev_, &ai, nullptr, &lutMem_) != VK_SUCCESS) return false;
+    OMK_GPU_ALLOC("grade lut", omk::prof::gpuKey(omk::prof::kVkMemory, lutMem_), ai.allocationSize);
+    vkBindImageMemory(dev_, lutImg_, lutMem_, 0);
+    VkBuffer sb; VkDeviceMemory sm;
+    const VkDeviceSize bytes = lutData_.size();
+    if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sb, sm))
+        return false;
+    void* p = nullptr;
+    vkMapMemory(dev_, sm, 0, bytes, 0, &p);
+    std::memcpy(p, lutData_.data(), lutData_.size());
+    vkUnmapMemory(dev_, sm);
+    VkCommandBuffer cb = oneShotBegin();
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = lutImg_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    VkBufferImageCopy cp{};
+    cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.imageExtent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
+    vkCmdCopyBufferToImage(cb, sb, lutImg_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    oneShotEnd(cb);
+    vkDestroyBuffer(dev_, sb, nullptr);
+    freeDeviceMemory(sm);
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = lutImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (vkCreateImageView(dev_, &vi, nullptr, &lutView_) != VK_SUCCESS) return false;
+    bindPostSets();
+    return true;
+}
+
+void VulkanRenderer::recordPost(VkCommandBuffer cb) {
+    if (!makePost()) return;
+    if (lutDirty_ && lutN_ > 1 && !uploadLut()) lutN_ = 0;
+    const auto barrier = [&](VkImage img, VkImageLayout from, VkImageLayout to, VkAccessFlags srcA,
+                             VkAccessFlags dstA, VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from; b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = img; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    const VkPipelineStageFlags OUT = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               FRAG = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                               XFER = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkAccessFlags W = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, R = VK_ACCESS_SHADER_READ_BIT;
+    // the scene's frame, copied: the final pass rewrites `colour_` from it
+    barrier(colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            W, VK_ACCESS_TRANSFER_READ_BIT, OUT, XFER);
+    barrier(postSrc_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, XFER);
+    VkImageCopy ic{};
+    ic.srcSubresource = ic.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    ic.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
+    vkCmdCopyImage(cb, colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, postSrc_,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
+    barrier(postSrc_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, R, XFER, FRAG);
+    const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pipe, int w, int h,
+                         VkDescriptorSet ds, int srcW, int srcH, float dx, float dy, int mode) {
+        VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderArea = {{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}};
+        vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        const VkViewport vp{0, 0, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f};
+        const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(w), static_cast<uint32_t>(h)}};
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        vkCmdSetScissor(cb, 0, 1, &sc);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &ds, 0, nullptr);
+        const PostPush p{{1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h)},
+                         {1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH)},
+                         {dx, dy}, bloom_, mode, lutN_ > 1 ? lutN_ : 0};
+        vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof p, &p);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb);
+    };
+    if (bloom_ > 0.0f) {
+        run(glowPass_, glowFb_[0], glowPipe_, glowW_, glowH_, postDs_[0], rw_, rh_, 0, 0, 0);
+        barrier(glowImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+        run(glowPass_, glowFb_[1], glowPipe_, glowW_, glowH_, postDs_[1], glowW_, glowH_, 1, 0, 1);
+        barrier(glowImg_[1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+        run(glowPass_, glowFb_[0], glowPipe_, glowW_, glowH_, postDs_[2], glowW_, glowH_, 0, 1, 1);
+        barrier(glowImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+    } else {
+        // the final pass's glow binding must still be an image in SHADER_READ
+        barrier(glowImg_[0], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                0, R, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, FRAG);
+    }
+    barrier(colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_ACCESS_TRANSFER_READ_BIT, W, XFER, OUT);
+    run(finalPass_, finalFb_, finalPipe_, rw_, rh_, postDs_[3], rw_, rh_, 0, 0, 2);
+}
+
 // Load `colour_` with a `w_ x h_` RGBA8 picture - the probe's way of asking the
 // pass about colours no scene is guaranteed to contain.
 bool VulkanRenderer::probeUpload(const unsigned char* rgba) {
@@ -2020,8 +2432,23 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // A set is freed on its own and only the new ones are allocated -
     // reallocating them all on a per-frame call exhausts the descriptor pool
     // and crashes.
-    if (white_.img == VK_NULL_HANDLE)
+    // binding 1 of a texture's set: its light map, or the shared black one
+    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view) {
+        VkDescriptorImageInfo dii{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr.dstSet = ds; wr.dstBinding = 1; wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr.pImageInfo = &dii;
+        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+    };
+    if (lightBlack_.img == VK_NULL_HANDLE) {
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_);
+        if (lightBlack_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &lightBlack_.ds); lightBlack_.ds = VK_NULL_HANDLE; }
+    }
+    if (white_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
+        bindLight(white_.ds, lightBlack_.view);
+    }
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
     };
@@ -2038,6 +2465,9 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (old.view) vkDestroyImageView(dev_, old.view, nullptr);
         if (old.img)  vkDestroyImage(dev_, old.img, nullptr);
         if (old.mem)  freeDeviceMemory(old.mem);
+        if (old.emView) vkDestroyImageView(dev_, old.emView, nullptr);
+        if (old.emImg)  vkDestroyImage(dev_, old.emImg, nullptr);
+        if (old.emMem)  freeDeviceMemory(old.emMem);
         it = uploaded_.erase(it);
     }
     tex_.assign(t.size(), Tex{});
@@ -2045,6 +2475,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // a texture it holds is uploaded from the pack's pixels at the pack's size
     const omk::TexturePack& pack = omk::texturePack();
     std::vector<omk::PackImage> reps;
+    int lit = 0;
     if (pack.active()) {
         // every texture this pool brings that the device does not hold yet,
         // decoded together on the thread pool
@@ -2071,6 +2502,20 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             } else {
                 upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
             }
+            // ...and its LIGHT MAP, when the pack has one: grey in RGBA, the
+            // red channel what `scene.frag` reads
+            if (pack.active() && !reps[i].emissive.empty()) {
+                const omk::PackImage& rep = reps[i];
+                Tex em;
+                upload([&](unsigned char* d) {
+                    for (std::size_t q = 0; q < rep.emissive.size(); ++q)
+                        d[4 * q] = d[4 * q + 1] = d[4 * q + 2] = rep.emissive[q], d[4 * q + 3] = 255;
+                }, rep.ew, rep.eh, em);
+                if (em.ds) vkFreeDescriptorSets(dev_, dpool_, 1, &em.ds);
+                u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
+                ++lit;
+            }
+            if (u.t.ds) bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
         }
         tex_[i] = hit->second.t;
@@ -2078,7 +2523,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     }
     if (pack.active())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
-                                    {"replaced", packed}});
+                                    {"replaced", packed}, {"lights", lit}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
@@ -2553,6 +2998,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
 
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
+    push_.bloomMode = bloom_ > 0.0f ? 1 : 0;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
         push_.texScaled = bound.packed ? 1 : 0;
@@ -2669,6 +3115,7 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
+    if (bloom_ > 0.0f || lutN_ > 1) recordPost(cb_);
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -2787,6 +3234,8 @@ VulkanRenderer::~VulkanRenderer() {
     omk::removeGeometryListener(&VulkanRenderer::geometryGone, this);
     if (!dev_) return;
     vkDeviceWaitIdle(dev_);
+    killPost();
+    killLut();
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);
@@ -2800,11 +3249,15 @@ VulkanRenderer::~VulkanRenderer() {
         if (t.view) vkDestroyImageView(dev_, t.view, nullptr);
         if (t.img)  vkDestroyImage(dev_, t.img, nullptr);
         if (t.mem)  freeDeviceMemory(t.mem);
+        if (t.emView) vkDestroyImageView(dev_, t.emView, nullptr);
+        if (t.emImg)  vkDestroyImage(dev_, t.emImg, nullptr);
+        if (t.emMem)  freeDeviceMemory(t.emMem);
     };
     for (auto& [key, u] : uploaded_) killTex(u.t);   // the slots' handles are theirs
     uploaded_.clear();
     tex_.clear();
     killTex(white_);
+    killTex(lightBlack_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);

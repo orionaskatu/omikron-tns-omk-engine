@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE TEXTURE PACK'S THREE ENGINE-SIDE HELPERS (`o3de/texpack.h`,
+// THE TEXTURE PACK'S FOUR ENGINE-SIDE HELPERS (`o3de/texpack.h`,
 // `todo/remaster.md` B4) - for `tools/omktexpack.py` and for
 // `verify.py: engine: texture pack`.
 //
@@ -7,6 +7,8 @@
 //                                           "<path> <material> <key> <w>x<h>"
 //     texpack_tool png <in.png> <out.raw>   the engine's PNG reader's answer:
 //                                           int32 w, int32 h, then w*h RGBA8
+//     texpack_tool cube <file.cube>         the engine's .cube reader's answer:
+//                                           "cube N first r g b last r g b", or why not
 //     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
 //                                           each texture greyed as the viewer
 //                                           greys it, aliased, and the pack's
@@ -20,6 +22,7 @@
 // on a file, so the Python tool can read an upscaler's PNG fast and the check
 // can difference the reader against Python's zlib.
 #include "formats/tex3dt.h"
+#include "o3de/colourgrade.h"
 #include "o3de/greybank.h"
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
@@ -131,6 +134,16 @@ int grey(const std::string& pack, const std::string& model) {
     return 0;
 }
 
+int cube(const std::string& path) {
+    omk::ColourLut lut;
+    std::string why;
+    if (!omk::parseCube(omk::readTextFile(path), lut, &why)) { std::printf("refused: %s\n", why.c_str()); return 0; }
+    const std::size_t k = lut.rgb.size() - 3;
+    std::printf("cube %d first %.6f %.6f %.6f last %.6f %.6f %.6f\n", lut.n, lut.rgb[0], lut.rgb[1], lut.rgb[2],
+                lut.rgb[k], lut.rgb[k + 1], lut.rgb[k + 2]);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -138,6 +151,7 @@ int main(int argc, char** argv) {
     if (mode == "keys" && argc == 3) return keys(argv[2]);
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
+    if (mode == "cube" && argc == 3) return cube(argv[2]);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
                          "       texpack_tool png <in.png> <out.raw>\n"
                          "       texpack_tool grey <pack> <model.3DO>\n");

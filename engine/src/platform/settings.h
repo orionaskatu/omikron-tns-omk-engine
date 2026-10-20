@@ -208,6 +208,15 @@ struct Settings {
     // (`o3de/texpack.h`), drawn by the Vulkan and GLES backends. Empty is off.
     std::string texturePack;
     Source texturePackSource = Source::Default;
+    // `bloom = S`: a glow from the pack's LIGHT MAPS (`<key>_e.png`), S the
+    // strength (the previews' 1.3), 0 off. Needs a texture pack with light
+    // maps; Vulkan and GLES only.
+    float  bloom = 0.0f;
+    Source bloomSource = Source::Default;
+    // `grade = DIR`: a colour grade per city, DIR's `.cube` files
+    // (`o3de/colourgrade.h`). Empty is off.
+    std::string grade;
+    Source gradeSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

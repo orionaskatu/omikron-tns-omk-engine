@@ -420,6 +420,14 @@ public:
     // And anisotropic filtering, `n` samples along the footprint's long axis
     // (1 off, up to 16). Only meaningful with mode 2.
     virtual bool setAnisotropy(int /*n*/) { return false; }
+    // THE REMASTER'S POST-PASS (`todo/remaster.md` step 2), both off unless
+    // asked, both refused (false) where the backend has none - the software
+    // reference draws what the original drew, GL1 and the 3DS have no pass.
+    // The BLOOM: a glow from the texture pack's light maps, `strength` 0 off.
+    virtual bool setBloom(float /*strength*/) { return false; }
+    // The GRADE: a 3D colour LUT of n^3 RGB entries 0..1, red fastest (a
+    // .cube file's order); null or n < 2 off. The viewer picks it per city.
+    virtual bool setGrade(const float* /*rgb*/, int /*n*/) { return false; }
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

@@ -16,6 +16,7 @@ layout(push_constant) uniform Push {
     int   texScaled;   // 104, a TEXTURE PACK replacement - see scene.frag
     float texScaleU;   // 108
     float texScaleV;   // 112
+    int   bloomMode;   // 116, the BLOOM's light map - see scene.frag
 } pc;
 
 // THE POSE BUFFER (`vkrender.cpp` `posesBodies`, 2026-10-11 - as GLES, GL1 and

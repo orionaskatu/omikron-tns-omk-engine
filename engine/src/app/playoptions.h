@@ -135,6 +135,8 @@ struct PlayOptions {
     int frameRateFlag = -1; // --framerate N, [Enhancements] framerate
     int smoothAnimFlag = -1; // --smooth-anim, [Enhancements] animation = smooth
     std::string texturePackFlag;  // --texture-pack DIR, [Remaster] texturepack; "" = the settings'
+    float bloomFlag = -1.0f;      // --bloom S, [Remaster] bloom; < 0 = the settings'
+    std::string gradeFlag;        // --grade DIR, [Remaster] grade; "" = the settings'
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.

@@ -50,7 +50,8 @@
 //
 // `OMK_TEXTURE_PACK=DIR` opens a REMASTER texture pack (`o3de/texpack.h`) for
 // that frame - the instrument's switch; the engine never reads it
-// (`verify.py: engine: texture pack`).
+// (`verify.py: engine: texture pack`); `OMK_BLOOM=S` and `OMK_GRADE=file.cube`
+// the remaster's post-pass (`verify.py: engine: bloom and grade`).
 //
 // poses the character on the line's frame, turns it by `yaw` degrees and moves
 // it, and draws it through the GLES backend TWICE: posed on the CPU
@@ -73,6 +74,7 @@
 #include "formats/tex3dt.h"
 #include "o3de/geom3do.h"
 #include "o3de/renderer.h"
+#include "o3de/colourgrade.h"
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
 #include "ui/surface.h"
@@ -539,6 +541,14 @@ int frameMode(int argc, char** argv) {
     omk::Renderer* gl = omk::makeGlesRenderer();
     const int filter = std::atoi(argv[8]);
     if (filter > 0) gl->setTextureFilter(filter);
+    // the REMASTER's post-pass, as `run_vulkan` takes it (`engine: bloom and grade`)
+    if (const char* b = std::getenv("OMK_BLOOM"); b && *b) gl->setBloom(static_cast<float>(std::atof(b)));
+    omk::ColourLut lut;
+    if (const char* gr = std::getenv("OMK_GRADE"); gr && *gr) {
+        std::string why;
+        if (!omk::parseCube(omk::readTextFile(gr), lut, &why)) { std::fprintf(stderr, "%s: %s\n", gr, why.c_str()); return 1; }
+        gl->setGrade(lut.rgb.data(), lut.n);
+    }
     const omk::Surface* g = run(*gl);
     if (!g) { std::fprintf(stderr, "gles renderer failed to come up\n"); return 1; }
     const Coverage c = compare(swF, *g);

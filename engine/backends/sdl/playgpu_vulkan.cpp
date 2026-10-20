@@ -35,6 +35,7 @@ void PlayState::gpuOpenWindow() {
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
+            if (bloomStrength > 0.0f) vkr->setBloom(bloomStrength);   // the remaster's
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
@@ -65,6 +66,7 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
+        if (wv && bloomStrength > 0.0f) wv->setBloom(bloomStrength);
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
             std::printf("renderer: the world through VULKAN offscreen - %s "

@@ -11,7 +11,10 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   run Real-ESRGAN (ncnn-vulkan) on them
     omktexpack.py build   OUT [--no-anchor] [--grain F] [--nearest N | --solid R,G,B N] [--match S ...]
                                                   -> OUT/pack, the directory to hand the viewer
-
+    omktexpack.py emissive PACK [--match S ...]   a light map <key>_e.png per texture, by the rule
+                                                  below - a START, to be curated by hand
+    omktexpack.py grades  DIR                     the city grades as .cube LUTs (+ map.txt)
+                                                  
 `export` covers every .3DO/.3DT pair under MESHES and the 26 effect sprites
 stored inside the .SCX files (`SCX:<name>` in the index; `--match SCX:` for
 them alone). It writes, under OUT:
@@ -315,6 +318,113 @@ def keyed_rgba(rgb, alpha, n):
     return bytes(rgba)
 
 
+# ---- the emissive maps (todo/remaster.md "Step 2, as decided") ---------------
+def emissive_factors(rgb, n):
+    """Per texel, how much of it is LIGHT, 0..1: much brighter than its own
+    texture's median (lettering, windows, bulbs), or bright and strongly
+    coloured for its texture (neon). 0 on a keyed texel. The rule the reader
+    chose from the previews of 2026-10-20; it also marks quay edges and pale
+    facade patches in the daylight cities, so the maps are curated after."""
+    lum = [(299 * rgb[3*i] + 587 * rgb[3*i+1] + 114 * rgb[3*i+2]) / 255000 for i in range(n)]
+    mxs = [max(rgb[3*i], rgb[3*i+1], rgb[3*i+2]) / 255 for i in range(n)]
+    med = sorted(lum)[n // 2]
+    vmed = sorted(mxs)[n // 2]
+    lo = max(med + 0.30, 0.55)
+    out = bytearray(n)
+    for i in range(n):
+        if rgb[3*i] == 0 and rgb[3*i+1] == 0 and rgb[3*i+2] == 0:
+            continue
+        f = min(1.0, max(0.0, (lum[i] - lo) / 0.15))
+        mx = mxs[i]
+        mn = min(rgb[3*i], rgb[3*i+1], rgb[3*i+2]) / 255
+        if mx > 0:
+            sat = (mx - mn) / mx
+            fn = (min(1.0, max(0.0, (sat - 0.55) / 0.2)) *
+                  min(1.0, max(0.0, (mx - max(vmed + 0.25, 0.5)) / 0.15)))
+            f = max(f, fn)
+        out[i] = int(f * 255 + 0.5)
+    return bytes(out)
+
+
+def cmd_emissive(pack, match):
+    pack = safe_out(pack)
+    os.makedirs(pack, exist_ok=True)
+    tex = shipped(match)
+    lit = 0
+    for k, e in tex.items():
+        w, h = e["w"], e["h"]
+        f = emissive_factors(e["rgb"], w * h)
+        if not any(f):
+            continue
+        lit += 1
+        write_png(os.path.join(pack, k + "_e.png"), w, h, bytes(v for v in f for _ in range(3)), 3)
+    print(f"{lit} light maps of {len(tex)} textures into {pack} - curate them: black is not light")
+
+
+# ---- the city grades ---------------------------------------------------------
+def _s(v, a):
+    return min(1.0, max(0.0, v + a * (v - 0.45) * (1 - abs(2 * v - 1)) * 1.6))
+
+
+def _sat(r, g, b, k):
+    l = 0.299 * r + 0.587 * g + 0.114 * b
+    return l + (r - l) * k, l + (g - l) * k, l + (b - l) * k
+
+
+def grade_rgb(kind, r, g, b):
+    """The grades of the 2026-10-20 previews, 0..1 channels (todo/remaster.md
+    keeps every one; these four were chosen). No vignette: a LUT is per
+    colour, the noir preview's vignette was spatial."""
+    l = 0.299 * r + 0.587 * g + 0.114 * b
+    if kind == "filmic":
+        r, g, b = (_s(v * 1.06, 0.35) for v in (r, g, b))
+        r, g, b = _sat(r, g, b, 1.12)
+    elif kind == "noir":
+        r, g, b = _sat(r, g, b, 0.82)
+        r, g, b = r * 0.94, g * 0.99, b * 1.08
+        r, g, b = (_s(max(0.0, v - 0.02) * 1.04, 0.3) for v in (r, g, b))
+    elif kind == "sunlit":
+        hi = max(0.0, l * 1.4 - 0.3)
+        r, g, b = r + 0.045 * hi, g + 0.022 * hi, b - 0.03 * hi
+        r, g, b = (0.03 + v * 0.97 for v in (r, g, b))
+        r, g, b = (_s(v * 1.04, 0.22) for v in (r, g, b))
+        r, g, b = _sat(r, g, b, 1.06)
+    elif kind == "neon2":
+        r, g, b = _sat(r, g, b, 1.15)
+        sh = max(0.0, 1 - l * 2.5)
+        r, g, b = r + 0.012 * sh, g - 0.01 * sh, b + 0.03 * sh
+        r, g, b = (0.012 + max(0.0, v) ** 0.95 * 0.988 for v in (r, g, b))
+        r, g, b = (_s(v * 1.03, 0.22) for v in (r, g, b))
+    return tuple(min(1.0, max(0.0, v)) for v in (r, g, b))
+
+
+CITY_GRADES = {"ANEKBAH": "noir", "JAUNPUR": "filmic", "LAHOREH": "sunlit", "QALISAR": "neon2"}
+# interiors and other sets that take a city's grade (`map.txt`); the rest none
+CITY_OF = {"AAPKAYL": "ANEKBAH"}
+
+
+def write_cube(path, kind, size=33):
+    with open(path, "w") as f:
+        f.write(f"TITLE \"OMK {kind}\"\nLUT_3D_SIZE {size}\n")
+        for bi in range(size):
+            for gi in range(size):
+                for ri in range(size):
+                    r, g, b = grade_rgb(kind, ri / (size - 1), gi / (size - 1), bi / (size - 1))
+                    f.write(f"{r:.6f} {g:.6f} {b:.6f}\n")
+
+
+def cmd_grades(out):
+    out = safe_out(out)
+    os.makedirs(out, exist_ok=True)
+    for city, kind in CITY_GRADES.items():
+        write_cube(os.path.join(out, city + ".cube"), kind)
+    with open(os.path.join(out, "map.txt"), "w") as f:
+        f.write("# a set name = the city whose grade it takes (omk-play --grade DIR)\n")
+        for k, v in CITY_OF.items():
+            f.write(f"{k} = {v}\n")
+    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3) and map.txt into {out}")
+
+
 # ---- the commands ------------------------------------------------------------
 def cmd_export(out, match):
     out = safe_out(out)
@@ -423,7 +533,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
@@ -445,6 +555,10 @@ def main(argv):
             sys.exit("the factor must be a power of two, 1..16")
     if cmd == "export":
         cmd_export(out, match)
+    elif cmd == "emissive":
+        cmd_emissive(out, match)
+    elif cmd == "grades":
+        cmd_grades(out)
     elif cmd == "upscale":
         if not binary:
             sys.exit("upscale needs --bin PATH (realesrgan-ncnn-vulkan)")

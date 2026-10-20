@@ -31570,6 +31570,176 @@ def c_engine_texture_pack():
            "one-colour pack is drawn, all 21 textures replaced"
 
 
+def c_engine_bloom_and_grade():
+    r"""THE BLOOM AND THE CITY GRADE - the remaster's post-pass (`todo/remaster.md`
+    step 2), two `[Remaster]` options, both OFF unless named: `bloom = S` /
+    `--bloom S` (a glow from the texture pack's LIGHT MAPS, `<key>_e.png`) and
+    `grade = DIR` / `--grade DIR` (a `.cube` LUT per city, `o3de/colourgrade.h`).
+
+    With the bloom on, the scene shader writes each texel's light into the
+    world target's alpha (Vulkan: a push field and binding 1 of the texture's
+    set; GLES: a BLOOM VARIANT of the scene programs, made from their source
+    at `init`, so the defaults - and the Vita's shader cache - are untouched).
+    After the scene: the frame copied aside, the light downsampled and blurred
+    at a quarter, then one pass back into the target with the glow
+    screen-blended and the grade applied (a 3D LUT as an N*N x N strip).
+    NOT A PORT, no oracle in the original: tier 3 for the LUT reader, and the
+    frames are this port's own invariants.
+
+    Parts:
+      1. the source: both default off; read under [Remaster], never by
+         `all = max`; the post-pass recorded only behind its two switches on
+         both backends; the GLES variant built only with the bloom;
+      2. THE .cube READER (`texpack_tool cube`): a LUT `omktexpack.write_cube`
+         writes reads back with its size and its first and last entries; a
+         1D LUT and a short table are refused;
+      3. on Vulkan (`run_vulkan`) and GLES (`gles_probe --frame`), Aapkayl
+         through 4555's neighbour, the nearest sampler:
+         * bloom on with ALL-BLACK light maps is BYTE-IDENTICAL to the bloom
+           off - the copy, the passes and the screen blend move no pixel when
+           there is no light;
+         * bloom on with ALL-WHITE light maps brightens the frame (mean
+           565 luminance up by more than 3 levels), and the pool event says
+           all 21 textures got a light map;
+         * an IDENTITY LUT moves no channel by more than one 565 step;
+         * a LUT that SWAPS red and blue gives back the ungraded frame's blue
+           as its red and its red as its blue (mean difference < 0.6 of a
+           5-bit step) - which pins the strip's layout (blue the slice, red
+           fastest) and the shader's lookup together.
+
+    Measured too, once, outside the check (2026-10-20, M3): with neither on,
+    every frame tried byte-identical to the build before (Vulkan 6 probe runs
+    and the street, GLES the street, with and without the full pack); the
+    engine's Qalisar grade against `omktexpack.grade_rgb` on the same frame
+    within the 565 step (mean 1.4-3.9 of 255); Vulkan against GLES with both
+    on 180 of 960000 pixels apart by more than ~16 levels.
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan LUT sliced by RED
+    instead of blue fails the identity and the swap (both False); the Vulkan
+    scene shader writing a light of 1 everywhere moves 224610 pixels of the
+    all-black-light frame; the GLES bloom variant not substituted (its alpha
+    left at 1) moves 224638 on GLES alone.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    model = os.path.join(fr, "MESHES", "DECORS", "Aapkayl.3DO")
+    if not (os.path.isdir(eng) and os.path.exists(model)):
+        return ("skipped",), ("skipped",), "engine/ or Aapkayl.3DO absent"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+
+    # ---- 1. the source
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+bloom\s*=\s*0\.0f;", sh)) and bool(re.search(r"std::string\s+grade;", sh)),
+              'kRemaster, "bloom"' in sc and 'kRemaster, "grade"' in sc and
+              'kEnhancements, "bloom"' not in sc and 'kEnhancements, "grade"' not in sc,
+              "bloom" not in max_body and "grade" not in max_body,
+              "if (bloom_ > 0.0f || lutN_ > 1) recordPost(cb_);" in vk and
+              "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
+              "if (bloom_ > 0.0f) bloomFrag_ = bloomVariant(" in gl)
+
+    for target in ("build/texpack_tool",):
+        mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
+        if mk.returncode != 0:
+            return ("build", target), ("built",), mk.stderr[-300:]
+    tool = os.path.join(eng, "build", "texpack_tool")
+    tmp = tempfile.mkdtemp()
+    try:
+        # ---- 2. the reader
+        cube = os.path.join(tmp, "q.cube")
+        omktexpack.write_cube(cube, "neon2", 9)
+        r = subprocess.run([tool, "cube", cube], capture_output=True, text=True).stdout
+        m = re.match(r"cube (\d+) first ([\d.]+) ([\d.]+) ([\d.]+) last ([\d.]+) ([\d.]+) ([\d.]+)", r)
+        f0 = omktexpack.grade_rgb("neon2", 0, 0, 0); f1 = omktexpack.grade_rgb("neon2", 1, 1, 1)
+        read_ok = bool(m) and int(m.group(1)) == 9 and \
+            all(abs(float(m.group(2 + i)) - f0[i]) < 1e-5 for i in range(3)) and \
+            all(abs(float(m.group(5 + i)) - f1[i]) < 1e-5 for i in range(3))
+        bad1 = os.path.join(tmp, "b1.cube"); open(bad1, "w").write("LUT_1D_SIZE 4\n0 0 0\n")
+        bad2 = os.path.join(tmp, "b2.cube"); open(bad2, "w").write("LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")
+        refused = all(subprocess.run([tool, "cube", b], capture_output=True, text=True).stdout.startswith("refused")
+                      for b in (bad1, bad2))
+        reader = (read_ok, refused)
+
+        # ---- the test packs and LUTs
+        tex = omktexpack.shipped(["DECORS/Aapkayl.3DO"])
+        packs = {}
+        for name, v in (("black", 0), ("white", 255)):
+            d = os.path.join(tmp, name); os.makedirs(d)
+            for k, e in tex.items():
+                omktexpack.write_png(os.path.join(d, k + "_e.png"), e["w"], e["h"], bytes([v]) * (3 * e["w"] * e["h"]), 3)
+            packs[name] = d
+        def lut(path, f, n=17):
+            with open(path, "w") as o:
+                o.write(f"LUT_3D_SIZE {n}\n")
+                for bi in range(n):
+                    for gi in range(n):
+                        for ri in range(n):
+                            o.write("%.6f %.6f %.6f\n" % f(ri / (n - 1), gi / (n - 1), bi / (n - 1)))
+        ident = os.path.join(tmp, "id.cube"); lut(ident, lambda r, g, b: (r, g, b))
+        swap = os.path.join(tmp, "sw.cube"); lut(swap, lambda r, g, b: (b, g, r))
+        CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
+
+        def frame(path):
+            raw = open(path, "rb").read()
+            W, H, _a, _b = struct.unpack_from("<4i", raw, 0)
+            return struct.unpack_from("<%dH" % (W * H), raw, 16 + 2 * W * H)
+        def judge(run):
+            got = {}
+            for tag, env_ in (("none", {}), ("black", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["black"]}),
+                              ("white", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["white"]}),
+                              ("ident", {"OMK_GRADE": ident}), ("swap", {"OMK_GRADE": swap})):
+                out = os.path.join(tmp, tag + ".bin")
+                rr = run(out, dict(os.environ, OMK_EVENTS="1", **env_))
+                if rr.returncode != 0 or not os.path.exists(out):
+                    return None
+                pool = [f for n, f in _events(rr.stdout) if n == "texpack.pool"]
+                got[tag] = (frame(out), pool[0].get("lights") if pool else None)
+                os.remove(out)
+            n, bk, wh, idf, sw = (got[k][0] for k in ("none", "black", "white", "ident", "swap"))
+            lum = lambda px: sum(((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2 for v in px) / len(px)
+            step = max(max(abs(((x >> 11) & 31) - ((y >> 11) & 31)), abs(((x >> 5) & 63) - ((y >> 5) & 63)),
+                           abs((x & 31) - (y & 31))) for x, y in zip(n, idf))
+            sw_err = sum(abs(((y >> 11) & 31) - (x & 31)) + abs((y & 31) - ((x >> 11) & 31)) for x, y in zip(n, sw)) / (2 * len(n))
+            return (sum(1 for x, y in zip(n, bk) if x != y),       # 0: no light, no change
+                    got["white"][1] == "21",
+                    lum(wh) - lum(n) > 3,
+                    step <= 1,
+                    sw_err < 0.6)
+
+        mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+        vkbin = os.path.join(eng, "build", "run_vulkan")
+        vres = ("no vulkan",)
+        if mk.returncode == 0 and os.path.exists(vkbin):
+            v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
+                                                      capture_output=True, text=True, env=env))
+            vres = v if v is not None else ("no vulkan device",)
+        gres = ("skipped",)
+        if platform.system() == "Darwin":
+            mk = subprocess.run(["make", "-s", "build/gles_probe"], cwd=eng, capture_output=True, text=True)
+            gp = os.path.join(eng, "build", "gles_probe")
+            gres = ("no gles_probe",)
+            if mk.returncode == 0 and os.path.exists(gp):
+                g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
+                                                          capture_output=True, text=True, env=env))
+                gres = g if g is not None else ("no gl context",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        reader {reader}; vulkan {vres}; gles {gres}")
+    want = (0, True, True, True, True)
+    return (src_ok, reader, vres, gres), \
+           ((True,) * 5, (True, True), vres if len(vres) == 1 else want, gres if len(gres) == 1 else want), \
+           "the source (both off by default, [Remaster] only, never all = max, the post-pass " \
+           "behind its two switches, the GLES variant only with the bloom); the .cube reader; " \
+           "on Vulkan and GLES: no light = no change byte for byte, all light brightens and all " \
+           "21 textures carry a map, an identity LUT within one 565 step, a red/blue swap LUT swaps"
+
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -45522,8 +45692,10 @@ def c_licence_headers():
     # `engine/tools/texpack_tool.cpp` and `tools/omktexpack.py` (the remaster's
     # texture pack, todo/remaster.md B4)
     # 638: + `engine/tools/blend_hold.cpp` (engine: blend hold)
+    # 640: + `engine/src/o3de/colourgrade.{h,cpp}` (the remaster's city grades,
+    # todo/remaster.md step 2)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (638, [], 1, []), \
+           (640, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48315,6 +48487,7 @@ SLOW = [
     ("engine: texture filter", c_engine_texture_filter, "ASSETS 4"),
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),
     ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
+    ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

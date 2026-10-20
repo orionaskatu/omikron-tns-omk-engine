@@ -211,6 +211,59 @@ the densest cluster of its 22 `Enseigne` meshes.
 inherit the city first); the day/night cycle may want a day and a night grade
 (Qalisar at least); the grade is off while the greyscale bank is on.
 
+## Step 2, as built (2026-10-20) - the bloom and the city grades
+
+**What it is.** Two `[Remaster]` options of their own, off unless named,
+never turned on by `all = max`, drawn by Vulkan and GLES (the software
+reference, GL1 and the 3DS refuse them):
+
+* `bloom = S` / `--bloom S` - a glow from the texture pack's LIGHT MAPS
+  (`<key>_e.png`, greyscale: how much of each texel is light). 1.3 is the
+  previews' strength.
+* `grade = DIR` / `--grade DIR` - a colour grade per city: DIR's
+  `<SET>.cube` files and `map.txt` (`AAPKAYL = ANEKBAH`), chosen each frame
+  for the set under the player's feet (`PlayState::worldSet`), OFF while the
+  greyscale bank is on; a hard switch, the game's own fade covers a change of
+  set. The scene viewer (`--scene`) takes neither yet.
+
+```bash
+P=~/Documents/omk/omk-pack
+python3 tools/omktexpack.py emissive $P/full/pack     # the light maps, ~2.5 min - then CURATE
+python3 tools/omktexpack.py grades   $P/grades        # the four city .cube files + map.txt
+engine/build/omk-play ../fr ../tables --save ../traces/save-appart.bin --area 101 \
+    --texture-pack $P/full/pack --bloom 1.3 --grade $P/grades
+```
+
+**How.** With the bloom on, the scene shader writes each texel's light into
+the world target's ALPHA (Vulkan: push field `bloomMode` at 116, the
+block 116 -> 120 bytes, and binding 1 of every texture's set - its light map
+or a shared black one; GLES: a BLOOM VARIANT of the scene programs made from
+their source at `init`, the light maps on unit 3, so the default programs and
+the Vita's shader cache are untouched). After the scene, `post.frag` /
+`kPostFrag`: the frame copied aside, `rgb * alpha` down to a quarter, two
+Gaussian passes (21 taps, sigma 4), then one pass back into the target - the
+glow SCREEN-blended, then the LUT (an N*N x N strip, blue the slice, red
+fastest, trilinear). `o3de/colourgrade.*` reads `.cube` (3D, 2..64, domain
+0..1) and maps sets to cities.
+
+**Measured.** With neither on, every frame tried is byte-identical to the
+build before: `run_vulkan` on Aapkayl and Qalisar under nearest, trilinear
++ 16x and 4x MSAA, and the 45-frame street dump on Vulkan and GLES, with and
+without the full pack (its light maps present). The engine's Qalisar grade
+against `omktexpack.grade_rgb` on the same frame: within the 565 step (mean
+1.4-3.9 of 255, worst 9.4). Vulkan against GLES with both on, Qalisar under
+the neons: 180 of 960000 pixels apart by more than ~16 levels. Checks:
+`engine: bloom and grade` (new, shown to fail three ways), and
+`engine: texture pack`, the GPU and enhancement neighbours, the Vita and 3DS
+builds green.
+
+**Open:** curating the 1112 light maps (the daylight cities' quays and pale
+facades - "what counts as light" on the comparison page); a day and a night
+grade (Qalisar at least, the clock runs); the scene viewer; the noir
+preview's vignette is not in the LUT (spatial) - a separate option if wanted;
+the Vita's shader cache does not hold the bloom variants and the post
+program, so a console without the compiler refuses them.
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

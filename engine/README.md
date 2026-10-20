@@ -3697,6 +3697,19 @@ is byte-identical to the build before the feature (measured on Vulkan and
 GLES, the street included). Check: `engine: texture pack` (shown to fail five
 ways).
 
+**And 2026-10-20, THE BLOOM AND THE CITY GRADES - remaster step 2**
+(`todo/remaster.md`). `[Remaster] bloom = S` / `--bloom S`: a glow from the
+texture pack's light maps (`<key>_e.png`), written into the world target's
+alpha by the scene shader (Vulkan: push `bloomMode`, binding 1; GLES: a bloom
+VARIANT of the scene programs, the defaults untouched), then downsampled,
+blurred and screen-blended by the post-pass. `[Remaster] grade = DIR` /
+`--grade DIR`: a `.cube` LUT per city (`o3de/colourgrade.*`), chosen for the
+set under the player's feet, off in the greyscale bank. Both off by default,
+both Vulkan and GLES only; with neither on every frame tried is
+byte-identical to the build before. **Not a port, no oracle in the
+original**: tier 3 for the `.cube` reader, the frames this port's own
+invariants. Check: `engine: bloom and grade` (shown to fail three ways).
+
 **And 2026-09-09, THE SHIMMER - a defect, not an enhancement.** Mesh flag
 `0x8000000` oscillates the vertex colour of 233 set meshes, the far skyline of
 every city and 132 of them in Lahoreh. The port had decoded the phase into

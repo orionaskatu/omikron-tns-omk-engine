@@ -113,6 +113,8 @@ tools avoid the question.
    hash and the colour-key questions before 2534 textures depend on them.
    **DONE 2026-10-20** - see "Step 1, as built" below.
 2. **A1 + A2** - tone map, grade, bloom on the game's own emitters.
+   **A2 as written does not hold** - see "Step 2's bloom, tried" below: the
+   additive meshes are water and glass, the lights are opaque textures.
 3. **B3 then A3 + A5** - material maps, reflections, characters in the
    painted light.
 4. **D1, then D2 on the player character** as the pilot for the glTF route.
@@ -120,6 +122,34 @@ tools avoid the question.
 Steps 1-3 are about one to two months of engine work and make a convincing
 remaster; step 4 is where the small remake begins, bounded by artist time,
 not code.
+
+## Step 2's bloom, tried (2026-10-20) - and why its premise was wrong
+
+A2 assumed the game marks its light sources by drawing them ADDITIVELY
+(`0x1000|0x2000`). Built on Vulkan to find out (an emitter mask in the world
+target's alpha - the luminance each additive draw adds - then a quarter-size
+down / blur / add), and measured:
+
+* **The additive meshes are mostly not lights.** Ranked by set: Lahoreh 41
+  (nearly all `Eau` - water), Aapkayl 22 (`AP_mirror`, `Ap01vitre` glass,
+  `eclair` lighting), Sprison 16 (`Barreau` bars), jaunpur 14 (water), the two
+  sex shops 14 each (`vitre`), mayerem / Jangir 10 (water, lakes, rivers).
+* **The street's signs and lamps are OPAQUE textures**, not additive. On
+  Anekbah's street at strength 4 the bloom moved ~5300 pixels by about one
+  565 step, all on the far skyline windows; in the apartment camera, 0.
+* So a bloom that follows the data is nearly a no-op, and a bloom driven by
+  brightness alone (a bright-pass) would make the sky and the pale walls glow
+  - a look chosen here, with nothing in the data behind it.
+
+**Not committed.** The working code (off by default, the default frame
+unchanged) is kept outside the repo: `~/Documents/omk/omk-pack/wip/
+bloom-wip.patch` + `bloom.frag`. Its post-pass (down / blur / add after the
+scene pass, before the readback) is reusable for tone mapping and a grade.
+
+**The principled way to a bloom is an EMISSIVE MAP per texture** - which
+texels are light (a sign's lettering, a lamp's bulb, a window) - carried by
+the texture pack beside B3's material maps, authored or generated and then
+curated. That is the reader's call: it decides what in the city is light.
 
 ## Step 1, as built (2026-10-20) - the texture pack
 

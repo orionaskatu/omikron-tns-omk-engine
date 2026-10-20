@@ -25,7 +25,11 @@ longer than most tasks it validates. So it is **not** run per task. The rule
 
 * per task, run `verify.py --only "<name>" ...` for the checks the change could
   plausibly break, and nothing else;
-* run the full sweep after **5 to 10 finished tasks**;
+* a full sweep is ADVISABLE after **5 to 10 finished tasks** - a reminder for
+  the READER, who starts it when they will not be testing or asking for other
+  work; an agent never starts one unasked, and at most says one is due (the
+  reader, 2026-10-20: "more an advice and reminder for me than a rule for
+  you" - the count is not always right either);
 * record it here, so the count survives between sessions.
 
 Increment `tasks since` when a task is finished; reset it to 0 and add a row

@@ -249,10 +249,13 @@ python3 tools/verify.py --slow --jobs 6  # THE FULL SWEEP - minutes
   a docs-only edit needs none (unless the doc quotes a number a check asserts).
 * **"The full sweep" means `--slow`.** Plain `verify.py` skips most `engine:`
   checks. Write which one ran, with its count.
-* **The full sweep runs every 5-10 FINISHED TASKS** (a task is one thing the
-  reader asked for); `todo/sweep-log.md` holds the counter — increment on a
-  commit, reset when a sweep is recorded. Pre-build (`make`, `make play
-  play-gles vulkan`) and `caffeinate -d -u -i` before one.
+* **The full sweep is the READER's to start** — never run it unless asked in
+  that message. After 5-10 finished tasks one is *advisable*: the counter in
+  `todo/sweep-log.md` is a reminder for the reader, who runs it when they will
+  not be testing or asking for other work (2026-10-20). Keep the counter
+  (increment per finished task, reset when a sweep is recorded) and at most
+  say that one is due. When asked: pre-build (`make`, `make play play-gles
+  vulkan`) and `caffeinate -d -u -i`.
 * **Every check is expensive.** A red check is fixed ALONE: rerun that check,
   and the section only once it is green. Before running anything, ask what it
   can tell you that you do not already know.

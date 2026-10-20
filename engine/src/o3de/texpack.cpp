@@ -2,10 +2,12 @@
 // The texture pack - see texpack.h. Not a port of anything in the original.
 #include "o3de/texpack.h"
 
+#include "o3de/greybank.h"
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
 #include "platform/pngread.h"
+#include "platform/threads.h"
 
 #include <cstdio>
 
@@ -57,6 +59,7 @@ std::string textureKeyHex(std::uint64_t key) {
 bool TexturePack::open(const std::string& dir) {
     files_.clear();
     refused_.clear();
+    greyOf_.clear();
     opened_ = false;
     dir_ = dir;
     if (!hostfs::isDirectory(dir)) {
@@ -76,30 +79,75 @@ bool TexturePack::open(const std::string& dir) {
 }
 
 bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba, int& w, int& h) const {
-    if (!opened_ || files_.empty() || !t.hasPixels()) return false;
-    const std::uint64_t key = textureKey(t);
-    const auto it = files_.find(key);
-    if (it == files_.end() || refused_.count(key)) return false;
-    const auto bytes = readWholeFile(it->second);
-    PngImage img;
-    std::string why;
-    if (bytes.empty() ||
-        !decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img, &why)) {
-        std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", it->second.c_str(),
-                     bytes.empty() ? "unreadable" : why.c_str(), t.name.c_str());
-        refused_.insert(key);
-        return false;
-    }
-    if (!powerOfTwoFactor(img.w, t.width) || !powerOfTwoFactor(img.h, t.height)) {
-        std::fprintf(stderr, "texture pack: %s is %dx%d, not %dx%d times a power of two "
-                             "(1..16) each way; %s drawn as shipped\n",
-                     it->second.c_str(), img.w, img.h, t.width, t.height, t.name.c_str());
-        refused_.insert(key);
-        return false;
-    }
-    w = img.w; h = img.h;
-    rgba = std::move(img.rgba);
+    const Texture* one[1] = {&t};
+    auto r = replacements(one);
+    if (!r[0].ok) return false;
+    w = r[0].w; h = r[0].h;
+    rgba = std::move(r[0].rgba);
     return true;
+}
+
+std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts) const {
+    std::vector<PackImage> out(ts.size());
+    if (!opened_ || files_.empty()) return out;
+    // the lookups, here: the key and the file of every texture the pack holds
+    struct Job { std::size_t at; std::uint64_t key; const std::string* file; std::string why; bool grey; };
+    std::vector<Job> jobs;
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        const Texture* t = ts[i];
+        if (!t || !t->hasPixels()) continue;
+        std::uint64_t key = textureKey(*t);
+        bool grey = false;
+        if (!files_.count(key))
+            if (const auto g = greyOf_.find(key); g != greyOf_.end()) { key = g->second; grey = true; }
+        const auto it = files_.find(key);
+        if (it == files_.end() || refused_.count(key)) continue;
+        jobs.push_back({i, key, &it->second, {}, grey});
+    }
+    // the reads and the decodes, on the pool: each job writes only its own
+    // result and its own reason
+    Threads::shared().parallelFor(0, jobs.size(), 1, [&](std::size_t from, std::size_t to) {
+        for (std::size_t j = from; j < to; ++j) {
+            Job& jb = jobs[j];
+            const Texture& t = *ts[jb.at];
+            const auto bytes = readWholeFile(*jb.file);
+            PngImage img;
+            if (bytes.empty()) { jb.why = "unreadable"; continue; }
+            if (!decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img, &jb.why))
+                continue;
+            if (!powerOfTwoFactor(img.w, t.width) || !powerOfTwoFactor(img.h, t.height)) {
+                char b[96];
+                std::snprintf(b, sizeof b, "%dx%d, not %dx%d times a power of two (1..16) each way",
+                              img.w, img.h, t.width, t.height);
+                jb.why = b;
+                continue;
+            }
+            if (jb.grey) {
+                std::uint8_t* p = img.rgba.data();
+                for (std::size_t k = 0; k + 3 < img.rgba.size(); k += 4) {
+                    const int y = lumaGrey(p[k], p[k + 1], p[k + 2]);
+                    p[k] = p[k + 1] = p[k + 2] = static_cast<std::uint8_t>(y);
+                    if (y == 0) p[k + 3] = 0;
+                }
+            }
+            PackImage& o = out[jb.at];
+            o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
+        }
+    });
+    // the refusals, here, once per key
+    for (const Job& jb : jobs) {
+        if (out[jb.at].ok) continue;
+        std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", jb.file->c_str(),
+                     jb.why.c_str(), ts[jb.at]->name.c_str());
+        refused_.insert(jb.key);
+    }
+    return out;
+}
+
+void TexturePack::aliasGrey(const Texture& colour, const Texture& grey) {
+    if (!opened_ || !colour.hasPixels() || !grey.hasPixels()) return;
+    const std::uint64_t c = textureKey(colour);
+    if (files_.count(c)) greyOf_[textureKey(grey)] = c;
 }
 
 TexturePack& texturePack() {

@@ -33,6 +33,7 @@
 #include "formats/tex3dt.h"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -42,6 +43,14 @@ namespace omk {
 
 std::uint64_t textureKey(const Texture& t);
 std::string textureKeyHex(std::uint64_t key);
+
+// One texture's replacement, decoded: RGBA8 of w x h; `ok` false when the
+// pack has none for it, or its file was unusable.
+struct PackImage {
+    bool ok = false;
+    int w = 0, h = 0;
+    std::vector<std::uint8_t> rgba;
+};
 
 class TexturePack {
 public:
@@ -55,11 +64,25 @@ public:
     // or when the file is unusable (not a PNG this reads, not a power-of-two
     // multiple of t) - said once per key, and t is then drawn as shipped.
     bool replacement(const Texture& t, std::vector<std::uint8_t>& rgba, int& w, int& h) const;
+    // The same for a whole POOL at once, one result per texture in order: the
+    // files read and decoded on the shared thread pool (`platform/threads.h`),
+    // the lookups and the refusals on the caller's thread. A null entry is
+    // skipped. What a backend calls when a pool reaches it: decoding 31
+    // replacements one after another took 634 ms on the street (M3).
+    std::vector<PackImage> replacements(std::span<const Texture* const> ts) const;
+    // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the viewer greys a
+    // pool's PALETTES, which makes each texture another key. Told which colour
+    // texture a grey one came from, the pack answers the grey key with the
+    // colour replacement taken to the engine's luma - and keyed (alpha 0)
+    // wherever that luma is 0, as `toRgbaKeyed` keys the grey palette's
+    // black - so a black-and-white cutscene draws the pack too.
+    void aliasGrey(const Texture& colour, const Texture& grey);
 
 private:
     std::string dir_;
     bool opened_ = false;
     std::unordered_map<std::uint64_t, std::string> files_;
+    std::unordered_map<std::uint64_t, std::uint64_t> greyOf_;   // grey key -> colour key
     mutable std::unordered_set<std::uint64_t> refused_;
 };
 

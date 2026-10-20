@@ -209,16 +209,22 @@ run headless.
 1. **A person's look in play** - the street and an interior at 1080p+ with
    the full pack, and the close-up of lettering. The pilot was judged on
    static frames only.
-2. **Decode cost at a pool change**: a replacement is decoded on upload.
-   Measured on the street with the full pack (GLES, M3): the pool's upload
-   takes **633.7 ms** for its first 31 textures and 129.6 ms for the next
-   pool, against 2.4 and 0.7 ms without - a visible hitch at a cutscene
-   hand-over. Decode on the thread pool, or keep decoded copies.
-3. **The greyscale bank** (ops 150/151): the viewer greys the pool's
-   PALETTES (`backends/sdl/playframe_world_scene.cpp`, `greyPalette`), which
-   is another key - so a black-and-white cutscene draws the SHIPPED textures,
-   greyed: consistent, just not upscaled. The fix is to key on the colour
-   palette and grey the replacement (luma `(299R+587G+114B)/1000`) at upload.
+2. ~~**Decode cost at a pool change**~~ - **DONE 2026-10-20**: a pool's
+   replacements are decoded together on the shared thread pool
+   (`TexturePack::replacements`); the street's uploads with the full pack
+   (GLES, M3) went 633.7 -> **145.7 ms** and 129.6 -> **34.0 ms** (2.4 / 0.7
+   without a pack), the frame byte-identical. What is left is the inflate
+   itself, ~20 ms a 1024x1024 texture on one core; keeping decoded copies
+   would trade 4 MB a texture of memory for it.
+3. ~~**The greyscale bank**~~ - **DONE 2026-10-20**: the viewer greys the
+   pool's PALETTES (`playframe_world_scene.cpp`), which made every key
+   another, so a black-and-white cutscene drew the shipped textures. Now the
+   viewer tells the pack where each grey texture came from (`aliasGrey`) and
+   the pack greys the colour replacement with the engine's luma, keyed where
+   the grey is 0 as the grey palette keys it. Area 237 with `--op-at 30:150`:
+   the grey pool replaced 34 of 36 on Vulkan and GLES (1 without the alias),
+   the nearest pack byte-identical to none, the full pack 0 colourful pixels;
+   `engine: texture pack` part 6.
 4. **Textures not under MESHES** - the SCX stream's embedded effect sprites
    (`sprite_fx.py`) are not exported.
 5. Curation: an exclusion list for anything the upscaler hurts, and B3's

@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "o3de/texpack.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
 
@@ -1613,6 +1614,14 @@ void PlayState::worldBolts() {
                 if (it == greyPalettes.end())
                     it = greyPalettes.emplace(t.pal.data(),
                                               std::make_pair(t.pal, omk::greyPalette(t.pal))).first;
+                // the TEXTURE PACK keyed this texture by its colour palette;
+                // told where the grey one came from, it greys the replacement
+                if (omk::texturePack().active()) {
+                    const omk::Texture colour = t;
+                    t.pal = it->second.second;
+                    omk::texturePack().aliasGrey(colour, t);
+                    continue;
+                }
                 t.pal = it->second.second;
             }
         else

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE TEXTURE PACK'S TWO ENGINE-SIDE HELPERS (`o3de/texpack.h`,
+// THE TEXTURE PACK'S THREE ENGINE-SIDE HELPERS (`o3de/texpack.h`,
 // `todo/remaster.md` B4) - for `tools/omktexpack.py` and for
 // `verify.py: engine: texture pack`.
 //
@@ -7,6 +7,12 @@
 //                                           "<path> <material> <key> <w>x<h>"
 //     texpack_tool png <in.png> <out.raw>   the engine's PNG reader's answer:
 //                                           int32 w, int32 h, then w*h RGBA8
+//     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
+//                                           each texture greyed as the viewer
+//                                           greys it, aliased, and the pack's
+//                                           answer compared with the engine's
+//                                           own greyed texture enlarged by
+//                                           nearest neighbour (a nearest pack)
 //
 // `keys` is the engine's half of a differential: the Python tool keys the same
 // textures from its own decoder, and the two must agree on every one, or a
@@ -14,11 +20,13 @@
 // on a file, so the Python tool can read an upscaler's PNG fast and the check
 // can difference the reader against Python's zlib.
 #include "formats/tex3dt.h"
+#include "o3de/greybank.h"
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -83,13 +91,55 @@ int png(const std::string& in, const std::string& out) {
     return 0;
 }
 
+// A NEAREST pack (`omktexpack.py build --nearest N`) answers a grey texture
+// with exactly the grey texture N times larger: the luma is per texel, so
+// greying the enlargement is enlarging the grey - and the key (alpha 0 where
+// the grey is 0) is `toRgbaKeyed` of the grey palette.
+int grey(const std::string& pack, const std::string& model) {
+    if (!omk::texturePack().open(pack)) return 1;
+    fs::path m = model, t;
+    for (const char* ext : {".3DT", ".3dt"}) { auto c = m; c.replace_extension(ext); if (fs::exists(c)) t = c; }
+    const auto tex = omk::textures(omk::DataFs::readPath(model), omk::DataFs::readPath(t.string()));
+    std::vector<omk::Texture> greyed;
+    for (const auto& c : tex) {
+        if (!c.hasPixels()) continue;
+        omk::Texture g = c;
+        g.pal = omk::greyPalette(c.pal);
+        omk::texturePack().aliasGrey(c, g);
+        greyed.push_back(g);
+    }
+    std::vector<const omk::Texture*> ptrs;
+    for (const auto& g : greyed) ptrs.push_back(&g);
+    const auto reps = omk::texturePack().replacements(ptrs);
+    long replaced = 0, exact = 0;
+    std::vector<std::uint8_t> want;
+    for (std::size_t i = 0; i < greyed.size(); ++i) {
+        if (!reps[i].ok) continue;
+        ++replaced;
+        const auto& g = greyed[i];
+        const int n = reps[i].w / g.width;
+        want.assign(static_cast<std::size_t>(g.width) * g.height * 4, 0);
+        g.toRgbaKeyed(want.data());
+        bool same = reps[i].h == g.height * n;
+        for (int y = 0; same && y < reps[i].h; ++y)
+            for (int x = 0; same && x < reps[i].w; ++x)
+                same = std::memcmp(&reps[i].rgba[(static_cast<std::size_t>(y) * reps[i].w + x) * 4],
+                                   &want[(static_cast<std::size_t>(y / n) * g.width + x / n) * 4], 4) == 0;
+        exact += same;
+    }
+    std::printf("grey: %zu textures, %ld replaced, %ld exact\n", greyed.size(), replaced, exact);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     if (mode == "keys" && argc == 3) return keys(argv[2]);
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
+    if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
-                         "       texpack_tool png <in.png> <out.raw>\n");
+                         "       texpack_tool png <in.png> <out.raw>\n"
+                         "       texpack_tool grey <pack> <model.3DO>\n");
     return 2;
 }

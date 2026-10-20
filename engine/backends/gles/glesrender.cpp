@@ -1895,6 +1895,17 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
     // A replacement is uploaded at its own size and `out.w`/`out.h` stay the
     // ORIGINAL's: the UVs are in its texels and `texSize` divides by it.
     const omk::TexturePack& pack = omk::texturePack();
+    std::vector<omk::PackImage> reps;
+    if (pack.active()) {
+        // every texture this pool brings that the GPU does not hold yet,
+        // decoded together on the thread pool
+        std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
+        for (std::size_t i = 0; i < t.size(); ++i)
+            if (t[i].hasPixels() &&
+                !uploaded_.count(std::make_tuple(t[i].idx.data(), t[i].pal.data(), t[i].width, t[i].height)))
+                toDecode[i] = &t[i];
+        reps = pack.replacements(toDecode);
+    }
     for (std::size_t i = 0; i < t.size(); ++i) {
         const auto& s = t[i];
         if (!s.hasPixels()) continue;
@@ -1914,8 +1925,11 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
             continue;
         }
         int upW = s.width, upH = s.height;
-        const bool fromPack = pack.active() && pack.replacement(s, px, upW, upH);
-        if (!fromPack) {
+        const bool fromPack = pack.active() && reps[i].ok;
+        if (fromPack) {
+            upW = reps[i].w; upH = reps[i].h;
+            px.swap(reps[i].rgba);
+        } else {
             upW = s.width; upH = s.height;
             const int n = s.width * s.height;
             px.resize(static_cast<std::size_t>(n) * 4);

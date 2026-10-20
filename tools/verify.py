@@ -31277,7 +31277,7 @@ def c_engine_texture_pack():
     (differentials against an independent implementation), and the frames
     are an invariant of this port's own, not of the original.
 
-    Five parts:
+    Six parts:
       1. the source: the default is empty; the key is read under [Remaster]
          and nowhere under [Enhancements] (so `all = max` can never turn it
          on); both backends consult the pack only behind `pack.active()`;
@@ -31296,7 +31296,16 @@ def c_engine_texture_pack():
          pack holding every texture at 4x by nearest neighbour draws the frame
          BYTE-IDENTICAL to no pack (which pins the UV scale: a wrong factor
          samples the wrong texel), while a pack of one colour changes it and
-         puts that colour on screen; the pool event says all 21 replaced.
+         puts that colour on screen; the pool event says all 21 replaced;
+      6. THE GREYSCALE BANK (ops 150/151): the viewer greys a pool's
+         palettes, which changes every key; `texpack_tool grey` greys each
+         Aapkayl texture as the viewer does, aliases it (`aliasGrey`), and
+         asks the nearest pack - all 21 must come back as the engine's own
+         greyed texture enlarged, alpha included (keyed where the grey is 0).
+         Measured once in the viewer too (area 237, `--op-at 30:150`): the
+         grey pool replaced 34 of 36 on Vulkan and GLES, 1 without the alias,
+         the nearest pack byte-identical to none and the full pack 0 colourful
+         pixels.
 
     Measured 2026-10-20 (M3): keys 2534/2534; nearest pack 0 pixels moved on
     both backends; the solid pack 217040 (Vulkan) / 217039 (GLES) moved,
@@ -31318,6 +31327,9 @@ def c_engine_texture_pack():
     mutant, which passing is right about. pa = pb with a != b means
     a + b = 2c, so pc = 0 and Paeth takes c either way; that comparison only
     ever decides between equal values.
+    And part 6: `aliasGrey` made a no-op answers (21, 0, 0); the grey
+    replacement left unkeyed where its luma is 0 answers 13 of 21 exact - 8
+    of Aapkayl's textures hold near-black colours the grey palette keys.
     """
     import subprocess, tempfile, shutil, re, random, zlib, platform
     eng = os.path.join(ROOT, "engine")
@@ -31340,8 +31352,9 @@ def c_engine_texture_pack():
               'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
               "texturePack" not in max_body,
               '"--texture-pack"' in po,
-              vk.count("pack.active() && pack.replacement(") == 1 and
-              gl.count("pack.active() && pack.replacement(") == 1)
+              all(b.count("pack.replacements(") == 1 and
+                  re.search(r"if \(pack\.active\(\)\) \{[^}]*pack\.replacements\(", b) is not None
+                  for b in (vk, gl)))
 
     for target in ("build/texpack_tool",):
         mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
@@ -31448,6 +31461,10 @@ def c_engine_texture_pack():
             sys.stdout.close()
             sys.stdout = so
         near, solid = os.path.join(work, "pack"), os.path.join(work + "-solid", "pack")
+        # ---- 6. the greyscale bank through the pack
+        rg = subprocess.run([tool, "grey", near, model], capture_output=True, text=True)
+        mg = re.search(r"grey: (\d+) textures, (\d+) replaced, (\d+) exact", rg.stdout)
+        greyres = tuple(int(v) for v in mg.groups()) if mg else ("no grey line",)
         CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
 
         def gpu_frame(path):
@@ -31494,15 +31511,16 @@ def c_engine_texture_pack():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"        keys {keys[1]} agree / {keys[2]} differ; png {pngs[0]}/{pngs[1]}, bad adler refused {pngs[2]}; "
-          f"vulkan {vres}; gles {gres}")
+          f"grey {greyres}; vulkan {vres}; gles {gres}")
     want_frame = (True, True, 0, True, True)
-    return (src_ok, keys, pngs, vres, gres), \
-           ((True,) * 5, (True, 2534, 0), (60, 60, True),
+    return (src_ok, keys, pngs, greyres, vres, gres), \
+           ((True,) * 5, (True, 2534, 0), (60, 60, True), (21, 21, 21),
             vres if len(vres) == 1 else want_frame, gres if len(gres) == 1 else want_frame), \
            "the source (default empty, read under [Remaster] only, never by all = max, both " \
            "backends behind pack.active()); the keys, engine against Python, 2534 of 2534; the " \
            "PNG reader exact on 60 images over every filter and colour type and refusing a bad " \
-           "Adler-32; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
+           "Adler-32; greyed as the greyscale bank greys them, all 21 answered with the " \
+           "grey texture exactly; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
            "one-colour pack is drawn, all 21 textures replaced"
 
 

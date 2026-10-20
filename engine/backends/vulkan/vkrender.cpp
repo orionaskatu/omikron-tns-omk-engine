@@ -2044,7 +2044,15 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened:
     // a texture it holds is uploaded from the pack's pixels at the pack's size
     const omk::TexturePack& pack = omk::texturePack();
-    std::vector<std::uint8_t> rep;
+    std::vector<omk::PackImage> reps;
+    if (pack.active()) {
+        // every texture this pool brings that the device does not hold yet,
+        // decoded together on the thread pool
+        std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
+        for (std::size_t i = 0; i < t.size(); ++i)
+            if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
+        reps = pack.replacements(toDecode);
+    }
     int packed = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
@@ -2053,9 +2061,10 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
-            int rw = 0, rh = 0;
-            if (pack.active() && pack.replacement(x, rep, rw, rh)) {
-                upload([&](unsigned char* d) { std::memcpy(d, rep.data(), rep.size()); }, rw, rh, u.t);
+            if (pack.active() && reps[i].ok) {
+                const omk::PackImage& rep = reps[i];
+                const int rw = rep.w, rh = rep.h;
+                upload([&](unsigned char* d) { std::memcpy(d, rep.rgba.data(), rep.rgba.size()); }, rw, rh, u.t);
                 u.t.su = static_cast<float>(rw) / static_cast<float>(x.width);
                 u.t.sv = static_cast<float>(rh) / static_cast<float>(x.height);
                 u.t.packed = true;

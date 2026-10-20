@@ -553,6 +553,10 @@ struct WaterPlane {
     float  y = 0.0f;         // the plane's height (the game's Y points DOWN)
     double area = 0.0;       // the horizontal additive area at that height
     long   triangles = 0;
+    // EVERY level past the floor, by height (the largest is `y`): a set may
+    // hold its water at more than one (Jaunpur's canals)
+    struct Level { float y; double area; long triangles; };
+    std::vector<Level> levels;
 };
 WaterPlane waterPlane(const Geometry& g);
 

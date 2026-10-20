@@ -13,6 +13,8 @@
 //     texpack_tool water <model.3DO>...     the remaster's water plane per set
 //                                           (`o3de/renderer.h` waterPlane):
 //                                           "<model> found y area triangles"
+//                                           (OMK_WATER_LEVELS=1: every level
+//                                           past 1e4 below each, "level y area n")
 //     texpack_tool cube <file.cube>         the engine's .cube reader's answer:
 //                                           "cube N first r g b last r g b", or why not
 //     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
@@ -171,6 +173,9 @@ int water(int argc, char** argv) {
         const auto w = omk::waterPlane(g);
         std::printf("%s %d %.1f %.0f %ld\n", fs::path(argv[i]).filename().string().c_str(), w.found ? 1 : 0,
                     static_cast<double>(w.y), w.area, w.triangles);
+        if (std::getenv("OMK_WATER_LEVELS"))
+            for (const auto& l : w.levels)
+                std::printf("    level %.1f %.0f %ld\n", static_cast<double>(l.y), l.area, l.triangles);
     }
     return 0;
 }

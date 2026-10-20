@@ -358,18 +358,33 @@ on at **0.35** (**0.6** since the Fresnel); off unless named, never `all = max`,
   clip; with no clip at all 2861. Part of `engine: water reflection` now,
   shown to fail on each backend. **CONFIRMED IN PLAY** (the reader, 2026-10-20: "Player reflect is fixed").
 * **The water near the camera mirrored too strongly** (the reader's screenshot, 2026-10-20: the quay's own reflection at a steep angle). The geometry is right - the reflection meets the quay at its waterline - but one strength everywhere is not water: it reflects ~2% looking straight down and nearly all at grazing. Done: a Fresnel term (Schlick, F0 0.02) on both backends - `strength` is now the GRAZING strength, cos theta the eye ray's height over the level plane (Vulkan: the eye in the lights UBO at 400, since the push block is full; GLES: `uEye`, the ray made in the vertex stage). On the canal at strength 1 the reflection's added light per moved pixel falls from 31.2 to 20.7 (upper half, far) and from 43.0 to 19.8 (lower half, near), so lower/upper goes 1.38 -> 0.96; `engine: water reflection` part 4 asserts it under 1.15. The reflection was fainter overall and 0.35 read too weak (the reader, in play); the preset is now **0.6** - "it seems good now" (2026-10-20) - CONFIRMED IN PLAY.
-* **Found looking for a surface swim: Jaunpur has water at MORE THAN ONE
-  height.** The finder takes the height with the most area (y 4); the canal
-  the player swims in after the bank at 10524,-40,10284 has its surface
-  lower (the swimmer's root at y ~100-117), and once he is in, the camera
-  drops below y 4 and the reflection is off. One plane per set, the largest,
-  is a limit of this first version: per-draw planes (each water mesh its own
-  height) would reflect every level, at a pass per level in view.
+* **CORRECTED 2026-10-20: the swimming canal IS the reflecting plane.** An
+  earlier bullet here said the canal the player swims in lies lower than y 4;
+  `todo/swimming.md` puts its surface at ~0..4 (the quay ~-120, the bed ~120),
+  which is the plane, and the reader's swimming screenshot shows it
+  reflecting. The camera that "dropped below y 4" in the headless runs was
+  the swimmer's UNDERWATER camera. `texpack_tool water` with
+  `OMK_WATER_LEVELS=1` lists every level past 1e4 square units: Jaunpur
+  holds two more, both ABOVE the canal (Y down) - 405905 at y -368 (59
+  triangles) and 43750 at -120 (14, the quay's height) - and Lahoreh's 16 is
+  its 12 (within the 4-unit tolerance); the other five sets have one level.
+  What Jaunpur's two are (terrace pools, or horizontal GLASS - additive too)
+  is unread: reflecting them waits for a look, and per-level planes are not
+  built.
 
-**Open**: a Fresnel term (stronger at grazing angles - the shader needs the
-eye, the push block is full: a uniform buffer then); ripples (a normal map
+* **The cost at 4K, measured 2026-10-20 on the M3** (load average 4-6;
+  `--res 3840x2160 --frames 300 --fps`, the canal at 10524,-40,10284,180,
+  `--remaster` with the pack, bloom and grades on; steady seconds, two runs
+  each, alike): **Vulkan** (`--vulkan`, the swapchain presenting) 120 fps
+  (vsync) with the water off, **110** with it on (12 ms worst); **GLES** 84-87
+  off, **78-80** on. The reflection pass is a second 3840x2160 scene pass while
+  water is in view - well inside the 30 fps yardstick on both. (`--world-vulkan`
+  is the offscreen harness with a CPU present, ~40-60 fps either way - not the
+  game's path, not quoted.)
+
+**Open**: ripples (a normal map
 from B3 perturbing the lookup); PAstar; the glass (`vitre`), one plane each;
-the cost - a second scene pass while water is in view, not yet measured at 4K.
+the per-level planes above (once Jaunpur's two upper levels are looked at).
 
 ## Step 1, as built (2026-10-20) - the texture pack
 

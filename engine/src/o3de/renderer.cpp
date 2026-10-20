@@ -227,8 +227,10 @@ WaterPlane waterPlane(const Geometry& g) {
             e.first += area; ++e.second;
         }
     }
-    for (const auto& [k, e] : byHeight)
+    for (const auto& [k, e] : byHeight) {
         if (e.first > out.area) { out.area = e.first; out.y = static_cast<float>(k) * 4.0f; out.triangles = e.second; }
+        if (e.first >= 1e4) out.levels.push_back({static_cast<float>(k) * 4.0f, e.first, e.second});
+    }
     out.found = out.area >= 1e6;
     return out;
 }

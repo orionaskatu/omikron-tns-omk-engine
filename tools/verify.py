@@ -32179,8 +32179,9 @@ def c_engine_emitter_light():
          2026-10-20 - "go with the curated list", the Blade Runner night):
          with `--remaster`'s grades folder, Qalisar's surface lights come
          from `lights.txt` (`world.fxsurfaces` curated, and some) and its
-         night is 0.5 (`remaster.night`); Anekbah, named by neither, keeps
-         the automatic rules and no night;
+         night is 0.5 (`remaster.night`); Anekbah's too, with no night (the
+         four cities' drafts, 2026-10-20); Kay'l's flat, which the list does
+         not name, keeps the automatic rules;
       5. THE TILES (`o3de/lighttiles.h`, "go" on the per-tile lists,
          2026-10-20): on Vulkan, Qalisar's every point light within the clip
          distance is binned to 32-pixel tiles x 16 depth slices (more than
@@ -32266,8 +32267,10 @@ def c_engine_emitter_light():
                 return (surf[0]["curated"] if surf else None, int(surf[0]["lights"]) if surf else 0, night)
             q = fxs(run(vk, None, "101", "15300,0,-10050,270", "--remaster", pack, "--enhance-all")[0])
             a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--enhance-all")[0])
-            curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("0", "false", False), a[2] == [])
-            print(f"        qalisar {q}; anekbah {a}")
+            k = fxs(run(vk, None, "237", None, "--remaster", pack, "--enhance-all")[0])
+            curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("1", "true", True), a[2] == [],
+                      k[0] in ("0", "false", False))
+            print(f"        qalisar {q}; anekbah {a}; kayl's flat {k}")
         # THE TILES (`o3de/lighttiles.h`): Qalisar's every point light binned
         # on Vulkan, no cluster full, and the tight box test drawing the same
         # frame byte for byte as the loose instrument (every light in every
@@ -32332,7 +32335,7 @@ def c_engine_emitter_light():
     want = (True, True, True)
     return (src_ok, rule, curate, tiles, vres, gres, agree), \
            ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
-            curate if len(curate) == 1 else (True,) * 5,
+            curate if len(curate) == 1 else (True,) * 6,
             tiles if len(tiles) == 1 else (True,) * 3,
             vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
             agree if isinstance(agree, tuple) else True), \

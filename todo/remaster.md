@@ -694,8 +694,21 @@ way.
   Vulkan beside GLES with `OMK_NO_TILES=1` (GLES does not tile yet).
   `licence headers` 644 -> 646.
 
+* **The four cities' lists** (the reader's "continue", 2026-10-21): Qalisar
+  was the only city curated, the others on the automatic rules, which lit
+  white walls. First drafts from each city's atlases (`texpack_tool lights`
+  and its textures beside their light maps), in `omktexpack.py`'s
+  `CITY_LIGHTS`: ANEKBAH 20 lines (the orange letters and the neon star
+  strong, the signs and the lamps bright, the lit windows low, the paintings
+  out); JAUNPUR 7 and LAHOREH 5 - sunlit cities, their signs alone at 1, the
+  white sandstone and pale walls the light maps mark left out. Kay'l's flat
+  (AAPKAYL) is named by none and keeps the automatic rules. Before/after by
+  eye: Anekbah's street loses the warm-green wash and keeps pools by its
+  lights; under Jaunpur's bridge the walls' false light goes. `engine:
+  emitter light` part 4: Anekbah curated, Kay'l's flat not.
+
 **CONFIRMED IN PLAY** ("it looks good now", 2026-10-20, `--enhance-all`).
-**Open**: GLES tiles (float textures for the lists, desktop and Quest); the
+**Open**: the three new lists by the reader's eye; GLES tiles (float textures for the lists, desktop and Quest); the
 CPU binning's per-frame allocations; a light's own shadow (none - a lamp
 lights through walls within its reach).
 

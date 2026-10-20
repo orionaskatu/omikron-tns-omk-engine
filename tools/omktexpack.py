@@ -411,8 +411,8 @@ CITY_NIGHT = {"QALISAR": 0.5}
 # THE LIGHT SOURCES (`lights.txt`, `o3de/emitterlight.h` SurfaceCuration):
 # which textures, and which parts of them, cast light with the emitters'
 # light on - the data cannot tell a neon tube from a bright painted panel.
-# Written only where there is none (the reader edits it); Qalisar's first
-# draft, from its atlases, 2026-10-20.
+# Written only where there is none (the reader edits it); first drafts of
+# the four cities, from their atlases, 2026-10-20.
 CITY_LIGHTS = """# THE LIGHT SOURCES - which textures, and which parts of them, cast light
 # (omk-play's emitters' light, --fx-light; `o3de/emitterlight.h`).
 # A set this file names is curated: only what is listed lights. A set it does
@@ -448,6 +448,46 @@ QALISAR BATITR16 128,0,256,32 = 3.0           # the orange letters
 QALISAR BATITR04 = 0.5                        # the lit panel
 QALISAR BATITR19 = 0.6                        # the emblem
 QALISAR BATITR15 = 1.5                        # the sign atlas
+#
+# ANEKBAH - a first draft, 2026-10-20: the letters and the neon star strong,
+# the signs and the lamps bright, the lit windows low; the paintings out.
+ANEKBAH BATITR16 128,0,256,32 = 3.0           # the orange letters
+ANEKBAH BATITR13 0,0,128,128 = 2.0            # the neon star
+ANEKBAH BATITR13 128,0,192,128 = 1.5          # the small signs
+ANEKBAH BATITR12 0,0,128,128 = 1.5            # the sign bands
+ANEKBAH BATITR12 128,128,256,256 = 0.5        # the lit panel
+ANEKBAH BATITR15 0,0,256,128 = 1.5            # the sign atlas
+ANEKBAH BATITR15 = 0.5                        # its posters
+ANEKBAH BATITR18 224,0,256,128 = 2.0          # the letter column
+ANEKBAH BATITR18 64,0,224,128 = 0.5           # the lit panel
+ANEKBAH BATITR18 128,128,256,256 = 0.4        # the food posters
+ANEKBAH BATITR20 192,128,256,256 = 2.0        # the green letters
+ANEKBAH BATITR20 128,128,192,256 = 1.0        # the lamp
+ANEKBAH BATITR20 0,0,128,128 = 1.0            # the green lamp strips
+ANEKBAH BATITR14 = 1.0                        # the yellow lamps
+ANEKBAH BATITR17 128,64,256,128 = 1.0         # the lamps
+ANEKBAH BATITR11 128,128,256,256 = 1.0        # the strip lamp
+ANEKBAH BATITR08 64,0,192,128 = 0.5           # the lit window
+ANEKBAH BATITR04 128,128,256,256 = 0.5        # the lit panel
+ANEKBAH BATITR10 0,128,128,256 = 0.5          # the lit window
+ANEKBAH BATITR19 0,128,128,256 = 0.6          # the emblem
+#
+# JAUNPUR - a first draft, 2026-10-20: a sunlit city - its signs alone, at 1;
+# its light maps mostly mark white sandstone, which is bright, not light.
+JAUNPUR TATITR15 64,0,128,128 = 1.0           # the sign column
+JAUNPUR TATITR17 0,0,128,128 = 1.0            # the sign panels
+JAUNPUR TATITR18 128,0,256,128 = 1.0          # the signs
+JAUNPUR TATITR12 0,0,64,128 = 1.0             # the sign column
+JAUNPUR TATITR12 128,0,256,128 = 1.0          # the sign bands
+JAUNPUR TATITR05 192,128,256,256 = 1.0        # the signs
+JAUNPUR SOUK02 128,0,192,128 = 1.0            # the sign column
+#
+# LAHOREH - a first draft, 2026-10-20: sunlit too - its signs and its lamp.
+LAHOREH VENISED3 0,0,128,128 = 1.0            # the sign columns
+LAHOREH VENISE3 0,0,128,128 = 1.0             # the sign columns
+LAHOREH VENISE19 0,0,256,128 = 1.0            # the sign atlas
+LAHOREH VENISE18 0,0,32,256 = 1.0             # the letter column
+LAHOREH BATITR11 128,128,256,256 = 1.0        # the strip lamp
 """
 
 

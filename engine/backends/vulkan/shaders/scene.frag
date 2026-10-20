@@ -55,9 +55,10 @@ layout(push_constant) uniform Push {
     // THE BLOOM (`post.frag`): 0 off - alpha 1, as always; 1 on - the alpha
     // is this texel's LIGHT, the texture pack's light map (binding 1)
     int   bloomMode;    // 116
-    // THE WATER REFLECTION (`todo/remaster.md` A3): this draw is WATER and
+    // THE WATER REFLECTION (`todo/remaster.md` A3): 1 this draw is WATER and
     // adds the reflected scene (binding 2) at its own screen position, times
-    // `waterStrength`; 0 on every other draw
+    // `waterStrength`; 2 this is the REFLECTION pass, and `waterStrength` is
+    // the water's height - what lies below it is discarded; 0 otherwise
     int   water;          // 120
     float waterStrength;  // 124
 } pc;
@@ -157,6 +158,7 @@ float litness() {
 
 void main() {
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
+    if (pc.water == 2 && vWorld.y > pc.waterStrength) discard;   // below the water (Y is down)
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
     // Under the nearest sampler (the original's) this is exactly the old
     // `rgb == 0` test on the same texel. Under the bilinear ENHANCEMENT the
@@ -213,7 +215,7 @@ void main() {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
     }
-    if (pc.water != 0)
+    if (pc.water == 1)
         c += texture(refl, gl_FragCoord.xy / vec2(textureSize(refl, 0))).rgb * pc.waterStrength;
     outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
 }

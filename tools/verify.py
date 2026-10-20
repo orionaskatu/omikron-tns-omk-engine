@@ -31847,8 +31847,15 @@ def c_engine_water_reflection():
       3. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, 30 frames
          at 640x480 on Jaunpur's canal: the water on moves pixels, and none
          it darkens - the reflection is ADDED; Anekbah (no water) with the
-         water on is byte-identical to the water off; and on the canal Vulkan
-         and GLES agree within 1% of the pixels (by ~16 levels).
+         water on is byte-identical to the water off; on the canal Vulkan
+         and GLES agree within 1% of the pixels (by ~16 levels); and THE
+         PER-FRAGMENT CLIP: at strength 1, the whole scene handed to the
+         reflection (`OMK_WATER_NO_CPU_CLIP=1`) draws within 500 pixels of the
+         CPU-clipped frame - the backend removes what lies below the water
+         itself, which is what keeps a swimmer's submerged half out of the
+         reflection (posed bodies are never CPU-clipped; the reader's play
+         test, 2026-10-20, showed his legs reflected above his head). Measured
+         77 pixels apart on Vulkan; with the clip disabled 2861.
 
     Measured too, once, outside the check (2026-10-20, M3): with the water
     off every frame tried is byte-identical to the build before (Vulkan and
@@ -31928,7 +31935,18 @@ def c_engine_water_reflection():
                 res[kind] = ("no frame",); continue
             moved = sum(1 for x, y in zip(off, on) if x != y)
             darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
-            res[kind] = (live == "1", moved > 2000, darker, soff == son)
+            # the PER-FRAGMENT clip (what keeps a swimmer's submerged half out
+            # of the reflection - the reader's play test, 2026-10-20): at 1.0,
+            # everything handed to the reflection draws within a few hundred
+            # pixels of the CPU-clipped frame
+            cpu, _ = frame(binary, os.path.join(tmp, "cpu.bin"), *canal, "--water", "1")
+            os.environ["OMK_WATER_NO_CPU_CLIP"] = "1"
+            try:
+                shd, _ = frame(binary, os.path.join(tmp, "shd.bin"), *canal, "--water", "1")
+            finally:
+                del os.environ["OMK_WATER_NO_CPU_CLIP"]
+            clip = sum(1 for x, y in zip(cpu, shd) if x != y) < 500 if cpu and shd else None
+            res[kind] = (live == "1", moved > 2000, darker, soff == son, clip)
             res[kind + "_on"] = on
         agree = ("skipped",)
         if "gles_on" in res and "vulkan_on" in res:
@@ -31940,7 +31958,7 @@ def c_engine_water_reflection():
         shutil.rmtree(tmp, ignore_errors=True)
     vres, gres = res.get("vulkan"), res.get("gles")
     print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
-    want = (True, True, 0, True)
+    want = (True, True, 0, True, True)
     return (src_ok, finder, vres, gres, agree), \
            ((True,) * 4, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
             agree if isinstance(agree, tuple) else True), \

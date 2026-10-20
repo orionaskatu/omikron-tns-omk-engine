@@ -345,6 +345,27 @@ on at **0.35**; off unless named, never `all = max`, Vulkan and GLES.
   HUNG in Jaunpur. A function-local static now, and the inflate bounded;
   `engine: texture pack` decodes on the pool in 20 fresh processes.
 
+* **The reader's play test, 2026-10-20 - a swimmer's legs reflected above
+  his head.** The CPU clip keeps only what is above the plane, but a POSED
+  draw (a body, the sky) is handed to the reflection whole - its corners are
+  at rest, the pose is the GPU's - so a swimmer's submerged half was mirrored
+  up through the water. Fixed in the backends: the reflection pass DISCARDS
+  per fragment below the plane (Vulkan: `water` mode 2, the plane's height in
+  `waterStrength`, `vWorld` is the posed position; GLES: `uClip` / `uClipY`
+  and a `vWy` varying from VERTEX variants made the same way as the fragment
+  one). Measured on the canal at strength 1: the shader clip alone (the whole
+  scene handed over, `OMK_WATER_NO_CPU_CLIP=1`) is 77 pixels from the CPU
+  clip; with no clip at all 2861. Part of `engine: water reflection` now,
+  shown to fail on each backend. **CONFIRMED IN PLAY** (the reader, 2026-10-20: "Player reflect is fixed").
+* **The water near the camera mirrored too strongly** (the reader's screenshot, 2026-10-20: the quay's own reflection at a steep angle). The geometry is right - the reflection meets the quay at its waterline - but one strength everywhere is not water: it reflects ~2% looking straight down and nearly all at grazing. Next: a Fresnel term (Schlick), the strength its grazing maximum.
+* **Found looking for a surface swim: Jaunpur has water at MORE THAN ONE
+  height.** The finder takes the height with the most area (y 4); the canal
+  the player swims in after the bank at 10524,-40,10284 has its surface
+  lower (the swimmer's root at y ~100-117), and once he is in, the camera
+  drops below y 4 and the reflection is off. One plane per set, the largest,
+  is a limit of this first version: per-draw planes (each water mesh its own
+  height) would reflect every level, at a pass per level in view.
+
 **Open**: a Fresnel term (stronger at grazing angles - the shader needs the
 eye, the push block is full: a uniform buffer then); ripples (a normal map
 from B3 perturbing the lookup); PAstar; the glass (`vitre`), one plane each;

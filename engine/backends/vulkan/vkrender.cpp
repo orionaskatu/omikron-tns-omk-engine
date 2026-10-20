@@ -235,7 +235,7 @@ public:
     bool setWater(float) override { return true; }   // nothing to build ahead
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
-                        float strength) override;
+                        float strength, float planeY) override;
     bool drawMirrorScene(const omk::View& v, const omk::View& refl,
                          std::span<const omk::Draw> scene,
                          std::span<const omk::Draw> sceneClipped,
@@ -592,7 +592,8 @@ private:
     VkFramebuffer    reflFbuf_ = VK_NULL_HANDLE;
     VkFramebuffer    passFb_ = VK_NULL_HANDLE;   // `begin`'s target when set, `fbuf_` otherwise
     bool             waterNow_ = false;
-    float            waterStrength_ = 0.0f;
+    bool             reflectingNow_ = false;   // the reflection pass: clip below `waterY_`
+    float            waterStrength_ = 0.0f, waterY_ = 0.0f;
     bool makeReflection();
     void killReflection();
     void bindReflection(VkDescriptorSet ds);
@@ -3028,8 +3029,8 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
     push_.bloomMode = bloom_ > 0.0f ? 1 : 0;
-    push_.water = waterNow_ ? 1 : 0;
-    push_.waterStrength = waterStrength_;
+    push_.water = waterNow_ ? 1 : reflectingNow_ ? 2 : 0;
+    push_.waterStrength = reflectingNow_ ? waterY_ : waterStrength_;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
         push_.texScaled = bound.packed ? 1 : 0;
@@ -3185,14 +3186,17 @@ void VulkanRenderer::killReflection() {
 
 bool VulkanRenderer::drawWaterScene(const omk::View& v, const omk::View& refl,
                                     std::span<const omk::Draw> scene, std::span<const omk::Draw> above,
-                                    std::span<const omk::Draw> water, float strength) {
+                                    std::span<const omk::Draw> water, float strength, float planeY) {
     if (water.empty() || strength <= 0.0f || !makeReflection()) return false;
     // 1. THE REFLECTION: the same render pass into the reflection's
     //    framebuffer, through the reflected camera; it ends in TRANSFER_SRC,
     //    as the scene's target does, and goes to SHADER_READ for the water
     passFb_ = reflFbuf_;
     begin(refl);
+    reflectingNow_ = true;
+    waterY_ = planeY;
     for (const auto& d : above) submit(d);
+    reflectingNow_ = false;
     vkCmdEndRenderPass(cb_);
     recording_ = false;
     passFb_ = VK_NULL_HANDLE;

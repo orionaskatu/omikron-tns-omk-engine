@@ -103,6 +103,7 @@ constexpr const char* kSwitches[] = {
     "OMK_VERIFY_SPLIT",         // the two-layer grid against the linear scan every moving frame (engine: split grid)
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
+    "OMK_WATER_NO_CPU_CLIP",    // =1 the water reflection is handed the whole scene, clipped by its shader alone (engine: water reflection)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);

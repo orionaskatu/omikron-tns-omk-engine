@@ -417,10 +417,30 @@ std::string bloomVariant(const char* frag) {
 // adds the reflection (unit 4) at its screen position times `uWater`, 0 on
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
-    std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\n" + frag;
+    std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\n"
+                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\n" + frag;
     const auto at = s.rfind("gl_FragColor = vec4(c,");
     if (at != std::string::npos)
         s.insert(at, "if (uWater > 0.0) c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater;\n    ");
+    // the REFLECTION pass discards what lies below the water (Y is down) - a
+    // posed body's place is the GPU's, so the CPU clip cannot do it
+    const std::string m = "void main() {";
+    const auto mp = s.find(m);
+    if (mp != std::string::npos) s.insert(mp + m.size(), "\n    if (uClip != 0 && vWy > uClipY) discard;");
+    return s;
+}
+
+// ...and its VERTEX side: the world height handed down as `vWy`, taken from
+// whatever the program transforms - `aPos` for a set, `wp` for a posed body.
+std::string waterVertVariant(const char* vert) {
+    std::string s = std::string("varying float vWy;\n") + vert;
+    const std::string key = "gl_Position = uMvp * vec4(";
+    const auto at = s.find(key);
+    if (at == std::string::npos) return s;
+    const auto end = s.find(", 1.0);", at);
+    if (end == std::string::npos) return s;
+    const std::string expr = s.substr(at + key.size(), end - at - key.size());
+    s.insert(at, "vWy = (" + expr + ").y;\n    ");
     return s;
 }
 
@@ -1079,7 +1099,8 @@ public:
         return true;
     }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
-                        std::span<const Draw> above, std::span<const Draw> water, float strength) override;
+                        std::span<const Draw> above, std::span<const Draw> water, float strength,
+                        float planeY) override;
     // ...and the city grade, any time: n^3 RGB 0..1, red fastest
     bool setGrade(const float* rgb, int n) override {
         if (!rgb || n < 2) { lutN_ = 0; return true; }
@@ -1315,7 +1336,7 @@ private:
         GLint lit = -1, caster = -1, pl = -1, plCount = -1, shadow = -1, lightMvp = -1,
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
-        GLint water = -1, reflInv = -1;   // the water variant's
+        GLint water = -1, reflInv = -1, clip = -1, clipY = -1;   // the water variant's
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1473,7 +1494,9 @@ private:
     // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
     float  waterWant_ = 0.0f;            // asked for at creation: the variant is built
     bool   waterNow_ = false;            // the draws being submitted are WATER
-    float  waterStrength_ = 0.0f;
+    bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
+    float  waterStrength_ = 0.0f, waterY_ = 0.0f;
+    std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
     int surfW_ = 0, surfH_ = 0;
@@ -1672,12 +1695,22 @@ bool GlesRenderer::init(int w, int h) {
     }
     const char* const sceneFragX = variant ? bloomFrag_.c_str() : kSceneFragX;
     const char* const sceneFrag = variant ? bloomFrag_.c_str() : kSceneFrag;
+    // the water variant's fragment reads `vWy`: its vertex stages hand it down
+    const bool enh = wantPixLights_ || wantShadowMap_;
+    if (waterWant_ > 0.0f) {
+        waterVert_ = waterVertVariant(enh ? kSceneVertX : kSceneVert);
+        waterPosedVert_ = waterVertVariant(enh ? kPosedVertX : kPosedVert);
+    }
+    const char* const vSceneX = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVertX;
+    const char* const vScene = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVert;
+    const char* const vPosedX = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVertX;
+    const char* const vPosed = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVert;
     if (wantPixLights_ || wantShadowMap_) {
-        prog_ = link(kSceneVertX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
+        prog_ = link(vSceneX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                                 {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
                                                 {kAttrNormal, "aNormal"}});
         if (prog_) {
-            posed_ = link(kPosedVertX, sceneFragX,
+            posed_ = link(vPosedX, sceneFragX,
                           {{kAttrPos, "aPos"}, {kAttrUV, "aUV"}, {kAttrCol, "aCol"},
                            {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
             if (!posed_) std::fprintf(stderr, "gles: no enhanced posing program - bodies are posed on the CPU\n");
@@ -1688,7 +1721,7 @@ bool GlesRenderer::init(int w, int h) {
         }
     }
     if (!prog_)
-        prog_ = link(kSceneVert, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
+        prog_ = link(vScene, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                               {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"}});
     present_ = link(kPresentVert, kPresentFrag, {{0, "aPos"}});
     if (!prog_ || !present_) return false;
@@ -1699,7 +1732,7 @@ bool GlesRenderer::init(int w, int h) {
     if (!enhanced) {
         // at start with the others, for the shader cache (above); a context
         // that cannot build it simply poses on the CPU
-        posed_ = link(kPosedVert, sceneFrag,
+        posed_ = link(vPosed, sceneFrag,
                       {{kAttrPos, "aPos"}, {kAttrUV, "aUV"}, {kAttrCol, "aCol"},
                        {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
         if (!posed_) std::fprintf(stderr, "gles: no posing program - bodies are posed on the CPU\n");
@@ -1759,6 +1792,8 @@ bool GlesRenderer::init(int w, int h) {
         L.grey = glGetUniformLocation(p, "uGrey");
         L.water = glGetUniformLocation(p, "uWater");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
+        L.clip = glGetUniformLocation(p, "uClip");
+        L.clipY = glGetUniformLocation(p, "uClipY");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -2729,7 +2764,8 @@ void GlesRenderer::setView(const View& view) {
 // reflected camera into `reflFbo_` (single-sampled, the target's size), then
 // the frame as usual with the water draws adding it from unit 4.
 bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
-                                  std::span<const Draw> above, std::span<const Draw> water, float strength) {
+                                  std::span<const Draw> above, std::span<const Draw> water, float strength,
+                                  float planeY) {
     if (waterWant_ <= 0.0f || water.empty() || strength <= 0.0f || mainLoc_.water < 0) return false;
     if (reflW_ != rw_ || reflH_ != rh_) {
         if (!reflFbo_) glGenFramebuffers(1, &reflFbo_);
@@ -2754,7 +2790,10 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     }
     passFbo_ = reflFbo_;
     begin(refl);
+    reflectingNow_ = true;
+    waterY_ = planeY;
     for (const auto& d : above) submit(d);
+    reflectingNow_ = false;
     passFbo_ = 0;
     recording_ = false;
     glActiveTexture(GL_TEXTURE4);
@@ -3152,6 +3191,8 @@ void GlesRenderer::submit(const Draw& d) {
     if (waterWant_ > 0.0f && L.water >= 0) {
         glUniform1f(L.water, waterNow_ ? waterStrength_ : 0.0f);
         if (waterNow_) glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+        glUniform1i(L.clip, reflectingNow_ ? 1 : 0);
+        if (reflectingNow_) glUniform1f(L.clipY, waterY_);
     }
     if (posed && (lastPose_ != d.meshPose || lastPoseGeo_ != d.geo)) {
         buildPoseUniforms(d, *pvb);

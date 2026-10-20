@@ -391,9 +391,13 @@ public:
     // ...asked for when the renderer is MADE (before `init`): a backend may
     // have to build its programs for it (GLES). False where there is none.
     virtual bool setWater(float /*strength*/) { return false; }
+    // `planeY`: the water's height. The reflection pass DISCARDS what lies
+    // below it per fragment - the CPU clip cannot see a posed body's place,
+    // and a swimmer's legs were reflected above the water (a reader's play
+    // test, 2026-10-20).
     virtual bool drawWaterScene(const View& /*v*/, const View& /*reflected*/,
                                 std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
-                                std::span<const Draw> /*water*/, float /*strength*/) {
+                                std::span<const Draw> /*water*/, float /*strength*/, float /*planeY*/) {
         return false;
     }
     virtual bool drawMirrorScene(const View& /*v*/, const View& /*reflected*/,

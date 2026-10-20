@@ -15,6 +15,7 @@
 // that order.
 #include "o3de/renderer.h"
 #include "platform/profile.h"
+#include "platform/env.h"
 #include <cstdio>
 
 #include <algorithm>
@@ -278,13 +279,19 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     clipped = inFrontOf(flat, n, wp.y, 1.0f);
     above.assign(posed.begin(), posed.end());
     above.insert(above.end(), clipped.begin(), clipped.end());
+    // `OMK_WATER_NO_CPU_CLIP=1`, an instrument: everything to the reflection,
+    // so the backend's per-fragment clip alone removes what is below the
+    // water - which is what it does for the posed bodies anyway
+    // (`verify.py: engine: water reflection`)
+    static const bool noCpuClip = omk::envFlag("OMK_WATER_NO_CPU_CLIP");
+    if (noCpuClip) above.assign(scene.begin(), scene.end());
     if (v.shadow.on) {
         static std::vector<Draw> casters;
         casters.clear();
         for (const auto& d : draws) if (d.castsShadow) casters.push_back(d);
         if (!casters.empty()) r.shadowPass(v, casters);
     }
-    return r.drawWaterScene(v, rv, scene, above, water, strength);
+    return r.drawWaterScene(v, rv, scene, above, water, strength, wp.y);
 }
 
 MirrorStats drawWithMirror(Renderer& r, const Geometry& g,

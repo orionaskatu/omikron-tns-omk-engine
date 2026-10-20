@@ -423,6 +423,10 @@ built it must say plainly that it overrides authored art.
 Bloom on the neon and a coloured fog are the same shape: they would flatter
 the game and have no data behind them.
 
+Since 2026-10-20 these - and everything else that overrides authored art -
+have a home of their own: `todo/remaster.md`, a `[Remaster]` section kept
+apart from this one.
+
 ## `all = max` / `--enhance-all`
 
 One switch for the whole section, so nobody has to know what the list

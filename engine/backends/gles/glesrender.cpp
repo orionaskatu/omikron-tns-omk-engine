@@ -107,6 +107,8 @@
 #include "platform/profile.h"
 #include "o3de/renderer.h"
 #include "o3de/shimmer.h"
+#include "o3de/texpack.h"
+#include "platform/events.h"
 #include "ui/overlay.h"
 #include "ui/surface.h"
 #include "platform/env.h"
@@ -1068,7 +1070,8 @@ private:
     // `keep` holds that storage alive, so its address cannot be reused for
     // other pixels while the GL texture exists. A NAME would not do: 182
     // names ship with different pixels in different files (CLAUDE.md 6).
-    struct Uploaded { GLuint id = 0; int w = 0, h = 0; PixelBuffer keep; bool used = false; };
+    struct Uploaded { GLuint id = 0; int w = 0, h = 0; PixelBuffer keep; bool used = false;
+                      bool packed = false; };   // from the TEXTURE PACK (o3de/texpack.h)
     // keyed by the storage AND the size: two slots may share one storage at
     // different sizes, and a key on the storage alone let the second upload
     // delete the texture the first slot still drew with
@@ -1887,7 +1890,11 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
     for (auto& [key, u] : uploaded_) u.used = false;
     tex_.assign(t.size(), Tex{});
     std::vector<unsigned char> px;
-    int reused = 0, fresh = 0;
+    int reused = 0, fresh = 0, packed = 0;
+    // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened.
+    // A replacement is uploaded at its own size and `out.w`/`out.h` stay the
+    // ORIGINAL's: the UVs are in its texels and `texSize` divides by it.
+    const omk::TexturePack& pack = omk::texturePack();
     for (std::size_t i = 0; i < t.size(); ++i) {
         const auto& s = t[i];
         if (!s.hasPixels()) continue;
@@ -1902,15 +1909,22 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         if (hit != uploaded_.end()) {
             hit->second.used = true;
             out.id = hit->second.id;
+            packed += hit->second.packed ? 1 : 0;
             ++reused;
             continue;
         }
-        const int n = s.width * s.height;
-        px.resize(static_cast<std::size_t>(n) * 4);
-        // alpha carries the COLOUR KEY, exactly as the Vulkan upload does:
-        // 0 where the texel is black, 255 elsewhere (`formats/tex3dt.h`, NEON
-        // where the platform has it)
-        s.toRgbaKeyed(px.data());
+        int upW = s.width, upH = s.height;
+        const bool fromPack = pack.active() && pack.replacement(s, px, upW, upH);
+        if (!fromPack) {
+            upW = s.width; upH = s.height;
+            const int n = s.width * s.height;
+            px.resize(static_cast<std::size_t>(n) * 4);
+            // alpha carries the COLOUR KEY, exactly as the Vulkan upload does:
+            // 0 where the texel is black, 255 elsewhere (`formats/tex3dt.h`, NEON
+            // where the platform has it)
+            s.toRgbaKeyed(px.data());
+        }
+        packed += fromPack ? 1 : 0;
         // REPEAT is the engine's addressing (the sampler Vulkan builds), and
         // GLES2 allows it only on power-of-two textures. All 2534 shipped under
         // MESHES are (max 256x256); a texture that is not
@@ -1934,11 +1948,11 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         if (mips && anisoOn_ > 1)
             glTexParameterf(GL_TEXTURE_2D, kGlTextureMaxAnisotropy, static_cast<GLfloat>(anisoOn_));
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, s.width, s.height, 0, GL_RGBA,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, px.data());
         if (mips) glGenerateMipmap(GL_TEXTURE_2D);
-gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * s.width * s.height / 3);
-        uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true};
+gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
+        uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true, fromPack};
         ++fresh;
     }
     // what no slot of this pool uses any more leaves the GPU
@@ -1951,6 +1965,9 @@ gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * s.width * s.height / 3);
     }
     std::printf("gles: texture pool of %zu - %d kept on the GPU, %d uploaded, %d dropped, %.1f ms\n",
                 t.size(), reused, fresh, dropped, glesClockMs() - t0);
+    if (pack.active())
+        omk::event("texpack.pool", {{"backend", "gles"}, {"textures", static_cast<long>(t.size())},
+                                    {"replaced", packed}});
 }
 
 // A SMALL WRITE INTO THE BOUND ARRAY BUFFER. On a host it is glBufferSubData.

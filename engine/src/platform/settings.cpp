@@ -12,6 +12,8 @@ constexpr const char* kPrefs = "preferences";
 constexpr const char* kOptions = "options";
 // And its section for what the original never had (settings.h).
 constexpr const char* kEnhancements = "enhancements";
+// And the remaster's, for what replaces authored art (settings.h).
+constexpr const char* kRemaster = "remaster";
 
 }  // namespace
 
@@ -157,6 +159,15 @@ Settings resolveSettings(const OptionsFile& ini,
         // field and `applyMaxEnhancements` leaves it alone. That is what makes
         // `all` a base rather than an override, whatever order the file is in.
         if (wantAll) { s.enhanceAll = true; applyMaxEnhancements(s); }
+
+        // ---- [Remaster], off unless written ------------------------------
+        if (const std::string* w = ini.find(kRemaster, "texturepack")) {
+            std::string v = *w;
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
+            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+            if (!v.empty()) { s.texturePack = v; s.texturePackSource = Settings::Source::Ini; }
+        }
     }
 
     // ---- 2. the save header, which is later and therefore wins -----------

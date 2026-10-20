@@ -27,7 +27,10 @@ new renderer.
    held back precisely because it overrides authored art, and a remaster does.
    So it says so and lives apart. Still OFF by default, still byte-identical
    at rest, every feature with a check shown to fail (CLAUDE.md §4, PORTING
-   B2) - the same contract as every enhancement row.
+   B2) - the same contract as every enhancement row. **Every feature is its
+   OWN option** (the reader, 2026-10-20): `--remaster` is only a preset over
+   them, any key beats it, and the current render must stay available
+   after every step - the default run is never changed by this plan.
 2. **Generated assets never enter the repo.** An upscaled texture or a remodel
    is a derivative of the copyrighted data and the repo is PUBLIC. Ship the
    PIPELINE (GPL scripts); each player generates the pack from their own
@@ -66,8 +69,9 @@ new renderer.
   per texture also carries the wet/polished tag.
 * **B4, the engine side.** A replacement loader keyed by a HASH of the
   decoded original indices (survives renames, two models sharing a texture),
-  falling back to the shipped texture. UVs are already divided by the
-  material's width (ASSETS 4), so a 4x texture drops in with no mesh change.
+  falling back to the shipped texture. (Corrected when built: the UVs reach
+  the GPU in the original's TEXELS and the shader divides by the bound
+  texture's size, so a 4x texture needs the factor passed - see below.)
   Memory: 2534 x 1024² is fine on desktop, not on the Vita or the 3DS - the
   pack is desktop/Quest only.
 * **B5, optional and more creative**: ComfyUI + a Stable Diffusion tile
@@ -107,6 +111,7 @@ tools avoid the question.
 
 1. **B4 + B1 on ONE model** - the fastest visible result, and it settles the
    hash and the colour-key questions before 2534 textures depend on them.
+   **DONE 2026-10-20** - see "Step 1, as built" below.
 2. **A1 + A2** - tone map, grade, bloom on the game's own emitters.
 3. **B3 then A3 + A5** - material maps, reflections, characters in the
    painted light.
@@ -115,3 +120,91 @@ tools avoid the question.
 Steps 1-3 are about one to two months of engine work and make a convincing
 remaster; step 4 is where the small remake begins, bounded by artist time,
 not code.
+
+## Step 1, as built (2026-10-20) - the texture pack
+
+**What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on
+`omk-play` / `omk-play-gles` (the scene viewer takes the flag too). OFF unless
+named; `all = max` never touches it. Vulkan and GLES draw it; the software
+reference, GL1 and the 3DS never consult it. A pack is a directory of
+`<key>.png` (RGBA, the original's size times a power of two each way), so
+any one texture can be opened and fixed in an image editor.
+
+**The pieces.**
+
+| file | what |
+|---|---|
+| `engine/src/o3de/texpack.{h,cpp}` | the key (FNV-1a 64 over size, indices, 768 palette bytes), the pack index, `openTexturePack` |
+| `engine/src/platform/pngread.{h,cpp}` | PNG + inflate, written here (no dependency, PORTING A8) |
+| `backends/vulkan` | `Tex::su/sv/packed`; push fields `texScaled`/`texScaleU`/`texScaleV` at 104..112 (the block 104 -> 116 bytes); `scene.frag` divides by the original's size only when `texScaled` |
+| `backends/gles` | a replacement uploaded at its size, `texSize` kept the original's |
+| `engine/tools/texpack_tool.cpp` | `keys` (the engine's keys) and `png` (the engine's reader, for the Python tool) |
+| `tools/omktexpack.py` | `export` / `upscale` / `build` - see its docstring |
+| `verify.py: engine: texture pack` | the check, `--slow`, shown to fail five ways |
+
+**How to make and use a pack** (the M3; ~1 h 10 for everything):
+
+```bash
+P=~/Documents/omk/omk-pack                       # never inside the repo - refused
+python3 tools/omktexpack.py export  $P/full      # 1255 unique textures, ~2 min
+python3 tools/omktexpack.py upscale $P/full --bin $P/realesrgan-dl/x/realesrgan-ncnn-vulkan
+python3 tools/omktexpack.py build   $P/full      # anchored (the default), ~25 min
+engine/build/omk-play-gles ../fr ../tables --save ../traces/save-appart.bin --area 0 \
+    --stand 1804,0,-6890,336 --texture-pack $P/full/pack
+```
+
+`--match DECORS/Aapkayl.3DO` limits any step to some models. Real-ESRGAN is
+the official `realesrgan-ncnn-vulkan-20220424-macos` release (universal,
+arm64; sha256 `e0ad0558...cc333a`), ~2 s an image on the M3 GPU.
+
+**What the pilot showed** (Kay'l's apartment `Aapkayl` + the street set
+`Anekbah`, 41 textures, all 256x256 -> 1024x1024; judged by eye on
+`run_vulkan` frames at 1200x800, trilinear + 16x):
+
+* **Raw Real-ESRGAN DENOISES the art.** `realesrgan-x4plus` sharpens edges
+  (the pillars, the sofa's folds, the sign lettering, the cutout triangles)
+  but wipes the painted GRAIN of floors and ceilings flat - a plastic look,
+  away from the original. `realesrgan-x4plus-anime` is flatter still and
+  posterises. Mixing a bilinear enlargement back in (`--grain F`) only
+  muddies it.
+* **ANCHORING fixes it, and is the default.** Back-projection: the upscaled
+  image is corrected so its 4x4 box average is the SHIPPED texel again
+  (`omktexpack.anchor`). The grain and the colours are the artists' at their
+  own scale; the upscaler contributes only what lies between texels - the
+  edges. In the comparison it kept x4plus's sharper sofa and panel edges and
+  the original's floor and ceiling. `--no-anchor` keeps the raw picture.
+* **The game's own lettering survives** (the hospital sign, the vertical
+  banners): crisper, not garbled - at this distance. Close up is not yet
+  judged.
+* Sizes: 1.75 MB a texture on disk (the pilot 72 MB; a full pack ~2.2 GB);
+  in VRAM 4 MB a texture + mips, ~200 MB for the street's pool of ~40.
+
+**Measured, the guarantees.** With no pack, every frame tried is
+byte-identical to the build before the feature: Vulkan `run_vulkan` on
+Aapkayl and ABar06 under nearest / bilinear / trilinear + 16x / 4x MSAA, the
+Vulkan scene viewer on Anekbah camera 3, and the 45-frame street dump on
+GLES. Under the nearest sampler a pack of every texture at 4x nearest draws
+byte-identical to none - on the street, all 1255 textures, 31 then 39 of the
+pool replaced.
+
+**Open, in the order I would take them:**
+
+1. **A person's look in play** - the street and an interior at 1080p+ with
+   the full pack, and the close-up of lettering. The pilot was judged on
+   static frames only.
+2. **Decode cost at a pool change**: a replacement is decoded on upload
+   (~1255 textures would be seconds); fine for a street, felt at a cutscene
+   hand-over that brings new characters. Decode on the thread pool, or cache.
+3. **The greyscale bank** (ops 150/151): the viewer greys the pool's
+   PALETTES (`backends/sdl/playframe_world_scene.cpp`, `greyPalette`), which
+   is another key - so a black-and-white cutscene draws the SHIPPED textures,
+   greyed: consistent, just not upscaled. The fix is to key on the colour
+   palette and grey the replacement (luma `(299R+587G+114B)/1000`) at upload.
+4. **Textures not under MESHES** - the SCX stream's embedded effect sprites
+   (`sprite_fx.py`) are not exported.
+5. Curation: an exclusion list for anything the upscaler hurts, and B3's
+   material maps from the same images.
+
+The full-sweep red seen on the way, NOT this change's: `engine: release
+build`'s second field (the development build's `OMKSNAP1` marker) is 0 in the
+build from before this feature too.

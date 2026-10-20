@@ -6,7 +6,9 @@
 // `msaa` (0/2/4/8, default 0), `filter` (0 nearest, 1 bilinear, 2 trilinear;
 // default 0) and `aniso` (1..16, default 1) are the `[Enhancements]` options,
 // asked of the Vulkan side only - the software reference has none, like the
-// original.
+// original. `OMK_TEXTURE_PACK=DIR` opens a REMASTER texture pack
+// (`o3de/texpack.h`) for the Vulkan side - the instrument's switch, read here
+// and never by the engine (`verify.py: engine: texture pack`).
 //
 // The same set, the same camera, the same submissions in the same order, once
 // through the software reference and once through the GPU. Both come back as
@@ -21,6 +23,7 @@
 #include "formats/tex3dt.h"
 #include "o3de/geom3do.h"
 #include "o3de/renderer.h"
+#include "o3de/texpack.h"
 #include "platform/datafs.h"
 
 #include <cstdio>
@@ -111,6 +114,10 @@ int main(int argc, char** argv) {
     if (filter > 0) vk->setTextureFilter(filter);
     const int aniso = argc > 10 ? std::atoi(argv[10]) : 1;
     if (aniso > 1) vk->setAnisotropy(aniso);
+    if (const char* pack = std::getenv("OMK_TEXTURE_PACK"); pack && *pack) {
+        if (!omk::texturePack().open(pack)) { delete vk; return 1; }
+        std::printf("texture pack: %s, %zu entries\n", pack, omk::texturePack().size());
+    }
     const omk::Surface* b = run(*vk);
     if (!b) {
         std::fprintf(stderr, "vulkan renderer failed to come up\n");

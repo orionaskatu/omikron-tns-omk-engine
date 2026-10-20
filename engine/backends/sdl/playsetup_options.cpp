@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "o3de/texpack.h"
 
 int PlayState::setupOptions(int argc, char** argv) {
     // THE FLAGS (`todo/play-split.md` S2): `omk::PlayOptions`, parsed in
@@ -79,7 +80,9 @@ int PlayState::setupOptions(int argc, char** argv) {
     // The viewer takes the whole program: it wants no boot chain, no widget
     // tree and no movies, and mixing it into the interface loop would make
     // both harder to read than either is worth.
-    if (!scene.empty())
+    if (!scene.empty()) {
+        // ...and so the TEXTURE PACK too comes from its flag alone here
+        if (!texturePackFlag.empty()) omk::openTexturePack(texturePackFlag);
         return sceneViewer(dataRoot, scene, camIndex, haveEye ? eyeA : nullptr,
                            haveAt ? atA : nullptr, fovA, letterbox, frames, dump,
                            startVulkan, noDelay, aaFlag < 0 ? 0 : aaFlag,
@@ -87,6 +90,7 @@ int PlayState::setupOptions(int argc, char** argv) {
                            // the scene viewer runs BEFORE settings resolve, so
                            // it takes the flag alone; `--config` is the game's
                            ssaaFlag < 0 ? 1 : ssaaFlag, dither);
+    }
 
     const auto& fs = fs_.emplace(dataRoot);
     uiWidgets = omk::UiWidgets::loadJson(tb + "/ui_widgets.json");

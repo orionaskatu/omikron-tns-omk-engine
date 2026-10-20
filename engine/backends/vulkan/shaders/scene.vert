@@ -13,6 +13,9 @@ layout(push_constant) uniform Push {
     int   lit;         // 92, and it must come AFTER the vec3
     int   cull;        // 96, the back-face cull - see scene.frag
     int   posed;       // 100, a body POSED here from set 2
+    int   texScaled;   // 104, a TEXTURE PACK replacement - see scene.frag
+    float texScaleU;   // 108
+    float texScaleV;   // 112
 } pc;
 
 // THE POSE BUFFER (`vkrender.cpp` `posesBodies`, 2026-10-11 - as GLES, GL1 and

@@ -3675,6 +3675,28 @@ decimal where the two can be compared. vitaGL refuses MSAA (its multisampling
 is the display's) and anisotropy (1x), and says so. `todo/enhancements.md`,
 "On the GLES backend".
 
+**And 2026-10-20, THE TEXTURE PACK - the first REMASTER feature, not an
+enhancement** (`todo/remaster.md` B). It replaces authored pixels, so it lives
+under `[Remaster]` (`texturepack = DIR`, `--texture-pack DIR`), apart from
+`[Enhancements]`, and `all = max` never turns it on. A pack is a directory of
+`<key>.png`, the key FNV-1a 64 over a texture's size, indices and palette
+(`o3de/texpack.h`); 2534 shipped textures are 1255 unique ones.
+`tools/omktexpack.py` exports them (wrapped by 16 texels for seamless tiling,
+the colour key filled and given its own mask), drives Real-ESRGAN, and builds
+the pack ANCHORED to the shipped texels by back-projection. Vulkan and GLES
+upload a replacement at its own size, a power-of-two multiple; the UVs stay in
+the original's texels (GLES's `texSize` is the original's, the Vulkan shader
+is told the factor through a push field that is 0 on every shipped texture).
+The software reference, GL1 and the 3DS never consult it. The PNG reader is
+this port's own (`platform/pngread.*`, an inflate with no dependency). **Tier
+3** for the keys (engine against Python, 2534 of 2534) and the reader (against
+Python's zlib, 60 images); the frames are an invariant of this port's own,
+not of the original: under the nearest sampler a 4x nearest-neighbour pack
+draws byte-identical to none on both backends, and with no pack every frame
+is byte-identical to the build before the feature (measured on Vulkan and
+GLES, the street included). Check: `engine: texture pack` (shown to fail five
+ways).
+
 **And 2026-09-09, THE SHIMMER - a defect, not an enhancement.** Mesh flag
 `0x8000000` oscillates the vertex colour of 233 set meshes, the far skyline of
 every city and 132 of them in Lahoreh. The port had decoded the phase into

@@ -283,6 +283,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --smooth-anim    ENHANCEMENT: bodies slerped between two keys by the clock's\n"
 "                   fraction; the original truncates to one. Seen above 30 fps;\n"
 "                   [Enhancements] animation=smooth\n"
+"  --texture-pack DIR  REMASTER, off by default: replace textures with the\n"
+"                   pack in DIR (<key>.png files, tools/omktexpack.py makes\n"
+"                   them); Vulkan and GLES only; [Remaster] texturepack=DIR\n"
 "  --software       force the software rasteriser\n"
 "  --profile F      write a profiler capture to F (tools/omkprof.py reads it;\n"
 "                   todo/debug-tools.md - absent from `make release`)\n"
@@ -507,6 +510,7 @@ int PlayOptions::parse(int argc, char** argv) {
                 return 2;
             }
         }
+        else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
         else if (a == "--dither" && i + 1 < argc) dither = std::atoi(argv[++i]) != 0;
         else if (a == "--invert-x") mouseInvertX = true;
         else if (a == "--invert-y") mouseInvertY = true;

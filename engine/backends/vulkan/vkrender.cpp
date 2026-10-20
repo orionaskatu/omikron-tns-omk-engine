@@ -66,6 +66,8 @@
 #include "o3de/depthtie.h"
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
+#include "o3de/texpack.h"
+#include "platform/events.h"
 #include "platform/env.h"
 
 #include <algorithm>
@@ -186,8 +188,15 @@ struct Push {
     int32_t cull;      // 96  the BACK-FACE CULL: 0 both sides, +1 discard
                        //     where !gl_FrontFacing, -1 where gl_FrontFacing
     int32_t posed;     // 100 a body POSED HERE: set 2 holds its affines and lights
+    // THE TEXTURE PACK (`o3de/texpack.h`, `todo/remaster.md` B4): the bound
+    // texture is a replacement `texScaleU` x `texScaleV` the original's size,
+    // and the UVs are still in the ORIGINAL's texels. 0 for every shipped
+    // texture, and the shader then divides exactly as it did before.
+    int32_t texScaled; // 104
+    float texScaleU;   // 108
+    float texScaleV;   // 112
 };
-static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
+static_assert(sizeof(Push) == 116, "the push block is 116 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -371,6 +380,9 @@ private:
     struct Tex {
         VkImage img = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE; VkDescriptorSet ds = VK_NULL_HANDLE;
+        // a TEXTURE PACK replacement's factor over the original (texpack.h)
+        float su = 1.0f, sv = 1.0f;
+        bool packed = false;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
@@ -2029,6 +2041,11 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         it = uploaded_.erase(it);
     }
     tex_.assign(t.size(), Tex{});
+    // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened:
+    // a texture it holds is uploaded from the pack's pixels at the pack's size
+    const omk::TexturePack& pack = omk::texturePack();
+    std::vector<std::uint8_t> rep;
+    int packed = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
         if (!x.hasPixels()) continue;
@@ -2036,11 +2053,23 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
-            upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
+            int rw = 0, rh = 0;
+            if (pack.active() && pack.replacement(x, rep, rw, rh)) {
+                upload([&](unsigned char* d) { std::memcpy(d, rep.data(), rep.size()); }, rw, rh, u.t);
+                u.t.su = static_cast<float>(rw) / static_cast<float>(x.width);
+                u.t.sv = static_cast<float>(rh) / static_cast<float>(x.height);
+                u.t.packed = true;
+            } else {
+                upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
+            }
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
         }
         tex_[i] = hit->second.t;
+        packed += tex_[i].packed ? 1 : 0;
     }
+    if (pack.active())
+        omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
+                                    {"replaced", packed}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
@@ -2515,6 +2544,12 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
 
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
+    {
+        const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
+        push_.texScaled = bound.packed ? 1 : 0;
+        push_.texScaleU = bound.su;
+        push_.texScaleV = bound.sv;
+    }
     push_.lit = litCount_ > 0 ? d.lit : 0;
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and

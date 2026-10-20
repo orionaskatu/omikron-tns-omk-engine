@@ -45,6 +45,13 @@ layout(push_constant) uniform Push {
     // software test in `Render_SubmitMesh`, which the device never sees.
     int   cull;         // 96
     int   posed;        // 100, a body posed in `scene.vert` (set 2)
+    // THE TEXTURE PACK (`o3de/texpack.h`): the bound texture is a replacement
+    // this many times the original's size, while the UVs are still in the
+    // ORIGINAL's texels. 0 on every shipped texture, which then divides by
+    // its own size exactly as before.
+    int   texScaled;    // 104
+    float texScaleU;    // 108
+    float texScaleV;    // 112
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
@@ -142,7 +149,9 @@ void main() {
     // key texels are (0,0,0,0), so the sample is premultiplied: a fragment
     // more than half key is discarded and the rest is un-premultiplied,
     // which is what keeps the cutout edge free of a dark fringe.
-    vec4 t = texture(tex, vUV / vec2(textureSize(tex, 0)));
+    vec2 texels = vec2(textureSize(tex, 0));
+    if (pc.texScaled != 0) texels /= vec2(pc.texScaleU, pc.texScaleV);
+    vec4 t = texture(tex, vUV / texels);
     if (pc.cutout != 0) {
         if (t.a < 0.5) discard;
         t.rgb /= t.a;

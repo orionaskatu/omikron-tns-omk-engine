@@ -199,6 +199,16 @@ struct Settings {
     // own option rows are not enhancements and this must never move them.
     bool   enhanceAll = false;
 
+    // ---- [Remaster] - what OVERRIDES authored art, OFF unless named -------
+    // (`todo/remaster.md`). A section of its own, apart from `[Enhancements]`
+    // and never touched by `all = max`: an enhancement draws the game's own
+    // data better, a remaster feature replaces some of it.
+    //
+    // `texturepack = DIR`: a directory of replacement textures
+    // (`o3de/texpack.h`), drawn by the Vulkan and GLES backends. Empty is off.
+    std::string texturePack;
+    Source texturePackSource = Source::Default;
+
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //
     // `sub_440BE0(scene, D, 1)` writes three floats on the scene, and D is

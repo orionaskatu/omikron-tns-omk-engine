@@ -31262,6 +31262,250 @@ def c_engine_mipmaps():
            "< bilinear, and coverage agreement with software stays >= 0.98"
 
 
+def c_engine_texture_pack():
+    r"""THE TEXTURE PACK - the remaster's first feature (`todo/remaster.md` B4),
+    OFF unless `[Remaster] texturepack = DIR` / `--texture-pack DIR` names one.
+
+    A pack is a directory of `<key>.png`, the key the engine's `textureKey`
+    (FNV-1a 64 over a texture's size, indices and palette; `o3de/texpack.h`).
+    Vulkan and GLES upload a replacement at its own size - a power-of-two
+    multiple of the original - while the UVs stay in the ORIGINAL's texels:
+    GLES keeps dividing by the original size, the Vulkan shader is told the
+    factor (`texScaled`, a push field 0 on every shipped texture, so the
+    default path divides exactly as before). The software reference never
+    consults it. NOT A PORT: tier 3 for the keys and the PNG reader
+    (differentials against an independent implementation), and the frames
+    are an invariant of this port's own, not of the original.
+
+    Five parts:
+      1. the source: the default is empty; the key is read under [Remaster]
+         and nowhere under [Enhancements] (so `all = max` can never turn it
+         on); both backends consult the pack only behind `pack.active()`;
+      2. THE KEYS, both ways: `texpack_tool keys` (the engine's decoder and
+         `textureKey`) against `omktexpack.texture_key` over tex3dt.py's own
+         decode, on every one of the 2534 shipped textures - a pack made by
+         the tool is found by the engine, or it is not;
+      3. THE PNG READER (`platform/pngread.*`, an inflate written here):
+         60 images Python writes with every row filter (0-4), colour types 0,
+         2, 3 (with tRNS), 4 and 6, zlib levels 0 / 1 / 9, smooth rows and
+         noisy four-level ones (where Paeth's ties fall; smooth rows almost
+         never tie) decode to exactly what was written, and a stream with a
+         broken Adler-32 is refused;
+      4. Vulkan (`run_vulkan`, Aapkayl through 4555's neighbour) and
+      5. GLES (`gles_probe --frame`, macOS) - under the NEAREST sampler, a
+         pack holding every texture at 4x by nearest neighbour draws the frame
+         BYTE-IDENTICAL to no pack (which pins the UV scale: a wrong factor
+         samples the wrong texel), while a pack of one colour changes it and
+         puts that colour on screen; the pool event says all 21 replaced.
+
+    Measured 2026-10-20 (M3): keys 2534/2534; nearest pack 0 pixels moved on
+    both backends; the solid pack 217040 (Vulkan) / 217039 (GLES) moved,
+    29173 / 29171 magenta. Also measured once, outside the check: with no pack
+    the Vulkan frames of Aapkayl and ABar06 under nearest, bilinear,
+    trilinear+16x and 4x MSAA, and the full viewer's 45-frame street dump on
+    Vulkan and GLES, are byte-identical to the build before the feature; and
+    a pack of all 1255 unique textures at 4x nearest draws the street
+    byte-identical too (31 and 39 of the pool replaced).
+
+    Shown to fail (2026-10-20): the shader dividing by the replacement's own
+    size (`texScaled` ignored) moves the Vulkan nearest frame; GLES handing
+    the replacement's size to `texSize` moves the GLES one (212851 / 212852
+    pixels); the Python key hashing 767 palette bytes agrees on 619 of 2534
+    (the textures whose last byte is 0 anyway) and the packs it makes are
+    found by neither backend; Paeth's `pb <= pc` made `pb < pc` decodes 45
+    of 60 and the Sub filter reading the byte before rather than the pixel
+    before 48 of 60. NOT a test: `pa <= pb` made `pa < pb` - an EQUIVALENT
+    mutant, which passing is right about. pa = pb with a != b means
+    a + b = 2c, so pc = 0 and Paeth takes c either way; that comparison only
+    ever decides between equal values.
+    """
+    import subprocess, tempfile, shutil, re, random, zlib, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    model = os.path.join(fr, "MESHES", "DECORS", "Aapkayl.3DO")
+    if not (os.path.isdir(eng) and os.path.exists(model)):
+        return ("skipped",), ("skipped",), "engine/ or Aapkayl.3DO absent"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack, tex3dt
+
+    # ---- 1. the source
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    po = open(os.path.join(eng, "src", "app", "playoptions.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"std::string\s+texturePack;", sh)),
+              'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
+              "texturePack" not in max_body,
+              '"--texture-pack"' in po,
+              vk.count("pack.active() && pack.replacement(") == 1 and
+              gl.count("pack.active() && pack.replacement(") == 1)
+
+    for target in ("build/texpack_tool",):
+        mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
+        if mk.returncode != 0:
+            return ("build", target), ("built",), mk.stderr[-300:]
+    tool = os.path.join(eng, "build", "texpack_tool")
+    tmp = tempfile.mkdtemp()
+    try:
+        # ---- 2. the keys
+        r = subprocess.run([tool, "keys", fr], capture_output=True, text=True)
+        rows = [ln.split() for ln in r.stdout.splitlines()]
+        agree = differ = 0
+        cache = {}
+        for rel, mat, key, _wh in rows:
+            if rel not in cache:
+                cache = {rel: tex3dt.textures(os.path.join(fr, rel))}
+            tx = cache[rel][int(mat)]
+            k = omktexpack.texture_key(tx["w"], tx["h"], tx["idx"], tx["pal"])
+            agree += k == key
+            differ += k != key
+        keys = (len(rows) > 0, agree, differ)
+
+        # ---- 3. the PNG reader
+        rnd = random.Random(20261020)
+        def png(path, w, h, ctype, rows_px, filt, level, plte=None, trns=None, bad_adler=False):
+            ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+            raw = b""
+            prev = bytes(w * ch)
+            for y, row in enumerate(rows_px):
+                f = filt[y % len(filt)]
+                out = bytearray(len(row))
+                for i, v in enumerate(row):
+                    a = row[i - ch] if i >= ch else 0
+                    b = prev[i] if y else 0
+                    c = prev[i - ch] if (y and i >= ch) else 0
+                    if f == 0: p = 0
+                    elif f == 1: p = a
+                    elif f == 2: p = b
+                    elif f == 3: p = (a + b) >> 1
+                    else:
+                        pp = a + b - c; pa, pb, pc = abs(pp - a), abs(pp - b), abs(pp - c)
+                        p = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                    out[i] = (v - p) & 255
+                raw += bytes([f]) + bytes(out)
+                prev = row
+            z = zlib.compress(raw, level)
+            if bad_adler:
+                z = z[:-1] + bytes([z[-1] ^ 1])
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            body = chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))
+            if plte: body += chunk(b"PLTE", plte)
+            if trns: body += chunk(b"tRNS", trns)
+            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + body + chunk(b"IDAT", z) + chunk(b"IEND", b""))
+        def expect(ctype, rows_px, plte, trns):
+            out = bytearray()
+            for row in rows_px:
+                if ctype == 0: out += b"".join(bytes((v, v, v, 255)) for v in row)
+                elif ctype == 2: out += b"".join(row[i:i + 3] + b"\xff" for i in range(0, len(row), 3))
+                elif ctype == 3: out += b"".join(plte[3 * v:3 * v + 3] + bytes([trns[v] if v < len(trns) else 255]) for v in row)
+                elif ctype == 4: out += b"".join(bytes((row[i], row[i], row[i], row[i + 1])) for i in range(0, len(row), 2))
+                else: out += row
+            return bytes(out)
+        cases = good = 0
+        for ctype in (0, 2, 3, 4, 6):
+          for noisy in (False, True):
+            for filt, level in (([0], 0), ([1], 1), ([2], 9), ([3], 6), ([4], 9), ([0, 1, 2, 3, 4], 6)):
+                w, h = 37, 23
+                ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+                plte = bytes(rnd.randrange(256) for _ in range(3 * 40)) if ctype == 3 else None
+                trns = bytes(rnd.randrange(256) for _ in range(17)) if ctype == 3 else None
+                # smooth-ish rows, so every filter actually predicts something
+                rows_px = []
+                for y in range(h):
+                    # ...and NOISY ones of four levels, where Paeth's TIES
+                    # (a + b = 2c, a != b) are common - smooth rows never tie
+                    rows_px.append(bytes((rnd.randrange(40) if ctype == 3 else
+                                          rnd.randrange(4) * 60 if noisy else
+                                          (x * 7 + y * 3 + rnd.randrange(9)) & 255) for x in range(w * ch)))
+                p = os.path.join(tmp, "t.png")
+                png(p, w, h, ctype, rows_px, filt, level, plte, trns)
+                out = os.path.join(tmp, "t.raw")
+                rr = subprocess.run([tool, "png", p, out], capture_output=True, text=True)
+                cases += 1
+                if rr.returncode == 0:
+                    raw = open(out, "rb").read()
+                    good += raw[:8] == struct.pack("<ii", w, h) and raw[8:] == expect(ctype, rows_px, plte, trns or b"")
+        bad = os.path.join(tmp, "bad.png")
+        png(bad, 8, 8, 2, [bytes(24)] * 8, [0], 6, bad_adler=True)
+        refused = subprocess.run([tool, "png", bad, os.path.join(tmp, "b.raw")],
+                                 capture_output=True, text=True).returncode != 0
+        pngs = (good, cases, refused)
+
+        # ---- the two test packs, from the originals
+        work = os.path.join(tmp, "work")
+        so = sys.stdout
+        try:
+            sys.stdout = open(os.devnull, "w")
+            omktexpack.cmd_export(work, ["DECORS/Aapkayl.3DO"])
+            shutil.copytree(work, work + "-solid")
+            omktexpack.cmd_build(work, 4, None, ["DECORS/Aapkayl.3DO"])
+            omktexpack.cmd_build(work + "-solid", 0, ((255, 0, 255), 4), ["DECORS/Aapkayl.3DO"])
+        finally:
+            sys.stdout.close()
+            sys.stdout = so
+        near, solid = os.path.join(work, "pack"), os.path.join(work + "-solid", "pack")
+        CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
+
+        def gpu_frame(path):
+            raw = open(path, "rb").read()
+            W, H, _a, _b = struct.unpack_from("<4i", raw, 0)
+            return struct.unpack_from("<%dH" % (W * H), raw, 16 + 2 * W * H)
+
+        def judge(run):
+            got = {}
+            for tag, pack in (("none", None), ("near", near), ("solid", solid)):
+                out = os.path.join(tmp, tag + ".bin")
+                env = dict(os.environ, OMK_EVENTS="1")
+                if pack:
+                    env["OMK_TEXTURE_PACK"] = pack
+                rr = run(out, env)
+                if rr.returncode != 0 or not os.path.exists(out):
+                    return None
+                pool = [f for n, f in _events(rr.stdout) if n == "texpack.pool"]
+                got[tag] = (gpu_frame(out), (pool[0]["textures"], pool[0]["replaced"]) if pool else None)
+                os.remove(out)
+            n, a, s = got["none"][0], got["near"][0], got["solid"][0]
+            return (got["none"][1] is None,                               # no pack: never consulted
+                    got["near"][1] == ("21", "21"),
+                    sum(1 for x, y in zip(n, a) if x != y),              # 0: the UV scale is exact
+                    sum(1 for x, y in zip(n, s) if x != y) > 100000,     # the replacement is drawn
+                    sum(1 for v in s if v == 0xF81F) > 10000)
+
+        mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+        vkbin = os.path.join(eng, "build", "run_vulkan")
+        vres = ("no vulkan",)
+        if mk.returncode == 0 and os.path.exists(vkbin):
+            v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
+                                                      capture_output=True, text=True, env=env))
+            vres = v if v is not None else ("no vulkan device",)
+        gres = ("skipped",)
+        if platform.system() == "Darwin":
+            mk = subprocess.run(["make", "-s", "build/gles_probe"], cwd=eng, capture_output=True, text=True)
+            gp = os.path.join(eng, "build", "gles_probe")
+            gres = ("no gles_probe",)
+            if mk.returncode == 0 and os.path.exists(gp):
+                g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
+                                                          capture_output=True, text=True, env=env))
+                gres = g if g is not None else ("no gl context",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        keys {keys[1]} agree / {keys[2]} differ; png {pngs[0]}/{pngs[1]}, bad adler refused {pngs[2]}; "
+          f"vulkan {vres}; gles {gres}")
+    want_frame = (True, True, 0, True, True)
+    return (src_ok, keys, pngs, vres, gres), \
+           ((True,) * 5, (True, 2534, 0), (60, 60, True),
+            vres if len(vres) == 1 else want_frame, gres if len(gres) == 1 else want_frame), \
+           "the source (default empty, read under [Remaster] only, never by all = max, both " \
+           "backends behind pack.active()); the keys, engine against Python, 2534 of 2534; the " \
+           "PNG reader exact on 60 images over every filter and colour type and refusing a bad " \
+           "Adler-32; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
+           "one-colour pack is drawn, all 21 textures replaced"
+
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -45210,8 +45454,11 @@ def c_licence_headers():
     # 628: + `tools/group_members.py` (fields gathered into owned components)
     # 631: + `engine/src/o3de/drawcore.{h,cpp}` and `engine/tools/drawcore_probe.cpp`
     # (the GPU backends' shared pose, light, tie and blend)
+    # 637: + `engine/src/platform/pngread.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}`,
+    # `engine/tools/texpack_tool.cpp` and `tools/omktexpack.py` (the remaster's
+    # texture pack, todo/remaster.md B4)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (631, [], 1, []), \
+           (637, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48001,6 +48248,7 @@ SLOW = [
     ("engine: anti-aliasing", c_engine_anti_aliasing, "ASSETS 4"),
     ("engine: texture filter", c_engine_texture_filter, "ASSETS 4"),
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),
+    ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

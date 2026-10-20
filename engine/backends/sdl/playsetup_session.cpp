@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "o3de/texpack.h"
 
 int PlayState::setupSession() {
     const auto& fs = *fs_;
@@ -174,6 +175,13 @@ int PlayState::setupSession() {
     smoothAnim = enh(smoothAnimFlag, settings.smoothAnimation ? 1 : 0,
                                 omk::kMaxAnimation) > 0;
     omk::setPoseSmoothing(smoothAnim);
+    // THE TEXTURE PACK (`o3de/texpack.h`, `todo/remaster.md` B4) - a REMASTER
+    // feature, not an enhancement: it replaces authored pixels. Opened once,
+    // here, before any pool reaches a renderer; the GPU backends consult it.
+    {
+        const std::string packDir = !texturePackFlag.empty() ? texturePackFlag : settings.texturePack;
+        if (!packDir.empty()) omk::openTexturePack(packDir);
+    }
     if (smoothAnim)
         std::printf("animation: smooth - an ENHANCEMENT: bodies are slerped between "
                     "two keys; the original truncates to one (`Anim_ApplyNodeFrame`'s _ftol)\n");

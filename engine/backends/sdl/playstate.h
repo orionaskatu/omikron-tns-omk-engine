@@ -93,6 +93,7 @@ struct PlayState {
     int & radarFlag = opt.radarFlag;
     int & frameRateFlag = opt.frameRateFlag;
     int & smoothAnimFlag = opt.smoothAnimFlag;
+    std::string & texturePackFlag = opt.texturePackFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;

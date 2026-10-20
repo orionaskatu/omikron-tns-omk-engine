@@ -151,6 +151,66 @@ texels are light (a sign's lettering, a lamp's bulb, a window) - carried by
 the texture pack beside B3's material maps, authored or generated and then
 curated. That is the reader's call: it decides what in the city is light.
 
+## Step 2, as decided (2026-10-20) - EMISSIVE bloom + a GRADE per city
+
+**The reader's decision**, after the offline previews: an EMISSIVE map per
+texture drives the bloom (not the additive draws - see "Step 2's bloom,
+tried" above), then one colour grade per city, the two `[Remaster]` options
+of their own, off by default. Qalisar takes the LIGHTER neon grade: "the area
+is intended to be dark, and the contrast with the neons is probably a part
+of the visual identity of the area" (the reader).
+
+**Every tested parameter, kept** (the reader: "save all the tested
+parameters somewhere just in case"). The scripts that made the previews, the
+patch of the first bloom and the comparison page are at
+`~/Documents/omk/omk-pack/compare/` (`scripts/emissive.py`, `scripts/look.py`,
+`index.html`); the pixels never enter the repo.
+
+*The emissive rule* (per texture, from the shipped texels; `l` the luma
+`(299R+587G+114B)/255000`, `med` its median over the texture, `vmed` the
+median of `max(R,G,B)`): a texel's emissive factor `f` is the larger of
+
+    bright  clamp((l - max(med + 0.30, 0.55)) / 0.15)
+    neon    clamp((sat - 0.55) / 0.2) * clamp((max - max(vmed + 0.25, 0.5)) / 0.15)
+            with sat = (max - min) / max over the texel's R, G, B
+
+and 0 on a keyed (pure black) texel. Of 1259 textures 1112 have some. It
+finds the signs' lettering, the signboards, lit windows, lamp globes and -
+with the neon term, added for Qalisar - the coloured tubes; it ALSO marks
+quay edges and bright facade patches in the daylight cities (Lahoreh,
+Jaunpur), which is why the maps are generated and then CURATED.
+
+*The bloom* (composited in the preview on the 565 frame): the emissive frame
+(the scene drawn with each texture's colour times `f`) box-averaged to a
+quarter, blurred by a Gaussian of sigma 4 quarter-texels (21 taps) twice
+each way, enlarged bilinear, times 1.3, SCREEN-blended:
+`1 - (1 - base) * (1 - glow)`.
+
+*The grades* (on 0..1 channels; `l` the luma; `S(v, a)` the S-curve
+`clamp(v + a * (v - 0.45) * (1 - |2v - 1|) * 1.6)`):
+
+| grade | city | the operations, in order |
+|---|---|---|
+| filmic | Jaunpur | `S(v * 1.06, 0.35)` per channel; saturation 1.12 about the new luma |
+| noir | Anekbah (and Kay'l's apartment) | saturation 0.82; r*0.94, g*0.99, b*1.08; `S(max(0, v - 0.02) * 1.04, 0.3)`; in the preview ALSO a vignette `1 - 0.35 * min(1, (x^2 + y^2) * 2.2)` (x, y from -0.5 to 0.5) - spatial, so NOT in a LUT |
+| sunlit | Lahoreh | `hi = max(0, 1.4 l - 0.3)`: r += 0.045 hi, g += 0.022 hi, b -= 0.03 hi; `0.03 + 0.97 v`; `S(v * 1.04, 0.22)`; saturation 1.06 |
+| neon2 (chosen) | Qalisar | saturation 1.15; `sh = max(0, 1 - 2.5 l)`: r += 0.012 sh, b += 0.03 sh, g -= 0.01 sh; `0.012 + 0.988 v^0.95`; `S(v * 1.03, 0.22)` |
+| neon (first, too dark) | - | saturation 1.18; the same shadow tint; `S(max(0, v - 0.015) * 1.05, 0.38)` |
+| tealorange | - | `sh = max(0, 1 - 2.2 l)`, `hi = max(0, 1.6 l - 0.4)`: r += -0.035 sh + 0.06 hi, g += 0.01 sh + 0.025 hi, b += 0.05 sh - 0.04 hi; `S(v, 0.2)` |
+
+*What the previews showed*: with the SKY in frame (the game session, not the
+set alone) Anekbah's noir reads as dusk and is right; Lahoreh's sunlit and
+Jaunpur's filmic kept each city's palette; the first Qalisar grade crushed
+the street under its neons, neon2 keeps it dark and readable. Views: Anekbah
+`--area 0 --stand 1804,0,-6890,336`; Jaunpur `--area 1 --stand
+10524,-40,10284,90`; Lahoreh `--area 64` (its street start); Qalisar `--area
+101 --stand 15516,0,-10182,270` (under the neons) and `,180` (the street),
+the densest cluster of its 22 `Enseigne` meshes.
+
+**Open, decided when built**: the area -> city map for interiors (they
+inherit the city first); the day/night cycle may want a day and a night grade
+(Qalisar at least); the grade is off while the greyscale bank is on.
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

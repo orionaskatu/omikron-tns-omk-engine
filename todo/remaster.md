@@ -187,14 +187,24 @@ GLES. Under the nearest sampler a pack of every texture at 4x nearest draws
 byte-identical to none - on the street, all 1255 textures, 31 then 39 of the
 pool replaced.
 
+**The full pack** (2026-10-20, M3): all 1255 textures exported, upscaled
+(x4plus, ~2 s an image, 1916 images with the masks) and built anchored in
+about 1 h 10; 2.1 GB at `~/Documents/omk/omk-pack/full/pack`. On the street
+from the apartment save every texture of both pools is replaced (31 and 39),
+none refused, and at 800x600 the picture is the original's - same colours,
+same mood - a little crisper on the ground and the clothes; the gain is for
+higher resolutions, where the 256x256 originals are magnified.
+
 **Open, in the order I would take them:**
 
 1. **A person's look in play** - the street and an interior at 1080p+ with
    the full pack, and the close-up of lettering. The pilot was judged on
    static frames only.
-2. **Decode cost at a pool change**: a replacement is decoded on upload
-   (~1255 textures would be seconds); fine for a street, felt at a cutscene
-   hand-over that brings new characters. Decode on the thread pool, or cache.
+2. **Decode cost at a pool change**: a replacement is decoded on upload.
+   Measured on the street with the full pack (GLES, M3): the pool's upload
+   takes **633.7 ms** for its first 31 textures and 129.6 ms for the next
+   pool, against 2.4 and 0.7 ms without - a visible hitch at a cutscene
+   hand-over. Decode on the thread pool, or keep decoded copies.
 3. **The greyscale bank** (ops 150/151): the viewer greys the pool's
    PALETTES (`backends/sdl/playframe_world_scene.cpp`, `greyPalette`), which
    is another key - so a black-and-white cutscene draws the SHIPPED textures,

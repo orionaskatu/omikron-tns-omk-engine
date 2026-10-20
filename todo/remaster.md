@@ -195,6 +195,15 @@ none refused, and at 800x600 the picture is the original's - same colours,
 same mood - a little crisper on the ground and the clothes; the gain is for
 higher resolutions, where the 256x256 originals are magnified.
 
+**On Vulkan in the game session** (`--world-vulkan`, the offscreen path a
+headless run can take - a dummy-driver `omk-play` otherwise falls back to the
+software reference): the same street, both pools replaced (31 and 39), the 4x
+nearest pack byte-identical to none; the full pack's frame against GLES's
+differs in 246 of 480000 pixels by more than ~16 levels, and with NO pack the
+two backends already differ in 245 (the fire's additive glow among them) - the
+backends' own difference, not the pack's. The windowed Vulkan present was not
+run headless.
+
 **Open, in the order I would take them:**
 
 1. **A person's look in play** - the street and an interior at 1080p+ with

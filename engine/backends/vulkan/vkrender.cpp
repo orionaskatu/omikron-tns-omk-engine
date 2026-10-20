@@ -125,7 +125,7 @@ struct GpuLightStd140 {
     float colourI[4];   // rgb colour 0..1, a intensity
 };
 struct LightUbo {
-    GpuLightStd140 l[8];
+    GpuLightStd140 l[64];   // View::kMaxGpuLights - 8 the set's, the rest the remaster's points
     int32_t count;
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
@@ -239,6 +239,9 @@ public:
     bool setWater(float) override { return true; }   // nothing to build ahead
     bool setBodyTint(bool) override { return true; }  // the pose block always carries it
     bool drawsBodyTint() const override { return true; }
+    bool setEmitterLights(bool) override { return true; }   // scene.frag takes a point light always
+    bool drawsEmitterLights() const override { return true; }
+    int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
                         float strength, float planeY) override;
@@ -2910,6 +2913,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
+        ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
         litCount_ = n;
         std::memcpy(litUboPtr_, &ub, sizeof ub);
     }

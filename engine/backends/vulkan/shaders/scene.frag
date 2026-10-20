@@ -97,15 +97,17 @@ struct GpuLight {
     vec4 colourI;   // rgb colour 0..1, a intensity
 };
 layout(set = 1, binding = 2) uniform Lights {
-    GpuLight l[8];
+    GpuLight l[64];    // View::kMaxGpuLights
     int   count;
     float base;        // View::litBase - the scene's +416, what a lit batch starts from
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   pad2;
-    vec4  eye;         // the camera, for the water's Fresnel (xyz)
+    vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
 } lg;
 
-vec3 litColour(vec3 n, vec3 w) {
+// `pointsOnly`: the remaster's mode 3 - a SET lit by the emitters' point
+// lights alone (its own lights are already in its baked colour)
+vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
     vec3 c = vec3(0.0);
     for (int i = 0; i < lg.count; ++i) {
         vec3  p  = lg.l[i].posA.xyz;
@@ -113,6 +115,12 @@ vec3 litColour(vec3 n, vec3 w) {
         vec3  d  = w - p;
         float d2 = dot(d, d);
         if (d2 > rA * rA) continue;      // the engine's own reach test
+        // THE REMASTER'S POINT LIGHT (`o3de/emitterlight.h`): a negative
+        // inner radius - no shipped light has one - shines from the light to
+        // the fragment, the falloff from |inner|
+        bool point = rB < 0.0;
+        if (pointsOnly && !point) continue;
+        rB = abs(rB);
         if (rA <= rB) continue;          // a degenerate pair lights nothing
         float fall = 1.0 - (sqrt(d2) - rB) / (rA - rB);
         fall = min(fall, 1.0);
@@ -120,7 +128,13 @@ vec3 litColour(vec3 n, vec3 w) {
         if (k <= 0.0) continue;
         // `-(N.L)`, with the falloff folded into L exactly as the engine
         // folds `v46` in before the dot.
-        float t = -dot(n, lg.l[i].dirB.xyz * k);
+        vec3 dir = point ? (d2 > 0.0 ? d / sqrt(d2) : vec3(0.0)) : lg.l[i].dirB.xyz;
+        float t = -dot(n, dir * k);
+        // ...and a point light WRAPS 0.3 of itself round to the far side, as
+        // the walls about a flame would bounce it
+        // (and nothing at its own housing: 30 to 90 units, `o3de/emitterlight.h`)
+        // ...and its falloff SQUARED - pools of light, dark between them
+        if (point) t = k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0));
         if (t <= 0.0) continue;
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
         c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
@@ -193,8 +207,12 @@ void main() {
             -64.0, -56.0, -48.0, -32.0, -28.0, -18.0, -13.0, -10.0);
         wave = tbl[wi] / 255.0;
     }
-    vec3 shade = pc.lit == 1 ? min(vec3(lg.base) + litColour(normalize(vNrm), vWorld), vec3(1.0))
-               : pc.lit == 2 ? min(vCol + litColour(normalize(vNrm), vWorld), vec3(1.0))
+    // (the remaster's NIGHT, `lg.eye.w`, dims the painted and the start light
+    // under the point lights; 1 - a multiply by one - everywhere else)
+    float night = lg.eye.w;
+    vec3 shade = pc.lit == 1 ? min(vec3(lg.base) * night + litColour(normalize(vNrm), vWorld, false), vec3(1.0))
+               : pc.lit == 2 ? min(vCol * night + litColour(normalize(vNrm), vWorld, false), vec3(1.0))
+               : pc.lit == 3 ? min((vCol + vec3(wave)) * night + litColour(normalize(vNrm), vWorld, true), vec3(1.0))
                              : vCol + vec3(wave);
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): `sub_42FF80`
     // writes each vertex colour as its luma, `(299 R + 587 G + 114 B) / 1000`

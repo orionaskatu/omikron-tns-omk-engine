@@ -476,6 +476,170 @@ per body (a tall body under a lamp); the day/night slots (`sub_41E7A0`
 rewrites the scene's grey - the probe reads the baked colours, which do not
 change).
 
+## Step 3, A5b - the emitters' light: as built (2026-10-20)
+
+The reader's "continue with the emitter lights", after the body light's play
+test by Anekbah's fire ("Lighting is not correct near the fire"). `[Remaster]
+fxlight = S` / `--fx-light S` (0..4), `--remaster`'s **1**; off unless named,
+never `all = max`, Vulkan and GLES (`o3de/emitterlight.h`).
+
+* **Why.** A set's flames, neon halos and lamp glows are the `.sfx`'s
+  ADDITIVE PARTICLES: they light nothing. The original lights a body from its
+  scene's grey and the set's `.3DO` lights; none sits at a flame, and the
+  flame's glow is not painted into the walls either (the burner's alcove
+  reads 0.25 against Anekbah's 0.44). So the fire's corner is dark in the
+  original too.
+* **Which emitters glow** - read from the effect, not its name: additive
+  (mode 4/5) and either a STANDING glow (a life of 2 frames or less, one
+  sprite re-made on the spot every frame - a lamp's halo) or a stream whose
+  SPRITE is saturated (a flame: the explosion sprite's bright texels 0.55;
+  the smoke sprite's 0.22). Judged by the product with the colour ramp
+  first, the burner (`agaz`, ramp (17,17,17) -> (88,136,154)) read 0.31
+  against the steam's 0.22 - too close; the sprite separates them. Anekbah
+  117 glows and 12 flames of 153 (24 steam and smoke dark), Qalisar 89 and 8
+  of 104, Jaunpur 15 and 0 of 47, Lahoreh 12 and 0 of 22.
+* **The light.** A `Light3do` of the set's own kind appended to the slot's
+  table when its emitters are bound (`WorldSlot::setLights` keeps the set's
+  own count), so per-vertex (`o3de/vertexlight`) and per-pixel lighting take
+  it unchanged. A POINT light: a NEGATIVE inner radius (no shipped record has
+  one) shines from the emitter to the lit point instead of along the record's
+  fixed direction, and wraps 0.3 round the far side (the walls about a flame
+  bounce it), and is NOTHING within 30 units of its emitter, whole past 90 -
+  a lamp does not light its own housing. Colour: a glow the sprite's bright
+  texels x the ramp; a flame its SPRITE's hue (seen orange - the ramp only
+  dims it). Reach 4.5 m (glow) and 9 m (flame), full inside a fifth;
+  intensity `S x brightness x 0.8` (glow) or `x 1.2 x min(4, sqrt(count x
+  life))` (a flame's particles overlap). By eye: the first strengths (0.6 /
+  1.5) lit the whole frame; 0.5 / 0.6 at 6 m the reader found "too weak, the
+  fire is big"; now 0.8 / 1.2 at 9 m.
+* **The set lit too, per pixel.** On a body alone the light did not show: the
+  camera sees Kay'l's back, and the walls stayed dark. Under per-pixel
+  lighting the SET's opaque draws take `Draw::lit` **3** - the baked colour
+  plus the POINT lights alone (the set's own lights are in its bake). The
+  frame's point lights are the 4 nearest the CAMERA within 20 m, faded in
+  over the last 5 m so none pops; the set's own lights nearest the player
+  fill the other 4 of the 8.
+* **Backends.** Vulkan: `scene.frag`'s `litColour` takes the point case and
+  a points-only pass (mode 3). GLES: a VARIANT of the enhanced fragment made
+  at init only when asked (the program the Vita may cache untouched).
+* **Measured** by the burner (1780, 0, -7380) at 800x600 with the preset and
+  `--enhance-all`: 329514 pixels move, 4 (Vulkan) / 8 (GLES) darker, the two
+  405 apart. Off: byte-identical to `26e042ff` on the software reference,
+  Vulkan and GLES, plain, `--remaster` and `--remaster --enhance-all`, by the
+  burner and in Qalisar - 14 of 14.
+* **The reader's play test, 2026-10-20**, three findings:
+  1. the fire too weak for its size - its reach 6 -> 9 m, its intensity
+     doubled;
+  2. **the sliders BLACK** under `--enhance-all` - not this feature (with
+     it off the frames are byte-identical to before) but per-pixel
+     lighting's: it drew the TRAFFIC in mode 1, from the scene's grey (10 of
+     255 in Anekbah), while the engine never lights a vehicle - per vertex it
+     draws in its own colours. The traffic is now mode 2 under per-pixel
+     lighting: its baked colour plus the lights (an ENHANCEMENT's fix; the
+     original per vertex is untouched);
+  3. **a neon's arrow washed out**: its glow emitter sits on the sign's disk
+     and lit the disk to white - the self-fade above. And "if the neon now
+     emits light, make the grade darker for more contrast": `omktexpack.py
+     grades --depth G` raises every channel to G after the city's grade
+     (black and white kept, the mids darker); the pack's grades are now
+     depth **1.2** (the depth-1 ones kept as `grades-depth1/`).
+* **The neons: "very small, it is not visible that they emit light (they
+  seem phosphorescent at most)"** (the reader, 2026-10-20 - and "letters not
+  emitting light in the original is more a GPU limitation than an artistic
+  vision"). The glows lit from were the white HALO sprites; the pink letters
+  emitted nothing. Now the SET'S GLOWING SURFACES are lights too
+  (`surfaceLights`, built at set load into `WorldSlot::fxSurface`): a texel
+  is light past 0.6 of the pack's LIGHT MAP (the bloom's; weighted above it -
+  the maps mark every bright painted texel too) or by the NEON rule, bright
+  (value past 0.65) and saturated (past 0.55) - Qalisar's pink letters carry
+  no light map. Each triangle is sampled on a LATTICE in texture space (2..16
+  a side): a sign's letters are thin texels inside a keyed-out quad, and its
+  corners sampled the key (the first version found no light at the sign).
+  Summed by area into 3 m cells; a cell with 300 square units of light is a
+  point light at its centroid, its colour the lit texels' pushed 1.6 from
+  grey (a tube's core is near white), 7 m reach, `S x min(1, sqrt(area) /
+  120)`. Anekbah ~390, Qalisar 304, Jaunpur ~320. Decoding the light maps
+  adds ~110 ms to a set's load (M3) - to cache. And the frame's light slots
+  are 16 now (`View::kMaxGpuLights`; the set's own still 8,
+  `kOwnGpuLights`): up to 12 point lights, nearest the camera, where the
+  renderer has the room (`maxPixelLights` - Vulkan always, GLES in its
+  variant).
+* **The reader's play test in Qalisar, 2026-10-20**: "light is not very
+  visible (maybe it is already too bright around or the light is not strong
+  enough) - the inspiration for this area is clearly Blade Runner and its
+  night scenes, the neons one of the main sources of light"; and "some
+  lights appear and disappear when I move". Three answers:
+  * THE NIGHT: `night.txt` beside the city grades (`omktexpack.py grades`
+    writes `QALISAR = 0.5`; `CityGrades::nightOf`, a set's own then its
+    city's): with the emitters' lights on, the share of the SET's painted
+    light and of a lit body's start that stays (`View::setDim` - Vulkan the
+    eye's w in the lights UBO, GLES `uSetDim` in the variant, defaulted to 1
+    at init); the point lights add on top whole. The sky is not dimmed.
+  * POOLS: a point light's falloff is SQUARED (shaders and `reachOf`), so
+    the light gathers near its source and the street between stays dark -
+    linear over 7 m, the shop panels' warm light washed the whole ground.
+    Surfaces' colour pushed 2.5 from grey (1.6 left the pink sign's light
+    pale `ffd6ca`), intensity 1.2, cells 5 m (fewer, stronger).
+  * NO POP: the nearest 12 by distance swapped as he walked; a light now
+    fades by its distance against the FIRST ONE LEFT OUT (`fxCut`, the 13th's
+    distance, which moves continuously): one leaving the 12 has faded out.
+* **"Better"; then: the light's colour from the neon texture's colours, and
+  the lights too few - "the scene darker than it should be, the neons look
+  turned off"** (the reader, 2026-10-20). The colour is now the lit texels'
+  at full value weighted by their SATURATION (a white core or a grey texel
+  adds light, not hue; pushed only 1.3 from grey). The slots: 64
+  (`View::kMaxGpuLights`), the set's 8 as ever (`kOwnGpuLights` - the
+  per-pixel enhancement's, not the original's: the engine lights per vertex
+  from every light that reaches) and up to 56 point lights within 30 m of
+  the camera - only with the emitters' light on, on a renderer that says so
+  (`maxPixelLights`; GLES in its variant). With so many adding, the surfaces
+  and the glows at 0.5 (1.2 and 0.8 washed the street), surfaces reaching 10
+  m. The cost at 4K (M3, Qalisar, `--enhance-all`): Vulkan 92 -> 50 fps,
+  GLES 97 -> 50 - above the 30 yardstick; a per-tile light list would win
+  most of it back.
+* **"Still looks off" - the CURATED LIST** (the reader, 2026-10-20: "go with
+  the curated list"). The rules cannot tell a neon tube from a bright painted
+  panel - both bright, saturated texels; tuned by numbers the street swung
+  between washed and dark, the warm panels outshining the pink sign. So
+  `lights.txt`, beside the grades (`SurfaceCuration`): lines `SET TEXTURE
+  [U0,V0,U1,V1] = GAIN [RRGGBB]`, `*` any set. A texture is an ATLAS
+  (Qalisar's `CATITR05`: a yellow emblem panel, lit windows and the pink
+  letters), so an entry names a RECTANGLE in the original's texels; a texel
+  takes the first rectangle it lies in, else the texture's line, else - the
+  set being curated - no light. Which texels glow stays the rules'; the gain
+  replaces the neon boost, the colour the texels'. A set the list does not
+  name keeps the automatic rules. `texpack_tool lights <pack> <set.3DO>`
+  lists the candidates (lit area, neon share, colour, pack key);
+  `omktexpack.py grades` writes the first draft (`CITY_LIGHTS`, Qalisar's 20
+  lines, from its atlases) only where there is none. At 4.0 the pink letters
+  flooded the street; 2.0 kept it a magenta night. "Much better."
+* **The neons' bloom** ("add just some bloom to the neon"): the bloom glows
+  where the light maps say, and the pink letters have none. A hook on the
+  pack (`TexturePack::setLightHook` -> `curateBloom`, on the pool) writes the
+  curated rectangles' texels into the light map by BRIGHTNESS (0 at a value
+  of 0.3, whole at 0.7 - the neon rule's 0.65 missed the letters' 0.77-0.86)
+  times `min(1, gain / 2)`. At half it did not show; spreading the glow 2
+  texels did nothing - the letters are a CUTOUT, their neighbours never
+  drawn - so "a bit more bloom" is the preset's bloom 1.3 -> **1.6** (2.0
+  washed the disk's arrow out again).
+* `engine: emitter light` new, shown to fail four ways (a flame by the
+  product's saturation; the GLES variant empty; mode 3 never set; the list
+  never covering a set). Part 4, the list and the night, in Qalisar and
+  Anekbah. On the way: the check compared the backends at TWO FILTERS -
+  `_viewer_args` adds `--filter nearest` to a run naming none, the Vulkan
+  harness took it and GLES under `--enhance-all` did not (3346 pixels apart);
+  the filter is named now. Whether GLES should honour `--filter` under
+  `--enhance-all` is OPEN.
+
+**CONFIRMED IN PLAY** (the reader's "it's good now", 2026-10-20, with
+`--enhance-all`: the fire, the sliders, Qalisar's night and neons). **Open**:
+the LIGHT POPPING - the frame's point lights are the 56 nearest the camera,
+so a far neon lights nothing round it and seems turned off ("set it by the
+game's distance culling"): per-TILE light lists, every light within the clip
+distance, is the next step; the light maps' decode adds ~110 ms to a set's
+load; the other cities' lists; without per-pixel lighting the lights reach
+only the bodies; flicker (a flame's light is steady).
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

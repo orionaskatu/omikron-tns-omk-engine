@@ -107,6 +107,7 @@ void PlayState::gpuOpenWindow() {
             if (bloomStrength > 0.0f) gr->setBloom(bloomStrength);   // the remaster's
             if (waterStrength > 0.0f) gr->setWater(waterStrength);
             if (bodyLight > 0.0f) gr->setBodyTint(true);
+            if (fxLight > 0.0f) gr->setEmitterLights(true);
             // per-pixel lighting and the mapped shadow: their programs are
             // linked at `init` only when asked, and what it could build is
             // what `drawsPixelLights` / `drawsShadowMap` answer later

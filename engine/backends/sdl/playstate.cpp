@@ -3,6 +3,8 @@
 // with the comment that stood above it, in their original order. A method
 // that reads one of the objects built in place (`fs`, `session`, ...) names
 // it first under its original name.
+#include "o3de/texpack.h"
+#include "o3de/emitterlight.h"
 #include "playstate.h"
 #include "platform/events.h"
 #include "platform/env.h"
@@ -2147,6 +2149,24 @@ void PlayState::prepareSet(SetLoad& L) {
     }
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
+        w.setLights = w.lights.size();
+        // THE GLOWING SURFACES' LIGHT (`o3de/emitterlight.h` surfaceLights,
+        // the remaster's): the pack's light maps over the set's triangles -
+        // its neon letters, its lit windows - after the set's own lights
+        w.fxSurface.clear();
+        if (fxLight > 0.0f && world_ && world_->drawsEmitterLights() && omk::texturePack().active() &&
+            omk::texturePack().lightMaps() > 0) {
+            std::vector<const omk::Texture*> ptrs;
+            for (const auto& wt : w.tex) ptrs.push_back(&wt);
+            const auto packs = omk::texturePack().replacements(ptrs);
+            int cells = 0;
+            w.fxSurface = omk::surfaceLights(w.geo, w.tex, packs, fxLight, &cells, L.stem, &omk::surfaceCuration());
+            w.lights.insert(w.lights.end(), w.fxSurface.begin(), w.fxSurface.end());
+            std::printf("fx light: %s - %d glowing surfaces light the bodies and the set (%s)\n", L.stem.c_str(), cells,
+                        omk::surfaceCuration().covers(L.stem) ? "the curated list" : "the automatic rules");
+            omk::event("world.fxsurfaces", {{"set", L.stem}, {"lights", cells},
+                                            {"curated", omk::surfaceCuration().covers(L.stem)}});
+        }
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
             static_cast<double>(mh->ambient) * 255.0));
         w.meshes = omk::readMeshes(d, *mh);

@@ -13,7 +13,10 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   -> OUT/pack, the directory to hand the viewer
     omktexpack.py emissive PACK [--match S ...]   a light map <key>_e.png per texture, by the rule
                                                   below - a START, to be curated by hand
-    omktexpack.py grades  DIR                     the city grades as .cube LUTs (+ map.txt)
+    omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
+                                                  --depth: every channel to the power G after
+                                                  the grade - darker mids, black and white kept
+                                                  (1, the previews'; 1.2 with the emitters' light)
                                                   
 `export` covers every .3DO/.3DT pair under MESHES and the 26 effect sprites
 stored inside the .SCX files (`SCX:<name>` in the index; `--match SCX:` for
@@ -401,28 +404,85 @@ def grade_rgb(kind, r, g, b):
 CITY_GRADES = {"ANEKBAH": "noir", "JAUNPUR": "filmic", "LAHOREH": "sunlit", "QALISAR": "neon2"}
 # interiors and other sets that take a city's grade (`map.txt`); the rest none
 CITY_OF = {"AAPKAYL": "ANEKBAH"}
+# THE NIGHT (`night.txt`, `CityGrades::nightOf`): how much of a set's painted
+# light stays when the emitters' lights are on - Qalisar's neons its night's
+# light, the Blade Runner streets it is drawn from (the reader, 2026-10-20)
+CITY_NIGHT = {"QALISAR": 0.5}
+# THE LIGHT SOURCES (`lights.txt`, `o3de/emitterlight.h` SurfaceCuration):
+# which textures, and which parts of them, cast light with the emitters'
+# light on - the data cannot tell a neon tube from a bright painted panel.
+# Written only where there is none (the reader edits it); Qalisar's first
+# draft, from its atlases, 2026-10-20.
+CITY_LIGHTS = """# THE LIGHT SOURCES - which textures, and which parts of them, cast light
+# (omk-play's emitters' light, --fx-light; `o3de/emitterlight.h`).
+# A set this file names is curated: only what is listed lights. A set it does
+# not name keeps the automatic rules (the light maps and the neon rule).
+#
+#   SET TEXTURE [U0,V0,U1,V1] = GAIN [RRGGBB]
+#
+# U/V in the ORIGINAL texture's texels (256x256 here, wrapped); a texel takes
+# the first rectangle it lies in, then the texture's line without one. Which
+# texels of it glow is still the rules' (strong light map, or a neon colour).
+# GAIN: 1 a lit panel, 3-4 a neon tube. RRGGBB: the light's colour, else the
+# lit texels'. `texpack_tool lights <pack> <set.3DO>` lists the candidates.
+#
+# QALISAR - a first draft, 2026-10-20: the neon letters strong and coloured,
+# the signs bright, the lit windows and panels low.
+QALISAR CATITR05 224,0,256,128 = 2.0 ff2ec8   # the pink letters ("XOOC")
+QALISAR CATITR05 192,0,224,128 = 2.5          # the white/turquoise letters beside them
+QALISAR CATITR05 0,0,128,128 = 1.0            # the yellow emblem panel
+QALISAR CATITR05 = 0.5                        # its lit windows
+QALISAR CATITR20 0,0,128,128 = 0.5            # the lit glass panel
+QALISAR BATITR11 128,128,256,256 = 1.0        # the strip lamp
+QALISAR CATITR17 0,0,128,128 = 2.5            # the turquoise letter signs
+QALISAR CATITR17 = 0.5                        # the yellow window
+QALISAR CATITR10 0,0,128,128 = 2.0            # the orange sign
+QALISAR CATITR10 128,128,256,256 = 1.5        # the white-lettered signs
+QALISAR CATITR07 128,64,256,128 = 2.0         # the yellow sign
+QALISAR BATITR12 0,0,128,128 = 1.5            # the sign bands
+QALISAR BATITR12 = 0.5                        # the lit panel
+QALISAR CATITR13 128,0,256,128 = 1.5          # the signs
+QALISAR CATITR13 = 0.5                        # the windows
+QALISAR CATITR18 = 0.5                        # the posters
+QALISAR BATITR16 128,0,256,32 = 3.0           # the orange letters
+QALISAR BATITR04 = 0.5                        # the lit panel
+QALISAR BATITR19 = 0.6                        # the emblem
+QALISAR BATITR15 = 1.5                        # the sign atlas
+"""
 
 
-def write_cube(path, kind, size=33):
+def write_cube(path, kind, size=33, depth=1.0):
     with open(path, "w") as f:
         f.write(f"TITLE \"OMK {kind}\"\nLUT_3D_SIZE {size}\n")
         for bi in range(size):
             for gi in range(size):
                 for ri in range(size):
                     r, g, b = grade_rgb(kind, ri / (size - 1), gi / (size - 1), bi / (size - 1))
+                    if depth != 1.0:
+                        r, g, b = (v ** depth for v in (r, g, b))
                     f.write(f"{r:.6f} {g:.6f} {b:.6f}\n")
 
 
-def cmd_grades(out):
+def cmd_grades(out, depth=1.0):
     out = safe_out(out)
     os.makedirs(out, exist_ok=True)
     for city, kind in CITY_GRADES.items():
-        write_cube(os.path.join(out, city + ".cube"), kind)
+        write_cube(os.path.join(out, city + ".cube"), kind, depth=depth)
+    with open(os.path.join(out, "night.txt"), "w") as f:
+        f.write("# a set name = the share of its painted light kept under the emitters' lights\n")
+        for k, v in CITY_NIGHT.items():
+            f.write(f"{k} = {v}\n")
+    lp = os.path.join(out, "lights.txt")
+    if not os.path.exists(lp):
+        with open(lp, "w") as f:
+            f.write(CITY_LIGHTS)
+    else:
+        print(f"{lp} kept - it is the reader's to edit")
     with open(os.path.join(out, "map.txt"), "w") as f:
         f.write("# a set name = the city whose grade it takes (omk-play --grade DIR)\n")
         for k, v in CITY_OF.items():
             f.write(f"{k} = {v}\n")
-    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3) and map.txt into {out}")
+    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3, depth {depth}), night.txt, lights.txt and map.txt into {out}")
 
 
 # ---- the commands ------------------------------------------------------------
@@ -537,10 +597,12 @@ def main(argv):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
+    depth = 1.0
     i = 0
     while i < len(rest):
         a = rest[i]
         if a == "--match": match.append(rest[i + 1]); i += 2
+        elif a == "--depth": depth = float(rest[i + 1]); i += 2
         elif a == "--bin": binary = rest[i + 1]; i += 2
         elif a == "--model": model = rest[i + 1]; i += 2
         elif a == "--tile": tile = int(rest[i + 1]); i += 2
@@ -558,7 +620,7 @@ def main(argv):
     elif cmd == "emissive":
         cmd_emissive(out, match)
     elif cmd == "grades":
-        cmd_grades(out)
+        cmd_grades(out, depth)
     elif cmd == "upscale":
         if not binary:
             sys.exit("upscale needs --bin PATH (realesrgan-ncnn-vulkan)")

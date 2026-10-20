@@ -31764,13 +31764,13 @@ def c_engine_remaster_preset():
     r"""THE REMASTER PRESET - `--remaster DIR` / `[Remaster] dir = DIR`: the three
     remaster options from one folder (`todo/remaster.md`): the texture pack in
     `DIR/pack` (or `DIR/full/pack`, `omktexpack.py export full`'s), the bloom
-    at the previews' 1.3, the city grades in `DIR/grades`. A BASE, as
+    at 1.6 (the previews' 1.3, raised with the neons' bloom, 2026-10-20), the city grades in `DIR/grades`. A BASE, as
     `all = max` is for `[Enhancements]`: a specific flag or key beats it.
 
     Run on the software reference (it draws none of them, but the session
     resolves and reports them - the `@evt` lines), Anekbah, three frames, a
     preset folder made here (an empty pack, one `ANEKBAH.cube`):
-      1. the preset alone: the pack opened from `DIR/pack`, the bloom at 1.3,
+      1. the preset alone: the pack opened from `DIR/pack`, the bloom at 1.6,
          the grade chosen for ANEKBAH (refused - `taken=0` - by software);
       2. `full/pack` found when there is no `pack/`;
       3. `--bloom 0` and `--texture-pack OTHER` beat it: no bloom, the other
@@ -31778,7 +31778,7 @@ def c_engine_remaster_preset():
       4. no preset: none of it.
 
     Shown to fail (2026-10-20): the preset not consulted for the bloom
-    answers no 1.30 line in part 1.
+    answers no 1.60 line in part 1.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -31803,7 +31803,7 @@ def c_engine_remaster_preset():
             ev = _events(r.stdout)
             opened = [f["dir"] for n, f in ev if n == "texpack.open"]
             grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
-            bloom = any(ln.startswith("bloom: 1.30") for ln in r.stdout.splitlines())
+            bloom = any(ln.startswith("bloom: 1.60") for ln in r.stdout.splitlines())
             return (opened[0] if opened else None, bloom, grade[0] if grade else None)
         got = (run("--remaster", dir_a),
                run("--remaster", dir_b)[0],
@@ -31815,7 +31815,7 @@ def c_engine_remaster_preset():
             os.path.join(dir_b, "full", "pack"),
             (other, False, ("ANEKBAH", "0")),
             (None, False, None))
-    return got, want, "the preset alone (its pack, bloom 1.3, its grade for ANEKBAH); " \
+    return got, want, "the preset alone (its pack, bloom 1.6, its grade for ANEKBAH); " \
                       "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing"
 
 
@@ -32025,8 +32025,8 @@ def c_engine_body_light():
          moves at most 0.1 per 10 units - its start colour 0.02 (measured
          0.0403 and 0.0208) - a body walking never pops;
       4. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, Anekbah's
-         street at 640x480 with the preset: the body light at 1 moves more
-         than 2000 pixels and less than 5% of the frame (bodies, not the set),
+         street at 640x480 with the preset (its emitters' light off): the
+         body light at 1 moves more than 1000 pixels and less than 5% of the frame (bodies, not the set),
          and Vulkan and GLES agree within 1%; and again under `--enhance-all`
          (PER-PIXEL lighting shades a body from the scene's grey and ignores
          its corners - `Draw::lit` 1 - so a tinted body is drawn in mode 2,
@@ -32102,7 +32102,8 @@ def c_engine_body_light():
                                        os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tmp,
                                        "--res", "640x480", "--frames", "30", "--dump", out,
                                        "--area", "0", "--stand", "1804,0,-6890,336",
-                                       "--remaster", os.path.expanduser("~/Documents/omk/omk-pack")] + list(extra)
+                                       "--remaster", os.path.expanduser("~/Documents/omk/omk-pack"),
+                                       "--fx-light", "0"] + list(extra)   # the body light alone
                                 + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                                 capture_output=True, text=True, env=env, timeout=240)
             if rr.returncode != 0 or not os.path.exists(out):
@@ -32123,7 +32124,7 @@ def c_engine_body_light():
                 res[kind] = ("no frame",); continue
             moved = sum(1 for x, y in zip(off, on) if x != y)
             emoved = sum(1 for x, y in zip(eoff, eon) if x != y)
-            res[kind] = (moved > 2000, moved < len(on) // 20, emoved > 2000, emoved < len(eon) // 20)
+            res[kind] = (moved > 1000, moved < len(on) // 20, emoved > 1000, emoved < len(eon) // 20)
             print(f"        {kind}: under --enhance-all it moves {emoved} pixels")
             frames[kind] = on
             print(f"        {kind}: the body light at 1 moves {moved} pixels")
@@ -32143,6 +32144,164 @@ def c_engine_body_light():
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
            "asked, its tint defaulted to 1); the probe's means and tints on Anekbah and Jaunpur; " \
            "the tint continuous along two walks; on Vulkan and GLES the bodies move and the backends agree"
+
+def c_engine_emitter_light():
+    r"""THE EMITTERS' LIGHT - the remaster's A5b (`todo/remaster.md`,
+    `o3de/emitterlight.h`), `[Remaster] fxlight = S` / `--fx-light S` (and
+    `--remaster DIR`'s 1), OFF unless named.
+
+    A set's flames and neon halos are ADDITIVE PARTICLES that light nothing
+    in the original: Kay'l by Anekbah's gas burner was as dark as the alley
+    (the reader's play test, 2026-10-20, "Lighting is not correct near the
+    fire"). Each GLOWING emitter becomes a `Light3do` of the set's own kind,
+    appended to the slot's table, so every path that lights a body takes it:
+    a standing glow (life <= 2 frames - a lamp's halo) or a stream whose
+    SPRITE is saturated (a flame; the steam's grey sprite is not). They are
+    POINT lights - a negative inner radius, which no shipped record has -
+    shining from the emitter to the lit point, wrapping 0.3 round the far
+    side. Under per-pixel lighting they light the SET too: its opaque draws in
+    mode 3, the baked colour plus the point lights alone (its own lights are
+    in the bake); the frame's point lights are the 4 nearest the CAMERA
+    within 20 m, faded in over the last 5 m. NOT A PORT, no oracle (tier 6).
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES point-light variant made only when asked;
+      2. THE RULE on the data (`world.fxlights`): Anekbah 117 glows and 12
+         flames of 153 emitters (its 24 steam and smoke dark), Qalisar 89 and
+         8, Jaunpur 15 and 0;
+      3. by Anekbah's burner (1780, 0, -7380) under `--enhance-all` with the
+         preset, on Vulkan and GLES: an emitter's light reaches the player
+         (`remaster.fxlight`), the light moves more than 100000 pixels (the
+         SET lit, not only the bodies) and darkens almost none (lights add),
+         and the two backends agree within 1%;
+      4. THE CURATED LIST AND THE NIGHT (the reader's play tests in Qalisar,
+         2026-10-20 - "go with the curated list", the Blade Runner night):
+         with `--remaster`'s grades folder, Qalisar's surface lights come
+         from `lights.txt` (`world.fxsurfaces` curated, and some) and its
+         night is 0.5 (`remaster.night`); Anekbah, named by neither, keeps
+         the automatic rules and no night.
+
+    Measured once, outside the check (2026-10-20, M3): with it off, frames
+    byte-identical to `26e042ff` on the software reference, Vulkan and GLES,
+    plain, `--remaster` and `--remaster --enhance-all`, by the burner and in
+    Qalisar (14 of 14; again after the slots, the night, the list and the
+    bloom hook, at the old bloom 1.3); on, by the burner at 640x480 with the
+    preset, ~252800 pixels move, Vulkan and GLES 448 apart.
+
+    Shown to fail (2026-10-20), one at a time: the list covering no set -
+    Qalisar not curated (part 4); a flame judged by the
+    PRODUCT's saturation (the burner's ramp cancels its orange) - 0 flames,
+    1477 pixels move; the GLES variant inserting nothing (its point lights
+    read as spots) - GLES moves 276331 and the backends part; mode 3 never
+    set - the set unlit, 7874 pixels move.
+
+    NOT CHECKED, judged by eye: the colours and the strength.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+fxLight\s*=\s*0\.0f;", sh)),
+              'kRemaster, "fxlight"' in sc and 'kEnhancements, "fxlight"' not in sc,
+              "fxLight" not in max_body,
+              "if (pointLit) bloomFrag_ = pointLightVariant(bloomFrag_);" in gl)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, out, area, stand, *extra):
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            # a FRESH saves folder each run: a run writes there (the clock),
+            # and a later run read it - the backends compared from two states
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30", "--area", area]
+            if stand: args += ["--stand", stand]
+            if out: args += ["--dump", out]
+            rr = subprocess.run(cmd + args + list(extra) + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            ev = _events(rr.stdout)
+            px = None
+            if out and os.path.exists(out):
+                raw = open(out, "rb").read()
+                px = struct.unpack("<%dH" % (len(raw) // 2), raw)
+            return ev, px
+        vk = os.path.join(eng, "build", "omk-play")
+        counts = {}
+        for area, stand in (("0", "1804,0,-6890,336"), ("101", "15516,0,-10182,270"), ("1", "10524,-40,10284,90")):
+            ev, _ = run(vk, None, area, stand, "--enhance-all", "--fx-light", "1")
+            for n, f in ev:
+                if n == "world.fxlights":
+                    counts[f["set"]] = (int(f["glows"]), int(f["flames"]), int(f["dark"]))
+        rule = (counts.get("ANEKBAH"), counts.get("QALISAR"), counts.get("JAUNPUR"))
+        # THE LIST AND THE NIGHT, with the preset's grades folder: Qalisar is
+        # curated (`lights.txt` names it) and kept at night 0.5 (`night.txt`);
+        # Anekbah, named by neither, keeps the automatic rules and its light
+        curate = ("skipped",)
+        if os.path.isdir(os.path.join(pack, "grades")):
+            def fxs(ev):
+                surf = [f for n_, f in ev if n_ == "world.fxsurfaces"]
+                night = [float(f["dim"]) for n_, f in ev if n_ == "remaster.night"]
+                return (surf[0]["curated"] if surf else None, int(surf[0]["lights"]) if surf else 0, night)
+            q = fxs(run(vk, None, "101", "15300,0,-10050,270", "--remaster", pack, "--enhance-all")[0])
+            a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--enhance-all")[0])
+            curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("0", "false", False), a[2] == [])
+            print(f"        qalisar {q}; anekbah {a}")
+        res, frames = {}, {}
+        lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+        for kind, binary in (("vulkan", vk), ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if not os.path.isdir(pack) or (kind == "gles" and platform.system() != "Darwin"):
+                res[kind] = ("skipped",); continue
+            # the filter NAMED: `_viewer_args` adds `--filter nearest` to a run
+            # that names none, which the Vulkan harness takes and GLES did not
+            # here - the two compared at two filters, 3346 pixels apart
+            _, off = run(binary, os.path.join(tmp, "off.bin"), "0", "1780,0,-7380,336",
+                         "--remaster", pack, "--enhance-all", "--fx-light", "0", "--filter", "trilinear")
+            ev, on = run(binary, os.path.join(tmp, "on.bin"), "0", "1780,0,-7380,336",
+                         "--remaster", pack, "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+            if off is None or on is None:
+                res[kind] = ("no frame",); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
+            reach = any(n == "remaster.fxlight" for n, _ in ev)
+            res[kind] = (reach, moved > 100000, darker < len(on) // 1000)
+            frames[kind] = on
+            print(f"        {kind}: the emitters' light moves {moved} pixels, {darker} darker; reaches {reach}")
+        agree = ("skipped",)
+        if len(frames) == 2:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = frames["vulkan"], frames["gles"]
+            apart = sum(1 for x, y in zip(a, b) if big(x, y))
+            print(f"        vulkan and gles: {apart} pixels apart of {len(a)}")
+            agree = apart < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        rule {rule}")
+    vres, gres = res.get("vulkan"), res.get("gles")
+    want = (True, True, True)
+    return (src_ok, rule, curate, vres, gres, agree), \
+           ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
+            curate if len(curate) == 1 else (True,) * 5,
+            vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+            agree if isinstance(agree, tuple) else True), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
+           "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
+           "light reaches the player, lights the set, only adds, and Vulkan and GLES agree"
 
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
@@ -46100,8 +46259,9 @@ def c_licence_headers():
     # todo/remaster.md step 2)
     # 642: + `engine/src/o3de/lightprobe.{h,cpp}` (the remaster's body light,
     # todo/remaster.md A5)
+    # 644: + `engine/src/o3de/emitterlight.{h,cpp}` (the emitters' light, A5b)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (642, [], 1, []), \
+           (644, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48897,6 +49057,7 @@ SLOW = [
     ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
     ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),
     ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
+    ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

@@ -82,8 +82,24 @@ bool CityGrades::open(const std::string& dir) {
         if (eq == std::string::npos) continue;
         cityOf_[upper(trim(ln.substr(0, eq)))] = upper(trim(ln.substr(eq + 1)));
     }
+    for (const auto& raw : splitLines(readTextFile(dir + "/night.txt"))) {
+        const std::string ln = trim(raw);
+        if (ln.empty() || ln[0] == '#') continue;
+        const auto eq = ln.find('=');
+        if (eq == std::string::npos) continue;
+        const float d = static_cast<float>(std::atof(trim(ln.substr(eq + 1)).c_str()));
+        if (d > 0.0f && d <= 1.0f) night_[upper(trim(ln.substr(0, eq)))] = d;
+    }
     opened_ = true;
     return true;
+}
+
+float CityGrades::nightOf(const std::string& setName) const {
+    const std::string s = upper(setName);
+    if (const auto it = night_.find(s); it != night_.end()) return it->second;
+    if (const auto c = cityOf_.find(s); c != cityOf_.end())
+        if (const auto it = night_.find(c->second); it != night_.end()) return it->second;
+    return 1.0f;
 }
 
 const ColourLut* CityGrades::forSet(const std::string& setName) const {

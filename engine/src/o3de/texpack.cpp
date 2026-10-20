@@ -101,12 +101,13 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         const Texture* t = ts[i];
         if (!t || !t->hasPixels()) continue;
         std::uint64_t key = textureKey(*t);
+        // (a texture the pack holds nothing for is still a job for the hook)
         bool grey = false;
         if (!files_.count(key) && !lights_.count(key))
             if (const auto g = greyOf_.find(key); g != greyOf_.end()) { key = g->second; grey = true; }
         const auto it = files_.find(key);
         const auto lt = lights_.find(key);
-        if ((it == files_.end() && lt == lights_.end()) || refused_.count(key)) continue;
+        if (((it == files_.end() && lt == lights_.end()) && !lightHook_) || refused_.count(key)) continue;
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
                         lt != lights_.end() ? &lt->second : nullptr, {}, grey});
     }
@@ -154,6 +155,10 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
             o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
         }
     });
+    if (lightHook_)
+        Threads::shared().parallelFor(0, jobs.size(), 1, [&](std::size_t from, std::size_t to) {
+            for (std::size_t j = from; j < to; ++j) lightHook_(*ts[jobs[j].at], out[jobs[j].at]);
+        });
     // the refusals, here, once per key
     for (const Job& jb : jobs) {
         if (out[jb.at].ok || !jb.file) continue;

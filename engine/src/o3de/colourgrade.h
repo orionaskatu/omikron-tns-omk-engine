@@ -42,11 +42,18 @@ public:
     const ColourLut* forSet(const std::string& setName) const;
     // ...and the name of the file that answered, "" for none - for the log.
     std::string sourceFor(const std::string& setName) const;
+    // THE NIGHT (`night.txt`, lines `SET = D`, its own then its city's): how
+    // much of a set's PAINTED light stays when the remaster's emitters light
+    // it (`o3de/emitterlight.h`) - Qalisar's 0.5 makes its neons the night's
+    // light, as the Blade Runner streets it is drawn from (the reader,
+    // 2026-10-20). 1 for a set it does not name.
+    float nightOf(const std::string& setName) const;
 
 private:
     bool opened_ = false;
     std::map<std::string, ColourLut> luts_;        // by set name, upper case
     std::map<std::string, std::string> cityOf_;    // map.txt
+    std::map<std::string, float> night_;           // night.txt
 };
 
 CityGrades& cityGrades();

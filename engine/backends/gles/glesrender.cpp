@@ -436,6 +436,47 @@ std::string waterVariant(const std::string& frag) {
     return s;
 }
 
+// THE EMITTERS' LIGHT's variant of the ENHANCED fragment program
+// (`o3de/emitterlight.h`, the remaster's A5b): a light whose inner radius is
+// negative is a POINT light, shining from it to the fragment. Made at `init`
+// only when asked - the enhanced program the Vita may cache is untouched.
+std::string pointLightVariant(const std::string& frag) {
+    std::string s = frag;
+    const auto rep = [&](const std::string& from, const std::string& to, bool all) {
+        for (auto at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) {
+            s.replace(at, from.size(), to);
+            if (!all) break;
+        }
+    };
+    rep("vec3 litColour(vec3 n, vec3 w) {", "vec3 litColour(vec3 n, vec3 w, bool po) {", false);
+    // ...and room for 64 lights, the set's 8 and the remaster's points
+    rep("uniform vec4  uPL[24];", "uniform vec4  uPL[192];", false);
+    rep("for (int i = 0; i < 8; ++i) {\n        if (float(i) >= uPLCount) break;",
+        "for (int i = 0; i < 64; ++i) {\n        if (float(i) >= uPLCount) break;", false);
+    rep("litColour(normalize(vNrm), vWorld)", "litColour(normalize(vNrm), vWorld, false)", true);
+    rep("if (pa.w <= db.w) continue;          // a degenerate pair lights nothing\n"
+        "        float fall = min(1.0 - (sqrt(d2) - db.w) / (pa.w - db.w), 1.0);",
+        "if (po && db.w >= 0.0) continue;\n"
+        "        float rB = abs(db.w);\n"
+        "        if (pa.w <= rB) continue;\n"
+        "        float fall = min(1.0 - (sqrt(d2) - rB) / (pa.w - rB), 1.0);", false);
+    // a point light shines from it to the fragment, and WRAPS 0.3 round
+    rep("float t = -dot(n, db.xyz * k);",
+        "vec3 dir = db.w < 0.0 ? (d2 > 0.0 ? d / sqrt(d2) : vec3(0.0)) : db.xyz;\n"
+        "        float t = db.w < 0.0 ? k * fall * clamp((sqrt(d2) - 30.0) / 60.0, 0.0, 1.0) * (0.3 + 0.7 * max(-dot(n, dir), 0.0))"
+        " : -dot(n, db.xyz * k);", false);
+    // ...and MODE 3, a set lit by the point lights alone; and the NIGHT,
+    // `uSetDim` (View::setDim), on the painted and the start light of all three
+    rep("vec3 litColour(vec3 n, vec3 w, bool po) {", "uniform float uSetDim;\nvec3 litColour(vec3 n, vec3 w, bool po) {", false);
+    rep("min(vCol + litColour(normalize(vNrm), vWorld, false)", "min(vCol * uSetDim + litColour(normalize(vNrm), vWorld, false)", true);
+    rep("min(vec3(uLitBase) + litColour(normalize(vNrm), vWorld, false)",
+        "min(vec3(uLitBase) * uSetDim + litColour(normalize(vNrm), vWorld, false)", true);
+    rep("if (uLit > 1.5) shade =",
+        "if (uLit > 2.5) shade = min(vCol * uSetDim + litColour(normalize(vNrm), vWorld, true), vec3(1.0));\n"
+        "    else if (uLit > 1.5) shade =", false);
+    return s;
+}
+
 // THE BODY LIGHT's variant of a posing program (`o3de/lightprobe.h`, the
 // remaster's A5): the start colour - the grey or the baked colour - times
 // `uLightTint`. Made at `init` only when asked, as the water's is.
@@ -1129,6 +1170,14 @@ public:
     // asked is drawn: a body this posing program cannot take is posed on the
     // CPU by the frontend, which tints its corners itself
     bool drawsBodyTint() const override { return tintWant_; }
+    // THE EMITTERS' LIGHT, before `init` too (the enhanced fragment's variant)
+    bool setEmitterLights(bool on) override {
+        if (prog_) return false;
+        fxWant_ = on;
+        return true;
+    }
+    bool drawsEmitterLights() const override { return fxWant_; }
+    int maxPixelLights() const override { return fxWant_ && pixLights_ ? View::kMaxGpuLights : View::kOwnGpuLights; }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                         std::span<const Draw> above, std::span<const Draw> water, float strength,
                         float planeY) override;
@@ -1368,7 +1417,8 @@ private:
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;
-        GLint tint = -1;   // the body light's variant   // the water variant's
+        GLint tint = -1;   // the body light's variant
+        GLint setDim = -1; // the emitters' light's variant: the night   // the water variant's
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1532,6 +1582,7 @@ private:
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
+    bool fxWant_ = false;                      // the emitters' light's (`setEmitterLights`)
     std::string tintPosedVert_;                // ...its posing program's source
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
@@ -1723,10 +1774,12 @@ bool GlesRenderer::init(int w, int h) {
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
     bool enhanced = false;
-    const bool variant = bloom_ > 0.0f || waterWant_ > 0.0f;
+    const bool pointLit = fxWant_ && (wantPixLights_ || wantShadowMap_);   // only the enhanced ones light per pixel
+    const bool variant = bloom_ > 0.0f || waterWant_ > 0.0f || pointLit;
     if (variant) {
         const char* base = wantPixLights_ || wantShadowMap_ ? kSceneFragX : kSceneFrag;
         bloomFrag_ = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);
+        if (pointLit) bloomFrag_ = pointLightVariant(bloomFrag_);
         if (waterWant_ > 0.0f) bloomFrag_ = waterVariant(bloomFrag_);
     }
     const char* const sceneFragX = variant ? bloomFrag_.c_str() : kSceneFragX;
@@ -1790,6 +1843,15 @@ bool GlesRenderer::init(int w, int h) {
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
     }
+    if (pointLit) {
+        // the night at 1 until a frame says otherwise: a uniform starts at 0
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1f(glGetUniformLocation(p, "uSetDim"), 1.0f);
+        }
+        glUseProgram(0);
+    }
     if (tintWant_) {
         // 1, 1, 1 until a draw says otherwise: a uniform starts at 0, and the
         // pose self-test's bodies drawn BLACK read as never posed (all of
@@ -1850,6 +1912,7 @@ bool GlesRenderer::init(int w, int h) {
         L.clipY = glGetUniformLocation(p, "uClipY");
         L.eye = glGetUniformLocation(p, "uEye");
         L.tint = glGetUniformLocation(p, "uLightTint");
+        L.setDim = glGetUniformLocation(p, "uSetDim");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -2935,9 +2998,9 @@ void GlesRenderer::begin(const View& view) {
     // (`View::lights`, nearest first, at most eight) and the shadow map the
     // depth pass just filled - or a strength of 0, which turns the lookup off
     if (pixLights_ || shadowMap_) {
-        float pl[24 * 4] = {};
+        float pl[View::kMaxGpuLights * 12] = {};
         const int nl = pixLights_ ? static_cast<int>(std::min<std::size_t>(
-                                        view.lights.size(), static_cast<std::size_t>(View::kMaxGpuLights)))
+                                        view.lights.size(), static_cast<std::size_t>(maxPixelLights())))
                                   : 0;
         for (int i = 0; i < nl; ++i) {
             const auto& l = view.lights[static_cast<std::size_t>(i)];
@@ -2952,6 +3015,7 @@ void GlesRenderer::begin(const View& view) {
             glUseProgram(p);
             if (L.pl >= 0 && nl > 0) glUniform4fv(L.pl, 3 * nl, pl);
             if (L.plCount >= 0) glUniform1f(L.plCount, static_cast<float>(nl));
+            if (L.setDim >= 0) glUniform1f(L.setDim, view.setDim);   // the night (a variant's)
             if (L.shadowP >= 0) glUniform4fv(L.shadowP, 1, sp);
             if (L.lightMvp >= 0) glUniformMatrix4fv(L.lightMvp, 1, GL_FALSE, lightMvp_);
         }

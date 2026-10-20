@@ -290,8 +290,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
-"                   DIR/pack (or DIR/full/pack), --bloom 1.3, the grades in\n"
-"                   DIR/grades, --water 0.6, --body-light 1; a specific\n"
+"                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
+"                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1;\n"
+"                   a specific"
 "                   flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
@@ -299,6 +300,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
 "                   light around them, strength S (0..1); Vulkan and GLES only;\n"
 "                   [Remaster] bodylight=S\n"
+"  --fx-light S     REMASTER, off by default: the set's flames and glows light\n"
+"                   the bodies near them, strength S (0..4); Vulkan and GLES\n"
+"                   only; [Remaster] fxlight=S\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -536,6 +540,13 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--fx-light" && i + 1 < argc) {
+            fxLightFlag = static_cast<float>(std::atof(argv[++i]));
+            if (fxLightFlag < 0.0f || fxLightFlag > 4.0f) {
+                std::fprintf(stderr, "--fx-light %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--body-light" && i + 1 < argc) {
             bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
             if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {

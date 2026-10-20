@@ -731,6 +731,8 @@ struct WorldSlot {
     // them and the street's moving population receives them - the static
     // set is shaded by a colour baked into every vertex and needs none.
     std::vector<omk::Light3do> lights;
+    std::size_t setLights = 0;   // ...the set's own, before the emitters' (`o3de/emitterlight.h`)
+    std::vector<omk::Light3do> fxSurface;   // ...its glowing SURFACES' (the pack's light maps), after them
     // ...and its AMBIENT grey, the byte `Read3DO_Init` writes into the
     // scene's `+416` (`(int64)(desc+184 * 255.0)`): what a lit vertex starts
     // from (todo/drift-audit.md L1)

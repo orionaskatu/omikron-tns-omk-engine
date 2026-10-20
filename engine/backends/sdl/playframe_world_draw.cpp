@@ -2,6 +2,8 @@
 // THE WORLD DRAWN: the particles, the visible set, the lights, the shadows, the mirror and the present pass.
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
+#include "o3de/colourgrade.h"
+#include "o3de/emitterlight.h"
 #include "playframe.h"
 #include "platform/events.h"
 #include "platform/env.h"
@@ -172,15 +174,21 @@ void PlayState::worldDrawLists() {
     // `LightObject` and `sub_440CA0` lights every character exactly as it
     // lights a walker, from the scene's `+416`, so a character takes `1`
     // like the crowd, and `1` starts from that grey (`View::litBase`)
-    // rather than from black. Mode `2` stays in the shaders, unused here.
-    const int litCrowd  = litPerPixel ? 1 : 0;
-    const int litStaged = litPerPixel ? 1 : 0;
+    // rather than from black. Mode `2` adds the lights to the corner colour:
+    // the traffic's, and a body under the remaster's body light (below).
+    const int litStaged = litPerPixel ? 1 : 0;   // the crowd's and the characters'
     // THE BODY LIGHT under per-pixel lighting (`bodyTintPerPixel`): the
     // bodies - not the traffic - in mode 2, from their corner colour, which
     // is the grey x tint (the CPU's corners; a GPU-posed body starts from the
     // grey, `lightsFromBlack`, and `scene.vert` tints it)
     const bool tintPix = bodyTintPerPixel();
     const int litBody = tintPix ? 2 : litStaged;
+    // THE TRAFFIC under per-pixel lighting: mode 2, its BAKED colour plus the
+    // lights. The engine never lights a vehicle - per vertex it draws in its
+    // own colours (no `vertexLights`, not from the grey) - and mode 1 started
+    // it from the scene's grey, 10 of 255 in Anekbah: a slider away from a
+    // light drew BLACK (the reader's play test, 2026-10-20)
+    const int litTraffic = litPerPixel ? 2 : 0;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
     view.lights.clear();
     if (litPerPixel) {
@@ -190,9 +198,36 @@ void PlayState::worldDrawLists() {
             at[1] = playerBody.posed.corners.front().y;
             at[2] = playerBody.posed.corners.front().z;
         }
-        std::vector<std::pair<float, const omk::Light3do*>> near;
+        // THE EMITTERS' LIGHTS (`o3de/emitterlight.h`, the remaster's), when
+        // on: they light the SET too (mode 3, below), so they are chosen by
+        // the CAMERA - the nearest `kFxSlots` within `kFxView`, faded in over
+        // its last quarter so none pops - and the set's own lights, nearest
+        // the player as before, take the slots left
+        const bool fxPix = fxLight > 0.0f && world_ && world_->drawsEmitterLights();
+        // ...and THE NIGHT (`CityGrades::nightOf`): how much of the set's
+        // painted light stays under them
+        view.setDim = fxPix && omk::cityGrades().active() ? omk::cityGrades().nightOf(worldSet) : 1.0f;
+        if (view.setDim != nightWas) {
+            nightWas = view.setDim;
+            std::printf("frame %ld: the night %.2f for %s - the set's painted light kept under the emitters' "
+                        "lights (`night.txt`)\n", frameNo, static_cast<double>(view.setDim), worldSet.c_str());
+            omk::event("remaster.night", {{"set", worldSet}, {"dim", static_cast<double>(view.setDim)}});
+        }
+        constexpr float kFxView = 3000.0f;
+        // the point lights' slots: what the renderer has past four of the
+        // set's own (60 of 64 on Vulkan and the GLES variant - 12 of 16 left
+        // most of a neon street's signs unlit, "as if turned off", 2026-10-20)
+        const int kFxSlots = std::max(0, world_->maxPixelLights() - 4);
+        std::vector<std::pair<float, const omk::Light3do*>> near, fx;
         for (const WorldSlot& ws2 : worldSlots)
             for (const auto& l : ws2.lights) {
+                if (fxPix && omk::pointLight(l)) {
+                    const float ex = view.cam.eye[0] - l.pos[0], ey = view.cam.eye[1] - l.pos[1],
+                                ez = view.cam.eye[2] - l.pos[2];
+                    const float e2 = ex * ex + ey * ey + ez * ez;
+                    if (e2 < kFxView * kFxView) fx.emplace_back(e2, &l);
+                    continue;
+                }
                 const float dx = at[0] - l.pos[0], dy = at[1] - l.pos[1],
                             dz = at[2] - l.pos[2];
                 const float d2 = dx * dx + dy * dy + dz * dz;
@@ -200,24 +235,54 @@ void PlayState::worldDrawLists() {
                 if (!(l.radiusA > l.radiusB)) continue;
                 near.emplace_back(d2, &l);
             }
-        std::sort(near.begin(), near.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-        if (near.size() > static_cast<std::size_t>(omk::View::kMaxGpuLights))
-            near.resize(static_cast<std::size_t>(omk::View::kMaxGpuLights));
-        for (const auto& [d2, l] : near) {
+        const auto byDistance = [](const auto& a, const auto& b) { return a.first < b.first; };
+        std::sort(near.begin(), near.end(), byDistance);
+        std::sort(fx.begin(), fx.end(), byDistance);
+        // THE CUT, without a pop: a light fades by its distance against the
+        // FIRST ONE LEFT OUT - that distance moves continuously with the
+        // camera, so a light leaving the nearest `kFxSlots` has faded to
+        // nothing by then (ranked by distance alone, they appeared and
+        // vanished as he walked - the reader, 2026-10-20)
+        float fxCut = kFxView;
+        if (fx.size() > static_cast<std::size_t>(kFxSlots)) {
+            fxCut = std::min(fxCut, std::sqrt(fx[static_cast<std::size_t>(kFxSlots)].first));
+            fx.resize(static_cast<std::size_t>(kFxSlots));
+        }
+        const std::size_t ownSlots = std::min<std::size_t>(static_cast<std::size_t>(omk::View::kOwnGpuLights),
+            static_cast<std::size_t>(world_->maxPixelLights()) - fx.size());
+        if (near.size() > ownSlots) near.resize(ownSlots);
+        std::vector<float> fade(near.size(), 1.0f);
+        for (const auto& [e2, l] : fx) {
+            near.emplace_back(e2, l);
+            fade.push_back(std::clamp((fxCut - std::sqrt(e2)) / (0.35f * fxCut), 0.0f, 1.0f));
+        }
+        for (std::size_t li = 0; li < near.size(); ++li) {
+            const omk::Light3do* l = near[li].second;
             omk::View::GpuLight g{};
             for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
             g.radiusA = l->radiusA; g.radiusB = l->radiusB;
             g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
             g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
             g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
-            g.intensity = l->f32;
+            g.intensity = l->f32 * fade[li];
             view.lights.push_back(g);
         }
         if (!lightsTold) {
             lightsTold = true;
             std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
                         "reach the player, nearest first\n", frameNo, view.lights.size());
+        }
+        // ...and the first frame an EMITTER's light is among them (the
+        // remaster's, `o3de/emitterlight.h` - a point light)
+        if (!fxLightsTold) {
+            int points = 0;
+            for (const auto& [d2, l] : near) points += omk::pointLight(*l) ? 1 : 0;
+            if (points > 0) {
+                fxLightsTold = true;
+                std::printf("frame %ld: per-pixel lighting - %d of the %zu are emitters' lights\n",
+                            frameNo, points, view.lights.size());
+                omk::event("remaster.fxlight", {{"frame", frameNo}, {"points", points}});
+            }
         }
     }
     // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
@@ -321,7 +386,7 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->atRest, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
+                                 litTraffic, castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
             }
@@ -331,7 +396,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
+                             litTraffic, castShadows});
     }
     // which path drew him, said when it changes - and counted, for the
     // runs that compare the two
@@ -1192,6 +1257,16 @@ void PlayState::worldMirror() {
         const int y = omk::lumaGrey(view.fogColour[0], view.fogColour[1], view.fogColour[2]);
         for (int k = 0; k < 3; ++k) drawn.fogColour[k] = static_cast<std::uint8_t>(y);
         omk::greyClear565(view.clearColour, drawn.clearColour);
+    }
+    // THE EMITTERS' LIGHTS ON THE SET (`o3de/emitterlight.h`): under
+    // per-pixel lighting the set's OPAQUE draws take the frame's point
+    // lights on top of their baked colour - mode 3, which skips the set's
+    // own lights (they are in the bake already)
+    if (lighting > 0 && fxLight > 0.0f && world.drawsEmitterLights()) {
+        for (auto& d : draws)
+            if (d.lit == 0 && d.blend == omk::Blend::Opaque && !d.meshPose &&
+                (d.geo == &worldSlots[0].geo || d.geo == &worldSlots[1].geo))
+                d.lit = 3;
     }
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
     // (it clears `fb` itself, BEFORE the eyes land in it - the deferred

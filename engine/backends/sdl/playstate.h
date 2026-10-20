@@ -99,6 +99,7 @@ struct PlayState {
     std::string & remasterFlag = opt.remasterFlag;
     float & waterFlag = opt.waterFlag;
     float & bodyLightFlag = opt.bodyLightFlag;
+    float & fxLightFlag = opt.fxLightFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -694,6 +695,7 @@ struct PlayState {
     float bloomStrength{};
     float waterStrength{};   // the water reflection's, 0 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
+    float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
     bool waterLive{};        // the frame drew through the water pass (for the log)
     std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
@@ -712,6 +714,8 @@ struct PlayState {
     } shadow{};
     float pedFootOffMax{};
     bool lightsTold{};
+    bool fxLightsTold{};   // the first frame an emitter's light reached the player said
+    float nightWas = 1.0f; // the night (`View::setDim`) last said
     float shimmerClock{};   // `dword_907310`, wrapped at 256
     std::vector<omk::DecorSoup> worldDecors{};   // every LOADED slot's soup, for decorUnder
     std::uint64_t worldGeoRev{};

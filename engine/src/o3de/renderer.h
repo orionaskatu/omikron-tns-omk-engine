@@ -133,6 +133,11 @@ struct View {
     // or the clock's in a day/night area - which is what the engine's own lit
     // path starts every vertex from (`sub_494E80`). It was black.
     float litBase = 0.0f;
+    // THE NIGHT (`CityGrades::nightOf`, the remaster's): under per-pixel
+    // lighting with the emitters' lights, the share of the SET's painted
+    // light (mode 3) and of a lit body's start that stays - the point lights
+    // add on top whole. 1 unless the remaster says otherwise.
+    float setDim = 1.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed
@@ -191,7 +196,12 @@ struct View {
     // Up to this many, nearest first. Anekbah has 155 and a body is reached by
     // a handful; the cap is the uniform block's, and it is stated rather than
     // silently truncating in the middle of a street.
-    static constexpr int kMaxGpuLights = 8;
+    static constexpr int kMaxGpuLights = 64;
+    // ...of which the SET's own lights are at most this many - the eight the
+    // per-pixel enhancement always took; the rest are the remaster's point
+    // lights (`o3de/emitterlight.h`), on a renderer whose `maxPixelLights`
+    // says it has the room
+    static constexpr int kOwnGpuLights = 8;
     std::vector<GpuLight> lights;   // empty = light per vertex, as before
 
     // ---------------------------------------------- THE SHIMMER's clock
@@ -403,6 +413,14 @@ public:
     // what it drew.
     virtual bool setBodyTint(bool /*on*/) { return false; }
     virtual bool drawsBodyTint() const { return false; }
+    // THE EMITTERS' LIGHT (`o3de/emitterlight.h`): point lights - a negative
+    // inner radius - honoured by the per-pixel lighting. Asked before `init`;
+    // the frontend adds the emitters' lights to a set's table only when
+    // `drawsEmitterLights`, so a backend without them lights what it lit.
+    virtual bool setEmitterLights(bool /*on*/) { return false; }
+    virtual bool drawsEmitterLights() const { return false; }
+    // how many of `View::lights` the per-pixel lighting reads
+    virtual int maxPixelLights() const { return View::kOwnGpuLights; }
     // `planeY`: the water's height. The reflection pass DISCARDS what lies
     // below it per fragment - the CPU clip cannot see a posed body's place,
     // and a swimmer's legs were reflected above the water (a reader's play

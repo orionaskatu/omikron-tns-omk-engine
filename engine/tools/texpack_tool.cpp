@@ -15,6 +15,11 @@
 //                                           "<model> found y area triangles"
 //                                           (OMK_WATER_LEVELS=1: every level
 //                                           past 1e4 below each, "level y area n")
+//     texpack_tool lights <pack> <model.3DO>   the remaster's GLOWING SURFACES
+//                                           (`o3de/emitterlight.h`): per
+//                                           texture that would cast light,
+//                                           "TEX lit neon RRGGBB key", by lit area -
+//                                           the start of a set's `lights.txt`
 //     texpack_tool probe <model.3DO> x,y,z...  the remaster's BODY LIGHT
 //                                           (`o3de/lightprobe.h`): the set's
 //                                           mean, then per point the painted
@@ -37,6 +42,7 @@
 #include "formats/tex3dt.h"
 #include "o3de/colourgrade.h"
 #include "o3de/geom3do.h"
+#include "o3de/emitterlight.h"
 #include "o3de/greybank.h"
 #include "o3de/lightprobe.h"
 #include "o3de/renderer.h"
@@ -50,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -212,6 +219,31 @@ int probe(int argc, char** argv) {
     return 0;
 }
 
+int lights(const std::string& pack, const std::string& model) {
+    if (!omk::texturePack().open(pack)) return 1;
+    fs::path m = model, t;
+    for (const char* ext : {".3DT", ".3dt"}) { auto c = m; c.replace_extension(ext); if (fs::exists(c)) t = c; }
+    const auto d = omk::DataFs::readPath(model);
+    const auto tex = omk::textures(d, omk::DataFs::readPath(t.string()));
+    const auto g = omk::buildGeometry(d, omk::DrawFilter::Engine);
+    std::vector<const omk::Texture*> ptrs;
+    for (const auto& x : tex) ptrs.push_back(&x);
+    const auto packs = omk::texturePack().replacements(ptrs);
+    std::vector<omk::SurfaceStat> st;
+    omk::surfaceLights(g, tex, packs, 1.0f, nullptr, "", nullptr, &st);
+    std::map<std::string, std::string> keyOf;
+    for (const auto& x : tex) if (x.hasPixels()) keyOf[x.name] = omk::textureKeyHex(omk::textureKey(x));
+    std::sort(st.begin(), st.end(), [](const auto& a, const auto& b) { return a.lit > b.lit; });
+    for (const auto& x : st) {
+        if (x.lit < 1.0) continue;
+        const double hi = std::max({x.r, x.g, x.b});
+        const auto byte = [&](double v) { return static_cast<unsigned>(hi > 0 ? std::lround(v / hi * 255.0) : 255); };
+        std::printf("%s %.0f %.2f %02x%02x%02x %s\n", x.texture.c_str(), x.lit, x.neon / x.lit, byte(x.r), byte(x.g), byte(x.b),
+                    keyOf[x.texture].c_str());
+    }
+    return 0;
+}
+
 int cube(const std::string& path) {
     omk::ColourLut lut;
     std::string why;
@@ -233,6 +265,7 @@ int main(int argc, char** argv) {
     if (mode == "pngpar" && argc == 4) return pngpar(argv[2], std::atoi(argv[3]));
     if (mode == "water" && argc >= 3) return water(argc, argv);
     if (mode == "probe" && argc >= 3) return probe(argc, argv);
+    if (mode == "lights" && argc == 4) return lights(argv[2], argv[3]);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
                          "       texpack_tool png <in.png> <out.raw>\n"
                          "       texpack_tool grey <pack> <model.3DO>\n");

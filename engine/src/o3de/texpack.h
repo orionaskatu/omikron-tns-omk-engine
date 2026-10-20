@@ -85,7 +85,14 @@ public:
     // black - so a black-and-white cutscene draws the pack too.
     void aliasGrey(const Texture& colour, const Texture& grey);
 
+    // THE LIGHT MAPS AMENDED after the decode (`o3de/emitterlight.h`
+    // curateBloom, the remaster's curated light sources): called once a
+    // texture, on the pool - it must be thread-safe - with the result so far.
+    using LightHook = void (*)(const Texture&, PackImage&);
+    void setLightHook(LightHook h) { lightHook_ = h; }
+
 private:
+    LightHook lightHook_ = nullptr;
     std::string dir_;
     bool opened_ = false;
     std::unordered_map<std::uint64_t, std::string> files_;

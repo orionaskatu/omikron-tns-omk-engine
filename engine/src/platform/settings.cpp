@@ -181,6 +181,12 @@ Settings resolveSettings(const OptionsFile& ini,
             if (end != w->c_str() && b >= 0.0f && b <= 1.0f) { s.water = b; s.waterSource = Settings::Source::Ini; }
             else std::fprintf(stderr, "settings: water = %s is not 0..1 - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kRemaster, "fxlight")) {
+            char* end = nullptr;
+            const float b = std::strtof(w->c_str(), &end);
+            if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.fxLight = b; s.fxLightSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: fxlight = %s is not 0..4 - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kRemaster, "bodylight")) {
             char* end = nullptr;
             const float b = std::strtof(w->c_str(), &end);

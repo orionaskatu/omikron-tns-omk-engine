@@ -231,6 +231,11 @@ struct Settings {
     // S the tint's strength, 0 off; Vulkan and GLES only.
     float  bodyLight = 0.0f;
     Source bodyLightSource = Source::Default;
+    // `fxlight = S`: the EMITTERS LIGHT (`o3de/emitterlight.h`) - the set's
+    // flames and glows become point lights, S their strength, 0 off; Vulkan
+    // and GLES only.
+    float  fxLight = 0.0f;
+    Source fxLightSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

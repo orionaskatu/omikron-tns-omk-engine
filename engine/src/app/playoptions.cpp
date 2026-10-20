@@ -291,7 +291,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.3, the grades in\n"
-"                   DIR/grades; a specific flag or key beats it; [Remaster] dir=DIR\n"
+"                   DIR/grades, --water 0.35; a specific flag or key beats it;\n"
+"                   [Remaster] dir=DIR\n"
+"  --water S        REMASTER, off by default: the water reflects the scene,\n"
+"                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -529,6 +532,13 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--water" && i + 1 < argc) {
+            waterFlag = static_cast<float>(std::atof(argv[++i]));
+            if (waterFlag < 0.0f || waterFlag > 1.0f) {
+                std::fprintf(stderr, "--water %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--dither" && i + 1 < argc) dither = std::atoi(argv[++i]) != 0;
         else if (a == "--invert-x") mouseInvertX = true;
         else if (a == "--invert-y") mouseInvertY = true;

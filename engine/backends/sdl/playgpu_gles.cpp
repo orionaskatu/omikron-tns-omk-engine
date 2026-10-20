@@ -105,6 +105,7 @@ void PlayState::gpuOpenWindow() {
             if (texAniso > 1) gr->setAnisotropy(texAniso);
             if (ssaa > 1) gr->setSupersample(ssaa);
             if (bloomStrength > 0.0f) gr->setBloom(bloomStrength);   // the remaster's
+            if (waterStrength > 0.0f) gr->setWater(waterStrength);
             // per-pixel lighting and the mapped shadow: their programs are
             // linked at `init` only when asked, and what it could build is
             // what `drawsPixelLights` / `drawsShadowMap` answer later

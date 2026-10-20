@@ -55,12 +55,20 @@ layout(push_constant) uniform Push {
     // THE BLOOM (`post.frag`): 0 off - alpha 1, as always; 1 on - the alpha
     // is this texel's LIGHT, the texture pack's light map (binding 1)
     int   bloomMode;    // 116
+    // THE WATER REFLECTION (`todo/remaster.md` A3): this draw is WATER and
+    // adds the reflected scene (binding 2) at its own screen position, times
+    // `waterStrength`; 0 on every other draw
+    int   water;          // 120
+    float waterStrength;  // 124
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D tex;
 // the texture's LIGHT MAP (`o3de/texpack.h`), black where the pack has none;
 // read only with the bloom on
 layout(set = 0, binding = 1) uniform sampler2D emis;
+// the WATER pass's reflection, the scene through the camera reflected in the
+// water plane (black unless a water pass made one); read only by water draws
+layout(set = 0, binding = 2) uniform sampler2D refl;
 
 // ---- the MAPPED shadow, `todo/enhancements.md` 6 - an ENHANCEMENT ----------
 //
@@ -205,5 +213,7 @@ void main() {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
     }
+    if (pc.water != 0)
+        c += texture(refl, gl_FragCoord.xy / vec2(textureSize(refl, 0))).rgb * pc.waterStrength;
     outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
 }

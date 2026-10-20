@@ -17,6 +17,8 @@ layout(push_constant) uniform Push {
     float texScaleU;   // 108
     float texScaleV;   // 112
     int   bloomMode;   // 116, the BLOOM's light map - see scene.frag
+    int   water;       // 120, the WATER reflection - see scene.frag
+    float waterStrength; // 124
 } pc;
 
 // THE POSE BUFFER (`vkrender.cpp` `posesBodies`, 2026-10-11 - as GLES, GL1 and

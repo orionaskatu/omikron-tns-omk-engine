@@ -413,6 +413,17 @@ std::string bloomVariant(const char* frag) {
     return s;
 }
 
+// ...and the WATER variant (`todo/remaster.md` A3), over either: a water draw
+// adds the reflection (unit 4) at its screen position times `uWater`, 0 on
+// every other draw. Made at `init` only when the water is asked for.
+std::string waterVariant(const std::string& frag) {
+    std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\n" + frag;
+    const auto at = s.rfind("gl_FragColor = vec4(c,");
+    if (at != std::string::npos)
+        s.insert(at, "if (uWater > 0.0) c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater;\n    ");
+    return s;
+}
+
 // THE PRESENT PASS: a picture onto the window, NEAREST, scaled into `uDst`.
 // Used for both the world target (`uDither` 1: the 888 -> 565 rule applied
 // here, `present.frag`'s arithmetic in float) and an RGB565 surface the CPU
@@ -1061,6 +1072,14 @@ public:
         bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
         return true;
     }
+    // THE WATER REFLECTION, before `init` too (its scene programs' variant)
+    bool setWater(float s) override {
+        if (prog_) return false;
+        waterWant_ = s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;
+        return true;
+    }
+    bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
+                        std::span<const Draw> above, std::span<const Draw> water, float strength) override;
     // ...and the city grade, any time: n^3 RGB 0..1, red fastest
     bool setGrade(const float* rgb, int n) override {
         if (!rgb || n < 2) { lutN_ = 0; return true; }
@@ -1296,6 +1315,7 @@ private:
         GLint lit = -1, caster = -1, pl = -1, plCount = -1, shadow = -1, lightMvp = -1,
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
+        GLint water = -1, reflInv = -1;   // the water variant's
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1450,6 +1470,12 @@ private:
     std::vector<unsigned char> lutData_;
     bool   lutDirty_ = false;
     void   runPost();
+    // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
+    float  waterWant_ = 0.0f;            // asked for at creation: the variant is built
+    bool   waterNow_ = false;            // the draws being submitted are WATER
+    float  waterStrength_ = 0.0f;
+    GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
+    int    reflW_ = 0, reflH_ = 0;
     int surfW_ = 0, surfH_ = 0;
 
     std::vector<Tex> tex_;
@@ -1510,6 +1536,9 @@ GlesRenderer::~GlesRenderer() {
     }
     if (lutTex_) deleteTextures(1, &lutTex_);
     if (lightBlack_) deleteTextures(1, &lightBlack_);
+    if (reflTex_) deleteTextures(1, &reflTex_);
+    if (reflDepth_) deleteRenderbuffers(1, &reflDepth_);
+    if (reflFbo_) glDeleteFramebuffers(1, &reflFbo_);
 }
 
 // THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): `colour_` copied to
@@ -1635,9 +1664,14 @@ bool GlesRenderer::init(int w, int h) {
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
     bool enhanced = false;
-    if (bloom_ > 0.0f) bloomFrag_ = bloomVariant(wantPixLights_ || wantShadowMap_ ? kSceneFragX : kSceneFrag);
-    const char* const sceneFragX = bloom_ > 0.0f ? bloomFrag_.c_str() : kSceneFragX;
-    const char* const sceneFrag = bloom_ > 0.0f ? bloomFrag_.c_str() : kSceneFrag;
+    const bool variant = bloom_ > 0.0f || waterWant_ > 0.0f;
+    if (variant) {
+        const char* base = wantPixLights_ || wantShadowMap_ ? kSceneFragX : kSceneFrag;
+        bloomFrag_ = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);
+        if (waterWant_ > 0.0f) bloomFrag_ = waterVariant(bloomFrag_);
+    }
+    const char* const sceneFragX = variant ? bloomFrag_.c_str() : kSceneFragX;
+    const char* const sceneFrag = variant ? bloomFrag_.c_str() : kSceneFrag;
     if (wantPixLights_ || wantShadowMap_) {
         prog_ = link(kSceneVertX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                                 {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
@@ -1669,6 +1703,17 @@ bool GlesRenderer::init(int w, int h) {
                       {{kAttrPos, "aPos"}, {kAttrUV, "aUV"}, {kAttrCol, "aCol"},
                        {kAttrPhase, "aPhase"}, {kAttrSlot, "aSlot"}, {kAttrNormal, "aNormal"}});
         if (!posed_) std::fprintf(stderr, "gles: no posing program - bodies are posed on the CPU\n");
+    }
+    if (waterWant_ > 0.0f) {
+        // the reflection on unit 4
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1i(glGetUniformLocation(p, "uRefl"), 4);
+            glUniform1f(glGetUniformLocation(p, "uWater"), 0.0f);
+        }
+        glUseProgram(0);
+        std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
     }
     if (bloom_ > 0.0f) {
         // the light maps on unit 3 (0 the texture, 1 the present's matrix, 2 the shadow map)
@@ -1712,6 +1757,8 @@ bool GlesRenderer::init(int w, int h) {
         L.lit = glGetUniformLocation(p, "uLit");
         L.litBase = glGetUniformLocation(p, "uLitBase");
         L.grey = glGetUniformLocation(p, "uGrey");
+        L.water = glGetUniformLocation(p, "uWater");
+        L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -2678,6 +2725,51 @@ void GlesRenderer::setView(const View& view) {
 // reflected pass takes the draws in FRONT of the plane, as the fallback does -
 // the port's own guard against what lies behind the mirror's wall.
 // `OMK_CPU_MIRROR=1` keeps the fallback, for laying the two side by side.
+// THE WATER REFLECTION (`todo/remaster.md` A3): the scene through the
+// reflected camera into `reflFbo_` (single-sampled, the target's size), then
+// the frame as usual with the water draws adding it from unit 4.
+bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
+                                  std::span<const Draw> above, std::span<const Draw> water, float strength) {
+    if (waterWant_ <= 0.0f || water.empty() || strength <= 0.0f || mainLoc_.water < 0) return false;
+    if (reflW_ != rw_ || reflH_ != rh_) {
+        if (!reflFbo_) glGenFramebuffers(1, &reflFbo_);
+        if (!reflTex_) glGenTextures(1, &reflTex_);
+        if (!reflDepth_) glGenRenderbuffers(1, &reflDepth_);
+        glBindTexture(GL_TEXTURE_2D, reflTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw_, rh_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindRenderbuffer(GL_RENDERBUFFER, reflDepth_);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, rw_, rh_);
+        glBindFramebuffer(GL_FRAMEBUFFER, reflFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflTex_, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, reflDepth_);
+        const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (st != GL_FRAMEBUFFER_COMPLETE) { std::fprintf(stderr, "gles: water reflection target incomplete\n"); return false; }
+        reflW_ = rw_; reflH_ = rh_;
+        std::printf("gles: the water reflection's target - %dx%d (a REMASTER feature)\n", rw_, rh_);
+    }
+    passFbo_ = reflFbo_;
+    begin(refl);
+    for (const auto& d : above) submit(d);
+    passFbo_ = 0;
+    recording_ = false;
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, reflTex_);
+    glActiveTexture(GL_TEXTURE0);
+    begin(v);
+    for (const auto& d : scene) submit(d);
+    waterNow_ = true;
+    waterStrength_ = strength;
+    for (const auto& d : water) submit(d);
+    waterNow_ = false;
+    end();
+    return true;
+}
+
 bool GlesRenderer::drawMirrorScene(const View& v, const View& refl, std::span<const Draw> scene,
                                    std::span<const Draw> sceneClipped, std::span<const Draw> mirror) {
     static const bool cpuMirror = omk::envFlag("OMK_CPU_MIRROR");
@@ -2722,7 +2814,7 @@ void GlesRenderer::begin(const View& view) {
     for (int i = 0; i < 3; ++i) fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
     dither_ = view.dither;
 
-    glBindFramebuffer(GL_FRAMEBUFFER, drawFbo());
+    glBindFramebuffer(GL_FRAMEBUFFER, passFbo_ ? passFbo_ : drawFbo());   // the water pass's target when set
     glViewport(0, 0, rw_, rh_);
     glDisable(GL_SCISSOR_TEST);
     // the engine clears to the scene's fog colour (`View::clearColour`)
@@ -3056,6 +3148,11 @@ void GlesRenderer::submit(const Draw& d) {
     st_.triangles += static_cast<long>(d.count / 3);
     const SceneLoc& L = posed ? posedLoc_ : mainLoc_;
     useProgram(posed ? posed_ : prog_);
+    // THE WATER's two uniforms, only with the water variant built
+    if (waterWant_ > 0.0f && L.water >= 0) {
+        glUniform1f(L.water, waterNow_ ? waterStrength_ : 0.0f);
+        if (waterNow_) glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+    }
     if (posed && (lastPose_ != d.meshPose || lastPoseGeo_ != d.geo)) {
         buildPoseUniforms(d, *pvb);
         glUniform4fv(L.pose, static_cast<GLsizei>(pvb->meshOfSlot.size() * 4), poseUni_.data());

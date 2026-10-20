@@ -2138,6 +2138,7 @@ void PlayState::prepareSet(SetLoad& L) {
     L.ms[3] = since(t);
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
+    w.water = omk::waterPlane(w.geo);
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
@@ -2226,9 +2227,13 @@ bool PlayState::integrateSet(SetLoad& L, long frame) {
         worldReady = true;
     }
     std::printf("world: slot %d set %s (AREA %d) - %zu corners, %zu batches, "
-                "%zu textures, %zu walkable triangles%s\n",
+                "%zu textures, %zu walkable triangles%s%s\n",
                 L.slot, L.stem.c_str(), L.area, w.geo.corners.size(), w.geo.batches.size(),
-                w.tex.size(), w.soup.size() / 9, w.mirror.found ? ", mirror" : "");
+                w.tex.size(), w.soup.size() / 9, w.mirror.found ? ", mirror" : "",
+                w.water.found ? ", water" : "");
+    if (w.water.found)
+        omk::event("world.water", {{"set", L.stem}, {"y", static_cast<double>(w.water.y)},
+                                   {"area", static_cast<long>(w.water.area)}, {"triangles", w.water.triangles}});
     std::printf("set load: %s - %zu KB read in %.1f ms, geometry %.1f, textures %.1f, "
                 "soups %.1f, the rest %.1f; asked at frame %ld, in at frame %ld - %s, "
                 "the frame waited %.1f ms for it, the Session's load %d frame(s)\n",

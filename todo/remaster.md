@@ -235,10 +235,10 @@ engine/build/omk-play ../fr ../tables --save ../traces/save-appart.bin --area 10
 ```
 
 **The preset** (the reader's "could you add a remaster arg?", 2026-10-20):
-`--remaster DIR` / `[Remaster] dir = DIR` turns on all three from one
+`--remaster DIR` / `[Remaster] dir = DIR` turns on all of it from one
 folder - the texture pack in `DIR/pack` (or `DIR/full/pack`, which
 `omktexpack.py export DIR/full` makes), the bloom at 1.3, the grades in
-`DIR/grades`. A BASE, as `all = max` is for `[Enhancements]`: `--bloom 0`,
+`DIR/grades`, the water at 0.35. A BASE, as `all = max` is for `[Enhancements]`: `--bloom 0`,
 `--texture-pack`, `--grade` or their keys beat it. With the reader's folder:
 
 ```bash
@@ -276,6 +276,79 @@ grade (Qalisar at least, the clock runs); the scene viewer; the noir
 preview's vignette is not in the LUT (spatial) - a separate option if wanted;
 the Vita's shader cache does not hold the bloom variants and the post
 program, so a console without the compiler refuses them.
+
+## Step 3, A3 - water reflections: the design (2026-10-20, the reader's "ok, go")
+
+**Why water first.** The sets are lit by BAKED vertex colour; only the
+characters take per-pixel light (enhancement row 7). Normal or roughness maps
+on a set would change nothing unless something relit it - which is row 8's
+objection. The data does mark water: the additive meshes are mostly water and
+glass (see "Step 2's bloom, tried").
+
+**The preview that failed** (kept: `~/Documents/omk/omk-pack/wip/
+water-mirror-preview.patch`): marking Jaunpur's 8 water meshes (by name, at
+the commonest height) as the set's MIRROR (flag `0x100000`) and running the
+existing mirror pass. The sky and half the town VANISHED and no reflection
+showed on the water. The original's mirror is confined by DRAW ORDER - the
+reflected pass first, the real pass over it, nothing cleared - which works
+only because a mirror is an OPENING with nothing real behind it. Water has the
+canal bed and the walls behind and around it, so it needs a pass of its own.
+
+**The pass**:
+1. the scene through the camera reflected in the water plane, CLIPPED to what
+   is above it, sky included, into an offscreen target of its own;
+2. the main pass as now; the water meshes keep their additive blend and add
+   the reflection sampled at the same screen position, times a strength (a
+   Fresnel term once judged);
+3. a renderer entry beside `drawMirrorScene` (Vulkan: the scene pass able to
+   target another framebuffer, one binding more; GLES: an FBO and a variant);
+4. the game picks the water plane per set as it picks the mirror, and draws
+   through the new path when the option is on and the camera is above it;
+5. what counts as water: horizontal ADDITIVE surfaces - the data, not names.
+
+Costs a second scene pass while water is in view. The vertical glass (`vitre`)
+would be a further step, one plane per window.
+
+### A3, as built (2026-10-20)
+
+`[Remaster] water = S` / `--water S` (0..1), and `--remaster DIR` turns it
+on at **0.35**; off unless named, never `all = max`, Vulkan and GLES.
+
+* **The plane** (`o3de/renderer.h` `waterPlane`) is the set's own data: the
+  height carrying the most area of horizontal additive faces, a plane past
+  1e6 square units. 7 sets have one: Lahoreh (y 12, 24.8M units, 3580
+  triangles), mayerem (1072), jaunpur (4, 9.2M, 1250), PAstar (1384 -
+  **Astaroth's arena: is that water, or a magic floor that should not
+  reflect? for a play test**), LMoexter, ACSvent, L_Khonsu. Anekbah, the
+  apartment and Qalisar have none.
+* **The pass** (`drawWithWater`): the camera above the plane; the draws split
+  into the water's triangles and the rest; the eye and target mirrored, the
+  image flipped vertically (a half turn of roll and a screen-X flip); the
+  scene clipped to what is above the plane (posed draws - the sky, the
+  bodies - whole). Vulkan: the scene's render pass into a second framebuffer
+  of the same attachments, binding 2 of the texture sets, push `water` /
+  `waterStrength` at 120 / 124 (the block is FULL at 128); GLES: an FBO and
+  a WATER VARIANT of the scene programs (unit 4), made at init only when asked.
+* **Looked at** (Jaunpur's canal facing 180, Lahoreh's street start): the
+  walls, railings and the arch mirror the right way up and meet the
+  waterline; at 1.0 the water washes out (the reflection is ADDED to the
+  water's own additive colour), at 0.35 it reads as a sheen. Vulkan and GLES
+  3363 / 3326 of 960000 pixels apart.
+* **Measured**: with the water off every frame tried is byte-identical to the
+  build before (Vulkan and GLES, the street and the canal with the full pack;
+  `run_vulkan` with 4x MSAA and trilinear). `engine: water reflection`, shown
+  to fail three ways; the reflection's ORIENTATION is judged by eye, not
+  checked (see the check's docstring).
+* **Found on the way and fixed first** (`30f2328e`): the PNG reader's fixed
+  Huffman codes were built lazily behind a plain bool, and with a pool
+  decoding on the thread pool two workers rebuilt them at once - the viewer
+  HUNG in Jaunpur. A function-local static now, and the inflate bounded;
+  `engine: texture pack` decodes on the pool in 20 fresh processes.
+
+**Open**: a Fresnel term (stronger at grazing angles - the shader needs the
+eye, the push block is full: a uniform buffer then); ripples (a normal map
+from B3 perturbing the lookup); PAstar; the glass (`vitre`), one plane each;
+the cost - a second scene pass while water is in view, not yet measured at 4K.
 
 ## Step 1, as built (2026-10-20) - the texture pack
 

@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/events.h"
 #include "platform/env.h"
 
 // -> true when the sphere is wholly outside one side plane
@@ -1187,7 +1188,21 @@ void PlayState::worldMirror() {
     // (it clears `fb` itself, BEFORE the eyes land in it - the deferred
     // clear here ran AFTER them from 4f6d611 on and left the frame black)
     if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) return;
-    const auto mst = omk::drawWithMirror(world, draws, drawn,
+    // THE WATER REFLECTION (`todo/remaster.md` A3), when asked for and the
+    // camera is above the shown slot's water; otherwise - and on a backend
+    // without the pass - the frame as it always was
+    const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)];
+    const bool watered = waterStrength > 0.0f &&
+        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, shownSlot.water, waterStrength);
+    if (watered != waterLive) {
+        waterLive = watered;
+        std::printf("frame %ld: the water %s\n", frameNo,
+                    watered ? "REFLECTS - the scene through the camera mirrored in its plane"
+                            : "does not reflect here (no water, the camera below it, or no pass)");
+        omk::event("remaster.water", {{"frame", frameNo}, {"live", watered},
+                                      {"y", static_cast<double>(shownSlot.water.y)}});
+    }
+    const auto mst = watered ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");
     if (mst.active != mirrorLive || (mst.maskPixels > 0 && !mirrorSeen)) {

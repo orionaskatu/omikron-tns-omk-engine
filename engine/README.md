@@ -3710,6 +3710,18 @@ byte-identical to the build before. **Not a port, no oracle in the
 original**: tier 3 for the `.cube` reader, the frames this port's own
 invariants. Check: `engine: bloom and grade` (shown to fail three ways).
 
+**And 2026-10-20, THE WATER REFLECTS - remaster A3** (`todo/remaster.md`).
+`[Remaster] water = S` / `--water S`: the set's water plane found from its
+own data (the height with the most horizontal ADDITIVE area,
+`waterPlane`), the scene drawn through the camera mirrored in it into a
+target of the backend's own (Vulkan: the scene's render pass, a second
+framebuffer; GLES: an FBO and a water variant of the scene programs), and the
+water's own draws adding it at their screen position. Off by default; with
+it off every frame tried is byte-identical to the build before. **Not a
+port**: the original has mirrors (flag `0x100000`), not this. Check:
+`engine: water reflection` (shown to fail three ways; the orientation is
+judged by eye).
+
 **And 2026-09-09, THE SHIMMER - a defect, not an enhancement.** Mesh flag
 `0x8000000` oscillates the vertex colour of 233 set meshes, the far skyline of
 every city and 132 of them in Lahoreh. The port had decoded the phase into

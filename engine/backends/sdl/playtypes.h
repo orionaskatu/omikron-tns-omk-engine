@@ -694,6 +694,7 @@ struct WorldSlot {
     omk::Geometry geo;
     std::vector<omk::Texture> tex;
     omk::MirrorPlane mirror;
+    omk::WaterPlane water;   // the remaster's water reflection (`o3de/renderer.h`)
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the
     // actor on a steep face and slides him off it, so dropping them made a

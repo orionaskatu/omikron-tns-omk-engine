@@ -223,6 +223,10 @@ struct Settings {
     // `[Enhancements]`: any specific key or flag beats it.
     std::string remasterDir;
     Source remasterDirSource = Source::Default;
+    // `water = S`: the WATER REFLECTS (`o3de/renderer.h` drawWithWater), S
+    // the reflection's strength, 0 off; Vulkan and GLES only.
+    float  water = 0.0f;
+    Source waterSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

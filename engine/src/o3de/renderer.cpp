@@ -18,6 +18,8 @@
 #include <cstdio>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <vector>
 
 namespace omk {
@@ -207,6 +209,83 @@ void runPass(Renderer& r, const View& v, std::span<const Draw> ds) {
 }
 
 }  // namespace
+
+WaterPlane waterPlane(const Geometry& g) {
+    WaterPlane out;
+    std::map<int, std::pair<double, long>> byHeight;   // y / 4 -> area, triangles
+    for (const auto& b : g.batches) {
+        if (b.blend != Blend::Add) continue;
+        for (std::size_t t = b.start; t + 2 < b.start + b.count; t += 3) {
+            const Corner& a = g.corners[t];
+            const Corner& c1 = g.corners[t + 1];
+            const Corner& c2 = g.corners[t + 2];
+            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
+            const double ux = c1.x - a.x, uz = c1.z - a.z, vx = c2.x - a.x, vz = c2.z - a.z;
+            const double area = std::fabs(ux * vz - uz * vx) * 0.5;
+            auto& e = byHeight[static_cast<int>(std::lround(a.y / 4.0f))];
+            e.first += area; ++e.second;
+        }
+    }
+    for (const auto& [k, e] : byHeight)
+        if (e.first > out.area) { out.area = e.first; out.y = static_cast<float>(k) * 4.0f; out.triangles = e.second; }
+    out.found = out.area >= 1e6;
+    return out;
+}
+
+bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
+                   const Geometry* setGeo, const WaterPlane& wp, float strength) {
+    if (!wp.found || strength <= 0.0f || !setGeo) return false;
+    // above the water: the game's Y points DOWN, so a smaller y
+    if (v.cam.eye[1] >= wp.y - 1.0f) return false;
+    static std::vector<Draw> scene, water;
+    scene.clear(); water.clear();
+    const auto onPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= 4.0f; };
+    for (const auto& d : draws) {
+        if (d.geo != setGeo || d.blend != Blend::Add || d.meshPose) { scene.push_back(d); continue; }
+        const Geometry& g = *d.geo;
+        // runs of the draw: water triangles to `water`, the others to `scene`
+        std::size_t runStart = d.start;
+        int runKind = -1;
+        const auto flush = [&](std::size_t end) {
+            if (runKind < 0 || end <= runStart) return;
+            Draw o = d; o.start = runStart; o.count = end - runStart;
+            (runKind ? water : scene).push_back(o);
+        };
+        for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
+            const int kind = onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2]) ? 1 : 0;
+            if (kind != runKind) { flush(t); runStart = t; runKind = kind; }
+        }
+        flush(d.start + d.count);
+    }
+    if (water.empty()) return false;
+    // the reflected view: `p' = p - 2 (n.p + d) n` with n = (0, -1, 0), d = y -
+    // a y' = 2 y_w - y - and the image flipped VERTICALLY, which the camera
+    // says as a half turn of roll and a screen-X flip (the reflection
+    // reverses the roll's sense)
+    View rv = v;
+    rv.cam.eye[1] = 2.0f * wp.y - v.cam.eye[1];
+    rv.cam.at[1] = 2.0f * wp.y - v.cam.at[1];
+    rv.cam.rollDeg = 180.0f - v.cam.rollDeg;
+    rv.cam.flipX = !v.cam.flipX;
+    // what the reflection may show: the triangles ABOVE the plane, and the
+    // draws a backend poses (the sky, the bodies) whole - their corners are
+    // at rest, so a test on them would be a test on the wrong place
+    static std::vector<Draw> above, posed, clipped;
+    above.clear(); posed.clear();
+    std::vector<Draw> flat;
+    for (const auto& d : scene) (d.meshPose ? posed : flat).push_back(d);
+    const float n[3] = {0.0f, -1.0f, 0.0f};
+    clipped = inFrontOf(flat, n, wp.y, 1.0f);
+    above.assign(posed.begin(), posed.end());
+    above.insert(above.end(), clipped.begin(), clipped.end());
+    if (v.shadow.on) {
+        static std::vector<Draw> casters;
+        casters.clear();
+        for (const auto& d : draws) if (d.castsShadow) casters.push_back(d);
+        if (!casters.empty()) r.shadowPass(v, casters);
+    }
+    return r.drawWaterScene(v, rv, scene, above, water, strength);
+}
 
 MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
                            std::span<const Texture> tex, const View& v,

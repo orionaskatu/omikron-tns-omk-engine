@@ -175,6 +175,12 @@ Settings resolveSettings(const OptionsFile& ini,
             if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.bloom = b; s.bloomSource = Settings::Source::Ini; }
             else std::fprintf(stderr, "settings: bloom = %s is not 0..4 - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kRemaster, "water")) {
+            char* end = nullptr;
+            const float b = std::strtof(w->c_str(), &end);
+            if (end != w->c_str() && b >= 0.0f && b <= 1.0f) { s.water = b; s.waterSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: water = %s is not 0..1 - ignored\n", w->c_str());
+        }
         if (const std::string* w = ini.find(kRemaster, "dir")) {
             std::string v = *w;
             while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();

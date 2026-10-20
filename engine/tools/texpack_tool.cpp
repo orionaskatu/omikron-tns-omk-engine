@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE TEXTURE PACK'S FIVE ENGINE-SIDE HELPERS (`o3de/texpack.h`,
+// THE REMASTER'S SIX ENGINE-SIDE HELPERS (`o3de/texpack.h`,
 // `todo/remaster.md` B4) - for `tools/omktexpack.py` and for
 // `verify.py: engine: texture pack`.
 //
@@ -10,6 +10,9 @@
 //     texpack_tool pngpar <in.png> <n>      the reader on the THREAD POOL: the
 //                                           file decoded n times at once, first
 //                                           use included - "pngpar n same k"
+//     texpack_tool water <model.3DO>...     the remaster's water plane per set
+//                                           (`o3de/renderer.h` waterPlane):
+//                                           "<model> found y area triangles"
 //     texpack_tool cube <file.cube>         the engine's .cube reader's answer:
 //                                           "cube N first r g b last r g b", or why not
 //     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
@@ -26,7 +29,9 @@
 // can difference the reader against Python's zlib.
 #include "formats/tex3dt.h"
 #include "o3de/colourgrade.h"
+#include "o3de/geom3do.h"
 #include "o3de/greybank.h"
+#include "o3de/renderer.h"
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
 #include "platform/pngread.h"
@@ -158,6 +163,18 @@ int pngpar(const std::string& in, int n) {
     return 0;
 }
 
+int water(int argc, char** argv) {
+    for (int i = 2; i < argc; ++i) {
+        const auto d = omk::DataFs::readPath(argv[i]);
+        if (d.empty()) continue;
+        const auto g = omk::buildGeometry(d, omk::DrawFilter::Engine);
+        const auto w = omk::waterPlane(g);
+        std::printf("%s %d %.1f %.0f %ld\n", fs::path(argv[i]).filename().string().c_str(), w.found ? 1 : 0,
+                    static_cast<double>(w.y), w.area, w.triangles);
+    }
+    return 0;
+}
+
 int cube(const std::string& path) {
     omk::ColourLut lut;
     std::string why;
@@ -177,6 +194,7 @@ int main(int argc, char** argv) {
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
     if (mode == "pngpar" && argc == 4) return pngpar(argv[2], std::atoi(argv[3]));
+    if (mode == "water" && argc >= 3) return water(argc, argv);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
                          "       texpack_tool png <in.png> <out.raw>\n"
                          "       texpack_tool grey <pack> <model.3DO>\n");

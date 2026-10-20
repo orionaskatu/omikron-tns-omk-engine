@@ -191,11 +191,12 @@ int PlayState::setupSession() {
             for (const char* sub : {"/pack", "/full/pack"})
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
-            std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s (a specific "
-                        "flag or key beats each)\n", preset.c_str(),
+            std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s (a "
+                        "specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.3",
-                        presetGrades.empty() ? "none found" : presetGrades.c_str());
+                        presetGrades.empty() ? "none found" : presetGrades.c_str(),
+                        waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.35");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -210,6 +211,13 @@ int PlayState::setupSession() {
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",
                         static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
+        // the WATER reflection: its flag, its key, then the preset's 0.35
+        waterStrength = waterFlag >= 0.0f ? waterFlag
+                      : settings.waterSource == omk::Settings::Source::Ini ? settings.water
+                      : !preset.empty() ? 0.35f : 0.0f;
+        if (waterStrength > 0.0f)
+            std::printf("water: %.2f - a REMASTER feature: the water reflects the scene, drawn by "
+                        "Vulkan and GLES only\n", static_cast<double>(waterStrength));
         const std::string gradeDir = !gradeFlag.empty() ? gradeFlag
                                    : !settings.grade.empty() ? settings.grade : presetGrades;
         if (!gradeDir.empty() && omk::cityGrades().open(gradeDir))

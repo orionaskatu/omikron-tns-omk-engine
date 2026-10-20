@@ -203,8 +203,13 @@ struct Push {
     // THE BLOOM (`todo/remaster.md` step 2, `post.frag`): 0 off; 1 on - the
     // alpha written is the texel's LIGHT, from the pack's light map
     int32_t bloomMode; // 116
+    // THE WATER REFLECTION (`todo/remaster.md` A3): a water draw adds the
+    // reflection (binding 2) times the strength; 0 on every other draw
+    int32_t water;     // 120
+    float waterStrength; // 124
 };
-static_assert(sizeof(Push) == 120, "the push block is 120 bytes");
+// 128 is every device's guaranteed push-constant size: the block is full
+static_assert(sizeof(Push) == 128, "the push block is 128 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -227,6 +232,10 @@ public:
     // posed on the CPU instead (`cpuPose`) - so no path draws it wrong.
     bool posesBodies() const override { return poseDs_ != VK_NULL_HANDLE; }
     int maxVertexLights() const override { return poseDs_ != VK_NULL_HANDLE ? kPoseLights : 0; }
+    bool setWater(float) override { return true; }   // nothing to build ahead
+    bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                        std::span<const omk::Draw> above, std::span<const omk::Draw> water,
+                        float strength) override;
     bool drawMirrorScene(const omk::View& v, const omk::View& refl,
                          std::span<const omk::Draw> scene,
                          std::span<const omk::Draw> sceneClipped,
@@ -572,6 +581,21 @@ private:
     bool             lutDirty_ = false;
     VkImage          lutImg_ = VK_NULL_HANDLE;  VkDeviceMemory lutMem_ = VK_NULL_HANDLE;
     VkImageView      lutView_ = VK_NULL_HANDLE;
+    // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
+    // A second scene target the size of the first, drawn through the camera
+    // reflected in the water plane by the SAME render pass (so every pipeline
+    // fits it) into its own framebuffer, then sampled by the water draws of
+    // the main pass. Made on first use; `resize` drops it.
+    VkImage          reflColour_ = VK_NULL_HANDLE, reflMs_ = VK_NULL_HANDLE, reflDepth_ = VK_NULL_HANDLE;
+    VkDeviceMemory   reflColourMem_ = VK_NULL_HANDLE, reflMsMem_ = VK_NULL_HANDLE, reflDepthMem_ = VK_NULL_HANDLE;
+    VkImageView      reflColourView_ = VK_NULL_HANDLE, reflMsView_ = VK_NULL_HANDLE, reflDepthView_ = VK_NULL_HANDLE;
+    VkFramebuffer    reflFbuf_ = VK_NULL_HANDLE;
+    VkFramebuffer    passFb_ = VK_NULL_HANDLE;   // `begin`'s target when set, `fbuf_` otherwise
+    bool             waterNow_ = false;
+    float            waterStrength_ = 0.0f;
+    bool makeReflection();
+    void killReflection();
+    void bindReflection(VkDescriptorSet ds);
     bool makePost();
     void killPost();
     void killLut();
@@ -1019,14 +1043,15 @@ bool VulkanRenderer::makeTarget() {
 bool VulkanRenderer::makePipelines() {
     // binding 0 the texture, binding 1 its LIGHT MAP (the remaster's bloom;
     // black unless the texture pack has one, read only with the bloom on)
-    VkDescriptorSetLayoutBinding b2tex[2]{};
-    for (uint32_t k = 0; k < 2; ++k) {
+    // ...and binding 2 the WATER pass's reflection (black without one)
+    VkDescriptorSetLayoutBinding b2tex[3]{};
+    for (uint32_t k = 0; k < 3; ++k) {
         b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
         b2tex[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b2tex[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli.bindingCount = 2; dli.pBindings = b2tex;
+    dli.bindingCount = 3; dli.pBindings = b2tex;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &dsl_), "descriptorSetLayout");
 
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
@@ -1292,7 +1317,7 @@ bool VulkanRenderer::makePipelines() {
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
     // two samplers a texture's set since the light map (binding 1)
-    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 260},
+    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 390},
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1554,6 +1579,7 @@ bool VulkanRenderer::resize(int w, int h) {
     img(presView_, presImg_, presMem_);
     buf(presRead_, presReadMem_);
     killPost();   // it reads `colour_` and is sized by the target
+    killReflection();
     w_ = w; h_ = h;
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     srcW_ = rw_; srcH_ = rh_;
@@ -2440,10 +2466,13 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         wr.pImageInfo = &dii;
         vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        bindReflection(ds);
     };
     if (lightBlack_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_);
         if (lightBlack_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &lightBlack_.ds); lightBlack_.ds = VK_NULL_HANDLE; }
+        // an upload's set is written with binding 0 alone: the black one's
+        // view stands in for the light map and the reflection until bound
     }
     if (white_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
@@ -2899,7 +2928,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp.renderPass = pass_; rp.framebuffer = fbuf_;
+    rp.renderPass = pass_; rp.framebuffer = passFb_ ? passFb_ : fbuf_;
     // the RENDER size, not the output one: a render area smaller than the
     // attachment leaves the rest of it undefined, and with supersampling on
     // the resolve then averages four blocks of uninitialised memory.
@@ -2999,6 +3028,8 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     push_.cutout = d.cutout ? 1 : 0;
     push_.caster = d.castsShadow ? 1 : 0;
     push_.bloomMode = bloom_ > 0.0f ? 1 : 0;
+    push_.water = waterNow_ ? 1 : 0;
+    push_.waterStrength = waterStrength_;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
         push_.texScaled = bound.packed ? 1 : 0;
@@ -3054,6 +3085,135 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
 // draws whose corners carry flag `0x100000`. What is chosen HERE is only the
 // stencil - the answer to "where may the reflection land", which the CPU path
 // answers by differencing two frames instead.
+// ---- THE WATER REFLECTION (`todo/remaster.md` A3) -------------------------
+//
+// The second target mirrors `makeTarget`'s - the same formats, the same sample
+// count, the same attachment order - so the SCENE's render pass and every
+// pipeline draw into it unchanged; only the framebuffer differs.
+bool VulkanRenderer::makeReflection() {
+    if (reflFbuf_ != VK_NULL_HANDLE) return true;
+    const bool msaa = samples_ != VK_SAMPLE_COUNT_1_BIT;
+    const auto image = [&](VkFormat f, VkImageUsageFlags use, VkImageAspectFlags asp,
+                           VkSampleCountFlagBits samples, VkImage& img, VkDeviceMemory& mem,
+                           VkImageView& view) -> bool {
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = f;
+        ii.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
+        ii.mipLevels = 1; ii.arrayLayers = 1;
+        ii.samples = samples; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = use; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(dev_, &ii, nullptr, &img) != VK_SUCCESS) return false;
+        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (vkAllocateMemory(dev_, &ai, nullptr, &mem) != VK_SUCCESS) return false;
+        OMK_GPU_ALLOC("water reflection", omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
+        vkBindImageMemory(dev_, img, mem, 0);
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
+        vi.subresourceRange = {asp, 0, 1, 0, 1};
+        return vkCreateImageView(dev_, &vi, nullptr, &view) == VK_SUCCESS;
+    };
+    if (!image(VK_FORMAT_R8G8B8A8_UNORM,
+               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT, reflColour_, reflColourMem_, reflColourView_) ||
+        (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                        samples_, reflMs_, reflMsMem_, reflMsView_)) ||
+        !image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+               VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
+               reflDepth_, reflDepthMem_, reflDepthView_)) {
+        std::fprintf(stderr, "vulkan: the water reflection's target - refused\n");
+        killReflection();
+        return false;
+    }
+    VkImageView views[3] = {msaa ? reflMsView_ : reflColourView_, reflDepthView_, reflColourView_};
+    VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
+    fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
+    if (vkCreateFramebuffer(dev_, &fi, nullptr, &reflFbuf_) != VK_SUCCESS) { killReflection(); return false; }
+    // its first contents, black, and in the layout the water draws read it in
+    VkCommandBuffer cb = oneShotBegin();
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = reflColour_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    const VkClearColorValue black{{0, 0, 0, 1}};
+    const VkImageSubresourceRange rng{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(cb, reflColour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rng);
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    oneShotEnd(cb);
+    // every texture's set reads it as binding 2 from now on
+    for (auto& [key, u] : uploaded_) if (u.t.ds) bindReflection(u.t.ds);
+    if (white_.ds) bindReflection(white_.ds);
+    std::printf("vulkan: the water reflection's target - %dx%d (a REMASTER feature)\n", rw_, rh_);
+    return true;
+}
+
+void VulkanRenderer::bindReflection(VkDescriptorSet ds) {
+    const VkImageView view = reflColourView_ ? reflColourView_ : lightBlack_.view;
+    if (!ds || !view) return;
+    VkDescriptorImageInfo dii{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = ds; wr.dstBinding = 2; wr.descriptorCount = 1;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.pImageInfo = &dii;
+    vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+}
+
+void VulkanRenderer::killReflection() {
+    if (!dev_) return;
+    const bool had = reflColourView_ != VK_NULL_HANDLE;
+    if (reflFbuf_) vkDestroyFramebuffer(dev_, reflFbuf_, nullptr);
+    for (auto* p : {&reflColourView_, &reflMsView_, &reflDepthView_})
+        if (*p) { vkDestroyImageView(dev_, *p, nullptr); *p = VK_NULL_HANDLE; }
+    for (auto* p : {&reflColour_, &reflMs_, &reflDepth_})
+        if (*p) { vkDestroyImage(dev_, *p, nullptr); *p = VK_NULL_HANDLE; }
+    for (auto* p : {&reflColourMem_, &reflMsMem_, &reflDepthMem_})
+        if (*p) { freeDeviceMemory(*p); *p = VK_NULL_HANDLE; }
+    reflFbuf_ = VK_NULL_HANDLE;
+    // the sets must not keep a view that is gone: back to black
+    if (had && lightBlack_.view) {
+        for (auto& [key, u] : uploaded_) if (u.t.ds) bindReflection(u.t.ds);
+        if (white_.ds) bindReflection(white_.ds);
+    }
+}
+
+bool VulkanRenderer::drawWaterScene(const omk::View& v, const omk::View& refl,
+                                    std::span<const omk::Draw> scene, std::span<const omk::Draw> above,
+                                    std::span<const omk::Draw> water, float strength) {
+    if (water.empty() || strength <= 0.0f || !makeReflection()) return false;
+    // 1. THE REFLECTION: the same render pass into the reflection's
+    //    framebuffer, through the reflected camera; it ends in TRANSFER_SRC,
+    //    as the scene's target does, and goes to SHADER_READ for the water
+    passFb_ = reflFbuf_;
+    begin(refl);
+    for (const auto& d : above) submit(d);
+    vkCmdEndRenderPass(cb_);
+    recording_ = false;
+    passFb_ = VK_NULL_HANDLE;
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = reflColour_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    // 2. THE FRAME, the water's own draws adding the reflection
+    begin(v);
+    for (const auto& d : scene) submit(d);
+    waterNow_ = true;
+    waterStrength_ = strength;
+    for (const auto& d : water) submit(d);
+    waterNow_ = false;
+    end();
+    return true;
+}
+
 bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
                                      std::span<const omk::Draw> scene,
                                      std::span<const omk::Draw> sceneClipped,
@@ -3236,6 +3396,7 @@ VulkanRenderer::~VulkanRenderer() {
     vkDeviceWaitIdle(dev_);
     killPost();
     killLut();
+    killReflection();
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);

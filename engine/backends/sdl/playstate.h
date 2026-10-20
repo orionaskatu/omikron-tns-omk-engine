@@ -97,6 +97,7 @@ struct PlayState {
     float & bloomFlag = opt.bloomFlag;
     std::string & gradeFlag = opt.gradeFlag;
     std::string & remasterFlag = opt.remasterFlag;
+    float & waterFlag = opt.waterFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -689,6 +690,8 @@ struct PlayState {
     // THE REMASTER's post-pass (`todo/remaster.md` step 2): the bloom's
     // strength (0 off) and the set the city grade was last chosen for
     float bloomStrength{};
+    float waterStrength{};   // the water reflection's, 0 off
+    bool waterLive{};        // the frame drew through the water pass (for the log)
     std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie

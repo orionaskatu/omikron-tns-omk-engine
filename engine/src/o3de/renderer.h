@@ -381,6 +381,21 @@ public:
     // answers and what the software reference answers on purpose.
     virtual void shadowPass(const View& /*v*/, std::span<const Draw> /*casters*/) {}
 
+    // THE WATER REFLECTION (`todo/remaster.md` A3) - a REMASTER feature, not
+    // the original's: the scene through `reflected` (the camera mirrored in
+    // the water plane), `above` (the draws above it, the sky included) into a
+    // target of the backend's own, then `scene` as usual and `water` - the
+    // water's own draws - adding that reflection at their screen position
+    // times `strength`. The boundary decides all of it (`drawWithWater`);
+    // false where the backend has no such pass, and the caller draws as usual.
+    // ...asked for when the renderer is MADE (before `init`): a backend may
+    // have to build its programs for it (GLES). False where there is none.
+    virtual bool setWater(float /*strength*/) { return false; }
+    virtual bool drawWaterScene(const View& /*v*/, const View& /*reflected*/,
+                                std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
+                                std::span<const Draw> /*water*/, float /*strength*/) {
+        return false;
+    }
     virtual bool drawMirrorScene(const View& /*v*/, const View& /*reflected*/,
                                  std::span<const Draw> /*scene*/,
                                  std::span<const Draw> /*sceneClipped*/,
@@ -523,5 +538,28 @@ MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
 // transparency instead of reflecting).
 MirrorStats drawWithMirror(Renderer& r, std::span<const Draw> draws,
                            const View& v, const MirrorPlane& mp);
+
+// THE WATER (`todo/remaster.md` A3) - a REMASTER feature, not the original's.
+// A set's water plane, found from its own geometry: the height carrying the
+// most area of HORIZONTAL faces drawn ADDITIVELY (the game's water is additive;
+// so are glass and mirrors, which stand upright). `found` only when that area
+// is a surface rather than a trim (at least 1e6 square units).
+struct WaterPlane {
+    bool   found = false;
+    float  y = 0.0f;         // the plane's height (the game's Y points DOWN)
+    double area = 0.0;       // the horizontal additive area at that height
+    long   triangles = 0;
+};
+WaterPlane waterPlane(const Geometry& g);
+
+// The frame with the water REFLECTING, when the backend has the pass
+// (`Renderer::drawWaterScene`) and the camera is above the plane: the draws
+// split into the water's own triangles (additive, on the plane, of `setGeo`)
+// and the rest; the reflected view (the eye and target mirrored in the plane,
+// the image flipped vertically - a 180-degree roll and a screen-X flip); the
+// draws above the plane for the reflection. False - and nothing drawn - when
+// any of that does not hold, and the caller draws as it would have.
+bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
+                   const Geometry* setGeo, const WaterPlane& wp, float strength);
 
 }  // namespace omk

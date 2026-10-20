@@ -31662,7 +31662,7 @@ def c_engine_bloom_and_grade():
               "bloom" not in max_body and "grade" not in max_body,
               "if (bloom_ > 0.0f || lutN_ > 1) recordPost(cb_);" in vk and
               "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
-              "if (bloom_ > 0.0f) bloomFrag_ = bloomVariant(" in gl)
+              "bloomFrag_ = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);" in gl)
 
     for target in ("build/texpack_tool",):
         mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
@@ -31817,6 +31817,137 @@ def c_engine_remaster_preset():
             (None, False, None))
     return got, want, "the preset alone (its pack, bloom 1.3, its grade for ANEKBAH); " \
                       "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing"
+
+
+def c_engine_water_reflection():
+    r"""THE WATER REFLECTS - the remaster's A3 (`todo/remaster.md`), `[Remaster]
+    water = S` / `--water S` (and `--remaster DIR`'s 0.35), OFF unless named.
+
+    The plane is the SET's own data (`o3de/renderer.h` waterPlane): the height
+    carrying the most area of HORIZONTAL faces drawn ADDITIVELY - the game's
+    water is additive; its glass and mirrors are too, but stand upright - and
+    a plane only past 1e6 square units. Each frame with the camera above it,
+    `drawWithWater` splits the draws into the water's own triangles and the
+    rest, mirrors the eye and target in the plane (the image flipped
+    vertically: a half turn of roll and a screen-X flip), clips the scene to
+    what is above it, and hands that to the backend: the reflection into a
+    target of its own (Vulkan: the scene's render pass, a second framebuffer;
+    GLES: an FBO and a WATER VARIANT of the scene programs, made at init), then
+    the frame with the water draws adding it at their screen position.
+    NOT A PORT, no oracle: the original has mirrors (flag 0x100000), not this.
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES variant built only when asked;
+      2. THE PLANE FINDER (`texpack_tool water`): Jaunpur's water found at
+         y 4 and Lahoreh's at 12; Anekbah and Kay'l's apartment have none
+         (of the 1100-odd sets, 7 have a plane - Lahoreh, mayerem, jaunpur,
+         PAstar, LMoexter, ACSvent, L_Khonsu; PAstar is Astaroth's, an open
+         question for a play test);
+      3. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, 30 frames
+         at 640x480 on Jaunpur's canal: the water on moves pixels, and none
+         it darkens - the reflection is ADDED; Anekbah (no water) with the
+         water on is byte-identical to the water off; and on the canal Vulkan
+         and GLES agree within 1% of the pixels (by ~16 levels).
+
+    Measured too, once, outside the check (2026-10-20, M3): with the water
+    off every frame tried is byte-identical to the build before (Vulkan and
+    GLES, the street and the canal with the full pack; `run_vulkan` with 4x
+    MSAA and trilinear); at 1200x800 the canal's reflection moves 52101
+    pixels on Vulkan, Lahoreh's 129097, and Vulkan and GLES are 3363 / 3326
+    pixels apart.
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan water draws left
+    unflagged (no reflection added) - Vulkan moves nothing and the backends
+    part; the GLES variant not inserting its line - GLES never reflects; the
+    plane threshold raised to 1e9 - no set has water, nothing reflects.
+
+    NOT CHECKED, judged by eye on the canal and Lahoreh's lake: the
+    reflection's ORIENTATION and alignment (upside down about the plane,
+    meeting its object at the waterline). A flip or a sign wrong there still
+    adds light only to the water and agrees across backends - both draw from
+    the one `drawWithWater`.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+water\s*=\s*0\.0f;", sh)),
+              'kRemaster, "water"' in sc and 'kEnhancements, "water"' not in sc,
+              "water" not in max_body,
+              "if (waterWant_ > 0.0f) bloomFrag_ = waterVariant(bloomFrag_);" in gl)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), mk.stderr[-300:]
+    dec = os.path.join(fr, "MESHES", "DECORS")
+    r = subprocess.run([tool, "water"] + [os.path.join(dec, n + ".3DO") for n in ("jaunpur", "Lahoreh", "Anekbah", "Aapkayl")],
+                       capture_output=True, text=True).stdout.split("\n")
+    planes = tuple((ln.split()[1], ln.split()[2]) for ln in r if ln.strip())
+    finder = planes == (("1", "4.0"), ("1", "12.0"), ("0", "100.0"), ("0", "1080.0"))
+
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(binary, out, *extra):
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tmp,
+                                       "--res", "640x480", "--frames", "30", "--dump", out] + list(extra)
+                                + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            if rr.returncode != 0 or not os.path.exists(out):
+                return None, None
+            raw = open(out, "rb").read()
+            live = [f for n, f in _events(rr.stdout) if n == "remaster.water"]
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), (live[0]["live"] if live else None)
+        canal = ["--area", "1", "--stand", "10524,-40,10284,180"]
+        street = ["--area", "0", "--stand", "1804,0,-6890,336"]
+        lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+        res = {}
+        for kind, binary in (("vulkan", os.path.join(eng, "build", "omk-play")),
+                             ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if kind == "gles" and platform.system() != "Darwin":
+                res[kind] = ("skipped",); continue
+            off, _ = frame(binary, os.path.join(tmp, "off.bin"), *canal, "--water", "0")
+            on, live = frame(binary, os.path.join(tmp, "on.bin"), *canal, "--water", "0.35")
+            soff, _ = frame(binary, os.path.join(tmp, "soff.bin"), *street, "--water", "0")
+            son, _ = frame(binary, os.path.join(tmp, "son.bin"), *street, "--water", "0.35")
+            if None in (off, on, soff, son):
+                res[kind] = ("no frame",); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
+            res[kind] = (live == "1", moved > 2000, darker, soff == son)
+            res[kind + "_on"] = on
+        agree = ("skipped",)
+        if "gles_on" in res and "vulkan_on" in res:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = res["vulkan_on"], res["gles_on"]
+            agree = sum(1 for x, y in zip(a, b) if big(x, y)) < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    vres, gres = res.get("vulkan"), res.get("gles")
+    print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
+    want = (True, True, 0, True)
+    return (src_ok, finder, vres, gres, agree), \
+           ((True,) * 4, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+            agree if isinstance(agree, tuple) else True), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only " \
+           "when asked); the plane finder (Jaunpur at 4, Lahoreh at 12, none in Anekbah or the " \
+           "apartment); on Vulkan and GLES the canal's water only brightens, Anekbah with the " \
+           "water on is byte-identical to off, and the two backends agree within 1%"
 
 
 def c_engine_text_scaling():
@@ -48568,6 +48699,7 @@ SLOW = [
     ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
     ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
     ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
+    ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

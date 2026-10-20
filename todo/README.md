@@ -19,6 +19,7 @@ and the `verify.py` check that pins each result.
 | [`road-traffic.md`](road-traffic.md) | the ROAD TRAFFIC (`engine/src/actor/vehicles.cpp`): the `.OPT` circuit's vehicle half, its reading and its steps |
 | [`handoff-classic-mac.md`](handoff-classic-mac.md) | **session state for the PowerPC Mac work, 2026-10-03** - where it stands, the tools volume, the recipes, what is next and the traps. Read it before `classic-mac-port-1999.md` |
 | [`classic-mac-port-1999.md`](classic-mac-port-1999.md) | **the what-if 1999 CLASSIC Mac port** (not a modern macOS one): Omikron as an Eidos Mac release of 2000 would have been - the box spec, how Westlake-style porters would have done it (OpenGL, QuickTime, byte order swapped at load), and how OMK reproduces it, with the endianness audit and the toolchain findings. Written 2026-10-01, none of it started |
+| [`perf-audit.md`](perf-audit.md) | **the performance audit of 2026-10-20**: CPU, GPU, RAM and VRAM re-measured on HEAD (M3), the low-end devices' last figures, and what is left ranked low-end first against the original's mechanisms |
 | [`omk-play.md`](omk-play.md) | **the viewer** (`engine/backends/sdl/`, `play.cpp` and its parts): what it fails to draw, filed the same way |
 | `pending/T*.md` | **a batch's deliverables**, one file per task, waiting to be integrated |
 

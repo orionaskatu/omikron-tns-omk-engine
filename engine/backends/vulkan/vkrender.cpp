@@ -385,7 +385,10 @@ private:
     // a header (lights, from-black, the base grey, the affines' count), the
     // lights (two vec4 each, `kPoseLights` places), then three vec4 an affine
     static constexpr int kPoseLights = 16, kPoseMaxMeshes = 256;
-    static constexpr VkDeviceSize kPoseBytes = 8u << 20;
+    // 2 MB: the Anekbah street walk's busiest frame writes 288 KB (25 staged
+    // bodies and the crowd, measured 2026-10-20); a frame past it poses the
+    // rest on the CPU (`writePose` refuses)
+    static constexpr VkDeviceSize kPoseBytes = 2u << 20;
     static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
     VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
     VkBuffer poseBuf_ = VK_NULL_HANDLE;
@@ -831,11 +834,9 @@ bool VulkanRenderer::makeTarget() {
     fi.layers = 1;
     VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fbuf_), "vkCreateFramebuffer");
 
-    if (!makeBuffer(static_cast<VkDeviceSize>(rw_) * rh_ * 4,
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    readBuf_, readMem_)) return false;
-    fb_ = omk::Surface(w_, h_, 0);
+    // `readBuf_` and `fb_` are made by the first `readback`: a GPU-presented
+    // run never reads a frame back, and at 4K they are 33 + 16 MB
+    fb_ = omk::Surface();
     // a RESIZE stops here: what follows is sized once and kept
     if (resizing_) return true;
 
@@ -1761,9 +1762,7 @@ bool VulkanRenderer::makePresentPass() {
         vkDestroyShaderModule(dev_, qf, nullptr);
         if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: present pipeline\n"); return false; }
     }
-    return makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      presRead_, presReadMem_);
+    return true;   // `presRead_` is `worldPicture`'s, made on its first call
 }
 
 // `colour_` (TRANSFER_SRC, as `end()` and `presentSurface` leave it) through the
@@ -1805,6 +1804,11 @@ bool VulkanRenderer::presentWorld(int vy, int vh) {
 
 bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rgba) {
     if (!runPresentPass(vy, vh)) return false;
+    if (presRead_ == VK_NULL_HANDLE &&
+        !makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    presRead_, presReadMem_))
+        return false;
     VkCommandBuffer cb = oneShotBegin();
     VkBufferImageCopy cp{};
     cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -2650,8 +2654,14 @@ const omk::Surface& VulkanRenderer::readback() {
     // buffer on every call silently threw that composite away and the frame
     // came back nearly black on Vulkan while software was correct. So a frame
     // is converted once, when `end()` says there is a new one.
+    if (fb_.w != w_ || fb_.h != h_) fb_ = omk::Surface(w_, h_, 0);
     if (!dirty_) return fb_;
     dirty_ = false;
+    if (readBuf_ == VK_NULL_HANDLE &&
+        !makeBuffer(static_cast<VkDeviceSize>(rw_) * rh_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    readBuf_, readMem_))
+        return fb_;
     if (copyOwed_) {                 // the copy `end()` does not record
         copyOwed_ = false;
         VkCommandBuffer cb = oneShotBegin();

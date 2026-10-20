@@ -1164,6 +1164,7 @@ private:
     // would be an allocation and a free of ~16 KB per body per frame, since a
     // posed body rewrites its whole buffer every frame.
     std::vector<GpuVert> up_;
+    static constexpr std::size_t kUploadScratchKeep = 16384;   // corners: a crowd body is ~1600
     std::vector<std::size_t> losers_, restore_;
     GLint oDst_ = -1, oPic_ = -1, oPicSize_ = -1, oMask_ = -1, oFade_ = -1;
     std::vector<std::uint32_t> lastMask_;
@@ -1355,7 +1356,7 @@ private:
     float fogStart_ = 0, fogEnd_ = 0, fogColour_[3] = {0, 0, 0};
     bool recording_ = false, dirty_ = false;
     Surface fb_{1, 1, 0};
-    std::vector<unsigned char> rgba_;
+    std::vector<unsigned char> rgba_;   // glReadPixels' target, allocated by `readback` only
     RasterStats st_;
 };
 
@@ -1393,11 +1394,11 @@ bool GlesRenderer::init(int w, int h) {
     w_ = w; h_ = h;
     // the environment can only turn it OFF - a probe's `setStateCache` holds
     if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
-    fb_ = Surface(w, h, 0);
+    fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
     if (ready_) {
         // a resize: only the target changes
         rw_ = w_ * ss_; rh_ = h_ * ss_;
-        rgba_.assign(static_cast<std::size_t>(rw_) * rh_ * 4, 0);
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
         return allocTarget() && (!msFbo_ || allocMultisample());
     }
     // the supersample factor the context can hold: a target past its largest
@@ -1415,7 +1416,7 @@ bool GlesRenderer::init(int w, int h) {
                         asked, w * asked, h * asked, lim, ss_);
     }
     rw_ = w_ * ss_; rh_ = h_ * ss_;
-    rgba_.assign(static_cast<std::size_t>(rw_) * rh_ * 4, 0);
+    rgba_ = std::vector<unsigned char>();   // released, not cleared
     // THE ENHANCED PROGRAMS, in place of the default two when either
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
@@ -1608,7 +1609,7 @@ gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
         std::printf("gles: the supersample present did not build - supersampling refused\n");
         ss_ = 1;
         rw_ = w_; rh_ = h_;
-        rgba_.assign(static_cast<std::size_t>(rw_) * rh_ * 4, 0);
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
         if (!allocTarget()) return false;
     }
     if (ss_ > 1) {
@@ -1722,7 +1723,7 @@ gpuRenderbuffer("render targets", depth_, 2LL * rw_ * rh_);
                     oom ? "out of memory" : "target incomplete", rw_, rh_, ss_ / 2);
         ss_ /= 2;
         rw_ = w_ * ss_; rh_ = h_ * ss_;
-        rgba_.assign(static_cast<std::size_t>(rw_) * rh_ * 4, 0);
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
     }
 }
 
@@ -2044,6 +2045,15 @@ bool GlesRenderer::uploadGeometry(const Geometry* g, bool allowStream) {
     if (it != vbo_.end()) it->second.streamed = false;
     std::vector<GpuVert>& v = up_;
     v.clear();
+    // the scratch keeps a BODY's size between calls, not a set's: after the
+    // set's one whole upload (139245 corners, 5 MB in Anekbah) it is released,
+    // so a console does not hold a second copy of the VBO in its heap
+    struct TrimScratch {
+        std::vector<GpuVert>& v;
+        ~TrimScratch() {
+            if (v.capacity() > kUploadScratchKeep) v = std::vector<GpuVert>();
+        }
+    } trimScratch{v};
     ++g_glesFrame.uploads;
     // the bytes SENT, counted where they are sent: booked here at the whole
     // geometry's size, a partial upload - the set's 69-run patch - would read
@@ -2992,8 +3002,12 @@ const Surface& GlesRenderer::readback() {
     // caller may read twice and write between (the mirror composite does).
     // On a Vita this is a PIPELINE STALL (the CPU waits for the GPU to finish
     // the frame), which is why the plan's step G6 is to stop needing it.
+    // the CPU copies exist only once something reads a frame back: a
+    // GPU-presented run never does, and at 4K they are 33 + 16 MB
+    if (fb_.w != w_ || fb_.h != h_) fb_ = Surface(w_, h_, 0);
     if (!dirty_) return fb_;
     dirty_ = false;
+    rgba_.resize(static_cast<std::size_t>(rw_) * rh_ * 4);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     const double t0 = glesClockMs();

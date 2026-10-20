@@ -30340,6 +30340,89 @@ def c_engine_street_memory():
         "read a chunk at a time, the archives holding directories only"
 
 
+def c_engine_gpu_readback_on_demand():
+    r"""THE READBACK BUFFERS ON DEMAND (`todo/perf-audit.md` B2-B5, 2026-10-20):
+    a GPU-presented frame is never read back, so the CPU copies of it are made
+    by the first `readback` and not at the renderer's start.
+
+    The street start, 60 frames at 640x480 with `--profile`, each window
+    hidden with its present kept (`OMK_HIDDEN_WINDOW`):
+
+      * **Vulkan**: the capture's GPU memory at the last frame holds NO
+        `readback` buffer (2.3 MB here, 63 MB at 4K when `readBuf_` and
+        `presRead_` were made at the start), and the pose buffer (`buffers`)
+        is at most 2 MB (8 MB before; the street's busiest frame writes
+        288 KB);
+      * **Vulkan with `--dump`**: the one frame read back still is - a
+        640x480 dump, and a `readback` buffer at the end (the lazy path ran);
+      * **GLES** (where `atos` exists): no more than 0.5 MB live from
+        `GlesRenderer::init` (`rgba_` was 1.17 MB here, 33 MB at 4K) and
+        under 1 MB from `uploadGeometry` (the scratch released after the
+        set's 139245-corner upload, 4.8 MB before).
+
+    Frames: an old/new comparison of 2026-10-20 (Vulkan, GLES, Vulkan with
+    `--ssaa 2`, GLES read back every frame) found the dumps and logs
+    identical, and `OMK_VERIFY_GPU_PRESENT` 0 pixels differing.
+
+    Shown to fail (2026-10-20): `readBuf_` made again in the target's
+    allocation (red: `readback` 1.17 MB); `kPoseBytes` back to 8 MB (red);
+    `rgba_` assigned at `init` (red: 1.17 MB from `GlesRenderer::init`);
+    `TrimScratch` keeping everything (red: 4.79 MB from `uploadGeometry`).
+    """
+    import subprocess, tempfile, shutil
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omkprof
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    vk, gl = (os.path.join(eng, "build", b) for b in ("omk-play", "omk-play-gles"))
+    if mk.returncode != 0 or not os.path.exists(vk) or not os.path.exists(gl):
+        return ("skipped",), ("skipped",), "no SDL + Vulkan + GL build here - the backends are optional"
+    tmp = tempfile.mkdtemp()
+    MB = 1048576.0
+
+    def run(play, cap, *extra):
+        saves = os.path.join(tmp, "saves-" + os.path.basename(cap))
+        os.mkdir(saves)
+        subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                        "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                        "--stand", "1804,0,-6890,336", "--nofmv", "--res", "640x480",
+                        "--filter", "nearest", "--saves", saves, "--frames", "60",
+                        "--profile", cap] + list(extra),
+                       capture_output=True, text=True, errors="replace",
+                       env=dict(os.environ, OMK_HIDDEN_WINDOW="1"))
+        c = omkprof.Capture(cap)
+        c.poll()
+        g = next((f["gpu"] for f in reversed(c.frames) if f.get("gpu")), None)
+        return c, ({t[0]: t[1] / MB for t in g["tags"]} if g else None)
+
+    try:
+        _, vkGpu = run(vk, os.path.join(tmp, "vk.prof"), "--vulkan")
+        dump = os.path.join(tmp, "d.bin")
+        _, vkDumpGpu = run(vk, os.path.join(tmp, "vkd.prof"), "--vulkan", "--dump", dump)
+        dumped = os.path.getsize(dump) if os.path.exists(dump) else 0
+        glCap, _ = run(gl, os.path.join(tmp, "gl.prof"))
+        glInit = glUpload = None
+        if shutil.which("atos") and glCap.sites:
+            byFn = omkprof.symbolizeSites(glCap.sites, gl)
+            glInit = sum(v[0] for k, v in byFn.items() if "GlesRenderer::init(" in k) / MB
+            glUpload = sum(v[0] for k, v in byFn.items() if "GlesRenderer::uploadGeometry(" in k) / MB
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if vkGpu is None or vkDumpGpu is None:
+        return ("gpu memory", vkGpu is not None, vkDumpGpu is not None), ("gpu memory", True, True), \
+            "both Vulkan runs must report their GPU memory (no Vulkan window here?)"
+    print("        vulkan: readback %.2f MB, pose buffer %.2f MB; with --dump: readback %.2f MB, "
+          "dump %d bytes; gles: init %s MB, upload scratch %s MB"
+          % (vkGpu.get("readback", 0.0), vkGpu.get("buffers", 0.0), vkDumpGpu.get("readback", 0.0),
+             dumped, "?" if glInit is None else "%.2f" % glInit,
+             "?" if glUpload is None else "%.2f" % glUpload))
+    glOk = (True, True) if glInit is None else (glInit <= 0.5, glUpload < 1.0)
+    return ("readback" not in vkGpu, vkGpu.get("buffers", 99.0) <= 2.0,
+            vkDumpGpu.get("readback", 0.0) > 0, dumped == 640 * 480 * 2) + glOk, (True,) * 6, \
+        "a GPU-presented run holds no readback buffer and a 2 MB pose buffer; a dump still reads " \
+        "its frame back; the GLES readback copy and the set-sized upload scratch are not kept"
+
+
 def c_engine_profiler():
     r"""The PROFILER (`todo/debug-tools.md` step 1): `omk-play --profile`.
 
@@ -47899,6 +47982,7 @@ SLOW = [
     ("engine: music ring", c_engine_music_ring, "audio/hostmix.h; todo/debug-tools.md"),
     ("engine: crowd memory", c_engine_crowd_memory, "STREET_LIFE; todo/debug-tools.md"),
     ("engine: street memory", c_engine_street_memory, "todo/ram-vs-original.md tier A"),
+    ("engine: gpu readback on demand", c_engine_gpu_readback_on_demand, "todo/perf-audit.md B2-B5"),
     ("engine: device sounds", c_engine_device_sounds, "todo/ram-vs-original.md tier B; audio/hostmix.h"),
     ("engine: sight mask", c_engine_sight_mask, "todo/ram-vs-original.md tier B; o3de/collision.h"),
     ("engine: indexed textures", c_engine_indexed_textures, "todo/ram-vs-original.md tier C; formats/tex3dt.h"),

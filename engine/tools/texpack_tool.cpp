@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE TEXTURE PACK'S FOUR ENGINE-SIDE HELPERS (`o3de/texpack.h`,
+// THE TEXTURE PACK'S FIVE ENGINE-SIDE HELPERS (`o3de/texpack.h`,
 // `todo/remaster.md` B4) - for `tools/omktexpack.py` and for
 // `verify.py: engine: texture pack`.
 //
@@ -7,6 +7,9 @@
 //                                           "<path> <material> <key> <w>x<h>"
 //     texpack_tool png <in.png> <out.raw>   the engine's PNG reader's answer:
 //                                           int32 w, int32 h, then w*h RGBA8
+//     texpack_tool pngpar <in.png> <n>      the reader on the THREAD POOL: the
+//                                           file decoded n times at once, first
+//                                           use included - "pngpar n same k"
 //     texpack_tool cube <file.cube>         the engine's .cube reader's answer:
 //                                           "cube N first r g b last r g b", or why not
 //     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
@@ -27,10 +30,12 @@
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
 #include "platform/pngread.h"
+#include "platform/threads.h"
 
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -134,6 +139,25 @@ int grey(const std::string& pack, const std::string& model) {
     return 0;
 }
 
+// `TexturePack::replacements` decodes a pool on the pool: the reader's
+// one-time state must survive its FIRST use being parallel (the fixed codes'
+// race, 2026-10-20). Nothing is decoded before the parallel pass.
+int pngpar(const std::string& in, int n) {
+    const auto b = omk::readWholeFile(in);
+    if (b.empty()) return 1;
+    std::vector<omk::PngImage> out(static_cast<std::size_t>(n));
+    std::vector<int> ok(static_cast<std::size_t>(n), 0);
+    omk::Threads::shared().parallelFor(0, out.size(), 1, [&](std::size_t from, std::size_t to) {
+        for (std::size_t i = from; i < to; ++i)
+            ok[i] = omk::decodePng(reinterpret_cast<const std::uint8_t*>(b.data()), b.size(), out[i]) ? 1 : 0;
+    });
+    int same = 0;
+    for (std::size_t i = 0; i < out.size(); ++i)
+        same += ok[i] && ok[0] && out[i].rgba == out[0].rgba ? 1 : 0;
+    std::printf("pngpar %d same %d\n", n, same);
+    return 0;
+}
+
 int cube(const std::string& path) {
     omk::ColourLut lut;
     std::string why;
@@ -152,6 +176,7 @@ int main(int argc, char** argv) {
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
+    if (mode == "pngpar" && argc == 4) return pngpar(argv[2], std::atoi(argv[3]));
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
                          "       texpack_tool png <in.png> <out.raw>\n"
                          "       texpack_tool grey <pack> <model.3DO>\n");

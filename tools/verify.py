@@ -31336,7 +31336,13 @@ def c_engine_texture_pack():
          2, 3 (with tRNS), 4 and 6, zlib levels 0 / 1 / 9, smooth rows and
          noisy four-level ones (where Paeth's ties fall; smooth rows almost
          never tie) decode to exactly what was written, and a stream with a
-         broken Adler-32 is refused;
+         broken Adler-32 is refused; and ON THE THREAD POOL (`texpack_tool
+         pngpar`): a fixed-Huffman PNG decoded 64 times at once, its first use
+         parallel, in 20 fresh processes, every copy alike. The fixed codes
+         were first built lazily behind a plain bool: two workers rebuilt them
+         at once and the viewer hung decoding a pool (Jaunpur, 2026-10-20);
+         that build put back answers 7 of 20 runs with copies apart (as low
+         as 0 of 64 alike);
       4. Vulkan (`run_vulkan`, Aapkayl through 4555's neighbour) and
       5. GLES (`gles_probe --frame`, macOS) - under the NEAREST sampler, a
          pack holding every texture at 4x by nearest neighbour draws the frame
@@ -31492,7 +31498,21 @@ def c_engine_texture_pack():
         png(bad, 8, 8, 2, [bytes(24)] * 8, [0], 6, bad_adler=True)
         refused = subprocess.run([tool, "png", bad, os.path.join(tmp, "b.raw")],
                                  capture_output=True, text=True).returncode != 0
-        pngs = (good, cases, refused)
+        # ...and ON THE POOL, first use included: a fixed-code stream decoded 64
+        # times at once in each of 20 fresh processes, every copy alike
+        W2, H2 = 256, 64
+        rawimg = b"".join(b"\0" + bytes((x * 3 + y + rnd.randrange(16)) & 255 for x in range(W2 * 3)) for y in range(H2))
+        co = zlib.compressobj(1, zlib.DEFLATED, 15, 9, zlib.Z_FIXED)
+        fz = co.compress(rawimg) + co.flush()
+        def chunk2(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+        fixed = os.path.join(tmp, "fixed.png")
+        open(fixed, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk2(b"IHDR", struct.pack(">IIBBBBB", W2, H2, 8, 2, 0, 0, 0))
+                                + chunk2(b"IDAT", fz) + chunk2(b"IEND", b""))
+        par = sum(1 for _ in range(20)
+                  if subprocess.run([tool, "pngpar", fixed, "64"], capture_output=True, text=True,
+                                    timeout=60).stdout.strip() == "pngpar 64 same 64")
+        pngs = (good, cases, refused, par)
 
         # ---- the two test packs, from the originals
         work = os.path.join(tmp, "work")
@@ -31560,7 +31580,7 @@ def c_engine_texture_pack():
           f"grey {greyres}; vulkan {vres}; gles {gres}")
     want_frame = (True, True, 0, True, True)
     return (src_ok, keys, pngs, greyres, vres, gres), \
-           ((True,) * 5, (True, 2534, 0), (60, 60, True), (21, 21, 21),
+           ((True,) * 5, (True, 2534, 0), (60, 60, True, 20), (21, 21, 21),
             vres if len(vres) == 1 else want_frame, gres if len(gres) == 1 else want_frame), \
            "the source (default empty, read under [Remaster] only, never by all = max, both " \
            "backends behind pack.active()); the keys, engine against Python, 2534 of 2534; the " \

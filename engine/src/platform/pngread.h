@@ -28,7 +28,10 @@ struct PngImage {
 };
 
 // A zlib stream -> its bytes. False on any malformed input, a bad Adler-32
-// included. `expect` only reserves.
+// included. `expect`, when not 0, is the exact size wanted: it reserves, and
+// a stream that would produce more is refused (a PNG's image data is exactly
+// it) - with the input's end checked on every symbol, a stream that runs off
+// its data is refused rather than decoded for ever.
 bool zlibInflate(const std::uint8_t* src, std::size_t n, std::vector<std::uint8_t>& out,
                  std::size_t expect = 0);
 

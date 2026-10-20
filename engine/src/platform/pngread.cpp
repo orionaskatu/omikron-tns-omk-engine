@@ -111,11 +111,18 @@ constexpr std::uint16_t kDistBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49
 constexpr std::uint8_t kDistExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
                                          7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-bool codes(Bits& b, const Huff& lit, const Huff& dist, std::vector<std::uint8_t>& out) {
+// `limit`: the most bytes the stream may produce (0: no limit). Every symbol
+// is checked against the input's end too - past it the reader feeds zeros,
+// and zeros decode as literals for ever (a pack PNG hung the viewer so).
+bool codes(Bits& b, const Huff& lit, const Huff& dist, std::vector<std::uint8_t>& out, std::size_t limit) {
     for (;;) {
         const int s = lit.decode(b);
-        if (s < 0) return false;
-        if (s < 256) { out.push_back(static_cast<std::uint8_t>(s)); continue; }
+        if (s < 0 || b.overrun()) return false;
+        if (s < 256) {
+            if (limit && out.size() >= limit) return false;
+            out.push_back(static_cast<std::uint8_t>(s));
+            continue;
+        }
         if (s == 256) return !b.overrun();
         const int li = s - 257;
         if (li >= 29) return false;
@@ -123,7 +130,7 @@ bool codes(Bits& b, const Huff& lit, const Huff& dist, std::vector<std::uint8_t>
         const int ds = dist.decode(b);
         if (ds < 0 || ds >= 30) return false;
         const std::size_t d = kDistBase[ds] + b.get(kDistExtra[ds]);
-        if (d > out.size() || b.overrun()) return false;
+        if (d > out.size() || b.overrun() || (limit && out.size() + len > limit)) return false;
         const std::size_t from = out.size() - d;
         out.resize(out.size() + len);
         std::uint8_t* o = out.data();
@@ -132,21 +139,31 @@ bool codes(Bits& b, const Huff& lit, const Huff& dist, std::vector<std::uint8_t>
     }
 }
 
-bool inflateRaw(Bits& b, std::vector<std::uint8_t>& out) {
-    static Huff fixedLit, fixedDist;
-    static bool fixedBuilt = false;
-    if (!fixedBuilt) {
+// THE FIXED CODES (RFC 1951 3.2.6), built ONCE and thread-safely: a pool's
+// replacements decode on several threads at a time (`TexturePack::
+// replacements`), and the first version built these lazily behind a plain
+// bool - two workers rebuilt them at once, one decoded through a table the
+// other was rewriting, and the viewer hung (2026-10-20). A function-local
+// static's initialisation is the language's own once.
+struct FixedCodes {
+    Huff lit, dist;
+    FixedCodes() {
         std::uint8_t l[288];
         for (int s = 0; s < 144; ++s) l[s] = 8;
         for (int s = 144; s < 256; ++s) l[s] = 9;
         for (int s = 256; s < 280; ++s) l[s] = 7;
         for (int s = 280; s < 288; ++s) l[s] = 8;
-        fixedLit.build(l, 288);
+        lit.build(l, 288);
         std::uint8_t d[30];
         for (int s = 0; s < 30; ++s) d[s] = 5;
-        fixedDist.build(d, 30);
-        fixedBuilt = true;
+        dist.build(d, 30);
     }
+};
+
+bool inflateRaw(Bits& b, std::vector<std::uint8_t>& out, std::size_t limit) {
+    static const FixedCodes fixed;
+    const Huff& fixedLit = fixed.lit;
+    const Huff& fixedDist = fixed.dist;
     int last = 0;
     do {
         last = static_cast<int>(b.get(1));
@@ -155,10 +172,11 @@ bool inflateRaw(Bits& b, std::vector<std::uint8_t>& out) {
             b.alignByte();
             const std::uint32_t len = b.get(16), nlen = b.get(16);
             if ((len ^ 0xFFFFu) != nlen) return false;
+            if (limit && out.size() + len > limit) return false;
             for (std::uint32_t i = 0; i < len; ++i) out.push_back(static_cast<std::uint8_t>(b.get(8)));
             if (b.overrun()) return false;
         } else if (type == 1) {
-            if (!codes(b, fixedLit, fixedDist, out)) return false;
+            if (!codes(b, fixedLit, fixedDist, out, limit)) return false;
         } else if (type == 2) {
             const int nlen = static_cast<int>(b.get(5)) + 257;
             const int ndist = static_cast<int>(b.get(5)) + 1;
@@ -186,10 +204,11 @@ bool inflateRaw(Bits& b, std::vector<std::uint8_t>& out) {
             if (lens[256] == 0) return false;   // no end-of-block code
             Huff lit, dist;
             if (!lit.build(lens, nlen) || !dist.build(lens + nlen, ndist)) return false;
-            if (!codes(b, lit, dist, out)) return false;
+            if (!codes(b, lit, dist, out, limit)) return false;
         } else {
             return false;
         }
+        if (b.overrun()) return false;
     } while (!last);
     return !b.overrun();
 }
@@ -223,7 +242,8 @@ bool zlibInflate(const std::uint8_t* src, std::size_t n, std::vector<std::uint8_
     if ((cmf & 0x0F) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0 || (flg & 0x20)) return false;
     if (expect) out.reserve(expect);
     Bits b(src + 2, n - 2);
-    if (!inflateRaw(b, out)) return false;
+    // `expect`, when given, is also the LIMIT: a PNG's image data is exactly it
+    if (!inflateRaw(b, out, expect)) return false;
     b.alignByte();
     const std::uint8_t* tail = b.bytePos();
     if (tail + 4 > src + n) return false;

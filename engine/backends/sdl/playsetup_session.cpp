@@ -5,6 +5,8 @@
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
 #include "o3de/colourgrade.h"
+#include "platform/events.h"
+#include "platform/hostfs.h"
 #include "o3de/texpack.h"
 
 int PlayState::setupSession() {
@@ -180,16 +182,36 @@ int PlayState::setupSession() {
     // feature, not an enhancement: it replaces authored pixels. Opened once,
     // here, before any pool reaches a renderer; the GPU backends consult it.
     {
-        const std::string packDir = !texturePackFlag.empty() ? texturePackFlag : settings.texturePack;
+        // THE REMASTER PRESET (`--remaster DIR`, `[Remaster] dir`): a BASE
+        // under the three options - a specific flag, then a specific key,
+        // then the preset's folder
+        const std::string preset = !remasterFlag.empty() ? remasterFlag : settings.remasterDir;
+        std::string presetPack, presetGrades;
+        if (!preset.empty()) {
+            for (const char* sub : {"/pack", "/full/pack"})
+                if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
+            if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
+            std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s (a specific "
+                        "flag or key beats each)\n", preset.c_str(),
+                        presetPack.empty() ? "none found" : presetPack.c_str(),
+                        bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.3",
+                        presetGrades.empty() ? "none found" : presetGrades.c_str());
+            omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
+        }
+        const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
+                                  : !settings.texturePack.empty() ? settings.texturePack : presetPack;
         if (!packDir.empty()) omk::openTexturePack(packDir);
         // ...and its post-pass: the bloom from the pack's light maps, the
         // grade per city (`o3de/colourgrade.h`), each its own option
-        bloomStrength = bloomFlag >= 0.0f ? bloomFlag : settings.bloom;
+        bloomStrength = bloomFlag >= 0.0f ? bloomFlag
+                      : settings.bloomSource == omk::Settings::Source::Ini ? settings.bloom
+                      : !preset.empty() ? 1.3f : 0.0f;
         if (bloomStrength > 0.0f)
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",
                         static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
-        const std::string gradeDir = !gradeFlag.empty() ? gradeFlag : settings.grade;
+        const std::string gradeDir = !gradeFlag.empty() ? gradeFlag
+                                   : !settings.grade.empty() ? settings.grade : presetGrades;
         if (!gradeDir.empty() && omk::cityGrades().open(gradeDir))
             std::printf("grade: %s - %zu city grades, a REMASTER feature, drawn by Vulkan and GLES only; "
                         "off while the greyscale bank is on\n", gradeDir.c_str(), omk::cityGrades().size());

@@ -289,6 +289,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
 "                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
+"  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
+"                   DIR/pack (or DIR/full/pack), --bloom 1.3, the grades in\n"
+"                   DIR/grades; a specific flag or key beats it; [Remaster] dir=DIR\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -525,6 +528,7 @@ int PlayOptions::parse(int argc, char** argv) {
             }
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
+        else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
         else if (a == "--dither" && i + 1 < argc) dither = std::atoi(argv[++i]) != 0;
         else if (a == "--invert-x") mouseInvertX = true;
         else if (a == "--invert-y") mouseInvertY = true;

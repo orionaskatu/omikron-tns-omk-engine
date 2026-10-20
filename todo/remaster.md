@@ -234,6 +234,19 @@ engine/build/omk-play ../fr ../tables --save ../traces/save-appart.bin --area 10
     --texture-pack $P/full/pack --bloom 1.3 --grade $P/grades
 ```
 
+**The preset** (the reader's "could you add a remaster arg?", 2026-10-20):
+`--remaster DIR` / `[Remaster] dir = DIR` turns on all three from one
+folder - the texture pack in `DIR/pack` (or `DIR/full/pack`, which
+`omktexpack.py export DIR/full` makes), the bloom at 1.3, the grades in
+`DIR/grades`. A BASE, as `all = max` is for `[Enhancements]`: `--bloom 0`,
+`--texture-pack`, `--grade` or their keys beat it. With the reader's folder:
+
+```bash
+engine/build/omk-play ../fr ../tables --remaster ~/Documents/omk/omk-pack
+```
+
+`engine: remaster preset` (shown to fail with the preset's bloom dropped).
+
 **How.** With the bloom on, the scene shader writes each texel's light into
 the world target's ALPHA (Vulkan: push field `bloomMode` at 116, the
 block 116 -> 120 bytes, and binding 1 of every texture's set - its light map

@@ -217,6 +217,12 @@ struct Settings {
     // (`o3de/colourgrade.h`). Empty is off.
     std::string grade;
     Source gradeSource = Source::Default;
+    // `dir = DIR`: THE REMASTER PRESET - the three above from one folder:
+    // its `pack/` (or `full/pack/`, `tools/omktexpack.py export full`'s), the
+    // bloom at the previews' 1.3, its `grades/`. A BASE, as `all = max` is for
+    // `[Enhancements]`: any specific key or flag beats it.
+    std::string remasterDir;
+    Source remasterDirSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

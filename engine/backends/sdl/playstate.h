@@ -96,6 +96,7 @@ struct PlayState {
     std::string & texturePackFlag = opt.texturePackFlag;
     float & bloomFlag = opt.bloomFlag;
     std::string & gradeFlag = opt.gradeFlag;
+    std::string & remasterFlag = opt.remasterFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;

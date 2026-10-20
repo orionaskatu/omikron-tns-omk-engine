@@ -175,6 +175,13 @@ Settings resolveSettings(const OptionsFile& ini,
             if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.bloom = b; s.bloomSource = Settings::Source::Ini; }
             else std::fprintf(stderr, "settings: bloom = %s is not 0..4 - ignored\n", w->c_str());
         }
+        if (const std::string* w = ini.find(kRemaster, "dir")) {
+            std::string v = *w;
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
+            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+            if (!v.empty()) { s.remasterDir = v; s.remasterDirSource = Settings::Source::Ini; }
+        }
         if (const std::string* w = ini.find(kRemaster, "grade")) {
             std::string v = *w;
             while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();

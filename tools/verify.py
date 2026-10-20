@@ -31740,6 +31740,65 @@ def c_engine_bloom_and_grade():
            "21 textures carry a map, an identity LUT within one 565 step, a red/blue swap LUT swaps"
 
 
+def c_engine_remaster_preset():
+    r"""THE REMASTER PRESET - `--remaster DIR` / `[Remaster] dir = DIR`: the three
+    remaster options from one folder (`todo/remaster.md`): the texture pack in
+    `DIR/pack` (or `DIR/full/pack`, `omktexpack.py export full`'s), the bloom
+    at the previews' 1.3, the city grades in `DIR/grades`. A BASE, as
+    `all = max` is for `[Enhancements]`: a specific flag or key beats it.
+
+    Run on the software reference (it draws none of them, but the session
+    resolves and reports them - the `@evt` lines), Anekbah, three frames, a
+    preset folder made here (an empty pack, one `ANEKBAH.cube`):
+      1. the preset alone: the pack opened from `DIR/pack`, the bloom at 1.3,
+         the grade chosen for ANEKBAH (refused - `taken=0` - by software);
+      2. `full/pack` found when there is no `pack/`;
+      3. `--bloom 0` and `--texture-pack OTHER` beat it: no bloom, the other
+         pack, the grade still the preset's;
+      4. no preset: none of it.
+
+    Shown to fail (2026-10-20): the preset not consulted for the bloom
+    answers no 1.30 line in part 1.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "no SDL - the frontend is optional (PORTING A8)"
+    tmp = tempfile.mkdtemp()
+    try:
+        dir_a = os.path.join(tmp, "a"); os.makedirs(os.path.join(dir_a, "pack")); os.makedirs(os.path.join(dir_a, "grades"))
+        dir_b = os.path.join(tmp, "b"); os.makedirs(os.path.join(dir_b, "full", "pack"))
+        other = os.path.join(tmp, "other"); os.makedirs(other)
+        with open(os.path.join(dir_a, "grades", "ANEKBAH.cube"), "w") as f:
+            f.write("LUT_3D_SIZE 2\n" + "".join("%d %d %d\n" % (r, g, b) for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+        def run(*extra):
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--frames", "3",
+                                "--nofmv", "--software"] + list(extra), capture_output=True, text=True, env=env)
+            ev = _events(r.stdout)
+            opened = [f["dir"] for n, f in ev if n == "texpack.open"]
+            grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
+            bloom = any(ln.startswith("bloom: 1.30") for ln in r.stdout.splitlines())
+            return (opened[0] if opened else None, bloom, grade[0] if grade else None)
+        got = (run("--remaster", dir_a),
+               run("--remaster", dir_b)[0],
+               run("--remaster", dir_a, "--bloom", "0", "--texture-pack", other),
+               run())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = ((os.path.join(dir_a, "pack"), True, ("ANEKBAH", "0")),
+            os.path.join(dir_b, "full", "pack"),
+            (other, False, ("ANEKBAH", "0")),
+            (None, False, None))
+    return got, want, "the preset alone (its pack, bloom 1.3, its grade for ANEKBAH); " \
+                      "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing"
+
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -48488,6 +48547,7 @@ SLOW = [
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),
     ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
     ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
+    ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

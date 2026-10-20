@@ -98,6 +98,7 @@ struct PlayState {
     std::string & gradeFlag = opt.gradeFlag;
     std::string & remasterFlag = opt.remasterFlag;
     float & waterFlag = opt.waterFlag;
+    float & bodyLightFlag = opt.bodyLightFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -369,6 +370,7 @@ struct PlayState {
         int   lightCount{};
         bool  lightsBlack{};
         float lightBase{};
+        float lightTint[3]{1.0f, 1.0f, 1.0f};   // the body light's (`o3de/lightprobe.h`)
         long posedFrame{};
         std::vector<omk::CollisionSphere> spheres{};   // the crowd push tests these
         float reach{};   // his model's +88
@@ -691,6 +693,7 @@ struct PlayState {
     // strength (0 off) and the set the city grade was last chosen for
     float bloomStrength{};
     float waterStrength{};   // the water reflection's, 0 off
+    float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
     bool waterLive{};        // the frame drew through the water pass (for the log)
     std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
@@ -1095,6 +1098,16 @@ struct PlayState {
                           std::size_t& hiddenMeshes, std::size_t& hiddenDrawn,
                           std::size_t& movingCulled, std::size_t& movingDrawn);   // from `worldDrawLists`
     void worldDrawClassicShadows();   // from `worldDrawLists`
+    // THE BODY LIGHT's tint for a body at `p` (`o3de/lightprobe.h`): the
+    // shown slot's painted light, 1, 1, 1 when off or not drawn
+    void bodyTint(const float p[3], float out[3]) const;
+    // ...and under PER-PIXEL lighting (`--lighting`, `--enhance-all`), where
+    // the shader lights a body from the scene's grey and ignores its corner
+    // colours (`Draw::lit` 1): a tinted body is drawn in mode 2 instead - the
+    // lights added to its corner colour - with that colour the grey x tint
+    bool bodyTintPerPixel() const {
+        return lighting > 0 && bodyLight > 0.0f && world_ && world_->drawsBodyTint();
+    }
     void worldDrawParticles(bool scriptSprites, float fxNear, float fxFar, int& spriteSlotBase);   // from `worldDrawLists`
     void worldDrawSky();   // from `worldDrawLists`
     void worldDrawShadowLight(bool castShadows);   // from `worldDrawLists`

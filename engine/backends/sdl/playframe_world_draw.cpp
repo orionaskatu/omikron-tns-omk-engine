@@ -175,6 +175,12 @@ void PlayState::worldDrawLists() {
     // rather than from black. Mode `2` stays in the shaders, unused here.
     const int litCrowd  = litPerPixel ? 1 : 0;
     const int litStaged = litPerPixel ? 1 : 0;
+    // THE BODY LIGHT under per-pixel lighting (`bodyTintPerPixel`): the
+    // bodies - not the traffic - in mode 2, from their corner colour, which
+    // is the grey x tint (the CPU's corners; a GPU-posed body starts from the
+    // grey, `lightsFromBlack`, and `scene.vert` tints it)
+    const bool tintPix = bodyTintPerPixel();
+    const int litBody = tintPix ? 2 : litStaged;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
     view.lights.clear();
     if (litPerPixel) {
@@ -264,13 +270,14 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litStaged, castShadows});
+                                 litBody, castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
                 draws.back().vertexLights = up->lightCount ? up->lights.data() : nullptr;
                 draws.back().vertexLightCount = up->lightCount;
-                draws.back().lightsFromBlack = up->lightsBlack;
+                draws.back().lightsFromBlack = up->lightsBlack || tintPix;
                 draws.back().lightBase = up->lightBase;
+                std::copy(up->lightTint, up->lightTint + 3, draws.back().lightTint);
             }
             continue;
         }
@@ -278,7 +285,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litBody, castShadows});
     }
     for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -288,14 +295,15 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
+                                 litBody, castShadows});
                 omk::Draw& dr = draws.back();
                 dr.meshPose = up->affine.data();
                 dr.meshPoses = up->mo->meshes.size();
                 dr.vertexLights = up->lightCount ? up->lights.data() : nullptr;
                 dr.vertexLightCount = up->lightCount;
-                dr.lightsFromBlack = up->lightsBlack;
+                dr.lightsFromBlack = up->lightsBlack || tintPix;
                 dr.lightBase = up->lightBase;
+                std::copy(up->lightTint, up->lightTint + 3, dr.lightTint);
             }
             continue;
         }
@@ -303,7 +311,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
+                             litBody, castShadows});
     }
     for (const auto& up : traffic.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -348,20 +356,21 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
                              &playerBody.rest, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litBody, castShadows});
             draws.back().meshPose = playerBody.affine.data();
             draws.back().meshPoses = playerBody.meshes.size();
             draws.back().vertexLights = playerBody.lightCount ? playerBody.lights.data() : nullptr;
             draws.back().vertexLightCount = playerBody.lightCount;
-            draws.back().lightsFromBlack = playerBody.lightsBlack;
+            draws.back().lightsFromBlack = playerBody.lightsBlack || tintPix;
             draws.back().lightBase = playerBody.lightBase;
+            std::copy(playerBody.lightTint, playerBody.lightTint + 3, draws.back().lightTint);
         }
     } else if (drawPlayer && !playerOffView)
         for (const auto& b : playerBody.posed.batches)
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
                              &playerBody.posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litBody, castShadows});
     // FIRST PERSON: only the meshes the hide spared - flag 0x200000,
     // the left arm - cut out of the posed body batch by batch.
     static omk::Geometry playerArm;

@@ -279,6 +279,11 @@ struct Draw {
     // `lightsFromBlack` stays for the flag; this is its value
     // (todo/drift-audit.md L1).
     float           lightBase        = 0.0f;
+    // THE BODY LIGHT (`o3de/lightprobe.h`, the remaster's A5): the start
+    // colour - the grey above, or the baked colour - multiplied by this,
+    // the painted light around the body. 1, 1, 1 on every draw unless the
+    // option is on AND the renderer says it draws it (`drawsBodyTint`).
+    float           lightTint[3]     = {1.0f, 1.0f, 1.0f};
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and
@@ -391,6 +396,13 @@ public:
     // ...asked for when the renderer is MADE (before `init`): a backend may
     // have to build its programs for it (GLES). False where there is none.
     virtual bool setWater(float /*strength*/) { return false; }
+    // THE BODY LIGHT (`o3de/lightprobe.h`): `Draw::lightTint` honoured on a
+    // posed body. Asked before `init` (GLES builds a variant of its posing
+    // programs); `drawsBodyTint` says afterwards whether it is drawn - the
+    // frontend hands a tint only then, so a backend without it draws exactly
+    // what it drew.
+    virtual bool setBodyTint(bool /*on*/) { return false; }
+    virtual bool drawsBodyTint() const { return false; }
     // `planeY`: the water's height. The reflection pass DISCARDS what lies
     // below it per fragment - the CPU clip cannot see a posed body's place,
     // and a swimmer's legs were reflected above the water (a reader's play

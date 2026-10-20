@@ -386,6 +386,96 @@ on at **0.35** (**0.6** since the Fresnel); off unless named, never `all = max`,
 from B3 perturbing the lookup); PAstar; the glass (`vitre`), one plane each;
 the per-level planes above (once Jaunpur's two upper levels are looked at).
 
+## Step 3, A5 - the bodies lit by their surroundings: as built (2026-10-20)
+
+The reader's "continue with the character lighting". `[Remaster] bodylight = S`
+/ `--body-light S`, and `--remaster`'s **1** (the reader's pick, "keep the
+middle ground at 1", from the comparisons below); off unless named, never
+`all = max`, Vulkan and GLES (`o3de/lightprobe.h`).
+
+* **The rule.** The original starts every lit body - the crowd, the
+  characters, the player, through `sub_494E80` - from ONE grey, the scene's
+  `+416` (the set's ambient), and adds the set's lights that reach it
+  (`o3de/vertexlight.h`); the set is shaded by colours BAKED into its
+  vertices. `LightProbes` reads those: the set's OPAQUE surface (water, glass
+  and multiply shadows are not light) summed into 200-unit cells at load BY
+  AREA - each triangle cut into pieces no longer than a cell, its corners'
+  colour interpolated - and around a body the cells' mean weighted
+  (1 - d^2/R^2)^2 on each centroid, R 600 - continuous as he walks. The body
+  starts, where the probe is brighter than `mean` (its mean colour at body
+  height (90) over the set's floors, by area), from the grey PLUS
+  `S (probe - mean)` per channel; where darker, from the grey SHADED
+  `1 - S (1 - probe / mean)`; clamped 0..1 - so the average place keeps the
+  original's grey and only the departures carry over: a dark stretch darker,
+  a lit one brighter, its hue with it. The lights still add on top. Nothing is added to the set.
+* **How it got there - three readings, compared by the reader:**
+  * a RATIO of the grey, `1 + S (probe / mean - 1)`: "difficult to see a
+    difference" - a set's grey can be nearly black (Anekbah's is **10 of
+    255**, 0.039) and the lamps outweigh any multiple of it; a contrast curve
+    on the ratio (`(L / mean)^(3 S)`) was no better for the same reason;
+  * the PROBE ITSELF as the start (`grey + S (probe - grey)`): the most
+    visible, and it brightens every body everywhere - the sets are painted
+    far brighter than the grey the game gives its characters (0.44 against
+    0.04 in Anekbah); not taken;
+  * the DEPARTURE ADDED (`grey + S (probe - mean)`), "the middle ground":
+    taken at 1. Anekbah's lit stretch at 1: Kay'l's red +33%, green +27%,
+    blue +13% (the city's mean is warm, so blue moves least).
+  * Read by its CORNERS first, Lahoreh's large floor triangles left spots with
+    no corner in reach - the surface by area replaced it.
+  * **The reader's play test, 2026-10-20 - "Lighting is not correct near the
+    fire"** (Anekbah's gas flame `AGAZ`, (1741, -54, -7517)): Kay'l BLACK by
+    it. The flame is a sprite and its glow was never painted into the
+    alcove - the probe reads 0.25 there against the set's 0.44 - and ADDED,
+    that departure is six times Anekbah's grey: the start clamped to 0. A
+    darker place now SHADES in proportion (0.52 of the grey there); the
+    brighter side stays added. (The original lights no body by that fire
+    either - its grey and the set's lamps only; light from the effect
+    sprites themselves would be a feature of its own.)
+* **Measured** (`texpack_tool probe`, which prints the tint of a 0.2 grey):
+  floor means Anekbah 0.4431, Jaunpur 0.6958, Lahoreh 0.7931, Qalisar
+  0.4647, Kay'l's flat 0.6051. Anekbah's street tints (0.99, 0.92, 0.76) at
+  (1804, -90, -6890), red 2.21 600 units on, 0.52 by the fire; Lahoreh's street start ~1 (an
+  average place). Along 1.2 km walks the tint of a 0.2 grey moves at most
+  0.04 per 10 units (its start colour 0.008).
+* **The plumbing.** `Draw::lightTint` (1, 1, 1 unless the renderer says
+  `drawsBodyTint`); Vulkan: one vec4 after the affines in the pose block
+  (nothing moves), `scene.vert` multiplies; GLES: a posing-program VARIANT
+  (`uLightTint`) made at init only when asked - the Vita's shader cache
+  untouched; the CPU paths (the frontend's posed corners, `lightStart`,
+  `poseGeometry`) multiply too. The software reference, GL1 and the 3DS
+  never get a tint.
+* **Found on the way: the GLES pose self-test drew its bodies BLACK** with
+  the variant - a uniform starts at 0 - and every body went the CPU way (70
+  pixels moved instead of 5931). The tint is defaulted to 1 at init.
+* **Off is the original:** frames byte-identical to the build before
+  (`0069efa7`, a worktree) on the software reference, Vulkan and GLES, plain
+  and with `--remaster`, Anekbah's street and Jaunpur's canal - 10 of 10,
+  and under `--enhance-all` on both backends. At 1, Vulkan moves 3011
+  pixels of Anekbah's street, GLES 3042.
+* **Under `--enhance-all` (the reader plays with it, 2026-10-20: "from now,
+  run it with --enhance-all")** PER-PIXEL lighting shades a body in the
+  fragment stage from the scene's grey (`Draw::lit` 1) and never reads its
+  corner colour, so the tint did nothing there. A tinted body is drawn in
+  mode 2 instead - the shaders' "lit ADDED to the corner colour", unused
+  until now - with that colour the grey x tint (the CPU's corners; a
+  GPU-posed body starts from the grey and `scene.vert` tints it). The
+  traffic keeps mode 1. Anekbah's street at 1: 3250 pixels move on Vulkan,
+  3208 on GLES; with it off byte-identical to `0069efa7` on both.
+* **Near a lamp the tint is small** (measured, a forced 0.25 barely moved
+  Kay'l by the Anekbah lamp without per-pixel lighting): the set's lights
+  add on top and outweigh the grey. Tinting the LIGHTS too was rendered and
+  not taken - the painted colours already contain the lamps, so it counts
+  them twice.
+* `engine: body light` new, shown to fail four ways (the Vulkan tint
+  dropped, the GLES variant empty, the weight made a step, mode 2 left out
+  under per-pixel lighting).
+
+**CONFIRMED IN PLAY** (the reader's "commit", 2026-10-20, with `--enhance-all`). **Open**: the props and
+the vehicles (posed by the traffic, untinted); a probe per BONE rather than
+per body (a tall body under a lamp); the day/night slots (`sub_41E7A0`
+rewrites the scene's grey - the probe reads the baked colours, which do not
+change).
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

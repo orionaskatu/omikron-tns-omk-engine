@@ -237,6 +237,8 @@ public:
     bool posesBodies() const override { return poseDs_ != VK_NULL_HANDLE; }
     int maxVertexLights() const override { return poseDs_ != VK_NULL_HANDLE ? kPoseLights : 0; }
     bool setWater(float) override { return true; }   // nothing to build ahead
+    bool setBodyTint(bool) override { return true; }  // the pose block always carries it
+    bool drawsBodyTint() const override { return true; }
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
                         float strength, float planeY) override;
@@ -445,7 +447,7 @@ private:
     // bodies and the crowd, measured 2026-10-20); a frame past it poses the
     // rest on the CPU (`writePose` refuses)
     static constexpr VkDeviceSize kPoseBytes = 2u << 20;
-    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
+    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes + 1) * 16;
     VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
     VkBuffer poseBuf_ = VK_NULL_HANDLE;
     VkDeviceMemory poseMem_ = VK_NULL_HANDLE;
@@ -2962,7 +2964,9 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
     for (int i = 0; i < nl; ++i) std::memcpy(f + 4 + 8 * i, d.vertexLights + 8 * i, 8 * sizeof(float));
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));   // three vec4 an affine
-    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    float* t = a + 12 * d.meshPoses;                                 // ...and the body light's tint
+    t[0] = d.lightTint[0]; t[1] = d.lightTint[1]; t[2] = d.lightTint[2]; t[3] = 1.0f;
+    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses + 1) * 16;
     off = static_cast<uint32_t>(at);
     poseCache_.emplace(key, off);
     return true;

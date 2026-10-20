@@ -85,11 +85,15 @@ inline int prepareLights(const Draw& d, int most, CornerLight* out) {
 inline bool relit(const Draw& d, int lights) { return lights > 0 || d.lightsFromBlack; }
 
 // The colour a corner's lighting starts from: the scene's grey for a body that
-// starts black (`Draw::lightBase`), else the corner's own.
+// starts black (`Draw::lightBase`), else the corner's own - times the body
+// light's tint (1 unless the remaster's A5 is drawn, `Draw::lightTint`).
 inline void lightStart(const Draw& d, const Corner& c, float rgb[3]) {
-    rgb[0] = d.lightsFromBlack ? d.lightBase : c.r;
-    rgb[1] = d.lightsFromBlack ? d.lightBase : c.g;
-    rgb[2] = d.lightsFromBlack ? d.lightBase : c.b;
+    rgb[0] = (d.lightsFromBlack ? d.lightBase : c.r) * d.lightTint[0];
+    rgb[1] = (d.lightsFromBlack ? d.lightBase : c.g) * d.lightTint[1];
+    rgb[2] = (d.lightsFromBlack ? d.lightBase : c.b) * d.lightTint[2];
+}
+inline bool tinted(const Draw& d) {
+    return d.lightTint[0] != 1.0f || d.lightTint[1] != 1.0f || d.lightTint[2] != 1.0f;
 }
 
 // `applyLights`' per-vertex half (`sub_493E40`): for each light in turn,

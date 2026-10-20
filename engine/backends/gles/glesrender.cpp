@@ -436,6 +436,21 @@ std::string waterVariant(const std::string& frag) {
     return s;
 }
 
+// THE BODY LIGHT's variant of a posing program (`o3de/lightprobe.h`, the
+// remaster's A5): the start colour - the grey or the baked colour - times
+// `uLightTint`. Made at `init` only when asked, as the water's is.
+std::string tintVariant(const std::string& vert) {
+    std::string s = "uniform vec3 uLightTint;\n" + vert;
+    const std::string unlit = "vCol = aCol + vec3(wave);";
+    const auto u = s.find(unlit);
+    if (u != std::string::npos) s.replace(u, unlit.size(), "vCol = aCol * uLightTint + vec3(wave);");
+    const std::string lit = "vec3 lit = uLightBlack > 0.5 ? vec3(uLightBase) : aCol;";
+    const auto l = s.find(lit);
+    if (l != std::string::npos)
+        s.replace(l, lit.size(), "vec3 lit = (uLightBlack > 0.5 ? vec3(uLightBase) : aCol) * uLightTint;");
+    return s;
+}
+
 // ...and its VERTEX side: the world height handed down as `vWy`, taken from
 // whatever the program transforms - `aPos` for a set, `wp` for a posed body -
 // and the ray to the eye as `vToEye`, made here where the floats are highp
@@ -1105,6 +1120,15 @@ public:
         waterWant_ = s < 0.0f ? 0.0f : s > 1.0f ? 1.0f : s;
         return true;
     }
+    // THE BODY LIGHT, before `init` too (its posing program's variant)
+    bool setBodyTint(bool on) override {
+        if (prog_) return false;
+        tintWant_ = on;
+        return true;
+    }
+    // asked is drawn: a body this posing program cannot take is posed on the
+    // CPU by the frontend, which tints its corners itself
+    bool drawsBodyTint() const override { return tintWant_; }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                         std::span<const Draw> above, std::span<const Draw> water, float strength,
                         float planeY) override;
@@ -1343,7 +1367,8 @@ private:
         GLint lit = -1, caster = -1, pl = -1, plCount = -1, shadow = -1, lightMvp = -1,
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
-        GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
+        GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;
+        GLint tint = -1;   // the body light's variant   // the water variant's
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;
@@ -1422,6 +1447,7 @@ private:
         float grey = -1;
         // the posed program's lights
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
+        float tint[3] = {-1, -1, -1};
     };
     struct DrawState {
         int blend = -1;                    // a `Blend`, -1 unknown
@@ -1505,6 +1531,8 @@ private:
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources
+    bool tintWant_ = false;                    // the body light's (`setBodyTint`)
+    std::string tintPosedVert_;                // ...its posing program's source
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
     int surfW_ = 0, surfH_ = 0;
@@ -1711,8 +1739,14 @@ bool GlesRenderer::init(int w, int h) {
     }
     const char* const vSceneX = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVertX;
     const char* const vScene = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVert;
-    const char* const vPosedX = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVertX;
-    const char* const vPosed = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVert;
+    const char* vPosedX = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVertX;
+    const char* vPosed = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVert;
+    // the BODY LIGHT over either (only the posing program is a variant: it is
+    // the one that draws the bodies)
+    if (tintWant_) {
+        tintPosedVert_ = tintVariant(enh ? vPosedX : vPosed);
+        vPosedX = vPosed = tintPosedVert_.c_str();
+    }
     if (wantPixLights_ || wantShadowMap_) {
         prog_ = link(vSceneX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                                 {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
@@ -1755,6 +1789,18 @@ bool GlesRenderer::init(int w, int h) {
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
+    }
+    if (tintWant_) {
+        // 1, 1, 1 until a draw says otherwise: a uniform starts at 0, and the
+        // pose self-test's bodies drawn BLACK read as never posed (all of
+        // them went the CPU way, 2026-10-20)
+        if (posed_) {
+            glUseProgram(posed_);
+            glUniform3f(glGetUniformLocation(posed_, "uLightTint"), 1.0f, 1.0f, 1.0f);
+            glUseProgram(0);
+        }
+        std::printf("gles: the body light - the posing program's variant (%s)\n",
+                    posed_ ? "built" : "not built - the bodies tinted on the CPU");
     }
     if (bloom_ > 0.0f) {
         // the light maps on unit 3 (0 the texture, 1 the present's matrix, 2 the shadow map)
@@ -1803,6 +1849,7 @@ bool GlesRenderer::init(int w, int h) {
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
         L.eye = glGetUniformLocation(p, "uEye");
+        L.tint = glGetUniformLocation(p, "uLightTint");
         L.caster = glGetUniformLocation(p, "uCaster");
         L.pl = glGetUniformLocation(p, "uPL");
         L.plCount = glGetUniformLocation(p, "uPLCount");
@@ -3245,6 +3292,10 @@ void GlesRenderer::submit(const Draw& d) {
         if (set(!uv || U.lightBase != d.lightBase)) {
             glUniform1f(L.lightBase, d.lightBase);
             U.lightBase = d.lightBase;
+        }
+        if (L.tint >= 0 && set(!uv || std::memcmp(U.tint, d.lightTint, sizeof U.tint) != 0)) {
+            glUniform3f(L.tint, d.lightTint[0], d.lightTint[1], d.lightTint[2]);
+            std::memcpy(U.tint, d.lightTint, sizeof U.tint);
         }
     }
 

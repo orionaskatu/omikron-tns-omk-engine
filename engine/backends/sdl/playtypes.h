@@ -57,6 +57,7 @@
 #include "script/props.h"
 #include "o3de/raster.h"
 #include "o3de/render.h"
+#include "o3de/lightprobe.h"
 #include "o3de/renderer.h"
 #include "platform/boot.h"
 #include "platform/movie.h"
@@ -252,6 +253,7 @@ struct Staged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
+    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     bool  litTold = false;       // the first lit frame said in the log
     float drawAt[3] = {0, 0, 0};   // where he was actually put, for a set piece
     bool  drawAtKnown = false;     // ...and whether a frame has put him yet
@@ -455,6 +457,7 @@ struct PedStaged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
+    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     // THE WALKER'S OWN POSE BUFFER, kept across frames: `composePose`
     // fills it in place (todo/optimization.md step 18's leftovers) where
     // it built a fresh vector for every body every frame.
@@ -695,6 +698,7 @@ struct WorldSlot {
     std::vector<omk::Texture> tex;
     omk::MirrorPlane mirror;
     omk::WaterPlane water;   // the remaster's water reflection (`o3de/renderer.h`)
+    omk::LightProbes probes; // the remaster's body light (`o3de/lightprobe.h`), built when on
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the
     // actor on a steep face and slides him off it, so dropping them made a

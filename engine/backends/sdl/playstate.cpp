@@ -2139,6 +2139,12 @@ void PlayState::prepareSet(SetLoad& L) {
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
     w.water = omk::waterPlane(w.geo);
+    if (bodyLight > 0.0f) {
+        w.probes.build(w.geo);
+        omk::event("world.probes", {{"set", L.stem}, {"mean", static_cast<double>(w.probes.meanLuma())}});
+    } else {
+        w.probes = omk::LightProbes{};
+    }
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
@@ -2433,4 +2439,13 @@ void PlayState::mark(const char* name) {
   OMK_SECTION(name, profMarkT, t);
   profMarkT = t;
  }
+}
+
+void PlayState::bodyTint(const float p[3], float out[3]) const {
+    out[0] = out[1] = out[2] = 1.0f;
+    if (bodyLight <= 0.0f || !world_ || !world_->drawsBodyTint() || !session_) return;
+    const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+    // the grey every body starts from: the active scene's (`+416`)
+    const float base = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
+    if (ws.probes.built()) ws.probes.tint(p, bodyLight, base, out);
 }

@@ -712,12 +712,15 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
     s.lightCount = 0;
     s.lightsBlack = false;
     s.lightBase = static_cast<float>(baseGrey) / 255.0f;
-    if (actorLit) {
+    {
         const std::size_t ri = s.mo->root >= 0 &&
             static_cast<std::size_t>(s.mo->root) * 3 + 2 < s.meshAt.size()
             ? static_cast<std::size_t>(s.mo->root) : 0;
         if (ri * 3 + 2 < s.meshAt.size())
             for (int k = 0; k < 3; ++k) litAt[k] = s.meshAt[ri * 3 + static_cast<std::size_t>(k)];
+    }
+    bodyTint(litAt, s.lightTint);   // the remaster's body light, 1 when off
+    if (actorLit) {
         s.lights.clear();
         int reachN = 0;
         for (const WorldSlot& ws2 : worldSlots)
@@ -765,8 +768,14 @@ void PlayState::worldStagedBody(std::unique_ptr<Staged>& up, const omk::SceneRun
     // ...and on the CPU path the corners themselves: black, then every
     // light that reaches him (`o3de/vertexlight.h`), from both resident
     // slots, as the crowd's are
+    if (!actorLit && !s.gpu && bodyTintPerPixel())   // the body light per pixel: grey x tint
+        for (auto& c : s.posed.corners) {
+            c.r = s.lightBase * s.lightTint[0]; c.g = s.lightBase * s.lightTint[1]; c.b = s.lightBase * s.lightTint[2];
+        }
     if (actorLit && !s.gpu) {
-        for (auto& c : s.posed.corners) c.r = c.g = c.b = s.lightBase;
+        for (auto& c : s.posed.corners) {
+            c.r = s.lightBase * s.lightTint[0]; c.g = s.lightBase * s.lightTint[1]; c.b = s.lightBase * s.lightTint[2];
+        }
         int reached = 0;
         for (const WorldSlot& ws2 : worldSlots)
             if (!ws2.lights.empty())

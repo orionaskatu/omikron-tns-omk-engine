@@ -25,7 +25,8 @@ layout(push_constant) uniform Push {
 // the 3DS pose): a posed draw's corners are its REST corners and this block,
 // at the body's offset - d[0] (lights, from black, base grey, affines), then
 // kLights lights of two vec4 (direction x strength, colour bytes), then three
-// vec4 an affine: world = R rest + t, the rows of a 3x4 (`renderer.h`).
+// vec4 an affine: world = R rest + t, the rows of a 3x4 (`renderer.h`), then
+// one vec4 the body light's tint (rgb).
 const int kLights = 16;
 layout(std430, set = 2, binding = 0) readonly buffer Pose { vec4 d[]; } pose;
 
@@ -66,9 +67,14 @@ void main() {
         // scene's grey where the body starts black, else from its colour; t =
         // -(N.L) truncated toward zero and clamped to 0..255, the ramp
         // `(t * c) >> 8` (exact in float), each light added and clamped
+        // ...from a start colour times THE BODY LIGHT's tint (the remaster's
+        // A5, `o3de/lightprobe.h`), the vec4 after the affines - 1, 1, 1
+        // unless it is on, which multiplies nothing
+        vec3 tint = pose.d[1 + 2 * kLights + 3 * int(h.w + 0.5)].rgb;
+        col = inCol * tint;
         int n = int(h.x);
         if (n > 0 || h.y > 0.5) {
-            vec3 lit = h.y > 0.5 ? vec3(h.z) : inCol;
+            vec3 lit = (h.y > 0.5 ? vec3(h.z) : inCol) * tint;
             for (int i = 0; i < kLights; ++i) {
                 if (i >= n) break;
                 vec4 L = pose.d[1 + 2 * i], C = pose.d[2 + 2 * i];

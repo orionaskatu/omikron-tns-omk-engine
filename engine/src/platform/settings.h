@@ -227,6 +227,10 @@ struct Settings {
     // the reflection's strength, 0 off; Vulkan and GLES only.
     float  water = 0.0f;
     Source waterSource = Source::Default;
+    // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
+    // S the tint's strength, 0 off; Vulkan and GLES only.
+    float  bodyLight = 0.0f;
+    Source bodyLightSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

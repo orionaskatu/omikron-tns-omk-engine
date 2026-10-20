@@ -31987,6 +31987,163 @@ def c_engine_water_reflection():
            "dims the near water, and the two backends agree within 1%"
 
 
+def c_engine_body_light():
+    r"""THE BODIES LIT BY THEIR SURROUNDINGS - the remaster's A5
+    (`todo/remaster.md`, `o3de/lightprobe.h`), `[Remaster] bodylight = S` /
+    `--body-light S` (and `--remaster DIR`'s 1, the reader's), OFF unless named.
+
+    The original starts every lit body from one grey, the scene's `+416` (the
+    set's ambient); the set itself is shaded by colours the artists BAKED into
+    its vertices. `LightProbes` sums the set's opaque corners into 2 m cells at
+    load and, around a body, takes the cells' weighted mean - (1 - d^2/R^2)^2
+    on each cell's centroid, R 6 m - and where the probe is brighter than
+    `mean` (its mean colour at body height over the set's floors) the body
+    starts from the grey PLUS `S (probe - mean)` per channel, where darker
+    from the grey SHADED `1 - S (1 - probe / mean)`; the average place keeps
+    the original's grey. Handed over as a tint of the grey. Brightening
+    ADDED: a set's grey can be nearly black (Anekbah's is 10 of 255) and a
+    multiple of it did not show (the reader, 2026-10-20, of the ratio and of a
+    contrast curve); darkening MULTIPLIED: added, it took a body by
+    Anekbah's fire - a sprite whose glow is not painted into its alcove - to
+    black (the reader's play test, 2026-10-20). The set's lights add on top. NOT A PORT, no oracle
+    (tier 6): the invariants are the rule's own.
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES variant made only when asked and its tint defaulted to 1 (a
+         uniform starts at 0: the pose self-test's bodies drew BLACK and all
+         went the CPU way, 2026-10-20);
+      2. THE PROBE (`texpack_tool probe`): Anekbah's floor mean 0.4431 and
+         Jaunpur's 0.6958; at a grey of 0.2, Anekbah's stretch at (1804, -90,
+         -6890) tints red 0.990 (blue 0.763), its lit stretch 600 units on
+         2.210, the fire's alcove at (1741, -90, -7517) 0.518 - shaded, not
+         black (to 0.01). The
+         set is read by SURFACE, each triangle cut into pieces no longer than
+         a cell: read by its corners, Lahoreh's large floor triangles left
+         spots with no corner in reach (2026-10-20);
+      3. CONTINUITY: along 1.2 km walks in both, the tint of a 0.2 grey
+         moves at most 0.1 per 10 units - its start colour 0.02 (measured
+         0.0403 and 0.0208) - a body walking never pops;
+      4. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, Anekbah's
+         street at 640x480 with the preset: the body light at 1 moves more
+         than 2000 pixels and less than 5% of the frame (bodies, not the set),
+         and Vulkan and GLES agree within 1%; and again under `--enhance-all`
+         (PER-PIXEL lighting shades a body from the scene's grey and ignores
+         its corners - `Draw::lit` 1 - so a tinted body is drawn in mode 2,
+         from its corner colour, the grey x tint: the reader plays with it,
+         2026-10-20). Measured 3250 / 3208 pixels moved.
+
+    Measured once, outside the check (2026-10-20, M3): with the body light
+    off, frames byte-identical to the build before on the software
+    reference, Vulkan and GLES, plain and with `--remaster`, on Anekbah's
+    street and Jaunpur's canal (10 of 10), and under `--enhance-all` on both
+    backends; at 1 Vulkan moves 3011 pixels of the street, GLES 3042 (the
+    street start is a little darker than Anekbah's mean: shaded, mildly).
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan shader's tint
+    dropped - Vulkan moves 0 pixels; the GLES variant inserting nothing -
+    GLES moves 0; the cell weight made a step (1 inside the reach) - the
+    walk jumps 0.13 per 10 units and the probe's values move; the bodies
+    left in mode 1 under per-pixel lighting - 0 pixels move under
+    `--enhance-all` on both. (The backends'
+    agreement does NOT catch a backend without the tint: its changes are
+    small per pixel - part 4's move count does.)
+
+    NOT CHECKED, judged by eye: whether the tint LOOKS right - the reader's
+    previews.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+bodyLight\s*=\s*0\.0f;", sh)),
+              'kRemaster, "bodylight"' in sc and 'kEnhancements, "bodylight"' not in sc,
+              "bodyLight" not in max_body,
+              "tintPosedVert_ = tintVariant(" in gl and 'glGetUniformLocation(posed_, "uLightTint"), 1.0f, 1.0f, 1.0f' in gl)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), mk.stderr[-300:]
+    dec = os.path.join(fr, "MESHES", "DECORS")
+    def probe(model, pts):
+        out = subprocess.run([tool, "probe", os.path.join(dec, model + ".3DO")] + pts,
+                             capture_output=True, text=True).stdout.split("\n")
+        mean = float(out[0].split()[1]) if out and out[0].startswith("mean") else None   # "mean M box ..." 
+        return mean, [[float(x) for x in ln.split()[6:9]] for ln in out[1:] if ln.strip()]
+    am, at = probe("Anekbah", ["1804,-90,-6890", "1804,-90,-6290", "1741,-90,-7517"])
+    jm, _ = probe("jaunpur", [])
+    values = (am is not None and abs(am - 0.4431) < 0.001, jm is not None and abs(jm - 0.6958) < 0.001,
+              len(at) == 3 and abs(at[0][0] - 0.990) < 0.01 and abs(at[1][0] - 2.210) < 0.01
+              and abs(at[2][0] - 0.518) < 0.01)
+    steps = []
+    for model, base in (("Anekbah", (1804, -90, -6890)), ("jaunpur", (10524, -130, 10284))):
+        _, t = probe(model, ["%d,%d,%d" % (base[0], base[1], base[2] + i * 10) for i in range(121)])
+        steps.append(max(max(abs(a - b) for a, b in zip(t[i], t[i + 1])) for i in range(len(t) - 1)) if len(t) == 121 else 9)
+    smooth = all(x < 0.1 for x in steps)
+    print(f"        probe means {am} {jm}; tints {at}; walk steps {steps}")
+
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(binary, out, *extra):
+            env = dict(os.environ)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tmp,
+                                       "--res", "640x480", "--frames", "30", "--dump", out,
+                                       "--area", "0", "--stand", "1804,0,-6890,336",
+                                       "--remaster", os.path.expanduser("~/Documents/omk/omk-pack")] + list(extra)
+                                + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            if rr.returncode != 0 or not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        res, frames = {}, {}
+        packed = os.path.isdir(os.path.expanduser("~/Documents/omk/omk-pack"))
+        for kind, binary in (("vulkan", os.path.join(eng, "build", "omk-play")),
+                             ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if not packed or (kind == "gles" and platform.system() != "Darwin"):
+                res[kind] = ("skipped",); continue
+            off = frame(binary, os.path.join(tmp, "off.bin"), "--body-light", "0")
+            on = frame(binary, os.path.join(tmp, "on.bin"), "--body-light", "1")
+            eoff = frame(binary, os.path.join(tmp, "eoff.bin"), "--body-light", "0", "--enhance-all")
+            eon = frame(binary, os.path.join(tmp, "eon.bin"), "--body-light", "1", "--enhance-all")
+            if None in (off, on, eoff, eon):
+                res[kind] = ("no frame",); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            emoved = sum(1 for x, y in zip(eoff, eon) if x != y)
+            res[kind] = (moved > 2000, moved < len(on) // 20, emoved > 2000, emoved < len(eon) // 20)
+            print(f"        {kind}: under --enhance-all it moves {emoved} pixels")
+            frames[kind] = on
+            print(f"        {kind}: the body light at 1 moves {moved} pixels")
+        agree = ("skipped",)
+        if len(frames) == 2:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = frames["vulkan"], frames["gles"]
+            agree = sum(1 for x, y in zip(a, b) if big(x, y)) < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    vres, gres = res.get("vulkan"), res.get("gles")
+    want = (True, True, True, True)
+    return (src_ok, values, smooth, vres, gres, agree), \
+           ((True,) * 4, (True,) * 3, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+            agree if isinstance(agree, tuple) else True), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
+           "asked, its tint defaulted to 1); the probe's means and tints on Anekbah and Jaunpur; " \
+           "the tint continuous along two walks; on Vulkan and GLES the bodies move and the backends agree"
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -45941,8 +46098,10 @@ def c_licence_headers():
     # 638: + `engine/tools/blend_hold.cpp` (engine: blend hold)
     # 640: + `engine/src/o3de/colourgrade.{h,cpp}` (the remaster's city grades,
     # todo/remaster.md step 2)
+    # 642: + `engine/src/o3de/lightprobe.{h,cpp}` (the remaster's body light,
+    # todo/remaster.md A5)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (640, [], 1, []), \
+           (642, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -48737,6 +48896,7 @@ SLOW = [
     ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
     ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
     ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),
+    ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

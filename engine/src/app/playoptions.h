@@ -139,6 +139,7 @@ struct PlayOptions {
     std::string gradeFlag;        // --grade DIR, [Remaster] grade; "" = the settings'
     std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four
     float waterFlag = -1.0f;      // --water S, [Remaster] water; < 0 = the settings'
+    float bodyLightFlag = -1.0f;  // --body-light S, [Remaster] bodylight; < 0 = the settings'
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.

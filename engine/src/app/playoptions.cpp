@@ -291,10 +291,14 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.3, the grades in\n"
-"                   DIR/grades, --water 0.6; a specific flag or key beats it;\n"
+"                   DIR/grades, --water 0.6, --body-light 1; a specific\n"
+"                   flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
 "                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
+"  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
+"                   light around them, strength S (0..1); Vulkan and GLES only;\n"
+"                   [Remaster] bodylight=S\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -532,6 +536,13 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--body-light" && i + 1 < argc) {
+            bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
+            if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {
+                std::fprintf(stderr, "--body-light %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--water" && i + 1 < argc) {
             waterFlag = static_cast<float>(std::atof(argv[++i]));
             if (waterFlag < 0.0f || waterFlag > 1.0f) {

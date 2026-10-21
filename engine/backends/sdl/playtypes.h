@@ -700,6 +700,7 @@ struct WorldSlot {
     omk::MirrorPlane mirror;
     omk::WaterPlane water;   // the remaster's water reflection (`o3de/renderer.h`)
     omk::FloorPlanes floors; // ...and its reflecting floors (`o3de/floorreflect.h`), when on
+    float ground = 0.0f;     // its dominant floor's height - the mist's (`omk::groundLevel`)
     omk::LightProbes probes; // the remaster's body light (`o3de/lightprobe.h`), built when on
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the

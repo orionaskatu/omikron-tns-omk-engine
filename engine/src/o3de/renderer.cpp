@@ -284,6 +284,26 @@ void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std
 
 }  // namespace
 
+float groundLevel(const Geometry& g) {
+    std::map<int, double> byHeight;   // y / 4 -> level opaque area
+    for (const auto& b : g.batches) {
+        if (b.blend != Blend::Opaque) continue;
+        for (std::size_t t = b.start; t + 2 < b.start + b.count; t += 3) {
+            const Corner& a = g.corners[t];
+            const Corner& c1 = g.corners[t + 1];
+            const Corner& c2 = g.corners[t + 2];
+            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
+            byHeight[static_cast<int>(std::lround(a.y / 4.0f))] +=
+                std::fabs((c1.x - a.x) * (c2.z - a.z) - (c1.z - a.z) * (c2.x - a.x)) * 0.5;
+        }
+    }
+    int best = 0;
+    double most = 0.0;
+    for (const auto& [k, area] : byHeight)
+        if (area > most) { most = area; best = k; }
+    return static_cast<float>(best) * 4.0f;
+}
+
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
                    const std::vector<float>* floorStrength) {

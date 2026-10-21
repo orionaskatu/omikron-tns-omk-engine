@@ -142,6 +142,11 @@ struct View {
     // brightness read as height, tilting the normal the POINT lights see -
     // Vulkan's tiled module (`scene.frag`); 0 nothing.
     float relief = 0.0f;
+    // THE MIST (the remaster's A4, `[Remaster] mist = S`): a height fog in the
+    // set's fog colour, thickest at `mistGround` (the set's dominant floor -
+    // the game's Y points DOWN) and thinning over `mistHeight` above it,
+    // integrated along each ray - on what the game fogs; 0 nothing. Vulkan.
+    float mist = 0.0f, mistGround = 0.0f, mistHeight = 400.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed
@@ -612,6 +617,11 @@ struct WaterPlane {
     std::vector<Level> levels;
 };
 WaterPlane waterPlane(const Geometry& g);
+
+// A set's GROUND: the height carrying the most LEVEL opaque area (`texpack_tool
+// floors` lists them) - Qalisar's, Anekbah's and Lahoreh's street at 0,
+// Jaunpur's quay at -120. The mist's floor. 0 for a geometry with none.
+float groundLevel(const Geometry& g);
 
 // The frame with the water REFLECTING, when the backend has the pass
 // (`Renderer::drawWaterScene`) and the camera is above the plane: the draws

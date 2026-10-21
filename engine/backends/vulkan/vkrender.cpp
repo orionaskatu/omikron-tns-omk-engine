@@ -572,6 +572,7 @@ private:
     // the fog, held between begin() and each submit()
     bool             fog_ = false;
     float            fogStart_ = 0.0f, fogEnd_ = 0.0f;
+    bool             mistOn_ = false;   // the frame has the mist (`View::mist`): the fogless batches marked for it
     float            fogColour_[3] = {0.0f, 0.0f, 0.0f};
     float            clearColour_[3] = {0.0f, 0.0f, 0.0f};   // View::clearColour
     omk::RasterStats st_;
@@ -3287,6 +3288,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     deadBufs_.clear();
     fog_ = view.fog;
     fogStart_ = view.fogStart;
+    mistOn_ = view.mist > 0.0f;
     fogEnd_ = view.fogEnd;
     for (int i = 0; i < 3; ++i)
         fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
@@ -3328,6 +3330,8 @@ void VulkanRenderer::begin(const omk::View& view) {
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
         ub.fx[0] = view.relief;
+        // THE MIST (`View::mist`): its strength, its ground and its height
+        ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
         // keeps, and their tiles binned for THIS camera at the render size.
         // The reflection pass begins first and the frame's pass last - the
@@ -3553,6 +3557,13 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         const float fogScale = (d.bucketKey & 0x800u) ? 2.0f : 1.0f;
         push_.fogStart = fogStart_ * fogScale;
         push_.fogEnd   = fogEnd_ * fogScale;
+        for (int i = 0; i < 3; ++i) push_.fogColour[i] = fogColour_[i];
+    } else if (mistOn_ && !(d.bucketKey & 0x2080u)) {
+        // THE MIST without the game's fog (an unlimited clip has none): the
+        // same batches, marked -1 / -1 - no linear fog (`fogEnd > fogStart`
+        // fails), the mist's to take (`scene.frag`)
+        push_.fogStart = -1.0f;
+        push_.fogEnd = -1.0f;
         for (int i = 0; i < 3; ++i) push_.fogColour[i] = fogColour_[i];
     }
     const auto it = vbo_.find(d.geo);

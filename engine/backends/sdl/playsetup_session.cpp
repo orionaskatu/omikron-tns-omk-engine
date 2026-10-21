@@ -193,7 +193,7 @@ int PlayState::setupSession() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s, floors %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s, floors %s, mist %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
@@ -202,7 +202,8 @@ int PlayState::setupSession() {
                         fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
                         reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2",
                         aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2",
-                        floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : "1");
+                        floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : "1",
+                        mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : "0.5");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -220,6 +221,14 @@ int PlayState::setupSession() {
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",
                         static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
+        // the MIST (`View::mist`): its flag, its key, the preset's 0.5 (the
+        // reader's, 2026-10-21, from a sheet of 0, 0.5 and 1 in three cities)
+        mistStrength = mistFlag >= 0.0f ? mistFlag
+                     : settings.mistSource == omk::Settings::Source::Ini ? settings.mist
+                     : !preset.empty() ? 0.5f : 0.0f;
+        if (mistStrength > 0.0f)
+            std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
+                        "Vulkan only\n", static_cast<double>(mistStrength));
         // the REFLECTING FLOORS (`o3de/floorreflect.h`): its flag, its key, the
         // preset's 1 - each floor's own strength is the list's
         floorStrength = floorsFlag >= 0.0f ? floorsFlag

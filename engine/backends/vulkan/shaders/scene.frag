@@ -109,9 +109,8 @@ layout(set = 1, binding = 2) uniform Lights {
     int   grey;        // View::grey - the greyscale bank, ops 150/151
     int   tiles;       // 1: the TILED point lights below are bound (`o3de/lighttiles.h`)
     vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
-#ifdef OMK_TILED
-    vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone
-#endif
+    vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone;
+                       // y, z, w: the MIST's strength, ground and height (View::mist...), both
 } lg;
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
@@ -337,6 +336,21 @@ void main() {
     if (pc.fogEnd > pc.fogStart && vDepth > pc.fogStart) {
         float f = clamp((pc.fogEnd - vDepth) / (pc.fogEnd - pc.fogStart), 0.0, 1.0);
         c = mix(pc.fogColour, c, f);
+    }
+    // THE MIST (the remaster's A4, `View::mist`): a height fog in the same
+    // colour, on what the game fogs - its density 1 at the set's GROUND and
+    // falling as exp(-h / height) above it (Y is down: h = ground - y), the
+    // ray's mean density in closed form, one unit of it the 15 m that takes
+    // 63% of the light at strength 1 (40 m read as nothing over a street). Not in the water's reflection pass
+    // (its eye is the frame's); 0 nothing. The batches it takes are the ones
+    // the game fogs - or, its fog off, the ones the backend marks -1 / -1.
+    if (lg.fx.y > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && pc.water != 2) {
+        float H = max(lg.fx.w, 1.0);
+        float h0 = max(lg.fx.z - lg.eye.y, 0.0), h1 = max(lg.fx.z - vWorld.y, 0.0);
+        float dist = length(vWorld - lg.eye.xyz);
+        float mean = abs(h1 - h0) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / (h1 - h0) : exp(-h0 / H);
+        float m = 1.0 - exp(-lg.fx.y * dist * mean / 1500.0);
+        c = mix(c, pc.fogColour, m);
     }
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the

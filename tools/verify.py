@@ -32226,7 +32226,8 @@ def c_engine_body_light():
                                        os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
                                        "--res", "640x480", "--frames", "30", "--dump", out, "--filter", "nearest",
                                        "--area", "0", "--stand", "1804,0,-6890,336",
-                                       "--remaster", (omkpaths.pack_path() or ""),
+                                       # (the mist is Vulkan's alone: the backends are compared without it)
+                                       "--remaster", (omkpaths.pack_path() or ""), "--mist", "0",
                                        "--fx-light", "0"] + list(extra)   # the body light alone
                                 + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                                 capture_output=True, text=True, env=env, timeout=240)
@@ -32392,9 +32393,9 @@ def c_engine_emitter_light():
                 surf = [f for n_, f in ev if n_ == "world.fxsurfaces"]
                 night = [float(f["dim"]) for n_, f in ev if n_ == "remaster.night"]
                 return (surf[0]["curated"] if surf else None, int(surf[0]["lights"]) if surf else 0, night)
-            q = fxs(run(vk, None, "101", "15300,0,-10050,270", "--remaster", pack, "--enhance-all")[0])
-            a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--enhance-all")[0])
-            k = fxs(run(vk, None, "237", None, "--remaster", pack, "--enhance-all")[0])
+            q = fxs(run(vk, None, "101", "15300,0,-10050,270", "--remaster", pack, "--mist", "0", "--enhance-all")[0])
+            a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--mist", "0", "--enhance-all")[0])
+            k = fxs(run(vk, None, "237", None, "--remaster", pack, "--mist", "0", "--enhance-all")[0])
             curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("1", "true", True), a[2] == [],
                       k[0] in ("0", "false", False))
             print(f"        qalisar {q}; anekbah {a}; kayl's flat {k}")
@@ -32406,11 +32407,11 @@ def c_engine_emitter_light():
         tiles = ("skipped",)
         if os.path.isdir(pack):
             ev, tight = run(vk, os.path.join(tmp, "tight.bin"), "101", "15300,0,-10050,270",
-                            "--remaster", pack, "--enhance-all", "--filter", "trilinear")
+                            "--remaster", pack, "--mist", "0", "--enhance-all", "--filter", "trilinear")
             os.environ["OMK_TILES_LOOSE"] = "1"
             try:
                 _, loose = run(vk, os.path.join(tmp, "loose.bin"), "101", "15300,0,-10050,270",
-                               "--remaster", pack, "--enhance-all", "--filter", "trilinear")
+                               "--remaster", pack, "--mist", "0", "--enhance-all", "--filter", "trilinear")
             finally:
                 del os.environ["OMK_TILES_LOOSE"]
             tl = [f for n_, f in ev if n_ == "remaster.tiles"]
@@ -32427,9 +32428,9 @@ def c_engine_emitter_light():
             # that names none, which the Vulkan harness takes and GLES did not
             # here - the two compared at two filters, 3346 pixels apart
             _, off = run(binary, os.path.join(tmp, "off.bin"), "0", "1780,0,-7380,336",
-                         "--remaster", pack, "--enhance-all", "--fx-light", "0", "--filter", "trilinear")
+                         "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "0", "--filter", "trilinear")
             ev, on = run(binary, os.path.join(tmp, "on.bin"), "0", "1780,0,-7380,336",
-                         "--remaster", pack, "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+                         "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
             if off is None or on is None:
                 res[kind] = ("no frame",); continue
             # the backends' AGREEMENT with Vulkan's lights as GLES's: GLES does
@@ -32438,7 +32439,7 @@ def c_engine_emitter_light():
                 os.environ["OMK_NO_TILES"] = "1"
                 try:
                     _, same = run(binary, os.path.join(tmp, "same.bin"), "0", "1780,0,-7380,336",
-                                  "--remaster", pack, "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+                                  "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
                 finally:
                     del os.environ["OMK_NO_TILES"]
             moved = sum(1 for x, y in zip(off, on) if x != y)
@@ -32720,7 +32721,7 @@ def c_engine_floors():
               "floors" not in max_body,
               "!preset.empty() ? 1.0f : 0.0f;" in pre,
               "push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;" in vk,
-              "if (lg.tiles != 0) {" in fs and "pc.water != 2" not in fs)
+              "if (lg.tiles != 0) {" in fs and "lg.tiles != 0 && pc.water != 2" not in fs)
     mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
@@ -32778,6 +32779,117 @@ def c_engine_floors():
         "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
         "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
         "lights, and on GLES"
+
+
+def c_engine_mist():
+    r"""THE MIST - the remaster's A4 beyond the AO (`todo/remaster.md`), `[Remaster]
+    mist = S` / `--mist S` (0..1), the `--remaster` preset's 0.5, OFF unless
+    named. Vulkan. A height fog in the set's OWN fog colour (each city's,
+    changing with the clock - `sub_41E7A0`), density 1 at the set's ground
+    (`groundLevel`: the height with the most level opaque area) falling as
+    exp(-h / 400) above it, integrated along each ray (15 m to 63% at strength
+    1), on the batches the game fogs - or, its fog off (an unlimited clip,
+    `--enhance-all`), the same batches marked -1 / -1 by the backend.
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 0.5; the shader's guard takes the -1 marks;
+      2. Qalisar's street (14300, 0, -10050) with the pack and
+         `--enhance-all` (its fog OFF), the post-pass off (`--bloom 0 --ao 0`,
+         no grade - they come after the mist: with them 41 of 228217 moved
+         pixels went away from the fog): `--mist 0.5` moves more than 20000
+         pixels, and they move TOWARD the fog colour (a mix with it) - all
+         but fewer than 1 in 1000: an ADDITIVE glow (a street lamp's halo,
+         which the mist leaves alone, as the game's fog does) added over a
+         background the mist moved can end further from it (48 of 260094);
+         and its SHAPE: the near ground (the frame's bottom 15%) changes less
+         than half as much as the band at the horizon (30-45% down) - 5.7
+         against 21.5 a pixel. An inverted mix moves toward the fog too, and
+         only this tells them apart.
+
+    Measured once, outside the check (2026-10-21, M3): with it off
+    byte-identical to `5f4cb214` on the software reference, Vulkan and GLES,
+    plain, `--remaster` and `--enhance-all`, by the burner, in Qalisar and at
+    Jaunpur's canal (15 of 15) - `fx` declared in the plain module too.
+
+    SHOWN TO FAIL (2026-10-21): the fogless batches never marked - part 2
+    (0 pixels, the first cut's bug: `--enhance-all` turns the game's fog off);
+    the mix inverted (`mix(pc.fogColour, c, m)`) - part 2's SHAPE (it still
+    moved toward the fog: the first form of this check passed it).
+
+    NOT CHECKED, judged by eye: the strength, the height, the colour.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("mistStrength = mistFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+mist\s*=\s*0\.0f;", sh)),
+              'kRemaster, "mist"' in sc and 'kEnhancements, "mist"' not in sc,
+              "mist" not in max_body,
+              "!preset.empty() ? 0.5f : 0.0f;" in pre,
+              "(pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0)" in fs)
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = omkpaths.pack_path() or ""
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 5, ("skipped",)), "no texture pack (omk.conf pack =)"
+    tmp = tempfile.mkdtemp()
+    nograde = os.path.join(tmp, "no-grades")   # an empty grades folder: no grade
+    os.makedirs(nograde)
+    play = os.path.join(eng, "build", "omk-play")
+    fog = None
+    try:
+        def run(name, *extra):
+            nonlocal fog
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "101", "--stand", "14300,0,-10050,270", "--dump", out, "--world-vulkan",
+                    "--filter", "nearest", "--remaster", pack, "--enhance-all",
+                    # the post-pass off - the grade's LUT, the bloom and the AO
+                    # come AFTER the mist and bend "toward the fog colour"
+                    "--bloom", "0", "--ao", "0", "--grade", nograde] + list(extra)
+            r = subprocess.run([play] + args, capture_output=True, text=True,
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy"), timeout=300)
+            m = re.search(r"fog and clear colour (\d+) (\d+) (\d+)", r.stdout + r.stderr)
+            if m: fog = tuple(int(v) for v in m.groups())
+            if r.returncode != 0 or not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        off, on = run("off", "--mist", "0"), run("on", "--mist", "0.5")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if off is None or on is None or fog is None:
+        return (src_ok, ("no frame",)), ((True,) * 5, ("frames",)), "a run wrote no frame or no fog colour"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    dist = lambda a: sum(abs(x - y) for x, y in zip(a, fog))
+    moved = away = 0
+    for x, y in zip(off, on):
+        if x == y:
+            continue
+        moved += 1
+        if dist(rgb(y)) > dist(rgb(x)) + 12:   # three channels' 565 rounding
+            away += 1
+    W = 640
+    band = lambda y0, y1: sum(sum(abs(p - q) for p, q in zip(rgb(off[y * W + x]), rgb(on[y * W + x])))
+                              for y in range(y0, y1) for x in range(W)) / ((y1 - y0) * W)
+    near, far = band(408, 480), band(144, 216)
+    print(f"        --mist 0.5 moves {moved} pixels, {away} away from the fog colour {fog}; "
+          f"near {near:.1f}, horizon {far:.1f} a pixel")
+    return (src_ok, moved > 20000, away * 1000 < moved, near * 2 < far), ((True,) * 5, True, True, True), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 0.5, the -1 marks taken); " \
+        "in Qalisar with the game's fog off the mist moves the frame, toward the fog colour (all but < 1/1000)"
 
 
 def c_engine_ao():
@@ -49646,6 +49758,7 @@ SLOW = [
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
+    ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

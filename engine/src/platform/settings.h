@@ -231,6 +231,9 @@ struct Settings {
     // (`o3de/floorreflect.h`), S times each one's strength. 0 = off.
     float  floors = 0.0f;
     Source floorsSource = Source::Default;
+    // `mist = S`: the MIST, a height fog in the set's fog colour (`View::mist`). 0 = off.
+    float  mist = 0.0f;
+    Source mistSource = Source::Default;
     // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
     // S the tint's strength, 0 off; Vulkan and GLES only.
     float  bodyLight = 0.0f;

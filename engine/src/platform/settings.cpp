@@ -185,6 +185,7 @@ Settings resolveSettings(const OptionsFile& ini,
         strength(ini.find(kRemaster, "bloom"), "bloom", 4.0f, s.bloom, s.bloomSource);
         strength(ini.find(kRemaster, "water"), "water", 1.0f, s.water, s.waterSource);
         strength(ini.find(kRemaster, "floors"), "floors", 1.0f, s.floors, s.floorsSource);
+        strength(ini.find(kRemaster, "mist"), "mist", 1.0f, s.mist, s.mistSource);
         strength(ini.find(kRemaster, "ao"), "ao", 4.0f, s.ao, s.aoSource);
         strength(ini.find(kRemaster, "relief"), "relief", 4.0f, s.relief, s.reliefSource);
         strength(ini.find(kRemaster, "fxlight"), "fxlight", 4.0f, s.fxLight, s.fxLightSource);

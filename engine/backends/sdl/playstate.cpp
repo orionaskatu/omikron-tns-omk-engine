@@ -2141,6 +2141,7 @@ void PlayState::prepareSet(SetLoad& L) {
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
     w.water = omk::waterPlane(w.geo);
+    w.ground = omk::groundLevel(w.geo);
     w.floors = floorStrength > 0.0f ? omk::floorPlanes(w.geo, w.tex, omk::floorList(), L.stem) : omk::FloorPlanes{};
     if (bodyLight > 0.0f) {
         w.probes.build(w.geo);

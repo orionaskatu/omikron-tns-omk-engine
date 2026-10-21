@@ -1016,6 +1016,41 @@ The reader's "continue" after B3; confirmed in play at 2 ("commit, push").
 * Off: byte-identical to `7ac3b75f` (12 of 12). `verify.py: engine: ao`,
   shown to fail two ways.
 
+## Step 3, A4 continued - the mist: as built (2026-10-21)
+
+The plan's "height or volumetric fog in the game's own fog colour and range";
+the reader's "0.5 looks fine" on a sheet of 0, 0.5 and 1 by Anekbah's burner,
+on Qalisar's street and at Jaunpur's canal.
+
+* `[Remaster] mist = S` / `--mist S` (0..1), the `--remaster` preset's
+  **0.5**, off unless named; Vulkan only (both scene modules - `fx` declared
+  in the plain one too, which changed no frame: 15 of 15 off byte-identical
+  to `5f4cb214`). Named apart from the game's fog.
+* **The colour is the game's own fog colour**, per city and per the clock
+  (`sub_41E7A0`) - at the save's clock, phase 2: Anekbah 12 25 35, Qalisar 19
+  10 38, Jaunpur 12 35 48. Jaunpur's dark teal looked wrong beside its golden
+  sky texture, and is the city's own night fog (the reader: "the fog colour
+  is not the same on each city"); it follows the clock with nothing curated.
+* **The shape**: density 1 at the set's GROUND (`groundLevel` - the height
+  with the most level opaque area: 0 for Qalisar, Anekbah and Lahoreh, -120
+  for Jaunpur's quay) falling as exp(-h / 400) above it (Y down), the ray's
+  mean density in closed form; 15 m to 63% at strength 1 (40 m read as
+  nothing over a street).
+* **Which batches**: the game's fogged ones - and with its fog OFF (an
+  unlimited clip, which `--enhance-all` sets) the same ones (not the near
+  bucket, not the transparent state - key 0x2080) marked -1 / -1 by the
+  backend: the first cut took only the fogged ones and drew nothing under
+  `--enhance-all`. Not in the water's reflection pass.
+* `verify.py: engine: mist` - the source; in Qalisar (its fog off, the
+  post-pass off) `--mist 0.5` moves 260094 pixels toward the fog colour (48
+  away: a street lamp's ADDITIVE halo, which the mist leaves as the game's
+  fog does, over a background it moved) and its shape - the near ground 5.7,
+  the horizon band 21.5 a pixel; shown to fail two ways (an inverted mix
+  passed the first form). `engine: body light` and `engine: emitter light`
+  compare Vulkan with GLES at `--mist 0`.
+* Open: GLES; the mist in the reflections; a lighter haze by day if the
+  day's fog colours want it (unseen: the save's clock is evening).
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

@@ -191,6 +191,9 @@ void PlayState::worldDrawLists() {
     // light drew BLACK (the reader's play test, 2026-10-20)
     const int litTraffic = litPerPixel ? 2 : 0;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
+    // THE MIST (`View::mist`, the remaster's): on the shown set's ground
+    view.mist = mistStrength;
+    view.mistGround = worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)].ground;
     view.lights.clear();
     if (litPerPixel) {
         float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};

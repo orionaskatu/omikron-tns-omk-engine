@@ -112,7 +112,17 @@ struct PresentPush { int32_t vy, vh, w, dither, ss; };
 const uint32_t kPostFrag[] =
 #include "post.frag.inc"
 ;
-struct PostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; };
+struct PostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; int32_t ao; };
+// THE AMBIENT OCCLUSION (`todo/remaster.md` A4): from the frame's depth, half
+// size, plain and multisampled
+const uint32_t kAoFrag[] =
+#include "ao.frag.inc"
+;
+const uint32_t kAoMsFrag[] =
+#include "ao_ms.frag.inc"
+;
+constexpr float kAoRadius = 60.0f;   // the occlusion's reach, game units (~60 cm): contact, not shade
+struct AoPush { float view[4], depth[4]; float radius, strength; int32_t mode, pad; float srcInv[2]; };
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -300,6 +310,13 @@ public:
     }
     // THE BLOOM's strength, 0 off; any time - it changes no pipeline
     bool setBloom(float s) override { bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s; return true; }
+    // THE AMBIENT OCCLUSION's strength, 0 off - before `init`: it keeps the
+    // frame's depth readable, which the target is made with
+    bool setAmbientOcclusion(float s) override {
+        if (dev_ != VK_NULL_HANDLE) return false;
+        ao_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
+        return true;
+    }
     // THE GRADE: `rgb` the LUT's N^3 entries, red fastest (a .cube's order),
     // 0..1; n 0 turns it off. Any time - uploaded before the next frame's pass.
     bool setGrade(const float* rgb, int n) override {
@@ -603,11 +620,30 @@ private:
     VkFramebuffer    glowFb_[2] = {};   VkFramebuffer finalFb_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout postDsl_ = VK_NULL_HANDLE;
     VkDescriptorPool postPool_ = VK_NULL_HANDLE;
-    VkDescriptorSet  postDs_[4] = {};   // down, blur H, blur V, final
+    VkDescriptorSet  postDs_[8] = {};   // down, blur H, blur V, final; AO, AO blur H, AO blur V, AO depth
     VkSampler        postSampler_ = VK_NULL_HANDLE;
     VkPipelineLayout postPlo_ = VK_NULL_HANDLE;
     VkPipeline       glowPipe_ = VK_NULL_HANDLE, finalPipe_ = VK_NULL_HANDLE;
     int              glowW_ = 0, glowH_ = 0;
+    // THE AMBIENT OCCLUSION: the depth's DEPTH-aspect view (`depthView_` has
+    // both aspects, which a sampler may not read), two half-size R8 images
+    // (AO, blur, blur), and the camera the frame's pass was drawn with
+    float            ao_ = 0.0f;
+    bool             aoOk_ = false;      // the depth format can be sampled
+    VkImageView      depthRead_ = VK_NULL_HANDLE;
+    VkImage          aoImg_[2] = {};  VkDeviceMemory aoMem_[2] = {};
+    VkImageView      aoView_[2] = {};
+    VkFramebuffer    aoFb_[2] = {};
+    VkRenderPass     aoPass_ = VK_NULL_HANDLE;
+    VkPipeline       aoPipe_ = VK_NULL_HANDLE;
+    // ...and the half-size VIEW Z every occlusion pass reads (R32F, its own pass)
+    VkImage          zImg_ = VK_NULL_HANDLE;  VkDeviceMemory zMem_ = VK_NULL_HANDLE;
+    VkImageView      zView_ = VK_NULL_HANDLE;
+    VkFramebuffer    zFb_ = VK_NULL_HANDLE;
+    VkRenderPass     zPass_ = VK_NULL_HANDLE;
+    VkPipeline       zPipe_ = VK_NULL_HANDLE;
+    int              aoW_ = 0, aoH_ = 0;
+    float            aoView4_[4] = {1, 1, 1, 1};   // tanH, tanV, picture w, h (render pixels)
     // the GRADE: an N*N x N RGBA8 strip, N 0 for none
     int              lutN_ = 0;
     std::vector<unsigned char> lutData_;
@@ -914,9 +950,23 @@ bool VulkanRenderer::makeTarget() {
     if (dsFmt_ == VK_FORMAT_UNDEFINED) {
         std::fprintf(stderr, "vulkan: no depth+stencil format\n"); return false;
     }
-    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    // ...SAMPLED and KEPT where the ambient occlusion reads it - and only there
+    aoOk_ = false;
+    if (ao_ > 0.0f) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        aoOk_ = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+        if (!aoOk_) std::fprintf(stderr, "vulkan: the depth format cannot be sampled - no ambient occlusion\n");
+    }
+    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
+    if (aoOk_) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &depthRead_), "vkCreateImageView(depth read)");
+    }
 
     // Attachment 0 is what the pipelines rasterise into: `colour_` itself
     // without MSAA, `msColour_` with it - in which case it is not kept
@@ -936,7 +986,7 @@ bool VulkanRenderer::makeTarget() {
     att[1].format = dsFmt_;
     att[1].samples = samples_;
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1633,6 +1683,7 @@ bool VulkanRenderer::resize(int w, int h) {
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
+    if (depthRead_) { vkDestroyImageView(dev_, depthRead_, nullptr); depthRead_ = VK_NULL_HANDLE; }
     img(depthView_, depth_, depthMem_);
     buf(readBuf_, readMem_);
     buf(upBuf_, upMem_);
@@ -2043,6 +2094,20 @@ bool VulkanRenderer::makePost() {
         std::fprintf(stderr, "vulkan: post-pass images\n");
         return false;
     }
+    if (aoOk_) {
+        aoW_ = std::max(1, rw_ / 2); aoH_ = std::max(1, rh_ / 2);
+        for (int k = 0; k < 2; ++k)
+            if (!image(aoW_, aoH_, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                       aoImg_[k], aoMem_[k], aoView_[k], "occlusion image")) {
+                std::fprintf(stderr, "vulkan: occlusion images\n");
+                return false;
+            }
+        if (!image(aoW_, aoH_, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                   zImg_, zMem_, zView_, "occlusion depth")) {
+            std::fprintf(stderr, "vulkan: occlusion depth image\n");
+            return false;
+        }
+    }
     const auto pass = [&](VkFormat f, VkImageLayout initial, VkImageLayout final_, VkRenderPass& out) {
         VkAttachmentDescription a{};
         a.format = f; a.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2062,7 +2127,11 @@ bool VulkanRenderer::makePost() {
     // every pixel of each target is written, so nothing is loaded
     if (!pass(half, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, glowPass_) ||
         !pass(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, finalPass_)) {
+              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, finalPass_) ||
+        (aoOk_ && !pass(VK_FORMAT_R8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        aoPass_)) ||
+        (aoOk_ && !pass(VK_FORMAT_R32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        zPass_))) {
         std::fprintf(stderr, "vulkan: post-pass render passes\n");
         return false;
     }
@@ -2072,6 +2141,18 @@ bool VulkanRenderer::makePost() {
         fi.width = static_cast<uint32_t>(gw); fi.height = static_cast<uint32_t>(gh); fi.layers = 1;
         VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &glowFb_[k]), "glow framebuffer");
     }
+    for (int k = 0; k < 2 && aoOk_; ++k) {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = aoPass_; fi.attachmentCount = 1; fi.pAttachments = &aoView_[k];
+        fi.width = static_cast<uint32_t>(aoW_); fi.height = static_cast<uint32_t>(aoH_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &aoFb_[k]), "occlusion framebuffer");
+    }
+    if (aoOk_) {
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = zPass_; fi.attachmentCount = 1; fi.pAttachments = &zView_;
+        fi.width = static_cast<uint32_t>(aoW_); fi.height = static_cast<uint32_t>(aoH_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &zFb_), "occlusion depth framebuffer");
+    }
     {
         VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fi.renderPass = finalPass_; fi.attachmentCount = 1; fi.pAttachments = &colourView_;
@@ -2079,22 +2160,22 @@ bool VulkanRenderer::makePost() {
         VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &finalFb_), "post framebuffer");
     }
     {
-        VkDescriptorSetLayoutBinding b[3]{};
-        for (uint32_t k = 0; k < 3; ++k) {
+        VkDescriptorSetLayoutBinding b[4]{};
+        for (uint32_t k = 0; k < 4; ++k) {
             b[k].binding = k; b[k].descriptorCount = 1;
             b[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             b[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        dli.bindingCount = 3; dli.pBindings = b;
+        dli.bindingCount = 4; dli.pBindings = b;
         VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &postDsl_), "post set layout");
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12};
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32};
         VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pi.maxSets = 4; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+        pi.maxSets = 8; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
         VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &postPool_), "post pool");
-        const VkDescriptorSetLayout l4[4] = {postDsl_, postDsl_, postDsl_, postDsl_};
+        const VkDescriptorSetLayout l8[8] = {postDsl_, postDsl_, postDsl_, postDsl_, postDsl_, postDsl_, postDsl_, postDsl_};
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        ai.descriptorPool = postPool_; ai.descriptorSetCount = 4; ai.pSetLayouts = l4;
+        ai.descriptorPool = postPool_; ai.descriptorSetCount = 8; ai.pSetLayouts = l8;
         VKCHECK(vkAllocateDescriptorSets(dev_, &ai, postDs_), "post sets");
         VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR;
@@ -2103,7 +2184,8 @@ bool VulkanRenderer::makePost() {
         bindPostSets();
     }
     {
-        VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PostPush)};
+        VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                static_cast<uint32_t>(std::max(sizeof(PostPush), sizeof(AoPush)))};
         VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pli.setLayoutCount = 1; pli.pSetLayouts = &postDsl_;
         pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
@@ -2154,9 +2236,33 @@ bool VulkanRenderer::makePost() {
                 return false;
             }
         }
+        // the OCCLUSION's own module, the multisampled one where the depth is
+        if (aoOk_) {
+            const bool msDepth = samples_ != VK_SAMPLE_COUNT_1_BIT;
+            VkShaderModule af = msDepth ? module(kAoMsFrag, sizeof(kAoMsFrag)) : module(kAoFrag, sizeof(kAoFrag));
+            st[1].module = af;
+            VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            gp.stageCount = 2; gp.pStages = st;
+            gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+            gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+            gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dsi;
+            gp.layout = postPlo_; gp.renderPass = aoPass_;
+            bool ok = af && vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &aoPipe_) == VK_SUCCESS;
+            gp.renderPass = zPass_;
+            ok = ok && vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &zPipe_) == VK_SUCCESS;
+            if (af) vkDestroyShaderModule(dev_, af, nullptr);
+            if (!ok) {
+                std::fprintf(stderr, "vulkan: occlusion pipeline\n");
+                vkDestroyShaderModule(dev_, qv, nullptr); vkDestroyShaderModule(dev_, qf, nullptr);
+                return false;
+            }
+        }
         vkDestroyShaderModule(dev_, qv, nullptr);
         vkDestroyShaderModule(dev_, qf, nullptr);
     }
+    if (aoOk_)
+        std::printf("vulkan: the remaster's ambient occlusion - %.2f, %dx%d%s\n", static_cast<double>(ao_), aoW_, aoH_,
+                    samples_ != VK_SAMPLE_COUNT_1_BIT ? ", from the multisampled depth" : "");
     std::printf("vulkan: the remaster's post-pass - bloom %.2f, grade %s, glow images %dx%d\n",
                 static_cast<double>(bloom_), lutN_ > 1 ? "on" : "off", gw, gh);
     omk::event("remaster.post", {{"backend", "vulkan"}, {"bloom", static_cast<double>(bloom_)},
@@ -2164,18 +2270,31 @@ bool VulkanRenderer::makePost() {
     return true;
 }
 
-// The four sets: what each pass samples. A binding a pass does not read is
-// still bound to a valid image (the copy), as Vulkan requires.
+// The seven sets: what each pass samples. A binding a pass does not read is
+// still bound to a valid image (the copy), as Vulkan requires. The occlusion's
+// four read the DEPTH at binding 0 (in its read-only layout), and the three
+// after the first the half-size view z at binding 2.
 void VulkanRenderer::bindPostSets() {
     if (!postPool_) return;
     const VkImageView lut = lutView_ ? lutView_ : postSrcView_;
-    const VkImageView views[4][3] = {{postSrcView_, glowView_[0], lut},     // down
-                                     {glowView_[0], glowView_[0], lut},     // blur H: A -> B
-                                     {glowView_[1], glowView_[0], lut},     // blur V: B -> A
-                                     {postSrcView_, glowView_[0], lut}};    // final
-    for (int s = 0; s < 4; ++s)
-        for (uint32_t k = 0; k < 3; ++k) {
-            VkDescriptorImageInfo ii{postSampler_, views[s][k], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkImageView occ = aoOk_ ? aoView_[0] : postSrcView_;
+    const VkImageView dep = aoOk_ ? depthRead_ : postSrcView_;
+    const VkImageView occ1 = aoOk_ ? aoView_[1] : postSrcView_;
+    const VkImageView zv = aoOk_ ? zView_ : postSrcView_;
+    const VkImageView views[8][4] = {{postSrcView_, glowView_[0], lut, occ},     // down
+                                     {glowView_[0], glowView_[0], lut, occ},     // blur H: A -> B
+                                     {glowView_[1], glowView_[0], lut, occ},     // blur V: B -> A
+                                     {postSrcView_, glowView_[0], lut, occ},     // final
+                                     {dep, postSrcView_, zv, postSrcView_},      // AO -> 0
+                                     {dep, occ, zv, postSrcView_},               // AO blur H: 0 -> 1
+                                     {dep, occ1, zv, postSrcView_},              // AO blur V: 1 -> 0
+                                     {dep, postSrcView_, lut, postSrcView_}};    // AO depth -> z
+    for (int s = 0; s < 8; ++s)
+        for (uint32_t k = 0; k < 4; ++k) {
+            const bool depth = aoOk_ && s >= 4 && k == 0;
+            VkDescriptorImageInfo ii{postSampler_, views[s][k],
+                                     depth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                           : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
             wr.dstSet = postDs_[s]; wr.dstBinding = k; wr.descriptorCount = 1;
             wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
@@ -2192,6 +2311,26 @@ void VulkanRenderer::killPost() {
     if (postPool_) vkDestroyDescriptorPool(dev_, postPool_, nullptr);
     if (postDsl_) vkDestroyDescriptorSetLayout(dev_, postDsl_, nullptr);
     if (finalFb_) vkDestroyFramebuffer(dev_, finalFb_, nullptr);
+    if (aoPipe_) vkDestroyPipeline(dev_, aoPipe_, nullptr);
+    if (aoPass_) vkDestroyRenderPass(dev_, aoPass_, nullptr);
+    if (zPipe_) vkDestroyPipeline(dev_, zPipe_, nullptr);
+    if (zPass_) vkDestroyRenderPass(dev_, zPass_, nullptr);
+    if (zFb_) vkDestroyFramebuffer(dev_, zFb_, nullptr);
+    if (zView_) vkDestroyImageView(dev_, zView_, nullptr);
+    if (zImg_) vkDestroyImage(dev_, zImg_, nullptr);
+    if (zMem_) freeDeviceMemory(zMem_);
+    aoPipe_ = VK_NULL_HANDLE; aoPass_ = VK_NULL_HANDLE;
+    zPipe_ = VK_NULL_HANDLE; zPass_ = VK_NULL_HANDLE; zFb_ = VK_NULL_HANDLE;
+    zView_ = VK_NULL_HANDLE; zImg_ = VK_NULL_HANDLE; zMem_ = VK_NULL_HANDLE;
+    for (int k = 0; k < 2; ++k) {
+        if (aoFb_[k]) vkDestroyFramebuffer(dev_, aoFb_[k], nullptr);
+        if (aoView_[k]) vkDestroyImageView(dev_, aoView_[k], nullptr);
+        if (aoImg_[k]) vkDestroyImage(dev_, aoImg_[k], nullptr);
+        if (aoMem_[k]) freeDeviceMemory(aoMem_[k]);
+        aoFb_[k] = VK_NULL_HANDLE; aoView_[k] = VK_NULL_HANDLE;
+        aoImg_[k] = VK_NULL_HANDLE; aoMem_[k] = VK_NULL_HANDLE;
+    }
+    aoW_ = aoH_ = 0;
     for (int k = 0; k < 2; ++k) {
         if (glowFb_[k]) vkDestroyFramebuffer(dev_, glowFb_[k], nullptr);
         if (glowView_[k]) vkDestroyImageView(dev_, glowView_[k], nullptr);
@@ -2321,7 +2460,7 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &ds, 0, nullptr);
         const PostPush p{{1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h)},
                          {1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH)},
-                         {dx, dy}, bloom_, mode, lutN_ > 1 ? lutN_ : 0};
+                         {dx, dy}, bloom_, mode, lutN_ > 1 ? lutN_ : 0, aoOk_ ? 1 : 0};
         vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof p, &p);
         vkCmdDraw(cb, 3, 1, 0, 0);
         vkCmdEndRenderPass(cb);
@@ -2337,6 +2476,51 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         // the final pass's glow binding must still be an image in SHADER_READ
         barrier(glowImg_[0], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 0, R, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, FRAG);
+    }
+    // THE AMBIENT OCCLUSION: the depth to its read-only layout (the next
+    // frame's pass starts it from UNDEFINED), then AO, blur, blur
+    if (aoOk_) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = depth_; b.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+        b.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT; b.dstAccessMask = R;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             FRAG, 0, 0, nullptr, 0, nullptr, 1, &b);
+        const float nearP = omk::kNearCut, farP = 200000.0f;   // `pushView`'s
+        // k: the occlusion image written, or -1 the half-size view z
+        const auto ao = [&](int k, VkDescriptorSet ds, int mode) {
+            VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            bi.renderPass = k < 0 ? zPass_ : aoPass_; bi.framebuffer = k < 0 ? zFb_ : aoFb_[k];
+            bi.renderArea = {{0, 0}, {static_cast<uint32_t>(aoW_), static_cast<uint32_t>(aoH_)}};
+            vkCmdBeginRenderPass(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, k < 0 ? zPipe_ : aoPipe_);
+            const VkViewport vp{0, 0, static_cast<float>(aoW_), static_cast<float>(aoH_), 0.0f, 1.0f};
+            const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(aoW_), static_cast<uint32_t>(aoH_)}};
+            vkCmdSetViewport(cb, 0, 1, &vp);
+            vkCmdSetScissor(cb, 0, 1, &sc);
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &ds, 0, nullptr);
+            AoPush p{};
+            for (int i = 0; i < 4; ++i) p.view[i] = aoView4_[i];
+            p.depth[0] = farP / (farP - nearP);
+            p.depth[1] = -farP * nearP / (farP - nearP);
+            p.depth[2] = fog_ ? fogStart_ : 0.0f;
+            p.depth[3] = fog_ ? fogEnd_ : 0.0f;
+            p.radius = kAoRadius; p.strength = ao_; p.mode = mode;
+            p.srcInv[0] = 1.0f / static_cast<float>(aoW_); p.srcInv[1] = 1.0f / static_cast<float>(aoH_);
+            vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof p, &p);
+            vkCmdDraw(cb, 3, 1, 0, 0);
+            vkCmdEndRenderPass(cb);
+        };
+        ao(-1, postDs_[7], 3);
+        barrier(zImg_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+        ao(0, postDs_[4], 0);
+        barrier(aoImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+        ao(1, postDs_[5], 1);
+        barrier(aoImg_[1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
+        ao(0, postDs_[6], 2);
+        barrier(aoImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
     }
     barrier(colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_ACCESS_TRANSFER_READ_BIT, W, XFER, OUT);
@@ -2949,6 +3133,16 @@ void VulkanRenderer::begin(const omk::View& view) {
     for (int i = 0; i < 3; ++i)
         clearColour_[i] = static_cast<float>(view.clearColour[i]) / 255.0f;
     pushView(view);
+    // the ambient occlusion's camera: the last pass begun is the frame's own
+    if (aoOk_) {
+        omk::RCamera c = view.cam;
+        c.w = view.letterboxed() ? view.vw : w_;
+        c.h = view.letterboxed() ? view.vh : h_;
+        float s3[3], u3[3], f3[3], tH = 1.0f, tV = 1.0f;
+        omk::cameraBasis(c, s3, u3, f3, tH, tV);
+        aoView4_[0] = tH; aoView4_[1] = tV;
+        aoView4_[2] = static_cast<float>(c.w * ss_); aoView4_[3] = static_cast<float>(c.h * ss_);
+    }
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
     dither_ = view.dither;
@@ -3390,7 +3584,7 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
-    if (bloom_ > 0.0f || lutN_ > 1) recordPost(cb_);
+    if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) recordPost(cb_);
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -3557,6 +3751,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (msColourView_) vkDestroyImageView(dev_, msColourView_, nullptr);
     if (msColour_) vkDestroyImage(dev_, msColour_, nullptr);
     if (msColourMem_) freeDeviceMemory(msColourMem_);
+    if (depthRead_) vkDestroyImageView(dev_, depthRead_, nullptr);
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);
     if (depthMem_) freeDeviceMemory(depthMem_);

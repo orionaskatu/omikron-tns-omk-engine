@@ -303,6 +303,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --fx-light S     REMASTER, off by default: the set's flames and glows light\n"
 "                   the bodies near them, strength S (0..4); Vulkan and GLES\n"
 "                   only; [Remaster] fxlight=S\n"
+"  --ao S           REMASTER, off by default: ambient occlusion at contacts, from\n"
+"                   the frame's depth, strength S (0..4); Vulkan only;\n"
+"                   [Remaster] ao=S\n"
 "  --relief S       REMASTER, off by default: the textures' relief under the\n"
 "                   emitters' lights, strength S (0..4); Vulkan only;\n"
 "                   [Remaster] relief=S\n"
@@ -543,6 +546,13 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
         else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--ao" && i + 1 < argc) {
+            aoFlag = static_cast<float>(std::atof(argv[++i]));
+            if (aoFlag < 0.0f || aoFlag > 4.0f) {
+                std::fprintf(stderr, "--ao %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--relief" && i + 1 < argc) {
             reliefFlag = static_cast<float>(std::atof(argv[++i]));
             if (reliefFlag < 0.0f || reliefFlag > 4.0f) {

@@ -749,6 +749,32 @@ pack's maps (DeepBump and the like, the plan above) at all.
   and mortar, not of a lit window); whether generated maps are worth it
   after this; GLES.
 
+## Step 3, A4 - the ambient occlusion: as built (2026-10-21)
+
+The reader's "continue" after B3; confirmed in play at 2 ("commit, push").
+
+* `[Remaster] ao = S` / `--ao S`, 0..4, **0 by default and not in the
+  `--remaster` preset** (the reader played it at 2 and named no strength).
+  Vulkan only; GLES has none.
+* The frame's DEPTH, kept only when asked: `makeTarget` makes it SAMPLED and
+  STORED under `aoOk_` (the format's sampling checked), with a depth-aspect
+  view. In the post pass (`recordPost`, run when bloom, grade or AO is on):
+  `ao.frag` mode 3 reduces it to a HALF-size view z (R32F; sample 0 of the
+  multisampled depth - `-DOMK_MS`, a second module), mode 0 the occlusion
+  (8 samples on a disk of 60 game units, at most 4% of the picture's width,
+  the Alchemy estimator, faded past 80 m and by the game's own FOG), modes
+  1 and 2 two blurs weighted by depth; `post.frag`'s final step MULTIPLIES
+  the frame by it, not on a light map's texels (the bloom's alpha).
+* Contact only: the sets' vertex colours hold the painted occlusion. At 4 a
+  dark halo spreads round the feet; a character standing ~30 cm from a wall
+  darkens from 1 up (physically right - "characters cast but never receive"
+  is offered, not built).
+* Cost (M3 loaded, 4K Qalisar, preset + `--enhance-all`): 44.7 fps off, 40.3
+  at 2 (2.4 ms). The first cut read the 4K multisampled depth 17 times a
+  pixel: 31 fps; keeping the depth alone costs nothing (45).
+* Off: byte-identical to `7ac3b75f` (12 of 12). `verify.py: engine: ao`,
+  shown to fail two ways.
+
 ## Step 1, as built (2026-10-20) - the texture pack
 
 **What it is.** `[Remaster] texturepack = DIR` or `--texture-pack DIR` on

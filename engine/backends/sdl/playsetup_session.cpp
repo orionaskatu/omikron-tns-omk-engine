@@ -235,6 +235,13 @@ int PlayState::setupSession() {
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
                : !preset.empty() ? 1.0f : 0.0f;
+        // the AMBIENT OCCLUSION: its flag, its key - not in the preset until
+        // the reader has seen it
+        aoStrength = aoFlag >= 0.0f ? aoFlag
+                   : settings.aoSource == omk::Settings::Source::Ini ? settings.ao : 0.0f;
+        if (aoStrength > 0.0f)
+            std::printf("ao: %.2f - a REMASTER feature: ambient occlusion at contacts, from the frame's depth, "
+                        "drawn by Vulkan only\n", static_cast<double>(aoStrength));
         if (relief > 0.0f)
             std::printf("relief: %.2f - a REMASTER feature: the textures' brightness read as height under the "
                         "emitters' lights, drawn by Vulkan only\n", static_cast<double>(relief));

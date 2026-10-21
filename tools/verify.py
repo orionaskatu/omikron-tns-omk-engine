@@ -32443,6 +32443,102 @@ def c_engine_relief():
         "or the tiles"
 
 
+def c_engine_ao():
+    r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
+    ao = S` / `--ao S` (0..4), OFF unless named and not in `--remaster DIR`'s
+    preset. Vulkan only.
+
+    Contact shade from the frame's own DEPTH (`ao.frag`): the depth kept and
+    made readable only when asked (`makeTarget`), reduced to a half-size view
+    z, then 8 samples a pixel on a disk of 60 game units (the Alchemy
+    estimator), two blurs weighted by depth, and the final post step
+    MULTIPLYING the frame by it - never on a light map's texels, faded out by
+    the game's own fog. The sets' vertex colours hold the painted occlusion;
+    this only adds contact. NOT A PORT, no oracle (tier 6).
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, not in
+         the preset; the depth SAMPLED and STORED only under `aoOk_`;
+      2. by Anekbah's burner (1780, 0, -7380) with the preset and
+         `--enhance-all` (the MULTISAMPLED depth): `--ao 2` moves more than
+         5000 pixels and brightens none (it only multiplies);
+      3. the same with `--aa 1` (the plain depth, the other shader module).
+
+    Measured once, outside the check (2026-10-21, M3, loaded): 4K Qalisar
+    with the preset and `--enhance-all`, 44.7 fps off, 40.3 at 2 (2.4 ms);
+    the first cut read the 4K multisampled depth 17 times a pixel - 31 fps -
+    and keeping the depth alone cost nothing (45). Off: byte-identical to
+    `7ac3b75f` on the software reference and Vulkan, plain, `--remaster` and
+    `--enhance-all`, by the burner and in Qalisar (12 of 12).
+
+    Shown to fail (2026-10-21), one at a time: the strength never sent - 0
+    pixels move (part 2 and 3); the occlusion divided in - 9339 pixels
+    brighter.
+
+    NOT CHECKED, judged by eye: the strength and the radius.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("aoStrength = aoFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+ao\s*=\s*0\.0f;", sh)),
+              'kRemaster, "ao"' in sc and 'kEnhancements, "ao"' not in sc,
+              "ao" not in re.findall(r"take\w*\(s\.(\w+)", max_body),
+              "preset" not in pre,
+              "VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u)" in vk,
+              "att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;" in vk)
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack"
+    tmp = tempfile.mkdtemp()
+    play = os.path.join(eng, "build", "omk-play")
+    lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+    try:
+        def run(name, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
+                    "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
+            rr = subprocess.run([play] + args, capture_output=True, text=True,
+                                env=dict(os.environ, SDL_VIDEODRIVER="dummy"), timeout=240)
+            if not os.path.exists(out):
+                return None, rr.stdout
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), rr.stdout
+        res = []
+        for label, extra in (("multisampled", ()), ("plain", ("--aa", "1"))):
+            off, _ = run("off" + label, "--ao", "0", *extra)
+            on, log = run("on" + label, "--ao", "2", *extra)
+            if off is None or on is None:
+                res.append(("no frame",)); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            brighter = sum(1 for x, y in zip(off, on) if lum(y) > lum(x) + 2)
+            ms = "from the multisampled depth" in log
+            print(f"        {label}: --ao 2 moves {moved} pixels, {brighter} brighter; multisampled {ms}")
+            res.append((moved > 5000, brighter, ms))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = [(True, 0, True), (True, 0, False)]
+    want = [w if len(r) == 3 else r for w, r in zip(want, res)]
+    return (src_ok, *res), ((True,) * 6, *want), \
+        "the source (off by default, [Remaster] only, never all = max, not the preset, the depth kept only " \
+        "when asked); by Anekbah's burner --ao 2 shades the frame and brightens nothing, from the " \
+        "multisampled depth and the plain one"
+
+
 def c_engine_text_scaling():
     r"""TEXT SCALING - the enhancement, and the original it leaves alone.
 
@@ -49200,6 +49296,7 @@ SLOW = [
     ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
     ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
+    ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

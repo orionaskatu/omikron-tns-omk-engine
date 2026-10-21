@@ -9,7 +9,9 @@
 //   mode 1  BLUR:  21 taps along `dir`, a Gaussian of sigma 4 quarter-texels
 //   mode 2  FINAL: `src` with the glow SCREEN-blended over it (`1 - (1 - c)
 //           (1 - g * strength)`), then the GRADE: a 3D LUT stored as an
-//           N*N x N strip (blue slices side by side), looked up trilinearly
+//           N*N x N strip (blue slices side by side), looked up trilinearly;
+//           and before both, the AMBIENT OCCLUSION (`ao.frag`, the remaster's
+//           A4) multiplied in where `ao` says - not on a light map's texels
 //
 // The figures are the previews' the reader chose (2026-10-20).
 layout(push_constant) uniform Push {
@@ -19,11 +21,13 @@ layout(push_constant) uniform Push {
     float strength;   // the bloom's, 0 off
     int   mode;
     int   lutSize;    // the grade's N, 0 off
+    int   ao;         // 1: binding 3 holds the half-size occlusion
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1) uniform sampler2D glow;
 layout(set = 0, binding = 2) uniform sampler2D lut;
+layout(set = 0, binding = 3) uniform sampler2D occlusion;
 layout(location = 0) out vec4 outColour;
 
 vec3 graded(vec3 c) {
@@ -60,7 +64,10 @@ void main() {
         }
         outColour = vec4(acc / wsum, 1.0);
     } else {
-        vec3 c = texture(src, uv).rgb;
+        vec4 s0 = texture(src, uv);
+        vec3 c = s0.rgb;
+        // a glowing texel (its light map, the alpha with the bloom on) is not occluded
+        if (pc.ao != 0) c *= mix(texture(occlusion, uv).r, 1.0, pc.strength > 0.0 ? s0.a : 0.0);
         if (pc.strength > 0.0) {
             vec3 g = min(texture(glow, uv).rgb * pc.strength, vec3(1.0));
             c = 1.0 - (1.0 - c) * (1.0 - g);

@@ -36,6 +36,7 @@ void PlayState::gpuOpenWindow() {
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
             if (bloomStrength > 0.0f) vkr->setBloom(bloomStrength);   // the remaster's
+            if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);
             if (waterStrength > 0.0f) vkr->setWater(waterStrength);
             if (bodyLight > 0.0f) vkr->setBodyTint(true);
             if (fxLight > 0.0f) vkr->setEmitterLights(true);
@@ -70,6 +71,7 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
         if (wv && bloomStrength > 0.0f) wv->setBloom(bloomStrength);
+        if (wv && aoStrength > 0.0f) wv->setAmbientOcclusion(aoStrength);
         if (wv && waterStrength > 0.0f) wv->setWater(waterStrength);
         if (wv && bodyLight > 0.0f) wv->setBodyTint(true);
         if (wv && fxLight > 0.0f) wv->setEmitterLights(true);

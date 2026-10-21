@@ -240,6 +240,10 @@ struct Settings {
     // the emitters' point lights (`View::relief`), S its strength, 0 off.
     float  relief = 0.0f;
     Source reliefSource = Source::Default;
+    // `ao = S`: the AMBIENT OCCLUSION at contacts, from the frame's depth
+    // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
+    float  ao = 0.0f;
+    Source aoSource = Source::Default;
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

@@ -124,7 +124,8 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/sh
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc \
-              build/shaders/post.frag.inc
+              build/shaders/post.frag.inc \
+              build/shaders/ao.frag.inc build/shaders/ao_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
@@ -135,6 +136,11 @@ build/shaders/%.inc: backends/vulkan/shaders/%
 build/shaders/scene_tiled.frag.inc: backends/vulkan/shaders/scene.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -mfmt=c -DOMK_TILED -fshader-stage=frag -o $@ $<
+
+# the ambient occlusion's again, for a MULTISAMPLED depth (`--aa`)
+build/shaders/ao_ms.frag.inc: backends/vulkan/shaders/ao.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_MS -fshader-stage=frag -o $@ $<
 
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,

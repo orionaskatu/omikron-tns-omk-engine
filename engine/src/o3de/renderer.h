@@ -485,6 +485,9 @@ public:
     // reference draws what the original drew, GL1 and the 3DS have no pass.
     // The BLOOM: a glow from the texture pack's light maps, `strength` 0 off.
     virtual bool setBloom(float /*strength*/) { return false; }
+    // The AMBIENT OCCLUSION (`todo/remaster.md` A4): contact shade from the
+    // frame's depth, `strength` 0 off - before `init`, as it keeps the depth.
+    virtual bool setAmbientOcclusion(float /*strength*/) { return false; }
     // The GRADE: a 3D colour LUT of n^3 RGB entries 0..1, red fastest (a
     // .cube file's order); null or n < 2 off. The viewer picks it per city.
     virtual bool setGrade(const float* /*rgb*/, int /*n*/) { return false; }

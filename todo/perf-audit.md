@@ -149,6 +149,28 @@ step (GPU timestamps per pass), in `todo/remaster.md` (A3 continued, "OPEN
 BUG"). Measure only with no other viewer running: a game left open beside a
 measurement voided two rounds of it.
 
+### 0b. DONE (2026-10-21): the interface at 4K - 8.9 -> 18.4 fps with a menu open
+
+The reader's play test: the inventory at ~22 fps at 4K; the start menu
+measured worse - "screen draw" 77 ms a frame, the whole frame 112 (M3,
+`--remaster --enhance-all`, screen 31 by `--keys 1`). A `sample` named two
+costs, both now cut with every pixel the same (8 of 8 menu frames
+byte-identical to `1f3ff2fa`: software, Vulkan, GLES, 1280x960 and 4K):
+
+* `blt`'s scaled rows on the thread pool (`ui/surface.cpp` `rows`): each row
+  alone, writing only itself - a blit of a quarter of a 640x480 frame and up;
+  the column tables passed BY REFERENCE (a `thread_local` name inside a
+  worker's row is that worker's empty copy).
+* `fillQuad` (`ui/screendraw.cpp`, the screens' translucent fill and the
+  full-screen dim): the overlay planes looked up once, and a big fill's blend
+  taken from a TABLE of all 65536 565 colours made by the same integer
+  arithmetic, kept while colour and alpha are the same.
+
+"screen draw" 77 -> 25.5 ms, the frame 112 -> 54.5. Left: the world still
+drawn and read back behind a full-sheet screen (~26 ms) - a sheet may have
+keyed holes, so skipping it wants a proof that none shows; the many small
+blits (glyphs, tiles) run serially.
+
 ### A. Before writing any code: run what is built
 
 1. **One device session per target on HEAD.** It costs a run and changes no

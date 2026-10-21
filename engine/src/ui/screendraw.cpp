@@ -10,6 +10,7 @@
 #include "o3de/vecmath.h"
 
 #include <algorithm>
+#include <vector>
 #include <cstdio>
 #include <cmath>
 
@@ -121,11 +122,35 @@ void fillQuad(Surface& fb, int x0, int y0, int x1, int y1,
     x1 = std::min(fb.w, x1); y1 = std::min(fb.h, y1);
     const int keep = alpha;              // dst weight
     const int add  = 255 - alpha;        // src weight
+    const auto blend = [&](std::uint16_t d) {
+        const int dr = ((d >> 11) & 31) * 255 / 31;
+        const int dg = ((d >> 5) & 63) * 255 / 63;
+        const int db = (d & 31) * 255 / 31;
+        const int nr = (r * add + dr * keep) / 255;
+        const int ng = (g * add + dg * keep) / 255;
+        const int nb = (b * add + db * keep) / 255;
+        return static_cast<std::uint16_t>(((nr * 31 / 255) << 11) | ((ng * 63 / 255) << 5) | (nb * 31 / 255));
+    };
+    // A BIG fill (the full-screen dim: 8.3 million pixels at 4K, ten integer
+    // divisions each) takes the blend from a TABLE of all 65536 colours, made
+    // by the same arithmetic - the same pixels, byte for byte - and kept while
+    // the colour and the alpha are the same (they are, frame after frame)
+    thread_local std::vector<std::uint16_t> lut;
+    thread_local int lutKey = -1;
+    const bool useLut = static_cast<long>(x1 - x0) * (y1 - y0) >= 65536;
+    if (useLut) {
+        const int key = ((r & 255) << 24) | ((g & 255) << 16) | ((b & 255) << 8) | (alpha & 255);
+        if (key != lutKey || lut.size() != 65536) {
+            lut.resize(65536);
+            for (int c = 0; c < 65536; ++c) lut[static_cast<std::size_t>(c)] = blend(static_cast<std::uint16_t>(c));
+            lutKey = key;
+        }
+    }
+    OverlayPlanes& ov = overlayPlanes();
     for (int y = y0; y < y1; ++y) {
         for (int x = x0; x < x1; ++x) {
             // on an overlay frame's KEY pixel the blend runs on the side
             // planes (`ui/overlay.h`): the law on C, its dst weight on M
-            OverlayPlanes& ov = overlayPlanes();
             const std::size_t ovI = static_cast<std::size_t>(y) * fb.w + x;
             const bool ovKey = ov.on && fb.px[ovI] == kOverlayKey;
             if (ovKey) {
@@ -133,15 +158,7 @@ void fillQuad(Surface& fb, int x0, int y0, int x1, int y1,
                 ov.m[ovI] = static_cast<std::uint8_t>(ov.m[ovI] * keep / 255);
             }
             std::uint16_t& d = ovKey ? ov.c[ovI] : fb.px[ovI];
-            const int dr = ((d >> 11) & 31) * 255 / 31;
-            const int dg = ((d >> 5) & 63) * 255 / 63;
-            const int db = (d & 31) * 255 / 31;
-            const int nr = (r * add + dr * keep) / 255;
-            const int ng = (g * add + dg * keep) / 255;
-            const int nb = (b * add + db * keep) / 255;
-            d = static_cast<std::uint16_t>(((nr * 31 / 255) << 11) |
-                                           ((ng * 63 / 255) << 5) |
-                                            (nb * 31 / 255));
+            d = useLut ? lut[d] : blend(d);
         }
     }
 }

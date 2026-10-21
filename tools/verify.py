@@ -32575,8 +32575,8 @@ def c_engine_relief():
 
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
-    ao = S` / `--ao S` (0..4), OFF unless named and not in `--remaster DIR`'s
-    preset. Vulkan only.
+    ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
+    (the reader's, 2026-10-21, after confirming it in play at 2). Vulkan only.
 
     Contact shade from the frame's own DEPTH (`ao.frag`): the depth kept and
     made readable only when asked (`makeTarget`), reduced to a half-size view
@@ -32587,8 +32587,8 @@ def c_engine_ao():
     this only adds contact. NOT A PORT, no oracle (tier 6).
 
     Parts:
-      1. the source: 0 by default, [Remaster] only, never `all = max`, not in
-         the preset; the depth SAMPLED and STORED only under `aoOk_`;
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 2; the depth SAMPLED and STORED only under `aoOk_`;
       2. by Anekbah's burner (1780, 0, -7380) with the preset and
          `--enhance-all` (the MULTISAMPLED depth): `--ao 2` moves more than
          5000 pixels and brightens none (it only multiplies);
@@ -32623,7 +32623,7 @@ def c_engine_ao():
     src_ok = (bool(re.search(r"float\s+ao\s*=\s*0\.0f;", sh)),
               'kRemaster, "ao"' in sc and 'kEnhancements, "ao"' not in sc,
               "ao" not in re.findall(r"take\w*\(s\.(\w+)", max_body),
-              "preset" not in pre,
+              "!preset.empty() ? 2.0f : 0.0f;" in pre,
               "VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u)" in vk,
               "att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;" in vk)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
@@ -32664,7 +32664,7 @@ def c_engine_ao():
     want = [(True, 0, True), (True, 0, False)]
     want = [w if len(r) == 3 else r for w, r in zip(want, res)]
     return (src_ok, *res), ((True,) * 6, *want), \
-        "the source (off by default, [Remaster] only, never all = max, not the preset, the depth kept only " \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 2, the depth kept only " \
         "when asked); by Anekbah's burner --ao 2 shades the frame and brightens nothing, from the " \
         "multisampled depth and the plain one"
 

@@ -816,8 +816,9 @@ brightness elsewhere). **The preset's relief 1 -> 2** - the reader's
 
 The reader's "continue" after B3; confirmed in play at 2 ("commit, push").
 
-* `[Remaster] ao = S` / `--ao S`, 0..4, **0 by default and not in the
-  `--remaster` preset** (the reader played it at 2 and named no strength).
+* `[Remaster] ao = S` / `--ao S`, 0..4, **0 by default**; the `--remaster`
+  preset's **2** since 2026-10-21 (the reader's "add ao 2 to the preset" -
+  first left out, the reader having played it at 2 and named no strength).
   Vulkan only; GLES has none.
 * The frame's DEPTH, kept only when asked: `makeTarget` makes it SAMPLED and
   STORED under `aoOk_` (the format's sampling checked), with a depth-aspect

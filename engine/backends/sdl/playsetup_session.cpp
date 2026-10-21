@@ -193,14 +193,15 @@ int PlayState::setupSession() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
                         waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.6",
                         bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : "1",
                         fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2");
+                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2",
+                        aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -236,10 +237,12 @@ int PlayState::setupSession() {
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
                : !preset.empty() ? 2.0f : 0.0f;
-        // the AMBIENT OCCLUSION: its flag, its key - not in the preset until
-        // the reader has seen it
+        // the AMBIENT OCCLUSION: its flag, its key, the preset's 2 (the
+        // reader's, 2026-10-21: confirmed in play at 2, then "add ao 2 to the
+        // preset")
         aoStrength = aoFlag >= 0.0f ? aoFlag
-                   : settings.aoSource == omk::Settings::Source::Ini ? settings.ao : 0.0f;
+                   : settings.aoSource == omk::Settings::Source::Ini ? settings.ao
+                   : !preset.empty() ? 2.0f : 0.0f;
         if (aoStrength > 0.0f)
             std::printf("ao: %.2f - a REMASTER feature: ambient occlusion at contacts, from the frame's depth, "
                         "drawn by Vulkan only\n", static_cast<double>(aoStrength));

@@ -55,9 +55,8 @@ std::vector<Light3do> emitterLights(const ParticleField& f,
         c[0] *= (static_cast<float>((c0 >> 16) & 255) + static_cast<float>((c1 >> 16) & 255)) / 510.0f;
         c[1] *= (static_cast<float>((c0 >> 8) & 255) + static_cast<float>((c1 >> 8) & 255)) / 510.0f;
         c[2] *= (static_cast<float>(c0 & 255) + static_cast<float>(c1 & 255)) / 510.0f;
-        const float hi = std::max({c[0], c[1], c[2]}), lo = std::min({c[0], c[1], c[2]});
+        const float hi = std::max({c[0], c[1], c[2]});
         const bool glow = additive && fx.life <= 2.0f;
-        (void)lo;
         const bool flame = additive && !glow && hi > 0.0f && spriteSat >= kFlameSaturation;
         if (!glow && !flame) {
             if (count) ++count->dark;
@@ -138,6 +137,26 @@ bool SurfaceCuration::covers(const std::string& set) const {
     return opened_ && (sets_.count(upperOf(set)) || sets_.count("*"));
 }
 
+const SurfaceCuration::Entry* SurfaceCuration::Lists::at(float u, float v) const {
+    for (const std::vector<Entry>* l : {first, second})
+        if (l)
+            for (const Entry& e : *l)
+                if (!e.hasRect || (u >= e.u0 && u < e.u1 && v >= e.v0 && v < e.v1)) return &e;
+    return nullptr;
+}
+
+SurfaceCuration::Lists SurfaceCuration::listsAny(const std::string& texture) const {
+    const auto it = byTexture_.find(upperOf(texture));
+    return {it != byTexture_.end() ? &it->second : nullptr, nullptr};
+}
+
+SurfaceCuration::Lists SurfaceCuration::listsFor(const std::string& set, const std::string& texture) const {
+    const std::string t = upperOf(texture);
+    const auto a = entries_.find(upperOf(set) + " " + t);
+    const auto b = entries_.find("* " + t);
+    return {a != entries_.end() ? &a->second : nullptr, b != entries_.end() ? &b->second : nullptr};
+}
+
 const SurfaceCuration::Entry* SurfaceCuration::findAny(const std::string& texture, float u, float v) const {
     const auto it = byTexture_.find(upperOf(texture));
     if (it == byTexture_.end()) return nullptr;
@@ -153,6 +172,7 @@ bool SurfaceCuration::namesAny(const std::string& texture) const {
 void curateBloom(const Texture& t, PackImage& pk) {
     const SurfaceCuration& cur = surfaceCuration();
     if (!cur.active() || !t.hasPixels() || !cur.namesAny(t.name)) return;
+    const SurfaceCuration::Lists lists = cur.listsAny(t.name);
     if (pk.emissive.empty()) {
         pk.ew = t.width; pk.eh = t.height;
         pk.emissive.assign(static_cast<std::size_t>(pk.ew) * pk.eh, 0);
@@ -163,7 +183,7 @@ void curateBloom(const Texture& t, PackImage& pk) {
             // replacement's where there is one)
             const float u = (static_cast<float>(x) + 0.5f) * static_cast<float>(t.width) / static_cast<float>(pk.ew);
             const float v = (static_cast<float>(y) + 0.5f) * static_cast<float>(t.height) / static_cast<float>(pk.eh);
-            const SurfaceCuration::Entry* e = cur.findAny(t.name, u, v);
+            const SurfaceCuration::Entry* e = lists.at(u, v);
             if (!e) continue;
             float rgb[3];
             if (pk.ok && pk.w > 0 && pk.h > 0) {
@@ -240,6 +260,7 @@ std::vector<Light3do> surfaceLights(const Geometry& g, std::span<const Texture> 
         const bool lightMap = !pk.emissive.empty() && pk.ew > 0 && pk.eh > 0;   // else the neon rule alone
         // THE LIST, where given: a texture it does not name casts nothing
         const bool named = curated && cur->names(set, t.name);
+        const SurfaceCuration::Lists lists = named ? cur->listsFor(set, t.name) : SurfaceCuration::Lists{};
         if (curated && !named && !stats) continue;
         // a texel's light and colour at a UV in the ORIGINAL's texels, wrapped
         const auto at = [&](float u, float v, float rgb[3], float& neonPart) {
@@ -320,7 +341,7 @@ std::vector<Light3do> surfaceLights(const Geometry& g, std::span<const Texture> 
                     if (named && ek > 0.0f) {
                         const float wu = std::fmod(std::fmod(su, static_cast<float>(t.width)) + static_cast<float>(t.width), static_cast<float>(t.width));
                         const float wv = std::fmod(std::fmod(sv, static_cast<float>(t.height)) + static_cast<float>(t.height), static_cast<float>(t.height));
-                        if (const SurfaceCuration::Entry* ce = cur->find(set, t.name, wu, wv)) {
+                        if (const SurfaceCuration::Entry* ce = lists.at(wu, wv)) {
                             ec += ek;
                             ecGain += ek * ce->gain;
                             if (ce->hasColour) {

@@ -212,6 +212,9 @@ int PlayState::setupSession() {
         bloomStrength = bloomFlag >= 0.0f ? bloomFlag
                       : settings.bloomSource == omk::Settings::Source::Ini ? settings.bloom
                       : !preset.empty() ? 1.6f : 0.0f;   // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
+        // the light maps decoded with the colours only for the bloom (the
+        // surface lights read them on their own)
+        omk::texturePack().setLights(bloomStrength > 0.0f);
         if (bloomStrength > 0.0f)
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",

@@ -33,6 +33,7 @@
 #include "formats/tex3dt.h"
 
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -77,6 +78,10 @@ public:
     // decode the NORMAL MAPS too (the relief's; each another PNG the size of
     // its colour) - off unless asked
     void setNormals(bool on) { wantNormals_ = on; }
+    // decode the LIGHT MAPS with the colours (`colour` true): the bloom's -
+    // on unless the session says no bloom will read them. The light maps
+    // alone (`colour` false, the surface lights') are decoded either way.
+    void setLights(bool on) { wantLights_ = on; }
     const std::string& dir() const { return dir_; }
     // t's replacement, decoded: RGBA8 of w x h. False when the pack has none,
     // or when the file is unusable (not a PNG this reads, not a power-of-two
@@ -90,7 +95,12 @@ public:
     // `colour` false: the LIGHT MAPS alone (and the hook) - the colour PNGs, a
     // texture's 1024x1024, are not decoded. The surface lights' way
     // (`o3de/emitterlight.h`): a set's load had cost ~110 ms more for them.
-    std::vector<PackImage> replacements(std::span<const Texture* const> ts, bool colour = true) const;
+    // `normals` false: none of the normal maps, whatever `setNormals` said -
+    // a backend that draws no relief (GLES).
+    // THREAD-SAFE against itself and `aliasGrey`: a set loads on a
+    // BackgroundJob while the renderer's pool is decoded on the main thread.
+    std::vector<PackImage> replacements(std::span<const Texture* const> ts, bool colour = true,
+                                        bool normals = true) const;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the viewer greys a
     // pool's PALETTES, which makes each texture another key. Told which colour
     // texture a grey one came from, the pack answers the grey key with the
@@ -108,6 +118,9 @@ public:
 private:
     LightHook lightHook_ = nullptr;
     bool wantNormals_ = false;
+    bool wantLights_ = true;
+    // guards `refused_` and `greyOf_`, the two the callers' threads touch
+    mutable std::mutex m_;
     std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`
     std::string dir_;
     bool opened_ = false;

@@ -66,6 +66,18 @@ def _play_text(eng):
                                      _g.glob(os.path.join(eng, "backends", "sdl", "*.h"))))
 
 
+# What a check may answer IN PLACE of a backend's result: only a backend it
+# could not try at all - not on this platform, its toolchain or the pack
+# absent. A run that was tried and failed ("no frame", "no vulkan device",
+# "no gl context") is NOT one: compared with itself it passed, and a crashed
+# viewer turned the remaster checks green (the review of 2026-10-21).
+_SKIP_ANSWERS = {("skipped",), ("no vulkan",), ("no gles_probe",)}
+
+
+def _or_skip(got, want):
+    return got if got in _SKIP_ANSWERS else want
+
+
 def _viewer_args(args):
     if not isinstance(args, (list, tuple)) or not args:
         return args
@@ -31523,7 +31535,7 @@ def c_engine_texture_pack():
     tmp = tempfile.mkdtemp()
     try:
         # ---- 2. the keys
-        r = subprocess.run([tool, "keys", fr], capture_output=True, text=True)
+        r = subprocess.run([tool, "keys", fr], capture_output=True, text=True, timeout=300)
         rows = [ln.split() for ln in r.stdout.splitlines()]
         agree = differ = 0
         cache = {}
@@ -31596,7 +31608,7 @@ def c_engine_texture_pack():
                 p = os.path.join(tmp, "t.png")
                 png(p, w, h, ctype, rows_px, filt, level, plte, trns)
                 out = os.path.join(tmp, "t.raw")
-                rr = subprocess.run([tool, "png", p, out], capture_output=True, text=True)
+                rr = subprocess.run([tool, "png", p, out], capture_output=True, text=True, timeout=300)
                 cases += 1
                 if rr.returncode == 0:
                     raw = open(out, "rb").read()
@@ -31604,7 +31616,7 @@ def c_engine_texture_pack():
         bad = os.path.join(tmp, "bad.png")
         png(bad, 8, 8, 2, [bytes(24)] * 8, [0], 6, bad_adler=True)
         refused = subprocess.run([tool, "png", bad, os.path.join(tmp, "b.raw")],
-                                 capture_output=True, text=True).returncode != 0
+                                 capture_output=True, text=True, timeout=300).returncode != 0
         # ...and ON THE POOL, first use included: a fixed-code stream decoded 64
         # times at once in each of 20 fresh processes, every copy alike
         W2, H2 = 256, 64
@@ -31635,7 +31647,7 @@ def c_engine_texture_pack():
             sys.stdout = so
         near, solid = os.path.join(work, "pack"), os.path.join(work + "-solid", "pack")
         # ---- 6. the greyscale bank through the pack
-        rg = subprocess.run([tool, "grey", near, model], capture_output=True, text=True)
+        rg = subprocess.run([tool, "grey", near, model], capture_output=True, text=True, timeout=300)
         mg = re.search(r"grey: (\d+) textures, (\d+) replaced, (\d+) exact", rg.stdout)
         greyres = tuple(int(v) for v in mg.groups()) if mg else ("no grey line",)
         CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
@@ -31670,7 +31682,7 @@ def c_engine_texture_pack():
         vres = ("no vulkan",)
         if mk.returncode == 0 and os.path.exists(vkbin):
             v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
-                                                      capture_output=True, text=True, env=env))
+                                                      capture_output=True, text=True, env=env, timeout=300))
             vres = v if v is not None else ("no vulkan device",)
         gres = ("skipped",)
         if platform.system() == "Darwin":
@@ -31679,7 +31691,7 @@ def c_engine_texture_pack():
             gres = ("no gles_probe",)
             if mk.returncode == 0 and os.path.exists(gp):
                 g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
-                                                          capture_output=True, text=True, env=env))
+                                                          capture_output=True, text=True, env=env, timeout=300))
                 gres = g if g is not None else ("no gl context",)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -31688,7 +31700,7 @@ def c_engine_texture_pack():
     want_frame = (True, True, 0, True, True)
     return (src_ok, keys, pngs, greyres, vres, gres), \
            ((True,) * 5, (True, 2534, 0), (60, 60, True, 20), (21, 21, 21),
-            vres if len(vres) == 1 else want_frame, gres if len(gres) == 1 else want_frame), \
+            _or_skip(vres, want_frame), _or_skip(gres, want_frame)), \
            "the source (default empty, read under [Remaster] only, never by all = max, both " \
            "backends behind pack.active()); the keys, engine against Python, 2534 of 2534; the " \
            "PNG reader exact on 60 images over every filter and colour type and refusing a bad " \
@@ -31767,9 +31779,12 @@ def c_engine_bloom_and_grade():
               'kRemaster, "bloom"' in sc and 'kRemaster, "grade"' in sc and
               'kEnhancements, "bloom"' not in sc and 'kEnhancements, "grade"' not in sc,
               "bloom" not in max_body and "grade" not in max_body,
-              "if (bloom_ > 0.0f || lutN_ > 1) recordPost(cb_);" in vk and
+              # (Vulkan's post-pass also runs for the AO, `be4a245f`)
+              "if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) recordPost(cb_);" in vk and
               "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
-              "bloomFrag_ = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);" in gl)
+              # the GLES variant over both program sets (the plain one the
+              # fallback, 2026-10-21)
+              "std::string f = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);" in gl)
 
     for target in ("build/texpack_tool",):
         mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
@@ -31781,7 +31796,7 @@ def c_engine_bloom_and_grade():
         # ---- 2. the reader
         cube = os.path.join(tmp, "q.cube")
         omktexpack.write_cube(cube, "neon2", 9)
-        r = subprocess.run([tool, "cube", cube], capture_output=True, text=True).stdout
+        r = subprocess.run([tool, "cube", cube], capture_output=True, text=True, timeout=300).stdout
         m = re.match(r"cube (\d+) first ([\d.]+) ([\d.]+) ([\d.]+) last ([\d.]+) ([\d.]+) ([\d.]+)", r)
         f0 = omktexpack.grade_rgb("neon2", 0, 0, 0); f1 = omktexpack.grade_rgb("neon2", 1, 1, 1)
         read_ok = bool(m) and int(m.group(1)) == 9 and \
@@ -31789,7 +31804,7 @@ def c_engine_bloom_and_grade():
             all(abs(float(m.group(5 + i)) - f1[i]) < 1e-5 for i in range(3))
         bad1 = os.path.join(tmp, "b1.cube"); open(bad1, "w").write("LUT_1D_SIZE 4\n0 0 0\n")
         bad2 = os.path.join(tmp, "b2.cube"); open(bad2, "w").write("LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")
-        refused = all(subprocess.run([tool, "cube", b], capture_output=True, text=True).stdout.startswith("refused")
+        refused = all(subprocess.run([tool, "cube", b], capture_output=True, text=True, timeout=300).stdout.startswith("refused")
                       for b in (bad1, bad2))
         reader = (read_ok, refused)
 
@@ -31844,7 +31859,7 @@ def c_engine_bloom_and_grade():
         vres = ("no vulkan",)
         if mk.returncode == 0 and os.path.exists(vkbin):
             v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
-                                                      capture_output=True, text=True, env=env))
+                                                      capture_output=True, text=True, env=env, timeout=300))
             vres = v if v is not None else ("no vulkan device",)
         gres = ("skipped",)
         if platform.system() == "Darwin":
@@ -31853,14 +31868,14 @@ def c_engine_bloom_and_grade():
             gres = ("no gles_probe",)
             if mk.returncode == 0 and os.path.exists(gp):
                 g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
-                                                          capture_output=True, text=True, env=env))
+                                                          capture_output=True, text=True, env=env, timeout=300))
                 gres = g if g is not None else ("no gl context",)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"        reader {reader}; vulkan {vres}; gles {gres}")
     want = (0, True, True, True, True)
     return (src_ok, reader, vres, gres), \
-           ((True,) * 5, (True, True), vres if len(vres) == 1 else want, gres if len(gres) == 1 else want), \
+           ((True,) * 5, (True, True), _or_skip(vres, want), _or_skip(gres, want)), \
            "the source (both off by default, [Remaster] only, never all = max, the post-pass " \
            "behind its two switches, the GLES variant only with the bloom); the .cube reader; " \
            "on Vulkan and GLES: no light = no change byte for byte, all light brightens and all " \
@@ -31906,7 +31921,7 @@ def c_engine_remaster_preset():
         def run(*extra):
             r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save",
                                 os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--frames", "3",
-                                "--nofmv", "--software"] + list(extra), capture_output=True, text=True, env=env)
+                                "--nofmv", "--software"] + list(extra), capture_output=True, text=True, env=env, timeout=300)
             ev = _events(r.stdout)
             opened = [f["dir"] for n, f in ev if n == "texpack.open"]
             grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
@@ -32002,7 +32017,8 @@ def c_engine_water_reflection():
     src_ok = (bool(re.search(r"float\s+water\s*=\s*0\.0f;", sh)),
               'kRemaster, "water"' in sc and 'kEnhancements, "water"' not in sc,
               "water" not in max_body,
-              "if (waterWant_ > 0.0f) bloomFrag_ = waterVariant(bloomFrag_);" in gl)
+              # (the variants built over both GLES program sets, 2026-10-21)
+              "if (waterWant_ > 0.0f) f = waterVariant(f);" in gl)
     mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     tool = os.path.join(eng, "build", "texpack_tool")
     if mk.returncode != 0 or not os.path.exists(tool):
@@ -32024,8 +32040,9 @@ def c_engine_water_reflection():
                 env["SDL_VIDEODRIVER"] = "dummy"
                 cmd = [binary]
             rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
-                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tmp,
-                                       "--res", "640x480", "--frames", "30", "--dump", out] + list(extra)
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                                       "--res", "640x480", "--frames", "30", "--dump", out,
+                                       "--filter", "nearest"] + list(extra)
                                 + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                                 capture_output=True, text=True, env=env, timeout=240)
             if rr.returncode != 0 or not os.path.exists(out):
@@ -32085,7 +32102,7 @@ def c_engine_water_reflection():
     print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
     want = (True, True, 0, True, True, True)
     return (src_ok, finder, vres, gres, agree), \
-           ((True,) * 4, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+           ((True,) * 4, True, _or_skip(vres, want), _or_skip(gres, want),
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only " \
            "when asked); the plane finder (Jaunpur at 4, Lahoreh at 12, none in Anekbah or the " \
@@ -32206,10 +32223,10 @@ def c_engine_body_light():
                 env["SDL_VIDEODRIVER"] = "dummy"
                 cmd = [binary]
             rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
-                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tmp,
-                                       "--res", "640x480", "--frames", "30", "--dump", out,
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                                       "--res", "640x480", "--frames", "30", "--dump", out, "--filter", "nearest",
                                        "--area", "0", "--stand", "1804,0,-6890,336",
-                                       "--remaster", os.path.expanduser("~/Documents/omk/omk-pack"),
+                                       "--remaster", (omkpaths.pack_path() or ""),
                                        "--fx-light", "0"] + list(extra)   # the body light alone
                                 + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                                 capture_output=True, text=True, env=env, timeout=240)
@@ -32218,7 +32235,7 @@ def c_engine_body_light():
             raw = open(out, "rb").read()
             return struct.unpack("<%dH" % (len(raw) // 2), raw)
         res, frames = {}, {}
-        packed = os.path.isdir(os.path.expanduser("~/Documents/omk/omk-pack"))
+        packed = os.path.isdir((omkpaths.pack_path() or ""))
         for kind, binary in (("vulkan", os.path.join(eng, "build", "omk-play")),
                              ("gles", os.path.join(eng, "build", "omk-play-gles"))):
             if not packed or (kind == "gles" and platform.system() != "Darwin"):
@@ -32246,7 +32263,7 @@ def c_engine_body_light():
     vres, gres = res.get("vulkan"), res.get("gles")
     want = (True, True, True, True)
     return (src_ok, values, smooth, vres, gres, agree), \
-           ((True,) * 4, (True,) * 3, True, vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+           ((True,) * 4, (True,) * 3, True, _or_skip(vres, want), _or_skip(gres, want),
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
            "asked, its tint defaulted to 1); the probe's means and tints on Anekbah and Jaunpur; " \
@@ -32326,11 +32343,14 @@ def c_engine_emitter_light():
     src_ok = (bool(re.search(r"float\s+fxLight\s*=\s*0\.0f;", sh)),
               'kRemaster, "fxlight"' in sc and 'kEnhancements, "fxlight"' not in sc,
               "fxLight" not in max_body,
-              "if (pointLit) bloomFrag_ = pointLightVariant(bloomFrag_);" in gl)
+              # (the variants built over both GLES program sets, 2026-10-21:
+              # the point lights over the enhanced one alone)
+              "if (points) f = pointLightVariant(f);" in gl and
+              "bloomFragX_ = fragOf(kSceneFragX, pointLit);" in gl)
     mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
-    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    pack = (omkpaths.pack_path() or "")
     tmp = tempfile.mkdtemp()
     try:
         def run(binary, out, area, stand, *extra):
@@ -32442,9 +32462,9 @@ def c_engine_emitter_light():
     want = (True, True, True)
     return (src_ok, rule, curate, tiles, vres, gres, agree), \
            ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
-            curate if len(curate) == 1 else (True,) * 6,
-            tiles if len(tiles) == 1 else (True,) * 3,
-            vres if len(vres) == 1 else want, gres if len(gres) == 1 else want,
+            _or_skip(curate, (True,) * 6),
+            _or_skip(tiles, (True,) * 3),
+            _or_skip(vres, want), _or_skip(gres, want),
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
            "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
@@ -32525,7 +32545,7 @@ def c_engine_relief():
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
-    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    pack = (omkpaths.pack_path() or "")
     if not os.path.isdir(pack):
         return (src_ok, ("skipped",)), ((True,) * 7, ("skipped",)), "no texture pack"
     tmp = tempfile.mkdtemp()
@@ -32571,6 +32591,81 @@ def c_engine_relief():
         "mode 3 alone, the normal map's binding there); by Anekbah's burner relief 1 moves the frame, and " \
         "nothing without the point lights or the tiles; the pack's normal maps uploaded at relief 1 (where " \
         "it has them) and none at 0"
+
+
+def c_engine_normal_maps():
+    r"""THE GENERATED NORMAL MAPS' TWO TOOLS (`todo/remaster.md` B3,
+    `o3de/normalmap.h`): `texpack_tool normals` and `texpack_tool islands`.
+
+    1. THE GENERATOR on a made-up texture, 256 x 256 (a 64 x 64 original's
+       4x): dark left, bright right - a step at x = 128. Without a coverage
+       the step is a SLOPE (the normal tilts there; brighter is higher, so it
+       leans to -u: R below 128); with a coverage marking a chart BORDER on
+       the step (`.cov` value 2 at the original's column 32) the map is FLAT
+       on the border's texels (columns 128-131) and fades back over 16 texels
+       at 1024 across (4 here), and away from it the two maps are the same.
+    2. ISLANDS over the shipped models: 1253 textures, 664258 faces, 0 of
+       them spanning more than their texture, 48484 regions (2026-10-21) -
+       what the region fade stands on (BATITR09, Qalisar's floor).
+
+    SHOWN TO FAIL (2026-10-21): the fade's `nx *= keep[i]` removed - part 1
+    (the border not flat); the region union never made (`up[root(..)] =`
+    dropped) - part 2's region count.
+    """
+    import subprocess, tempfile, shutil, struct, sys
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build failed",), ("built",), "texpack_tool must build"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    try:
+        W = 256
+        rgba = bytearray()
+        for y in range(W):
+            for x in range(W):
+                v = 60 if x < W // 2 else 200
+                rgba += bytes((v, v, v, 255))
+        png = os.path.join(tmp, "t.png")
+        omktexpack.write_png(png, W, W, bytes(rgba), 4)
+        C = 64
+        cov = bytearray(b"\x01" * (C * C))
+        for y in range(C):
+            cov[y * C + C // 2] = 2
+        cp = os.path.join(tmp, "t.cov")
+        open(cp, "wb").write(struct.pack("<ii", C, C) + bytes(cov))
+        def gen(cov_arg, name):
+            out = os.path.join(tmp, name)
+            r = subprocess.run([tool, "normals", png, out, "-", cov_arg], capture_output=True, text=True, timeout=120)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None
+            b = open(out, "rb").read()
+            return b[8:] if struct.unpack_from("<ii", b, 0) == (W, W) else None
+        plain, faded = gen("-", "p.raw"), gen(cp, "f.raw")
+        if plain is None or faded is None:
+            part1 = ("no map",)
+        else:
+            px = lambda m, x, y: m[(y * W + x) * 4:(y * W + x) * 4 + 3]
+            row = W // 2
+            step_tilts = px(plain, W // 2, row)[0] < 120
+            border_flat = all(abs(px(faded, x, row)[0] - 128) <= 1 and abs(px(faded, x, row)[1] - 128) <= 1
+                              for x in range(W // 2, W // 2 + W // C))   # the border column's texels
+            far_same = all(px(plain, x, row) == px(faded, x, row) for x in (W // 8, 3 * W // 8 - 8, 5 * W // 8 + 8))
+            part1 = (step_tilts, border_flat, far_same)
+        r = subprocess.run([tool, "islands", omkpaths.data_root(), tmp], capture_output=True, text=True, timeout=600)
+        m = re.search(r"@islands textures=(\d+) covered_whole=(\d+) faces=(\d+) tiling_faces=(\d+) "
+                      r"regions=(\d+) border_texels=(\d+)", r.stdout)
+        part2 = tuple(int(m.group(k)) for k in (1, 3, 4, 5)) if m else ("no @islands line",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        generator {part1}; islands {part2}")
+    return (part1, part2), ((True, True, True), (1253, 664258, 0, 48484)), \
+        "the generator: a step is a slope, flat on a chart border, untouched away from it; islands over " \
+        "the shipped models: textures, faces, faces spanning more than their texture, regions"
 
 
 def c_engine_ao():
@@ -32629,7 +32724,7 @@ def c_engine_ao():
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
-    pack = os.path.expanduser("~/Documents/omk/omk-pack")
+    pack = (omkpaths.pack_path() or "")
     if not os.path.isdir(pack):
         return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack"
     tmp = tempfile.mkdtemp()
@@ -32662,7 +32757,7 @@ def c_engine_ao():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     want = [(True, 0, True), (True, 0, False)]
-    want = [w if len(r) == 3 else r for w, r in zip(want, res)]
+    want = [_or_skip(r, w) for w, r in zip(want, res)]
     return (src_ok, *res), ((True,) * 6, *want), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 2, the depth kept only " \
         "when asked); by Anekbah's burner --ao 2 shades the frame and brightens nothing, from the " \
@@ -49436,6 +49531,7 @@ SLOW = [
     ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
     ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
+    ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

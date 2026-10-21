@@ -237,7 +237,7 @@ WaterPlane waterPlane(const Geometry& g) {
 
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength) {
-    if (!wp.found || strength <= 0.0f || !setGeo) return false;
+    if (!wp.found || strength <= 0.0f || !setGeo || !r.drawsWater()) return false;
     // above the water: the game's Y points DOWN, so a smaller y
     if (v.cam.eye[1] >= wp.y - 1.0f) return false;
     static std::vector<Draw> scene, water;

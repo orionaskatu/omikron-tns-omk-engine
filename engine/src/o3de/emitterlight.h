@@ -110,6 +110,16 @@ struct SurfaceCuration {
     // decoded for the pool, which does not say which set asked)
     const Entry* findAny(const std::string& texture, float u, float v) const;
     bool namesAny(const std::string& texture) const;
+    // the entry lists a lookup walks, found ONCE for a texture - a lookup by
+    // name builds upper-case keys, which per texel (`curateBloom`) or per
+    // lattice sample (`surfaceLights`) was a string or two each time
+    struct Lists {
+        const std::vector<Entry>* first = nullptr;    // the set's (or any set's)
+        const std::vector<Entry>* second = nullptr;   // the `*` line's
+        const Entry* at(float u, float v) const;
+    };
+    Lists listsFor(const std::string& set, const std::string& texture) const;
+    Lists listsAny(const std::string& texture) const;
     std::size_t size() const { return count_; }
 private:
     bool opened_ = false;

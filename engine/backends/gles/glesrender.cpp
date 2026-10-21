@@ -1178,6 +1178,7 @@ public:
     }
     bool drawsEmitterLights() const override { return fxWant_; }
     int maxPixelLights() const override { return fxWant_ && pixLights_ ? View::kMaxGpuLights : View::kOwnGpuLights; }
+    bool drawsWater() const override { return waterWant_ > 0.0f && mainLoc_.water >= 0; }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                         std::span<const Draw> above, std::span<const Draw> water, float strength,
                         float planeY) override;
@@ -1498,6 +1499,7 @@ private:
         // the posed program's lights
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
         float tint[3] = {-1, -1, -1};
+        float water = -1; int clip = -1;   // the water variant's
     };
     struct DrawState {
         int blend = -1;                    // a `Blend`, -1 unknown
@@ -1568,7 +1570,8 @@ private:
     float  bloom_ = 0.0f;
     GLuint lightBlack_ = 0;              // the light map of a texture with none
     GLuint lastEmis_ = 0;
-    std::string bloomFrag_;              // the bloom variant's source, kept for `link`
+    std::string bloomFrag_, bloomFragX_; // the variants' fragment sources (plain, enhanced), kept for `link`
+    GLint  postLoc_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};   // uSrc .. uLutN, at link
     GLuint postProg_ = 0, postSrc_ = 0, glowTex_[2] = {0, 0}, glowFbo_[2] = {0, 0}, lutTex_ = 0;
     int    postW_ = 0, postH_ = 0, lutN_ = 0;
     std::vector<unsigned char> lutData_;
@@ -1580,10 +1583,11 @@ private:
     bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
-    std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources
+    std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
+    std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
     bool fxWant_ = false;                      // the emitters' light's (`setEmitterLights`)
-    std::string tintPosedVert_;                // ...its posing program's source
+    std::string tintPosedVert_, tintPosedVertX_;   // ...its posing programs' sources (plain, enhanced)
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
     int    reflW_ = 0, reflH_ = 0;
     int surfW_ = 0, surfH_ = 0;
@@ -1616,7 +1620,10 @@ GlesRenderer::~GlesRenderer() {
     if (!deadBufs_.empty()) deleteBuffers(static_cast<GLsizei>(deadBufs_.size()), deadBufs_.data());
     for (auto& [g, vb] : vbo_) deleteBuffers(1, &vb.id);
     // the pool's ids are owned by `uploaded_` (two slots may share one)
-    for (auto& [key, u] : uploaded_) if (u.id) deleteTextures(1, &u.id);
+    for (auto& [key, u] : uploaded_) {
+        if (u.id) deleteTextures(1, &u.id);
+        if (u.em) deleteTextures(1, &u.em);
+    }
     if (white_.id) deleteTextures(1, &white_.id);
     if (bayer_) deleteTextures(1, &bayer_);
     if (surfTex_) deleteTextures(1, &surfTex_);
@@ -1666,6 +1673,9 @@ void GlesRenderer::runPost() {
                     static_cast<double>(bloom_), lutN_ > 1 ? "on" : "off");
         omk::event("remaster.post", {{"backend", "gles"}, {"bloom", static_cast<double>(bloom_)},
                                      {"grade", lutN_}});
+        // its uniforms, looked up once
+        const char* names[8] = {"uSrc", "uGlow", "uLut", "uSrcInv", "uDir", "uStrength", "uMode", "uLutN"};
+        for (int k = 0; k < 8; ++k) postLoc_[k] = glGetUniformLocation(postProg_, names[k]);
     }
     const auto texture = [](GLuint& id, int w, int h) {
         if (!id) glGenTextures(1, &id);
@@ -1706,10 +1716,8 @@ void GlesRenderer::runPost() {
     glDisable(GL_CULL_FACE);
     glUseProgram(postProg_);
     curProg_ = postProg_;
-    const GLint lSrc = glGetUniformLocation(postProg_, "uSrc"), lGlow = glGetUniformLocation(postProg_, "uGlow"),
-                lLut = glGetUniformLocation(postProg_, "uLut"), lInv = glGetUniformLocation(postProg_, "uSrcInv"),
-                lDir = glGetUniformLocation(postProg_, "uDir"), lStr = glGetUniformLocation(postProg_, "uStrength"),
-                lMode = glGetUniformLocation(postProg_, "uMode"), lN = glGetUniformLocation(postProg_, "uLutN");
+    const GLint lSrc = postLoc_[0], lGlow = postLoc_[1], lLut = postLoc_[2], lInv = postLoc_[3],
+                lDir = postLoc_[4], lStr = postLoc_[5], lMode = postLoc_[6], lN = postLoc_[7];
     glUniform1i(lSrc, 0); glUniform1i(lGlow, 1); glUniform1i(lLut, 2);
     glUniform1f(lStr, bloom_);
     glUniform1f(lN, lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f);
@@ -1774,31 +1782,40 @@ bool GlesRenderer::init(int w, int h) {
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
     bool enhanced = false;
-    const bool pointLit = fxWant_ && (wantPixLights_ || wantShadowMap_);   // only the enhanced ones light per pixel
-    const bool variant = bloom_ > 0.0f || waterWant_ > 0.0f || pointLit;
-    if (variant) {
-        const char* base = wantPixLights_ || wantShadowMap_ ? kSceneFragX : kSceneFrag;
-        bloomFrag_ = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);
-        if (pointLit) bloomFrag_ = pointLightVariant(bloomFrag_);
-        if (waterWant_ > 0.0f) bloomFrag_ = waterVariant(bloomFrag_);
-    }
-    const char* const sceneFragX = variant ? bloomFrag_.c_str() : kSceneFragX;
-    const char* const sceneFrag = variant ? bloomFrag_.c_str() : kSceneFrag;
-    // the water variant's fragment reads `vWy`: its vertex stages hand it down
     const bool enh = wantPixLights_ || wantShadowMap_;
+    const bool pointLit = fxWant_ && enh;   // only the enhanced ones light per pixel
+    // the remaster's variants over BOTH program sets, each from its own
+    // sources: the plain set is the fallback when the enhanced one does not
+    // link, and an enhanced fragment beside a plain vertex stage cannot link
+    // (it reads `vNrm` / `vWorld`) - so it must not inherit the enhanced one's
+    const auto fragOf = [&](const char* base, bool points) {
+        std::string f = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);
+        if (points) f = pointLightVariant(f);
+        if (waterWant_ > 0.0f) f = waterVariant(f);
+        return f;
+    };
+    bloomFragX_ = fragOf(kSceneFragX, pointLit);
+    bloomFrag_ = fragOf(kSceneFrag, false);
+    const char* const sceneFragX = bloomFragX_.c_str();
+    const char* const sceneFrag = bloomFrag_.c_str();
+    // the water variant's fragment reads `vWy`: its vertex stages hand it down
     if (waterWant_ > 0.0f) {
-        waterVert_ = waterVertVariant(enh ? kSceneVertX : kSceneVert);
-        waterPosedVert_ = waterVertVariant(enh ? kPosedVertX : kPosedVert);
+        waterVertX_ = waterVertVariant(kSceneVertX);
+        waterVert_ = waterVertVariant(kSceneVert);
+        waterPosedVertX_ = waterVertVariant(kPosedVertX);
+        waterPosedVert_ = waterVertVariant(kPosedVert);
     }
-    const char* const vSceneX = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVertX;
+    const char* const vSceneX = waterWant_ > 0.0f ? waterVertX_.c_str() : kSceneVertX;
     const char* const vScene = waterWant_ > 0.0f ? waterVert_.c_str() : kSceneVert;
-    const char* vPosedX = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVertX;
+    const char* vPosedX = waterWant_ > 0.0f ? waterPosedVertX_.c_str() : kPosedVertX;
     const char* vPosed = waterWant_ > 0.0f ? waterPosedVert_.c_str() : kPosedVert;
     // the BODY LIGHT over either (only the posing program is a variant: it is
     // the one that draws the bodies)
     if (tintWant_) {
-        tintPosedVert_ = tintVariant(enh ? vPosedX : vPosed);
-        vPosedX = vPosed = tintPosedVert_.c_str();
+        tintPosedVertX_ = tintVariant(vPosedX);
+        tintPosedVert_ = tintVariant(vPosed);
+        vPosedX = tintPosedVertX_.c_str();
+        vPosed = tintPosedVert_.c_str();
     }
     if (wantPixLights_ || wantShadowMap_) {
         prog_ = link(vSceneX, sceneFragX, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
@@ -2330,7 +2347,7 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
             if (t[i].hasPixels() &&
                 !uploaded_.count(std::make_tuple(t[i].idx.data(), t[i].pal.data(), t[i].width, t[i].height)))
                 toDecode[i] = &t[i];
-        reps = pack.replacements(toDecode);
+        reps = pack.replacements(toDecode, true, false);   // no relief here: no normal maps
     }
     for (std::size_t i = 0; i < t.size(); ++i) {
         const auto& s = t[i];
@@ -2422,6 +2439,9 @@ gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
         it = uploaded_.erase(it);
         ++dropped;
     }
+    // a deleted light map's name may come back for a new one: the cached
+    // binding of unit 3 must not skip it
+    if (dropped) lastEmis_ = 0;
     std::printf("gles: texture pool of %zu - %d kept on the GPU, %d uploaded, %d dropped, %.1f ms\n",
                 t.size(), reused, fresh, dropped, glesClockMs() - t0);
     if (pack.active())
@@ -2976,9 +2996,11 @@ void GlesRenderer::begin(const View& view) {
     glBindFramebuffer(GL_FRAMEBUFFER, passFbo_ ? passFbo_ : drawFbo());   // the water pass's target when set
     glViewport(0, 0, rw_, rh_);
     glDisable(GL_SCISSOR_TEST);
-    // the engine clears to the scene's fog colour (`View::clearColour`)
+    // the engine clears to the scene's fog colour (`View::clearColour`); with
+    // the BLOOM its alpha is the light map's value, so what no surface covers
+    // clears to 0 - not light (at 1 the fog past the clip distance glowed)
     glClearColor(view.clearColour[0] / 255.0f, view.clearColour[1] / 255.0f,
-                 view.clearColour[2] / 255.0f, 1.0f);
+                 view.clearColour[2] / 255.0f, bloom_ > 0.0f ? 0.0f : 1.0f);
     OMK_GL_CLEAR_DEPTH(1.0f);
     glDepthMask(GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -3308,16 +3330,6 @@ void GlesRenderer::submit(const Draw& d) {
     st_.triangles += static_cast<long>(d.count / 3);
     const SceneLoc& L = posed ? posedLoc_ : mainLoc_;
     useProgram(posed ? posed_ : prog_);
-    // THE WATER's two uniforms, only with the water variant built
-    if (waterWant_ > 0.0f && L.water >= 0) {
-        glUniform1f(L.water, waterNow_ ? waterStrength_ : 0.0f);
-        if (waterNow_) {
-            glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
-            glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
-        }
-        glUniform1i(L.clip, reflectingNow_ ? 1 : 0);
-        if (reflectingNow_) glUniform1f(L.clipY, waterY_);
-    }
     if (posed && (lastPose_ != d.meshPose || lastPoseGeo_ != d.geo)) {
         buildPoseUniforms(d, *pvb);
         glUniform4fv(L.pose, static_cast<GLsizei>(pvb->meshOfSlot.size() * 4), poseUni_.data());
@@ -3333,6 +3345,26 @@ void GlesRenderer::submit(const Draw& d) {
     };
     UniCache& U = ds_.uni[posed ? 1 : 0];
     const bool uv = U.valid;
+    // THE WATER's uniforms, only with the water variant built: its strength
+    // and the clip through the cache (every draw of every frame sent them,
+    // water or none), the water draws' and the reflection's own each time
+    if (waterWant_ > 0.0f && L.water >= 0) {
+        const float w = waterNow_ ? waterStrength_ : 0.0f;
+        if (set(!uv || U.water != w)) {
+            glUniform1f(L.water, w);
+            U.water = w;
+        }
+        if (waterNow_) {
+            glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+            glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
+        }
+        const int clip = reflectingNow_ ? 1 : 0;
+        if (set(!uv || U.clip != clip)) {
+            glUniform1i(L.clip, clip);
+            U.clip = clip;
+        }
+        if (reflectingNow_) glUniform1f(L.clipY, waterY_);
+    }
     if (posed) {
         // the body's lights; a draw handed more than the program holds is
         // the frontend's error, and gets the first `kVertexLights`

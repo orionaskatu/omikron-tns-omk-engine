@@ -39,6 +39,13 @@ bool parseCube(const std::string& text, ColourLut& out, std::string* why) {
             out.rgb.reserve(static_cast<std::size_t>(out.n) * out.n * out.n * 3);
             continue;
         }
+        // Resolve's exports name the input range: 0..1 alone is read
+        if (ln.rfind("LUT_3D_INPUT_RANGE", 0) == 0) {
+            float a = 0, b = 0;
+            if (std::sscanf(ln.c_str() + 18, "%f %f", &a, &b) != 2 || a != 0.0f || b != 1.0f)
+                return fail("a LUT_3D_INPUT_RANGE other than 0 1");
+            continue;
+        }
         if (ln.rfind("DOMAIN_MIN", 0) == 0 || ln.rfind("DOMAIN_MAX", 0) == 0) {
             float a = 0, b = 0, c = 0;
             const bool max = ln[7] == 'M' && ln[8] == 'A';
@@ -59,7 +66,7 @@ bool parseCube(const std::string& text, ColourLut& out, std::string* why) {
 }
 
 bool CityGrades::open(const std::string& dir) {
-    luts_.clear(); cityOf_.clear(); opened_ = false;
+    luts_.clear(); cityOf_.clear(); night_.clear(); opened_ = false;
     if (!hostfs::isDirectory(dir)) {
         std::fprintf(stderr, "city grades: %s is not a directory - no grade\n", dir.c_str());
         return false;

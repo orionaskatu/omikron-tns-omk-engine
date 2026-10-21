@@ -1325,6 +1325,7 @@ void PlayState::worldMirror() {
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
                     "%.0f in front)\n", frameNo,
                     mst.active ? "REFLECTING"
+                    : watered ? "SET ASIDE - the water reflects instead (one reflection a frame)"
                     : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
                                              : "out of view - the camera is behind it",
                     mst.native ? " [native: the two passes]" : "",

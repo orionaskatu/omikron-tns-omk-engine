@@ -396,13 +396,15 @@ def cmd_materials(pack, match, deepbump=None, python=None, jobs=3, force=False):
     cache = safe_out(os.path.join(os.path.dirname(pack), "materials-ai"))
     # the faces' REGIONS of every texture (`texpack_tool islands`), made once:
     # the map fades flat at their borders, where an atlas's pictures meet
+    # (`.done` written LAST: a run cut short is made again, not trusted)
     covdir = safe_out(os.path.join(os.path.dirname(pack), "materials-cov"))
-    if not os.path.isdir(covdir) or not os.listdir(covdir):
+    if not os.path.exists(os.path.join(covdir, ".done")):
         os.makedirs(covdir, exist_ok=True)
         r = subprocess.run([TOOL, "islands", omkpaths.data_root(), covdir], capture_output=True, text=True)
         if r.returncode != 0:
             sys.exit("texpack_tool islands failed: " + r.stderr.strip())
         print(r.stdout.strip())
+        open(os.path.join(covdir, ".done"), "w").write(r.stdout)
     if deepbump:
         os.makedirs(cache, exist_ok=True)
         if not os.path.exists(os.path.join(deepbump, "cli.py")):
@@ -420,12 +422,18 @@ def cmd_materials(pack, match, deepbump=None, python=None, jobs=3, force=False):
                 if not os.path.exists(base):
                     w, h, rgba = read_png(src)
                     rgb = os.path.join(td, "rgb.png")
-                    write_png(rgb, w, h, bytes(b for i, b in enumerate(rgba) if i % 4 != 3), 3)
-                    r = subprocess.run([python or sys.executable, "cli.py", rgb, base, "color_to_normals",
+                    three = bytearray(w * h * 3)
+                    three[0::3], three[1::3], three[2::3] = rgba[0::4], rgba[1::4], rgba[2::4]
+                    write_png(rgb, w, h, bytes(three), 3)
+                    # under another name, then renamed: an interrupted run leaves
+                    # no half-written map that a later one would take as made
+                    part = os.path.join(cache, k + ".part.png")
+                    r = subprocess.run([python or sys.executable, "cli.py", rgb, part, "color_to_normals",
                                         "--color_to_normals-overlap", "SMALL"],
                                        cwd=deepbump, capture_output=True, text=True)
-                    if r.returncode != 0 or not os.path.exists(base):
+                    if r.returncode != 0 or not os.path.exists(part):
                         return "deepbump failed: " + (r.stderr.strip().splitlines() or ["?"])[-1]
+                    os.replace(part, base)
             raw = os.path.join(td, "n.raw")
             cov = os.path.join(covdir, k + ".cov")
             r = subprocess.run([TOOL, "normals", src, raw, base, cov if os.path.exists(cov) else "-"],
@@ -434,7 +442,9 @@ def cmd_materials(pack, match, deepbump=None, python=None, jobs=3, force=False):
                 return "failed: " + r.stderr.strip()
             b = open(raw, "rb").read()
             w, h = struct.unpack_from("<ii", b, 0)
-            write_png(out, w, h, b[8:], 4)
+            part = os.path.join(pack, k + "_n.part.png")   # not a name the engine lists
+            write_png(part, w, h, b[8:], 4)
+            os.replace(part, out)
         return "made"
 
     counts = {}

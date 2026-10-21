@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "o3de/vertexlight.h"
+#include "o3de/emitterlight.h"
 
 #include <array>
 #include <algorithm>
@@ -71,7 +72,7 @@ bool reachOf(const Light3do& l, const float bodyPos[3], float out[3]) {
     if (point) {
         // nothing at its own housing (`o3de/emitterlight.h` kSelfNear/Far),
         // and the falloff SQUARED - pools of light
-        k *= fall * std::clamp((d - 30.0f) / 60.0f, 0.0f, 1.0f);
+        k *= fall * std::clamp((d - kSelfNear) / (kSelfFar - kSelfNear), 0.0f, 1.0f);
         if (!(k > 0.0f) || !(d > 0.0f)) return false;
         out[0] = dx / d * k; out[1] = dy / d * k; out[2] = dz / d * k;
         return true;

@@ -436,6 +436,10 @@ public:
     // below it per fragment - the CPU clip cannot see a posed body's place,
     // and a swimmer's legs were reflected above the water (a reader's play
     // test, 2026-10-20).
+    // whether `drawWaterScene` can be drawn at all - asked BEFORE the frame's
+    // shadow pass, which a refusal would otherwise have the mirror path run
+    // again
+    virtual bool drawsWater() const { return false; }
     virtual bool drawWaterScene(const View& /*v*/, const View& /*reflected*/,
                                 std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
                                 std::span<const Draw> /*water*/, float /*strength*/, float /*planeY*/) {

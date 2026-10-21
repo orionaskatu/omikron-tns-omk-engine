@@ -38,6 +38,8 @@ struct Threads::Impl {
     // count and one of the two waits for ever. Held across a whole call. The
     // bar in Qalisar (2026-10-21): its set loading on a BackgroundJob, the
     // texture pack decoding on the pool, the main thread's frame on it too.
+    // A call that finds it held runs INLINE rather than wait - the frame
+    // would otherwise stall for the whole of a set's decode.
     std::mutex calls;
     std::condition_variable wake, finished;
     std::size_t from = 0, to = 0;
@@ -118,7 +120,8 @@ void Threads::parallelFor(std::size_t begin, std::size_t end, std::size_t grain,
     int chunks = grain ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(cap), (n + grain - 1) / grain)) : cap;
     if (chunks < 1) chunks = 1;
     if (chunks == 1) { body(begin, end); return; }
-    std::lock_guard<std::mutex> call(impl_->calls);
+    std::unique_lock<std::mutex> call(impl_->calls, std::try_to_lock);
+    if (!call.owns_lock()) { body(begin, end); return; }
     {
         std::lock_guard<std::mutex> lk(impl_->m);
         impl_->from = begin; impl_->to = end;

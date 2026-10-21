@@ -61,8 +61,11 @@ bool TexturePack::open(const std::string& dir) {
     files_.clear();
     lights_.clear();
     normals_.clear();
-    refused_.clear();
-    greyOf_.clear();
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        refused_.clear();
+        greyOf_.clear();
+    }
     opened_ = false;
     dir_ = dir;
     if (!hostfs::isDirectory(dir)) {
@@ -94,13 +97,18 @@ bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba,
     return true;
 }
 
-std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts, bool colour) const {
+std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts, bool colour,
+                                                bool normals) const {
     std::vector<PackImage> out(ts.size());
     if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
     struct Job { std::size_t at; std::uint64_t key; const std::string* file; const std::string* light;
                  std::string why; bool grey; const std::string* normal = nullptr; };
     std::vector<Job> jobs;
+    // the light maps: always when they alone are asked; with the colours only
+    // when a bloom will read them
+    const bool lights = !colour || wantLights_;
+    std::unique_lock<std::mutex> lk(m_);
     for (std::size_t i = 0; i < ts.size(); ++i) {
         const Texture* t = ts[i];
         if (!t || !t->hasPixels()) continue;
@@ -109,14 +117,16 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         bool grey = false;
         if (!files_.count(key) && !lights_.count(key))
             if (const auto g = greyOf_.find(key); g != greyOf_.end()) { key = g->second; grey = true; }
-        const auto it = files_.find(key);
-        const auto lt = lights_.find(key);
-        if (((it == files_.end() && lt == lights_.end()) && !lightHook_) || refused_.count(key)) continue;
-        const auto nt = wantNormals_ && !grey ? normals_.find(key) : normals_.end();
+        // a REFUSED colour is not read again - but its light map still is
+        const auto it = refused_.count(key) ? files_.end() : files_.find(key);
+        const auto lt = lights ? lights_.find(key) : lights_.end();
+        if ((it == files_.end() && lt == lights_.end()) && !lightHook_) continue;
+        const auto nt = normals && wantNormals_ && !grey ? normals_.find(key) : normals_.end();
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
                         lt != lights_.end() ? &lt->second : nullptr, {}, grey,
                         nt != normals_.end() ? &nt->second : nullptr});
     }
+    lk.unlock();
     // the reads and the decodes, on the pool: each job writes only its own
     // result and its own reason
     Threads::shared().parallelFor(0, jobs.size(), 1, [&](std::size_t from, std::size_t to) {
@@ -128,9 +138,8 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 // the light map: its red channel, any size the rule allows
                 const auto lb = readWholeFile(*jb.light);
                 PngImage li;
-                std::string lwhy;
                 if (!lb.empty() &&
-                    decodePng(reinterpret_cast<const std::uint8_t*>(lb.data()), lb.size(), li, &lwhy) &&
+                    decodePng(reinterpret_cast<const std::uint8_t*>(lb.data()), lb.size(), li) &&
                     powerOfTwoFactor(li.w, t.width) && powerOfTwoFactor(li.h, t.height)) {
                     o.ew = li.w; o.eh = li.h;
                     o.emissive.resize(static_cast<std::size_t>(li.w) * li.h);
@@ -176,6 +185,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
             for (std::size_t j = from; j < to; ++j) lightHook_(*ts[jobs[j].at], out[jobs[j].at]);
         });
     // the refusals, here, once per key
+    lk.lock();
     for (const Job& jb : jobs) {
         if (out[jb.at].ok || !jb.file || !colour) continue;
         std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", jb.file->c_str(),
@@ -188,6 +198,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
 void TexturePack::aliasGrey(const Texture& colour, const Texture& grey) {
     if (!opened_ || !colour.hasPixels() || !grey.hasPixels()) return;
     const std::uint64_t c = textureKey(colour);
+    std::lock_guard<std::mutex> lk(m_);
     if (files_.count(c) || lights_.count(c)) greyOf_[textureKey(grey)] = c;
 }
 

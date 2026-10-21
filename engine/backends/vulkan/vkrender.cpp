@@ -263,6 +263,7 @@ public:
     bool tilesLights() const override {
         return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;
     }
+    bool drawsWater() const override { return true; }
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
                         float strength, float planeY) override;
@@ -2372,6 +2373,9 @@ bool VulkanRenderer::uploadLut() {
     lutDirty_ = false;
     vkDeviceWaitIdle(dev_);
     killLut();
+    // a failure on the way frees what was made and rebinds the post sets -
+    // they held the view `killLut` just destroyed
+    const auto fail = [&] { killLut(); bindPostSets(); return false; };
     const int w = lutN_ * lutN_, h = lutN_;
     VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -2380,19 +2384,19 @@ bool VulkanRenderer::uploadLut() {
     ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
     ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if (vkCreateImage(dev_, &ii, nullptr, &lutImg_) != VK_SUCCESS) return false;
+    if (vkCreateImage(dev_, &ii, nullptr, &lutImg_) != VK_SUCCESS) return fail();
     VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, lutImg_, &req);
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(dev_, &ai, nullptr, &lutMem_) != VK_SUCCESS) return false;
+    if (vkAllocateMemory(dev_, &ai, nullptr, &lutMem_) != VK_SUCCESS) return fail();
     OMK_GPU_ALLOC("grade lut", omk::prof::gpuKey(omk::prof::kVkMemory, lutMem_), ai.allocationSize);
     vkBindImageMemory(dev_, lutImg_, lutMem_, 0);
     VkBuffer sb; VkDeviceMemory sm;
     const VkDeviceSize bytes = lutData_.size();
     if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sb, sm))
-        return false;
+        return fail();
     void* p = nullptr;
     vkMapMemory(dev_, sm, 0, bytes, 0, &p);
     std::memcpy(p, lutData_.data(), lutData_.size());
@@ -2419,7 +2423,7 @@ bool VulkanRenderer::uploadLut() {
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = lutImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R8G8B8A8_UNORM;
     vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(dev_, &vi, nullptr, &lutView_) != VK_SUCCESS) return false;
+    if (vkCreateImageView(dev_, &vi, nullptr, &lutView_) != VK_SUCCESS) return fail();
     bindPostSets();
     return true;
 }
@@ -3255,8 +3259,10 @@ void VulkanRenderer::begin(const omk::View& view) {
         std::memcpy(shUboPtr_, &ub, sizeof ub);
     }
     VkClearValue clear[2]{};
-    // the engine clears to the scene's fog colour (`View::clearColour`)
-    clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], 1.0f}};
+    // the engine clears to the scene's fog colour (`View::clearColour`); with
+    // the BLOOM its alpha is the light map's value, so what no surface covers
+    // clears to 0 - not light (at 1 the fog past the clip distance glowed)
+    clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], bloom_ > 0.0f ? 0.0f : 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = pass_; rp.framebuffer = passFb_ ? passFb_ : fbuf_;

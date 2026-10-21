@@ -812,6 +812,60 @@ brightness elsewhere). **The preset's relief 1 -> 2** - the reader's
   maps across both, by the looks); the sign (bright as raised) in the
   engine's grain; GLES.
 
+## The review of steps 1-3 (2026-10-21)
+
+The reader's "recheck everything you did for the remaster". Four read-only
+reviews (the Vulkan backend, GLES and the plumbing, the CPU side, the tools
+and checks), each finding re-read in the code before a fix; one rejected.
+
+**Fixed:**
+* `TexturePack`: `refused_` and `greyOf_` raced (a set's load on a
+  BackgroundJob against the renderer's call and `aliasGrey`) - a mutex; a
+  refused COLOUR no longer drops the key's light map; light maps decoded
+  with the colours only when a bloom reads them (`setLights`), no normal
+  maps for GLES (no relief there).
+* The pool: a call finding it held by another thread runs INLINE rather than
+  wait (the frame stalled for a set's decode); the Vita's caller count, now
+  raced by two callers, replaced by the owner's thread id and a polled
+  semaphore.
+* The bloom: what no surface covers cleared to alpha 0, not 1 - the fog past
+  the clip distance glowed as light (Vulkan and GLES; 0-226 pixels moved in
+  three views, none by more than 8).
+* GLES: the variants built over BOTH program sets, so the plain fallback
+  links when the enhanced one does not (it inherited the enhanced fragment
+  and GLES did not start); the light-map binding cache reset when textures
+  are dropped; light maps freed at shutdown; the water's two uniforms
+  through the cache; the post-pass's uniforms looked up once.
+* Vulkan: a failed grade upload rebinds the post sets (they held a destroyed
+  view). `Renderer::drawsWater()` asked before the shadow pass.
+* `curateBloom` / `surfaceLights`: the curation's lists found once a texture,
+  not by name per texel (a string each). `.cube`: `LUT_3D_INPUT_RANGE 0 1`
+  read (Resolve's); the night factors cleared on a re-open.
+* `omktexpack.py materials`: maps and DeepBump's written under another name
+  and renamed, `islands` finished by a `.done` - an interrupted run left
+  files a later one trusted.
+* The checks: six remaster checks took "no frame" / "no vulkan device" as
+  their own answer - a crashed viewer passed (`_or_skip`: only a backend not
+  tried at all may stand in); water and body light compared GLES at bilinear
+  against Vulkan at nearest and shared one saves folder; the pack through
+  `omkpaths.pack_path()` (`$OMK_PACK`, `pack =`); timeouts. New `engine:
+  normal maps` (the generator and `islands`, shown to fail both ways).
+  `engine: bloom and grade` had been red since the AO (`|| aoOk_`).
+
+**Rejected:** "GLES claims the emitters' light it cannot draw" - mode 3 needs
+per-pixel lighting, which a failed enhanced link already refuses
+(`playsetup_bodies.cpp`); and the emitters' light reaches the BODIES on GLES
+per-vertex through the set's light table, which a refusal would have lost.
+
+**Left for a second pass:** the light binning's allocations (~37k vectors a
+frame at 4K) and the reflection's binning thrown away; the reflection pass
+storing its depth under the AO; the water reflection's image bound as a
+texture during its own pass (validation-level, never read); a throwaway
+descriptor set per light/normal map; `anchor()` (one back-projection pass
+halves the error its docstring says it removes - a pack rebuild); the
+reflections without the tiled point lights; water and an authored mirror
+exclusive (the log now says so); the duplicated helpers.
+
 ## Step 3, A4 - the ambient occlusion: as built (2026-10-21)
 
 The reader's "continue" after B3; confirmed in play at 2 ("commit, push").

@@ -263,7 +263,9 @@ public:
     bool setWater(float) override { return true; }   // nothing to build ahead
     bool setBodyTint(bool) override { return true; }  // the pose block always carries it
     bool drawsBodyTint() const override { return true; }
-    bool setEmitterLights(bool) override { return true; }   // scene.frag takes a point light always
+    // scene.frag takes a point light always; ON says the frame will send the
+    // emitters' lights, and only then are the tiled lights' buffers made (32 MB)
+    bool setEmitterLights(bool on) override { emitters_ = on; return true; }
     bool drawsEmitterLights() const override { return true; }
     int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
     bool tilesLights() const override {
@@ -461,6 +463,7 @@ private:
     void*           pointsPtr_ = nullptr;
     VkBuffer        tilesBuf_ = VK_NULL_HANDLE;  VkDeviceMemory tilesMem_ = VK_NULL_HANDLE;
     void*           tilesPtr_ = nullptr;
+    bool            emitters_ = false;   // `setEmitterLights`: the two buffers above made at init
     omk::LightTiles tiles_;
     bool            tilesTold_ = false, tilesOverTold_ = false;
     // The command buffer is opened by whichever of `shadowPass` and `begin`
@@ -1188,19 +1191,25 @@ bool VulkanRenderer::makeTarget() {
                        litUbo_, litUboMem_);
             vkMapMemory(dev_, litUboMem_, 0, sizeof(LightUbo), 0, &litUboPtr_);
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
-            makeBuffer(kPointsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                       pointsBuf_, pointsMem_);
-            vkMapMemory(dev_, pointsMem_, 0, kPointsBytes, 0, &pointsPtr_);
-            // TWO HALVES: the frame's camera's tiles, then the water
-            // reflection's - binned for ITS camera (`ds1Refl_`)
-            makeBuffer(kTileWordsMax * 4 * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                       tilesBuf_, tilesMem_);
-            vkMapMemory(dev_, tilesMem_, 0, kTileWordsMax * 4 * 2, 0, &tilesPtr_);
-            if (tilesPtr_) {
-                std::memset(tilesPtr_, 0, 16);
-                std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+            // the tiled point lights' buffers, only for a frame that sends
+            // the emitters' lights: without them no tiled pipeline is bound,
+            // and the 32 MB stayed mapped for nothing (`verify.py: engine:
+            // gpu readback on demand`, 2026-10-21)
+            if (emitters_) {
+                makeBuffer(kPointsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           pointsBuf_, pointsMem_);
+                vkMapMemory(dev_, pointsMem_, 0, kPointsBytes, 0, &pointsPtr_);
+                // TWO HALVES: the frame's camera's tiles, then the water
+                // reflection's - binned for ITS camera (`ds1Refl_`)
+                makeBuffer(kTileWordsMax * 4 * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           tilesBuf_, tilesMem_);
+                vkMapMemory(dev_, tilesMem_, 0, kTileWordsMax * 4 * 2, 0, &tilesPtr_);
+                if (tilesPtr_) {
+                    std::memset(tilesPtr_, 0, 16);
+                    std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+                }
             }
         }
     }

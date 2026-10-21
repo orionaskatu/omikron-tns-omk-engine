@@ -989,6 +989,16 @@ layout and feedback rules bind only descriptors a draw ACCESSES; one helper
 for the session's flag / key / preset picks - three checks read those lines;
 a memo of `source_textures` - the build walks keys, not models.
 
+**The anchor-3 rebuild (2026-10-21), NOT ADOPTED, the reader to judge.**
+`build --anchor-passes 3` into `omk-pack/full-anchor3/` (1255 textures, the
+`_e`/`_n` maps linked from `full/pack`), against the judged pack (1 pass):
+every texture differs, mean |diff| median 1.04/255, p90 2.07, max 7.78. The
+sheet `full-anchor3/compare-sheet.png` (original | 1 pass | 3 passes; the
+six most changed and two typical) shows what the number says: three passes
+pull the noisy textures back toward the source's pixel grid - blockier on
+the moss/water/stone grains, no visible change on drawn ones. To try it in
+play: `--texture-pack ~/Documents/omk/omk-pack/full-anchor3/pack`.
+
 Still open, the reader's to choose: the reflections (water and the authored
 mirror) without the tiled point lights - a binning for the reflected camera
 (DONE for the water and the floors, A3 continued); water and an authored

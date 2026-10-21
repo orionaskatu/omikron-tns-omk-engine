@@ -25969,7 +25969,11 @@ def c_render_backends():
         return "\n".join(t[i:].split("\n")[:n + 2]), n
     b1, n1 = body("readable/src/08_wave.c", "@func 0x0042FF80")
     b0, n0 = body("readable/src/20_ddraw.c", "@func 0x00460060")
-    luma1, luma0 = b1.count("587"), b0.count("587")
+    # the CODE's luma, comments stripped: a banner that describes the formula in
+    # prose (the drift audit's, `(299 R + 587 G + 114 B) / 1000`) counted as an
+    # 18th (2026-10-21)
+    code = lambda b: re.sub(r"/\*.*?\*/", "", b, flags=re.S)
+    luma1, luma0 = code(b1).count("587"), code(b0).count("587")
 
     return (banks[0], banks[1], sorted(G.values()), gated, gatedNamed,
             n[150], n[151], len(chunks), sorted(chunks),
@@ -30533,6 +30537,12 @@ def c_engine_gpu_readback_on_demand():
     allocation (red: `readback` 1.17 MB); `kPoseBytes` back to 8 MB (red);
     `rgba_` assigned at `init` (red: 1.17 MB from `GlesRenderer::init`);
     `TrimScratch` keeping everything (red: 4.79 MB from `uploadGeometry`).
+
+    The `buffers` figure was red in the sweep of 2026-10-21: 34.2 MB - the
+    tiled point lights' storage (16 MB, 2026-10-20; 32 since the reflection's
+    half) made at every init. They are now made only for a renderer told
+    `setEmitterLights(true)` (`[Remaster] fxlight`), the one way a frame sends
+    them: back to the 2 MB pose buffer alone.
     """
     import subprocess, tempfile, shutil
     sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -30864,8 +30874,11 @@ def c_engine_release_build():
         return ("build failed",), ("built",), (mk.stdout + mk.stderr + mk2.stderr)[-400:]
     def scan(b):
         syms = subprocess.run(["nm", "-C", b], capture_output=True, text=True).stdout
-        data = open(b, "rb").read()
-        return sum(1 for l in syms.splitlines() if "omk::prof::" in l), data.count(b"OMKSNAP1")
+        # the snapshot WRITER, by its symbol: the marker's bytes were counted
+        # until Apple clang 21 (2026-10-21) folded the `"OMKSNAP1"` loop into
+        # immediate stores and the literal left the binary
+        return (sum(1 for l in syms.splitlines() if "omk::prof::" in l),
+                sum(1 for l in syms.splitlines() if "omk::prof::snapshot(" in l))
     tmp = tempfile.mkdtemp()
     try:
         dumps = []
@@ -30955,6 +30968,13 @@ def c_engine_profiler_gpu():
     images, then dropped the white one's handle (`white_ = Tex{}`) without
     destroying it and uploaded another. The pool is now kept across changes
     (`setTextures`) and the white image with it.
+
+    **40 -> 42 on 2026-10-21**, not a leak: the remaster's two 1x1 fallbacks,
+    made once at init and bound wherever a texture has no pack file -
+    `lightBlack_` (binding 1, the light map of one with none; the bloom,
+    2026-10-20) and `normalFlat_` (binding 3, the flat normal map; the relief,
+    2026-10-21). Both exist with the remaster off, so the street counts them;
+    the no-growth figure still guards the leak this pin once caught.
     """
     import subprocess, tempfile, shutil
     sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -30989,9 +31009,10 @@ def c_engine_profiler_gpu():
         growth // 1024))
     return (every, sums, tex[1], tex[0] > 8 << 20, "vertex buffers" in last, "staging" in last,
             0 <= growth < 1 << 20), \
-           (True, True, 40, True, True, False, True), \
+           (True, True, 42, True, True, False, True), \
         "the street through the Vulkan world renderer: GPU memory in every frame, its " \
-        "categories summing to the total, the 40 texture atlases over 8 MB, vertex " \
+        "categories summing to the total, the 40 texture atlases and the 2 remaster " \
+        "fallbacks over 8 MB, vertex " \
         "buffers, no staging left at rest, no growth over frames 15..29"
 
 
@@ -31819,7 +31840,7 @@ def c_engine_bloom_and_grade():
               'kEnhancements, "bloom"' not in sc and 'kEnhancements, "grade"' not in sc,
               "bloom" not in max_body and "grade" not in max_body,
               # (Vulkan's post-pass also runs for the AO, `be4a245f`)
-              "if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) recordPost(cb_);" in vk and
+              "if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) {\n        recordPost(cb_);" in vk and
               "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
               # the GLES variant over both program sets (the plain one the
               # fallback, 2026-10-21)

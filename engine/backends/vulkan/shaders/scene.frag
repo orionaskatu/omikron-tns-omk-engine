@@ -58,7 +58,8 @@ layout(push_constant) uniform Push {
     // THE WATER REFLECTION (`todo/remaster.md` A3): 1 this draw is WATER and
     // adds the reflected scene (binding 2) at its own screen position, times
     // `waterStrength`; 2 this is the REFLECTION pass, and `waterStrength` is
-    // the water's height - what lies below it is discarded; 0 otherwise
+    // the water's height - what lies below it is discarded; 3 a REFLECTING
+    // FLOOR's draw, as 1 with its relief (`o3de/floorreflect.h`); 0 otherwise
     int   water;          // 120
     float waterStrength;  // 124
 } pc;
@@ -182,10 +183,11 @@ vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
         // ...and the ramp, `(t * c) >> 8` per channel, saturating.
         c += min(t * lg.l[i].colourI.rgb / 256.0, vec3(1.0));
     }
-    // ...and the frame's TILED point lights, this fragment's tile's alone (not
-    // in the water's reflection pass: the tiles are the frame's camera's)
+    // ...and the frame's TILED point lights, this fragment's tile's alone - in
+    // the water's reflection pass too, its tiles binned for ITS camera (its
+    // own set 1); the reflections were unlit by them before (2026-10-21)
 #ifdef OMK_TILED
-    if (lg.tiles != 0 && pc.water != 2) {
+    if (lg.tiles != 0) {
         uint across = tl.t[0], down = tl.t[1];
         uvec2 tc = uvec2(gl_FragCoord.xy) / max(tl.t[3], 1u);   // the tile's size, by resolution
         // the depth slice: `depthSlice` in `o3de/lighttiles.cpp`, the same
@@ -339,10 +341,25 @@ void main() {
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.
-    if (pc.water == 1) {
+    // A REFLECTING FLOOR (`o3de/floorreflect.h`) is mode 3: the same, its
+    // lookup broken up by the floor's RELIEF where the pack has its normal
+    // map (the tiled module's, as the relief reads it) - the slope shifts it, up to
+    // ~1% of the frame's height. The water's mode 1 is as it was.
+    if (pc.water == 1 || pc.water == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
-        c += texture(refl, gl_FragCoord.xy / vec2(textureSize(refl, 0))).rgb * pc.waterStrength * f;
+        vec2 rs = vec2(textureSize(refl, 0));
+        // (a floor's reflection is at HALF size, in the image's top-left quarter)
+        float k = pc.water == 3 ? 0.5 : 1.0;
+        vec2 at = gl_FragCoord.xy * k;
+#ifdef OMK_TILED
+        if (pc.water == 3) {
+            vec4 nm = texture(nmap, vUV / texels);
+            if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
+        }
+#endif
+        if (pc.water == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
+        c += texture(refl, at / rs).rgb * pc.waterStrength * f;
     }
     outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
 }

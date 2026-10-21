@@ -525,6 +525,25 @@ CITY_NIGHT = {"QALISAR": 0.5}
 # light on - the data cannot tell a neon tube from a bright painted panel.
 # Written only where there is none (the reader edits it); first drafts of
 # the four cities, from their atlases, 2026-10-20.
+# THE REFLECTING FLOORS (`floors.txt`, `o3de/floorreflect.h`): which floors
+# are wet or polished, and how much - a FIRST DRAFT, Qalisar alone, read off
+# `texpack_tool floors` (its level opaque area by texture and height): the
+# street's paving, BATITR09 at 0 and 4 (4060 m2) and CATITR03 at 0 (862), and
+# the raised walks, CATITR02 at -316 and -136 (774). To be judged in play.
+CITY_FLOORS = """# THE REFLECTING FLOORS - which floors mirror the scene, and how much
+# (omk-play's --floors; `o3de/floorreflect.h`). One plane a frame: the listed
+# floor's level below the eye with the most of it near, the water first.
+#
+#   SET TEXTURE = STRENGTH       # 0..1, times --floors (the preset's 1)
+#
+# `texpack_tool floors <set.3DO>` lists a set's level floors by texture and area.
+#
+# QALISAR - a first draft, 2026-10-21: the neon street wet, its raised walks less.
+Qalisar BATITR09 = 0.5
+Qalisar CATITR03 = 0.5
+Qalisar CATITR02 = 0.35
+"""
+
 CITY_LIGHTS = """# THE LIGHT SOURCES - which textures, and which parts of them, cast light
 # (omk-play's emitters' light, --fx-light; `o3de/emitterlight.h`).
 # A set this file names is curated: only what is listed lights. A set it does
@@ -624,17 +643,19 @@ def cmd_grades(out, depth=1.0):
         f.write("# a set name = the share of its painted light kept under the emitters' lights\n")
         for k, v in CITY_NIGHT.items():
             f.write(f"{k} = {v}\n")
-    lp = os.path.join(out, "lights.txt")
-    if not os.path.exists(lp):
-        with open(lp, "w") as f:
-            f.write(CITY_LIGHTS)
-    else:
-        print(f"{lp} kept - it is the reader's to edit")
+    for name, text in (("lights.txt", CITY_LIGHTS), ("floors.txt", CITY_FLOORS)):
+        lp = os.path.join(out, name)
+        if not os.path.exists(lp):
+            with open(lp, "w") as f:
+                f.write(text)
+        else:
+            print(f"{lp} kept - it is the reader's to edit")
     with open(os.path.join(out, "map.txt"), "w") as f:
         f.write("# a set name = the city whose grade it takes (omk-play --grade DIR)\n")
         for k, v in CITY_OF.items():
             f.write(f"{k} = {v}\n")
-    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3, depth {depth}), night.txt, lights.txt and map.txt into {out}")
+    print(f"{len(CITY_GRADES)} city grades (.cube, 33^3, depth {depth}), night.txt, lights.txt, floors.txt "
+          f"and map.txt into {out}")
 
 
 # ---- the commands ------------------------------------------------------------

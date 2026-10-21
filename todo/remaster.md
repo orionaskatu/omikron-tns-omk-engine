@@ -386,6 +386,99 @@ on at **0.35** (**0.6** since the Fresnel); off unless named, never `all = max`,
 from B3 perturbing the lookup); PAstar; the glass (`vitre`), one plane each;
 the per-level planes above (once Jaunpur's two upper levels are looked at).
 
+## Step 3, A3 continued - the reflecting floors and the lit reflections: as built (2026-10-21)
+
+The reader's "do 1 and 2" (the wet and polished floors; the reflections lit by
+the tiled point lights).
+
+* **The floors, planar - the water's pass**, not screen-space: it shows what
+  the camera cannot (SSR reuses the frame and fails at its edges), it was
+  judged good on the water, and Qalisar's street is one level. `[Remaster]
+  floors = S` / `--floors S` (0..1), the `--remaster` preset's **1**, off unless
+  named; Vulkan and GLES (its water variant, now built when the floors alone
+  are on).
+* **Which floors**: the grades folder's `floors.txt` (`SET TEXTURE =
+  STRENGTH`, `o3de/floorreflect.h`), curated by eye as `lights.txt` is;
+  `omktexpack.py grades` writes the draft (CITY_FLOORS) when absent, and
+  `texpack_tool floors <set.3DO>` lists a set's LEVEL opaque area by texture
+  and height. Qalisar's draft: its street, BATITR09 at 0 and 4 (4060 m2) and
+  CATITR03 at 0 (862), at 0.5; its raised walks, CATITR02 (774), at 0.35.
+* **The plane**: a set's listed level triangles grouped by height, levels
+  within 8 units one plane at the HIGHEST (the rest lie below and the
+  reflection clips them - at a mean height the top floor was in its own
+  reflection); each frame the level below the eye with the most listed floor
+  within 40 m (`chooseFloor`); the water first when its plane reflects - one
+  reflection a frame (the authored mirror set aside, said in the log).
+* **In the frame**: `drawWithWater` keeps a listed floor's runs on the plane
+  IN THE SCENE, in order (a decal and a depth tie ride on it), each carrying
+  `Draw::reflect`; the backend adds the reflection there as on the water, at
+  `floors x reflect`, with the Fresnel - shader mode 3, whose lookup the
+  floor's RELIEF shifts (the pack's normal map, ~1% of the frame's height;
+  the tiled module). The water's mode 1 is unchanged.
+* **The lit reflections** (Vulkan): the water's reflection pass bins the tiled
+  point lights for ITS camera into the tiles buffer's second half and binds
+  its own set 1 (`ds1Refl_`); the shader no longer skips the tiles there.
+  `OMK_REFL_UNLIT=1` leaves them empty, as before - byte-identical to
+  `7929d606` on Jaunpur's canal. In Qalisar with the floors, lighting the
+  reflection moves 57853 pixels at 640x480.
+* **Found on the way, fixed**: `binLights` mirrored X a SECOND time under
+  `flipX` (the basis already negates `s`) - a reflected camera's lights went
+  to the other side's tiles: the tight binning 15838 pixels from the loose
+  one, 0 after. The frame's camera never sets `flipX`, so nothing drawn
+  before moved.
+* **Off**: `--floors 0` byte-identical to `7929d606`, 14 of 15 (software,
+  Vulkan, GLES; the burner, Qalisar, the canal) - the 15th the canal under
+  `--enhance-all`, its water's reflection lit (1060 pixels). `engine: floors`
+  new, shown to fail two ways; `env switches` had been red since the bloom
+  (raw `getenv` in `run_vulkan`, `gles_probe`, `texpack_tool`) - mended.
+* **The cost, and cut** (the reader's play test at 4K, M3: Qalisar 57 fps
+  without the floors reflecting, 32 with): a second full scene pass. Measured
+  apart - ~4.5 ms the pass (3.4 of it CPU, the 640x480 runs say), ~5.5 the
+  reflection's per-fragment tiled lights at 4x MSAA. Now: the floors'
+  reflection drawn at HALF size into the image's top-left quarter (one image
+  and one binding for water and floors; Vulkan's viewport and render area,
+  GLES's viewport and `uReflInv`), at ONE sample (`reflPass1_`, its own
+  half-size depth, the scene pipelines again at 1 sample - all or none), and
+  the reflection's CPU clip remembered for the SET's geometry (`clipAbove`;
+  a particle's geometry is one object rewritten every frame, and a memo of it
+  drew a stale clip - 1 pixel - so the others are clipped as before). Each
+  step byte-identical where it should be (the memo to the clip it replaces;
+  the water's frames to `7929d606` unlit). 4K Qalisar with the floors: 32 ->
+  35-36 fps (floors off 42-48 in the same runs, the machine loaded); the
+  half-size and one-sample pictures are hard to tell from the full one.
+* **Open**: the list (Qalisar's draft only), the strengths, the relief's
+  shift - for a play test; the authored mirror's pass still plain (no tiles);
+  floors and water in one frame; GLES's reflection keeps its nearest slots;
+  the second pass's CPU recording (~3 ms) left as it is.
+* **OPEN BUG - the reader's 4K slowdown with the floors (2026-10-21, M3),
+  reproduced by the reader several times, NOT YET by a headless run.** Playing
+  Qalisar at 4K with the preset: 35-40 fps at the start, then ~16 fps
+  (47-60 ms a frame) after walking back and forth between the start
+  (15300, -10050) and the end of the pavement toward Anekbah's airlock (~13424,
+  -9923), and staying low - in one log, short spikes at frames ~4980 and ~7920
+  that recovered, then 47-59 ms held from ~9700 to the close (12350), the
+  camera at 13541 -68 -9894 looking west. Established: a live `sample` of the
+  slow game - the main thread waits on the GPU's fence (76%) inside
+  `drawWithWater` -> `drawWaterScene`, so the GPU frame grew; the floors' plane
+  stayed y 0, no area streamed in, the clip memo stays small (161 -> 245).
+  On a QUIET machine (the reader's game closed - measurements taken beside it
+  were void, a mistake made twice): the far end 58 fps off / 48 on / 52
+  unlit or with an empty reflection; standing there 12000 frames, 21 ms
+  steady; a scripted walk west and back, 17-30 ms. The lit reflection alone
+  adds short SPIKES (to ~34 ms) as the street's motorbikes pass close - none
+  with it unlit or the floors off; the reflection's binning is normal through
+  a walk (listed a little below the main pass's, no full cluster).
+  Next: GPU TIMESTAMPS per pass (shadow, reflection, main, post), logged every
+  second, so the next reproduction names the pass that grows; then, if it is
+  the reflection's lights, a cap on the lights a reflected fragment takes.
+  Machine notes: SDL3 appeared on this machine the same day and the Makefile
+  prefers it (`make SDL_PKG=sdl2`, or `MAKEFLAGS=SDL_PKG=sdl2` for verify).
+* **The game's own rain** (ASSETS 4e, read for the reader): Anekbah, the
+  Impasse, the rooftops and Khonsu, one shower every ~11-18 minutes of wall
+  clock (8-14 dry, 20 s ramp, 2.5-3.5 min, 10 s fade), only at *Niveau de
+  detail* 2 - Qalisar has none. An idea: a rain city's floors wet with the
+  cycle.
+
 ## Step 3, A5 - the bodies lit by their surroundings: as built (2026-10-20)
 
 The reader's "continue with the character lighting". `[Remaster] bodylight = S`

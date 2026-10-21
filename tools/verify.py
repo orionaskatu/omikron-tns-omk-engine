@@ -32668,6 +32668,118 @@ def c_engine_normal_maps():
         "the shipped models: textures, faces, faces spanning more than their texture, regions"
 
 
+def c_engine_floors():
+    r"""THE REFLECTING FLOORS and THE LIT REFLECTIONS - the remaster's A3 beyond
+    the water (`todo/remaster.md`, `o3de/floorreflect.h`). `[Remaster] floors =
+    S` / `--floors S` (0..1), the `--remaster` preset's 1, OFF unless named:
+    the floors a grades folder's `floors.txt` lists mirror the scene through
+    the water's pass, one plane a frame (the water first); and the water's
+    reflection pass takes the TILED point lights, binned for its own camera
+    into the tiles buffer's second half (Vulkan's `ds1Refl_`).
+
+    Parts (Qalisar's street, 1804... the neon street at 15300, 0, -10050, with
+    the pack, `--enhance-all`, and this check's own `floors.txt` - the draft in
+    `omktexpack.py`'s CITY_FLOORS - so the reader's curated list cannot move it):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1; a floor's draw is shader mode 3; the reflection reads its
+         tiles (no `pc.water != 2`);
+      2. Vulkan: `--floors 1` moves more than 5000 pixels of `--floors 0`, and
+         the `remaster.floors` event says the plane is live at y 0;
+      3. Vulkan: the floor's reflection LIT - `OMK_REFL_UNLIT=1` (its tiles
+         left empty, as before) moves more than 200 pixels of it;
+      4. GLES: `--floors 1` moves more than 5000 pixels there too.
+
+    Measured once, outside the check (2026-10-21, M3): with `--floors 0`
+    byte-identical to `7929d606` on the software reference, Vulkan and GLES,
+    by the burner, in Qalisar and at Jaunpur's canal (14 of 15) - the 15th the
+    canal under `--enhance-all` on Vulkan, its water's reflection now lit
+    (1060 pixels); with `OMK_REFL_UNLIT=1` that frame is `7929d606`'s again.
+
+    SHOWN TO FAIL (2026-10-21): a floor's draw never given mode 3 - part 2
+    (0 pixels); the reflection's tiles skipped again (`pc.water != 2`) - part
+    1 and part 3 (0 pixels).
+
+    NOT CHECKED, judged by eye: the list, the strengths, the relief's shift.
+    """
+    import subprocess, tempfile, shutil, re, sys, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("floorStrength = floorsFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+floors\s*=\s*0\.0f;", sh)),
+              'kRemaster, "floors"' in sc and 'kEnhancements, "floors"' not in sc,
+              "floors" not in max_body,
+              "!preset.empty() ? 1.0f : 0.0f;" in pre,
+              "push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;" in vk,
+              "if (lg.tiles != 0) {" in fs and "pc.water != 2" not in fs)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = omkpaths.pack_path() or ""
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack (omk.conf pack =)"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    grades = os.path.join(tmp, "grades")
+    os.makedirs(grades)
+    open(os.path.join(grades, "floors.txt"), "w").write(omktexpack.CITY_FLOORS)
+    try:
+        def run(binary, name, env_extra, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", **env_extra)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "101", "--stand", "15300,0,-10050,270", "--dump", out, "--filter", "nearest",
+                    "--remaster", pack, "--grade", grades, "--enhance-all"] + list(extra) + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, []
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), _events(r.stdout + r.stderr)
+        diff = lambda a, b: sum(1 for x, y in zip(a, b) if x != y)
+        vkb = os.path.join(eng, "build", "omk-play")
+        off, _ = run(vkb, "off", {}, "--floors", "0")
+        on, ev = run(vkb, "on", {}, "--floors", "1")
+        unlit, _ = run(vkb, "unlit", {"OMK_REFL_UNLIT": "1"}, "--floors", "1")
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            goff, _ = run(gb, "goff", {}, "--floors", "0")
+            gon, _ = run(gb, "gon", {}, "--floors", "1")
+            gl = ("no frame",) if goff is None or gon is None else (diff(goff, gon) > 5000,)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if None in (off, on, unlit):
+        return (src_ok, ("no frame",)), ((True,) * 6, ("frames",)), "a Vulkan run wrote no frame"
+    live = [k for n, k in ev if n == "remaster.floors"]
+    moved, lit = diff(off, on), diff(on, unlit)
+    print(f"        floors 1 moves {moved} pixels on Vulkan; the reflection's lights {lit}; "
+          f"events {live[:2]}; GLES {gl}")
+    return (src_ok, moved > 5000, bool(live) and live[0].get("live") in ("1", "true") and
+            float(live[0].get("y", "nan")) == 0.0, lit > 200, gl), \
+           ((True,) * 6, True, True, True, _or_skip(gl, (True,))), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
+        "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
+        "lights, and on GLES"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -46730,8 +46842,9 @@ def c_licence_headers():
     # 646: + `engine/src/o3de/lighttiles.{h,cpp}` (its tiled point lights)
     # 647: + `engine/tools/walk_edges.cpp` (`engine: walk edges`)
     # 649: + `engine/src/o3de/normalmap.{h,cpp}` (the generated normal maps, B3)
+    # 651: + `engine/src/o3de/floorreflect.{h,cpp}` (the reflecting floors, A3)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (649, [], 1, []), \
+           (651, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -49532,6 +49645,7 @@ SLOW = [
     ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
+    ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

@@ -7,6 +7,8 @@
 #include "playgpu_vulkan.h"
 #include "platform/env.h"
 
+#include <algorithm>
+
 // The Vulkan window - this glue's, not the game's (the gateway: game code
 // holds no host handle). One viewer a process, so one window.
 static SDL_Window* vkWin = nullptr;
@@ -37,7 +39,8 @@ void PlayState::gpuOpenWindow() {
             if (ssaa > 1) vkr->setSupersample(ssaa);
             if (bloomStrength > 0.0f) vkr->setBloom(bloomStrength);   // the remaster's
             if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);
-            if (waterStrength > 0.0f) vkr->setWater(waterStrength);
+            if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
+                vkr->setWater(std::max(waterStrength, floorStrength));
             if (bodyLight > 0.0f) vkr->setBodyTint(true);
             if (fxLight > 0.0f) vkr->setEmitterLights(true);
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
@@ -72,7 +75,8 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
         if (wv && bloomStrength > 0.0f) wv->setBloom(bloomStrength);
         if (wv && aoStrength > 0.0f) wv->setAmbientOcclusion(aoStrength);
-        if (wv && waterStrength > 0.0f) wv->setWater(waterStrength);
+        if (wv && std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
+            wv->setWater(std::max(waterStrength, floorStrength));
         if (wv && bodyLight > 0.0f) wv->setBodyTint(true);
         if (wv && fxLight > 0.0f) wv->setEmitterLights(true);
         if (wv && wv->init(dispW, dispH)) {

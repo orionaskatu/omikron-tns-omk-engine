@@ -98,6 +98,7 @@ struct PlayState {
     std::string & gradeFlag = opt.gradeFlag;
     std::string & remasterFlag = opt.remasterFlag;
     float & waterFlag = opt.waterFlag;
+    float & floorsFlag = opt.floorsFlag;
     float & bodyLightFlag = opt.bodyLightFlag;
     float & fxLightFlag = opt.fxLightFlag;
     float & reliefFlag = opt.reliefFlag;
@@ -696,11 +697,14 @@ struct PlayState {
     // strength (0 off) and the set the city grade was last chosen for
     float bloomStrength{};
     float waterStrength{};   // the water reflection's, 0 off
+    float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
     float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
     float relief{};          // the relief's (`View::relief`), 0 off
     float aoStrength{};      // the ambient occlusion's (`Renderer::setAmbientOcclusion`), 0 off
     bool waterLive{};        // the frame drew through the water pass (for the log)
+    bool floorLive{};        // ...the floors' (for the log), at this plane
+    float floorLiveY{};
     std::string gradeFor{"\x01"};
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie

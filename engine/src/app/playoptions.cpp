@@ -292,10 +292,14 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2; a specific flag or key beats it;\n"
+"                   --relief 2, --ao 2, --floors 1; a specific flag or key\n"
+"                   beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
 "                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
+"  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
+"                   lists reflect the scene, strength S (0..1) times theirs;\n"
+"                   Vulkan and GLES only; [Remaster] floors=S\n"
 "  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
 "                   light around them, strength S (0..1); Vulkan and GLES only;\n"
 "                   [Remaster] bodylight=S\n"
@@ -570,6 +574,13 @@ int PlayOptions::parse(int argc, char** argv) {
             bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
             if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {
                 std::fprintf(stderr, "--body-light %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--floors" && i + 1 < argc) {
+            floorsFlag = static_cast<float>(std::atof(argv[++i]));
+            if (floorsFlag < 0.0f || floorsFlag > 1.0f) {
+                std::fprintf(stderr, "--floors %s: not 0..1\n", argv[i]);
                 return 2;
             }
         }

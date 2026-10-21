@@ -33,6 +33,7 @@
 #include "actor/moves.h"
 #include "actor/walk.h"
 #include "o3de/collision.h"
+#include "o3de/floorreflect.h"
 #include "o3de/geom3do.h"
 #include "o3de/particles.h"
 #include "o3de/pointplace.h"
@@ -698,6 +699,7 @@ struct WorldSlot {
     std::vector<omk::Texture> tex;
     omk::MirrorPlane mirror;
     omk::WaterPlane water;   // the remaster's water reflection (`o3de/renderer.h`)
+    omk::FloorPlanes floors; // ...and its reflecting floors (`o3de/floorreflect.h`), when on
     omk::LightProbes probes; // the remaster's body light (`o3de/lightprobe.h`), built when on
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the

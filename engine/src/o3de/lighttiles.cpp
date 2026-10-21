@@ -54,7 +54,6 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
         const float k = 1.0f / std::sqrt(std::max(1e-6f, 1.0f - (r * r) / (vz * vz)));
         float cx = sx * (1.0f + (vx / vz) / tanH);
         const float cy = sy * (1.0f - (vy / vz) / tanV);
-        if (cam.flipX) cx = static_cast<float>(pxW) - cx;
         const float rx = sx * (r / vz) / tanH * k * 1.15f, ry = sy * (r / vz) / tanV * k * 1.15f;
         q.x0 = std::max(0, static_cast<int>(std::floor((cx - rx) / tile)));
         q.x1 = std::min(out.across - 1, static_cast<int>(std::floor((cx + rx) / tile)));
@@ -79,7 +78,6 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
     cx1.assign(cx0.size(), 0.0f);
     for (int x = 0; x < out.across; ++x) {
         float p0 = static_cast<float>(x * tile), p1 = static_cast<float>(std::min(pxW, (x + 1) * tile));
-        if (cam.flipX) { const float a = static_cast<float>(pxW) - p1, b = static_cast<float>(pxW) - p0; p0 = a; p1 = b; }
         cx0[static_cast<std::size_t>(x)] = (p0 / sx - 1.0f) * tanH;
         cx1[static_cast<std::size_t>(x)] = (p1 / sx - 1.0f) * tanH;
     }

@@ -139,6 +139,7 @@ struct PlayOptions {
     std::string gradeFlag;        // --grade DIR, [Remaster] grade; "" = the settings'
     std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four
     float waterFlag = -1.0f;      // --water S, [Remaster] water; < 0 = the settings'
+    float floorsFlag = -1.0f;     // --floors S, [Remaster] floors; < 0 = the settings'
     float bodyLightFlag = -1.0f;  // --body-light S, [Remaster] bodylight; < 0 = the settings'
     float fxLightFlag = -1.0f;    // --fx-light S, [Remaster] fxlight; < 0 = the settings'
     float reliefFlag = -1.0f;     // --relief S, [Remaster] relief; < 0 = the settings'

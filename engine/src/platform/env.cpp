@@ -18,6 +18,7 @@ namespace {
 // "log" prints lines and changes nothing else.
 constexpr const char* kSwitches[] = {
     "OMK_ACTIVE_POOL_ONLY",     // A/B: a staged body's program looked up in the active pool alone - the old, wrong lookup (engine: walk-in scene)
+    "OMK_BLOOM",                // run_vulkan: the remaster's bloom at S (engine: bloom and grade)
     "OMK_BODYLOG",              // log: every staged body's line every frame, culled or not (engine: beat handover)
     "OMK_CAMEYE",               // log: the resolved camera eye every frame (camera travel)
     "OMK_CAMLOG",               // =1 log: transitions, camera requests and moves, scene ops, zone prunes, and the camera as drawn (engine: player move)
@@ -39,6 +40,7 @@ constexpr const char* kSwitches[] = {
     "OMK_GLES_NO_STATE_CACHE",  // GLES: the draw-state cache off (engine: gles state cache)
     "OMK_GLES_WINDUMP",         // =<path> GLES: the window's own picture written on the last frame (engine: gles overlay)
     "OMK_GPU_PRESENT_STATS",    // log: the GPU present's counts every 30 frames (engine: gpu present)
+    "OMK_GRADE",                // =<file.cube> run_vulkan: the remaster's grade (engine: bloom and grade)
     "OMK_HIDDEN_WINDOW",        // the GPU window created hidden, the present kept - for profiling (engine: gles overlay)
     "OMK_KOTRACE",              // =1 log: a knocked-out fighter's channel, tick by tick
     "OMK_LBLOG",                // =1 log: which term holds the letterbox bars, when it changes
@@ -81,6 +83,7 @@ constexpr const char* kSwitches[] = {
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned
+    "OMK_REFL_UNLIT",           // Vulkan: the water/floor reflection without its own tiled lights, as before (engine: floors)
     "OMK_ROOTSPIN_NEG",         // diagnostic: a scene clip's root delta turned the other way, the body left alone
     "OMK_SHADOWLOG",            // log: the shadows' light, the player's feet and a walker's shadow, periodically (engine: character shadow)
     "OMK_SKIN_FAR",             // every staged body posed, in view or not
@@ -91,6 +94,7 @@ constexpr const char* kSwitches[] = {
     "OMK_SWIMTRACE",            // log: the swimmer's probes every tick
     "OMK_SYNC_SETS",            // A/B: a set loaded on the frame's own thread instead of a job
     "OMK_TEXTURE_MEMORY",       // =<bytes> GL1: the free texture memory to size the textures by (engine: gl1 backend)
+    "OMK_TEXTURE_PACK",         // =<dir> run_vulkan / gles_probe: the texture pack (engine: texture pack)
     "OMK_TIE_LOG",              // log: the depth tie's decisions per upload (engine: gles tie bake)
     "OMK_TIE_STATS",            // log: how each large geometry's revisions were answered, every 30 frames (engine: dirty corners)
     "OMK_TILES_LOOSE",          // the tiled lights binned without their box test or cap (engine: emitter light)
@@ -105,6 +109,7 @@ constexpr const char* kSwitches[] = {
     "OMK_VERIFY_SPLIT",         // the two-layer grid against the linear scan every moving frame (engine: split grid)
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
+    "OMK_WATER_LEVELS",         // texpack_tool water: every level of horizontal additive area, not the plane alone
     "OMK_WATER_NO_CPU_CLIP",    // =1 the water reflection is handed the whole scene, clipped by its shader alone (engine: water reflection)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
 };

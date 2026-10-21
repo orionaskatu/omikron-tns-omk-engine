@@ -20,7 +20,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace omk {
@@ -235,15 +238,94 @@ WaterPlane waterPlane(const Geometry& g) {
     return out;
 }
 
+namespace {
+
+// THE REFLECTION'S CLIP, remembered: `inFrontOf` tests every triangle of every
+// draw against the plane, every frame - the SET's draws are the same frame
+// after frame, so the runs a (start, count) of its geometry keeps above a
+// plane are too. The set's alone: a particle's or a decal's geometry is ONE
+// object rewritten every frame, and a memo of it drew a stale clip (1 pixel
+// in Qalisar, 2026-10-21). Kept per plane height; forgotten when the plane
+// moves or a geometry is destroyed (its address may come back for another).
+// Main thread only, as every caller of `drawWithWater` is.
+struct ClipMemo {
+    float y = 0.0f;
+    bool listening = false;
+    std::unordered_map<const Geometry*, std::unordered_map<std::uint64_t, std::vector<std::pair<std::size_t, std::size_t>>>> runs;
+    static void gone(void* ctx, const Geometry* g) { static_cast<ClipMemo*>(ctx)->runs.erase(g); }
+};
+
+void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std::vector<Draw>& out) {
+    static ClipMemo memo;
+    if (!memo.listening) { addGeometryListener(&ClipMemo::gone, &memo); memo.listening = true; }
+    if (memo.y != y) { memo.runs.clear(); memo.y = y; }
+    const float n[3] = {0.0f, -1.0f, 0.0f};
+    out.clear();
+    static std::vector<Draw> one;
+    for (const auto& d : in) {
+        if (!d.geo) continue;
+        if (d.geo != stable) {
+            one.assign(1, d);
+            for (const auto& o : inFrontOf(one, n, y, 1.0f)) out.push_back(o);
+            continue;
+        }
+        auto& byDraw = memo.runs[d.geo];
+        const std::uint64_t key = (static_cast<std::uint64_t>(d.start) << 32) ^ static_cast<std::uint64_t>(d.count);
+        auto it = byDraw.find(key);
+        if (it == byDraw.end()) {
+            one.assign(1, d);
+            std::vector<std::pair<std::size_t, std::size_t>> r;
+            for (const auto& o : inFrontOf(one, n, y, 1.0f)) r.emplace_back(o.start, o.count);
+            it = byDraw.emplace(key, std::move(r)).first;
+        }
+        for (const auto& [st, cn] : it->second) { Draw o = d; o.start = st; o.count = cn; out.push_back(o); }
+    }
+}
+
+}  // namespace
+
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
-                   const Geometry* setGeo, const WaterPlane& wp, float strength) {
+                   const Geometry* setGeo, const WaterPlane& wp, float strength,
+                   const std::vector<float>* floorStrength) {
     if (!wp.found || strength <= 0.0f || !setGeo || !r.drawsWater()) return false;
     // above the water: the game's Y points DOWN, so a smaller y
     if (v.cam.eye[1] >= wp.y - 1.0f) return false;
     static std::vector<Draw> scene, water;
     scene.clear(); water.clear();
     const auto onPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= 4.0f; };
+    bool floored = false;
     for (const auto& d : draws) {
+        if (floorStrength) {
+            // THE FLOORS: a listed floor's runs on the plane reflect, in place
+            float s = 0.0f;
+            if (d.geo == setGeo && d.blend == Blend::Opaque && !d.meshPose) {
+                const auto& bs = d.geo->batches;
+                const auto b = std::upper_bound(bs.begin(), bs.end(), d.start,
+                                                [](std::size_t at, const Batch& x) { return at < x.start; });
+                if (b != bs.begin()) {
+                    const Batch& bb = *(b - 1);
+                    if (bb.material >= 0 && static_cast<std::size_t>(bb.material) < floorStrength->size())
+                        s = (*floorStrength)[static_cast<std::size_t>(bb.material)];
+                }
+            }
+            if (s <= 0.0f) { scene.push_back(d); continue; }
+            const Geometry& g = *d.geo;
+            std::size_t runStart = d.start;
+            int runKind = -1;
+            const auto flush = [&](std::size_t end) {
+                if (runKind < 0 || end <= runStart) return;
+                Draw o = d; o.start = runStart; o.count = end - runStart;
+                o.reflect = runKind ? s : 0.0f;
+                floored |= runKind == 1;
+                scene.push_back(o);
+            };
+            for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
+                const int kind = onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2]) ? 1 : 0;
+                if (kind != runKind) { flush(t); runStart = t; runKind = kind; }
+            }
+            flush(d.start + d.count);
+            continue;
+        }
         if (d.geo != setGeo || d.blend != Blend::Add || d.meshPose) { scene.push_back(d); continue; }
         const Geometry& g = *d.geo;
         // runs of the draw: water triangles to `water`, the others to `scene`
@@ -260,7 +342,7 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
         }
         flush(d.start + d.count);
     }
-    if (water.empty()) return false;
+    if (water.empty() && !floored) return false;
     // the reflected view: `p' = p - 2 (n.p + d) n` with n = (0, -1, 0), d = y -
     // a y' = 2 y_w - y - and the image flipped VERTICALLY, which the camera
     // says as a half turn of roll and a screen-X flip (the reflection
@@ -276,8 +358,7 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     static std::vector<Draw> above, posed, clipped, flat;
     above.clear(); posed.clear(); flat.clear();
     for (const auto& d : scene) (d.meshPose ? posed : flat).push_back(d);
-    const float n[3] = {0.0f, -1.0f, 0.0f};
-    clipped = inFrontOf(flat, n, wp.y, 1.0f);
+    clipAbove(flat, wp.y, setGeo, clipped);   // `inFrontOf`'s runs, the set's remembered
     above.assign(posed.begin(), posed.end());
     above.insert(above.end(), clipped.begin(), clipped.end());
     // `OMK_WATER_NO_CPU_CLIP=1`, an instrument: everything to the reflection,

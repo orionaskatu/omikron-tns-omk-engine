@@ -13,7 +13,10 @@
 //
 // The projection is `cameraBasis`'s (`o3de/raster.h`), the one the GPU
 // backends build their matrices from: screen x = w/2 (1 + (v.s / v.f) / tanH),
-// y = h/2 (1 - (v.u / v.f) / tanV), mirrored in x under `flipX`.
+// y = h/2 (1 - (v.u / v.f) / tanV) - `flipX` already in the basis (it negates
+// `s`): mirrored AGAIN here, as it was, a reflected camera's lights went to the
+// other side's tiles - unseen until the water's reflection binned its own
+// (2026-10-21: 15838 pixels from the loose binning's, 0 after).
 //
 // ...and in DEPTH: a tile is cut into `kLightSlices` slices of view depth,
 // spaced exponentially from `kSliceNear` to `kSliceFar`, and a light joins

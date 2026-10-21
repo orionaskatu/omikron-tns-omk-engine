@@ -193,7 +193,7 @@ int PlayState::setupSession() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s, floors %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
@@ -201,7 +201,8 @@ int PlayState::setupSession() {
                         bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : "1",
                         fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
                         reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2",
-                        aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2");
+                        aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2",
+                        floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : "1");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -219,6 +220,11 @@ int PlayState::setupSession() {
             std::printf("bloom: %.2f - a REMASTER feature: a glow from the texture pack's light maps "
                         "(%zu of them), drawn by Vulkan and GLES only\n",
                         static_cast<double>(bloomStrength), omk::texturePack().lightMaps());
+        // the REFLECTING FLOORS (`o3de/floorreflect.h`): its flag, its key, the
+        // preset's 1 - each floor's own strength is the list's
+        floorStrength = floorsFlag >= 0.0f ? floorsFlag
+                      : settings.floorsSource == omk::Settings::Source::Ini ? settings.floors
+                      : !preset.empty() ? 1.0f : 0.0f;
         // the WATER reflection: its flag, its key, then the preset's 0.6 (0.35 before the Fresnel, 2026-10-20)
         waterStrength = waterFlag >= 0.0f ? waterFlag
                       : settings.waterSource == omk::Settings::Source::Ini ? settings.water
@@ -270,6 +276,18 @@ int PlayState::setupSession() {
                         "off while the greyscale bank is on\n", gradeDir.c_str(), omk::cityGrades().size());
         // ...and beside them the CURATED LIGHT SOURCES (`o3de/emitterlight.h`
         // SurfaceCuration): which textures, which parts of them, cast light
+        // ...and the FLOORS that reflect (`floors.txt`, the same folder): no
+        // list, no floors
+        if (floorStrength > 0.0f) {
+            if (!gradeDir.empty() && omk::floorList().open(gradeDir + "/floors.txt"))
+                std::printf("floors: %.2f - a REMASTER feature: %zu floors of %s/floors.txt reflect the scene, "
+                            "drawn by Vulkan and GLES only\n", static_cast<double>(floorStrength),
+                            omk::floorList().size(), gradeDir.c_str());
+            else {
+                std::printf("floors: no floors.txt beside the grades - nothing reflects\n");
+                floorStrength = 0.0f;
+            }
+        }
         if (fxLight > 0.0f && !gradeDir.empty() && omk::surfaceCuration().open(gradeDir + "/lights.txt"))
         {
             std::printf("fx light: %s/lights.txt - %zu curated light sources\n", gradeDir.c_str(),

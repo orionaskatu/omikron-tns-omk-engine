@@ -1587,6 +1587,7 @@ private:
     void   runPost();
     // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
     float  waterWant_ = 0.0f;            // asked for at creation: the variant is built
+    bool   reflHalf_ = false;            // the floors' frame: its reflection at half size
     bool   waterNow_ = false;            // the draws being submitted are WATER
     bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
@@ -2913,7 +2914,10 @@ void GlesRenderer::setView(const View& view) {
 bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                                   std::span<const Draw> above, std::span<const Draw> water, float strength,
                                   float planeY) {
-    if (waterWant_ <= 0.0f || water.empty() || strength <= 0.0f || mainLoc_.water < 0) return false;
+    // (no water draws: the REFLECTING FLOORS' frame - its floors are in
+    // `scene`, `Draw::reflect` set)
+    if (waterWant_ <= 0.0f || strength <= 0.0f || mainLoc_.water < 0) return false;
+    reflHalf_ = water.empty();
     if (reflW_ != rw_ || reflH_ != rh_) {
         if (!reflFbo_) glGenFramebuffers(1, &reflFbo_);
         if (!reflTex_) glGenTextures(1, &reflTex_);
@@ -2947,10 +2951,10 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     glBindTexture(GL_TEXTURE_2D, reflTex_);
     glActiveTexture(GL_TEXTURE0);
     begin(v);
-    for (const auto& d : scene) submit(d);
-    waterNow_ = true;
     waterStrength_ = strength;
     for (int k = 0; k < 3; ++k) waterEye_[k] = v.cam.eye[k];
+    for (const auto& d : scene) submit(d);
+    waterNow_ = true;
     for (const auto& d : water) submit(d);
     waterNow_ = false;
     end();
@@ -3002,7 +3006,10 @@ void GlesRenderer::begin(const View& view) {
     dither_ = view.dither;
 
     glBindFramebuffer(GL_FRAMEBUFFER, passFbo_ ? passFbo_ : drawFbo());   // the water pass's target when set
-    glViewport(0, 0, rw_, rh_);
+    // the FLOORS' reflection at HALF size, in the target's lower-left quarter
+    // (`reflHalf_`; the water's whole) - a quarter of the pixels
+    if (passFbo_ && reflHalf_) glViewport(0, 0, (rw_ + 1) / 2, (rh_ + 1) / 2);
+    else glViewport(0, 0, rw_, rh_);
     glDisable(GL_SCISSOR_TEST);
     // the engine clears to the scene's fog colour (`View::clearColour`); with
     // the BLOOM its alpha is the light map's value, so what no surface covers
@@ -3357,13 +3364,17 @@ void GlesRenderer::submit(const Draw& d) {
     // and the clip through the cache (every draw of every frame sent them,
     // water or none), the water draws' and the reflection's own each time
     if (waterWant_ > 0.0f && L.water >= 0) {
-        const float w = waterNow_ ? waterStrength_ : 0.0f;
+        // ...a REFLECTING FLOOR's run (`Draw::reflect`) at its own strength
+        const bool floorNow = !reflectingNow_ && d.reflect > 0.0f;
+        const float w = waterNow_ ? waterStrength_ : floorNow ? waterStrength_ * d.reflect : 0.0f;
         if (set(!uv || U.water != w)) {
             glUniform1f(L.water, w);
             U.water = w;
         }
-        if (waterNow_) {
-            glUniform2f(L.reflInv, 1.0f / static_cast<float>(rw_), 1.0f / static_cast<float>(rh_));
+        if (waterNow_ || floorNow) {
+            // (a floor samples the half-size reflection: half the scale)
+            const float k = floorNow ? 0.5f : 1.0f;
+            glUniform2f(L.reflInv, k / static_cast<float>(rw_), k / static_cast<float>(rh_));
             glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
         }
         const int clip = reflectingNow_ ? 1 : 0;

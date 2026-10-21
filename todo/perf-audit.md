@@ -141,6 +141,14 @@ Each row: the cost, the original's mechanism where it has one, the target it
 helps most, and whether frames stay identical (the `optimization.md` rule:
 **a step that moves a pixel is a bug in the step** unless labelled).
 
+### 0. OPEN (2026-10-21): the reader's 4K slowdown with the reflecting floors
+
+Qalisar at 4K, `--remaster`: ~16 fps after walking the pavement back and
+forth, GPU-bound, not reproduced headless - the whole record, and the next
+step (GPU timestamps per pass), in `todo/remaster.md` (A3 continued, "OPEN
+BUG"). Measure only with no other viewer running: a game left open beside a
+measurement voided two rounds of it.
+
 ### A. Before writing any code: run what is built
 
 1. **One device session per target on HEAD.** It costs a run and changes no

@@ -25,6 +25,7 @@
 #include "o3de/renderer.h"
 #include "o3de/colourgrade.h"
 #include "o3de/texpack.h"
+#include "platform/env.h"
 #include "platform/datafs.h"
 
 #include <cstdio>
@@ -117,9 +118,9 @@ int main(int argc, char** argv) {
     if (aniso > 1) vk->setAnisotropy(aniso);
     // the REMASTER's post-pass: `OMK_BLOOM=S` and `OMK_GRADE=file.cube`
     // (`verify.py: engine: bloom and grade`)
-    if (const char* b = std::getenv("OMK_BLOOM"); b && *b) vk->setBloom(static_cast<float>(std::atof(b)));
+    if (const char* b = omk::envStr("OMK_BLOOM"); b && *b) vk->setBloom(static_cast<float>(std::atof(b)));
     omk::ColourLut lut;
-    if (const char* g = std::getenv("OMK_GRADE"); g && *g) {
+    if (const char* g = omk::envStr("OMK_GRADE"); g && *g) {
         std::string why;
         if (!omk::parseCube(omk::readTextFile(g), lut, &why)) {
             std::fprintf(stderr, "%s: %s\n", g, why.c_str());
@@ -127,7 +128,7 @@ int main(int argc, char** argv) {
         }
         vk->setGrade(lut.rgb.data(), lut.n);
     }
-    if (const char* pack = std::getenv("OMK_TEXTURE_PACK"); pack && *pack) {
+    if (const char* pack = omk::envStr("OMK_TEXTURE_PACK"); pack && *pack) {
         if (!omk::texturePack().open(pack)) { delete vk; return 1; }
         std::printf("texture pack: %s, %zu entries\n", pack, omk::texturePack().size());
     }

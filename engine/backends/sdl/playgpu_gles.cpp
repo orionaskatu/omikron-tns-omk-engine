@@ -10,6 +10,8 @@
 #include "../openxr/xrhost.h"
 #endif
 
+#include <algorithm>
+
 // The GLES window - this glue's, not the game's (the gateway: game code holds
 // no host handle). One viewer a process, so one window.
 static SDL_Window* glWin = nullptr;
@@ -105,7 +107,8 @@ void PlayState::gpuOpenWindow() {
             if (texAniso > 1) gr->setAnisotropy(texAniso);
             if (ssaa > 1) gr->setSupersample(ssaa);
             if (bloomStrength > 0.0f) gr->setBloom(bloomStrength);   // the remaster's
-            if (waterStrength > 0.0f) gr->setWater(waterStrength);
+            if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
+                gr->setWater(std::max(waterStrength, floorStrength));
             if (bodyLight > 0.0f) gr->setBodyTint(true);
             if (fxLight > 0.0f) gr->setEmitterLights(true);
             // per-pixel lighting and the mapped shadow: their programs are

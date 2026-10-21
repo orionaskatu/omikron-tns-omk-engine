@@ -303,6 +303,11 @@ struct Draw {
     // the painted light around the body. 1, 1, 1 on every draw unless the
     // option is on AND the renderer says it draws it (`drawsBodyTint`).
     float           lightTint[3]     = {1.0f, 1.0f, 1.0f};
+    // A REFLECTING FLOOR's draw (`o3de/floorreflect.h`, the remaster's): its
+    // triangles on the frame's reflection plane, adding the reflection as the
+    // water does, at this times the pass's strength. 0 on every other draw;
+    // set only by `drawWithWater`, for its own frame.
+    float           reflect          = 0.0f;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and
@@ -615,7 +620,13 @@ WaterPlane waterPlane(const Geometry& g);
 // the image flipped vertically - a 180-degree roll and a screen-X flip); the
 // draws above the plane for the reflection. False - and nothing drawn - when
 // any of that does not hold, and the caller draws as it would have.
+//
+// ...or the REFLECTING FLOORS (`o3de/floorreflect.h`): `floorStrength` per
+// material of `setGeo` (null for the water), and `wp` the floor's plane. The
+// listed floors' triangles on it stay in the scene, IN ORDER (a decal and a
+// depth tie ride on it), each run carrying its `Draw::reflect`.
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
-                   const Geometry* setGeo, const WaterPlane& wp, float strength);
+                   const Geometry* setGeo, const WaterPlane& wp, float strength,
+                   const std::vector<float>* floorStrength = nullptr);
 
 }  // namespace omk

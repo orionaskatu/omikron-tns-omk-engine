@@ -34,6 +34,9 @@
 //                                           at the borders of `islands`'
 //                                           coverage ("-" for none of either),
 //                                           as `png` writes: int32 w, h, w*h RGBA8
+//     texpack_tool floors <model.3DO>       a set's LEVEL opaque triangles by
+//                                           texture and height, the most area
+//                                           first - the reflecting floors' list
 //     texpack_tool islands <gamedata> <outdir>
 //                                           every texture's COVERAGE by the
 //                                           faces that sample it, <key>.cov
@@ -58,6 +61,7 @@
 #include "o3de/normalmap.h"
 #include "o3de/renderer.h"
 #include "o3de/texpack.h"
+#include "platform/env.h"
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
@@ -253,6 +257,43 @@ int islands(const std::string& data, const std::string& outdir) {
     return 0;
 }
 
+// THE FLOORS of a set (`todo/remaster.md` A3, the reflecting floors): its
+// LEVEL opaque triangles by texture and height, the most area first - what a
+// `floors.txt` is drafted from. One line each: "<texture> <key> y <height>
+// area <m2> triangles <n>" (area in square metres, 100 units a metre).
+int floors(const std::string& model) {
+    const auto d = omk::DataFs::readPath(model);
+    fs::path t = model;
+    for (const char* ext : {".3dt", ".3DT", ".3Dt"}) {
+        auto c = fs::path(model); c.replace_extension(ext);
+        if (fs::exists(c)) { t = c; break; }
+    }
+    if (d.empty() || t == fs::path(model)) { std::fprintf(stderr, "%s: no .3DO/.3DT pair\n", model.c_str()); return 1; }
+    const auto tex = omk::textures(d, omk::DataFs::readPath(t.string()));
+    const omk::Geometry g = omk::buildGeometry(d, omk::DrawFilter::Engine);
+    struct Row { double area = 0; long tris = 0; };
+    std::map<std::pair<int, int>, Row> rows;   // (material, y / 4)
+    for (const auto& b : g.batches) {
+        if (b.blend != omk::Blend::Opaque || b.material < 0 || static_cast<std::size_t>(b.material) >= tex.size()) continue;
+        for (std::size_t k = b.start; k + 2 < b.start + b.count; k += 3) {
+            const omk::Corner* p = &g.corners[k];
+            if (std::fabs(p[0].y - p[1].y) > 2.0f || std::fabs(p[0].y - p[2].y) > 2.0f) continue;   // not level
+            const double ux = p[1].x - p[0].x, uz = p[1].z - p[0].z, vx = p[2].x - p[0].x, vz = p[2].z - p[0].z;
+            Row& r = rows[{b.material, static_cast<int>(std::lround(p[0].y / 4.0f))}];
+            r.area += std::fabs(ux * vz - uz * vx) * 0.5 / 1e4;
+            ++r.tris;
+        }
+    }
+    std::vector<std::pair<std::pair<int, int>, Row>> v(rows.begin(), rows.end());
+    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.area > b.second.area; });
+    for (const auto& [k, r] : v) {
+        const omk::Texture& x = tex[static_cast<std::size_t>(k.first)];
+        std::printf("%s %s y %d area %.0f triangles %ld\n", x.name.c_str(),
+                    x.hasPixels() ? omk::textureKeyHex(omk::textureKey(x)).c_str() : "-", k.second * 4, r.area, r.tris);
+    }
+    return 0;
+}
+
 int png(const std::string& in, const std::string& out) {
     const auto b = omk::readWholeFile(in);
     omk::PngImage img;
@@ -386,7 +427,7 @@ int water(int argc, char** argv) {
         const auto w = omk::waterPlane(g);
         std::printf("%s %d %.1f %.0f %ld\n", fs::path(argv[i]).filename().string().c_str(), w.found ? 1 : 0,
                     static_cast<double>(w.y), w.area, w.triangles);
-        if (std::getenv("OMK_WATER_LEVELS"))
+        if (omk::envFlag("OMK_WATER_LEVELS"))
             for (const auto& l : w.levels)
                 std::printf("    level %.1f %.0f %ld\n", static_cast<double>(l.y), l.area, l.triangles);
     }
@@ -468,10 +509,11 @@ int main(int argc, char** argv) {
     if (mode == "lights" && argc == 4) return lights(argv[2], argv[3]);
     if (mode == "normals" && argc >= 4 && argc <= 9) return normals(argc, argv);
     if (mode == "islands" && argc == 4) return islands(argv[2], argv[3]);
+    if (mode == "floors" && argc == 3) return floors(argv[2]);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata> | png <in.png> <out.raw> | pngpar <in.png> <n>\n"
                          "       | grey <pack> <model.3DO> | cube <file.cube> | water <model.3DO>...\n"
                          "       | probe <model.3DO> ... | lights <pack> <model.3DO>\n"
                          "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
-                         "       | islands <gamedata> <outdir>   (the header says what each answers)\n");
+                         "       | islands <gamedata> <outdir> | floors <model.3DO>   (the header says what each answers)\n");
     return 2;
 }

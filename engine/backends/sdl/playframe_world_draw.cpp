@@ -1319,7 +1319,25 @@ void PlayState::worldMirror() {
         omk::event("remaster.water", {{"frame", frameNo}, {"live", watered},
                                       {"y", static_cast<double>(shownSlot.water.y)}});
     }
-    const auto mst = watered ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
+    // ...and where it does not, the REFLECTING FLOORS (`o3de/floorreflect.h`):
+    // the listed floor's level below the eye with the most of it near, through
+    // the same pass - one reflection a frame
+    omk::WaterPlane floorPlane;
+    if (!watered && floorStrength > 0.0f && shownSlot.floors.any())
+        floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
+    const bool floored = floorPlane.found &&
+        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, floorPlane, floorStrength, &shownSlot.floors.strength);
+    if (floored != floorLive || (floored && floorPlane.y != floorLiveY)) {
+        floorLive = floored;
+        floorLiveY = floorPlane.y;
+        std::printf("frame %ld: the floors %s (y %.0f)\n", frameNo,
+                    floored ? "REFLECT - the scene mirrored in the level below the eye"
+                            : "do not reflect here (none listed near, the water reflecting, or no pass)",
+                    static_cast<double>(floorPlane.y));
+        omk::event("remaster.floors", {{"frame", frameNo}, {"live", floored},
+                                       {"y", static_cast<double>(floorPlane.y)}});
+    }
+    const auto mst = watered || floored ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");
     if (mst.active != mirrorLive || (mst.maskPixels > 0 && !mirrorSeen)) {
@@ -1328,7 +1346,7 @@ void PlayState::worldMirror() {
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
                     "%.0f in front)\n", frameNo,
                     mst.active ? "REFLECTING"
-                    : watered ? "SET ASIDE - the water reflects instead (one reflection a frame)"
+                    : watered || floored ? "SET ASIDE - the water or a floor reflects instead (one reflection a frame)"
                     : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
                                              : "out of view - the camera is behind it",
                     mst.native ? " [native: the two passes]" : "",

@@ -27,6 +27,16 @@
 //                                           of a grey of 0.2
 //     texpack_tool cube <file.cube>         the engine's .cube reader's answer:
 //                                           "cube N first r g b last r g b", or why not
+//     texpack_tool normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]
+//                                           the remaster's NORMAL MAP of a
+//                                           pack texture (`o3de/normalmap.h`),
+//                                           over an AI map `base.png`, faded
+//                                           at the borders of `islands`'
+//                                           coverage ("-" for none of either),
+//                                           as `png` writes: int32 w, h, w*h RGBA8
+//     texpack_tool islands <gamedata> <outdir>
+//                                           every texture's COVERAGE by the
+//                                           faces that sample it, <key>.cov
 //     texpack_tool grey <pack> <model.3DO>  the GREYSCALE BANK through a pack:
 //                                           each texture greyed as the viewer
 //                                           greys it, aliased, and the pack's
@@ -45,6 +55,7 @@
 #include "o3de/emitterlight.h"
 #include "o3de/greybank.h"
 #include "o3de/lightprobe.h"
+#include "o3de/normalmap.h"
 #include "o3de/renderer.h"
 #include "o3de/texpack.h"
 #include "platform/datafs.h"
@@ -52,6 +63,8 @@
 #include "platform/threads.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -101,6 +114,145 @@ int keys(const std::string& data) {
     return 0;
 }
 
+// THE ISLANDS: which texels of each texture a face samples, over every model
+// that draws it - the normal maps' guard against an ATLAS (`o3de/normalmap.h`).
+// BATITR09, Qalisar's floor, is three surfaces in one texture; a generated map
+// draws a ridge where two meet, and a face mapped to one of them up to its
+// border draws the ridge as a line along its edge. Each face's UV triangle
+// (texels, the original's size) is rasterised by its texel centres, wrapped;
+// one spanning the texture or more TILES, and covers it all. Coverage alone
+// does not part BATITR09's beige from its green - both are drawn, and they
+// touch - so the texture is cut into REGIONS: faces whose UV triangles
+// OVERLAP (share a texel centre a texel or more inside each - BATITR09's
+// beige and green faces meet on a line, give or take a texel) are one
+// region, and a covered texel beside another region's is a BORDER. Not
+// tried twice: a UV edge only one triangle has (the sets cut their faces
+// freely - 170786 such edges, most inside a picture), and a 3D edge across
+// which the texels jump (the paving restarts at nearly every face, 567299).
+// `<outdir>/<key>.cov`: int32 w, h, then w*h bytes: 0 no face samples the
+// texel, 1 covered, 2 on a chart's border.
+int islands(const std::string& data, const std::string& outdir) {
+    fs::path meshes;
+    for (const auto& e : fs::directory_iterator(data))
+        if (e.is_directory() && lower(e.path().filename().string()) == "meshes") meshes = e.path();
+    if (meshes.empty()) { std::fprintf(stderr, "no MESHES under %s\n", data.c_str()); return 1; }
+    // `id` the texel's first triangle (-1 none), `up` the triangles' union-find
+    struct Cover { int w = 0, h = 0; std::vector<std::uint8_t> m; std::vector<int> id, up; };
+    const auto root = [](std::vector<int>& up, int a) {
+        while (up[static_cast<std::size_t>(a)] != a) a = up[static_cast<std::size_t>(a)] = up[static_cast<std::size_t>(up[static_cast<std::size_t>(a)])];
+        return a;
+    };
+    std::map<std::uint64_t, Cover> cov;
+    long faces = 0, tiled = 0;
+    for (const auto& e : fs::recursive_directory_iterator(meshes)) {
+        if (!e.is_regular_file() || lower(e.path().extension().string()) != ".3do") continue;
+        fs::path t;
+        for (const char* ext : {".3dt", ".3DT", ".3Dt"}) {
+            auto c = e.path(); c.replace_extension(ext);
+            if (fs::exists(c)) { t = c; break; }
+        }
+        if (t.empty()) continue;
+        const auto d = omk::DataFs::readPath(e.path().string());
+        const auto tex = omk::textures(d, omk::DataFs::readPath(t.string()));
+        const omk::Geometry g = omk::buildGeometry(d, omk::DrawFilter::Engine);
+        for (const auto& b : g.batches) {
+            if (b.material < 0 || static_cast<std::size_t>(b.material) >= tex.size()) continue;
+            const omk::Texture& x = tex[static_cast<std::size_t>(b.material)];
+            if (!x.hasPixels()) continue;
+            Cover& c = cov[omk::textureKey(x)];
+            const int w = x.width, h = x.height;
+            if (c.m.empty()) {
+                c.w = w; c.h = h; c.m.assign(static_cast<std::size_t>(w) * h, 0);
+                c.id.assign(c.m.size(), -1);
+            }
+            for (std::size_t k = b.start; k + 2 < b.start + b.count; k += 3) {
+                const omk::Corner* p = &g.corners[k];
+                ++faces;
+                float u0 = std::min({p[0].u, p[1].u, p[2].u}), u1 = std::max({p[0].u, p[1].u, p[2].u});
+                float v0 = std::min({p[0].v, p[1].v, p[2].v}), v1 = std::max({p[0].v, p[1].v, p[2].v});
+                if (u1 - u0 >= w || v1 - v0 >= h) { std::fill(c.m.begin(), c.m.end(), 1); ++tiled; continue; }
+                const auto mark = [&](int x0, int y0) {
+                    c.m[static_cast<std::size_t>(((y0 % h) + h) % h) * w + ((x0 % w) + w) % w] = 1;
+                };
+                // the corners' own texels, so a sliver covering no centre still counts
+                for (int q = 0; q < 3; ++q)
+                    mark(static_cast<int>(std::floor(p[q].u)), static_cast<int>(std::floor(p[q].v)));
+                const float area = (p[1].u - p[0].u) * (p[2].v - p[0].v) - (p[2].u - p[0].u) * (p[1].v - p[0].v);
+                if (std::fabs(area) < 1e-6f) continue;
+                const float s = area > 0 ? 1.0f : -1.0f;
+                const int tri = static_cast<int>(c.up.size());
+                c.up.push_back(tri);
+                for (int y = static_cast<int>(std::floor(v0)); y <= static_cast<int>(std::ceil(v1)); ++y)
+                    for (int xx = static_cast<int>(std::floor(u0)); xx <= static_cast<int>(std::ceil(u1)); ++xx) {
+                        const float cu = xx + 0.5f, cv = y + 0.5f;
+                        // the centre's distance inside each edge, in texels
+                        float inside = 1e9f;
+                        for (int q = 0; q < 3; ++q) {
+                            const omk::Corner& a = p[q];
+                            const omk::Corner& bb = p[(q + 1) % 3];
+                            const float len = std::hypot(bb.u - a.u, bb.v - a.v);
+                            if (len > 0.0f)
+                                inside = std::min(inside, s * ((bb.u - a.u) * (cv - a.v) - (bb.v - a.v) * (cu - a.u)) / len);
+                        }
+                        if (inside < -1e-4f) continue;
+                        mark(xx, y);
+                        if (inside < 1.0f) continue;
+                        // a texel or more inside: this triangle's region is the texel's
+                        int& first = c.id[static_cast<std::size_t>(((y % h) + h) % h) * w + ((xx % w) + w) % w];
+                        if (first < 0) first = tri;
+                        else c.up[static_cast<std::size_t>(root(c.up, tri))] = root(c.up, first);
+                    }
+            }
+        }
+    }
+    long full = 0, borders = 0, regions = 0;
+    for (auto& [key, c] : cov) {
+        // the regions: a texel labelled by its region, one unlabelled (only
+        // within a texel of an edge) by its nearest labelled neighbour's, over
+        // a few passes; a covered texel beside another region's is a border
+        std::vector<int> lab(c.m.size(), -1);
+        for (std::size_t i = 0; i < lab.size(); ++i)
+            if (c.id[i] >= 0) lab[i] = root(c.up, c.id[i]);
+        const auto at = [&](int x, int y) {
+            return static_cast<std::size_t>(((y % c.h) + c.h) % c.h) * c.w + ((x % c.w) + c.w) % c.w;
+        };
+        for (int pass = 0; pass < 3; ++pass) {
+            std::vector<int> next = lab;
+            for (int y = 0; y < c.h; ++y)
+                for (int x = 0; x < c.w; ++x) {
+                    const std::size_t i = at(x, y);
+                    if (lab[i] >= 0 || !c.m[i]) continue;
+                    for (const std::size_t j : {at(x + 1, y), at(x - 1, y), at(x, y + 1), at(x, y - 1)})
+                        if (lab[j] >= 0) { next[i] = lab[j]; break; }
+                }
+            lab.swap(next);
+        }
+        std::vector<int> roots;
+        for (int y = 0; y < c.h; ++y)
+            for (int x = 0; x < c.w; ++x) {
+                const std::size_t i = at(x, y);
+                if (lab[i] < 0) continue;
+                roots.push_back(lab[i]);
+                for (const std::size_t j : {at(x + 1, y), at(x - 1, y), at(x, y + 1), at(x, y - 1)})
+                    if (lab[j] >= 0 && lab[j] != lab[i]) { c.m[i] = 2; ++borders; break; }
+            }
+        std::sort(roots.begin(), roots.end());
+        regions += std::unique(roots.begin(), roots.end()) - roots.begin();
+        const std::string out = outdir + "/" + omk::textureKeyHex(key) + ".cov";
+        if (!omk::safeOutputPath(out)) return 2;
+        std::FILE* f = std::fopen(out.c_str(), "wb");
+        if (!f) { std::fprintf(stderr, "%s: cannot write\n", out.c_str()); return 1; }
+        const std::int32_t hdr[2] = {c.w, c.h};
+        std::fwrite(hdr, sizeof hdr, 1, f);
+        std::fwrite(c.m.data(), 1, c.m.size(), f);
+        std::fclose(f);
+        full += std::count(c.m.begin(), c.m.end(), 0) == 0;
+    }
+    std::printf("@islands textures=%zu covered_whole=%ld faces=%ld tiling_faces=%ld regions=%ld border_texels=%ld\n",
+                cov.size(), full, faces, tiled, regions, borders);
+    return 0;
+}
+
 int png(const std::string& in, const std::string& out) {
     const auto b = omk::readWholeFile(in);
     omk::PngImage img;
@@ -115,6 +267,54 @@ int png(const std::string& in, const std::string& out) {
     const std::int32_t hdr[2] = {img.w, img.h};
     std::fwrite(hdr, sizeof hdr, 1, f);
     std::fwrite(img.rgba.data(), 1, img.rgba.size(), f);
+    std::fclose(f);
+    return 0;
+}
+
+int normals(int argc, char** argv) {
+    const std::string in = argv[2], out = argv[3];
+    const auto b = omk::readWholeFile(in);
+    omk::PngImage img;
+    std::string why;
+    if (b.empty() || !omk::decodePng(reinterpret_cast<const std::uint8_t*>(b.data()), b.size(), img, &why)) {
+        std::fprintf(stderr, "%s: %s\n", in.c_str(), b.empty() ? "unreadable" : why.c_str());
+        return 1;
+    }
+    omk::NormalMapParams p;
+    omk::PngImage base;
+    if (argc > 4 && std::string(argv[4]) != "-") {
+        const auto bb = omk::readWholeFile(argv[4]);
+        if (bb.empty() || !omk::decodePng(reinterpret_cast<const std::uint8_t*>(bb.data()), bb.size(), base, &why) ||
+            base.w != img.w || base.h != img.h) {
+            std::fprintf(stderr, "%s: %s\n", argv[4], bb.empty() ? "unreadable" : why.empty() ? "not the colour's size" : why.c_str());
+            return 1;
+        }
+        p.base = base.rgba.data();
+    }
+    std::vector<std::uint8_t> cov;
+    if (argc > 5 && std::string(argv[5]) != "-") {
+        const auto cb = omk::readWholeFile(argv[5]);
+        std::int32_t hdr[2] = {0, 0};
+        if (cb.size() >= sizeof hdr) std::memcpy(hdr, cb.data(), sizeof hdr);
+        if (hdr[0] <= 0 || hdr[1] <= 0 || cb.size() != sizeof hdr + static_cast<std::size_t>(hdr[0]) * hdr[1]) {
+            std::fprintf(stderr, "%s: not a coverage (texpack_tool islands)\n", argv[5]);
+            return 1;
+        }
+        cov.assign(reinterpret_cast<const std::uint8_t*>(cb.data()) + sizeof hdr,
+                   reinterpret_cast<const std::uint8_t*>(cb.data()) + cb.size());
+        p.cover = cov.data(); p.cw = hdr[0]; p.ch = hdr[1];
+    }
+    if (argc > 6) p.strength = static_cast<float>(std::atof(argv[6]));
+    if (argc > 7) p.wide = std::atoi(argv[7]);
+    if (argc > 8) p.fade = std::atoi(argv[8]);
+    std::vector<std::uint8_t> map;
+    omk::normalMap(img.rgba.data(), img.w, img.h, p, map);
+    if (!omk::safeOutputPath(out)) return 2;
+    std::FILE* f = std::fopen(out.c_str(), "wb");
+    if (!f) return 1;
+    const std::int32_t hdr[2] = {img.w, img.h};
+    std::fwrite(hdr, sizeof hdr, 1, f);
+    std::fwrite(map.data(), 1, map.size(), f);
     std::fclose(f);
     return 0;
 }
@@ -266,6 +466,8 @@ int main(int argc, char** argv) {
     if (mode == "water" && argc >= 3) return water(argc, argv);
     if (mode == "probe" && argc >= 3) return probe(argc, argv);
     if (mode == "lights" && argc == 4) return lights(argv[2], argv[3]);
+    if (mode == "normals" && argc >= 4 && argc <= 9) return normals(argc, argv);
+    if (mode == "islands" && argc == 4) return islands(argv[2], argv[3]);
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
                          "       texpack_tool png <in.png> <out.raw>\n"
                          "       texpack_tool grey <pack> <model.3DO>\n");

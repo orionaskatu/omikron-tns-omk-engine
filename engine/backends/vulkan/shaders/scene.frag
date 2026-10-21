@@ -70,6 +70,11 @@ layout(set = 0, binding = 1) uniform sampler2D emis;
 // the WATER pass's reflection, the scene through the camera reflected in the
 // water plane (black unless a water pass made one); read only by water draws
 layout(set = 0, binding = 2) uniform sampler2D refl;
+#ifdef OMK_TILED
+// THE NORMAL MAP (the pack's `<key>_n.png`, the remaster's B3) - the relief's;
+// a flat one of ALPHA 0 where the texture has none
+layout(set = 0, binding = 3) uniform sampler2D nmap;
+#endif
 
 // ---- the MAPPED shadow, `todo/enhancements.md` 6 - an ENHANCEMENT ----------
 //
@@ -235,13 +240,6 @@ float litness() {
 vec3 relief(vec3 n, vec3 w, vec2 uv) {
     float s = lg.fx.x;
     if (s <= 0.0) return n;
-    vec2 px = 1.0 / vec2(textureSize(tex, 0));
-    const vec3 Y = vec3(0.299, 0.587, 0.114);
-    float hl = dot(texture(tex, uv - vec2(px.x, 0.0)).rgb, Y);
-    float hr = dot(texture(tex, uv + vec2(px.x, 0.0)).rgb, Y);
-    float hu = dot(texture(tex, uv - vec2(0.0, px.y)).rgb, Y);
-    float hd = dot(texture(tex, uv + vec2(0.0, px.y)).rgb, Y);
-    vec2 g = vec2(hr - hl, hd - hu) * s;
     vec3 dp1 = dFdx(w), dp2 = dFdy(w);
     vec2 du1 = dFdx(uv), du2 = dFdy(uv);
     vec3 p2 = cross(dp2, n), p1 = cross(n, dp1);
@@ -249,6 +247,22 @@ vec3 relief(vec3 n, vec3 w, vec2 uv) {
     float m = max(dot(T, T), dot(B, B));
     if (m <= 0.0) return n;
     float inv = inversesqrt(m);
+    // THE PACK'S NORMAL MAP where there is one (`o3de/normalmap.h`: OpenGL's
+    // convention - R along +u, G along -v, the image's up): its slope, scaled
+    // by the strength, along the frame's T and -B
+    vec4 nm = texture(nmap, uv);
+    if (nm.a > 0.0) {
+        vec3 t = nm.rgb * 2.0 - 1.0;
+        vec2 sl = t.xy / max(t.z, 0.2) * s;
+        return normalize(n + (T * inv) * sl.x - (B * inv) * sl.y);
+    }
+    vec2 px = 1.0 / vec2(textureSize(tex, 0));
+    const vec3 Y = vec3(0.299, 0.587, 0.114);
+    float hl = dot(texture(tex, uv - vec2(px.x, 0.0)).rgb, Y);
+    float hr = dot(texture(tex, uv + vec2(px.x, 0.0)).rgb, Y);
+    float hu = dot(texture(tex, uv - vec2(0.0, px.y)).rgb, Y);
+    float hd = dot(texture(tex, uv + vec2(0.0, px.y)).rgb, Y);
+    vec2 g = vec2(hr - hl, hd - hu) * s;
     // the slope a texel, x8: a brightness step of 0.1 tilts the normal ~0.8 at 1
     // (x4 was barely seen at 1 - the median pixel moved 8 of 255)
     return normalize(n - (T * inv) * g.x * 8.0 - (B * inv) * g.y * 8.0);

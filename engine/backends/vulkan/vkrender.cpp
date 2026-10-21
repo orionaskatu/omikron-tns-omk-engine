@@ -472,10 +472,15 @@ private:
         // when there is none)
         VkImage emImg = VK_NULL_HANDLE; VkDeviceMemory emMem = VK_NULL_HANDLE;
         VkImageView emView = VK_NULL_HANDLE;
+        // its NORMAL MAP, the pack's `<key>_n.png` (binding 3, the relief's;
+        // `normalFlat_` when there is none)
+        VkImage nmImg = VK_NULL_HANDLE; VkDeviceMemory nmMem = VK_NULL_HANDLE;
+        VkImageView nmView = VK_NULL_HANDLE;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
     Tex              lightBlack_;         // the light map of a texture that has none
+    Tex              normalFlat_;         // the normal map of one that has none: flat, ALPHA 0 - "none"
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
     struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
@@ -1137,14 +1142,15 @@ bool VulkanRenderer::makePipelines() {
     // binding 0 the texture, binding 1 its LIGHT MAP (the remaster's bloom;
     // black unless the texture pack has one, read only with the bloom on)
     // ...and binding 2 the WATER pass's reflection (black without one)
-    VkDescriptorSetLayoutBinding b2tex[3]{};
-    for (uint32_t k = 0; k < 3; ++k) {
+    // 0 the texture, 1 its light map, 2 the water's reflection, 3 its normal map
+    VkDescriptorSetLayoutBinding b2tex[4]{};
+    for (uint32_t k = 0; k < 4; ++k) {
         b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
         b2tex[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b2tex[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli.bindingCount = 3; dli.pBindings = b2tex;
+    dli.bindingCount = 4; dli.pBindings = b2tex;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &dsl_), "descriptorSetLayout");
 
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
@@ -1427,7 +1433,7 @@ bool VulkanRenderer::makePipelines() {
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
     // two samplers a texture's set since the light map (binding 1)
-    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 390},
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 530},   // four a texture's set
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};   // set 1's tiled lights
@@ -2711,16 +2717,25 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // A set is freed on its own and only the new ones are allocated -
     // reallocating them all on a per-frame call exhausts the descriptor pool
     // and crashes.
-    // binding 1 of a texture's set: its light map, or the shared black one
-    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view) {
-        VkDescriptorImageInfo dii{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        wr.dstSet = ds; wr.dstBinding = 1; wr.descriptorCount = 1;
-        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        wr.pImageInfo = &dii;
-        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+    // binding 1 of a texture's set: its light map, or the shared black one;
+    // binding 3 its normal map, or the shared flat one
+    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view, VkImageView normal) {
+        VkDescriptorImageInfo dii[2] = {{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                        {sampler_, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet wr[2]{};
+        for (int k = 0; k < 2; ++k) {
+            wr[k].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            wr[k].dstSet = ds; wr[k].dstBinding = k == 0 ? 1 : 3; wr[k].descriptorCount = 1;
+            wr[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            wr[k].pImageInfo = &dii[k];
+        }
+        vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
         bindReflection(ds);
     };
+    if (normalFlat_.img == VK_NULL_HANDLE) {
+        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_);
+        if (normalFlat_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &normalFlat_.ds); normalFlat_.ds = VK_NULL_HANDLE; }
+    }
     if (lightBlack_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_);
         if (lightBlack_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &lightBlack_.ds); lightBlack_.ds = VK_NULL_HANDLE; }
@@ -2729,7 +2744,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     }
     if (white_.img == VK_NULL_HANDLE) {
         upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
-        bindLight(white_.ds, lightBlack_.view);
+        bindLight(white_.ds, lightBlack_.view, normalFlat_.view);
     }
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
@@ -2750,6 +2765,9 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (old.emView) vkDestroyImageView(dev_, old.emView, nullptr);
         if (old.emImg)  vkDestroyImage(dev_, old.emImg, nullptr);
         if (old.emMem)  freeDeviceMemory(old.emMem);
+        if (old.nmView) vkDestroyImageView(dev_, old.nmView, nullptr);
+        if (old.nmImg)  vkDestroyImage(dev_, old.nmImg, nullptr);
+        if (old.nmMem)  freeDeviceMemory(old.nmMem);
         it = uploaded_.erase(it);
     }
     tex_.assign(t.size(), Tex{});
@@ -2766,7 +2784,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
         reps = pack.replacements(toDecode);
     }
-    int packed = 0;
+    int packed = 0, normals = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
         if (!x.hasPixels()) continue;
@@ -2797,7 +2815,17 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
                 u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
                 ++lit;
             }
-            if (u.t.ds) bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view);
+            // ...and its NORMAL MAP (the relief's), when the pack has one
+            if (pack.active() && !reps[i].normal.empty()) {
+                const omk::PackImage& rep = reps[i];
+                Tex nm;
+                upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm);
+                if (nm.ds) vkFreeDescriptorSets(dev_, dpool_, 1, &nm.ds);
+                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
+                ++normals;
+            }
+            if (u.t.ds) bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
+                                  u.t.nmView ? u.t.nmView : normalFlat_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
         }
         tex_[i] = hit->second.t;
@@ -2805,7 +2833,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     }
     if (pack.active())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
-                                    {"replaced", packed}, {"lights", lit}});
+                                    {"replaced", packed}, {"lights", lit}, {"normals", normals}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
@@ -3722,12 +3750,16 @@ VulkanRenderer::~VulkanRenderer() {
         if (t.emView) vkDestroyImageView(dev_, t.emView, nullptr);
         if (t.emImg)  vkDestroyImage(dev_, t.emImg, nullptr);
         if (t.emMem)  freeDeviceMemory(t.emMem);
+        if (t.nmView) vkDestroyImageView(dev_, t.nmView, nullptr);
+        if (t.nmImg)  vkDestroyImage(dev_, t.nmImg, nullptr);
+        if (t.nmMem)  freeDeviceMemory(t.nmMem);
     };
     for (auto& [key, u] : uploaded_) killTex(u.t);   // the slots' handles are theirs
     uploaded_.clear();
     tex_.clear();
     killTex(white_);
     killTex(lightBlack_);
+    killTex(normalFlat_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);

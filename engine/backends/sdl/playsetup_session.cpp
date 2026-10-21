@@ -200,7 +200,7 @@ int PlayState::setupSession() {
                         waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.6",
                         bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : "1",
                         fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "1");
+                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -230,11 +230,12 @@ int PlayState::setupSession() {
         fxLight = fxLightFlag >= 0.0f ? fxLightFlag
                 : settings.fxLightSource == omk::Settings::Source::Ini ? settings.fxLight
                 : !preset.empty() ? 1.0f : 0.0f;
-        // the RELIEF (`View::relief`): its flag, its key, the preset's 1 (the
-        // reader's, 2026-10-21, beside 0, 2 and 4)
+        // the RELIEF (`View::relief`): its flag, its key, the preset's 2 (the
+        // reader's, 2026-10-21: 1 on the brightness beside 0, 2 and 4; 2 once
+        // the pack's generated normal maps came, "relief 2 is better")
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
-               : !preset.empty() ? 1.0f : 0.0f;
+               : !preset.empty() ? 2.0f : 0.0f;
         // the AMBIENT OCCLUSION: its flag, its key - not in the preset until
         // the reader has seen it
         aoStrength = aoFlag >= 0.0f ? aoFlag
@@ -242,9 +243,14 @@ int PlayState::setupSession() {
         if (aoStrength > 0.0f)
             std::printf("ao: %.2f - a REMASTER feature: ambient occlusion at contacts, from the frame's depth, "
                         "drawn by Vulkan only\n", static_cast<double>(aoStrength));
-        if (relief > 0.0f)
-            std::printf("relief: %.2f - a REMASTER feature: the textures' brightness read as height under the "
-                        "emitters' lights, drawn by Vulkan only\n", static_cast<double>(relief));
+        if (relief > 0.0f) {
+            // ...from the pack's NORMAL MAPS where it has them (B3, `<key>_n.png`),
+            // the brightness elsewhere
+            omk::texturePack().setNormals(true);
+            std::printf("relief: %.2f - a REMASTER feature: the textures' relief under the emitters' lights, "
+                        "%zu normal maps in the pack (the brightness elsewhere), drawn by Vulkan only\n",
+                        static_cast<double>(relief), omk::texturePack().normalMaps());
+        }
         if (fxLight > 0.0f)
             std::printf("fx light: %.2f - a REMASTER feature: the set's flames and glows light the bodies "
                         "near them, drawn by Vulkan and GLES only\n", static_cast<double>(fxLight));

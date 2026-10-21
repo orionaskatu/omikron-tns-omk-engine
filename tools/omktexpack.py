@@ -13,6 +13,11 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   -> OUT/pack, the directory to hand the viewer
     omktexpack.py emissive PACK [--match S ...]   a light map <key>_e.png per texture, by the rule
                                                   below - a START, to be curated by hand
+    omktexpack.py materials PACK [--deepbump DIR [--python PY]] [--jobs N] [--force] [--match S ...]
+                                                  a NORMAL MAP <key>_n.png per colour texture
+                                                  (B3, engine/src/o3de/normalmap.h): the
+                                                  engine's generator, over DeepBump's map
+                                                  when DIR (its cli.py) is given - see below
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -45,6 +50,19 @@ stay the artists' and the upscaler adds only sub-texel sharpness;
 and `--solid` build from the ORIGINALS instead: the first is the shipped
 picture at N times the texels (the engine must draw it identically - the
 check's invariant), the second one colour (the engine must visibly draw it).
+
+`materials` (the remaster's B3, todo/remaster.md): for every `<key>.png` of
+PACK, `texpack_tool normals` writes `<key>_n.png` beside it - the normal in
+OpenGL's convention, the height in alpha. With `--deepbump DIR` - HugoTini's
+DeepBump (GPL-3), DIR its unpacked source, `--python` an interpreter with
+numpy, onnxruntime and imageio - its colour-to-normals map is made first
+(cached in PACK/../materials-ai/) and the engine's generator lays its own
+grain over it, blurred: the COMBINATION the reader chose (2026-10-21). An
+existing `<key>_n.png` is kept unless `--force`; DeepBump's maps are cached
+(delete PACK/../materials-ai/ to make them again). Every map fades flat at the
+borders of the REGIONS the faces draw from (`texpack_tool islands`, made once
+into PACK/../materials-cov/): an atlas's pictures meet in a step the maps read
+as a ridge, drawn along every face mapped up to it - Qalisar's floor, BATITR09.
 
 NOTHING THIS WRITES MAY BE COMMITTED: the pixels are the game's, the repo is
 public. So OUT is refused inside the repository and inside the data tree.
@@ -364,6 +382,73 @@ def cmd_emissive(pack, match):
     print(f"{lit} light maps of {len(tex)} textures into {pack} - curate them: black is not light")
 
 
+# ---- the material maps (B3) -------------------------------------------------
+def cmd_materials(pack, match, deepbump=None, python=None, jobs=3, force=False):
+    import concurrent.futures
+    pack = safe_out(pack)
+    if not os.path.exists(TOOL):
+        sys.exit(f"{TOOL} is missing - run `make build/texpack_tool` in engine/ first")
+    keys = sorted(n[:16] for n in os.listdir(pack) if len(n) == 20 and n.endswith(".png"))
+    if match:
+        index = os.path.join(os.path.dirname(pack), "index.json")
+        names = json.load(open(index))["textures"] if os.path.exists(index) else {}
+        keys = [k for k in keys if any(m.lower() in names.get(k, {}).get("name", "").lower() or m == k for m in match)]
+    cache = safe_out(os.path.join(os.path.dirname(pack), "materials-ai"))
+    # the faces' REGIONS of every texture (`texpack_tool islands`), made once:
+    # the map fades flat at their borders, where an atlas's pictures meet
+    covdir = safe_out(os.path.join(os.path.dirname(pack), "materials-cov"))
+    if not os.path.isdir(covdir) or not os.listdir(covdir):
+        os.makedirs(covdir, exist_ok=True)
+        r = subprocess.run([TOOL, "islands", omkpaths.data_root(), covdir], capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit("texpack_tool islands failed: " + r.stderr.strip())
+        print(r.stdout.strip())
+    if deepbump:
+        os.makedirs(cache, exist_ok=True)
+        if not os.path.exists(os.path.join(deepbump, "cli.py")):
+            sys.exit(f"{deepbump}/cli.py not found - DeepBump's unpacked source")
+
+    def one(k):
+        out = os.path.join(pack, k + "_n.png")
+        if os.path.exists(out) and not force:
+            return "kept"
+        src = os.path.join(pack, k + ".png")
+        base = "-"
+        with tempfile.TemporaryDirectory() as td:
+            if deepbump:
+                base = os.path.join(cache, k + ".png")
+                if not os.path.exists(base):
+                    w, h, rgba = read_png(src)
+                    rgb = os.path.join(td, "rgb.png")
+                    write_png(rgb, w, h, bytes(b for i, b in enumerate(rgba) if i % 4 != 3), 3)
+                    r = subprocess.run([python or sys.executable, "cli.py", rgb, base, "color_to_normals",
+                                        "--color_to_normals-overlap", "SMALL"],
+                                       cwd=deepbump, capture_output=True, text=True)
+                    if r.returncode != 0 or not os.path.exists(base):
+                        return "deepbump failed: " + (r.stderr.strip().splitlines() or ["?"])[-1]
+            raw = os.path.join(td, "n.raw")
+            cov = os.path.join(covdir, k + ".cov")
+            r = subprocess.run([TOOL, "normals", src, raw, base, cov if os.path.exists(cov) else "-"],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                return "failed: " + r.stderr.strip()
+            b = open(raw, "rb").read()
+            w, h = struct.unpack_from("<ii", b, 0)
+            write_png(out, w, h, b[8:], 4)
+        return "made"
+
+    counts = {}
+    with concurrent.futures.ThreadPoolExecutor(max(1, jobs)) as ex:
+        for n, (k, res) in enumerate(zip(keys, ex.map(one, keys)), 1):
+            counts[res.split(":")[0]] = counts.get(res.split(":")[0], 0) + 1
+            if res not in ("made", "kept"):
+                print(f"  {k}: {res}")
+            if n % 100 == 0:
+                print(f"  {n} of {len(keys)}", flush=True)
+    print(f"normal maps into {pack}: " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+          + (" (over DeepBump's)" if deepbump else " (the engine's generator alone)"))
+
+
 # ---- the city grades ---------------------------------------------------------
 def _s(v, a):
     return min(1.0, max(0.0, v + a * (v - 0.45) * (1 - abs(2 * v - 1)) * 1.6))
@@ -633,11 +718,12 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
     depth = 1.0
+    deepbump, python, jobs, force = None, None, 3, False
     i = 0
     while i < len(rest):
         a = rest[i]
@@ -649,6 +735,10 @@ def main(argv):
         elif a == "--nearest": nearest_n = int(rest[i + 1]); i += 2
         elif a == "--grain": grain = float(rest[i + 1]); i += 2
         elif a == "--no-anchor": anchored = False; i += 1
+        elif a == "--deepbump": deepbump = os.path.abspath(rest[i + 1]); i += 2
+        elif a == "--python": python = rest[i + 1]; i += 2
+        elif a == "--jobs": jobs = int(rest[i + 1]); i += 2
+        elif a == "--force": force = True; i += 1
         elif a == "--solid":
             solid = (tuple(int(v) for v in rest[i + 1].split(",")), int(rest[i + 2])); i += 3
         else: sys.exit(f"unknown argument {a}\n\n{__doc__}")
@@ -661,6 +751,8 @@ def main(argv):
         cmd_emissive(out, match)
     elif cmd == "grades":
         cmd_grades(out, depth)
+    elif cmd == "materials":
+        cmd_materials(out, match, deepbump, python, jobs, force)
     elif cmd == "upscale":
         if not binary:
             sys.exit("upscale needs --bin PATH (realesrgan-ncnn-vulkan)")

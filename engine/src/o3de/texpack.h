@@ -56,6 +56,13 @@ struct PackImage {
     // when the pack has none. Only the BLOOM reads it.
     int ew = 0, eh = 0;
     std::vector<std::uint8_t> emissive;
+    // THE NORMAL MAP (`<key>_n.png`, `todo/remaster.md` B3, `o3de/normalmap.h`):
+    // RGBA8 `nw x nh` - the normal in OpenGL's convention, the height in A
+    // (kept at 1 or more: the shader reads alpha 0 as "none"). Decoded only
+    // when the session asked (`setNormals`) and with the colour; only the
+    // RELIEF reads it.
+    int nw = 0, nh = 0;
+    std::vector<std::uint8_t> normal;
 };
 
 class TexturePack {
@@ -66,6 +73,10 @@ public:
     bool active() const { return opened_; }
     std::size_t size() const { return files_.size(); }
     std::size_t lightMaps() const { return lights_.size(); }
+    std::size_t normalMaps() const { return normals_.size(); }
+    // decode the NORMAL MAPS too (the relief's; each another PNG the size of
+    // its colour) - off unless asked
+    void setNormals(bool on) { wantNormals_ = on; }
     const std::string& dir() const { return dir_; }
     // t's replacement, decoded: RGBA8 of w x h. False when the pack has none,
     // or when the file is unusable (not a PNG this reads, not a power-of-two
@@ -96,6 +107,8 @@ public:
 
 private:
     LightHook lightHook_ = nullptr;
+    bool wantNormals_ = false;
+    std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`
     std::string dir_;
     bool opened_ = false;
     std::unordered_map<std::uint64_t, std::string> files_;

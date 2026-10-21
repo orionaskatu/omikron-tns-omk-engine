@@ -32471,7 +32471,14 @@ def c_engine_relief():
          `--enhance-all` on Vulkan: relief 1 moves more than 50000 pixels;
       3. ...and NOTHING where the point lights are not: relief 1 with
          `--fx-light 0`, and relief 1 under `OMK_NO_TILES=1` (the
-         nearest-slots path), each byte-identical to its relief-0 frame.
+         nearest-slots path), each byte-identical to its relief-0 frame;
+      4. THE PACK'S NORMAL MAPS (2026-10-21, `<key>_n.png`,
+         `o3de/normalmap.h`): the shader reads binding 3 in the tiled module
+         alone, the flat stand-in's alpha 0 meaning "none"; relief 1 uploads
+         normal maps for the burner's set (the `texpack.pool` event's
+         `normals`), relief 0 none - they are decoded only when asked. Where
+         the pack has none (it is made by `omktexpack.py materials`, outside
+         the repo) the count is not asserted, only said.
 
     Measured once, outside the check (2026-10-21, M3): with it off, frames
     byte-identical to `e0b586b1` on the software reference and Vulkan, plain,
@@ -32482,7 +32489,12 @@ def c_engine_relief():
     Shown to fail (2026-10-21), one at a time: the strength never read - 0
     pixels move (part 2); the mode-3 guard dropped, the bodies grained too -
     part 1 (the frame moves 83677, the bodies' share); the uniform always 1 -
-    the relief-0 frame relieved too, 0 move (part 2).
+    the relief-0 frame relieved too, 0 move (part 2). Part 4: `setNormals`
+    never called - 0 normal maps at relief 1; always called - relief 0
+    uploads them too.
+
+    The preset's 1 became 2 (2026-10-21, the reader's "relief 2 is better"
+    once the generated maps came).
 
     NOT CHECKED, judged by eye: the strength, and whether bright reads as
     raised.
@@ -32505,26 +32517,33 @@ def c_engine_relief():
     src_ok = (bool(re.search(r"float\s+relief\s*=\s*0\.0f;", sh)),
               'kRemaster, "relief"' in sc and 'kEnhancements, "relief"' not in sc,
               "relief" not in max_body,
-              "!preset.empty() ? 1.0f : 0.0f;" in pre,
+              "!preset.empty() ? 2.0f : 0.0f;" in pre,
               "vec3 relief(" in tiled and fs.count("relief(") == 2,
-              bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(pc\.lit == 3\) nL = relief\(", fs)))
+              bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(pc\.lit == 3\) nL = relief\(", fs)),
+              bool(re.search(r"#ifdef OMK_TILED\s*\n(//[^\n]*\n)*layout\(set = 0, binding = 3\) uniform sampler2D nmap;", fs))
+              and "nm.a > 0.0" in tiled)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
     pack = os.path.expanduser("~/Documents/omk/omk-pack")
     if not os.path.isdir(pack):
-        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack"
+        return (src_ok, ("skipped",)), ((True,) * 7, ("skipped",)), "no texture pack"
     tmp = tempfile.mkdtemp()
     vk = os.path.join(eng, "build", "omk-play")
+    normals = {}
+    has_maps = any(n.endswith("_n.png") for d in ("pack", "full/pack") if os.path.isdir(os.path.join(pack, d))
+                   for n in os.listdir(os.path.join(pack, d)))
     try:
         def run(name, env_extra, *extra):
             out = os.path.join(tmp, name + ".bin")
-            env = dict(os.environ, SDL_VIDEODRIVER="dummy", **env_extra)
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **env_extra)
             args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                     "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
                     "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
                     "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
-            subprocess.run([vk] + args, capture_output=True, text=True, env=env, timeout=240)
+            r = subprocess.run([vk] + args, capture_output=True, text=True, env=env, timeout=240)
+            normals[name] = sum(int(k.get("normals", 0)) for n, k in _events(r.stdout + r.stderr)
+                                if n == "texpack.pool")
             if not os.path.exists(out):
                 return None
             raw = open(out, "rb").read()
@@ -32539,15 +32558,19 @@ def c_engine_relief():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if any(v is None for v in f.values()):
-        return (src_ok, ("no frame",)), ((True,) * 6, ("frames",)), "a run wrote no frame"
+        return (src_ok, ("no frame",)), ((True,) * 7, ("frames",)), "a run wrote no frame"
     moved = sum(1 for x, y in zip(f["off"], f["on"]) if x != y)
     nofx = sum(1 for x, y in zip(f["nofx0"], f["nofx1"]) if x != y)
     slot = sum(1 for x, y in zip(f["slot0"], f["slot1"]) if x != y)
-    print(f"        relief 1 moves {moved} pixels; without the point lights {nofx}; untiled {slot}")
-    return (src_ok, moved > 50000, nofx, slot), ((True,) * 6, True, 0, 0), \
-        "the source (off by default, [Remaster] only, never all = max, the preset's 1, the tiled module and " \
-        "mode 3 alone); by Anekbah's burner relief 1 moves the frame, and nothing without the point lights " \
-        "or the tiles"
+    print(f"        relief 1 moves {moved} pixels; without the point lights {nofx}; untiled {slot}; "
+          f"normal maps uploaded at relief 1 {normals['on']}, at 0 {normals['off']}"
+          + ("" if has_maps else " (the pack has none - `omktexpack.py materials`)"))
+    return (src_ok, moved > 50000, nofx, slot, normals["on"] > 0 or not has_maps, normals["off"]), \
+        ((True,) * 7, True, 0, 0, True, 0), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 2, the tiled module and " \
+        "mode 3 alone, the normal map's binding there); by Anekbah's burner relief 1 moves the frame, and " \
+        "nothing without the point lights or the tiles; the pack's normal maps uploaded at relief 1 (where " \
+        "it has them) and none at 0"
 
 
 def c_engine_ao():
@@ -46611,8 +46634,9 @@ def c_licence_headers():
     # 644: + `engine/src/o3de/emitterlight.{h,cpp}` (the emitters' light, A5b)
     # 646: + `engine/src/o3de/lighttiles.{h,cpp}` (its tiled point lights)
     # 647: + `engine/tools/walk_edges.cpp` (`engine: walk edges`)
+    # 649: + `engine/src/o3de/normalmap.{h,cpp}` (the generated normal maps, B3)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (647, [], 1, []), \
+           (649, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

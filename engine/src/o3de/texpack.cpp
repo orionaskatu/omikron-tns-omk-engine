@@ -9,6 +9,7 @@
 #include "platform/pngread.h"
 #include "platform/threads.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace omk {
@@ -59,6 +60,7 @@ std::string textureKeyHex(std::uint64_t key) {
 bool TexturePack::open(const std::string& dir) {
     files_.clear();
     lights_.clear();
+    normals_.clear();
     refused_.clear();
     greyOf_.clear();
     opened_ = false;
@@ -72,10 +74,12 @@ bool TexturePack::open(const std::string& dir) {
         if (name.size() != 20 && name.size() != 22) continue;
         const std::string ext = name.substr(name.size() - 4);
         if (ext != ".png" && ext != ".PNG") continue;
-        const bool light = name.size() == 22;
-        if (light && name.compare(16, 2, "_e") != 0) continue;
+        const bool suffixed = name.size() == 22;
+        const bool light = suffixed && name.compare(16, 2, "_e") == 0;
+        const bool normal = suffixed && name.compare(16, 2, "_n") == 0;
+        if (suffixed && !light && !normal) continue;
         std::uint64_t k;
-        if (hexKey(name.substr(0, 16), k)) (light ? lights_ : files_)[k] = dir + "/" + name;
+        if (hexKey(name.substr(0, 16), k)) (light ? lights_ : normal ? normals_ : files_)[k] = dir + "/" + name;
     }
     opened_ = true;
     return true;
@@ -95,7 +99,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
     struct Job { std::size_t at; std::uint64_t key; const std::string* file; const std::string* light;
-                 std::string why; bool grey; };
+                 std::string why; bool grey; const std::string* normal = nullptr; };
     std::vector<Job> jobs;
     for (std::size_t i = 0; i < ts.size(); ++i) {
         const Texture* t = ts[i];
@@ -108,8 +112,10 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         const auto it = files_.find(key);
         const auto lt = lights_.find(key);
         if (((it == files_.end() && lt == lights_.end()) && !lightHook_) || refused_.count(key)) continue;
+        const auto nt = wantNormals_ && !grey ? normals_.find(key) : normals_.end();
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
-                        lt != lights_.end() ? &lt->second : nullptr, {}, grey});
+                        lt != lights_.end() ? &lt->second : nullptr, {}, grey,
+                        nt != normals_.end() ? &nt->second : nullptr});
     }
     // the reads and the decodes, on the pool: each job writes only its own
     // result and its own reason
@@ -153,6 +159,16 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 }
             }
             o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
+            if (jb.normal) {
+                // the normal map, at the colour's size or a power of two of the original's
+                const auto nb = readWholeFile(*jb.normal);
+                PngImage ni;
+                if (!nb.empty() && decodePng(reinterpret_cast<const std::uint8_t*>(nb.data()), nb.size(), ni) &&
+                    powerOfTwoFactor(ni.w, t.width) && powerOfTwoFactor(ni.h, t.height)) {
+                    for (std::size_t q = 3; q < ni.rgba.size(); q += 4) ni.rgba[q] = std::max<std::uint8_t>(1, ni.rgba[q]);
+                    o.nw = ni.w; o.nh = ni.h; o.normal = std::move(ni.rgba);
+                }
+            }
         }
     });
     if (lightHook_)

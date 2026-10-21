@@ -724,7 +724,7 @@ asset, no pack format and no tangents, and shows whether relief is worth the
 pack's maps (DeepBump and the like, the plan above) at all.
 
 * `[Remaster] relief = S` / `--relief S`, 0..4, **0 by default**; the
-  `--remaster` preset's **1** - the reader's "ok" (2026-10-21) on a sheet of
+  `--remaster` preset's **1** (**2** since the generated maps, below) - the reader's "ok" (2026-10-21) on a sheet of
   0, 1, 2 and 4 by Anekbah's burner and in Qalisar (4 too harsh; Qalisar's
   wide pink light shows little at any strength; the lit floor brightens a
   little as it grows - a bias to correct if a higher strength is wanted). `View::relief` ->
@@ -748,6 +748,69 @@ pack's maps (DeepBump and the like, the plan above) at all.
 * Open: the strength and the sign (bright reads as raised - true of stone
   and mortar, not of a lit window); whether generated maps are worth it
   after this; GLES.
+
+## Step 3, B3 - the generated normal maps: as built (2026-10-21)
+
+The relief's second step: a NORMAL MAP per pack texture, `<key>_n.png`
+beside its colour, read by the same `relief()` where there is one (the
+brightness elsewhere). **The preset's relief 1 -> 2** - the reader's
+"relief 2 is better" once the maps came.
+
+* **The generator** (`engine/src/o3de/normalmap.{h,cpp}`, `texpack_tool
+  normals`): the reader's pick from a sheet of seven textures - DeepBump's
+  map (HugoTini, GPL-3, colour to normals; it reads VOLUMES but invents
+  blotches and streaks) blurred until its inventions are gone, as the large
+  forms, plus the engine's own band-passed brightness slope over four scales
+  as the grain. Without DeepBump the map is the engine's alone, which anyone
+  can rebuild. OpenGL's convention (R +u, G the image's up), the height in
+  alpha. `tools/omktexpack.py materials PACK --deepbump DIR --python PY`;
+  DeepBump's maps cached in `PACK/../materials-ai/` (1259, the long part),
+  the whole pack regenerated from that cache in 79 s (M3, 8 jobs).
+* **The engine**: `TexturePack` lists `_n` files beside `_e`; decodes them
+  only when the session asked (`setNormals`, relief above 0) - another
+  1024x1024 PNG per texture. Vulkan: binding 3 of a texture's set, a flat
+  1x1 of ALPHA 0 where there is none (the shader's "none"); the descriptor
+  pool 390 -> 530. GLES has no relief.
+* **The floor's line** (the reader's "do it first"): a crisp groove along
+  some tile edges of Qalisar's pink street. Found by bisecting the pack's
+  maps (11 renders): `BATITR09`, an ATLAS - beige paving, a long green
+  slab and an unused bolted plate in one 256x256. DeepBump draws a wide
+  ridge where two pictures meet; a floor face maps the beige paving up to
+  its border, and at a grazing angle the sampler's coarse mip reaches into
+  the ridge. NOT the cause, measured on the way: the upscaler's border (the
+  pack's edge texels step 2-14x an interior step, but the ORIGINAL's own
+  wrap seam, sharpened) and DeepBump's unwrapped edges (handing it a
+  wrapped margin of an eighth changed nothing - removed again).
+* **The fix - the faces' REGIONS** (`texpack_tool islands <data> <dir>`,
+  `<key>.cov`, made once into `PACK/../materials-cov/`, 33 s): every face's
+  UV triangle over every model, rasterised by texel centres; triangles
+  sharing a centre a texel or more inside each are ONE region (union-find),
+  so the beige and green, which meet on a line, are two. 1253 textures,
+  664258 faces, 48484 regions, 3.5% of texels a border. The generator
+  fades the slope flat over 16 texels (at 1024 across, four of the
+  original's) from a border or an unsampled texel: 8 left the line, 16 and
+  32 took it. 0 of the 664258 faces spans more than its texture - the sets
+  do not tile a texture across one face.
+  Tried and dropped: a UV edge only one triangle has (170786 - the sets cut
+  their faces freely, most such edges inside a picture); a 3D edge across
+  which the texels jump (567299 - the paving restarts at nearly every face:
+  Qalisar's floor, 5003 shared edges, 895 jump, 2123 one-sided).
+* Off: byte-identical to `b39143ac` on the software reference and Vulkan,
+  plain, `--remaster --relief 0` and `--enhance-all --relief 0`, by
+  Anekbah's burner and in Qalisar (8 of 8). `verify.py: engine: relief`
+  part 4 - the binding in the tiled module, normal maps uploaded at relief 1
+  (39 by the burner) and none at 0; shown to fail (`setNormals` never
+  called: 0). Relief 1 still moves 85210 pixels there.
+* **The freeze entering a bar in Qalisar**, met in the play test (`b39143ac`):
+  the bar's set loads on a `BackgroundJob` whose pack decode is a
+  `parallelFor`, beside the frame's own on the main thread; the pool held
+  one call's state and the loader waited for ever. Older than the maps -
+  since the decode went onto the pool (`30f2328e`) - which made the window
+  long enough to meet. A call lock per pool; `verify.py: thread pool`.
+* Open: a faint trace of the line remains at relief 2 at a grazing angle;
+  the one stretch of BATITR09's beige/green border no region parts (a face
+  maps across both, by the looks); the sign (bright as raised) in the
+  engine's grain; GLES.
 
 ## Step 3, A4 - the ambient occlusion: as built (2026-10-21)
 

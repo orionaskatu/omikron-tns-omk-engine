@@ -1027,6 +1027,31 @@ The reader's "continue" after B3; confirmed in play at 2 ("commit, push").
 * Off: byte-identical to `7ac3b75f` (12 of 12). `verify.py: engine: ao`,
   shown to fail two ways.
 
+## B2 - the curation: the mechanism and a draft, NOT applied (2026-10-21)
+
+The reader's choice: "build the tool + draft, don't apply" - which textures
+leave the pack is theirs, by eye.
+
+* **The mechanism**: `PACK/exclude.txt`, a 16-hex key a line (`#` comments):
+  a listed texture draws AS SHIPPED - its colour and its normal map left out,
+  its light map kept (read off the original's texels); the engine says how
+  many ("left as shipped by exclude.txt", `@evt texpack.open excluded`).
+  `texpack_tool open <pack>` answers the counts; `verify.py: texture pack
+  curation` (a made pack of two, shown to fail two ways - the file unread,
+  the normal map kept).
+* **The draft**: `omktexpack.py curate ROOT` writes `ROOT/exclude-draft.txt`
+  (48 keys, outside the pack: nothing applied) and contact sheets
+  `ROOT/curation/sheet-NN.png`, the original beside the pack's. The score: the
+  ORIGINAL's "ink" (luma 40 from its 5x5 mean) cut into glyph-sized marks,
+  counted only in LINES (four or more on a baseline, alike in height, close) -
+  the first cut counted every small mark and drafted noisy weapons and
+  mottled walls - plus a bonus for names that say lettering (TEXT, MAPS, PLAN,
+  ECRAN, LOGO, AFFICH...). Its image half finds real labels (PASSP1, PHARMA1,
+  BATTERIE, TETRA02, OMNIAM) and some false ones (FOIE, MEGAZ1).
+* **For the reader**: read the sheets in `~/Documents/omk/omk-pack/full/
+  curation/`, move the agreed lines of `exclude-draft.txt` into
+  `full/pack/exclude.txt`.
+
 ## Step 3, A4 continued - the mist: as built (2026-10-21)
 
 The plan's "height or volumetric fog in the game's own fog colour and range";

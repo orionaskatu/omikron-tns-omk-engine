@@ -84,6 +84,25 @@ bool TexturePack::open(const std::string& dir) {
         std::uint64_t k;
         if (hexKey(name.substr(0, 16), k)) (light ? lights_ : normal ? normals_ : files_)[k] = dir + "/" + name;
     }
+    // THE CURATION (`todo/remaster.md` B2): `exclude.txt` in the pack, a key a
+    // line (`<16 hex>  # NAME why`) - what the upscaler hurt (lettering the AI
+    // garbles): its colour and its normal map left out, so the SHIPPED texture
+    // draws; its light map kept (the bloom's, read off the original's
+    // texels). `omktexpack.py curate` drafts one beside the pack, unapplied.
+    excluded_ = 0;
+    if (std::FILE* f = std::fopen((dir + "/exclude.txt").c_str(), "rb")) {
+        char line[256];
+        while (std::fgets(line, sizeof line, f)) {
+            std::string ln(line);
+            if (const auto h = ln.find('#'); h != std::string::npos) ln.resize(h);
+            const auto a = ln.find_first_not_of(" \t\r\n");
+            std::uint64_t k;
+            if (a == std::string::npos || ln.size() < a + 16 || !hexKey(ln.substr(a, 16), k)) continue;
+            excluded_ += files_.erase(k);
+            normals_.erase(k);
+        }
+        std::fclose(f);
+    }
     opened_ = true;
     return true;
 }
@@ -213,8 +232,12 @@ bool openTexturePack(const std::string& dir) {
                 "replaces the shipped pixels, drawn by Vulkan and GLES only (the software "
                 "reference draws what the original drew)\n",
                 dir.c_str(), texturePack().size(), texturePack().lightMaps());
+    if (texturePack().excluded())
+        std::printf("texture pack: %zu textures left as shipped by %s/exclude.txt (the curation)\n",
+                    texturePack().excluded(), dir.c_str());
     event("texpack.open", {{"dir", dir}, {"entries", static_cast<long>(texturePack().size())},
-                           {"lights", static_cast<long>(texturePack().lightMaps())}});
+                           {"lights", static_cast<long>(texturePack().lightMaps())},
+                           {"excluded", static_cast<long>(texturePack().excluded())}});
     return true;
 }
 

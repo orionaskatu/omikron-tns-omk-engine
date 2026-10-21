@@ -37,6 +37,9 @@
 //     texpack_tool floors <model.3DO>       a set's LEVEL opaque triangles by
 //                                           texture and height, the most area
 //                                           first - the reflecting floors' list
+//     texpack_tool open <pack>              the pack as the engine opens it:
+//                                           "@pack files N lights N normals N
+//                                           excluded N" (exclude.txt, B2)
 //     texpack_tool islands <gamedata> <outdir>
 //                                           every texture's COVERAGE by the
 //                                           faces that sample it, <key>.cov
@@ -510,10 +513,19 @@ int main(int argc, char** argv) {
     if (mode == "normals" && argc >= 4 && argc <= 9) return normals(argc, argv);
     if (mode == "islands" && argc == 4) return islands(argv[2], argv[3]);
     if (mode == "floors" && argc == 3) return floors(argv[2]);
+    if (mode == "open" && argc == 3) {
+        // the pack as the engine opens it: what `exclude.txt` left out
+        if (!omk::texturePack().open(argv[2])) return 1;
+        const auto& p = omk::texturePack();
+        std::printf("@pack files %zu lights %zu normals %zu excluded %zu\n", p.size(), p.lightMaps(),
+                    p.normalMaps(), p.excluded());
+        return 0;
+    }
     std::fprintf(stderr, "usage: texpack_tool keys <gamedata> | png <in.png> <out.raw> | pngpar <in.png> <n>\n"
                          "       | grey <pack> <model.3DO> | cube <file.cube> | water <model.3DO>...\n"
                          "       | probe <model.3DO> ... | lights <pack> <model.3DO>\n"
                          "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
-                         "       | islands <gamedata> <outdir> | floors <model.3DO>   (the header says what each answers)\n");
+                         "       | islands <gamedata> <outdir> | floors <model.3DO> | open <pack>\n"
+                         "       (the header says what each answers)\n");
     return 2;
 }

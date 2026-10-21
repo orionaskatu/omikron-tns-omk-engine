@@ -31427,6 +31427,45 @@ def c_engine_mipmaps():
            "< bilinear, and coverage agreement with software stays >= 0.98"
 
 
+def c_texture_pack_curation():
+    r"""THE CURATION's MECHANISM (`todo/remaster.md` B2, `o3de/texpack.h`): a pack's
+    `exclude.txt`, a key a line (comments after `#`), leaves those textures AS
+    SHIPPED - their colour and their normal map out, their light map kept.
+    A made pack of two textures (one with a normal map and a light map), the
+    first excluded: the engine opens one replacement, no normal map, the light
+    map, and says one excluded (`texpack_tool open`). Without the file, both.
+
+    SHOWN TO FAIL (2026-10-21): the file never read - 2 replacements, 0
+    excluded; the normal map kept - 1 normal map.
+    """
+    import subprocess, tempfile, shutil, sys
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build failed",), ("built",), "texpack_tool must build"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    try:
+        a, b = "00000000000000aa", "00000000000000bb"
+        px = bytes([200, 100, 50, 255]) * 16
+        for name in (a + ".png", b + ".png", a + "_n.png", a + "_e.png"):
+            omktexpack.write_png(os.path.join(tmp, name), 4, 4, px, 4)
+        def opened():
+            r = subprocess.run([tool, "open", tmp], capture_output=True, text=True, timeout=60)
+            m = re.search(r"@pack files (\d+) lights (\d+) normals (\d+) excluded (\d+)", r.stdout)
+            return tuple(int(v) for v in m.groups()) if m else ("no @pack line",)
+        before = opened()
+        open(os.path.join(tmp, "exclude.txt"), "w").write("# the curation\n" + a + "  # TEST lettering\n")
+        after = opened()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return (before, after), ((2, 1, 1, 0), (1, 1, 0, 1)), \
+        "a made pack (files, light maps, normal maps, excluded): without exclude.txt both textures; with it " \
+        "the listed one as shipped - its normal map out, its light map kept"
+
+
 def c_engine_texture_pack():
     r"""THE TEXTURE PACK - the remaster's first feature (`todo/remaster.md` B4),
     OFF unless `[Remaster] texturepack = DIR` / `--texture-pack DIR` names one.
@@ -49394,6 +49433,7 @@ CHECKS = [
     ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
     ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
     ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
+    ("texture pack curation", c_texture_pack_curation, "todo/remaster.md B2; o3de/texpack.h"),
     ("engine: events", c_events, "todo/code-readability-audit.md; engine/src/platform/events.h"),
     ("engine: draw core", c_engine_draw_core, "todo/code-readability-audit.md; engine/src/o3de/drawcore.h"),
     ("tutorial anchors", c_tutorial_anchors, "tutorial/README.md"),

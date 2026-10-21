@@ -18,6 +18,10 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   (B3, engine/src/o3de/normalmap.h): the
                                                   engine's generator, over DeepBump's map
                                                   when DIR (its cli.py) is given - see below
+    omktexpack.py curate  ROOT                    the CURATION's draft (B2): ROOT/exclude-draft.txt,
+                                                  the textures most likely to carry lettering, and
+                                                  contact sheets in ROOT/curation/ - NOT applied:
+                                                  the engine reads PACK/exclude.txt alone
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -476,6 +480,131 @@ def cmd_materials(pack, match, deepbump=None, python=None, jobs=3, force=False):
           + (" (over DeepBump's)" if deepbump else " (the engine's generator alone)"))
 
 
+# ---- the curation (B2) -----------------------------------------------------
+# Texture names that say lettering (the score's bonus): the rest is the image's.
+LETTERING_NAMES = ("TEXT", "AFFICH", "PANN", "ENSEIGN", "PUB", "LOGO", "SIGN", "ECRAN", "MAPS", "PLAN",
+                   "JOURNAL", "TITRE", "MENU", "ETIQ", "NEON")
+
+
+def lettering_score(w, h, rgba):
+    """How much of a texture reads as LETTERING: its "ink" (texels further than
+    40 from their 5x5 mean, by luma) cut into 4-connected marks of a glyph's
+    size (3..150 texels, 2..20 down, at most 20 across) - and only those in a
+    LINE counted: four or more on one baseline (within a texel), of heights
+    within two of each other, each within twice its height of the next. Per
+    32x32 block. Speckle makes as many small marks as text does (the first cut
+    drafted noisy weapons and mottled walls); it does not line them up."""
+    n = w * h
+    lum = [(299 * rgba[4 * i] + 587 * rgba[4 * i + 1] + 114 * rgba[4 * i + 2]) // 1000 for i in range(n)]
+    # the summed-area table, for each texel's 5x5 mean
+    sat = [0] * ((w + 1) * (h + 1))
+    for y in range(h):
+        run = 0
+        for x in range(w):
+            run += lum[y * w + x]
+            sat[(y + 1) * (w + 1) + x + 1] = sat[y * (w + 1) + x + 1] + run
+    ink = bytearray(n)
+    for y in range(h):
+        y0, y1 = max(0, y - 2), min(h, y + 3)
+        for x in range(w):
+            x0, x1 = max(0, x - 2), min(w, x + 3)
+            tot = sat[y1 * (w + 1) + x1] - sat[y0 * (w + 1) + x1] - sat[y1 * (w + 1) + x0] + sat[y0 * (w + 1) + x0]
+            mean = tot // ((y1 - y0) * (x1 - x0))
+            if abs(lum[y * w + x] - mean) > 40 and rgba[4 * (y * w + x) + 3]:
+                ink[y * w + x] = 1
+    seen = bytearray(n)
+    marks = []
+    for start in range(n):
+        if not ink[start] or seen[start]:
+            continue
+        stack = [start]; seen[start] = 1
+        area, xs0, xs1, ys0, ys1 = 0, w, -1, h, -1
+        while stack:
+            i = stack.pop(); area += 1
+            x, y = i % w, i // w
+            xs0, xs1, ys0, ys1 = min(xs0, x), max(xs1, x), min(ys0, y), max(ys1, y)
+            for j in (i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1, i - w, i + w):
+                if 0 <= j < n and ink[j] and not seen[j]:
+                    seen[j] = 1; stack.append(j)
+        if 3 <= area <= 150 and xs1 - xs0 < 20 and 1 <= ys1 - ys0 < 20:
+            marks.append((ys1, xs0, xs1, ys1 - ys0 + 1))
+    # the LINES: by baseline, then left to right, runs of close marks alike in height
+    marks.sort()
+    inline = 0
+    i = 0
+    while i < len(marks):
+        j = i
+        while j + 1 < len(marks) and marks[j + 1][0] - marks[i][0] <= 1:
+            j += 1
+        row = sorted(marks[i:j + 1], key=lambda m: m[1])
+        run = [row[0]] if row else []
+        for m in row[1:]:
+            prev = run[-1]
+            if m[1] - prev[2] <= 2 * max(prev[3], m[3]) and abs(m[3] - prev[3]) <= 2:
+                run.append(m)
+            else:
+                if len(run) >= 4:
+                    inline += len(run)
+                run = [m]
+        if len(run) >= 4:
+            inline += len(run)
+        i = j + 1
+    return inline / max(1.0, n / 1024.0)
+
+
+def cmd_curate(root, count=48):
+    """The CURATION's draft (todo/remaster.md B2): the textures most likely to
+    carry LETTERING the upscaler garbles, scored on the ORIGINALS (ROOT/src),
+    written as ROOT/exclude-draft.txt - NOT applied: the engine reads
+    PACK/exclude.txt alone, so the reader moves the lines they agree with -
+    and contact sheets ROOT/curation/sheet-NN.png, each row the original (x4,
+    nearest) beside the pack's, for judging."""
+    root = safe_out(root)
+    idx = json.load(open(os.path.join(root, "index.json")))["textures"]
+    pack = os.path.join(root, "pack")
+    scored = []
+    for n, (k, e) in enumerate(sorted(idx.items()), 1):
+        src = os.path.join(root, "src", k + ".png")
+        if not os.path.exists(src) or not os.path.exists(os.path.join(pack, k + ".png")):
+            continue
+        w, h, rgba = read_png(src)
+        sc = lettering_score(w, h, rgba)
+        name = e.get("name", "")
+        if any(t in name.upper() for t in LETTERING_NAMES):
+            sc += 2.0
+        scored.append((sc, k, name, e.get("model", "")))
+        if n % 200 == 0:
+            print(f"  {n} of {len(idx)}", flush=True)
+    scored.sort(reverse=True)
+    top = scored[:count]
+    with open(os.path.join(root, "exclude-draft.txt"), "w") as f:
+        f.write("# THE CURATION's DRAFT (omktexpack.py curate) - NOT APPLIED. The engine reads\n"
+                "# PACK/exclude.txt: move there the lines whose upscale garbles lettering\n"
+                "# (see curation/sheet-NN.png, the original beside the pack's). A listed key\n"
+                "# draws as shipped; its light map stays.\n#\n#   KEY               score  NAME (model)\n")
+        for sc, k, name, model in top:
+            f.write(f"{k}  # {sc:5.2f}  {name} ({model})\n")
+    # the sheets: 6 rows a page, original x4 (nearest) | the pack's, both 512 across
+    out = os.path.join(root, "curation"); os.makedirs(out, exist_ok=True)
+    S = 512
+    for page in range(0, len(top), 6):
+        rows = top[page:page + 6]
+        W, H = 2 * S + 16, len(rows) * (S + 8)
+        img = bytearray(W * H * 3)
+        for r, (sc, k, name, model) in enumerate(rows):
+            for col, path in enumerate((os.path.join(root, "src", k + ".png"), os.path.join(pack, k + ".png"))):
+                w, h, rgba = read_png(path)
+                for yy in range(S):
+                    sy = yy * h // S
+                    for xx in range(S):
+                        sx = xx * w // S
+                        q = 4 * (sy * w + sx); o = 3 * ((r * (S + 8) + yy) * W + col * (S + 16) + xx)
+                        img[o:o + 3] = rgba[q:q + 3]
+        write_png(os.path.join(out, "sheet-%02d.png" % (page // 6 + 1)), W, H, bytes(img), 3)
+    print(f"curation: {len(top)} candidates of {len(scored)} into {root}/exclude-draft.txt and "
+          f"{(len(top) + 5) // 6} sheets in {out} - NOT applied (PACK/exclude.txt is the reader's)")
+
+
 # ---- the city grades ---------------------------------------------------------
 def _s(v, a):
     return min(1.0, max(0.0, v + a * (v - 0.45) * (1 - abs(2 * v - 1)) * 1.6))
@@ -766,7 +895,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_pas
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
@@ -806,6 +935,8 @@ def main(argv):
         cmd_emissive(out, match)
     elif cmd == "grades":
         cmd_grades(out, depth)
+    elif cmd == "curate":
+        cmd_curate(out)
     elif cmd == "materials":
         cmd_materials(out, match, deepbump, python, jobs, force)
     elif cmd == "upscale":

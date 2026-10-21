@@ -75,6 +75,8 @@ public:
     std::size_t size() const { return files_.size(); }
     std::size_t lightMaps() const { return lights_.size(); }
     std::size_t normalMaps() const { return normals_.size(); }
+    // the replacements `exclude.txt` left out (the curation, B2)
+    std::size_t excluded() const { return excluded_; }
     // decode the NORMAL MAPS too (the relief's; each another PNG the size of
     // its colour) - off unless asked
     void setNormals(bool on) { wantNormals_ = on; }
@@ -119,6 +121,7 @@ private:
     LightHook lightHook_ = nullptr;
     bool wantNormals_ = false;
     bool wantLights_ = true;
+    std::size_t excluded_ = 0;
     // guards `refused_` and `greyOf_`, the two the callers' threads touch
     mutable std::mutex m_;
     std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`

@@ -19,6 +19,10 @@
 //     ascending and to cover the range exactly once;
 //   * a nested `parallelFor` inside a chunk, which must still be correct (it
 //     runs inline on that worker, since the pool is busy);
+//   * two THREADS calling it at once, 2000 times each (the bar in Qalisar,
+//     2026-10-21: a set loading on a BackgroundJob while the frame ran) -
+//     both answers right, and done: a watchdog ends a hang after 30 s with
+//     `concurrent HUNG`;
 //   * and the timing of both, which is the reason the class exists.
 //
 // In a build with `OMK_THREADS=0` it still runs: `workers()` is 0, everything
@@ -34,6 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -114,6 +119,40 @@ int main(int argc, char** argv) {
         });
     });
     if (std::memcmp(nested.data(), inlineOut.data(), items * sizeof(float)) != 0) ++mismatches;
+
+#if OMK_THREADS
+    // two callers on two threads: each sums its own range, many times over
+    {
+        bool over = false;
+        std::mutex om;
+        std::thread([&] {
+            for (int t = 0; t < 300; ++t) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::lock_guard<std::mutex> lk(om);
+                if (over) return;
+            }
+            std::printf("concurrent HUNG\n");
+            std::fflush(stdout);
+            std::_Exit(4);
+        }).detach();
+        const auto caller = [&](std::size_t base, long& bad) {
+            for (int r = 0; r < 2000; ++r) {
+                std::vector<int> seen(64, 0);
+                pool.parallelFor(0, 64, 1, [&](std::size_t from, std::size_t to) {
+                    for (std::size_t i = from; i < to; ++i) seen[i] += static_cast<int>(base + i);
+                });
+                for (std::size_t i = 0; i < 64; ++i) bad += seen[i] != static_cast<int>(base + i);
+            }
+        };
+        long badA = 0, badB = 0;
+        std::thread other([&] { caller(1000, badB); });
+        caller(0, badA);
+        other.join();
+        { std::lock_guard<std::mutex> lk(om); over = true; }
+        std::printf("concurrent: 2 threads x 2000 calls, %ld wrong\n", badA + badB);
+        mismatches += badA + badB;
+    }
+#endif
 
     std::printf("%zu items x %d: inline %.1f ms, pool %.1f ms over %zu grains (%.2fx on the best grain)\n",
                 items, repeats, inlineMs, poolMs / static_cast<double>(sizeof grains / sizeof grains[0]),

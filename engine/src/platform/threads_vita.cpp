@@ -66,6 +66,9 @@ struct Threads::Impl {
     std::atomic<int> taken{0};
     SceUID work = -1;      // signalled once per worker that has a chunk
     SceUID done = -1;      // signalled by each worker when its chunk is done
+    // one CALL at a time from different threads - see `threads_std.cpp`'s
+    // `calls`: a binary semaphore held across a whole call
+    SceUID calls = -1;
     bool stop = false;
     Worker* slots = nullptr;
     int count = 0;
@@ -114,7 +117,8 @@ Threads::Threads(int workers) : impl_(new Impl) {
     const int want = workers > 0 ? workers : hardwareDefault();
     impl_->work = sceKernelCreateSema("omk_work", 0, 0, 64, nullptr);
     impl_->done = sceKernelCreateSema("omk_done", 0, 0, 64, nullptr);
-    if (impl_->work < 0 || impl_->done < 0) return;          // no threads: inline
+    impl_->calls = sceKernelCreateSema("omk_calls", 0, 1, 1, nullptr);
+    if (impl_->work < 0 || impl_->done < 0 || impl_->calls < 0) return;   // no threads: inline
     impl_->slots = new Impl::Worker[static_cast<std::size_t>(want)];
     for (int i = 0; i < want; ++i) {
         impl_->slots[i].pool = impl_.get();
@@ -140,6 +144,7 @@ Threads::~Threads() {
     delete[] impl_->slots;
     sceKernelDeleteSema(impl_->work);
     sceKernelDeleteSema(impl_->done);
+    sceKernelDeleteSema(impl_->calls);
 }
 
 int Threads::workers() const { return impl_ ? impl_->count : 0; }
@@ -158,6 +163,7 @@ void Threads::parallelFor(std::size_t begin, std::size_t end, std::size_t grain,
     int chunks = grain ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(cap), (n + grain - 1) / grain)) : cap;
     if (chunks < 1) chunks = 1;
     if (chunks == 1) { body(begin, end); return; }
+    sceKernelWaitSema(impl_->calls, 1, nullptr);
     impl_->from = begin; impl_->to = end; impl_->grain = grain;
     impl_->body = &body; impl_->chunks = chunks;
     impl_->taken.store(0);                        // before any worker is woken
@@ -166,6 +172,7 @@ void Threads::parallelFor(std::size_t begin, std::size_t end, std::size_t grain,
     impl_->slice(chunks - 1, lo, hi);             // the caller takes the last chunk
     if (lo < hi) body(lo, hi);
     for (int i = 0; i < chunks - 1; ++i) sceKernelWaitSema(impl_->done, 1, nullptr);
+    sceKernelSignalSema(impl_->calls, 1);
 }
 
 namespace hostthread {

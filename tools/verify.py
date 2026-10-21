@@ -15320,20 +15320,33 @@ def c_thread_pool():
 
     SHOWN TO FAIL: `#include "platform/threads.h"` moved below the
     `#if` in `threads_std.cpp` and `threads_none.cpp` - workers 0.
+
+    2026-10-21: TWO THREADS CALLING IT AT ONCE. Entering the bar in Qalisar
+    froze the game: its set loads on a `BackgroundJob`, whose texture-pack
+    decode is a `parallelFor`, while the frame's own `parallelFor` ran on the
+    main thread - the pool holds one call's state, the second overwrote the
+    first's chunk count, and the loader waited for ever (a `sample` of the
+    frozen process: `integrateSet` -> `BackgroundJob::wait`, the job in
+    `TexturePack::replacements` -> `parallelFor`, every worker idle). A call
+    lock per pool (`calls`, and the Vita's `omk_calls` semaphore). The
+    probe's two threads x 2000 calls: 0 wrong. SHOWN TO FAIL: the lock
+    removed - `concurrent HUNG` (its 30 s watchdog).
     """
     eng = os.path.join(ROOT, "engine")
     b = subprocess.run(["make", "-s", "build/thread_probe"], cwd=eng, capture_output=True)
     exe = os.path.join(eng, "build", "thread_probe")
     if b.returncode != 0 or not os.path.exists(exe):
         return ("build failed",), ("built",), "thread_probe must build"
-    out = subprocess.run([exe], capture_output=True, text=True).stdout
+    out = subprocess.run([exe], capture_output=True, text=True, timeout=120).stdout
     m = re.search(r"workers (\d+) \(runners (\d+)\), OMK_THREADS (\d)", out)
     mm = re.search(r"mismatches (\d+)", out)
+    cc = re.search(r"concurrent(: 2 threads x 2000 calls, (\d+) wrong| HUNG)", out)
     multi = (os.cpu_count() or 1) > 1
     return (bool(m), m and m.group(3) == "1", m and (int(m.group(1)) > 0 or not multi),
-            mm and int(mm.group(1))), (True, True, True, 0), \
+            mm and int(mm.group(1)), cc and (cc.group(2) or "HUNG")), (True, True, True, 0, "0"), \
         "thread_probe read; OMK_THREADS 1; workers > 0 on a host with more than one core " \
-        "(%s); the tiling's mismatches" % (m.group(0) if m else "no line")
+        "(%s); the tiling's mismatches; two threads calling at once: how many wrong " \
+        "(HUNG when they never finish)" % (m.group(0) if m else "no line")
 
 
 def c_events():

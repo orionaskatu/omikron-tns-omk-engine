@@ -6206,6 +6206,44 @@ def c_engine_pedestrians():
 
 
 
+def c_engine_crowd_slope():
+    r"""The street crowd on QALISAR's slopes (a reader, 2026-10-21: the NPCs
+    "walking through a slope instead of walking on it, flickering position in
+    slope"; engine/tools/ped_probe's `slope` line).
+
+    A walker's height is the lane's: `sub_455830` moves the body toward its
+    mover and lifts it by the moved distance times the vertical over the
+    distance - no ground probe, in the engine as in the port. What it ADDS is
+    the walk clip's root y (`+24`, `footY`), summed by `sub_437FE0` in the
+    node's frame, which `sub_453330` builds from the heading. The engine hands
+    `sub_455D10` the vector {dx, 0, dz} (`v58 = 0`): the heading is flat and
+    the root's forward travel stays horizontal. The port passed the vertical
+    too, so on a 23-degree street the heading pitched by asin 0.39, the stride
+    climbed (or sank) 25 units of its own on top of the lane's, and `footY`
+    snapped back at every loop of the clip - a sawtooth up to 30 units deep.
+    (The vehicles' `sub_456C70` does pass the vertical, 19_dsound.c 143.)
+
+    Measured over 600 frames at level 3 in Qalisar (AREA 101), walking
+    bodies only: the largest |heading y| and the largest |footY|.
+    SHOWN TO FAIL with the vertical put back: 0.3873 and 29.8.
+    """
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    b = subprocess.run(["make", "-s", "build/ped_probe"], cwd=eng, capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "ped_probe")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    r = subprocess.run([binp, omkpaths.data_root(), os.path.join(ROOT, "tables"), "101", "600", "3"],
+                       capture_output=True, text=True)
+    m = re.search(r"^slope max_pitch (\S+) max_footy (\S+)", r.stdout, re.M)
+    if not m:
+        return ("no slope line",), ("a line",), "ped_probe must report"
+    pitch, foot = float(m.group(1)), float(m.group(2))
+    return (pitch, foot <= 5.0), (0.0, True), \
+        "Qalisar's walking crowd: the largest heading pitch (must be 0) and " \
+        "the largest root-track y within 5 (the clip's own bob is 2.1)"
+
 def c_engine_road_traffic():
     r"""The ROAD TRAFFIC - the sliders and the motos (docs/STREET_LIFE.md 2b;
     engine/src/actor/vehicles.cpp; engine/tools/veh_probe).
@@ -18514,6 +18552,17 @@ def c_engine_walker_falls():
     drops that were refused now fall - and stays at 0 stranded. This census
     stands the walker WITHOUT blockers, so it measures the ground response
     alone, as before.
+
+    2026-10-21: A FALLING BODY MEETS A RAMP (`engine: walk edges`). The
+    airborne tick now lands on a steep face that is not a wall (60 degrees or
+    flatter) and lies more than a step above the walkable floor under it, so
+    Anekbah's descents go 116 -> **115**: the one lost is a spot at 3546
+    -152 -7950 whose west step fell THROUGH a 35-degree lip to a floor below,
+    and now lands on the lip and slides back onto the walkable floor beside
+    it. The fourth column guards the rest of that change: a ramp running off
+    the model's edge into nothing slid there for ever (the move put back each
+    frame) - 4 directions in Anekbah - until a slide put back at the void
+    ends and drops past the ramp.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -18539,11 +18588,56 @@ def c_engine_walker_falls():
             got.append((ledge, down, strand, unslide))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return tuple(got), ((663, 310, 0, 0), (36, 14, 0, 0), (326, 116, 0, 0)), \
+    return tuple(got), ((663, 310, 0, 0), (36, 14, 0, 0), (326, 115, 0, 0)), \
         "per set (Aapkayl, AImpasse, Anekbah): spots standing beside a drop, " \
         "spots from which the walker actually goes down, spots on a " \
         "ledge from which nothing moves at all, and directions STILL SLIDING " \
         "after ten seconds - the last two must be 0"
+
+def c_engine_walk_edges():
+    r"""`engine/`'s walker at two edges a reader met (2026-10-20: *"falling in
+    the void, ... looping in the falling animation"*), each on a set
+    `engine/tools/walk_edges.cpp` builds itself, so nothing else is measured.
+
+    VOID: a platform, a ledge 30 lower and 15 wide, and nothing past it. The
+    30-unit drop is a SHORT fall, which keeps walking, and the walk carried him
+    past the ledge over nothing, where he fell for ever. `Actor_ApplyMotion`
+    (0x004672D0) puts a body whose ground probe finds no face at all back at
+    the last safe position, in the air as on the ground; the walker now puts
+    the frame's horizontal back (the vertical is kept - the port's, labelled
+    in `Walker::airFrame`), and he lands on the ledge at y 30.
+
+    RAMP: a 45-degree ramp from a platform down to a floor, with a deeper floor
+    UNDER it. The walker read the steep faces only while already sliding, so
+    stepping onto the ramp's top found the deep floor and fell THROUGH the
+    ramp. The engine's probe meets the nearest face; the falling body now
+    lands on a steep face that is not a wall (60 degrees or flatter) and lies
+    more than a step above the walkable floor under it, and slides down to the
+    floor at y 50.
+
+    SHOWN TO FAIL against the walker before the change: the void case ends at
+    y **7346**, still falling, the ramp case at **200**; each half mutated
+    alone fails only its own case (the put-back off: 7346, the ramp landing
+    off: 200).
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    b = subprocess.run(["make", "-s", "build/walk_edges"], cwd=eng,
+                       capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "walk_edges")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run([binp], capture_output=True, text=True).stdout
+    m = re.search(r"@walk_edges void_y=(\S+) void_air=(\d) ramp_y=(\S+) ramp_air=(\d)", out)
+    if not m:
+        return ("no @walk_edges line",), ("a line",), "the tool must report"
+    got = (round(float(m.group(1))), int(m.group(2)),
+           round(float(m.group(3))), int(m.group(4)))
+    return got, (30, 0, 50, 0), \
+        "void: final y on the ledge and still airborne (0); ramp: final y on " \
+        "the floor past the ramp and still airborne or sliding (0)"
 
 def c_engine_tunnel_doors():
     r"""`engine/`: a transition's door resolves in the OUTGOING slot's object
@@ -39652,6 +39746,12 @@ def c_engine_shoot_landing():
     drops onto floor 3 near x 42235: a fall of 199.3 (5.06 m) at frame 171,
     message 11 to the area's handler, and the health property from 200 (the
     `--shoot-health 1000` the store clamps at 200) to 155.
+
+    2026-10-21: 171 -> **191**, the same fall and the same message. A falling
+    body now meets a ramp (`engine: walk edges`): at frame ~162 he lands on a
+    sloped face at y ~995, 64 above floor 3 and no steeper than 60 degrees,
+    slides on it while the shoot mover pushes him, and falls off it onto the
+    floor - where he used to fall straight through it.
     """
     import subprocess, re
     fr = omkpaths.data_root()
@@ -39674,7 +39774,7 @@ def c_engine_shoot_landing():
     stat = re.findall(r"^frame (\d+): SHOOT STAT \(sub_423A40\) - the player's health -> (-?\d+)",
                       o, re.M)
     got = (lands, stat[:1])
-    want = ([("171", "199.3", "5.06", "11", "to its handler")], [("172", "155")])
+    want = ([("191", "199.3", "5.06", "11", "to its handler")], [("192", "155")])
     return got, want, ("the catacombs' drop onto floor 3: the landing's fall and the message it "
                        "posts (11 at 5 m and over, 10 from 3 m), the area's handler running, "
                        "and the 45 it takes from the health property the next frame")
@@ -46510,8 +46610,9 @@ def c_licence_headers():
     # todo/remaster.md A5)
     # 644: + `engine/src/o3de/emitterlight.{h,cpp}` (the emitters' light, A5b)
     # 646: + `engine/src/o3de/lighttiles.{h,cpp}` (its tiled point lights)
+    # 647: + `engine/tools/walk_edges.cpp` (`engine: walk edges`)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (646, [], 1, []), \
+           (647, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -49013,6 +49114,7 @@ SLOW = [
     ("engine: spawn from tables", c_engine_spawn_from_tables, "SCRIPT_VM; FILE_FORMATS; engine/README"),
     ("engine: city crowd", c_engine_city_crowd, "STREET_LIFE 1; SCRIPT_VM"),
     ("engine: pedestrians", c_engine_pedestrians, "STREET_LIFE 2; actor/sliders.h"),
+    ("engine: crowd slope", c_engine_crowd_slope, "STREET_LIFE 2; a reader, 2026-10-21"),
     ("engine: road traffic", c_engine_road_traffic, "STREET_LIFE 2b; actor/vehicles.cpp"),
     ("engine: street frame", c_engine_street_frame, "STREET_LIFE; todo/street-life 4"),
     ("engine: character shadow", c_engine_character_shadow, "ASSETS 4d; o3de/shadow.h"),
@@ -49159,6 +49261,7 @@ SLOW = [
     ("engine: path turn",    c_engine_path_turn,    "todo/omk-play; FILE_FORMATS 5c"),
     ("engine: cupboard take", c_engine_cupboard_take, "todo/omk-play; ASSETS"),
     ("engine: walker falls", c_engine_walker_falls, "todo/omk-play"),
+    ("engine: walk edges",   c_engine_walk_edges,   "actor/walk.cpp; a reader, 2026-10-20"),
     ("engine: probe grid", c_engine_probe_grid, "todo/optimization.md 2; o3de/collision.h"),
     ("engine: tie equivalence", c_engine_tie_equivalence, "todo/optimization.md 3; o3de/depthtie.h"),
     ("engine: body tie", c_engine_body_tie, "todo/vita-port.md 2026-09-22; o3de/geom3do.h tieClass"),

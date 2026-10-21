@@ -122,8 +122,13 @@ float headingFromClipRoot(std::span<const std::byte> clip, int frame) {
 // downward from one unit above it - probing up from far below finds the
 // ceiling. A pelvis point (a scene clip's root) and a feet point (an
 // ADDRESSES record) both land on the same floor this way.
+// ONE UNIT ABOVE IS `p[1] - 2`: `floorUnder` takes a surface more than a unit
+// below its origin, so `p[1] - 1` asked for one strictly below the point - and
+// a point already ON a floor (the walker's own, saved and put back) then kept
+// or missed it on the float rounding of its height, and missing it put him on
+// whatever lay under it.
 static double seatOnFloor(const TriangleSoup& soup, const float p[3]) {
-    if (const auto g = floorUnder(soup, p[0], p[1] - 1.0, p[2])) return *g;
+    if (const auto g = floorUnder(soup, p[0], p[1] - 2.0, p[2])) return *g;
     return p[1];
 }
 

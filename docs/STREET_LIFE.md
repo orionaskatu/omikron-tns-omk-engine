@@ -278,7 +278,14 @@ inside the one ahead, which a reader saw parked in Anekbah (`veh_probe`'s
 from the distance covered this frame: under 2 units → stop, and the body
 swaps the walk clip (type 9) for an idle (type **11**) on flag `0x100`;
 between the two thresholds at `unk_4C8880` the base speed, beyond them the
-speed doubled. A slower mover ahead on the same key is **overtaken**: the two
+speed doubled. It also AIMS the body, and the walk hands it the vector
+**{dx, 0, dz}** (`v58 = 0`) with the 3D distance: the heading stays flat, so
+the walk clip's root travel (`sub_437FE0`, summed into `+24`) stays
+horizontal and the slope's climb is the lane's alone. The vehicles'
+`sub_456C70` passes the vertical. The port passed it for the walkers too
+until 2026-10-21, and Qalisar's crowd climbed a stride's worth of its own
+on every slope and snapped back at each loop of the clip, up to 30 units
+(`verify.py: engine: crowd slope`). A slower mover ahead on the same key is **overtaken**: the two
 swap list positions and the follower takes a 39-unit sidestep (flag `0x20`).
 
 **Reservation groups** (`sub_453230`): entering a route or a step that names

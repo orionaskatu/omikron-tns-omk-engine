@@ -1058,8 +1058,13 @@ void PlayState::worldStagedGround(Staged& s, float& ground) {
         // frame). A linear probe is the whole city's walkable soup
         // - 15137 triangles in Anekbah - and there are three of
         // them per staged body per frame (todo/vita-port.md).
+        // From ONE UNIT ABOVE, which is `- 2` (`floorUnder` wants a surface
+        // more than a unit below its origin): `- 1` asked for one strictly
+        // below the point, so a body put on a floor - `at` copied from the
+        // player's feet - missed it or kept it on the rounding of its height
+        // and was dropped onto whatever lay under it, up to a body height.
         if (const auto g = omk::floorUnder(walkSoup.soup, walkSoup.grid, s.at[0],
-                                           s.at[1] - 1.0, s.at[2])) {
+                                           s.at[1] - 2.0, s.at[2])) {
             const float drop = static_cast<float>(*g) - s.at[1];
             // A body height. Further than that and the authored
             // point is not standing on this floor at all - a

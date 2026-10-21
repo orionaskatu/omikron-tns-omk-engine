@@ -173,6 +173,7 @@ public:
         pos_[0] = x; pos_[1] = y; pos_[2] = z;
         fall_ = 0.0; vy_ = 0.0; vx_ = 0.0; vz_ = 0.0;
         airborne_ = false; sliding_ = false; jumping_ = false; shortFall_ = false;
+        throughSteep_ = false;
     }
 
     // THE JUMP, `MDJUMP01` (0x0046BD50) - an IMPULSE into the same three
@@ -359,10 +360,14 @@ private:
     bool   jumping_  = false;
     bool   noAbsorb_ = true;     // `sub_47CF00` nonzero: always outside shoot mode
     bool   shortFall_ = false;   // `+1304` 0 or 2 while airborne (see `shortFall`)
+    bool   throughSteep_ = false;   // this fall passes the ramps (`airFrame`'s void edge)
     // Leave the ground `drop` above the floor, in the frame: the gravity
     // `Actor_ApplyMotion` adds before the ground response is spent at once
     // (`a5`), and the rest (`v68`) bands the fall.
     StepResult leaveGround(double drop, double dt);
+    // `tick`'s airborne half; the frame began at (fromX, fromZ), where a
+    // move that finds nothing under it is put back
+    StepResult airFrame(double dt, double fromX, double fromZ);
     int    tier_ = 0;
     double landFall_ = 0.0;
     double drop_ = 0.0;          // the last landing's descent from its apex

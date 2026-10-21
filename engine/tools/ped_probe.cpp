@@ -134,8 +134,19 @@ int main(int argc, char** argv) {
     int progEnds = 0, progEndsNoBank = 0, reentries = 0, reentriesAfterEnd = 0;
     std::vector<int> longPhase(peds.movers().size(), -2);
     std::vector<std::string> longClip(peds.movers().size());
+    // THE SLOPE (a reader, 2026-10-21: the crowd "walking through a slope,
+    // flickering"): the heading a WALKING body is aimed by, and the root track's
+    // summed y it stands on. `sub_455830` aims it flat, so the pitch is 0 and the
+    // walk clip's own bob is all `footY` carries; a pitched heading turned the
+    // stride into a climb that `footY` summed and dropped at every loop.
+    float maxPitch = 0.0f, maxFootY = 0.0f;
     for (int f = 0; f < frames; ++f) {
         s.frame();
+        for (const auto& w : peds.movers()) {
+            if (!w.live || w.vehicle >= 0 || (w.flags & 0x80u)) continue;   // walking only
+            maxPitch = std::max(maxPitch, std::fabs(w.heading[1]));
+            maxFootY = std::max(maxFootY, std::fabs(w.footY));
+        }
         if (listPrograms) {
             // `--programs`: an actor program that stops running, and a body
             // that leaves or re-enters the shown list (a `Staged` rebuilt in
@@ -310,6 +321,7 @@ int main(int argc, char** argv) {
                         w.pos[0], w.pos[1], w.pos[2], w.facing, w.clip ? w.clip->name.c_str() : "-", w.clock, w.speed,
                         std::sqrt(lx * lx + ly * ly + lz * lz), best, w.remaining);
     }
+    std::printf("slope max_pitch %.4f max_footy %.1f\n", maxPitch, maxFootY);
     std::printf("run frames %d live %d moved %d lane_changes %d blocked %d overtakes %d actions %d in_action %d idle %d max_lag %.1f max_offlane %.2f nan %d\n",
                 frames, live, moved, laneChanges, blocked, overtakes, actions, inAction, idle, maxLag, maxOff, nan);
     return 0;

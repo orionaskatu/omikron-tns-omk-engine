@@ -468,8 +468,13 @@ the tiled point lights).
   adds short SPIKES (to ~34 ms) as the street's motorbikes pass close - none
   with it unlit or the floors off; the reflection's binning is normal through
   a walk (listed a little below the main pass's, no full cluster).
-  Next: GPU TIMESTAMPS per pass (shadow, reflection, main, post), logged every
-  second, so the next reproduction names the pass that grows; then, if it is
+  **The GPU timestamps are built** (2026-10-21, `OMK_GPU_TIMES=1`, Vulkan):
+  one at each pass boundary of the frame's command buffer, outside every
+  render pass, read after the frame's fence - "vulkan: GPU ms a frame (mean of
+  60) - shadow, reflection, scene, post" and `@evt gpu.time`. At the far end,
+  quiet, 4K: shadow 0.19, reflection 1.40, scene 6.62, post 3.67 - 12 ms, so
+  that frame is not GPU-bound when it is fast. To reproduce, play with
+  `OMK_GPU_TIMES=1` and read which pass grows when it slows; then, if it is
   the reflection's lights, a cap on the lights a reflected fragment takes.
   Machine notes: SDL3 appeared on this machine the same day and the Makefile
   prefers it (`make SDL_PKG=sdl2`, or `MAKEFLAGS=SDL_PKG=sdl2` for verify).

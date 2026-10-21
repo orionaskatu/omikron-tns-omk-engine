@@ -466,6 +466,24 @@ private:
     // runs first, and only once - the depth pass has to be recorded BEFORE the
     // frame's own render pass begins.
     bool            cbStarted_ = false;
+    // THE GPU'S OWN TIME per pass (`OMK_GPU_TIMES=1`, an instrument - the
+    // reader's 4K slowdown was GPU-bound and the CPU's phases could not say
+    // where): a timestamp at each pass boundary of the frame's one command
+    // buffer, OUTSIDE every render pass, read after the frame's fence (no
+    // extra wait); the means per pass every 60 frames, as `gpu.time` too.
+    VkQueryPool     tsPool_ = VK_NULL_HANDLE;
+    static constexpr uint32_t kStamps = 8;
+    uint32_t        tsCount_ = 0;
+    const char*     tsLabel_[kStamps] = {};
+    double          tsSum_[kStamps] = {};      // ms, by the label's slot in `kStampNames`
+    int             tsFrames_ = 0;
+    void stamp(const char* label) {
+        if (!tsPool_ || tsCount_ >= kStamps) return;
+        if (tsCount_ == 0) vkCmdResetQueryPool(cb_, tsPool_, 0, kStamps);
+        vkCmdWriteTimestamp(cb_, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, tsPool_, tsCount_);
+        tsLabel_[tsCount_++] = label;
+    }
+    void readStamps();
     bool            shadowLive_ = false;   // a depth pass was recorded this frame
     int             litCount_ = 0;         // lights uploaded for this frame
     float           shimmerClock_ = 0.0f;  // the View's, held for the uniform
@@ -902,6 +920,15 @@ bool VulkanRenderer::pickDevice() {
     cai.commandPool = pool_; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cai.commandBufferCount = 1;
     VKCHECK(vkAllocateCommandBuffers(dev_, &cai, &cb_), "vkAllocateCommandBuffers");
+    if (omk::envFlag("OMK_GPU_TIMES")) {
+        if (props_.limits.timestampComputeAndGraphics && props_.limits.timestampPeriod > 0.0f) {
+            VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = kStamps;
+            if (vkCreateQueryPool(dev_, &qi, nullptr, &tsPool_) != VK_SUCCESS) tsPool_ = VK_NULL_HANDLE;
+        }
+        std::printf("vulkan: the GPU's time per pass %s\n", tsPool_ ? "- every 60 frames (OMK_GPU_TIMES)"
+                                                                 : "refused: the device has no timestamps");
+    }
     VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VKCHECK(vkCreateFence(dev_, &fi, nullptr, &fence_), "vkCreateFence");
     return true;
@@ -3231,6 +3258,8 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         vkResetCommandBuffer(cb_, 0);
         vkBeginCommandBuffer(cb_, &bi);
         cbStarted_ = true;
+        tsCount_ = 0;
+        stamp("start");
     }
     // a posed caster is placed on the CPU: the depth-only pipeline has no set 2
     std::vector<omk::Draw> placed;
@@ -3260,6 +3289,7 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
                   static_cast<uint32_t>(d.start), 0);
     }
     vkCmdEndRenderPass(cb_);
+    stamp("shadow");
 
     if (shUboPtr_) {
         ShadowUbo ub{};
@@ -3409,6 +3439,8 @@ void VulkanRenderer::begin(const omk::View& view) {
         vkResetCommandBuffer(cb_, 0);
         vkBeginCommandBuffer(cb_, &bi);
         cbStarted_ = true;
+        tsCount_ = 0;
+        stamp("start");
     }
     // A frame with no shadow pass says so through the uniform, because the
     // descriptor set is bound either way.
@@ -3753,6 +3785,7 @@ bool VulkanRenderer::drawWaterScene(const omk::View& v, const omk::View& refl,
     for (const auto& d : above) submit(d);
     reflectingNow_ = false;
     vkCmdEndRenderPass(cb_);
+    stamp("reflection");
     recording_ = false;
     passFb_ = VK_NULL_HANDLE;
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -3798,6 +3831,27 @@ bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
     return true;
 }
 
+// the frame's stamps, read after its fence: each pass's time is from the stamp
+// before it to its own (the first, "start", none)
+void VulkanRenderer::readStamps() {
+    static const char* const kNames[kStamps] = {"shadow", "reflection", "scene", "post"};
+    if (!tsPool_ || tsCount_ < 2) return;
+    uint64_t t[kStamps] = {};
+    if (vkGetQueryPoolResults(dev_, tsPool_, 0, tsCount_, sizeof t, t, sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+    for (uint32_t i = 1; i < tsCount_; ++i)
+        for (uint32_t n = 0; n < kStamps && kNames[n]; ++n)
+            if (std::strcmp(tsLabel_[i], kNames[n]) == 0)
+                tsSum_[n] += static_cast<double>(t[i] - t[i - 1]) * props_.limits.timestampPeriod / 1e6;
+    if (++tsFrames_ < 60) return;
+    std::printf("vulkan: GPU ms a frame (mean of 60) - shadow %.2f, reflection %.2f, scene %.2f, post %.2f\n",
+                tsSum_[0] / 60.0, tsSum_[1] / 60.0, tsSum_[2] / 60.0, tsSum_[3] / 60.0);
+    omk::event("gpu.time", {{"shadow", tsSum_[0] / 60.0}, {"reflection", tsSum_[1] / 60.0},
+                            {"scene", tsSum_[2] / 60.0}, {"post", tsSum_[3] / 60.0}});
+    for (auto& v : tsSum_) v = 0.0;
+    tsFrames_ = 0;
+}
+
 void VulkanRenderer::end() {
     // `OMK_TIE_STATS=1`: every 30 frames, how each large geometry's revisions
     // were answered - replayed from the dirty corners, walked, or a replay
@@ -3834,7 +3888,11 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
-    if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) recordPost(cb_);
+    stamp("scene");
+    if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) {
+        recordPost(cb_);
+        stamp("post");
+    }
     // The colour attachment ends in TRANSFER_SRC_OPTIMAL (the render pass says
     // so). The READBACK COPY is not recorded here: a frame the GPU presents
     // (`presentWorld`) never reads it, so copying every frame is waste
@@ -3850,6 +3908,7 @@ void VulkanRenderer::end() {
     vkResetFences(dev_, 1, &fence_);
     vkQueueSubmit(queue_, 1, &si, fence_);
     vkWaitForFences(dev_, 1, &fence_, VK_TRUE, UINT64_MAX);
+    readStamps();
     recording_ = false;
     cbStarted_ = false;
     shadowLive_ = false;
@@ -3984,6 +4043,7 @@ VulkanRenderer::~VulkanRenderer() {
     killTex(normalFlat_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
+    if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipe1_) if (p) vkDestroyPipeline(dev_, p, nullptr);

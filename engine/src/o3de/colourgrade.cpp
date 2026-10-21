@@ -5,6 +5,7 @@
 #include "platform/datafs.h"
 #include "platform/hostfs.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -63,6 +64,18 @@ bool parseCube(const std::string& text, ColourLut& out, std::string* why) {
     if (out.rgb.size() != static_cast<std::size_t>(out.n) * out.n * out.n * 3)
         return fail("the table is not LUT_3D_SIZE^3 entries");
     return true;
+}
+
+void lutStrip(const float* rgb, int n, std::vector<unsigned char>& out) {
+    out.assign(static_cast<std::size_t>(n) * n * n * 4, 255);
+    for (int b = 0; b < n; ++b)
+        for (int g = 0; g < n; ++g)
+            for (int r = 0; r < n; ++r) {
+                const float* src = rgb + 3 * ((static_cast<std::size_t>(b) * n + g) * n + r);
+                unsigned char* d = &out[4 * (static_cast<std::size_t>(g) * n * n + b * n + r)];
+                for (int c = 0; c < 3; ++c)
+                    d[c] = static_cast<unsigned char>(std::clamp(src[c], 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
 }
 
 bool CityGrades::open(const std::string& dir) {

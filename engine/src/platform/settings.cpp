@@ -162,63 +162,34 @@ Settings resolveSettings(const OptionsFile& ini,
         if (wantAll) { s.enhanceAll = true; applyMaxEnhancements(s); }
 
         // ---- [Remaster], off unless written ------------------------------
-        if (const std::string* w = ini.find(kRemaster, "texturepack")) {
+        // a PATH (trimmed, its quotes taken off) and a STRENGTH in 0..max -
+        // each key once, a value out of range said and ignored
+        const auto path = [](const std::string* w, std::string& to, Settings::Source& src) {
+            if (!w) return;
             std::string v = *w;
             while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
             while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
             if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
-            if (!v.empty()) { s.texturePack = v; s.texturePackSource = Settings::Source::Ini; }
-        }
-        if (const std::string* w = ini.find(kRemaster, "bloom")) {
+            if (!v.empty()) { to = v; src = Settings::Source::Ini; }
+        };
+        const auto strength = [](const std::string* w, const char* key, float max, float& to,
+                                 Settings::Source& src) {
+            if (!w) return;
             char* end = nullptr;
             const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.bloom = b; s.bloomSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: bloom = %s is not 0..4 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "water")) {
-            char* end = nullptr;
-            const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 1.0f) { s.water = b; s.waterSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: water = %s is not 0..1 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "ao")) {
-            char* end = nullptr;
-            const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.ao = b; s.aoSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: ao = %s is not 0..4 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "relief")) {
-            char* end = nullptr;
-            const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.relief = b; s.reliefSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: relief = %s is not 0..4 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "fxlight")) {
-            char* end = nullptr;
-            const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 4.0f) { s.fxLight = b; s.fxLightSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: fxlight = %s is not 0..4 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "bodylight")) {
-            char* end = nullptr;
-            const float b = std::strtof(w->c_str(), &end);
-            if (end != w->c_str() && b >= 0.0f && b <= 1.0f) { s.bodyLight = b; s.bodyLightSource = Settings::Source::Ini; }
-            else std::fprintf(stderr, "settings: bodylight = %s is not 0..1 - ignored\n", w->c_str());
-        }
-        if (const std::string* w = ini.find(kRemaster, "dir")) {
-            std::string v = *w;
-            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
-            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
-            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
-            if (!v.empty()) { s.remasterDir = v; s.remasterDirSource = Settings::Source::Ini; }
-        }
-        if (const std::string* w = ini.find(kRemaster, "grade")) {
-            std::string v = *w;
-            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
-            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
-            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
-            if (!v.empty()) { s.grade = v; s.gradeSource = Settings::Source::Ini; }
-        }
+            if (end != w->c_str() && b >= 0.0f && b <= max) { to = b; src = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: %s = %s is not 0..%g - ignored\n", key, w->c_str(),
+                              static_cast<double>(max));
+        };
+        path(ini.find(kRemaster, "texturepack"), s.texturePack, s.texturePackSource);
+        strength(ini.find(kRemaster, "bloom"), "bloom", 4.0f, s.bloom, s.bloomSource);
+        strength(ini.find(kRemaster, "water"), "water", 1.0f, s.water, s.waterSource);
+        strength(ini.find(kRemaster, "ao"), "ao", 4.0f, s.ao, s.aoSource);
+        strength(ini.find(kRemaster, "relief"), "relief", 4.0f, s.relief, s.reliefSource);
+        strength(ini.find(kRemaster, "fxlight"), "fxlight", 4.0f, s.fxLight, s.fxLightSource);
+        strength(ini.find(kRemaster, "bodylight"), "bodylight", 1.0f, s.bodyLight, s.bodyLightSource);
+        path(ini.find(kRemaster, "dir"), s.remasterDir, s.remasterDirSource);
+        path(ini.find(kRemaster, "grade"), s.grade, s.gradeSource);
     }
 
     // ---- 2. the save header, which is later and therefore wins -----------

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE REMASTER'S SIX ENGINE-SIDE HELPERS (`o3de/texpack.h`,
+// THE REMASTER'S ENGINE-SIDE HELPERS (`o3de/texpack.h`,
 // `todo/remaster.md` B4) - for `tools/omktexpack.py` and for
 // `verify.py: engine: texture pack`.
 //
@@ -82,23 +82,32 @@ std::string lower(std::string s) {
     return s;
 }
 
-int keys(const std::string& data) {
+// Every .3DO under the data's MESHES with its .3DT beside it, in path order
+// (`keys` and `islands`); empty, said, when there is no MESHES.
+std::vector<std::pair<fs::path, fs::path>> modelsWithTextures(const std::string& data) {
+    std::vector<std::pair<fs::path, fs::path>> out;
     fs::path meshes;
-    for (const auto& e : fs::directory_iterator(data))
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(data, ec))
         if (e.is_directory() && lower(e.path().filename().string()) == "meshes") meshes = e.path();
-    if (meshes.empty()) { std::fprintf(stderr, "no MESHES under %s\n", data.c_str()); return 1; }
+    if (meshes.empty()) { std::fprintf(stderr, "no MESHES under %s\n", data.c_str()); return out; }
     std::vector<fs::path> models;
-    for (const auto& e : fs::recursive_directory_iterator(meshes))
+    for (const auto& e : fs::recursive_directory_iterator(meshes, ec))
         if (e.is_regular_file() && lower(e.path().extension().string()) == ".3do") models.push_back(e.path());
     std::sort(models.begin(), models.end());
-    long n = 0;
-    for (const auto& m : models) {
-        fs::path t;
+    for (const auto& m : models)
         for (const char* ext : {".3dt", ".3DT", ".3Dt"}) {
             auto c = m; c.replace_extension(ext);
-            if (fs::exists(c)) { t = c; break; }
+            if (fs::exists(c)) { out.emplace_back(m, c); break; }
         }
-        if (t.empty()) continue;
+    return out;
+}
+
+int keys(const std::string& data) {
+    const auto models = modelsWithTextures(data);
+    if (models.empty()) return 1;
+    long n = 0;
+    for (const auto& [m, t] : models) {
         const auto d = omk::DataFs::readPath(m.string());
         const auto tb = omk::DataFs::readPath(t.string());
         const auto tex = omk::textures(d, tb);
@@ -110,7 +119,7 @@ int keys(const std::string& data) {
             ++n;
         }
     }
-    std::fprintf(stderr, "%ld textures in %zu models\n", n, models.size());
+    std::fprintf(stderr, "%ld textures in %zu models (those with a .3DT)\n", n, models.size());
     return 0;
 }
 
@@ -132,10 +141,8 @@ int keys(const std::string& data) {
 // `<outdir>/<key>.cov`: int32 w, h, then w*h bytes: 0 no face samples the
 // texel, 1 covered, 2 on a chart's border.
 int islands(const std::string& data, const std::string& outdir) {
-    fs::path meshes;
-    for (const auto& e : fs::directory_iterator(data))
-        if (e.is_directory() && lower(e.path().filename().string()) == "meshes") meshes = e.path();
-    if (meshes.empty()) { std::fprintf(stderr, "no MESHES under %s\n", data.c_str()); return 1; }
+    const auto models = modelsWithTextures(data);
+    if (models.empty()) return 1;
     // `id` the texel's first triangle (-1 none), `up` the triangles' union-find
     struct Cover { int w = 0, h = 0; std::vector<std::uint8_t> m; std::vector<int> id, up; };
     const auto root = [](std::vector<int>& up, int a) {
@@ -144,15 +151,8 @@ int islands(const std::string& data, const std::string& outdir) {
     };
     std::map<std::uint64_t, Cover> cov;
     long faces = 0, tiled = 0;
-    for (const auto& e : fs::recursive_directory_iterator(meshes)) {
-        if (!e.is_regular_file() || lower(e.path().extension().string()) != ".3do") continue;
-        fs::path t;
-        for (const char* ext : {".3dt", ".3DT", ".3Dt"}) {
-            auto c = e.path(); c.replace_extension(ext);
-            if (fs::exists(c)) { t = c; break; }
-        }
-        if (t.empty()) continue;
-        const auto d = omk::DataFs::readPath(e.path().string());
+    for (const auto& [m, t] : models) {
+        const auto d = omk::DataFs::readPath(m.string());
         const auto tex = omk::textures(d, omk::DataFs::readPath(t.string()));
         const omk::Geometry g = omk::buildGeometry(d, omk::DrawFilter::Engine);
         for (const auto& b : g.batches) {
@@ -462,14 +462,16 @@ int main(int argc, char** argv) {
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
-    if (mode == "pngpar" && argc == 4) return pngpar(argv[2], std::atoi(argv[3]));
+    if (mode == "pngpar" && argc == 4 && std::atoi(argv[3]) > 0) return pngpar(argv[2], std::atoi(argv[3]));
     if (mode == "water" && argc >= 3) return water(argc, argv);
     if (mode == "probe" && argc >= 3) return probe(argc, argv);
     if (mode == "lights" && argc == 4) return lights(argv[2], argv[3]);
     if (mode == "normals" && argc >= 4 && argc <= 9) return normals(argc, argv);
     if (mode == "islands" && argc == 4) return islands(argv[2], argv[3]);
-    std::fprintf(stderr, "usage: texpack_tool keys <gamedata>\n"
-                         "       texpack_tool png <in.png> <out.raw>\n"
-                         "       texpack_tool grey <pack> <model.3DO>\n");
+    std::fprintf(stderr, "usage: texpack_tool keys <gamedata> | png <in.png> <out.raw> | pngpar <in.png> <n>\n"
+                         "       | grey <pack> <model.3DO> | cube <file.cube> | water <model.3DO>...\n"
+                         "       | probe <model.3DO> ... | lights <pack> <model.3DO>\n"
+                         "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
+                         "       | islands <gamedata> <outdir>   (the header says what each answers)\n");
     return 2;
 }

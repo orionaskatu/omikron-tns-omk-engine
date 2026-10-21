@@ -229,7 +229,9 @@ void PlayState::worldDrawLists() {
         // set's own (60 of 64 on Vulkan and the GLES variant - 12 of 16 left
         // most of a neon street's signs unlit, "as if turned off", 2026-10-20)
         const int kFxSlots = tiled ? 0 : std::max(0, world_->maxPixelLights() - 4);
-        std::vector<std::pair<float, const omk::Light3do*>> near, fx;
+        // (kept from frame to frame: the selection runs every frame)
+        static std::vector<std::pair<float, const omk::Light3do*>> near, fx;
+        near.clear(); fx.clear();
         for (const WorldSlot& ws2 : worldSlots)
             for (const auto& l : ws2.lights) {
                 if (fxPix && omk::pointLight(l)) {
@@ -276,7 +278,8 @@ void PlayState::worldDrawLists() {
         const std::size_t ownSlots = std::min<std::size_t>(static_cast<std::size_t>(omk::View::kOwnGpuLights),
             static_cast<std::size_t>(world_->maxPixelLights()) - fx.size());
         if (near.size() > ownSlots) near.resize(ownSlots);
-        std::vector<float> fade(near.size(), 1.0f);
+        static std::vector<float> fade;
+        fade.assign(near.size(), 1.0f);
         for (const auto& [e2, l] : fx) {
             near.emplace_back(e2, l);
             fade.push_back(std::clamp((fxCut - std::sqrt(e2)) / (0.35f * fxCut), 0.0f, 1.0f));

@@ -9,7 +9,7 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
     omktexpack.py export  OUT [--match S ...]     the shipped textures, ready to upscale
     omktexpack.py upscale OUT --bin PATH [--model M] [--tile N]
                                                   run Real-ESRGAN (ncnn-vulkan) on them
-    omktexpack.py build   OUT [--no-anchor] [--grain F] [--nearest N | --solid R,G,B N] [--match S ...]
+    omktexpack.py build   OUT [--no-anchor | --anchor-passes N] [--grain F] [--nearest N | --solid R,G,B N] [--match S ...]
                                                   -> OUT/pack, the directory to hand the viewer
     omktexpack.py emissive PACK [--match S ...]   a light map <key>_e.png per texture, by the rule
                                                   below - a START, to be curated by hand
@@ -46,7 +46,8 @@ pilot of 2026-10-20 - todo/remaster.md). By DEFAULT the result is ANCHORED to
 the shipped texels (back-projection, `anchor` below): its box average at the
 original's size is the original again, so the grain and the painted colours
 stay the artists' and the upscaler adds only sub-texel sharpness;
-`--no-anchor` keeps the upscaler's raw picture. `--nearest N`
+`--no-anchor` keeps the upscaler's raw picture; `--anchor-passes N` (1 by
+default, the judged pack's) takes the box averages closer to the shipped texels. `--nearest N`
 and `--solid` build from the ORIGINALS instead: the first is the shipped
 picture at N times the texels (the engine must draw it identically - the
 check's invariant), the second one colour (the engine must visibly draw it).
@@ -294,12 +295,24 @@ def bilinear_signed(vals, w, h, ch, n):
     return out
 
 
-def anchor(up, src, w, h, n):
-    """BACK-PROJECTION: correct the upscaled `up` (RGB, w*n x h*n) so that its
-    n x n box average is the SHIPPED texel again, by adding the bilinear
-    enlargement of the residual. The texel-scale content - the grain, the
-    colours the artists painted - is then the original's; what the upscaler
-    contributes is only what lies between texels (an edge's sharpness)."""
+def anchor(up, src, w, h, n, passes=1):
+    """BACK-PROJECTION: correct the upscaled `up` (RGB, w*n x h*n) toward an
+    n x n box average that is the SHIPPED texel, by adding the bilinear
+    enlargement of the residual - so the texel-scale content (the grain, the
+    colours the artists painted) leans to the original's, and what the
+    upscaler contributes is mostly what lies between texels.
+
+    ONE pass does not land on it: the bilinear spread of a residual is not
+    box-exact. Measured (the review of 2026-10-21) on a grainy 32x32 at 4x,
+    the box averages' mean error 5.65 -> 3.23 after one pass, 2.04 after two,
+    0.63 after six. The pack the reader judged was built with one; `passes`
+    (`build --anchor-passes N`) goes further, for a rebuild."""
+    for _ in range(max(1, passes) - 1):
+        up = _anchor_once(up, src, w, h, n)
+    return _anchor_once(up, src, w, h, n)
+
+
+def _anchor_once(up, src, w, h, n):
     W = w * n
     down = [0] * (w * h * 3)
     inv = 1.0 / (n * n)
@@ -348,8 +361,12 @@ def emissive_factors(rgb, n):
     facade patches in the daylight cities, so the maps are curated after."""
     lum = [(299 * rgb[3*i] + 587 * rgb[3*i+1] + 114 * rgb[3*i+2]) / 255000 for i in range(n)]
     mxs = [max(rgb[3*i], rgb[3*i+1], rgb[3*i+2]) / 255 for i in range(n)]
-    med = sorted(lum)[n // 2]
-    vmed = sorted(mxs)[n // 2]
+    # the medians over the texels DRAWN: a keyed one (black, cut out) is not
+    # the texture, and a mostly-cut-out one's median fell toward 0 - marking
+    # more of what is left as light (the review of 2026-10-21)
+    drawn = [i for i in range(n) if rgb[3*i] or rgb[3*i+1] or rgb[3*i+2]] or list(range(n))
+    med = sorted(lum[i] for i in drawn)[len(drawn) // 2]
+    vmed = sorted(mxs[i] for i in drawn)[len(drawn) // 2]
     lo = max(med + 0.30, 0.55)
     out = bytearray(n)
     for i in range(n):
@@ -661,7 +678,7 @@ def cmd_upscale(out, binary, model, tile):
     sys.exit(subprocess.run(cmd).returncode)
 
 
-def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
+def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_passes=1):
     out = safe_out(out)
     idx = json.load(open(os.path.join(out, "index.json")))
     pad = idx["pad"]
@@ -704,7 +721,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True):
         if anchored or grain > 0:
             src = source_textures(e["model"])[e["material"]]["rgb"]
         if anchored:
-            rgb = bytearray(anchor(bytes(rgb), src, w, h, s))
+            rgb = bytearray(anchor(bytes(rgb), src, w, h, s, anchor_passes))
         if grain > 0:
             # THE GRAIN KEPT: an AI upscaler denoises, and the painted grain
             # of a floor or a ceiling is part of the art - mix a plain
@@ -732,26 +749,33 @@ def main(argv):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
+    anchor_passes = 1
     depth = 1.0
     deepbump, python, jobs, force = None, None, 3, False
-    i = 0
-    while i < len(rest):
-        a = rest[i]
-        if a == "--match": match.append(rest[i + 1]); i += 2
-        elif a == "--depth": depth = float(rest[i + 1]); i += 2
-        elif a == "--bin": binary = rest[i + 1]; i += 2
-        elif a == "--model": model = rest[i + 1]; i += 2
-        elif a == "--tile": tile = int(rest[i + 1]); i += 2
-        elif a == "--nearest": nearest_n = int(rest[i + 1]); i += 2
-        elif a == "--grain": grain = float(rest[i + 1]); i += 2
-        elif a == "--no-anchor": anchored = False; i += 1
-        elif a == "--deepbump": deepbump = os.path.abspath(rest[i + 1]); i += 2
-        elif a == "--python": python = rest[i + 1]; i += 2
-        elif a == "--jobs": jobs = int(rest[i + 1]); i += 2
-        elif a == "--force": force = True; i += 1
-        elif a == "--solid":
-            solid = (tuple(int(v) for v in rest[i + 1].split(",")), int(rest[i + 2])); i += 3
-        else: sys.exit(f"unknown argument {a}\n\n{__doc__}")
+    # a flag without its value, or a value that is not a number: said, with
+    # the usage - not a traceback
+    try:
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--match": match.append(rest[i + 1]); i += 2
+            elif a == "--depth": depth = float(rest[i + 1]); i += 2
+            elif a == "--bin": binary = rest[i + 1]; i += 2
+            elif a == "--model": model = rest[i + 1]; i += 2
+            elif a == "--tile": tile = int(rest[i + 1]); i += 2
+            elif a == "--nearest": nearest_n = int(rest[i + 1]); i += 2
+            elif a == "--grain": grain = float(rest[i + 1]); i += 2
+            elif a == "--no-anchor": anchored = False; i += 1
+            elif a == "--anchor-passes": anchor_passes = int(rest[i + 1]); i += 2
+            elif a == "--deepbump": deepbump = os.path.abspath(rest[i + 1]); i += 2
+            elif a == "--python": python = rest[i + 1]; i += 2
+            elif a == "--jobs": jobs = int(rest[i + 1]); i += 2
+            elif a == "--force": force = True; i += 1
+            elif a == "--solid":
+                solid = (tuple(int(v) for v in rest[i + 1].split(",")), int(rest[i + 2])); i += 3
+            else: sys.exit(f"unknown argument {a}\n\n{__doc__}")
+    except (IndexError, ValueError) as e:
+        sys.exit(f"bad arguments ({e})\n\n{__doc__}")
     for n in (nearest_n, solid[1] if solid else 0):
         if n and (n < 1 or n > 16 or n & (n - 1)):
             sys.exit("the factor must be a power of two, 1..16")
@@ -768,7 +792,7 @@ def main(argv):
             sys.exit("upscale needs --bin PATH (realesrgan-ncnn-vulkan)")
         cmd_upscale(out, binary, model, tile)
     else:
-        cmd_build(out, nearest_n, solid, match, grain, anchored)
+        cmd_build(out, nearest_n, solid, match, grain, anchored, anchor_passes)
 
 
 if __name__ == "__main__":

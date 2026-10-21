@@ -67,6 +67,7 @@
 #include "o3de/drawcore.h"
 #include "o3de/vertexlight.h"
 #include "o3de/texpack.h"
+#include "o3de/colourgrade.h"
 #include "o3de/lighttiles.h"
 #include "platform/events.h"
 #include "platform/env.h"
@@ -76,6 +77,7 @@
 #include <set>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <map>
 #include <tuple>
@@ -141,18 +143,22 @@ struct GpuLightStd140 {
     float colourI[4];   // rgb colour 0..1, a intensity
 };
 struct LightUbo {
-    GpuLightStd140 l[64];   // View::kMaxGpuLights - 8 the set's, the rest the remaster's points
+    GpuLightStd140 l[omk::View::kMaxGpuLights];   // 8 the set's, the rest the remaster's points
     int32_t count;
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
     int32_t tiles;     // 1: the TILED point lights (`o3de/lighttiles.h`) are bound - padding once
-    // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 400. Written by
+    // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 3088. Written by
     // every `begin`, and the frame's own pass is the last one - the only one
     // that reads it (the reflection pass draws no water)
     float   eye[4];
-    // THE RELIEF (`View::relief`), at 416: read by the TILED module alone
+    // THE RELIEF (`View::relief`), at 3104: read by the TILED module alone
     float   fx[4];
 };
+// the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
+// bytes, four scalars, then the two vec4s)
+static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104,
+              "the Lights block's layout is scene.frag's");
 
 struct ShadowUbo {
     float lightMvp[16];
@@ -322,15 +328,7 @@ public:
     // 0..1; n 0 turns it off. Any time - uploaded before the next frame's pass.
     bool setGrade(const float* rgb, int n) override {
         if (!rgb || n < 2) { lutN_ = 0; return true; }
-        lutData_.assign(static_cast<std::size_t>(n) * n * n * 4, 255);
-        for (int b = 0; b < n; ++b)
-            for (int g = 0; g < n; ++g)
-                for (int r = 0; r < n; ++r) {
-                    const float* src = rgb + 3 * ((static_cast<std::size_t>(b) * n + g) * n + r);
-                    unsigned char* d = &lutData_[4 * (static_cast<std::size_t>(g) * n * n + b * n + r)];
-                    for (int c = 0; c < 3; ++c)
-                        d[c] = static_cast<unsigned char>(std::clamp(src[c], 0.0f, 1.0f) * 255.0f + 0.5f);
-                }
+        omk::lutStrip(rgb, n, lutData_);
         lutN_ = n; lutDirty_ = true;
         return true;
     }
@@ -413,6 +411,7 @@ private:
     VkFormat       dsFmt_ = VK_FORMAT_UNDEFINED;
     VkImageView    depthView_ = VK_NULL_HANDLE;
     VkRenderPass   pass_ = VK_NULL_HANDLE;
+    VkRenderPass   reflPass_ = VK_NULL_HANDLE;   // the water reflection's, under the AO (its depth not stored)
     VkFramebuffer  fbuf_ = VK_NULL_HANDLE;
     VkBuffer       readBuf_ = VK_NULL_HANDLE; VkDeviceMemory readMem_ = VK_NULL_HANDLE;
 
@@ -673,6 +672,8 @@ private:
     void killReflection();
     void bindReflection(VkDescriptorSet ds);
     bool makePost();
+    bool makePostAt();
+    int  postFailW_ = -1, postFailH_ = -1;   // the size `makePostAt` last failed at: not retried every frame
     void killPost();
     void killLut();
     bool uploadLut();
@@ -1017,6 +1018,15 @@ bool VulkanRenderer::makeTarget() {
     rpi.attachmentCount = msaa ? 3 : 2; rpi.pAttachments = att;
     rpi.subpassCount = 1; rpi.pSubpasses = &sub;
     VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &pass_), "vkCreateRenderPass");
+    // ...and with the AO, the WATER REFLECTION's own: the same but for the
+    // depth's store - nothing reads the reflection's depth, and storing it is
+    // a full extra depth write (on a tiled GPU at 4K). Store ops do not touch
+    // compatibility: its framebuffer and every pipeline stay `pass_`'s.
+    if (aoOk_) {
+        att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        if (vkCreateRenderPass(dev_, &rpi, nullptr, &reflPass_) != VK_SUCCESS) reflPass_ = VK_NULL_HANDLE;
+        att[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
 
     VkImageView views[3] = {msaa ? msColourView_ : colourView_, depthView_, colourView_};
     VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
@@ -1140,10 +1150,9 @@ bool VulkanRenderer::makeTarget() {
 }
 
 bool VulkanRenderer::makePipelines() {
-    // binding 0 the texture, binding 1 its LIGHT MAP (the remaster's bloom;
-    // black unless the texture pack has one, read only with the bloom on)
-    // ...and binding 2 the WATER pass's reflection (black without one)
-    // 0 the texture, 1 its light map, 2 the water's reflection, 3 its normal map
+    // SET 0 a texture's: binding 0 the texture, 1 its LIGHT MAP (the bloom's;
+    // black without one), 2 the WATER pass's reflection (black without one),
+    // 3 its NORMAL MAP (the relief's; flat, alpha 0, without one)
     VkDescriptorSetLayoutBinding b2tex[4]{};
     for (uint32_t k = 0; k < 4; ++k) {
         b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
@@ -1688,6 +1697,7 @@ bool VulkanRenderer::resize(int w, int h) {
     };
     if (fbuf_) { vkDestroyFramebuffer(dev_, fbuf_, nullptr); fbuf_ = VK_NULL_HANDLE; }
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
+    if (reflPass_) { vkDestroyRenderPass(dev_, reflPass_, nullptr); reflPass_ = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     if (depthRead_) { vkDestroyImageView(dev_, depthRead_, nullptr); depthRead_ = VK_NULL_HANDLE; }
@@ -2065,9 +2075,19 @@ bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rg
 // `colour_` -> copy `postSrc_` -> [down to glow A, blur A -> B, blur B -> A]
 // -> final: `postSrc_` + glow A screen-blended, then the grade, into `colour_`.
 // The bracket runs only with the bloom on; the grade only with a LUT.
+// A failure is remembered for its size: retried, it tore down and rebuilt
+// everything and said so again every frame. A new size tries once more.
 bool VulkanRenderer::makePost() {
     const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
     if (finalPipe_ != VK_NULL_HANDLE && gw == glowW_ && gh == glowH_) return true;
+    if (gw == postFailW_ && gh == postFailH_) return false;
+    if (makePostAt()) return true;
+    postFailW_ = gw; postFailH_ = gh;
+    return false;
+}
+
+bool VulkanRenderer::makePostAt() {
+    const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
     killPost();
     glowW_ = gw; glowH_ = gh;
     const auto image = [&](int w, int h, VkFormat f, VkImageUsageFlags use, VkImage& img,
@@ -2590,7 +2610,10 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // material with no texture - which `raster.cpp` handles by leaving the
     // texel at 255 and letting the vertex colour stand alone.
     // `fill` writes tw*th RGBA texels, alpha the colour key
-    auto upload = [&](auto&& fill, int tw, int th, Tex& out) {
+    // `withSet` false: the image alone - a light map, a normal map, a 1x1
+    // stand-in, bound into ANOTHER texture's set (each had one allocated,
+    // written and freed at once)
+    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true) {
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * 4;
         VkBuffer sb; VkDeviceMemory sm;
         if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2697,10 +2720,17 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vi.format = VK_FORMAT_R8G8B8A8_UNORM;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
         vkCreateImageView(dev_, &vi, nullptr, &out.view);
+        if (!withSet) return;
 
         VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
-        vkAllocateDescriptorSets(dev_, &dai, &out.ds);
+        if (vkAllocateDescriptorSets(dev_, &dai, &out.ds) != VK_SUCCESS) {
+            // said, never written into: the draw then takes the white set
+            out.ds = VK_NULL_HANDLE;
+            static bool told = false;
+            if (!told) { told = true; std::fprintf(stderr, "vulkan: the texture descriptor pool is exhausted\n"); }
+            return;
+        }
         VkDescriptorImageInfo dii{sampler_, out.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         wr.dstSet = out.ds; wr.dstBinding = 0; wr.descriptorCount = 1;
@@ -2737,12 +2767,10 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         bindReflection(ds);
     };
     if (normalFlat_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_);
-        if (normalFlat_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &normalFlat_.ds); normalFlat_.ds = VK_NULL_HANDLE; }
+        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_, false);
     }
     if (lightBlack_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_);
-        if (lightBlack_.ds) { vkFreeDescriptorSets(dev_, dpool_, 1, &lightBlack_.ds); lightBlack_.ds = VK_NULL_HANDLE; }
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_, false);
         // an upload's set is written with binding 0 alone: the black one's
         // view stands in for the light map and the reflection until bound
     }
@@ -2814,8 +2842,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
                 upload([&](unsigned char* d) {
                     for (std::size_t q = 0; q < rep.emissive.size(); ++q)
                         d[4 * q] = d[4 * q + 1] = d[4 * q + 2] = rep.emissive[q], d[4 * q + 3] = 255;
-                }, rep.ew, rep.eh, em);
-                if (em.ds) vkFreeDescriptorSets(dev_, dpool_, 1, &em.ds);
+                }, rep.ew, rep.eh, em, false);
                 u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
                 ++lit;
             }
@@ -2823,8 +2850,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             if (pack.active() && !reps[i].normal.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex nm;
-                upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm);
-                if (nm.ds) vkFreeDescriptorSets(dev_, dpool_, 1, &nm.ds);
+                upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm, false);
                 u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
                 ++normals;
             }
@@ -3206,7 +3232,14 @@ void VulkanRenderer::begin(const omk::View& view) {
         // last binning is the one both read, and the reflection skips them.
         ub.tiles = 0;
         tilesNow_ = false;
-        if (!view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
+        if (passFb_ != VK_NULL_HANDLE && !view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
+            // THE REFLECTION'S begin: its binning was overwritten by the
+            // frame's own before the one submit, and its shader skips the
+            // tiles (`pc.water != 2`) - only the pipelines it draws with are
+            // the tiled ones, as before
+            ub.tiles = 1;
+            tilesNow_ = true;
+        } else if (!view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
             const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
             auto* gp = static_cast<GpuLightStd140*>(pointsPtr_);
             for (std::size_t i = 0; i < np; ++i) {
@@ -3265,7 +3298,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], bloom_ > 0.0f ? 0.0f : 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp.renderPass = pass_; rp.framebuffer = passFb_ ? passFb_ : fbuf_;
+    rp.renderPass = passFb_ && reflPass_ ? reflPass_ : pass_; rp.framebuffer = passFb_ ? passFb_ : fbuf_;
     // the RENDER size, not the output one: a render area smaller than the
     // attachment leaves the rest of it undefined, and with supersampling on
     // the resolve then averages four blocks of uninitialised memory.
@@ -3783,6 +3816,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);
     if (pass_) vkDestroyRenderPass(dev_, pass_, nullptr);
+    if (reflPass_) vkDestroyRenderPass(dev_, reflPass_, nullptr);
     if (colourView_) vkDestroyImageView(dev_, colourView_, nullptr);
     if (colour_) vkDestroyImage(dev_, colour_, nullptr);
     if (colourMem_) freeDeviceMemory(colourMem_);

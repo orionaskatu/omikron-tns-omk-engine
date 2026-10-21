@@ -857,14 +857,44 @@ per-pixel lighting, which a failed enhanced link already refuses
 (`playsetup_bodies.cpp`); and the emitters' light reaches the BODIES on GLES
 per-vertex through the set's light table, which a refusal would have lost.
 
-**Left for a second pass:** the light binning's allocations (~37k vectors a
-frame at 4K) and the reflection's binning thrown away; the reflection pass
-storing its depth under the AO; the water reflection's image bound as a
-texture during its own pass (validation-level, never read); a throwaway
-descriptor set per light/normal map; `anchor()` (one back-projection pass
-halves the error its docstring says it removes - a pack rebuild); the
-reflections without the tiled point lights; water and an authored mirror
-exclusive (the log now says so); the duplicated helpers.
+**The second pass** (the reader's "then do the second pass"; everything on
+byte-identical to `4eb586ae`, 18 of 18 - the burner, Qalisar, Jaunpur's
+canal; software, Vulkan, GLES):
+* The light binning (`lighttiles.cpp`): one flat list of (cluster, distance,
+  light) and a STABLE counting sort, its scratch kept from frame to frame -
+  one vector a cluster (~37k at 4K) was allocated every frame; the words are
+  the same bit for bit. The reflection's `begin` bins nothing (the frame's
+  pass overwrote it and the reflection's shader skips the tiles).
+* Under the AO the water reflection has its own render pass, its depth not
+  stored (`reflPass_`; store ops leave the pipelines compatible).
+* `setTextures`: light maps, normal maps and the 1x1 stand-ins uploaded
+  without a descriptor set (each allocated, written and freed at once), and
+  a failed allocation said and drawn white instead of written into.
+* `makePost` remembers a failure for its size (it rebuilt and said so every
+  frame); `LightUbo` sized by `View::kMaxGpuLights` and its offsets pinned by
+  a `static_assert` (the comments said 400 / 416; they are 3088 / 3104).
+* GLES: a variant whose anchor is not in the shader SAYS so (it built and
+  did nothing).
+* Shared: `lutStrip` (`colourgrade.h`, the grade's strip, written twice);
+  `[Remaster]`'s keys through two helpers (`settings.cpp`); the light
+  selection's and `drawWithWater`'s vectors kept between frames.
+* `omktexpack.py`: `anchor()`'s docstring said one pass restores the box
+  averages - it halves their error (4.96 -> 2.56; three passes 1.05);
+  `build --anchor-passes N` for a rebuild, 1 the default (the judged pack);
+  the emissive rule's medians over the drawn texels; argument errors said.
+  `texpack_tool`: `keys` and `islands` share the mesh walk, `pngpar` refuses
+  a count below 1, the usage names every mode.
+
+Not done, and why: the water reflection's image in its own pass's sets - the
+shader never reads it there (`pc.water == 1` is false), and the spec's
+layout and feedback rules bind only descriptors a draw ACCESSES; one helper
+for the session's flag / key / preset picks - three checks read those lines;
+a memo of `source_textures` - the build walks keys, not models.
+
+Still open, the reader's to choose: the reflections (water and the authored
+mirror) without the tiled point lights - a binning for the reflected camera;
+water and an authored mirror in one frame; the light maps uploaded as one
+channel (R8 / luminance), a quarter of their memory.
 
 ## Step 3, A4 - the ambient occlusion: as built (2026-10-21)
 

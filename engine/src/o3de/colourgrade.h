@@ -31,6 +31,11 @@ struct ColourLut {
 // than 0..1.
 bool parseCube(const std::string& text, ColourLut& out, std::string* why = nullptr);
 
+// A LUT as the GPU backends sample it (`Renderer::setGrade`): a STRIP, RGBA8,
+// n*n texels across and n down - row GREEN, column blue * n + red - from
+// `rgb` (n^3 triples, red fastest) into `out`, n*n*n*4 bytes.
+void lutStrip(const float* rgb, int n, std::vector<unsigned char>& out);
+
 class CityGrades {
 public:
     // Read DIR's .cube files and map.txt. False, said, when DIR is not a

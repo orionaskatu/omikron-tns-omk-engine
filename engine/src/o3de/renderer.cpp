@@ -273,9 +273,8 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     // what the reflection may show: the triangles ABOVE the plane, and the
     // draws a backend poses (the sky, the bodies) whole - their corners are
     // at rest, so a test on them would be a test on the wrong place
-    static std::vector<Draw> above, posed, clipped;
-    above.clear(); posed.clear();
-    std::vector<Draw> flat;
+    static std::vector<Draw> above, posed, clipped, flat;
+    above.clear(); posed.clear(); flat.clear();
     for (const auto& d : scene) (d.meshPose ? posed : flat).push_back(d);
     const float n[3] = {0.0f, -1.0f, 0.0f};
     clipped = inFrontOf(flat, n, wp.y, 1.0f);

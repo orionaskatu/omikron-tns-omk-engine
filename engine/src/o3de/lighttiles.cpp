@@ -28,7 +28,11 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
     const float sx = static_cast<float>(pxW) * 0.5f, sy = static_cast<float>(pxH) * 0.5f;
     // each light's tile rectangle, and its depth (the lists nearest first)
     struct Rect { int x0, y0, x1, y1; float z; int s0 = 0, s1 = kLightSlices - 1; };
-    std::vector<Rect> rects(points.size(), Rect{1, 1, 0, 0, 0.0f});
+    // the SCRATCH is kept from frame to frame (`thread_local`: a renderer
+    // bins on its own thread): one vector a cluster - ~37k of them at 4K - was
+    // allocated and freed every frame
+    static thread_local std::vector<Rect> rects;
+    rects.assign(points.size(), Rect{1, 1, 0, 0, 0.0f});
     for (std::size_t i = 0; i < points.size(); ++i) {
         const auto& l = points[i];
         const float d[3] = {l.pos[0] - cam.eye[0], l.pos[1] - cam.eye[1], l.pos[2] - cam.eye[2]};
@@ -70,14 +74,17 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
     for (int z = 1; z <= kLightSlices; ++z)
         zs[z] = kSliceNear * std::pow(F, static_cast<float>(z) / static_cast<float>(kLightSlices));
     zs[kLightSlices] = 1e9f;   // the last slice runs on to the clip
-    std::vector<float> cx0(static_cast<std::size_t>(out.across)), cx1(cx0.size());
+    static thread_local std::vector<float> cx0, cx1, cy0, cy1;
+    cx0.assign(static_cast<std::size_t>(out.across), 0.0f);
+    cx1.assign(cx0.size(), 0.0f);
     for (int x = 0; x < out.across; ++x) {
         float p0 = static_cast<float>(x * tile), p1 = static_cast<float>(std::min(pxW, (x + 1) * tile));
         if (cam.flipX) { const float a = static_cast<float>(pxW) - p1, b = static_cast<float>(pxW) - p0; p0 = a; p1 = b; }
         cx0[static_cast<std::size_t>(x)] = (p0 / sx - 1.0f) * tanH;
         cx1[static_cast<std::size_t>(x)] = (p1 / sx - 1.0f) * tanH;
     }
-    std::vector<float> cy0(static_cast<std::size_t>(out.down)), cy1(cy0.size());
+    cy0.assign(static_cast<std::size_t>(out.down), 0.0f);
+    cy1.assign(cy0.size(), 0.0f);
     for (int y = 0; y < out.down; ++y) {
         const float p0 = static_cast<float>(y * tile), p1 = static_cast<float>(std::min(pxH, (y + 1) * tile));
         cy0[static_cast<std::size_t>(y)] = (1.0f - p1 / sy) * tanV;   // y grows down the screen
@@ -88,7 +95,12 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
     // gives a light that cannot reach a fragment nothing, so a CORRECT tight
     // test draws the same frame byte for byte (`verify.py: engine: emitter light`)
     static const bool loose = envFlag("OMK_TILES_LOOSE");
-    std::vector<std::vector<std::pair<float, std::uint32_t>>> lists(tiles);
+    // every (cluster, distance, light) in the order found - by light, so a
+    // cluster's own entries keep the order its list had - then placed by
+    // cluster with a STABLE counting sort: the words are the same, bit for bit
+    struct Entry { std::uint32_t cluster; float dd; std::uint32_t idx; };
+    static thread_local std::vector<Entry> entries;
+    entries.clear();
     for (std::size_t i = 0; i < points.size(); ++i) {
         const Rect& q = rects[i];
         if (q.x0 > q.x1 || q.y0 > q.y1) continue;
@@ -112,28 +124,39 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
                     const float bx = std::clamp(vx, xlo, xhi) - vx;
                     const float dd = bx * bx + by * by + bz * bz;
                     if (!loose && dd > r2) continue;
-                    lists[static_cast<std::size_t>(z) * plane + static_cast<std::size_t>(y) * out.across + x]
-                        .emplace_back(dd, static_cast<std::uint32_t>(i));
+                    entries.push_back({static_cast<std::uint32_t>(static_cast<std::size_t>(z) * plane +
+                                                                  static_cast<std::size_t>(y) * out.across + x),
+                                       dd, static_cast<std::uint32_t>(i)});
                 }
             }
         }
     }
+    static thread_local std::vector<std::uint32_t> first, cursor;
+    static thread_local std::vector<std::pair<float, std::uint32_t>> sorted;
+    first.assign(tiles + 1, 0);
+    for (const Entry& e : entries) ++first[e.cluster + 1];
+    for (std::size_t t = 0; t < tiles; ++t) first[t + 1] += first[t];
+    cursor.assign(first.begin(), first.end() - 1);
+    sorted.resize(entries.size());
+    for (const Entry& e : entries) sorted[cursor[e.cluster]++] = {e.dd, e.idx};
     out.words.assign(4 + 2 * tiles, 0);
+    out.words.reserve(4 + 2 * tiles + sorted.size());
     out.words[0] = static_cast<std::uint32_t>(out.across);
     out.words[1] = static_cast<std::uint32_t>(out.down);
     out.words[2] = static_cast<std::uint32_t>(kLightSlices);
     out.words[3] = static_cast<std::uint32_t>(tile);
     for (std::size_t t = 0; t < tiles; ++t) {
-        auto& v = lists[t];
-        if (!loose && v.size() > static_cast<std::size_t>(kTileCap)) {
-            std::nth_element(v.begin(), v.begin() + kTileCap, v.end());
-            v.resize(static_cast<std::size_t>(kTileCap));
+        const auto b = sorted.begin() + first[t];
+        std::size_t n = first[t + 1] - first[t];
+        if (!loose && n > static_cast<std::size_t>(kTileCap)) {
+            std::nth_element(b, b + kTileCap, b + static_cast<std::ptrdiff_t>(n));
+            n = static_cast<std::size_t>(kTileCap);
             ++out.full;
         }
         out.words[4 + 2 * t] = static_cast<std::uint32_t>(out.words.size());
-        out.words[4 + 2 * t + 1] = static_cast<std::uint32_t>(v.size());
-        for (const auto& [dd, idx] : v) out.words.push_back(idx);
-        out.listed += static_cast<long>(v.size());
+        out.words[4 + 2 * t + 1] = static_cast<std::uint32_t>(n);
+        for (std::size_t k = 0; k < n; ++k) out.words.push_back(b[static_cast<std::ptrdiff_t>(k)].second);
+        out.listed += static_cast<long>(n);
     }
 }
 

@@ -104,6 +104,7 @@
 
 #include "o3de/depthtie.h"
 #include "o3de/drawcore.h"
+#include "o3de/colourgrade.h"
 #include "platform/profile.h"
 #include "o3de/renderer.h"
 #include "o3de/shimmer.h"
@@ -401,6 +402,14 @@ void main() {
 }
 )";
 
+// A variant's ANCHOR not found: said, never silent - the shader text it
+// patches changed and the variant would build and do nothing (the review of
+// 2026-10-21)
+void anchorMissed(const char* variant, const std::string& anchor) {
+    std::fprintf(stderr, "gles: the %s variant's anchor is not in the shader - `%.60s` - it does nothing there\n",
+                 variant, anchor.c_str());
+}
+
 // The BLOOM variant of a scene fragment program: the same source, with the
 // alpha written as the texel's LIGHT (the pack's light map on unit 3). Made
 // from the default text at `init`, so the default programs - and the Vita's
@@ -410,6 +419,7 @@ std::string bloomVariant(const char* frag) {
     const std::string from = "gl_FragColor = vec4(c, 1.0);";
     const auto at = s.rfind(from);
     if (at != std::string::npos) s.replace(at, from.size(), "gl_FragColor = vec4(c, texture2D(uEmis, vUV).r);");
+    else anchorMissed("bloom", from);
     return s;
 }
 
@@ -428,11 +438,13 @@ std::string waterVariant(const std::string& frag) {
                      "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
                      "        c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater * f;\n"
                      "    }\n    ");
+    else anchorMissed("water", "gl_FragColor = vec4(c,");
     // the REFLECTION pass discards what lies below the water (Y is down) - a
     // posed body's place is the GPU's, so the CPU clip cannot do it
     const std::string m = "void main() {";
     const auto mp = s.find(m);
     if (mp != std::string::npos) s.insert(mp + m.size(), "\n    if (uClip != 0 && vWy > uClipY) discard;");
+    else anchorMissed("water", m);
     return s;
 }
 
@@ -443,10 +455,13 @@ std::string waterVariant(const std::string& frag) {
 std::string pointLightVariant(const std::string& frag) {
     std::string s = frag;
     const auto rep = [&](const std::string& from, const std::string& to, bool all) {
+        int n = 0;
         for (auto at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) {
             s.replace(at, from.size(), to);
+            ++n;
             if (!all) break;
         }
+        if (n == 0) anchorMissed("emitters' light", from);
     };
     rep("vec3 litColour(vec3 n, vec3 w) {", "vec3 litColour(vec3 n, vec3 w, bool po) {", false);
     // ...and room for 64 lights, the set's 8 and the remaster's points
@@ -489,6 +504,8 @@ std::string tintVariant(const std::string& vert) {
     const auto l = s.find(lit);
     if (l != std::string::npos)
         s.replace(l, lit.size(), "vec3 lit = (uLightBlack > 0.5 ? vec3(uLightBase) : aCol) * uLightTint;");
+    // the plain posing program has the first, the enhanced one both
+    if (u == std::string::npos && l == std::string::npos) anchorMissed("body light", unlit);
     return s;
 }
 
@@ -499,9 +516,8 @@ std::string waterVertVariant(const char* vert) {
     std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\n") + vert;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
-    if (at == std::string::npos) return s;
-    const auto end = s.find(", 1.0);", at);
-    if (end == std::string::npos) return s;
+    const auto end = at == std::string::npos ? at : s.find(", 1.0);", at);
+    if (end == std::string::npos) { anchorMissed("water (vertex)", key); return s; }
     const std::string expr = s.substr(at + key.size(), end - at - key.size());
     s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    ");
     return s;
@@ -1185,15 +1201,7 @@ public:
     // ...and the city grade, any time: n^3 RGB 0..1, red fastest
     bool setGrade(const float* rgb, int n) override {
         if (!rgb || n < 2) { lutN_ = 0; return true; }
-        lutData_.assign(static_cast<std::size_t>(n) * n * n * 4, 255);
-        for (int b = 0; b < n; ++b)
-            for (int gg = 0; gg < n; ++gg)
-                for (int r = 0; r < n; ++r) {
-                    const float* src = rgb + 3 * ((static_cast<std::size_t>(b) * n + gg) * n + r);
-                    unsigned char* d = &lutData_[4 * (static_cast<std::size_t>(gg) * n * n + b * n + r)];
-                    for (int c = 0; c < 3; ++c)
-                        d[c] = static_cast<unsigned char>(std::clamp(src[c], 0.0f, 1.0f) * 255.0f + 0.5f);
-                }
+        lutStrip(rgb, n, lutData_);
         lutN_ = n; lutDirty_ = true;
         return true;
     }
@@ -1417,9 +1425,9 @@ private:
         GLint lit = -1, caster = -1, pl = -1, plCount = -1, shadow = -1, lightMvp = -1,
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
-        GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;
+        GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
         GLint tint = -1;   // the body light's variant
-        GLint setDim = -1; // the emitters' light's variant: the night   // the water variant's
+        GLint setDim = -1; // the emitters' light's variant: the night
     };
     SceneLoc mainLoc_, posedLoc_;
     GLuint curProg_ = 0;

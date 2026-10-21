@@ -375,6 +375,7 @@ private:
     VkInstance        inst_ = VK_NULL_HANDLE;
     VkPhysicalDevice  phys_ = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties props_{};
+    bool r8Ok_ = false;   // R8 blits and filters: the light maps one channel (`setTextures`)
     VkPhysicalDeviceMemoryProperties memProps_{};
     VkDevice          dev_  = VK_NULL_HANDLE;
     VkQueue           queue_ = VK_NULL_HANDLE;
@@ -851,6 +852,13 @@ bool VulkanRenderer::pickDevice() {
     vkEnumeratePhysicalDevices(inst_, &n, devs.data());
     phys_ = devs[0];
     vkGetPhysicalDeviceProperties(phys_, &props_);
+    {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_R8_UNORM, &fp);
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                                          VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        r8Ok_ = (fp.optimalTilingFeatures & need) == need;
+    }
     vkGetPhysicalDeviceMemoryProperties(phys_, &memProps_);
 
     uint32_t qn = 0;
@@ -2740,8 +2748,13 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // `withSet` false: the image alone - a light map, a normal map, a 1x1
     // stand-in, bound into ANOTHER texture's set (each had one allocated,
     // written and freed at once)
-    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true) {
-        const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * 4;
+    // `one`: ONE channel (R8), `fill` writing a byte a texel - a light map,
+    // which the shader reads `.r` of; a quarter of its memory as RGBA (each
+    // 1024x1024 map 4 MB -> 1 MB). Only where the device blits and filters
+    // R8 (`r8Ok_`), else RGBA as before.
+    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true, bool one = false) {
+        const VkFormat fmt = one ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * (one ? 1 : 4);
         VkBuffer sb; VkDeviceMemory sm;
         if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -2769,7 +2782,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (filter_ >= 2)
             for (int m = std::max(tw, th); m > 1; m >>= 1) ++levels;
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
         ii.extent = {static_cast<uint32_t>(tw), static_cast<uint32_t>(th), 1};
         ii.mipLevels = levels; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -2844,7 +2857,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
 
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+        vi.format = fmt;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
         vkCreateImageView(dev_, &vi, nullptr, &out.view);
         if (!withSet) return;
@@ -2966,10 +2979,14 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             if (pack.active() && !reps[i].emissive.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex em;
-                upload([&](unsigned char* d) {
-                    for (std::size_t q = 0; q < rep.emissive.size(); ++q)
-                        d[4 * q] = d[4 * q + 1] = d[4 * q + 2] = rep.emissive[q], d[4 * q + 3] = 255;
-                }, rep.ew, rep.eh, em, false);
+                if (r8Ok_)
+                    upload([&](unsigned char* d) { std::memcpy(d, rep.emissive.data(), rep.emissive.size()); },
+                           rep.ew, rep.eh, em, false, true);
+                else
+                    upload([&](unsigned char* d) {
+                        for (std::size_t q = 0; q < rep.emissive.size(); ++q)
+                            d[4 * q] = d[4 * q + 1] = d[4 * q + 2] = rep.emissive[q], d[4 * q + 3] = 255;
+                    }, rep.ew, rep.eh, em, false);
                 u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
                 ++lit;
             }
@@ -2990,7 +3007,8 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     }
     if (pack.active())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
-                                    {"replaced", packed}, {"lights", lit}, {"normals", normals}});
+                                    {"replaced", packed}, {"lights", lit}, {"normals", normals},
+                                    {"lightChannels", r8Ok_ ? 1 : 4}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {

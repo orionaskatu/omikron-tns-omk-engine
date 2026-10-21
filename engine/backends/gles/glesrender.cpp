@@ -2396,16 +2396,18 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         GLuint em = 0;
         if (bloom_ > 0.0f && pack.active() && !reps[i].emissive.empty()) {
             const omk::PackImage& rep = reps[i];
-            std::vector<unsigned char> e(rep.emissive.size() * 4);
-            for (std::size_t q = 0; q < rep.emissive.size(); ++q)
-                e[4 * q] = e[4 * q + 1] = e[4 * q + 2] = rep.emissive[q], e[4 * q + 3] = 255;
             glGenTextures(1, &em);
             glBindTexture(GL_TEXTURE_2D, em);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rep.ew, rep.eh, 0, GL_RGBA, GL_UNSIGNED_BYTE, e.data());
+            // ONE channel - the shader reads `.r`, LUMINANCE answers it in r, g
+            // and b alike: a quarter of the RGBA's memory (as `maskTex_` is kept)
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, rep.ew, rep.eh, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                         rep.emissive.data());
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
             ++lit;
         }
         out.em = em;

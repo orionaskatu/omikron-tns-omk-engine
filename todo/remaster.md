@@ -990,9 +990,15 @@ for the session's flag / key / preset picks - three checks read those lines;
 a memo of `source_textures` - the build walks keys, not models.
 
 Still open, the reader's to choose: the reflections (water and the authored
-mirror) without the tiled point lights - a binning for the reflected camera;
-water and an authored mirror in one frame; the light maps uploaded as one
-channel (R8 / luminance), a quarter of their memory.
+mirror) without the tiled point lights - a binning for the reflected camera
+(DONE for the water and the floors, A3 continued); water and an authored
+mirror in one frame; the light maps uploaded as one channel (R8 / luminance),
+a quarter of their memory - **DONE 2026-10-21**: Vulkan `R8_UNORM` where the
+device blits and filters it (`r8Ok_`, else RGBA as before; `@evt texpack.pool
+lightChannels=1` on the M3), GLES `GL_LUMINANCE` (as `maskTex_` already was);
+the shader reads `.r` - byte-identical to `1f3ff2fa` with the bloom on, 8 of
+8 (Vulkan and GLES, plain preset and `--enhance-all`, the burner and Qalisar);
+a 1024x1024 map 4 MB -> 1 MB.
 
 ## Step 3, A4 - the ambient occlusion: as built (2026-10-21)
 

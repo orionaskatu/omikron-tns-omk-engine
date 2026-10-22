@@ -30,6 +30,7 @@
 // rule (`texscale.h`).
 #pragma once
 
+#include "formats/ktx2.h"
 #include "formats/tex3dt.h"
 
 #include <cstdint>
@@ -45,8 +46,28 @@ namespace omk {
 std::uint64_t textureKey(const Texture& t);
 std::string textureKeyHex(std::uint64_t key);
 
+// THE BLOCK FORMATS (`todo/remaster.md`, the pack's KTX2 files): beside each
+// `<key>.png` the pack may hold `<key>.bc7.ktx2` (BC7, desktop GPUs) and
+// `<key>.astc.ktx2` (ASTC, Android and the Quest) - and `_e` / `_n` the same,
+// a light map BC4 or ASTC - each with its whole mip chain
+// (`tools/tex_encode.cpp`, `omktexpack.py compress`). A backend says which
+// it can sample (`setCodecs`); a texture that has one is then READ, not
+// decoded - no PNG inflate on the frame it arrives - and uploaded as blocks,
+// a quarter of RGBA's memory or less. The PNG stays the fallback, and the
+// source a person edits.
+enum PackCodec : unsigned { kCodecBc = 1, kCodecAstc = 2 };
+struct PackBlocks {
+    std::uint32_t vkFormat = 0;   // `formats/ktx2.h`'s numbers
+    int w = 0, h = 0;
+    std::vector<std::uint8_t> bytes;                          // the whole file
+    std::vector<std::pair<std::size_t, std::size_t>> levels;  // offset, length; level 0 first
+    bool empty() const { return bytes.empty(); }
+};
+
 // One texture's replacement, decoded: RGBA8 of w x h; `ok` false when the
-// pack has none for it, or its file was unusable.
+// pack has none for it, or its file was unusable. With the block formats on,
+// `colourZ` / `emissiveZ` / `normalZ` hold the blocks INSTEAD of `rgba` /
+// `emissive` / `normal` (w, h and ew, eh, nw, nh as before).
 struct PackImage {
     bool ok = false;
     int w = 0, h = 0;
@@ -64,6 +85,7 @@ struct PackImage {
     // RELIEF reads it.
     int nw = 0, nh = 0;
     std::vector<std::uint8_t> normal;
+    PackBlocks colourZ, emissiveZ, normalZ;
 };
 
 class TexturePack {
@@ -84,6 +106,12 @@ public:
     // on unless the session says no bloom will read them. The light maps
     // alone (`colour` false, the surface lights') are decoded either way.
     void setLights(bool on) { wantLights_ = on; }
+    // the block formats the backend samples (`PackCodec` bits, 0 none - the
+    // default: PNGs only)
+    void setCodecs(unsigned c) { codecs_ = c; }
+    unsigned codecs() const { return codecs_; }
+    // colour textures with a KTX2 of `codec`
+    std::size_t blockFiles(PackCodec codec) const { return ktx_[codec == kCodecAstc ? 1 : 0][0].size(); }
     const std::string& dir() const { return dir_; }
     // t's replacement, decoded: RGBA8 of w x h. False when the pack has none,
     // or when the file is unusable (not a PNG this reads, not a power-of-two
@@ -115,10 +143,18 @@ public:
     // curateBloom, the remaster's curated light sources): called once a
     // texture, on the pool - it must be thread-safe - with the result so far.
     using LightHook = void (*)(const Texture&, PackImage&);
-    void setLightHook(LightHook h) { lightHook_ = h; }
+    // `raw`: the textures the hook paints into - their LIGHT MAPS decoded
+    // from the PNGs whatever the codecs, the hook working on pixels (their
+    // colours may still be blocks: the hook then reads the shipped texels)
+    using RawFilter = bool (*)(const Texture&);
+    void setLightHook(LightHook h, RawFilter raw = nullptr) { lightHook_ = h; rawFilter_ = raw; }
 
 private:
     LightHook lightHook_ = nullptr;
+    RawFilter rawFilter_ = nullptr;
+    unsigned codecs_ = 0;
+    // [bc, astc][colour, light, normal]: key -> its KTX2
+    std::unordered_map<std::uint64_t, std::string> ktx_[2][3];
     bool wantNormals_ = false;
     bool wantLights_ = true;
     std::size_t excluded_ = 0;

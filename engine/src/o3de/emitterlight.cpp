@@ -186,7 +186,7 @@ void curateBloom(const Texture& t, PackImage& pk) {
             const SurfaceCuration::Entry* e = lists.at(u, v);
             if (!e) continue;
             float rgb[3];
-            if (pk.ok && pk.w > 0 && pk.h > 0) {
+            if (pk.ok && pk.w > 0 && pk.h > 0 && !pk.rgba.empty()) {   // not a block replacement
                 const int cx = std::min(pk.w - 1, static_cast<int>(u * static_cast<float>(pk.w) / static_cast<float>(t.width)));
                 const int cy = std::min(pk.h - 1, static_cast<int>(v * static_cast<float>(pk.h) / static_cast<float>(t.height)));
                 const std::uint8_t* p = pk.rgba.data() + (static_cast<std::size_t>(cy) * pk.w + cx) * 4;
@@ -206,6 +206,11 @@ void curateBloom(const Texture& t, PackImage& pk) {
             std::uint8_t& o = pk.emissive[static_cast<std::size_t>(y) * pk.ew + x];
             o = static_cast<std::uint8_t>(std::max<float>(o, std::min(255.0f, add)));
         }
+}
+
+bool bloomCurated(const Texture& t) {
+    const SurfaceCuration& cur = surfaceCuration();
+    return cur.active() && t.hasPixels() && cur.namesAny(t.name);
 }
 
 SurfaceCuration& surfaceCuration() {
@@ -274,7 +279,7 @@ std::vector<Light3do> surfaceLights(const Geometry& g, std::span<const Texture> 
                 e = std::max(0.0f, (static_cast<float>(pk.emissive[static_cast<std::size_t>(ey) * pk.ew + ex]) / 255.0f
                                     - kSurfaceFloor) / (1.0f - kSurfaceFloor));
             }
-            if (pk.ok && pk.w > 0 && pk.h > 0) {
+            if (pk.ok && pk.w > 0 && pk.h > 0 && !pk.rgba.empty()) {   // not a block replacement
                 const int cx = ((static_cast<int>(std::floor(u * static_cast<float>(pk.w) / static_cast<float>(t.width))) % pk.w) + pk.w) % pk.w;
                 const int cy = ((static_cast<int>(std::floor(v * static_cast<float>(pk.h) / static_cast<float>(t.height))) % pk.h) + pk.h) % pk.h;
                 const std::uint8_t* p = pk.rgba.data() + (static_cast<std::size_t>(cy) * pk.w + cx) * 4;

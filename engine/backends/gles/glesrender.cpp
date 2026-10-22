@@ -1762,6 +1762,7 @@ private:
     int  filter_ = 0;        // 0 nearest (the software devices), 1 bilinear (a 3D card), 2 trilinear
     int  aniso_ = 1;         // asked; 1 is off
     int  anisoOn_ = 1;       // what `init` found the context grants (1: none)
+    bool astcOk_ = false;    // ASTC sampled: the pack's `.astc.ktx2` files (`setTextures`)
     GLuint windowFbo_ = 0;
     bool overlayLayer_ = false;
     float shade_ = 1.0f;     // `presentEye`'s darkening, 1 = none
@@ -2314,6 +2315,20 @@ gpuBuffer("vertex buffers", quad_, sizeof quad);
             anisoOn_ = std::min(aniso_, static_cast<int>(most));
         if (anisoOn_ > 1) std::printf("gles: anisotropy %dx\n", anisoOn_);
     }
+    // THE PACK'S BLOCK FORMATS (`o3de/texpack.h`): ASTC, where the context
+    // names `GL_KHR_texture_compression_astc_ldr` - Android's GPUs and the
+    // Quest's; a desktop GL has no ASTC and keeps the PNGs (and no BC7: the
+    // Mac's GL stops at 4.1, before BPTC). `OMK_NO_BLOCK_FORMATS=1` keeps
+    // the PNGs anywhere.
+    {
+        const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        astcOk_ = ext && std::strstr(ext, "GL_KHR_texture_compression_astc_ldr") &&
+                  !omk::envFlag("OMK_NO_BLOCK_FORMATS");
+        omk::texturePack().setCodecs(astcOk_ ? omk::kCodecAstc : 0u);
+        if (astcOk_ && omk::texturePack().active())
+            std::printf("gles: the texture pack's ASTC files - %zu colours read as blocks\n",
+                        omk::texturePack().blockFiles(omk::kCodecAstc));
+    }
     if (omk::tieOff()) tieOn_ = false;
 #if defined(__vita__)
     streamOn_ = !omk::envFlag("OMK_NO_STREAM");
@@ -2515,6 +2530,18 @@ gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVe
     return ok;
 }
 
+// A pack texture in ASTC (`o3de/texpack.h` PackBlocks) into the BOUND
+// texture: every level its file carries when `mips`, else level 0 alone. The
+// format's GL name from its block size (`GL_KHR_texture_compression_astc_ldr`).
+static void uploadAstc(const omk::PackBlocks& z, bool mips) {
+    const omk::BlockFormat f = omk::blockFormat(z.vkFormat);
+    const GLenum gl = f.bw == 4 ? 0x93B0 : f.bw == 5 ? 0x93B2 : f.bw == 6 ? 0x93B4 : 0x93B7;   // 4x4 5x5 6x6 8x8
+    const std::size_t n = mips ? z.levels.size() : 1;
+    for (std::size_t l = 0; l < n; ++l)
+        glCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l), gl, std::max(1, z.w >> l), std::max(1, z.h >> l), 0,
+                               static_cast<GLsizei>(z.levels[l].second), z.bytes.data() + z.levels[l].first);
+}
+
 void GlesRenderer::setTextures(std::span<const Texture> t) {
     const double t0 = glesClockMs();
     forgetState();
@@ -2558,7 +2585,11 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         }
         int upW = s.width, upH = s.height;
         const bool fromPack = pack.active() && reps[i].ok;
-        if (fromPack) {
+        const bool blocks = fromPack && !reps[i].colourZ.empty() &&
+                            omk::blockFormat(reps[i].colourZ.vkFormat).astc;
+        if (blocks) {
+            upW = reps[i].w; upH = reps[i].h;
+        } else if (fromPack) {
             upW = reps[i].w; upH = reps[i].h;
             px.swap(reps[i].rgba);
         } else {
@@ -2573,7 +2604,17 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         packed += fromPack ? 1 : 0;
         // ...and its LIGHT MAP, with the bloom on and the pack holding one
         GLuint em = 0;
-        if (bloom_ > 0.0f && pack.active() && !reps[i].emissive.empty()) {
+        if (bloom_ > 0.0f && pack.active() && !reps[i].emissiveZ.empty() &&
+            omk::blockFormat(reps[i].emissiveZ.vkFormat).astc) {
+            glGenTextures(1, &em);
+            glBindTexture(GL_TEXTURE_2D, em);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            uploadAstc(reps[i].emissiveZ, false);   // the grey's red, as LUMINANCE's
+            ++lit;
+        } else if (bloom_ > 0.0f && pack.active() && !reps[i].emissive.empty()) {
             const omk::PackImage& rep = reps[i];
             glGenTextures(1, &em);
             glBindTexture(GL_TEXTURE_2D, em);
@@ -2613,10 +2654,15 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         if (mips && anisoOn_ > 1)
             glTexParameterf(GL_TEXTURE_2D, kGlTextureMaxAnisotropy, static_cast<GLfloat>(anisoOn_));
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
-                     GL_UNSIGNED_BYTE, px.data());
-        if (mips) glGenerateMipmap(GL_TEXTURE_2D);
-gpuTexture("textures", out.id, (mips ? 16LL : 12LL) * upW * upH / 3);
+        if (blocks) {
+            uploadAstc(reps[i].colourZ, mips);   // its own chain: nothing generated
+        } else {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, px.data());
+            if (mips) glGenerateMipmap(GL_TEXTURE_2D);
+        }
+gpuTexture("textures", out.id, blocks ? static_cast<long long>(reps[i].colourZ.bytes.size())
+                                       : (mips ? 16LL : 12LL) * upW * upH / 3);
         uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true, fromPack, em};
         ++fresh;
     }

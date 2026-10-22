@@ -74,6 +74,7 @@
 #include "platform/env.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <set>
 #include <cstdio>
@@ -390,6 +391,7 @@ private:
     VkPhysicalDevice  phys_ = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties props_{};
     bool r8Ok_ = false;   // R8 blits and filters: the light maps one channel (`setTextures`)
+    bool bcOk_ = false;   // BC7 and BC4 sampled and filtered: the pack's block files (`setTextures`)
     VkPhysicalDeviceMemoryProperties memProps_{};
     VkDevice          dev_  = VK_NULL_HANDLE;
     VkQueue           queue_ = VK_NULL_HANDLE;
@@ -951,6 +953,22 @@ bool VulkanRenderer::pickDevice() {
                      filter_ < 2 ? "it needs trilinear filtering (a mip chain)"
                                  : "the device has no samplerAnisotropy feature");
     }
+    // THE PACK'S BLOCK FORMATS (`o3de/texpack.h`): BC7 for the colours and
+    // the normal maps, BC4 for the light maps - read from the pack's KTX2
+    // files when the device samples and filters both (Apple's GPUs through
+    // MoltenVK do). `OMK_NO_BLOCK_FORMATS=1` keeps the PNGs, for comparison.
+    if (have.textureCompressionBC && !omk::envFlag("OMK_NO_BLOCK_FORMATS")) {
+        bool all = true;
+        for (const VkFormat f : {VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK}) {
+            VkFormatProperties fp{};
+            vkGetPhysicalDeviceFormatProperties(phys_, f, &fp);
+            const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            all = all && (fp.optimalTilingFeatures & need) == need;
+        }
+        if (all) { enable.textureCompressionBC = VK_TRUE; bcOk_ = true; }
+    }
+    omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);
     VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &qi;
     di.pEnabledFeatures = &enable;
@@ -2990,6 +3008,31 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // which the shader reads `.r` of; a quarter of its memory as RGBA (each
     // 1024x1024 map 4 MB -> 1 MB). Only where the device blits and filters
     // R8 (`r8Ok_`), else RGBA as before.
+    // an uploaded image's view, and its descriptor set unless `withSet` false
+    auto viewAndSet = [&](Tex& out, VkFormat fmt, uint32_t levels, bool withSet) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = fmt;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+        vkCreateImageView(dev_, &vi, nullptr, &out.view);
+        if (!withSet) return;
+
+        VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
+        if (vkAllocateDescriptorSets(dev_, &dai, &out.ds) != VK_SUCCESS) {
+            // said, never written into: the draw then takes the white set
+            out.ds = VK_NULL_HANDLE;
+            static bool told = false;
+            if (!told) { told = true; std::fprintf(stderr, "vulkan: the texture descriptor pool is exhausted\n"); }
+            return;
+        }
+        VkDescriptorImageInfo dii{sampler_, out.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr.dstSet = out.ds; wr.dstBinding = 0; wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr.pImageInfo = &dii;
+        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+    };
     auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true, bool one = false) {
         const VkFormat fmt = one ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * (one ? 1 : 4);
@@ -3093,28 +3136,69 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vkDestroyBuffer(dev_, sb, nullptr);
         freeDeviceMemory(sm);
 
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = fmt;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
-        vkCreateImageView(dev_, &vi, nullptr, &out.view);
-        if (!withSet) return;
-
-        VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
-        if (vkAllocateDescriptorSets(dev_, &dai, &out.ds) != VK_SUCCESS) {
-            // said, never written into: the draw then takes the white set
-            out.ds = VK_NULL_HANDLE;
-            static bool told = false;
-            if (!told) { told = true; std::fprintf(stderr, "vulkan: the texture descriptor pool is exhausted\n"); }
-            return;
+        viewAndSet(out, fmt, levels, withSet);
+    };
+    // ...and a texture of the pack's BLOCK FORMATS (`o3de/texpack.h`
+    // PackBlocks): the file's levels copied as they are - no blit ladder,
+    // a block image cannot be blitted, and the KTX2 carries its own chain
+    // made the ladder's way (`tools/tex_encode.cpp`). Only its level 0 when
+    // the sampler takes no mips, as the RGBA path makes none.
+    auto uploadZ = [&](const omk::PackBlocks& z, Tex& out, bool withSet = true) {
+        const VkFormat fmt = static_cast<VkFormat>(z.vkFormat);
+        const uint32_t levels = filter_ >= 2 ? static_cast<uint32_t>(z.levels.size()) : 1u;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(z.bytes.size());
+        VkBuffer sb; VkDeviceMemory sm;
+        if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        sb, sm)) return;
+        void* p = nullptr;
+        vkMapMemory(dev_, sm, 0, bytes, 0, &p);
+        std::memcpy(p, z.bytes.data(), z.bytes.size());
+        vkUnmapMemory(dev_, sm);
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
+        ii.extent = {static_cast<uint32_t>(z.w), static_cast<uint32_t>(z.h), 1};
+        ii.mipLevels = levels; ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        vkCreateImage(dev_, &ii, nullptr, &out.img);
+        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, out.img, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        vkAllocateMemory(dev_, &ai, nullptr, &out.mem);
+        OMK_GPU_ALLOC("textures", omk::prof::gpuKey(omk::prof::kVkMemory, out.mem), ai.allocationSize);
+        vkBindImageMemory(dev_, out.img, out.mem, 0);
+        VkCommandBuffer cb = oneShotBegin();
+        VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.srcQueueFamilyIndex = bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = out.img;
+        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+        bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        std::vector<VkBufferImageCopy> cps(levels);
+        for (uint32_t l = 0; l < levels; ++l) {
+            cps[l] = VkBufferImageCopy{};
+            cps[l].bufferOffset = z.levels[l].first;
+            cps[l].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+            cps[l].imageExtent = {std::max(1u, static_cast<uint32_t>(z.w) >> l),
+                                  std::max(1u, static_cast<uint32_t>(z.h) >> l), 1};
         }
-        VkDescriptorImageInfo dii{sampler_, out.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        wr.dstSet = out.ds; wr.dstBinding = 0; wr.descriptorCount = 1;
-        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        wr.pImageInfo = &dii;
-        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        vkCmdCopyBufferToImage(cb, sb, out.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, cps.data());
+        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        oneShotEnd(cb);
+        vkDestroyBuffer(dev_, sb, nullptr);
+        freeDeviceMemory(sm);
+        viewAndSet(out, fmt, levels, withSet);
     };
 
     // THE POOL, UPLOADED ONLY WHERE IT IS NEW, as the GLES, 3DS and GL1
@@ -3186,6 +3270,11 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     const omk::TexturePack& pack = omk::texturePack();
     std::vector<omk::PackImage> reps;
     int lit = 0;
+    // what a pool change COSTS the frame it lands on - the pack's decode and
+    // every upload - said when it brings anything new (the preload's measure)
+    using clk = std::chrono::steady_clock;
+    const auto t0 = clk::now();
+    int fresh = 0, blocksUp = 0;
     if (pack.active()) {
         // every texture this pool brings that the device does not hold yet,
         // decoded together on the thread pool
@@ -3194,6 +3283,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
         reps = pack.replacements(toDecode);
     }
+    const auto t1 = clk::now();
     int packed = 0, normals = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
@@ -3202,7 +3292,14 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
-            if (pack.active() && reps[i].ok) {
+            if (pack.active() && reps[i].ok && !reps[i].colourZ.empty()) {
+                const omk::PackImage& rep = reps[i];
+                uploadZ(rep.colourZ, u.t);
+                u.t.su = static_cast<float>(rep.w) / static_cast<float>(x.width);
+                u.t.sv = static_cast<float>(rep.h) / static_cast<float>(x.height);
+                u.t.packed = true;
+                ++blocksUp;
+            } else if (pack.active() && reps[i].ok) {
                 const omk::PackImage& rep = reps[i];
                 const int rw = rep.w, rh = rep.h;
                 upload([&](unsigned char* d) { std::memcpy(d, rep.rgba.data(), rep.rgba.size()); }, rw, rh, u.t);
@@ -3214,7 +3311,12 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             }
             // ...and its LIGHT MAP, when the pack has one: grey in RGBA, the
             // red channel what `scene.frag` reads
-            if (pack.active() && !reps[i].emissive.empty()) {
+            if (pack.active() && !reps[i].emissiveZ.empty()) {
+                Tex em;
+                uploadZ(reps[i].emissiveZ, em, false);
+                u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
+                ++lit;
+            } else if (pack.active() && !reps[i].emissive.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex em;
                 if (r8Ok_)
@@ -3229,7 +3331,12 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
                 ++lit;
             }
             // ...and its NORMAL MAP (the relief's), when the pack has one
-            if (pack.active() && !reps[i].normal.empty()) {
+            if (pack.active() && !reps[i].normalZ.empty()) {
+                Tex nm;
+                uploadZ(reps[i].normalZ, nm, false);
+                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
+                ++normals;
+            } else if (pack.active() && !reps[i].normal.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex nm;
                 upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm, false);
@@ -3239,14 +3346,21 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
             if (u.t.ds) bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
                                   u.t.nmView ? u.t.nmView : normalFlat_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
+            ++fresh;
         }
         tex_[i] = hit->second.t;
         packed += tex_[i].packed ? 1 : 0;
     }
+    const double decodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    const double uploadMs = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
+    if (fresh > 0)
+        std::printf("vulkan: texture pool - %d new of %zu (%d from the pack's block files), the pack's read and "
+                    "decode %.1f ms, the uploads %.1f ms\n", fresh, t.size(), blocksUp, decodeMs, uploadMs);
     if (pack.active())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
                                     {"replaced", packed}, {"lights", lit}, {"normals", normals},
-                                    {"lightChannels", r8Ok_ ? 1 : 4}});
+                                    {"lightChannels", r8Ok_ ? 1 : 4}, {"fresh", fresh}, {"blocks", blocksUp},
+                                    {"decodeMs", decodeMs}, {"uploadMs", uploadMs}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {

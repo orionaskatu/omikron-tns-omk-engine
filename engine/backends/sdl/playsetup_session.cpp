@@ -381,7 +381,7 @@ int PlayState::setupSession() {
             std::printf("fx light: %s/lights.txt - %zu curated light sources\n", gradeDir.c_str(),
                         omk::surfaceCuration().size());
             // ...which BLOOM too, where the light maps have nothing for them
-            if (bloomStrength > 0.0f) omk::texturePack().setLightHook(&omk::curateBloom);
+            if (bloomStrength > 0.0f) omk::texturePack().setLightHook(&omk::curateBloom, &omk::bloomCurated);
         }
     }
     if (smoothAnim)

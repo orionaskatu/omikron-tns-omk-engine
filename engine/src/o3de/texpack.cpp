@@ -36,6 +36,34 @@ bool powerOfTwoFactor(int big, int small) {
     return f >= 1 && f <= 16 && !(f & (f - 1));
 }
 
+// the normal map's PNG, at the colour's size or a power of two of the
+// original's; its alpha (the height) kept at 1 or more - 0 reads "none"
+void pngNormal(const std::string& path, const Texture& t, PackImage& o) {
+    const auto nb = readWholeFile(path);
+    PngImage ni;
+    if (nb.empty() || !decodePng(reinterpret_cast<const std::uint8_t*>(nb.data()), nb.size(), ni) ||
+        !powerOfTwoFactor(ni.w, t.width) || !powerOfTwoFactor(ni.h, t.height)) return;
+    for (std::size_t q = 3; q < ni.rgba.size(); q += 4) ni.rgba[q] = std::max<std::uint8_t>(1, ni.rgba[q]);
+    o.nw = ni.w; o.nh = ni.h; o.normal = std::move(ni.rgba);
+}
+
+// a pack KTX2 of `t`'s: read, its format right for its kind (`light`: BC4 or
+// ASTC; else BC7 or ASTC), its size a power of two of t's
+bool readBlocks(const std::string& path, const Texture& t, bool light, PackBlocks& z, std::string& why) {
+    const auto b = readWholeFile(path);
+    std::vector<std::uint8_t> bytes(reinterpret_cast<const std::uint8_t*>(b.data()),
+                                    reinterpret_cast<const std::uint8_t*>(b.data()) + b.size());
+    Ktx2 k;
+    if (!readKtx2(std::move(bytes), k, &why)) return false;
+    const BlockFormat f = blockFormat(k.vkFormat);
+    if (!f.astc && (light ? k.vkFormat != kVkBc4Unorm : k.vkFormat != kVkBc7Unorm)) { why = "the wrong block format"; return false; }
+    if (!powerOfTwoFactor(k.w, t.width) || !powerOfTwoFactor(k.h, t.height)) { why = "not a power of two of the original"; return false; }
+    z.vkFormat = k.vkFormat; z.w = k.w; z.h = k.h;
+    z.levels = std::move(k.levels);
+    z.bytes = std::move(k.bytes);
+    return true;
+}
+
 }  // namespace
 
 std::uint64_t textureKey(const Texture& t) {
@@ -61,6 +89,7 @@ bool TexturePack::open(const std::string& dir) {
     files_.clear();
     lights_.clear();
     normals_.clear();
+    for (auto& c : ktx_) for (auto& m : c) m.clear();
     {
         std::lock_guard<std::mutex> lk(m_);
         refused_.clear();
@@ -74,6 +103,18 @@ bool TexturePack::open(const std::string& dir) {
         return false;
     }
     for (const auto& name : hostfs::listNames(dir)) {
+        // `<key>[_e|_n].<bc7|bc4|astc>.ktx2` - the block formats
+        if (name.size() > 21 && name.compare(name.size() - 5, 5, ".ktx2") == 0) {
+            std::uint64_t k;
+            if (!hexKey(name.substr(0, 16), k)) continue;
+            std::string rest = name.substr(16, name.size() - 21);   // [_e|_n].codec
+            int kind = 0;
+            if (rest.compare(0, 2, "_e") == 0) { kind = 1; rest = rest.substr(2); }
+            else if (rest.compare(0, 2, "_n") == 0) { kind = 2; rest = rest.substr(2); }
+            const int codec = rest == ".astc" ? 1 : (rest == ".bc7" && kind != 1) || (rest == ".bc4" && kind == 1) ? 0 : -1;
+            if (codec >= 0) ktx_[codec][kind][k] = dir + "/" + name;
+            continue;
+        }
         if (name.size() != 20 && name.size() != 22) continue;
         const std::string ext = name.substr(name.size() - 4);
         if (ext != ".png" && ext != ".PNG") continue;
@@ -100,6 +141,7 @@ bool TexturePack::open(const std::string& dir) {
             if (a == std::string::npos || ln.size() < a + 16 || !hexKey(ln.substr(a, 16), k)) continue;
             excluded_ += files_.erase(k);
             normals_.erase(k);
+            for (auto& c : ktx_) { c[0].erase(k); c[2].erase(k); }
         }
         std::fclose(f);
     }
@@ -122,7 +164,9 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
     struct Job { std::size_t at; std::uint64_t key; const std::string* file; const std::string* light;
-                 std::string why; bool grey; const std::string* normal = nullptr; };
+                 std::string why; bool grey; const std::string* normal = nullptr;
+                 // the KTX2s, when the backend samples their codec: colour, light, normal
+                 const std::string* z[3] = {nullptr, nullptr, nullptr}; };
     std::vector<Job> jobs;
     // the light maps: always when they alone are asked; with the colours only
     // when a bloom will read them
@@ -144,6 +188,27 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
                         lt != lights_.end() ? &lt->second : nullptr, {}, grey,
                         nt != normals_.end() ? &nt->second : nullptr});
+        // the block formats: with the colours, never for a grey alias (its
+        // pixels are recomputed) nor what the light hook paints
+        if (colour && codecs_ && !grey) {
+            Job& jb = jobs.back();
+            for (const int c : {0, 1}) {
+                if (!(codecs_ & (c == 0 ? kCodecBc : kCodecAstc))) continue;
+                const auto pick = [&](int kind, bool want) -> const std::string* {
+                    if (!want) return nullptr;
+                    const auto f = ktx_[c][kind].find(key);
+                    return f != ktx_[c][kind].end() ? &f->second : nullptr;
+                };
+                // a light map the hook paints into stays its PNG: the hook
+                // works on its pixels (the colour it reads falls back to the
+                // shipped texels when the replacement is blocks)
+                const bool rawLight = rawFilter_ && rawFilter_(*t);
+                for (int kind = 0; kind < 3; ++kind)
+                    if (!jb.z[kind]) jb.z[kind] = pick(kind, kind == 0 ? jb.file != nullptr
+                                                           : kind == 1 ? jb.light != nullptr && !rawLight
+                                                                       : jb.normal != nullptr);
+            }
+        }
     }
     lk.unlock();
     // the reads and the decodes, on the pool: each job writes only its own
@@ -153,7 +218,9 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
             Job& jb = jobs[j];
             const Texture& t = *ts[jb.at];
             PackImage& o = out[jb.at];
-            if (jb.light) {
+            if (jb.light && jb.z[1] && readBlocks(*jb.z[1], t, true, o.emissiveZ, jb.why)) {
+                o.ew = o.emissiveZ.w; o.eh = o.emissiveZ.h;
+            } else if (jb.light) {
                 // the light map: its red channel, any size the rule allows
                 const auto lb = readWholeFile(*jb.light);
                 PngImage li;
@@ -166,6 +233,19 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 }
             }
             if (!jb.file || !colour) continue;
+            if (jb.z[0] && readBlocks(*jb.z[0], t, false, o.colourZ, jb.why)) {
+                o.ok = true; o.w = o.colourZ.w; o.h = o.colourZ.h;
+                if (jb.normal && jb.z[2] && readBlocks(*jb.z[2], t, false, o.normalZ, jb.why)) {
+                    o.nw = o.normalZ.w; o.nh = o.normalZ.h;
+                    continue;
+                }
+                // a normal map without its KTX2 is decoded below as before
+            }
+            if (o.ok) {
+                if (jb.normal) pngNormal(*jb.normal, t, o);
+                continue;
+            }
+            jb.why.clear();   // a KTX2 refused falls back to the PNG
             const auto bytes = readWholeFile(*jb.file);
             PngImage img;
             if (bytes.empty()) { jb.why = "unreadable"; continue; }
@@ -187,16 +267,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 }
             }
             o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
-            if (jb.normal) {
-                // the normal map, at the colour's size or a power of two of the original's
-                const auto nb = readWholeFile(*jb.normal);
-                PngImage ni;
-                if (!nb.empty() && decodePng(reinterpret_cast<const std::uint8_t*>(nb.data()), nb.size(), ni) &&
-                    powerOfTwoFactor(ni.w, t.width) && powerOfTwoFactor(ni.h, t.height)) {
-                    for (std::size_t q = 3; q < ni.rgba.size(); q += 4) ni.rgba[q] = std::max<std::uint8_t>(1, ni.rgba[q]);
-                    o.nw = ni.w; o.nh = ni.h; o.normal = std::move(ni.rgba);
-                }
-            }
+            if (jb.normal) pngNormal(*jb.normal, t, o);
         }
     });
     if (lightHook_)

@@ -138,6 +138,10 @@ SurfaceCuration& surfaceCuration();
 // some bloom", the reader, 2026-10-20). A texture without a map gets one at
 // its own size.
 void curateBloom(const Texture& t, PackImage& pk);
+// ...and the textures it paints into, whose LIGHT MAPS the pack decodes from
+// their PNGs whatever block formats it holds (`TexturePack::setLightHook`'s
+// `raw`); a colour read as blocks is read here from the shipped texels
+bool bloomCurated(const Texture& t);
 inline constexpr float kCuratedBloom = 1.0f;
 
 // ...and what each texture would give, for writing the list

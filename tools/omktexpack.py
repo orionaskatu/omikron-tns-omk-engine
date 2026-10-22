@@ -45,6 +45,14 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   original MP2 sound copied untouched ->
                                                   ROOT/films/pack/<key>.mpg (`omk-play --film-pack`,
                                                   or the --remaster preset's ROOT/films/pack)
+    omktexpack.py compress PACK [--codec bc|astc|all] [--astcenc PATH] [--astc-block 6x6] [--jobs N]
+                                                  the pack in GPU BLOCK FORMATS beside its PNGs
+                                                  (engine/src/o3de/texpack.h): <key>.bc7.ktx2 (BC7),
+                                                  <key>_n.bc7.ktx2, <key>_e.bc4.ktx2 for desktop GPUs;
+                                                  <key>[_n|_e].astc.ktx2 (ASTC, 6x6 by default) for
+                                                  Android and the Quest - each with its mip chain,
+                                                  by engine/build/tex_encode; read instead of the PNG
+                                                  by a backend that samples the format
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -99,6 +107,7 @@ own reader (`engine/build/texpack_tool png`), because pure-Python un-filtering
 of a 3072x3072 image takes tens of seconds.
 """
 import json
+import re
 import os
 import shutil
 import struct
@@ -1006,6 +1015,80 @@ def cmd_films(root, binary, model, q):
     print(f"film pack: {pack}")
 
 
+def cmd_compress(pack, codec, astcenc, block, jobs):
+    """Every PNG of PACK as KTX2 beside it, in the codecs asked - skipping an
+    output newer than its PNG. Says the counts, the failures, each kind's
+    mean round-trip PSNR (tex_encode's, at level 0) and the bytes made."""
+    import concurrent.futures
+    pack = safe_out(pack)
+    tool = os.path.join(os.path.dirname(TOOL), "tex_encode")
+    if not os.path.exists(tool):
+        sys.exit(f"{tool} is missing - run `make build/tex_encode` in engine/ first")
+    want = ["bc", "astc"] if codec == "all" else [codec]
+    if "astc" in want and not (astcenc and os.path.exists(astcenc)):
+        sys.exit("astc needs --astcenc PATH (ARM's astcenc)")
+    work, linked = [], 0
+    for name in sorted(os.listdir(pack)):
+        if not name.endswith(".png") or len(name) not in (20, 22):
+            continue
+        stem, kind = name[:-4], ("light" if name.endswith("_e.png") else
+                                 "normal" if name.endswith("_n.png") else "colour")
+        src = os.path.join(pack, name)
+        for c in want:
+            if c == "bc":
+                ext, args = (".bc4.ktx2", ["bc4"]) if kind == "light" else \
+                    (".bc7.ktx2", ["bc7n" if kind == "normal" else "bc7"])
+            else:
+                ext, args = ".astc.ktx2", ["astc"]
+            dst = os.path.join(pack, stem + ext)
+            if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+                continue
+            # a LINKED PNG (a pack made over another, `full-anchor3`'s light
+            # and normal maps): its KTX2 is the target's twin, linked too,
+            # when that one is made - not a second copy of the same bytes
+            if os.path.islink(src):
+                twin = os.path.realpath(src)[:-4] + ext
+                if os.path.exists(twin):
+                    if os.path.lexists(dst):
+                        os.remove(dst)
+                    os.symlink(os.path.relpath(twin, pack), dst)
+                    linked += 1
+                    continue
+            cmd = [tool, args[0], src, dst] + ([astcenc, block] if c == "astc" else [])
+            work.append((c, kind, cmd))
+    print(f"compress: {len(work)} files to make in {pack} ({', '.join(want)}), {jobs} at once; "
+          f"{linked} linked to the KTX2 beside a linked PNG's target")
+    stats, failed, done = {}, [], 0
+
+    def run(w):
+        r = subprocess.run(w[2], capture_output=True, text=True)
+        return w, r
+    with concurrent.futures.ThreadPoolExecutor(jobs) as ex:
+        for w, r in ex.map(run, work):
+            done += 1
+            m = re.search(r"psnr (\S+)", r.stdout)
+            if r.returncode != 0 or not m:
+                failed.append((w[2][2], r.stderr.strip()[:200]))
+                continue
+            st = stats.setdefault((w[0], w[1]), [0, 0.0])
+            st[0] += 1
+            st[1] += float(m.group(1))
+            if done % 250 == 0:
+                print(f"  {done} of {len(work)}")
+    for (c, kind), (n, p) in sorted(stats.items()):
+        print(f"  {c} {kind}: {n} made, mean PSNR {p / n:.1f} dB")
+    for f, why in failed[:20]:
+        print(f"  FAILED {f}: {why}")
+    for c, ext in (("bc", (".bc7.ktx2", ".bc4.ktx2")), ("astc", (".astc.ktx2",))):
+        files = [n for n in os.listdir(pack) if n.endswith(ext)]
+        if files:
+            own = [n for n in files if not os.path.islink(os.path.join(pack, n))]
+            print(f"  {c}: {len(files)} files ({len(files) - len(own)} links), "
+                  f"{sum(os.path.getsize(os.path.join(pack, n)) for n in own) / 1e9:.2f} GB of their own")
+    if failed:
+        sys.exit(f"{len(failed)} failed")
+
+
 def cmd_ui(root, binary, model, tile, anchor_passes):
     """The interface pack, end to end, into ROOT/ui: `export` (the engine's
     keys from `texpack_tool uikeys`, each BMP padded by its edge, its key -
@@ -1172,7 +1255,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_pas
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui", "fonts", "films"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui", "fonts", "films", "compress"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, None, 0, 0, None, 0.0, True
@@ -1180,6 +1263,7 @@ def main(argv):
     depth = 1.0
     fonts_k = 8
     film_q = 2
+    codec, astcenc, astc_block = "bc", None, "6x6"
     deepbump, python, jobs, force = None, None, 3, False
     # a flag without its value, or a value that is not a number: said, with
     # the usage - not a traceback
@@ -1191,6 +1275,9 @@ def main(argv):
             elif a == "--depth": depth = float(rest[i + 1]); i += 2
             elif a == "--k": fonts_k = int(rest[i + 1]); i += 2
             elif a == "--q": film_q = int(rest[i + 1]); i += 2
+            elif a == "--codec": codec = rest[i + 1]; i += 2
+            elif a == "--astcenc": astcenc = rest[i + 1]; i += 2
+            elif a == "--astc-block": astc_block = rest[i + 1]; i += 2
             elif a == "--bin": binary = rest[i + 1]; i += 2
             elif a == "--model": model = rest[i + 1]; i += 2
             elif a == "--tile": tile = int(rest[i + 1]); i += 2
@@ -1216,6 +1303,10 @@ def main(argv):
         cmd_ui(out, binary, model or "realesrgan-x4plus", tile, anchor_passes)
     elif cmd == "fonts":
         cmd_fonts(out, fonts_k)
+    elif cmd == "compress":
+        if codec not in ("bc", "astc", "all"):
+            sys.exit("--codec is bc, astc or all")
+        cmd_compress(out, codec, astcenc, astc_block, jobs)
     elif cmd == "films":
         cmd_films(out, binary, model or "realesr-animevideov3-x4", film_q)
     elif cmd == "emissive":

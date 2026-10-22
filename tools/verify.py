@@ -33728,6 +33728,172 @@ def c_engine_film_pack():
         "the real pack's three found, 1280x960, frame for frame the originals' count"
 
 
+def c_engine_block_formats():
+    r"""THE TEXTURE PACK IN GPU BLOCK FORMATS (`todo/remaster.md`): beside each
+    pack PNG, `<key>.bc7.ktx2` (BC7; BC4 for a light map) for desktop GPUs and
+    `<key>.astc.ktx2` for Android and the Quest, each a KTX2 with its whole mip
+    chain (`tools/tex_encode.cpp`, `omktexpack.py compress`). A backend says
+    which it samples - Vulkan BC where the device samples and filters BC7 and
+    BC4, GLES ASTC where the context names `GL_KHR_texture_compression_astc_
+    ldr` - and the pack then READS the file instead of decoding the PNG: no
+    inflate on the frame a texture arrives, a quarter of the memory or less.
+    The reader is THE ENGINE'S (`formats/ktx2.h`), self-checking.
+    Parts:
+      1. the source: BC enabled only with both formats filterable, the codecs
+         handed to the pack by each backend, the grey alias on its PNG and
+         the bloom's curated LIGHT MAPS too (their pixels are worked on);
+      2. the READER on files made here (`tex_encode` over a 64x64 gradient):
+         BC7, BC4 (and ASTC 6x6 where `omk.conf`'s pack holds astcenc) read
+         back with 7 levels and their round trip over 40 dB; then a copy one
+         byte short, one claiming R8G8B8A8, one with a level's length off by
+         a block - each REFUSED;
+      3. through VULKAN (`--world-vulkan`): a pack made here - every texture
+         of ANEKBAH a solid colour at 4x, PNG and BC7 (a solid block is exact)
+         - a 16-texel checker of two colours, every 4x4 block one colour, so
+         BC7-exact to its third level - drawn on the street with the blocks
+         and with `OMK_NO_BLOCK_FORMATS` (the PNGs): the pool says it took
+         blocks in the one and none in the other; NEAREST the frames are THE
+         SAME BYTES, TRILINEAR (the KTX2's own chain against the blit
+         ladder's, its smallest levels lossy) within one 565 step a pixel on
+         average; the pack visible (the frame not the shipped one);
+      4. the real pack where `omk.conf`'s `pack` has its BC files: the walk
+         into Anekbah's restaurant (`engine: area load`'s) with the blocks
+         and with the PNGs - the arrival's pool read from blocks, and its
+         read-and-decode at most a third of the PNGs'.
+    SHOWN TO FAIL (2026-10-22), one at a time: the reader without its
+    level-length test - the third bad copy read (part 2); the blocks uploaded
+    without the pack's UV factor - both frames off (part 3); every level
+    copied from level 0's offset - the trilinear frame off, the nearest one
+    (level 0 alone) not (part 3).
+    NOT CHECKED, judged by eye: the encoders' quality beyond the round trip.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    src_ok = ("enable.textureCompressionBC = VK_TRUE; bcOk_ = true;" in vk and
+              "omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);" in vk,
+              "GL_KHR_texture_compression_astc_ldr" in gl and
+              "omk::texturePack().setCodecs(astcOk_ ? omk::kCodecAstc : 0u);" in gl,
+              "if (colour && codecs_ && !grey) {" in tp and "jb.light != nullptr && !rawLight" in tp,
+              "setLightHook(&omk::curateBloom, &omk::bloomCurated)" in ps)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/tex_encode", "play"], cwd=eng,
+                        capture_output=True, text=True)
+    tool, enc = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "tex_encode")
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not all(os.path.exists(x) for x in (tool, enc, play)):
+        return (src_ok, "build"), ((True,) * 4, "built"), mk.stderr[-300:]
+    pk = omkpaths.pack_path() or ""
+    astcenc = os.path.join(pk, "astcenc", "bin", "astcenc") if pk else ""
+    def chunk(t, b):
+        return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+    def png(path, w, h, rgba):
+        rows = b"".join(b"\x00" + rgba[y * w * 4:(y + 1) * w * 4] for y in range(h))
+        open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+                               chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b""))
+    def reads(*paths):
+        out = subprocess.run([tool, "ktx2"] + list(paths), capture_output=True, text=True).stdout.splitlines()
+        return [l.split()[1] for l in out]
+    tmp = tempfile.mkdtemp()
+    try:
+        # 2. the reader
+        g = os.path.join(tmp, "g.png")
+        png(g, 64, 64, bytes(v for y in range(64) for x in range(64) for v in (x * 4, y * 4, (x + y) * 2, 255)))
+        made = []
+        for codec, extra in (("bc7", []), ("bc4", []), ("astc", [astcenc, "6x6"])):
+            if codec == "astc" and not os.path.exists(astcenc):
+                made.append(("skipped",))
+                continue
+            k = os.path.join(tmp, codec + ".ktx2")
+            r = subprocess.run([enc, codec, g, k] + extra, capture_output=True, text=True)
+            m = re.search(r"levels (\d+) psnr (\S+)", r.stdout)
+            made.append((int(m.group(1)), float(m.group(2)) > 40.0, reads(k)[0]) if m else ("failed", r.stderr[-120:]))
+        b7 = open(os.path.join(tmp, "bc7.ktx2"), "rb").read()
+        bad = []
+        for name, data in (("short", b7[:-1]), ("format", b7[:12] + struct.pack("<I", 37) + b7[16:]),
+                           ("length", b7[:88] + struct.pack("<Q", struct.unpack_from("<Q", b7, 88)[0] - 16) + b7[96:])):
+            open(os.path.join(tmp, name + ".ktx2"), "wb").write(data)
+            bad.append(reads(os.path.join(tmp, name + ".ktx2"))[0])
+        reader = (tuple(made), tuple(bad))
+        # 3. through Vulkan: a solid colour per ANEKBAH texture, PNG and BC7
+        keys = [l.split() for l in subprocess.run([tool, "keys", fr], capture_output=True, text=True).stdout.splitlines()]
+        mine = {k[2]: k[3] for k in keys if len(k) >= 4 and "ANEKBAH.3DO" in k[0].upper()}
+        pack = os.path.join(tmp, "pack")
+        os.makedirs(pack)
+        for key, size in mine.items():
+            w, h = (int(v) * 4 for v in size.split("x"))
+            c = bytes.fromhex(key[:6]) + b"\xff"
+            d = bytes(255 - v for v in c[:3]) + b"\xff"
+            # a 16-texel checker of the key's colour and its inverse: every
+            # 4x4 block one colour (BC7-exact) down to the third level - a
+            # wrong UV scale or a level's offset shows, a solid would not
+            png(os.path.join(pack, key + ".png"), w, h,
+                b"".join((c if ((x >> 4) ^ (y >> 4)) & 1 else d) for y in range(h) for x in range(w)))
+            subprocess.run([enc, "bc7", os.path.join(pack, key + ".png"), os.path.join(pack, key + ".bc7.ktx2")],
+                           capture_output=True)
+        def frame(name, *extra, env=None):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                                "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                "1804,0,-6890,336", "--frames", "30", "--dump", out] + list(extra),
+                               capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **(env or {})))
+            pools = [e[1] for e in _events(r.stdout) if e[0] == "texpack.pool"]
+            return (open(out, "rb").read() if os.path.exists(out) else None), sum(int(p.get("blocks", 0)) for p in pools)
+        none, _ = frame("none", "--filter", "nearest")
+        vulkan = []
+        for filt in ("nearest", "trilinear"):
+            zf, zb = frame("z" + filt, "--filter", filt, "--texture-pack", pack)
+            pf, pb = frame("p" + filt, "--filter", filt, "--texture-pack", pack, env={"OMK_NO_BLOCK_FORMATS": "1"})
+            # nearest: the same bytes; trilinear: the lossy small levels
+            # (squares under a block) - a mean under one 565 step
+            same = zf is not None and pf is not None and zf == pf
+            if filt == "trilinear" and zf is not None and pf is not None and len(zf) == len(pf):
+                a = struct.unpack("<%dH" % (len(zf) // 2), zf)
+                b = struct.unpack("<%dH" % (len(pf) // 2), pf)
+                diff = sum(abs(((x >> 5) & 63) - ((y >> 5) & 63)) for x, y in zip(a, b)) / len(a)
+                print(f"        trilinear: blocks against PNGs, mean {diff:.3f} of a green step")
+                same = diff < 1.0
+            vulkan.append((zb > 0, pb == 0, same))
+        visible = none is not None and frame("vis", "--filter", "nearest", "--texture-pack", pack)[0] != none
+        # 4. the real pack
+        real = ("skipped",)
+        rp = os.path.join(pk, "full", "pack") if pk else ""
+        if rp and os.path.isdir(rp) and any(n.endswith(".bc7.ktx2") for n in os.listdir(rp)):
+            def walk(env=None):
+                r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                                    "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                    os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                    "6411,0,450,90", "--frames", "120", "--hold", "k200*100", "--texture-pack", rp],
+                                   capture_output=True, text=True, errors="replace", timeout=900,
+                                   env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **(env or {})))
+                pools = [e[1] for e in _events(r.stdout) if e[0] == "texpack.pool" and int(e[1].get("fresh", 0)) > 0]
+                arr = pools[2:] if len(pools) > 2 else []   # the first two are the street's own
+                return sum(int(p.get("blocks", 0)) for p in arr), sum(float(p.get("decodeMs", 0)) for p in arr)
+            zb, zms = walk()
+            pb, pms = walk({"OMK_NO_BLOCK_FORMATS": "1"})
+            print(f"        the restaurant's arrival: {zb} textures from blocks, read and decode {zms:.1f} ms; "
+                  f"from the PNGs {pms:.1f} ms")
+            real = (zb > 0, pb == 0, pms > 0 and zms <= pms / 3)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        reader: {reader}; vulkan (blocks taken, PNGs alone, same frame) {vulkan}, the pack visible {visible}")
+    want_made = ((7, True, "ok"), (7, True, "ok"), (7, True, "ok") if os.path.exists(astcenc) else ("skipped",))
+    return (src_ok, reader, tuple(vulkan), visible, real), \
+        ((True,) * 4, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
+         _or_skip(real, (True, True, True))), \
+        "the source (BC only where filterable, each backend's codecs, the grey alias and the curated light " \
+        "maps on their PNGs); the reader takes what tex_encode makes and refuses a short file, a foreign format " \
+        "and a wrong level length; through Vulkan a block pack draws the same bytes as its PNGs nearest, " \
+        "and within a step trilinear; the real pack's arrival read from blocks at a third of the PNGs' cost or less"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47746,8 +47912,9 @@ def c_licence_headers():
                     missing.append(os.path.relpath(os.path.join(base, f), ROOT))
 
     # and the vendored tree must carry none of ours
-    vendored = sorted(_g.glob(os.path.join(ROOT, "engine/third_party/*.h")) +
-                      _g.glob(os.path.join(ROOT, "engine/third_party/*.c")))
+    # every level: `bc7enc/` keeps its six files together with their LICENSE
+    vendored = sorted(p for ext in ("h", "c", "cpp")
+                      for p in _g.glob(os.path.join(ROOT, "engine/third_party/**/*." + ext), recursive=True))
     mislabelled = [os.path.relpath(p, ROOT) for p in vendored
                    if TAG in open(p, encoding="utf-8",
                                   errors="replace").read(600)]
@@ -47816,13 +47983,17 @@ def c_licence_headers():
     # (the font pack, Tier E); and the vendored 3 -> 4, `stb_truetype.h`
     # (MIT or public domain), which font_hd alone includes
     # 662: + `engine/src/platform/filmpack.{h,cpp}` (the film pack, Tier E)
+    # 665: + `engine/src/formats/ktx2.{h,cpp}` and `engine/tools/tex_encode.cpp`
+    # (the pack in GPU block formats); and the vendored 4 -> 10, the walk now
+    # recursive and taking .cpp: `bc7enc/` - bc7enc.c/.h, bc7decomp.cpp/.h,
+    # rgbcx.h, rgbcx_table4.h (MIT or public domain), tex_encode alone
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (662, [], 4, []), \
+           (665, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
            "stamped with OMK's licence (must be empty - pl_mpeg.h, the FSR " \
-           "headers and stb_truetype.h are MIT and are not ours to relicense)"
+           "headers, stb_truetype.h and bc7enc/ are MIT and are not ours to relicense)"
 
 
 def c_dialogue_mode():
@@ -50627,6 +50798,7 @@ SLOW = [
     ("engine: font pack",    c_engine_font_pack,    "todo/remaster.md Tier E; ui/fontpack.h"),
     ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
     ("engine: film pack",    c_engine_film_pack,    "todo/remaster.md Tier E; platform/filmpack.h"),
+    ("engine: block formats", c_engine_block_formats, "todo/remaster.md; formats/ktx2.h; o3de/texpack.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

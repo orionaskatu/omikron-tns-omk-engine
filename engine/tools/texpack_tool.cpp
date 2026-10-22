@@ -65,6 +65,9 @@
 //                                           the pack) - w*h 565 - "@filmframe hd
 //                                           <0|1> size <w>x<h> frames <n>
 //                                           duration <s>"
+//     texpack_tool ktx2 <file>...            THE BLOCK FORMATS (`formats/ktx2.h`):
+//                                           "@ktx2 ok <vkFormat> <w>x<h> levels <n>"
+//                                           or "@ktx2 refused <why>", a file a line
 //
 // `keys` is the engine's half of a differential: the Python tool keys the same
 // textures from its own decoder, and the two must agree on every one, or a
@@ -84,6 +87,7 @@
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
+#include "formats/ktx2.h"
 #include "platform/filmpack.h"
 #include "platform/movie.h"
 #include "ui/fontpack.h"
@@ -619,6 +623,20 @@ int main(int argc, char** argv) {
     if (mode == "uiblit" && argc == 8) return uiblit(argv);
     if (mode == "fontline" && argc == 11) return fontline(argv);
     if (mode == "filmframe" && argc == 9) return filmframe(argv);
+    if (mode == "ktx2" && argc >= 3) {
+        for (int i = 2; i < argc; ++i) {
+            const auto b = omk::readWholeFile(argv[i]);
+            std::vector<std::uint8_t> bytes(reinterpret_cast<const std::uint8_t*>(b.data()),
+                                            reinterpret_cast<const std::uint8_t*>(b.data()) + b.size());
+            omk::Ktx2 k;
+            std::string why;
+            if (omk::readKtx2(std::move(bytes), k, &why))
+                std::printf("@ktx2 ok %u %dx%d levels %zu\n", k.vkFormat, k.w, k.h, k.levels.size());
+            else
+                std::printf("@ktx2 refused %s\n", why.c_str());
+        }
+        return 0;
+    }
     if (mode == "filmkey" && argc >= 3) {
         for (int i = 2; i < argc; ++i)
             std::printf("%016llx %s\n", static_cast<unsigned long long>(omk::filmKey(argv[i])), argv[i]);

@@ -1245,6 +1245,55 @@ the film at its own size); the GLES path presents the film through the
 present pass's NEAREST scale (the smoothing is the CPU's, on the
 display-sized surface the other backends use).
 
+## The pack in GPU block formats: as built (2026-10-22)
+
+The reader's "is there another format more adapted [than PNG]" and "BC7 in
+KTX2 first, generate the android astc version too, then the preload". What
+an arrival cost before it (the walk into Anekbah's restaurant, M3, `--remaster
+--enhance-all`, 1080p, `vulkan: texture pool` - a line added for this): 63 ms
+decoding the pack's PNGs and 28 ms uploading on the frame the set arrives,
+then 41 + 10 and 38 + 7 as its characters come; 275 + 119 ms at the start.
+The set itself (`set load:`) 4 ms, already on a thread. Two thirds PNG
+inflate, one third upload of 4 bytes a texel.
+
+* `engine/src/formats/ktx2.*`: KTX 2.0, written and read by OMK itself -
+  one 2D image, its whole mip chain, no supercompression, BC4 / BC7 / ASTC
+  4x4..8x8 (UNORM); the reader refuses anything else and checks every
+  level's length against its block count.
+* `engine/tools/tex_encode.cpp` (vendored `third_party/bc7enc`, MIT/PD;
+  ARM's `astcenc` 5.7 binary for ASTC, run): a pack PNG -> a KTX2 with the
+  chain made by 2x2 averages (the Vulkan blit ladder's), BC7 perceptual for
+  colours, BC7 linear for normal maps, BC4 for light maps, or ASTC; prints
+  the level-0 round trip. `omktexpack.py compress PACK --codec bc|astc|all`
+  runs it over a pack, 8 at once, skipping what is newer than its PNG.
+* The pack (`o3de/texpack.*`) indexes `<key>[_e|_n].{bc7,bc4,astc}.ktx2`;
+  a backend says what it samples (`setCodecs`) and those files are READ
+  instead of the PNGs. Vulkan: BC where the device samples and filters BC7
+  and BC4 (MoltenVK on Apple GPUs does), the blocks copied level by level.
+  GLES: ASTC where `GL_KHR_texture_compression_astc_ldr` is named (Android,
+  the Quest) - not on the Mac's GL (no ASTC, and 4.1 has no BC7), which keeps
+  the PNGs. Kept on PNG: the greyscale bank's alias (its pixels recomputed)
+  and the bloom curation's LIGHT MAPS (it paints into them; their colours
+  may be blocks - the curation then reads the shipped texels).
+  `OMK_NO_BLOCK_FORMATS=1` keeps the PNGs, for comparison.
+* The full pack (1259 colours, 833 light maps, 1259 normal maps): BC 3351
+  files, **3.11 GB**, mean round trip 48.2 dB (colours), 53.7 (light maps),
+  43.5 (normal maps), ~10 min on the M3. ASTC 6x6 (Android, the Quest):
+  3351 files, **1.41 GB**, 44.3 / 54.9 / 41.1 dB, ~15 min. `full-anchor3`
+  the same, its light and normal maps LINKED to `full`'s KTX2s as its PNGs
+  are linked to `full`'s (`compress` follows a linked PNG to its twin).
+  **The ASTC path is not run here**: no Mac context names the ASTC
+  extension, so `uploadAstc` is built and compiled for Android but its first
+  run will be the Quest's or a phone's - an `OMK_NO_BLOCK_FORMATS=1` run
+  there is the comparison.
+
+**Measured after** (the same walk): the start 27 + 57 ms (from 275 + 119);
+the restaurant's arrival **8 + 12 ms** (from 63 + 28), then 3 + 3 and 2 + 2
+(from 41 + 10, 38 + 7). `verify.py: engine: block formats` (the reader, a
+made pack through Vulkan the same bytes as its PNGs, the real arrival at a
+third of the PNGs' cost or less - 9.0 against 91.7 ms), shown to fail three
+ways.
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

@@ -491,6 +491,12 @@ public:
     // Same contract as the other two: a request, before `init()`, that the
     // software reference declines.
     virtual bool setSupersample(int /*n*/) { return false; }
+    // ...and its opposite, THE UPSCALE (`todo/remaster.md` A6): render the
+    // frame `factor` times SMALLER each way and bring it up to the output with
+    // AMD's FSR 1 (EASU, then RCAS's sharpening) before the present's dither.
+    // 1 is off; it takes the place of the supersample. A REMASTER feature, for
+    // the 4K frame rate - before `init()`, Vulkan only.
+    virtual bool setUpscale(float /*factor*/) { return false; }
     // And anisotropic filtering, `n` samples along the footprint's long axis
     // (1 off, up to 16). Only meaningful with mode 2.
     virtual bool setAnisotropy(int /*n*/) { return false; }

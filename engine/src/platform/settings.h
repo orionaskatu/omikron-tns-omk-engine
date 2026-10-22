@@ -234,6 +234,10 @@ struct Settings {
     // `mist = S`: the MIST, a height fog in the set's fog colour (`View::mist`). 0 = off.
     float  mist = 0.0f;
     Source mistSource = Source::Default;
+    // `upscale = F`: THE UPSCALE, the frame drawn F times smaller each way and
+    // brought up by AMD FSR 1 (`Renderer::setUpscale`), 1..3. 1 = off.
+    float  upscale = 1.0f;
+    Source upscaleSource = Source::Default;
     // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
     // S the tint's strength, 0 off; Vulkan and GLES only.
     float  bodyLight = 0.0f;

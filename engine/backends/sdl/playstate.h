@@ -100,6 +100,7 @@ struct PlayState {
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
     float & mistFlag = opt.mistFlag;
+    float & upscaleFlag = opt.upscaleFlag;
     float & bodyLightFlag = opt.bodyLightFlag;
     float & fxLightFlag = opt.fxLightFlag;
     float & reliefFlag = opt.reliefFlag;
@@ -700,6 +701,7 @@ struct PlayState {
     float waterStrength{};   // the water reflection's, 0 off
     float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
     float mistStrength{};    // the mist's (`View::mist`), 0 off
+    float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
     float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
     float relief{};          // the relief's (`View::relief`), 0 off

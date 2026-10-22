@@ -59,14 +59,15 @@ them conflicts with GPL-3.0.
 | path | what | upstream | licence |
 |---|---|---|---|
 | `engine/third_party/pl_mpeg.h` | MPEG-1 / MP2 decoder and PS demuxer | [phoboslab/pl_mpeg](https://github.com/phoboslab/pl_mpeg) | **MIT** (Dominic Szablewski) |
+| `engine/third_party/ffx_a.h`, `ffx_fsr1.h` | AMD FidelityFX Super Resolution 1 (the remaster's upscale) | [GPUOpen-Effects/FidelityFX-FSR](https://github.com/GPUOpen-Effects/FidelityFX-FSR) | **MIT** (Advanced Micro Devices) |
 
-That is the only third-party file in the published tree, and it is **vendored
-deliberately** rather than found by the build: `docs/PORTING.md` A8 draws the
+Those are the only third-party files in the published tree, and they are
+**vendored deliberately** rather than found by the build: `docs/PORTING.md` A8 draws the
 line as a vendored dependency being checked in so `make` works without it
 installed, which makes a missing one a broken checkout, while a system
 dependency's absence merely disables a frontend.
 
-It does **not** carry an SPDX header from OMK, deliberately. Stamping
+They do **not** carry an SPDX header from OMK, deliberately. Stamping
 `GPL-3.0-or-later` on someone else's file is a false statement about its terms,
 and it is the kind that survives a long time because it looks tidy.
 

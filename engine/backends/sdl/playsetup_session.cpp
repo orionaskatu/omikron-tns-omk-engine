@@ -229,6 +229,13 @@ int PlayState::setupSession() {
         if (mistStrength > 0.0f)
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
                         "Vulkan only\n", static_cast<double>(mistStrength));
+        // THE UPSCALE (`Renderer::setUpscale`): its flag, its key - not the
+        // preset's, a frame rate's choice rather than a look's
+        upscale = upscaleFlag >= 0.0f ? upscaleFlag
+                : settings.upscaleSource == omk::Settings::Source::Ini ? settings.upscale : 1.0f;
+        if (upscale > 1.0f)
+            std::printf("upscale: x%.2f - a REMASTER feature: the frame drawn smaller and brought up by "
+                        "AMD FSR 1, Vulkan only\n", static_cast<double>(upscale));
         // the REFLECTING FLOORS (`o3de/floorreflect.h`): its flag, its key, the
         // preset's 1 - each floor's own strength is the list's
         floorStrength = floorsFlag >= 0.0f ? floorsFlag

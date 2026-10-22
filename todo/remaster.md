@@ -46,7 +46,7 @@ new renderer.
 | A3 | reflections: generalise the planar mirror pass (`AP_mirror`, `AB_mirror`, ...) and the envmap flag `0x4000000`; screen-space reflections on floors a material tag marks wet or polished | the mirrors and envmaps are the game's; the tags come from B3 | which floors - by eye, per city |
 | A4 | SSAO at LOW strength; height or volumetric fog in the game's own fog colour and range | the vertex colours already hold painted occlusion, so AO only adds contact detail | strength by eye, never doubling the painted dark |
 | A5 | **characters lit by their surroundings**: light probes sampled from the set's vertex colours near a body | READS the artists' lighting instead of adding lights - the most defensible lighting step | the probe spacing; how it composes with row 7 |
-| A6 | FSR (open) / MetalFX upscaling at 4K | cheaper than row 9 (`todo/optimization.md` "The 4K benchmark") | the 4K benchmark on the M3 is the gate (30+ fps) |
+| A6 | FSR (open) / MetalFX upscaling at 4K - **FSR 1 BUILT, Vulkan (2026-10-22)** | cheaper than row 9 (`todo/optimization.md` "The 4K benchmark") | the 4K benchmark on the M3 is the gate (30+ fps) |
 
 ## Tier B - the HD texture pack (~1 week engine, then curation). The best ratio.
 
@@ -1096,6 +1096,54 @@ on Qalisar's street and at Jaunpur's canal.
   compare Vulkan with GLES at `--mist 0`.
 * Open: GLES; the mist in the reflections; a lighter haze by day if the
   day's fog colours want it (unseen: the save's clock is evening).
+
+## A6 - the upscale: as built (2026-10-22)
+
+`--upscale F` / `[Remaster] upscale = F` (1..3, 1 off), **off by default and
+not in the `--remaster` preset** - a frame rate's choice, not a look. Vulkan
+only (GLES not yet). AMD **FSR 1**, vendored verbatim (MIT,
+`engine/third_party/ffx_a.h`, `ffx_fsr1.h`); MetalFX is out of reach through
+MoltenVK.
+
+* The frame is drawn `F` times smaller each way - every render size through
+  one rule, `rs()` (the target, the viewport, the AO's view, both light
+  binnings) - and `runPresentPass` brings it up: **EASU** (`easu.frag`) into
+  an output-size image, then **RCAS** (sharpness 0.2 stops, AMD's sample)
+  inside `present.frag`, BEFORE the original's 565 dither, so the dither stays
+  the output pixel's. It takes `--ssaa`'s place (said, and ignored).
+* The CPU paths: `readback` runs the same two passes raw (no dither) and
+  quantises on the CPU as before; `presentSurface` (the interface over the
+  world) uploads into the present pass's output-size image, `colour_` being
+  smaller than the picture.
+* `src/o3de/fsrcon.h` transcribes `FsrEasuCon` / `FsrRcasCon` (the header's
+  CPU side drags in hundreds of warnings); `engine: upscale` compares the
+  words with AMD's own.
+
+Proved (`verify.py: engine: upscale`, shown to fail two ways): the 100
+constant words AMD's; the street drawn at 640x480 for 1280x960, close to the
+native frame and registered; the window's present pass 0 pixels from the
+readback's over 90 GPU-presented frames (`OMK_VERIFY_GPU_PRESENT`). Off:
+byte-identical to `451c0aa5` (`--vulkan`, `--world-vulkan`, `--ssaa 2`,
+`--remaster --enhance-all`, 4 of 4); the Khronos validation layer silent with
+it on (the world, and the pause menu over it).
+
+**The 4K frame, 2026-10-22, M3** (Qalisar's street `--area 101 --stand
+15516,0,-10182,180`, `--vulkan --res 3840x2160 --remaster --enhance-all`,
+hidden window, one other session's Python on a core):
+
+| `--upscale` | drawn at | fps | worst | GPU: scene / post / reflection |
+|---|---|---|---|---|
+| off | 3840x2160 | **42.6** | 28 ms | 7.4 / 3.4 / 1.1 ms |
+| 1.5 | 2560x1440 | **57** | 20 ms | - |
+| 2 | 1920x1080 | **68** | 19 ms | 2.0 / 0.8 / 0.5 ms |
+
+At x2 the GPU's passes are 3.4 ms of a 14.7 ms frame: what is left is the
+CPU's submission (`world begin..end` 8.7 ms with the wait) and the 4K present
+(2.7 -> 4.7 ms, EASU and RCAS at the output size). The upscale removes the
+GPU from the reader's 4K slowdown (open bug above) whatever its cause there.
+
+**Open**: GLES (the same two shaders as a GL pass); the sharpness as an
+option, if the reader finds RCAS's 0.2 too strong - judged in play, not yet.
 
 ## Step 1, as built (2026-10-20) - the texture pack
 

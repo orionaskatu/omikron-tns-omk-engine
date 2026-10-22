@@ -37,6 +37,7 @@ void PlayState::gpuOpenWindow() {
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
+            if (upscale > 1.0f) vkr->setUpscale(upscale);   // the remaster's, in the supersample's place
             if (bloomStrength > 0.0f) vkr->setBloom(bloomStrength);   // the remaster's
             if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);
             if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
@@ -73,6 +74,7 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
+        if (wv && upscale > 1.0f) wv->setUpscale(upscale);
         if (wv && bloomStrength > 0.0f) wv->setBloom(bloomStrength);
         if (wv && aoStrength > 0.0f) wv->setAmbientOcclusion(aoStrength);
         if (wv && std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass

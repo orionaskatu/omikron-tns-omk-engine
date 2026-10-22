@@ -300,6 +300,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --mist S         REMASTER, off by default: a height fog in the set's fog\n"
 "                   colour, thick at its ground and thinning above, strength S\n"
 "                   (0..1); Vulkan only; [Remaster] mist=S\n"
+"  --upscale F      REMASTER, off by default: draw the frame F times smaller\n"
+"                   each way (1..3; 1.5 FSR's quality, 2 its performance) and\n"
+"                   bring it up with AMD FSR 1 - the 4K frame rate; Vulkan\n"
+"                   only, in --ssaa's place; [Remaster] upscale=F\n"
 "  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
 "                   lists reflect the scene, strength S (0..1) times theirs;\n"
 "                   Vulkan and GLES only; [Remaster] floors=S\n"
@@ -577,6 +581,13 @@ int PlayOptions::parse(int argc, char** argv) {
             bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
             if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {
                 std::fprintf(stderr, "--body-light %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--upscale" && i + 1 < argc) {
+            upscaleFlag = static_cast<float>(std::atof(argv[++i]));
+            if (upscaleFlag < 1.0f || upscaleFlag > 3.0f) {
+                std::fprintf(stderr, "--upscale %s: not 1..3\n", argv[i]);
                 return 2;
             }
         }

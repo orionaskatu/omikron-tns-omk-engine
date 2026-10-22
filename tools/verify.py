@@ -32952,6 +32952,167 @@ def c_engine_mist():
         "in Qalisar with the game's fog off the mist moves the frame, toward the fog colour (all but < 1/1000)"
 
 
+def c_engine_upscale():
+    r"""THE UPSCALE - the remaster's A6 (`todo/remaster.md`), `[Remaster]
+    upscale = F` / `--upscale F` (1..3), OFF unless named and NOT in the
+    `--remaster` preset (a frame rate's choice, not a look). Vulkan. The frame
+    is drawn F times smaller each way (`rs()`: every render size through one
+    rule) and brought up to the output by AMD FSR 1 - EASU (`easu.frag`) then
+    RCAS's sharpening inside the present pass, BEFORE the original's 565
+    dither, so the dither stays the output pixel's. AMD's shader code is
+    vendored verbatim (MIT, `third_party/ffx_fsr1.h`).
+    Parts:
+      1. the source: 1 by default, [Remaster] only, never `all = max`, not the
+         preset's; the present pass binds EASU's output only upscaled;
+      2. the CONSTANTS: `src/o3de/fsrcon.h`'s transcription against AMD's own
+         `FsrEasuCon` / `FsrRcasCon` (the header under `A_CPU`), compiled side
+         by side - every word, for six size triples and four sharpnesses;
+      3. Anekbah's street at 1280x960 through the offscreen harness (the
+         READBACK's path, EASU and RCAS run raw): the renderer's own event
+         says it drew 640x480 at x2; the frame is not the native one, and it
+         is the native one UPSCALED - the mean difference under 6 a channel,
+         and REGISTERED: of the 25 shifts within two pixels, none matches the
+         native frame better than none - a picture placed wrong (its rows, its
+         viewport) fails it. A ONE-pixel offset does not: the mutation below
+         moved EASU's by one output pixel and (0, 0) still won, 3.35 against
+         4.02 - the two frames differ in detail more than in place, so the
+         constants are part 2's to guard;
+      4. the window's path (`--vulkan`, hidden) at x1.5: every frame presented
+         by the GPU, and `OMK_VERIFY_GPU_PRESENT` - the present pass's RCAS
+         and dither against the readback's raw RCAS and the CPU's dither -
+         0 pixels apart over 90 frames (no dump: a dumped frame is the CPU's).
+    Measured once, outside the check (2026-10-22, M3): off, byte-identical to
+    `451c0aa5` (`--vulkan`, `--world-vulkan`, `--ssaa 2`, `--remaster
+    --enhance-all`, 4 of 4), and the present pass at `--ssaa 2` still 0
+    pixels from the CPU's; the Khronos validation layer silent on both paths
+    (the world, and the pause menu over it - `presentSurface` into the
+    output-size image).
+    SHOWN TO FAIL (2026-10-22), one at a time: `fsrcon.h`'s con[2] with
+    -0.0 for -0.5 - part 2 (94 of 100 words); the present pass's RCAS skipped
+    on the readback's raw path - part 4 (90 of 90 frames differing).
+    NOT CHECKED, judged by eye: the sharpness (`kRcasStops`, AMD's 0.2).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("upscale = upscaleFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+upscale\s*=\s*1\.0f;", sh)),
+              'kRemaster, "upscale"' in sc and 'kEnhancements, "upscale"' not in sc,
+              "upscale" not in max_body,
+              "preset" not in pre and pre.rstrip(";").endswith(": 1.0f"),
+              "up ? &presUpDs_ : &presDs_" in vk)
+    # 2. the constants, against AMD's
+    tmp = tempfile.mkdtemp()
+    try:
+        prog = os.path.join(tmp, "con.cpp")
+        open(prog, "w").write(r"""
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <math.h>
+#include <stdlib.h>
+#define A_CPU 1
+#include "ffx_a.h"
+#include "ffx_fsr1.h"
+#include "o3de/fsrcon.h"
+int main() {
+    const float s[6][6] = {{1920,1080,1920,1080,3840,2160}, {2560,1440,2560,1440,3840,2160},
+                           {640,480,640,480,1280,960}, {853,427,853,640,1280,640},
+                           {427,320,1280,960,640,480}, {1,1,7,5,3,2}};
+    int same = 0, all = 0;
+    for (auto& v : s) {
+        AU1 a[4][4]; std::uint32_t b[16];
+        FsrEasuCon(a[0], a[1], a[2], a[3], v[0], v[1], v[2], v[3], v[4], v[5]);
+        omk::fsrEasuCon(b, v[0], v[1], v[2], v[3], v[4], v[5]);
+        for (int k = 0; k < 16; ++k) { ++all; same += a[k / 4][k % 4] == b[k]; }
+    }
+    const float sts[4] = {0.0f, 0.2f, 1.0f, 2.0f};
+    for (float st : sts) {
+        AU1 r[4]; FsrRcasCon(r, st);
+        ++all; same += r[0] == omk::fsrRcasCon(st);
+    }
+    std::printf("%d %d\n", same, all);
+}
+""")
+        exe = os.path.join(tmp, "con")
+        cc = subprocess.run(["c++", "-std=c++20", "-w", "-I" + os.path.join(eng, "third_party"),
+                             "-I" + os.path.join(eng, "src"), prog, "-o", exe], capture_output=True, text=True)
+        con = tuple(int(v) for v in subprocess.run([exe], capture_output=True, text=True).stdout.split()) \
+            if cc.returncode == 0 else ("no compile", cc.stderr[-200:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    con_ok = len(con) == 2 and con[0] == con[1] == 100
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    play = os.path.join(eng, "build", "omk-play")
+    tmp = tempfile.mkdtemp()
+    W, H = 1280, 960
+    try:
+        def run(name, *extra, env=None, dump=True):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "%dx%d" % (W, H),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--filter", "nearest"] + \
+                   (["--dump", out] if dump else []) + list(extra)
+            r = subprocess.run([play] + args, capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, OMK_EVENTS="1", **(env or {})))
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            px = struct.unpack("<%dH" % (len(raw) // 2), raw) if len(raw) == W * H * 2 else None
+            return px, r.stdout
+        native, _ = run("native", "--world-vulkan", "--frames", "60", env={"SDL_VIDEODRIVER": "dummy"})
+        up, log = run("up", "--world-vulkan", "--frames", "60", "--upscale", "2", env={"SDL_VIDEODRIVER": "dummy"})
+        # no dump: the dumped frame is composed on the CPU
+        _, wlog = run("win", "--vulkan", "--frames", "90", "--upscale", "1.5", dump=False,
+                      env={"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if "through VULKAN" not in log and not [e for e in _events(log) if e[0] == "vulkan.upscale"]:
+        return (src_ok, con_ok, ("skipped",)), ((True,) * 5, True, ("skipped",)), "no Vulkan device"
+    ev = [e[1] for e in _events(log) if e[0] == "vulkan.upscale"]
+    drawn = (ev[0].get("drawW"), ev[0].get("drawH")) if ev else None
+    if native is None or up is None:
+        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 5, True, ("640", "480"), "frames"), \
+            "a run wrote no frame"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    a = [rgb(v) for v in native]
+    b = [rgb(v) for v in up]
+    def mad(dx, dy):   # the mean channel difference, b shifted by (dx, dy), over the inner frame
+        tot = n = 0
+        for y in range(40, H - 40, 4):
+            for x in range(40, W - 40, 4):
+                p, q = a[y * W + x], b[(y + dy) * W + x + dx]
+                tot += abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2]); n += 3
+        return tot / n
+    shifts = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+    m0 = shifts[(0, 0)]
+    best = min(shifts, key=shifts.get)
+    gm = re.findall(r"gpu present verify: frame \d+, (\d+) frames compared, (\d+) differ", wlog)
+    gpu = re.findall(r"present: (\d+) of (\d+) straight from the GPU", wlog)
+    gpu_ok = bool(gm) and int(gm[-1][0]) >= 60 and gm[-1][1] == "0" and len(gpu) >= 1 and \
+        all(x == y for x, y in gpu)
+    print(f"        constants {con}; drawn {drawn}; x2 against native: mean {m0:.2f} a channel, the best "
+          f"of 25 shifts {best} ({shifts[best]:.2f}; the best other "
+          f"{min(shifts[k] for k in shifts if k != (0, 0)):.2f}); "
+          f"the window at x1.5: {gm[-1] if gm else 'no verify'} (compared, differing), GPU-presented {gpu}")
+    return (src_ok, con_ok, drawn, a != b, m0 < 6.0, best, gpu_ok), \
+           ((True,) * 5, True, ("640", "480"), True, True, (0, 0), True), \
+        "the source (off by default, [Remaster] only, never all = max, not the preset's, EASU's output " \
+        "bound only upscaled); the 100 constant words AMD's; the street drawn at 640x480 for 1280x960, " \
+        "the native frame upscaled (close, and registered); the window's present pass 0 pixels from " \
+        "the readback's over 90 frames, every one the GPU's"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47015,13 +47176,15 @@ def c_licence_headers():
     # 647: + `engine/tools/walk_edges.cpp` (`engine: walk edges`)
     # 649: + `engine/src/o3de/normalmap.{h,cpp}` (the generated normal maps, B3)
     # 651: + `engine/src/o3de/floorreflect.{h,cpp}` (the reflecting floors, A3)
+    # 652: + `engine/src/o3de/fsrcon.h` (the upscale's constants, A6); and the
+    # vendored 1 -> 3, AMD's `ffx_a.h` and `ffx_fsr1.h` (MIT) beside pl_mpeg.h
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (651, [], 1, []), \
+           (652, [], 3, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
-           "stamped with OMK's licence (must be empty - pl_mpeg.h " \
-           "is MIT and is not ours to relicense)"
+           "stamped with OMK's licence (must be empty - pl_mpeg.h and the FSR " \
+           "headers are MIT and are not ours to relicense)"
 
 
 def c_dialogue_mode():
@@ -49820,6 +49983,7 @@ SLOW = [
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
     ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
+    ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

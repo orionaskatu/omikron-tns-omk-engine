@@ -69,6 +69,7 @@
 #include "o3de/texpack.h"
 #include "o3de/colourgrade.h"
 #include "o3de/lighttiles.h"
+#include "o3de/fsrcon.h"
 #include "platform/events.h"
 #include "platform/env.h"
 
@@ -109,7 +110,12 @@ const uint32_t kFsqFrag[] =
 const uint32_t kPresentFrag[] =
 #include "present.frag.inc"
 ;
-struct PresentPush { int32_t vy, vh, w, dither, ss; };
+struct PresentPush { int32_t vy, vh, w, dither, ss, rcas; uint32_t rcasCon; int32_t raw; };
+// THE UPSCALE (`todo/remaster.md` A6): AMD FSR 1's EASU, vendored (MIT,
+// `third_party/ffx_fsr1.h`); its RCAS is in the present pass above
+const uint32_t kEasuFrag[] =
+#include "easu.frag.inc"
+;
 // THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): bloom and grade.
 const uint32_t kPostFrag[] =
 #include "post.frag.inc"
@@ -339,7 +345,13 @@ public:
         ss_ = n < 2 ? 1 : n < 4 ? 2 : 4;
         return true;
     }
+    bool setUpscale(float f) override {
+        if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
+        up_ = f > 1.0f ? std::min(f, 3.0f) : 1.0f;
+        return true;
+    }
     int supersample() const { return ss_; }
+    float upscale() const { return up_; }
     int textureFilter() const { return filter_; }
     int anisotropy() const { return anisoOn_ ? aniso_ : 1; }
     // The largest count the device's colour, depth and stencil limits all
@@ -393,6 +405,16 @@ private:
     // at triangle edges and a cutout's silhouette is a colour key inside one.
     int rw_ = 0, rh_ = 0;
     int ss_ = 1;             // 1 off, else 2 or 4
+    // ...or THE UPSCALE (`todo/remaster.md` A6): the frame drawn `up_` times
+    // SMALLER each way and brought up to the output by FSR 1 in the present
+    // pass (`runPresentPass`); 1 off, and it takes the supersample's place
+    float up_ = 1.0f;
+    // a picture `v` output pixels long, in RENDER pixels - the one rule every
+    // size the frame is drawn at goes through (EASU's viewport is the same)
+    int rs(int v) const {
+        return up_ > 1.0f ? std::max(1, static_cast<int>(std::lround(static_cast<float>(v) / up_))) : v * ss_;
+    }
+    int picH_ = 0;           // the last frame's picture height, output pixels (`readback`'s upscale)
     // Which region of `colour_` the present blit should take. `end()` fills
     // the whole render target; `presentSurface` uploads a finished picture at
     // the OUTPUT size into its top-left, and blitting the whole thing then
@@ -639,7 +661,23 @@ private:
     VkSampler        presSampler_ = VK_NULL_HANDLE;
     VkBuffer         presRead_ = VK_NULL_HANDLE; VkDeviceMemory presReadMem_ = VK_NULL_HANDLE;
     bool makePresentPass();
-    bool runPresentPass(int vy, int vh);
+    bool runPresentPass(int vy, int vh, bool raw = false);
+
+    // ---- THE UPSCALE (`todo/remaster.md` A6) -----------------------------
+    // EASU's output at the OUTPUT size (`easu.frag`), which the present pass
+    // reads through `presUpDs_` and sharpens (RCAS); made on first use
+    VkImage          easuImg_ = VK_NULL_HANDLE;  VkDeviceMemory easuMem_ = VK_NULL_HANDLE;
+    VkImageView      easuView_ = VK_NULL_HANDLE;
+    VkRenderPass     easuPass_ = VK_NULL_HANDLE; VkFramebuffer easuFb_ = VK_NULL_HANDLE;
+    VkDescriptorPool easuPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet  easuDs_ = VK_NULL_HANDLE;   // `colour_`, LINEAR: EASU's gathers
+    VkDescriptorSet  presUpDs_ = VK_NULL_HANDLE; // `easuView_`: the present pass's input
+    VkPipelineLayout easuPlo_ = VK_NULL_HANDLE;  VkPipeline easuPipe_ = VK_NULL_HANDLE;
+    VkSampler        easuSampler_ = VK_NULL_HANDLE;
+    // RCAS's sharpness in stops, 0 the most (AMD's sample: 0.2)
+    static constexpr float kRcasStops = 0.2f;
+    bool makeUpscale();
+    void killUpscale();
 
     // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -----------
     // The BLOOM from the texture pack's light maps and the city's colour
@@ -1848,6 +1886,7 @@ bool VulkanRenderer::resize(int w, int h) {
     img(depthView_, depth_, depthMem_);
     buf(readBuf_, readMem_);
     buf(upBuf_, upMem_);
+    killUpscale();   // before the present's pool and layout, which it borrows
     // the present pass reads `colourView_`, so all of it goes; its guard is
     // `presPipe_`, and it is rebuilt at the new size on its next use
     if (presPipe_) { vkDestroyPipeline(dev_, presPipe_, nullptr); presPipe_ = VK_NULL_HANDLE; }
@@ -1862,7 +1901,7 @@ bool VulkanRenderer::resize(int w, int h) {
     killPost();   // it reads `colour_` and is sized by the target
     killReflection();
     w_ = w; h_ = h;
-    rw_ = w_ * ss_; rh_ = h_ * ss_;
+    rw_ = rs(w_); rh_ = rs(h_);
     srcW_ = rw_; srcH_ = rh_;
     resizing_ = true;
     const bool ok = makeTarget();
@@ -1949,7 +1988,7 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh) {
                    swapImgs_[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    // LINEAR only when there is something to average: at ss 1
                    // this must stay NEAREST or every existing frame changes.
-                   1, &blit, ss_ > 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+                   1, &blit, ss_ > 1 || up_ > 1.0f ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
 
     barrier(swapImgs_[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
@@ -2002,12 +2041,16 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
                     lut + 4 * static_cast<std::size_t>(s.px[static_cast<std::size_t>(i)]), 4);
     vkUnmapMemory(dev_, upMem_);
 
+    // UPSCALED, `colour_` is smaller than the picture: it goes into the
+    // present pass's output-size image instead, and is presented from there
+    const bool up = up_ > 1.0f;
+    if (up && !makePresentPass()) return false;
     VkCommandBuffer cb = oneShotBegin();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.oldLayout = up ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = colour_;
+    b.image = up ? presImg_ : colour_;
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -2015,8 +2058,8 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
     VkBufferImageCopy cp{};
     cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     cp.imageExtent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
-    vkCmdCopyBufferToImage(cb, upBuf_, colour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
-    srcW_ = w_; srcH_ = h_;   // only the top-left holds the uploaded picture
+    vkCmdCopyBufferToImage(cb, upBuf_, up ? presImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    if (!up) { srcW_ = w_; srcH_ = h_; }   // only the top-left holds the uploaded picture
     b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2024,7 +2067,7 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     oneShotEnd(cb);
-    return presentDirect();
+    return up ? presentImage(presImg_, w_, h_) : presentDirect();
 }
 
 // ---- THE PRESENT PASS (todo/optimization.md step 4b) --------------------------
@@ -2038,7 +2081,10 @@ bool VulkanRenderer::makePresentPass() {
         ii.extent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        // TRANSFER_DST: `presentSurface` uploads into it when the upscale
+        // leaves `colour_` smaller than the output
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VKCHECK(vkCreateImage(dev_, &ii, nullptr, &presImg_), "present image");
@@ -2157,8 +2203,11 @@ bool VulkanRenderer::makePresentPass() {
 
 // `colour_` (TRANSFER_SRC, as `end()` and `presentSurface` leave it) through the
 // present shader into `presImg_`, and back to TRANSFER_SRC.
-bool VulkanRenderer::runPresentPass(int vy, int vh) {
+bool VulkanRenderer::runPresentPass(int vy, int vh, bool raw) {
     if (!makePresentPass()) return false;
+    const bool up = up_ > 1.0f;
+    if (up && !makeUpscale()) return false;
+    vh = std::clamp(vh, 1, h_);
     VkCommandBuffer cb = oneShotBegin();
     const auto layout = [&](VkImageLayout from, VkImageLayout to) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -2171,13 +2220,34 @@ bool VulkanRenderer::runPresentPass(int vy, int vh) {
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
     layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (up) {
+        // EASU: the drawn picture, `rs(w_) x rs(vh)` of `colour_`'s top-left,
+        // up to the picture's `w_ x vh` in `easuImg_`'s
+        VkRenderPassBeginInfo ep{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        ep.renderPass = easuPass_; ep.framebuffer = easuFb_;
+        ep.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(vh)}};
+        vkCmdBeginRenderPass(cb, &ep, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, easuPipe_);
+        const VkViewport vp{0, 0, static_cast<float>(w_), static_cast<float>(vh), 0.0f, 1.0f};
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        vkCmdSetScissor(cb, 0, 1, &ep.renderArea);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, easuPlo_, 0, 1, &easuDs_, 0, nullptr);
+        std::uint32_t con[16];
+        omk::fsrEasuCon(con, static_cast<float>(rs(w_)), static_cast<float>(rs(vh)), static_cast<float>(rw_),
+                        static_cast<float>(rh_), static_cast<float>(w_), static_cast<float>(vh));
+        vkCmdPushConstants(cb, easuPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof con, con);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb);   // `easuImg_` left SHADER_READ_ONLY for the pass below
+    }
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = presPass_; rp.framebuffer = presFbuf_;
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPipe_);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &presDs_, 0, nullptr);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, ss_};
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, up ? &presUpDs_ : &presDs_,
+                            0, nullptr);
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, up ? 1 : ss_, up ? 1 : 0,
+                         up ? omk::fsrRcasCon(kRcasStops) : 0u, raw ? 1 : 0};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
@@ -2212,6 +2282,156 @@ bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rg
     std::memcpy(rgba.data(), p, bytes);
     vkUnmapMemory(dev_, presReadMem_);
     return true;
+}
+
+// ---- THE UPSCALE (`todo/remaster.md` A6) -------------------------------------
+//
+// EASU's target, pass and pipeline, and the two sets: `colour_` LINEAR for
+// EASU's gathers, `easuImg_` for the present pass's RCAS. Both sets take the
+// present pass's layout (one sampler, binding 0), so this is made after it
+// and torn down before it.
+bool VulkanRenderer::makeUpscale() {
+    if (easuPipe_ != VK_NULL_HANDLE) return true;
+    if (presDsl_ == VK_NULL_HANDLE) return false;
+    const VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
+    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
+    ii.extent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
+    ii.mipLevels = 1; ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VKCHECK(vkCreateImage(dev_, &ii, nullptr, &easuImg_), "upscale image");
+    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, easuImg_, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &easuMem_), "upscale image memory");
+    OMK_GPU_ALLOC("render targets", omk::prof::gpuKey(omk::prof::kVkMemory, easuMem_), ai.allocationSize);
+    VKCHECK(vkBindImageMemory(dev_, easuImg_, easuMem_, 0), "upscale image bind");
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = easuImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = fmt;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &easuView_), "upscale image view");
+
+    // every pixel of the picture is written; it ends where RCAS reads it
+    VkAttachmentDescription a{};
+    a.format = fmt; a.samples = VK_SAMPLE_COUNT_1_BIT;
+    a.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    a.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    a.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+    // ...and the present pass's fragment shader waits for it
+    VkSubpassDependency dep{};
+    dep.srcSubpass = 0; dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rpi.attachmentCount = 1; rpi.pAttachments = &a;
+    rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+    rpi.dependencyCount = 1; rpi.pDependencies = &dep;
+    VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &easuPass_), "upscale render pass");
+    VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fi.renderPass = easuPass_; fi.attachmentCount = 1; fi.pAttachments = &easuView_;
+    fi.width = static_cast<uint32_t>(w_); fi.height = static_cast<uint32_t>(h_); fi.layers = 1;
+    VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &easuFb_), "upscale framebuffer");
+
+    // its own pool, for the reason the present pass has one
+    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pi.maxSets = 2; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+    VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &easuPool_), "upscale pool");
+    const VkDescriptorSetLayout two[2] = {presDsl_, presDsl_};
+    VkDescriptorSet sets[2]{};
+    VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    dai.descriptorPool = easuPool_; dai.descriptorSetCount = 2; dai.pSetLayouts = two;
+    VKCHECK(vkAllocateDescriptorSets(dev_, &dai, sets), "upscale sets");
+    easuDs_ = sets[0]; presUpDs_ = sets[1];
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &easuSampler_), "upscale sampler");
+    const VkDescriptorImageInfo in{easuSampler_, colourView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo out{presSampler_, easuView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr[2]{};
+    for (int k = 0; k < 2; ++k) {
+        wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[k].dstSet = sets[k]; wr[k].dstBinding = 0; wr[k].descriptorCount = 1;
+        wr[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr[k].pImageInfo = k == 0 ? &in : &out;
+    }
+    vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
+
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16 * sizeof(std::uint32_t)};
+    VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &presDsl_;
+    pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
+    VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &easuPlo_), "upscale pipeline layout");
+    const auto module = [&](const uint32_t* code, size_t bytes) {
+        VkShaderModuleCreateInfo mi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        mi.codeSize = bytes; mi.pCode = code;
+        VkShaderModule m = VK_NULL_HANDLE;
+        vkCreateShaderModule(dev_, &mi, nullptr, &m);
+        return m;
+    };
+    VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
+    VkShaderModule qf = module(kEasuFrag, sizeof(kEasuFrag));
+    if (!qv || !qf) { std::fprintf(stderr, "vulkan: upscale shader module\n"); return false; }
+    VkPipelineShaderStageCreateInfo st[2]{};
+    st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+             VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+    st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+             VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+    VkPipelineVertexInputStateCreateInfo vin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    // the picture's height is the call's (a letterbox's rows), so the
+    // viewport and scissor are set per run
+    VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vps.viewportCount = 1; vps.scissorCount = 1;
+    const VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    ds.dynamicStateCount = 2; ds.pDynamicStates = dyn;
+    VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.blendEnable = VK_FALSE; cba.colorWriteMask = 0xF;
+    VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    cb.attachmentCount = 1; cb.pAttachments = &cba;
+    VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    gp.stageCount = 2; gp.pStages = st;
+    gp.pVertexInputState = &vin; gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &ds;
+    gp.layout = easuPlo_; gp.renderPass = easuPass_;
+    const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &easuPipe_);
+    vkDestroyShaderModule(dev_, qv, nullptr);
+    vkDestroyShaderModule(dev_, qf, nullptr);
+    if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: upscale pipeline\n"); easuPipe_ = VK_NULL_HANDLE; return false; }
+    return true;
+}
+
+void VulkanRenderer::killUpscale() {
+    if (easuPipe_) { vkDestroyPipeline(dev_, easuPipe_, nullptr); easuPipe_ = VK_NULL_HANDLE; }
+    if (easuPlo_) { vkDestroyPipelineLayout(dev_, easuPlo_, nullptr); easuPlo_ = VK_NULL_HANDLE; }
+    if (easuSampler_) { vkDestroySampler(dev_, easuSampler_, nullptr); easuSampler_ = VK_NULL_HANDLE; }
+    if (easuPool_) { vkDestroyDescriptorPool(dev_, easuPool_, nullptr); easuPool_ = VK_NULL_HANDLE; }
+    easuDs_ = presUpDs_ = VK_NULL_HANDLE;
+    if (easuFb_) { vkDestroyFramebuffer(dev_, easuFb_, nullptr); easuFb_ = VK_NULL_HANDLE; }
+    if (easuPass_) { vkDestroyRenderPass(dev_, easuPass_, nullptr); easuPass_ = VK_NULL_HANDLE; }
+    if (easuView_) { vkDestroyImageView(dev_, easuView_, nullptr); easuView_ = VK_NULL_HANDLE; }
+    if (easuImg_) { vkDestroyImage(dev_, easuImg_, nullptr); easuImg_ = VK_NULL_HANDLE; }
+    if (easuMem_) { freeDeviceMemory(easuMem_); easuMem_ = VK_NULL_HANDLE; }
 }
 
 // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -------------------
@@ -2739,7 +2959,18 @@ bool VulkanRenderer::probeUpload(const unsigned char* rgba) {
 
 bool VulkanRenderer::init(int w, int h) {
     w_ = w; h_ = h;
-    rw_ = w_ * ss_; rh_ = h_ * ss_;
+    if (up_ > 1.0f && ss_ > 1) {
+        std::printf("vulkan: the upscale takes the supersample's place (--ssaa %d ignored)\n", ss_);
+        ss_ = 1;
+    }
+    rw_ = rs(w_); rh_ = rs(h_);
+    if (up_ > 1.0f) {
+        std::printf("vulkan: the frame drawn at %dx%d and upscaled to %dx%d by FSR 1 (x%.2f) - "
+                    "a REMASTER feature\n", rw_, rh_, w_, h_, static_cast<double>(up_));
+        omk::event("vulkan.upscale", {{"factor", static_cast<double>(up_)}, {"drawW", static_cast<long>(rw_)},
+                                      {"drawH", static_cast<long>(rh_)}, {"outW", static_cast<long>(w_)},
+                                      {"outH", static_cast<long>(h_)}});
+    }
     srcW_ = rw_; srcH_ = rh_;
     if (!pickDevice()) return false;
     if (!makeTarget()) return false;
@@ -3170,8 +3401,9 @@ void VulkanRenderer::resolveTies(const omk::Draw& d) {
 
 void VulkanRenderer::setViewport(const omk::View& view) {
     // ...in RENDER pixels, so the letterbox's strip scales with the frame.
-    int vw = (view.letterboxed() ? view.vw : w_) * ss_;
-    int vh = (view.letterboxed() ? view.vh : h_) * ss_;
+    picH_ = view.letterboxed() ? view.vh : h_;
+    int vw = rs(view.letterboxed() ? view.vw : w_);
+    int vh = rs(picH_);
     // the FLOORS' reflection: drawn at HALF size into the image's top-left
     // quarter (`reflHalf_`) - a quarter of the pixels; the water's, whole
     if (reflHalfNow()) { vw = (vw + 1) / 2; vh = (vh + 1) / 2; }
@@ -3360,7 +3592,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         float s3[3], u3[3], f3[3], tH = 1.0f, tV = 1.0f;
         omk::cameraBasis(c, s3, u3, f3, tH, tV);
         aoView4_[0] = tH; aoView4_[1] = tV;
-        aoView4_[2] = static_cast<float>(c.w * ss_); aoView4_[3] = static_cast<float>(c.h * ss_);
+        aoView4_[2] = static_cast<float>(rs(c.w)); aoView4_[3] = static_cast<float>(rs(c.h));
     }
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
@@ -3415,7 +3647,7 @@ void VulkanRenderer::begin(const omk::View& view) {
             bc.w = view.letterboxed() ? view.vw : w_;
             bc.h = view.letterboxed() ? view.vh : h_;
             const int hd = reflHalf_ ? 2 : 1;   // the floors' reflection is drawn at half size
-            omk::binLights(bc, (bc.w * ss_ + hd - 1) / hd, (bc.h * ss_ + hd - 1) / hd,
+            omk::binLights(bc, (rs(bc.w) + hd - 1) / hd, (rs(bc.h) + hd - 1) / hd,
                            std::span<const omk::View::GpuLight>(view.points.data(), np), tilesRefl_);
             if (tilesRefl_.words.size() <= kTileWordsMax) {
                 std::memcpy(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, tilesRefl_.words.data(),
@@ -3434,7 +3666,7 @@ void VulkanRenderer::begin(const omk::View& view) {
             omk::RCamera bc = view.cam;
             bc.w = view.letterboxed() ? view.vw : w_;
             bc.h = view.letterboxed() ? view.vh : h_;
-            omk::binLights(bc, bc.w * ss_, bc.h * ss_, std::span<const omk::View::GpuLight>(view.points.data(), np), tiles_);
+            omk::binLights(bc, rs(bc.w), rs(bc.h), std::span<const omk::View::GpuLight>(view.points.data(), np), tiles_);
             if (tiles_.words.size() <= kTileWordsMax) {
                 std::memcpy(tilesPtr_, tiles_.words.data(), tiles_.words.size() * 4);
                 ub.tiles = 1;
@@ -3953,18 +4185,24 @@ const omk::Surface& VulkanRenderer::readback() {
     if (fb_.w != w_ || fb_.h != h_) fb_ = omk::Surface(w_, h_, 0);
     if (!dirty_) return fb_;
     dirty_ = false;
+    // UPSCALED, the picture is read at the OUTPUT size, through the same EASU
+    // and RCAS as the present pass's (`raw`: undithered), and quantised below
+    // as a frame drawn at that size would be
+    const bool up = up_ > 1.0f;
+    const int cw = up ? w_ : rw_, ch = up ? h_ : rh_;
     if (readBuf_ == VK_NULL_HANDLE &&
-        !makeBuffer(static_cast<VkDeviceSize>(rw_) * rh_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        !makeBuffer(static_cast<VkDeviceSize>(cw) * ch * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                     readBuf_, readMem_))
         return fb_;
     if (copyOwed_) {                 // the copy `end()` does not record
         copyOwed_ = false;
+        if (up && !runPresentPass(0, picH_ > 0 ? picH_ : h_, true)) return fb_;
         VkCommandBuffer cb = oneShotBegin();
         VkBufferImageCopy cp{};
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        cp.imageExtent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
-        vkCmdCopyImageToBuffer(cb, colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        cp.imageExtent = {static_cast<uint32_t>(cw), static_cast<uint32_t>(ch), 1};
+        vkCmdCopyImageToBuffer(cb, up ? presImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readBuf_, 1, &cp);
         oneShotEnd(cb);              // submitted and waited: the bytes are there
     }
@@ -4100,6 +4338,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);
     if (depthMem_) freeDeviceMemory(depthMem_);
+    killUpscale();
     if (presPipe_) vkDestroyPipeline(dev_, presPipe_, nullptr);
     if (presPlo_) vkDestroyPipelineLayout(dev_, presPlo_, nullptr);
     if (presSampler_) vkDestroySampler(dev_, presSampler_, nullptr);

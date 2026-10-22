@@ -309,6 +309,11 @@ build/omk-play ../fr ../tables                          # the game (Vulkan
                                                         # device for it)
 build/omk-play ../fr ../tables --software               # the reference
 build/omk-play ../fr ../tables --fps                    # the frame rate
+make app                                     # macOS: build/OMK.app, the same
+build/OMK.app/Contents/MacOS/omk-play ../fr ../tables --fullscreen
+                                             # binary as a GAME - play at 4K
+                                             # this way (todo/remaster.md: the
+                                             # bare binary's GPU clock drop)
 build/omk-play ../fr ../tables --scene Aapkayl          # V swaps the backend
 build/omk-play ../fr ../tables --scene Aapkayl \
     --eye 3526,1015,-905 --at 3412,1032,-882 --fov 83   # dialog 402's camera

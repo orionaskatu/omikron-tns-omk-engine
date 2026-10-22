@@ -309,6 +309,25 @@ else
 	@echo "built $(PLAY_BIN) against $(PLAY_WITH)"
 endif
 
+# ------------------------------------------------------------ THE MACOS APP
+#
+# `make app`: `build/OMK.app`, the same `omk-play` inside a bundle whose
+# Info.plist (`backends/sdl/OMK-Info.plist`) says it is a GAME - which a bare
+# binary cannot, so macOS never offers it Game Mode (the highest CPU and GPU
+# priority when the app is frontmost and full screen, F11). Run it as
+# `build/OMK.app/Contents/MacOS/omk-play ARGS` or `open build/OMK.app --args`.
+# Optional, macOS only; the checks run the bare binary.
+.PHONY: app
+app: play
+ifeq ($(shell uname),Darwin)
+	@mkdir -p build/OMK.app/Contents/MacOS
+	@cp backends/sdl/OMK-Info.plist build/OMK.app/Contents/Info.plist
+	@cp $(PLAY_BIN) build/OMK.app/Contents/MacOS/omk-play
+	@echo "built build/OMK.app around $(PLAY_BIN) - Game Mode eligible full screen"
+else
+	@echo "make app: macOS only"
+endif
+
 # ------------------------------------------------------------ THE PS VITA
 #
 # `todo/vita-port.md`. The same rule as SDL and Vulkan: OPTIONAL, never in

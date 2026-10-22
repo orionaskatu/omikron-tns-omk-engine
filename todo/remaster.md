@@ -450,7 +450,22 @@ the tiled point lights).
   shift - for a play test; the authored mirror's pass still plain (no tiles);
   floors and water in one frame; GLES's reflection keeps its nearest slots;
   the second pass's CPU recording (~3 ms) left as it is.
-* **OPEN BUG - the reader's 4K slowdown with the floors (2026-10-21, M3),
+* **CLOSED 2026-10-22 - NOT THE ENGINE: macOS held the bare binary's GPU at
+  its lowest clock.** With `OMK_GPU_TIMES=1` (4K Qalisar, `--upscale 1.5`) the
+  reader's drop came ~1140 frames in, on the pavement (12850, -10000): EVERY
+  pass slowed at once, the content-independent ones too - post 1.6 -> 4 ms,
+  present 4 -> 12 ms, scene 2.7 -> 15, reflection 0.7 -> 5 (GPU 5.8 -> 25 ms a
+  frame) - and stayed slow wherever the camera looked. `powermetrics` while
+  slow: **GPU 338 MHz, 90% busy, the SOFTWARE-requested state P1** (the lowest
+  of 13; the top is 1338 MHz, 4x - the slowdown). Thermal pressure Nominal;
+  plugging in changed nothing; a FRESH process at the same spot, the same
+  CPU load beside it, ran fast for 1200 frames - the cap was the process's.
+  Run as an APP (`make app`: `build/OMK.app`, Info.plist the adventure-games
+  category with `LSSupportsGameMode` / `GCSupportsGameMode`), full screen,
+  Game Mode engaged (the reader saw its icon) and the same walk held 4.4-6.8
+  ms of GPU for 12840 frames, median 60 fps. **Play at 4K through
+  `build/OMK.app`.** The record of the hunt, kept:
+* **(was) OPEN BUG - the reader's 4K slowdown with the floors (2026-10-21, M3),
   reproduced by the reader several times, NOT YET by a headless run.** Playing
   Qalisar at 4K with the preset: 35-40 fps at the start, then ~16 fps
   (47-60 ms a frame) after walking back and forth between the start

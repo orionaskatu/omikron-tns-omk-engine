@@ -267,3 +267,10 @@
 ; F times smaller each way and brought up by AMD FSR 1 (1..3, 1 = off;
 ; 1.5 its quality mode, 2 its performance one; Vulkan).
 ;upscale = 1
+;
+; The characters ROUNDED: each triangle split 3x3 and pulled toward its
+; corners' normals by S (0..1, 0.75 Phong's own; every backend).
+;smooth = 0
+; ...and the models left as they are, by the name the log prints
+; ("smooth: V2H_FNM - ..."), commas between - for one that suffers.
+;smoothskip =

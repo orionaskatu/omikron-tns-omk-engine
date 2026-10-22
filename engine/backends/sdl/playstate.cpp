@@ -405,19 +405,23 @@ const omk::Geometry & PlayState::lodRestFor(const std::string& model, const Char
             m = next;
         }
     }
+    // cut from the FLAT rest where the model was rounded (`CharModel::flat`):
+    // the crowd's bodies are posed on the CPU every frame, and four times
+    // the corners cost 4K Qalisar 58 -> 34 fps (2026-10-22)
+    const omk::Geometry& from = mo.flat.corners.empty() ? mo.rest : mo.flat;
     omk::Geometry g;
     g.batches.clear();
-    for (const auto& b : mo.rest.batches) {
+    for (const auto& b : from.batches) {
         omk::Batch nb = b;
         nb.start = g.corners.size(); nb.count = 0;
         for (std::size_t c = b.start; c + 3 <= b.start + b.count; c += 3) {
-            const auto mi = mo.rest.cornerMesh[c];
+            const auto mi = from.cornerMesh[c];
             if (mi < 0 || static_cast<std::size_t>(mi) >= keep.size() || !keep[static_cast<std::size_t>(mi)]) continue;
             for (int k = 0; k < 3; ++k) {
-                g.corners.push_back(mo.rest.corners[c + static_cast<std::size_t>(k)]);
-                g.cornerMesh.push_back(mo.rest.cornerMesh[c + static_cast<std::size_t>(k)]);
-                if (!mo.rest.cornerVertex.empty()) g.cornerVertex.push_back(mo.rest.cornerVertex[c + static_cast<std::size_t>(k)]);
-                if (!mo.rest.cornerDeclared.empty()) g.cornerDeclared.push_back(mo.rest.cornerDeclared[c + static_cast<std::size_t>(k)]);
+                g.corners.push_back(from.corners[c + static_cast<std::size_t>(k)]);
+                g.cornerMesh.push_back(from.cornerMesh[c + static_cast<std::size_t>(k)]);
+                if (!from.cornerVertex.empty()) g.cornerVertex.push_back(from.cornerVertex[c + static_cast<std::size_t>(k)]);
+                if (!from.cornerDeclared.empty()) g.cornerDeclared.push_back(from.cornerDeclared[c + static_cast<std::size_t>(k)]);
             }
             nb.count += 3;
         }
@@ -1594,6 +1598,28 @@ CharModel * PlayState::charModelFor(const std::string& name) {
         if (const auto mt = fs.resolve("MESHES/PERSOS/" + name + ".3DT"))
             m.tex = omk::textures(md, omk::DataFs::readPath(*mt));
         m.face = omk::faceMeshOf(m.meshes);
+        // the ROUNDED BODIES (`o3de/smoothbody.h`, the remaster's D1): the rest
+        // subdivided once, here, so every actor wearing it and every crowd
+        // copy cut from it (`lodRestFor`) is rounded - the face kept as it is
+        if (smoothes(name)) {
+            const std::size_t before = m.rest.corners.size();
+            m.flat = m.rest;   // the crowd's (`lodRestFor`)
+            const auto ss = omk::smoothBody(m.rest, m.face.valid() ? m.face.base : 0,
+                                            m.face.valid() ? m.face.base + static_cast<std::size_t>(m.face.count) : 0,
+                                            3, smoothBodies);
+            omk::event("body.smooth", {{"model", name}, {"triangles", static_cast<long>(ss.triangles)},
+                                       {"split", static_cast<long>(ss.split)},
+                                       {"seam", static_cast<long>(ss.keptSeam)},
+                                       {"face", static_cast<long>(ss.keptFace)},
+                                       {"pinned", static_cast<long>(ss.pinned)},
+                                       {"unpulled", static_cast<long>(ss.unpulled)},
+                                       {"folded", static_cast<long>(ss.folded)},
+                                       {"positions", static_cast<long>(ss.positions)},
+                                       {"corners", static_cast<long>(m.rest.corners.size())}});
+            std::printf("smooth: %s - %zu of %zu triangles split (%zu kept at a seam, %zu the face), "
+                        "%zu -> %zu corners\n", name.c_str(), ss.split, ss.triangles, ss.keptSeam,
+                        ss.keptFace, before, m.rest.corners.size());
+        }
         m.boneIdx.build(m.meshes, omk::MeshNameIndex::shadowNames());
         for (std::size_t i = 0; i < m.meshes.size() && m.root < 0; ++i) {
             bool hasParent = false;

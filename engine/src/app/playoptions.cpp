@@ -319,6 +319,13 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --relief S       REMASTER, off by default: the textures' relief under the\n"
 "                   emitters' lights, strength S (0..4); Vulkan only;\n"
 "                   [Remaster] relief=S\n"
+"  --smooth S       REMASTER, off by default: the characters ROUNDED - each\n"
+"                   triangle split 3x3 and pulled toward its corners' normals\n"
+"                   by S (0..1, 0.75 Phong's own); every backend; [Remaster]\n"
+"                   smooth=S\n"
+"  --smooth-skip A,B  the models --smooth leaves as they are, by the name the\n"
+"                   log prints (\"smooth: V2H_FNM - ...\"); [Remaster]\n"
+"                   smoothskip=A,B\n"
 "  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
 "                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
 "                   Vulkan and GLES only; [Remaster] grade=DIR\n"
@@ -560,6 +567,14 @@ int PlayOptions::parse(int argc, char** argv) {
             aoFlag = static_cast<float>(std::atof(argv[++i]));
             if (aoFlag < 0.0f || aoFlag > 4.0f) {
                 std::fprintf(stderr, "--ao %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--smooth-skip" && i + 1 < argc) smoothSkipFlag = argv[++i];
+        else if (a == "--smooth" && i + 1 < argc) {
+            smoothFlag = static_cast<float>(std::atof(argv[++i]));
+            if (smoothFlag < 0.0f || smoothFlag > 1.0f) {
+                std::fprintf(stderr, "--smooth %s: not 0..1\n", argv[i]);
                 return 2;
             }
         }

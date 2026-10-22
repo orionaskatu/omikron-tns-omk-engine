@@ -262,6 +262,33 @@ int PlayState::setupSession() {
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
                : !preset.empty() ? 2.0f : 0.0f;
+        // the ROUNDED BODIES (`o3de/smoothbody.h`): its flag, its key - not the
+        // preset's until the reader has judged it
+        smoothBodies = smoothFlag >= 0.0f ? smoothFlag
+                     : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth : 0.0f;
+        if (smoothBodies > 0.0f)
+            std::printf("smooth: %.2f - a REMASTER feature: the characters rounded, each triangle split 3x3 "
+                        "(Phong tessellation), every backend\n", static_cast<double>(smoothBodies));
+        // ...and the models it leaves alone: its flag, its key - a list of
+        // names, commas or spaces between, any case
+        {
+            const std::string& list = !smoothSkipFlag.empty() ? smoothSkipFlag : settings.smoothSkip;
+            std::string name;
+            for (std::size_t i = 0; i <= list.size(); ++i) {
+                const char ch = i < list.size() ? list[i] : ',';
+                if (ch == ',' || ch == ' ' || ch == '\t') {
+                    if (!name.empty()) smoothSkip.insert(name);
+                    name.clear();
+                } else {
+                    name += static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+                }
+            }
+            if (smoothBodies > 0.0f && !smoothSkip.empty()) {
+                std::printf("smooth: left as they are -");
+                for (const auto& n : smoothSkip) std::printf(" %s", n.c_str());
+                std::printf("\n");
+            }
+        }
         // the AMBIENT OCCLUSION: its flag, its key, the preset's 2 (the
         // reader's, 2026-10-21: confirmed in play at 2, then "add ao 2 to the
         // preset")

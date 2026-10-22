@@ -189,10 +189,12 @@ Settings resolveSettings(const OptionsFile& ini,
         strength(ini.find(kRemaster, "upscale"), "upscale", 3.0f, s.upscale, s.upscaleSource);
         strength(ini.find(kRemaster, "ao"), "ao", 4.0f, s.ao, s.aoSource);
         strength(ini.find(kRemaster, "relief"), "relief", 4.0f, s.relief, s.reliefSource);
+        strength(ini.find(kRemaster, "smooth"), "smooth", 1.0f, s.smooth, s.smoothSource);
         strength(ini.find(kRemaster, "fxlight"), "fxlight", 4.0f, s.fxLight, s.fxLightSource);
         strength(ini.find(kRemaster, "bodylight"), "bodylight", 1.0f, s.bodyLight, s.bodyLightSource);
         path(ini.find(kRemaster, "dir"), s.remasterDir, s.remasterDirSource);
         path(ini.find(kRemaster, "grade"), s.grade, s.gradeSource);
+        path(ini.find(kRemaster, "smoothskip"), s.smoothSkip, s.smoothSkipSource);
     }
 
     // ---- 2. the save header, which is later and therefore wins -----------

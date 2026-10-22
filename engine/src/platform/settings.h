@@ -251,6 +251,14 @@ struct Settings {
     // the emitters' point lights (`View::relief`), S its strength, 0 off.
     float  relief = 0.0f;
     Source reliefSource = Source::Default;
+    // `smooth = S`: THE ROUNDED BODIES - each character triangle split 3x3 and
+    // pulled toward its corners' normals by S (`o3de/smoothbody.h`). 0 = off.
+    float  smooth = 0.0f;
+    Source smoothSource = Source::Default;
+    // `smoothskip = A,B`: the models the rounding leaves as they are, by name
+    // - the way out for one that suffers, the rest still rounded
+    std::string smoothSkip;
+    Source smoothSkipSource = Source::Default;
     // `ao = S`: the AMBIENT OCCLUSION at contacts, from the frame's depth
     // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
     float  ao = 0.0f;

@@ -104,6 +104,8 @@ struct PlayState {
     float & bodyLightFlag = opt.bodyLightFlag;
     float & fxLightFlag = opt.fxLightFlag;
     float & reliefFlag = opt.reliefFlag;
+    float & smoothFlag = opt.smoothFlag;
+    std::string & smoothSkipFlag = opt.smoothSkipFlag;
     float & aoFlag = opt.aoFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
@@ -705,6 +707,15 @@ struct PlayState {
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
     float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
     float relief{};          // the relief's (`View::relief`), 0 off
+    float smoothBodies{};    // the rounded bodies' pull (`o3de/smoothbody.h`), 0 off
+    std::set<std::string> smoothSkip;   // ...and the models left as they are (upper case)
+    // whether `model` is rounded: the option on and the name not skipped
+    bool smoothes(const std::string& model) const {
+        if (smoothBodies <= 0.0f) return false;
+        std::string up = model;
+        for (auto& ch : up) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+        return !smoothSkip.count(up);
+    }
     float aoStrength{};      // the ambient occlusion's (`Renderer::setAmbientOcclusion`), 0 off
     bool waterLive{};        // the frame drew through the water pass (for the log)
     bool floorLive{};        // ...the floors' (for the log), at this plane

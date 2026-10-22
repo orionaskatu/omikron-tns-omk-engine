@@ -1131,6 +1131,54 @@ on Qalisar's street and at Jaunpur's canal.
 * Open: GLES; the mist in the reflections; a lighter haze by day if the
   day's fog colours want it (unseen: the save's clock is evening).
 
+## D1 - the rounded bodies: first cut (2026-10-22)
+
+`--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), **off by
+default, not in the preset** until the reader has judged it. Every backend:
+the character's REST geometry is subdivided ONCE at load
+(`engine/src/o3de/smoothbody.*`, hooked in `charModelFor` and the player's
+load) - each triangle 3x3, every new point pulled toward its corners'
+tangent planes by S (Phong tessellation, Boubekeur and Alexa 2008).
+
+* Kept as they are: the triangles spanning two meshes (the skinned JOINTS -
+  a new corner can follow one bone only; 30659 of 89107 over the 191 shipped
+  characters), the FACE (its `.3DM` morph replaces vertices by
+  `cornerVertex`; 13871), and every position on a crease (> ~45 degrees),
+  an open boundary or a kept triangle - pinned, so joints and creases stay
+  where they were. 44354 split.
+* No crack: a point on an edge depends on its two ends alone, its weights
+  integers over 3 and its corners summed in one order (by position) - the
+  first cut summed in each triangle's own order and left the two sides of
+  an edge an ulp apart (318889 open edges against 84012).
+* No FOLD (the reader's play, 2026-10-22: "when the npc move their arm, the
+  arm become empty", a shop seller): the full pull on a thin limb of few
+  sides folded 453 sub-triangles over at 0.75 (145 at 0.5, 68 at 0.35), and
+  a fold is culled from behind - a hole that opens as the limb turns. One
+  pull PER EDGE now, shared by its two triangles, and a guard: a triangle
+  that would fold has its interior unpulled, then its edges' pulls 0, until
+  none folds - 0 left, 211 of 44354 interiors flattened. Damping every edge
+  by its ends' angle also cured it and flattened nearly every body back
+  (judged on a crop), so it was not kept.
+* The CROWD stays flat: its bodies are posed on the CPU every frame, and four
+  times the corners took 4K Qalisar from 58 to 34 fps. `CharModel::flat`
+  keeps the unrounded rest for `lodRestFor`; staged characters and the
+  player are rounded. Cost then (M3, 4K, `--upscale 1.5`, preset +
+  `--enhance-all`): the street 57.3 -> 55.2 fps, the bar 93 -> ~85.
+* `verify.py: engine: smooth bodies` (`tools/smooth_probe.cpp` over all 191
+  models: originals kept, watertight, the face whole, nothing flung, no fold;
+  the bar's frame moves), shown to fail three ways. Off: byte-identical to `451c0aa5` (3 of
+  3: Vulkan, software, the harness with `--enhance-all`).
+
+**The way out, kept** (the reader, 2026-10-22: "good for now, but maybe I
+will find an issue later ... keep it easily changeable"): `--smooth 0` (or
+the key unset) turns it all off, and `--smooth-skip A,B` / `[Remaster]
+smoothskip = A,B` leaves the named models as they are - the name the log
+prints ("smooth: V2H_FNM - ..."), any case - the rest still rounded.
+
+**Open**: the joints - rounding them needs a corner to blend two bones,
+which no renderer here does (one `inMesh` per corner); a per-model opt-out
+list (the plan's), if a model's hard edges suffer; the crowd near the camera.
+
 ## A6 - the upscale: as built (2026-10-22)
 
 `--upscale F` / `[Remaster] upscale = F` (1..3, 1 off), **off by default and

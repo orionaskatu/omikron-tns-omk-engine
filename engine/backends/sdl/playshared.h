@@ -74,6 +74,7 @@
 #include "o3de/raster.h"
 #include "o3de/render.h"
 #include "o3de/renderer.h"
+#include "o3de/smoothbody.h"
 #include "platform/boot.h"
 #include "platform/movie.h"
 #include "platform/datafs.h"

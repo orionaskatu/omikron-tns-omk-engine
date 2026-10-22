@@ -148,6 +148,10 @@ struct HoldRun { std::vector<int> keys; int frames = 0; };
 // on the name alone.
 struct CharModel {
     omk::Geometry rest;
+    // the rest BEFORE the rounding (`o3de/smoothbody.h`), kept for the crowd's
+    // copies (`lodRestFor`) - posed on the CPU every frame, too many to round;
+    // empty when the model was not rounded
+    omk::Geometry flat;
     std::vector<omk::Mesh> meshes;
     std::vector<omk::Texture> tex;
     omk::FaceMesh face;

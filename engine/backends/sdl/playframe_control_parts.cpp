@@ -195,6 +195,18 @@ void PlayState::controlBinding() {
             playerBody.meshes.clear();
             if (const auto mh = omk::readHeader(md)) playerBody.meshes = omk::readMeshes(md, *mh);
             playerBody.headMesh = omk::headMeshOf(playerBody.meshes);
+            // the ROUNDED BODIES (`o3de/smoothbody.h`), as `charModelFor` does
+            // for everyone else - his face kept for its morph
+            if (smoothes(playerModel)) {
+                const auto face = omk::faceMeshOf(playerBody.meshes);
+                const auto ss = omk::smoothBody(playerBody.rest, face.valid() ? face.base : 0,
+                                                face.valid() ? face.base + static_cast<std::size_t>(face.count) : 0,
+                                                3, smoothBodies);
+                playerBody.rest.revision = ++worldGeoRev;
+                std::printf("smooth: the player's %s - %zu of %zu triangles split (%zu kept at a seam, %zu the "
+                            "face), %zu corners\n", playerModel.c_str(), ss.split, ss.triangles, ss.keptSeam,
+                            ss.keptFace, playerBody.rest.corners.size());
+            }
             playerBody.boneIdx.build(playerBody.meshes, omk::MeshNameIndex::shadowNames());
             // his PUSH spheres: the model's own list, hung from the feet
             // (`pushSpheresOf` - HO1_FN's four of 10.9), which is what

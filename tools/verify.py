@@ -33113,6 +33113,118 @@ int main() {
         "the readback's over 90 frames, every one the GPU's"
 
 
+def c_engine_smooth_bodies():
+    r"""THE ROUNDED BODIES - the remaster's D1 (`todo/remaster.md`), `[Remaster]
+    smooth = S` / `--smooth S` (0..1), OFF unless named and not in the
+    `--remaster` preset. Every backend: the character's REST geometry is
+    subdivided once at load (`o3de/smoothbody.h`) - each triangle 3x3, every
+    new point pulled toward its corners' tangent planes by S (Phong
+    tessellation), the face, the joints' skinned triangles, creases and open
+    boundaries left where they were. NOT A PORT, no oracle (tier 6): what is
+    checked is that it breaks nothing the shipped models carry.
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, not the
+         preset's; the subdivision at both loads (`charModelFor`, the player);
+      2. `smooth_probe` over every `MESHES/PERSOS/*.3DO` (191) at 3 and 0.75:
+         every original corner bit for bit (KEPT), the output's open edges
+         never more than the input predicts (WATERTIGHT - a crack, even by an
+         ulp, opens 2 x 3 more), no new corner on the face's mesh, no new point
+         split are (over 40000 of 89107); and NO FOLD - no new triangle facing
+         against the one it came from (culled from behind it is a hole: the
+         reader's "the arm becomes empty", 2026-10-22);
+         split are (over 40000 of 89107);
+      3. Qalisar's bar at `--smooth 0.75`: the models say they were split
+         (`@evt body.smooth`) and the frame moves; `--smooth-skip psh_fn`
+         (any case) leaves that one model alone and rounds the rest (the
+         reader's "keep it easily changeable", 2026-10-22).
+    Measured 2026-10-22: 44354 of 89107 triangles split, 30659 kept at a
+    joint (corners of two meshes), 13871 the face; 84002 open edges against
+    84012 predicted - 10 closed by a sub-edge landing on another edge exactly
+    (CMH_FN, Del_fn, GD1_FNM, NMD_FN), never one more.
+    SHOWN TO FAIL (2026-10-22): the first cut itself - each triangle summing
+    its corners in its own order, the two sides of an edge an ulp apart -
+    318889 open against 84012, all 191 models (part 2; the canonical order
+    taken out again: 201656, 191); the face split - 64 models' open edges
+    off, and the face test, which first counted the face's ORIGINAL corners
+    (kept either way) and so could not fail, now asks for no new corner on
+    the face's mesh.
+    THE FOLDS (2026-10-22, the reader's play: "when the npc move their arm,
+    the arm become empty"): the full pull on a thin limb of few sides folded
+    453 sub-triangles over at 0.75 (145 at 0.5, 68 at 0.35 - no strength was
+    free of them); culled from behind, a fold is a hole that opens as the
+    limb turns. Now one pull PER EDGE, shared by its two triangles, and a
+    GUARD: a triangle that would fold has its interior unpulled, then its
+    edges' pulls 0, until none folds - 0 at 0.75, 211 of 44354 interiors
+    flattened. (Damping every edge by its ends' angle also cured it, and
+    flattened nearly every body back - judged on a crop, not kept.) Shown
+    to fail: the guard out - 453; the skip list ignored (`smoothes`
+    returning true) - part 3's skipped model rounded.
+    NOT CHECKED, judged by eye: the roundness, S.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
+    pl = open(os.path.join(eng, "backends", "sdl", "playframe_control_parts.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("smoothBodies = smoothFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+smooth\s*=\s*0\.0f;", sh)),
+              'kRemaster, "smooth"' in sc and 'kEnhancements, "smooth"' not in sc,
+              not re.search(r"\bs\.smooth\s*=", max_body),   # (`smoothAnimation` is its own)
+              "preset" not in pre and pre.rstrip(";").endswith(": 0.0f"),
+              "omk::smoothBody(m.rest" in pc and "omk::smoothBody(playerBody.rest" in pl)
+    mk = subprocess.run(["make", "-s", "build/smooth_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "smooth_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return (src_ok, "probe build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    out = subprocess.run([probe, fr, "3", "0.75"], capture_output=True, text=True).stdout
+    m = re.search(r"@smooth (.*)", out)
+    f = dict(zip(*[iter(m.group(1).split())] * 2)) if m else {}
+    g = lambda k: int(f.get(k, -1))
+    corpus = (g("models"), g("split") > 40000, g("kept_bad"), g("open_bad"), g("face_bad"), g("far_bad"),
+              g("flipped"))
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, corpus, ("skipped",)), ((True,) * 5, (191, True, 0, 0, 0, 0, 0), ("skipped",)), \
+            "no SDL - the frontend is optional (PORTING A8)"
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(name, *extra):
+            o = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv",
+                                "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "60",
+                                "--area", "124", "--stand", "14300,-190,-11150,180", "--filter", "nearest",
+                                "--dump", o] + list(extra), capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"), timeout=300)
+            return (open(o, "rb").read() if os.path.exists(o) else None), r.stdout
+        off, _ = run("off")
+        on, log = run("on", "--smooth", "0.75")
+        _, skipLog = run("skip", "--smooth", "0.75", "--smooth-skip", "psh_fn")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ev = [e[1] for e in _events(log) if e[0] == "body.smooth"]
+    split = sum(int(e.get("split", 0)) for e in ev)
+    skipped = sorted(e[1].get("model", "") for e in _events(skipLog) if e[0] == "body.smooth")
+    rounded = sorted(e.get("model", "") for e in ev)
+    frame = (len(ev) > 3, split > 1000, off is not None and on is not None and off != on,
+             "PSH_FN" in rounded and "PSH_FN" not in skipped and len(skipped) == len(rounded) - 1)
+    print(f"        corpus: {m.group(1) if m else 'no @smooth line'}; the bar: {len(ev)} models smoothed, "
+          f"{split} triangles split, the frame moved {frame[2]}")
+    return (src_ok, corpus, frame), ((True,) * 5, (191, True, 0, 0, 0, 0, 0), (True, True, True, True)), \
+        "the source (off by default, [Remaster] only, never all = max, not the preset's, at both loads); " \
+        "the 191 shipped characters subdivided with every original corner kept, no crack, the face whole " \
+        "and nothing flung; in Qalisar's bar the models split, the frame moves, and a skipped model stays as it is"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47194,8 +47306,10 @@ def c_licence_headers():
     # 651: + `engine/src/o3de/floorreflect.{h,cpp}` (the reflecting floors, A3)
     # 652: + `engine/src/o3de/fsrcon.h` (the upscale's constants, A6); and the
     # vendored 1 -> 3, AMD's `ffx_a.h` and `ffx_fsr1.h` (MIT) beside pl_mpeg.h
+    # 655: + `engine/src/o3de/smoothbody.{h,cpp}` and `engine/tools/smooth_probe.cpp`
+    # (the rounded bodies, D1)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (652, [], 3, []), \
+           (655, [], 3, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50000,6 +50114,7 @@ SLOW = [
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
     ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
     ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
+    ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

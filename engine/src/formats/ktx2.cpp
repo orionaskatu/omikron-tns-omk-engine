@@ -87,9 +87,11 @@ std::vector<std::uint8_t> writeKtx2(std::uint32_t vkFormat, int w, int h,
     const BlockFormat bf = blockFormat(vkFormat);
     const std::size_t nl = levels.size();
     std::vector<std::uint8_t> o(kId, kId + 12);
-    for (const std::uint32_t v : {vkFormat, 1u, static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h), 0u, 0u,
-                                  1u, static_cast<std::uint32_t>(nl), 0u})
-        put32(o, v);
+    // one array of one type: where `std::uint32_t` is `unsigned long` (the
+    // 3DS's newlib) a braced list mixing it with `1u` deduces nothing
+    const std::uint32_t header[9] = {vkFormat, 1, static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h), 0, 0,
+                                     1, static_cast<std::uint32_t>(nl), 0};
+    for (const std::uint32_t v : header) put32(o, v);
     // the DATA FORMAT DESCRIPTOR: one basic block, one sample over the whole
     // block (the spec's form for a block-compressed format)
     const std::uint32_t model = bf.astc ? 162u : vkFormat == kVkBc4Unorm ? 131u : 134u;

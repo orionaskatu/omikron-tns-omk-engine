@@ -47,6 +47,20 @@ VR ?= 1
 ifeq ($(VR),1)
 override CXXFLAGS += -DOMK_VR=1
 endif
+# THE REMASTER (`todo/remaster.md`): `REMASTER=1` (the default here) defines
+# OMK_REMASTER - the texture, interface, font and film packs, the block
+# formats, the lighting, the upscale, the preload. Its code lives in its own
+# files: the modules (`src/o3de/texpack.*` and the rest, compiled EMPTY
+# without it), `backends/remaster/` (the frontend's half, this Makefile and
+# Android's only) and `backends/gles/glesrender_remaster.cpp`; the shared
+# files keep thin calls that `backends/sdl/playremaster_off.cpp` stubs. The
+# Vita, the classic Mac, the 3DS and the PowerPC builds never define it.
+# `make noremaster` builds the viewers without it (`verify.py: engine:
+# remaster switch`).
+REMASTER ?= 1
+ifeq ($(REMASTER),1)
+override CXXFLAGS += -DOMK_REMASTER=1
+endif
 
 SRC   := $(wildcard src/*/*.cpp)
 # `run_vulkan.cpp` is EXCLUDED from the default set on purpose: it links the
@@ -55,6 +69,12 @@ SRC   := $(wildcard src/*/*.cpp)
 # the `vulkan` target instead. Sweeping it in here broke exactly that property
 # the first time, with an undefined-symbol link error on a clean build.
 TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp,$(wildcard tools/*.cpp))
+# ...and without the remaster, its own tools: they ARE its modules' drivers
+REMASTER_TOOLS := tools/texpack_tool.cpp tools/tex_encode.cpp tools/font_hd.cpp tools/door_census.cpp \
+                  tools/smooth_probe.cpp
+ifneq ($(REMASTER),1)
+TOOLS := $(filter-out $(REMASTER_TOOLS),$(TOOLS))
+endif
 BINS  := $(patsubst tools/%.cpp,build/%,$(TOOLS))
 
 OBJDIR   ?= build/obj
@@ -62,8 +82,9 @@ OBJDIR   ?= build/obj
 # track flags: an object built with one value linked beside one built with the
 # other is memory corruption, not a stale feature. So the object tree records
 # the VR value it was built with, and a different one empties it first.
-ifneq ($(shell cat $(OBJDIR)/.vr 2>/dev/null),$(VR))
-$(shell rm -rf $(OBJDIR) && mkdir -p $(OBJDIR) && echo $(VR) > $(OBJDIR)/.vr)
+# (OMK_REMASTER too: it changes the same layouts' meaning - the stamp holds both)
+ifneq ($(shell cat $(OBJDIR)/.vr 2>/dev/null),$(VR)$(REMASTER))
+$(shell rm -rf $(OBJDIR) && mkdir -p $(OBJDIR) && echo $(VR)$(REMASTER) > $(OBJDIR)/.vr)
 endif
 # the viewer's binary - `make release` puts its own elsewhere
 PLAY_BIN ?= build/omk-play
@@ -117,9 +138,18 @@ SDL_DEFS   := $(if $(filter sdl3,$(SDL_PKG)),-DOMK_SDL3)
 # the binary carries them and there is no runtime path to get wrong. The GLSL
 # stays in the tree and readable; the .inc files are build output.
 VK_PKG    := $(shell pkg-config --exists vulkan && echo vulkan)
+# the Vulkan backend is desktop-only and carries the remaster through and
+# through (its post passes, its pack uploads): a build without it has none
 VK_CFLAGS := $(if $(VK_PKG),$(shell pkg-config --cflags vulkan))
 VK_LIBS   := $(if $(VK_PKG),$(shell pkg-config --libs vulkan))
 GLSLC     := $(shell command -v glslc 2>/dev/null)
+# (both: the viewer takes Vulkan when EITHER is there - `$(VK_PKG)$(GLSLC)`)
+ifneq ($(REMASTER),1)
+VK_PKG :=
+VK_CFLAGS :=
+VK_LIBS :=
+GLSLC :=
+endif
 VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/shaders/scene_tiled.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
@@ -208,12 +238,26 @@ $(INSTR_STAMP):
 # code that talks to a backend lives there, so the rest carries no #if for it
 # ...and the VR half (`backends/vr/`), whose files compile empty without OMK_VR
 PLAY_VR_SRCS := $(wildcard backends/vr/*.cpp)
+# ...and the REMASTER's (`backends/remaster/`), empty without OMK_REMASTER
+PLAY_RM_SRCS := $(wildcard backends/remaster/*.cpp)
 PLAY_SW_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_SW_DIR)/%.o) $(PLAY_SW_DIR)/playgpu_none.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_SW_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_SW_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_SW_DIR)/%.o)
 PLAY_VK_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_VK_DIR)/%.o) $(PLAY_VK_DIR)/playgpu_vulkan.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_VK_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_VK_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_VK_DIR)/%.o)
 PLAY_GL_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_GL_DIR)/%.o) $(PLAY_GL_DIR)/playgpu_gles.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_GL_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_GL_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_GL_DIR)/%.o)
+$(PLAY_SW_DIR)/%.o: backends/remaster/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_SW_FLAGS) -c -o $@ $<
+$(PLAY_VK_DIR)/%.o: backends/remaster/%.cpp | $(VK_SHADERS)
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) -c -o $@ $<
+$(PLAY_GL_DIR)/%.o: backends/remaster/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_GL_FLAGS) -c -o $@ $<
 $(PLAY_SW_DIR)/%.o: backends/vr/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_SW_FLAGS) -c -o $@ $<
@@ -271,6 +315,15 @@ release:
 	    echo "$(RELEASE_FLAGS)" > build/obj-release/.flags; fi
 	$(MAKE) play OBJDIR=build/obj-release PLAY_BIN=build/release/omk-play INSTRUMENTS=0 \
 	    CXXFLAGS="$(RELEASE_FLAGS)"
+
+# THE VIEWERS WITHOUT THE REMASTER (`REMASTER=0`): what the Vita, the 3DS and
+# the classic Mac build, on this machine - its own object tree and binaries
+# (build/obj-noremaster, build/noremaster/), so it never mixes with the
+# development build. `verify.py: engine: remaster switch`.
+.PHONY: noremaster
+noremaster:
+	$(MAKE) play play-gles REMASTER=0 OBJDIR=build/obj-noremaster PLAY_BIN=build/noremaster/omk-play \
+	    PLAY_GL_BIN=build/noremaster/omk-play-gles
 
 # ---------------------------------------------------------------- HARDENED
 #
@@ -466,17 +519,18 @@ build/gles_probe: backends/gles/gles_probe.cpp backends/gles/glesrender.cpp $(SR
 # Optional like `play`, and needs SDL the same way. `build/omk-play-gles`.
 GL_LIBS := $(if $(filter Darwin,$(UNAME_S)),-framework OpenGL,-lGLESv2)
 ifneq ($(SDL_PKG),)
-build/omk-play-gles: $(PLAY_GL_OBJS) $(PLAY_GL_DIR)/glesrender.o $(SRCOBJS) $(INSTR_STAMP)
+PLAY_GL_BIN ?= build/omk-play-gles
+$(PLAY_GL_BIN): $(PLAY_GL_OBJS) $(PLAY_GL_DIR)/glesrender.o $(SRCOBJS) $(INSTR_STAMP)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(GL_LIBS)
 endif
 
 .PHONY: play-gles
-play-gles: $(if $(SDL_PKG),build/omk-play-gles)
+play-gles: $(if $(SDL_PKG),$(PLAY_GL_BIN))
 ifeq ($(SDL_PKG),)
 	@echo "no SDL found - the GLES frontend is optional (PORTING A8)."
 else
-	@echo "built build/omk-play-gles against $(SDL_PKG) + GL"
+	@echo "built $(PLAY_GL_BIN) against $(SDL_PKG) + GL"
 endif
 
 # One object per source. The mkdir is in the recipe rather than an order-only

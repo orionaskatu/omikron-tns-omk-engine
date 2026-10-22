@@ -1,0 +1,382 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// THE REMASTER'S GLES BACKEND (`todo/remaster.md`) - the post pass, the water
+// reflection's pass, FSR's two passes, the scene programs' variants and the
+// pack's uploads (ASTC). Included at the end of `glesrender.cpp`, inside its
+// namespace, under OMK_REMASTER only - its stubs are there otherwise. Not
+// compiled on its own.
+
+// THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): `colour_` copied to
+// `postSrc_`; the glow down / blur / blur at a quarter; the final pass back
+// into `colour_` (`fbo_`) with the glow screen-blended and the grade applied.
+void GlesRenderer::runPost() {
+    if (!postProg_) {
+        postProg_ = link(kPostVert, kPostFrag, {{0, "aPos"}});
+        if (!postProg_) {
+            std::printf("gles: the post-pass program did not build - bloom and grade refused\n");
+            bloom_ = 0.0f; lutN_ = 0;
+            return;
+        }
+        std::printf("gles: the remaster's post-pass - bloom %.2f, grade %s\n",
+                    static_cast<double>(bloom_), lutN_ > 1 ? "on" : "off");
+        omk::event("remaster.post", {{"backend", "gles"}, {"bloom", static_cast<double>(bloom_)},
+                                     {"grade", lutN_}});
+        // its uniforms, looked up once
+        const char* names[8] = {"uSrc", "uGlow", "uLut", "uSrcInv", "uDir", "uStrength", "uMode", "uLutN"};
+        for (int k = 0; k < 8; ++k) postLoc_[k] = glGetUniformLocation(postProg_, names[k]);
+    }
+    const auto texture = [](GLuint& id, int w, int h) {
+        if (!id) glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    };
+    const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
+    if (postW_ != rw_ || postH_ != rh_) {
+        texture(postSrc_, rw_, rh_);
+        for (int k = 0; k < 2; ++k) {
+            texture(glowTex_[k], gw, gh);
+            if (!glowFbo_[k]) glGenFramebuffers(1, &glowFbo_[k]);
+            glBindFramebuffer(GL_FRAMEBUFFER, glowFbo_[k]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glowTex_[k], 0);
+        }
+        postW_ = rw_; postH_ = rh_;
+    }
+    if (lutDirty_ && lutN_ > 1) {
+        if (!lutTex_) glGenTextures(1, &lutTex_);
+        glBindTexture(GL_TEXTURE_2D, lutTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, lutN_ * lutN_, lutN_, 0, GL_RGBA, GL_UNSIGNED_BYTE, lutData_.data());
+        lutDirty_ = false;
+    }
+    // the frame, copied out of the world target
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    glBindTexture(GL_TEXTURE_2D, postSrc_);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, rw_, rh_);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glUseProgram(postProg_);
+    curProg_ = postProg_;
+    const GLint lSrc = postLoc_[0], lGlow = postLoc_[1], lLut = postLoc_[2], lInv = postLoc_[3],
+                lDir = postLoc_[4], lStr = postLoc_[5], lMode = postLoc_[6], lN = postLoc_[7];
+    glUniform1i(lSrc, 0); glUniform1i(lGlow, 1); glUniform1i(lLut, 2);
+    glUniform1f(lStr, bloom_);
+    glUniform1f(lN, lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_);
+    for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    const auto pass = [&](GLuint fb, int w, int h, GLuint src, int srcW, int srcH, float dx, float dy, int mode) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fb);
+        glViewport(0, 0, w, h);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, src);
+        glUniform2f(lInv, 1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH));
+        glUniform2f(lDir, dx, dy);
+        glUniform1i(lMode, mode);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    };
+    if (bloom_ > 0.0f) {
+        pass(glowFbo_[0], gw, gh, postSrc_, rw_, rh_, 0, 0, 0);
+        pass(glowFbo_[1], gw, gh, glowTex_[0], gw, gh, 1, 0, 1);
+        pass(glowFbo_[0], gw, gh, glowTex_[1], gw, gh, 0, 1, 1);
+    }
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, glowTex_[0]);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, lutTex_ ? lutTex_ : glowTex_[0]);
+    glActiveTexture(GL_TEXTURE0);
+    pass(fbo_, rw_, rh_, postSrc_, rw_, rh_, 0, 0, 2);
+    glEnable(GL_DEPTH_TEST);
+    forgetState();
+    lastEmis_ = 0;
+}
+
+// THE MIRROR, THE ORIGINAL'S WAY (`sub_440D90`, 0x00440D90): the scene is
+// drawn FIRST through the camera reflected in the mirror's plane - with the
+// screen-X flip `dword_53ADE0` asks of `Raster_DrawTriangles`, here `flipX` -
+// and then AGAIN through the real camera, over it, with no clear between: only
+// `Render_Frame(reflected, 1)` then `Render_Frame(camera, 0)`. The reflected
+// pass leaves exactly the depths of a virtual room behind the plane, so the
+// real room's walls, nearer, cover it everywhere but where the wall is open for
+// the mirror, and the mirror's own faces blend over what shows through. No
+// stencil, no read-back: the CPU fallback reads the frame back and converts
+// it, 190 ms a frame in Kay'l's apartment on the console. The
+// reflected pass takes the draws in FRONT of the plane, as the fallback does -
+// the port's own guard against what lies behind the mirror's wall.
+// `OMK_CPU_MIRROR=1` keeps the fallback, for laying the two side by side.
+// THE WATER REFLECTION (`todo/remaster.md` A3): the scene through the
+// reflected camera into `reflFbo_` (single-sampled, the target's size), then
+// the frame as usual with the water draws adding it from unit 4.
+bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
+                                  std::span<const Draw> above, std::span<const Draw> water, float strength,
+                                  float planeY) {
+    // (no water draws: the REFLECTING FLOORS' frame - its floors are in
+    // `scene`, `Draw::reflect` set)
+    if (waterWant_ <= 0.0f || strength <= 0.0f || mainLoc_.water < 0) return false;
+    reflHalf_ = water.empty();
+    if (reflW_ != rw_ || reflH_ != rh_) {
+        if (!reflFbo_) glGenFramebuffers(1, &reflFbo_);
+        if (!reflTex_) glGenTextures(1, &reflTex_);
+        if (!reflDepth_) glGenRenderbuffers(1, &reflDepth_);
+        glBindTexture(GL_TEXTURE_2D, reflTex_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw_, rh_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindRenderbuffer(GL_RENDERBUFFER, reflDepth_);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, rw_, rh_);
+        glBindFramebuffer(GL_FRAMEBUFFER, reflFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflTex_, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, reflDepth_);
+        const GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (st != GL_FRAMEBUFFER_COMPLETE) { std::fprintf(stderr, "gles: water reflection target incomplete\n"); return false; }
+        reflW_ = rw_; reflH_ = rh_;
+        std::printf("gles: the water reflection's target - %dx%d (a REMASTER feature)\n", rw_, rh_);
+    }
+    passFbo_ = reflFbo_;
+    begin(refl);
+    reflectingNow_ = true;
+    waterY_ = planeY;
+    for (const auto& d : above) submit(d);
+    reflectingNow_ = false;
+    passFbo_ = 0;
+    recording_ = false;
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, reflTex_);
+    glActiveTexture(GL_TEXTURE0);
+    begin(v);
+    waterStrength_ = strength;
+    for (int k = 0; k < 3; ++k) waterEye_[k] = v.cam.eye[k];
+    for (const auto& d : scene) submit(d);
+    waterNow_ = true;
+    for (const auto& d : water) submit(d);
+    waterNow_ = false;
+    end();
+    return true;
+}
+
+// THE UPSCALE's two passes (`kEasuFrag`, `kRcasFrag`): `colour_`'s drawn
+// picture, `rs(w_) x rs(vh)`, up to `w_ x vh` in `easuTex_`'s top rows, then
+// sharpened into `rcasTex_`'s - which the present pass and `readback` then
+// read exactly as they read `colour_` unscaled. The rows below the picture
+// are cleared black, as the world target's are.
+void GlesRenderer::fsrPass(int vh) {
+    vh = std::clamp(vh, 1, h_);
+    if (fsrW_ != w_ || fsrH_ != h_) {
+        for (const auto& [tex, fbo] : {std::pair<GLuint*, GLuint*>{&easuTex_, &easuFbo_}, {&rcasTex_, &rcasFbo_}}) {
+            if (!*tex) glGenTextures(1, tex);
+            glBindTexture(GL_TEXTURE_2D, *tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w_, h_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+gpuTexture("render targets", *tex, 4LL * w_ * h_);
+            if (!*fbo) glGenFramebuffers(1, fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *tex, 0);
+        }
+        fsrW_ = w_; fsrH_ = h_;
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_);
+    for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    const float whole[4] = {-1.0f, -1.0f, 2.0f, 2.0f};
+    const auto run = [&](GLuint fbo, GLuint prog, GLuint src) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, w_, h_);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glViewport(0, h_ - vh, w_, vh);   // the picture's rows, the target's top
+        glUseProgram(prog);
+        curProg_ = prog;
+        glUniform4fv(glGetUniformLocation(prog, "uDst"), 1, whole);
+        glUniform1i(glGetUniformLocation(prog, "uSrc"), 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, src);
+    };
+    run(easuFbo_, easuProg_, colour_);
+    glUniform2f(glGetUniformLocation(easuProg_, "uSrcTex"), static_cast<float>(rw_), static_cast<float>(rh_));
+    glUniform2f(glGetUniformLocation(easuProg_, "uIn"), static_cast<float>(rs(w_)), static_cast<float>(rs(vh)));
+    glUniform2f(glGetUniformLocation(easuProg_, "uOut"), static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(glGetUniformLocation(easuProg_, "uOutTexH"), static_cast<float>(h_));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    run(rcasFbo_, rcasProg_, easuTex_);
+    glUniform2f(glGetUniformLocation(rcasProg_, "uSrcTex"), static_cast<float>(w_), static_cast<float>(h_));
+    glUniform2f(glGetUniformLocation(rcasProg_, "uPic"), static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(glGetUniformLocation(rcasProg_, "uSharp"), std::exp2(-omk::kFsrRcasStops));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glEnable(GL_DEPTH_TEST);
+    forgetState();
+}
+
+// A pack texture in ASTC (`o3de/texpack.h` PackBlocks) into the BOUND
+// texture: every level its file carries when `mips`, else level 0 alone. The
+// format's GL name from its block size (`GL_KHR_texture_compression_astc_ldr`).
+void GlesRenderer::uploadAstc(const omk::PackBlocks& z, bool mips) {
+    const omk::BlockFormat f = omk::blockFormat(z.vkFormat);
+    const GLenum gl = f.bw == 4 ? 0x93B0 : f.bw == 5 ? 0x93B2 : f.bw == 6 ? 0x93B4 : 0x93B7;   // 4x4 5x5 6x6 8x8
+    const std::size_t n = mips ? z.levels.size() : 1;
+    for (std::size_t l = 0; l < n; ++l)
+        glCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l), gl, std::max(1, z.w >> l), std::max(1, z.h >> l), 0,
+                               static_cast<GLsizei>(z.levels[l].second), z.bytes.data() + z.levels[l].first);
+}
+
+// the city grade, any time: n^3 RGB 0..1, red fastest
+bool GlesRenderer::setGrade(const float* rgb, int n) {
+    if (!rgb || n < 2) { lutN_ = 0; return true; }
+    lutStrip(rgb, n, lutData_);
+    lutN_ = n; lutDirty_ = true;
+    return true;
+}
+
+bool GlesRenderer::packActive() const { return texturePack().active(); }
+
+std::vector<PackImage> GlesRenderer::packDecode(std::span<const Texture* const> ts) const {
+    return texturePack().replacements(ts, true, false);
+}
+
+bool GlesRenderer::astcBlocks(const PackBlocks& z) { return !z.empty() && blockFormat(z.vkFormat).astc; }
+
+// the scene and posing programs' sources through the variants asked for
+void GlesRenderer::remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag,
+                                   const char*& vSceneX, const char*& vScene, const char*& vPosedX,
+                                   const char*& vPosed) {
+    // the remaster's variants over BOTH program sets, each from its own
+    // sources: the plain set is the fallback when the enhanced one does not
+    // link, and an enhanced fragment beside a plain vertex stage cannot link
+    // (it reads `vNrm` / `vWorld`) - so it must not inherit the enhanced one's
+    const auto fragOf = [&](const char* base, bool points) {
+        std::string f = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);
+        if (points) f = pointLightVariant(f);
+        if (waterWant_ > 0.0f) f = waterVariant(f);
+        return f;
+    };
+    bloomFragX_ = fragOf(kSceneFragX, pointLit);
+    bloomFrag_ = fragOf(kSceneFrag, false);
+    sceneFragX = bloomFragX_.c_str();
+    sceneFrag = bloomFrag_.c_str();
+    // the water variant's fragment reads `vWy`: its vertex stages hand it down
+    if (waterWant_ > 0.0f) {
+        waterVertX_ = waterVertVariant(kSceneVertX);
+        waterVert_ = waterVertVariant(kSceneVert);
+        waterPosedVertX_ = waterVertVariant(kPosedVertX);
+        waterPosedVert_ = waterVertVariant(kPosedVert);
+    }
+    if (waterWant_ > 0.0f) {
+        vSceneX = waterVertX_.c_str();
+        vScene = waterVert_.c_str();
+        vPosedX = waterPosedVertX_.c_str();
+        vPosed = waterPosedVert_.c_str();
+    }
+    // the BODY LIGHT over either (only the posing program is a variant: it is
+    // the one that draws the bodies)
+    if (tintWant_) {
+        tintPosedVertX_ = tintVariant(vPosedX);
+        tintPosedVert_ = tintVariant(vPosed);
+        vPosedX = tintPosedVertX_.c_str();
+        vPosed = tintPosedVert_.c_str();
+    }
+}
+
+// ...and their starting uniforms, once linked
+void GlesRenderer::remasterProgramUniforms(bool pointLit) {
+    if (waterWant_ > 0.0f) {
+        // the reflection on unit 4
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1i(glGetUniformLocation(p, "uRefl"), 4);
+            glUniform1f(glGetUniformLocation(p, "uWater"), 0.0f);
+        }
+        glUseProgram(0);
+        std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
+    }
+    if (pointLit) {
+        // the night at 1 until a frame says otherwise: a uniform starts at 0
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1f(glGetUniformLocation(p, "uSetDim"), 1.0f);
+        }
+        glUseProgram(0);
+    }
+    if (tintWant_) {
+        // 1, 1, 1 until a draw says otherwise: a uniform starts at 0, and the
+        // pose self-test's bodies drawn BLACK read as never posed (all of
+        // them went the CPU way, 2026-10-20)
+        if (posed_) {
+            glUseProgram(posed_);
+            glUniform3f(glGetUniformLocation(posed_, "uLightTint"), 1.0f, 1.0f, 1.0f);
+            glUseProgram(0);
+        }
+        std::printf("gles: the body light - the posing program's variant (%s)\n",
+                    posed_ ? "built" : "not built - the bodies tinted on the CPU");
+    }
+    if (bloom_ > 0.0f) {
+        // the light maps on unit 3 (0 the texture, 1 the present's matrix, 2 the shadow map)
+        for (const GLuint p : {prog_, posed_}) {
+            if (!p) continue;
+            glUseProgram(p);
+            glUniform1i(glGetUniformLocation(p, "uEmis"), 3);
+        }
+        glUseProgram(0);
+        std::printf("gles: bloom %.2f - the scene programs' bloom variant (light maps on unit 3)\n",
+                    static_cast<double>(bloom_));
+    }
+}
+
+// FSR's programs (`kEasuFrag`, `kRcasFrag`) when the upscale is asked for;
+// a context that cannot build them refuses it - false only when the target,
+// re-made at the output size, fails
+bool GlesRenderer::remasterInitUpscale() {
+    if (upscale_ > 1.0f) {
+        easuProg_ = link(kPresentVert, kEasuFrag, {{0, "aPos"}});
+        rcasProg_ = link(kPresentVert, kRcasFrag, {{0, "aPos"}});
+        if (!easuProg_ || !rcasProg_) {
+            // a context that cannot build them: refused, not the renderer
+            std::printf("gles: the upscale's programs did not build - upscale refused\n");
+            upscale_ = 1.0f;
+            rw_ = w_; rh_ = h_;
+            if (!allocTarget()) return false;
+        } else {
+            std::printf("gles: upscale x%.2f - the world drawn at %dx%d for %dx%d, brought up by AMD FSR 1 "
+                        "(EASU, RCAS %.1f stops), a REMASTER feature\n", static_cast<double>(upscale_), rw_, rh_, w_, h_,
+                        static_cast<double>(omk::kFsrRcasStops));
+            omk::event("gles.upscale", {{"factor", static_cast<double>(upscale_)}, {"rw", rw_}, {"rh", rh_},
+                                        {"w", w_}, {"h", h_}});
+        }
+    }
+    return true;
+}
+
+// the pack's block formats the context samples
+void GlesRenderer::remasterInitCodecs() {
+    // THE PACK'S BLOCK FORMATS (`o3de/texpack.h`): ASTC, where the context
+    // names `GL_KHR_texture_compression_astc_ldr` - Android's GPUs and the
+    // Quest's; a desktop GL has no ASTC and keeps the PNGs (and no BC7: the
+    // Mac's GL stops at 4.1, before BPTC). `OMK_NO_BLOCK_FORMATS=1` keeps
+    // the PNGs anywhere.
+    {
+        const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        astcOk_ = ext && std::strstr(ext, "GL_KHR_texture_compression_astc_ldr") &&
+                  !omk::envFlag("OMK_NO_BLOCK_FORMATS");
+        omk::texturePack().setCodecs(astcOk_ ? omk::kCodecAstc : 0u);
+        if (astcOk_ && omk::texturePack().active())
+            std::printf("gles: the texture pack's ASTC files - %zu colours read as blocks\n",
+                        omk::texturePack().blockFiles(omk::kCodecAstc));
+    }
+}

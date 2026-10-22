@@ -3,8 +3,6 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
-#include "o3de/colourgrade.h"
-#include "o3de/texpack.h"
 #include "platform/events.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
@@ -1450,23 +1448,7 @@ void PlayState::worldBolts() {
     OMK_ZONE("world: bolts");   // the profiler (todo/debug-tools.md 6)
     auto& session = *session_;
     omk::Renderer& world = *world_;
-    // THE CITY GRADE (`o3de/colourgrade.h`): chosen for the set under the
-    // player's feet, and off while the greyscale bank is on - a grade would
-    // tint a black-and-white cutscene. A hard switch: a change of set comes
-    // with the game's own fade.
-    if (omk::cityGrades().active()) {
-        const std::string want = session.renderGrey() ? std::string() : worldSet;
-        if (want != gradeFor) {
-            const omk::ColourLut* lut = want.empty() ? nullptr : omk::cityGrades().forSet(want);
-            const bool took = world.setGrade(lut ? lut->rgb.data() : nullptr, lut ? lut->n : 0);
-            const std::string src = want.empty() ? "" : omk::cityGrades().sourceFor(want);
-            std::printf("frame %ld: grade %s for %s%s\n", frameNo, src.empty() ? "none" : src.c_str(),
-                        want.empty() ? "the greyscale bank" : want.c_str(),
-                        took ? "" : " - REFUSED, this renderer has no grade");
-            omk::event("remaster.grade", {{"set", want}, {"lut", src}, {"taken", took}});
-            gradeFor = want;
-        }
-    }
+    remasterGrade();   // the city grade (`backends/remaster/`)
     // ---- THE BOLTS (`actor/projectile.h`) ------------------------
     //
     // Each live entry is a clone of the held gun's `tir` node, drawn
@@ -1635,13 +1617,9 @@ void PlayState::worldBolts() {
                                               std::make_pair(t.pal, omk::greyPalette(t.pal))).first;
                 // the TEXTURE PACK keyed this texture by its colour palette;
                 // told where the grey one came from, it greys the replacement
-                if (omk::texturePack().active()) {
-                    const omk::Texture colour = t;
-                    t.pal = it->second.second;
-                    omk::texturePack().aliasGrey(colour, t);
-                    continue;
-                }
+                const omk::Texture colour = t;
                 t.pal = it->second.second;
+                remasterAliasGrey(colour, t);
             }
         else
             greyPalettes.clear();

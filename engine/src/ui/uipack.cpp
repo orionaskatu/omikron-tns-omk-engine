@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The interface pack - see uipack.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "ui/uipack.h"
 
 #include "platform/datafs.h"
@@ -154,3 +157,5 @@ UiPack& uiPack() {
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

@@ -185,7 +185,7 @@ if(OMK_VITA_GAME)
     ${ENGINE}/backends/sdl/sdlfront.cpp
     ${ENGINE}/backends/sdl/playscene.cpp
     ${ENGINE}/backends/sdl/playstate.cpp
-    ${ENGINE}/backends/sdl/playpreload.cpp   # the remaster's preload radius (off unless asked)
+    ${ENGINE}/backends/sdl/playremaster_off.cpp   # the remaster's empty stubs (no OMK_REMASTER here)
     ${ENGINE}/backends/sdl/playgpu_gles.cpp
     ${OMK_HARNESS_SRC}
     ${ENGINE}/backends/sdl/playvr_off.cpp   # the VR seam's empty stubs (no OMK_VR here)

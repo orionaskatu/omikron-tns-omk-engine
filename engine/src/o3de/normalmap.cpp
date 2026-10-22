@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "o3de/normalmap.h"
 
 #include <algorithm>
@@ -153,3 +156,5 @@ void normalMap(const std::uint8_t* rgba, int w, int h, const NormalMapParams& p,
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

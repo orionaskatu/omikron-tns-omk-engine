@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "o3de/lighttiles.h"
 
 #include <algorithm>
@@ -159,3 +162,5 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

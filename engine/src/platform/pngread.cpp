@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // PNG, read only - see pngread.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "platform/pngread.h"
 
 #include <cstring>
@@ -357,3 +360,5 @@ bool decodePng(const std::uint8_t* src, std::size_t n, PngImage& out, std::strin
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

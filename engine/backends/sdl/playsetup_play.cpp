@@ -135,14 +135,9 @@ int PlayState::setupPlay() {
                 continue;
             }
             omk::Movie mov;
-            // THE FILM PACK (`platform/filmpack.h`): the same film upscaled,
-            // the same sound - played by the same decoder, smoothed to the
-            // display; the original when the pack has none for it
-            const std::string hd = real ? omk::filmPack().find(*real) : "";
-            if (!hd.empty() && mov.open(hd)) {
-                mov.setSmooth(true);
-                std::printf("  %s: from the film pack, %s - a REMASTER feature\n", name, hd.c_str());
-                omk::event("film.pack", {{"film", name}, {"w", mov.info().width}, {"h", mov.info().height}});
+            // THE FILM PACK (`backends/remaster/`): the same film upscaled,
+            // the same sound; the original when the pack has none for it
+            if (real && remasterOpenFilm(*real, mov, name)) {
             } else if (!real || !mov.open(*real)) {
                 std::printf("  %s: not decodable, skipped\n", name);
                 continue;

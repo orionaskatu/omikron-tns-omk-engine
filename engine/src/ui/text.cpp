@@ -254,8 +254,10 @@ int TextLayout::drawRun(Surface& dst, int x, int y,
             const int top = y + glyphPx(rec->height + gl.bottom - gl.height);
             if (cov.empty()) {
                 // nothing to draw
-            } else if (const auto hd = fontPack().find(*f)) {
+#if OMK_REMASTER
+            } else if (const auto hd = fontPack().find(*f)) {   // the font pack (`ui/fontpack.h`)
                 drawGlyphHd(dst, pen, top, gl, *hd, code, cur, clipTop, clipBottom);
+#endif
             } else {
                 drawGlyphScaled(dst, pen, top, gl, cov, cur, clipTop, clipBottom);
             }
@@ -346,52 +348,6 @@ void TextLayout::drawGlyphScaled(Surface& dst, int pen, int top, const Glyph& gl
                 c = static_cast<int>(t * 31.0f + 0.5f);
             }
             if (c) blendCoverage(dst, px, py, c & 31, rgb);
-        }
-    }
-}
-
-// THE FONT PACK's glyph (`ui/fontpack.h`): each destination pixel the AREA
-// AVERAGE of the HD coverage under it - the box the pixel covers at the glyph
-// scale, edge texels weighted by how much of them it takes - so a coverage
-// `k` times finer is brought down rather than up, at any scale. Blended as
-// `drawGlyphScaled` blends.
-void TextLayout::drawGlyphHd(Surface& dst, int pen, int top, const Glyph& gl, const HdFont& hd,
-                             unsigned char code, const std::uint8_t rgb[3], int clipTop, int clipBottom) const {
-    const int W = glyphPx(gl.width), H = glyphPx(gl.height);
-    const int gw = gl.width * hd.lay.k, gh = gl.height * hd.lay.k;
-    const float step = static_cast<float>(hd.lay.k) * static_cast<float>(den_) / static_cast<float>(num_);
-    // the texels [a, b) covers along one axis, as (first, last, weights of the two ends)
-    const auto span = [](float a, float b, int n, int& i0, int& i1, float& w0, float& w1) {
-        a = std::clamp(a, 0.0f, static_cast<float>(n));
-        b = std::clamp(b, 0.0f, static_cast<float>(n));
-        i0 = static_cast<int>(a);
-        i1 = std::min(static_cast<int>(std::ceil(b)) - 1, n - 1);
-        w0 = static_cast<float>(i0 + 1) - a;
-        w1 = b - static_cast<float>(i1);
-        if (i0 == i1) w0 = w1 = b - a;
-    };
-    for (int dy = 0; dy < H; ++dy) {
-        const int py = top + dy;
-        if (py < 0 || py >= dst.h || py < clipTop || py >= clipBottom) continue;
-        int y0, y1; float wy0, wy1;
-        span(dy * step, (dy + 1) * step, gh, y0, y1, wy0, wy1);
-        if (y1 < y0) continue;
-        for (int dx = 0; dx < W; ++dx) {
-            const int px = pen + dx;
-            if (px < 0 || px >= dst.w) continue;
-            int x0, x1; float wx0, wx1;
-            span(dx * step, (dx + 1) * step, gw, x0, x1, wx0, wx1);
-            if (x1 < x0) continue;
-            float sum = 0.0f;
-            for (int y = y0; y <= y1; ++y) {
-                const float wy = y == y0 ? wy0 : (y == y1 ? wy1 : 1.0f);
-                float row = 0.0f;
-                for (int x = x0; x <= x1; ++x)
-                    row += hd.at(code, x, y) * (x == x0 ? wx0 : (x == x1 ? wx1 : 1.0f));
-                sum += row * wy;
-            }
-            const int c = static_cast<int>(sum / (step * step) * (31.0f / 255.0f) + 0.5f);
-            if (c > 0) blendCoverage(dst, px, py, std::min(c, 31), rgb);
         }
     }
 }

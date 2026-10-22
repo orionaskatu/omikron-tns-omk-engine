@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // KTX2 - see ktx2.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "formats/ktx2.h"
 
 #include <cstring>
@@ -139,3 +142,5 @@ std::vector<std::uint8_t> writeKtx2(std::uint32_t vkFormat, int w, int h,
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

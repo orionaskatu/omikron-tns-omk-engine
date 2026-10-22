@@ -3,8 +3,6 @@
 // with the comment that stood above it, in their original order. A method
 // that reads one of the objects built in place (`fs`, `session`, ...) names
 // it first under its original name.
-#include "o3de/texpack.h"
-#include "o3de/emitterlight.h"
 #include "playstate.h"
 #include "platform/events.h"
 #include "platform/env.h"
@@ -1598,28 +1596,7 @@ CharModel * PlayState::charModelFor(const std::string& name) {
         if (const auto mt = fs.resolve("MESHES/PERSOS/" + name + ".3DT"))
             m.tex = omk::textures(md, omk::DataFs::readPath(*mt));
         m.face = omk::faceMeshOf(m.meshes);
-        // the ROUNDED BODIES (`o3de/smoothbody.h`, the remaster's D1): the rest
-        // subdivided once, here, so every actor wearing it and every crowd
-        // copy cut from it (`lodRestFor`) is rounded - the face kept as it is
-        if (smoothes(name)) {
-            const std::size_t before = m.rest.corners.size();
-            m.flat = m.rest;   // the crowd's (`lodRestFor`)
-            const auto ss = omk::smoothBody(m.rest, m.face.valid() ? m.face.base : 0,
-                                            m.face.valid() ? m.face.base + static_cast<std::size_t>(m.face.count) : 0,
-                                            3, smoothBodies);
-            omk::event("body.smooth", {{"model", name}, {"triangles", static_cast<long>(ss.triangles)},
-                                       {"split", static_cast<long>(ss.split)},
-                                       {"seam", static_cast<long>(ss.keptSeam)},
-                                       {"face", static_cast<long>(ss.keptFace)},
-                                       {"pinned", static_cast<long>(ss.pinned)},
-                                       {"unpulled", static_cast<long>(ss.unpulled)},
-                                       {"folded", static_cast<long>(ss.folded)},
-                                       {"positions", static_cast<long>(ss.positions)},
-                                       {"corners", static_cast<long>(m.rest.corners.size())}});
-            std::printf("smooth: %s - %zu of %zu triangles split (%zu kept at a seam, %zu the face), "
-                        "%zu -> %zu corners\n", name.c_str(), ss.split, ss.triangles, ss.keptSeam,
-                        ss.keptFace, before, m.rest.corners.size());
-        }
+        remasterSmoothModel(m, name);   // the rounded bodies (`backends/remaster/`)
         m.boneIdx.build(m.meshes, omk::MeshNameIndex::shadowNames());
         for (std::size_t i = 0; i < m.meshes.size() && m.root < 0; ++i) {
             bool hasParent = false;
@@ -2166,41 +2143,18 @@ void PlayState::prepareSet(SetLoad& L) {
     L.ms[3] = since(t);
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
-    w.water = omk::waterPlane(w.geo);
-    w.ground = omk::groundLevel(w.geo);
-    w.floors = floorStrength > 0.0f ? omk::floorPlanes(w.geo, w.tex, omk::floorList(), L.stem) : omk::FloorPlanes{};
-    if (bodyLight > 0.0f) {
-        w.probes.build(w.geo);
-        omk::event("world.probes", {{"set", L.stem}, {"mean", static_cast<double>(w.probes.meanLuma())}});
-    } else {
-        w.probes = omk::LightProbes{};
-    }
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
         w.setLights = w.lights.size();
-        // THE GLOWING SURFACES' LIGHT (`o3de/emitterlight.h` surfaceLights,
-        // the remaster's): the pack's light maps over the set's triangles -
-        // its neon letters, its lit windows - after the set's own lights
-        w.fxSurface.clear();
-        if (fxLight > 0.0f && world_ && world_->drawsEmitterLights() && omk::texturePack().active() &&
-            omk::texturePack().lightMaps() > 0) {
-            std::vector<const omk::Texture*> ptrs;
-            for (const auto& wt : w.tex) ptrs.push_back(&wt);
-            // the LIGHT MAPS alone: the colours are the shipped palette's
-            const auto packs = omk::texturePack().replacements(ptrs, false);
-            int cells = 0;
-            w.fxSurface = omk::surfaceLights(w.geo, w.tex, packs, fxLight, &cells, L.stem, &omk::surfaceCuration());
-            w.lights.insert(w.lights.end(), w.fxSurface.begin(), w.fxSurface.end());
-            std::printf("fx light: %s - %d glowing surfaces light the bodies and the set (%s)\n", L.stem.c_str(), cells,
-                        omk::surfaceCuration().covers(L.stem) ? "the curated list" : "the automatic rules");
-            omk::event("world.fxsurfaces", {{"set", L.stem}, {"lights", cells},
-                                            {"curated", omk::surfaceCuration().covers(L.stem)}});
-        }
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
             static_cast<double>(mh->ambient) * 255.0));
         w.meshes = omk::readMeshes(d, *mh);
         w.meshHidden.clear();        // a fresh set: flag 2 as shipped
     }
+    // THE REMASTER'S PART of a set (`backends/remaster/playremaster_world.cpp`):
+    // its water and ground, its reflecting floors, its light probes, its
+    // glowing surfaces' lights - nothing without OMK_REMASTER
+    remasterPrepareSet(L);
     // THE SET'S OWN EMITTERS - `Sfx_BindAmbientEffects`, the environment
     // family. Every mesh flagged 0x40000000 whose first four name bytes
     // match a section-D tag registers that binding's effect at the mesh's
@@ -2233,21 +2187,9 @@ bool PlayState::askSet(int slot, const std::string& stem, int area, long frame) 
     slotAsked[slot] = stem;
     slotAskedArea[slot] = area;
     if (stem.empty()) return had;
-    // PREPARED AHEAD (`playpreload.cpp`): the set the preload radius made for
-    // this area, taken as it is - its job done or still running, `integrate
-    // Set` waits on it exactly as on one started here
-    if (const auto it = preloads.find(stem); it != preloads.end() && it->second.area == area && it->second.L) {
-        auto P = it->second.L;
-        preloads.erase(it);   // its pins stay until the next refresh: the pool takes them first
-        P->slot = slot;
-        P->askedFrame = frame;
-        setLoads[slot] = P;
-        ++preloadTaken;
-        std::printf("preload: %s (AREA %d) taken - %s\n", stem.c_str(), area,
-                    P->job && !P->job->ready() ? "still preparing, waited for" : "prepared ahead");
-        omk::event("preload.take", {{"set", stem}, {"area", area}, {"ready", !P->job || P->job->ready()}});
-        return had;
-    }
+    // PREPARED AHEAD (`backends/remaster/playpreload.cpp`): the preload
+    // radius's set for this area, taken as it is
+    if (remasterTakePreload(slot, stem, area, frame)) return had;
     const auto o = fs.resolve("MESHES/DECORS/" + stem + ".3DO");
     if (!o) { std::printf("world: no set %s.3DO\n", stem.c_str()); return had; }
     auto L = std::make_shared<SetLoad>();
@@ -2503,13 +2445,4 @@ void PlayState::mark(const char* name) {
   OMK_SECTION(name, profMarkT, t);
   profMarkT = t;
  }
-}
-
-void PlayState::bodyTint(const float p[3], float out[3]) const {
-    out[0] = out[1] = out[2] = 1.0f;
-    if (bodyLight <= 0.0f || !world_ || !world_->drawsBodyTint() || !session_) return;
-    const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
-    // the grey every body starts from: the active scene's (`+416`)
-    const float base = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
-    if (ws.probes.built()) ws.probes.tint(p, bodyLight, base, out);
 }

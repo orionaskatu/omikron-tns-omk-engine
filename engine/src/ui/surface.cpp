@@ -88,7 +88,9 @@ Surface surfaceFromBmp(std::span<const std::byte> d) {
     Surface s = decodeBmp(d);
     // THE INTERFACE PACK (`ui/uipack.h`): noted when the pack has an HD
     // version of exactly this bitmap; nothing when no pack is open
+#if OMK_REMASTER
     uiPack().attach(s);
+#endif
     return s;
 }
 
@@ -122,12 +124,14 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
     // source. Its key is the original's (0), so a key-source blit with any
     // other key keeps the original. The HD surface is not noted, so this
     // recurses once.
+#if OMK_REMASTER
     if ((dw > sw || dh > sh) && (!keySrc || srcKey == 0))
         if (const auto hd = uiPack().find(src)) {
             const int k = hd->w / src.w;
             return blt(dst, dr, *hd, Rect{sr.left * k, sr.top * k, sr.right * k, sr.bottom * k},
                        flags, srcKey, dstKey, filter);
         }
+#endif
 
     // ---- THE INTERFACE SCALING ENHANCEMENT (surface.h) -------------------
     //

@@ -2,8 +2,6 @@
 // THE WORLD DRAWN: the particles, the visible set, the lights, the shadows, the mirror and the present pass.
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
-#include "o3de/lighttiles.h"
-#include "o3de/colourgrade.h"
 #include "o3de/emitterlight.h"
 #include "playframe.h"
 #include "platform/events.h"
@@ -191,9 +189,7 @@ void PlayState::worldDrawLists() {
     // light drew BLACK (the reader's play test, 2026-10-20)
     const int litTraffic = litPerPixel ? 2 : 0;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
-    // THE MIST (`View::mist`, the remaster's): on the shown set's ground
-    view.mist = mistStrength;
-    view.mistGround = worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)].ground;
+    remasterViewMist(view);   // the mist (`backends/remaster/`)
     view.lights.clear();
     if (litPerPixel) {
         float at[3] = {view.cam.eye[0], view.cam.eye[1], view.cam.eye[2]};
@@ -202,36 +198,11 @@ void PlayState::worldDrawLists() {
             at[1] = playerBody.posed.corners.front().y;
             at[2] = playerBody.posed.corners.front().z;
         }
-        // THE EMITTERS' LIGHTS (`o3de/emitterlight.h`, the remaster's), when
-        // on: they light the SET too (mode 3, below), so they are chosen by
-        // the CAMERA - the nearest `kFxSlots` within `kFxView`, faded in over
-        // its last quarter so none pops - and the set's own lights, nearest
-        // the player as before, take the slots left
-        const bool fxPix = fxLight > 0.0f && world_ && world_->drawsEmitterLights();
-        // ...and THE NIGHT (`CityGrades::nightOf`): how much of the set's
-        // painted light stays under them
-        view.setDim = fxPix && omk::cityGrades().active() ? omk::cityGrades().nightOf(worldSet) : 1.0f;
-        if (view.setDim != nightWas) {
-            nightWas = view.setDim;
-            std::printf("frame %ld: the night %.2f for %s - the set's painted light kept under the emitters' "
-                        "lights (`night.txt`)\n", frameNo, static_cast<double>(view.setDim), worldSet.c_str());
-            omk::event("remaster.night", {{"set", worldSet}, {"dim", static_cast<double>(view.setDim)}});
-        }
-        // ...and on a renderer that TILES them (`o3de/lighttiles.h`), every
-        // one within the game's CLIP DISTANCE (the reader, 2026-10-20: "set
-        // it depending of the game distance culling setting"; 200 m at most,
-        // the unlimited clip's), faded over its last fifth - no slots, no cut
-        // (`OMK_NO_TILES=1`, an instrument: the nearest-slots way on a
-        // renderer that tiles - to set Vulkan beside GLES, which does not yet)
-        static const bool noTiles = omk::envFlag("OMK_NO_TILES");
-        const bool tiled = fxPix && world_->tilesLights() && !noTiles;
-        view.relief = tiled ? relief : 0.0f;   // the relief rides the tiled module
-        const float kFxView = tiled ? std::min(20000.0f, static_cast<float>(clipInches)) : 3000.0f;
-        view.points.clear();
-        // the point lights' slots: what the renderer has past four of the
-        // set's own (60 of 64 on Vulkan and the GLES variant - 12 of 16 left
-        // most of a neon street's signs unlit, "as if turned off", 2026-10-20)
-        const int kFxSlots = tiled ? 0 : std::max(0, world_->maxPixelLights() - 4);
+        // THE EMITTERS' LIGHTS (`backends/remaster/`): the night, the relief,
+        // the tiled point lights - and, when they take slots, how many
+        bool fxPix = false;
+        float kFxView = 0.0f;
+        const int kFxSlots = remasterViewLights(view, fxPix, kFxView);
         // (kept from frame to frame: the selection runs every frame)
         static std::vector<std::pair<float, const omk::Light3do*>> near, fx;
         near.clear(); fx.clear();
@@ -254,30 +225,8 @@ void PlayState::worldDrawLists() {
         const auto byDistance = [](const auto& a, const auto& b) { return a.first < b.first; };
         std::sort(near.begin(), near.end(), byDistance);
         std::sort(fx.begin(), fx.end(), byDistance);
-        if (tiled) {
-            for (const auto& [e2, l] : fx) {
-                if (view.points.size() >= static_cast<std::size_t>(omk::kMaxPoints)) break;
-                omk::View::GpuLight g{};
-                for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
-                g.radiusA = l->radiusA; g.radiusB = l->radiusB;
-                g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
-                g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
-                g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
-                g.intensity = l->f32 * std::clamp((kFxView - std::sqrt(e2)) / (0.2f * kFxView), 0.0f, 1.0f);
-                if (g.intensity > 0.0f) view.points.push_back(g);
-            }
-            fx.clear();
-        }
-        // THE CUT, without a pop: a light fades by its distance against the
-        // FIRST ONE LEFT OUT - that distance moves continuously with the
-        // camera, so a light leaving the nearest `kFxSlots` has faded to
-        // nothing by then (ranked by distance alone, they appeared and
-        // vanished as he walked - the reader, 2026-10-20)
         float fxCut = kFxView;
-        if (fx.size() > static_cast<std::size_t>(kFxSlots)) {
-            fxCut = std::min(fxCut, std::sqrt(fx[static_cast<std::size_t>(kFxSlots)].first));
-            fx.resize(static_cast<std::size_t>(kFxSlots));
-        }
+        remasterPointLights(view, fx, kFxView, kFxSlots, fxCut);
         const std::size_t ownSlots = std::min<std::size_t>(static_cast<std::size_t>(omk::View::kOwnGpuLights),
             static_cast<std::size_t>(world_->maxPixelLights()) - fx.size());
         if (near.size() > ownSlots) near.resize(ownSlots);
@@ -303,23 +252,7 @@ void PlayState::worldDrawLists() {
             std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
                         "reach the player, nearest first\n", frameNo, view.lights.size());
         }
-        // ...and the first frame an EMITTER's light is among them (the
-        // remaster's, `o3de/emitterlight.h` - a point light)
-        if (!fxLightsTold) {
-            int points = 0;
-            for (const auto& [d2, l] : near) points += omk::pointLight(*l) ? 1 : 0;
-            // ...or, TILED, those of `View::points` whose reach takes in the player
-            for (const auto& g : view.points) {
-                const float dx = at[0] - g.pos[0], dy = at[1] - g.pos[1], dz = at[2] - g.pos[2];
-                points += dx * dx + dy * dy + dz * dz <= g.radiusA * g.radiusA ? 1 : 0;
-            }
-            if (points > 0) {
-                fxLightsTold = true;
-                std::printf("frame %ld: per-pixel lighting - %d of the %zu are emitters' lights\n",
-                            frameNo, points, view.lights.size());
-                omk::event("remaster.fxlight", {{"frame", frameNo}, {"points", points}});
-            }
-        }
+        remasterLightsTold(view, near, at);   // the first frame an emitter's light is among them
     }
     // ---- THE MAPPED SHADOW's LIGHT (`todo/enhancements.md` 6) --
     //
@@ -1294,53 +1227,15 @@ void PlayState::worldMirror() {
         for (int k = 0; k < 3; ++k) drawn.fogColour[k] = static_cast<std::uint8_t>(y);
         omk::greyClear565(view.clearColour, drawn.clearColour);
     }
-    // THE EMITTERS' LIGHTS ON THE SET (`o3de/emitterlight.h`): under
-    // per-pixel lighting the set's OPAQUE draws take the frame's point
-    // lights on top of their baked colour - mode 3, which skips the set's
-    // own lights (they are in the bake already)
-    if (lighting > 0 && fxLight > 0.0f && world.drawsEmitterLights()) {
-        for (auto& d : draws)
-            if (d.lit == 0 && d.blend == omk::Blend::Opaque && !d.meshPose &&
-                (d.geo == &worldSlots[0].geo || d.geo == &worldSlots[1].geo))
-                d.lit = 3;
-    }
+    remasterLitSet(draws);   // the emitters' lights on the set (`backends/remaster/`)
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
     // (it clears `fb` itself, BEFORE the eyes land in it - the deferred
     // clear here ran AFTER them from 4f6d611 on and left the frame black)
     if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) return;
-    // THE WATER REFLECTION (`todo/remaster.md` A3), when asked for and the
-    // camera is above the shown slot's water; otherwise - and on a backend
-    // without the pass - the frame as it always was
-    const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)];
-    const bool watered = waterStrength > 0.0f &&
-        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, shownSlot.water, waterStrength);
-    if (watered != waterLive) {
-        waterLive = watered;
-        std::printf("frame %ld: the water %s\n", frameNo,
-                    watered ? "REFLECTS - the scene through the camera mirrored in its plane"
-                            : "does not reflect here (no water, the camera below it, or no pass)");
-        omk::event("remaster.water", {{"frame", frameNo}, {"live", watered},
-                                      {"y", static_cast<double>(shownSlot.water.y)}});
-    }
-    // ...and where it does not, the REFLECTING FLOORS (`o3de/floorreflect.h`):
-    // the listed floor's level below the eye with the most of it near, through
-    // the same pass - one reflection a frame
-    omk::WaterPlane floorPlane;
-    if (!watered && floorStrength > 0.0f && shownSlot.floors.any())
-        floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
-    const bool floored = floorPlane.found &&
-        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, floorPlane, floorStrength, &shownSlot.floors.strength);
-    if (floored != floorLive || (floored && floorPlane.y != floorLiveY)) {
-        floorLive = floored;
-        floorLiveY = floorPlane.y;
-        std::printf("frame %ld: the floors %s (y %.0f)\n", frameNo,
-                    floored ? "REFLECT - the scene mirrored in the level below the eye"
-                            : "do not reflect here (none listed near, the water reflecting, or no pass)",
-                    static_cast<double>(floorPlane.y));
-        omk::event("remaster.floors", {{"frame", frameNo}, {"live", floored},
-                                       {"y", static_cast<double>(floorPlane.y)}});
-    }
-    const auto mst = watered || floored ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
+    // THE WATER and the REFLECTING FLOORS (`backends/remaster/`), where they
+    // draw the frame; otherwise the set's own mirror, as the engine draws it
+    const bool reflected = remasterDrawReflected(world, draws, drawn);
+    const auto mst = reflected ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");
     if (mst.active != mirrorLive || (mst.maskPixels > 0 && !mirrorSeen)) {
@@ -1349,7 +1244,7 @@ void PlayState::worldMirror() {
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
                     "%.0f in front)\n", frameNo,
                     mst.active ? "REFLECTING"
-                    : watered || floored ? "SET ASIDE - the water or a floor reflects instead (one reflection a frame)"
+                    : reflected ? "SET ASIDE - the water or a floor reflects instead (one reflection a frame)"
                     : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
                                              : "out of view - the camera is behind it",
                     mst.native ? " [native: the two passes]" : "",

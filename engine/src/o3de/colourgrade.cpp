@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The city grades - see colourgrade.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "o3de/colourgrade.h"
 
 #include "platform/datafs.h"
@@ -144,3 +147,5 @@ CityGrades& cityGrades() {
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

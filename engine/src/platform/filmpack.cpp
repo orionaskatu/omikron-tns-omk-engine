@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The film pack - see filmpack.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "platform/filmpack.h"
 
 #include "platform/datafs.h"
@@ -61,3 +64,5 @@ FilmPack& filmPack() {
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

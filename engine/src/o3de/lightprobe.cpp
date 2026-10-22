@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "o3de/lightprobe.h"
 
 #include <algorithm>
@@ -157,3 +160,5 @@ void LightProbes::tint(const float p[3], float s, float base, float out[3]) cons
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

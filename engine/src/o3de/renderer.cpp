@@ -214,6 +214,9 @@ void runPass(Renderer& r, const View& v, std::span<const Draw> ds) {
 
 }  // namespace
 
+// THE WATER and the REFLECTING FLOORS' helpers (`todo/remaster.md` A3, A4's
+// mist ground): the remaster's alone - compiled only with OMK_REMASTER
+#if OMK_REMASTER
 WaterPlane waterPlane(const Geometry& g) {
     WaterPlane out;
     std::map<int, std::pair<double, long>> byHeight;   // y / 4 -> area, triangles
@@ -395,6 +398,7 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     }
     return r.drawWaterScene(v, rv, scene, above, water, strength, wp.y);
 }
+#endif  // OMK_REMASTER
 
 MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
                            std::span<const Texture> tex, const View& v,

@@ -291,6 +291,10 @@ build/omk-play ../gamedata ../tables --save ../traces/save-appart.bin --area 0 \
   dither and the shimmer are FIDELITY, on by default — the original's hardware
   device filtered and dithered. Before building an enhancement, check whether
   the game already does it and the port dropped it. `todo/enhancements.md`.
+* **Remaster code lives in remaster files** (OMK_REMASTER, `todo/remaster.md`
+  "The remaster switch"): its modules, `engine/backends/remaster/`, the GLES
+  `.inl`; a shared file gets a one-line call stubbed in
+  `playremaster_off.cpp`. `verify.py: engine: remaster switch` holds it.
 * The view is not letterboxed by default (`--letterbox` for laying a shot
   beside a dialogue capture).
 * Instruments: `--flicker <dir>` (but read the log first), `--keys`/`--type`/

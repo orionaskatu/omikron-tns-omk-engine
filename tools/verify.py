@@ -74,6 +74,17 @@ def _play_text(eng):
 _SKIP_ANSWERS = {("skipped",), ("no vulkan",), ("no gles_probe",)}
 
 
+def _engine_src(*rels):
+    """The text of these engine sources, together. The remaster switch
+    (`engine: remaster switch`) moved code out of the shared files into the
+    remaster's own (`backends/remaster/`, the GLES `.inl`): a source fact a
+    check asserts about the remaster is read across the shared file and the
+    remaster file it went to, so the check reads the same facts as before
+    and a fact missing from both still fails."""
+    eng = os.path.join(ROOT, "engine")
+    return "\n".join(open(os.path.join(eng, rel)).read() for rel in rels)
+
+
 def _or_skip(got, want):
     return got if got in _SKIP_ANSWERS else want
 
@@ -31575,7 +31586,8 @@ def c_engine_texture_pack():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     po = open(os.path.join(eng, "src", "app", "playoptions.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -31583,9 +31595,12 @@ def c_engine_texture_pack():
               'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
               "texturePack" not in max_body,
               '"--texture-pack"' in po,
-              all(b.count("pack.replacements(") == 1 and
-                  re.search(r"if \(pack\.active\(\)\) \{[^}]*pack\.replacements\(", b) is not None
-                  for b in (vk, gl)))
+              vk.count("pack.replacements(") == 1 and
+              re.search(r"if \(pack\.active\(\)\) \{[^}]*pack\.replacements\(", vk) is not None and
+              # GLES since the remaster switch: the same gate as `packOn` (`packActive`)
+              # and the pack's call as `packDecode`, its body in the remaster's `.inl`
+              gl.count("texturePack().replacements(") == 1 and
+              re.search(r"if \(packOn\) \{[^}]*packDecode\(", gl) is not None)
 
     for target in ("build/texpack_tool",):
         mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
@@ -31832,7 +31847,8 @@ def c_engine_bloom_and_grade():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     src_ok = (bool(re.search(r"float\s+bloom\s*=\s*0\.0f;", sh)) and bool(re.search(r"std::string\s+grade;", sh)),
@@ -32071,7 +32087,8 @@ def c_engine_water_reflection():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     src_ok = (bool(re.search(r"float\s+water\s*=\s*0\.0f;", sh)),
@@ -32243,7 +32260,8 @@ def c_engine_body_light():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     src_ok = (bool(re.search(r"float\s+bodyLight\s*=\s*0\.0f;", sh)),
@@ -32398,7 +32416,8 @@ def c_engine_emitter_light():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     src_ok = (bool(re.search(r"float\s+fxLight\s*=\s*0\.0f;", sh)),
@@ -32587,7 +32606,7 @@ def c_engine_relief():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -32769,7 +32788,7 @@ def c_engine_floors():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
@@ -32886,7 +32905,7 @@ def c_engine_mist():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -32999,7 +33018,7 @@ def c_engine_upscale():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -33167,9 +33186,9 @@ def c_engine_smooth_bodies():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
-    pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
-    pl = open(os.path.join(eng, "backends", "sdl", "playframe_control_parts.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    pc = _engine_src("backends/sdl/playstate.cpp", "backends/remaster/playremaster_bodies.cpp")
+    pl = _engine_src("backends/sdl/playframe_control_parts.cpp", "backends/remaster/playremaster_bodies.cpp")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("smoothBodies = smoothFlag"):]
@@ -33374,7 +33393,7 @@ def c_engine_font_pack():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     tx = open(os.path.join(eng, "src", "ui", "text.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     run_body = tx[tx.index("int TextLayout::drawRun"):]
@@ -33514,10 +33533,12 @@ def c_engine_gles_upscale():
     fr = omkpaths.data_root()
     if not os.path.isdir(eng):
         return ("skipped",), ("skipped",), "engine/ absent"
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     pg = open(os.path.join(eng, "backends", "sdl", "playgpu_gles.cpp")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
-    src_ok = ("gr->setUpscale(upscale)" in pg,
+    src_ok = ("remasterConfigure(*gr)" in pg and "r.setUpscale(upscale)" in
+              _engine_src("backends/remaster/playremaster_world.cpp"),
               "upscale_ > 1.0f ? rcasFbo_ : fbo_" in gl,
               "glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));" in gl,
               "omk::kFsrRcasStops" in gl and "omk::fsrRcasCon(omk::kFsrRcasStops)" in vk and "kRcasStops =" not in vk)
@@ -33626,15 +33647,18 @@ def c_engine_film_pack():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     pp = open(os.path.join(eng, "backends", "sdl", "playsetup_play.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
-    pick = pp[pp.index("omk::filmPack().find"):]
+    # the player asks the pack first (`remasterOpenFilm`, the remaster's own
+    # file since the switch), and smooths only the pack's film
+    pick = pp[pp.index("remasterOpenFilm(*real, mov, name)"):]
     pick = pick[:pick.index("continue;")]
     src_ok = (bool(re.search(r"std::string\s+filmPack;", sh)),
               'kRemaster, "filmpack"' in sc and 'kEnhancements, "filmpack"' not in sc,
               "filmPack" not in max_body,
-              "mov.setSmooth(true)" in pick and pick.index("mov.open(hd)") < pick.index("mov.open(*real)"),
+              "mov.open(*real)" in pick and (lambda rw: rw.index("mov.open(hd)") < rw.index("mov.setSmooth(true)"))(
+                  _engine_src("backends/remaster/playremaster_world.cpp")),
               'preset + "/films/pack"' in ps)
     mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
     tool = os.path.join(eng, "build", "texpack_tool")
@@ -33773,9 +33797,10 @@ def c_engine_block_formats():
     if not os.path.isdir(eng):
         return ("skipped",), ("skipped",), "engine/ absent"
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
-    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
     tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     src_ok = ("enable.textureCompressionBC = VK_TRUE; bcOk_ = true;" in vk and
               "omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);" in vk,
               "GL_KHR_texture_compression_astc_ldr" in gl and
@@ -33936,7 +33961,7 @@ def c_engine_preload():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
@@ -33945,7 +33970,8 @@ def c_engine_preload():
     src_ok = (bool(re.search(r"float\s+preload\s*=\s*0\.0f;", sh)),
               'kRemaster, "preload"' in sc and 'kEnhancements, "preload"' not in sc,
               "preload" not in max_body and "!preset.empty() ? 25.0f : 0.0f" in ps,
-              ask.index("preloads.find(stem)") < ask.index("std::make_shared<SetLoad>()"),
+              ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
+              "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
               "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk)
     mk = subprocess.run(["make", "-s", "build/door_census", "play"], cwd=eng, capture_output=True, text=True)
     census, play = os.path.join(eng, "build", "door_census"), os.path.join(eng, "build", "omk-play")
@@ -34002,6 +34028,89 @@ def c_engine_preload():
         "brings fewer than its 7; the same frame with and without"
 
 
+def c_engine_remaster_switch():
+    r"""THE REMASTER SWITCH (`todo/remaster.md`, the reader's "do the OMK_REMASTER
+    switch ... keep remaster code in another files as much as possible",
+    2026-10-23): `REMASTER=1` (the Makefile's default, and Android's) defines
+    OMK_REMASTER; the Vita, the 3DS, the classic Mac and the PowerPC builds
+    never do. The remaster's code lives in its own files - its modules
+    (`src/o3de/texpack.cpp` and the rest, compiled EMPTY without it),
+    `backends/remaster/` (the frontend's half) and the GLES backend's two
+    `.inl` - and the shared files keep thin calls that
+    `backends/sdl/playremaster_off.cpp` stubs. `make noremaster` builds the
+    viewers without it (software and GLES; Vulkan, desktop-only and the
+    remaster's through and through, is left out).
+    Parts:
+      1. the build: `make noremaster`'s two viewers, linked;
+      2. NOTHING of the remaster in them: none of a list of its symbols (the
+         packs, the KTX2 and PNG readers, the smoothing, the light probes, the
+         surface lights, the FSR shaders, the preload) in either binary - and
+         every one of them IN the development build's (the list cannot pass by
+         naming what never existed);
+      3. ORIGINAL MODE UNCHANGED: Anekbah's street with its crowd, 60 frames,
+         the same bytes from the development build and from `noremaster` -
+         software, and GLES on the readback's path (`OMK_NO_GPU_PRESENT`);
+      4. a remaster option on a build without it SAID ("remaster: not
+         built"), never silently dropped.
+    SHOWN TO FAIL (2026-10-23), one at a time: `uiPack().attach` back in
+    `surface.cpp` without its `#if` - `make noremaster` does not link (part
+    1); the set's own lights (`readLights`) moved behind the switch by mistake
+    - both frames differ (part 3).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "play", "play-gles", "noremaster"], cwd=eng, capture_output=True, text=True)
+    bins = {"dev": os.path.join(eng, "build", "omk-play"), "devgl": os.path.join(eng, "build", "omk-play-gles"),
+            "off": os.path.join(eng, "build", "noremaster", "omk-play"),
+            "offgl": os.path.join(eng, "build", "noremaster", "omk-play-gles")}
+    built = tuple(os.path.exists(b) for b in bins.values())
+    if mk.returncode != 0 or not all(built):
+        return ("build", built), ("built", (True,) * 4), mk.stderr[-400:]
+    names = ["TexturePack", "UiPack", "FontPack", "FilmPack", "readKtx2", "decodePng", "smoothBody",
+             "LightProbes5build", "surfaceLights", "drawWithWater", "waterPlane", "cityGrades", "phasePreload",
+             "fsrPass", "runPost"]
+    def syms(b):
+        out = subprocess.run(["nm", "-j", b], capture_output=True, text=True).stdout
+        return {n for n in names if n in out}
+    devHas, offHas, offGlHas = syms(bins["devgl"]), syms(bins["off"]), syms(bins["offgl"])
+    # `phasePreload` and `fsrPass` / `runPost` keep their names as STUBS in the
+    # build without: what must be gone is the code behind them, so those three
+    # are asked of the development build only
+    stubs = {"phasePreload", "fsrPass", "runPost"}
+    symbols = (sorted(set(names) - devHas), sorted((offHas | offGlHas) - stubs))
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(name, b, *extra, env=None):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([b, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--res", "640x480", "--frames", "60", "--filter", "nearest", "--dump", out] + list(extra),
+                               capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, **(env or {})))
+            return (open(out, "rb").read() if os.path.exists(out) else None), r.stdout
+        sw_dev, _ = frame("swdev", bins["dev"], "--software", env={"SDL_VIDEODRIVER": "dummy"})
+        sw_off, _ = frame("swoff", bins["off"], "--software", env={"SDL_VIDEODRIVER": "dummy"})
+        gl_dev, _ = frame("gldev", bins["devgl"], env={"OMK_NO_GPU_PRESENT": "1"})
+        gl_off, _ = frame("gloff", bins["offgl"], env={"OMK_NO_GPU_PRESENT": "1"})
+        _, said = frame("said", bins["off"], "--software", "--remaster", tmp, env={"SDL_VIDEODRIVER": "dummy"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    same = (sw_dev is not None and sw_dev == sw_off, gl_dev is not None and gl_dev == gl_off)
+    told = "remaster: not built" in said
+    sizes = {k: os.path.getsize(v) for k, v in bins.items()}
+    print(f"        sizes: software {sizes['dev']} -> {sizes['off']}, GLES {sizes['devgl']} -> {sizes['offgl']}; "
+          f"symbols missing from the development build {symbols[0]}, left without the remaster {symbols[1]}; "
+          f"the same frames (software, GLES) {same}; said {told}")
+    return (built, symbols, same, told), ((True,) * 4, ([], []), (True, True), True), \
+        "make noremaster's two viewers built; none of the remaster's symbols in them, every one in the " \
+        "development build; original mode the same bytes with and without it, software and GLES; a " \
+        "remaster option on a build without it said"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -34056,7 +34165,7 @@ def c_engine_ao():
         return ("skipped",), ("skipped",), "engine/ absent"
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -48003,7 +48112,7 @@ def c_licence_headers():
     roots = [("tools", (".py",)),
              ("engine/src", (".h", ".cpp", ".c")),
              ("engine/tools", (".h", ".cpp", ".c")),
-             ("engine/backends", (".h", ".cpp", ".c")),
+             ("engine/backends", (".h", ".cpp", ".c", ".inl")),
              ("scripts", (".sh",))]
     missing, authored = [], 0
     for rel, exts in roots:
@@ -48097,8 +48206,12 @@ def c_licence_headers():
     # rgbcx.h, rgbcx_table4.h (MIT or public domain), tex_encode alone
     # 667: + `engine/backends/sdl/playpreload.cpp` and `engine/tools/door_census.cpp`
     # (the preload radius)
+    # 674: the remaster switch - + `engine/backends/remaster/playremaster_{setup,
+    # world,bodies,draw}.cpp` and `backends/sdl/playremaster_off.cpp` (the
+    # preload MOVED there, not added), and the walk now takes `.inl` under
+    # engine/backends: `backends/gles/glesrender_remaster{,_shaders}.inl`
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (667, [], 10, []), \
+           (674, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50909,7 +51022,8 @@ SLOW = [
     ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
     ("engine: film pack",    c_engine_film_pack,    "todo/remaster.md Tier E; platform/filmpack.h"),
     ("engine: block formats", c_engine_block_formats, "todo/remaster.md; formats/ktx2.h; o3de/texpack.h"),
-    ("engine: preload",      c_engine_preload,      "todo/remaster.md; backends/sdl/playpreload.cpp"),
+    ("engine: preload",      c_engine_preload,      "todo/remaster.md; backends/remaster/playpreload.cpp"),
+    ("engine: remaster switch", c_engine_remaster_switch, "todo/remaster.md; engine/Makefile REMASTER"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

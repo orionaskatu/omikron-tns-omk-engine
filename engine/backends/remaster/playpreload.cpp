@@ -17,7 +17,9 @@
 // dropping the same set. `askSet` takes a prepared set instead of starting
 // one. At most `kHeld` are held, the nearest first: a city's tunnel opens on
 // the next city.
-#include "playstate.h"
+#if OMK_REMASTER
+
+#include "../sdl/playstate.h"
 
 #include "platform/events.h"
 
@@ -30,6 +32,24 @@ constexpr std::size_t kHeld = 6;
 constexpr int kEvery = 10;                  // frames between distance passes
 constexpr int kUploadsPerFrame = 3;         // textures the renderer takes a frame
 }  // namespace
+
+// `askSet`'s first question: the set the preload radius prepared for this
+// area, its job done or still running - `integrateSet` waits on it exactly
+// as on one started there. -> whether it was taken.
+bool PlayState::remasterTakePreload(int slot, const std::string& stem, int area, long frame) {
+    const auto it = preloads.find(stem);
+    if (it == preloads.end() || it->second.area != area || !it->second.L) return false;
+    auto P = it->second.L;
+    preloads.erase(it);   // its pins stay until the next refresh: the pool takes them first
+    P->slot = slot;
+    P->askedFrame = frame;
+    setLoads[slot] = P;
+    ++preloadTaken;
+    std::printf("preload: %s (AREA %d) taken - %s\n", stem.c_str(), area,
+                P->job && !P->job->ready() ? "still preparing, waited for" : "prepared ahead");
+    omk::event("preload.take", {{"set", stem}, {"area", area}, {"ready", !P->job || P->job->ready()}});
+    return true;
+}
 
 void PlayState::preloadPin() {
     std::vector<omk::Texture> pins;
@@ -118,3 +138,5 @@ void PlayState::phasePreload() {
         }
     if (pinsChanged) preloadPin();
 }
+
+#endif  // OMK_REMASTER

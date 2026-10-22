@@ -106,12 +106,7 @@ void PlayState::gpuOpenWindow() {
             if (texFilter > 0) gr->setTextureFilter(texFilter);
             if (texAniso > 1) gr->setAnisotropy(texAniso);
             if (ssaa > 1) gr->setSupersample(ssaa);
-            if (upscale > 1.0f) gr->setUpscale(upscale);   // the remaster's, in the supersample's place
-            if (bloomStrength > 0.0f) gr->setBloom(bloomStrength);   // the remaster's
-            if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
-                gr->setWater(std::max(waterStrength, floorStrength));
-            if (bodyLight > 0.0f) gr->setBodyTint(true);
-            if (fxLight > 0.0f) gr->setEmitterLights(true);
+            remasterConfigure(*gr);   // the remaster's (`backends/remaster/`)
             // per-pixel lighting and the mapped shadow: their programs are
             // linked at `init` only when asked, and what it could build is
             // what `drawsPixelLights` / `drawsShadowMap` answer later

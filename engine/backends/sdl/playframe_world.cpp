@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME'S WORLD PHASE - whoever is on screen, and the world when no screen is over it.
 // Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
-#include "o3de/emitterlight.h"
 #include "platform/events.h"
 #include "playframe.h"
 #include "platform/env.h"
@@ -42,22 +41,7 @@ int PlayState::phaseWorld() {
                 if (bound > 0)
                     std::printf("world: frame %ld  %s binds %d ambient emitters into %s\n",
                                 frameNo, ws.stem.c_str(), bound, session.scene().file().c_str());
-                // THE EMITTERS' LIGHT (`o3de/emitterlight.h`, the remaster's):
-                // the set's table rebuilt as its own lights plus a point light
-                // a glowing emitter, so every path that lights a body takes them
-                if (fxLight > 0.0f && world_ && world_->drawsEmitterLights()) {
-                    omk::EmitterLightCount n;
-                    const auto fl = omk::emitterLights(
-                        session.scene().effects(), [&](int id) { return sprites.tab.texOf(id); }, fxLight, &n);
-                    ws.lights.resize(ws.setLights);
-                    ws.lights.insert(ws.lights.end(), ws.fxSurface.begin(), ws.fxSurface.end());
-                    ws.lights.insert(ws.lights.end(), fl.begin(), fl.end());
-                    std::printf("fx light: %s - %d glows and %d flames of %d emitters light the bodies "
-                                "(%zu set lights)\n", ws.stem.c_str(), n.glows, n.flames,
-                                n.glows + n.flames + n.dark, ws.setLights);
-                    omk::event("world.fxlights", {{"set", ws.stem}, {"glows", n.glows}, {"flames", n.flames},
-                                                  {"dark", n.dark}});
-                }
+                remasterEmitterLights(ws);   // the emitters' light (`backends/remaster/`)
                 break;
             }
         };

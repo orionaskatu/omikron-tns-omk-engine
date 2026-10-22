@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The rounded bodies - see smoothbody.h. Not a port of anything in the original.
+// (the remaster's: compiled empty without OMK_REMASTER - `engine/Makefile`)
+#if OMK_REMASTER
+
 #include "o3de/smoothbody.h"
 
 #include <algorithm>
@@ -308,3 +311,5 @@ SmoothStats smoothBody(Geometry& g, std::size_t faceFrom, std::size_t faceTo, in
 }
 
 }  // namespace omk
+
+#endif  // OMK_REMASTER

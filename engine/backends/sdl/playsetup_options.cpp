@@ -4,7 +4,6 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
-#include "o3de/texpack.h"
 
 int PlayState::setupOptions(int argc, char** argv) {
     // THE FLAGS (`todo/play-split.md` S2): `omk::PlayOptions`, parsed in
@@ -82,7 +81,7 @@ int PlayState::setupOptions(int argc, char** argv) {
     // both harder to read than either is worth.
     if (!scene.empty()) {
         // ...and so the TEXTURE PACK too comes from its flag alone here
-        if (!texturePackFlag.empty()) omk::openTexturePack(texturePackFlag);
+        remasterSceneViewer();
         return sceneViewer(dataRoot, scene, camIndex, haveEye ? eyeA : nullptr,
                            haveAt ? atA : nullptr, fovA, letterbox, frames, dump,
                            startVulkan, noDelay, aaFlag < 0 ? 0 : aaFlag,

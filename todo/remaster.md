@@ -1344,6 +1344,86 @@ airlock walked end to end in a check; the memory held, measured
 door before `--stand` moves him, which prepares and drops two sets once -
 harmless, said.
 
+## The remaster switch, OMK_REMASTER: as built (2026-10-23)
+
+The reader's "how much independent are the two modes ... could you evaluate
+if the remaster code has already a cost for low-end devices on original
+mode?", then "do the OMK_REMASTER switch first. Would it help to keep
+remaster code in another files as much as possible?" (yes: option B, the
+code moved into files of its own; the VR switch's pattern).
+
+**The cost measured first** (2026-10-22, M3, Anekbah's street with its
+crowd, 300 frames at 640x480, original mode): against the engine before the
+remaster (`3022b073`, a worktree build), the software renderer 10.2 -> 9.7
+ms a frame (noise), GLES 2.74-2.92 -> 2.80-2.95 s (noise), peak memory +1
+MB; the binaries +17% (2.83 -> 3.32 MB, the Vulkan build) and +12% (GLES).
+No runtime cost - every feature an early return when off - but the code was
+compiled into every port: the Vita, the 3DS, the classic Mac and PowerPC
+builds glob `src/*/*.cpp` and `backends/sdl/*.cpp`. ~3,450 lines in the
+remaster's own files and ~2,200 inside shared ones (an inventory, 2026-10-22).
+
+**As built**:
+
+* `engine/Makefile`: `REMASTER ?= 1` defines OMK_REMASTER (Android's
+  CMake too); the Vita, 3DS, classic Mac and PowerPC build files never do.
+  The object tree's stamp holds VR and REMASTER together. Without it the
+  remaster's own tools are not built and Vulkan is left out (desktop-only,
+  and the remaster's through and through). `make noremaster` builds the
+  software and GLES viewers without it into `build/noremaster/`.
+* The modules (`src/o3de/{texpack,normalmap,emitterlight,lightprobe,
+  lighttiles,floorreflect,smoothbody,colourgrade}`, `src/ui/{uipack,
+  fontpack}`, `src/platform/{filmpack,pngread}`, `src/formats/ktx2`)
+  compile EMPTY without it, `src/vr/`'s way; their headers stay (types
+  only cost nothing).
+* The frontend's half moved to `engine/backends/remaster/` (compiled by
+  this Makefile and Android's alone): `playremaster_setup.cpp` (the packs,
+  strengths and preset - the 215-line block of `playsetup_session.cpp`),
+  `playremaster_world.cpp` (a set's water, floors, probes and glows; the
+  emitters' light table; the grade; the grey alias; the films; a GPU
+  renderer's requests), `playremaster_bodies.cpp` (the smoothing, the body
+  tint), `playremaster_draw.cpp` (the mist, the emitters' point lights with
+  the night and the relief, the water and floor reflections), and
+  `playpreload.cpp`. The shared files keep one-line calls
+  (`remasterSetup()`, `remasterPrepareSet(L)`, `remasterDrawReflected(...)`
+  ...), `backends/sdl/playremaster_off.cpp` stubs them (`playvr_off.cpp`'s
+  pattern) - the per-pixel lighting stub reproduces exactly what the code
+  did with the emitters' light off.
+* GLES: its remaster code in two `.inl` included by `glesrender.cpp` under
+  OMK_REMASTER only - `glesrender_remaster_shaders.inl` (the post pass, the
+  scene programs' variants, FSR) at namespace scope, `glesrender_remaster.inl`
+  (`runPost`, the water pass, `fsrPass`, the ASTC upload, `setGrade`, and
+  the hooks `remasterSources` / `remasterProgramUniforms` /
+  `remasterInitUpscale` / `remasterInitCodecs` / `packActive` / `packDecode`)
+  at the file's end; its stubs beside the include. The remaster's overrides
+  and fields in the class are under `#if`.
+* `src/`: the interface pack's two calls (`surface.cpp`) and the font
+  pack's (`text.cpp`) under `#if`; `TextLayout::drawGlyphHd` moved into
+  `fontpack.cpp`; the water helpers of `renderer.cpp` (`waterPlane`,
+  `groundLevel`, `drawWithWater`) under `#if` - and no longer computed at
+  every set load on a port.
+
+**Measured after** (`verify.py: engine: remaster switch`): the software
+viewer 3.31 -> 2.78 MB without it, GLES 3.20 -> 2.91 MB; none of the
+remaster's symbols in either (and every one in the development build);
+Anekbah's street THE SAME BYTES with and without, software and GLES; a
+remaster option on a build without it said. Shown to fail: `uiPack().attach`
+back without its `#if` - `make noremaster` does not link; the set's own
+lights wrongly moved behind the switch - both frames differ. The thirty
+checks the move could reach green (every remaster check, the GLES ones, the
+area load, the city return, the Vita, 3DS and hardened builds); the source
+scans now read a shared file together with the remaster file its facts
+went to (`verify.py` `_engine_src`).
+
+**Not checked here**: the classic Mac build (no Retro68 on this machine)
+and the Android build (no NDK) - their build files were changed to match.
+**Still inline in shared code**: GLES's `begin` / `submit` set the water,
+tint and emitter uniforms (a few dozen lines on plain data, no remaster
+call); `View` / `Draw` / `WorldSlot` keep the remaster's fields; the
+settings and the command line parse the remaster's options everywhere (so
+a build without it can SAY it ignores them). Vulkan (desktop) is unsplit.
+Also found and fixed on the way: the Vita's hand-written source list and a
+3DS type deduction, both broken by the 2026-10-22 commits (`471971ac`).
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

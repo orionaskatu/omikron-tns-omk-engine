@@ -767,6 +767,30 @@ struct PlayState {
     int preloadDoorsKey[2] = {-2, -2};
     long preloadTaken{}, preloadMade{};
     void phasePreload();
+    // ---- THE REMASTER (`backends/remaster/`; empty stubs in
+    // `backends/sdl/playremaster_off.cpp` for a build without OMK_REMASTER)
+    void remasterSetup();                          // the packs, strengths, preset
+    void remasterPrepareSet(SetLoad& L);           // a set's water, floors, probes, glows
+    void remasterSmoothModel(CharModel& m, const std::string& name);
+    void remasterSmoothPlayer();
+    bool remasterTakePreload(int slot, const std::string& stem, int area, long frame);
+    void remasterSceneViewer();                    // the scene viewer's texture pack
+    void remasterEmitterLights(WorldSlot& ws);     // a set's table: its lights, glows, flames
+    void remasterGrade();                          // the city grade for the set underfoot
+    void remasterAliasGrey(const omk::Texture& colour, const omk::Texture& grey);
+    void remasterConfigure(omk::Renderer& r);      // a GPU renderer's remaster requests
+    // the draw (`backends/remaster/playremaster_draw.cpp`)
+    // the intro film's upscaled copy, opened into `mov` (smoothed) - false: none
+    bool remasterOpenFilm(const std::string& real, omk::Movie& mov, const char* name);
+    void remasterViewMist(omk::View& view);
+    int  remasterViewLights(omk::View& view, bool& fxPix, float& kFxView);
+    void remasterPointLights(omk::View& view, std::vector<std::pair<float, const omk::Light3do*>>& fx,
+                             float kFxView, int kFxSlots, float& fxCut);
+    void remasterLightsTold(const omk::View& view, const std::vector<std::pair<float, const omk::Light3do*>>& near,
+                            const float at[3]);
+    void remasterLitSet(std::vector<omk::Draw>& draws);
+    bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> draws, const omk::View& drawn);
+    bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures
     void preloadPin();
     std::string slotAsked[2]{};

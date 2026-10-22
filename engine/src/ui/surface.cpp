@@ -3,6 +3,7 @@
 #include "ui/surface.h"
 #include "platform/threads.h"
 #include "ui/overlay.h"
+#include "ui/uipack.h"
 
 #include <cmath>
 #include <functional>
@@ -19,7 +20,8 @@ using omk::le::u32;
 
 }  // namespace
 
-Surface surfaceFromBmp(std::span<const std::byte> d) {
+namespace {
+Surface decodeBmp(std::span<const std::byte> d) {
     Surface s;
     if (d.size() < 54 || static_cast<char>(d[0]) != 'B' || static_cast<char>(d[1]) != 'M')
         return s;
@@ -80,6 +82,15 @@ Surface surfaceFromBmp(std::span<const std::byte> d) {
     }
     return s;
 }
+}  // namespace
+
+Surface surfaceFromBmp(std::span<const std::byte> d) {
+    Surface s = decodeBmp(d);
+    // THE INTERFACE PACK (`ui/uipack.h`): noted when the pack has an HD
+    // version of exactly this bitmap; nothing when no pack is open
+    uiPack().attach(s);
+    return s;
+}
 
 namespace {
 
@@ -104,6 +115,19 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
 
     const bool keySrc  = (flags & kBltKeySrc)  != 0;
     const bool keyDest = (flags & kBltKeyDest) != 0;
+
+    // ---- THE INTERFACE PACK (`ui/uipack.h`, the remaster's) --------------
+    // An ENLARGING blit of a bitmap the pack has an HD version of draws from
+    // that, its rectangle scaled by the factor - the same blit, a finer
+    // source. Its key is the original's (0), so a key-source blit with any
+    // other key keeps the original. The HD surface is not noted, so this
+    // recurses once.
+    if ((dw > sw || dh > sh) && (!keySrc || srcKey == 0))
+        if (const auto hd = uiPack().find(src)) {
+            const int k = hd->w / src.w;
+            return blt(dst, dr, *hd, Rect{sr.left * k, sr.top * k, sr.right * k, sr.bottom * k},
+                       flags, srcKey, dstKey, filter);
+        }
 
     // ---- THE INTERFACE SCALING ENHANCEMENT (surface.h) -------------------
     //

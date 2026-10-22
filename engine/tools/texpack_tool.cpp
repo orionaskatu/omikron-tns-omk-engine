@@ -68,6 +68,8 @@
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
+#include "ui/surface.h"
+#include "ui/uipack.h"
 
 #include <algorithm>
 #include <array>
@@ -108,6 +110,50 @@ std::vector<std::pair<fs::path, fs::path>> modelsWithTextures(const std::string&
             if (fs::exists(c)) { out.emplace_back(m, c); break; }
         }
     return out;
+}
+
+// THE INTERFACE PACK's keys (`ui/uipack.h`): every BMP the interface loads,
+// as `surfaceFromBmp` decodes it - "<key> <path> <w>x<h>", the key the
+// engine's `uiKey`, so `tools/omktexpack.py ui` names its files by the
+// engine's own hash rather than a re-derivation of it
+int uikeys(const std::string& data) {
+    omk::DataFs fs(data);
+    long n = 0;
+    for (const char* dir : {"I2D/bitmaps", "IMAGES", "IMAGES/French", "FONTS"})
+        for (const auto& path : fs.list(dir, ".bmp")) {
+            const auto s = omk::surfaceFromBmp(omk::DataFs::readPath(path));
+            if (!s.valid()) continue;
+            char key[17];
+            std::snprintf(key, sizeof key, "%016llx", static_cast<unsigned long long>(omk::uiKey(s)));
+            std::printf("%s %s %dx%d\n", key, fs::relative(path, data).generic_string().c_str(), s.w, s.h);
+            ++n;
+        }
+    std::fprintf(stderr, "%ld bitmaps\n", n);
+    return n ? 0 : 1;
+}
+
+// ...and its effect, without the viewer: the bitmap `rel` blitted whole into
+// a W x H surface - the interface's own stretch (`blt`, key 0, filter 1) -
+// with the pack `pack` open ("-": none). Writes the 565 frame to `out` and
+// prints "@uiblit hd <0|1> drawn <n>"
+int uiblit(char** argv) {
+    const std::string data = argv[2], pack = argv[3], rel = argv[4], out = argv[7];
+    const int w = std::atoi(argv[5]), h = std::atoi(argv[6]);
+    if (pack != "-" && !omk::uiPack().open(pack)) return 1;
+    omk::DataFs fs(data);
+    const auto at = fs.resolve(rel);
+    if (!at || w <= 0 || h <= 0) return 1;
+    const auto src = omk::surfaceFromBmp(omk::DataFs::readPath(*at));
+    if (!src.valid()) return 1;
+    omk::Surface dst(w, h, 0x07E0);   // green: a keyed texel shows it through
+    omk::blt(dst, omk::Rect{0, 0, w, h}, src, omk::Rect{0, 0, src.w, src.h}, omk::kBltKeySrc, 0, 0, 1);
+    std::FILE* f = std::fopen(out.c_str(), "wb");
+    if (!f) return 1;
+    std::fwrite(dst.px.data(), 2, dst.px.size(), f);
+    std::fclose(f);
+    const auto st = omk::uiPack().stats();
+    std::printf("@uiblit hd %d drawn %zu\n", st.drawn > 0 ? 1 : 0, st.drawn);
+    return 0;
 }
 
 int keys(const std::string& data) {
@@ -503,6 +549,8 @@ int cube(const std::string& path) {
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     if (mode == "keys" && argc == 3) return keys(argv[2]);
+    if (mode == "uikeys" && argc == 3) return uikeys(argv[2]);
+    if (mode == "uiblit" && argc == 8) return uiblit(argv);
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
@@ -526,6 +574,7 @@ int main(int argc, char** argv) {
                          "       | probe <model.3DO> ... | lights <pack> <model.3DO>\n"
                          "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
                          "       | islands <gamedata> <outdir> | floors <model.3DO> | open <pack>\n"
+                         "       | uikeys <gamedata> | uiblit <gamedata> <uipack|-> <file.bmp> <w> <h> <out.raw>\n"
                          "       (the header says what each answers)\n");
     return 2;
 }

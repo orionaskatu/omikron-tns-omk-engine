@@ -81,6 +81,7 @@
 #include "platform/frontend.h"
 #include "ui/overlay.h"
 #include "ui/hudbar.h"
+#include "ui/uipack.h"
 #include "ui/iamtext.h"
 #include "ui/options.h"
 #include "ui/radar.h"

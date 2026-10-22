@@ -33225,6 +33225,114 @@ def c_engine_smooth_bodies():
         "and nothing flung; in Qalisar's bar the models split, the frame moves, and a skipped model stays as it is"
 
 
+def c_engine_ui_pack():
+    r"""THE INTERFACE PACK - the remaster's Tier E (`todo/remaster.md`),
+    `[Remaster] uipack = DIR` / `--ui-pack DIR`, the `--remaster` preset's
+    `ui/pack` when there is one; OFF unless named. Every backend (the 2D is
+    the CPU's): a bitmap `surfaceFromBmp` loads is noted when the pack has its
+    key (`uiKey`, FNV-1a over the 565 bitmap - `texpack_tool uikeys` hands
+    the tool the engine's own), and `blt`, ENLARGING it, draws from the HD
+    version, the rectangle scaled. NOT A PORT, no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the note in `surfaceFromBmp`, the HD draw in `blt` behind an
+         enlarging blit;
+      2. `uikeys` over the shipped data: 56 bitmaps, 52 distinct (four are
+         another's bytes);
+      3. a pack MADE HERE, one file: the menus' sheet's (`sneak.bmp`) key, the sheet 4x in
+         one colour (magenta) with alpha 0 exactly where it is keyed, blitted
+         to 2560x1920 by `texpack_tool uiblit` (the interface's `blt`, key
+         source, filter 1): with the pack every drawn pixel is magenta and
+         the DRAWN SET is the original's, texel for texel (the key's
+         silhouette kept); without it, no magenta;
+      4. the real pack where `omk.conf`'s `pack` has one (`ui/pack`): the
+         same sheet drawn from it (`@uiblit hd 1`).
+    SHOWN TO FAIL (2026-10-22): `blt`'s HD draw off - hd 0, no magenta
+    (part 3); the HD bitmap's key ignored (every texel its colour) - the
+    drawn set off by 1561440 pixels (part 3).
+    NOT CHECKED, judged by eye: the upscaled pictures themselves.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    su = open(os.path.join(eng, "src", "ui", "surface.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"std::string\s+uiPack;", sh)),
+              'kRemaster, "uipack"' in sc and 'kEnhancements, "uipack"' not in sc,
+              "uiPack" not in max_body,
+              "uiPack().attach(s);" in su,
+              "if ((dw > sw || dh > sh) && (!keySrc || srcKey == 0))" in su)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    keys = [l.split() for l in subprocess.run([tool, "uikeys", fr], capture_output=True,
+                                              text=True).stdout.splitlines() if l.strip()]
+    corpus = (len(keys), len({k[0] for k in keys}))
+    sheet = next((k for k in keys if k[1].lower().endswith("bitmaps/sneak.bmp")), None) or \
+        next((k for k in keys if k[2] == "640x480"), None)
+    if not sheet:
+        return (src_ok, corpus, "no sheet"), ((True,) * 5, (56, 52), "a 640x480 sheet"), "uikeys found none"
+    key, rel = sheet[0], sheet[1]
+    W, H = 2560, 1920
+    tmp = tempfile.mkdtemp()
+    try:
+        def blit(pack):
+            out = os.path.join(tmp, "o.raw")
+            r = subprocess.run([tool, "uiblit", fr, pack, rel, str(W), str(H), out], capture_output=True, text=True)
+            m = re.search(r"@uiblit hd (\d)", r.stdout)
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            return (struct.unpack("<%dH" % (W * H), raw) if len(raw) == W * H * 2 else None), \
+                   (int(m.group(1)) if m else -1)
+        plain, _ = blit("-")
+        w0, h0 = 640, 480
+        pk = os.path.join(tmp, "pack")
+        os.makedirs(pk)
+        # the keyed texels, read back through the tool at 1:1 - green shows through them
+        out1 = os.path.join(tmp, "k.raw")
+        subprocess.run([tool, "uiblit", fr, "-", rel, str(w0), str(h0), out1], capture_output=True)
+        one = struct.unpack("<%dH" % (w0 * h0), open(out1, "rb").read())
+        keyed = [v == 0x07E0 for v in one]
+        rows = []
+        for y in range(h0 * 4):
+            row = bytearray()
+            for x in range(w0 * 4):
+                row += b"\xff\x00\xff\x00" if keyed[(y // 4) * w0 + x // 4] else b"\xff\x00\xff\xff"
+            rows.append(b"\x00" + bytes(row))
+        def chunk(t, b):
+            return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w0 * 4, h0 * 4, 8, 6, 0, 0, 0)) +
+               chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b""))
+        open(os.path.join(pk, key + ".png"), "wb").write(png)
+        made, hd = blit(pk)
+        real = (omkpaths.pack_path() or "")
+        real = os.path.join(real, "ui", "pack") if real else ""
+        _, realHd = blit(real) if real and os.path.isfile(os.path.join(real, key + ".png")) else (None, ("skipped",))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if plain is None or made is None:
+        return (src_ok, corpus, "no frame"), ((True,) * 5, (56, 52), "frames"), "a blit wrote nothing"
+    MAG = 0xF81F
+    drawnPlain = [v != 0x07E0 for v in plain]
+    drawnMade = [v != 0x07E0 for v in made]
+    allMag = all(v == MAG for v, d in zip(made, drawnMade) if d)
+    sameSet = sum(1 for a, b in zip(drawnPlain, drawnMade) if a != b)
+    noMag = sum(1 for v in plain if v == MAG)
+    print(f"        uikeys: {corpus[0]} bitmaps, {corpus[1]} distinct; {rel} ({key}) at {W}x{H}: with the made pack "
+          f"hd {hd}, every drawn pixel magenta {allMag}, drawn set differing in {sameSet}; without it "
+          f"{noMag} magenta; the real pack: hd {realHd}")
+    return (src_ok, corpus, (hd, allMag, sameSet, noMag), realHd), \
+           ((True,) * 5, (56, 52), (1, True, 0, 0), _or_skip(realHd, 1)), \
+        "the source (off by default, [Remaster] only, never all = max, noted at load, drawn from when " \
+        "enlarged); 56 bitmaps keyed; a made pack draws the start sheet from its HD version with the key's " \
+        "silhouette exact, and nothing without it; the real pack drawn from where there is one"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47308,8 +47416,9 @@ def c_licence_headers():
     # vendored 1 -> 3, AMD's `ffx_a.h` and `ffx_fsr1.h` (MIT) beside pl_mpeg.h
     # 655: + `engine/src/o3de/smoothbody.{h,cpp}` and `engine/tools/smooth_probe.cpp`
     # (the rounded bodies, D1)
+    # 657: + `engine/src/ui/uipack.{h,cpp}` (the interface pack, Tier E)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (655, [], 3, []), \
+           (657, [], 3, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50115,6 +50224,7 @@ SLOW = [
     ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
     ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
     ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),
+    ("engine: ui pack",      c_engine_ui_pack,      "todo/remaster.md Tier E; ui/uipack.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

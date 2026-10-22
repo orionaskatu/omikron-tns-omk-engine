@@ -22,6 +22,12 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   the textures most likely to carry lettering, and
                                                   contact sheets in ROOT/curation/ - NOT applied:
                                                   the engine reads PACK/exclude.txt alone
+    omktexpack.py ui      ROOT [--bin PATH] [--model M]
+                                                  the INTERFACE PACK (engine/src/ui/uipack.h):
+                                                  every BMP the interface loads, upscaled 4x,
+                                                  anchored, its black key a smooth alpha ->
+                                                  ROOT/ui/pack (`omk-play --ui-pack`, or the
+                                                  --remaster preset's ROOT/ui/pack)
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -202,8 +208,9 @@ def key_mask(rgb, n):
                  for i in range(n))
 
 
-def dilate(rgb, keyed, w, h, passes=PAD):
-    """Fill keyed texels from unkeyed neighbours (wrapping), up to `passes` deep."""
+def dilate(rgb, keyed, w, h, passes=PAD, wrap=True):
+    """Fill keyed texels from unkeyed neighbours (wrapping, or not past the
+    edge for the interface's pictures), up to `passes` deep."""
     px = bytearray(rgb)
     known = bytearray(1 - k for k in keyed)
     for _ in range(passes):
@@ -215,6 +222,8 @@ def dilate(rgb, keyed, w, h, passes=PAD):
             acc = [0, 0, 0]; c = 0
             for j in (y * w + (x - 1) % w, y * w + (x + 1) % w,
                       ((y - 1) % h) * w + x, ((y + 1) % h) * w + x):
+                if not wrap and (abs(j % w - x) > 1 or abs(j // w - y) > 1):
+                    continue   # wrapped round an edge
                 if known[j]:
                     acc[0] += px[3 * j]; acc[1] += px[3 * j + 1]; acc[2] += px[3 * j + 2]; c += 1
             if c:
@@ -226,14 +235,16 @@ def dilate(rgb, keyed, w, h, passes=PAD):
     return bytes(px)
 
 
-def padded(px, w, h, ch, pad=PAD):
-    """The image wrapped by `pad` texels on every side."""
+def padded(px, w, h, ch, pad=PAD, wrap=True):
+    """The image wrapped by `pad` texels on every side - or its edge texels
+    repeated (`wrap` False: the interface's pictures do not tile)."""
+    at = (lambda v, n: v % n) if wrap else (lambda v, n: min(max(v, 0), n - 1))
     rows = []
     for yy in range(-pad, h + pad):
-        y = yy % h
+        y = at(yy, h)
         row = px[y * w * ch:(y + 1) * w * ch]
-        left = b"".join(row[((x % w) * ch):((x % w) * ch) + ch] for x in range(-pad, 0))
-        right = b"".join(row[((x % w) * ch):((x % w) * ch) + ch] for x in range(w, w + pad))
+        left = b"".join(row[(at(x, w) * ch):(at(x, w) * ch) + ch] for x in range(-pad, 0))
+        right = b"".join(row[(at(x, w) * ch):(at(x, w) * ch) + ch] for x in range(w, w + pad))
         rows.append(left + row + right)
     return b"".join(rows), w + 2 * pad, h + 2 * pad
 
@@ -820,6 +831,125 @@ def cmd_export(out, match):
           f"to {out}")
 
 
+# ---- the INTERFACE PACK (todo/remaster.md Tier E; engine/src/ui/uipack.h) --
+def read_bmp(path):
+    """-> (w, h, rgb) of an uncompressed 8- or 24-bit BMP, top row first -
+    the formats `surfaceFromBmp` reads, at their FULL colour (the engine keeps
+    565; the upscaler is better fed the 8 bits)."""
+    d = open(path, "rb").read()
+    if d[:2] != b"BM":
+        return None
+    bits, hdr = struct.unpack_from("<II", d, 10)
+    w, hraw = struct.unpack_from("<ii", d, 18)
+    bpp, comp = struct.unpack_from("<HI", d, 28)
+    if comp != 0 or bpp not in (8, 24) or w <= 0 or hraw == 0:
+        return None
+    h = abs(hraw)
+    out = bytearray(3 * w * h)
+    if bpp == 24:
+        stride = (w * 3 + 3) // 4 * 4
+        for y in range(h):
+            r0 = bits + stride * (y if hraw < 0 else h - 1 - y)
+            row = d[r0:r0 + 3 * w]
+            seg = bytearray(3 * w); seg[0::3] = row[2::3]; seg[1::3] = row[1::3]; seg[2::3] = row[0::3]
+            out[3 * w * y:3 * w * (y + 1)] = seg
+    else:
+        ncol = struct.unpack_from("<I", d, 46)[0] or 256
+        pal = d[14 + hdr:14 + hdr + 4 * ncol]
+        lut = [bytes((pal[4 * i + 2], pal[4 * i + 1], pal[4 * i])) if 4 * i + 3 < len(pal) else b"\0\0\0"
+               for i in range(256)]
+        stride = (w + 3) // 4 * 4
+        for y in range(h):
+            r0 = bits + stride * (y if hraw < 0 else h - 1 - y)
+            out[3 * w * y:3 * w * (y + 1)] = b"".join(lut[v] for v in d[r0:r0 + w])
+    return w, h, bytes(out)
+
+
+def cmd_ui(root, binary, model, tile, anchor_passes):
+    """The interface pack, end to end, into ROOT/ui: `export` (the engine's
+    keys from `texpack_tool uikeys`, each BMP padded by its edge, its key -
+    pure black - filled from its neighbours and kept as a mask), `upscale`
+    (with --bin; skipped when up/ is there), `build` (cropped, ANCHORED to the
+    original's colours, the mask thresholded into alpha) -> ROOT/ui/pack, the
+    directory `omk-play --ui-pack` reads (or the `--remaster` preset, as
+    ROOT/ui/pack). Each step skips what is already done."""
+    out = safe_out(os.path.join(root, "ui"))
+    if not os.path.exists(TOOL):
+        sys.exit(f"{TOOL} is missing - run `make build/texpack_tool` in engine/ first")
+    r = subprocess.run([TOOL, "uikeys", omkpaths.data_root()], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("texpack_tool uikeys failed: " + r.stderr.strip())
+    for d in ("src", "in", "up", "pack"):
+        os.makedirs(os.path.join(out, d), exist_ok=True)
+    index, data = {}, omkpaths.data_root()
+    for line in r.stdout.split("\n"):
+        if not line.strip():
+            continue
+        key, rel, size = line.split()
+        b = read_bmp(os.path.join(data, rel))
+        if not b:
+            print(f"{rel}: not read - skipped"); continue
+        w, h, rgb = b
+        keyed = key_mask(rgb, w * h)
+        nkey = sum(keyed)
+        index[key] = {"path": rel, "w": w, "h": h, "keyed": nkey}
+        if os.path.exists(os.path.join(out, "in", key + ".png")):
+            continue
+        write_png(os.path.join(out, "src", key + ".png"), w, h, rgb, 3)
+        fill = dilate(rgb, keyed, w, h, wrap=False) if 0 < nkey < w * h else rgb
+        p, pw, ph = padded(fill, w, h, 3, wrap=False)
+        write_png(os.path.join(out, "in", key + ".png"), pw, ph, p, 3)
+        if nkey:
+            mask = bytes(0 if kk else 255 for kk in keyed for _ in range(3))
+            mp, _, _ = padded(mask, w, h, 3, wrap=False)
+            write_png(os.path.join(out, "in", key + "_mask.png"), pw, ph, mp, 3)
+    with open(os.path.join(out, "index.json"), "w") as f:
+        json.dump({"pad": PAD, "bitmaps": index}, f, indent=1, sort_keys=True)
+    print(f"exported {len(index)} interface bitmaps to {out}")
+    todo = [k for k in index if not os.path.exists(os.path.join(out, "up", k + ".png"))]
+    if todo:
+        if not binary:
+            print(f"{len(todo)} not upscaled yet - run again with --bin PATH (realesrgan-ncnn-vulkan)")
+            return
+        cmd = [binary, "-i", os.path.join(out, "in"), "-o", os.path.join(out, "up"),
+               "-n", model, "-s", "4", "-f", "png"]
+        if tile:
+            cmd += ["-t", str(tile)]
+        mdir = os.path.join(os.path.dirname(os.path.abspath(binary)), "models")
+        if os.path.isdir(mdir):
+            cmd += ["-m", mdir]
+        print(" ".join(cmd))
+        if subprocess.run(cmd).returncode != 0:
+            sys.exit("the upscaler failed")
+    made = 0
+    for key, e in sorted(index.items()):
+        dst = os.path.join(out, "pack", key + ".png")
+        if os.path.exists(dst):
+            made += 1; continue
+        w, h = e["w"], e["h"]
+        uw, uh, rgba = read_png(os.path.join(out, "up", key + ".png"))
+        s = uw // (w + 2 * PAD)
+        if s < 2 or uw != s * (w + 2 * PAD) or uh != s * (h + 2 * PAD) or s & (s - 1):
+            print(f"{e['path']}: {uw}x{uh} is not a power-of-two multiple of the padded size - skipped")
+            continue
+        c = crop(rgba, uw, PAD * s, PAD * s, w * s, h * s, 4)
+        rgb = bytearray(3 * w * s * h * s)
+        rgb[0::3] = c[0::4]; rgb[1::3] = c[1::4]; rgb[2::3] = c[2::4]
+        src = read_bmp(os.path.join(data, e["path"]))[2]
+        rgb = anchor(bytes(rgb), src, w, h, s, anchor_passes)
+        n = w * s * h * s
+        if e["keyed"]:
+            mw, mh, mr = read_png(os.path.join(out, "up", key + "_mask.png"))
+            mc = crop(mr, mw, PAD * s, PAD * s, w * s, h * s, 4)
+            alpha = mc[0::4].translate(bytes(255 if v >= 128 else 0 for v in range(256)))
+        else:
+            alpha = b"\xff" * n
+        write_png(dst, w * s, h * s, keyed_rgba(bytes(rgb), alpha, n), 4)
+        made += 1
+        print(f"  {e['path']} -> {w * s}x{h * s}")
+    print(f"built {made} of {len(index)} into {os.path.join(out, 'pack')}")
+
+
 def cmd_upscale(out, binary, model, tile):
     out = safe_out(out)
     os.makedirs(os.path.join(out, "up"), exist_ok=True)
@@ -901,7 +1031,7 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_pas
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
@@ -937,6 +1067,8 @@ def main(argv):
             sys.exit("the factor must be a power of two, 1..16")
     if cmd == "export":
         cmd_export(out, match)
+    elif cmd == "ui":
+        cmd_ui(out, binary, model, tile, anchor_passes)
     elif cmd == "emissive":
         cmd_emissive(out, match)
     elif cmd == "grades":

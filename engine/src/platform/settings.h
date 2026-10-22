@@ -208,6 +208,10 @@ struct Settings {
     // (`o3de/texpack.h`), drawn by the Vulkan and GLES backends. Empty is off.
     std::string texturePack;
     Source texturePackSource = Source::Default;
+    // `uipack = DIR`: the INTERFACE PACK (`ui/uipack.h`) - the 640x480
+    // bitmaps drawn from upscaled ones when enlarged. Empty is off.
+    std::string uiPack;
+    Source uiPackSource = Source::Default;
     // `bloom = S`: a glow from the pack's LIGHT MAPS (`<key>_e.png`), S the
     // strength (the previews' 1.3), 0 off. Needs a texture pack with light
     // maps; Vulkan and GLES only.

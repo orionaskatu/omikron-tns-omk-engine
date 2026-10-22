@@ -286,13 +286,18 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --texture-pack DIR  REMASTER, off by default: replace textures with the\n"
 "                   pack in DIR (<key>.png files, tools/omktexpack.py makes\n"
 "                   them); Vulkan and GLES only; [Remaster] texturepack=DIR\n"
+"  --ui-pack DIR    REMASTER, off by default: the interface's bitmaps (menus,\n"
+"                   HUD, documents, the map) drawn from the upscaled pack in\n"
+"                   DIR (tools/omktexpack.py ui makes it) when the window\n"
+"                   enlarges them; every backend; [Remaster] uipack=DIR\n"
 "  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
 "                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2, --floors 1, --mist 0.5; a specific\n"
+"                   --relief 2, --ao 2, --floors 1, --mist 0.5, the\n"
+"                   interface pack in DIR/ui/pack when there is one; a specific\n"
 "                   flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
@@ -554,6 +559,7 @@ int PlayOptions::parse(int argc, char** argv) {
             }
         }
         else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
+        else if (a == "--ui-pack" && i + 1 < argc) uiPackFlag = argv[++i];
         else if (a == "--bloom" && i + 1 < argc) {
             bloomFlag = static_cast<float>(std::atof(argv[++i]));
             if (bloomFlag < 0.0f || bloomFlag > 4.0f) {

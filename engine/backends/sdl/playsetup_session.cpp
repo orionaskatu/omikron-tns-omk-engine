@@ -209,6 +209,20 @@ int PlayState::setupSession() {
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
                                   : !settings.texturePack.empty() ? settings.texturePack : presetPack;
         if (!packDir.empty()) omk::openTexturePack(packDir);
+        // THE INTERFACE PACK (`ui/uipack.h`): its flag, its key, the preset's
+        // `ui/pack` - opened before the first bitmap loads (the splash's)
+        {
+            std::string uiDir = !uiPackFlag.empty() ? uiPackFlag : settings.uiPack;
+            if (uiDir.empty() && !preset.empty() && omk::hostfs::isDirectory(preset + "/ui/pack"))
+                uiDir = preset + "/ui/pack";
+            if (!uiDir.empty()) {
+                const bool ok = omk::uiPack().open(uiDir);
+                std::printf("ui pack: %s - %s\n", uiDir.c_str(),
+                            ok ? (std::to_string(omk::uiPack().files()) + " upscaled bitmaps, a REMASTER feature").c_str()
+                               : "no <key>.png there - off");
+                omk::event("ui.pack", {{"dir", uiDir}, {"files", static_cast<long>(omk::uiPack().files())}});
+            }
+        }
         // ...and its post-pass: the bloom from the pack's light maps, the
         // grade per city (`o3de/colourgrade.h`), each its own option
         bloomStrength = bloomFlag >= 0.0f ? bloomFlag

@@ -1131,6 +1131,40 @@ on Qalisar's street and at Jaunpur's canal.
 * Open: GLES; the mist in the reflections; a lighter haze by day if the
   day's fog colours want it (unseen: the save's clock is evening).
 
+## Tier E - the interface pack: as built (2026-10-22)
+
+The reader's "do the upscaled interface". `--ui-pack DIR` / `[Remaster]
+uipack = DIR`, and the `--remaster` preset's `DIR/ui/pack` when there is one;
+off unless named. Every backend - the 2D is composed on the CPU.
+
+* `engine/src/ui/uipack.*`: the texture pack's way for the 2D - `<key>.png`,
+  the key `uiKey` (FNV-1a over the bitmap as LOADED, size and 565 pixels).
+  `surfaceFromBmp` notes every bitmap the pack has (its pixel buffer, which
+  survives the move out); `blt`, the one place a bitmap is sampled at the
+  output's size, draws an ENLARGING blit from the HD version, its rectangle
+  scaled. The HD bitmap is 565 and keyed as the original (alpha < half ->
+  0, any other 0 nudged to 1), so the key draws what it drew, its edge from
+  an upscaled mask. At most 16 held decoded.
+* `tools/omktexpack.py ui ROOT --bin realesrgan-ncnn-vulkan`: the engine's
+  keys (`texpack_tool uikeys`: 56 bitmaps, 52 distinct - `I2D/bitmaps`,
+  `IMAGES`, `IMAGES/French`, `FONTS`), each at its 8-bit colour, padded by
+  its EDGE (not wrapped - these do not tile), the black key dilated and kept
+  as a mask; Real-ESRGAN x4plus; cropped, ANCHORED to the original's colours,
+  the mask thresholded into alpha -> ROOT/ui/pack (52 files, 302 MB; ~25 min
+  on the M3, mostly the pure-Python anchor).
+* `verify.py: engine: ui pack` - a pack MADE in the check (the menus' sheet
+  in one colour, its key exact) drawn by `texpack_tool uiblit` through the
+  interface's own `blt`: every drawn pixel the pack's, the drawn set the
+  original's exactly, nothing without it; the real pack drawn from where
+  there is one. Shown to fail twice.
+* Cost: none measured - the 4K pause menu 26-27 fps either way (loaded M3).
+
+**Open**: the FONTS - text is drawn by its own glyph path (`drawGlyphScaled`,
+`.FNT` coverage), not `blt`, so the menu's words stay the 640x480 glyphs,
+filtered; an HD font is a coverage atlas per glyph and its own step. The
+pack is not in the curation's eye yet: a picture whose upscale suffers can
+be dropped from `ui/pack` by hand (its key: `texpack_tool uikeys`).
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), **off by

@@ -33581,6 +33581,153 @@ def c_engine_gles_upscale():
         "90 frames, every one the GPU's"
 
 
+def c_engine_film_pack():
+    r"""THE FILM PACK - the remaster's Tier E (`todo/remaster.md`), `[Remaster]
+    filmpack = DIR` / `--film-pack DIR`, the `--remaster` preset's
+    `films/pack` when there is one; OFF unless named. Every backend: the boot
+    chain's three FLIS films (`docs/BOOT.md`) played from upscaled copies -
+    `<key>.mpg`, MPEG-1 program streams like the originals, the original's MP2
+    sound copied untouched - by the SAME decoder at the same clock, smoothed
+    (bilinear) to the display where the shipped films stay nearest.
+    `tools/omktexpack.py films` makes them (ffmpeg, Real-ESRGAN's video
+    model, x4). NOT A PORT, no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the player asks the pack before the original and smooths only its
+         film; the preset's `films/pack`;
+      2. the KEY: the engine's `filmKey` (`texpack_tool filmkey`) and the
+         tool's `film_key` agree on the three shipped films, and tell them
+         apart - or a pack made by one is never found by the other;
+      3. a pack MADE HERE (with ffmpeg; skipped without it): EIDOS's first
+         six seconds at twice the size, under EIDOS's key. Its 150th frame
+         through `texpack_tool filmframe` (the player's `Movie`, 1280x960):
+         from the pack (hd 1, 640x480), and the original's frame ENLARGED -
+         under 8 a channel from the original drawn the old way, and
+         REGISTERED, none of the 25 shifts within two pixels better than none;
+         without the pack, the original (hd 0, 320x240);
+      4. the real pack where `omk.conf`'s `pack` has one (`films/pack`): each
+         of the three found, 1280x960, every frame decoded - the original's
+         count or ONE MORE (pl_mpeg never emits a stream's last picture,
+         ffmpeg does: EIDOS 386/387, GAME 3211/3212, QUANTIC 703/703), and IN
+         STEP: the pack's frame N, of N-1, N and N+1, the nearest to the
+         original's N, on frames that move (EIDOS 100, QUANTIC 300, GAME 3000) -
+         a frame added at the START would show N-1 there, the picture a
+         frame behind the copied sound.
+    SHOWN TO FAIL (2026-10-22): `FilmPack::find` answering nothing - hd 0
+    (parts 3 and 4); the smoothed picture drawn 8 rows low - part 3's
+    registration.
+    NOT CHECKED, judged by eye: the upscale itself.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    pp = open(os.path.join(eng, "backends", "sdl", "playsetup_play.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pick = pp[pp.index("omk::filmPack().find"):]
+    pick = pick[:pick.index("continue;")]
+    src_ok = (bool(re.search(r"std::string\s+filmPack;", sh)),
+              'kRemaster, "filmpack"' in sc and 'kEnhancements, "filmpack"' not in sc,
+              "filmPack" not in max_body,
+              "mov.setSmooth(true)" in pick and pick.index("mov.open(hd)") < pick.index("mov.open(*real)"),
+              'preset + "/films/pack"' in ps)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    flis = os.path.join(fr, next(n for n in os.listdir(fr) if n.upper() == "FLIS"))
+    films = {n: next((os.path.join(flis, f) for f in os.listdir(flis) if f.upper() == n + ".MPG"), None)
+             for n in ("EIDOS", "QUANTIC", "GAME")}
+    eng_keys = dict(l.split()[::-1] for l in subprocess.run([tool, "filmkey"] + list(films.values()),
+                                                           capture_output=True, text=True).stdout.splitlines())
+    py_keys = {films[n]: omktexpack.film_key(films[n]) for n in films}
+    keys = (sum(1 for f in py_keys if eng_keys.get(f) == py_keys[f]), len(set(py_keys.values())))
+    W, H = 1280, 960
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(pack, name, n, w=W, h=H):
+            out = os.path.join(tmp, "f.raw")
+            r = subprocess.run([tool, "filmframe", fr, pack, "FLIS/%s.mpg" % name, str(w), str(h), str(n), out],
+                               capture_output=True, text=True)
+            m = re.search(r"@filmframe hd (\d) size (\d+)x(\d+) frames (\d+) duration (\S+)", r.stdout)
+            if not m:
+                return None, None
+            raw = open(out, "rb").read()
+            return (struct.unpack("<%dH" % (w * h), raw) if len(raw) == w * h * 2 else None), \
+                (int(m.group(1)), "%sx%s" % (m.group(2), m.group(3)), int(m.group(4)), float(m.group(5)))
+        made = ("skipped",)
+        ff = shutil.which("ffmpeg")
+        if ff:
+            pk = os.path.join(tmp, "pack")
+            os.makedirs(pk)
+            subprocess.run([ff, "-v", "error", "-y", "-i", films["EIDOS"], "-t", "6", "-map", "0:v:0", "-map", "0:a:0",
+                            "-vf", "scale=640:480:flags=lanczos", "-c:v", "mpeg1video", "-q:v", "2", "-c:a", "copy",
+                            "-f", "mpeg", os.path.join(pk, py_keys[films["EIDOS"]] + ".mpg")], check=True)
+            orig, oi = frame("-", "EIDOS", 150)
+            hd, hi = frame(pk, "EIDOS", 150)
+            if orig is None or hd is None:
+                made = ("no frame", oi, hi)
+            else:
+                rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+                a, b = [rgb(v) for v in orig], [rgb(v) for v in hd]
+                def mad(dx, dy):
+                    tot = n = 0
+                    # a step of 3, NOT 4: every 4th pixel is one phase of
+                    # the original's 4x4 blocks, which pulled the best shift
+                    # to (1, 2) on a frame registered at (0, 0) when sampled
+                    # whole (2026-10-22)
+                    for y in range(40, H - 40, 3):
+                        for x in range(40, W - 40, 3):
+                            u, v = a[y * W + x], b[(y + dy) * W + x + dx]
+                            tot += abs(u[0] - v[0]) + abs(u[1] - v[1]) + abs(u[2] - v[2]); n += 3
+                    return tot / n
+                shifts = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+                lit = sum(1 for v in orig if v)
+                made = ((oi[0], oi[1]), (hi[0], hi[1]), orig != hd, lit > W * H // 10,
+                        shifts[(0, 0)] < 8.0, min(shifts, key=shifts.get))
+                print(f"        made pack: EIDOS frame 150 from {hi[1]} - mean {shifts[(0, 0)]:.2f} a channel from "
+                      f"the original's, best shift {min(shifts, key=shifts.get)}, {lit} pixels lit")
+        real = omkpaths.pack_path() or ""
+        real = os.path.join(real, "films", "pack") if real else ""
+        realRes = ("skipped",)
+        if real and os.path.isdir(real) and all(os.path.isfile(os.path.join(real, py_keys[f] + ".mpg"))
+                                                for f in py_keys):
+            got = []
+            late = {"EIDOS": 100, "QUANTIC": 300, "GAME": 3000}   # frames that MOVE (QUANTIC 600 is still: a tie)
+            for n in films:
+                _, o = frame("-", n, 1 << 20, 64, 48)
+                _, p = frame(real, n, 1 << 20, 64, 48)
+                ref, _ = frame("-", n, late[n], 320, 240)
+                near = {}
+                for m in (late[n] - 1, late[n], late[n] + 1):
+                    px, _ = frame(real, n, m, 320, 240)
+                    g = lambda v: ((v >> 11) * 8 * 30 + ((v >> 5) & 63) * 4 * 59 + (v & 31) * 8 * 11) // 100
+                    near[m - late[n]] = sum(abs(g(x) - g(y)) for x, y in zip(ref, px)) if ref and px else 1 << 40
+                step = min(near, key=near.get)
+                got.append((p[0], p[1], p[2] - o[2] in (0, 1), step) if o and p else ("no film", n))
+                print(f"        the real pack: {n} {p} against the original's {o}; frame {late[n]} in step "
+                      f"{step:+d}")
+            realRes = tuple(got)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        keys: {keys[0]} of 3 agree, {keys[1]} distinct")
+    want_made = (((0, "320x240"), (1, "640x480"), True, True, True, (0, 0)) if made != ("skipped",)
+                 else ("skipped",))
+    want_real = ((1, "1280x960", True, 0),) * 3 if realRes != ("skipped",) else ("skipped",)
+    return (src_ok, keys, made, realRes), ((True,) * 5, (3, 3), want_made, want_real), \
+        "the source (off by default, [Remaster] only, never all = max, the pack's film before the " \
+        "original's and smoothed, the preset's films/pack); the engine's key and the tool's agree on the " \
+        "three films; a made pack's film played in the original's place, enlarged and registered on it; " \
+        "the real pack's three found, 1280x960, frame for frame the originals' count"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47668,8 +47815,9 @@ def c_licence_headers():
     # 660: + `engine/src/ui/fontpack.{h,cpp}` and `engine/tools/font_hd.cpp`
     # (the font pack, Tier E); and the vendored 3 -> 4, `stb_truetype.h`
     # (MIT or public domain), which font_hd alone includes
+    # 662: + `engine/src/platform/filmpack.{h,cpp}` (the film pack, Tier E)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (660, [], 4, []), \
+           (662, [], 4, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50478,6 +50626,7 @@ SLOW = [
     ("engine: ui pack",      c_engine_ui_pack,      "todo/remaster.md Tier E; ui/uipack.h"),
     ("engine: font pack",    c_engine_font_pack,    "todo/remaster.md Tier E; ui/fontpack.h"),
     ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
+    ("engine: film pack",    c_engine_film_pack,    "todo/remaster.md Tier E; platform/filmpack.h"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

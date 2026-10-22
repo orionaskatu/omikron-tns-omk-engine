@@ -252,6 +252,10 @@
 ; tools/omktexpack.py fonts makes it; the preset takes DIR/fonts/pack.
 ;fontpack = /path/to/omk-pack/fonts/pack
 ;
+; The intro FILMS played from upscaled copies - tools/omktexpack.py films
+; makes them; the preset takes DIR/films/pack.
+;filmpack = /path/to/omk-pack/films/pack
+;
 ; The HD texture pack alone (a folder of <key>.png), and the city grades
 ; alone (a folder of <SET>.cube and map.txt). Vulkan and GLES.
 ;texturepack = /path/to/pack

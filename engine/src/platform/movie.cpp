@@ -3,6 +3,7 @@
 #include "platform/datafs.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +23,11 @@ struct Movie::Impl {
     std::vector<std::uint16_t> row565;
     int mapW = -1;
     double mapFit = 0.0;
+    // the BILINEAR map (`setSmooth`): per destination column and row, the
+    // first source texel and the second's weight in 256ths
+    std::vector<int> bx, by;
+    std::vector<std::uint16_t> bwx, bwy;
+    int bilW = -1, bilH = -1;
     ~Impl() { if (plm) plm_destroy(plm); }
 };
 
@@ -86,6 +92,51 @@ bool Movie::nextFrame(Surface& dst) {
     // `sx(dx) = int(dx / fit)` is tabled once per size, and each SOURCE pixel
     // is converted to 565 once and then replicated - the output is the same
     // bytes, which `run_movies` checks.
+    if (smooth_) {
+        // texel centres on texel centres: source x = (dx + 0.5) / fit - 0.5,
+        // clamped at the edges
+        const auto table = [](int n, int src, double f, std::vector<int>& at, std::vector<std::uint16_t>& w) {
+            at.resize(static_cast<std::size_t>(n));
+            w.resize(static_cast<std::size_t>(n));
+            for (int d = 0; d < n; ++d) {
+                double s = (d + 0.5) / f - 0.5;
+                s = std::clamp(s, 0.0, static_cast<double>(src - 1));
+                int i = static_cast<int>(s);
+                if (i >= src - 1) i = std::max(0, src - 2);
+                at[static_cast<std::size_t>(d)] = i;
+                w[static_cast<std::size_t>(d)] = static_cast<std::uint16_t>(std::lround((s - i) * 256.0));
+            }
+        };
+        if (p_->bilW != outW || p_->bilH != outH) {
+            table(outW, sw, fit, p_->bx, p_->bwx);
+            table(outH, sh, fit, p_->by, p_->bwy);
+            p_->bilW = outW; p_->bilH = outH;
+        }
+        const int x1 = sw > 1 ? 3 : 0, y1 = sh > 1 ? sw * 3 : 0;
+        for (int dy = 0; dy < outH; ++dy) {
+            const int ty = oy + dy;
+            if (ty < 0 || ty >= dst.h) continue;
+            const std::uint8_t* r0 = &p_->rgb[static_cast<std::size_t>(p_->by[static_cast<std::size_t>(dy)]) * sw * 3];
+            const int wy = p_->bwy[static_cast<std::size_t>(dy)];
+            std::uint16_t* out = dst.px.data() + static_cast<std::size_t>(ty) * dst.w;
+            for (int dx = 0; dx < outW; ++dx) {
+                const int tx = ox + dx;
+                if (tx < 0 || tx >= dst.w) continue;
+                const std::uint8_t* a = r0 + static_cast<std::size_t>(p_->bx[static_cast<std::size_t>(dx)]) * 3;
+                const int wx = p_->bwx[static_cast<std::size_t>(dx)];
+                int c[3];
+                for (int k = 0; k < 3; ++k) {
+                    const int top = a[k] * (256 - wx) + a[k + x1] * wx;
+                    const int bot = a[k + y1] * (256 - wx) + a[k + y1 + x1] * wx;
+                    c[k] = (top * (256 - wy) + bot * wy + 32768) >> 16;
+                }
+                out[tx] = quantise888(static_cast<std::uint8_t>(c[0]), static_cast<std::uint8_t>(c[1]),
+                                      static_cast<std::uint8_t>(c[2]));
+            }
+        }
+        ++frames_;
+        return true;
+    }
     if (p_->mapW != outW || p_->mapFit != fit) {
         p_->colSrc.assign(static_cast<std::size_t>(outW), -1);
         for (int dx = 0; dx < outW; ++dx) {

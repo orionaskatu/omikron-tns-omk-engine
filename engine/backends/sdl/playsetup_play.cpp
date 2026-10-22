@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "platform/events.h"
 
 int PlayState::setupPlay() {
     const auto& fs = *fs_;
@@ -134,7 +135,15 @@ int PlayState::setupPlay() {
                 continue;
             }
             omk::Movie mov;
-            if (!real || !mov.open(*real)) {
+            // THE FILM PACK (`platform/filmpack.h`): the same film upscaled,
+            // the same sound - played by the same decoder, smoothed to the
+            // display; the original when the pack has none for it
+            const std::string hd = real ? omk::filmPack().find(*real) : "";
+            if (!hd.empty() && mov.open(hd)) {
+                mov.setSmooth(true);
+                std::printf("  %s: from the film pack, %s - a REMASTER feature\n", name, hd.c_str());
+                omk::event("film.pack", {{"film", name}, {"w", mov.info().width}, {"h", mov.info().height}});
+            } else if (!real || !mov.open(*real)) {
                 std::printf("  %s: not decodable, skipped\n", name);
                 continue;
             }

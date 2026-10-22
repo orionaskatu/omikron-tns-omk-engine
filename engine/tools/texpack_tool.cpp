@@ -56,6 +56,15 @@
 //                                           num/den, white on black - int32 w, h,
 //                                           then w*h 565 - "@fontline hd <faces
 //                                           decoded> w <w> h <h>"
+//     texpack_tool filmkey <file>...         THE FILM PACK (`platform/filmpack.h`):
+//                                           "<key> <file>", the engine's `filmKey`
+//     texpack_tool filmframe <gamedata> <filmpack|-> <FLIS/NAME.mpg> <W> <H> <n> <out.raw>
+//                                           the film the player would open, its
+//                                           n-th frame decoded into W x H as the
+//                                           player draws it (smoothed when from
+//                                           the pack) - w*h 565 - "@filmframe hd
+//                                           <0|1> size <w>x<h> frames <n>
+//                                           duration <s>"
 //
 // `keys` is the engine's half of a differential: the Python tool keys the same
 // textures from its own decoder, and the two must agree on every one, or a
@@ -75,6 +84,8 @@
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
+#include "platform/filmpack.h"
+#include "platform/movie.h"
 #include "ui/fontpack.h"
 #include "ui/text.h"
 #include "ui/surface.h"
@@ -185,6 +196,29 @@ int fontline(char** argv) {
     std::fwrite(dst.px.data(), 2, dst.px.size(), f);
     std::fclose(f);
     std::printf("@fontline hd %zu w %d h %d\n", omk::fontPack().stats().decoded, w, h);
+    return 0;
+}
+
+int filmframe(char** argv) {
+    const std::string data = argv[2], pack = argv[3], rel = argv[4], out = argv[8];
+    const int w = std::atoi(argv[5]), h = std::atoi(argv[6]), n = std::atoi(argv[7]);
+    if (pack != "-" && !omk::filmPack().open(pack)) return 1;
+    omk::DataFs fs(data);
+    const auto real = fs.resolve(rel);
+    if (!real || w <= 0 || h <= 0 || n <= 0) return 1;
+    const std::string hd = omk::filmPack().find(*real);
+    omk::Movie mov;
+    if (!mov.open(hd.empty() ? *real : hd)) return 1;
+    mov.setSmooth(!hd.empty());
+    omk::Surface dst(w, h, 0);
+    for (int k = 0; k < n; ++k)
+        if (!mov.nextFrame(dst)) break;
+    std::FILE* f = omk::safeOutputPath(out) ? std::fopen(out.c_str(), "wb") : nullptr;
+    if (!f) return 1;
+    std::fwrite(dst.px.data(), 2, dst.px.size(), f);
+    std::fclose(f);
+    std::printf("@filmframe hd %d size %dx%d frames %ld duration %.3f\n", hd.empty() ? 0 : 1, mov.info().width,
+                mov.info().height, mov.framesDecoded(), mov.info().duration);
     return 0;
 }
 
@@ -584,6 +618,12 @@ int main(int argc, char** argv) {
     if (mode == "uikeys" && argc == 3) return uikeys(argv[2]);
     if (mode == "uiblit" && argc == 8) return uiblit(argv);
     if (mode == "fontline" && argc == 11) return fontline(argv);
+    if (mode == "filmframe" && argc == 9) return filmframe(argv);
+    if (mode == "filmkey" && argc >= 3) {
+        for (int i = 2; i < argc; ++i)
+            std::printf("%016llx %s\n", static_cast<unsigned long long>(omk::filmKey(argv[i])), argv[i]);
+        return 0;
+    }
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
@@ -609,6 +649,7 @@ int main(int argc, char** argv) {
                          "       | islands <gamedata> <outdir> | floors <model.3DO> | open <pack>\n"
                          "       | uikeys <gamedata> | uiblit <gamedata> <uipack|-> <file.bmp> <w> <h> <out.raw>\n"
                          "       | fontline <gamedata> <tables> <fontpack|-> <face> <num> <den> <filter> <text> <out.raw>\n"
+                         "       | filmkey <file>... | filmframe <gamedata> <filmpack|-> <FLIS/NAME.mpg> <W> <H> <n> <out.raw>\n"
                          "       (the header says what each answers)\n");
     return 2;
 }

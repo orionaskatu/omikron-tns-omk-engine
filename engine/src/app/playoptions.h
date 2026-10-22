@@ -137,6 +137,7 @@ struct PlayOptions {
     std::string texturePackFlag;  // --texture-pack DIR, [Remaster] texturepack; "" = the settings'
     std::string uiPackFlag;       // --ui-pack DIR, [Remaster] uipack; "" = the settings'
     std::string fontPackFlag;     // --font-pack DIR, [Remaster] fontpack; "" = the settings'
+    std::string filmPackFlag;     // --film-pack DIR, [Remaster] filmpack; "" = the settings'
     float bloomFlag = -1.0f;      // --bloom S, [Remaster] bloom; < 0 = the settings'
     std::string gradeFlag;        // --grade DIR, [Remaster] grade; "" = the settings'
     std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four

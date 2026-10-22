@@ -81,6 +81,7 @@
 #include "platform/frontend.h"
 #include "ui/overlay.h"
 #include "ui/hudbar.h"
+#include "platform/filmpack.h"
 #include "ui/fontpack.h"
 #include "ui/uipack.h"
 #include "ui/iamtext.h"

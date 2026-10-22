@@ -102,7 +102,8 @@ tools avoid the question.
 * The 640x480 interface bitmaps AI-upscaled (B1's pipeline); row 3's integer
   mode is still open beside it.
 * The MPEG-1 films (`todo/classic-mac-port-1999.md`) upscaled: Real-ESRGAN in
-  video mode (free) or Topaz Video AI (paid).
+  video mode (free) or Topaz Video AI (paid). **BUILT 2026-10-22** - "Tier E -
+  the film pack" below.
 * Widescreen: the authored camera editings were framed for 4:3 - read what
   `docs/CUTSCENES.md` says about their framing BEFORE widening anything.
   Unchecked.
@@ -1203,6 +1204,46 @@ them at their own size: at 4K a 17-pixel face is 4.5x).
 cleaner; the Latin faces slightly rounder than the runtime's enlargement.
 **Open**: the reader's eye in play; an AI upscale of the Latin faces' sheets
 (Real-ESRGAN) was not tried - letters are where it invents most.
+
+## Tier E - the film pack: as built (2026-10-22)
+
+The reader's "do 3)". `--film-pack DIR` / `[Remaster] filmpack = DIR`, and
+the `--remaster` preset's `DIR/films/pack`; off unless named. Every
+backend: the boot chain's three FLIS films (320x240 MPEG-1, 29.97 fps, MP2
+sound) played from upscaled copies BY THE SAME DECODER (pl_mpeg).
+
+* `engine/src/platform/filmpack.*`: `<key>.mpg`, the key FNV-1a 64 over the
+  original's size and first MiB (another language's film is another key).
+  The player (`playsetup_play.cpp`) opens the pack's film before the
+  original, and `Movie::setSmooth` draws it BILINEAR to the display - texel
+  centres on texel centres; the shipped films stay nearest. The copied
+  sound is the shipped bytes, so the clock the picture follows is unchanged.
+* `tools/omktexpack.py films ROOT --bin realesrgan-ncnn-vulkan`: every frame
+  out (ffmpeg, `-vsync passthrough`), Real-ESRGAN's VIDEO model
+  `realesr-animevideov3-x4` (x4plus was sharper but darkened the films'
+  tones, and is 13x slower: ~2 s a frame), re-encoded MPEG-1 1280x960 at
+  `-q:v 2` with the original MP2 stream COPIED, muxed as a program stream.
+  A film's frames are deleted once its .mpg is written - the three at once
+  (~10 GB of PNG) filled the disk on the first run.
+* `verify.py: engine: film pack` - the engine's key against the tool's, a
+  pack MADE in the check (EIDOS 2x) played in the original's place and
+  registered on it, the real pack's three found and IN STEP with the
+  originals (frame N against frame N, on frames that move); shown to fail
+  twice. The counts: EIDOS 387 against 386, GAME 3212 against 3211, QUANTIC
+  703 both - pl_mpeg never emits a stream's LAST picture and ffmpeg does, so
+  the copy carries one more at the end; frame 100 / 3000 match their own
+  numbers, so nothing drifts. Made in ~15 min on the M3 (GAME 140 MB, the
+  pack 155 MB). Its registration samples every THIRD pixel:
+  every fourth is one phase of the original's 4x4 blocks and pulled the
+  best shift to (1, 2) on a frame that registers at (0, 0) whole.
+
+**Played** (OMK.app, 4K, M3, 2026-10-22): all three from the pack; EIDOS 14
+of 387 frames and GAME 46 of 3212 DROPPED to keep up with the sound - the
+CPU's bilinear to 2880x2160 plus the 1280x960 decode is near a frame's
+budget. **Open**: that cost (the GPU could scale it, as GLES already takes
+the film at its own size); the GLES path presents the film through the
+present pass's NEAREST scale (the smoothing is the CPU's, on the
+display-sized surface the other backends use).
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

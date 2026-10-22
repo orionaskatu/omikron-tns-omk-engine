@@ -294,6 +294,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   finer ones in DIR (tools/omktexpack.py fonts makes it)\n"
 "                   where --text-scaling fit enlarges them; every backend;\n"
 "                   [Remaster] fontpack=DIR\n"
+"  --film-pack DIR  REMASTER, off by default: the intro films played from the\n"
+"                   upscaled copies in DIR (tools/omktexpack.py films makes\n"
+"                   them), smoothed to the display; [Remaster] filmpack=DIR\n"
 "  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
 "                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
@@ -301,8 +304,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
 "                   --relief 2, --ao 2, --floors 1, --mist 0.5, --smooth\n"
-"                   0.75, the interface pack in DIR/ui/pack and the font pack\n"
-"                   in DIR/fonts/pack when there are; a specific\n"
+"                   0.75, the interface pack in DIR/ui/pack, the font pack in\n"
+"                   DIR/fonts/pack and the film pack in DIR/films/pack when\n"
+"                   there are; a specific\n"
 "                   flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
@@ -566,6 +570,7 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
         else if (a == "--ui-pack" && i + 1 < argc) uiPackFlag = argv[++i];
         else if (a == "--font-pack" && i + 1 < argc) fontPackFlag = argv[++i];
+        else if (a == "--film-pack" && i + 1 < argc) filmPackFlag = argv[++i];
         else if (a == "--bloom" && i + 1 < argc) {
             bloomFlag = static_cast<float>(std::atof(argv[++i]));
             if (bloomFlag < 0.0f || bloomFlag > 4.0f) {

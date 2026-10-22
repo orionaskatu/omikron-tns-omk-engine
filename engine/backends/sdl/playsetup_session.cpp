@@ -224,6 +224,19 @@ int PlayState::setupSession() {
                 omk::event("ui.pack", {{"dir", uiDir}, {"files", static_cast<long>(omk::uiPack().files())}});
             }
         }
+        // THE FILM PACK (`platform/filmpack.h`): its flag, its key, the
+        // preset's `films/pack` - the intro films played from it
+        {
+            std::string filmDir = !filmPackFlag.empty() ? filmPackFlag : settings.filmPack;
+            if (filmDir.empty() && !preset.empty() && omk::hostfs::isDirectory(preset + "/films/pack"))
+                filmDir = preset + "/films/pack";
+            if (!filmDir.empty()) {
+                const bool ok = omk::filmPack().open(filmDir);
+                std::printf("film pack: %s - %s\n", filmDir.c_str(),
+                            ok ? (std::to_string(omk::filmPack().files()) + " upscaled films, a REMASTER feature").c_str()
+                               : "no <key>.mpg there - off");
+            }
+        }
         // THE FONT PACK (`ui/fontpack.h`): its flag, its key, the preset's
         // `fonts/pack` - drawn only where `textscaling fit` enlarges the text
         {

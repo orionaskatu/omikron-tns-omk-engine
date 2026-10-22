@@ -36,6 +36,15 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   antialiasing super-resolved for the rest ->
                                                   ROOT/fonts/pack (`omk-play --font-pack`, or
                                                   the --remaster preset's ROOT/fonts/pack)
+    omktexpack.py films   ROOT --bin PATH [--model M] [--q Q]
+                                                  the FILM PACK (engine/src/platform/filmpack.h):
+                                                  the three FLIS films' frames (ffmpeg) upscaled
+                                                  4x (M: realesr-animevideov3-x4, a video model -
+                                                  steady from frame to frame, the films' own tones),
+                                                  re-encoded as MPEG-1 (quality Q, 2) with the
+                                                  original MP2 sound copied untouched ->
+                                                  ROOT/films/pack/<key>.mpg (`omk-play --film-pack`,
+                                                  or the --remaster preset's ROOT/films/pack)
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -91,6 +100,7 @@ of a 3072x3072 image takes tens of seconds.
 """
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -915,6 +925,87 @@ def cmd_fonts(root, k):
     print(f"wrote {made} faces into {pack}")
 
 
+def film_key(path):
+    """The engine's `filmKey` (engine/src/platform/filmpack.h): FNV-1a 64 over
+    the file's size as eight little-endian bytes, then its first MiB - enough
+    to tell the films (and another language's) apart without reading 46 MB at
+    every launch."""
+    h = 0xcbf29ce484222325
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        head = f.read(1 << 20)
+    for b in struct.pack("<Q", size) + head:
+        h ^= b
+        h = (h * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return "%016x" % h
+
+
+FILMS = ("EIDOS", "QUANTIC", "GAME")
+
+
+def cmd_films(root, binary, model, q):
+    """The film pack, end to end, into ROOT/films: frames/<NAME>/ (every
+    frame the decoder gives, PNG), up/<NAME>/ (the upscaler's, 4x), and
+    pack/<key>.mpg - MPEG-1 video at 4x the size, the original's MP2 audio
+    stream COPIED (no re-encode: the sound stays the shipped bytes), muxed as
+    a program stream like the original, so the engine's own decoder (pl_mpeg)
+    plays it. Each step skips what is done; a frame count that differs
+    between the steps stops it (the picture would drift from the sound).
+    A film's frames are DELETED once its .mpg is written: GAME's upscaled
+    PNGs alone are ~5 GB, and the three at once filled a disk (2026-10-22)."""
+    out = safe_out(os.path.join(root, "films"))
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        sys.exit("films needs ffmpeg on the PATH")
+    if not binary:
+        sys.exit("films needs --bin PATH (realesrgan-ncnn-vulkan)")
+    data = omkpaths.data_root()
+    flis = os.path.join(data, next(n for n in os.listdir(data) if n.upper() == "FLIS"))
+    pack = os.path.join(out, "pack")
+    os.makedirs(pack, exist_ok=True)
+    for name in FILMS:
+        src = next((os.path.join(flis, n) for n in os.listdir(flis) if n.upper() == name + ".MPG"), None)
+        if not src:
+            print(f"{name}: not in {flis}, skipped")
+            continue
+        key = film_key(src)
+        dst = os.path.join(pack, key + ".mpg")
+        frames, up = os.path.join(out, "frames", name), os.path.join(out, "up", name)
+        if os.path.exists(dst):
+            print(f"{name}: {dst} already made")
+            shutil.rmtree(frames, ignore_errors=True)
+            shutil.rmtree(up, ignore_errors=True)
+            continue
+        os.makedirs(frames, exist_ok=True)
+        os.makedirs(up, exist_ok=True)
+        if not os.listdir(frames):
+            subprocess.run([ff, "-v", "error", "-i", src, "-map", "0:v:0", "-vsync", "passthrough",
+                            os.path.join(frames, "%06d.png")], check=True)
+        n = len([f for f in os.listdir(frames) if f.endswith(".png")])
+        if len([f for f in os.listdir(up) if f.endswith(".png")]) != n:
+            cmd = [binary, "-i", frames, "-o", up, "-n", model, "-s", "4", "-f", "png"]
+            mdir = os.path.join(os.path.dirname(os.path.abspath(binary)), "models")
+            if os.path.isdir(mdir):
+                cmd += ["-m", mdir]
+            print(f"{name}: {n} frames -> {model}")
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        nu = len([f for f in os.listdir(up) if f.endswith(".png")])
+        if nu != n:
+            sys.exit(f"{name}: {nu} upscaled frames for {n} - not encoded")
+        rate = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                               "stream=r_frame_rate", "-of", "csv=p=0", src],
+                              capture_output=True, text=True).stdout.strip() or "30000/1001"
+        tmp = dst + ".part"
+        subprocess.run([ff, "-v", "error", "-y", "-framerate", rate, "-i", os.path.join(up, "%06d.png"),
+                        "-i", src, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "mpeg1video", "-q:v", str(q),
+                        "-pix_fmt", "yuv420p", "-c:a", "copy", "-f", "mpeg", tmp], check=True)
+        os.replace(tmp, dst)
+        print(f"{name}: {n} frames, {os.path.getsize(dst) / 1e6:.0f} MB -> {dst}")
+        shutil.rmtree(frames, ignore_errors=True)
+        shutil.rmtree(up, ignore_errors=True)
+    print(f"film pack: {pack}")
+
+
 def cmd_ui(root, binary, model, tile, anchor_passes):
     """The interface pack, end to end, into ROOT/ui: `export` (the engine's
     keys from `texpack_tool uikeys`, each BMP padded by its edge, its key -
@@ -1081,13 +1172,14 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_pas
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui", "fonts"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui", "fonts", "films"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
-    match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
+    match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, None, 0, 0, None, 0.0, True
     anchor_passes = 1
     depth = 1.0
     fonts_k = 8
+    film_q = 2
     deepbump, python, jobs, force = None, None, 3, False
     # a flag without its value, or a value that is not a number: said, with
     # the usage - not a traceback
@@ -1098,6 +1190,7 @@ def main(argv):
             if a == "--match": match.append(rest[i + 1]); i += 2
             elif a == "--depth": depth = float(rest[i + 1]); i += 2
             elif a == "--k": fonts_k = int(rest[i + 1]); i += 2
+            elif a == "--q": film_q = int(rest[i + 1]); i += 2
             elif a == "--bin": binary = rest[i + 1]; i += 2
             elif a == "--model": model = rest[i + 1]; i += 2
             elif a == "--tile": tile = int(rest[i + 1]); i += 2
@@ -1120,9 +1213,11 @@ def main(argv):
     if cmd == "export":
         cmd_export(out, match)
     elif cmd == "ui":
-        cmd_ui(out, binary, model, tile, anchor_passes)
+        cmd_ui(out, binary, model or "realesrgan-x4plus", tile, anchor_passes)
     elif cmd == "fonts":
         cmd_fonts(out, fonts_k)
+    elif cmd == "films":
+        cmd_films(out, binary, model or "realesr-animevideov3-x4", film_q)
     elif cmd == "emissive":
         cmd_emissive(out, match)
     elif cmd == "grades":
@@ -1134,7 +1229,7 @@ def main(argv):
     elif cmd == "upscale":
         if not binary:
             sys.exit("upscale needs --bin PATH (realesrgan-ncnn-vulkan)")
-        cmd_upscale(out, binary, model, tile)
+        cmd_upscale(out, binary, model or "realesrgan-x4plus", tile)
     else:
         cmd_build(out, nearest_n, solid, match, grain, anchored, anchor_passes)
 

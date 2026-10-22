@@ -216,6 +216,10 @@ struct Settings {
     // drawn finer where `textscaling fit` enlarges them. Empty is off.
     std::string fontPack;
     Source fontPackSource = Source::Default;
+    // `filmpack = DIR`: the FILM PACK (`platform/filmpack.h`) - the intro
+    // films played from upscaled copies. Empty is off.
+    std::string filmPack;
+    Source filmPackSource = Source::Default;
     // `bloom = S`: a glow from the pack's LIGHT MAPS (`<key>_e.png`), S the
     // strength (the previews' 1.3), 0 off. Needs a texture pack with light
     // maps; Vulkan and GLES only.

@@ -48,4 +48,7 @@ inline void fsrEasuCon(std::uint32_t con[16], float inVpW, float inVpH, float in
 // STOPS - 0 the most, each 1 halving it - as a linear factor
 inline std::uint32_t fsrRcasCon(float stops) { return fsrBits(std::exp2(-stops)); }
 
+// RCAS's sharpness in stops, 0 the most (AMD's sample: 0.2) - both backends'
+inline constexpr float kFsrRcasStops = 0.2f;
+
 }  // namespace omk

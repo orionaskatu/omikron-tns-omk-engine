@@ -193,7 +193,7 @@ int PlayState::setupSession() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s, floors %s, mist %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s, floors %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
@@ -203,7 +203,8 @@ int PlayState::setupSession() {
                         reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2",
                         aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2",
                         floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : "0.5");
+                        mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : "0.5",
+                        smoothFlag >= 0.0f || settings.smoothSource == omk::Settings::Source::Ini ? "as set" : "0.75");
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -221,6 +222,21 @@ int PlayState::setupSession() {
                             ok ? (std::to_string(omk::uiPack().files()) + " upscaled bitmaps, a REMASTER feature").c_str()
                                : "no <key>.png there - off");
                 omk::event("ui.pack", {{"dir", uiDir}, {"files", static_cast<long>(omk::uiPack().files())}});
+            }
+        }
+        // THE FONT PACK (`ui/fontpack.h`): its flag, its key, the preset's
+        // `fonts/pack` - drawn only where `textscaling fit` enlarges the text
+        {
+            std::string fontDir = !fontPackFlag.empty() ? fontPackFlag : settings.fontPack;
+            if (fontDir.empty() && !preset.empty() && omk::hostfs::isDirectory(preset + "/fonts/pack"))
+                fontDir = preset + "/fonts/pack";
+            if (!fontDir.empty()) {
+                const bool ok = omk::fontPack().open(fontDir);
+                std::printf("font pack: %s - %s\n", fontDir.c_str(),
+                            ok ? (std::to_string(omk::fontPack().files()) + " faces drawn finer when the text is "
+                                  "enlarged, a REMASTER feature").c_str()
+                               : "no <key>.png there - off");
+                omk::event("font.pack", {{"dir", fontDir}, {"files", static_cast<long>(omk::fontPack().files())}});
             }
         }
         // ...and its post-pass: the bloom from the pack's light maps, the
@@ -249,7 +265,7 @@ int PlayState::setupSession() {
                 : settings.upscaleSource == omk::Settings::Source::Ini ? settings.upscale : 1.0f;
         if (upscale > 1.0f)
             std::printf("upscale: x%.2f - a REMASTER feature: the frame drawn smaller and brought up by "
-                        "AMD FSR 1, Vulkan only\n", static_cast<double>(upscale));
+                        "AMD FSR 1, Vulkan and GLES\n", static_cast<double>(upscale));
         // the REFLECTING FLOORS (`o3de/floorreflect.h`): its flag, its key, the
         // preset's 1 - each floor's own strength is the list's
         floorStrength = floorsFlag >= 0.0f ? floorsFlag
@@ -276,10 +292,12 @@ int PlayState::setupSession() {
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
                : !preset.empty() ? 2.0f : 0.0f;
-        // the ROUNDED BODIES (`o3de/smoothbody.h`): its flag, its key - not the
-        // preset's until the reader has judged it
+        // the ROUNDED BODIES (`o3de/smoothbody.h`): its flag, its key, the
+        // preset's 0.75 (the reader's "do it by default", 2026-10-22 - every
+        // character not yet seen, so --smooth-skip stays the way out)
         smoothBodies = smoothFlag >= 0.0f ? smoothFlag
-                     : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth : 0.0f;
+                     : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth
+                     : !preset.empty() ? 0.75f : 0.0f;
         if (smoothBodies > 0.0f)
             std::printf("smooth: %.2f - a REMASTER feature: the characters rounded, each triangle split 3x3 "
                         "(Phong tessellation), every backend\n", static_cast<double>(smoothBodies));

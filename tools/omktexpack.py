@@ -28,6 +28,14 @@ two each way, the key the engine's `textureKey` (engine/src/o3de/texpack.h).
                                                   anchored, its black key a smooth alpha ->
                                                   ROOT/ui/pack (`omk-play --ui-pack`, or the
                                                   --remaster preset's ROOT/ui/pack)
+    omktexpack.py fonts   ROOT [--k K]            the FONT PACK (engine/src/ui/fontpack.h): every
+                                                  face's glyphs K (8) times finer, by
+                                                  engine/build/font_hd - the game's own
+                                                  FONTS/OMIKRON.TTF for its alien script
+                                                  (MENUINTR, SNEAK), the glyph's own
+                                                  antialiasing super-resolved for the rest ->
+                                                  ROOT/fonts/pack (`omk-play --font-pack`, or
+                                                  the --remaster preset's ROOT/fonts/pack)
     omktexpack.py grades  DIR [--depth G]         the city grades as .cube LUTs (+ map.txt);
                                                   --depth: every channel to the power G after
                                                   the grade - darker mids, black and white kept
@@ -116,7 +124,7 @@ def write_png(path, w, h, px, channels):
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
     stride = w * channels
     raw = b"".join(b"\0" + px[y * stride:(y + 1) * stride] for y in range(h))
-    ctype = 2 if channels == 3 else 6
+    ctype = {1: 0, 3: 2, 4: 6}[channels]
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n"
                 + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))
@@ -865,6 +873,48 @@ def read_bmp(path):
     return w, h, bytes(out)
 
 
+# the faces drawn from the game's vector font rather than super-resolved:
+# its alien script (the sheet of 2026-10-22 - MENUINTR and SNEAK are its
+# rasterisations; PARCHEMI is another script, fitted worse than its own
+# coverage)
+TTF_FACES = ("MENUINTR", "SNEAK")
+
+
+def cmd_fonts(root, k):
+    """The font pack, into ROOT/fonts: `font_hd` writes raw/<key>.raw (int32
+    w, h, then the grey coverage) and says how each face came out; each
+    becomes pack/<key>.png, grey."""
+    out = safe_out(os.path.join(root, "fonts"))
+    tool = os.path.join(os.path.dirname(TOOL), "font_hd")
+    if not os.path.exists(tool):
+        sys.exit(f"{tool} is missing - run `make build/font_hd` in engine/ first")
+    data = omkpaths.data_root()
+    ttf = next((os.path.join(data, "FONTS", n) for n in sorted(os.listdir(os.path.join(data, "FONTS")))
+                if n.lower() == "omikron.ttf"), None)
+    raw, pack = os.path.join(out, "raw"), os.path.join(out, "pack")
+    os.makedirs(raw, exist_ok=True)
+    os.makedirs(pack, exist_ok=True)
+    cmd = [tool, data, os.path.join(ROOT, "tables"), raw, str(k)]
+    if ttf:
+        cmd += [ttf, ",".join(TTF_FACES)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    if r.returncode != 0:
+        sys.exit("font_hd failed: " + r.stderr.strip())
+    made = 0
+    for line in r.stdout.split("\n"):
+        f = line.split()
+        if len(f) < 4 or f[0] != "@fonthd":
+            continue
+        key = f[f.index("key") + 1]
+        with open(os.path.join(raw, key + ".raw"), "rb") as fh:
+            b = fh.read()
+        w, h = struct.unpack_from("<ii", b)
+        write_png(os.path.join(pack, key + ".png"), w, h, b[8:8 + w * h], 1)
+        made += 1
+    print(f"wrote {made} faces into {pack}")
+
+
 def cmd_ui(root, binary, model, tile, anchor_passes):
     """The interface pack, end to end, into ROOT/ui: `export` (the engine's
     keys from `texpack_tool uikeys`, each BMP padded by its edge, its key -
@@ -1031,12 +1081,13 @@ def cmd_build(out, nearest_n, solid, match, grain=0.0, anchored=True, anchor_pas
 
 def main(argv):
     argv = omkpaths.take_flags(list(argv))
-    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui"):
+    if len(argv) < 3 or argv[1] not in ("export", "upscale", "build", "emissive", "grades", "materials", "curate", "ui", "fonts"):
         sys.exit(__doc__)
     cmd, out, rest = argv[1], argv[2], argv[3:]
     match, binary, model, tile, nearest_n, solid, grain, anchored = [], None, "realesrgan-x4plus", 0, 0, None, 0.0, True
     anchor_passes = 1
     depth = 1.0
+    fonts_k = 8
     deepbump, python, jobs, force = None, None, 3, False
     # a flag without its value, or a value that is not a number: said, with
     # the usage - not a traceback
@@ -1046,6 +1097,7 @@ def main(argv):
             a = rest[i]
             if a == "--match": match.append(rest[i + 1]); i += 2
             elif a == "--depth": depth = float(rest[i + 1]); i += 2
+            elif a == "--k": fonts_k = int(rest[i + 1]); i += 2
             elif a == "--bin": binary = rest[i + 1]; i += 2
             elif a == "--model": model = rest[i + 1]; i += 2
             elif a == "--tile": tile = int(rest[i + 1]); i += 2
@@ -1069,6 +1121,8 @@ def main(argv):
         cmd_export(out, match)
     elif cmd == "ui":
         cmd_ui(out, binary, model, tile, anchor_passes)
+    elif cmd == "fonts":
+        cmd_fonts(out, fonts_k)
     elif cmd == "emissive":
         cmd_emissive(out, match)
     elif cmd == "grades":

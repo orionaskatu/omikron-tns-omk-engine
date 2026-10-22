@@ -290,14 +290,19 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   HUD, documents, the map) drawn from the upscaled pack in\n"
 "                   DIR (tools/omktexpack.py ui makes it) when the window\n"
 "                   enlarges them; every backend; [Remaster] uipack=DIR\n"
+"  --font-pack DIR  REMASTER, off by default: the fonts' glyphs drawn from the\n"
+"                   finer ones in DIR (tools/omktexpack.py fonts makes it)\n"
+"                   where --text-scaling fit enlarges them; every backend;\n"
+"                   [Remaster] fontpack=DIR\n"
 "  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
 "                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
 "                   Vulkan and GLES only; [Remaster] bloom=S\n"
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2, --floors 1, --mist 0.5, the\n"
-"                   interface pack in DIR/ui/pack when there is one; a specific\n"
+"                   --relief 2, --ao 2, --floors 1, --mist 0.5, --smooth\n"
+"                   0.75, the interface pack in DIR/ui/pack and the font pack\n"
+"                   in DIR/fonts/pack when there are; a specific\n"
 "                   flag or key beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
@@ -308,7 +313,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --upscale F      REMASTER, off by default: draw the frame F times smaller\n"
 "                   each way (1..3; 1.5 FSR's quality, 2 its performance) and\n"
 "                   bring it up with AMD FSR 1 - the 4K frame rate; Vulkan\n"
-"                   only, in --ssaa's place; [Remaster] upscale=F\n"
+"                   and GLES, in --ssaa's place; [Remaster] upscale=F\n"
 "  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
 "                   lists reflect the scene, strength S (0..1) times theirs;\n"
 "                   Vulkan and GLES only; [Remaster] floors=S\n"
@@ -560,6 +565,7 @@ int PlayOptions::parse(int argc, char** argv) {
         }
         else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
         else if (a == "--ui-pack" && i + 1 < argc) uiPackFlag = argv[++i];
+        else if (a == "--font-pack" && i + 1 < argc) fontPackFlag = argv[++i];
         else if (a == "--bloom" && i + 1 < argc) {
             bloomFlag = static_cast<float>(std::atof(argv[++i]));
             if (bloomFlag < 0.0f || bloomFlag > 4.0f) {

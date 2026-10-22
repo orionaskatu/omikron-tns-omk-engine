@@ -32990,7 +32990,7 @@ def c_engine_upscale():
     SHOWN TO FAIL (2026-10-22), one at a time: `fsrcon.h`'s con[2] with
     -0.0 for -0.5 - part 2 (94 of 100 words); the present pass's RCAS skipped
     on the readback's raw path - part 4 (90 of 90 frames differing).
-    NOT CHECKED, judged by eye: the sharpness (`kRcasStops`, AMD's 0.2).
+    NOT CHECKED, judged by eye: the sharpness (`kFsrRcasStops`, AMD's 0.2).
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -33115,24 +33115,23 @@ int main() {
 
 def c_engine_smooth_bodies():
     r"""THE ROUNDED BODIES - the remaster's D1 (`todo/remaster.md`), `[Remaster]
-    smooth = S` / `--smooth S` (0..1), OFF unless named and not in the
-    `--remaster` preset. Every backend: the character's REST geometry is
+    smooth = S` / `--smooth S` (0..1), OFF unless named or the `--remaster`
+    preset's 0.75 (the reader's "do it by default", 2026-10-22). Every backend: the character's REST geometry is
     subdivided once at load (`o3de/smoothbody.h`) - each triangle 3x3, every
     new point pulled toward its corners' tangent planes by S (Phong
     tessellation), the face, the joints' skinned triangles, creases and open
     boundaries left where they were. NOT A PORT, no oracle (tier 6): what is
     checked is that it breaks nothing the shipped models carry.
     Parts:
-      1. the source: 0 by default, [Remaster] only, never `all = max`, not the
-         preset's; the subdivision at both loads (`charModelFor`, the player);
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 0.75; the subdivision at both loads (`charModelFor`, the player);
       2. `smooth_probe` over every `MESHES/PERSOS/*.3DO` (191) at 3 and 0.75:
          every original corner bit for bit (KEPT), the output's open edges
          never more than the input predicts (WATERTIGHT - a crack, even by an
          ulp, opens 2 x 3 more), no new corner on the face's mesh, no new point
-         split are (over 40000 of 89107); and NO FOLD - no new triangle facing
+         flung, and the models split are (over 40000 of 89107); and NO FOLD - no new triangle facing
          against the one it came from (culled from behind it is a hole: the
          reader's "the arm becomes empty", 2026-10-22);
-         split are (over 40000 of 89107);
       3. Qalisar's bar at `--smooth 0.75`: the models say they were split
          (`@evt body.smooth`) and the frame moves; `--smooth-skip psh_fn`
          (any case) leaves that one model alone and rounds the rest (the
@@ -33178,7 +33177,7 @@ def c_engine_smooth_bodies():
     src_ok = (bool(re.search(r"float\s+smooth\s*=\s*0\.0f;", sh)),
               'kRemaster, "smooth"' in sc and 'kEnhancements, "smooth"' not in sc,
               not re.search(r"\bs\.smooth\s*=", max_body),   # (`smoothAnimation` is its own)
-              "preset" not in pre and pre.rstrip(";").endswith(": 0.0f"),
+              bool(re.search(r"!preset\.empty\(\)\s*\?\s*0\.75f\s*:\s*0\.0f;$", pre)),
               "omk::smoothBody(m.rest" in pc and "omk::smoothBody(playerBody.rest" in pl)
     mk = subprocess.run(["make", "-s", "build/smooth_probe"], cwd=eng, capture_output=True, text=True)
     probe = os.path.join(eng, "build", "smooth_probe")
@@ -33220,7 +33219,7 @@ def c_engine_smooth_bodies():
     print(f"        corpus: {m.group(1) if m else 'no @smooth line'}; the bar: {len(ev)} models smoothed, "
           f"{split} triangles split, the frame moved {frame[2]}")
     return (src_ok, corpus, frame), ((True,) * 5, (191, True, 0, 0, 0, 0, 0), (True, True, True, True)), \
-        "the source (off by default, [Remaster] only, never all = max, not the preset's, at both loads); " \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 0.75, at both loads); " \
         "the 191 shipped characters subdivided with every original corner kept, no crack, the face whole " \
         "and nothing flung; in Qalisar's bar the models split, the frame moves, and a skipped model stays as it is"
 
@@ -33331,6 +33330,255 @@ def c_engine_ui_pack():
         "the source (off by default, [Remaster] only, never all = max, noted at load, drawn from when " \
         "enlarged); 56 bitmaps keyed; a made pack draws the start sheet from its HD version with the key's " \
         "silhouette exact, and nothing without it; the real pack drawn from where there is one"
+
+
+def c_engine_font_pack():
+    r"""THE FONT PACK - the remaster's Tier E (`todo/remaster.md`), `[Remaster]
+    fontpack = DIR` / `--font-pack DIR`, the `--remaster` preset's
+    `fonts/pack` when there is one; OFF unless named. Every backend (text is
+    the CPU's). Where `textscaling fit` ENLARGES a glyph, `TextLayout::drawRun`
+    asks `fontPack()` for its face's coverage 8x finer (`<key>.png`, the key
+    FNV-1a over the `.FNT` blob, laid out by `hdLayout` from the face alone)
+    and brings it DOWN to the glyph scale by area averages (`drawGlyphHd`).
+    `engine/tools/font_hd.cpp` makes it: the alien script (MENUINTR, SNEAK)
+    from the disc's own `FONTS/OMIKRON.TTF` ("Omikron One", 1998), fitted to
+    each shipped glyph, the rest by enlarging each glyph's antialiased
+    coverage smoothly and drawing its half-coverage contour sharp. NOT A PORT,
+    no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the HD draw only inside `scaled()`; the preset's `fonts/pack`;
+      2. `font_hd` over the 13 shipped faces at 8x: every face written, the
+         TTF taking at least 150 of MENUINTR's 223 glyphs and 120 of SNEAK's
+         (182 and 156, 2026-10-22), and every face's HD glyphs brought back
+         down within 0.08 of the shipped coverage (mean |difference|) and
+         0.9..1.1 of its mass;
+      3. a pack of two of those faces (JOURNAL, MENUINTR) and `texpack_tool
+         fontline` (the engine's `TextLayout`) at 9/2, a 4K glyph scale: the
+         faces decoded, the line differs from the runtime's own enlargement,
+         and its INK lands where the runtime's does - each glyph's box (the
+         columns and rows over half coverage) within 2 pixels of it; at 1/1
+         the pack changes nothing; a file one row short is refused.
+    SHOWN TO FAIL (2026-10-22): `drawGlyphHd` stepping `k` HD pixels a
+    screen pixel (the glyph scale ignored) - both lines' ink boxes off
+    (part 3); the HD path taken unscaled whenever a pack is open - both 1/1
+    lines moved (part 3).
+    TRIED AND DROPPED, recorded in `font_hd.cpp`: back-projection, which broke
+    thin strokes. NOT CHECKED, judged by eye: the letters themselves.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    tx = open(os.path.join(eng, "src", "ui", "text.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    run_body = tx[tx.index("int TextLayout::drawRun"):]
+    run_body = run_body[:run_body.index("\n}\n")]
+    scaled = run_body[run_body.index("scaled()"):]
+    src_ok = (bool(re.search(r"std::string\s+fontPack;", sh)),
+              'kRemaster, "fontpack"' in sc and 'kEnhancements, "fontpack"' not in sc,
+              "fontPack" not in max_body,
+              "fontPack().find" in scaled[:scaled.index("drawGlyphScaled")],
+              'preset + "/fonts/pack"' in ps)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/font_hd"], cwd=eng, capture_output=True, text=True)
+    tool, hd = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "font_hd")
+    if mk.returncode != 0 or not os.path.exists(tool) or not os.path.exists(hd):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    fonts = os.path.join(fr, "FONTS")
+    ttf = next((os.path.join(fonts, n) for n in sorted(os.listdir(fonts)) if n.lower() == "omikron.ttf"), None)
+    tmp = tempfile.mkdtemp()
+    try:
+        raw = os.path.join(tmp, "raw")
+        os.makedirs(raw)
+        r = subprocess.run([hd, fr, os.path.join(ROOT, "tables"), raw, "8"] +
+                           ([ttf, "MENUINTR,SNEAK"] if ttf else []), capture_output=True, text=True)
+        faces = {}
+        for m in re.finditer(r"^@fonthd (\S+) key (\S+) k 8 glyphs (\d+) ttf (\d+) em \S+ residual (\S+) mass (\S+)",
+                             r.stdout, re.M):
+            faces[m.group(1)] = (m.group(2), int(m.group(4)), float(m.group(5)), float(m.group(6)))
+        corpus = (len(faces), faces.get("MENUINTR", (0, 0))[1] >= 150, faces.get("SNEAK", (0, 0))[1] >= 120,
+                  all(f[2] < 0.08 and 0.9 <= f[3] <= 1.1 for f in faces.values()))
+        if not ttf:
+            corpus = corpus[:1] + (("skipped",), ("skipped",)) + corpus[3:]
+        pack = os.path.join(tmp, "pack")
+        os.makedirs(pack)
+        def chunk(t, b):
+            return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+        def png(path, w, h, px):
+            rows = b"".join(b"\x00" + px[y * w:(y + 1) * w] for y in range(h))
+            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)) +
+                                   chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b""))
+        for name in ("JOURNAL", "MENUINTR"):
+            if name in faces:
+                b = open(os.path.join(raw, faces[name][0] + ".raw"), "rb").read()
+                w, h = struct.unpack_from("<ii", b)
+                png(os.path.join(pack, faces[name][0] + ".png"), w, h, b[8:8 + w * h])
+        short = os.path.join(tmp, "short")
+        os.makedirs(short)
+        if "JOURNAL" in faces:
+            b = open(os.path.join(raw, faces["JOURNAL"][0] + ".raw"), "rb").read()
+            w, h = struct.unpack_from("<ii", b)
+            png(os.path.join(short, faces["JOURNAL"][0] + ".png"), w, h - 1, b[8:8 + w * (h - 1)])
+        def line(pk, face, text, num, den):
+            out = os.path.join(tmp, "l.raw")
+            q = subprocess.run([tool, "fontline", fr, os.path.join(ROOT, "tables"), pk, face, str(num), str(den), "1",
+                                text, out], capture_output=True, text=True)
+            m = re.search(r"@fontline hd (\d+) w (\d+) h (\d+)", q.stdout)
+            if not m:
+                return None, -1
+            w, h = int(m.group(2)), int(m.group(3))
+            b = open(out, "rb").read()
+            return (w, h, struct.unpack_from("<%dH" % (w * h), b, 8)), int(m.group(1))
+        def boxes(img):
+            # each glyph's ink box: runs of columns with a pixel over half, and their rows
+            w, h, px = img
+            lit = [[((px[y * w + x] >> 5) & 63) >= 32 for x in range(w)] for y in range(h)]
+            cols = [any(lit[y][x] for y in range(h)) for x in range(w)]
+            out, x = [], 0
+            while x < w:
+                if cols[x]:
+                    x0 = x
+                    while x < w and cols[x]:
+                        x += 1
+                    rows = [y for y in range(h) if any(lit[y][x0:x])]
+                    out.append((x0, x - 1, rows[0], rows[-1]))
+                x += 1
+            return out
+        lines = []
+        for face, text in (("J", "Omikron Nomad Soul"), ("I", "Omikron")):
+            base, _ = line("-", face, text, 9, 2)
+            withPk, dec = line(pack, face, text, 9, 2)
+            nat0, _ = line("-", face, text, 1, 1)
+            nat1, _ = line(pack, face, text, 1, 1)
+            if not base or not withPk or not nat0 or not nat1:
+                lines.append(("no line", face))
+                continue
+            b0, b1 = boxes(base), boxes(withPk)
+            near = len(b0) == len(b1) and len(b0) > 3 and \
+                all(max(abs(p - q) for p, q in zip(u, v)) <= 2 for u, v in zip(b0, b1))
+            lines.append((dec >= 1, base[2] != withPk[2], near, nat0[2] == nat1[2]))
+        _, refused = line(short, "J", "Omikron", 9, 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        font_hd: {len(faces)} faces, MENUINTR {faces.get('MENUINTR', (0, 0))[1]} and SNEAK "
+          f"{faces.get('SNEAK', (0, 0))[1]} from the TTF, worst residual "
+          f"{max((f[2] for f in faces.values()), default=0):.4f}; the lines (decoded, differs, ink boxes "
+          f"within 2, inert at 1/1): {lines}; a short file decoded {refused}")
+    want_corpus = (13, True, True, True) if ttf else (13, ("skipped",), ("skipped",), True)
+    return (src_ok, corpus, tuple(lines), refused), \
+           ((True,) * 5, want_corpus, ((True,) * 4,) * 2, 0), \
+        "the source (off by default, [Remaster] only, never all = max, drawn only when the text is " \
+        "enlarged, the preset's fonts/pack); the 13 faces made 8x finer, the alien script from the disc's " \
+        "TTF, each back down within 0.08 of the shipped coverage; through the engine at 4K's scale the " \
+        "pack is drawn, its ink where the runtime's is, nothing at 1/1, a wrong-size file refused"
+
+
+def c_engine_gles_upscale():
+    r"""THE UPSCALE ON GLES - the remaster's A6 (`todo/remaster.md`), the same
+    `--upscale F` / `[Remaster] upscale = F` as Vulkan's (`engine: upscale`,
+    whose part 1 says it is off by default and not the preset's). The frame
+    drawn F times smaller through the same rule (`rs()`) and brought up by
+    AMD's FSR 1 TRANSCRIBED into GLSL 1.00/1.20 (`kEasuFrag`, `kRcasFrag` -
+    no unsigned integers, no `textureGather` there): EASU, then RCAS at
+    `kFsrRcasStops` (shared with Vulkan), then the present pass's own 565
+    dither, untouched.
+    Parts:
+      1. the source: the frontend hands the factor to the GLES renderer; the
+         readback reads RCAS's target upscaled; the view's viewport through
+         `rs()`; both backends' sharpness one constant;
+      2. Anekbah's street at 1280x960 on the READBACK's path
+         (`OMK_NO_GPU_PRESENT`): the renderer says it drew 640x480 at x2
+         (`@evt gles.upscale`); the frame is not the native one and is the
+         native one UPSCALED - mean under 6 a channel, and registered: of the
+         25 shifts within two pixels none matches better than none;
+      3. a LETTERBOXED frame - the supermarket fight's approach cutscene,
+         frame 300 (`engine: fight letterbox`'s bars): the picture's own rows
+         (the `picH_` the readback runs FSR over), registered the same way;
+      4. the WINDOW (hidden) at x1.5 with `OMK_VERIFY_GPU_PRESENT`: every
+         frame the GPU's, and the window's pixels those of the readback's
+         frame, 0 differing over 90 frames.
+    Measured 2026-10-22 (M3, the Qalisar street): x2 against native a mean of
+    2.0 grey levels, registered at (0, 0); against Vulkan's x2 2.5.
+    SHOWN TO FAIL (2026-10-22): the readback reading the world target in
+    place of RCAS's - part 2 (the 640x480 picture in a 1280x960 frame);
+    RCAS skipped in the present (EASU's target presented) - part 4.
+    NOT CHECKED, judged by eye: the sharpness.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    pg = open(os.path.join(eng, "backends", "sdl", "playgpu_gles.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    src_ok = ("gr->setUpscale(upscale)" in pg,
+              "upscale_ > 1.0f ? rcasFbo_ : fbo_" in gl,
+              "glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));" in gl,
+              "omk::kFsrRcasStops" in gl and "omk::fsrRcasCon(omk::kFsrRcasStops)" in vk and "kRcasStops =" not in vk)
+    mk = subprocess.run(["make", "-s", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, "build"), ((True,) * 4, "built"), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    W, H = 1280, 960
+    try:
+        def run(name, *extra, env=None, dump=True, where=("--area", "0", "--stand", "1804,0,-6890,336")):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "%dx%d" % (W, H),
+                    "--filter", "nearest"] + list(where) + (["--dump", out] if dump else []) + list(extra)
+            r = subprocess.run(["caffeinate", "-d", "-u", "-i", play] + args, capture_output=True, text=True,
+                               errors="replace", timeout=600, env=dict(os.environ, OMK_EVENTS="1", **(env or {})))
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            px = struct.unpack("<%dH" % (len(raw) // 2), raw) if len(raw) == W * H * 2 else None
+            return px, r.stdout
+        hidden = {"OMK_NO_GPU_PRESENT": "1"}
+        native, _ = run("native", "--frames", "60", env=hidden)
+        up, log = run("up", "--frames", "60", "--upscale", "2", env=hidden)
+        fight = ("--fight-supermarket",)
+        lbNative, _ = run("lbn", "--frames", "300", env=hidden, where=fight)
+        lbUp, _ = run("lbu", "--frames", "300", "--upscale", "2", env=hidden, where=fight)
+        _, wlog = run("win", "--frames", "90", "--upscale", "1.5", dump=False,
+                      env={"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ev = [e[1] for e in _events(log) if e[0] == "gles.upscale"]
+    drawn = (ev[0].get("rw"), ev[0].get("rh")) if ev else None
+    if None in (native, up, lbNative, lbUp):
+        return (src_ok, drawn, "no frame"), ((True,) * 4, ("640", "480"), "frames"), "a run wrote no frame"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    def registered(p, q):
+        a, b = [rgb(v) for v in p], [rgb(v) for v in q]
+        def mad(dx, dy):
+            tot = n = 0
+            for y in range(40, H - 40, 4):
+                for x in range(40, W - 40, 4):
+                    u, v = a[y * W + x], b[(y + dy) * W + x + dx]
+                    tot += abs(u[0] - v[0]) + abs(u[1] - v[1]) + abs(u[2] - v[2]); n += 3
+            return tot / n
+        sh = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+        best = min(sh, key=sh.get)
+        return (p != q, sh[(0, 0)] < 6.0, best), sh[(0, 0)]
+    whole, m0 = registered(native, up)
+    letter, m1 = registered(lbNative, lbUp)
+    bars = (sum(1 for x in range(W) if lbNative[x]), sum(1 for x in range(W) if lbUp[x]))
+    gm = re.findall(r"gles present verify: frame (\d+), (\d+) pixels differ; (\d+) of (\d+) frames differed", wlog)
+    gpu = re.findall(r"present: (\d+) of (\d+) straight from the GPU", wlog)
+    win = bool(gm) and int(gm[-1][3]) >= 60 and gm[-1][2] == "0" and bool(gpu) and all(x == y for x, y in gpu)
+    print(f"        drawn {drawn}; x2 against native: mean {m0:.2f} a channel, {whole}; letterboxed: mean "
+          f"{m1:.2f}, {letter}, its top row lit {bars}; the window at x1.5: {gm[-1] if gm else 'no verify'}, GPU-presented {gpu}")
+    return (src_ok, drawn, whole, letter, bars, win), \
+           ((True,) * 4, ("640", "480"), (True, True, (0, 0)), (True, True, (0, 0)), (0, 0), True), \
+        "the source (the factor handed to GLES, the readback reading RCAS's target, the viewport by rs(), " \
+        "one sharpness for both backends); the street drawn at 640x480 for 1280x960 and the native frame " \
+        "upscaled, whole and letterboxed (close, and registered); the window's pixels the readback's over " \
+        "90 frames, every one the GPU's"
 
 
 def c_engine_ao():
@@ -47417,13 +47665,16 @@ def c_licence_headers():
     # 655: + `engine/src/o3de/smoothbody.{h,cpp}` and `engine/tools/smooth_probe.cpp`
     # (the rounded bodies, D1)
     # 657: + `engine/src/ui/uipack.{h,cpp}` (the interface pack, Tier E)
+    # 660: + `engine/src/ui/fontpack.{h,cpp}` and `engine/tools/font_hd.cpp`
+    # (the font pack, Tier E); and the vendored 3 -> 4, `stb_truetype.h`
+    # (MIT or public domain), which font_hd alone includes
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (657, [], 3, []), \
+           (660, [], 4, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
-           "stamped with OMK's licence (must be empty - pl_mpeg.h and the FSR " \
-           "headers are MIT and are not ours to relicense)"
+           "stamped with OMK's licence (must be empty - pl_mpeg.h, the FSR " \
+           "headers and stb_truetype.h are MIT and are not ours to relicense)"
 
 
 def c_dialogue_mode():
@@ -50225,6 +50476,8 @@ SLOW = [
     ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
     ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),
     ("engine: ui pack",      c_engine_ui_pack,      "todo/remaster.md Tier E; ui/uipack.h"),
+    ("engine: font pack",    c_engine_font_pack,    "todo/remaster.md Tier E; ui/fontpack.h"),
+    ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

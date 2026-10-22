@@ -60,6 +60,7 @@ them conflicts with GPL-3.0.
 |---|---|---|---|
 | `engine/third_party/pl_mpeg.h` | MPEG-1 / MP2 decoder and PS demuxer | [phoboslab/pl_mpeg](https://github.com/phoboslab/pl_mpeg) | **MIT** (Dominic Szablewski) |
 | `engine/third_party/ffx_a.h`, `ffx_fsr1.h` | AMD FidelityFX Super Resolution 1 (the remaster's upscale) | [GPUOpen-Effects/FidelityFX-FSR](https://github.com/GPUOpen-Effects/FidelityFX-FSR) | **MIT** (Advanced Micro Devices) |
+| `engine/third_party/stb_truetype.h` | TrueType rasteriser (the font pack's maker, `engine/tools/font_hd.cpp`, only) | [nothings/stb](https://github.com/nothings/stb) | **MIT** or public domain, the user's choice (Sean Barrett) |
 
 Those are the only third-party files in the published tree, and they are
 **vendored deliberately** rather than found by the build: `docs/PORTING.md` A8 draws the

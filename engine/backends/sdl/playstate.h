@@ -95,6 +95,7 @@ struct PlayState {
     int & smoothAnimFlag = opt.smoothAnimFlag;
     std::string & texturePackFlag = opt.texturePackFlag;
     std::string & uiPackFlag = opt.uiPackFlag;
+    std::string & fontPackFlag = opt.fontPackFlag;
     float & bloomFlag = opt.bloomFlag;
     std::string & gradeFlag = opt.gradeFlag;
     std::string & remasterFlag = opt.remasterFlag;

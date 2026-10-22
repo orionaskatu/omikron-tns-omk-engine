@@ -104,6 +104,7 @@
 
 #include "o3de/depthtie.h"
 #include "o3de/drawcore.h"
+#include "o3de/fsrcon.h"
 #include "o3de/colourgrade.h"
 #include "platform/profile.h"
 #include "o3de/renderer.h"
@@ -579,6 +580,136 @@ void main() {
                   g6 * 4.0 + floor(g6 / 16.0),
                   b5 * 8.0 + floor(b5 / 4.0));
     gl_FragColor = vec4(o / 255.0, 1.0);
+}
+)";
+
+// ---- THE UPSCALE (`todo/remaster.md` A6) - AMD FSR 1 on GL ---------------
+//
+// `kEasuFrag` and `kRcasFrag` are AMD's 32-bit EASU and RCAS
+// (`third_party/ffx_fsr1.h`, MIT - `FsrEasuF`, `FsrEasuSetF`, `FsrEasuTapF`,
+// `FsrRcasF`) TRANSCRIBED into GLSL 1.00/1.20, which has no unsigned integers
+// and no `textureGather`: the twelve texels are read one by one, and AMD's
+// bit-trick reciprocals (`APrxLoRcpF1`, `APrxLoRsqF1`, `APrxMedRcpF1`) are
+// exact ones - within their own error of the Vulkan pass, not bit for bit.
+// Both run in TOP-ORIGIN pixel coordinates over a picture in the top rows of
+// its texture (GL's row 0 the bottom), as the present pass reads them, and
+// both CLAMP their reads to the drawn picture. EASU's constants are
+// `FsrEasuCon`'s, in floats: `uIn` the drawn picture (`rs(w_) x rs(vh)`),
+// `uOut` the output's (`w_ x vh`).
+constexpr const char* kEasuFrag = R"(
+uniform sampler2D uSrc;
+uniform vec2 uSrcTex;      // the source texture's size
+uniform vec2 uIn;          // the drawn picture, render pixels
+uniform vec2 uOut;         // the output picture
+uniform float uOutTexH;    // the output target's height
+vec3 T(vec2 p) {
+    p = clamp(p, vec2(0.0), uIn - 1.0);
+    return texture2D(uSrc, vec2(p.x + 0.5, uSrcTex.y - 0.5 - p.y) / uSrcTex).rgb;
+}
+float L(vec3 c) { return c.b * 0.5 + (c.r * 0.5 + c.g); }
+float rcp(float x) { return 1.0 / max(x, 1.0e-20); }
+void setF(inout vec2 dir, inout float len, float w, float lA, float lB, float lC, float lD, float lE) {
+    float dc = lD - lC, cb = lC - lB;
+    float lenX = rcp(max(abs(dc), abs(cb)));
+    float dirX = lD - lB;
+    dir.x += dirX * w;
+    lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
+    len += lenX * lenX * w;
+    float ec = lE - lC, ca = lC - lA;
+    float lenY = rcp(max(abs(ec), abs(ca)));
+    float dirY = lE - lA;
+    dir.y += dirY * w;
+    lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
+    len += lenY * lenY * w;
+}
+void tap(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c) {
+    vec2 v = vec2(off.x * dir.x + off.y * dir.y, off.x * -dir.y + off.y * dir.x) * len;
+    float d2 = min(v.x * v.x + v.y * v.y, clp);
+    float wB = 2.0 / 5.0 * d2 - 1.0;
+    float wA = lob * d2 - 1.0;
+    wB *= wB;
+    wA *= wA;
+    wB = 25.0 / 16.0 * wB - (25.0 / 16.0 - 1.0);
+    float w = wB * wA;
+    aC += c * w;
+    aW += w;
+}
+void main() {
+    vec2 ip = vec2(floor(gl_FragCoord.x), uOutTexH - 1.0 - floor(gl_FragCoord.y));
+    vec2 pp = ip * (uIn / uOut) + (0.5 * uIn / uOut - 0.5);
+    vec2 fp = floor(pp);
+    pp -= fp;
+    vec3 b = T(fp + vec2(0.0, -1.0)), c = T(fp + vec2(1.0, -1.0));
+    vec3 e = T(fp + vec2(-1.0, 0.0)), f = T(fp), g = T(fp + vec2(1.0, 0.0)), h = T(fp + vec2(2.0, 0.0));
+    vec3 i = T(fp + vec2(-1.0, 1.0)), j = T(fp + vec2(0.0, 1.0)), k = T(fp + vec2(1.0, 1.0)), l = T(fp + vec2(2.0, 1.0));
+    vec3 n = T(fp + vec2(0.0, 2.0)), o = T(fp + vec2(1.0, 2.0));
+    float bL = L(b), cL = L(c), eL = L(e), fL = L(f), gL = L(g), hL = L(h);
+    float iL = L(i), jL = L(j), kL = L(k), lL = L(l), nL = L(n), oL = L(o);
+    vec2 dir = vec2(0.0);
+    float len = 0.0;
+    setF(dir, len, (1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
+    setF(dir, len, pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
+    setF(dir, len, (1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
+    setF(dir, len, pp.x * pp.y, gL, jL, kL, lL, oL);
+    vec2 dir2 = dir * dir;
+    float dirR = dir2.x + dir2.y;
+    bool zro = dirR < 1.0 / 32768.0;
+    dirR = zro ? 1.0 : inversesqrt(dirR);
+    dir.x = zro ? 1.0 : dir.x;
+    dir *= dirR;
+    len = len * 0.5;
+    len *= len;
+    float stretch = (dir.x * dir.x + dir.y * dir.y) * rcp(max(abs(dir.x), abs(dir.y)));
+    vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+    float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
+    float clp = rcp(lob);
+    vec3 min4 = min(min(f, g), min(j, k));
+    vec3 max4 = max(max(f, g), max(j, k));
+    vec3 aC = vec3(0.0);
+    float aW = 0.0;
+    tap(aC, aW, vec2(0.0, -1.0) - pp, dir, len2, lob, clp, b);
+    tap(aC, aW, vec2(1.0, -1.0) - pp, dir, len2, lob, clp, c);
+    tap(aC, aW, vec2(-1.0, 1.0) - pp, dir, len2, lob, clp, i);
+    tap(aC, aW, vec2(0.0, 1.0) - pp, dir, len2, lob, clp, j);
+    tap(aC, aW, vec2(0.0, 0.0) - pp, dir, len2, lob, clp, f);
+    tap(aC, aW, vec2(-1.0, 0.0) - pp, dir, len2, lob, clp, e);
+    tap(aC, aW, vec2(1.0, 1.0) - pp, dir, len2, lob, clp, k);
+    tap(aC, aW, vec2(2.0, 1.0) - pp, dir, len2, lob, clp, l);
+    tap(aC, aW, vec2(2.0, 0.0) - pp, dir, len2, lob, clp, h);
+    tap(aC, aW, vec2(1.0, 0.0) - pp, dir, len2, lob, clp, g);
+    tap(aC, aW, vec2(1.0, 2.0) - pp, dir, len2, lob, clp, o);
+    tap(aC, aW, vec2(0.0, 2.0) - pp, dir, len2, lob, clp, n);
+    gl_FragColor = vec4(min(max4, max(min4, aC / aW)), 1.0);
+}
+)";
+
+// RCAS over EASU's picture (`uPic` its size), the sharpness `uSharp` -
+// `exp2(-stops)`, `FsrRcasCon`'s `con.x`. No denoise, as on Vulkan.
+constexpr const char* kRcasFrag = R"(
+uniform sampler2D uSrc;
+uniform vec2 uSrcTex;
+uniform vec2 uPic;
+uniform float uSharp;
+vec3 T(vec2 p) {
+    p = clamp(p, vec2(0.0), uPic - 1.0);
+    return texture2D(uSrc, vec2(p.x + 0.5, uSrcTex.y - 0.5 - p.y) / uSrcTex).rgb;
+}
+float mx3(float x, float y, float z) { return max(x, max(y, z)); }
+float mn3(float x, float y, float z) { return min(x, min(y, z)); }
+void main() {
+    vec2 sp = vec2(floor(gl_FragCoord.x), uSrcTex.y - 1.0 - floor(gl_FragCoord.y));
+    vec3 b = T(sp + vec2(0.0, -1.0)), d = T(sp + vec2(-1.0, 0.0)), e = T(sp);
+    vec3 f = T(sp + vec2(1.0, 0.0)), h = T(sp + vec2(0.0, 1.0));
+    vec3 mn4 = min(min(b, d), min(f, h));
+    vec3 mx4 = max(max(b, d), max(f, h));
+    // (black ring: 0 / 0, and white: 0 / -0 - AMD's leave a NaN for the GPU's
+    // min and max to drop; GLSL promises nothing of NaN, so they are kept finite)
+    vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1.0e-20));
+    vec3 hitMax = (1.0 - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1.0e-20));
+    vec3 lobeC = max(-hitMin, hitMax);
+    float lobe = max(-(0.25 - 1.0 / 16.0), min(mx3(lobeC.r, lobeC.g, lobeC.b), 0.0)) * uSharp;
+    vec3 o = (lobe * b + lobe * d + lobe * h + lobe * f + e) / (4.0 * lobe + 1.0);
+    gl_FragColor = vec4(o, 1.0);
 }
 )";
 
@@ -1217,6 +1348,12 @@ public:
         return true;
     }
     int supersample() const { return ss_; }
+    bool setUpscale(float f) override {
+        if (ready_) return false;   // too late: the target exists
+        upscale_ = f > 1.0f ? std::min(f, 3.0f) : 1.0f;
+        return true;
+    }
+    float upscale() const { return upscale_; }
     // MULTISAMPLING (`todo/enhancements.md` 0): the world rasterised into a
     // multisampled target and resolved into `colour_` by a blit at `end()`, so
     // every consumer - the readback, the present, the supersample resolve -
@@ -1256,7 +1393,7 @@ public:
     // through the blend - the picture times a constant - so no program changes
     bool presentEye(int ew, int eh, int winW, int winH, float shade = 1.0f) {
         notePresent();
-        if (ew <= 0 || eh <= 0 || ew > w_ || eh > h_ || ss_ > 1) return false;
+        if (ew <= 0 || eh <= 0 || ew > w_ || eh > h_ || ss_ > 1 || upscale_ > 1.0f) return false;
         const float dst[4] = {-1.0f, -1.0f, 2.0f, 2.0f};
         shade_ = shade;
         drawPresent(colour_, ew, eh, w_, h_, true, true, dst, winW, winH);
@@ -1380,7 +1517,23 @@ private:
 
     int w_ = 0, h_ = 0;      // the OUTPUT size - what `readback()` answers with
     int ss_ = 1;             // the supersample factor, 1 off
-    int rw_ = 0, rh_ = 0;    // ...and the RENDER size, `w_ * ss_` by `h_ * ss_`
+    // ...or THE UPSCALE (`todo/remaster.md` A6): the frame drawn `upscale_` times
+    // SMALLER each way and brought up by FSR 1 (`fsrPass`); 1 off, and it
+    // takes the supersample's place
+    float upscale_ = 1.0f;
+    // a picture `v` output pixels long, in RENDER pixels - Vulkan's `rs`, the
+    // one rule every size the frame is drawn at goes through
+    int rs(int v) const {
+        return upscale_ > 1.0f ? std::max(1, static_cast<int>(std::lround(static_cast<float>(v) / upscale_))) : v * ss_;
+    }
+    int rw_ = 0, rh_ = 0;    // ...and the RENDER size, `rs(w_)` by `rs(h_)`
+    int picH_ = 0;           // the last view's picture height, output pixels (`readback`'s upscale)
+    // EASU's and RCAS's targets, the OUTPUT's size, their pictures in the top
+    // rows as `colour_`'s is; and the two programs
+    GLuint easuTex_ = 0, easuFbo_ = 0, rcasTex_ = 0, rcasFbo_ = 0, easuProg_ = 0, rcasProg_ = 0;
+    int fsrW_ = 0, fsrH_ = 0;
+    // EASU then RCAS over the picture's `vh` output rows -> `rcasTex_`
+    void fsrPass(int vh);
     bool ready_ = false;
     bool allocTarget();      // `colour_` and `depth_` at the render size
     bool allocMultisample(); // ...and the multisampled pair, when asked
@@ -1646,6 +1799,10 @@ GlesRenderer::~GlesRenderer() {
     if (prog_) glDeleteProgram(prog_);
     if (present_) glDeleteProgram(present_);
     if (presentSS_) glDeleteProgram(presentSS_);
+    if (easuProg_) glDeleteProgram(easuProg_);
+    if (rcasProg_) glDeleteProgram(rcasProg_);
+    for (GLuint* t : {&easuTex_, &rcasTex_}) if (*t) deleteTextures(1, t);
+    for (GLuint* f : {&easuFbo_, &rcasFbo_}) if (*f) glDeleteFramebuffers(1, f);
     for (auto& [g, pv] : poseVbo_) deleteBuffers(1, &pv.id);
     if (posed_) glDeleteProgram(posed_);
     for (auto& [g, nb] : nrmVbo_) deleteBuffers(1, &nb.id);
@@ -1767,13 +1924,18 @@ bool GlesRenderer::init(int w, int h) {
     fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
     if (ready_) {
         // a resize: only the target changes
-        rw_ = w_ * ss_; rh_ = h_ * ss_;
+        rw_ = rs(w_); rh_ = rs(h_);
+        fsrW_ = fsrH_ = 0;   // EASU's targets follow at the next pass
         rgba_ = std::vector<unsigned char>();   // released, not cleared
         return allocTarget() && (!msFbo_ || allocMultisample());
     }
     // the supersample factor the context can hold: a target past its largest
     // texture or renderbuffer is refused by the driver, so it is halved here
     // until it fits, and said
+    if (upscale_ > 1.0f && ss_ > 1) {
+        std::printf("gles: --ssaa %d ignored - the upscale takes its place\n", ss_);
+        ss_ = 1;
+    }
     if (ss_ > 1) {
         GLint maxTex = 0, maxRb = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
@@ -1785,7 +1947,7 @@ bool GlesRenderer::init(int w, int h) {
             std::printf("gles: supersampling %dx does not fit (%dx%d past the context's %d) - %dx\n",
                         asked, w * asked, h * asked, lim, ss_);
     }
-    rw_ = w_ * ss_; rh_ = h_ * ss_;
+    rw_ = rs(w_); rh_ = rs(h_);
     rgba_ = std::vector<unsigned char>();   // released, not cleared
     // THE ENHANCED PROGRAMS, in place of the default two when either
     // enhancement is asked for; a context that cannot build them keeps the
@@ -2077,6 +2239,23 @@ gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
         sDither_  = glGetUniformLocation(presentSS_, "uDither");
         std::printf("gles: supersampling %dx - the world drawn at %dx%d\n", ss_, rw_, rh_);
     }
+    if (upscale_ > 1.0f) {
+        easuProg_ = link(kPresentVert, kEasuFrag, {{0, "aPos"}});
+        rcasProg_ = link(kPresentVert, kRcasFrag, {{0, "aPos"}});
+        if (!easuProg_ || !rcasProg_) {
+            // a context that cannot build them: refused, not the renderer
+            std::printf("gles: the upscale's programs did not build - upscale refused\n");
+            upscale_ = 1.0f;
+            rw_ = w_; rh_ = h_;
+            if (!allocTarget()) return false;
+        } else {
+            std::printf("gles: upscale x%.2f - the world drawn at %dx%d for %dx%d, brought up by AMD FSR 1 "
+                        "(EASU, RCAS %.1f stops), a REMASTER feature\n", static_cast<double>(upscale_), rw_, rh_, w_, h_,
+                        static_cast<double>(omk::kFsrRcasStops));
+            omk::event("gles.upscale", {{"factor", static_cast<double>(upscale_)}, {"rw", rw_}, {"rh", rh_},
+                                        {"w", w_}, {"h", h_}});
+        }
+    }
 
     // the white 1x1 a material with no texture binds - raster.cpp leaves the
     // texel at 255 and lets the vertex colour stand alone
@@ -2245,7 +2424,7 @@ bool GlesRenderer::poseSelfTest() {
                  v.data(), GL_STATIC_DRAW);
 gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVert)));
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    glViewport(0, 0, w_, h_);
+    glViewport(0, 0, rw_, rh_);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
@@ -2275,13 +2454,13 @@ gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVe
                           reinterpret_cast<const void*>(offsetof(GpuPoseVert, slot)));
     glVertexAttribPointer(kAttrNormal, 3, GL_FLOAT, GL_FALSE, st,
                           reinterpret_cast<const void*>(offsetof(GpuPoseVert, nx)));
-    std::vector<unsigned char> px(static_cast<std::size_t>(w_) * h_ * 4);
+    std::vector<unsigned char> px(static_cast<std::size_t>(rw_) * rh_ * 4);
     const auto at = [&](float nx, float ny) -> const unsigned char* {
-        int x = static_cast<int>((nx + 1.0f) * 0.5f * static_cast<float>(w_));
-        int y = static_cast<int>((ny + 1.0f) * 0.5f * static_cast<float>(h_));
-        x = std::clamp(x, 0, w_ - 1);
-        y = std::clamp(y, 0, h_ - 1);
-        return px.data() + (static_cast<std::size_t>(y) * w_ + x) * 4;
+        int x = static_cast<int>((nx + 1.0f) * 0.5f * static_cast<float>(rw_));
+        int y = static_cast<int>((ny + 1.0f) * 0.5f * static_cast<float>(rh_));
+        x = std::clamp(x, 0, rw_ - 1);
+        y = std::clamp(y, 0, rh_ - 1);
+        return px.data() + (static_cast<std::size_t>(y) * rw_ + x) * 4;
     };
     int placed[2] = {0, 0};
     std::string report;
@@ -2301,7 +2480,7 @@ gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVe
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glDrawArrays(GL_TRIANGLES, 0, kN * 6);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, w_, h_, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        glReadPixels(0, 0, rw_, rh_, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         for (int k = 0; k < kN; ++k) {
             const float cx = -1.0f + 2.0f * (static_cast<float>(k % kCols) + 0.5f) / kCols;
             const float cy = -1.0f + 2.0f * (static_cast<float>(k / kCols) + 0.5f) / kRows;
@@ -2851,8 +3030,10 @@ void GlesRenderer::setView(const View& view) {
     const int vh = view.letterboxed() ? view.vh : h_;
     cam.w = vw; cam.h = vh;
     // ...at the RENDER size: a supersampled target is the frame `ss_` times
-    // over, and the projection is the same (the aspect does not change)
-    glViewport(0, rh_ - vh * ss_, vw * ss_, vh * ss_);
+    // over, an upscaled one `upscale_` times under, and the projection is the same
+    // (the aspect does not change)
+    glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));
+    picH_ = vh;
 
     // THE VIEW-PROJECTION from the software rasterizer's own basis. GL's clip
     // space differs from Vulkan's in the two ways that matter: Y points UP
@@ -3623,11 +3804,15 @@ const Surface& GlesRenderer::readback() {
     if (fb_.w != w_ || fb_.h != h_) fb_ = Surface(w_, h_, 0);
     if (!dirty_) return fb_;
     dirty_ = false;
-    rgba_.resize(static_cast<std::size_t>(rw_) * rh_ * 4);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    // UPSCALED, the picture is FSR's at the output size: the two passes run
+    // here as the present runs them, and the rest is the unscaled path's
+    if (upscale_ > 1.0f) fsrPass(picH_ > 0 ? picH_ : h_);
+    const int readW = upscale_ > 1.0f ? w_ : rw_, readH = upscale_ > 1.0f ? h_ : rh_;
+    rgba_.resize(static_cast<std::size_t>(readW) * readH * 4);
+    glBindFramebuffer(GL_FRAMEBUFFER, upscale_ > 1.0f ? rcasFbo_ : fbo_);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     const double t0 = glesClockMs();
-    glReadPixels(0, 0, rw_, rh_, GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
+    glReadPixels(0, 0, readW, readH, GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
     const double t1 = glesClockMs();
     g_glesMs[0] += t1 - t0;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -3741,6 +3926,11 @@ bool GlesRenderer::presentWorld(int vy, int vh, int frameW, int frameH, int winW
     const float dst[4] = {frame[0], frame[1] + frame[3] - rowH * static_cast<float>(vy + vh),
                           frame[2], rowH * static_cast<float>(vh)};
     if (ss_ > 1) { drawPresentSS(vh, dst, winW, winH); return true; }
+    if (upscale_ > 1.0f) {
+        fsrPass(vh);
+        drawPresent(rcasTex_, w_, vh, w_, h_, true, true, dst, winW, winH);
+        return true;
+    }
     drawPresent(colour_, w_, vh, w_, h_, true, true, dst, winW, winH);
     return true;
 }
@@ -3773,6 +3963,65 @@ void GlesRenderer::drawPresentSS(int vh, const float dst[4], int winW, int winH)
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glEnable(GL_DEPTH_TEST);
+}
+
+// THE UPSCALE's two passes (`kEasuFrag`, `kRcasFrag`): `colour_`'s drawn
+// picture, `rs(w_) x rs(vh)`, up to `w_ x vh` in `easuTex_`'s top rows, then
+// sharpened into `rcasTex_`'s - which the present pass and `readback` then
+// read exactly as they read `colour_` unscaled. The rows below the picture
+// are cleared black, as the world target's are.
+void GlesRenderer::fsrPass(int vh) {
+    vh = std::clamp(vh, 1, h_);
+    if (fsrW_ != w_ || fsrH_ != h_) {
+        for (const auto& [tex, fbo] : {std::pair<GLuint*, GLuint*>{&easuTex_, &easuFbo_}, {&rcasTex_, &rcasFbo_}}) {
+            if (!*tex) glGenTextures(1, tex);
+            glBindTexture(GL_TEXTURE_2D, *tex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w_, h_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+gpuTexture("render targets", *tex, 4LL * w_ * h_);
+            if (!*fbo) glGenFramebuffers(1, fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *tex, 0);
+        }
+        fsrW_ = w_; fsrH_ = h_;
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_);
+    for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    const float whole[4] = {-1.0f, -1.0f, 2.0f, 2.0f};
+    const auto run = [&](GLuint fbo, GLuint prog, GLuint src) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, w_, h_);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glViewport(0, h_ - vh, w_, vh);   // the picture's rows, the target's top
+        glUseProgram(prog);
+        curProg_ = prog;
+        glUniform4fv(glGetUniformLocation(prog, "uDst"), 1, whole);
+        glUniform1i(glGetUniformLocation(prog, "uSrc"), 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, src);
+    };
+    run(easuFbo_, easuProg_, colour_);
+    glUniform2f(glGetUniformLocation(easuProg_, "uSrcTex"), static_cast<float>(rw_), static_cast<float>(rh_));
+    glUniform2f(glGetUniformLocation(easuProg_, "uIn"), static_cast<float>(rs(w_)), static_cast<float>(rs(vh)));
+    glUniform2f(glGetUniformLocation(easuProg_, "uOut"), static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(glGetUniformLocation(easuProg_, "uOutTexH"), static_cast<float>(h_));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    run(rcasFbo_, rcasProg_, easuTex_);
+    glUniform2f(glGetUniformLocation(rcasProg_, "uSrcTex"), static_cast<float>(w_), static_cast<float>(h_));
+    glUniform2f(glGetUniformLocation(rcasProg_, "uPic"), static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(glGetUniformLocation(rcasProg_, "uSharp"), std::exp2(-omk::kFsrRcasStops));
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glEnable(GL_DEPTH_TEST);
+    forgetState();
 }
 
 bool GlesRenderer::presentSurface(const Surface& s, int winW, int winH) {

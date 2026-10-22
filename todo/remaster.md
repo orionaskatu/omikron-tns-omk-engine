@@ -1159,16 +1159,58 @@ off unless named. Every backend - the 2D is composed on the CPU.
   there is one. Shown to fail twice.
 * Cost: none measured - the 4K pause menu 26-27 fps either way (loaded M3).
 
-**Open**: the FONTS - text is drawn by its own glyph path (`drawGlyphScaled`,
-`.FNT` coverage), not `blt`, so the menu's words stay the 640x480 glyphs,
-filtered; an HD font is a coverage atlas per glyph and its own step. The
-pack is not in the curation's eye yet: a picture whose upscale suffers can
+**The FONTS** - text is drawn by its own glyph path, not `blt`: the font
+pack below. The pack is not in the curation's eye yet: a picture whose upscale suffers can
 be dropped from `ui/pack` by hand (its key: `texpack_tool uikeys`).
+
+## Tier E - the font pack: as built (2026-10-22)
+
+The reader's "do 1) and 4)" (HD fonts, and the GLES upscale). `--font-pack
+DIR` / `[Remaster] fontpack = DIR`, and the `--remaster` preset's
+`DIR/fonts/pack`; off unless named. Every backend - text is the CPU's. It
+acts only where `textscaling fit` ENLARGES the glyphs (the original drew
+them at their own size: at 4K a 17-pixel face is 4.5x).
+
+* `engine/src/ui/fontpack.*`: one `<key>.png` a face, GREY, the key FNV-1a
+  over the `.FNT` blob; every present glyph at `k` (8) times its size, laid
+  out by `hdLayout` from the face alone (2048-wide shelves, code order), so
+  the file carries no table and `k` is the power of two whose layout has the
+  image's size. `TextLayout::drawRun` asks for it inside its `scaled()`
+  branch and `drawGlyphHd` brings each glyph DOWN by area averages; blended
+  as `drawGlyphScaled` blends (`blendCoverage`, shared).
+* `engine/tools/font_hd.cpp` makes it, `tools/omktexpack.py fonts ROOT`
+  wraps it (-> ROOT/fonts/pack, 13 files, 3.3 MB, 14 s). Two sources, both
+  the disc's:
+  * **`FONTS/OMIKRON.TTF`** - "Omikron One Medium", Loic Normand, 1998,
+    Fontographer: the game's ALIEN SCRIPT, which MENUINTR and SNEAK are
+    rasterisations of (a sheet of every face beside the TTF, 2026-10-22;
+    PARCHEMI is another script). Each glyph drawn from its outline by
+    stb_truetype (vendored, the tool only), at an em fitted per face (40.25
+    and 21.75 px) and moved onto the shipped glyph's centroid; kept when it
+    averages back down within 0.06 of the shipped coverage - 182 of 223
+    MENUINTR glyphs, 156 of SNEAK's. The others fall back to:
+  * **the glyph's own coverage**: the 0..31 levels are ANTIALIASING, so they
+    place the contour to under a texel. A Catmull-Rom enlargement, its
+    half-coverage contour drawn sharp - the runtime's `fit` does the same
+    with a bilinear one, so the Latin faces gain a ROUNDER contour, not new
+    detail: there is no vector source for them. Back-projection
+    (Irani-Peleg) was tried and dropped: it fits the coverage's quantisation
+    as shape, lumps contours and breaks thin strokes (COMPUTER, GENERIC1).
+* `verify.py: engine: font pack` (`texpack_tool fontline` draws a line
+  through the engine's `TextLayout`), shown to fail twice.
+
+**Judged so far** (crops at 9/2, 2026-10-22): the alien script clearly
+cleaner; the Latin faces slightly rounder than the runtime's enlargement.
+**Open**: the reader's eye in play; an AI upscale of the Latin faces' sheets
+(Real-ESRGAN) was not tried - letters are where it invents most.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
-`--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), **off by
-default, not in the preset** until the reader has judged it. Every backend:
+`--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by
+default; **the `--remaster` preset's 0.75 since 2026-10-22** (the reader: "do
+it by default ... it is difficult to fully validate now without seeing every
+character in the game, so maybe we will have to change it later" - the way
+out below stays). Every backend:
 the character's REST geometry is subdivided ONCE at load
 (`engine/src/o3de/smoothbody.*`, hooked in `charModelFor` and the player's
 load) - each triangle 3x3, every new point pulled toward its corners'
@@ -1217,7 +1259,7 @@ list (the plan's), if a model's hard edges suffer; the crowd near the camera.
 
 `--upscale F` / `[Remaster] upscale = F` (1..3, 1 off), **off by default and
 not in the `--remaster` preset** - a frame rate's choice, not a look. Vulkan
-only (GLES not yet). AMD **FSR 1**, vendored verbatim (MIT,
+and, since 2026-10-22, GLES (below). AMD **FSR 1**, vendored verbatim (MIT,
 `engine/third_party/ffx_a.h`, `ffx_fsr1.h`); MetalFX is out of reach through
 MoltenVK.
 
@@ -1258,8 +1300,23 @@ CPU's submission (`world begin..end` 8.7 ms with the wait) and the 4K present
 (2.7 -> 4.7 ms, EASU and RCAS at the output size). The upscale removes the
 GPU from the reader's 4K slowdown (open bug above) whatever its cause there.
 
-**Open**: GLES (the same two shaders as a GL pass); the sharpness as an
-option, if the reader finds RCAS's 0.2 too strong - judged in play, not yet.
+**GLES (2026-10-22, the reader's "do ... 4)")**: the same rule (`rs()`,
+`rw_`/`rh_`, the viewport, the posing self-test's target) and FSR 1
+TRANSCRIBED into GLSL 1.00/1.20 (`kEasuFrag`, `kRcasFrag` in
+`glesrender.cpp`: no unsigned integers, no `textureGather`; AMD's bit-trick
+reciprocals as exact ones, RCAS's two divisions kept finite on pure black
+and white). Two passes into output-size targets (`fsrPass`), then the
+present pass's own dither, untouched; `readback` runs them over the last
+view's picture rows (`picH_`). `--ssaa` is ignored beside it, as on Vulkan;
+`presentEye` (VR) refuses it. `kFsrRcasStops` (`fsrcon.h`) is both
+backends' sharpness. `verify.py: engine: gles upscale`: the street at x2
+registered on native (mean 3.2 a channel), the fight's letterboxed approach
+too, and the hidden window 0 pixels from the readback over 90 frames; shown
+to fail twice. Against Vulkan's x2 on the Qalisar street: a mean 2.5 grey
+levels.
+
+**Open**: the sharpness as an option, if the reader finds RCAS's 0.2 too
+strong - judged in play, not yet.
 
 ## Step 1, as built (2026-10-20) - the texture pack
 

@@ -240,13 +240,17 @@
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
 ; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
 ; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, mist 0.5.
+; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75.
 ;dir = /path/to/omk-pack
 ;
 ; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an
 ; upscaled pack when the window enlarges them - tools/omktexpack.py ui makes
 ; it; the preset takes DIR/ui/pack when there is one.
 ;uipack = /path/to/omk-pack/ui/pack
+;
+; The FONTS' glyphs drawn finer where textscaling = fit enlarges the text -
+; tools/omktexpack.py fonts makes it; the preset takes DIR/fonts/pack.
+;fontpack = /path/to/omk-pack/fonts/pack
 ;
 ; The HD texture pack alone (a folder of <key>.png), and the city grades
 ; alone (a folder of <SET>.cube and map.txt). Vulkan and GLES.

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "formats/fnt.h"
+#include "ui/fontpack.h"
 #include "ui/surface.h"
 
 #include <cstdint>
@@ -253,6 +254,11 @@ private:
     void drawGlyphScaled(Surface& dst, int pen, int top, const Glyph& gl,
                          std::span<const std::byte> cov, const std::uint8_t rgb[3],
                          int clipTop, int clipBottom) const;
+    // the font pack's (`ui/fontpack.h`), when it has the face: the HD
+    // coverage area-averaged down to the glyph scale
+    void drawGlyphHd(Surface& dst, int pen, int top, const Glyph& gl, const HdFont& hd,
+                     unsigned char code, const std::uint8_t rgb[3], int clipTop, int clipBottom) const;
+    static void blendCoverage(Surface& dst, int px, int py, int c, const std::uint8_t rgb[3]);
     const FontTable* table_;
     std::string dir_;
     mutable std::map<char, Font> loaded_;

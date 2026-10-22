@@ -212,6 +212,10 @@ struct Settings {
     // bitmaps drawn from upscaled ones when enlarged. Empty is off.
     std::string uiPack;
     Source uiPackSource = Source::Default;
+    // `fontpack = DIR`: the FONT PACK (`ui/fontpack.h`) - the faces' glyphs
+    // drawn finer where `textscaling fit` enlarges them. Empty is off.
+    std::string fontPack;
+    Source fontPackSource = Source::Default;
     // `bloom = S`: a glow from the pack's LIGHT MAPS (`<key>_e.png`), S the
     // strength (the previews' 1.3), 0 off. Needs a texture pack with light
     // maps; Vulkan and GLES only.

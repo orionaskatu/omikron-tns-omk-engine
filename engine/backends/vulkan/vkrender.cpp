@@ -674,8 +674,6 @@ private:
     VkDescriptorSet  presUpDs_ = VK_NULL_HANDLE; // `easuView_`: the present pass's input
     VkPipelineLayout easuPlo_ = VK_NULL_HANDLE;  VkPipeline easuPipe_ = VK_NULL_HANDLE;
     VkSampler        easuSampler_ = VK_NULL_HANDLE;
-    // RCAS's sharpness in stops, 0 the most (AMD's sample: 0.2)
-    static constexpr float kRcasStops = 0.2f;
     bool makeUpscale();
     void killUpscale();
 
@@ -2247,7 +2245,7 @@ bool VulkanRenderer::runPresentPass(int vy, int vh, bool raw) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, up ? &presUpDs_ : &presDs_,
                             0, nullptr);
     const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, up ? 1 : ss_, up ? 1 : 0,
-                         up ? omk::fsrRcasCon(kRcasStops) : 0u, raw ? 1 : 0};
+                         up ? omk::fsrRcasCon(omk::kFsrRcasStops) : 0u, raw ? 1 : 0};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);

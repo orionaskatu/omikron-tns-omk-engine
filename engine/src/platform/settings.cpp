@@ -183,6 +183,7 @@ Settings resolveSettings(const OptionsFile& ini,
         };
         path(ini.find(kRemaster, "texturepack"), s.texturePack, s.texturePackSource);
         path(ini.find(kRemaster, "uipack"), s.uiPack, s.uiPackSource);
+        path(ini.find(kRemaster, "fontpack"), s.fontPack, s.fontPackSource);
         strength(ini.find(kRemaster, "bloom"), "bloom", 4.0f, s.bloom, s.bloomSource);
         strength(ini.find(kRemaster, "water"), "water", 1.0f, s.water, s.waterSource);
         strength(ini.find(kRemaster, "floors"), "floors", 1.0f, s.floors, s.floorsSource);

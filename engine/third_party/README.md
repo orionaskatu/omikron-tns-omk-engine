@@ -1,6 +1,6 @@
 # Vendored third-party code
 
-Three files, and they are here rather than found by the build for the reason
+Four files, and they are here rather than found by the build for the reason
 [`../../docs/PORTING.md`](../../docs/PORTING.md) A8 gives: **a vendored
 dependency is checked in and `make` works without it being installed, so a
 missing one is a broken checkout; a system dependency's absence merely disables
@@ -10,6 +10,7 @@ the frontend and never the suite.**
 |---|---|---|---|
 | `pl_mpeg.h` | MPEG-1 video decoder, MP2 audio decoder and MPEG-PS demuxer, in one header | [phoboslab/pl_mpeg](https://github.com/phoboslab/pl_mpeg) | **MIT** (`SPDX-License-Identifier: MIT`, Dominic Szablewski) |
 | `ffx_a.h`, `ffx_fsr1.h` | AMD FidelityFX Super Resolution 1 (EASU, RCAS) and its portability header, GLSL side | [GPUOpen-Effects/FidelityFX-FSR](https://github.com/GPUOpen-Effects/FidelityFX-FSR) `ffx-fsr/` | **MIT** (Advanced Micro Devices, 2021) |
+| `stb_truetype.h` | TrueType parser and rasteriser, in one header | [nothings/stb](https://github.com/nothings/stb) | **MIT or public domain**, either (Sean Barrett) |
 
 Fetched 2026-09-01 from `raw.githubusercontent.com/phoboslab/pl_mpeg/master`,
 4439 lines, and **kept verbatim** — it is not edited here, so it can be diffed
@@ -26,6 +27,14 @@ original never had - so A8 rule 3 is not in question, there being nothing of
 the original's for it to stand in for. The few constants its CPU side computes
 are transcribed in `src/o3de/fsrcon.h` and compared with the header's own by
 `verify.py: engine: upscale`.
+
+`stb_truetype.h` was fetched 2026-10-22 from
+`raw.githubusercontent.com/nothings/stb/6e9f34d5429c`, v1.26, 5079 lines, and
+is **kept verbatim**. One TOOL includes it, `tools/font_hd.cpp` (the
+remaster's font pack, `src/ui/fontpack.h`), to draw the disc's own
+`FONTS/OMIKRON.TTF` at eight times its glyphs' size; the engine never reads
+a TTF, and the original never drew one (its faces are the `.FNT` bitmaps), so
+A8 rule 3 is not in question.
 
 ## Why a decoder is allowed at all
 

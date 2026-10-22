@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/text.h"
+#include "ui/fontpack.h"
 #include "ui/overlay.h"
 
 #include "platform/datafs.h"
@@ -250,9 +251,14 @@ int TextLayout::drawRun(Surface& dst, int x, int y,
         if (f && f->glyphs[code].present && scaled()) {
             const auto cov = f->coverage(code);
             const Glyph& gl = f->glyphs[code];
-            if (!cov.empty())
-                drawGlyphScaled(dst, pen, y + glyphPx(rec->height + gl.bottom - gl.height), gl, cov,
-                                cur, clipTop, clipBottom);
+            const int top = y + glyphPx(rec->height + gl.bottom - gl.height);
+            if (cov.empty()) {
+                // nothing to draw
+            } else if (const auto hd = fontPack().find(*f)) {
+                drawGlyphHd(dst, pen, top, gl, *hd, code, cur, clipTop, clipBottom);
+            } else {
+                drawGlyphScaled(dst, pen, top, gl, cov, cur, clipTop, clipBottom);
+            }
         } else if (f && f->glyphs[code].present) {
             const Glyph& gl = f->glyphs[code];
             const auto cov = f->coverage(code);
@@ -339,37 +345,86 @@ void TextLayout::drawGlyphScaled(Surface& dst, int pen, int top, const Glyph& gl
                 t = t * t * (3.0f - 2.0f * t);
                 c = static_cast<int>(t * 31.0f + 0.5f);
             }
-            if (!c) continue;
-            c &= 31;
-            const std::size_t at565 = static_cast<std::size_t>(py) * dst.w + px;
-            const std::uint16_t b = dst.px[at565];
-            // ON AN OVERLAY FRAME'S KEY the pixel beneath is "the world", not
-            // a colour (`ui/overlay.h`): the blend is affine in it, so it runs
-            // on the planes - C = (colour * c + C * (31 - c)) / 31, M scaled
-            // by (31 - c) / 31 - and the key stays. Blended with the key's
-            // magenta itself, every glyph gets a pink rim over the world
-            // (seen on the Quest's interface layer; the flat GLES overlay
-            // has the same path).
-            OverlayPlanes& ov = overlayPlanes();
-            if (ov.on && b == kOverlayKey && ov.w == dst.w && at565 < ov.m.size()) {
-                ov.row(at565);
-                std::uint16_t& cp = ov.c[at565];
-                const int cr = ((cp >> 11) << 3) | (cp >> 13), cg = (((cp >> 5) & 63) << 2) | ((cp >> 9) & 3),
-                          cb = ((cp & 31) << 3) | ((cp & 31) >> 2);
-                cp = rgb565((rgb[0] * c + cr * (31 - c)) / 31, (rgb[1] * c + cg * (31 - c)) / 31,
-                            (rgb[2] * c + cb * (31 - c)) / 31);
-                ov.m[at565] = static_cast<std::uint8_t>(ov.m[at565] * (31 - c) / 31);
-                continue;
-            }
-            const int br = ((b >> 11) << 3) | (b >> 13), bg = (((b >> 5) & 63) << 2) | ((b >> 9) & 3),
-                      bb = ((b & 31) << 3) | ((b & 31) >> 2);
-            dst.set(px, py, rgb565((rgb[0] * c + br * (31 - c)) / 31,
-                                   (rgb[1] * c + bg * (31 - c)) / 31,
-                                   (rgb[2] * c + bb * (31 - c)) / 31));
+            if (c) blendCoverage(dst, px, py, c & 31, rgb);
         }
     }
 }
 
+// THE FONT PACK's glyph (`ui/fontpack.h`): each destination pixel the AREA
+// AVERAGE of the HD coverage under it - the box the pixel covers at the glyph
+// scale, edge texels weighted by how much of them it takes - so a coverage
+// `k` times finer is brought down rather than up, at any scale. Blended as
+// `drawGlyphScaled` blends.
+void TextLayout::drawGlyphHd(Surface& dst, int pen, int top, const Glyph& gl, const HdFont& hd,
+                             unsigned char code, const std::uint8_t rgb[3], int clipTop, int clipBottom) const {
+    const int W = glyphPx(gl.width), H = glyphPx(gl.height);
+    const int gw = gl.width * hd.lay.k, gh = gl.height * hd.lay.k;
+    const float step = static_cast<float>(hd.lay.k) * static_cast<float>(den_) / static_cast<float>(num_);
+    // the texels [a, b) covers along one axis, as (first, last, weights of the two ends)
+    const auto span = [](float a, float b, int n, int& i0, int& i1, float& w0, float& w1) {
+        a = std::clamp(a, 0.0f, static_cast<float>(n));
+        b = std::clamp(b, 0.0f, static_cast<float>(n));
+        i0 = static_cast<int>(a);
+        i1 = std::min(static_cast<int>(std::ceil(b)) - 1, n - 1);
+        w0 = static_cast<float>(i0 + 1) - a;
+        w1 = b - static_cast<float>(i1);
+        if (i0 == i1) w0 = w1 = b - a;
+    };
+    for (int dy = 0; dy < H; ++dy) {
+        const int py = top + dy;
+        if (py < 0 || py >= dst.h || py < clipTop || py >= clipBottom) continue;
+        int y0, y1; float wy0, wy1;
+        span(dy * step, (dy + 1) * step, gh, y0, y1, wy0, wy1);
+        if (y1 < y0) continue;
+        for (int dx = 0; dx < W; ++dx) {
+            const int px = pen + dx;
+            if (px < 0 || px >= dst.w) continue;
+            int x0, x1; float wx0, wx1;
+            span(dx * step, (dx + 1) * step, gw, x0, x1, wx0, wx1);
+            if (x1 < x0) continue;
+            float sum = 0.0f;
+            for (int y = y0; y <= y1; ++y) {
+                const float wy = y == y0 ? wy0 : (y == y1 ? wy1 : 1.0f);
+                float row = 0.0f;
+                for (int x = x0; x <= x1; ++x)
+                    row += hd.at(code, x, y) * (x == x0 ? wx0 : (x == x1 ? wx1 : 1.0f));
+                sum += row * wy;
+            }
+            const int c = static_cast<int>(sum / (step * step) * (31.0f / 255.0f) + 0.5f);
+            if (c > 0) blendCoverage(dst, px, py, std::min(c, 31), rgb);
+        }
+    }
+}
+
+// Coverage `c` (1..31) of colour `rgb` as an ALPHA over what is drawn - see
+// `drawGlyphScaled` - and on an overlay frame's key, over its planes.
+void TextLayout::blendCoverage(Surface& dst, int px, int py, int c, const std::uint8_t rgb[3]) {
+    const std::size_t at565 = static_cast<std::size_t>(py) * dst.w + px;
+    const std::uint16_t b = dst.px[at565];
+    // ON AN OVERLAY FRAME'S KEY the pixel beneath is "the world", not
+    // a colour (`ui/overlay.h`): the blend is affine in it, so it runs
+    // on the planes - C = (colour * c + C * (31 - c)) / 31, M scaled
+    // by (31 - c) / 31 - and the key stays. Blended with the key's
+    // magenta itself, every glyph gets a pink rim over the world
+    // (seen on the Quest's interface layer; the flat GLES overlay
+    // has the same path).
+    OverlayPlanes& ov = overlayPlanes();
+    if (ov.on && b == kOverlayKey && ov.w == dst.w && at565 < ov.m.size()) {
+        ov.row(at565);
+        std::uint16_t& cp = ov.c[at565];
+        const int cr = ((cp >> 11) << 3) | (cp >> 13), cg = (((cp >> 5) & 63) << 2) | ((cp >> 9) & 3),
+                  cb = ((cp & 31) << 3) | ((cp & 31) >> 2);
+        cp = rgb565((rgb[0] * c + cr * (31 - c)) / 31, (rgb[1] * c + cg * (31 - c)) / 31,
+                    (rgb[2] * c + cb * (31 - c)) / 31);
+        ov.m[at565] = static_cast<std::uint8_t>(ov.m[at565] * (31 - c) / 31);
+        return;
+    }
+    const int br = ((b >> 11) << 3) | (b >> 13), bg = (((b >> 5) & 63) << 2) | ((b >> 9) & 3),
+              bb = ((b & 31) << 3) | ((b & 31) >> 2);
+    dst.set(px, py, rgb565((rgb[0] * c + br * (31 - c)) / 31,
+                           (rgb[1] * c + bg * (31 - c)) / 31,
+                           (rgb[2] * c + bb * (31 - c)) / 31));
+}
 
 // ------------------------------------------- `Text_LayOutBlock` (0x0043F3E0)
 //

@@ -49,6 +49,13 @@
 //                                           answer compared with the engine's
 //                                           own greyed texture enlarged by
 //                                           nearest neighbour (a nearest pack)
+//     texpack_tool fontline <gamedata> <tables> <fontpack|-> <face> <num> <den> <filter> <text> <out.raw>
+//                                           THE FONT PACK (`ui/fontpack.h`): one
+//                                           line of `text` in `face` drawn by
+//                                           `TextLayout` at the glyph scale
+//                                           num/den, white on black - int32 w, h,
+//                                           then w*h 565 - "@fontline hd <faces
+//                                           decoded> w <w> h <h>"
 //
 // `keys` is the engine's half of a differential: the Python tool keys the same
 // textures from its own decoder, and the two must agree on every one, or a
@@ -68,6 +75,8 @@
 #include "platform/datafs.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
+#include "ui/fontpack.h"
+#include "ui/text.h"
 #include "ui/surface.h"
 #include "ui/uipack.h"
 
@@ -153,6 +162,29 @@ int uiblit(char** argv) {
     std::fclose(f);
     const auto st = omk::uiPack().stats();
     std::printf("@uiblit hd %d drawn %zu\n", st.drawn > 0 ? 1 : 0, st.drawn);
+    return 0;
+}
+
+int fontline(char** argv) {
+    const std::string data = argv[2], tables = argv[3], pack = argv[4], text = argv[9], out = argv[10];
+    const char face = argv[5][0];
+    const int num = std::atoi(argv[6]), den = std::atoi(argv[7]), filter = std::atoi(argv[8]);
+    if (pack != "-" && !omk::fontPack().open(pack)) return 1;
+    const auto table = omk::FontTable::loadJson(tables + "/ui.json");
+    omk::TextLayout lay(table, data + "/FONTS");
+    lay.setGlyphScale(num, den, filter);
+    const auto run = omk::parseMarkup(text, face).run;
+    const int w = lay.measure(run) + 8, h = lay.height(run) * 2 + 8;
+    if (w <= 8 || num <= 0 || den <= 0) return 1;
+    omk::Surface dst(w, h, 0);
+    lay.drawRun(dst, 4, 4, run);
+    std::FILE* f = omk::safeOutputPath(out) ? std::fopen(out.c_str(), "wb") : nullptr;
+    if (!f) return 1;
+    const std::int32_t wh[2] = {w, h};
+    std::fwrite(wh, 4, 2, f);
+    std::fwrite(dst.px.data(), 2, dst.px.size(), f);
+    std::fclose(f);
+    std::printf("@fontline hd %zu w %d h %d\n", omk::fontPack().stats().decoded, w, h);
     return 0;
 }
 
@@ -551,6 +583,7 @@ int main(int argc, char** argv) {
     if (mode == "keys" && argc == 3) return keys(argv[2]);
     if (mode == "uikeys" && argc == 3) return uikeys(argv[2]);
     if (mode == "uiblit" && argc == 8) return uiblit(argv);
+    if (mode == "fontline" && argc == 11) return fontline(argv);
     if (mode == "png" && argc == 4) return png(argv[2], argv[3]);
     if (mode == "grey" && argc == 4) return grey(argv[2], argv[3]);
     if (mode == "cube" && argc == 3) return cube(argv[2]);
@@ -575,6 +608,7 @@ int main(int argc, char** argv) {
                          "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
                          "       | islands <gamedata> <outdir> | floors <model.3DO> | open <pack>\n"
                          "       | uikeys <gamedata> | uiblit <gamedata> <uipack|-> <file.bmp> <w> <h> <out.raw>\n"
+                         "       | fontline <gamedata> <tables> <fontpack|-> <face> <num> <den> <filter> <text> <out.raw>\n"
                          "       (the header says what each answers)\n");
     return 2;
 }

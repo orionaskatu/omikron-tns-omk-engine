@@ -250,6 +250,12 @@ struct Settings {
     // brought up by AMD FSR 1 (`Renderer::setUpscale`), 1..3. 1 = off.
     float  upscale = 1.0f;
     Source upscaleSource = Source::Default;
+    // `preload = M`: THE PRELOAD RADIUS - the sets behind every door within M
+    // metres (two hops: an airlock and what is beyond it) prepared on a thread
+    // and their textures put on the GPU ahead, released past M + 10. 0 off.
+    // More memory for no load on arriving; the `--remaster` preset's 25.
+    float  preload = 0.0f;
+    Source preloadSource = Source::Default;
     // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
     // S the tint's strength, 0 off; Vulkan and GLES only.
     float  bodyLight = 0.0f;

@@ -104,6 +104,7 @@ struct PlayState {
     float & floorsFlag = opt.floorsFlag;
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
+    float & preloadFlag = opt.preloadFlag;
     float & bodyLightFlag = opt.bodyLightFlag;
     float & fxLightFlag = opt.fxLightFlag;
     float & reliefFlag = opt.reliefFlag;
@@ -752,6 +753,22 @@ struct PlayState {
     bool actorKnown{};
     int lastCamera{};
     std::shared_ptr<SetLoad> setLoads[2]{};
+    // THE PRELOAD RADIUS (`playpreload.cpp`): metres (0 off), the sets
+    // prepared ahead by stem, and the doors of the resident pair
+    float preloadMetres{};
+    struct Preloaded {
+        int area = -1;
+        std::shared_ptr<SetLoad> L;
+        bool sent = false;    // its textures handed to the renderer's preload
+        double dist = 0;      // to its nearest door, game units
+    };
+    std::map<std::string, Preloaded> preloads{};
+    std::vector<omk::Session::DoorTarget> preloadDoors{};
+    int preloadDoorsKey[2] = {-2, -2};
+    long preloadTaken{}, preloadMade{};
+    void phasePreload();
+    // the pinned list: every prepared preload's textures
+    void preloadPin();
     std::string slotAsked[2]{};
     int slotAskedArea[2] = {-1, -1};
     bool syncSets{};   // A/B only

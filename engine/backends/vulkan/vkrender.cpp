@@ -254,7 +254,12 @@ constexpr int32_t kCullSign = 1;
 class VulkanRenderer : public omk::Renderer {
 public:
     bool init(int w, int h) override;
-    void setTextures(std::span<const omk::Texture> t) override;
+    void setTextures(std::span<const omk::Texture> t) override { poolTextures(t, false); }
+    void setPreloadTextures(std::span<const omk::Texture> t) override;
+    int preloadStep(int budget) override;
+    // the pool's textures uploaded where new; `preload`: ONLY that, pinned -
+    // nothing evicted, the frame's pool (`tex_`) untouched
+    void poolTextures(std::span<const omk::Texture> t, bool preload);
     void begin(const omk::View& v) override;
     void shadowPass(const omk::View& v, std::span<const omk::Draw> casters) override;
     bool drawsPixelLights() const override { return true; }
@@ -538,7 +543,9 @@ private:
     Tex              normalFlat_;         // the normal map of one that has none: flat, ALPHA 0 - "none"
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
-    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
+    // `pinned`: a preloaded set's (`setPreloadTextures`) - kept while listed
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; bool pinned = false; };
+    std::vector<omk::Texture> preQueue_;   // the preload's textures not yet on the device
     std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
 
     std::map<const omk::Geometry*, std::pair<VkBuffer, VkDeviceMemory>> vbo_;
@@ -2996,7 +3003,29 @@ bool VulkanRenderer::init(int w, int h) {
     return true;
 }
 
-void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
+void VulkanRenderer::setPreloadTextures(std::span<const omk::Texture> t) {
+    const auto keyOf = [](const omk::Texture& x) {
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+    };
+    for (auto& [key, u] : uploaded_) u.pinned = false;
+    preQueue_.clear();
+    for (const auto& x : t) {
+        if (!x.hasPixels()) continue;
+        if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.pinned = true;
+        else preQueue_.push_back(x);   // shares its pixel buffers: the key stays
+    }
+}
+
+int VulkanRenderer::preloadStep(int budget) {
+    if (preQueue_.empty() || budget <= 0) return static_cast<int>(preQueue_.size());
+    const std::size_t n = std::min(preQueue_.size(), static_cast<std::size_t>(budget));
+    std::vector<omk::Texture> now(preQueue_.end() - static_cast<std::ptrdiff_t>(n), preQueue_.end());
+    preQueue_.resize(preQueue_.size() - n);
+    poolTextures(now, true);
+    return static_cast<int>(preQueue_.size());
+}
+
+void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload) {
     // One VkImage and one descriptor set per material, plus a white 1x1 for a
     // material with no texture - which `raster.cpp` handles by leaving the
     // texel at 255 and letting the vertex colour stand alone.
@@ -3243,13 +3272,15 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
     };
+    if (!preload) {
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
         if (x.hasPixels())
             if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.used = true;
+    }
     bool waited = false;
-    for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
-        if (it->second.used) { ++it; continue; }
+    for (auto it = uploaded_.begin(); !preload && it != uploaded_.end(); ) {
+        if (it->second.used || it->second.pinned) { ++it; continue; }
         if (!waited) { vkDeviceWaitIdle(dev_); waited = true; }
         Tex& old = it->second.t;
         if (old.ds)   vkFreeDescriptorSets(dev_, dpool_, 1, &old.ds);
@@ -3264,7 +3295,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (old.nmMem)  freeDeviceMemory(old.nmMem);
         it = uploaded_.erase(it);
     }
-    tex_.assign(t.size(), Tex{});
+    if (!preload) tex_.assign(t.size(), Tex{});
     // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened:
     // a texture it holds is uploaded from the pack's pixels at the pack's size
     const omk::TexturePack& pack = omk::texturePack();
@@ -3291,7 +3322,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         auto hit = uploaded_.find(keyOf(x));
         if (hit == uploaded_.end()) {
             Uploaded u;
-            u.idx = x.idx; u.pal = x.pal; u.used = true;
+            u.idx = x.idx; u.pal = x.pal; u.used = !preload; u.pinned = preload;
             if (pack.active() && reps[i].ok && !reps[i].colourZ.empty()) {
                 const omk::PackImage& rep = reps[i];
                 uploadZ(rep.colourZ, u.t);
@@ -3347,12 +3378,23 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
                                   u.t.nmView ? u.t.nmView : normalFlat_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
             ++fresh;
+        } else if (preload) {
+            hit->second.pinned = true;
         }
+        if (preload) continue;
         tex_[i] = hit->second.t;
         packed += tex_[i].packed ? 1 : 0;
     }
     const double decodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double uploadMs = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
+    if (preload) {
+        if (fresh > 0)
+            std::printf("vulkan: preload - %d textures uploaded ahead (%d from block files), read and decode %.1f ms, "
+                        "uploads %.1f ms; %zu still to come\n", fresh, blocksUp, decodeMs, uploadMs, preQueue_.size());
+        omk::event("texpack.preload", {{"fresh", fresh}, {"blocks", blocksUp}, {"decodeMs", decodeMs},
+                                       {"uploadMs", uploadMs}, {"waiting", static_cast<long>(preQueue_.size())}});
+        return;
+    }
     if (fresh > 0)
         std::printf("vulkan: texture pool - %d new of %zu (%d from the pack's block files), the pack's read and "
                     "decode %.1f ms, the uploads %.1f ms\n", fresh, t.size(), blocksUp, decodeMs, uploadMs);

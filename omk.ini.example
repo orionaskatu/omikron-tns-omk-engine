@@ -240,7 +240,7 @@
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
 ; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
 ; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75.
+; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75, preload 25.
 ;dir = /path/to/omk-pack
 ;
 ; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an
@@ -251,6 +251,12 @@
 ; The FONTS' glyphs drawn finer where textscaling = fit enlarges the text -
 ; tools/omktexpack.py fonts makes it; the preset takes DIR/fonts/pack.
 ;fontpack = /path/to/omk-pack/fonts/pack
+;
+; THE PRELOAD RADIUS, in metres (0 off; the preset's 25): the sets behind
+; every door within it - and behind the airlock or corridor each opens on -
+; prepared ahead and their textures put on the GPU, released 10 m further.
+; No load on arriving, more memory held: leave it 0 on a small device.
+;preload = 25
 ;
 ; The intro FILMS played from upscaled copies - tools/omktexpack.py films
 ; makes them; the preset takes DIR/films/pack.

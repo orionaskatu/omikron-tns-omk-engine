@@ -112,6 +112,14 @@ struct Announced {
 // How LONG a conversation lasts is not modelled - there is no dialogue UI -
 // so `closeDialogs` is the one thing a caller supplies. Everything either side
 // of it is the engine's own control flow.
+// THE DOORS' DESTINATIONS (the preload radius, `Session::doorTargets`): the
+// areas a zone's ENTER and ACTIVATE scripts name - the immediate first field
+// of `area.goto` (op 47) or `area.preload` (op 45) - each script walked
+// STATICALLY by the opcode table's lengths from its offset to its `end`;
+// appended to `out` once each. `code` is the chunk the zone came from.
+void zoneDestinations(const Zone& z, std::span<const std::byte> code, const OpcodeTable& table,
+                      std::vector<int>& out);
+
 class Session {
 public:
     Session(const std::string& iamDir, GameState& state, const OpcodeTable& table)
@@ -739,6 +747,34 @@ public:
     // The slices the set behind `area` would take, 0 when the file is absent
     // (the engine's `sub_41F060` fails and the load completes synchronously).
     int loadSlicesFor(int area) const;
+
+    // THE DOORS (the preload radius, `todo/remaster.md`): every live zone of
+    // the resident slots whose ENTER or ACTIVATE script names a destination -
+    // `area.goto` (op 47) or `area.preload` (op 45) with an immediate first
+    // field - read STATICALLY: each script walked instruction by instruction
+    // by the opcode table's lengths from its offset to its `end`, nothing
+    // run, nothing changed. A destination already resident is left out. The
+    // zone's centre is where the player would walk to reach it.
+    //
+    // TWO HOPS (`depth` 2, the reader's point of 2026-10-22): the engine
+    // keeps two areas resident, and a door from the street mostly opens
+    // onto an AIRLOCK (a "Sas") whose own door leads on - into the interior,
+    // or, from inside, back to the street the interior's load evicted. So
+    // each destination's AREA chunk is read too (`zonesOf`, its zones whether
+    // registered or not) and ITS destinations listed, at the FIRST door's
+    // place - the one the player walks to - with `via` the airlock.
+    struct DoorTarget {
+        double pos[3] = {0, 0, 0};
+        int area = -1;
+        std::string set;   // the destination's `.3DO` stem (its AREA header +88)
+        int zone = -1;     // the first door's zone id, for the log
+        int via = -1;      // the area between, for a second hop
+    };
+    std::vector<DoorTarget> doorTargets(int depth = 2) const;
+    // an area's set stem, resident or not ("" when it has none)
+    std::string setOfArea(int area) const;
+    // an area's AREA chunk (read when not resident)
+    std::vector<std::byte> areaChunkOf(int area) const;
 
     // ------------------------------------------------- THE CONTEXT TABLE
     //

@@ -1294,6 +1294,56 @@ made pack through Vulkan the same bytes as its PNGs, the real arrival at a
 third of the PNGs' cost or less - 9.0 against 91.7 ms), shown to fail three
 ways.
 
+## The preload radius: as built (2026-10-22)
+
+The reader's "an option for a pre-load radius ... every set in a 25 metres
+radius pre-loaded in another thread, unloaded when 30-35 metres away ...
+optional as it would need more ram/vram", after the block formats; and two
+points before it was built: "many places have a sas ... they could make the
+current idea more complex", "sas are not only when changing area: a
+corridor between the street and a bar". `--preload M` / `[Remaster]
+preload = M`, **the `--remaster` preset's 25**, 0 off, released past M + 10.
+First planned for the Quest (`todo/quest-port.md` §4), built here.
+
+* **Nothing of the game's logic moves.** The engine keeps two areas
+  resident and loads into them at its own moments (`Area_TickLoad`, the
+  transitions); the preload only makes the DATA those loads ask for ready.
+* **The doors** (`Session::doorTargets`, `zoneDestinations`): each live
+  zone's ENTER and ACTIVATE scripts walked STATICALLY by the opcode table's
+  lengths to their `end`, collecting `area.goto` (47) / `area.preload` (45)
+  with an immediate destination - and, the airlocks being why, **TWO HOPS**:
+  each destination's own AREA chunk read (`zonesOf`) and its destinations
+  listed at the FIRST door's place. `engine/tools/door_census.cpp` prints
+  the graph: from the street, a door opens on a small 2-door area (an
+  airlock or corridor, `ABAR06SS` 14 KB, `QBARSAS` 6 KB, `QPEEPSAS`) with
+  the room behind (`ABAR06` 130 KB, `QBAR`, `QPEEPSHO`); from the room, its
+  sas and then the STREET its load evicted (QBAR -> QBARSAS -> QALISAR). A
+  city's tunnels (`TUNELAQ1/2`) open on the next CITY at two hops: near
+  Anekbah's tunnel door, Qalisar (1459 KB) is prepared.
+* **The work** (`backends/sdl/playpreload.cpp`): every 10 frames, each
+  destination's nearest door; within M a set is prepared on a thread
+  (`prepareSet`, the job a load starts), at most 6 held, nearest first; once
+  ready its textures go to the renderer (`Renderer::setPreloadTextures`),
+  which uploads 3 a frame (`preloadStep`) and PINS them - the pool's
+  eviction spares them (Vulkan `poolTextures`, split out of `setTextures`).
+  `askSet` takes a prepared set before starting one.
+* **Measured** (the walk into Anekbah's restaurant, M3, `--remaster
+  --enhance-all`, the block formats on): ARESTO prepared when its door was
+  4.7 m away, its 7 textures up 3 a frame during the walk (~7-12 ms of work
+  a frame), taken ready (0.0 ms waited); **the arrival's set textures: none
+  on the frame** (7 new, 2.4 + 10.9 ms, without). Its characters still load
+  on arrival (3 + 2 textures, ~11 and ~6 ms) - not preloaded.
+* `verify.py: engine: preload` (the source, the door graph both ways through
+  the airlocks, the walk, the same frame with and without), shown to fail;
+  the pin's eviction caught by the source alone (see its docstring).
+
+**Open**: the arriving area's CHARACTERS (their models and textures); GLES
+(sets prepared, textures not pinned - `setPreloadTextures` is Vulkan's); an
+airlock walked end to end in a check; the memory held, measured
+(`omkprof.py --sites`). The save's first frames put the player at Kayl's
+door before `--stand` moves him, which prepares and drops two sets once -
+harmless, said.
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

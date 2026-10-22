@@ -218,6 +218,7 @@ int PlayState::phaseWorld() {
         {
             bool changed = false, skyChanged = false;
             phaseWorldSets(changed, skyChanged);
+            phasePreload();
             // A NEW SKY is a new section of the texture pool and nothing else:
             // not the whole rebuild below - both sets' soups and grids again,
             // and a new `worldGen`, which bakes the depth tie again - one frame

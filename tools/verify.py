@@ -33894,6 +33894,114 @@ def c_engine_block_formats():
         "and within a step trilinear; the real pack's arrival read from blocks at a third of the PNGs' cost or less"
 
 
+def c_engine_preload():
+    r"""THE PRELOAD RADIUS (`todo/remaster.md`; first planned for the Quest,
+    `todo/quest-port.md` §4): `--preload M` / `[Remaster] preload = M`, the
+    `--remaster` preset's 25, 0 off. The sets behind every door within M
+    metres - TWO HOPS, a door from the street mostly opening on an airlock or
+    corridor (a "Sas") with the room behind it (the reader's two points,
+    2026-10-22) - prepared on a thread and their textures put on the GPU a few
+    a frame and kept; released past M + 10; `askSet` takes them. NOTHING of
+    the game's logic moves: the engine still loads into its two resident
+    slots at its own moments; only the data is ready when it asks.
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         preset's 25; `askSet` takes a prepared set before it starts one; the
+         Vulkan pool's eviction spares a pinned texture;
+      2. the DOOR GRAPH (`door_census`, the static scan of each door zone's
+         scripts for `area.goto` / `area.preload` the Session uses): Anekbah's
+         doors reach the restaurant at one hop and ABAR06 through its airlock
+         ABAR06SS at two; Qalisar's reach QBAR through QBARSAS; and from QBAR,
+         its sas and then QALISAR - the street its load evicted;
+      3. the walk into Anekbah's restaurant (`engine: area load`'s) on
+         `--world-vulkan` under `--remaster` with `--preload 25`: ARESTO
+         taken ready (`@evt preload.take`), its textures uploaded ahead
+         (`texpack.preload`, at least its 7), and the arrival's pool - the
+         first after the transition's `area.goto 46` - bringing NONE new,
+         against at least 7 without; without, nothing taken or uploaded ahead;
+      4. the frame the walk ends on THE SAME BYTES with and without - the
+         preload moves when work is done, never what is drawn.
+    SHOWN TO FAIL (2026-10-22): `askSet` not taking the prepared set - part 3
+    (nothing taken, the arrival's pool 7 new again). The eviction ignoring
+    the pin is caught by PART 1 ALONE: this walk changes no pool between the
+    uploads ahead and the arrival, so the eviction never runs in it.
+    NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
+    walk follows); GLES (sets prepared, its textures not pinned); the
+    characters of the area arriving (not preloaded).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = open(os.path.join(eng, "backends", "sdl", "playsetup_session.cpp")).read()
+    pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    ask = pc[pc.index("bool PlayState::askSet"):]
+    src_ok = (bool(re.search(r"float\s+preload\s*=\s*0\.0f;", sh)),
+              'kRemaster, "preload"' in sc and 'kEnhancements, "preload"' not in sc,
+              "preload" not in max_body and "!preset.empty() ? 25.0f : 0.0f" in ps,
+              ask.index("preloads.find(stem)") < ask.index("std::make_shared<SetLoad>()"),
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk)
+    mk = subprocess.run(["make", "-s", "build/door_census", "play"], cwd=eng, capture_output=True, text=True)
+    census, play = os.path.join(eng, "build", "door_census"), os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(census) or not os.path.exists(play):
+        return (src_ok, "build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    out = subprocess.run([census, fr, os.path.join(ROOT, "tables"), "0", "101", "124"], capture_output=True,
+                         text=True).stdout
+    hops = {}
+    for block in out.split("== area ")[1:]:
+        root = int(block.split()[0])
+        hops[root] = {int(m.group(1)): set(re.findall(r"(?<!\S)(\d+) [A-Z0-9_-]+\(", m.group(2)))
+                      for m in re.finditer(r"hop (\d): ?(.*)", block)}
+    graph = ("46" in hops.get(0, {}).get(1, set()),
+             "235" in hops.get(0, {}).get(1, set()) and "234" in hops.get(0, {}).get(2, set()),
+             "239" in hops.get(101, {}).get(1, set()) and "124" in hops.get(101, {}).get(2, set()),
+             "239" in hops.get(124, {}).get(1, set()) and "101" in hops.get(124, {}).get(2, set()))
+    pk = omkpaths.pack_path()
+    if not pk:
+        return (src_ok, graph, ("skipped",)), ((True,) * 5, (True,) * 4, ("skipped",)), "no remaster pack"
+    tmp = tempfile.mkdtemp()
+    try:
+        def walk(name, preload):
+            dump = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                                "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                "6411,0,450,90", "--frames", "140", "--hold", "k200*120", "--remaster", pk,
+                                "--preload", str(preload), "--dump", dump],
+                               capture_output=True, text=True, errors="replace", timeout=900,
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"))
+            ev = _events(r.stdout)
+            goto = r.stdout.find("area.goto 46")
+            pools = [int(m.group(1)) for m in re.finditer(r"vulkan: texture pool - (\d+) new", r.stdout[goto:])] \
+                if goto >= 0 else []
+            took = [e[1] for e in ev if e[0] == "preload.take" and e[1].get("set") == "ARESTO"]
+            ahead = sum(int(e[1].get("fresh", 0)) for e in ev if e[0] == "texpack.preload")
+            # the arrival: the first pool the transition brings, 0 when none brings anything
+            first = pools[0] if pools else 0
+            return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0
+        on, took, ahead, arrivalOn, wentOn = walk("on", 25)
+        off, tookOff, aheadOff, arrivalOff, wentOff = walk("off", 0)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead, "
+          f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
+          f"{'the same' if on and on == off else 'DIFFER'}")
+    walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
+              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0)
+    return (src_ok, graph, walked, on is not None and on == off), \
+        ((True,) * 5, (True,) * 4, (True,) * 6, True), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
+        "prepared set first, a pinned texture spared); the door graph two hops deep, airlocks included, both " \
+        "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
+        "brings fewer than its 7; the same frame with and without"
+
+
 def c_engine_ao():
     r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
     ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
@@ -47987,8 +48095,10 @@ def c_licence_headers():
     # (the pack in GPU block formats); and the vendored 4 -> 10, the walk now
     # recursive and taking .cpp: `bc7enc/` - bc7enc.c/.h, bc7decomp.cpp/.h,
     # rgbcx.h, rgbcx_table4.h (MIT or public domain), tex_encode alone
+    # 667: + `engine/backends/sdl/playpreload.cpp` and `engine/tools/door_census.cpp`
+    # (the preload radius)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (665, [], 10, []), \
+           (667, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50799,6 +50909,7 @@ SLOW = [
     ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
     ("engine: film pack",    c_engine_film_pack,    "todo/remaster.md Tier E; platform/filmpack.h"),
     ("engine: block formats", c_engine_block_formats, "todo/remaster.md; formats/ktx2.h; o3de/texpack.h"),
+    ("engine: preload",      c_engine_preload,      "todo/remaster.md; backends/sdl/playpreload.cpp"),
     ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),

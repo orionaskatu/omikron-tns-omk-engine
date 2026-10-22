@@ -2233,6 +2233,21 @@ bool PlayState::askSet(int slot, const std::string& stem, int area, long frame) 
     slotAsked[slot] = stem;
     slotAskedArea[slot] = area;
     if (stem.empty()) return had;
+    // PREPARED AHEAD (`playpreload.cpp`): the set the preload radius made for
+    // this area, taken as it is - its job done or still running, `integrate
+    // Set` waits on it exactly as on one started here
+    if (const auto it = preloads.find(stem); it != preloads.end() && it->second.area == area && it->second.L) {
+        auto P = it->second.L;
+        preloads.erase(it);   // its pins stay until the next refresh: the pool takes them first
+        P->slot = slot;
+        P->askedFrame = frame;
+        setLoads[slot] = P;
+        ++preloadTaken;
+        std::printf("preload: %s (AREA %d) taken - %s\n", stem.c_str(), area,
+                    P->job && !P->job->ready() ? "still preparing, waited for" : "prepared ahead");
+        omk::event("preload.take", {{"set", stem}, {"area", area}, {"ready", !P->job || P->job->ready()}});
+        return had;
+    }
     const auto o = fs.resolve("MESHES/DECORS/" + stem + ".3DO");
     if (!o) { std::printf("world: no set %s.3DO\n", stem.c_str()); return had; }
     auto L = std::make_shared<SetLoad>();

@@ -272,6 +272,17 @@ int PlayState::setupSession() {
         if (mistStrength > 0.0f)
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
                         "Vulkan only\n", static_cast<double>(mistStrength));
+        // THE PRELOAD RADIUS (`backends/sdl/playpreload.cpp`): its flag, its
+        // key, the preset's 25 (a memory's choice, but the remaster's packs
+        // are what make an arrival cost - `--preload 0` gives it back)
+        preloadMetres = preloadFlag >= 0.0f ? preloadFlag
+                      : settings.preloadSource == omk::Settings::Source::Ini ? settings.preload
+                      : !preset.empty() ? 25.0f : 0.0f;
+        if (preloadMetres > 0.0f)
+            std::printf("preload: %.0f m - a REMASTER feature: the sets behind the doors within %.0f m (and behind "
+                        "the airlock or corridor each opens on) prepared on a thread and their textures put on the "
+                        "GPU ahead, released past %.0f m\n", static_cast<double>(preloadMetres),
+                        static_cast<double>(preloadMetres), static_cast<double>(preloadMetres) + 10.0);
         // THE UPSCALE (`Renderer::setUpscale`): its flag, its key - not the
         // preset's, a frame rate's choice rather than a look's
         upscale = upscaleFlag >= 0.0f ? upscaleFlag

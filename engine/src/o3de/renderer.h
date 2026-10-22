@@ -348,6 +348,16 @@ public:
     // The resident texture pool, indexed the way the shipped data indexes it -
     // by the batch's material. Called when a set is loaded, not per frame.
     virtual void setTextures(std::span<const Texture> t) = 0;
+    // THE PRELOAD RADIUS (`todo/remaster.md`): the textures of the sets
+    // prepared ahead, near doors - uploaded a few at a time by `preloadStep`
+    // and KEPT (pinned) while they are listed, so a set arriving finds them
+    // on the device. A new list replaces the old; what drops off it is
+    // evicted by the next `setTextures` as usual. No-ops by default: a
+    // backend that keeps no uploads (the software reference) has nothing to
+    // hold.
+    virtual void setPreloadTextures(std::span<const Texture> /*t*/) {}
+    // up to `budget` of the listed textures uploaded; -> how many still wait
+    virtual int preloadStep(int /*budget*/) { return 0; }
 
     virtual void begin(const View& v) = 0;
     virtual void submit(const Draw& d) = 0;

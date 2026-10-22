@@ -145,6 +145,7 @@ struct PlayOptions {
     float floorsFlag = -1.0f;     // --floors S, [Remaster] floors; < 0 = the settings'
     float mistFlag = -1.0f;       // --mist S, [Remaster] mist; < 0 = the settings'
     float upscaleFlag = -1.0f;    // --upscale F, [Remaster] upscale; < 0 = the settings'
+    float preloadFlag = -1.0f;    // --preload M, [Remaster] preload; < 0 = the settings'
     float bodyLightFlag = -1.0f;  // --body-light S, [Remaster] bodylight; < 0 = the settings'
     float fxLightFlag = -1.0f;    // --fx-light S, [Remaster] fxlight; < 0 = the settings'
     float reliefFlag = -1.0f;     // --relief S, [Remaster] relief; < 0 = the settings'

@@ -304,16 +304,22 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
 "                   --relief 2, --ao 2, --floors 1, --mist 0.5, --smooth\n"
-"                   0.75, the interface pack in DIR/ui/pack, the font pack in\n"
-"                   DIR/fonts/pack and the film pack in DIR/films/pack when\n"
-"                   there are; a specific\n"
-"                   flag or key beats it;\n"
+"                   0.75, --preload 25, the interface pack in DIR/ui/pack,\n"
+"                   the font pack in DIR/fonts/pack and the film pack in\n"
+"                   DIR/films/pack when there are; a specific flag or key\n"
+"                   beats it;\n"
 "                   [Remaster] dir=DIR\n"
 "  --water S        REMASTER, off by default: the water reflects the scene,\n"
 "                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
 "  --mist S         REMASTER, off by default: a height fog in the set's fog\n"
 "                   colour, thick at its ground and thinning above, strength S\n"
 "                   (0..1); Vulkan only; [Remaster] mist=S\n"
+"  --preload M      REMASTER, off by default (the --remaster preset's 25):\n"
+"                   the sets behind every door within M metres - and behind\n"
+"                   the airlock or corridor it opens on - prepared on a thread\n"
+"                   and their textures put on the GPU ahead, released past\n"
+"                   M + 10; no load on arriving, more memory held; 0 off;\n"
+"                   [Remaster] preload=M\n"
 "  --upscale F      REMASTER, off by default: draw the frame F times smaller\n"
 "                   each way (1..3; 1.5 FSR's quality, 2 its performance) and\n"
 "                   bring it up with AMD FSR 1 - the 4K frame rate; Vulkan\n"
@@ -620,6 +626,13 @@ int PlayOptions::parse(int argc, char** argv) {
             upscaleFlag = static_cast<float>(std::atof(argv[++i]));
             if (upscaleFlag < 1.0f || upscaleFlag > 3.0f) {
                 std::fprintf(stderr, "--upscale %s: not 1..3\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--preload" && i + 1 < argc) {
+            preloadFlag = static_cast<float>(std::atof(argv[++i]));
+            if (preloadFlag < 0.0f || preloadFlag > 100.0f) {
+                std::fprintf(stderr, "--preload %s: not 0..100 metres\n", argv[i]);
                 return 2;
             }
         }

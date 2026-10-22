@@ -33131,8 +33131,21 @@ def c_engine_ao():
          preset's 2; the depth SAMPLED and STORED only under `aoOk_`;
       2. by Anekbah's burner (1780, 0, -7380) with the preset and
          `--enhance-all` (the MULTISAMPLED depth): `--ao 2` moves more than
-         5000 pixels and brightens none (it only multiplies);
+         1000 pixels, brightens none (it only multiplies), and leaves the
+         PLAYER's box (290..374 x 185..444 at 640x480) all but alone - under
+         1000 of its 22100 pixels move;
       3. the same with `--aa 1` (the plain depth, the other shader module).
+
+    **The set's alone, 2026-10-22** (the reader: "too strong" on the
+    characters - chins, armpits and legs smudged black, a halo on the wall
+    behind a figure): a BODY neither takes the occlusion nor casts it.
+    `scene.frag` writes a body's alpha 0 (`caster`), the set's 1/255 and its
+    glow above; the half-size depth pass takes a body's pixel for the sky. By
+    the burner `--ao 2` moved 12310 pixels before, 7605 of them in the
+    player's box; after, 2085, 404 there (the wall's edge). The ground under
+    a figure keeps the cast shadow (`todo/enhancements.md` 5). Shown to fail
+    (2026-10-22): the body's mark taken out of `scene.frag` - 12300 pixels
+    move, 7605 in the player's box (part 2 red).
 
     Measured once, outside the check (2026-10-21, M3, loaded): 4K Qalisar
     with the preset and `--enhance-all`, 44.7 fps off, 40.3 at 2 (2.4 ms);
@@ -33197,16 +33210,19 @@ def c_engine_ao():
             moved = sum(1 for x, y in zip(off, on) if x != y)
             brighter = sum(1 for x, y in zip(off, on) if lum(y) > lum(x) + 2)
             ms = "from the multisampled depth" in log
-            print(f"        {label}: --ao 2 moves {moved} pixels, {brighter} brighter; multisampled {ms}")
-            res.append((moved > 5000, brighter, ms))
+            body = sum(1 for y in range(185, 445) for x in range(290, 375)
+                       if off[y * 640 + x] != on[y * 640 + x])
+            print(f"        {label}: --ao 2 moves {moved} pixels, {brighter} brighter, {body} in the player's "
+                  f"box; multisampled {ms}")
+            res.append((moved > 1000, brighter, body < 1000, ms))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    want = [(True, 0, True), (True, 0, False)]
+    want = [(True, 0, True, True), (True, 0, True, False)]
     want = [_or_skip(r, w) for w, r in zip(want, res)]
     return (src_ok, *res), ((True,) * 6, *want), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 2, the depth kept only " \
-        "when asked); by Anekbah's burner --ao 2 shades the frame and brightens nothing, from the " \
-        "multisampled depth and the plain one"
+        "when asked); by Anekbah's burner --ao 2 shades the frame, brightens nothing and leaves the " \
+        "player alone, from the multisampled depth and the plain one"
 
 
 def c_engine_text_scaling():

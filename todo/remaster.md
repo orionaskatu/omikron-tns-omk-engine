@@ -1051,6 +1051,25 @@ The reader's "continue" after B3; confirmed in play at 2 ("commit, push").
   pixel: 31 fps; keeping the depth alone costs nothing (45).
 * Off: byte-identical to `7ac3b75f` (12 of 12). `verify.py: engine: ao`,
   shown to fail two ways.
+* **The SET's alone, 2026-10-22** - the reader, after play in Qalisar's bar
+  and a shop at `--remaster --enhance-all`: "the shadow and the bloom for
+  characters, they seem too strong". Two causes, both fixed:
+  * the AO on the BODIES: a low-poly figure occludes itself (chins, armpits,
+    legs black) and haloes the wall behind it - "characters cast but never
+    receive" was too little. Now a body NEITHER takes NOR casts it:
+    `scene.frag` writes its alpha 0 (`caster`, every body path), the set's
+    1/255 plus its glow in the 254 steps above (a mark at the TOP would
+    collide with full glow: additive draws add alpha); `ao.frag`'s depth pass
+    takes a body's pixel for the sky, `post.frag` reads the glow through
+    `glowOf`. By Anekbah's burner `--ao 2` moved 12310 pixels, 7605 in the
+    player's box; now 2085 and 404. The ground under a figure keeps the
+    shadow map's shadow;
+  * the GLOW on the bodies: `omktexpack.py emissive`'s rule (much brighter
+    than the texture's median) took pale skin and white cloth for light -
+    229 of 303 character textures had a light map, faces and legs glowing
+    under the bloom. No character emits in the game: the rule skips
+    `MESHES/PERSOS` now, and the pack's 279 character `_e.png` were MOVED to
+    `full/lights-persos-removed/` (kept, not deleted).
 
 ## B2 - the curation: the mechanism and a draft, NOT applied (2026-10-21)
 

@@ -30,6 +30,10 @@ layout(set = 0, binding = 2) uniform sampler2D lut;
 layout(set = 0, binding = 3) uniform sampler2D occlusion;
 layout(location = 0) out vec4 outColour;
 
+// the GLOW a texel's alpha carries (`scene.frag`): 0 on a body (alpha 0) and
+// on the set without light (1/255), its light map's value above
+float glowOf(float a) { return max(0.0, a * 255.0 - 1.0) / 254.0; }
+
 vec3 graded(vec3 c) {
     float n = float(pc.lutSize);
     c = clamp(c, 0.0, 1.0);
@@ -51,7 +55,7 @@ void main() {
         for (int j = -1; j <= 1; j += 2)
             for (int i = -1; i <= 1; i += 2) {
                 vec4 s = texture(src, uv + vec2(i, j) * pc.srcInv);
-                acc += s.rgb * s.a;
+                acc += s.rgb * glowOf(s.a);
             }
         outColour = vec4(acc * 0.25, 1.0);
     } else if (pc.mode == 1) {
@@ -66,8 +70,9 @@ void main() {
     } else {
         vec4 s0 = texture(src, uv);
         vec3 c = s0.rgb;
-        // a glowing texel (its light map, the alpha with the bloom on) is not occluded
-        if (pc.ao != 0) c *= mix(texture(occlusion, uv).r, 1.0, pc.strength > 0.0 ? s0.a : 0.0);
+        // a glowing texel (its light map, the alpha with the bloom on) is not
+        // occluded, and neither is a BODY (alpha 0): the occlusion is the set's
+        if (pc.ao != 0) c *= s0.a < 0.5 / 255.0 ? 1.0 : mix(texture(occlusion, uv).r, 1.0, glowOf(s0.a));
         if (pc.strength > 0.0) {
             vec3 g = min(texture(glow, uv).rgb * pc.strength, vec3(1.0));
             c = 1.0 - (1.0 - c) * (1.0 - g);

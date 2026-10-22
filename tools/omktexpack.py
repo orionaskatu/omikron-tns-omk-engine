@@ -394,6 +394,12 @@ def cmd_emissive(pack, match):
     tex = shipped(match)
     lit = 0
     for k, e in tex.items():
+        # no CHARACTER emits light in the game, and the rule took pale skin and
+        # white cloth for it: their faces glowed under the bloom (the reader,
+        # 2026-10-22). A texture a set or an object shares keeps its map - the
+        # first model wins, and MESHES/PERSOS sorts after both
+        if "/PERSOS/" in e["model"].upper():
+            continue
         w, h = e["w"], e["h"]
         f = emissive_factors(e["rgb"], w * h)
         if not any(f):

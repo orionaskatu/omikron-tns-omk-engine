@@ -375,5 +375,12 @@ void main() {
         if (pc.water == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         c += texture(refl, at / rs).rgb * pc.waterStrength * f;
     }
-    outColour = vec4(c, pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 1.0);
+    // THE ALPHA, read by the post-pass (`post.frag`, `ao.frag`): 0 on a BODY
+    // (`caster`: a character, the shadow map's - posed here or on the CPU),
+    // and on the set 1/255 plus its light map's value (the bloom's glow) in
+    // the 254 steps above - so a body neither glows nor takes or casts the
+    // ambient occlusion. A body marked by the top of the range would collide
+    // with full glow: additive draws ADD their alpha.
+    float glowV = pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 0.0;
+    outColour = vec4(c, pc.caster != 0 ? 0.0 : (1.0 + 254.0 * glowV) / 255.0);
 }

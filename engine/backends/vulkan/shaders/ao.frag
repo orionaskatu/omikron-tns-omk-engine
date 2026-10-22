@@ -1,8 +1,10 @@
 #version 450
 // THE AMBIENT OCCLUSION (the remaster's A4, `todo/remaster.md`), at LOW
 // strength: the sets' vertex colours already hold the artists' painted
-// occlusion, so this only adds CONTACT - a body's feet on the floor, a crate
-// against a wall - and never doubles the painted dark. Off unless asked
+// occlusion, so this only adds CONTACT - a crate against a wall, a step on
+// the ground - and never doubles the painted dark. The SET's alone: a body
+// neither takes it nor casts it (mode 3), its ground shadow is the shadow
+// map's (`todo/enhancements.md` 5). Off unless asked
 // (`[Remaster] ao = S`, `--ao S`). NOT IN THE ORIGINAL.
 //
 // It reads the frame's own DEPTH (kept for it - `makeTarget`), half size, in
@@ -10,7 +12,8 @@
 //
 //   mode 3  DEPTH: the half-size view z, from one full-size depth each (the
 //           4K multisampled depth read 17 times a pixel at random cost 8 ms
-//           of 23 on the M3 - every later mode reads this instead)
+//           of 23 on the M3 - every later mode reads this instead); a BODY's
+//           pixel taken as the sky - the occlusion is the set's
 //   mode 0  AO: the view-space point and its normal from the depths around
 //           it, then 12 samples on a disk of `radius` game units, rotated per
 //           pixel - the Alchemy estimator, sum max(0, v.n - bias) / (v.v + e),
@@ -39,6 +42,7 @@ layout(set = 0, binding = 0) uniform sampler2D depthTex;
 #endif
 layout(set = 0, binding = 1) uniform sampler2D aoTex;
 layout(set = 0, binding = 2) uniform sampler2D zTex;   // mode 3's output, half size
+layout(set = 0, binding = 3) uniform sampler2D colourTex;   // the frame's colour: a BODY's alpha is 0
 layout(location = 0) out vec4 outAo;
 
 const float kFar = 8000.0;   // no contact detail to add past ~80 m
@@ -72,7 +76,12 @@ void main() {
     if (pc.mode == 3) {
         ivec2 q = o * 2;   // the full-size pixel this half-size one stands for
         float d = depthAt(q);
-        outAo = vec4(d >= 1.0 || q.x >= int(pc.view.z) || q.y >= int(pc.view.w) ? 1e9 : viewZ(d));
+        // a BODY is the sky here (`scene.frag`'s alpha 0): it neither takes the
+        // occlusion nor casts it - a low-poly figure occluding itself smudged
+        // chins, armpits and legs black, and haloed the wall behind it (the
+        // reader, 2026-10-22: "too strong" on the characters)
+        bool body = texelFetch(colourTex, clamp(q, ivec2(0), textureSize(colourTex, 0) - 1), 0).a < 0.5 / 255.0;
+        outAo = vec4(d >= 1.0 || body || q.x >= int(pc.view.z) || q.y >= int(pc.view.w) ? 1e9 : viewZ(d));
     } else if (pc.mode == 0) {
         float z = zAt(o);
         if (z >= 1e8) { outAo = vec4(1.0); return; }

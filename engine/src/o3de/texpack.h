@@ -53,8 +53,11 @@ std::string textureKeyHex(std::uint64_t key);
 // (`tools/tex_encode.cpp`, `omktexpack.py compress`). A backend says which
 // it can sample (`setCodecs`); a texture that has one is then READ, not
 // decoded - no PNG inflate on the frame it arrives - and uploaded as blocks,
-// a quarter of RGBA's memory or less. The PNG stays the fallback, and the
-// source a person edits.
+// a quarter of RGBA's memory or less. The PNG, where there is one, stays the
+// fallback and the source a person edits; a pack shipped for play may DROP
+// its colour and normal PNGs (half its size): the KTX2 then indexes the key,
+// and where pixels are wanted (a GL without BPTC, a grey alias) the BC is
+// decoded on the CPU (`formats/blockdecode.h`). An ASTC-only pack keeps them.
 enum PackCodec : unsigned { kCodecBc = 1, kCodecAstc = 2 };
 struct PackBlocks {
     std::uint32_t vkFormat = 0;   // `formats/ktx2.h`'s numbers

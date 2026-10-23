@@ -34,8 +34,8 @@
 #pragma GCC diagnostic ignored "-Wpedantic"
 #endif
 #include "bc7enc/bc7enc.c"
-#include "bc7enc/bc7decomp.cpp"
-#define RGBCX_IMPLEMENTATION
+// the decoders, compiled once in `src/formats/blockdecode.cpp`
+#include "bc7enc/bc7decomp.h"
 #include "bc7enc/rgbcx.h"
 #if defined(__clang__)
 #pragma clang diagnostic pop

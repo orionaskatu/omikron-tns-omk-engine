@@ -6,6 +6,7 @@
 #include "o3de/texpack.h"
 
 #include "o3de/greybank.h"
+#include "formats/blockdecode.h"
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
@@ -39,13 +40,22 @@ bool powerOfTwoFactor(int big, int small) {
     return f >= 1 && f <= 16 && !(f & (f - 1));
 }
 
-// the normal map's PNG, at the colour's size or a power of two of the
-// original's; its alpha (the height) kept at 1 or more - 0 reads "none"
-void pngNormal(const std::string& path, const Texture& t, PackImage& o) {
-    const auto nb = readWholeFile(path);
+bool blockPixels(const std::string* path, const Texture& t, bool light, std::vector<std::uint8_t>& px,
+                 int& w, int& h, std::string& why);
+
+// the normal map's PNG - or, with none (`path` empty), its BC7 decoded - at
+// the colour's size or a power of two of the original's; its alpha (the
+// height) kept at 1 or more - 0 reads "none"
+void pngNormal(const std::string& path, const std::string* bc, const Texture& t, PackImage& o) {
     PngImage ni;
-    if (nb.empty() || !decodePng(reinterpret_cast<const std::uint8_t*>(nb.data()), nb.size(), ni) ||
-        !powerOfTwoFactor(ni.w, t.width) || !powerOfTwoFactor(ni.h, t.height)) return;
+    std::string why;
+    if (path.empty()) {
+        if (!blockPixels(bc, t, false, ni.rgba, ni.w, ni.h, why)) return;
+    } else {
+        const auto nb = readWholeFile(path);
+        if (nb.empty() || !decodePng(reinterpret_cast<const std::uint8_t*>(nb.data()), nb.size(), ni) ||
+            !powerOfTwoFactor(ni.w, t.width) || !powerOfTwoFactor(ni.h, t.height)) return;
+    }
     for (std::size_t q = 3; q < ni.rgba.size(); q += 4) ni.rgba[q] = std::max<std::uint8_t>(1, ni.rgba[q]);
     o.nw = ni.w; o.nh = ni.h; o.normal = std::move(ni.rgba);
 }
@@ -64,6 +74,20 @@ bool readBlocks(const std::string& path, const Texture& t, bool light, PackBlock
     z.vkFormat = k.vkFormat; z.w = k.w; z.h = k.h;
     z.levels = std::move(k.levels);
     z.bytes = std::move(k.bytes);
+    return true;
+}
+
+// the pixels of a pack BC KTX2 (`path`: BC7, or BC4 for a `light`) - level 0
+// decoded on the CPU (`formats/blockdecode.h`), where no PNG stands beside it
+bool blockPixels(const std::string* path, const Texture& t, bool light, std::vector<std::uint8_t>& px,
+                 int& w, int& h, std::string& why) {
+    PackBlocks z;
+    if (!path) { why = "no PNG, and no BC KTX2 to decode"; return false; }
+    if (!readBlocks(*path, t, light, z, why)) return false;
+    if (z.levels.empty() || blockFormat(z.vkFormat).astc) { why = "no BC level to decode"; return false; }
+    const std::span<const std::uint8_t> l(z.bytes.data() + z.levels[0].first, z.levels[0].second);
+    if (!(light ? decodeBc4(l, z.w, z.h, px) : decodeBc7(l, z.w, z.h, px))) { why = "its blocks cut short"; return false; }
+    w = z.w; h = z.h;
     return true;
 }
 
@@ -128,6 +152,16 @@ bool TexturePack::open(const std::string& dir) {
         std::uint64_t k;
         if (hexKey(name.substr(0, 16), k)) (light ? lights_ : normal ? normals_ : files_)[k] = dir + "/" + name;
     }
+    // A KTX2 NEEDS NO PNG BESIDE IT: a key with blocks and no PNG is indexed
+    // with an EMPTY path - drawn from its blocks, and where pixels are wanted
+    // (a GL without BPTC, a grey alias, a raw light map) its BC decoded on
+    // the CPU (`blockPixels`). A pack shipped for play drops the PNGs, half
+    // its size; the PNG, when there, is still the source a person edits.
+    for (int kind = 0; kind < 3; ++kind) {
+        auto& idx = kind == 0 ? files_ : kind == 1 ? lights_ : normals_;
+        for (const auto& c : ktx_)
+            for (const auto& kv : c[kind]) idx.emplace(kv.first, std::string());
+    }
     // THE CURATION (`todo/remaster.md` B2): `exclude.txt` in the pack, a key a
     // line (`<16 hex>  # NAME why`) - what the upscaler hurt (lettering the AI
     // garbles): its colour and its normal map left out, so the SHIPPED texture
@@ -169,7 +203,9 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     struct Job { std::size_t at; std::uint64_t key; const std::string* file; const std::string* light;
                  std::string why; bool grey; const std::string* normal = nullptr;
                  // the KTX2s, when the backend samples their codec: colour, light, normal
-                 const std::string* z[3] = {nullptr, nullptr, nullptr}; };
+                 const std::string* z[3] = {nullptr, nullptr, nullptr};
+                 // ...and the BC ones whatever it samples: the pixels where no PNG is
+                 const std::string* bc[3] = {nullptr, nullptr, nullptr}; };
     std::vector<Job> jobs;
     // the light maps: always when they alone are asked; with the colours only
     // when a bloom will read them
@@ -191,6 +227,8 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         jobs.push_back({i, key, it != files_.end() ? &it->second : nullptr,
                         lt != lights_.end() ? &lt->second : nullptr, {}, grey,
                         nt != normals_.end() ? &nt->second : nullptr});
+        for (int kind = 0; kind < 3; ++kind)
+            if (const auto f = ktx_[0][kind].find(key); f != ktx_[0][kind].end()) jobs.back().bc[kind] = &f->second;
         // the block formats: with the colours, never for a grey alias (its
         // pixels are recomputed) nor what the light hook paints
         if (colour && codecs_ && !grey) {
@@ -223,6 +261,13 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
             PackImage& o = out[jb.at];
             if (jb.light && jb.z[1] && readBlocks(*jb.z[1], t, true, o.emissiveZ, jb.why)) {
                 o.ew = o.emissiveZ.w; o.eh = o.emissiveZ.h;
+            } else if (jb.light && jb.light->empty()) {
+                // no PNG: its BC4 decoded (a raw light map the hook paints into)
+                std::string why;
+                if (!blockPixels(jb.bc[1], t, true, o.emissive, o.ew, o.eh, why)) {
+                    o.emissive.clear();
+                    o.ew = o.eh = 0;
+                }
             } else if (jb.light) {
                 // the light map: its red channel, any size the rule allows
                 const auto lb = readWholeFile(*jb.light);
@@ -245,15 +290,20 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 // a normal map without its KTX2 is decoded below as before
             }
             if (o.ok) {
-                if (jb.normal) pngNormal(*jb.normal, t, o);
+                if (jb.normal) pngNormal(*jb.normal, jb.bc[2], t, o);
                 continue;
             }
             jb.why.clear();   // a KTX2 refused falls back to the PNG
-            const auto bytes = readWholeFile(*jb.file);
             PngImage img;
-            if (bytes.empty()) { jb.why = "unreadable"; continue; }
-            if (!decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img, &jb.why))
-                continue;
+            if (jb.file->empty()) {
+                // no PNG: the BC7 decoded - a GL without BPTC, a grey alias
+                if (!blockPixels(jb.bc[0], t, false, img.rgba, img.w, img.h, jb.why)) continue;
+            } else {
+                const auto bytes = readWholeFile(*jb.file);
+                if (bytes.empty()) { jb.why = "unreadable"; continue; }
+                if (!decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img, &jb.why))
+                    continue;
+            }
             if (!powerOfTwoFactor(img.w, t.width) || !powerOfTwoFactor(img.h, t.height)) {
                 char b[96];
                 std::snprintf(b, sizeof b, "%dx%d, not %dx%d times a power of two (1..16) each way",
@@ -270,7 +320,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 }
             }
             o.ok = true; o.w = img.w; o.h = img.h; o.rgba = std::move(img.rgba);
-            if (jb.normal) pngNormal(*jb.normal, t, o);
+            if (jb.normal) pngNormal(*jb.normal, jb.bc[2], t, o);
         }
     });
     if (lightHook_)
@@ -281,7 +331,8 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     lk.lock();
     for (const Job& jb : jobs) {
         if (out[jb.at].ok || !jb.file || !colour) continue;
-        std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", jb.file->c_str(),
+        const std::string& named = !jb.file->empty() ? *jb.file : jb.bc[0] ? *jb.bc[0] : textureKeyHex(jb.key);
+        std::fprintf(stderr, "texture pack: %s - %s; %s drawn as shipped\n", named.c_str(),
                      jb.why.c_str(), ts[jb.at]->name.c_str());
         refused_.insert(jb.key);
     }

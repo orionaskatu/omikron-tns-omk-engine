@@ -48210,8 +48210,10 @@ def c_licence_headers():
     # world,bodies,draw}.cpp` and `backends/sdl/playremaster_off.cpp` (the
     # preload MOVED there, not added), and the walk now takes `.inl` under
     # engine/backends: `backends/gles/glesrender_remaster{,_shaders}.inl`
+    # 676: + `engine/src/formats/blockdecode.{h,cpp}` (the pack without its
+    # PNGs: bc7decomp / rgbcx compiled there, tex_encode links them)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (674, [], 10, []), \
+           (676, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

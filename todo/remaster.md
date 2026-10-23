@@ -1424,6 +1424,190 @@ a build without it can SAY it ignores them). Vulkan (desktop) is unsplit.
 Also found and fixed on the way: the Vita's hand-written source list and a
 3DS type deduction, both broken by the 2026-10-22 commits (`471971ac`).
 
+## The audit of the whole remaster (2026-10-23) - findings, NOTHING FIXED yet
+
+The reader's "do an audit of the remaster mode (performances,
+optimizations, bugs, cleanliness, etc...)". Four read-only reviews at
+`9168b0e9` (Vulkan; GLES; the CPU modules; the frontend, the switch, the
+options and the checks), the headline findings re-read in the code, then
+reviewed by the session that wrote the preload, the block formats and the
+switch (its nuances folded in below). **No timing taken**: the machine was
+heavily loaded (the reader's warning) - the costs below are the records'
+or estimates. Line numbers are `9168b0e9`'s; `texpack.cpp` has moved since
+(`0120c502`), so it is named by function. ✔ = re-read and confirmed.
+
+**What holds up.** HEAD builds every variant (`make SDL_PKG=sdl2 play
+play-gles vulkan noremaster` in a worktree); without the switch the
+software viewer is 2.75 MB, GLES 2.88 MB (3.31 / 3.20 with it); the only
+remaster names left in those are the stubs and `LightProbes::Cell`'s map
+type (a `WorldSlot` field). The Vita/3DS/Mac/PowerPC build files never
+define it; the stubs match the real code with everything off; GLES's ten
+hooks match their stubs and its destructor frees every remaster resource;
+Vulkan's `Push` / `PostPush` / `AoPush` / `LightUbo` match their shaders;
+the tile binning handles `flipX` and the roll.
+
+**Bugs, the order to fix them in:**
+1. ✔ **GLES: the floors' reflection is drawn FULL size and sampled as
+   HALF.** `begin` sets the half viewport (`glesrender.cpp:2688`), then
+   `setView` (:2594) sets the full one; `submit` (:3053) samples with
+   `0.5/rw_`. A floors-only frame shows the reflection's lower-left quarter
+   magnified 2x, and GLES saves none of the quarter. Fix: halve inside
+   `setView` when `passFbo_ && reflHalf_`; compare with Vulkan's floors.
+2. ✔ **The reflection's clip memo outlives a slot's set**
+   (`renderer.cpp:254-286`, `ClipMemo`). Keyed by `const Geometry*`, then
+   `(start, count)`; a slot reloaded in place (`w = std::move(L.out)`,
+   `playstate.cpp:2232`) keeps its address and `GpuResidency`'s assignment
+   does nothing, so no listener fires. A next set with its plane at the same
+   y and a draw of the same `(start, count)` draws the OLD set's runs (which
+   may pass its corner count). Fix: the memo keyed by `geo->revision` too.
+3. ✔ **The preload's cap never yields to a nearer door**
+   (`playpreload.cpp:114`, `break` at `kHeld`). Two hops a door: three doors
+   within 25 m fill the six, and the door walked to next waits until one is
+   35 m away. Fix: a nearer want evicts the farthest held; `engine: preload`
+   to test the cap and the release radius, shown to fail on the code now.
+4. ✔ **Vulkan: texture images unchecked** (`upload` ~3085-3096, `uploadZ`
+   ~3187-3201): `vkCreateImage` / `vkAllocateMemory` / `vkBindImageMemory`
+   - out of device memory (the 4x pack with its maps) acts on null handles.
+   Fix: ONE checked `makeImage2D` helper (seven hand-rolled sequences:
+   `makeTarget`, `makePostAt` - which also leaks `qv`/`qf` on a half failure
+   -, `makeReflection`, `reflDepth1_`, `makeUpscale`, `uploadLut`, the two
+   uploads), the texture then drawn white. Before the split (below).
+5. ✔ **A build without the switch names only some ignored options**
+   (`playremaster_off.cpp:17-19`): `--bloom --water --floors --mist --ao
+   --relief --fx-light --body-light --grade --ui-pack --font-pack
+   --film-pack --smooth-skip` and every `[Remaster]` key but `dir` /
+   `texturepack` pass silently; `engine: remaster switch` part 4 tries
+   `--remaster` alone. Fix: `Settings::anyRemaster()`; the check one plain
+   flag and one ini key.
+6. **One-liners with them**: `.cube` reads `nan`/`inf` (`sscanf %f`), and
+   `lutStrip` casts NaN to a byte - refuse non-finite in `parseCube`; a glow
+   whose ramp is black (`hi = 0`) computes 0/0 (`emitterlight.cpp:62-87`)
+   and still takes a light slot - `hi <= 0` is dark.
+7. **Lower** (the pack is our own content): a PNG's IHDR alone reserves up
+   to ~1 GiB before inflating (`pngread.cpp:246`, `out.reserve(expect)`;
+   cap at deflate's 1032:1); a KTX2's codec slot not checked against its
+   content (`readBlocks`: require `f.astc` to match the slot).
+8. **Vulkan's present-pass barriers** (`runPresentPass` 2236-2245, 2275):
+   `TOP_OF_PIPE`, access 0, both ways - no dependency on the post's writes
+   nor the reads before the transition back. Harmless on MoltenVK (layouts
+   are no-ops), wrong by the spec.
+9. PLAUSIBLE: GLES FSR at `mediump` (no `GL_FRAGMENT_PRECISION_HIGH`,
+   Mali-400 class): `1.0e-20` flushes to 0 and coordinates past 2048 lose
+   their texel - refuse the upscale without highp; ASTC with a partial mip
+   chain incomplete (black) under trilinear; an NPOT light map at
+   `GL_REPEAT` (:2121-2139) incomplete on GLES2 (the glow silently gone);
+   detached preload jobs capture `this`, nothing waits at teardown;
+   `fontpack`'s `byFont` keyed by a `Font*` that may come back; NaN corner
+   normals unpinned in `smoothbody` (:97-108); `--preload nan` passes the
+   range test, `--preload abc` is 0, the ini's `upscale` takes 0..3 where
+   the flag takes 1..3; preloads keyed by stem but matched by area (two
+   areas on one `.3DO`, if any - `door_census` would say); the taken set's
+   pins kept until the next change (`preloadPin()` after the take).
+
+**Performance:**
+* **The preload's uploads on Vulkan**: `preloadStep` calls
+  `pack.replacements` on the render thread, and every colour, light map and
+  normal map is its own staging buffer, allocation and `oneShotEnd`
+  (`vkQueueWaitIdle`, :851) - the shape of the ~7-12 ms a frame measured
+  (preload section). Order: FIRST `TexturePack::replacements`' lock scope
+  (`textureKey` hashes every texel under `m_` - with six preload jobs, the
+  frame's calls wait), THEN the decode into `prepareSet`'s thread, one
+  command buffer and fence a batch, a staging ring, image memory
+  sub-allocated (three allocations a texture, toward
+  `maxMemoryAllocationCount`).
+* **GLES has no pins** (`setPreloadTextures` is Vulkan's): each door
+  decodes and uploads its set on the arrival frame, and the airlock's round
+  trip evicts and reloads the city's pool - several times the M3's 13 ms on
+  Android or the Quest. A `pinned` flag spared by the eviction, an
+  `uploadOne(i)` driven 3 a frame, all in `glesrender_remaster.inl`.
+* **The preset's 25 m on GLES and software** holds up to six full
+  `SetLoad`s with nothing pinned; up to six threads started in one frame
+  (one per want, 1 MB stacks), no cancellation - a released set's job runs
+  to its end. One or two in flight, a cancel flag between `prepareSet`'s
+  stages; the preset's preload only where pins exist, or a lower cap.
+* **4K memory and bandwidth, Vulkan (estimates)**: `reflMs_` /
+  `reflDepth_` made full size at full samples for a floors-only scene that
+  draws into `reflFbuf1_` alone (~300 MB at 4x; the water's alone needs
+  them - and the water could go half size too); `stencilStoreOp` STORE
+  though nothing loads it; under the AO the whole multisampled depth stored
+  where `ao.frag` reads sample 0 (`VK_KHR_depth_stencil_resolve`,
+  SAMPLE_ZERO); no `TRANSIENT` / lazily allocated attachments (memoryless
+  on Apple); the post copies `colour_` -> `postSrc_` whole (~66 MB a 4K
+  frame) even for the AO or grade alone - a ping-pong pair, or the
+  composite folded into `present.frag`; the glow images made and barriered
+  with the bloom at 0; post passes over the letterbox bands; the glow at
+  RGBA16F (B10G11R11 half the bytes); the 21-tap blur as 11 bilinear taps.
+* **GLES**: a water frame calls `begin()` twice (`drawWaterScene` :146,
+  :156) - `frameNo_` twice, every body's depth ties resolved twice, the
+  target cleared and the lights sent twice; `fsrPass` looks up 9 uniforms a
+  run and runs again in `readback`; `runPost` runs with the bloom on when
+  no draw bound a light map, and `glCopyTexSubImage2D`s the whole frame
+  (ping-pong on tilers); `reflInv` / `eye` / `clipY` sent every draw.
+* **CPU**: `uipack`'s LRU of 16 thrashes on a screen of 17+ packed bitmaps
+  in a fixed order (decode under `impl_->m`) - count the largest screen's
+  bitmaps before changing it; a KTX2 copied whole (`std::byte` ->
+  `uint8_t`); `clipAbove` allocates per non-set draw a frame and
+  `drawWithWater` rescans the set's level triangles a frame (memo by
+  revision, with bug 2); HD glyphs area-averaged per draw; `smoothbody`'s
+  `ord` sorted per grid point; `spriteColour` per emitter.
+* **The plane scan with the remaster off** (`playremaster_world.cpp:26-27`,
+  `waterPlane` / `groundLevel` on every set): the DEVELOPMENT build only,
+  on the loading thread - the ports never compile it. A gate on the water /
+  mist is optional. In original mode at run time: no cost (two float and an
+  int compare a draw on GLES).
+
+**Cleanliness:**
+* **Vulkan unsplit**: ~1,100 lines to a `vkrender_remaster.inl` on GLES's
+  pattern (upscale 2310-2458, post 2460-2945, reflection 4048-4250, the
+  tile block of `begin` 3778-3840, the pack's light / normal branches of
+  `poolTextures` and the BC / R8 probe), the members in one struct, stubs.
+  Its own MECHANICAL commit after the fixes, byte-identical by `engine:
+  remaster switch` and the Vulkan frame checks.
+* GLES's `#if` in the class fragmented (:1423-1474): `bloom_`,
+  `waterWant_` and its six, `fxWant_`, `lightBlack_`, the variant strings,
+  the `refl*` ids unguarded - on the Vita. `static constexpr` zeros under
+  `#else` compile every branch out. The variant sources kept as members
+  after `link`; two consecutive `if (waterWant_ > 0)` (:273, :279); the
+  five-line `glTexParameteri` block six times; light maps, `postSrc_`, the
+  glows, the LUT and `reflTex_` never counted by `gpuTexture()` (the
+  Quest's budget).
+* New `-Wshadow`: a `view` parameter shadowing `PlayState`'s field in
+  `playremaster_draw.cpp` (22, 31, 66, 95, 118, 131) and
+  `playremaster_off.cpp` (33, 35); `vkrender.cpp:997` (`qi`).
+* **Units**: comments saying the unit is ~1 cm - it is the INCH:
+  `lightprobe.h:65` (kCell ~5 m, not 2), `emitterlight.h:60-61` (the
+  glow's ~11 m, not 4.5), `floorreflect.h:31` (~100 m, not 40);
+  `playpreload.cpp:30` its own `kInchesPerMetre`. **The comments only** -
+  the values were tuned by eye; a retune is the reader's, from a picture.
+* `lighttiles.h:32` says "nearest the camera first" - nearest the cluster,
+  unordered after `nth_element`; `Rect::z` written, never read.
+  `TexturePack::replacement()` has no caller (still dead after
+  `0120c502`); `normalMap` used by `texpack_tool` alone. `upper()` three
+  times; the FNV / `hex16` in four modules; the level-triangle walk three
+  times (`floorreflect.cpp:76` without the `t+2 < size` guard). Vulkan
+  writes the requests of `remasterConfigure` itself twice
+  (`playgpu_vulkan.cpp:40-45, 77-82`); its destructor leaves `shUbo_`,
+  `litUbo_`, the shadow image / pass / framebuffer and `dsl1_` (older than
+  the remaster); `makeShadowSet`'s comment on the pool reset is stale.
+* `renderer.h:635-640` declares `waterPlane` / `groundLevel` outside the
+  `#if` their definitions are in (a shared caller fails only at a
+  `noremaster` link).
+
+**The checks**: `engine: preload` never reaches the cap, the release or the
+area mismatch (how bug 3 passed), its take needs `ready` in time (a
+PLAUSIBLE flake under `--jobs 6`), and part 1 matches one exact Vulkan line;
+`engine: remaster switch` reads the development GLES binary's symbols only
+and `make noremaster` builds with `VR=1` - the ports have none (build it
+`VR=0`); `nm -j` is macOS's. `engine: block formats` reads the FULL pack,
+which moved to the external drive with the runtime pack's (`0120c502`) -
+red here until it has a setting of its own.
+
+**The order** (agreed with the reviewing session): bugs 1-5 and the two
+one-liners; then the pack's lock scope, Vulkan's batched upload with the
+decode in `prepareSet`, GLES's pins; then the split and the 4K trims,
+measured with `OMK_GPU_TIMES=1` on a QUIET machine (4K Qalisar, before and
+after).
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

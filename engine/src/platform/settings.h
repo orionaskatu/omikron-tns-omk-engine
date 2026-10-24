@@ -281,6 +281,15 @@ struct Settings {
     // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
     float  ao = 0.0f;
     Source aoSource = Source::Default;
+    // whether any `[Remaster]` key asks for something: a build without
+    // OMK_REMASTER says it ignores them (`playremaster_off.cpp`; the audit's
+    // bug 5 - only the preset and the texture pack were named)
+    bool anyRemaster() const {
+        return !texturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
+               !grade.empty() || !remasterDir.empty() || !smoothSkip.empty() || bloom > 0.0f || water > 0.0f ||
+               floors > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
+               smooth > 0.0f || fxLight > 0.0f || bodyLight > 0.0f;
+    }
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //

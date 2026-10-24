@@ -16,11 +16,14 @@
 // it is dropped - the gap stops a player on the edge from preparing and
 // dropping the same set. `askSet` takes a prepared set instead of starting
 // one. At most `kHeld` are held, the nearest first: a city's tunnel opens on
-// the next city.
+// the next city - and a NEARER door takes the place of the farthest held (the
+// audit's bug 3, 2026-10-23: three doors within reach filled the six, and the
+// door walked to next waited until one of them was past the keep radius).
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
 
+#include "platform/env.h"
 #include "platform/events.h"
 
 #include <algorithm>
@@ -98,7 +101,8 @@ void PlayState::phasePreload() {
         if (n == near.end() || n->second.first > keep || n->second.second != it->second.area) {
             std::printf("preload: %s (AREA %d) released - %s\n", it->first.c_str(), it->second.area,
                         n == near.end() ? "no door leads there now" : "past the keep radius");
-            omk::event("preload.drop", {{"set", it->first}, {"area", it->second.area}});
+            omk::event("preload.drop", {{"set", it->first}, {"area", it->second.area},
+                                        {"metres", n == near.end() ? -1.0 : n->second.first / kInchesPerMetre}});
             pinsChanged = pinsChanged || it->second.sent;
             it = preloads.erase(it);
         } else {
@@ -106,13 +110,29 @@ void PlayState::phasePreload() {
             ++it;
         }
     }
-    // wanted: within reach, nearest first, up to `kHeld` held
+    // wanted: within reach, nearest first, up to `kHeld` held - a want
+    // nearer than the farthest held taking its place (`OMK_PRELOAD_HELD=n`,
+    // an instrument: the cap n, so a short walk reaches it)
+    static const std::size_t held =
+        static_cast<std::size_t>(std::max(1L, omk::envInt("OMK_PRELOAD_HELD", static_cast<long>(kHeld))));
     std::vector<std::pair<double, std::string>> want;
     for (const auto& [stem, dn] : near)
         if (dn.first <= reach && !preloads.count(stem)) want.push_back({dn.first, stem});
     std::sort(want.begin(), want.end());
     for (const auto& [dist, stem] : want) {
-        if (preloads.size() >= kHeld) break;
+        if (preloads.size() >= held) {
+            const auto far = std::max_element(preloads.begin(), preloads.end(), [](const auto& a, const auto& b) {
+                return a.second.dist < b.second.dist;
+            });
+            if (far->second.dist <= dist) break;   // every held is nearer: the rest wait
+            std::printf("preload: %s (AREA %d) released - %s's door is nearer\n", far->first.c_str(),
+                        far->second.area, stem.c_str());
+            omk::event("preload.drop", {{"set", far->first}, {"area", far->second.area}, {"for", stem},
+                                        {"metres", far->second.dist / kInchesPerMetre},
+                                        {"forMetres", dist / kInchesPerMetre}});
+            pinsChanged = pinsChanged || far->second.sent;
+            preloads.erase(far);
+        }
         const int area = near[stem].second;
         const auto o = fs.resolve("MESHES/DECORS/" + stem + ".3DO");
         if (!o) continue;

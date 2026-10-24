@@ -54,6 +54,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NOCLOUD",              // the start menu's cloud left out of a screen render (engine: screen scale)
     "OMK_NOUI",                 // the interface left out of the frame - the HUD, the bars, the fight gauges (engine: fight letterbox)
     "OMK_NO_AMBIENT_CLAMP",     // A/B: a set's ambient floor not clamped (engine: ambient clamp)
+    "OMK_NO_BLOCK_FORMATS",     // the pack's KTX2 block files not read - its PNGs uploaded, for comparison (engine: block formats)
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
@@ -81,6 +82,7 @@ constexpr const char* kSwitches[] = {
     "OMK_POOL_PAD",             // =<n> n spare copies of texture slot 0, to push the pool past 64 (engine: pool past 64)
     "OMK_POOL_TWICE",           // A/B: textures dropped and re-sent on an arrival, the old order
     "OMK_POST_MESSAGE",         // =<msg>@<frame> posts that message on that frame (engine: mirror park)
+    "OMK_PRELOAD_HELD",         // =<n> the preload radius holds at most n sets, not 6 - its cap within a short walk (engine: preload)
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned
@@ -108,6 +110,7 @@ constexpr const char* kSwitches[] = {
     "OMK_VERIFY_GROUND",        // the floor probe through the grid and the scan both, counted (engine: ground grid)
     "OMK_VERIFY_PATCH",         // the full merge beside the in-place one, compared bit for bit (engine: patch index)
     "OMK_VERIFY_SPLIT",         // the two-layer grid against the linear scan every moving frame (engine: split grid)
+    "OMK_VK_IMAGE_FAIL",        // =<what> Vulkan: every image of that category refused as out of memory (engine: vulkan images)
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
     "OMK_WATER_LEVELS",         // texpack_tool water: every level of horizontal additive area, not the plane alone

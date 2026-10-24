@@ -32767,7 +32767,14 @@ def c_engine_floors():
          the `remaster.floors` event says the plane is live at y 0;
       3. Vulkan: the floor's reflection LIT - `OMK_REFL_UNLIT=1` (its tiles
          left empty, as before) moves more than 200 pixels of it;
-      4. GLES: `--floors 1` moves more than 5000 pixels there too.
+      4. GLES: `--floors 1` moves more than 5000 pixels there too;
+      5. GLES's floors where VULKAN's are: the pixels the floors move by more
+         than a few steps (2 red, 4 green, 2 blue) on each backend overlap,
+         intersection over union above 0.4 - the two light the reflection
+         their own ways (tiles, nearest slots), so the frames are not compared.
+
+    Measured 2026-10-24 (M1): 4570 pixels moved on Vulkan, 3874 on GLES, the
+    overlap 0.670 (against the untiled Vulkan, `OMK_NO_TILES=1`: 0.826).
 
     Measured once, outside the check (2026-10-21, M3): with `--floors 0`
     byte-identical to `7929d606` on the software reference, Vulkan and GLES,
@@ -32777,7 +32784,10 @@ def c_engine_floors():
 
     SHOWN TO FAIL (2026-10-21): a floor's draw never given mode 3 - part 2
     (0 pixels); the reflection's tiles skipped again (`pc.water != 2`) - part
-    1 and part 3 (0 pixels).
+    1 and part 3 (0 pixels). (2026-10-24) GLES's reflection drawn full size
+    and sampled as half (the audit's bug 1: `setView` putting the full
+    viewport back over `begin`'s half one) - part 5, 0.003 (282 pixels moved,
+    the lower-left quarter magnified 2x).
 
     NOT CHECKED, judged by eye: the list, the strengths, the relief's shift.
     """
@@ -32843,7 +32853,16 @@ def c_engine_floors():
             gb = os.path.join(eng, "build", "omk-play-gles")
             goff, _ = run(gb, "goff", {}, "--floors", "0")
             gon, _ = run(gb, "gon", {}, "--floors", "1")
-            gl = ("no frame",) if goff is None or gon is None else (diff(goff, gon) > 5000,)
+            if goff is None or gon is None:
+                gl = ("no frame",)
+            else:
+                big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                    abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+                mv = {i for i, (x, y) in enumerate(zip(off, on)) if big(x, y)} if off and on else set()
+                mg = {i for i, (x, y) in enumerate(zip(goff, gon)) if big(x, y)}
+                iou = len(mv & mg) / max(1, len(mv | mg))
+                print(f"        floors' pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+                gl = (diff(goff, gon) > 5000, iou > 0.4)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if None in (off, on, unlit):
@@ -32854,11 +32873,128 @@ def c_engine_floors():
           f"events {live[:2]}; GLES {gl}")
     return (src_ok, moved > 5000, bool(live) and live[0].get("live") in ("1", "true") and
             float(live[0].get("y", "nan")) == 0.0, lit > 200, gl), \
-           ((True,) * 6, True, True, True, _or_skip(gl, (True,))), \
+           ((True,) * 6, True, True, True, _or_skip(gl, (True, True))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
         "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
-        "lights, and on GLES"
+        "lights, and on GLES - where Vulkan's do"
 
+
+def c_engine_clip_memo():
+    r"""THE REFLECTION'S CLIP MEMO ACROSS A RELOAD - the remaster audit's bug 2
+    (`todo/remaster.md`, "The audit of the whole remaster"; `clipAbove` in
+    `src/o3de/renderer.cpp`). The memo keeps, per geometry and plane height,
+    the runs of each SET draw above the water's or the floors' plane. A world
+    slot reloaded IN PLACE (`w = std::move(L.out)`) keeps its geometry's
+    address and destroys nothing, so a memo keyed by the address alone drew
+    the OLD set's runs for the new one. Now keyed by `Geometry::revision`
+    too: a new revision empties it, and the set motion patch's
+    (`dirtyFrom`/`dirtyTo`/`dirtyCorners`) drops only the draws over a moved
+    corner.
+
+    Tier 6 (read and explained - a model of the remaster's own code, no
+    original behind it). `engine/tools/clip_memo.cpp` drives `drawWithWater`
+    with ONE `Geometry` holding sets in turn and a renderer recording what it
+    is handed to reflect: the first set (6 corners above), set B moved into
+    the same object (3), B's first triangle moved below by the patch, its
+    corners unsorted as the patch leaves them (0), and a draw the patch left
+    alone (6) - four `@clip` rows, each its runs against the wanted.
+
+    SHOWN TO FAIL (2026-10-24): the memo ignoring the revision (the old
+    behaviour) - `reload` 6 for 3, `moved` 6 for 0; the patch's draws never
+    dropped - `moved` 3 for 0.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "build/clip_memo"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    r = subprocess.run([os.path.join(eng, "build", "clip_memo")], capture_output=True, text=True, timeout=60)
+    rows = {}
+    for line in r.stdout.splitlines():
+        f = line.split()
+        if len(f) == 5 and f[0] == "@clip":
+            rows[f[1]] = (int(f[2]), int(f[3]), f[4])
+    print(f"        {rows}")
+    got = tuple(rows.get(k, ("missing",))[:2] for k in ("first", "reload", "moved", "kept"))
+    return (got, r.returncode), (((6, 6), (3, 3), (0, 0), (6, 6)), 0), \
+        "one geometry reloaded in place: the reflection's clip follows the new set, and the motion patch's " \
+        "moved triangles, keeping the draws it left alone"
+
+def c_engine_vulkan_images():
+    r"""VULKAN'S IMAGES, CHECKED - the remaster audit's bug 4 (`todo/remaster.md`,
+    "The audit of the whole remaster"). Every image the Vulkan backend makes -
+    render targets, the shadow map, the present and upscale images, the
+    post-pass's, the grade's strip, the reflection's, every texture - goes
+    through ONE `makeImage2D`: the image, its memory bound, its view, or none
+    of them and a line saying which step failed. The two texture uploads
+    checked nothing before: out of device memory (the 4x pack with its maps)
+    they bound memory to a null image and copied into it.
+
+    Tier 6 (read and explained; no original behind it). Parts (Qalisar's
+    street, `--remaster --enhance-all --floors 1`, 640x480, 30 frames):
+      1. the source: ONE `vkCreateImage` in `vkrender.cpp`, the helper's;
+      2. `OMK_VK_IMAGE_FAIL=textures` (an instrument: every image of the
+         category refused as out of memory): the run ends normally, writes
+         its frame, says what it refused, and the frame is not the normal one
+         (the textures white);
+      3. `OMK_VK_IMAGE_FAIL="shadow map"`: the renderer REFUSED - set 1 is
+         made with the shadow map and carries the scene's lights, and a
+         frame without it faulted in MoltenVK's first draw - and a frame
+         written all the same (the frontend's fallback).
+
+    SHOWN TO FAIL (2026-10-24): the texture upload going on past a refused
+    image (the old unchecked sequence) - part 2, the run killed by SIGSEGV
+    (-11), no frame; the shadow map's refusal not refusing the renderer (the
+    old "fitted blobs" message) - part 3, SIGBUS (-10) in the first draw.
+    NOT CHECKED: a device really out of memory; GLES (its textures are
+    `glTexImage2D`s the driver backs).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    src_ok = (len(re.findall(r"vkCreateImage\(dev_", vk)) == 1,
+              "bool VulkanRenderer::makeImage2D(" in vk)
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, "build"), ((True,) * 2, "built"), mk.stderr[-300:]
+    pk = omkpaths.pack_path()
+    if not pk:
+        return (src_ok, ("skipped",)), ((True,) * 2, ("skipped",)), "no remaster pack"
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(name, refuse):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+            if refuse:
+                env["OMK_VK_IMAGE_FAIL"] = refuse
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30", "--area", "101",
+                                "--stand", "15300,0,-10050,270", "--dump", out, "--filter", "nearest",
+                                "--remaster", pk, "--enhance-all", "--floors", "1", "--world-vulkan"],
+                               capture_output=True, text=True, errors="replace", env=env, timeout=600)
+            px = open(out, "rb").read() if os.path.exists(out) else None
+            said = bool(refuse) and f"vulkan: {refuse} " in r.stderr and "refused" in r.stderr
+            return r.returncode, px, said, r.stderr
+        rc0, base, _, _ = run("base", None)
+        rcT, texF, saidT, _ = run("tex", "textures")
+        rcS, shF, saidS, errS = run("shadow", "shadow map")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    tex = (rcT, texF is not None, saidT, texF is not None and base is not None and texF != base)
+    shadow = (rcS, shF is not None, saidS, "its set carries the scene's lights too, refused" in errS)
+    print(f"        textures refused: exit {rcT}, frame {texF is not None}, said {saidT}; "
+          f"the shadow map refused: exit {rcS}, frame {shF is not None}, the renderer refused {shadow[3]}")
+    return (src_ok, rc0 == 0 and base is not None, tex, shadow), \
+        ((True,) * 2, True, (0, True, True, True), (0, True, True, True)), \
+        "one checked image helper; textures refused draw white and the run goes on; the shadow map refused " \
+        "refuses the renderer cleanly, a frame written all the same"
 
 def c_engine_mist():
     r"""THE MIST - the remaster's A4 beyond the AO (`todo/remaster.md`), `[Remaster]
@@ -33945,11 +34081,19 @@ def c_engine_preload():
          first after the transition's `area.goto 46` - bringing NONE new,
          against at least 7 without; without, nothing taken or uploaded ahead;
       4. the frame the walk ends on THE SAME BYTES with and without - the
-         preload moves when work is done, never what is drawn.
+         preload moves when work is done, never what is drawn;
+      5. THE CAP AND THE RELEASE (the audit's bug 3, 2026-10-23): a walk down
+         Qalisar's street (15300, -10050, west) with `OMK_PRELOAD_HELD=1` - the
+         cap 1, so a short walk reaches it: never more than one held (wants
+         less drops and takes), at least one set released for a NEARER door
+         (`@evt preload.drop ... for=`, its metres above the want's) and that
+         set then wanted, and every release past the keep radius beyond 35 m.
     SHOWN TO FAIL (2026-10-22): `askSet` not taking the prepared set - part 3
     (nothing taken, the arrival's pool 7 new again). The eviction ignoring
     the pin is caught by PART 1 ALONE: this walk changes no pool between the
     uploads ahead and the arrival, so the eviction never runs in it.
+    (2026-10-24) The cap never yielding (the audit's bug 3, `break` at the
+    cap) - part 5: QSEXSHP1 held the whole walk, QBAR never wanted.
     NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
     walk follows); GLES (sets prepared, its textures not pinned); the
     characters of the area arriving (not preloaded).
@@ -34013,19 +34157,44 @@ def c_engine_preload():
             return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0
         on, took, ahead, arrivalOn, wentOn = walk("on", 25)
         off, tookOff, aheadOff, arrivalOff, wentOff = walk("off", 0)
+        r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                            "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                            os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101", "--stand",
+                            "15300,0,-10050,270", "--frames", "400", "--hold", "k200*380", "--remaster", pk,
+                            "--preload", "25"],
+                           capture_output=True, text=True, errors="replace", timeout=900,
+                           env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_PRELOAD_HELD="1"))
+        held = most = 0
+        evicted, wanted, released = [], [], []
+        for n, f in _events(r.stdout):
+            if n == "preload.want":
+                held += 1
+                wanted.append((f.get("set"), len(evicted)))
+            elif n in ("preload.drop", "preload.take"):
+                held -= 1
+                if n == "preload.drop":
+                    (evicted if "for" in f else released).append(f)
+            most = max(most, held)
+        cap = (most == 1, bool(evicted),
+               all(float(e["metres"]) > float(e["forMetres"]) for e in evicted),
+               all(any(w == e["for"] and k == i + 1 for w, k in wanted) for i, e in enumerate(evicted)),
+               all(float(f["metres"]) > 35.0 or float(f["metres"]) < 0.0 for f in released))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead, "
           f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
-          f"{'the same' if on and on == off else 'DIFFER'}")
+          f"{'the same' if on and on == off else 'DIFFER'}; the cap at 1: at most {most} held, released for a "
+          f"nearer door {[(e['set'], e['metres'], e['for'], e['forMetres']) for e in evicted]}, past the radius "
+          f"{[(f['set'], f['metres']) for f in released]}")
     walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
               arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0)
-    return (src_ok, graph, walked, on is not None and on == off), \
-        ((True,) * 5, (True,) * 4, (True,) * 6, True), \
+    return (src_ok, graph, walked, on is not None and on == off, cap), \
+        ((True,) * 5, (True,) * 4, (True,) * 6, True, (True,) * 5), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
         "prepared set first, a pinned texture spared); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
-        "brings fewer than its 7; the same frame with and without"
+        "brings fewer than its 7; the same frame with and without; at the cap a nearer door takes the farthest " \
+        "held's place, and a release is past the keep radius"
 
 
 def c_engine_remaster_switch():
@@ -34051,11 +34220,16 @@ def c_engine_remaster_switch():
          the same bytes from the development build and from `noremaster` -
          software, and GLES on the readback's path (`OMK_NO_GPU_PRESENT`);
       4. a remaster option on a build without it SAID ("remaster: not
-         built"), never silently dropped.
+         built"), never silently dropped: the preset (`--remaster`), a plain
+         flag (`--bloom 1`) and an ini key (`[Remaster] water = 1` through
+         `--config`) - the audit's bug 5, 2026-10-23: only the preset, the
+         texture pack, the upscale, the preload and the smoothing were named.
     SHOWN TO FAIL (2026-10-23), one at a time: `uiPack().attach` back in
     `surface.cpp` without its `#if` - `make noremaster` does not link (part
     1); the set's own lights (`readLights`) moved behind the switch by mistake
-    - both frames differ (part 3).
+    - both frames differ (part 3). (2026-10-24) The old test (the preset, the
+    texture pack, upscale, preload, smooth) - part 4, `--bloom 1` and the
+    ini's `water` silent.
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -34096,19 +34270,24 @@ def c_engine_remaster_switch():
         sw_off, _ = frame("swoff", bins["off"], "--software", env={"SDL_VIDEODRIVER": "dummy"})
         gl_dev, _ = frame("gldev", bins["devgl"], env={"OMK_NO_GPU_PRESENT": "1"})
         gl_off, _ = frame("gloff", bins["offgl"], env={"OMK_NO_GPU_PRESENT": "1"})
-        _, said = frame("said", bins["off"], "--software", "--remaster", tmp, env={"SDL_VIDEODRIVER": "dummy"})
+        quiet = {"SDL_VIDEODRIVER": "dummy"}
+        _, said = frame("said", bins["off"], "--software", "--remaster", tmp, "--frames", "1", env=quiet)
+        _, saidFlag = frame("saidflag", bins["off"], "--software", "--bloom", "1", "--frames", "1", env=quiet)
+        ini = os.path.join(tmp, "remaster.ini")
+        open(ini, "w").write("[Remaster]\nwater = 1\n")
+        _, saidIni = frame("saidini", bins["off"], "--software", "--config", ini, "--frames", "1", env=quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     same = (sw_dev is not None and sw_dev == sw_off, gl_dev is not None and gl_dev == gl_off)
-    told = "remaster: not built" in said
+    told = tuple("remaster: not built" in x for x in (said, saidFlag, saidIni))
     sizes = {k: os.path.getsize(v) for k, v in bins.items()}
     print(f"        sizes: software {sizes['dev']} -> {sizes['off']}, GLES {sizes['devgl']} -> {sizes['offgl']}; "
           f"symbols missing from the development build {symbols[0]}, left without the remaster {symbols[1]}; "
           f"the same frames (software, GLES) {same}; said {told}")
-    return (built, symbols, same, told), ((True,) * 4, ([], []), (True, True), True), \
+    return (built, symbols, same, told), ((True,) * 4, ([], []), (True, True), (True, True, True)), \
         "make noremaster's two viewers built; none of the remaster's symbols in them, every one in the " \
         "development build; original mode the same bytes with and without it, software and GLES; a " \
-        "remaster option on a build without it said"
+        "remaster option on a build without it said - the preset, a plain flag, an ini key"
 
 
 def c_engine_ao():
@@ -48212,8 +48391,9 @@ def c_licence_headers():
     # engine/backends: `backends/gles/glesrender_remaster{,_shaders}.inl`
     # 676: + `engine/src/formats/blockdecode.{h,cpp}` (the pack without its
     # PNGs: bc7decomp / rgbcx compiled there, tex_encode links them)
+    # 677: + `engine/tools/clip_memo.cpp` (the audit's bug 2, `engine: clip memo`)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (676, [], 10, []), \
+           (677, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -51016,6 +51196,8 @@ SLOW = [
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
+    ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),
+    ("engine: vulkan images", c_engine_vulkan_images, "todo/remaster.md audit bug 4; backends/vulkan/vkrender.cpp makeImage2D"),
     ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
     ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
     ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),

@@ -152,6 +152,14 @@ struct PlayOptions {
     float smoothFlag = -1.0f;     // --smooth S, [Remaster] smooth; < 0 = the settings'
     std::string smoothSkipFlag;   // --smooth-skip A,B, [Remaster] smoothskip; "" = the settings'
     float aoFlag = -1.0f;         // --ao S, [Remaster] ao; < 0 = the settings'
+    // whether any remaster flag above was given - `Settings::anyRemaster`'s
+    // twin for the command line (a 0 strength asks for nothing)
+    bool anyRemaster() const {
+        return !texturePackFlag.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
+               !gradeFlag.empty() || !remasterFlag.empty() || !smoothSkipFlag.empty() || bloomFlag > 0.0f ||
+               waterFlag > 0.0f || floorsFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
+               bodyLightFlag > 0.0f || fxLightFlag > 0.0f || reliefFlag > 0.0f || smoothFlag > 0.0f || aoFlag > 0.0f;
+    }
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.

@@ -250,12 +250,45 @@ namespace {
 // object rewritten every frame, and a memo of it drew a stale clip (1 pixel
 // in Qalisar, 2026-10-21). Kept per plane height; forgotten when the plane
 // moves or a geometry is destroyed (its address may come back for another).
+// ...and per REVISION (the audit's bug 2, 2026-10-23): a world slot reloaded
+// IN PLACE (`w = std::move(L.out)`) keeps the geometry's address and destroys
+// nothing, so the next set - its plane at the same height, a draw of the same
+// (start, count) - drew the OLD set's runs. A new revision empties the memo,
+// unless it is the set motion patch's (`Geometry::dirtyCorners`, from the
+// revision the memo holds): then only the draws over a moved corner go - a
+// door may cross the plane.
 // Main thread only, as every caller of `drawWithWater` is.
 struct ClipMemo {
+    using Runs = std::vector<std::pair<std::size_t, std::size_t>>;
+    struct Entry {
+        std::uint64_t revision = 0;
+        std::unordered_map<std::uint64_t, Runs> byDraw;   // (start << 32) | count -> its runs
+    };
     float y = 0.0f;
     bool listening = false;
-    std::unordered_map<const Geometry*, std::unordered_map<std::uint64_t, std::vector<std::pair<std::size_t, std::size_t>>>> runs;
+    std::unordered_map<const Geometry*, Entry> runs;
+    std::vector<std::uint32_t> moved;   // the patch's corners, SORTED (`dirtyCorners` is not)
     static void gone(void* ctx, const Geometry* g) { static_cast<ClipMemo*>(ctx)->runs.erase(g); }
+
+    // the entry for `g` at its current revision
+    Entry& at(const Geometry& g) {
+        Entry& e = runs[&g];
+        if (e.revision == g.revision) return e;
+        if (!e.byDraw.empty() && g.dirtyTo == g.revision && g.dirtyFrom == e.revision) {
+            moved.assign(g.dirtyCorners.begin(), g.dirtyCorners.end());
+            std::sort(moved.begin(), moved.end());
+            for (auto it = e.byDraw.begin(); it != e.byDraw.end();) {
+                const std::uint64_t start = it->first >> 32, end = start + (it->first & 0xFFFFFFFFu);
+                const auto m = std::lower_bound(moved.begin(), moved.end(), start);
+                if (m != moved.end() && *m < end) it = e.byDraw.erase(it);
+                else ++it;
+            }
+        } else {
+            e.byDraw.clear();
+        }
+        e.revision = g.revision;
+        return e;
+    }
 };
 
 void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std::vector<Draw>& out) {
@@ -265,6 +298,7 @@ void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std
     const float n[3] = {0.0f, -1.0f, 0.0f};
     out.clear();
     static std::vector<Draw> one;
+    ClipMemo::Entry* kept = stable ? &memo.at(*stable) : nullptr;
     for (const auto& d : in) {
         if (!d.geo) continue;
         if (d.geo != stable) {
@@ -272,8 +306,8 @@ void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std
             for (const auto& o : inFrontOf(one, n, y, 1.0f)) out.push_back(o);
             continue;
         }
-        auto& byDraw = memo.runs[d.geo];
-        const std::uint64_t key = (static_cast<std::uint64_t>(d.start) << 32) ^ static_cast<std::uint64_t>(d.count);
+        auto& byDraw = kept->byDraw;
+        const std::uint64_t key = (static_cast<std::uint64_t>(d.start) << 32) | static_cast<std::uint64_t>(d.count);
         auto it = byDraw.find(key);
         if (it == byDraw.end()) {
             one.assign(1, d);

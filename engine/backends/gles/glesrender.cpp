@@ -2591,7 +2591,18 @@ void GlesRenderer::setView(const View& view) {
     // ...at the RENDER size: a supersampled target is the frame `ss_` times
     // over, an upscaled one `upscale_` times under, and the projection is the same
     // (the aspect does not change)
-    glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));
+    // ...and the FLOORS' reflection at HALF size (`reflHalf_`, Vulkan's
+    // `setViewport`): the picture's rectangle halved, so a floor sampling
+    // `gl_FragCoord * 0.5` reads the texel its own pixel reflects. (The half
+    // viewport was `begin`'s, and this call put the full one back over it: a
+    // floors-only frame drew its reflection full size and sampled its
+    // lower-left quarter, magnified 2x - the audit's bug 1, 2026-10-23.)
+    if (passFbo_ && reflHalf_) {
+        const int y0 = (rh_ - rs(vh)) / 2;
+        glViewport(0, y0, (rs(vw) + 1) / 2, (rh_ + 1) / 2 - y0);
+    } else {
+        glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));
+    }
     picH_ = vh;
 
     // THE VIEW-PROJECTION from the software rasterizer's own basis. GL's clip
@@ -2683,10 +2694,9 @@ void GlesRenderer::begin(const View& view) {
     dither_ = view.dither;
 
     glBindFramebuffer(GL_FRAMEBUFFER, passFbo_ ? passFbo_ : drawFbo());   // the water pass's target when set
-    // the FLOORS' reflection at HALF size, in the target's lower-left quarter
-    // (`reflHalf_`; the water's whole) - a quarter of the pixels
-    if (passFbo_ && reflHalf_) glViewport(0, 0, (rw_ + 1) / 2, (rh_ + 1) / 2);
-    else glViewport(0, 0, rw_, rh_);
+    // (the picture's viewport is `setView`'s, below - the floors' half size
+    // there too)
+    glViewport(0, 0, rw_, rh_);
     glDisable(GL_SCISSOR_TEST);
     // the engine clears to the scene's fog colour (`View::clearColour`); with
     // the BLOOM its alpha is the light map's value, so what no surface covers

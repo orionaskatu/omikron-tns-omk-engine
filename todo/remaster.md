@@ -1660,6 +1660,46 @@ among the green. No timing: the load average was 6 on 8 cores.
   file cache. The read on the render thread is the cost a cold pack pays:
   the audit's "decode into `prepareSet`'s thread" first.
 
+**Bugs 1-5 FIXED (2026-10-24, M1)**, each with a check shown to fail on the
+old code:
+1. **GLES floors** - `setView` halves the picture's own viewport when
+   `passFbo_ && reflHalf_` (Vulkan's `setViewport` rule), `begin` no longer
+   sets one it overwrote. `engine: floors` part 5: the pixels the floors move
+   on GLES and on Vulkan overlap 0.670 (IoU; 0.826 against the untiled
+   Vulkan), 0.003 with the bug (282 pixels moved, against 3874).
+2. **The clip memo** - per `Geometry::revision`: a new revision empties a
+   geometry's entry, the motion patch's (`dirtyFrom` = the memo's revision)
+   drops only the draws over a moved corner (sorted copy - `dirtyCorners` is
+   not). New `engine/tools/clip_memo.cpp` + `engine: clip memo`: one geometry
+   holding sets in turn - the old memo reflects 6 corners for 3 after the
+   reload and 6 for 0 after the patch.
+3. **The preload's cap** - a want nearer than the farthest held releases it
+   (`@evt preload.drop ... for= metres= forMetres=`; every drop now carries
+   its metres). `OMK_PRELOAD_HELD=n` lowers the cap for a test. `engine:
+   preload` part 5, Qalisar's street at cap 1: QSEXSHP1 (17.81 m) released
+   for QBAR (17.39 m); with the old `break` nothing released. Seen on the
+   way, not touched: every Qalisar start prepares ANEKBAH "6.5 m away" and
+   releases it at 60.9 m one pass later - the first distance pass runs from
+   a position before `--stand`'s (a wasted `prepareSet`, not a wrong frame).
+4. **Vulkan's images** - ONE `makeImage2D` (image, memory, bind, view, or
+   none and a line) behind all ten sequences (the audit's seven, plus the
+   shadow map, the present image and the floors' depth); `vkrender.cpp` has
+   one `vkCreateImage`. A refused texture has no image and no set and draws
+   white; the 1x1 stand-ins are their own category, and a draw with no set
+   at all is skipped. The shadow map's refusal now REFUSES THE RENDERER:
+   set 1 is made with it and carries the lights and tiles, so the old "no
+   shadow map, fitted blobs instead" path faulted in MoltenVK's first draw
+   (SIGBUS) - never a working path. (The `qv`/`qf` leak is the PRESENT
+   pass's shader modules, not `makePostAt`'s - fixed there.)
+   `OMK_VK_IMAGE_FAIL=<category>` refuses a category as out of memory; new
+   `engine: vulkan images`. Frames unrefused byte-identical before and after.
+5. **The ignored options** - `Settings::anyRemaster()` and
+   `PlayOptions::anyRemaster()`; `engine: remaster switch` part 4 also tries
+   `--bloom 1` and `[Remaster] water = 1` (`--config`) - both silent before.
+Also: `env switches` was red since the block formats (`OMK_NO_BLOCK_FORMATS`
+read, never listed) - its row added. The remaster checks after: all green
+but `emitter light` (the run-to-run flip above).
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

@@ -14,8 +14,7 @@
 // the remaster's options are parsed everywhere (the settings and the command
 // line are shared); without it, one that asks for something is SAID
 void PlayState::remasterSetup() {
-    if (!remasterFlag.empty() || !settings.remasterDir.empty() || !texturePackFlag.empty() ||
-        !settings.texturePack.empty() || upscaleFlag > 1.0f || preloadFlag > 0.0f || smoothFlag > 0.0f)
+    if (opt.anyRemaster() || settings.anyRemaster())
         std::printf("remaster: not built (a build without OMK_REMASTER) - its options are ignored\n");
 }
 void PlayState::remasterPrepareSet(SetLoad&) {}

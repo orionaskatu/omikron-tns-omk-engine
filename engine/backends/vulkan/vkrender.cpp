@@ -388,6 +388,8 @@ private:
     }
     bool makeBuffer(VkDeviceSize n, VkBufferUsageFlags use,
                     VkMemoryPropertyFlags props, VkBuffer& b, VkDeviceMemory& m);
+    bool makeImage2D(const VkImageCreateInfo& ii, VkImageAspectFlags aspect, const char* what,
+                     VkImage& img, VkDeviceMemory& mem, VkImageView* view);
     VkCommandBuffer oneShotBegin();
     void oneShotEnd(VkCommandBuffer cb);
     bool uploadGeometry(const omk::Geometry* g);
@@ -831,6 +833,55 @@ bool VulkanRenderer::makeBuffer(VkDeviceSize n, VkBufferUsageFlags use,
     return true;
 }
 
+// ONE IMAGE, CHECKED (the remaster audit's bug 4, 2026-10-23): `ii`'s image,
+// device-local memory allocated and bound, and - where `view` is given - a 2D
+// view of all its levels with `aspect`. Or NONE of them: a step that fails
+// destroys what the ones before it made, leaves every handle null and says
+// so (once per `what`, which is also the GPU profiler's category). The image
+// sequences were written out by hand ten times, and the two texture uploads
+// checked nothing - out of device memory (the 4x pack with its light and
+// normal maps) they bound memory to a null image and copied into it. A
+// texture that fails now has no image and no set, and draws white.
+bool VulkanRenderer::makeImage2D(const VkImageCreateInfo& ii, VkImageAspectFlags aspect, const char* what,
+                                 VkImage& img, VkDeviceMemory& mem, VkImageView* view) {
+    img = VK_NULL_HANDLE; mem = VK_NULL_HANDLE;
+    if (view) *view = VK_NULL_HANDLE;
+    const auto fail = [&](const char* step, VkResult r) {
+        if (mem) freeDeviceMemory(mem);
+        if (img) vkDestroyImage(dev_, img, nullptr);
+        img = VK_NULL_HANDLE; mem = VK_NULL_HANDLE;
+        static std::set<std::string> told;
+        if (told.insert(what).second)
+            std::fprintf(stderr, "vulkan: %s %ux%u - %s failed (%d), refused%s\n", what, ii.extent.width,
+                         ii.extent.height, step, static_cast<int>(r),
+                         r == VK_ERROR_OUT_OF_DEVICE_MEMORY ? ": out of device memory" : "");
+        return false;
+    };
+    // `OMK_VK_IMAGE_FAIL=<what>`, an instrument: every image of that category
+    // refused as if the device were out of memory (`verify.py: engine: vulkan
+    // images`)
+    static const char* refuse = omk::envStr("OMK_VK_IMAGE_FAIL");
+    if (refuse && std::strcmp(refuse, what) == 0) return fail("the image", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    VkResult r = vkCreateImage(dev_, &ii, nullptr, &img);
+    if (r != VK_SUCCESS) { img = VK_NULL_HANDLE; return fail("the image", r); }
+    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    r = vkAllocateMemory(dev_, &ai, nullptr, &mem);
+    if (r != VK_SUCCESS) { mem = VK_NULL_HANDLE; return fail("its memory", r); }
+    OMK_GPU_ALLOC(what, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
+    r = vkBindImageMemory(dev_, img, mem, 0);
+    if (r != VK_SUCCESS) return fail("binding its memory", r);
+    if (!view) return true;
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = ii.format;
+    vi.subresourceRange = {aspect, 0, ii.mipLevels, 0, 1};
+    r = vkCreateImageView(dev_, &vi, nullptr, view);
+    if (r != VK_SUCCESS) { *view = VK_NULL_HANDLE; return fail("its view", r); }
+    return true;
+}
+
 VkCommandBuffer VulkanRenderer::oneShotBegin() {
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool = pool_; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1039,19 +1090,7 @@ bool VulkanRenderer::makeTarget() {
         ii.samples = samples; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = use; ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &img), "vkCreateImage");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &mem), "vkAllocateMemory(image)");
-        OMK_GPU_ALLOC("render targets", omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, img, mem, 0), "vkBindImageMemory");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
-        vi.subresourceRange = {asp, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &view), "vkCreateImageView");
-        return true;
+        return makeImage2D(ii, asp, "render targets", img, mem, &view);
     };
     if (!image(VK_FORMAT_R8G8B8A8_UNORM,
                // SAMPLED for the present pass, which reads the frame where it is
@@ -1183,18 +1222,7 @@ bool VulkanRenderer::makeTarget() {
         ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (vkCreateImage(dev_, &ii, nullptr, &shImg_) == VK_SUCCESS) {
-            VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, shImg_, &req);
-            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            vkAllocateMemory(dev_, &ai, nullptr, &shMem_);
-            OMK_GPU_ALLOC("shadow map", omk::prof::gpuKey(omk::prof::kVkMemory, shMem_), ai.allocationSize);
-            vkBindImageMemory(dev_, shImg_, shMem_, 0);
-            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            vi.image = shImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = shFmt_;
-            vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-            vkCreateImageView(dev_, &vi, nullptr, &shView_);
+        if (makeImage2D(ii, VK_IMAGE_ASPECT_DEPTH_BIT, "shadow map", shImg_, shMem_, &shView_)) {
 
             VkAttachmentDescription da{};
             da.format = shFmt_; da.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1274,9 +1302,16 @@ bool VulkanRenderer::makeTarget() {
             }
         }
     }
-    if (shFbuf_ == VK_NULL_HANDLE)
-        std::fprintf(stderr, "vulkan: no shadow map here - `--shadow-quality mapped` "
-                             "will draw the fitted blobs instead\n");
+    // NO SHADOW MAP, NO RENDERER: set 1 is made with it - the shadow map, the
+    // lights' uniforms, the tiled lights' buffers - and every scene pipeline
+    // reads that set, so a frame without it bound draws on nothing (MoltenVK
+    // faults in its first draw: `OMK_VK_IMAGE_FAIL="shadow map"`, 2026-10-24).
+    // Refused here like a render target, and the frontend falls back. (It
+    // used to say the fitted blobs would stand in - they never could.)
+    if (shFbuf_ == VK_NULL_HANDLE) {
+        std::fprintf(stderr, "vulkan: no shadow map here - its set carries the scene's lights too, refused\n");
+        return false;
+    }
     return true;
 }
 
@@ -2110,18 +2145,8 @@ bool VulkanRenderer::makePresentPass() {
                    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &presImg_), "present image");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, presImg_, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &presMem_), "present image memory");
-        OMK_GPU_ALLOC("present image", omk::prof::gpuKey(omk::prof::kVkMemory, presMem_), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, presImg_, presMem_, 0), "present image bind");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = presImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = fmt;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &presView_), "present image view");
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "present image", presImg_, presMem_, &presView_))
+            return false;
     }
     {
         // every pixel is written, so nothing is loaded; it ends where the
@@ -2188,7 +2213,13 @@ bool VulkanRenderer::makePresentPass() {
         };
         VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
         VkShaderModule qf = module(kPresentFrag, sizeof(kPresentFrag));
-        if (!qv || !qf) { std::fprintf(stderr, "vulkan: present shader module\n"); return false; }
+        if (!qv || !qf) {
+            // (the one that was made, not leaked)
+            if (qv) vkDestroyShaderModule(dev_, qv, nullptr);
+            if (qf) vkDestroyShaderModule(dev_, qf, nullptr);
+            std::fprintf(stderr, "vulkan: present shader module\n");
+            return false;
+        }
         VkPipelineShaderStageCreateInfo st[2]{};
         st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                  VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
@@ -2324,18 +2355,7 @@ bool VulkanRenderer::makeUpscale() {
     ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
     ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VKCHECK(vkCreateImage(dev_, &ii, nullptr, &easuImg_), "upscale image");
-    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, easuImg_, &req);
-    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    ai.allocationSize = req.size;
-    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &easuMem_), "upscale image memory");
-    OMK_GPU_ALLOC("render targets", omk::prof::gpuKey(omk::prof::kVkMemory, easuMem_), ai.allocationSize);
-    VKCHECK(vkBindImageMemory(dev_, easuImg_, easuMem_, 0), "upscale image bind");
-    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vi.image = easuImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = fmt;
-    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &easuView_), "upscale image view");
+    if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "render targets", easuImg_, easuMem_, &easuView_)) return false;
 
     // every pixel of the picture is written; it ends where RCAS reads it
     VkAttachmentDescription a{};
@@ -2485,18 +2505,7 @@ bool VulkanRenderer::makePostAt() {
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = use; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (vkCreateImage(dev_, &ii, nullptr, &img) != VK_SUCCESS) return false;
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (vkAllocateMemory(dev_, &ai, nullptr, &mem) != VK_SUCCESS) return false;
-        OMK_GPU_ALLOC(what, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
-        vkBindImageMemory(dev_, img, mem, 0);
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        return vkCreateImageView(dev_, &vi, nullptr, &view) == VK_SUCCESS;
+        return makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, img, mem, &view);
     };
     const VkFormat half = VK_FORMAT_R16G16B16A16_SFLOAT;
     if (!image(rw_, rh_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -2791,14 +2800,7 @@ bool VulkanRenderer::uploadLut() {
     ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
     ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    if (vkCreateImage(dev_, &ii, nullptr, &lutImg_) != VK_SUCCESS) return fail();
-    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, lutImg_, &req);
-    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    ai.allocationSize = req.size;
-    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(dev_, &ai, nullptr, &lutMem_) != VK_SUCCESS) return fail();
-    OMK_GPU_ALLOC("grade lut", omk::prof::gpuKey(omk::prof::kVkMemory, lutMem_), ai.allocationSize);
-    vkBindImageMemory(dev_, lutImg_, lutMem_, 0);
+    if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "grade lut", lutImg_, lutMem_, &lutView_)) return fail();
     VkBuffer sb; VkDeviceMemory sm;
     const VkDeviceSize bytes = lutData_.size();
     if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -2827,10 +2829,6 @@ bool VulkanRenderer::uploadLut() {
     oneShotEnd(cb);
     vkDestroyBuffer(dev_, sb, nullptr);
     freeDeviceMemory(sm);
-    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vi.image = lutImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R8G8B8A8_UNORM;
-    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(dev_, &vi, nullptr, &lutView_) != VK_SUCCESS) return fail();
     bindPostSets();
     return true;
 }
@@ -3043,7 +3041,14 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
         vi.format = fmt;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
-        vkCreateImageView(dev_, &vi, nullptr, &out.view);
+        if (vkCreateImageView(dev_, &vi, nullptr, &out.view) != VK_SUCCESS) {
+            // no view, no texture: it draws white (and a map stands aside)
+            out.view = VK_NULL_HANDLE;
+            freeDeviceMemory(out.mem);
+            vkDestroyImage(dev_, out.img, nullptr);
+            out.img = VK_NULL_HANDLE; out.mem = VK_NULL_HANDLE;
+            return;
+        }
         if (!withSet) return;
 
         VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -3062,7 +3067,10 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         wr.pImageInfo = &dii;
         vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
     };
-    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true, bool one = false) {
+    // `what`: the image's category - "textures", or the 1x1 stand-ins every
+    // missing texture or map falls back to
+    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true, bool one = false,
+                      const char* what = "textures") {
         const VkFormat fmt = one ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * (one ? 1 : 4);
         VkBuffer sb; VkDeviceMemory sm;
@@ -3099,14 +3107,11 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                  | (levels > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        vkCreateImage(dev_, &ii, nullptr, &out.img);
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, out.img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        vkAllocateMemory(dev_, &ai, nullptr, &out.mem);
-        OMK_GPU_ALLOC("textures", omk::prof::gpuKey(omk::prof::kVkMemory, out.mem), ai.allocationSize);
-        vkBindImageMemory(dev_, out.img, out.mem, 0);
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, out.img, out.mem, nullptr)) {
+            vkDestroyBuffer(dev_, sb, nullptr);
+            freeDeviceMemory(sm);
+            return;   // no image: the texture draws white
+        }
 
         VkCommandBuffer cb = oneShotBegin();
         VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -3191,14 +3196,11 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        vkCreateImage(dev_, &ii, nullptr, &out.img);
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, out.img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        vkAllocateMemory(dev_, &ai, nullptr, &out.mem);
-        OMK_GPU_ALLOC("textures", omk::prof::gpuKey(omk::prof::kVkMemory, out.mem), ai.allocationSize);
-        vkBindImageMemory(dev_, out.img, out.mem, 0);
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "textures", out.img, out.mem, nullptr)) {
+            vkDestroyBuffer(dev_, sb, nullptr);
+            freeDeviceMemory(sm);
+            return;   // no image: the texture draws white
+        }
         VkCommandBuffer cb = oneShotBegin();
         VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -3258,16 +3260,22 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         bindReflection(ds);
     };
     if (normalFlat_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_, false);
+        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_, false,
+               false, "texture stand-ins");
     }
     if (lightBlack_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_, false);
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_, false, false,
+               "texture stand-ins");
         // an upload's set is written with binding 0 alone: the black one's
         // view stands in for the light map and the reflection until bound
     }
     if (white_.img == VK_NULL_HANDLE) {
-        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
-        bindLight(white_.ds, lightBlack_.view, normalFlat_.view);
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_, true, false,
+               "texture stand-ins");
+        // (the stand-ins refused - 4 bytes each, so a device already out of
+        // memory: no set to write into, and a draw with none is skipped)
+        if (white_.ds && lightBlack_.view && normalFlat_.view)
+            bindLight(white_.ds, lightBlack_.view, normalFlat_.view);
     }
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
@@ -3374,8 +3382,9 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                 u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
                 ++normals;
             }
-            if (u.t.ds) bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
-                                  u.t.nmView ? u.t.nmView : normalFlat_.view);
+            if (u.t.ds && lightBlack_.view && normalFlat_.view)
+                bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
+                          u.t.nmView ? u.t.nmView : normalFlat_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
             ++fresh;
         } else if (preload) {
@@ -3962,6 +3971,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     const VkDescriptorSet ds =
         (slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE) ? tex_[slot].ds
                                                                 : white_.ds;
+    if (ds == VK_NULL_HANDLE) return;   // not even the white stand-in: nothing to draw with
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 0, 1, &ds, 0, nullptr);
     // (the water reflection's pass binds its own: the tiles of ITS camera)
     const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && ds1Refl_ != VK_NULL_HANDLE ? ds1Refl_ : ds1_;
@@ -4062,18 +4072,7 @@ bool VulkanRenderer::makeReflection() {
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = samples; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = use; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (vkCreateImage(dev_, &ii, nullptr, &img) != VK_SUCCESS) return false;
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        if (vkAllocateMemory(dev_, &ai, nullptr, &mem) != VK_SUCCESS) return false;
-        OMK_GPU_ALLOC("water reflection", omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
-        vkBindImageMemory(dev_, img, mem, 0);
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
-        vi.subresourceRange = {asp, 0, 1, 0, 1};
-        return vkCreateImageView(dev_, &vi, nullptr, &view) == VK_SUCCESS;
+        return makeImage2D(ii, asp, "water reflection", img, mem, &view);
     };
     if (!image(VK_FORMAT_R8G8B8A8_UNORM,
                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -4101,23 +4100,8 @@ bool VulkanRenderer::makeReflection() {
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        bool ok = vkCreateImage(dev_, &ii, nullptr, &reflDepth1_) == VK_SUCCESS;
-        if (ok) {
-            VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, reflDepth1_, &req);
-            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            ok = vkAllocateMemory(dev_, &ai, nullptr, &reflDepth1Mem_) == VK_SUCCESS;
-            if (ok) {
-                OMK_GPU_ALLOC("floors' reflection depth", omk::prof::gpuKey(omk::prof::kVkMemory, reflDepth1Mem_),
-                              ai.allocationSize);
-                vkBindImageMemory(dev_, reflDepth1_, reflDepth1Mem_, 0);
-                VkImageViewCreateInfo dv{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-                dv.image = reflDepth1_; dv.viewType = VK_IMAGE_VIEW_TYPE_2D; dv.format = dsFmt_;
-                dv.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-                ok = vkCreateImageView(dev_, &dv, nullptr, &reflDepth1View_) == VK_SUCCESS;
-            }
-        }
+        bool ok = makeImage2D(ii, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+                              "floors' reflection depth", reflDepth1_, reflDepth1Mem_, &reflDepth1View_);
         if (ok) {
             VkImageView v1[2] = {reflColourView_, reflDepth1View_};
             VkFramebufferCreateInfo f1{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};

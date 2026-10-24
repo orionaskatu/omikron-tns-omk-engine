@@ -32939,6 +32939,9 @@ def c_engine_vulkan_images():
     Tier 6 (read and explained; no original behind it). Parts (Qalisar's
     street, `--remaster --enhance-all --floors 1`, 640x480, 30 frames):
       1. the source: ONE `vkCreateImage` in `vkrender.cpp`, the helper's;
+         and the texture uploads BATCHED (the audit's performance item 2):
+         both record into `uploadCb()`, staged by `stage()`, and the pool
+         ends in one `flushUploads()` - no `oneShotBegin` between them;
       2. `OMK_VK_IMAGE_FAIL=textures` (an instrument: every image of the
          category refused as out of memory): the run ends normally, writes
          its frame, says what it refused, and the frame is not the normal one
@@ -32952,6 +32955,8 @@ def c_engine_vulkan_images():
     image (the old unchecked sequence) - part 2, the run killed by SIGSEGV
     (-11), no frame; the shadow map's refusal not refusing the renderer (the
     old "fitted blobs" message) - part 3, SIGBUS (-10) in the first draw.
+    A texture uploaded on its own one-shot again (`oneShotBegin` in place of
+    `uploadCb`) - part 1.
     NOT CHECKED: a device really out of memory; GLES (its textures are
     `glTexImage2D`s the driver backs).
     """
@@ -32961,15 +32966,19 @@ def c_engine_vulkan_images():
     if not os.path.isdir(eng):
         return ("skipped",), ("skipped",), "engine/ absent"
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    pool = vk[vk.index("void VulkanRenderer::poolTextures("):]
+    pool = pool[:pool.index("\nbool VulkanRenderer::uploadGeometry(")]
     src_ok = (len(re.findall(r"vkCreateImage\(dev_", vk)) == 1,
-              "bool VulkanRenderer::makeImage2D(" in vk)
+              "bool VulkanRenderer::makeImage2D(" in vk,
+              pool.count("uploadCb()") == 2 and pool.count("stage(bytes, sb, so, dst)") == 2 and
+              "oneShotBegin()" not in pool and pool.count("flushUploads();") == 1)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not os.path.exists(play):
-        return (src_ok, "build"), ((True,) * 2, "built"), mk.stderr[-300:]
+        return (src_ok, "build"), ((True,) * 3, "built"), mk.stderr[-300:]
     pk = omkpaths.pack_path()
     if not pk:
-        return (src_ok, ("skipped",)), ((True,) * 2, ("skipped",)), "no remaster pack"
+        return (src_ok, ("skipped",)), ((True,) * 3, ("skipped",)), "no remaster pack"
     tmp = tempfile.mkdtemp()
     try:
         def run(name, refuse):
@@ -32996,7 +33005,7 @@ def c_engine_vulkan_images():
     print(f"        textures refused: exit {rcT}, frame {texF is not None}, said {saidT}; "
           f"the shadow map refused: exit {rcS}, frame {shF is not None}, the renderer refused {shadow[3]}")
     return (src_ok, rc0 == 0 and base is not None, tex, shadow), \
-        ((True,) * 2, True, (0, True, True, True), (0, True, True, True)), \
+        ((True,) * 3, True, (0, True, True, True), (0, True, True, True)), \
         "one checked image helper; textures refused draw white and the run goes on; the shadow map refused " \
         "refuses the renderer cleanly, a frame written all the same"
 
@@ -33922,13 +33931,20 @@ def c_engine_block_formats():
          average; the pack visible (the frame not the shipped one);
       4. the real pack where `omk.conf`'s `pack` has its BC files: the walk
          into Anekbah's restaurant (`engine: area load`'s) with the blocks
-         and with the PNGs - the arrival's pool read from blocks, and its
-         read-and-decode at most a third of the PNGs'.
+         and with the PNGs - the arrival's pool read from blocks, and the
+         read-and-decode the FRAME does (the pools nothing was prepared for,
+         the whole walk: the street's second, the characters') at most a
+         third of the PNGs'. (2026-10-24: the arrival's pool alone measured
+         this until the set's load decoded it ahead, `263e28b` - since then
+         ~0.6 ms either way, the sum left the characters' 5 textures and went
+         red on their noise, 28.5 against 65.8 ms.)
     SHOWN TO FAIL (2026-10-22), one at a time: the reader without its
     level-length test - the third bad copy read (part 2); the blocks uploaded
     without the pack's UV factor - both frames off (part 3); every level
     copied from level 0's offset - the trilinear frame off, the nearest one
-    (level 0 alone) not (part 3).
+    (level 0 alone) not (part 3). (2026-10-24) The frame's own read and
+    decode, the check run under `OMK_NO_BLOCK_FORMATS=1` - part 4, 168.3
+    against 82.8 ms (its first item too: no block taken).
     NOT CHECKED, judged by eye: the encoders' quality beyond the round trip.
     """
     import subprocess, tempfile, shutil, re, zlib
@@ -34040,11 +34056,14 @@ def c_engine_block_formats():
                                    env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **(env or {})))
                 pools = [e[1] for e in _events(r.stdout) if e[0] == "texpack.pool" and int(e[1].get("fresh", 0)) > 0]
                 arr = pools[2:] if len(pools) > 2 else []   # the first two are the street's own
-                return sum(int(p.get("blocks", 0)) for p in arr), sum(float(p.get("decodeMs", 0)) for p in arr)
-            zb, zms = walk()
-            pb, pms = walk({"OMK_NO_BLOCK_FORMATS": "1"})
-            print(f"        the restaurant's arrival: {zb} textures from blocks, read and decode {zms:.1f} ms; "
-                  f"from the PNGs {pms:.1f} ms")
+                # decoded on the frame: the pools the set's load prepared nothing for
+                own = [p for p in pools if int(p.get("prepared", 0)) == 0]
+                return sum(int(p.get("blocks", 0)) for p in arr), sum(float(p.get("decodeMs", 0)) for p in own), \
+                    sum(int(p.get("fresh", 0)) for p in own)
+            zb, zms, zn = walk()
+            pb, pms, pn = walk({"OMK_NO_BLOCK_FORMATS": "1"})
+            print(f"        the restaurant's arrival: {zb} textures from blocks; the walk's own read and decode "
+                  f"({zn} and {pn} textures, nothing prepared) {zms:.1f} ms from blocks, {pms:.1f} ms from the PNGs")
             real = (zb > 0, pb == 0, pms > 0 and zms <= pms / 3)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -34072,7 +34091,7 @@ def c_engine_preload():
     Parts:
       1. the source: off by default, [Remaster] only, never `all = max`, the
          preset's 25; `askSet` takes a prepared set before it starts one; the
-         Vulkan pool's eviction spares a pinned texture;
+         Vulkan pool's eviction spares a pinned texture, and GLES's;
       2. the DOOR GRAPH (`door_census`, the static scan of each door zone's
          scripts for `area.goto` / `area.preload` the Session uses): Anekbah's
          doors reach the restaurant at one hop and ABAR06 through its airlock
@@ -34093,7 +34112,16 @@ def c_engine_preload():
          cap 1, so a short walk reaches it: never more than one held (wants
          less drops and takes), at least one set released for a NEARER door
          (`@evt preload.drop ... for=`, its metres above the want's) and that
-         set then wanted, and every release past the keep radius beyond 35 m.
+         set then wanted, and every release past the keep radius beyond 35 m;
+      6. GLES'S PINS (the audit's item, 2026-10-24: `setPreloadTextures` /
+         `preloadStep` in `glesrender_remaster.inl`): part 3's walk on
+         `omk-play-gles` (`OMK_NO_GPU_PRESENT`), 120 frames standing first
+         (the walk starts 4.7 m from the door: GLES's uncapped frames beside
+         other checks reached it before the set's thread was done, the pins
+         never sent - timing, not the pins) - ARESTO's textures up ahead,
+         every one decoded ahead (the pack hands GLES the parked result
+         without its normal maps), the arrival's pool bringing none new
+         against at least 7 without, and the frame the same bytes.
     SHOWN TO FAIL (2026-10-22): `askSet` not taking the prepared set - part 3
     (nothing taken, the arrival's pool 7 new again). The eviction ignoring
     the pin is caught by PART 1 ALONE: this walk changes no pool between the
@@ -34101,9 +34129,12 @@ def c_engine_preload():
     (2026-10-24) The cap never yielding (the audit's bug 3, `break` at the
     cap) - part 5: QSEXSHP1 held the whole walk, QBAR never wanted. The set's
     load not preparing the pack's decode - part 3, 0 of 7 prepared.
+    GLES's `setPreloadTextures` queueing nothing - part 6 (none ahead, the
+    arrival's pool 7 new); the pack's parked result refused to a pool asking
+    no normal maps (the old take) - part 6, 0 of 7 prepared. GLES's eviction
+    ignoring the pin is part 1's alone, as Vulkan's.
     NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
-    walk follows); GLES (sets prepared, its textures not pinned); the
-    characters of the area arriving (not preloaded).
+    walk follows); the characters of the area arriving (not preloaded).
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -34115,6 +34146,7 @@ def c_engine_preload():
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
     vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     ask = pc[pc.index("bool PlayState::askSet"):]
@@ -34123,10 +34155,13 @@ def c_engine_preload():
               "preload" not in max_body and "!preset.empty() ? 25.0f : 0.0f" in ps,
               ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
               "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
-              "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk)
-    mk = subprocess.run(["make", "-s", "build/door_census", "play"], cwd=eng, capture_output=True, text=True)
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk and
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in gl)
+    mk = subprocess.run(["make", "-s", "build/door_census", "play", "play-gles"], cwd=eng, capture_output=True,
+                        text=True)
     census, play = os.path.join(eng, "build", "door_census"), os.path.join(eng, "build", "omk-play")
-    if mk.returncode != 0 or not os.path.exists(census) or not os.path.exists(play):
+    playgl = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not all(os.path.exists(x) for x in (census, play, playgl)):
         return (src_ok, "build"), ((True,) * 5, "built"), mk.stderr[-300:]
     out = subprocess.run([census, fr, os.path.join(ROOT, "tables"), "0", "101", "124"], capture_output=True,
                          text=True).stdout
@@ -34142,21 +34177,25 @@ def c_engine_preload():
     pk = omkpaths.pack_path()
     if not pk:
         return (src_ok, graph, ("skipped",)), ((True,) * 5, (True,) * 4, ("skipped",)), "no remaster pack"
+    gles_env = dict(os.environ, OMK_EVENTS="1", OMK_NO_GPU_PRESENT="1")
     tmp = tempfile.mkdtemp()
     try:
-        def walk(name, preload):
+        def walk(name, preload, gles=False):
             dump = os.path.join(tmp, name + ".bin")
-            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+            r = subprocess.run([playgl if gles else play, fr, os.path.join(ROOT, "tables")] +
+                               ([] if gles else ["--world-vulkan"]) + ["--res", "640x480",
                                 "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
                                 os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
-                                "6411,0,450,90", "--frames", "140", "--hold", "k200*120", "--remaster", pk,
+                                "6411,0,450,90", "--frames", "260" if gles else "140", "--hold",
+                                "0*120,k200*120" if gles else "k200*120", "--remaster", pk,
                                 "--preload", str(preload), "--dump", dump],
                                capture_output=True, text=True, errors="replace", timeout=900,
-                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"))
+                               env=gles_env if gles else dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"))
             ev = _events(r.stdout)
             goto = r.stdout.find("area.goto 46")
-            pools = [int(m.group(1)) for m in re.finditer(r"vulkan: texture pool - (\d+) new", r.stdout[goto:])] \
-                if goto >= 0 else []
+            pool = r"gles: texture pool of \d+ - \d+ kept on the GPU, (\d+) uploaded" if gles \
+                else r"vulkan: texture pool - (\d+) new"
+            pools = [int(m.group(1)) for m in re.finditer(pool, r.stdout[goto:])] if goto >= 0 else []
             took = [e[1] for e in ev if e[0] == "preload.take" and e[1].get("set") == "ARESTO"]
             ahead = sum(int(e[1].get("fresh", 0)) for e in ev if e[0] == "texpack.preload")
             prepared = sum(int(e[1].get("prepared", 0)) for e in ev if e[0] == "texpack.preload")
@@ -34165,6 +34204,10 @@ def c_engine_preload():
             return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0, prepared
         on, took, ahead, arrivalOn, wentOn, prepared = walk("on", 25)
         off, tookOff, aheadOff, arrivalOff, wentOff, _ = walk("off", 0)
+        glOn, glTook, glAhead, glArrOn, glWentOn, glPrepared = walk("glon", 25, True)
+        glOff, _, glAheadOff, glArrOff, glWentOff, _ = walk("gloff", 0, True)
+        gles = (glWentOn and glWentOff, bool(glTook), glAhead >= 7 and glPrepared == glAhead, glArrOn == 0,
+                glArrOff >= 7 and glAheadOff == 0, glOn is not None and glOn == glOff)
         r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
                             "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
                             os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101", "--stand",
@@ -34194,16 +34237,18 @@ def c_engine_preload():
           f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
           f"{'the same' if on and on == off else 'DIFFER'}; the cap at 1: at most {most} held, released for a "
           f"nearer door {[(e['set'], e['metres'], e['for'], e['forMetres']) for e in evicted]}, past the radius "
-          f"{[(f['set'], f['metres']) for f in released]}")
+          f"{[(f['set'], f['metres']) for f in released]}; GLES: {glAhead} up ahead ({glPrepared} decoded ahead), "
+          f"the arrival's pool {glArrOn} new, without {glArrOff}; the frames "
+          f"{'the same' if glOn and glOn == glOff else 'DIFFER'}")
     walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
               arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead)
-    return (src_ok, graph, walked, on is not None and on == off, cap), \
-        ((True,) * 5, (True,) * 4, (True,) * 7, True, (True,) * 5), \
+    return (src_ok, graph, walked, on is not None and on == off, cap, gles), \
+        ((True,) * 5, (True,) * 4, (True,) * 7, True, (True,) * 5, (True,) * 6), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
         "prepared set first, a pinned texture spared); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
         "brings fewer than its 7; the same frame with and without; at the cap a nearer door takes the farthest " \
-        "held's place, and a release is past the keep radius"
+        "held's place, and a release is past the keep radius; GLES pins its preload the same way"
 
 
 def c_engine_remaster_switch():

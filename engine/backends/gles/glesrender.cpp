@@ -1127,11 +1127,20 @@ private:
     // names ship with different pixels in different files (CLAUDE.md 6).
     struct Uploaded { GLuint id = 0; int w = 0, h = 0; PixelBuffer keep; bool used = false;
                       bool packed = false;      // from the TEXTURE PACK (o3de/texpack.h)
-                      GLuint em = 0; };         // its light map, 0 for none
+                      GLuint em = 0;            // its light map, 0 for none
+                      bool pinned = false; };   // a preloaded set's (`setPreloadTextures`): kept while listed
     // keyed by the storage AND the size: two slots may share one storage at
     // different sizes, and a key on the storage alone let the second upload
     // delete the texture the first slot still drew with
     std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
+    Uploaded uploadOne(const Texture& s, PackImage* rep, std::vector<unsigned char>& px, int& lit);
+#if OMK_REMASTER
+    // THE PRELOAD RADIUS (`Renderer::setPreloadTextures`, `glesrender_remaster.inl`):
+    // the listed textures not on the GPU yet, uploaded a few a frame
+    std::vector<Texture> preQueue_;
+    void setPreloadTextures(std::span<const Texture> t) override;
+    int preloadStep(int budget) override;
+#endif
     struct Vbo {
         GLuint id = 0; std::size_t n = 0; std::uint64_t rev = 0;
         // STREAMED: this frame's corners live in the ring at
@@ -2058,6 +2067,94 @@ gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVe
 }
 
 
+// ONE TEXTURE onto the GPU: `s`, or its pack replacement `rep` (null when
+// no pack is open) - the pool's upload, and the preload's (`preloadStep`).
+// `px` is scratch; `lit` counts a light map uploaded.
+GlesRenderer::Uploaded GlesRenderer::uploadOne(const Texture& s, PackImage* rep,
+                                               std::vector<unsigned char>& px, int& lit) {
+    Uploaded u;
+    u.w = s.width; u.h = s.height; u.keep = s.idx; u.used = true;
+    int upW = s.width, upH = s.height;
+    const bool fromPack = rep && rep->ok;
+    const bool blocks = fromPack && astcBlocks(rep->colourZ);
+    if (blocks) {
+        upW = rep->w; upH = rep->h;
+    } else if (fromPack) {
+        upW = rep->w; upH = rep->h;
+        px.swap(rep->rgba);
+    } else {
+        upW = s.width; upH = s.height;
+        const int n = s.width * s.height;
+        px.resize(static_cast<std::size_t>(n) * 4);
+        // alpha carries the COLOUR KEY, exactly as the Vulkan upload does:
+        // 0 where the texel is black, 255 elsewhere (`formats/tex3dt.h`, NEON
+        // where the platform has it)
+        s.toRgbaKeyed(px.data());
+    }
+    // ...and its LIGHT MAP, with the bloom on and the pack holding one
+    GLuint em = 0;
+    if (bloom_ > 0.0f && rep && astcBlocks(rep->emissiveZ)) {
+        glGenTextures(1, &em);
+        glBindTexture(GL_TEXTURE_2D, em);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        uploadAstc(rep->emissiveZ, false);   // the grey's red, as LUMINANCE's
+        ++lit;
+    } else if (bloom_ > 0.0f && rep && !rep->emissive.empty()) {
+        const omk::PackImage& e = *rep;
+        glGenTextures(1, &em);
+        glBindTexture(GL_TEXTURE_2D, em);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        // ONE channel - the shader reads `.r`, LUMINANCE answers it in r, g
+        // and b alike: a quarter of the RGBA's memory (as `maskTex_` is kept)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, e.ew, e.eh, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
+                     e.emissive.data());
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        ++lit;
+    }
+    // REPEAT is the engine's addressing (the sampler Vulkan builds), and
+    // GLES2 allows it only on power-of-two textures. All 2534 shipped under
+    // MESHES are (max 256x256); a texture that is not
+    // - a set-piece model out of an SCX stream, say - is clamped and SAID.
+    const auto pot = [](int v) { return v > 0 && !(v & (v - 1)); };
+    const bool repeat = pot(s.width) && pot(s.height);
+    if (!repeat)
+        std::fprintf(stderr, "gles: texture %s is %dx%d, not a power of two - "
+                             "clamped, where the engine repeats\n",
+                     s.name.c_str(), s.width, s.height);
+    glGenTextures(1, &u.id);
+    glBindTexture(GL_TEXTURE_2D, u.id);
+    // THE MIP CHAIN (trilinear): GLES2 builds one only for a power-of-two
+    // texture, which is every one the engine repeats - a clamped one keeps
+    // bilinear, as said above for its addressing
+    const bool mips = filter_ >= 2 && repeat;
+    const GLint f = filter_ ? GL_LINEAR : GL_NEAREST;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mips ? GL_LINEAR_MIPMAP_LINEAR : f);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, f);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+    if (mips && anisoOn_ > 1)
+        glTexParameterf(GL_TEXTURE_2D, kGlTextureMaxAnisotropy, static_cast<GLfloat>(anisoOn_));
+    if (blocks) {
+        uploadAstc(rep->colourZ, mips);   // its own chain: nothing generated
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, px.data());
+        if (mips) glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    gpuTexture("textures", u.id, blocks ? static_cast<long long>(rep->colourZ.bytes.size())
+                                       : (mips ? 16LL : 12LL) * upW * upH / 3);
+    u.packed = fromPack;
+    u.em = em;
+    return u;
+}
+
 void GlesRenderer::setTextures(std::span<const Texture> t) {
     const double t0 = glesClockMs();
     forgetState();
@@ -2099,91 +2196,17 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
             ++reused;
             continue;
         }
-        int upW = s.width, upH = s.height;
-        const bool fromPack = packOn && reps[i].ok;
-        const bool blocks = fromPack && astcBlocks(reps[i].colourZ);
-        if (blocks) {
-            upW = reps[i].w; upH = reps[i].h;
-        } else if (fromPack) {
-            upW = reps[i].w; upH = reps[i].h;
-            px.swap(reps[i].rgba);
-        } else {
-            upW = s.width; upH = s.height;
-            const int n = s.width * s.height;
-            px.resize(static_cast<std::size_t>(n) * 4);
-            // alpha carries the COLOUR KEY, exactly as the Vulkan upload does:
-            // 0 where the texel is black, 255 elsewhere (`formats/tex3dt.h`, NEON
-            // where the platform has it)
-            s.toRgbaKeyed(px.data());
-        }
-        packed += fromPack ? 1 : 0;
-        // ...and its LIGHT MAP, with the bloom on and the pack holding one
-        GLuint em = 0;
-        if (bloom_ > 0.0f && packOn && astcBlocks(reps[i].emissiveZ)) {
-            glGenTextures(1, &em);
-            glBindTexture(GL_TEXTURE_2D, em);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            uploadAstc(reps[i].emissiveZ, false);   // the grey's red, as LUMINANCE's
-            ++lit;
-        } else if (bloom_ > 0.0f && packOn && !reps[i].emissive.empty()) {
-            const omk::PackImage& rep = reps[i];
-            glGenTextures(1, &em);
-            glBindTexture(GL_TEXTURE_2D, em);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            // ONE channel - the shader reads `.r`, LUMINANCE answers it in r, g
-            // and b alike: a quarter of the RGBA's memory (as `maskTex_` is kept)
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, rep.ew, rep.eh, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
-                         rep.emissive.data());
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-            ++lit;
-        }
-        out.em = em;
-        // REPEAT is the engine's addressing (the sampler Vulkan builds), and
-        // GLES2 allows it only on power-of-two textures. All 2534 shipped under
-        // MESHES are (max 256x256); a texture that is not
-        // - a set-piece model out of an SCX stream, say - is clamped and SAID.
-        const auto pot = [](int v) { return v > 0 && !(v & (v - 1)); };
-        const bool repeat = pot(s.width) && pot(s.height);
-        if (!repeat)
-            std::fprintf(stderr, "gles: texture %s is %dx%d, not a power of two - "
-                                 "clamped, where the engine repeats\n",
-                         s.name.c_str(), s.width, s.height);
-        glGenTextures(1, &out.id);
-        glBindTexture(GL_TEXTURE_2D, out.id);
-        // THE MIP CHAIN (trilinear): GLES2 builds one only for a power-of-two
-        // texture, which is every one the engine repeats - a clamped one keeps
-        // bilinear, as said above for its addressing
-        const bool mips = filter_ >= 2 && repeat;
-        const GLint f = filter_ ? GL_LINEAR : GL_NEAREST;
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, mips ? GL_LINEAR_MIPMAP_LINEAR : f);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, f);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-        if (mips && anisoOn_ > 1)
-            glTexParameterf(GL_TEXTURE_2D, kGlTextureMaxAnisotropy, static_cast<GLfloat>(anisoOn_));
-        if (blocks) {
-            uploadAstc(reps[i].colourZ, mips);   // its own chain: nothing generated
-        } else {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
-                         GL_UNSIGNED_BYTE, px.data());
-            if (mips) glGenerateMipmap(GL_TEXTURE_2D);
-        }
-gpuTexture("textures", out.id, blocks ? static_cast<long long>(reps[i].colourZ.bytes.size())
-                                       : (mips ? 16LL : 12LL) * upW * upH / 3);
-        uploaded_[key] = Uploaded{out.id, s.width, s.height, s.idx, true, fromPack, em};
+        const Uploaded u = uploadOne(s, packOn ? &reps[i] : nullptr, px, lit);
+        out.id = u.id;
+        out.em = u.em;
+        packed += u.packed ? 1 : 0;
+        uploaded_[key] = u;
         ++fresh;
     }
     // what no slot of this pool uses any more leaves the GPU
     int dropped = 0;
     for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
-        if (it->second.used) { ++it; continue; }
+        if (it->second.used || it->second.pinned) { ++it; continue; }
         deleteTextures(1, &it->second.id);
         if (it->second.em) deleteTextures(1, &it->second.em);
         it = uploaded_.erase(it);

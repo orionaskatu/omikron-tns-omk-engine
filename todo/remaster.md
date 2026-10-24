@@ -1337,8 +1337,7 @@ First planned for the Quest (`todo/quest-port.md` §4), built here.
   the airlocks, the walk, the same frame with and without), shown to fail;
   the pin's eviction caught by the source alone (see its docstring).
 
-**Open**: the arriving area's CHARACTERS (their models and textures); GLES
-(sets prepared, textures not pinned - `setPreloadTextures` is Vulkan's); an
+**Open**: the arriving area's CHARACTERS (their models and textures); an
 airlock walked end to end in a check; the memory held, measured
 (`omkprof.py --sites`). The save's first frames put the player at Kayl's
 door before `--stand` moves him, which prepares and drops two sets once -
@@ -1515,7 +1514,7 @@ the tile binning handles `flipX` and the roll.
   command buffer and fence a batch, a staging ring, image memory
   sub-allocated (three allocations a texture, toward
   `maxMemoryAllocationCount`).
-* **GLES has no pins** (`setPreloadTextures` is Vulkan's): each door
+* **GLES has no pins** (FIXED 2026-10-24, "GLES's pins" below) (`setPreloadTextures` is Vulkan's): each door
   decodes and uploads its set on the arrival frame, and the airlock's round
   trip evicts and reloads the city's pool - several times the M3's 13 ms on
   Android or the Quest. A `pinned` flag spared by the eviction, an
@@ -1727,6 +1726,48 @@ but `emitter light` (the run-to-run flip above).
   read and decode 10.7 -> 5.5 / 5.5 ms, the second 4.6 -> 10.5 / 4.8; a
   preload frame's 1.0-2.0 -> 0.3-1.1 ms; fps unchanged (24.6 / 25.1). The
   UPLOADS are unchanged, ~5 ms per 3 textures - the batched upload is next.
+* **The batched upload (Vulkan)**: a pool's copies recorded into ONE
+  command buffer (`uploadCb`), submitted and waited on ONCE at the pool's end
+  (`flushUploads`), staged in a persistent 32 MB host-visible RING (16-byte
+  slices; full, the batch is flushed first; a texture past it its own buffer,
+  freed at the flush) - not a staging buffer, an allocation, a submit and a
+  `vkQueueWaitIdle` a texture. Frames byte-identical to `263e28b` on five
+  paths (the preset trilinear, plain, the preset nearest, the pack's blocks,
+  its PNGs through the blit ladder). 4K Qalisar, old against new back to
+  back, twice: the first pool's uploads 60.7 / 43.2 -> 36.7 / 25.9 ms, the
+  second's 22.9 / 21.1 -> 9.0 / 9.6, the preload's 1.69 / 1.58 -> 0.99 /
+  0.75 ms a texture. NOT DONE: the image memory sub-allocated (still three
+  allocations a texture with its maps).
+* **The emitter light's flip, narrowed**: it needs the pack's BLOCK files -
+  with `OMK_NO_BLOCK_FORMATS=1` (its PNGs, the blit ladder) none in 5 - and
+  not the levels under 4x4 (uploaded without them it still flips). The BC4
+  light maps' levels sit at 8-aligned offsets (392 of 1688), legal for an
+  8-byte block; every BC7 level is 16-aligned. Open.
+* **GLES's pins** (2026-10-24): `setPreloadTextures` / `preloadStep` in
+  `glesrender_remaster.inl`, as Vulkan's - a `pinned` flag on the pool's
+  entry that `setTextures`' eviction spares, the listed textures not yet on
+  the GPU queued and uploaded 3 a frame through `uploadOne` (one texture's
+  upload, split out of `setTextures` unchanged - frames byte-identical to
+  `263e28b` in original mode and with the pack, trilinear and nearest). The
+  pack hands a pool asking NO normal maps (GLES's) the PARKED result too,
+  its normal maps dropped: before, GLES re-decoded every texture the set's
+  load had prepared whenever the relief was on (the preset's), since the
+  parking asked the normals and GLES did not. The restaurant walk on GLES:
+  ARESTO's 7 textures up ahead, 7 of 7 decoded ahead (0.1-0.3 ms a step,
+  uploads 1.2-1.5 ms a texture), the arrival's pool **0 new, 0.0 ms**
+  against 7 new and 8.8 ms without (59 ms before the decode moved to the
+  load); the frame the same bytes. `engine: preload` part 6, shown to fail
+  three ways (part 1 for the eviction). NOT DONE: on GLES the relief is not
+  drawn, yet `setNormals` still has the load decode the normal maps it
+  parks - work and up to its share of the 256 MB for nothing there.
+* **`engine: block formats` red since `263e28b`, the check's measure**: its
+  part 4 summed the read and decode of the restaurant's arrival pools, which
+  the set's load now decodes ahead (~0.6 ms with blocks or PNGs) - what was
+  left was the 5 characters' textures, and their noise (28.5 against 65.8
+  ms, a third wanted). It now sums the pools the frame decodes itself
+  (nothing prepared, the whole walk - 10 textures): 24.5 / 23.8 ms from
+  blocks against 101.3 / 102.8 from the PNGs. Not run after `263e28b` -
+  found running it for GLES's pins.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

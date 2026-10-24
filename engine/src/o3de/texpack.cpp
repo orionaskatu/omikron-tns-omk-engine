@@ -227,9 +227,10 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     for (std::size_t i = 0; i < ts.size(); ++i)
         if (ts[i] && ts[i]->hasPixels()) keys[i] = textureKey(*ts[i]);
     std::unique_lock<std::mutex> lk(m_);
-    // a PREPARED result, when this asks what the parking asked: the colours,
-    // and the normal maps as `wantNormals_` had them
-    const bool takeParked = colour && !parked_.empty() && (normals || !wantNormals_);
+    // a PREPARED result, when this asks for the colours: the parking asked
+    // them with the normal maps as `wantNormals_` had them - dropped here for
+    // a pool that takes none (GLES)
+    const bool takeParked = colour && !parked_.empty();
     for (std::size_t i = 0; i < ts.size(); ++i) {
         const Texture* t = ts[i];
         if (!t || !t->hasPixels()) continue;
@@ -240,6 +241,11 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 out[i] = std::move(pk->second);
                 parked_.erase(pk);
                 ++parkedTaken_;
+                if (!normals) {
+                    out[i].normal = {};
+                    out[i].normalZ = {};
+                    out[i].nw = out[i].nh = 0;
+                }
                 continue;
             }
         }

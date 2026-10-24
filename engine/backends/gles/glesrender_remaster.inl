@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE REMASTER'S GLES BACKEND (`todo/remaster.md`) - the post pass, the water
 // reflection's pass, FSR's two passes, the scene programs' variants and the
-// pack's uploads (ASTC). Included at the end of `glesrender.cpp`, inside its
+// pack's uploads (ASTC), the preload's pins. Included at the end of `glesrender.cpp`, inside its
 // namespace, under OMK_REMASTER only - its stubs are there otherwise. Not
 // compiled on its own.
 
@@ -250,6 +250,63 @@ std::vector<PackImage> GlesRenderer::packDecode(std::span<const Texture* const> 
 }
 
 bool GlesRenderer::astcBlocks(const PackBlocks& z) { return !z.empty() && blockFormat(z.vkFormat).astc; }
+
+// THE PRELOAD RADIUS (`Renderer::setPreloadTextures`, `todo/remaster.md`): a
+// prepared set's textures, PINNED - `setTextures`' eviction spares them while
+// they are listed, so an airlock's round trip does not drop and reload the
+// city's pool, and a set arriving finds its textures on the GPU. Those not
+// there yet wait in `preQueue_` for `preloadStep`. A new list replaces the
+// old; what drops off it is evicted by the next `setTextures`.
+void GlesRenderer::setPreloadTextures(std::span<const Texture> t) {
+    for (auto& [key, u] : uploaded_) u.pinned = false;
+    preQueue_.clear();
+    for (const auto& x : t) {
+        if (!x.hasPixels()) continue;
+        const auto key = std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+        if (auto hit = uploaded_.find(key); hit != uploaded_.end()) hit->second.pinned = true;
+        else preQueue_.push_back(x);   // shares its pixel buffers: the key stays
+    }
+}
+
+// up to `budget` of the waiting textures uploaded (the pack's replacements
+// decoded first, most of them parked by the set's load); -> how many still wait
+int GlesRenderer::preloadStep(int budget) {
+    if (preQueue_.empty() || budget <= 0) return static_cast<int>(preQueue_.size());
+    const double t0 = glesClockMs();
+    const std::size_t n = std::min(preQueue_.size(), static_cast<std::size_t>(budget));
+    std::vector<Texture> now(preQueue_.end() - static_cast<std::ptrdiff_t>(n), preQueue_.end());
+    preQueue_.resize(preQueue_.size() - n);
+    const bool packOn = packActive();
+    std::vector<PackImage> reps;
+    long prepared = 0;
+    if (packOn) {
+        std::vector<const Texture*> ts;
+        for (const auto& x : now) ts.push_back(&x);
+        const std::size_t taken0 = texturePack().parkedTaken();
+        reps = packDecode(ts);
+        prepared = static_cast<long>(texturePack().parkedTaken() - taken0);   // decoded ahead, on a load's thread
+    }
+    const double t1 = glesClockMs();
+    std::vector<unsigned char> px;
+    int fresh = 0, lit = 0;
+    for (std::size_t i = 0; i < now.size(); ++i) {
+        const auto key = std::make_tuple(now[i].idx.data(), now[i].pal.data(), now[i].width, now[i].height);
+        if (auto hit = uploaded_.find(key); hit != uploaded_.end()) { hit->second.pinned = true; continue; }
+        Uploaded u = uploadOne(now[i], packOn ? &reps[i] : nullptr, px, lit);
+        u.used = false;
+        u.pinned = true;
+        uploaded_[key] = u;
+        ++fresh;
+    }
+    const double t2 = glesClockMs();
+    if (fresh > 0)
+        std::printf("gles: preload - %d textures uploaded ahead, read and decode %.1f ms, uploads %.1f ms; "
+                    "%zu still to come\n", fresh, t1 - t0, t2 - t1, preQueue_.size());
+    omk::event("texpack.preload", {{"backend", "gles"}, {"fresh", fresh}, {"prepared", prepared},
+                                   {"decodeMs", t1 - t0}, {"uploadMs", t2 - t1},
+                                   {"waiting", static_cast<long>(preQueue_.size())}});
+    return static_cast<int>(preQueue_.size());
+}
 
 // the scene and posing programs' sources through the variants asked for
 void GlesRenderer::remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag,

@@ -393,6 +393,21 @@ private:
                      VkImage& img, VkDeviceMemory& mem, VkImageView* view);
     VkCommandBuffer oneShotBegin();
     void oneShotEnd(VkCommandBuffer cb);
+    // THE BATCHED UPLOAD (the remaster audit's performance item 2): a pool's
+    // texture copies recorded into ONE command buffer (`uploadCb`), submitted
+    // and waited on once (`flushUploads`), their bytes staged in one
+    // persistent host-visible RING - not a staging buffer, an allocation, a
+    // submit and a `vkQueueWaitIdle` a texture
+    VkCommandBuffer uploadCb();
+    bool stage(VkDeviceSize bytes, VkBuffer& buf, VkDeviceSize& off, unsigned char*& ptr);
+    void flushUploads();
+    static constexpr VkDeviceSize kRingBytes = VkDeviceSize{32} << 20;
+    VkCommandBuffer batchCb_ = VK_NULL_HANDLE;
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> batchOwn_;   // staging past the ring's size
+    VkBuffer ring_ = VK_NULL_HANDLE; VkDeviceMemory ringMem_ = VK_NULL_HANDLE;
+    unsigned char* ringPtr_ = nullptr;
+    VkDeviceSize ringAt_ = 0;
+    bool ringFailed_ = false;
     bool uploadGeometry(const omk::Geometry* g);
 
     VkInstance        inst_ = VK_NULL_HANDLE;
@@ -902,6 +917,64 @@ void VulkanRenderer::oneShotEnd(VkCommandBuffer cb) {
     vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(queue_);
     vkFreeCommandBuffers(dev_, pool_, 1, &cb);
+}
+
+VkCommandBuffer VulkanRenderer::uploadCb() {
+    if (batchCb_ == VK_NULL_HANDLE) batchCb_ = oneShotBegin();
+    return batchCb_;
+}
+
+// `bytes` of staging, 16-aligned (a block format's texel block, and the
+// copy's 4): from the ring - the batch flushed first when it is full - or,
+// past the ring's size, a buffer of its own freed at the flush
+bool VulkanRenderer::stage(VkDeviceSize bytes, VkBuffer& buf, VkDeviceSize& off, unsigned char*& ptr) {
+    const VkDeviceSize need = (bytes + 15) & ~VkDeviceSize{15};
+    if (need <= kRingBytes && !ringFailed_) {
+        if (ring_ == VK_NULL_HANDLE) {
+            void* p = nullptr;
+            if (makeBuffer(kRingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           ring_, ringMem_) &&
+                vkMapMemory(dev_, ringMem_, 0, kRingBytes, 0, &p) == VK_SUCCESS) {
+                ringPtr_ = static_cast<unsigned char*>(p);
+            } else {
+                ringFailed_ = true;   // a buffer a texture, as before
+                std::fprintf(stderr, "vulkan: the upload ring refused - a staging buffer a texture\n");
+            }
+        }
+        if (ringPtr_) {
+            if (ringAt_ + need > kRingBytes) flushUploads();
+            buf = ring_; off = ringAt_; ptr = ringPtr_ + ringAt_;
+            ringAt_ += need;
+            return true;
+        }
+    }
+    VkBuffer b = VK_NULL_HANDLE; VkDeviceMemory m = VK_NULL_HANDLE;
+    if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, b, m))
+        return false;
+    void* p = nullptr;
+    if (vkMapMemory(dev_, m, 0, bytes, 0, &p) != VK_SUCCESS) {
+        vkDestroyBuffer(dev_, b, nullptr);
+        freeDeviceMemory(m);
+        return false;
+    }
+    batchOwn_.push_back({b, m});
+    buf = b; off = 0; ptr = static_cast<unsigned char*>(p);
+    return true;
+}
+
+void VulkanRenderer::flushUploads() {
+    if (batchCb_ != VK_NULL_HANDLE) {
+        oneShotEnd(batchCb_);
+        batchCb_ = VK_NULL_HANDLE;
+    }
+    for (auto& [b, m] : batchOwn_) {
+        vkDestroyBuffer(dev_, b, nullptr);
+        freeDeviceMemory(m);
+    }
+    batchOwn_.clear();
+    ringAt_ = 0;
 }
 
 // The instance ALONE, so the window layer can make a surface from it before a
@@ -3074,13 +3147,9 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                       const char* what = "textures") {
         const VkFormat fmt = one ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * (one ? 1 : 4);
-        VkBuffer sb; VkDeviceMemory sm;
-        if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        sb, sm)) return;
-        void* p = nullptr;
-        vkMapMemory(dev_, sm, 0, bytes, 0, &p);
-        auto* dst = static_cast<unsigned char*>(p);
+        VkBuffer sb; VkDeviceSize so = 0;
+        unsigned char* dst = nullptr;
+        if (!stage(bytes, sb, so, dst)) return;
         // Alpha carries the COLOUR KEY: 0 where the texel is black, the key
         // the cutout path (flag 0x800) discards on, 255 elsewhere. With the
         // nearest sampler the shader's test on it is the same test on the
@@ -3089,7 +3158,6 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         // clean. A non-cutout batch never reads alpha, so a black texel
         // still draws black.
         fill(dst);
-        vkUnmapMemory(dev_, sm);
 
         // THE MIP CHAIN - the trilinear enhancement's, generated here by a
         // ladder of half-size linear blits, because the .3DT ships ONE level
@@ -3108,13 +3176,10 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                  | (levels > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, out.img, out.mem, nullptr)) {
-            vkDestroyBuffer(dev_, sb, nullptr);
-            freeDeviceMemory(sm);
-            return;   // no image: the texture draws white
-        }
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, out.img, out.mem, nullptr))
+            return;   // no image: the texture draws white (its staging left to the flush)
 
-        VkCommandBuffer cb = oneShotBegin();
+        VkCommandBuffer cb = uploadCb();
         VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3125,6 +3190,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
         VkBufferImageCopy cp{};
+        cp.bufferOffset = so;
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         cp.imageExtent = {static_cast<uint32_t>(tw), static_cast<uint32_t>(th), 1};
         vkCmdCopyBufferToImage(cb, sb, out.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
@@ -3167,10 +3233,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-        oneShotEnd(cb);
-        vkDestroyBuffer(dev_, sb, nullptr);
-        freeDeviceMemory(sm);
-
+        // (submitted with the pool's other copies - `flushUploads`)
         viewAndSet(out, fmt, levels, withSet);
     };
     // ...and a texture of the pack's BLOCK FORMATS (`o3de/texpack.h`
@@ -3182,14 +3245,10 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         const VkFormat fmt = static_cast<VkFormat>(z.vkFormat);
         const uint32_t levels = filter_ >= 2 ? static_cast<uint32_t>(z.levels.size()) : 1u;
         const VkDeviceSize bytes = static_cast<VkDeviceSize>(z.bytes.size());
-        VkBuffer sb; VkDeviceMemory sm;
-        if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        sb, sm)) return;
-        void* p = nullptr;
-        vkMapMemory(dev_, sm, 0, bytes, 0, &p);
-        std::memcpy(p, z.bytes.data(), z.bytes.size());
-        vkUnmapMemory(dev_, sm);
+        VkBuffer sb; VkDeviceSize so = 0;
+        unsigned char* dst = nullptr;
+        if (!stage(bytes, sb, so, dst)) return;
+        std::memcpy(dst, z.bytes.data(), z.bytes.size());
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
         ii.extent = {static_cast<uint32_t>(z.w), static_cast<uint32_t>(z.h), 1};
@@ -3197,12 +3256,9 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "textures", out.img, out.mem, nullptr)) {
-            vkDestroyBuffer(dev_, sb, nullptr);
-            freeDeviceMemory(sm);
-            return;   // no image: the texture draws white
-        }
-        VkCommandBuffer cb = oneShotBegin();
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "textures", out.img, out.mem, nullptr))
+            return;   // no image: the texture draws white (its staging left to the flush)
+        VkCommandBuffer cb = uploadCb();
         VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3215,7 +3271,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         std::vector<VkBufferImageCopy> cps(levels);
         for (uint32_t l = 0; l < levels; ++l) {
             cps[l] = VkBufferImageCopy{};
-            cps[l].bufferOffset = z.levels[l].first;
+            cps[l].bufferOffset = so + z.levels[l].first;
             cps[l].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
             cps[l].imageExtent = {std::max(1u, static_cast<uint32_t>(z.w) >> l),
                                   std::max(1u, static_cast<uint32_t>(z.h) >> l), 1};
@@ -3227,9 +3283,6 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-        oneShotEnd(cb);
-        vkDestroyBuffer(dev_, sb, nullptr);
-        freeDeviceMemory(sm);
         viewAndSet(out, fmt, levels, withSet);
     };
 
@@ -3398,6 +3451,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         tex_[i] = hit->second.t;
         packed += tex_[i].packed ? 1 : 0;
     }
+    flushUploads();   // the pool's copies, submitted and waited on once
     const double decodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double uploadMs = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
     if (preload) {
@@ -4464,6 +4518,9 @@ VulkanRenderer::~VulkanRenderer() {
     if (poseMem_) freeDeviceMemory(poseMem_);
     if (pointsBuf_) vkDestroyBuffer(dev_, pointsBuf_, nullptr);
     if (pointsMem_) freeDeviceMemory(pointsMem_);
+    flushUploads();   // (nothing pending outside a pool; its own buffers, if any)
+    if (ring_) vkDestroyBuffer(dev_, ring_, nullptr);
+    if (ringMem_) freeDeviceMemory(ringMem_);
     if (tilesBuf_) vkDestroyBuffer(dev_, tilesBuf_, nullptr);
     if (tilesMem_) freeDeviceMemory(tilesMem_);
     if (readBuf_) vkDestroyBuffer(dev_, readBuf_, nullptr);

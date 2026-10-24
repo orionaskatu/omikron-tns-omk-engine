@@ -1419,7 +1419,9 @@ and the Android build (no NDK) - their build files were changed to match.
 tint and emitter uniforms (a few dozen lines on plain data, no remaster
 call); `View` / `Draw` / `WorldSlot` keep the remaster's fields; the
 settings and the command line parse the remaster's options everywhere (so
-a build without it can SAY it ignores them). Vulkan (desktop) is unsplit.
+a build without it can SAY it ignores them). Vulkan (desktop) is built only
+with the remaster; its upscale, post pass and water reflection moved to
+`vkrender_remaster.inl` on 2026-10-24 (the audit's cleanliness).
 Also found and fixed on the way: the Vita's hand-written source list and a
 3DS type deduction, both broken by the 2026-10-22 commits (`471971ac`).
 
@@ -1556,7 +1558,7 @@ the tile binning handles `flipX` and the roll.
   int compare a draw on GLES).
 
 **Cleanliness:**
-* **Vulkan unsplit**: ~1,100 lines to a `vkrender_remaster.inl` on GLES's
+* **Vulkan unsplit** (DONE in part 2026-10-24, "The Vulkan split" below): ~1,100 lines to a `vkrender_remaster.inl` on GLES's
   pattern (upscale 2310-2458, post 2460-2945, reflection 4048-4250, the
   tile block of `begin` 3778-3840, the pack's light / normal branches of
   `poolTextures` and the BC / R8 probe), the members in one struct, stubs.
@@ -1768,6 +1770,21 @@ but `emitter light` (the run-to-run flip above).
   (nothing prepared, the whole walk - 10 textures): 24.5 / 23.8 ms from
   blocks against 101.3 / 102.8 from the PNGs. Not run after `263e28b` -
   found running it for GLES's pins.
+* **The Vulkan split** (2026-10-24): the upscale (`makeUpscale`,
+  `killUpscale`), the post pass (`makePost` .. `recordPost`, the LUT) and
+  the water reflection (`makeReflection` .. `drawWaterScene`) - 750 lines -
+  moved UNCHANGED to `backends/vulkan/vkrender_remaster.inl`, included at
+  the end of `vkrender.cpp`'s anonymous namespace (GLES's pattern). No stubs:
+  the backend is never compiled without OMK_REMASTER (the Makefile drops
+  it), and an `#error` says so. The mirror pass stays (the original's two
+  passes); its comment, which sat above the reflection's section, moved down
+  to it. Frames byte-identical to `c2a78d8` on five paths (plain trilinear,
+  the preset on Qalisar and the canal, the upscale x1.5, the water and bloom
+  alone); the ten checks that read Vulkan's source now read both files
+  (`_engine_src`), all green; `licence headers` 677 -> 678. LEFT INLINE, as
+  they need code changes rather than a move: the tile block of `begin`, the
+  pack's light / normal branches of `poolTextures`, the BC / R8 probe, the
+  members in one struct.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

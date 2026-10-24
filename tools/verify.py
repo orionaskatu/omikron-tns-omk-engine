@@ -31365,7 +31365,7 @@ def c_engine_mipmaps():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     pl = _play_text(eng)
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     # any renderer variable, not an enumerated one - see `engine: anti-aliasing`
     ga = len(re.findall(r"if \((?:\w+ && )?texAniso > 1\) \w+->setAnisotropy\(texAniso\)", pl))
     src_ok = (bool(re.search(r"int\s+anisotropy\s*=\s*1;", sh)),
@@ -31585,7 +31585,7 @@ def c_engine_texture_pack():
     # ---- 1. the source
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
                      "backends/gles/glesrender_remaster_shaders.inl")
     po = open(os.path.join(eng, "src", "app", "playoptions.cpp")).read()
@@ -31847,7 +31847,7 @@ def c_engine_bloom_and_grade():
     # ---- 1. the source
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
                      "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
@@ -32804,7 +32804,7 @@ def c_engine_floors():
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("floorStrength = floorsFlag"):]
@@ -32938,7 +32938,8 @@ def c_engine_vulkan_images():
 
     Tier 6 (read and explained; no original behind it). Parts (Qalisar's
     street, `--remaster --enhance-all --floors 1`, 640x480, 30 frames):
-      1. the source: ONE `vkCreateImage` in `vkrender.cpp`, the helper's;
+      1. the source: ONE `vkCreateImage` in `vkrender.cpp` and its
+         `vkrender_remaster.inl`, the helper's;
          and the texture uploads BATCHED (the audit's performance item 2):
          both record into `uploadCb()`, staged by `stage()`, and the pool
          ends in one `flushUploads()` - no `oneShotBegin` between them;
@@ -32965,7 +32966,7 @@ def c_engine_vulkan_images():
     fr = omkpaths.data_root()
     if not os.path.isdir(eng):
         return ("skipped",), ("skipped",), "engine/ absent"
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     pool = vk[vk.index("void VulkanRenderer::poolTextures("):]
     pool = pool[:pool.index("\nbool VulkanRenderer::uploadGeometry(")]
     src_ok = (len(re.findall(r"vkCreateImage\(dev_", vk)) == 1,
@@ -33168,7 +33169,7 @@ def c_engine_upscale():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("upscale = upscaleFlag"):]
@@ -33685,7 +33686,7 @@ def c_engine_gles_upscale():
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
                      "backends/gles/glesrender_remaster_shaders.inl")
     pg = open(os.path.join(eng, "backends", "sdl", "playgpu_gles.cpp")).read()
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     src_ok = ("remasterConfigure(*gr)" in pg and "r.setUpscale(upscale)" in
               _engine_src("backends/remaster/playremaster_world.cpp"),
               "upscale_ > 1.0f ? rcasFbo_ : fbo_" in gl,
@@ -33952,7 +33953,7 @@ def c_engine_block_formats():
     fr = omkpaths.data_root()
     if not os.path.isdir(eng):
         return ("skipped",), ("skipped",), "engine/ absent"
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
                      "backends/gles/glesrender_remaster_shaders.inl")
     tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
@@ -34145,7 +34146,7 @@ def c_engine_preload():
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
@@ -34399,7 +34400,7 @@ def c_engine_ao():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("aoStrength = aoFlag"):]
@@ -48446,8 +48447,9 @@ def c_licence_headers():
     # 676: + `engine/src/formats/blockdecode.{h,cpp}` (the pack without its
     # PNGs: bc7decomp / rgbcx compiled there, tex_encode links them)
     # 677: + `engine/tools/clip_memo.cpp` (the audit's bug 2, `engine: clip memo`)
+    # 678: + `engine/backends/vulkan/vkrender_remaster.inl` (the Vulkan split, the audit's cleanliness)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (677, [], 10, []), \
+           (678, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \

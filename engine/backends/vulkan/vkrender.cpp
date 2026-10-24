@@ -279,6 +279,7 @@ public:
     // emitters' lights, and only then are the tiled lights' buffers made (32 MB)
     bool setEmitterLights(bool on) override { emitters_ = on; return true; }
     bool drawsEmitterLights() const override { return true; }
+    bool takesPack() const override { return true; }
     int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
     bool tilesLights() const override {
         return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;
@@ -3314,13 +3315,16 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
     using clk = std::chrono::steady_clock;
     const auto t0 = clk::now();
     int fresh = 0, blocksUp = 0;
+    long prepared = 0;
     if (pack.active()) {
         // every texture this pool brings that the device does not hold yet,
         // decoded together on the thread pool
         std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
         for (std::size_t i = 0; i < t.size(); ++i)
             if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
+        const std::size_t taken0 = pack.parkedTaken();
         reps = pack.replacements(toDecode);
+        prepared = static_cast<long>(pack.parkedTaken() - taken0);   // decoded ahead, on a load's thread
     }
     const auto t1 = clk::now();
     int packed = 0, normals = 0;
@@ -3400,7 +3404,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         if (fresh > 0)
             std::printf("vulkan: preload - %d textures uploaded ahead (%d from block files), read and decode %.1f ms, "
                         "uploads %.1f ms; %zu still to come\n", fresh, blocksUp, decodeMs, uploadMs, preQueue_.size());
-        omk::event("texpack.preload", {{"fresh", fresh}, {"blocks", blocksUp}, {"decodeMs", decodeMs},
+        omk::event("texpack.preload", {{"fresh", fresh}, {"blocks", blocksUp}, {"prepared", prepared}, {"decodeMs", decodeMs},
                                        {"uploadMs", uploadMs}, {"waiting", static_cast<long>(preQueue_.size())}});
         return;
     }
@@ -3411,6 +3415,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
                                     {"replaced", packed}, {"lights", lit}, {"normals", normals},
                                     {"lightChannels", r8Ok_ ? 1 : 4}, {"fresh", fresh}, {"blocks", blocksUp},
+                                    {"prepared", prepared},
                                     {"decodeMs", decodeMs}, {"uploadMs", uploadMs}});
 }
 

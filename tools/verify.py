@@ -31806,7 +31806,7 @@ def c_engine_bloom_and_grade():
          both backends; the GLES variant built only with the bloom;
       2. THE .cube READER (`texpack_tool cube`): a LUT `omktexpack.write_cube`
          writes reads back with its size and its first and last entries; a
-         1D LUT and a short table are refused;
+         1D LUT, a short table, a NaN and an infinity are refused;
       3. on Vulkan (`run_vulkan`) and GLES (`gles_probe --frame`), Aapkayl
          through 4555's neighbour, the nearest sampler:
          * bloom on with ALL-BLACK light maps is BYTE-IDENTICAL to the bloom
@@ -31832,7 +31832,8 @@ def c_engine_bloom_and_grade():
     instead of blue fails the identity and the swap (both False); the Vulkan
     scene shader writing a light of 1 everywhere moves 224610 pixels of the
     all-black-light frame; the GLES bloom variant not substituted (its alpha
-    left at 1) moves 224638 on GLES alone.
+    left at 1) moves 224638 on GLES alone. (2026-10-24) The reader without its
+    finite test (the audit's item 6) - the NaN and the infinity read (part 2).
     """
     import subprocess, tempfile, shutil, re, platform
     eng = os.path.join(ROOT, "engine")
@@ -31880,8 +31881,11 @@ def c_engine_bloom_and_grade():
             all(abs(float(m.group(5 + i)) - f1[i]) < 1e-5 for i in range(3))
         bad1 = os.path.join(tmp, "b1.cube"); open(bad1, "w").write("LUT_1D_SIZE 4\n0 0 0\n")
         bad2 = os.path.join(tmp, "b2.cube"); open(bad2, "w").write("LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")
+        table = "\n".join(["0 0 0"] * 7)
+        bad3 = os.path.join(tmp, "b3.cube"); open(bad3, "w").write(f"LUT_3D_SIZE 2\n{table}\nnan 0 0\n")
+        bad4 = os.path.join(tmp, "b4.cube"); open(bad4, "w").write(f"LUT_3D_SIZE 2\n{table}\n0 inf 0\n")
         refused = all(subprocess.run([tool, "cube", b], capture_output=True, text=True, timeout=300).stdout.startswith("refused")
-                      for b in (bad1, bad2))
+                      for b in (bad1, bad2, bad3, bad4))
         reader = (read_ok, refused)
 
         # ---- the test packs and LUTs
@@ -34077,7 +34081,9 @@ def c_engine_preload():
       3. the walk into Anekbah's restaurant (`engine: area load`'s) on
          `--world-vulkan` under `--remaster` with `--preload 25`: ARESTO
          taken ready (`@evt preload.take`), its textures uploaded ahead
-         (`texpack.preload`, at least its 7), and the arrival's pool - the
+         (`texpack.preload`, at least its 7) - every one DECODED AHEAD on
+         the set's load thread (`TexturePack::prepare`, the event's
+         `prepared`; the audit's performance item 1) - and the arrival's pool - the
          first after the transition's `area.goto 46` - bringing NONE new,
          against at least 7 without; without, nothing taken or uploaded ahead;
       4. the frame the walk ends on THE SAME BYTES with and without - the
@@ -34093,7 +34099,8 @@ def c_engine_preload():
     the pin is caught by PART 1 ALONE: this walk changes no pool between the
     uploads ahead and the arrival, so the eviction never runs in it.
     (2026-10-24) The cap never yielding (the audit's bug 3, `break` at the
-    cap) - part 5: QSEXSHP1 held the whole walk, QBAR never wanted.
+    cap) - part 5: QSEXSHP1 held the whole walk, QBAR never wanted. The set's
+    load not preparing the pack's decode - part 3, 0 of 7 prepared.
     NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
     walk follows); GLES (sets prepared, its textures not pinned); the
     characters of the area arriving (not preloaded).
@@ -34152,11 +34159,12 @@ def c_engine_preload():
                 if goto >= 0 else []
             took = [e[1] for e in ev if e[0] == "preload.take" and e[1].get("set") == "ARESTO"]
             ahead = sum(int(e[1].get("fresh", 0)) for e in ev if e[0] == "texpack.preload")
+            prepared = sum(int(e[1].get("prepared", 0)) for e in ev if e[0] == "texpack.preload")
             # the arrival: the first pool the transition brings, 0 when none brings anything
             first = pools[0] if pools else 0
-            return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0
-        on, took, ahead, arrivalOn, wentOn = walk("on", 25)
-        off, tookOff, aheadOff, arrivalOff, wentOff = walk("off", 0)
+            return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0, prepared
+        on, took, ahead, arrivalOn, wentOn, prepared = walk("on", 25)
+        off, tookOff, aheadOff, arrivalOff, wentOff, _ = walk("off", 0)
         r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
                             "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
                             os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101", "--stand",
@@ -34181,15 +34189,16 @@ def c_engine_preload():
                all(float(f["metres"]) > 35.0 or float(f["metres"]) < 0.0 for f in released))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead, "
+    print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead "
+          f"({prepared} decoded ahead), "
           f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
           f"{'the same' if on and on == off else 'DIFFER'}; the cap at 1: at most {most} held, released for a "
           f"nearer door {[(e['set'], e['metres'], e['for'], e['forMetres']) for e in evicted]}, past the radius "
           f"{[(f['set'], f['metres']) for f in released]}")
     walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
-              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0)
+              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead)
     return (src_ok, graph, walked, on is not None and on == off, cap), \
-        ((True,) * 5, (True,) * 4, (True,) * 6, True, (True,) * 5), \
+        ((True,) * 5, (True,) * 4, (True,) * 7, True, (True,) * 5), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
         "prepared set first, a pinned texture spared); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \

@@ -59,7 +59,10 @@ std::vector<Light3do> emitterLights(const ParticleField& f,
         c[1] *= (static_cast<float>((c0 >> 8) & 255) + static_cast<float>((c1 >> 8) & 255)) / 510.0f;
         c[2] *= (static_cast<float>(c0 & 255) + static_cast<float>(c1 & 255)) / 510.0f;
         const float hi = std::max({c[0], c[1], c[2]});
-        const bool glow = additive && fx.life <= 2.0f;
+        // (a glow whose ramp is BLACK lights nothing: its hue would be 0/0 and
+        // it would take a light slot - dark, as a flame's `hi > 0` makes it;
+        // the audit's item 6, 2026-10-23)
+        const bool glow = additive && fx.life <= 2.0f && hi > 0.0f;
         const bool flame = additive && !glow && hi > 0.0f && spriteSat >= kFlameSaturation;
         if (!glow && !flame) {
             if (count) ++count->dark;

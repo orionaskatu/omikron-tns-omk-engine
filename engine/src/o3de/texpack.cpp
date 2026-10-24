@@ -91,6 +91,12 @@ bool blockPixels(const std::string* path, const Texture& t, bool light, std::vec
     return true;
 }
 
+// what a parked result holds
+std::size_t imageBytes(const PackImage& p) {
+    return p.rgba.size() + p.emissive.size() + p.normal.size() + p.colourZ.bytes.size() +
+           p.emissiveZ.bytes.size() + p.normalZ.bytes.size();
+}
+
 }  // namespace
 
 std::uint64_t textureKey(const Texture& t) {
@@ -121,6 +127,9 @@ bool TexturePack::open(const std::string& dir) {
         std::lock_guard<std::mutex> lk(m_);
         refused_.clear();
         greyOf_.clear();
+        parked_.clear();
+        parkedBytes_ = 0;
+        parkedOrder_.clear();
     }
     opened_ = false;
     dir_ = dir;
@@ -196,7 +205,7 @@ bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba,
 }
 
 std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const> ts, bool colour,
-                                                bool normals) const {
+                                                bool normals, bool pooled) const {
     std::vector<PackImage> out(ts.size());
     if (!opened_ || (files_.empty() && lights_.empty())) return out;
     // the lookups, here: the key and the file of every texture the pack holds
@@ -210,11 +219,30 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     // the light maps: always when they alone are asked; with the colours only
     // when a bloom will read them
     const bool lights = !colour || wantLights_;
+    // the KEYS first, outside the lock: `textureKey` hashes every texel, and
+    // the preload's jobs and the frame's pool ask at once - the lock is for
+    // `refused_` and `greyOf_` alone (the audit's performance item 1,
+    // 2026-10-23: six preload jobs held the frame's pool behind their hashing)
+    std::vector<std::uint64_t> keys(ts.size(), 0);
+    for (std::size_t i = 0; i < ts.size(); ++i)
+        if (ts[i] && ts[i]->hasPixels()) keys[i] = textureKey(*ts[i]);
     std::unique_lock<std::mutex> lk(m_);
+    // a PREPARED result, when this asks what the parking asked: the colours,
+    // and the normal maps as `wantNormals_` had them
+    const bool takeParked = colour && !parked_.empty() && (normals || !wantNormals_);
     for (std::size_t i = 0; i < ts.size(); ++i) {
         const Texture* t = ts[i];
         if (!t || !t->hasPixels()) continue;
-        std::uint64_t key = textureKey(*t);
+        std::uint64_t key = keys[i];
+        if (takeParked) {
+            if (const auto pk = parked_.find(key); pk != parked_.end()) {
+                parkedBytes_ -= imageBytes(pk->second);
+                out[i] = std::move(pk->second);
+                parked_.erase(pk);
+                ++parkedTaken_;
+                continue;
+            }
+        }
         // (a texture the pack holds nothing for is still a job for the hook)
         bool grey = false;
         if (!files_.count(key) && !lights_.count(key))
@@ -254,7 +282,11 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
     lk.unlock();
     // the reads and the decodes, on the pool: each job writes only its own
     // result and its own reason
-    Threads::shared().parallelFor(0, jobs.size(), 1, [&](std::size_t from, std::size_t to) {
+    const auto across = [&](auto&& fn) {
+        if (pooled) Threads::shared().parallelFor(0, jobs.size(), 1, fn);
+        else fn(std::size_t{0}, jobs.size());
+    };
+    across([&](std::size_t from, std::size_t to) {
         for (std::size_t j = from; j < to; ++j) {
             Job& jb = jobs[j];
             const Texture& t = *ts[jb.at];
@@ -324,7 +356,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
         }
     });
     if (lightHook_)
-        Threads::shared().parallelFor(0, jobs.size(), 1, [&](std::size_t from, std::size_t to) {
+        across([&](std::size_t from, std::size_t to) {
             for (std::size_t j = from; j < to; ++j) lightHook_(*ts[jobs[j].at], out[jobs[j].at]);
         });
     // the refusals, here, once per key
@@ -341,9 +373,58 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
 
 void TexturePack::aliasGrey(const Texture& colour, const Texture& grey) {
     if (!opened_ || !colour.hasPixels() || !grey.hasPixels()) return;
-    const std::uint64_t c = textureKey(colour);
+    const std::uint64_t c = textureKey(colour), g = textureKey(grey);
     std::lock_guard<std::mutex> lk(m_);
-    if (files_.count(c) || lights_.count(c)) greyOf_[textureKey(grey)] = c;
+    if (files_.count(c) || lights_.count(c)) greyOf_[g] = c;
+}
+
+void TexturePack::prepare(std::span<const Texture* const> ts) {
+    if (!opened_ || files_.empty()) return;
+    // what a backend's pool asks: the colours, the normal maps as wanted -
+    // on this thread alone
+    auto rs = replacements(ts, true, true, false);
+    std::vector<std::uint64_t> keys(ts.size(), 0);
+    for (std::size_t i = 0; i < ts.size(); ++i)
+        if (ts[i] && ts[i]->hasPixels() && imageBytes(rs[i]) > 0) keys[i] = textureKey(*ts[i]);
+    std::lock_guard<std::mutex> lk(m_);
+    for (std::size_t i = 0; i < ts.size(); ++i) {
+        if (!keys[i] || parked_.count(keys[i])) continue;
+        const std::size_t b = imageBytes(rs[i]);
+        if (b > kParkedBytes) continue;
+        // the oldest let go to make room
+        while (parkedBytes_ + b > kParkedBytes && !parkedOrder_.empty()) {
+            if (const auto old = parked_.find(parkedOrder_.front()); old != parked_.end()) {
+                parkedBytes_ -= imageBytes(old->second);
+                parked_.erase(old);
+            }
+            parkedOrder_.pop_front();
+        }
+        parkedBytes_ += b;
+        parked_.emplace(keys[i], std::move(rs[i]));
+        parkedOrder_.push_back(keys[i]);
+    }
+}
+
+void TexturePack::forget(std::span<const Texture* const> ts) {
+    std::vector<std::uint64_t> keys;
+    for (const Texture* t : ts)
+        if (t && t->hasPixels()) keys.push_back(textureKey(*t));
+    std::lock_guard<std::mutex> lk(m_);
+    for (const std::uint64_t k : keys)
+        if (const auto pk = parked_.find(k); pk != parked_.end()) {
+            parkedBytes_ -= imageBytes(pk->second);
+            parked_.erase(pk);
+        }
+}
+
+std::size_t TexturePack::parkedBytes() const {
+    std::lock_guard<std::mutex> lk(m_);
+    return parkedBytes_;
+}
+
+std::size_t TexturePack::parkedTaken() const {
+    std::lock_guard<std::mutex> lk(m_);
+    return parkedTaken_;
 }
 
 TexturePack& texturePack() {

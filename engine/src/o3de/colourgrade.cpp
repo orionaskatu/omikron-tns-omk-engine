@@ -9,6 +9,7 @@
 #include "platform/hostfs.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -60,6 +61,9 @@ bool parseCube(const std::string& text, ColourLut& out, std::string* why) {
         }
         float r, g, b;
         if (std::sscanf(ln.c_str(), "%f %f %f", &r, &g, &b) != 3) return fail("a line that is not three numbers");
+        // `%f` reads "nan" and "inf" too, and `lutStrip` would cast a NaN to a
+        // byte (the audit's item 6, 2026-10-23)
+        if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) return fail("a value that is not finite");
         if (out.n == 0) return fail("table data before LUT_3D_SIZE");
         out.rgb.push_back(r); out.rgb.push_back(g); out.rgb.push_back(b);
     }

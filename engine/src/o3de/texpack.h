@@ -34,6 +34,7 @@
 #include "formats/tex3dt.h"
 
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <span>
 #include <string>
@@ -132,8 +133,12 @@ public:
     // a backend that draws no relief (GLES).
     // THREAD-SAFE against itself and `aliasGrey`: a set loads on a
     // BackgroundJob while the renderer's pool is decoded on the main thread.
+    // `pooled` false: decoded on the CALLER's thread alone - `prepare`'s, from
+    // a load's background job, which must not take the shared pool's workers
+    // from the frame (the first pools of a street decoded 5x slower beside
+    // six preload jobs, 2026-10-24)
     std::vector<PackImage> replacements(std::span<const Texture* const> ts, bool colour = true,
-                                        bool normals = true) const;
+                                        bool normals = true, bool pooled = true) const;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the viewer greys a
     // pool's PALETTES, which makes each texture another key. Told which colour
     // texture a grey one came from, the pack answers the grey key with the
@@ -141,6 +146,22 @@ public:
     // wherever that luma is 0, as `toRgbaKeyed` keys the grey palette's
     // black - so a black-and-white cutscene draws the pack too.
     void aliasGrey(const Texture& colour, const Texture& grey);
+
+    // THE PREPARED RESULTS (the remaster audit's performance item 1,
+    // 2026-10-23): `prepare` decodes on the CALLER's thread - a set's load,
+    // a `BackgroundJob` - what a backend's pool would decode on the frame
+    // the set arrives, and PARKS each result that holds anything by its
+    // texture's key; `replacements` (the colours asked, with the normal maps
+    // as the parking had them) hands a parked one over, once, instead of
+    // reading and decoding it again. `forget` drops what a released set
+    // parked. At most `kParkedBytes` parked, the OLDEST let go to make room
+    // (a set released while still preparing parks after its `forget`: it
+    // ages out rather than holding the cap).
+    static constexpr std::size_t kParkedBytes = std::size_t{256} << 20;
+    void prepare(std::span<const Texture* const> ts);
+    void forget(std::span<const Texture* const> ts);
+    std::size_t parkedBytes() const;
+    std::size_t parkedTaken() const;   // results handed over from `prepare` so far
 
     // THE LIGHT MAPS AMENDED after the decode (`o3de/emitterlight.h`
     // curateBloom, the remaster's curated light sources): called once a
@@ -161,7 +182,7 @@ private:
     bool wantNormals_ = false;
     bool wantLights_ = true;
     std::size_t excluded_ = 0;
-    // guards `refused_` and `greyOf_`, the two the callers' threads touch
+    // guards `refused_`, `greyOf_` and `parked_`, what the callers' threads touch
     mutable std::mutex m_;
     std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`
     std::string dir_;
@@ -170,6 +191,11 @@ private:
     std::unordered_map<std::uint64_t, std::string> lights_;   // `<key>_e.png`
     std::unordered_map<std::uint64_t, std::uint64_t> greyOf_;   // grey key -> colour key
     mutable std::unordered_set<std::uint64_t> refused_;
+    // `prepare`'s results (under `m_`), and their bytes
+    mutable std::unordered_map<std::uint64_t, PackImage> parked_;
+    mutable std::size_t parkedBytes_ = 0;
+    mutable std::size_t parkedTaken_ = 0;
+    std::deque<std::uint64_t> parkedOrder_;   // the keys as parked, oldest first (some since taken)
 };
 
 // The process's one pack, empty unless the session opened it.

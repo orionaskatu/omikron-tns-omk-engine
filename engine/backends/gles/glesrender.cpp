@@ -1014,6 +1014,7 @@ public:
         return true;
     }
     bool drawsEmitterLights() const override { return fxWant_; }
+    bool takesPack() const override { return true; }
     bool drawsWater() const override { return waterWant_ > 0.0f && mainLoc_.water >= 0; }
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                         std::span<const Draw> above, std::span<const Draw> water, float strength,

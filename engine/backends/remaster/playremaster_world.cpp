@@ -23,6 +23,14 @@
 // thread `prepareSet` runs on, after the set's own lights are read
 void PlayState::remasterPrepareSet(SetLoad& L) {
     WorldSlot& w = L.out;
+    // THE PACK'S DECODE, here on the load's thread rather than on the frame
+    // the set's pool reaches the renderer (`TexturePack::prepare`; the audit's
+    // performance item 1, 2026-10-23) - a preloaded set's and an arriving one's
+    if (world_ && world_->takesPack() && omk::texturePack().active()) {
+        std::vector<const omk::Texture*> all;
+        for (const auto& wt : w.tex) all.push_back(&wt);
+        omk::texturePack().prepare(all);
+    }
     w.water = omk::waterPlane(w.geo);
     w.ground = omk::groundLevel(w.geo);
     w.floors = floorStrength > 0.0f ? omk::floorPlanes(w.geo, w.tex, omk::floorList(), L.stem) : omk::FloorPlanes{};

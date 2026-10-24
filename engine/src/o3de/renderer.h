@@ -356,6 +356,10 @@ public:
     // backend that keeps no uploads (the software reference) has nothing to
     // hold.
     virtual void setPreloadTextures(std::span<const Texture> /*t*/) {}
+    // whether this backend draws the TEXTURE PACK's replacements (Vulkan,
+    // GLES): a set's load then decodes them ahead (`TexturePack::prepare`);
+    // for one that never asks (the software reference) they would only wait
+    virtual bool takesPack() const { return false; }
     // up to `budget` of the listed textures uploaded; -> how many still wait
     virtual int preloadStep(int /*budget*/) { return 0; }
 

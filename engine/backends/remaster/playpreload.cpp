@@ -23,6 +23,7 @@
 
 #include "../sdl/playstate.h"
 
+#include "o3de/texpack.h"
 #include "platform/env.h"
 #include "platform/events.h"
 
@@ -34,6 +35,11 @@ constexpr double kInchesPerMetre = 39.37;   // the game's unit
 constexpr std::size_t kHeld = 6;
 constexpr int kEvery = 10;                  // frames between distance passes
 constexpr int kUploadsPerFrame = 3;         // textures the renderer takes a frame
+// jobs PREPARING at once: each reads and decodes a whole set (`prepareSet`,
+// the pack's decode with it), and six started in one frame took the cores
+// and the disk from the frame's own pool - the nearest go first, the rest
+// wait for a free one (the audit's performance item 3, 2026-10-23)
+constexpr int kInFlight = 2;
 }  // namespace
 
 // `askSet`'s first question: the set the preload radius prepared for this
@@ -95,6 +101,14 @@ void PlayState::phasePreload() {
         if (it == near.end() || dist < it->second.first) near[d.set] = {dist, d.area};
     }
     bool pinsChanged = false;
+    // a released set's prepared decode (`TexturePack::prepare`) dropped with
+    // it - one still preparing parks after this, and ages out of the pack's cap
+    const auto forgetParked = [](const Preloaded& pl) {
+        if (!pl.L || (pl.L->job && !pl.L->job->ready())) return;
+        std::vector<const omk::Texture*> ts;
+        for (const auto& t : pl.L->out.tex) ts.push_back(&t);
+        omk::texturePack().forget(ts);
+    };
     // released: out of the keep radius, or no door leads there any more
     for (auto it = preloads.begin(); it != preloads.end();) {
         const auto n = near.find(it->first);
@@ -104,6 +118,7 @@ void PlayState::phasePreload() {
             omk::event("preload.drop", {{"set", it->first}, {"area", it->second.area},
                                         {"metres", n == near.end() ? -1.0 : n->second.first / kInchesPerMetre}});
             pinsChanged = pinsChanged || it->second.sent;
+            forgetParked(it->second);
             it = preloads.erase(it);
         } else {
             it->second.dist = n->second.first;
@@ -119,7 +134,10 @@ void PlayState::phasePreload() {
     for (const auto& [stem, dn] : near)
         if (dn.first <= reach && !preloads.count(stem)) want.push_back({dn.first, stem});
     std::sort(want.begin(), want.end());
+    int inFlight = 0;
+    for (const auto& [st, pl] : preloads) inFlight += pl.L && pl.L->job && !pl.L->job->ready() ? 1 : 0;
     for (const auto& [dist, stem] : want) {
+        if (inFlight >= kInFlight) break;   // the next pass starts it
         if (preloads.size() >= held) {
             const auto far = std::max_element(preloads.begin(), preloads.end(), [](const auto& a, const auto& b) {
                 return a.second.dist < b.second.dist;
@@ -131,6 +149,7 @@ void PlayState::phasePreload() {
                                         {"metres", far->second.dist / kInchesPerMetre},
                                         {"forMetres", dist / kInchesPerMetre}});
             pinsChanged = pinsChanged || far->second.sent;
+            forgetParked(far->second);
             preloads.erase(far);
         }
         const int area = near[stem].second;
@@ -146,6 +165,7 @@ void PlayState::phasePreload() {
         L->job = std::make_unique<omk::BackgroundJob>([this, L] { prepareSet(*L); });
         preloads[stem] = Preloaded{area, L, false, dist};
         ++preloadMade;
+        ++inFlight;
         std::printf("preload: %s (AREA %d) - its door %.1f m away, prepared on a thread\n", stem.c_str(), area,
                     dist / kInchesPerMetre);
         omk::event("preload.want", {{"set", stem}, {"area", area}, {"metres", dist / kInchesPerMetre}});

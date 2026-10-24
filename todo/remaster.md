@@ -1700,6 +1700,34 @@ Also: `env switches` was red since the block formats (`OMK_NO_BLOCK_FORMATS`
 read, never listed) - its row added. The remaster checks after: all green
 but `emitter light` (the run-to-run flip above).
 
+**Then (2026-10-24, M1), item 6 and the first performance items:**
+* `.cube`: a non-finite value refused (`std::isfinite` in `parseCube`);
+  `engine: bloom and grade` part 2 refuses a `nan` and an `inf` table, and
+  reads both without the test.
+* A glow whose ramp is black is DARK (`hi > 0`, as a flame): no 0/0 hue, no
+  light slot. NOT CHECKED, and none can be on this data: Anekbah, Qalisar
+  and Jaunpur keep their counts (117/12/24, 89/8/7, 15/0/32) - none of
+  their glows is black.
+* **The pack's lock**: `replacements` hashes its keys BEFORE taking `m_`
+  (and `aliasGrey` both of its), the lock for the maps alone.
+* **The decode on the load's thread**: `TexturePack::prepare` - called by
+  `remasterPrepareSet` for every set load when the renderer `takesPack()`
+  (Vulkan, GLES) - decodes what the set's pool will ask, SERIALLY on that
+  thread (`replacements(..., pooled = false)`: through the shared pool, six
+  jobs took its workers and the street's first pool decoded in 59.5 ms, not
+  10.7), and PARKS each result; `replacements` hands a parked one over once
+  (the colours asked, the normal maps as parked). 256 MB at most, the oldest
+  let go; a released preload `forget`s its own. `@evt texpack.pool` /
+  `texpack.preload` carry `prepared`; `engine: preload` part 3 wants all 7
+  of ARESTO's prepared (0 without the call). GLES gains the same: an
+  arriving set's decode is done before it arrives (its pins are still open).
+* **Two preload jobs in flight** (`kInFlight`), the nearest first - six
+  started in one frame competed with the frame for the cores and the disk.
+* Measured, 4K Qalisar (load ~3-4, two runs): the street's first pool's
+  read and decode 10.7 -> 5.5 / 5.5 ms, the second 4.6 -> 10.5 / 4.8; a
+  preload frame's 1.0-2.0 -> 0.3-1.1 ms; fps unchanged (24.6 / 25.1). The
+  UPLOADS are unchanged, ~5 ms per 3 textures - the batched upload is next.
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

@@ -1526,7 +1526,7 @@ the tile binning handles `flipX` and the roll.
   (one per want, 1 MB stacks), no cancellation - a released set's job runs
   to its end. One or two in flight, a cancel flag between `prepareSet`'s
   stages; the preset's preload only where pins exist, or a lower cap.
-* **4K memory and bandwidth, Vulkan (estimates)**: `reflMs_` /
+* **4K memory and bandwidth, Vulkan (estimates)** (partly DONE 2026-10-24, "The 4K trims" below): `reflMs_` /
   `reflDepth_` made full size at full samples for a floors-only scene that
   draws into `reflFbuf1_` alone (~300 MB at 4x; the water's alone needs
   them - and the water could go half size too); `stencilStoreOp` STORE
@@ -1785,6 +1785,68 @@ but `emitter light` (the run-to-run flip above).
   they need code changes rather than a move: the tile block of `begin`, the
   pack's light / normal branches of `poolTextures`, the BC / R8 probe, the
   members in one struct.
+* **The 4K trims (Vulkan), 2026-10-24, M1** - 4K Qalisar, `--vulkan --res
+  3840x2160 --remaster --enhance-all` (4x MSAA, the AO, the bloom, the
+  grade), hidden window, `OMK_GPU_TIMES=1`, 600 frames, frames 300-599
+  (`gpu.time` windows 5-10), the Parallels VM stopped, load ~1.3-2.9. The
+  baseline `c7a1c98`: 22.3-22.5 ms of GPU a frame (shadow 0.35, reflection
+  2.4, scene 13.0, post 6.5-6.7), repeatable within 0.25 ms. THE POST
+  BROKEN DOWN by switching its parts off: the AO ~4 ms (its view-z
+  reduction 1.1, the occlusion 1.2, the two blurs together ~1.0 - timed by
+  skipping each, a scratch build), the bloom ~0.7, the copy and the final
+  pass ~1.8.
+  * **The copy gone**: when the post runs, `begin` draws the scene into
+    `postSrc_` through a second framebuffer of `pass_` (`fbufPost_`: the
+    resolve, or the attachment itself without MSAA), and the final pass
+    writes every pixel of `colour_` - no `vkCmdCopyImage` (66 MB a 4K frame).
+    `postNow_` is decided by `begin`, where the target is chosen.
+  * **The stencil not stored**: cleared at each pass's start, never loaded.
+  * **TRANSIENT attachments in lazily allocated memory** (`makeImage2D`):
+    the MSAA colour, the depth when no AO reads it, the reflection's MSAA
+    colour and depth, the floors' half-size depth - MEMORYLESS on Apple's
+    GPUs (MoltenVK has the type): 130 MB at 4K for the scene alone, 433 MB
+    with the water's target (`@evt vulkan.memoryless`). The figures are the
+    allocations' sizes; MoltenVK backing them with no memory is its
+    documented mapping, not measured here (the profiler build would).
+  * Measured, all three, against `c7a1c98` back to back, two pairs: 21.57 ->
+    20.72, 22.37 -> 21.92 ms (the post 6.4-6.7 -> 5.5-6.2; the copy alone,
+    four pairs, 22.40 -> 22.22 on average - the post faster by 0.6-0.9 but
+    the scene's stamp 0.3-0.5 later; the stencil alone within noise). A
+    small win in time; the memory is the larger one.
+  * **Frames byte-identical** to `c7a1c98` on nine paths (the preset on
+    Qalisar and the canal, `--enhance-all`, the bloom alone, the upscale with
+    4x MSAA, plain, trilinear, the water with 4x MSAA, the set viewer facing
+    Kay'l's mirror).
+  * **The validation layer** (Homebrew's 1.4.357; it loads only with
+    `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` - the manifest names the
+    library bare): the new framebuffer first wanted `postSrc_` with
+    TRANSFER_SRC usage (fixed). It also found FIVE older faults, all in
+    `c7a1c98` too, now fixed: a one-level texture moved to TRANSFER_SRC
+    without that usage (it goes DST -> shader now); the shadow map sampled
+    UNDEFINED by a run whose shadow pass never draws (made SHADER_READ at
+    creation); the water reflection's colour CLEARED without TRANSFER_DST
+    usage (its clear and transition refused, the image then read UNDEFINED);
+    the post's down and blur V passes binding the glow image they write, and
+    the glow passes binding the occlusion before its first run (their unused
+    bindings now `postSrc_`). LEFT: `VUID-vkCmdDraw-imageLayout-00344` on the
+    reflection pass - the texture sets bind the reflection image (binding 2,
+    `refl`) while the pass draws into it; the shader reads it only on the
+    water's draws, so it is the layer's static view (a second set per
+    texture would silence it). Plain, the upscale and the bloom: silent.
+  * NOT DONE, measured small or moot: the glow at B10G11R11 and the blur as
+    11 bilinear taps (the whole bloom is ~0.7 ms; both change pixels); the
+    glow images made with the bloom at 0 (8 MB at 4K); the post over the
+    letterbox bands (the target is the letterboxed size already); the
+    reflection's full-size MSAA targets for a floors-only scene (memoryless
+    now on Apple, still real elsewhere); the AO's depth through
+    `VK_KHR_depth_stencil_resolve` (SAMPLE_ZERO) - it would make the depth
+    memoryless under the AO too (~166 MB at 4K) and let the view-z pass read
+    one sample, but needs `vkCreateRenderPass2` and a resolve attachment in
+    every framebuffer of `pass_`; the AO's own 4 ms, the largest cost left.
+  * `engine: profiler gpu` was RED since this session's earlier commits, not
+    from these: the 1x1 fallbacks' own category (`6319abd`) and the staging
+    ring (`c2a78d8`) - re-pinned (39 + 3, the ring alone at rest), shown to
+    fail. `engine: bloom and grade` and `engine: ao` read the new lines.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

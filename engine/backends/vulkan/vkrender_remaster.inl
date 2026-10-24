@@ -148,8 +148,9 @@ void VulkanRenderer::killUpscale() {
 
 // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -------------------
 //
-// `colour_` -> copy `postSrc_` -> [down to glow A, blur A -> B, blur B -> A]
-// -> final: `postSrc_` + glow A screen-blended, then the grade, into `colour_`.
+// the scene into `postSrc_` (`fbufPost_`, chosen by `begin`) -> [down to glow
+// A, blur A -> B, blur B -> A] -> final: `postSrc_` + glow A screen-blended,
+// then the grade, into `colour_`.
 // The bracket runs only with the bloom on; the grade only with a LUT.
 // A failure is remembered for its size: retried, it tore down and rebuilt
 // everything and said so again every frame. A new size tries once more.
@@ -177,8 +178,10 @@ bool VulkanRenderer::makePostAt() {
         return makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, img, mem, &view);
     };
     const VkFormat half = VK_FORMAT_R16G16B16A16_SFLOAT;
-    if (!image(rw_, rh_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-               postSrc_, postSrcMem_, postSrcView_, "post copy") ||
+    // (TRANSFER_SRC: `pass_` ends its attachment in that layout, as `colour_`'s)
+    if (!image(rw_, rh_, VK_FORMAT_R8G8B8A8_UNORM,
+               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+               postSrc_, postSrcMem_, postSrcView_, "post source") ||
         !image(gw, gh, half, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                glowImg_[0], glowMem_[0], glowView_[0], "glow image") ||
         !image(gw, gh, half, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -250,6 +253,18 @@ bool VulkanRenderer::makePostAt() {
         fi.renderPass = finalPass_; fi.attachmentCount = 1; fi.pAttachments = &colourView_;
         fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
         VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &finalFb_), "post framebuffer");
+    }
+    {
+        // THE SCENE'S TARGET WHEN THE POST RUNS: `pass_` with `postSrc_` where
+        // `fbuf_` has `colour_` (the resolve, or the attachment itself without
+        // MSAA) - the frame lands where the post reads it, no copy (~1.3 ms
+        // and 66 MB a 4K frame on the M1, the audit's 4K trims)
+        const bool msaa = samples_ != VK_SAMPLE_COUNT_1_BIT;
+        VkImageView views[3] = {msaa ? msColourView_ : postSrcView_, depthView_, postSrcView_};
+        VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
+        fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
+        VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fbufPost_), "post scene framebuffer");
     }
     {
         VkDescriptorSetLayoutBinding b[4]{};
@@ -373,9 +388,15 @@ void VulkanRenderer::bindPostSets() {
     const VkImageView dep = aoOk_ ? depthRead_ : postSrcView_;
     const VkImageView occ1 = aoOk_ ? aoView_[1] : postSrcView_;
     const VkImageView zv = aoOk_ ? zView_ : postSrcView_;
-    const VkImageView views[8][4] = {{postSrcView_, glowView_[0], lut, occ},     // down
-                                     {glowView_[0], glowView_[0], lut, occ},     // blur H: A -> B
-                                     {glowView_[1], glowView_[0], lut, occ},     // blur V: B -> A
+    // a binding a pass does not read still holds an image in SHADER_READ: never
+    // the one it WRITES (the down and blur V passes bound glow A while drawing
+    // into it) nor the occlusion, undefined until the AO's first run - both the
+    // validation layer's (VUID-vkCmdDraw-imageLayout-00344, -None-09600,
+    // 2026-10-24). `postSrc_` is in SHADER_READ through every post pass.
+    const VkImageView src = postSrcView_;
+    const VkImageView views[8][4] = {{postSrcView_, src, lut, src},              // down
+                                     {glowView_[0], src, lut, src},              // blur H: A -> B
+                                     {glowView_[1], src, lut, src},              // blur V: B -> A
                                      {postSrcView_, glowView_[0], lut, occ},     // final
                                      {dep, postSrcView_, zv, postSrcView_},      // AO -> 0
                                      {dep, occ, zv, postSrcView_},               // AO blur H: 0 -> 1
@@ -403,6 +424,8 @@ void VulkanRenderer::killPost() {
     if (postPool_) vkDestroyDescriptorPool(dev_, postPool_, nullptr);
     if (postDsl_) vkDestroyDescriptorSetLayout(dev_, postDsl_, nullptr);
     if (finalFb_) vkDestroyFramebuffer(dev_, finalFb_, nullptr);
+    if (fbufPost_) vkDestroyFramebuffer(dev_, fbufPost_, nullptr);
+    fbufPost_ = VK_NULL_HANDLE;
     if (aoPipe_) vkDestroyPipeline(dev_, aoPipe_, nullptr);
     if (aoPass_) vkDestroyRenderPass(dev_, aoPass_, nullptr);
     if (zPipe_) vkDestroyPipeline(dev_, zPipe_, nullptr);
@@ -518,18 +541,10 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
                                FRAG = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                XFER = VK_PIPELINE_STAGE_TRANSFER_BIT;
     const VkAccessFlags W = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, R = VK_ACCESS_SHADER_READ_BIT;
-    // the scene's frame, copied: the final pass rewrites `colour_` from it
-    barrier(colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            W, VK_ACCESS_TRANSFER_READ_BIT, OUT, XFER);
-    barrier(postSrc_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, XFER);
-    VkImageCopy ic{};
-    ic.srcSubresource = ic.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    ic.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
-    vkCmdCopyImage(cb, colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, postSrc_,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &ic);
-    barrier(postSrc_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_ACCESS_TRANSFER_WRITE_BIT, R, XFER, FRAG);
+    // the scene's frame is in `postSrc_` (`fbufPost_`, the pass ends it in
+    // TRANSFER_SRC); `colour_` holds nothing of this frame - the final pass
+    // writes every pixel of it
+    barrier(postSrc_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
     const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pipe, int w, int h,
                          VkDescriptorSet ds, int srcW, int srcH, float dx, float dy, int mode) {
         VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -606,8 +621,7 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         ao(0, postDs_[6], 2);
         barrier(aoImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
     }
-    barrier(colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_ACCESS_TRANSFER_READ_BIT, W, XFER, OUT);
+    barrier(colour_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, W, OUT, OUT);
     run(finalPass_, finalFb_, finalPipe_, rw_, rh_, postDs_[3], rw_, rh_, 0, 0, 2);
 }
 
@@ -630,12 +644,20 @@ bool VulkanRenderer::makeReflection() {
         ii.usage = use; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         return makeImage2D(ii, asp, "water reflection", img, mem, &view);
     };
+    // (TRANSFER_DST: its first contents are CLEARED below - the validation
+    // layer's VUID-vkCmdClearColorImage-image-00002 without it, 2026-10-24)
     if (!image(VK_FORMAT_R8G8B8A8_UNORM,
-               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT, reflColour_, reflColourMem_, reflColourView_) ||
-        (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
-                        samples_, reflMs_, reflMsMem_, reflMsView_)) ||
-        !image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        // (TRANSIENT, as the scene's: the samples resolved within the pass,
+        // the depth stored only by `pass_` with the AO, which the reflection
+        // uses when its own `reflPass_` could not be made)
+        (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                        VK_IMAGE_ASPECT_COLOR_BIT, samples_, reflMs_, reflMsMem_, reflMsView_)) ||
+        !image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                           (!aoOk_ || reflPass_ ? VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT : 0u),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                reflDepth_, reflDepthMem_, reflDepthView_)) {
         std::fprintf(stderr, "vulkan: the water reflection's target - refused\n");
@@ -655,7 +677,8 @@ bool VulkanRenderer::makeReflection() {
         ii.extent = {static_cast<uint32_t>(hw), static_cast<uint32_t>(hh), 1};
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT; ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool ok = makeImage2D(ii, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
                               "floors' reflection depth", reflDepth1_, reflDepth1Mem_, &reflDepth1View_);
         if (ok) {
@@ -686,6 +709,7 @@ bool VulkanRenderer::makeReflection() {
     for (auto& [key, u] : uploaded_) if (u.t.ds) bindReflection(u.t.ds);
     if (white_.ds) bindReflection(white_.ds);
     std::printf("vulkan: the water reflection's target - %dx%d (a REMASTER feature)\n", rw_, rh_);
+    omk::event("vulkan.memoryless", {{"images", lazyImages_}, {"mb", static_cast<double>(lazyBytes_) / 1048576.0}});
     return true;
 }
 

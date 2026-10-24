@@ -416,6 +416,7 @@ private:
     bool r8Ok_ = false;   // R8 blits and filters: the light maps one channel (`setTextures`)
     bool bcOk_ = false;   // BC7 and BC4 sampled and filtered: the pack's block files (`setTextures`)
     VkPhysicalDeviceMemoryProperties memProps_{};
+    long long lazyBytes_ = 0; int lazyImages_ = 0;   // TRANSIENT attachments in lazily allocated memory
     VkDevice          dev_  = VK_NULL_HANDLE;
     VkQueue           queue_ = VK_NULL_HANDLE;
     uint32_t          qfam_ = 0;
@@ -707,9 +708,9 @@ private:
     // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -----------
     // The BLOOM from the texture pack's light maps and the city's colour
     // GRADE, after the scene's render pass and before the readback and the
-    // present pass, so every way a frame leaves sees them. `colour_` is
-    // copied to `postSrc_`; two quarter-size half-float images take the glow
-    // (down, blur, blur); one pass writes the finished frame back into
+    // present pass, so every way a frame leaves sees them. The scene is drawn
+    // into `postSrc_` (`fbufPost_`); two quarter-size half-float images take
+    // the glow (down, blur, blur); one pass writes the finished frame into
     // `colour_`. Made on first use for the target's size; `resize` drops it.
     float            bloom_ = 0.0f;
     VkImage          postSrc_ = VK_NULL_HANDLE;  VkDeviceMemory postSrcMem_ = VK_NULL_HANDLE;
@@ -718,6 +719,8 @@ private:
     VkImageView      glowView_[2] = {};
     VkRenderPass     glowPass_ = VK_NULL_HANDLE, finalPass_ = VK_NULL_HANDLE;
     VkFramebuffer    glowFb_[2] = {};   VkFramebuffer finalFb_ = VK_NULL_HANDLE;
+    VkFramebuffer    fbufPost_ = VK_NULL_HANDLE;   // `pass_` into `postSrc_`: the scene when the post runs
+    bool             postNow_ = false;             // this frame's post, decided by `begin`
     VkDescriptorSetLayout postDsl_ = VK_NULL_HANDLE;
     VkDescriptorPool postPool_ = VK_NULL_HANDLE;
     VkDescriptorSet  postDs_[8] = {};   // down, blur H, blur V, final; AO, AO blur H, AO blur V, AO depth
@@ -884,8 +887,26 @@ bool VulkanRenderer::makeImage2D(const VkImageCreateInfo& ii, VkImageAspectFlags
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     ai.allocationSize = req.size;
     ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    // a TRANSIENT attachment (never loaded nor stored: the MSAA samples, a
+    // depth nothing reads) in LAZILY ALLOCATED memory where the device has
+    // it - MEMORYLESS on Apple's GPUs, the samples living in tile memory
+    // alone (the audit's 4K trims: 4x MSAA at 4K is ~133 MB of colour and
+    // ~166 MB of depth and stencil that were real allocations)
+    bool lazy = false;
+    if (ii.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)
+        for (uint32_t i = 0; i < memProps_.memoryTypeCount; ++i)
+            if ((req.memoryTypeBits & (1u << i)) &&
+                (memProps_.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)) {
+                ai.memoryTypeIndex = i;
+                lazy = true;
+                break;
+            }
     r = vkAllocateMemory(dev_, &ai, nullptr, &mem);
     if (r != VK_SUCCESS) { mem = VK_NULL_HANDLE; return fail("its memory", r); }
+    if (lazy) {
+        lazyBytes_ += static_cast<long long>(ai.allocationSize);
+        ++lazyImages_;
+    }
     OMK_GPU_ALLOC(what, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
     r = vkBindImageMemory(dev_, img, mem, 0);
     if (r != VK_SUCCESS) return fail("binding its memory", r);
@@ -1172,7 +1193,9 @@ bool VulkanRenderer::makeTarget() {
                    VK_IMAGE_USAGE_SAMPLED_BIT,
                VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT,
                colour_, colourMem_, colourView_)) return false;
-    if (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    // (TRANSIENT: resolved within the pass, never stored - `makeImage2D`)
+    if (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM,
+                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                        VK_IMAGE_ASPECT_COLOR_BIT, samples_,
                        msColour_, msColourMem_, msColourView_)) return false;
     // A depth+STENCIL format, because the mirror pass confines its reflection
@@ -1198,7 +1221,9 @@ bool VulkanRenderer::makeTarget() {
         aoOk_ = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
         if (!aoOk_) std::fprintf(stderr, "vulkan: the depth format cannot be sampled - no ambient occlusion\n");
     }
-    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u),
+    // (TRANSIENT where nothing reads it after the pass - the AO's absence)
+    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                           (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT),
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
     if (aoOk_) {
@@ -1228,7 +1253,9 @@ bool VulkanRenderer::makeTarget() {
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // the stencil lives within the pass (the mirror's, cleared at its start):
+    // nothing loads it after, so it is not stored (the audit's 4K trims)
+    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     att[2].format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -1271,6 +1298,14 @@ bool VulkanRenderer::makeTarget() {
     // `readBuf_` and `fb_` are made by the first `readback`: a GPU-presented
     // run never reads a frame back, and at 4K they are 33 + 16 MB
     fb_ = omk::Surface();
+    if (lazyImages_ > 0) {
+        static bool said = false;
+        if (!said)
+            std::printf("vulkan: %d render-target attachments TRANSIENT in lazily allocated memory, %.0f MB "
+                        "(memoryless on Apple's GPUs)\n", lazyImages_, static_cast<double>(lazyBytes_) / 1048576.0);
+        said = true;
+        omk::event("vulkan.memoryless", {{"images", lazyImages_}, {"mb", static_cast<double>(lazyBytes_) / 1048576.0}});
+    }
     // a RESIZE stops here: what follows is sized once and kept
     if (resizing_) return true;
 
@@ -1297,6 +1332,21 @@ bool VulkanRenderer::makeTarget() {
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         if (makeImage2D(ii, VK_IMAGE_ASPECT_DEPTH_BIT, "shadow map", shImg_, shMem_, &shView_)) {
+            // SHADER_READ from the start: every frame's scene set binds it,
+            // and a run whose shadow pass never draws (no mapped shadows)
+            // read it UNDEFINED (the validation layer's VUID-vkCmdDraw-None-09600,
+            // found 2026-10-24); its pass starts from UNDEFINED as before
+            {
+                VkCommandBuffer cb = oneShotBegin();
+                VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.image = shImg_; b.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                     0, 0, nullptr, 0, nullptr, 1, &b);
+                oneShotEnd(cb);
+            }
 
             VkAttachmentDescription da{};
             da.format = shFmt_; da.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2613,19 +2663,23 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         }
         // Level 0..levels-2 are now TRANSFER_SRC, the last TRANSFER_DST; the
         // last level is moved to SRC too so ONE barrier can hand the whole
-        // image to the shader. With one level that is level 0 (DST -> SRC ->
-        // shader), a layout change and nothing else.
-        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, levels - 1, 1, 0, 1};
-        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        bar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        // image to the shader. With one level there is no ladder: level 0 goes
+        // from DST to the shader - the image has no TRANSFER_SRC usage then
+        // (the validation layer's VUID-VkImageMemoryBarrier-oldLayout-01212,
+        // found 2026-10-24).
+        if (levels > 1) {
+            bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, levels - 1, 1, 0, 1};
+            bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            bar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        }
         bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
-        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        bar.oldLayout = levels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        bar.srcAccessMask = levels > 1 ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
@@ -3335,7 +3389,10 @@ void VulkanRenderer::begin(const omk::View& view) {
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = passFb_ && passFb_ == reflFbuf1_ ? reflPass1_ : passFb_ && reflPass_ ? reflPass_ : pass_;
-    rp.framebuffer = passFb_ ? passFb_ : fbuf_;
+    // the post's this frame: decided here, where the scene's target is
+    // chosen - with it the scene lands in `postSrc_`, and `end` must run it
+    if (!passFb_) postNow_ = (bloom_ > 0.0f || lutN_ > 1 || aoOk_) && makePost();
+    rp.framebuffer = passFb_ ? passFb_ : postNow_ ? fbufPost_ : fbuf_;
     // the RENDER size, not the output one: a render area smaller than the
     // attachment leaves the rest of it undefined, and with supersampling on
     // the resolve then averages four blocks of uninitialised memory.
@@ -3593,7 +3650,7 @@ void VulkanRenderer::end() {
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
     stamp("scene");
-    if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) {
+    if (postNow_) {
         recordPost(cb_);
         stamp("post");
     }

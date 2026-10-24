@@ -30986,6 +30986,13 @@ def c_engine_profiler_gpu():
     2026-10-20) and `normalFlat_` (binding 3, the flat normal map; the relief,
     2026-10-21). Both exist with the remaster off, so the street counts them;
     the no-growth figure still guards the leak this pin once caught.
+
+    **2026-10-24, two moves found red on the M1, neither a leak**: the three
+    1x1 fallbacks (white, `lightBlack_`, `normalFlat_`) are their own
+    category since the audit's bug 4 (`6319abd`, "texture stand-ins") - 39
+    textures + 3 stand-ins, the same 42; and the batched upload (`c2a78d8`)
+    keeps ONE staging ring of 32 MB for the run - staging at rest is that
+    ring alone (a staging buffer left over would make it two).
     """
     import subprocess, tempfile, shutil
     sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -31013,18 +31020,19 @@ def c_engine_profiler_gpu():
     sums = every and all(sum(t[1] for t in g["tags"]) == g["live"] for g in gpus)
     last = {t[0]: (t[1], t[2]) for t in (gpus[-1]["tags"] if every else [])}
     tex = last.get("textures", (0, 0))
+    stand = last.get("texture stand-ins", (0, 0))
     growth = (gpus[-1]["live"] - gpus[15]["live"]) if every else -1
     print("        GPU at frame 29: %.1f MB - %s; frames 15..29 grew %+d KB" % (
         (gpus[-1]["live"] if every else 0) / 1048576.0,
         ", ".join("%s %.1f MB (%d)" % (k, v[0] / 1048576.0, v[1]) for k, v in sorted(last.items())),
         growth // 1024))
-    return (every, sums, tex[1], tex[0] > 8 << 20, "vertex buffers" in last, "staging" in last,
-            0 <= growth < 1 << 20), \
-           (True, True, 42, True, True, False, True), \
+    return (every, sums, tex[1] + stand[1], tex[0] > 8 << 20, "vertex buffers" in last,
+            last.get("staging", (0, 0)) == (32 << 20, 1), 0 <= growth < 1 << 20), \
+           (True, True, 42, True, True, True, True), \
         "the street through the Vulkan world renderer: GPU memory in every frame, its " \
-        "categories summing to the total, the 40 texture atlases and the 2 remaster " \
-        "fallbacks over 8 MB, vertex " \
-        "buffers, no staging left at rest, no growth over frames 15..29"
+        "categories summing to the total, the 39 texture atlases and the 3 fallbacks (the " \
+        "atlases over 8 MB), vertex " \
+        "buffers, the staging ring alone at rest (32 MB, one), no growth over frames 15..29"
 
 
 def c_engine_frontend_gateway():
@@ -31856,8 +31864,11 @@ def c_engine_bloom_and_grade():
               'kRemaster, "bloom"' in sc and 'kRemaster, "grade"' in sc and
               'kEnhancements, "bloom"' not in sc and 'kEnhancements, "grade"' not in sc,
               "bloom" not in max_body and "grade" not in max_body,
-              # (Vulkan's post-pass also runs for the AO, `be4a245f`)
-              "if (bloom_ > 0.0f || lutN_ > 1 || aoOk_) {\n        recordPost(cb_);" in vk and
+              # (Vulkan's post-pass also runs for the AO, `be4a245f`; decided
+              # by `begin`, which then draws the scene into `postSrc_`, the
+              # audit's 4K trims 2026-10-24)
+              "postNow_ = (bloom_ > 0.0f || lutN_ > 1 || aoOk_) && makePost();" in vk and
+              "if (postNow_) {\n        recordPost(cb_);" in vk and
               "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
               # the GLES variant over both program sets (the plain one the
               # fallback, 2026-10-21)
@@ -34409,7 +34420,8 @@ def c_engine_ao():
               'kRemaster, "ao"' in sc and 'kEnhancements, "ao"' not in sc,
               "ao" not in re.findall(r"take\w*\(s\.(\w+)", max_body),
               "!preset.empty() ? 2.0f : 0.0f;" in pre,
-              "VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u)" in vk,
+              # (TRANSIENT without the AO - lazily allocated, the 4K trims)
+              "(aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)" in vk,
               "att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;" in vk)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:

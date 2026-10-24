@@ -1608,6 +1608,36 @@ decode in `prepareSet`, GLES's pins; then the split and the 4K trims,
 measured with `OMK_GPU_TIMES=1` on a QUIET machine (4K Qalisar, before and
 after).
 
+**The checks on the M1 (2026-10-24, MacBookPro17,1, `b7fb18e6`)**, the pack
+on the external disk (`omk.conf`: `pack = /Volumes/Crucial_X8/omk/omk-pack`,
+`full/pack` with PNG, BC7, BC4 and ASTC). The 21 remaster checks with
+`--only`, `--jobs 4`: **20 green, `emitter light` red** - `block formats`
+part 4 (red at the audit, the pack moved), `preload` and `remaster switch`
+among the green. No timing: the load average was 6 on 8 cores.
+* **SDL3 does not build** (`sdlfront.cpp:539-540` and three more:
+  `SDL_AudioSpec` has no `callback` / `userdata` in SDL3), and the Makefile
+  takes SDL3 wherever `pkg-config` has it - this M1 has 3.4.18 beside
+  2.28.5. `make SDL_PKG=sdl2` (and `MAKEFLAGS=SDL_PKG=sdl2` for `verify.py`'s
+  own makes) until it does. **The trap**: the failed SDL3 make left objects
+  built with `-DOMK_SDL3` in `build/obj/play-gles` that the SDL2 make then
+  linked (make does not track flags) - a GLES viewer importing
+  `SDL_GetWindowSizeInPixels` whose `OMK_VERIFY_GPU_PRESENT` never ran, so
+  `gles upscale` failed part 4 and `body light` once. `rm -rf
+  build/obj/play-gles build/obj/play-vk` after a make with the wrong SDL.
+* **`emitter light`'s `tight == loose` is not the tiles**: tight and loose
+  differ by 1-2 pixels, one 565 step, at (510,55) and (501,249) of Qalisar
+  640x480 - and so do two runs of the SAME tight build (each pixel takes one
+  of two values per run). A 1-unit margin on the tight test's radius leaves
+  the frame byte-identical; the 313 `View::points` are the same in order and
+  value every run; the pack pools the same counts. The flips need the
+  `--remaster` preset's RELIEF (`--relief 0`: none in 5) and TRILINEAR
+  (`--filter bilinear`: none in 5); off with the pack alone or the lights
+  alone. Every KTX2 in `full/pack` carries its full chain (6702 files), so
+  the suspect is the levels as UPLOADED - a level never written, read at a
+  distance through the relief's taps - with audit item 9's partial-chain
+  worry, on Vulkan. The check is right to be red until that is found; not
+  M1-only either, the M3's runs may simply have landed on one value.
+
 ## D1 - the rounded bodies: first cut (2026-10-22)
 
 `--smooth S` / `[Remaster] smooth = S` (0..1, 0.75 Phong's own), off by

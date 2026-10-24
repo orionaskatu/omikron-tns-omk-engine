@@ -1637,6 +1637,28 @@ among the green. No timing: the load average was 6 on 8 cores.
   distance through the relief's taps - with audit item 9's partial-chain
   worry, on Vulkan. The check is right to be red until that is found; not
   M1-only either, the M3's runs may simply have landed on one value.
+* **The 4K frame on the M1** (the M3's table above, same street and flags:
+  `--vulkan --res 3840x2160 --remaster --enhance-all`, hidden window,
+  `OMK_GPU_TIMES=1`, 600 frames, frames 240-599 averaged; load ~2.3, the
+  BARE binary - the M3's GPU-clock cap showed only past ~1140 frames):
+
+  | `--upscale` | ms a frame | fps | world begin..end | present | GPU: shadow / reflection / scene / post |
+  |---|---|---|---|---|---|
+  | off | 39.2 | **25.5** | 33.3 | 4.1 | 0.23 / 2.32 / 12.38 / 6.03 = 21.0 |
+  | 1.5 | 28.9 | **34.6** | 20.1 | 6.9 | 0.27 / 1.45 / 5.65 / 2.70 = 10.1 |
+  | 2 | 24.0 | **41.6** | 15.2 | 7.0 | 0.23 / 1.05 / 3.41 / 1.62 = 6.3 |
+
+  (the M3: 42.6 / 57 / 68 fps.) Repeated 20 minutes later: 25.7 / 34.6 /
+  41.6, every GPU pass within 0.15 ms - the figures hold. At x2 the GPU is 6.3 ms of a 24 ms frame:
+  the CPU's submission (~9 ms of `world begin..end` past the GPU's) and the
+  4K present (7 ms) are the frame - the Vulkan trims of the list above buy
+  little there; at native 4K the GPU's 21 ms is most of it.
+* **The preload's uploads, the same runs**: 7 frames each uploading 3
+  textures ahead (all from block files). The upload ~4.7 ms a frame on every
+  run; the READ AND DECODE 10.7 ms a frame (worst frame 21.7 ms) on the
+  first run - the pack cold on the external disk - and 1.3 ms once in the
+  file cache. The read on the render thread is the cost a cold pack pays:
+  the audit's "decode into `prepareSet`'s thread" first.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

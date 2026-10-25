@@ -1625,7 +1625,7 @@ among the green. No timing: the load average was 6 on 8 cores.
   `SDL_GetWindowSizeInPixels` whose `OMK_VERIFY_GPU_PRESENT` never ran, so
   `gles upscale` failed part 4 and `body light` once. `rm -rf
   build/obj/play-gles build/obj/play-vk` after a make with the wrong SDL.
-* **`emitter light`'s `tight == loose` is not the tiles**: tight and loose
+* **`emitter light`'s `tight == loose` is not the tiles** (the cause found 2026-10-25, below): tight and loose
   differ by 1-2 pixels, one 565 step, at (510,55) and (501,249) of Qalisar
   640x480 - and so do two runs of the SAME tight build (each pixel takes one
   of two values per run). A 1-unit margin on the tight test's radius leaves
@@ -1740,7 +1740,8 @@ but `emitter light` (the run-to-run flip above).
   second's 22.9 / 21.1 -> 9.0 / 9.6, the preload's 1.69 / 1.58 -> 0.99 /
   0.75 ms a texture. NOT DONE: the image memory sub-allocated (still three
   allocations a texture with its maps).
-* **The emitter light's flip, narrowed**: it needs the pack's BLOCK files -
+* **The emitter light's flip, narrowed** (FOUND AND FIXED 2026-10-25, "The
+  emitter light's flip, found" below): it needs the pack's BLOCK files -
   with `OMK_NO_BLOCK_FORMATS=1` (its PNGs, the blit ladder) none in 5 - and
   not the levels under 4x4 (uploaded without them it still flips). The BC4
   light maps' levels sit at 8-aligned offsets (392 of 1688), legal for an
@@ -1847,6 +1848,49 @@ but `emitter light` (the run-to-run flip above).
     from these: the 1x1 fallbacks' own category (`6319abd`) and the staging
     ring (`c2a78d8`) - re-pinned (39 + 3, the ring alone at rest), shown to
     fail. `engine: bloom and grade` and `engine: ao` read the new lines.
+* **The emitter light's flip, found (2026-10-25, M1)**. Reproducing it
+  needed the CHECK'S OWN ARGUMENTS - `--save traces/save-appart.bin`: without
+  the save, 48 runs over three builds, under CPU and GPU load, gave one frame;
+  with it, 10 runs gave 5. The cause: IMPLICIT LOD PAST A NON-UNIFORM BRANCH
+  in `scene.frag`. `relief()`'s four brightness taps followed the normal
+  map's early return (`if (nm.a > 0.0) return`), so in a 2x2 quad where a
+  neighbour had returned, `texture()`'s derivatives - and the mip level - were
+  UNDEFINED; so were `relief()`'s own `dFdx`s, its normal-map read, the
+  floors' normal-map read and the glow's light-map read past the cutout's and
+  the water's `discard`s. Fixed: `main` takes `gradUV` / `gradW` before the
+  water's discard (the cull's takes a whole primitive), and every read after
+  goes through `textureGrad` (`relief()` takes the gradients as arguments).
+  The colour read before the cutout stays `texture()` - the original's.
+  The check's configuration: 5 frames in 10 before; 10, 8, 10 and 6 runs the
+  same after (34 of 34), and the check green 3 of 3. `engine: relief` part 1
+  holds the rule (no `texture()` or `dFd` in `relief()`, the gradients before
+  the water's discard, the normal map and the light map through
+  `textureGrad`), shown to fail twice; `relief`, `floors`, `water
+  reflection`, `bloom and grade`, `body light` green. The earlier narrowing
+  (blocks, relief, trilinear) was what made the undefined LOD SHOW: a level
+  choice matters only where the levels differ.
+* **OPEN - without MSAA, the same Qalisar frame differs on EVERY run**
+  (`--aa 1`, which `--enhance-all` overrides, so no check sees it): ~2000
+  pixels of the wall behind the pink sign (340-410, 0-95 at 640x480), in
+  blocks, from frame 2 on - and older too (`263e28b`, `c7a1c98`). Ruled out,
+  each by hashing or zeroing on the backend's side, the frame still varying:
+  the light and tile data (the last frame's UBO, points and tile words
+  byte-identical over runs), the vertex data (every upload hashed; the
+  vertex-buffer cache off), the textures (all 53 uploads hashed), the draw
+  list (785 draws, same order and fields), the pose buffer (zeroed; its
+  cache off), the light buffers (zeroed), texture eviction (off), the
+  reflections (floors and water off), the post pass (bloom, AO and grade
+  off), the relief, the normal map, the shadow map; no MoltenVK or Metal
+  error, Metal's shader validation silent, the Khronos layer only its known
+  static `refl` report. What it NEEDS: the emitter lights' TILED pipelines -
+  `OMK_NO_TILES=1` and `--fx-light 0` are stable - and not their light loop
+  (skipped, it still varies). A debug output of the fragment's world
+  position shows DIFFERENT SURFACES winning those pixels from run to run
+  (positions thousands of units apart), not one surface lit differently.
+  Next: which draws use `pipeTiled_` there and whether its vertex stage
+  places them as the plain pipeline does (a Metal compile of the vertex
+  function per pipeline, its depth then not the plain one's), and a Metal
+  capture on a machine with Xcode.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

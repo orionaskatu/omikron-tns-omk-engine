@@ -32582,6 +32582,15 @@ def c_engine_relief():
     Parts:
       1. the source: 0 by default, [Remaster] only, never `all = max`, the
          preset's 1; in the shader inside `#ifdef OMK_TILED` and on mode 3;
+         and (2026-10-25) NO IMPLICIT LOD past a non-uniform discard:
+         `main` takes the UV and position gradients (`gradUV`, `gradW`)
+         before the water's discard, `relief()` takes them as arguments and
+         reads only through `textureGrad` (no `texture()`, no `dFdx`), and
+         the normal map and the glow's light map elsewhere through
+         `textureGrad` too - past a discard or `relief()`'s early return the
+         quad is not whole and the LOD UNDEFINED: on the M1 the relief's taps
+         drew `engine: emitter light`'s tight frame differently run to run
+         (5 frames in 10; 18 of 18 the same after);
       2. by Anekbah's burner (1780, 0, -7380) with the preset and
          `--enhance-all` on Vulkan: relief 1 moves more than 50000 pixels;
       3. ...and NOTHING where the point lights are not: relief 1 with
@@ -32600,6 +32609,10 @@ def c_engine_relief():
     `--remaster` and `--remaster --enhance-all`, by the burner and in Qalisar
     (12 of 12). At x4 the slope was barely seen (the median moved pixel 8 of
     255 at 1); x8 now.
+
+    Part 1's eighth item SHOWN TO FAIL (2026-10-25): one tap put back to
+    `texture(tex, ...)`, and the gradients moved after the water's discard -
+    each red alone.
 
     Shown to fail (2026-10-21), one at a time: the strength never read - 0
     pixels move (part 2); the mode-3 guard dropped, the bodies grained too -
@@ -32629,6 +32642,9 @@ def c_engine_relief():
     pre = pre[:pre.index(";")] + ";"
     tiled = fs[fs.index("#ifdef OMK_TILED\n// THE RELIEF"):]
     tiled = tiled[:tiled.index("#endif")]
+    body = fs[fs.index("vec3 relief("):]
+    body = body[:body.index("\n}\n")]
+    mainf = fs[fs.index("void main()"):]
     src_ok = (bool(re.search(r"float\s+relief\s*=\s*0\.0f;", sh)),
               'kRemaster, "relief"' in sc and 'kEnhancements, "relief"' not in sc,
               "relief" not in max_body,
@@ -32636,13 +32652,18 @@ def c_engine_relief():
               "vec3 relief(" in tiled and fs.count("relief(") == 2,
               bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(pc\.lit == 3\) nL = relief\(", fs)),
               bool(re.search(r"#ifdef OMK_TILED\s*\n(//[^\n]*\n)*layout\(set = 0, binding = 3\) uniform sampler2D nmap;", fs))
-              and "nm.a > 0.0" in tiled)
+              and "nm.a > 0.0" in tiled,
+              # no implicit LOD past a non-uniform discard (2026-10-25)
+              "texture(" not in body.replace("textureGrad(", "").replace("textureSize(", "") and "dFd" not in body
+              and mainf.index("gradUV[2] =") < mainf.index("pc.water == 2 && vWorld.y")
+              and mainf.index("gradW[2] =") < mainf.index("pc.water == 2 && vWorld.y")
+              and "texture(nmap" not in fs and "textureGrad(emis" in mainf)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
     pack = (omkpaths.pack_path() or "")
     if not os.path.isdir(pack):
-        return (src_ok, ("skipped",)), ((True,) * 7, ("skipped",)), "no texture pack"
+        return (src_ok, ("skipped",)), ((True,) * 8, ("skipped",)), "no texture pack"
     tmp = tempfile.mkdtemp()
     vk = os.path.join(eng, "build", "omk-play")
     normals = {}
@@ -32673,7 +32694,7 @@ def c_engine_relief():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if any(v is None for v in f.values()):
-        return (src_ok, ("no frame",)), ((True,) * 7, ("frames",)), "a run wrote no frame"
+        return (src_ok, ("no frame",)), ((True,) * 8, ("frames",)), "a run wrote no frame"
     moved = sum(1 for x, y in zip(f["off"], f["on"]) if x != y)
     nofx = sum(1 for x, y in zip(f["nofx0"], f["nofx1"]) if x != y)
     slot = sum(1 for x, y in zip(f["slot0"], f["slot1"]) if x != y)
@@ -32681,7 +32702,7 @@ def c_engine_relief():
           f"normal maps uploaded at relief 1 {normals['on']}, at 0 {normals['off']}"
           + ("" if has_maps else " (the pack has none - `omktexpack.py materials`)"))
     return (src_ok, moved > 50000, nofx, slot, normals["on"] > 0 or not has_maps, normals["off"]), \
-        ((True,) * 7, True, 0, 0, True, 0), \
+        ((True,) * 8, True, 0, 0, True, 0), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 2, the tiled module and " \
         "mode 3 alone, the normal map's binding there); by Anekbah's burner relief 1 moves the frame, and " \
         "nothing without the point lights or the tiles; the pack's normal maps uploaded at relief 1 (where " \

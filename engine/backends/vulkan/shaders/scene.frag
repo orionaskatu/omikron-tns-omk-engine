@@ -238,11 +238,11 @@ float litness() {
 // surface's screen derivatives (world position and UV). Only the point lights
 // see it (the painted light has no direction), and only on the SET (mode 3):
 // a body's painted cloth and face read as grain. 0, the default, leaves `n`.
-vec3 relief(vec3 n, vec3 w, vec2 uv) {
+// `dp1`/`dp2`, `du1`/`du2`: the screen derivatives of `w` and `uv`, taken by
+// `main` BEFORE its discards (`gradW`, `gradUV`) - see there.
+vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
     float s = lg.fx.x;
     if (s <= 0.0) return n;
-    vec3 dp1 = dFdx(w), dp2 = dFdy(w);
-    vec2 du1 = dFdx(uv), du2 = dFdy(uv);
     vec3 p2 = cross(dp2, n), p1 = cross(n, dp1);
     vec3 T = p2 * du1.x + p1 * du2.x, B = p2 * du1.y + p1 * du2.y;
     float m = max(dot(T, T), dot(B, B));
@@ -251,18 +251,20 @@ vec3 relief(vec3 n, vec3 w, vec2 uv) {
     // THE PACK'S NORMAL MAP where there is one (`o3de/normalmap.h`: OpenGL's
     // convention - R along +u, G along -v, the image's up): its slope, scaled
     // by the strength, along the frame's T and -B
-    vec4 nm = texture(nmap, uv);
+    vec4 nm = textureGrad(nmap, uv, du1, du2);
     if (nm.a > 0.0) {
         vec3 t = nm.rgb * 2.0 - 1.0;
         vec2 sl = t.xy / max(t.z, 0.2) * s;
         return normalize(n + (T * inv) * sl.x - (B * inv) * sl.y);
     }
+    // (explicit gradients: past the normal map's early return the quad is
+    // not uniform either)
     vec2 px = 1.0 / vec2(textureSize(tex, 0));
     const vec3 Y = vec3(0.299, 0.587, 0.114);
-    float hl = dot(texture(tex, uv - vec2(px.x, 0.0)).rgb, Y);
-    float hr = dot(texture(tex, uv + vec2(px.x, 0.0)).rgb, Y);
-    float hu = dot(texture(tex, uv - vec2(0.0, px.y)).rgb, Y);
-    float hd = dot(texture(tex, uv + vec2(0.0, px.y)).rgb, Y);
+    float hl = dot(textureGrad(tex, uv - vec2(px.x, 0.0), du1, du2).rgb, Y);
+    float hr = dot(textureGrad(tex, uv + vec2(px.x, 0.0), du1, du2).rgb, Y);
+    float hu = dot(textureGrad(tex, uv - vec2(0.0, px.y), du1, du2).rgb, Y);
+    float hd = dot(textureGrad(tex, uv + vec2(0.0, px.y), du1, du2).rgb, Y);
     vec2 g = vec2(hr - hl, hd - hu) * s;
     // the slope a texel, x8: a brightness step of 0.1 tilts the normal ~0.8 at 1
     // (x4 was barely seen at 1 - the median pixel moved 8 of 255)
@@ -272,6 +274,18 @@ vec3 relief(vec3 n, vec3 w, vec2 uv) {
 
 void main() {
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
+    vec2 texels = vec2(textureSize(tex, 0));
+    if (pc.texScaled != 0) texels /= vec2(pc.texScaleU, pc.texScaleV);
+    // THE SCREEN DERIVATIVES the remaster's reads take, here - before the
+    // water's and the cutout's DISCARDS (the cull's takes a whole primitive).
+    // Past a discard that took a neighbour the quad is no longer whole:
+    // `dFdx` and a `texture()`'s implicit LOD are UNDEFINED there. On the M1 that drew the relief, its normal map and the
+    // glow's light map differently EACH RUN on a wall whose quads a cutout
+    // edge split (`verify.py: engine: emitter light`'s run-to-run flip, found
+    // 2026-10-25). The reads after the discards take these through
+    // `textureGrad`; the colour read above them stays as the original's.
+    vec2 gradUV[2] = vec2[2](dFdx(vUV / texels), dFdy(vUV / texels));
+    vec3 gradW[2] = vec3[2](dFdx(vWorld), dFdy(vWorld));
     if (pc.water == 2 && vWorld.y > pc.waterStrength) discard;   // below the water (Y is down)
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
     // Under the nearest sampler (the original's) this is exactly the old
@@ -279,8 +293,6 @@ void main() {
     // key texels are (0,0,0,0), so the sample is premultiplied: a fragment
     // more than half key is discarded and the rest is un-premultiplied,
     // which is what keeps the cutout edge free of a dark fringe.
-    vec2 texels = vec2(textureSize(tex, 0));
-    if (pc.texScaled != 0) texels /= vec2(pc.texScaleU, pc.texScaleV);
     vec4 t = texture(tex, vUV / texels);
     if (pc.cutout != 0) {
         if (t.a < 0.5) discard;
@@ -311,7 +323,7 @@ void main() {
     float night = lg.eye.w;
     vec3 nL = normalize(vNrm);
 #ifdef OMK_TILED
-    if (pc.lit == 3) nL = relief(nL, vWorld, vUV / texels);
+    if (pc.lit == 3) nL = relief(nL, vWorld, vUV / texels, gradW[0], gradW[1], gradUV[0], gradUV[1]);
 #endif
     vec3 shade = pc.lit == 1 ? min(vec3(lg.base) * night + litColour(nL, vWorld, false), vec3(1.0))
                : pc.lit == 2 ? min(vCol * night + litColour(nL, vWorld, false), vec3(1.0))
@@ -368,7 +380,7 @@ void main() {
         vec2 at = gl_FragCoord.xy * k;
 #ifdef OMK_TILED
         if (pc.water == 3) {
-            vec4 nm = texture(nmap, vUV / texels);
+            vec4 nm = textureGrad(nmap, vUV / texels, gradUV[0], gradUV[1]);
             if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
         }
 #endif
@@ -381,6 +393,6 @@ void main() {
     // the 254 steps above - so a body neither glows nor takes or casts the
     // ambient occlusion. A body marked by the top of the range would collide
     // with full glow: additive draws ADD their alpha.
-    float glowV = pc.bloomMode != 0 ? texture(emis, vUV / texels).r : 0.0;
+    float glowV = pc.bloomMode != 0 ? textureGrad(emis, vUV / texels, gradUV[0], gradUV[1]).r : 0.0;
     outColour = vec4(c, pc.caster != 0 ? 0.0 : (1.0 + 254.0 * glowV) / 255.0);
 }

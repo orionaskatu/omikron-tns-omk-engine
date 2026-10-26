@@ -264,6 +264,7 @@ public:
     bool init(int w, int h) override;
     void setTextures(std::span<const omk::Texture> t) override { poolTextures(t, false); }
     void setPreloadTextures(std::span<const omk::Texture> t) override;
+    bool keepsPreload() const override { return true; }
     int preloadStep(int budget) override;
     // the pool's textures uploaded where new; `preload`: ONLY that, pinned -
     // nothing evicted, the frame's pool (`tex_`) untouched
@@ -2317,9 +2318,23 @@ bool VulkanRenderer::makePresentPass() {
         VkSubpassDescription sub{};
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        // in: after the last frame's blit or copy read it and `presentSurface`
+        // wrote it; out: before the next blit or copy reads it
+        VkSubpassDependency dep[2]{};
+        dep[0].srcSubpass = VK_SUBPASS_EXTERNAL; dep[0].dstSubpass = 0;
+        dep[0].srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        dep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep[1].srcSubpass = 0; dep[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         rpi.attachmentCount = 1; rpi.pAttachments = &a;
         rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        rpi.dependencyCount = 2; rpi.pDependencies = dep;
         VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &presPass_), "present render pass");
         VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fi.renderPass = presPass_; fi.attachmentCount = 1; fi.pAttachments = &presView_;
@@ -2418,17 +2433,24 @@ bool VulkanRenderer::runPresentPass(int vy, int vh, bool raw) {
     if (up && !makeUpscale()) return false;
     vh = std::clamp(vh, 1, h_);
     VkCommandBuffer cb = oneShotBegin();
-    const auto layout = [&](VkImageLayout from, VkImageLayout to) {
+    // Real scopes both ways (the audit's item 8): the top of the pipe and no
+    // access ordered nothing, and only the host's wait on the frame's fence
+    // kept it right
+    const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags srcA, VkAccessFlags dstA,
+                            VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.oldLayout = from; b.newLayout = to;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = colour_;
         b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        b.srcAccessMask = 0; b.dstAccessMask = 0;
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
-    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // its last writer: the scene's or the post's pass, or `presentSurface`'s copy
+    layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
     if (up) {
         // EASU: the drawn picture, `rs(w_) x rs(vh)` of `colour_`'s top-left,
         // up to the picture's `w_ x vh` in `easuImg_`'s
@@ -2460,7 +2482,11 @@ bool VulkanRenderer::runPresentPass(int vy, int vh, bool raw) {
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
-    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    // after the EASU's or this pass's reads, before the readback's copy or
+    // `presentDirect`'s blit
+    layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+           0, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+           VK_PIPELINE_STAGE_TRANSFER_BIT);
     oneShotEnd(cb);
     return true;
 }

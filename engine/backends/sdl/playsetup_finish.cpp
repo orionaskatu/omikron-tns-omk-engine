@@ -98,6 +98,7 @@ int PlayState::finish() {
         std::printf("player: Vie %d (the DB player record's property 1); %ld run-overs posted\n",
                     static_cast<int>(vie), session.runOvers());
     }
+    remasterFinish();
     std::printf("session: %d areas entered, %d ui answers, %d zones turned away by "
                 "the height band\n",
                 session.areasEntered(),

@@ -83,6 +83,7 @@
 #include <fstream>
 #include <vector>
 #include <map>
+#include <functional>
 #include <memory>
 #include <thread>
 #include <mutex>
@@ -898,6 +899,11 @@ struct SetLoad {
     long askedFrame = 0;
     int delayMs = 0;                 // `OMK_LOAD_DELAY_MS`
     int heldFrames = 0;              // frames the Session's load waited on the job
+    // asked between the job's stages: true stops it there, `found` false - a
+    // preloaded set released while it prepares (`playpreload.cpp`); unset, it
+    // runs to its end
+    std::function<bool()> cancelled;
+    int stoppedAt = -1;              // the stage (as `ms`) a cancel stopped it before; -1 none
     std::unique_ptr<omk::BackgroundJob> job;
 };
 

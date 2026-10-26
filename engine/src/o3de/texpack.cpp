@@ -128,6 +128,7 @@ bool TexturePack::open(const std::string& dir) {
         refused_.clear();
         greyOf_.clear();
         parked_.clear();
+        parkedRefs_.clear();
         parkedBytes_ = 0;
         parkedOrder_.clear();
     }
@@ -240,6 +241,7 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 parkedBytes_ -= imageBytes(pk->second);
                 out[i] = std::move(pk->second);
                 parked_.erase(pk);
+                parkedRefs_.erase(key);
                 ++parkedTaken_;
                 if (!normals) {
                     out[i].normal = {};
@@ -394,7 +396,8 @@ void TexturePack::prepare(std::span<const Texture* const> ts) {
         if (ts[i] && ts[i]->hasPixels() && imageBytes(rs[i]) > 0) keys[i] = textureKey(*ts[i]);
     std::lock_guard<std::mutex> lk(m_);
     for (std::size_t i = 0; i < ts.size(); ++i) {
-        if (!keys[i] || parked_.count(keys[i])) continue;
+        if (!keys[i]) continue;
+        if (parked_.count(keys[i])) { ++parkedRefs_[keys[i]]; continue; }
         const std::size_t b = imageBytes(rs[i]);
         if (b > kParkedBytes) continue;
         // the oldest let go to make room
@@ -402,11 +405,13 @@ void TexturePack::prepare(std::span<const Texture* const> ts) {
             if (const auto old = parked_.find(parkedOrder_.front()); old != parked_.end()) {
                 parkedBytes_ -= imageBytes(old->second);
                 parked_.erase(old);
+                parkedRefs_.erase(parkedOrder_.front());
             }
             parkedOrder_.pop_front();
         }
         parkedBytes_ += b;
         parked_.emplace(keys[i], std::move(rs[i]));
+        parkedRefs_[keys[i]] = 1;
         parkedOrder_.push_back(keys[i]);
     }
 }
@@ -418,8 +423,10 @@ void TexturePack::forget(std::span<const Texture* const> ts) {
     std::lock_guard<std::mutex> lk(m_);
     for (const std::uint64_t k : keys)
         if (const auto pk = parked_.find(k); pk != parked_.end()) {
+            if (--parkedRefs_[k] > 0) continue;   // another set's too
             parkedBytes_ -= imageBytes(pk->second);
             parked_.erase(pk);
+            parkedRefs_.erase(k);
         }
 }
 

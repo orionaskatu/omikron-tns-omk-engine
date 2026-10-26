@@ -1144,6 +1144,7 @@ private:
     // the listed textures not on the GPU yet, uploaded a few a frame
     std::vector<Texture> preQueue_;
     void setPreloadTextures(std::span<const Texture> t) override;
+    bool keepsPreload() const override { return true; }
     int preloadStep(int budget) override;
 #endif
     struct Vbo {

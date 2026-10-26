@@ -22,6 +22,7 @@ void PlayState::remasterSmoothModel(CharModel&, const std::string&) {}
 void PlayState::remasterSmoothPlayer() {}
 bool PlayState::remasterTakePreload(int, const std::string&, int, long) { return false; }
 void PlayState::phasePreload() {}
+void PlayState::remasterFinish() {}
 void PlayState::preloadPin() {}
 void PlayState::remasterSceneViewer() {}
 void PlayState::remasterEmitterLights(WorldSlot&) {}

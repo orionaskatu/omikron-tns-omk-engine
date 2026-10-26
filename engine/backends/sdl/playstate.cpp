@@ -2064,16 +2064,22 @@ void PlayState::prepareSet(SetLoad& L) {
         return std::chrono::duration<double, std::milli>(clk::now() - a).count();
     };
     WorldSlot& w = L.out;
+    const auto stop = [&L](int stage) {
+        if (!L.cancelled || !L.cancelled()) return false;
+        L.stoppedAt = stage;
+        return true;
+    };
 #if !defined(__vita__) && !defined(macintosh)   // no std::this_thread on either
     if (L.delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(L.delayMs));
 #endif
+    if (stop(0)) return;
     auto t = clk::now();
     const auto d = omk::DataFs::readPath(L.path3do);
     std::vector<std::byte> td;
     if (!L.path3dt.empty()) td = omk::DataFs::readPath(L.path3dt);
     L.bytes = d.size() + td.size();
     L.ms[0] = since(t);
-    if (d.empty()) return;
+    if (d.empty() || stop(1)) return;
     w.stem = L.stem;
     w.area = L.area;
     t = clk::now();
@@ -2117,9 +2123,11 @@ void PlayState::prepareSet(SetLoad& L) {
         }
     }
     L.ms[1] = since(t);
+    if (stop(2)) return;
     t = clk::now();
     if (!L.path3dt.empty()) w.tex = omk::textures(d, td);
     L.ms[2] = since(t);
+    if (stop(3)) return;
     t = clk::now();
     w.soup = omk::collisionSoup(d, omk::SoupKind::Walkable, &w.soupMesh);
     w.steep = omk::collisionSoup(d, omk::SoupKind::Steep, &w.steepMesh);
@@ -2141,6 +2149,7 @@ void PlayState::prepareSet(SetLoad& L) {
     }
     w.restXyzOfMesh.clear(); w.restSoupOfMesh.clear(); w.restSteepOfMesh.clear();
     L.ms[3] = since(t);
+    if (stop(4)) return;   // before the pack's decode, the most of a preload's work
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
     if (const auto mh = omk::readHeader(d)) {

@@ -33289,6 +33289,16 @@ def c_engine_upscale():
     frame read back and presented ran both passes twice - and its 11
     uniforms looked up once rather than 9 lookups a run. Shown to fail: the
     once-a-frame return removed - part 1's last False alone.
+
+    (2026-10-26) Part 1 also holds Vulkan's present pass to real barriers
+    (the audit's item 8): `runPresentPass`'s two transitions of `colour_`
+    were TOP_OF_PIPE with no access both ways - nothing ordered after the
+    frame's writes nor before the readback's copy, only the host's waits -
+    and its render pass now states its external dependencies. Byte-identical
+    (x2 and `--ssaa 2`, M1), the Khronos layer silent before and after - its
+    sync validation did not see the old barriers, nor a hazard planted in
+    the EASU pass's dependency that moved 7 pixels, so this is a source pin.
+    Shown to fail: the old barrier restored - part 1's last False alone.
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -33302,6 +33312,10 @@ def c_engine_upscale():
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl")
     fsr = gl[gl.index("void GlesRenderer::fsrPass(int vh) {"):]
     fsr = fsr[:fsr.index("\n}\n")]
+    vpp = vk[vk.index("bool VulkanRenderer::runPresentPass("):]
+    vpp = vpp[:vpp.index("\n}\n")]
+    vmp = vk[vk.index("bool VulkanRenderer::makePresentPass() {"):]
+    vmp = vmp[:vmp.index("\n}\n")]
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("upscale = upscaleFlag"):]
@@ -33316,7 +33330,13 @@ def c_engine_upscale():
               # once, not per run (the audit's GLES item, 2026-10-26)
               "if (fsrVh_ == vh && fsrW_ == w_ && fsrH_ == h_) return;" in fsr and
               "fsrVh_ = vh;" in fsr and "fsrVh_ = -1;" in gl and
-              fsr.count("glGetUniformLocation(") == 2 and "if (fsrLoc_[0] < 0) {" in fsr)
+              fsr.count("glGetUniformLocation(") == 2 and "if (fsrLoc_[0] < 0) {" in fsr,
+              # Vulkan's present pass ordered both ways (the audit's item 8):
+              # no TOP_OF_PIPE in its transitions, its render pass's two
+              # external dependencies
+              "TOP_OF_PIPE" not in vpp and vpp.count("VK_ACCESS_TRANSFER_READ_BIT") == 1 and
+              "VK_ACCESS_SHADER_READ_BIT" in vpp and
+              "rpi.dependencyCount = 2; rpi.pDependencies = dep;" in vmp)
     # 2. the constants, against AMD's
     tmp = tempfile.mkdtemp()
     try:
@@ -33385,11 +33405,11 @@ int main() {
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if "through VULKAN" not in log and not [e for e in _events(log) if e[0] == "vulkan.upscale"]:
-        return (src_ok, con_ok, ("skipped",)), ((True,) * 6, True, ("skipped",)), "no Vulkan device"
+        return (src_ok, con_ok, ("skipped",)), ((True,) * 7, True, ("skipped",)), "no Vulkan device"
     ev = [e[1] for e in _events(log) if e[0] == "vulkan.upscale"]
     drawn = (ev[0].get("drawW"), ev[0].get("drawH")) if ev else None
     if native is None or up is None:
-        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 6, True, ("640", "480"), "frames"), \
+        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 7, True, ("640", "480"), "frames"), \
             "a run wrote no frame"
     rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
     a = [rgb(v) for v in native]
@@ -33413,7 +33433,7 @@ int main() {
           f"{min(shifts[k] for k in shifts if k != (0, 0)):.2f}); "
           f"the window at x1.5: {gm[-1] if gm else 'no verify'} (compared, differing), GPU-presented {gpu}")
     return (src_ok, con_ok, drawn, a != b, m0 < 6.0, best, gpu_ok), \
-           ((True,) * 6, True, ("640", "480"), True, True, (0, 0), True), \
+           ((True,) * 7, True, ("640", "480"), True, True, (0, 0), True), \
         "the source (off by default, [Remaster] only, never all = max, not the preset's, EASU's output " \
         "bound only upscaled); the 100 constant words AMD's; the street drawn at 640x480 for 1280x960, " \
         "the native frame upscaled (close, and registered); the window's present pass 0 pixels from " \
@@ -34230,7 +34250,12 @@ def c_engine_preload():
     Parts:
       1. the source: off by default, [Remaster] only, never `all = max`, the
          preset's 25; `askSet` takes a prepared set before it starts one; the
-         Vulkan pool's eviction spares a pinned texture, and GLES's;
+         Vulkan pool's eviction spares a pinned texture, and GLES's; the
+         pack's parked decodes COUNTED (`parkedRefs_`): AAPKAYL and ARESTO
+         share `APPART10`, parked once, and a released AAPKAYL's `forget`
+         dropped it from the restaurant - part 3 red (fewer decoded ahead
+         than uploaded) in 4 of 6 runs once part 7's cancel forgot a job
+         returning past its last stage (2026-10-26). A timing, so a pin;
       2. the DOOR GRAPH (`door_census`, the static scan of each door zone's
          scripts for `area.goto` / `area.preload` the Session uses): Anekbah's
          doors reach the restaurant at one hop and ABAR06 through its airlock
@@ -34272,6 +34297,16 @@ def c_engine_preload():
     arrival's pool 7 new); the pack's parked result refused to a pool asking
     no normal maps (the old take) - part 6, 0 of 7 prepared. GLES's eviction
     ignoring the pin is part 1's alone, as Vulkan's.
+      7. THE CANCEL AND THE UNKEPT CAP (the audit's preload item, 2026-10-26):
+         part 5's walk with each preload's job sleeping 3 s first
+         (`OMK_PRELOAD_DELAY_MS`) - a set released while it prepares is
+         CANCELLED (`@evt preload.cancelled`, after its drop) before its read
+         (stage 0), and counted in flight until it returns: the next want
+         says one running, and none ever more than one (two in flight);
+         `remasterFinish` waits for the jobs at the end. The cap where the
+         renderer keeps no textures (`keepsPreload`, the software reference)
+         is 2 (Qalisar's stand, 60 frames), Vulkan's and GLES's 6 (parts 3
+         and 6's walks).
     NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
     walk follows); the characters of the area arriving (not preloaded).
     """
@@ -34286,6 +34321,7 @@ def c_engine_preload():
     pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
     vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     ask = pc[pc.index("bool PlayState::askSet"):]
@@ -34295,13 +34331,14 @@ def c_engine_preload():
               ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
               "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
               "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk and
-              "if (it->second.used || it->second.pinned) { ++it; continue; }" in gl)
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in gl,
+              "if (--parkedRefs_[k] > 0) continue;" in tp and "++parkedRefs_[keys[i]]; continue;" in tp)
     mk = subprocess.run(["make", "-s", "build/door_census", "play", "play-gles"], cwd=eng, capture_output=True,
                         text=True)
     census, play = os.path.join(eng, "build", "door_census"), os.path.join(eng, "build", "omk-play")
     playgl = os.path.join(eng, "build", "omk-play-gles")
     if mk.returncode != 0 or not all(os.path.exists(x) for x in (census, play, playgl)):
-        return (src_ok, "build"), ((True,) * 5, "built"), mk.stderr[-300:]
+        return (src_ok, "build"), ((True,) * 6, "built"), mk.stderr[-300:]
     out = subprocess.run([census, fr, os.path.join(ROOT, "tables"), "0", "101", "124"], capture_output=True,
                          text=True).stdout
     hops = {}
@@ -34315,7 +34352,7 @@ def c_engine_preload():
              "239" in hops.get(124, {}).get(1, set()) and "101" in hops.get(124, {}).get(2, set()))
     pk = omkpaths.pack_path()
     if not pk:
-        return (src_ok, graph, ("skipped",)), ((True,) * 5, (True,) * 4, ("skipped",)), "no remaster pack"
+        return (src_ok, graph, ("skipped",)), ((True,) * 6, (True,) * 4, ("skipped",)), "no remaster pack"
     gles_env = dict(os.environ, OMK_EVENTS="1", OMK_NO_GPU_PRESENT="1")
     tmp = tempfile.mkdtemp()
     try:
@@ -34340,11 +34377,14 @@ def c_engine_preload():
             prepared = sum(int(e[1].get("prepared", 0)) for e in ev if e[0] == "texpack.preload")
             # the arrival: the first pool the transition brings, 0 when none brings anything
             first = pools[0] if pools else 0
+            heldAt.update(e[1].get("held") for e in ev if e[0] == "preload.want")
             return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0, prepared
+        heldAt = set()   # the cap each want reported, GPU walks
         on, took, ahead, arrivalOn, wentOn, prepared = walk("on", 25)
         off, tookOff, aheadOff, arrivalOff, wentOff, _ = walk("off", 0)
         glOn, glTook, glAhead, glArrOn, glWentOn, glPrepared = walk("glon", 25, True)
         glOff, _, glAheadOff, glArrOff, glWentOff, _ = walk("gloff", 0, True)
+        gpuHeld = set(heldAt)
         gles = (glWentOn and glWentOff, bool(glTook), glAhead >= 7 and glPrepared == glAhead, glArrOn == 0,
                 glArrOff >= 7 and glAheadOff == 0, glOn is not None and glOn == glOff)
         r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
@@ -34369,6 +34409,30 @@ def c_engine_preload():
                all(float(e["metres"]) > float(e["forMetres"]) for e in evicted),
                all(any(w == e["for"] and k == i + 1 for w, k in wanted) for i, e in enumerate(evicted)),
                all(float(f["metres"]) > 35.0 or float(f["metres"]) < 0.0 for f in released))
+        # 7. the cancel: part 5's walk, every job 3 s late
+        def qalisar(*extra, env, frames="400", hold="k200*380"):
+            return subprocess.run([play, fr, os.path.join(ROOT, "tables")] + list(extra) +
+                                  ["--res", "640x480", "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp),
+                                   "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                   "--stand", "15300,0,-10050,270", "--frames", frames, "--hold", hold,
+                                   "--remaster", pk, "--preload", "25"],
+                                  capture_output=True, text=True, errors="replace", timeout=900,
+                                  env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **env)).stdout
+        ev7 = _events(qalisar("--world-vulkan", env={"OMK_PRELOAD_HELD": "1", "OMK_PRELOAD_DELAY_MS": "3000"}))
+        seq = [(n, f) for n, f in ev7 if n in ("preload.want", "preload.drop", "preload.cancelled")]
+        cancelled = [(k, f) for k, (n, f) in enumerate(seq) if n == "preload.cancelled"]
+        dropAt = {}
+        for k, (n, f) in enumerate(seq):
+            if n == "preload.drop": dropAt.setdefault(f.get("set"), k)
+        # a want after a cancelled set's drop, while only it can be running (the cap 1: nothing held)
+        counted = [int(f.get("running", -1)) for k, (n, f) in enumerate(seq) if n == "preload.want" and
+                   any(dropAt.get(c.get("set"), 1 << 30) < k < ck for ck, c in cancelled)]
+        runs = [int(f.get("running", -1)) for n, f in seq if n == "preload.want"]
+        soft = {f.get("held") for n, f in _events(qalisar(env={}, frames="60", hold="0*60"))
+                if n == "preload.want"}
+        cancel = (bool(cancelled), all(dropAt.get(c.get("set"), 1 << 30) < k for k, c in cancelled),
+                  all(str(c.get("stage")) == "0" for _, c in cancelled), bool(counted) and min(counted) >= 1,
+                  bool(runs) and max(runs) <= 1, soft == {"2"}, gpuHeld == {"6"})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead "
@@ -34378,16 +34442,21 @@ def c_engine_preload():
           f"nearer door {[(e['set'], e['metres'], e['for'], e['forMetres']) for e in evicted]}, past the radius "
           f"{[(f['set'], f['metres']) for f in released]}; GLES: {glAhead} up ahead ({glPrepared} decoded ahead), "
           f"the arrival's pool {glArrOn} new, without {glArrOff}; the frames "
-          f"{'the same' if glOn and glOn == glOff else 'DIFFER'}")
+          f"{'the same' if glOn and glOn == glOff else 'DIFFER'}; 3 s late: cancelled "
+          f"{[(c.get('set'), c.get('stage')) for _, c in cancelled]}, the wants after their drops counting "
+          f"{counted} running, at most {max(runs) if runs else None}; held {sorted(soft)} on software, "
+          f"{sorted(gpuHeld)} on the GPU walks")
     walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
               arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead)
-    return (src_ok, graph, walked, on is not None and on == off, cap, gles), \
-        ((True,) * 5, (True,) * 4, (True,) * 7, True, (True,) * 5, (True,) * 6), \
+    return (src_ok, graph, walked, on is not None and on == off, cap, gles, cancel), \
+        ((True,) * 6, (True,) * 4, (True,) * 7, True, (True,) * 5, (True,) * 6, (True,) * 7), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
-        "prepared set first, a pinned texture spared); the door graph two hops deep, airlocks included, both " \
+        "prepared set first, a pinned texture spared, a shared decode counted); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
         "brings fewer than its 7; the same frame with and without; at the cap a nearer door takes the farthest " \
-        "held's place, and a release is past the keep radius; GLES pins its preload the same way"
+        "held's place, and a release is past the keep radius; GLES pins its preload the same way; a set " \
+        "released while it prepares cancelled before its read and counted in flight till it returns; 2 held " \
+        "on software, 6 on the GPU"
 
 
 def c_engine_remaster_switch():

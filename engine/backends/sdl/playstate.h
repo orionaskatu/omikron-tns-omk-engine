@@ -761,8 +761,12 @@ struct PlayState {
         std::shared_ptr<SetLoad> L;
         bool sent = false;    // its textures handed to the renderer's preload
         double dist = 0;      // to its nearest door, game units
+        std::function<void()> cancel;   // stops its job at its next stage
     };
     std::map<std::string, Preloaded> preloads{};
+    // released while still preparing: cancelled, and counted in flight
+    // until their jobs return
+    std::vector<std::shared_ptr<SetLoad>> preloadDropped{};
     std::vector<omk::Session::DoorTarget> preloadDoors{};
     int preloadDoorsKey[2] = {-2, -2};
     long preloadTaken{}, preloadMade{};
@@ -774,6 +778,7 @@ struct PlayState {
     void remasterSmoothModel(CharModel& m, const std::string& name);
     void remasterSmoothPlayer();
     bool remasterTakePreload(int slot, const std::string& stem, int area, long frame);
+    void remasterFinish();                         // the preload's jobs stopped and waited for
     void remasterSceneViewer();                    // the scene viewer's texture pack
     void remasterEmitterLights(WorldSlot& ws);     // a set's table: its lights, glows, flames
     void remasterGrade();                          // the city grade for the set underfoot

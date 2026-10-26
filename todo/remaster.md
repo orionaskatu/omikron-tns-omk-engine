@@ -1488,7 +1488,7 @@ the tile binning handles `flipX` and the roll.
    to ~1 GiB before inflating (`pngread.cpp:246`, `out.reserve(expect)`;
    cap at deflate's 1032:1); a KTX2's codec slot not checked against its
    content (`readBlocks`: require `f.astc` to match the slot).
-8. **Vulkan's present-pass barriers** (`runPresentPass` 2236-2245, 2275):
+8. ✔ (2026-10-26, "Item 8" below) **Vulkan's present-pass barriers** (`runPresentPass` 2236-2245, 2275):
    `TOP_OF_PIPE`, access 0, both ways - no dependency on the post's writes
    nor the reads before the transition back. Harmless on MoltenVK (layouts
    are no-ops), wrong by the spec.
@@ -1521,7 +1521,7 @@ the tile binning handles `flipX` and the roll.
   trip evicts and reloads the city's pool - several times the M3's 13 ms on
   Android or the Quest. A `pinned` flag spared by the eviction, an
   `uploadOne(i)` driven 3 a frame, all in `glesrender_remaster.inl`.
-* **The preset's 25 m on GLES and software** holds up to six full
+* **The preset's 25 m on GLES and software** (DONE 2026-10-26, "The preload's cancel" below) holds up to six full
   `SetLoad`s with nothing pinned; up to six threads started in one frame
   (one per want, 1 MB stacks), no cancellation - a released set's job runs
   to its end. One or two in flight, a cancel flag between `prepareSet`'s
@@ -1962,6 +1962,58 @@ but `emitter light` (the run-to-run flip above).
     The canal with the water and a grade at 640x480: 7 render targets,
     5,068,800 bytes, where 2 were counted. `engine: profiler gpu`'s GLES
     part, shown to fail.
+* **Item 8 (2026-10-26), Vulkan's present-pass barriers**: `runPresentPass`'s
+  two transitions of `colour_` now name their scopes - in, after the scene's
+  or the post's colour writes and `presentSurface`'s copy, before the
+  fragment shader's reads; out, after those reads, before the readback's
+  copy or `presentDirect`'s blit reads it - and `presPass_` states its two
+  external dependencies (after the last blit's or copy's use of `presImg_`,
+  before the next one's read). Only the host's waits (the frame's fence,
+  `oneShotEnd`'s queue idle) kept the old ones right. Byte-identical (x2
+  and `--ssaa 2`, the M1), `engine: gpu present` / `fight gpu present` /
+  `vulkan images` green. The Khronos layer (1.4.357, synchronization
+  validation ON - its CURRENT-VALIDATION-ENABLED line says so) silent before
+  and after - and silent too on a hazard PLANTED in the EASU pass (its
+  external dependency removed), which moved 7 pixels of a frame: on this
+  machine the sync validation is no guard. So `engine: upscale` part 1 pins
+  the source, shown to fail (the first transition back to the top of the
+  pipe).
+* **The preload's cancel (2026-10-26)** - the audit's "preset's 25 m"
+  item. The two in flight were already there (`kInFlight`, 2026-10-24);
+  what was left:
+  * A set RELEASED while its job prepares is CANCELLED: `SetLoad::cancelled`
+    (a `std::function`, so no `<atomic>` in the ports' headers - the flag
+    itself lives in `playpreload.cpp`) is asked between `prepareSet`'s five
+    stages, the last before the pack's decode; the job is kept in
+    `preloadDropped` and COUNTS IN FLIGHT until it returns (before, a
+    released job ran to its end uncounted, beside two new ones).
+    `remasterFinish` (the session's end) cancels what still prepares and
+    waits for every job - they capture `this` (the preload's half of audit
+    item 9). `@evt preload.cancelled` says where each stopped.
+  * Where the renderer keeps no textures (`Renderer::keepsPreload`, false
+    on the software reference) 2 are held, not 6. MEASURED: no memory saved
+    on Qalisar's walk (peak 92-93 MB both ways, 5 held against 2) - the held
+    interiors are small beside the resident city; it saves a want or two of
+    thread work, no more.
+  * THE PACK'S PARKED DECODES COUNTED (`parkedRefs_`): two sets sharing a
+    texture park it once (`prepare` skips a parked key), and one set's
+    `forget` dropped it from the other - AAPKAYL and ARESTO share
+    `APPART10`. Forgetting a cancelled job that returned past its last stage
+    turned `engine: preload` part 3 red in 4 of 6 runs (6 of 7 decoded
+    ahead); the old code mostly escaped by order. Now a key is forgotten as
+    many times as it was prepared.
+  * `engine: preload` part 7 (part 5's walk, each job 3 s late via
+    `OMK_PRELOAD_DELAY_MS`: ANEKBAH cancelled at stage 0, the next want
+    counting it running, never more than one; held 2 on software, 6 on the
+    GPU walks) and a part-1 pin for the count - shown to fail four ways (no
+    cancel: stage -1; the dropped not counted: 0 running; the cap ignoring
+    the renderer: 6 on software; the count's guard removed: part 1).
+  * SEEN, NOT FIXED: the FIRST distance pass of a `--stand` start measures
+    from the player's pre-stand position - Qalisar's wants ANEKBAH and
+    TUNELAQ1 at 6.5 m, released at 61 and 125 m ten frames later; Anekbah's
+    restaurant walk AAPKAYL and AHALL27 at 2.5 m, released at 48.7 m. A
+    wasted job each (now cancelled cheaply); whether a save's own start
+    does it too is unread.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

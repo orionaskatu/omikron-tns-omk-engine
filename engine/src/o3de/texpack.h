@@ -154,9 +154,11 @@ public:
     // texture's key; `replacements` (the colours asked, with the normal maps
     // as the parking had them) hands a parked one over, once, instead of
     // reading and decoding it again. `forget` drops what a released set
-    // parked. At most `kParkedBytes` parked, the OLDEST let go to make room
-    // (a set released while still preparing parks after its `forget`: it
-    // ages out rather than holding the cap).
+    // parked - COUNTED, a key as many times as it was prepared: two sets
+    // sharing a texture park it once, and one set's release must not drop it
+    // from the other (2026-10-26). At most `kParkedBytes` parked, the OLDEST
+    // let go to make room (a set released while still preparing parks after
+    // its `forget`: it ages out rather than holding the cap).
     static constexpr std::size_t kParkedBytes = std::size_t{256} << 20;
     void prepare(std::span<const Texture* const> ts);
     void forget(std::span<const Texture* const> ts);
@@ -193,6 +195,7 @@ private:
     mutable std::unordered_set<std::uint64_t> refused_;
     // `prepare`'s results (under `m_`), and their bytes
     mutable std::unordered_map<std::uint64_t, PackImage> parked_;
+    mutable std::unordered_map<std::uint64_t, int> parkedRefs_;   // `prepare`s a parked key, less `forget`s
     mutable std::size_t parkedBytes_ = 0;
     mutable std::size_t parkedTaken_ = 0;
     std::deque<std::uint64_t> parkedOrder_;   // the keys as parked, oldest first (some since taken)

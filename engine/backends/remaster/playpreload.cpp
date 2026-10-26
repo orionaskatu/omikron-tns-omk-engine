@@ -19,6 +19,11 @@
 // the next city - and a NEARER door takes the place of the farthest held (the
 // audit's bug 3, 2026-10-23: three doors within reach filled the six, and the
 // door walked to next waited until one of them was past the keep radius).
+// A set released while its job still prepares is CANCELLED at the job's next
+// stage (`SetLoad::cancelled`) and counts in flight until it returns; a
+// backend that does not keep the textures (`Renderer::keepsPreload`, the
+// software reference) holds two, not six (the audit's preload item,
+// 2026-10-26).
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
@@ -28,11 +33,17 @@
 #include "platform/events.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <memory>
 
 namespace {
 constexpr double kInchesPerMetre = 39.37;   // the game's unit
 constexpr std::size_t kHeld = 6;
+// ...where the renderer keeps none of their textures: a held set saves its
+// read and build alone, and holds its memory all the same - the nearest
+// door's, and the room behind its airlock
+constexpr std::size_t kHeldUnkept = 2;
 constexpr int kEvery = 10;                  // frames between distance passes
 constexpr int kUploadsPerFrame = 3;         // textures the renderer takes a frame
 // jobs PREPARING at once: each reads and decodes a whole set (`prepareSet`,
@@ -58,6 +69,21 @@ bool PlayState::remasterTakePreload(int slot, const std::string& stem, int area,
                 P->job && !P->job->ready() ? "still preparing, waited for" : "prepared ahead");
     omk::event("preload.take", {{"set", stem}, {"area", area}, {"ready", !P->job || P->job->ready()}});
     return true;
+}
+
+// The session's end: every preload job still preparing cancelled, and each
+// waited for - they capture `this` (the audit's item 9, its preload half); the
+// cancelled ones reported as `phasePreload` would have
+void PlayState::remasterFinish() {
+    for (auto& [stem, pl] : preloads)
+        if (pl.cancel && pl.L && pl.L->job && !pl.L->job->ready()) pl.cancel();
+    for (auto& [stem, pl] : preloads)
+        if (pl.L && pl.L->job) pl.L->job->wait();
+    for (const auto& L : preloadDropped) {
+        if (L->job) L->job->wait();
+        omk::event("preload.cancelled", {{"set", L->stem}, {"area", L->area}, {"stage", L->stoppedAt}});
+    }
+    preloadDropped.clear();
 }
 
 void PlayState::preloadPin() {
@@ -102,13 +128,29 @@ void PlayState::phasePreload() {
     }
     bool pinsChanged = false;
     // a released set's prepared decode (`TexturePack::prepare`) dropped with
-    // it - one still preparing parks after this, and ages out of the pack's cap
-    const auto forgetParked = [](const Preloaded& pl) {
-        if (!pl.L || (pl.L->job && !pl.L->job->ready())) return;
+    // it; one still preparing is cancelled, and kept until its job returns
+    const auto forgetParked = [](const SetLoad& L) {
         std::vector<const omk::Texture*> ts;
-        for (const auto& t : pl.L->out.tex) ts.push_back(&t);
+        for (const auto& t : L.out.tex) ts.push_back(&t);
         omk::texturePack().forget(ts);
     };
+    const auto release = [&](Preloaded& pl) {
+        if (!pl.L) return;
+        if (pl.L->job && !pl.L->job->ready()) {
+            if (pl.cancel) pl.cancel();
+            preloadDropped.push_back(pl.L);
+        } else {
+            forgetParked(*pl.L);
+        }
+    };
+    // the cancelled, returned: what each did before it stopped
+    for (auto it = preloadDropped.begin(); it != preloadDropped.end();) {
+        const SetLoad& L = **it;
+        if (L.job && !L.job->ready()) { ++it; continue; }
+        omk::event("preload.cancelled", {{"set", L.stem}, {"area", L.area}, {"stage", L.stoppedAt}});
+        if (L.stoppedAt < 0) forgetParked(L);   // too late: it ran to its end
+        it = preloadDropped.erase(it);
+    }
     // released: out of the keep radius, or no door leads there any more
     for (auto it = preloads.begin(); it != preloads.end();) {
         const auto n = near.find(it->first);
@@ -118,7 +160,7 @@ void PlayState::phasePreload() {
             omk::event("preload.drop", {{"set", it->first}, {"area", it->second.area},
                                         {"metres", n == near.end() ? -1.0 : n->second.first / kInchesPerMetre}});
             pinsChanged = pinsChanged || it->second.sent;
-            forgetParked(it->second);
+            release(it->second);
             it = preloads.erase(it);
         } else {
             it->second.dist = n->second.first;
@@ -128,14 +170,19 @@ void PlayState::phasePreload() {
     // wanted: within reach, nearest first, up to `kHeld` held - a want
     // nearer than the farthest held taking its place (`OMK_PRELOAD_HELD=n`,
     // an instrument: the cap n, so a short walk reaches it)
-    static const std::size_t held =
-        static_cast<std::size_t>(std::max(1L, omk::envInt("OMK_PRELOAD_HELD", static_cast<long>(kHeld))));
+    static const long heldEnv = omk::envInt("OMK_PRELOAD_HELD", 0);
+    const std::size_t held = heldEnv > 0 ? static_cast<std::size_t>(heldEnv)
+                           : world_->keepsPreload() ? kHeld : kHeldUnkept;
+    // `OMK_PRELOAD_DELAY_MS=n`, an instrument: each preload's job sleeps n ms
+    // first, so a walk releases one while it still prepares
+    static const int delayMs = static_cast<int>(std::max(0L, omk::envInt("OMK_PRELOAD_DELAY_MS", 0)));
     std::vector<std::pair<double, std::string>> want;
     for (const auto& [stem, dn] : near)
         if (dn.first <= reach && !preloads.count(stem)) want.push_back({dn.first, stem});
     std::sort(want.begin(), want.end());
     int inFlight = 0;
     for (const auto& [st, pl] : preloads) inFlight += pl.L && pl.L->job && !pl.L->job->ready() ? 1 : 0;
+    for (const auto& L : preloadDropped) inFlight += L->job && !L->job->ready() ? 1 : 0;
     for (const auto& [dist, stem] : want) {
         if (inFlight >= kInFlight) break;   // the next pass starts it
         if (preloads.size() >= held) {
@@ -149,7 +196,7 @@ void PlayState::phasePreload() {
                                         {"metres", far->second.dist / kInchesPerMetre},
                                         {"forMetres", dist / kInchesPerMetre}});
             pinsChanged = pinsChanged || far->second.sent;
-            forgetParked(far->second);
+            release(far->second);
             preloads.erase(far);
         }
         const int area = near[stem].second;
@@ -162,13 +209,17 @@ void PlayState::phasePreload() {
         L->askedFrame = frameNo;
         L->path3do = *o;
         if (const auto t = fs.resolve("MESHES/DECORS/" + stem + ".3DT")) L->path3dt = *t;
+        L->delayMs = delayMs;
+        const auto stop = std::make_shared<std::atomic<bool>>(false);
+        L->cancelled = [stop] { return stop->load(std::memory_order_relaxed); };
         L->job = std::make_unique<omk::BackgroundJob>([this, L] { prepareSet(*L); });
-        preloads[stem] = Preloaded{area, L, false, dist};
+        preloads[stem] = Preloaded{area, L, false, dist, [stop] { stop->store(true, std::memory_order_relaxed); }};
         ++preloadMade;
-        ++inFlight;
         std::printf("preload: %s (AREA %d) - its door %.1f m away, prepared on a thread\n", stem.c_str(), area,
                     dist / kInchesPerMetre);
-        omk::event("preload.want", {{"set", stem}, {"area", area}, {"metres", dist / kInchesPerMetre}});
+        omk::event("preload.want", {{"set", stem}, {"area", area}, {"metres", dist / kInchesPerMetre},
+                                    {"running", inFlight}, {"held", static_cast<long>(held)}});
+        ++inFlight;
     }
     // prepared: its textures to the renderer
     for (auto& [stem, pl] : preloads)

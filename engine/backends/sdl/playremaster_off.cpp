@@ -30,14 +30,14 @@ void PlayState::remasterGrade() {}
 void PlayState::remasterAliasGrey(const omk::Texture&, const omk::Texture&) {}
 void PlayState::remasterConfigure(omk::Renderer&) {}
 bool PlayState::remasterOpenFilm(const std::string&, omk::Movie&, const char*) { return false; }
-void PlayState::remasterViewMist(omk::View& view) { view.mist = 0.0f; }
+void PlayState::remasterViewMist(omk::View& v) { v.mist = 0.0f; }
 // the per-pixel lighting as it always was: no night, no relief, no point lights
-int PlayState::remasterViewLights(omk::View& view, bool& fxPix, float& kFxView) {
+int PlayState::remasterViewLights(omk::View& v, bool& fxPix, float& kFxView) {
     fxPix = false;
     kFxView = 0.0f;
-    view.setDim = 1.0f;
-    view.relief = 0.0f;
-    view.points.clear();
+    v.setDim = 1.0f;
+    v.relief = 0.0f;
+    v.points.clear();
     return 0;
 }
 void PlayState::remasterPointLights(omk::View&, std::vector<std::pair<float, const omk::Light3do*>>&, float, int,

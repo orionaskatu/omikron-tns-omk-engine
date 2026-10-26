@@ -15339,6 +15339,9 @@ def c_env_switches():
     SHOWN TO FAIL: a `std::getenv("OMK_NOUI")` put back in a viewer file (the
     raw-read list names it); a row deleted from the table (that name is
     `unlisted`); a row added that nothing reads (`unread`).
+    (2026-10-26) The scan reads the `.inl` files too - GLES's and Vulkan's
+    remaster halves live there, and `OMK_GLES_NO_HIGHP`, read in one, showed
+    as listed and never read while it took `.cpp` and `.h` alone.
     """
     table_src = open(os.path.join(ROOT, "engine", "src", "platform", "env.cpp")).read()
     body = table_src.split("kSwitches[] = {", 1)[1].split("};", 1)[0]
@@ -15349,7 +15352,7 @@ def c_env_switches():
             if "third_party" in root:
                 continue
             for f in files:
-                if not f.endswith((".cpp", ".h")):
+                if not f.endswith((".cpp", ".h", ".inl")):   # the .inl too (2026-10-26: GLES's remaster half)
                     continue
                 p = os.path.join(root, f)
                 rel = os.path.relpath(p, ROOT)
@@ -31218,6 +31221,50 @@ def c_engine_sdl3():
         "Vulkan's window up on both and 0 pixels from the CPU's; the audio device open on both and sounding"
 
 
+def c_engine_vulkan_teardown():
+    r"""VULKAN'S TEARDOWN LEAVES NOTHING (the remaster audit's cleanliness,
+    2026-10-26): `~VulkanRenderer` never destroyed the mapped shadow's image,
+    view, pass, framebuffer, pipeline, sampler and layout, set 1's layout, or
+    the shadow and lights UBOs - older than the remaster. The viewer never
+    deletes its renderer (the process's end takes it), so `shadow_probe`,
+    which makes one with the shadow map and deletes it, runs under the Khronos
+    validation layer where one is installed (skipped otherwise): the layer
+    inserted (the loader's own line) and no `VUID-vkDestroyDevice-device-05137`
+    - an object outliving its device.
+    SHOWN TO FAIL (2026-10-26): the destructor's new block removed - 2 such
+    reports (2 buffers, 3 memories, the image, view, framebuffer, pass and
+    pipeline listed).
+    """
+    import subprocess, glob
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    layer = None
+    for d in ("/opt/homebrew/share/vulkan/explicit_layer.d", "/usr/local/share/vulkan/explicit_layer.d",
+              "/usr/share/vulkan/explicit_layer.d"):
+        if os.path.exists(os.path.join(d, "VkLayer_khronos_validation.json")):
+            layer = d
+            break
+    if not layer:
+        return ("skipped",), ("skipped",), "no Khronos validation layer installed"
+    mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "shadow_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("build",), ("built",), (mk.stdout + mk.stderr)[-300:]
+    prefix = os.path.dirname(os.path.dirname(os.path.dirname(layer)))   # <prefix>/share/vulkan/explicit_layer.d
+    env = dict(os.environ, VK_INSTANCE_LAYERS="VK_LAYER_KHRONOS_validation", VK_LOADER_DEBUG="layer",
+               DYLD_FALLBACK_LIBRARY_PATH=os.path.join(prefix, "lib"))
+    r = subprocess.run([probe], capture_output=True, text=True, errors="replace", timeout=300, env=env)
+    out = r.stdout + r.stderr
+    if "no Vulkan" in out or "device" not in out:
+        return ("skipped",), ("skipped",), "no Vulkan device"
+    inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"' in out
+    leaks = out.count("VUID-vkDestroyDevice-device-05137")
+    print(f"        layer inserted {inserted}; the probe exit {r.returncode}; objects outliving the device: {leaks}")
+    return (inserted, r.returncode, leaks), (True, 0, 0), \
+        "the validation layer inserted; shadow_probe ran; nothing left alive at vkDestroyDevice"
+
+
 def c_engine_classic_build():
     r"""THE CLASSIC MAC OS BUILD (`todo/classic-mac-port-1999.md` step 5): the
     engine and the VIEWER as Carbon binaries for Mac OS 9 and Mac OS X on
@@ -33923,6 +33970,14 @@ def c_engine_gles_upscale():
     place of RCAS's - part 2 (the 640x480 picture in a 1280x960 frame);
     RCAS skipped in the present (EASU's target presented) - part 4.
     NOT CHECKED, judged by eye: the sharpness.
+      5. (2026-10-26, the audit's item 9) WITHOUT HIGHP in the fragment
+         stage - fp16 on a Mali-400 class GPU, where FSR's constants flush
+         and its coordinates lose their texel - the upscale is REFUSED
+         (`@evt gles.upscale.refused`, none of `gles.upscale`) and the frame
+         is the native one, byte for byte; `OMK_GLES_NO_HIGHP` stands for such
+         a device (the Mac's GL is fp32). Shown to fail: the highp test
+         taken out of the link and the refusal (the code before) - the frame
+         upscaled, `gles.upscale` and no refusal.
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -33963,6 +34018,7 @@ def c_engine_gles_upscale():
         lbUp, _ = run("lbu", "--frames", "300", "--upscale", "2", env=hidden, where=fight)
         _, wlog = run("win", "--frames", "90", "--upscale", "1.5", dump=False,
                       env={"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"})
+        noHigh, nhlog = run("nohp", "--frames", "60", "--upscale", "2", env=dict(hidden, OMK_GLES_NO_HIGHP="1"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     ev = [e[1] for e in _events(log) if e[0] == "gles.upscale"]
@@ -33988,10 +34044,14 @@ def c_engine_gles_upscale():
     gm = re.findall(r"gles present verify: frame (\d+), (\d+) pixels differ; (\d+) of (\d+) frames differed", wlog)
     gpu = re.findall(r"present: (\d+) of (\d+) straight from the GPU", wlog)
     win = bool(gm) and int(gm[-1][3]) >= 60 and gm[-1][2] == "0" and bool(gpu) and all(x == y for x, y in gpu)
+    nh = [e for e in _events(nhlog) if e[0] in ("gles.upscale", "gles.upscale.refused")]
+    refused = ([e[0] for e in nh] == ["gles.upscale.refused"] and str(nh[0][1].get("highp")).lower() in ("0", "false"),
+               noHigh is not None and noHigh == native)
+    print(f"        without highp: {[e[0] for e in nh]}, the frame {'the native one' if refused[1] else 'NOT the native one'}")
     print(f"        drawn {drawn}; x2 against native: mean {m0:.2f} a channel, {whole}; letterboxed: mean "
           f"{m1:.2f}, {letter}, its top row lit {bars}; the window at x1.5: {gm[-1] if gm else 'no verify'}, GPU-presented {gpu}")
-    return (src_ok, drawn, whole, letter, bars, win), \
-           ((True,) * 4, ("640", "480"), (True, True, (0, 0)), (True, True, (0, 0)), (0, 0), True), \
+    return (src_ok, drawn, whole, letter, bars, win, refused), \
+           ((True,) * 4, ("640", "480"), (True, True, (0, 0)), (True, True, (0, 0)), (0, 0), True, (True, True)), \
         "the source (the factor handed to GLES, the readback reading RCAS's target, the viewport by rs(), " \
         "one sharpness for both backends); the street drawn at 640x480 for 1280x960 and the native frame " \
         "upscaled, whole and letterboxed (close, and registered); the window's pixels the readback's over " \
@@ -34193,6 +34253,12 @@ def c_engine_block_formats():
     decode, the check run under `OMK_NO_BLOCK_FORMATS=1` - part 4, 168.3
     against 82.8 ms (its first item too: no block taken).
     NOT CHECKED, judged by eye: the encoders' quality beyond the round trip.
+    (2026-10-26, the audit's item 9) Part 1 also pins two GLES guards no
+    shipped file reaches - every ASTC of the pack holds its whole chain, and
+    every light map is a power of two: an ASTC whose chain is not whole
+    drops the mip from its filter (GLES2 has no MAX_LEVEL; incomplete samples
+    black), and a light map not a power of two is CLAMPED (GLES2 repeats only
+    those). Shown to fail: either guard removed - part 1's last False.
     """
     import subprocess, tempfile, shutil, re, zlib
     eng = os.path.join(ROOT, "engine")
@@ -34209,13 +34275,17 @@ def c_engine_block_formats():
               "GL_KHR_texture_compression_astc_ldr" in gl and
               "omk::texturePack().setCodecs(astcOk_ ? omk::kCodecAstc : 0u);" in gl,
               "if (colour && codecs_ && !grey) {" in tp and "jb.light != nullptr && !rawLight" in tp,
-              "setLightHook(&omk::curateBloom, &omk::bloomCurated)" in ps)
+              "setLightHook(&omk::curateBloom, &omk::bloomCurated)" in ps,
+              "return chain || !mips;" in gl and
+              "if (!uploadAstc(rep->colourZ, mips)) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);" in gl and
+              "pot(rep->emissiveZ.w) && pot(rep->emissiveZ.h) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl and
+              "pot(e.ew) && pot(e.eh) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl)
     mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/tex_encode", "play"], cwd=eng,
                         capture_output=True, text=True)
     tool, enc = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "tex_encode")
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not all(os.path.exists(x) for x in (tool, enc, play)):
-        return (src_ok, "build"), ((True,) * 4, "built"), mk.stderr[-300:]
+        return (src_ok, "build"), ((True,) * 5, "built"), mk.stderr[-300:]
     pk = omkpaths.pack_path() or ""
     astcenc = os.path.join(pk, "astcenc", "bin", "astcenc") if pk else ""
     def chunk(t, b):
@@ -34317,7 +34387,7 @@ def c_engine_block_formats():
     print(f"        reader: {reader}; vulkan (blocks taken, PNGs alone, same frame) {vulkan}, the pack visible {visible}")
     want_made = ((7, True, "ok"), (7, True, "ok"), (7, True, "ok") if os.path.exists(astcenc) else ("skipped",))
     return (src_ok, reader, tuple(vulkan), visible, real), \
-        ((True,) * 4, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
+        ((True,) * 5, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
          _or_skip(real, (True, True, True))), \
         "the source (BC only where filterable, each backend's codecs, the grey alias and the curated light " \
         "maps on their PNGs); the reader takes what tex_encode makes and refuses a short file, a foreign format " \
@@ -48753,8 +48823,9 @@ def c_licence_headers():
     # PNGs: bc7decomp / rgbcx compiled there, tex_encode links them)
     # 677: + `engine/tools/clip_memo.cpp` (the audit's bug 2, `engine: clip memo`)
     # 678: + `engine/backends/vulkan/vkrender_remaster.inl` (the Vulkan split, the audit's cleanliness)
+    # 679: + `engine/src/platform/packkey.h` (the packs' one FNV-1a, the audit's cleanliness)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (678, [], 10, []), \
+           (679, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -51560,6 +51631,7 @@ SLOW = [
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
     ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),
     ("engine: vulkan images", c_engine_vulkan_images, "todo/remaster.md audit bug 4; backends/vulkan/vkrender.cpp makeImage2D"),
+    ("engine: vulkan teardown", c_engine_vulkan_teardown, "todo/remaster.md audit cleanliness; backends/vulkan/vkrender.cpp ~VulkanRenderer"),
     ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
     ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
     ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),

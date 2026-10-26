@@ -28,7 +28,7 @@
 namespace omk {
 
 inline constexpr float kFloorMerge = 8.0f;      // levels this close are one plane (game units)
-inline constexpr float kFloorNear = 4000.0f;    // the floor that counts for the choice: within 40 m
+inline constexpr float kFloorNear = 4000.0f;    // the floor that counts for the choice: within ~100 m (inches)
 
 class FloorList {
 public:

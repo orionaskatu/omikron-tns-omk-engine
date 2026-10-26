@@ -38,6 +38,7 @@ constexpr const char* kSwitches[] = {
     "OMK_GL1",                  // =0: the GL1 build draws with the software reference (engine: gl1 backend)
     "OMK_GL1_COMPOSITE",        // GL1: the interface composed on the CPU instead of drawn as an overlay
     "OMK_GL1_NO_SKIP",          // GL1: the whole-mesh frustum skip off, to show it changes no pixel (engine: gl1 backend)
+    "OMK_GLES_NO_HIGHP",        // GLES: the fragment stage taken for one with no highp float - the upscale refused (engine: gles upscale)
     "OMK_GLES_NO_STATE_CACHE",  // GLES: the draw-state cache off (engine: gles state cache)
     "OMK_GLES_WINDUMP",         // =<path> GLES: the window's own picture written on the last frame (engine: gles overlay)
     "OMK_GPU_PRESENT_STATS",    // log: the GPU present's counts every 30 frames (engine: gpu present)

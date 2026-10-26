@@ -7,7 +7,6 @@
 #include "playgpu_vulkan.h"
 #include "platform/env.h"
 
-#include <algorithm>
 
 // The Vulkan window - this glue's, not the game's (the gateway: game code
 // holds no host handle). One viewer a process, so one window.
@@ -31,13 +30,8 @@ void PlayState::gpuOpenWindow() {
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
-            if (upscale > 1.0f) vkr->setUpscale(upscale);   // the remaster's, in the supersample's place
-            if (bloomStrength > 0.0f) vkr->setBloom(bloomStrength);   // the remaster's
-            if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);
-            if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
-                vkr->setWater(std::max(waterStrength, floorStrength));
-            if (bodyLight > 0.0f) vkr->setBodyTint(true);
-            if (fxLight > 0.0f) vkr->setEmitterLights(true);
+            remasterConfigure(*vkr);   // the remaster's (`backends/remaster/`), as GLES's
+            if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);   // ...and the AO, Vulkan's alone
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
@@ -68,13 +62,8 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);
-        if (wv && upscale > 1.0f) wv->setUpscale(upscale);
-        if (wv && bloomStrength > 0.0f) wv->setBloom(bloomStrength);
+        if (wv) remasterConfigure(*wv);
         if (wv && aoStrength > 0.0f) wv->setAmbientOcclusion(aoStrength);
-        if (wv && std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
-            wv->setWater(std::max(waterStrength, floorStrength));
-        if (wv && bodyLight > 0.0f) wv->setBodyTint(true);
-        if (wv && fxLight > 0.0f) wv->setEmitterLights(true);
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
             std::printf("renderer: the world through VULKAN offscreen - %s "

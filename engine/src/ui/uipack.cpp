@@ -8,6 +8,7 @@
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
+#include "platform/packkey.h"
 #include "platform/pngread.h"
 #include "platform/sync.h"
 
@@ -22,21 +23,13 @@
 namespace omk {
 
 std::uint64_t uiKey(const Surface& s) {
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    const auto mix = [&](std::uint8_t b) { h = (h ^ b) * 0x100000001b3ull; };
-    for (int v : {s.w, s.h})
-        for (int k = 0; k < 4; ++k) mix(static_cast<std::uint8_t>((static_cast<std::uint32_t>(v) >> (8 * k)) & 0xFF));
-    for (const std::uint16_t p : s.px) { mix(static_cast<std::uint8_t>(p & 0xFF)); mix(static_cast<std::uint8_t>(p >> 8)); }
-    return h;
+    Fnv1a f;
+    for (int v : {s.w, s.h}) f.mixLe(static_cast<std::uint32_t>(v), 4);
+    for (const std::uint16_t p : s.px) f.mixLe(p, 2);
+    return f.h;
 }
 
 namespace {
-
-std::string hex16(std::uint64_t k) {
-    char b[17];
-    std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(k));
-    return b;
-}
 
 // eight fixed texels: a buffer the allocator handed to ANOTHER bitmap of the
 // same size since `attach` would have to match all eight to be taken for it
@@ -62,7 +55,7 @@ struct UiPack::Impl {
     Mutex m;
 
     std::shared_ptr<const Surface> decode(std::uint64_t key, int w, int h) {
-        const auto bytes = DataFs::readPath(dir + "/" + hex16(key) + ".png");
+        const auto bytes = DataFs::readPath(dir + "/" + keyHex(key) + ".png");
         PngImage img;
         if (bytes.empty() || !decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img)) {
             ++st.refused;

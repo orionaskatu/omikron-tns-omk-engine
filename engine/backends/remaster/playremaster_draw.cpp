@@ -19,16 +19,16 @@
 #include <cstdio>
 
 // THE MIST (`View::mist`): on the shown set's ground
-void PlayState::remasterViewMist(omk::View& view) {
-    view.mist = mistStrength;
-    view.mistGround = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)].ground;
+void PlayState::remasterViewMist(omk::View& v) {
+    v.mist = mistStrength;
+    v.mistGround = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)].ground;
 }
 
 // THE EMITTERS' LIGHTS under per-pixel lighting: the night, the relief, the
 // reach - `fxPix` whether they light at all, `kFxView` how far they are taken;
 // -> the slots they take among the frame's lights (0 when TILED: they go to
 // `View::points` instead)
-int PlayState::remasterViewLights(omk::View& view, bool& fxPix, float& kFxView) {
+int PlayState::remasterViewLights(omk::View& v, bool& fxPix, float& kFxView) {
     // they light the SET too (mode 3, `remasterLitSet`), so they are chosen by
     // the CAMERA - the nearest slots within the reach, faded in over its last
     // quarter so none pops - and the set's own lights, nearest the player as
@@ -36,12 +36,12 @@ int PlayState::remasterViewLights(omk::View& view, bool& fxPix, float& kFxView) 
     fxPix = fxLight > 0.0f && world_ && world_->drawsEmitterLights();
     // ...and THE NIGHT (`CityGrades::nightOf`): how much of the set's painted
     // light stays under them
-    view.setDim = fxPix && omk::cityGrades().active() ? omk::cityGrades().nightOf(worldSet) : 1.0f;
-    if (view.setDim != nightWas) {
-        nightWas = view.setDim;
+    v.setDim = fxPix && omk::cityGrades().active() ? omk::cityGrades().nightOf(worldSet) : 1.0f;
+    if (v.setDim != nightWas) {
+        nightWas = v.setDim;
         std::printf("frame %ld: the night %.2f for %s - the set's painted light kept under the emitters' "
-                    "lights (`night.txt`)\n", frameNo, static_cast<double>(view.setDim), worldSet.c_str());
-        omk::event("remaster.night", {{"set", worldSet}, {"dim", static_cast<double>(view.setDim)}});
+                    "lights (`night.txt`)\n", frameNo, static_cast<double>(v.setDim), worldSet.c_str());
+        omk::event("remaster.night", {{"set", worldSet}, {"dim", static_cast<double>(v.setDim)}});
     }
     // ...and on a renderer that TILES them (`o3de/lighttiles.h`), every one
     // within the game's CLIP DISTANCE (the reader, 2026-10-20: "set it
@@ -51,9 +51,9 @@ int PlayState::remasterViewLights(omk::View& view, bool& fxPix, float& kFxView) 
     // that tiles - to set Vulkan beside GLES, which does not yet)
     static const bool noTiles = omk::envFlag("OMK_NO_TILES");
     fxTiled = fxPix && world_->tilesLights() && !noTiles;
-    view.relief = fxTiled ? relief : 0.0f;   // the relief rides the tiled module
+    v.relief = fxTiled ? relief : 0.0f;   // the relief rides the tiled module
     kFxView = fxTiled ? std::min(20000.0f, static_cast<float>(clipInches)) : 3000.0f;
-    view.points.clear();
+    v.points.clear();
     // the point lights' slots: what the renderer has past four of the set's
     // own (60 of 64 on Vulkan and the GLES variant - 12 of 16 left most of a
     // neon street's signs unlit, "as if turned off", 2026-10-20)
@@ -63,11 +63,11 @@ int PlayState::remasterViewLights(omk::View& view, bool& fxPix, float& kFxView) 
 // ...and the ones picked, nearest the camera first: TILED all of them into
 // `View::points` (faded over the reach's last fifth); else the nearest
 // `kFxSlots`, `fxCut` the first left out
-void PlayState::remasterPointLights(omk::View& view, std::vector<std::pair<float, const omk::Light3do*>>& fx,
+void PlayState::remasterPointLights(omk::View& v, std::vector<std::pair<float, const omk::Light3do*>>& fx,
                                     float kFxView, int kFxSlots, float& fxCut) {
     if (fxTiled) {
         for (const auto& [e2, l] : fx) {
-            if (view.points.size() >= static_cast<std::size_t>(omk::kMaxPoints)) break;
+            if (v.points.size() >= static_cast<std::size_t>(omk::kMaxPoints)) break;
             omk::View::GpuLight g{};
             for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
             g.radiusA = l->radiusA; g.radiusB = l->radiusB;
@@ -75,7 +75,7 @@ void PlayState::remasterPointLights(omk::View& view, std::vector<std::pair<float
             g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
             g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
             g.intensity = l->f32 * std::clamp((kFxView - std::sqrt(e2)) / (0.2f * kFxView), 0.0f, 1.0f);
-            if (g.intensity > 0.0f) view.points.push_back(g);
+            if (g.intensity > 0.0f) v.points.push_back(g);
         }
         fx.clear();
     }
@@ -92,20 +92,20 @@ void PlayState::remasterPointLights(omk::View& view, std::vector<std::pair<float
 
 // ...and the first frame an EMITTER's light is among them (the remaster's,
 // `o3de/emitterlight.h` - a point light)
-void PlayState::remasterLightsTold(const omk::View& view, const std::vector<std::pair<float, const omk::Light3do*>>& near,
+void PlayState::remasterLightsTold(const omk::View& v, const std::vector<std::pair<float, const omk::Light3do*>>& near,
                                    const float at[3]) {
     if (!fxLightsTold) {
         int points = 0;
         for (const auto& [d2, l] : near) points += omk::pointLight(*l) ? 1 : 0;
         // ...or, TILED, those of `View::points` whose reach takes in the player
-        for (const auto& g : view.points) {
+        for (const auto& g : v.points) {
             const float dx = at[0] - g.pos[0], dy = at[1] - g.pos[1], dz = at[2] - g.pos[2];
             points += dx * dx + dy * dy + dz * dz <= g.radiusA * g.radiusA ? 1 : 0;
         }
         if (points > 0) {
             fxLightsTold = true;
             std::printf("frame %ld: per-pixel lighting - %d of the %zu are emitters' lights\n",
-                        frameNo, points, view.lights.size());
+                        frameNo, points, v.lights.size());
             omk::event("remaster.fxlight", {{"frame", frameNo}, {"points", points}});
         }
     }
@@ -115,9 +115,9 @@ void PlayState::remasterLightsTold(const omk::View& view, const std::vector<std:
 // lighting the set's OPAQUE draws take the frame's point lights on top of
 // their baked colour - mode 3, which skips the set's own lights (they are in
 // the bake already)
-void PlayState::remasterLitSet(std::vector<omk::Draw>& draws) {
+void PlayState::remasterLitSet(std::vector<omk::Draw>& list) {
     if (lighting > 0 && fxLight > 0.0f && world_ && world_->drawsEmitterLights()) {
-        for (auto& d : draws)
+        for (auto& d : list)
             if (d.lit == 0 && d.blend == omk::Blend::Opaque && !d.meshPose &&
                 (d.geo == &worldSlots[0].geo || d.geo == &worldSlots[1].geo))
                 d.lit = 3;
@@ -128,11 +128,11 @@ void PlayState::remasterLitSet(std::vector<omk::Draw>& draws) {
 // is above the shown slot's water; where it does not, the REFLECTING FLOORS
 // (`o3de/floorreflect.h`) through the same pass - one reflection a frame.
 // -> whether either drew the frame (the set's own mirror then does not)
-bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> draws, const omk::View& drawn) {
+bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn) {
     auto& session = *session_;
     const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session.shownSlot() & 1)];
     const bool watered = waterStrength > 0.0f &&
-        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, shownSlot.water, waterStrength);
+        omk::drawWithWater(world, list, drawn, &shownSlot.geo, shownSlot.water, waterStrength);
     if (watered != waterLive) {
         waterLive = watered;
         std::printf("frame %ld: the water %s\n", frameNo,
@@ -148,7 +148,7 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     if (!watered && floorStrength > 0.0f && shownSlot.floors.any())
         floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
     const bool floored = floorPlane.found &&
-        omk::drawWithWater(world, draws, drawn, &shownSlot.geo, floorPlane, floorStrength, &shownSlot.floors.strength);
+        omk::drawWithWater(world, list, drawn, &shownSlot.geo, floorPlane, floorStrength, &shownSlot.floors.strength);
     if (floored != floorLive || (floored && floorPlane.y != floorLiveY)) {
         floorLive = floored;
         floorLiveY = floorPlane.y;

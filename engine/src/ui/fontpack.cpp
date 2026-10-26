@@ -9,6 +9,7 @@
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
+#include "platform/packkey.h"
 #include "platform/pngread.h"
 #include "platform/sync.h"
 
@@ -22,9 +23,9 @@
 namespace omk {
 
 std::uint64_t fontKey(const Font& f) {
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    for (const std::byte b : f.blob) h = (h ^ static_cast<std::uint8_t>(b)) * 0x100000001b3ull;
-    return h;
+    Fnv1a h;
+    for (const std::byte b : f.blob) h.mix(static_cast<std::uint8_t>(b));
+    return h.h;
 }
 
 HdLayout hdLayout(const Font& f, int k) {
@@ -84,9 +85,7 @@ std::shared_ptr<const HdFont> FontPack::find(const Font& f) {
     std::shared_ptr<const HdFont> out;
     const std::uint64_t key = fontKey(f);
     if (impl_->keys.count(key)) {
-        char name[24];
-        std::snprintf(name, sizeof name, "/%016llx.png", static_cast<unsigned long long>(key));
-        const auto bytes = DataFs::readPath(impl_->dir + name);
+        const auto bytes = DataFs::readPath(impl_->dir + "/" + keyHex(key) + ".png");
         PngImage img;
         if (!bytes.empty() && decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img)) {
             for (int k = 2; k <= 16 && !out; k *= 2) {
@@ -101,7 +100,7 @@ std::shared_ptr<const HdFont> FontPack::find(const Font& f) {
         }
         if (out) {
             ++impl_->st.decoded;
-            event("fontpack.face", {{"key", std::string(name + 1, 16)}, {"k", std::to_string(out->lay.k)}});
+            event("fontpack.face", {{"key", keyHex(key)}, {"k", std::to_string(out->lay.k)}});
         } else {
             ++impl_->st.refused;   // unreadable, or no `k` lays the face out at its size
         }

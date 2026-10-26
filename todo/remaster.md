@@ -1493,7 +1493,7 @@ the tile binning handles `flipX` and the roll.
    `TOP_OF_PIPE`, access 0, both ways - no dependency on the post's writes
    nor the reads before the transition back. Harmless on MoltenVK (layouts
    are no-ops), wrong by the spec.
-9. PLAUSIBLE: GLES FSR at `mediump` (no `GL_FRAGMENT_PRECISION_HIGH`,
+9. ✔ (2026-10-26, "Item 9" below) PLAUSIBLE: GLES FSR at `mediump` (no `GL_FRAGMENT_PRECISION_HIGH`,
    Mali-400 class): `1.0e-20` flushes to 0 and coordinates past 2048 lose
    their texel - refuse the upscale without highp; ASTC with a partial mip
    chain incomplete (black) under trilinear; an NPOT light map at
@@ -1565,7 +1565,7 @@ the tile binning handles `flipX` and the roll.
   `poolTextures` and the BC / R8 probe), the members in one struct, stubs.
   Its own MECHANICAL commit after the fixes, byte-identical by `engine:
   remaster switch` and the Vulkan frame checks.
-* GLES's `#if` in the class fragmented (:1423-1474): `bloom_`,
+* GLES's `#if` in the class fragmented (DONE 2026-10-26, "The cleanliness batch" below) (:1423-1474): `bloom_`,
   `waterWant_` and its six, `fxWant_`, `lightBlack_`, the variant strings,
   the `refl*` ids unguarded - on the Vita. `static constexpr` zeros under
   `#else` compile every branch out. The variant sources kept as members
@@ -1573,15 +1573,15 @@ the tile binning handles `flipX` and the roll.
   2026-10-26); the five-line `glTexParameteri` block six times; light maps,
   `postSrc_`, the glows, the LUT and `reflTex_` never counted by
   `gpuTexture()` (the Quest's budget) (DONE 2026-10-26).
-* New `-Wshadow`: a `view` parameter shadowing `PlayState`'s field in
+* New `-Wshadow` (DONE 2026-10-26): a `view` parameter shadowing `PlayState`'s field in
   `playremaster_draw.cpp` (22, 31, 66, 95, 118, 131) and
   `playremaster_off.cpp` (33, 35); `vkrender.cpp:997` (`qi`).
-* **Units**: comments saying the unit is ~1 cm - it is the INCH:
+* **Units** (DONE 2026-10-26): comments saying the unit is ~1 cm - it is the INCH:
   `lightprobe.h:65` (kCell ~5 m, not 2), `emitterlight.h:60-61` (the
   glow's ~11 m, not 4.5), `floorreflect.h:31` (~100 m, not 40);
   `playpreload.cpp:30` its own `kInchesPerMetre`. **The comments only** -
   the values were tuned by eye; a retune is the reader's, from a picture.
-* `lighttiles.h:32` says "nearest the camera first" - nearest the cluster,
+* (DONE 2026-10-26 but `normalMap`, which `texpack_tool` uses) `lighttiles.h:32` says "nearest the camera first" - nearest the cluster,
   unordered after `nth_element`; `Rect::z` written, never read.
   `TexturePack::replacement()` has no caller (still dead after
   `0120c502`); `normalMap` used by `texpack_tool` alone. `upper()` three
@@ -1591,7 +1591,7 @@ the tile binning handles `flipX` and the roll.
   (`playgpu_vulkan.cpp:40-45, 77-82`); its destructor leaves `shUbo_`,
   `litUbo_`, the shadow image / pass / framebuffer and `dsl1_` (older than
   the remaster); `makeShadowSet`'s comment on the pool reset is stale.
-* `renderer.h:635-640` declares `waterPlane` / `groundLevel` outside the
+* (DONE 2026-10-26) `renderer.h:635-640` declares `waterPlane` / `groundLevel` outside the
   `#if` their definitions are in (a shared caller fails only at a
   `noremaster` link).
 
@@ -2052,6 +2052,72 @@ but `emitter light` (the run-to-run flip above).
   this M1's default build; 21 frontend and GPU checks rerun green on it
   (the next full sweep is its first). NOT JUDGED: SDL3's resampled sound by
   ear - the reader's.
+* **The cleanliness batch (2026-10-26)** - the audit's cleanliness section,
+  mechanical: every scene of a fixed set the SAME BYTES as before, ten
+  scenes (software plain and with the pack, Vulkan's harness at Qalisar, the
+  canal and `--enhance-all`, GLES at Qalisar, the canal and plain, and both
+  `noremaster` viewers), the set itself repeating byte for byte first.
+  * `-Wshadow`: the remaster hooks' `view` / `draws` parameters `v` / `list`,
+    the query pool's `qi` `qpi` - the builds warning-free.
+  * THE UNIT, the comments only (the values were tuned by eye): the probe's
+    cell ~5 m and reach ~15 m, its body height ~2.3 m (meant as the hips,
+    read as centimetres - unchanged), the glow 450 units ~11 m and the flame
+    ~23 m, the floors' choice ~100 m; the preload uses `omk::kInchesPerMetre`
+    rather than its own 39.37.
+  * `lighttiles`: a full cluster keeps the lights nearest IT, unordered after
+    the cut (the header said nearest the camera); `Rect::z` gone.
+    `TexturePack::replacement()` (no caller) gone.
+  * ONE COPY EACH: the packs' FNV-1a and the 16-digit file name
+    (`platform/packkey.h`, four modules - `engine: texture pack`'s 2534 keys
+    unchanged), `upperAscii` (`platform/datafs.h`, three), the LEVEL-triangle
+    walk (`forLevelTriangles` in `renderer.h`, three - now bounded by the
+    corners too; each caller keeps its own area arithmetic, float or double,
+    so the planes are the same bits).
+  * `renderer.h`: `waterPlane`, `groundLevel`, `drawWithWater` declared
+    behind OMK_REMASTER as defined; `WaterPlane` stays shared (a world slot
+    holds one).
+  * Vulkan: both of its windows' renderers take `remasterConfigure` (and the
+    AO, Vulkan's alone) instead of its six requests written out twice; the
+    destructor destroys the mapped shadow's image, view, sampler, pass,
+    framebuffer, pipeline and layout, set 1's layout and the two UBOs -
+    `engine: vulkan teardown` (new, the Khronos layer over `shadow_probe`;
+    the viewer never deletes its renderer): shown to fail, 2 reports of
+    objects outliving the device without it. `makeShadowSet`'s comment: the
+    pool is no longer reset, the set is made once.
+  * GLES: the remaster's members in ONE `#if OMK_REMASTER` block, and
+    without it `static constexpr` zeros, so the shared code's branches on
+    them compile out on the ports; `submit`'s water uniforms and the bloom's
+    light map moved to the `.inl` (`remasterWaterUniforms`,
+    `remasterLightMap`), the destructor's remaster frees to
+    `remasterRelease`, stubs beside the others; the draw-state cache's
+    counting a member (`stateSet`); `texParams(filter, wrap)` for the four
+    calls twelve textures made by hand. NOT DONE: the variant sources kept
+    after `link` (a few KB, and now in remaster builds alone).
+* **Item 9 (2026-10-26)** - GLES's limits on the low end (Android, the
+  Quest's lesser cousins), none reproducible on the M1, so each is read,
+  guarded, and the guard pinned:
+  * FSR WITHOUT HIGHP: where the fragment stage has no highp float
+    (`glGetShaderPrecisionFormat`, GLES contexts; a desktop GL's 1.20 is
+    fp32) the upscale is REFUSED - the prelude's mediump fallback is fp16 on
+    a Mali-400, which flushes EASU's 1e-20 and loses a texel past 2048.
+    `OMK_GLES_NO_HIGHP=1` stands for such a device: `engine: gles upscale`
+    part 5, the refusal said and the frame the native one byte for byte -
+    shown to fail with the test taken out. The NDK's clang compiles the
+    GLES branch (`--target=aarch64-linux-android29`, syntax only).
+  * AN ASTC CHAIN NOT WHOLE: `uploadAstc` uploads a chain only when it runs
+    to 1x1 and says so; else level 0 alone and no mip in the filter - GLES2
+    has no `GL_TEXTURE_MAX_LEVEL`, and an incomplete texture samples black.
+    MEASURED: all 6698 ASTC files of the pack (2514 colours, 1666 light maps,
+    2518 normal maps) hold their whole chains - the guard is for a pack to
+    come.
+  * A LIGHT MAP NOT A POWER OF TWO: clamped, as the colour is - GLES2 repeats
+    only powers of two, and an incomplete light map's glow is silently
+    black. None in the pack is. Both pinned in `engine: block formats` part 1,
+    shown to fail each way.
+  * The preload's jobs waited for at teardown: `remasterFinish`, the same
+    day. A SET LOAD's own job (`askSet`) still captures `this` and nothing
+    waits for it at the end - outside the remaster, left.
+  All ten scenes of the batch's set the same bytes.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

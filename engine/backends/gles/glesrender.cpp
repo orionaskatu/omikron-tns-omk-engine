@@ -822,6 +822,14 @@ inline void gpuRenderbuffer(const char* tag, GLuint id, long long bytes) {
     OMK_GPU_ALLOC(tag, gpuKey(omk::prof::kGlRenderbuffer, id), bytes);
     (void)tag; (void)id; (void)bytes;
 }
+// the bound 2D texture's filter (min and mag) and wrap (S and T) - the four
+// calls nearly every texture here makes, in this order
+inline void texParams(GLint filter, GLint wrap) {
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+}
 inline void deleteTextures(GLsizei n, const GLuint* ids) {
     for (GLsizei i = 0; i < n; ++i) OMK_GPU_FREE(gpuKey(omk::prof::kGlTexture, ids[i]));
     glDeleteTextures(n, ids);
@@ -1382,6 +1390,12 @@ private:
         UniCache uni[2];                   // [0] prog_, [1] posed_
     } ds_;
     bool stateCache_ = true;
+    // whether a draw-state call must be made (`DrawState`): counted either way
+    bool stateSet(bool changed) {
+        if (changed || !stateCache_) { ++g_glesStateSet; return true; }
+        ++g_glesStateSkipped;
+        return false;
+    }
     void forgetState() { ds_ = DrawState{}; }
 
     // THE BUFFERS OF GEOMETRIES THAT ARE GONE (todo/optimization.md step 26).
@@ -1439,38 +1453,23 @@ private:
           pDither_ = -1, pQuant_ = -1;
     GLuint fbo_ = 0, colour_ = 0, depth_ = 0;
     GLuint bayer_ = 0, quad_ = 0, surfTex_ = 0;
-    // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) ------------
+    // ---- THE REMASTER'S STATE (`glesrender_remaster.inl`) - in ONE block,
+    // and without OMK_REMASTER (the Vita, the 3DS's GLES-less builds, the
+    // classic Mac) CONSTANTS, so every branch the shared code takes on them
+    // compiles out (the audit's cleanliness, 2026-10-26) ---------------------
+#if OMK_REMASTER
+    // the POST-PASS (`todo/remaster.md` step 2)
     float  bloom_ = 0.0f;
     GLuint lightBlack_ = 0;              // the light map of a texture with none
     GLuint lastEmis_ = 0;
-    bool   lightMapNow_ = false;         // a draw of this pass bound a light map: else the glow is black
     std::string bloomFrag_, bloomFragX_; // the variants' fragment sources (plain, enhanced), kept for `link`
-#if OMK_REMASTER
     GLint  postLoc_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};   // uSrc .. uLutN, at link
-#endif
     GLuint postProg_ = 0, postSrc_ = 0, glowTex_[2] = {0, 0}, glowFbo_[2] = {0, 0}, lutTex_ = 0;
     int    lutN_ = 0;
-#if OMK_REMASTER
     int    postW_ = 0, postH_ = 0;
-#endif
     std::vector<unsigned char> lutData_;
-#if OMK_REMASTER
     bool   lutDirty_ = false;
-#endif
-    void   runPost();
-    // ---- THE REMASTER'S HOOKS (`glesrender_remaster.inl`; stubs at the end
-    // of this file without OMK_REMASTER) ------------------------------------
-    // the scene and posing programs' sources through the variants asked for
-    void remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag, const char*& vSceneX,
-                         const char*& vScene, const char*& vPosedX, const char*& vPosed);
-    void remasterProgramUniforms(bool pointLit);   // ...their starting uniforms, once linked
-    bool remasterInitUpscale();                    // FSR's programs; false: the target failed
-    void remasterInitCodecs();                     // the pack's block formats the context samples
-    bool packActive() const;                       // a texture pack is open
-    std::vector<PackImage> packDecode(std::span<const Texture* const> ts) const;
-    static bool astcBlocks(const PackBlocks& z);   // `z` holds ASTC
-    static void uploadAstc(const PackBlocks& z, bool mips);   // into the bound texture
-    // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
+    // the WATER REFLECTION (`todo/remaster.md` A3)
     float  waterWant_ = 0.0f;            // asked for at creation: the variant is built
     bool   reflHalf_ = false;            // the floors' frame: its reflection at half size
     bool   waterNow_ = false;            // the draws being submitted are WATER
@@ -1479,15 +1478,34 @@ private:
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
-#if OMK_REMASTER
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
-#endif
     bool fxWant_ = false;                      // the emitters' light's (`setEmitterLights`)
     std::string tintPosedVert_, tintPosedVertX_;   // ...its posing programs' sources (plain, enhanced)
     GLuint reflFbo_ = 0, reflTex_ = 0, reflDepth_ = 0, passFbo_ = 0;
-#if OMK_REMASTER
     int    reflW_ = 0, reflH_ = 0;
+#else
+    static constexpr float  bloom_ = 0.0f, waterWant_ = 0.0f;
+    static constexpr GLuint lightBlack_ = 0, postProg_ = 0, passFbo_ = 0;
+    static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false, fxWant_ = false;
+    static constexpr int    lutN_ = 0;
 #endif
+    bool   lightMapNow_ = false;         // a draw of this pass bound a light map: else the glow is black
+    void   runPost();
+    // ---- THE REMASTER'S HOOKS (`glesrender_remaster.inl`; stubs at the end
+    // of this file without OMK_REMASTER) ------------------------------------
+    // the scene and posing programs' sources through the variants asked for
+    void remasterSources(bool pointLit, const char*& sceneFragX, const char*& sceneFrag, const char*& vSceneX,
+                         const char*& vScene, const char*& vPosedX, const char*& vPosed);
+    void remasterProgramUniforms(bool pointLit);   // ...their starting uniforms, once linked
+    void remasterRelease();                        // its GL objects, at the renderer's end
+    void remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCache& U, bool uv);   // a draw's water, floor, clip
+    void remasterLightMap(const Tex& t);           // the bloom's light map on unit 3
+    bool remasterInitUpscale();                    // FSR's programs; false: the target failed
+    void remasterInitCodecs();                     // the pack's block formats the context samples
+    bool packActive() const;                       // a texture pack is open
+    std::vector<PackImage> packDecode(std::span<const Texture* const> ts) const;
+    static bool astcBlocks(const PackBlocks& z);   // `z` holds ASTC
+    static bool uploadAstc(const PackBlocks& z, bool mips);   // into the bound texture; false: no whole chain
     int surfW_ = 0, surfH_ = 0;
 
     std::vector<Tex> tex_;
@@ -1550,17 +1568,7 @@ GlesRenderer::~GlesRenderer() {
     if (shFbo_) glDeleteFramebuffers(1, &shFbo_);
     if (shProg_) glDeleteProgram(shProg_);
     if (shPosed_) glDeleteProgram(shPosed_);
-    if (postProg_) glDeleteProgram(postProg_);
-    if (postSrc_) deleteTextures(1, &postSrc_);
-    for (int k = 0; k < 2; ++k) {
-        if (glowTex_[k]) deleteTextures(1, &glowTex_[k]);
-        if (glowFbo_[k]) glDeleteFramebuffers(1, &glowFbo_[k]);
-    }
-    if (lutTex_) deleteTextures(1, &lutTex_);
-    if (lightBlack_) deleteTextures(1, &lightBlack_);
-    if (reflTex_) deleteTextures(1, &reflTex_);
-    if (reflDepth_) deleteRenderbuffers(1, &reflDepth_);
-    if (reflFbo_) glDeleteFramebuffers(1, &reflFbo_);
+    remasterRelease();
 }
 
 
@@ -1730,17 +1738,14 @@ bool GlesRenderer::init(int w, int h) {
                 }
                 glGenTextures(1, &shTex_);
                 glBindTexture(GL_TEXTURE_2D, shTex_);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kShadowSide, kShadowSide, 0, GL_RGBA,
                              GL_UNSIGNED_BYTE, nullptr);
-gpuTexture("render targets", shTex_, 4LL * kShadowSide * kShadowSide);
+                             gpuTexture("render targets", shTex_, 4LL * kShadowSide * kShadowSide);
                 glGenRenderbuffers(1, &shDepth_);
                 glBindRenderbuffer(GL_RENDERBUFFER, shDepth_);
                 glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, kShadowSide, kShadowSide);
-gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
+                gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
                 glGenFramebuffers(1, &shFbo_);
                 glBindFramebuffer(GL_FRAMEBUFFER, shFbo_);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, shTex_, 0);
@@ -1763,10 +1768,7 @@ gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
     // BECAUSE of 16 bits, `OES_depth24` is the lever - `todo/vita-port.md`.)
     glGenTextures(1, &colour_);
     glBindTexture(GL_TEXTURE_2D, colour_);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
     glGenRenderbuffers(1, &depth_);
     glGenFramebuffers(1, &fbo_);
     if (!allocTarget()) return false;
@@ -1830,7 +1832,7 @@ gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, wpx);
-gpuTexture("texture stand-ins", white_.id, 4);
+    gpuTexture("texture stand-ins", white_.id, 4);
     // the shadow map's unit holds the white texel until a depth pass fills
     // it, so no draw - the posing self-test's included - samples nothing
     if (mainLoc_.shadow >= 0) {
@@ -1847,18 +1849,15 @@ gpuTexture("texture stand-ins", white_.id, 4);
             static_cast<unsigned char>(kBayer4[i]);
     glGenTextures(1, &bayer_);
     glBindTexture(GL_TEXTURE_2D, bayer_);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    texParams(GL_NEAREST, GL_REPEAT);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, bl);
-gpuTexture("textures", bayer_, 64);
+    gpuTexture("textures", bayer_, 64);
 
     const float quad[8] = {0, 0, 1, 0, 0, 1, 1, 1};
     glGenBuffers(1, &quad_);
     glBindBuffer(GL_ARRAY_BUFFER, quad_);
     glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
-gpuBuffer("vertex buffers", quad_, sizeof quad);
+    gpuBuffer("vertex buffers", quad_, sizeof quad);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // THE ANISOTROPY the context grants: the extension named, and its own
@@ -1903,10 +1902,10 @@ bool GlesRenderer::allocTarget() {
         while (glGetError() != GL_NO_ERROR) {}
         glBindTexture(GL_TEXTURE_2D, colour_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw_, rh_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-gpuTexture("render targets", colour_, 4LL * rw_ * rh_);
+        gpuTexture("render targets", colour_, 4LL * rw_ * rh_);
         glBindRenderbuffer(GL_RENDERBUFFER, depth_);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, rw_, rh_);
-gpuRenderbuffer("render targets", depth_, 2LL * rw_ * rh_);
+        gpuRenderbuffer("render targets", depth_, 2LL * rw_ * rh_);
         const bool oom = glGetError() == GL_OUT_OF_MEMORY;
         glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colour_, 0);
@@ -1935,7 +1934,7 @@ bool GlesRenderer::allocMultisample() {
     while (glGetError() != GL_NO_ERROR) {}
     glBindRenderbuffer(GL_RENDERBUFFER, msColour_);
     glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples_, GL_RGBA8, rw_, rh_);
-gpuRenderbuffer("render targets", msColour_, 4LL * samples_ * rw_ * rh_);
+    gpuRenderbuffer("render targets", msColour_, 4LL * samples_ * rw_ * rh_);
     glBindFramebuffer(GL_FRAMEBUFFER, msFbo_);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msColour_);
     GLenum fbs = GL_FRAMEBUFFER_UNSUPPORTED;
@@ -1945,7 +1944,7 @@ gpuRenderbuffer("render targets", msColour_, 4LL * samples_ * rw_ * rh_);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msDepth_);
         fbs = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (fbs == GL_FRAMEBUFFER_COMPLETE) {
-gpuRenderbuffer("render targets", msDepth_, (df == GL_DEPTH_COMPONENT16 ? 2LL : 4LL) * samples_ * rw_ * rh_);
+        gpuRenderbuffer("render targets", msDepth_, (df == GL_DEPTH_COMPONENT16 ? 2LL : 4LL) * samples_ * rw_ * rh_);
             break;
         }
     }
@@ -1988,7 +1987,7 @@ bool GlesRenderer::poseSelfTest() {
     glBindBuffer(GL_ARRAY_BUFFER, vb);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(v.size() * sizeof(GpuPoseVert)),
                  v.data(), GL_STATIC_DRAW);
-gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVert)));
+                 gpuBuffer("posed bodies", vb, static_cast<long long>(v.size() * sizeof(GpuPoseVert)));
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glViewport(0, 0, rw_, rh_);
     glDisable(GL_DEPTH_TEST);
@@ -2106,32 +2105,30 @@ GlesRenderer::Uploaded GlesRenderer::uploadOne(const Texture& s, PackImage* rep,
         // where the platform has it)
         s.toRgbaKeyed(px.data());
     }
-    // ...and its LIGHT MAP, with the bloom on and the pack holding one
+    const auto pot = [](int v) { return v > 0 && !(v & (v - 1)); };
+    // ...and its LIGHT MAP, with the bloom on and the pack holding one -
+    // repeated as its colour is, but GLES2 repeats only a power-of-two
+    // texture: another is CLAMPED, or it is incomplete and its glow silently
+    // black (the audit's item 9)
     GLuint em = 0;
     if (bloom_ > 0.0f && rep && astcBlocks(rep->emissiveZ)) {
         glGenTextures(1, &em);
         glBindTexture(GL_TEXTURE_2D, em);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        texParams(GL_LINEAR, pot(rep->emissiveZ.w) && pot(rep->emissiveZ.h) ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         uploadAstc(rep->emissiveZ, false);   // the grey's red, as LUMINANCE's
-gpuTexture("textures", em, rep->emissiveZ.levels.empty() ? 0LL : static_cast<long long>(rep->emissiveZ.levels[0].second));
+        gpuTexture("textures", em, rep->emissiveZ.levels.empty() ? 0LL : static_cast<long long>(rep->emissiveZ.levels[0].second));
         ++lit;
     } else if (bloom_ > 0.0f && rep && !rep->emissive.empty()) {
         const omk::PackImage& e = *rep;
         glGenTextures(1, &em);
         glBindTexture(GL_TEXTURE_2D, em);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        texParams(GL_LINEAR, pot(e.ew) && pot(e.eh) ? GL_REPEAT : GL_CLAMP_TO_EDGE);
         // ONE channel - the shader reads `.r`, LUMINANCE answers it in r, g
         // and b alike: a quarter of the RGBA's memory (as `maskTex_` is kept)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, e.ew, e.eh, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
                      e.emissive.data());
-gpuTexture("textures", em, 1LL * e.ew * e.eh);
+                     gpuTexture("textures", em, 1LL * e.ew * e.eh);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         ++lit;
     }
@@ -2139,7 +2136,6 @@ gpuTexture("textures", em, 1LL * e.ew * e.eh);
     // GLES2 allows it only on power-of-two textures. All 2534 shipped under
     // MESHES are (max 256x256); a texture that is not
     // - a set-piece model out of an SCX stream, say - is clamped and SAID.
-    const auto pot = [](int v) { return v > 0 && !(v & (v - 1)); };
     const bool repeat = pot(s.width) && pot(s.height);
     if (!repeat)
         std::fprintf(stderr, "gles: texture %s is %dx%d, not a power of two - "
@@ -2159,7 +2155,9 @@ gpuTexture("textures", em, 1LL * e.ew * e.eh);
     if (mips && anisoOn_ > 1)
         glTexParameterf(GL_TEXTURE_2D, kGlTextureMaxAnisotropy, static_cast<GLfloat>(anisoOn_));
     if (blocks) {
-        uploadAstc(rep->colourZ, mips);   // its own chain: nothing generated
+        // its own chain, nothing generated - and no mip in the filter where
+        // the file's is not whole
+        if (!uploadAstc(rep->colourZ, mips)) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);
     } else {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upW, upH, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, px.data());
@@ -2231,7 +2229,9 @@ void GlesRenderer::setTextures(std::span<const Texture> t) {
     }
     // a deleted light map's name may come back for a new one: the cached
     // binding of unit 3 must not skip it
+#if OMK_REMASTER
     if (dropped) lastEmis_ = 0;
+#endif
     std::printf("gles: texture pool of %zu - %d kept on the GPU, %d uploaded, %d dropped, %.1f ms\n",
                 t.size(), reused, fresh, dropped, glesClockMs() - t0);
     if (packOn)
@@ -2277,7 +2277,7 @@ bool GlesRenderer::streamToRing(const Geometry* g, Vbo& vb) {
         glBindBuffer(GL_ARRAY_BUFFER, ring_);
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(3 * kRingCorners * sizeof(GpuVert)),
                      nullptr, GL_DYNAMIC_DRAW);
-gpuBuffer("vertex buffers", ring_, 3LL * kRingCorners * sizeof(GpuVert));
+                     gpuBuffer("vertex buffers", ring_, 3LL * kRingCorners * sizeof(GpuVert));
     }
     std::vector<GpuVert>& v = up_;
     v.resize(n);
@@ -2500,7 +2500,7 @@ bool GlesRenderer::uploadGeometry(const Geometry* g, bool allowStream) {
     // device must answer (`todo/vita-port.md` G3).
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(v.size() * sizeof(GpuVert)),
                  v.data(), GL_DYNAMIC_DRAW);
-gpuBuffer("vertex buffers", vb.id, static_cast<long long>(v.size() * sizeof(GpuVert)));
+                 gpuBuffer("vertex buffers", vb.id, static_cast<long long>(v.size() * sizeof(GpuVert)));
     g_glesFrame.uploadBytes += static_cast<long>(v.size() * sizeof(GpuVert));
     ++g_glesFrame.wholeUploads;
     if (glesUploadLog()) std::printf("  [upload] new buffer %p %zu corners rev %llu%s\n",
@@ -2834,7 +2834,7 @@ bool GlesRenderer::uploadPosedGeometry(const Geometry* g, PoseVbo*& out) {
     glBindBuffer(GL_ARRAY_BUFFER, pv.id);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(v.size() * sizeof(GpuPoseVert)),
                  v.data(), GL_STATIC_DRAW);
-gpuBuffer("posed bodies", pv.id, static_cast<long long>(v.size() * sizeof(GpuPoseVert)));
+                 gpuBuffer("posed bodies", pv.id, static_cast<long long>(v.size() * sizeof(GpuPoseVert)));
     pv.n = v.size();
     pv.rev = g->revision;
     pv.slotOfCorner.resize(v.size());
@@ -2941,7 +2941,7 @@ bool GlesRenderer::uploadNormals(const Geometry* g) {
     glBindBuffer(GL_ARRAY_BUFFER, nb.id);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(nrmUp_.size() * sizeof(float)),
                  nrmUp_.data(), GL_DYNAMIC_DRAW);
-gpuBuffer("vertex buffers", nb.id, static_cast<long long>(nrmUp_.size() * sizeof(float)));
+                 gpuBuffer("vertex buffers", nb.id, static_cast<long long>(nrmUp_.size() * sizeof(float)));
     ds_.attrBuf = 0;                      // the next draw re-points its attributes
     ++g_glesFrame.uploads;
     g_glesFrame.uploadBytes += static_cast<long>(nrmUp_.size() * sizeof(float));
@@ -3086,46 +3086,11 @@ void GlesRenderer::submit(const Draw& d) {
     }
     // Every call below goes through the draw-state cache (`DrawState`): `set`
     // says whether it must be made, and counts it either way.
-    const auto set = [&](bool changed) {
-        if (changed || !stateCache_) { ++g_glesStateSet; return true; }
-        ++g_glesStateSkipped;
-        return false;
-    };
+    const auto set = [&](bool changed) { return stateSet(changed); };
     UniCache& U = ds_.uni[posed ? 1 : 0];
     const bool uv = U.valid;
-    // THE WATER's uniforms, only with the water variant built: its strength
-    // and the clip through the cache (every draw of every frame sent them,
-    // water or none), the water draws' and the reflection's own each time
-    if (waterWant_ > 0.0f && L.water >= 0) {
-        // ...a REFLECTING FLOOR's run (`Draw::reflect`) at its own strength
-        const bool floorNow = !reflectingNow_ && d.reflect > 0.0f;
-        const float w = waterNow_ ? waterStrength_ : floorNow ? waterStrength_ * d.reflect : 0.0f;
-        if (set(!uv || U.water != w)) {
-            glUniform1f(L.water, w);
-            U.water = w;
-        }
-        if (waterNow_ || floorNow) {
-            // (a floor samples the half-size reflection: half the scale)
-            const float k = floorNow ? 0.5f : 1.0f;
-            if (set(!uv || U.reflK != k)) {
-                glUniform2f(L.reflInv, k / static_cast<float>(rw_), k / static_cast<float>(rh_));
-                U.reflK = k;
-            }
-            if (set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
-                glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
-                std::memcpy(U.eye, waterEye_, sizeof U.eye);
-            }
-        }
-        const int clip = reflectingNow_ ? 1 : 0;
-        if (set(!uv || U.clip != clip)) {
-            glUniform1i(L.clip, clip);
-            U.clip = clip;
-        }
-        if (reflectingNow_ && set(!uv || U.clipY != waterY_)) {
-            glUniform1f(L.clipY, waterY_);
-            U.clipY = waterY_;
-        }
-    }
+    // THE WATER's uniforms, only with the water variant built
+    if (waterWant_ > 0.0f && L.water >= 0) remasterWaterUniforms(d, L, U, uv);
     if (posed) {
         // the body's lights; a draw handed more than the program holds is
         // the frontend's error, and gets the first `kVertexLights`
@@ -3178,28 +3143,7 @@ void GlesRenderer::submit(const Draw& d) {
         ds_.texValid = true;
     }
     // THE BLOOM's light map, on unit 3 - only with the bloom on
-    if (bloom_ > 0.0f) {
-        if (!lightBlack_) {
-            const unsigned char z[4] = {0, 0, 0, 255};
-            glGenTextures(1, &lightBlack_);
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, lightBlack_);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, z);
-gpuTexture("texture stand-ins", lightBlack_, 4);
-            glActiveTexture(GL_TEXTURE0);
-            lastEmis_ = 0;
-        }
-        const GLuint em = t.em ? t.em : lightBlack_;
-        lightMapNow_ |= t.em != 0;
-        if (em != lastEmis_) {
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, em);
-            glActiveTexture(GL_TEXTURE0);
-            lastEmis_ = em;
-        }
-    }
+    if (bloom_ > 0.0f) remasterLightMap(t);
     if (set(!uv || U.texW != t.w || U.texH != t.h)) {
         glUniform2f(L.texSize, t.w, t.h);
         U.texW = t.w; U.texH = t.h;
@@ -3541,10 +3485,7 @@ bool GlesRenderer::presentSurface(const Surface& s, int winW, int winH) {
     if (!surfTex_) {
         glGenTextures(1, &surfTex_);
         glBindTexture(GL_TEXTURE_2D, surfTex_);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
     }
     const double t0 = glesClockMs();
     glBindTexture(GL_TEXTURE_2D, surfTex_);
@@ -3603,7 +3544,7 @@ bool GlesRenderer::presentSurface(const Surface& s, int winW, int winH) {
     if (s.w != surfW_ || s.h != surfH_) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, s.w, s.h, 0, GL_RGB,
                      GL_UNSIGNED_SHORT_5_6_5, s.px.data());
-gpuTexture("interface", surfTex_, 2LL * s.w * s.h);
+                     gpuTexture("interface", surfTex_, 2LL * s.w * s.h);
         for (int y = 0; check && y < s.h; ++y) shadowRow(y);
         surfW_ = s.w; surfH_ = s.h;
         lastOverlay_.clear();
@@ -3687,10 +3628,7 @@ bool GlesRenderer::presentOverlay(const Surface& s, const unsigned char* mask, c
         oFade_ = glGetUniformLocation(overlay_, "uFade");
         glGenTextures(1, &maskTex_);
         glBindTexture(GL_TEXTURE_2D, maskTex_);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
     }
     if (overlayLayer_) {
         // no world under it: cleared to (0, 0, 0, 1) - "nothing drawn over the
@@ -3704,10 +3642,7 @@ bool GlesRenderer::presentOverlay(const Surface& s, const unsigned char* mask, c
     if (!surfTex_) {
         glGenTextures(1, &surfTex_);
         glBindTexture(GL_TEXTURE_2D, surfTex_);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
     }
     glBindTexture(GL_TEXTURE_2D, surfTex_);
     // (a texture `presentSurface` left at another size holds no row of this)
@@ -3762,7 +3697,7 @@ bool GlesRenderer::presentOverlay(const Surface& s, const unsigned char* mask, c
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         if (last.size() != static_cast<std::size_t>(s.h) * perRow) {
             glTexImage2D(GL_TEXTURE_2D, 0, fmt, s.w, s.h, 0, fmt, type, cur);
-gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
+            gpuTexture("interface", tex, static_cast<long long>(bpp) * s.w * s.h);
             last.assign(static_cast<std::size_t>(s.h) * perRow, 0u);
             for (int y = 0; y < s.h; ++y) changedBlocks(y, true);
             wasFlagged.assign(static_cast<std::size_t>(s.h), 1);
@@ -3946,7 +3881,10 @@ void GlesRenderer::remasterInitCodecs() {}
 bool GlesRenderer::packActive() const { return false; }
 std::vector<PackImage> GlesRenderer::packDecode(std::span<const Texture* const>) const { return {}; }
 bool GlesRenderer::astcBlocks(const PackBlocks&) { return false; }
-void GlesRenderer::uploadAstc(const PackBlocks&, bool) {}
+bool GlesRenderer::uploadAstc(const PackBlocks&, bool) { return true; }
+void GlesRenderer::remasterRelease() {}
+void GlesRenderer::remasterWaterUniforms(const Draw&, const SceneLoc&, UniCache&, bool) {}
+void GlesRenderer::remasterLightMap(const Tex&) {}
 #endif  // OMK_REMASTER
 
 }  // namespace omk

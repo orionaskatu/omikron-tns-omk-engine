@@ -16,11 +16,6 @@
 namespace omk {
 namespace {
 
-std::string upper(std::string s) {
-    for (auto& c : s) c = static_cast<char>(c >= 'a' && c <= 'z' ? c - 32 : c);
-    return s;
-}
-
 std::string trim(std::string s) {
     while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) s.pop_back();
     std::size_t i = 0;
@@ -92,14 +87,14 @@ bool CityGrades::open(const std::string& dir) {
         return false;
     }
     for (const auto& name : hostfs::listNames(dir)) {
-        if (name.size() > 5 && upper(name.substr(name.size() - 5)) == ".CUBE") {
+        if (name.size() > 5 && upperAscii(name.substr(name.size() - 5)) == ".CUBE") {
             ColourLut lut;
             std::string why;
             if (!parseCube(readTextFile(dir + "/" + name), lut, &why)) {
                 std::fprintf(stderr, "city grades: %s - %s; skipped\n", name.c_str(), why.c_str());
                 continue;
             }
-            luts_[upper(name.substr(0, name.size() - 5))] = std::move(lut);
+            luts_[upperAscii(name.substr(0, name.size() - 5))] = std::move(lut);
         }
     }
     for (const auto& raw : splitLines(readTextFile(dir + "/map.txt"))) {
@@ -107,7 +102,7 @@ bool CityGrades::open(const std::string& dir) {
         if (ln.empty() || ln[0] == '#') continue;
         const auto eq = ln.find('=');
         if (eq == std::string::npos) continue;
-        cityOf_[upper(trim(ln.substr(0, eq)))] = upper(trim(ln.substr(eq + 1)));
+        cityOf_[upperAscii(trim(ln.substr(0, eq)))] = upperAscii(trim(ln.substr(eq + 1)));
     }
     for (const auto& raw : splitLines(readTextFile(dir + "/night.txt"))) {
         const std::string ln = trim(raw);
@@ -115,14 +110,14 @@ bool CityGrades::open(const std::string& dir) {
         const auto eq = ln.find('=');
         if (eq == std::string::npos) continue;
         const float d = static_cast<float>(std::atof(trim(ln.substr(eq + 1)).c_str()));
-        if (d > 0.0f && d <= 1.0f) night_[upper(trim(ln.substr(0, eq)))] = d;
+        if (d > 0.0f && d <= 1.0f) night_[upperAscii(trim(ln.substr(0, eq)))] = d;
     }
     opened_ = true;
     return true;
 }
 
 float CityGrades::nightOf(const std::string& setName) const {
-    const std::string s = upper(setName);
+    const std::string s = upperAscii(setName);
     if (const auto it = night_.find(s); it != night_.end()) return it->second;
     if (const auto c = cityOf_.find(s); c != cityOf_.end())
         if (const auto it = night_.find(c->second); it != night_.end()) return it->second;
@@ -130,7 +125,7 @@ float CityGrades::nightOf(const std::string& setName) const {
 }
 
 const ColourLut* CityGrades::forSet(const std::string& setName) const {
-    const std::string s = upper(setName);
+    const std::string s = upperAscii(setName);
     if (const auto it = luts_.find(s); it != luts_.end()) return &it->second;
     if (const auto c = cityOf_.find(s); c != cityOf_.end())
         if (const auto it = luts_.find(c->second); it != luts_.end()) return &it->second;
@@ -138,7 +133,7 @@ const ColourLut* CityGrades::forSet(const std::string& setName) const {
 }
 
 std::string CityGrades::sourceFor(const std::string& setName) const {
-    const std::string s = upper(setName);
+    const std::string s = upperAscii(setName);
     if (luts_.count(s)) return s + ".cube";
     if (const auto c = cityOf_.find(s); c != cityOf_.end() && luts_.count(c->second))
         return c->second + ".cube (map.txt)";

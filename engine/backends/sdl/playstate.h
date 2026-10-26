@@ -787,14 +787,14 @@ struct PlayState {
     // the draw (`backends/remaster/playremaster_draw.cpp`)
     // the intro film's upscaled copy, opened into `mov` (smoothed) - false: none
     bool remasterOpenFilm(const std::string& real, omk::Movie& mov, const char* name);
-    void remasterViewMist(omk::View& view);
-    int  remasterViewLights(omk::View& view, bool& fxPix, float& kFxView);
-    void remasterPointLights(omk::View& view, std::vector<std::pair<float, const omk::Light3do*>>& fx,
+    void remasterViewMist(omk::View& v);
+    int  remasterViewLights(omk::View& v, bool& fxPix, float& kFxView);
+    void remasterPointLights(omk::View& v, std::vector<std::pair<float, const omk::Light3do*>>& fx,
                              float kFxView, int kFxSlots, float& fxCut);
-    void remasterLightsTold(const omk::View& view, const std::vector<std::pair<float, const omk::Light3do*>>& near,
+    void remasterLightsTold(const omk::View& v, const std::vector<std::pair<float, const omk::Light3do*>>& near,
                             const float at[3]);
-    void remasterLitSet(std::vector<omk::Draw>& draws);
-    bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> draws, const omk::View& drawn);
+    void remasterLitSet(std::vector<omk::Draw>& list);
+    bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
     bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures
     void preloadPin();

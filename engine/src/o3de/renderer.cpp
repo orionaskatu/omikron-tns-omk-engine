@@ -220,19 +220,13 @@ void runPass(Renderer& r, const View& v, std::span<const Draw> ds) {
 WaterPlane waterPlane(const Geometry& g) {
     WaterPlane out;
     std::map<int, std::pair<double, long>> byHeight;   // y / 4 -> area, triangles
-    for (const auto& b : g.batches) {
-        if (b.blend != Blend::Add) continue;
-        for (std::size_t t = b.start; t + 2 < b.start + b.count; t += 3) {
-            const Corner& a = g.corners[t];
-            const Corner& c1 = g.corners[t + 1];
-            const Corner& c2 = g.corners[t + 2];
-            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
-            const double ux = c1.x - a.x, uz = c1.z - a.z, vx = c2.x - a.x, vz = c2.z - a.z;
-            const double area = std::fabs(ux * vz - uz * vx) * 0.5;
-            auto& e = byHeight[static_cast<int>(std::lround(a.y / 4.0f))];
-            e.first += area; ++e.second;
-        }
-    }
+    forLevelTriangles(g, [](const Batch& b) { return b.blend == Blend::Add; },
+                      [&](const Corner& a, const Corner& c1, const Corner& c2) {
+        const double ux = c1.x - a.x, uz = c1.z - a.z, vx = c2.x - a.x, vz = c2.z - a.z;
+        const double area = std::fabs(ux * vz - uz * vx) * 0.5;
+        auto& e = byHeight[static_cast<int>(std::lround(a.y / 4.0f))];
+        e.first += area; ++e.second;
+    });
     for (const auto& [k, e] : byHeight) {
         if (e.first > out.area) { out.area = e.first; out.y = static_cast<float>(k) * 4.0f; out.triangles = e.second; }
         if (e.first >= 1e4) out.levels.push_back({static_cast<float>(k) * 4.0f, e.first, e.second});
@@ -323,17 +317,11 @@ void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std
 
 float groundLevel(const Geometry& g) {
     std::map<int, double> byHeight;   // y / 4 -> level opaque area
-    for (const auto& b : g.batches) {
-        if (b.blend != Blend::Opaque) continue;
-        for (std::size_t t = b.start; t + 2 < b.start + b.count; t += 3) {
-            const Corner& a = g.corners[t];
-            const Corner& c1 = g.corners[t + 1];
-            const Corner& c2 = g.corners[t + 2];
-            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
-            byHeight[static_cast<int>(std::lround(a.y / 4.0f))] +=
-                std::fabs((c1.x - a.x) * (c2.z - a.z) - (c1.z - a.z) * (c2.x - a.x)) * 0.5;
-        }
-    }
+    forLevelTriangles(g, [](const Batch& b) { return b.blend == Blend::Opaque; },
+                      [&](const Corner& a, const Corner& c1, const Corner& c2) {
+        byHeight[static_cast<int>(std::lround(a.y / 4.0f))] +=
+            std::fabs((c1.x - a.x) * (c2.z - a.z) - (c1.z - a.z) * (c2.x - a.x)) * 0.5;
+    });
     int best = 0;
     double most = 0.0;
     for (const auto& [k, area] : byHeight)

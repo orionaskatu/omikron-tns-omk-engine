@@ -29,13 +29,13 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
     float s[3], u[3], f[3], tanH = 1.0f, tanV = 1.0f;
     cameraBasis(cam, s, u, f, tanH, tanV);
     const float sx = static_cast<float>(pxW) * 0.5f, sy = static_cast<float>(pxH) * 0.5f;
-    // each light's tile rectangle, and its depth (the lists nearest first)
-    struct Rect { int x0, y0, x1, y1; float z; int s0 = 0, s1 = kLightSlices - 1; };
+    // each light's tile rectangle and its depth slices
+    struct Rect { int x0, y0, x1, y1; int s0 = 0, s1 = kLightSlices - 1; };
     // the SCRATCH is kept from frame to frame (`thread_local`: a renderer
     // bins on its own thread): one vector a cluster - ~37k of them at 4K - was
     // allocated and freed every frame
     static thread_local std::vector<Rect> rects;
-    rects.assign(points.size(), Rect{1, 1, 0, 0, 0.0f});
+    rects.assign(points.size(), Rect{1, 1, 0, 0});
     for (std::size_t i = 0; i < points.size(); ++i) {
         const auto& l = points[i];
         const float d[3] = {l.pos[0] - cam.eye[0], l.pos[1] - cam.eye[1], l.pos[2] - cam.eye[2]};
@@ -45,7 +45,6 @@ void binLights(const RCamera& cam, int pxW, int pxH, std::span<const View::GpuLi
         const float r = l.radiusA;
         if (vz + r <= kNearCut) continue;                 // wholly behind the eye
         Rect& q = rects[i];
-        q.z = vz;
         q.s0 = depthSlice(vz - r);
         q.s1 = depthSlice(vz + r);
         if (vz - r <= kNearCut * 4.0f) {                   // the eye in or near it: every tile

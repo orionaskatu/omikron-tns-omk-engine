@@ -57,8 +57,8 @@ std::vector<Light3do> emitterLights(const ParticleField& f,
                                     EmitterLightCount* count = nullptr);
 
 // The rule's constants: a stream is a flame past this saturation of its
-// sprite, (max - min) / max; a glow reaches 4.5 m, a flame 9 (the game's units are
-// ~1 cm), both at full strength inside a fifth of that; the intensity is the
+// sprite, (max - min) / max; a glow reaches 450 units, ~11 m, a flame 900, ~23 m
+// (the world unit is the inch), both at full strength inside a fifth of that; the intensity is the
 // `.3DO` record's `+32` (`sub_493E40` scales it by 256; the shipped median is
 // 1.5), times the colour's brightness.
 inline constexpr float kFlameSaturation = 0.4f;

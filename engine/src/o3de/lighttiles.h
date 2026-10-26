@@ -29,7 +29,8 @@
 // [3] the tile's size in render pixels, then
 // two words a cluster (slice-major, then row, then column) - the offset of its
 // list and its count - then the lists, light indices into `View::points`. A
-// cluster keeps at most `kTileCap`, nearest the camera first.
+// cluster keeps at most `kTileCap`, the lights nearest the CLUSTER (unordered
+// after that cut); one under the cap keeps the order the lights were found.
 #pragma once
 
 #include "o3de/raster.h"

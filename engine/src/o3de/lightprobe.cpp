@@ -22,7 +22,7 @@ struct P { float x, y, z, r, g, b; };
 // `cell`: each piece's centroid, its corners' interpolated colour and its
 // AREA. A set's floor is a few large triangles whose corners can lie further
 // apart than the probe's reach - Lahoreh's street start had no corner within
-// 6 m, so a body there was never tinted (2026-10-20).
+// `kReach` (600 units, ~15 m), so a body there was never tinted (2026-10-20).
 template <class F>
 void pieces(const P& a, const P& b, const P& c, float cell, int depth, F&& add) {
     const auto d2 = [](const P& u, const P& v) {

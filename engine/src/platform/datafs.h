@@ -169,6 +169,12 @@ std::string readTextFile(const std::string& path);
 // the '\n' dropped and nothing else ('\r' kept), a last line without a '\n'
 // included, and no empty line after a final '\n'.
 std::vector<std::string> splitLines(const std::string& text);
+// ASCII's letters upper-cased and every other byte kept: a set's or a
+// texture's name as a list (the remaster's grades, floors, lights) compares it
+inline std::string upperAscii(std::string s) {
+    for (auto& c : s) c = static_cast<char>(c >= 'a' && c <= 'z' ? c - 32 : c);
+    return s;
+}
 // `n` bytes as the whole of `path`, replacing it. -> false unless every byte
 // was written and the file closed. C stdio, for the reason above.
 bool writeWholeFile(const std::string& path, const void* data, std::size_t n);

@@ -117,11 +117,12 @@ public:
     // colour textures with a KTX2 of `codec`
     std::size_t blockFiles(PackCodec codec) const { return ktx_[codec == kCodecAstc ? 1 : 0][0].size(); }
     const std::string& dir() const { return dir_; }
-    // t's replacement, decoded: RGBA8 of w x h. False when the pack has none,
-    // or when the file is unusable (not a PNG this reads, not a power-of-two
-    // multiple of t) - said once per key, and t is then drawn as shipped.
-    bool replacement(const Texture& t, std::vector<std::uint8_t>& rgba, int& w, int& h) const;
-    // The same for a whole POOL at once, one result per texture in order: the
+    // Each texture's replacement, decoded: RGBA8 of w x h, not `ok` when the
+    // pack has none or the file is unusable (not a PNG this reads, not a
+    // power-of-two multiple of the texture) - said once per key, and the
+    // texture is then drawn as shipped. For a whole POOL at once (the single
+    // `replacement` had no caller left - removed 2026-10-26), one result per
+    // texture in order: the
     // files read and decoded on the shared thread pool (`platform/threads.h`),
     // the lookups and the refusals on the caller's thread. A null entry is
     // skipped. What a backend calls when a pool reaches it: decoding 31

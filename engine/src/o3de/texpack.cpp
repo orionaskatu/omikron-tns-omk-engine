@@ -10,6 +10,7 @@
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
+#include "platform/packkey.h"
 #include "platform/pngread.h"
 #include "platform/threads.h"
 
@@ -100,23 +101,17 @@ std::size_t imageBytes(const PackImage& p) {
 }  // namespace
 
 std::uint64_t textureKey(const Texture& t) {
-    std::uint64_t h = 0xcbf29ce484222325ull;
-    const auto mix = [&](std::uint8_t b) { h ^= b; h *= 0x100000001b3ull; };
-    for (const int v : {t.width, t.height})
-        for (int i = 0; i < 4; ++i) mix(static_cast<std::uint8_t>(static_cast<std::uint32_t>(v) >> (8 * i)));
+    Fnv1a h;
+    for (const int v : {t.width, t.height}) h.mixLe(static_cast<std::uint32_t>(v), 4);
     const std::size_t n = static_cast<std::size_t>(t.width) * static_cast<std::size_t>(t.height);
     const std::uint8_t* idx = t.idx.data();
-    for (std::size_t i = 0; i < n && i < t.idx.size(); ++i) mix(idx[i]);
+    for (std::size_t i = 0; i < n && i < t.idx.size(); ++i) h.mix(idx[i]);
     const std::uint8_t* pal = t.pal.data();
-    for (std::size_t i = 0; i < 768; ++i) mix(i < t.pal.size() ? pal[i] : 0);
-    return h;
+    for (std::size_t i = 0; i < 768; ++i) h.mix(i < t.pal.size() ? pal[i] : 0);
+    return h.h;
 }
 
-std::string textureKeyHex(std::uint64_t key) {
-    char b[17];
-    std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(key));
-    return b;
-}
+std::string textureKeyHex(std::uint64_t key) { return keyHex(key); }
 
 bool TexturePack::open(const std::string& dir) {
     files_.clear();
@@ -193,15 +188,6 @@ bool TexturePack::open(const std::string& dir) {
         std::fclose(f);
     }
     opened_ = true;
-    return true;
-}
-
-bool TexturePack::replacement(const Texture& t, std::vector<std::uint8_t>& rgba, int& w, int& h) const {
-    const Texture* one[1] = {&t};
-    auto r = replacements(one);
-    if (!r[0].ok) return false;
-    w = r[0].w; h = r[0].h;
-    rgba = std::move(r[0].rgba);
     return true;
 }
 

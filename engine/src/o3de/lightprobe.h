@@ -62,9 +62,11 @@ public:
     float meanLuma() const { return meanLuma_; }
     const float* meanRgb() const { return meanRgb_; }
 
-    static constexpr float kCell = 200.0f;    // ~2 m: the game's units are ~1 cm
-    static constexpr float kReach = 600.0f;
-    static constexpr float kBodyHeight = 90.0f;   // a floor's probe, at the hips
+    // in world units, which are INCHES (`kInchesPerMetre`) - set by eye, the
+    // metres beside them only what they come to
+    static constexpr float kCell = 200.0f;        // ~5 m
+    static constexpr float kReach = 600.0f;       // ~15 m
+    static constexpr float kBodyHeight = 90.0f;   // a floor's probe ~2.3 m up (meant as the hips, read as cm)
 
 private:
     struct Cell { double r = 0, g = 0, b = 0, x = 0, y = 0, z = 0, w = 0; };   // sums by area

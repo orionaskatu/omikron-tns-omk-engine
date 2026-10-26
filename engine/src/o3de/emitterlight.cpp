@@ -4,6 +4,8 @@
 
 #include "o3de/emitterlight.h"
 
+#include "platform/datafs.h"   // upperAscii
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -93,13 +95,6 @@ std::vector<Light3do> emitterLights(const ParticleField& f,
     return out;
 }
 
-namespace {
-std::string upperOf(std::string v) {
-    for (auto& ch : v) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
-    return v;
-}
-}  // namespace
-
 bool SurfaceCuration::open(const std::string& path) {
     entries_.clear();
     sets_.clear();
@@ -122,13 +117,13 @@ bool SurfaceCuration::open(const std::string& path) {
         const int n = std::sscanf(ln.substr(eq + 1).c_str(), "%f %15s", &e.gain, col);
         if (n < 1) continue;
         if (n == 2) { e.colour = static_cast<std::uint32_t>(std::strtoul(col, nullptr, 16)) & 0xFFFFFFu; e.hasColour = true; }
-        ++sets_[upperOf(set)];
+        ++sets_[upperAscii(set)];
         {
-            auto& bt = byTexture_[upperOf(tx)];
+            auto& bt = byTexture_[upperAscii(tx)];
             if (e.hasRect) bt.insert(std::find_if(bt.begin(), bt.end(), [](const Entry& x) { return !x.hasRect; }), e);
             else bt.push_back(e);
         }
-        auto& v = entries_[upperOf(set) + " " + upperOf(tx)];
+        auto& v = entries_[upperAscii(set) + " " + upperAscii(tx)];
         // rectangles first, in file order; the texture-wide entry last
         if (e.hasRect) v.insert(std::find_if(v.begin(), v.end(), [](const Entry& x) { return !x.hasRect; }), e);
         else v.push_back(e);
@@ -140,7 +135,7 @@ bool SurfaceCuration::open(const std::string& path) {
 }
 
 bool SurfaceCuration::covers(const std::string& set) const {
-    return opened_ && (sets_.count(upperOf(set)) || sets_.count("*"));
+    return opened_ && (sets_.count(upperAscii(set)) || sets_.count("*"));
 }
 
 const SurfaceCuration::Entry* SurfaceCuration::Lists::at(float u, float v) const {
@@ -152,19 +147,19 @@ const SurfaceCuration::Entry* SurfaceCuration::Lists::at(float u, float v) const
 }
 
 SurfaceCuration::Lists SurfaceCuration::listsAny(const std::string& texture) const {
-    const auto it = byTexture_.find(upperOf(texture));
+    const auto it = byTexture_.find(upperAscii(texture));
     return {it != byTexture_.end() ? &it->second : nullptr, nullptr};
 }
 
 SurfaceCuration::Lists SurfaceCuration::listsFor(const std::string& set, const std::string& texture) const {
-    const std::string t = upperOf(texture);
-    const auto a = entries_.find(upperOf(set) + " " + t);
+    const std::string t = upperAscii(texture);
+    const auto a = entries_.find(upperAscii(set) + " " + t);
     const auto b = entries_.find("* " + t);
     return {a != entries_.end() ? &a->second : nullptr, b != entries_.end() ? &b->second : nullptr};
 }
 
 const SurfaceCuration::Entry* SurfaceCuration::findAny(const std::string& texture, float u, float v) const {
-    const auto it = byTexture_.find(upperOf(texture));
+    const auto it = byTexture_.find(upperAscii(texture));
     if (it == byTexture_.end()) return nullptr;
     for (const Entry& e : it->second)
         if (!e.hasRect || (u >= e.u0 && u < e.u1 && v >= e.v0 && v < e.v1)) return &e;
@@ -172,7 +167,7 @@ const SurfaceCuration::Entry* SurfaceCuration::findAny(const std::string& textur
 }
 
 bool SurfaceCuration::namesAny(const std::string& texture) const {
-    return byTexture_.count(upperOf(texture)) > 0;
+    return byTexture_.count(upperAscii(texture)) > 0;
 }
 
 void curateBloom(const Texture& t, PackImage& pk) {
@@ -225,14 +220,14 @@ SurfaceCuration& surfaceCuration() {
 }
 
 bool SurfaceCuration::names(const std::string& set, const std::string& texture) const {
-    const std::string t = upperOf(texture);
-    return entries_.count(upperOf(set) + " " + t) || entries_.count("* " + t);
+    const std::string t = upperAscii(texture);
+    return entries_.count(upperAscii(set) + " " + t) || entries_.count("* " + t);
 }
 
 const SurfaceCuration::Entry* SurfaceCuration::find(const std::string& set, const std::string& texture,
                                                     float u, float v) const {
-    const std::string t = upperOf(texture);
-    const std::string keys[2] = {upperOf(set) + " " + t, "* " + t};
+    const std::string t = upperAscii(texture);
+    const std::string keys[2] = {upperAscii(set) + " " + t, "* " + t};
     for (const std::string& key : keys) {
         const auto it = entries_.find(key);
         if (it == entries_.end()) continue;

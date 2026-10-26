@@ -38,7 +38,6 @@
 #include <memory>
 
 namespace {
-constexpr double kInchesPerMetre = 39.37;   // the game's unit
 constexpr std::size_t kHeld = 6;
 // ...where the renderer keeps none of their textures: a held set saves its
 // read and build alone, and holds its memory all the same - the nearest
@@ -121,7 +120,7 @@ void PlayState::phasePreload() {
     // (6.5 m) to release them at 61 and 125 m ten frames later
     if (frameNo % kEvery != 0 || !session.playerPlaced() || handoverFrame < 0 || frameNo <= handoverFrame) return;
     const float* p = session.playerPos();
-    const double reach = preloadMetres * kInchesPerMetre, keep = (preloadMetres + 10.0) * kInchesPerMetre;
+    const double reach = preloadMetres * omk::kInchesPerMetre, keep = (preloadMetres + 10.0) * omk::kInchesPerMetre;
     // each destination's nearest door
     std::map<std::string, std::pair<double, int>> near;   // stem -> (distance, area)
     for (const auto& d : preloadDoors) {
@@ -162,7 +161,7 @@ void PlayState::phasePreload() {
             std::printf("preload: %s (AREA %d) released - %s\n", it->first.c_str(), it->second.area,
                         n == near.end() ? "no door leads there now" : "past the keep radius");
             omk::event("preload.drop", {{"set", it->first}, {"area", it->second.area},
-                                        {"metres", n == near.end() ? -1.0 : n->second.first / kInchesPerMetre}});
+                                        {"metres", n == near.end() ? -1.0 : n->second.first / omk::kInchesPerMetre}});
             pinsChanged = pinsChanged || it->second.sent;
             release(it->second);
             it = preloads.erase(it);
@@ -197,8 +196,8 @@ void PlayState::phasePreload() {
             std::printf("preload: %s (AREA %d) released - %s's door is nearer\n", far->first.c_str(),
                         far->second.area, stem.c_str());
             omk::event("preload.drop", {{"set", far->first}, {"area", far->second.area}, {"for", stem},
-                                        {"metres", far->second.dist / kInchesPerMetre},
-                                        {"forMetres", dist / kInchesPerMetre}});
+                                        {"metres", far->second.dist / omk::kInchesPerMetre},
+                                        {"forMetres", dist / omk::kInchesPerMetre}});
             pinsChanged = pinsChanged || far->second.sent;
             release(far->second);
             preloads.erase(far);
@@ -220,8 +219,8 @@ void PlayState::phasePreload() {
         preloads[stem] = Preloaded{area, L, false, dist, [stop] { stop->store(true, std::memory_order_relaxed); }};
         ++preloadMade;
         std::printf("preload: %s (AREA %d) - its door %.1f m away, prepared on a thread\n", stem.c_str(), area,
-                    dist / kInchesPerMetre);
-        omk::event("preload.want", {{"set", stem}, {"area", area}, {"metres", dist / kInchesPerMetre},
+                    dist / omk::kInchesPerMetre);
+        omk::event("preload.want", {{"set", stem}, {"area", area}, {"metres", dist / omk::kInchesPerMetre},
                                     {"running", inFlight}, {"held", static_cast<long>(held)}});
         ++inFlight;
     }

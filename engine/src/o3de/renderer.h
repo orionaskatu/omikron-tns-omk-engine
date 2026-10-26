@@ -55,6 +55,8 @@
 #include "o3de/render.h"
 #include "ui/surface.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -639,7 +641,29 @@ struct WaterPlane {
     struct Level { float y; double area; long triangles; };
     std::vector<Level> levels;
 };
+// ...the functions are the remaster's, compiled with it alone (a shared
+// caller would fail only at a `noremaster` link - the audit's cleanliness)
+#if OMK_REMASTER
 WaterPlane waterPlane(const Geometry& g);
+
+// Every LEVEL triangle (its three corners within 2 units of one height) of the
+// batches `want(batch)` takes: `f(a, c1, c2)`, in order. Bounded by the
+// corners as well as the batch. The water's plane, the ground and the
+// reflecting floors walk a set this way (one copy, where there were three).
+template <class Want, class F>
+void forLevelTriangles(const Geometry& g, Want&& want, F&& f) {
+    for (const auto& b : g.batches) {
+        if (!want(b)) continue;
+        const std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(b.start) + b.count, g.corners.size());
+        for (std::size_t t = b.start; t + 2 < end; t += 3) {
+            const Corner& a = g.corners[t];
+            const Corner& c1 = g.corners[t + 1];
+            const Corner& c2 = g.corners[t + 2];
+            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
+            f(a, c1, c2);
+        }
+    }
+}
 
 // A set's GROUND: the height carrying the most LEVEL opaque area (`texpack_tool
 // floors` lists them) - Qalisar's, Anekbah's and Lahoreh's street at 0,
@@ -661,5 +685,6 @@ float groundLevel(const Geometry& g);
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
                    const std::vector<float>* floorStrength = nullptr);
+#endif  // OMK_REMASTER
 
 }  // namespace omk

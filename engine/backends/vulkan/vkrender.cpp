@@ -1154,9 +1154,9 @@ bool VulkanRenderer::pickDevice() {
     VKCHECK(vkAllocateCommandBuffers(dev_, &cai, &cb_), "vkAllocateCommandBuffers");
     if (omk::envFlag("OMK_GPU_TIMES")) {
         if (props_.limits.timestampComputeAndGraphics && props_.limits.timestampPeriod > 0.0f) {
-            VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-            qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = kStamps;
-            if (vkCreateQueryPool(dev_, &qi, nullptr, &tsPool_) != VK_SUCCESS) tsPool_ = VK_NULL_HANDLE;
+            VkQueryPoolCreateInfo qpi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qpi.queryType = VK_QUERY_TYPE_TIMESTAMP; qpi.queryCount = kStamps;
+            if (vkCreateQueryPool(dev_, &qpi, nullptr, &tsPool_) != VK_SUCCESS) tsPool_ = VK_NULL_HANDLE;
         }
         std::printf("vulkan: the GPU's time per pass %s\n", tsPool_ ? "- every 60 frames (OMK_GPU_TIMES)"
                                                                  : "refused: the device has no timestamps");
@@ -1931,14 +1931,14 @@ bool VulkanRenderer::makePipelines() {
     return true;
 }
 
-// SET 1, rebuilt. It has to be a function because `setTextures` RESETS the
-// descriptor pool, and a reset frees every set allocated from it - this one
-// included. The first version allocated it once in `makePipelines` and the
-// game's first `setTextures` quietly destroyed it, so the fragment shader read
-// a strength of 0 and no shadow was ever drawn. The synthetic probe passed an
-// EMPTY texture list, took the early-out and never reset, which is why it
-// worked while the game did not: the bug was in the difference between the two
-// callers, not in the shadow.
+// SET 1, made once by `makePipelines` and kept as long as the pool: a
+// texture's set now leaves the pool on its own (`FREE_DESCRIPTOR_SET`), and
+// nothing resets it. (It was a function because `setTextures` once RESET the
+// pool, freeing every set - this one included - and was remade after each:
+// the first version, made once, was quietly destroyed by the game's first
+// `setTextures` and no shadow was ever drawn, while the synthetic probe's EMPTY
+// texture list never reset and worked - the bug was in the difference between
+// the two callers, not in the shadow.)
 void VulkanRenderer::makeShadowSet() {
     if (shFbuf_ == VK_NULL_HANDLE || dpool_ == VK_NULL_HANDLE) return;
     VkDescriptorSetAllocateInfo sai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -3930,6 +3930,22 @@ VulkanRenderer::~VulkanRenderer() {
     if (pipeStencil_) vkDestroyPipeline(dev_, pipeStencil_, nullptr);
     if (pipeDepthReset_) vkDestroyPipeline(dev_, pipeDepthReset_, nullptr);
     for (auto& pp : pipeRefl_) if (pp) vkDestroyPipeline(dev_, pp, nullptr);
+    // the mapped shadow and set 1's layout and buffers - older than the
+    // remaster, and never destroyed until the audit's cleanliness (2026-10-26);
+    // set 1 itself goes with the pool
+    if (shPipe_) vkDestroyPipeline(dev_, shPipe_, nullptr);
+    if (shPlo_) vkDestroyPipelineLayout(dev_, shPlo_, nullptr);
+    if (shFbuf_) vkDestroyFramebuffer(dev_, shFbuf_, nullptr);
+    if (shPass_) vkDestroyRenderPass(dev_, shPass_, nullptr);
+    if (shSampler_) vkDestroySampler(dev_, shSampler_, nullptr);
+    if (shView_) vkDestroyImageView(dev_, shView_, nullptr);
+    if (shImg_) vkDestroyImage(dev_, shImg_, nullptr);
+    if (shMem_) freeDeviceMemory(shMem_);
+    if (dsl1_) vkDestroyDescriptorSetLayout(dev_, dsl1_, nullptr);
+    if (shUbo_) vkDestroyBuffer(dev_, shUbo_, nullptr);
+    if (shUboMem_) freeDeviceMemory(shUboMem_);   // unmapped by the free
+    if (litUbo_) vkDestroyBuffer(dev_, litUbo_, nullptr);
+    if (litUboMem_) freeDeviceMemory(litUboMem_);
     if (pfence_) vkDestroyFence(dev_, pfence_, nullptr);
     if (acquired_) vkDestroySemaphore(dev_, acquired_, nullptr);
     if (drawn_) vkDestroySemaphore(dev_, drawn_, nullptr);

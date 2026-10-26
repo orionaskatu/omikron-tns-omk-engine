@@ -221,9 +221,13 @@ endif
 # different flags, so their objects must never mix), with `-MMD -MP` like the
 # engine objects, and `build/omk-play` / `build/omk-play-gles` are real file
 # targets. `play` and `play-gles` stay the entry points and print as before.
-PLAY_SW_DIR := $(OBJDIR)/play-sw
-PLAY_VK_DIR := $(OBJDIR)/play-vk
-PLAY_GL_DIR := $(OBJDIR)/play-gles
+# ...and per SDL: the frontend's objects carry `-DOMK_SDL3` or not, and an
+# SDL3 object linked into an SDL2 build imported calls that build never made
+# (the remaster audit's trap, 2026-10-24) - SDL3's in their own directories
+PLAY_SDL_SUFFIX := $(if $(filter sdl3,$(SDL_PKG)),-sdl3)
+PLAY_SW_DIR := $(OBJDIR)/play-sw$(PLAY_SDL_SUFFIX)
+PLAY_VK_DIR := $(OBJDIR)/play-vk$(PLAY_SDL_SUFFIX)
+PLAY_GL_DIR := $(OBJDIR)/play-gles$(PLAY_SDL_SUFFIX)
 PLAY_SW_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS)
 PLAY_VK_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) $(VK_CFLAGS) -DOMK_VULKAN -Ibuild/shaders
 PLAY_GL_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) -DOMK_GLES
@@ -238,8 +242,9 @@ INSTRUMENTS ?= 1
 PLAY_SDL_SRCS := $(filter-out backends/sdl/playharness$(if $(filter 0,$(INSTRUMENTS)),,_off).cpp \
                  backends/sdl/playgpu_%.cpp,$(wildcard backends/sdl/*.cpp))
 # A stamp per value, so switching INSTRUMENTS RELINKS: the swapped object is
-# older than the binary, and make compares nothing else.
-INSTR_STAMP := $(OBJDIR)/instruments-$(INSTRUMENTS).stamp
+# older than the binary, and make compares nothing else. The SDL package is
+# in it for the same reason.
+INSTR_STAMP := $(OBJDIR)/instruments-$(INSTRUMENTS)-$(SDL_PKG).stamp
 $(INSTR_STAMP):
 	@mkdir -p $(@D)
 	@rm -f $(OBJDIR)/instruments-*.stamp

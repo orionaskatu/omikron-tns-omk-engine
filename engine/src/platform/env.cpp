@@ -18,6 +18,7 @@ namespace {
 // "log" prints lines and changes nothing else.
 constexpr const char* kSwitches[] = {
     "OMK_ACTIVE_POOL_ONLY",     // A/B: a staged body's program looked up in the active pool alone - the old, wrong lookup (engine: walk-in scene)
+    "OMK_AUDIO_DEVICE",         // the world's audio device opened in a --frames run too, which never opens it (engine: sdl3)
     "OMK_BLOOM",                // run_vulkan: the remaster's bloom at S (engine: bloom and grade)
     "OMK_BODYLOG",              // log: every staged body's line every frame, culled or not (engine: beat handover)
     "OMK_CAMEYE",               // log: the resolved camera eye every frame (camera travel)

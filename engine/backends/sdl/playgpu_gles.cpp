@@ -64,7 +64,12 @@ void PlayState::gpuOpenWindow() {
     // readback is G6. The window is whatever size the host gives - 960x544 on
     // a Vita - and the frame is scaled into it at its own aspect.
     if (!vkRen && !forceSoftware) {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+#if defined(OMK_SDL3)
+        const bool videoUp = SDL_InitSubSystem(SDL_INIT_VIDEO);   // SDL3: true on success
+#else
+        const bool videoUp = SDL_InitSubSystem(SDL_INIT_VIDEO) == 0;
+#endif
+        if (videoUp) {
 #if !defined(__APPLE__)
             // GLES 2 where the platform has it (the Vita's vitaGL, Linux,
             // WebGL); macOS's legacy GL 2.1 profile takes no attributes

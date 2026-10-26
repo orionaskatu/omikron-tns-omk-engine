@@ -114,8 +114,12 @@ void PlayState::phasePreload() {
                                      {"second", second}});
     }
     // ...and the distances only once the player stands somewhere: before
-    // that his position is the origin, and every door near it looks close
-    if (frameNo % kEvery != 0 || !session.playerPlaced()) return;
+    // that his position is the origin, and every door near it looks close -
+    // and only after his body is handed over (`handoverFrame`), where a
+    // `--stand` start moves him: until then he stands at the area's first
+    // address, and Qalisar's start wanted ANEKBAH and TUNELAQ1 from there
+    // (6.5 m) to release them at 61 and 125 m ten frames later
+    if (frameNo % kEvery != 0 || !session.playerPlaced() || handoverFrame < 0 || frameNo <= handoverFrame) return;
     const float* p = session.playerPos();
     const double reach = preloadMetres * kInchesPerMetre, keep = (preloadMetres + 10.0) * kInchesPerMetre;
     // each destination's nearest door

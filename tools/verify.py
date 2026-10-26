@@ -31130,6 +31130,94 @@ def c_engine_frontend_gateway():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def c_engine_sdl3():
+    r"""SDL3 AND SDL2 BOTH BUILD AND RUN THE SAME (PORTING A8: "3 is preferred
+    and 2 is accepted" - the Makefile takes SDL3 wherever `pkg-config` has
+    it). SDL3 did not BUILD from the remaster's audit (2026-10-24) to
+    2026-10-26 - the audio device, text input and the Vulkan window had kept
+    SDL2's calls - and every build on a machine with both needed
+    `SDL_PKG=sdl2`; nothing checked it. Where `pkg-config` has both:
+      1. each flavour builds `omk-play` and `omk-play-gles` (private binaries,
+         `build/sdl/`; SDL3's objects in their own `-sdl3` directories, so
+         neither flavour's object is ever linked into the other);
+      2. the software reference's street frame, 60 frames, the SAME BYTES;
+      3. GLES on the readback's path (`OMK_NO_GPU_PRESENT`): GLES2 on both
+         (SDL3's `SDL_InitSubSystem` is true on success - a `== 0` left
+         SDL3 on the software reference) and the same bytes;
+      4. Vulkan's window (hidden, `OMK_VERIFY_GPU_PRESENT`): VULKAN on both,
+         every compared frame 0 pixels from the CPU's;
+      5. THE AUDIO DEVICE (`OMK_AUDIO_DEVICE`, SDL's `disk` driver): opened
+         on both and its output non-silent - SDL3's is a stream pulled
+         through `feed3`, SDL2's a callback.
+    NOT THE SAME SAMPLES: SDL2's device reopens at the world's 22050 Hz,
+    SDL3's stays at 44100 and its stream resamples (measured 2026-10-26: SDL3's
+    every other frame matching SDL2's within 1e-6 where the gaps fell alike).
+    SHOWN TO FAIL (2026-10-26), one at a time: the GLES window's init back to
+    `== 0` - part 3 (SDL3 on the software reference); `feed3` not handed to
+    the stream - part 5 (SDL3's device silent).
+    """
+    import subprocess, tempfile, shutil, re, array
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    have = [p for p in ("sdl3", "sdl2")
+            if subprocess.run(["pkg-config", "--exists", p], capture_output=True).returncode == 0]
+    if len(have) < 2:
+        return ("skipped",), ("skipped",), "pkg-config has %s - both are needed" % (have or "neither")
+    env0 = {k: v for k, v in os.environ.items() if k != "MAKEFLAGS"}   # the flavour is this check's
+    out = os.path.join(eng, "build", "sdl")
+    bins, built = {}, []
+    for p in ("sdl3", "sdl2"):
+        bins[p] = (os.path.join(out, "omk-play-" + p), os.path.join(out, "omk-play-gles-" + p))
+        mk = subprocess.run(["make", "-s", "play", "play-gles", "SDL_PKG=" + p, "PLAY_BIN=" + bins[p][0],
+                             "PLAY_GL_BIN=" + bins[p][1]], cwd=eng, capture_output=True, text=True, env=env0)
+        built.append(mk.returncode == 0 and all(os.path.exists(b) for b in bins[p]) and
+                     ("against " + p) in mk.stdout)
+        if not built[-1]:
+            return (tuple(built), "build"), ((True, True), "built"), (mk.stdout + mk.stderr)[-400:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, env, *extra, frames="60"):
+            dump = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([binary, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--area", "0", "--stand",
+                                "1804,0,-6890,336", "--filter", "nearest", "--frames", frames, "--dump", dump] +
+                               list(extra), capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(env0, **env))
+            return (open(dump, "rb").read() if os.path.exists(dump) else None), r.stdout
+        got = {}
+        for p in ("sdl3", "sdl2"):
+            play, gles = bins[p]
+            raw = os.path.join(tmp, p + ".raw")
+            sw, swlog = run(play, p + "-sw", {"SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "disk",
+                                              "OMK_AUDIO_DEVICE": "1", "SDL_DISKAUDIOFILE": raw,
+                                              "SDL_AUDIO_DISK_OUTPUT_FILE": raw}, frames="120")
+            pcm = array.array("f", open(raw, "rb").read()[:os.path.getsize(raw) // 4 * 4]) \
+                if os.path.exists(raw) else array.array("f")
+            gl, gllog = run(gles, p + "-gl", {"OMK_NO_GPU_PRESENT": "1"})
+            _, vklog = run(play, p + "-vk", {"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"}, "--vulkan")
+            vm = re.findall(r"gpu present verify: frame \d+, (\d+) frames compared, (\d+) differ", vklog)
+            got[p] = dict(sw=sw, gl=gl, gles="renderer: GLES2" in gllog, vk="renderer: VULKAN" in vklog,
+                          vkok=bool(vm) and int(vm[-1][0]) >= 20 and vm[-1][1] == "0",
+                          dev="audio: device " in swlog, peak=max(map(abs, pcm)) if pcm else 0.0,
+                          samples=len(pcm))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    a, b = got["sdl3"], got["sdl2"]
+    print(f"        software frames {'the same' if a['sw'] and a['sw'] == b['sw'] else 'DIFFER'}; GLES "
+          f"{a['gles']}/{b['gles']}, frames {'the same' if a['gl'] and a['gl'] == b['gl'] else 'DIFFER'}; "
+          f"Vulkan's window {a['vk']}/{b['vk']}, verified {a['vkok']}/{b['vkok']}; audio device "
+          f"{a['dev']}/{b['dev']}, {a['samples']}/{b['samples']} samples, peak {a['peak']:.3f}/{b['peak']:.3f} "
+          f"(sdl3/sdl2)")
+    return (tuple(built), a["sw"] is not None and a["sw"] == b["sw"],
+            (a["gles"], b["gles"], a["gl"] is not None and a["gl"] == b["gl"]),
+            (a["vk"], b["vk"], a["vkok"], b["vkok"]),
+            (a["dev"], b["dev"], a["peak"] > 0.05, b["peak"] > 0.05)), \
+        ((True, True), True, (True, True, True), (True,) * 4, (True,) * 4), \
+        "both flavours built; the software frame the same bytes; GLES up on both and the same bytes; " \
+        "Vulkan's window up on both and 0 pixels from the CPU's; the audio device open on both and sounding"
+
+
 def c_engine_classic_build():
     r"""THE CLASSIC MAC OS BUILD (`todo/classic-mac-port-1999.md` step 5): the
     engine and the VIEWER as Carbon binaries for Mac OS 9 and Mac OS X on
@@ -34269,6 +34357,11 @@ def c_engine_preload():
          `prepared`; the audit's performance item 1) - and the arrival's pool - the
          first after the transition's `area.goto 46` - bringing NONE new,
          against at least 7 without; without, nothing taken or uploaded ahead;
+         and ARESTO the ONLY set wanted, on Vulkan and on GLES - the
+         distances wait for the player's hand-over, where `--stand` moves
+         him: from the area's first address, before it, the walk also
+         wanted AAPKAYL and AHALL27 (2.5 m there, 48.7 m ten frames later;
+         Qalisar's ANEKBAH and TUNELAQ1 the same way) - 2026-10-26;
       4. the frame the walk ends on THE SAME BYTES with and without - the
          preload moves when work is done, never what is drawn;
       5. THE CAP AND THE RELEASE (the audit's bug 3, 2026-10-23): a walk down
@@ -34301,7 +34394,7 @@ def c_engine_preload():
          part 5's walk with each preload's job sleeping 3 s first
          (`OMK_PRELOAD_DELAY_MS`) - a set released while it prepares is
          CANCELLED (`@evt preload.cancelled`, after its drop) before its read
-         (stage 0), and counted in flight until it returns: the next want
+         (stage 0 - QSEXSHP1, released for QBAR's nearer door), and counted in flight until it returns: the next want
          says one running, and none ever more than one (two in flight);
          `remasterFinish` waits for the jobs at the end. The cap where the
          renderer keeps no textures (`keepsPreload`, the software reference)
@@ -34378,8 +34471,10 @@ def c_engine_preload():
             # the arrival: the first pool the transition brings, 0 when none brings anything
             first = pools[0] if pools else 0
             heldAt.update(e[1].get("held") for e in ev if e[0] == "preload.want")
+            wantSets[name] = {e[1].get("set") for e in ev if e[0] == "preload.want"}
             return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0, prepared
         heldAt = set()   # the cap each want reported, GPU walks
+        wantSets = {}    # each walk's wanted sets
         on, took, ahead, arrivalOn, wentOn, prepared = walk("on", 25)
         off, tookOff, aheadOff, arrivalOff, wentOff, _ = walk("off", 0)
         glOn, glTook, glAhead, glArrOn, glWentOn, glPrepared = walk("glon", 25, True)
@@ -34435,7 +34530,8 @@ def c_engine_preload():
                   bool(runs) and max(runs) <= 1, soft == {"2"}, gpuHeld == {"6"})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    print(f"        door graph {graph}; with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead "
+    print(f"        door graph {graph}; wanted {sorted(wantSets.get('on', ()))} (GLES "
+          f"{sorted(wantSets.get('glon', ()))}); with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead "
           f"({prepared} decoded ahead), "
           f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
           f"{'the same' if on and on == off else 'DIFFER'}; the cap at 1: at most {most} held, released for a "
@@ -34447,9 +34543,10 @@ def c_engine_preload():
           f"{counted} running, at most {max(runs) if runs else None}; held {sorted(soft)} on software, "
           f"{sorted(gpuHeld)} on the GPU walks")
     walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
-              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead)
+              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead,
+              wantSets.get("on") == {"ARESTO"} and wantSets.get("glon") == {"ARESTO"})
     return (src_ok, graph, walked, on is not None and on == off, cap, gles, cancel), \
-        ((True,) * 6, (True,) * 4, (True,) * 7, True, (True,) * 5, (True,) * 6, (True,) * 7), \
+        ((True,) * 6, (True,) * 4, (True,) * 8, True, (True,) * 5, (True,) * 6, (True,) * 7), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
         "prepared set first, a pinned texture spared, a shared decode counted); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
@@ -51448,6 +51545,7 @@ SLOW = [
     ("engine: profiler control", c_engine_profiler_control, "todo/debug-tools.md step 3"),
     ("engine: profiler gpu", c_engine_profiler_gpu, "todo/debug-tools.md step 5"),
     ("engine: release build", c_engine_release_build, "todo/debug-tools.md"),
+    ("engine: sdl3",     c_engine_sdl3,         "PORTING A8; backends/sdl/sdlfront.cpp; engine/Makefile SDL_PKG"),
     ("engine: anti-aliasing", c_engine_anti_aliasing, "ASSETS 4"),
     ("engine: texture filter", c_engine_texture_filter, "ASSETS 4"),
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),

@@ -18,20 +18,14 @@ bool PlayState::gpuWindowBuild() const { return true; }
 // Vulkan when the machine has it (see THE RENDERER in `playsetup_devices.cpp`)
 void PlayState::gpuOpenWindow() {
     if (!forceSoftware && !worldVulkan) {
-        if (SDL_Init(SDL_INIT_VIDEO) == 0) {
-            vkWin = SDL_CreateWindow("OMK Engine (vulkan)",
-                                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                     dispW, dispH, SDL_WINDOW_VULKAN |
-                                     // hidden for a profile of the direct present
-                                     // (`OMK_HIDDEN_WINDOW`, playgpu_gles.cpp)
-                                     (omk::envFlag("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
-                                                                       : omk::sdlFrontend(front).windowFlags()));
-        }
+        vkWin = vkSdlWindow("OMK Engine (vulkan)", dispW, dispH,
+                            // hidden for a profile of the direct present
+                            // (`OMK_HIDDEN_WINDOW`, playgpu_gles.cpp)
+                            omk::envFlag("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
+                                                              : omk::sdlFrontend(front).windowFlags());
         if (vkWin) {
-            unsigned nx = 0;
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, nullptr);
-            std::vector<const char*> ext(nx);
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, ext.data());
+            const std::vector<const char*> ext = vkSdlExtensions(vkWin);
+            const auto nx = static_cast<unsigned>(ext.size());
             omk::Renderer* vkr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
@@ -48,7 +42,7 @@ void PlayState::gpuOpenWindow() {
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
             if (inst &&
-                SDL_Vulkan_CreateSurface(vkWin, static_cast<VkInstance>(inst), &surf) &&
+                vkSdlSurface(vkWin, static_cast<VkInstance>(inst), &surf) &&
                 omk::vulkanAttachSurface(vkr, reinterpret_cast<unsigned long long>(surf)) &&
                 vkr->init(dispW, dispH)) {
                 vkRen = vkr;

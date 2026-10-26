@@ -493,7 +493,8 @@ the tiled point lights).
   `OMK_GPU_TIMES=1` and read which pass grows when it slows; then, if it is
   the reflection's lights, a cap on the lights a reflected fragment takes.
   Machine notes: SDL3 appeared on this machine the same day and the Makefile
-  prefers it (`make SDL_PKG=sdl2`, or `MAKEFLAGS=SDL_PKG=sdl2` for verify).
+  prefers it (`make SDL_PKG=sdl2`, or `MAKEFLAGS=SDL_PKG=sdl2` for verify -
+  no longer needed since 2026-10-26: SDL3 builds).
 * **The game's own rain** (ASSETS 4e, read for the reader): Anekbah, the
   Impasse, the rooftops and Khonsu, one shower every ~11-18 minutes of wall
   clock (8-14 dry, 20 s ramp, 2.5-3.5 min, 10 s fade), only at *Niveau de
@@ -1615,7 +1616,7 @@ on the external disk (`omk.conf`: `pack = /Volumes/Crucial_X8/omk/omk-pack`,
 `--only`, `--jobs 4`: **20 green, `emitter light` red** - `block formats`
 part 4 (red at the audit, the pack moved), `preload` and `remaster switch`
 among the green. No timing: the load average was 6 on 8 cores.
-* **SDL3 does not build** (`sdlfront.cpp:539-540` and three more:
+* **SDL3 does not build** (FIXED 2026-10-26, "SDL3 builds" below) (`sdlfront.cpp:539-540` and three more:
   `SDL_AudioSpec` has no `callback` / `userdata` in SDL3), and the Makefile
   takes SDL3 wherever `pkg-config` has it - this M1 has 3.4.18 beside
   2.28.5. `make SDL_PKG=sdl2` (and `MAKEFLAGS=SDL_PKG=sdl2` for `verify.py`'s
@@ -2003,17 +2004,54 @@ but `emitter light` (the run-to-run flip above).
     ahead); the old code mostly escaped by order. Now a key is forgotten as
     many times as it was prepared.
   * `engine: preload` part 7 (part 5's walk, each job 3 s late via
-    `OMK_PRELOAD_DELAY_MS`: ANEKBAH cancelled at stage 0, the next want
+    `OMK_PRELOAD_DELAY_MS`: ANEKBAH cancelled at stage 0 - QSEXSHP1 once the
+    stale first pass was fixed, the next want
     counting it running, never more than one; held 2 on software, 6 on the
     GPU walks) and a part-1 pin for the count - shown to fail four ways (no
     cancel: stage -1; the dropped not counted: 0 running; the cap ignoring
     the renderer: 6 on software; the count's guard removed: part 1).
-  * SEEN, NOT FIXED: the FIRST distance pass of a `--stand` start measures
-    from the player's pre-stand position - Qalisar's wants ANEKBAH and
-    TUNELAQ1 at 6.5 m, released at 61 and 125 m ten frames later; Anekbah's
-    restaurant walk AAPKAYL and AHALL27 at 2.5 m, released at 48.7 m. A
-    wasted job each (now cancelled cheaply); whether a save's own start
-    does it too is unread.
+  * FIXED THE SAME DAY (the reader's next "2"): the FIRST distance pass of a
+    `--stand` start measured from the area's first ADDRESS - the session
+    places him there, and `--stand` moves him only at the hand-over, when
+    his controller is built - Qalisar's wants ANEKBAH and TUNELAQ1 at 6.5 m,
+    released at 61 and 125 m ten frames later; Anekbah's restaurant walk
+    AAPKAYL and AHALL27 at 2.5 m, released at 48.7 m. The distances now wait
+    for the hand-over (`handoverFrame`). A save's own start was not wrong (no
+    stand; its address start wants the same two sets, at 1.0 m from where
+    the body stands rather than 2.5 from the address). `engine: preload`
+    part 3: ARESTO the only set wanted, Vulkan and GLES - shown to fail
+    without the wait (AAPKAYL and AHALL27 wanted). Part 7's cancelled set is
+    now QSEXSHP1 (released for QBAR's nearer door while it sleeps).
+* **SDL3 builds (2026-10-26)** - the audit's note. Thirteen errors at four
+  sites, and one fault that compiled:
+  * the AUDIO DEVICE: SDL3's spec is the format alone and the callback the
+    stream's - `feed3` mixes the asked bytes (whole frames, rounded up) into
+    `abuf_` and puts them; `SDL_AUDIO_F32` (native order there), the audio
+    subsystem started, `SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES` 1024 (SDL2's
+    `samples`). Both now print the device's real format (`audio: device ...`):
+    SDL2's device reopens at the world's 22050 Hz, SDL3's stays at 44100 and
+    its stream resamples - the same signal, every other SDL3 frame within
+    1e-6 of SDL2's where the gaps fell alike (the disk driver's output);
+  * `SDL_StartTextInput` / `SDL_StopTextInput` take the window in SDL3;
+  * the Vulkan window, its extensions and its surface: `vkSdlWindow`,
+    `vkSdlExtensions`, `vkSdlSurface` in `playgpu_vulkan.h`, for the viewer's
+    window and the set viewer's;
+  * COMPILED BUT WRONG: GLES's `SDL_InitSubSystem(SDL_INIT_VIDEO) == 0` -
+    SDL3 answers true on success, so GLES fell to the software reference;
+  * the options' resolutions: SDL3's fullscreen list need not hold the
+    desktop's mode (its dummy driver lists none) - added, as SDL2's list
+    carried it (`engine: options menu` red under SDL3 without it).
+  THE TRAP closed in the Makefile: SDL3's frontend objects compile into
+  their own `play-*-sdl3` directories, and the instruments' stamp names the
+  SDL package, so switching relinks. `OMK_AUDIO_DEVICE=1` opens the world's
+  device in a `--frames` run. `engine: sdl3` (new): both flavours built into
+  `build/sdl/`, the software and GLES frames the same bytes, Vulkan's window
+  0 pixels from the CPU's on both, the device open and sounding on both
+  (SDL's `disk` driver) - shown to fail twice (the `== 0` back: GLES on the
+  software reference; `feed3` not handed over: SDL3 silent). SDL3 is now
+  this M1's default build; 21 frontend and GPU checks rerun green on it
+  (the next full sweep is its first). NOT JUDGED: SDL3's resampled sound by
+  ear - the reader's.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

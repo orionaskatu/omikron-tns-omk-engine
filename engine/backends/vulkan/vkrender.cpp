@@ -100,6 +100,14 @@ const uint32_t kFrag[] =
 const uint32_t kFragTiled[] =
 #include "scene_tiled.frag.inc"
 ;
+// ...and both with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH): the
+// opaque cutout draws' modules
+const uint32_t kFragCut[] =
+#include "scene_cut.frag.inc"
+;
+const uint32_t kFragTiledCut[] =
+#include "scene_tiled_cut.frag.inc"
+;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
 ;
@@ -471,6 +479,9 @@ private:
     VkPipelineLayout      plo_ = VK_NULL_HANDLE;
     VkPipeline            pipe_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     VkPipeline            pipeTiled_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // the tiled module's
+    // an OPAQUE CUTOUT draw's: its depth written by the shader, so a discarded
+    // keyed texel writes none (`scene.frag` OMK_LATE_DEPTH) - plain and tiled
+    VkPipeline            pipeCut_ = VK_NULL_HANDLE, pipeTiledCut_ = VK_NULL_HANDLE;
     // THE FLOORS' REFLECTION at ONE sample when the frame has MSAA: its own
     // render pass and the scene pipelines again at 1 sample (a pipeline's
     // count is fixed) - the reflection's per-fragment lights ran four times a
@@ -1504,6 +1515,8 @@ bool VulkanRenderer::makePipelines() {
     VkShaderModule vs = module(kVert, sizeof(kVert));
     VkShaderModule fs = module(kFrag, sizeof(kFrag));
     VkShaderModule fsTiled = module(kFragTiled, sizeof(kFragTiled));
+    VkShaderModule fsCut = module(kFragCut, sizeof(kFragCut));
+    VkShaderModule fsTiledCut = module(kFragTiledCut, sizeof(kFragTiledCut));
     if (!vs || !fs) { std::fprintf(stderr, "vulkan: shader module\n"); return false; }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -1605,6 +1618,20 @@ bool VulkanRenderer::makePipelines() {
             gp.pStages = st2;
             if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled_[k]) != VK_SUCCESS)
                 pipeTiled_[k] = VK_NULL_HANDLE;
+            gp.pStages = stages;
+        }
+        // ...and the OPAQUE CUTOUT's, the depth the shader's (only an opaque
+        // draw writes depth); without one a cutout draw keeps the plain
+        if (k == 0) {
+            VkPipelineShaderStageCreateInfo st3[2] = {stages[0], stages[1]};
+            gp.pStages = st3;
+            st3[1].module = fsCut;
+            if (!fsCut || vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeCut_) != VK_SUCCESS)
+                pipeCut_ = VK_NULL_HANDLE;
+            st3[1].module = fsTiledCut;
+            if (!fsTiled || !fsTiledCut ||
+                vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiledCut_) != VK_SUCCESS)
+                pipeTiledCut_ = VK_NULL_HANDLE;
             gp.pStages = stages;
         }
     }
@@ -1769,6 +1796,8 @@ bool VulkanRenderer::makePipelines() {
     vkDestroyShaderModule(dev_, vs, nullptr);
     vkDestroyShaderModule(dev_, fs, nullptr);
     if (fsTiled) vkDestroyShaderModule(dev_, fsTiled, nullptr);
+    if (fsCut) vkDestroyShaderModule(dev_, fsCut, nullptr);
+    if (fsTiledCut) vkDestroyShaderModule(dev_, fsTiledCut, nullptr);
 
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
@@ -3475,6 +3504,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                    : passFb_ && passFb_ == reflFbuf1_ ? (tilesNow_ && pipeTiled1_[k] ? pipeTiled1_[k] : pipe1_[k])
                    : tilesNow_ && pipeTiled_[k] ? pipeTiled_[k]
                                     : pipe_[k];
+    // an opaque CUTOUT draw: the same pipeline with the shader's depth
+    if (d.cutout && use == pipe_[0] && pipeCut_) use = pipeCut_;
+    else if (d.cutout && use == pipeTiled_[0] && pipeTiledCut_) use = pipeTiledCut_;
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
@@ -3813,6 +3845,8 @@ VulkanRenderer::~VulkanRenderer() {
     if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    if (pipeCut_) vkDestroyPipeline(dev_, pipeCut_, nullptr);
+    if (pipeTiledCut_) vkDestroyPipeline(dev_, pipeTiledCut_, nullptr);
     for (auto& p : pipe1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipeTiled1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (reflPass1_) vkDestroyRenderPass(dev_, reflPass1_, nullptr);

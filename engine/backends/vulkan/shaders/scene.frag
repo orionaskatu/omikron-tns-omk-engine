@@ -273,6 +273,20 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 #endif
 
 void main() {
+#ifdef OMK_LATE_DEPTH
+    // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
+    // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
+    // Apple's GPUs a module that can `discard` its keyed texels still let some
+    // of them write depth once it grew past a size - the tiled module, the
+    // relief's code - so the cutout's holes hid what lies behind them
+    // DIFFERENTLY EACH RUN, the texture atlas's neighbours showing through
+    // (Qalisar without MSAA, ~2000 pixels behind the pink sign; found
+    // 2026-10-26). Writing the depth makes it the shader's: a discarded
+    // fragment writes none. The value is the rasterised one, so nothing moves.
+    // Not every draw: it costs the hidden-surface removal (5.4 ms of 13 at 4K
+    // for the whole scene, measured).
+    gl_FragDepth = gl_FragCoord.z;
+#endif
     if ((pc.cull > 0 && !gl_FrontFacing) || (pc.cull < 0 && gl_FrontFacing)) discard;
     vec2 texels = vec2(textureSize(tex, 0));
     if (pc.texScaled != 0) texels /= vec2(pc.texScaleU, pc.texScaleV);

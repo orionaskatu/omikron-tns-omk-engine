@@ -32406,7 +32406,15 @@ def c_engine_emitter_light():
          200 lights), no cluster at its cap (a full one dropped lights as the
          camera moved - "flickering big shadows"), and the TIGHT box test draws
          the frame byte-identical to `OMK_TILES_LOOSE=1` (no test, no cap) -
-         13118 entries against 182000-odd at 640x480.
+         13118 entries against 182000-odd at 640x480;
+      6. THE CUTOUT'S DEPTH (2026-10-26): Qalisar's frame of part 5 WITHOUT
+         MSAA (`--aa 1`) three times, the same bytes each run, and an opaque
+         cutout draw binding the late-depth pipelines (`pipeCut_`,
+         `pipeTiledCut_`, `scene.frag` OMK_LATE_DEPTH). With the tiled module
+         a keyed texel's `discard` let some depth through on Apple's GPUs -
+         ~2000 pixels behind the pink sign different on EVERY run, the atlas's
+         neighbours showing; the hashing that ruled out every input is in
+         `todo/remaster.md`.
 
     Measured once, outside the check (2026-10-20, M3): with it off, frames
     byte-identical to `26e042ff` on the software reference, Vulkan and GLES,
@@ -32421,6 +32429,8 @@ def c_engine_emitter_light():
     1477 pixels move; the GLES variant inserting nothing (its point lights
     read as spots) - GLES moves 276331 and the backends part; mode 3 never
     set - the set unlit, 7874 pixels move.
+    (2026-10-26) Part 6: the cutout draws left on the plain pipelines - the
+    three no-MSAA frames apart (the source item too).
 
     NOT CHECKED, judged by eye: the colours and the strength.
     """
@@ -32513,6 +32523,20 @@ def c_engine_emitter_light():
             tiles = (int(t0.get("lights", 0)) > 200, int(t0.get("full", -1)) == 0,
                      tight is not None and tight == loose)
             print(f"        tiles {t0}; tight == loose {tight == loose if tight else None}")
+        cut = ("skipped",)
+        if os.path.isdir(pack):
+            vkc = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+            mkf = open(os.path.join(eng, "Makefile")).read()
+            fsrc = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+            cut_src = ("if (d.cutout && use == pipe_[0] && pipeCut_) use = pipeCut_;" in vkc and
+                       "else if (d.cutout && use == pipeTiled_[0] && pipeTiledCut_) use = pipeTiledCut_;" in vkc and
+                       mkf.count("-DOMK_LATE_DEPTH") == 2 and
+                       bool(re.search(r"#ifdef OMK_LATE_DEPTH\n(\s*//[^\n]*\n)*\s*gl_FragDepth = gl_FragCoord\.z;", fsrc)))
+            noaa = [run(vk, os.path.join(tmp, "noaa%d.bin" % i), "101", "15300,0,-10050,270", "--remaster", pack,
+                        "--mist", "0", "--enhance-all", "--filter", "trilinear", "--aa", "1")[1] for i in range(3)]
+            cut = (cut_src, noaa[0] is not None and noaa[0] == noaa[1] == noaa[2])
+            apart = [sum(1 for x, y in zip(noaa[0], q) if x != y) if noaa[0] and q else None for q in noaa[1:]]
+            print(f"        without MSAA, three runs: {apart} pixels apart from the first")
         res, frames = {}, {}
         lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
         for kind, binary in (("vulkan", vk), ("gles", os.path.join(eng, "build", "omk-play-gles"))):
@@ -32555,12 +32579,13 @@ def c_engine_emitter_light():
     print(f"        rule {rule}")
     vres, gres = res.get("vulkan"), res.get("gles")
     want = (True, True, True)
-    return (src_ok, rule, curate, tiles, vres, gres, agree), \
+    return (src_ok, rule, curate, tiles, vres, gres, agree, cut), \
            ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
             _or_skip(curate, (True,) * 6),
             _or_skip(tiles, (True,) * 3),
             _or_skip(vres, want), _or_skip(gres, want),
-            agree if isinstance(agree, tuple) else True), \
+            agree if isinstance(agree, tuple) else True,
+            _or_skip(cut, (True, True))), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
            "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
            "light reaches the player, lights the set, only adds, and Vulkan and GLES agree"

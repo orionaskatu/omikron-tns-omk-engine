@@ -1869,7 +1869,7 @@ but `emitter light` (the run-to-run flip above).
   reflection`, `bloom and grade`, `body light` green. The earlier narrowing
   (blocks, relief, trilinear) was what made the undefined LOD SHOW: a level
   choice matters only where the levels differ.
-* **OPEN - without MSAA, the same Qalisar frame differs on EVERY run**
+* **FOUND AND FIXED 2026-10-26 (below) - without MSAA, the same Qalisar frame differed on EVERY run**
   (`--aa 1`, which `--enhance-all` overrides, so no check sees it): ~2000
   pixels of the wall behind the pink sign (340-410, 0-95 at 640x480), in
   blocks, from frame 2 on - and older too (`263e28b`, `c7a1c98`). Ruled out,
@@ -1891,6 +1891,36 @@ but `emitter light` (the run-to-run flip above).
   places them as the plain pipeline does (a Metal compile of the vertex
   function per pipeline, its depth then not the plain one's), and a Metal
   capture on a machine with Xcode.
+* **The no-MSAA variation, found (2026-10-26)**: a CUTOUT's `discard` that
+  let depth through. Bisected on the backend's side: the tiled PIPELINES with
+  everything else the frame's (plain pipelines with the tiles on: 1 frame in
+  5; tiled: 5 in 5); then the module - its tile block removed, still 5 in 5;
+  its storage buffers too, still; the two modules made byte-identical SPIR-V:
+  1 in 5; adding back the relief's code alone (its strength 0, returning at
+  once): 5 in 5; the tile block alone: 5 in 5; the floors' normal-map read
+  alone: 1. So no one feature: the module's SIZE. With the cutout's
+  `discard` disabled: 1 in 5; with `gl_FragDepth = gl_FragCoord.z` written:
+  1 in 5. A debug output of the winning fragment's world position had shown
+  surfaces thousands of units apart winning those pixels: a cutout's keyed
+  texels sometimes WROTE DEPTH, hiding what lies behind - and where they
+  wrote colour too, the mip levels' blend of the atlas's neighbours showed
+  ("other images"). On Apple's GPUs, through MoltenVK, once the module grew
+  past some size; the 2026-10-20 note in `scene.frag` (the storage buffers,
+  "present but never run", darkening a cutout sign's keyed texels) was the
+  same family. FIX: the OPAQUE CUTOUT draws alone bind a variant of their
+  pipeline whose module writes `gl_FragDepth` (`scene.frag` OMK_LATE_DEPTH,
+  `scene_cut.frag.inc` / `scene_tiled_cut.frag.inc`, `pipeCut_` /
+  `pipeTiledCut_`): the depth decided after the shader, a discarded texel
+  writing none. Every draw that way costs the hidden-surface removal - 5.4 ms
+  of 13 at 4K, measured - the cutouts alone 0.4-0.65 ms. After: no MSAA 5 of
+  5 and 8 of 8, the check's MSAA configuration 6 of 6; the frame within 1-7
+  pixels (one 565 step, scattered - the written depth's precision on the
+  non-cutout draws) of the late-depth-everywhere one; ORIGINAL MODE
+  byte-identical (Anekbah plain and trilinear, Qalisar). `engine: emitter
+  light` part 6 (three no-MSAA frames the same, and the source), shown to
+  fail (2117 and 1763 pixels apart). The validation layer: only its known
+  `refl` report. GLES draws its cutouts with `discard` too and does not tile
+  - not measured there.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

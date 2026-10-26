@@ -538,8 +538,7 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
     const VkPipelineStageFlags OUT = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                               FRAG = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                               XFER = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                               FRAG = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     const VkAccessFlags W = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, R = VK_ACCESS_SHADER_READ_BIT;
     // the scene's frame is in `postSrc_` (`fbufPost_`, the pass ends it in
     // TRANSFER_SRC); `colour_` holds nothing of this frame - the final pass

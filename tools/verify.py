@@ -34398,7 +34398,7 @@ def c_engine_block_formats():
 def c_engine_preload():
     r"""THE PRELOAD RADIUS (`todo/remaster.md`; first planned for the Quest,
     `todo/quest-port.md` §4): `--preload M` / `[Remaster] preload = M`, the
-    `--remaster` preset's 25, 0 off. The sets behind every door within M
+    `--remaster` preset's 15 (25 until 2026-10-26's measurement), 0 off. The sets behind every door within M
     metres - TWO HOPS, a door from the street mostly opening on an airlock or
     corridor (a "Sas") with the room behind it (the reader's two points,
     2026-10-22) - prepared on a thread and their textures put on the GPU a few
@@ -34407,7 +34407,7 @@ def c_engine_preload():
     slots at its own moments; only the data is ready when it asks.
     Parts:
       1. the source: off by default, [Remaster] only, never `all = max`, the
-         preset's 25; `askSet` takes a prepared set before it starts one; the
+         preset's 15; `askSet` takes a prepared set before it starts one; the
          Vulkan pool's eviction spares a pinned texture, and GLES's; the
          pack's parked decodes COUNTED (`parkedRefs_`): AAPKAYL and ARESTO
          share `APPART10`, parked once, and a released AAPKAYL's `forget`
@@ -34490,7 +34490,7 @@ def c_engine_preload():
     ask = pc[pc.index("bool PlayState::askSet"):]
     src_ok = (bool(re.search(r"float\s+preload\s*=\s*0\.0f;", sh)),
               'kRemaster, "preload"' in sc and 'kEnhancements, "preload"' not in sc,
-              "preload" not in max_body and "!preset.empty() ? 25.0f : 0.0f" in ps,
+              "preload" not in max_body and "!preset.empty() ? 15.0f : 0.0f" in ps,
               ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
               "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
               "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk and
@@ -34617,7 +34617,7 @@ def c_engine_preload():
               wantSets.get("on") == {"ARESTO"} and wantSets.get("glon") == {"ARESTO"})
     return (src_ok, graph, walked, on is not None and on == off, cap, gles, cancel), \
         ((True,) * 6, (True,) * 4, (True,) * 8, True, (True,) * 5, (True,) * 6, (True,) * 7), \
-        "the source (off by default, [Remaster] only, never all = max, the preset's 25, askSet takes the " \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 15, askSet takes the " \
         "prepared set first, a pinned texture spared, a shared decode counted); the door graph two hops deep, airlocks included, both " \
         "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
         "brings fewer than its 7; the same frame with and without; at the cap a nearer door takes the farthest " \

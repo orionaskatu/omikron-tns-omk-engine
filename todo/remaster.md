@@ -1303,7 +1303,7 @@ optional as it would need more ram/vram", after the block formats; and two
 points before it was built: "many places have a sas ... they could make the
 current idea more complex", "sas are not only when changing area: a
 corridor between the street and a bar". `--preload M` / `[Remaster]
-preload = M`, **the `--remaster` preset's 25**, 0 off, released past M + 10.
+preload = M`, **the `--remaster` preset's 15** (25 until the measurement of 2026-10-26, below), 0 off, released past M + 10.
 First planned for the Quest (`todo/quest-port.md` §4), built here.
 
 * **Nothing of the game's logic moves.** The engine keeps two areas
@@ -2118,6 +2118,29 @@ but `emitter light` (the run-to-run flip above).
     day. A SET LOAD's own job (`askSet`) still captures `this` and nothing
     waits for it at the end - outside the remaster, left.
   All ten scenes of the batch's set the same bytes.
+* **The preload radius, MEASURED (2026-10-26, the reader's "what do you think
+  about the radius length?" then "run the measurement")** - M1, PACED runs (the
+  hidden Vulkan window at 30 fps, `--remaster` with the pack, `--no-crowd`),
+  two doors approached from ~30 m, walking (`k200`, ~2.1 m/s) and RUNNING
+  (`k54+k200`, ~5.6 m/s - the order matters: `k200+k54` only walks), at 0, 5,
+  10, 15 and 25 m; frame numbers from temporary prints, not committed:
+  | door | pace | 0 | 5 | 10 | 15 | 25 |
+  |---|---|---|---|---|---|---|
+  | ARESTO (7 textures) | walk | arrival 12 new, 34.6 ms | 1.2 s spare | 3.9 | 6.3 | 11.2 |
+  | ARESTO | run | 12 new, 33.6 ms | 0.2 s spare | 1.2 | 1.9 | 3.9 |
+  | TUNELAQ1 (airlock) | walk | 8 new, 8.1 ms | never wanted | 2.0 | 4.3 | 9.5 |
+  | TUNELAQ1 | run | 8 new, 7.7 ms | never wanted | 0.4 | 1.1 | 3.1 |
+  ("spare": from the last texture uploaded to the arrival.) The work is
+  prepared within one 10-frame pass and uploaded by frame 13-18 after the
+  want - ~0.4-0.6 s. A door's ZONE fires metres before its point: 5 m never
+  wanted the tunnel. With the preload the arrival still brings 4-5 new
+  textures - the CHARACTERS', which nothing preloads (ARESTO 29-30 ms against
+  34 without: the set's own 7 saved ~4 ms here; the block files decode fast
+  on the M1). Reading: 25 m is ~4x what the M1 needs running; 15 m keeps
+  1.1-1.9 s spare at a run, ~3x the work. A device several times slower (the
+  Quest) is what the margin is for, and where its memory is the limit.
+  THE PRESET IS 15 since (the reader's "yes"); `--preload 25` or the ini's key
+  gives the old reach back.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

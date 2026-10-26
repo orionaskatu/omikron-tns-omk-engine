@@ -252,11 +252,11 @@
 ; tools/omktexpack.py fonts makes it; the preset takes DIR/fonts/pack.
 ;fontpack = /path/to/omk-pack/fonts/pack
 ;
-; THE PRELOAD RADIUS, in metres (0 off; the preset's 25): the sets behind
+; THE PRELOAD RADIUS, in metres (0 off; the preset's 15): the sets behind
 ; every door within it - and behind the airlock or corridor each opens on -
 ; prepared ahead and their textures put on the GPU, released 10 m further.
 ; No load on arriving, more memory held: leave it 0 on a small device.
-;preload = 25
+;preload = 15
 ;
 ; The intro FILMS played from upscaled copies - tools/omktexpack.py films
 ; makes them; the preset takes DIR/films/pack.

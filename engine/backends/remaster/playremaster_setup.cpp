@@ -114,11 +114,14 @@ void PlayState::remasterSetup() {
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
                         "Vulkan only\n", static_cast<double>(mistStrength));
         // THE PRELOAD RADIUS (`backends/sdl/playpreload.cpp`): its flag, its
-        // key, the preset's 25 (a memory's choice, but the remaster's packs
-        // are what make an arrival cost - `--preload 0` gives it back)
+        // key, the preset's 15 (a memory's choice, but the remaster's packs
+        // are what make an arrival cost - `--preload 0` gives it back; 25
+        // until the measurement of 2026-10-26, `todo/remaster.md`: the M1
+        // prepares and uploads a set in ~0.5 s, and 15 m leaves 1.1-1.9 s of
+        // it spare at a run)
         preloadMetres = preloadFlag >= 0.0f ? preloadFlag
                       : settings.preloadSource == omk::Settings::Source::Ini ? settings.preload
-                      : !preset.empty() ? 25.0f : 0.0f;
+                      : !preset.empty() ? 15.0f : 0.0f;
         if (preloadMetres > 0.0f)
             std::printf("preload: %.0f m - a REMASTER feature: the sets behind the doors within %.0f m (and behind "
                         "the airlock or corridor each opens on) prepared on a thread and their textures put on the "

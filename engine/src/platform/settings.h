@@ -253,7 +253,7 @@ struct Settings {
     // `preload = M`: THE PRELOAD RADIUS - the sets behind every door within M
     // metres (two hops: an airlock and what is beyond it) prepared on a thread
     // and their textures put on the GPU ahead, released past M + 10. 0 off.
-    // More memory for no load on arriving; the `--remaster` preset's 25.
+    // More memory for no load on arriving; the `--remaster` preset's 15.
     float  preload = 0.0f;
     Source preloadSource = Source::Default;
     // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),

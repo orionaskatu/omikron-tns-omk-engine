@@ -244,8 +244,15 @@
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
 ; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
 ; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75, preload 25.
+; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75, preload 15
+; (`kRemasterPreset` in engine/src/platform/settings.h).
 ;dir = /path/to/omk-pack
+;
+; The SWITCH over everything in this section: `original` reads none of it at
+; start, as if the section were empty (a remaster flag on the command line
+; still applies); `remaster`, the default, reads it. OMK's options menu
+; writes it ("Rendu", on its Remaster page).
+;mode = remaster
 ;
 ; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an
 ; upscaled pack when the window enlarges them - tools/omktexpack.py ui makes
@@ -307,5 +314,6 @@
 ; French and English. The game's own rows keep the language of the copy
 ; installed (`IAM\Options`), which neither the data nor the exe names - so
 ; this is set by hand. fr (the default) or en.
-; NOT READ YET: the reader gains it with the graphics menu.
+; The menu's own "Langue des options OMK" row writes it. A copy of
+; omk-menu.ini beside this file is read over the compiled texts.
 ;language = fr

@@ -19,7 +19,25 @@
 #include <cstdio>
 #include <string>
 
+// OMK's options menu offers its Remaster page (`playomkoptions.cpp`)
+bool PlayState::remasterBuilt() const { return true; }
+
 void PlayState::remasterSetup() {
+    // `[Remaster] mode = original` (OMK's options menu, `todo/graphics-menu.md`):
+    // the section's keys unread, as if the file had none; a flag still applies
+    if (!settings.remasterOn) {
+        omk::dropRemasterKeys(settings);
+        std::printf("remaster: [Remaster] mode = original - its keys are not read%s\n",
+                    opt.anyRemaster() ? " (the command line's remaster flags still are)" : "");
+        omk::event("remaster.mode", {{"mode", std::string("original")}});
+    }
+    // the preset's strengths (`settings.h` kRemasterPreset), and as text for its line
+    const auto pv = [](const char* key) { return omk::remasterPresetValue(key); };
+    const auto pvText = [](const char* key) {
+        char b[16];
+        std::snprintf(b, sizeof b, "%g", static_cast<double>(omk::remasterPresetValue(key)));
+        return std::string(b);
+    };
     // THE TEXTURE PACK (`o3de/texpack.h`, `todo/remaster.md` B4) - a REMASTER
     // feature, not an enhancement: it replaces authored pixels. Opened once,
     // here, before any pool reaches a renderer; the GPU backends consult it.
@@ -36,16 +54,16 @@ void PlayState::remasterSetup() {
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
                         "fx light %s, relief %s, ao %s, floors %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
-                        bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : "1.6",
+                        bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : pvText("bloom").c_str(),
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
-                        waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : "0.6",
-                        bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : "2",
-                        aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : "2",
-                        floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : "1",
-                        mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : "0.5",
-                        smoothFlag >= 0.0f || settings.smoothSource == omk::Settings::Source::Ini ? "as set" : "0.75");
+                        waterFlag >= 0.0f || settings.waterSource == omk::Settings::Source::Ini ? "as set" : pvText("water").c_str(),
+                        bodyLightFlag >= 0.0f || settings.bodyLightSource == omk::Settings::Source::Ini ? "as set" : pvText("bodylight").c_str(),
+                        fxLightFlag >= 0.0f || settings.fxLightSource == omk::Settings::Source::Ini ? "as set" : pvText("fxlight").c_str(),
+                        reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : pvText("relief").c_str(),
+                        aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : pvText("ao").c_str(),
+                        floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : pvText("floors").c_str(),
+                        mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : pvText("mist").c_str(),
+                        smoothFlag >= 0.0f || settings.smoothSource == omk::Settings::Source::Ini ? "as set" : pvText("smooth").c_str());
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
@@ -97,7 +115,7 @@ void PlayState::remasterSetup() {
         // grade per city (`o3de/colourgrade.h`), each its own option
         bloomStrength = bloomFlag >= 0.0f ? bloomFlag
                       : settings.bloomSource == omk::Settings::Source::Ini ? settings.bloom
-                      : !preset.empty() ? 1.6f : 0.0f;   // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
+                      : !preset.empty() ? pv("bloom") : 0.0f;
         // the light maps decoded with the colours only for the bloom (the
         // surface lights read them on their own)
         omk::texturePack().setLights(bloomStrength > 0.0f);
@@ -109,7 +127,7 @@ void PlayState::remasterSetup() {
         // reader's, 2026-10-21, from a sheet of 0, 0.5 and 1 in three cities)
         mistStrength = mistFlag >= 0.0f ? mistFlag
                      : settings.mistSource == omk::Settings::Source::Ini ? settings.mist
-                     : !preset.empty() ? 0.5f : 0.0f;
+                     : !preset.empty() ? pv("mist") : 0.0f;
         if (mistStrength > 0.0f)
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
                         "Vulkan only\n", static_cast<double>(mistStrength));
@@ -121,7 +139,7 @@ void PlayState::remasterSetup() {
         // it spare at a run)
         preloadMetres = preloadFlag >= 0.0f ? preloadFlag
                       : settings.preloadSource == omk::Settings::Source::Ini ? settings.preload
-                      : !preset.empty() ? 15.0f : 0.0f;
+                      : !preset.empty() ? pv("preload") : 0.0f;
         if (preloadMetres > 0.0f)
             std::printf("preload: %.0f m - a REMASTER feature: the sets behind the doors within %.0f m (and behind "
                         "the airlock or corridor each opens on) prepared on a thread and their textures put on the "
@@ -138,34 +156,34 @@ void PlayState::remasterSetup() {
         // preset's 1 - each floor's own strength is the list's
         floorStrength = floorsFlag >= 0.0f ? floorsFlag
                       : settings.floorsSource == omk::Settings::Source::Ini ? settings.floors
-                      : !preset.empty() ? 1.0f : 0.0f;
+                      : !preset.empty() ? pv("floors") : 0.0f;
         // the WATER reflection: its flag, its key, then the preset's 0.6 (0.35 before the Fresnel, 2026-10-20)
         waterStrength = waterFlag >= 0.0f ? waterFlag
                       : settings.waterSource == omk::Settings::Source::Ini ? settings.water
-                      : !preset.empty() ? 0.6f : 0.0f;
+                      : !preset.empty() ? pv("water") : 0.0f;
         if (waterStrength > 0.0f)
             std::printf("water: %.2f - a REMASTER feature: the water reflects the scene, drawn by "
                         "Vulkan and GLES only\n", static_cast<double>(waterStrength));
         // the BODY LIGHT (`o3de/lightprobe.h`): its flag, its key, the preset's 1 (the reader's, 2026-10-20)
         bodyLight = bodyLightFlag >= 0.0f ? bodyLightFlag
                   : settings.bodyLightSource == omk::Settings::Source::Ini ? settings.bodyLight
-                  : !preset.empty() ? 1.0f : 0.0f;
+                  : !preset.empty() ? pv("bodylight") : 0.0f;
         // the EMITTERS' LIGHT (`o3de/emitterlight.h`): its flag, its key, the preset's 1
         fxLight = fxLightFlag >= 0.0f ? fxLightFlag
                 : settings.fxLightSource == omk::Settings::Source::Ini ? settings.fxLight
-                : !preset.empty() ? 1.0f : 0.0f;
+                : !preset.empty() ? pv("fxlight") : 0.0f;
         // the RELIEF (`View::relief`): its flag, its key, the preset's 2 (the
         // reader's, 2026-10-21: 1 on the brightness beside 0, 2 and 4; 2 once
         // the pack's generated normal maps came, "relief 2 is better")
         relief = reliefFlag >= 0.0f ? reliefFlag
                : settings.reliefSource == omk::Settings::Source::Ini ? settings.relief
-               : !preset.empty() ? 2.0f : 0.0f;
+               : !preset.empty() ? pv("relief") : 0.0f;
         // the ROUNDED BODIES (`o3de/smoothbody.h`): its flag, its key, the
         // preset's 0.75 (the reader's "do it by default", 2026-10-22 - every
         // character not yet seen, so --smooth-skip stays the way out)
         smoothBodies = smoothFlag >= 0.0f ? smoothFlag
                      : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth
-                     : !preset.empty() ? 0.75f : 0.0f;
+                     : !preset.empty() ? pv("smooth") : 0.0f;
         if (smoothBodies > 0.0f)
             std::printf("smooth: %.2f - a REMASTER feature: the characters rounded, each triangle split 3x3 "
                         "(Phong tessellation), every backend\n", static_cast<double>(smoothBodies));
@@ -194,7 +212,7 @@ void PlayState::remasterSetup() {
         // preset")
         aoStrength = aoFlag >= 0.0f ? aoFlag
                    : settings.aoSource == omk::Settings::Source::Ini ? settings.ao
-                   : !preset.empty() ? 2.0f : 0.0f;
+                   : !preset.empty() ? pv("ao") : 0.0f;
         if (aoStrength > 0.0f)
             std::printf("ao: %.2f - a REMASTER feature: ambient occlusion at contacts, from the frame's depth, "
                         "drawn by Vulkan only\n", static_cast<double>(aoStrength));

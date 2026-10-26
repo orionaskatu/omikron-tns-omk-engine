@@ -17,6 +17,7 @@ void PlayState::remasterSetup() {
     if (opt.anyRemaster() || settings.anyRemaster())
         std::printf("remaster: not built (a build without OMK_REMASTER) - its options are ignored\n");
 }
+bool PlayState::remasterBuilt() const { return false; }   // OMK's options offer no Remaster page
 void PlayState::remasterPrepareSet(SetLoad&) {}
 void PlayState::remasterSmoothModel(CharModel&, const std::string&) {}
 void PlayState::remasterSmoothPlayer() {}

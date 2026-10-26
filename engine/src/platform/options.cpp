@@ -78,12 +78,21 @@ bool OptionsFile::boolean(const std::string& section, const std::string& key,
 }
 
 OptionsFile loadOptionsFile(const std::string& path) {
-    OptionsFile o;
+    if (fileSize(path) < 0) {             // absent is not an error
+        OptionsFile o;
+        o.path = path;
+        return o;
+    }
+    OptionsFile o = parseOptionsText(readTextFile(path));
     o.path = path;
-    if (fileSize(path) < 0) return o;   // absent is not an error
+    return o;
+}
+
+OptionsFile parseOptionsText(const std::string& text) {
+    OptionsFile o;
     o.loaded = true;
     std::string section;
-    for (std::string line : splitLines(readTextFile(path))) {
+    for (std::string line : splitLines(text)) {
         // a `;` or `#` comment, and the Win32 parser's own tolerance of blanks
         const auto cut = line.find_first_of(";#");
         if (cut != std::string::npos) line = line.substr(0, cut);
@@ -235,6 +244,14 @@ bool editOptionsText(const std::string& text, const std::vector<OptionsEdit>& ed
             if (rest == std::string::npos) continue;
             const IniParse q = iniParse(body.substr(rest));
             if (!q.header && q.eq != std::string::npos && q.name == key) commented = i;
+        }
+        if (e.unset) {
+            // commented out where it is set; nothing to do where it is not
+            for (const std::size_t i : active) {
+                const std::size_t lead = lines[i].body.find_first_not_of(" \t");
+                lines[i].body.insert(lead == std::string::npos ? 0 : lead, ";");
+            }
+            continue;
         }
         if (!active.empty()) {
             for (const std::size_t i : active) {

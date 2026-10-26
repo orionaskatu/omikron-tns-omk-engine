@@ -1365,6 +1365,7 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
                 drivers.push_back(std::string("OpenGL - ") + glRen->name());
             drivers.push_back(optMenu.str(68));
             optMenu.setDevices(8, drivers, (vkRen || glRen) ? 0 : static_cast<int>(drivers.size()) - 1);
+            omkOptionsOpen();   // OMK's pages: this run's values, the renderer's reach
             optEntered = false;
             if (optSndMove.empty() && optSndConfirm.empty()) {
                 optSndMove    = loadSlot(35, omk::UiWidgets::kSoundMove);
@@ -1756,6 +1757,8 @@ void PlayState::modesOptionsHost(bool optHost, bool optOnSneakTab, omk::OptionsM
                 break;
             }
         }
+        // OMK's pages: their changes written to the config, the live ones applied
+        omkOptionsServe();
         // `Oui` on "Sauvegarder les options": `sub_4092A0`, the
         // settings-only save - the 3496 bytes over the file's head,
         // or a new file of 256 empty slots behind them

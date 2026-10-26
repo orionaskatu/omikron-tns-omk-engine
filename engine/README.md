@@ -126,6 +126,10 @@ src/ui/          the interface
     widgets      the widget tree, Ui_DispatchInput, the name field, the
                  load panel
     options      screen 35 - thirteen pages over sixteen shared row widgets
+    omkoptions   OMK's own pages on it: [Enhancements], [Remaster], the
+                 language - offered by build and renderer, written to the ini
+    omktext      their French and English texts (engine/lang/omk-menu.ini,
+                 compiled in by tools/omklang.py)
     text         Text_LayOutBlock - the markup, the faces, the advances,
                  and Text_DrawRun's 32-entry coverage ramp
     screendraw   COMPOSE a screen: the background (the panel's bank-B arm -

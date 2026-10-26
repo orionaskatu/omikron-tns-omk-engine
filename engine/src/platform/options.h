@@ -54,6 +54,9 @@ struct OptionsFile {
 // Parse an ini. A missing file is not an error: `loaded` stays false and every
 // lookup falls back, which is what the engine does when a key is absent.
 OptionsFile loadOptionsFile(const std::string& path);
+// ...and the same parse of a text already in memory (`ui/omktext.h` reads
+// its embedded strings this way); `loaded` is true, `path` empty.
+OptionsFile parseOptionsText(const std::string& text);
 
 // ---- WRITING IT BACK - OMK's own options menu (`todo/graphics-menu.md` A1)
 //
@@ -71,11 +74,15 @@ OptionsFile loadOptionsFile(const std::string& path);
 //     `;language = fr` - is set on that line, uncommented, so its
 //     documentation stays above it;
 //   * otherwise it is added after the section's last setting, and a section
-//     the file has not got is added at its end.
+//     the file has not got is added at its end;
+//   * an UNSET edit (the menu's "Valeurs par défaut") comments every active
+//     line of the key out - `;key = value`, so the next set finds it there
+//     and the reader falls back to its default; a key not set is left alone.
 //
 // A section seen twice is one section, as the reader merges them.
 struct OptionsEdit {
     std::string section, key, value;
+    bool unset = false;
 };
 // `text`, a whole ini, with `edits` applied in order. -> false (and `out`
 // untouched) when a value or name cannot be written: a `;` or `#` would be

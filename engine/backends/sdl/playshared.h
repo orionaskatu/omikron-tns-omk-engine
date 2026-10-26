@@ -82,6 +82,8 @@
 #include "ui/hudbar.h"
 #include "ui/iamtext.h"
 #include "ui/options.h"
+#include "ui/omkoptions.h"   // OMK's own pages on screen 35
+#include "ui/omktext.h"
 #include "ui/radar.h"
 #include "ui/screendraw.h"
 #include "ui/text.h"

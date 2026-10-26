@@ -89,7 +89,80 @@ keys appended instead). Run with `config template`, `options file`,
 `settings resolve`, `engine: options`, `engine: options menu`: 6 of 6.
 The Vita/3DS/Android mains were edited, not built.
 
-### A2. The pages - `ui/options.*`
+### A2. The pages - DONE (2026-10-26), with A2b, A3 and A4's first kind
+
+**As built** - `ui/omkoptions.{h,cpp}` (the model), `ui/omktext.{h,cpp}` (the
+texts), `backends/sdl/playomkoptions.cpp` (the viewer's half), a seam in
+`ui/options.cpp` (`OptionsMenu::attachOmk`):
+
+* the root: "Graphismes (OMK)" in row widget 4, the start menu's Retour moved
+  to 5 - above Retour, so the cursor's order is the drawn order (`docs/UI.md`
+  §4 "The port's own pages"). Pages 100 / 101 / 102; BACK from them goes to
+  their parent, never through page 0's prompt;
+* 100: Améliorations >, Remaster > (only when `remasterBuilt()` - false in
+  `playremaster_off.cpp`), **Langue des options OMK** (live), Retour;
+* 101: the 13 `[Enhancements]` rows, **Valeurs par défaut**, Retour - 16
+  widgets, the most a page has (`Opt_LayOutPage` spaces them 18 px apart; the
+  page was looked at on GLES and reads cleanly);
+* 102: **Rendu** (`[Remaster] mode`, below), the eleven strengths, Valeurs par
+  défaut, Retour;
+* WHAT RUNS DECIDES WHAT IS OFFERED: `Renderer::takes()` (new, `kTakes*` in
+  `o3de/renderer.h`): Vulkan every bit; GLES all but AO, relief and mist; GL1
+  and the 3DS the texture filter; the software reference none. A row needing
+  a bit the renderer lacks is left out, and so is a CHOICE (`mapped` shadows,
+  `perpixel` lighting) - a row left with one choice goes too. Measured: the
+  software run offers 8 enhancement rows and 3 remaster ones, GLES 13 and 9;
+* a row shows the value THIS RUN resolved (`omkOptionsOpen`: the effective
+  enhancement fields; for the remaster the flag, else the file's key, else
+  the preset's - re-read from the file, since `mode = original` leaves the
+  run without them). A value the choices lack (a hand-written `bloom = 1.3`)
+  is added among them, not rounded;
+* a row a FLAG holds says "fixé par --aa" and cannot be selected;
+  `--enhance-all` holds every row it raises that has no flag of its own;
+* a change that waits for the next start shows a `*`, and the page heading
+  "- * au prochain démarrage";
+* **Valeurs par défaut** (the reader's ask, 2026-10-26): every key of the page
+  UNSET - commented out in the file (`OptionsEdit::unset`), so a later set
+  finds it there - and each row shown at what the reader gives without it:
+  `omk::Settings{}`'s default, or the remaster PRESET's value when a preset
+  folder is configured. The preset's numbers moved into one table for that,
+  `kRemasterPreset` (`platform/settings.h`), which `remasterSetup` now reads
+  too. A row a flag holds is left as it is.
+
+**Changed from the plan:**
+
+* no `dir` row: switching the preset OFF by blanking `dir` would lose the
+  folder. Instead **`[Remaster] mode = original|remaster`** (`Settings::
+  remasterOn`): `original` drops every `[Remaster]` key at start
+  (`dropRemasterKeys`, the flags still apply), `remaster` - the default -
+  reads them. It is also the key part B's switch will write;
+* the strengths are CHOICE rows over fixed values (0, 0.5, 1, 1.6, 2.5, 4 for
+  the bloom...), not sliders: the file gets clean numbers, and a slider's
+  0..100 is the game's volume scale, not a strength's;
+* the language row sits on page 100, live: the texts reload at once, OMK's
+  rows only (the game's stay `IAM\Options`'s).
+
+**Live (A4's first kind):** `omk.language`, `uiscaling`, `textscaling`,
+`radar`, `framerate`, `animation`, `clipdistance` - each read per frame or
+re-applied (`omkOptionsServe`). Every other row is written and waits for the
+next start; lifting them is step 3.
+
+**Checks:** `omk lang` (the compiled copy fresh, `[fr]` = `[en]`, Latin-1,
+every id the pages ask exists - shown to fail with `row.reset` dropped from
+English); `engine: graphics menu` (one software run through 100, 101, 102 and
+the language, the page lines, the `options.omk` events and the config's
+exact bytes after; the no-remaster viewer's page 100 - shown to fail with the
+renderer gating removed, and with the stub claiming the remaster);
+`engine: options menu` now expects the root's sixth row. With `options
+write`, `config template`, `settings resolve`, `options file`, `engine:
+options`, `engine: remaster switch`, `engine: remaster preset`: all green.
+The ports built: `engine: vita build`, `engine: 3ds build`, `engine: gles
+backend` green (step 1's launcher edits built with them). **The Vita lists
+the viewer's `backends/sdl/*.cpp` by hand** (`backends/vita/CMakeLists.txt`),
+unlike the 3DS, the classic Mac, Android and the PowerPC Mac, which glob - so
+`playomkoptions.cpp` was added there, and a new viewer file always must be.
+
+#### The plan, as first written
 
 * the root gains **"Graphismes (OMK)"** - a header row (type 2) in a free row
   widget, on both hosts;
@@ -230,15 +303,12 @@ key updated so the next start resumes in it.
 
 ## Order
 
-1. A1, the writer, with its round trip.
-2. A2 + A2b + A3, the pages and their texts (the `[OMK] language` key read,
-   the strings file embedded), every non-live row labelled for the next start.
-3. A4's kind 1 live; then kinds 2 and 3 one by one, every backend.
+1. ✔ A1, the writer, with its round trip (`52cd093`).
+2. ✔ A2 + A2b + A3 + A4's kind 1: the pages, their texts, the reset, the
+   live rows; every other row labelled for the next start.
+3. A4's kinds 2 and 3 made live one by one, every backend.
 4. B: the strengths first, then the UI/font bypass, then the texture re-upload,
    then the bodies.
 
-**Before starting:** other sessions have uncommitted work in exactly the files
-this touches - `o3de/texpack.*`, `o3de/renderer.h`,
-`backends/vulkan/vkrender.cpp`, `ui/uipack.cpp`,
-`backends/remaster/playremaster_world.cpp` (git status of 2026-10-26). Wait
-for it to land.
+(The other sessions' work in `texpack`, `renderer.h`, `vkrender.cpp` and
+`uipack.cpp` that this plan waited for landed in `bfbfc92`, 2026-10-26.)

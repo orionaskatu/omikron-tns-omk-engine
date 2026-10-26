@@ -217,6 +217,9 @@ struct PlayState {
     std::optional<omk::ScreenComposer> comp_;
     omk::OptionTree optTree{};
     std::optional<omk::OptionsMenu> optMenu_;
+    // OMK's own pages on it, and their texts (`playomkoptions.cpp`)
+    std::optional<omk::OmkOptions> omkOpt_;
+    omk::OmkText omkText_{};
     omk::Surface view3dPic{};
     omk::MenuCloud cloud{};
     omk::ControlSchemes schemes{};
@@ -777,6 +780,10 @@ struct PlayState {
     // ---- THE REMASTER (`backends/remaster/`; empty stubs in
     // `backends/sdl/playremaster_off.cpp` for a build without OMK_REMASTER)
     void remasterSetup();                          // the packs, strengths, preset
+    bool remasterBuilt() const;                    // false in `playremaster_off.cpp`
+    void omkOptionsSetup();                        // OMK's pages, beside screen 35
+    void omkOptionsOpen();                         // ...given this run's values, at each open
+    void omkOptionsServe();                        // ...their changes written and applied
     void remasterPrepareSet(SetLoad& L);           // a set's water, floors, probes, glows
     void remasterSmoothModel(CharModel& m, const std::string& name);
     void remasterSmoothPlayer();

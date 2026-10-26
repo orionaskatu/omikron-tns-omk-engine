@@ -4600,6 +4600,22 @@ Read for the port's live menu (`todo/options-menu.md`, `ui/options.h`
   `Rendu logiciel`. The volumes are attenuations, `(100 - v) * 0.4` out and
   `100 - 2.5 a` back.
 
+### The port's own pages - NOT the exe's (2026-10-26)
+
+`omk-play` hangs three pages of its own on this screen
+(`todo/graphics-menu.md`, `ui/omkoptions.h`): "Graphismes (OMK)" with
+`[Enhancements]`, `[Remaster]` and the language of these rows, written back to
+the config. Everything above is still the exe's, with one visible difference:
+**the root page carries a fifth header, "Graphismes (OMK)", in row widget 4,
+and the start menu's `Retour` moves to widget 5.** The pages are numbered 100
+to 102, past every page record; BACK from them never passes page 0's prompt
+(their rows are written as they change, and the prompt saves the game's
+header). Their texts are not `IAM\Options`'s but `engine/lang/omk-menu.ini`'s,
+French or English by `[OMK] language` - the installed copy's language being
+named nowhere in the data or the exe. `OptionsMenu` without `attachOmk` is the
+exe's screen exactly, and `OptionsWalk` (the model `sim: options` checks)
+never sees them.
+
 
 ---
 

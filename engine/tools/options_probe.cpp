@@ -16,7 +16,9 @@ int main(int argc, char** argv) {
             return 2;
         }
         std::vector<omk::OptionsEdit> edits;
-        for (int i = 3; i + 2 < argc; i += 3) edits.push_back({argv[i], argv[i + 1], argv[i + 2]});
+        // a value of `<unset>` is an UNSET edit - the key commented out
+        for (int i = 3; i + 2 < argc; i += 3)
+            edits.push_back({argv[i], argv[i + 1], argv[i + 2], std::string(argv[i + 2]) == "<unset>"});
         const bool ok = omk::writeOptionsFile(argv[2], edits);
         std::printf("edit %s %zu: %s\n", argv[2], edits.size(), ok ? "written" : "REFUSED");
         return ok ? 0 : 1;

@@ -6878,6 +6878,154 @@ def c_options_write():
             "path in the shipped tree refused")
 
 
+def c_omk_lang():
+    r"""The texts of OMK's own menu rows (`engine/lang/omk-menu.ini`,
+    `ui/omktext.h`, `todo/graphics-menu.md` A2b).
+
+    Four things, each one a way a row would draw wrong or not at all:
+
+    1. the compiled copy (`engine/src/ui/omktext_data.cpp`) is what
+       `tools/omklang.py` makes of the file today - a stale one ships old texts;
+    2. `[fr]` and `[en]` carry the same ids - a text missing in English
+       silently falls back to French;
+    3. every text is Latin-1, the fonts' range - anything past it draws as
+       two wrong glyphs (`utf8ToLatin1`);
+    4. every id the pages ask for (`OmkOptions::textIds`, out of
+       `build/omkmenu_probe`) exists in both - a missing one is drawn as its id.
+    """
+    import subprocess
+    gen = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "omklang.py"), "--check"],
+                         capture_output=True, text=True)
+    secs, sec = {}, None
+    with open(os.path.join(ROOT, "engine", "lang", "omk-menu.ini"), encoding="utf-8") as f:
+        for raw in f:
+            line = re.split(r"[;#]", raw, 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sec = line[1:-1].strip().lower()
+                secs.setdefault(sec, {})
+                continue
+            if "=" in line and sec:
+                k, v = line.split("=", 1)
+                secs[sec][k.strip().lower()] = v.strip()
+    fr, en = secs.get("fr", {}), secs.get("en", {})
+    notLatin = []
+    for lang, d in secs.items():
+        for k, v in d.items():
+            try:
+                v.encode("latin-1")
+            except UnicodeEncodeError:
+                notLatin.append(lang + "." + k)
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "build/omkmenu_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "omkmenu_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("not built",), ("built",), "omkmenu_probe did not build: " + mk.stderr[-300:]
+    out = subprocess.run([probe], capture_output=True).stdout.decode("latin-1")
+    need = re.findall(r"^NEED (\S+)$", out, re.M)
+    missing = sorted(i for i in need if i not in fr or i not in en)
+    return (gen.returncode, sorted(set(fr) ^ set(en)), notLatin, len(need) > 0, missing), \
+           (0, [], [], True, []), \
+           ("the compiled copy fresh (tools/omklang.py --check); the ids in one language and "
+            "not the other; the texts outside Latin-1; whether the probe listed the pages' ids, "
+            "and those missing from either language")
+
+
+def c_engine_graphics_menu():
+    r"""engine: OMK's own options pages, live (`todo/graphics-menu.md` A2-A4).
+
+    One run, the start menu's Options -> "Graphismes (OMK)", on the SOFTWARE
+    renderer with a hand-written config beside its saves - a comment, a key with
+    a trailing comment, a remaster strength the choices lack (1.3):
+
+    * page 100, then Améliorations (101): ONLY the rows the software renderer
+      can draw (`Renderer::takes` is 0 - no MSAA, filtering, mapped shadows or
+      per-pixel lighting), the running values (the file's `radar = always`);
+    * `Tout au maximum` RIGHT: written, NOT live - a `*` and the heading's
+      "au prochain démarrage";
+    * `Distance de vue illimitée` RIGHT: written and applied at once;
+    * `Valeurs par défaut`: the page's keys COMMENTED OUT, the live ones applied
+      back, the marks gone;
+    * the Remaster page: on software only the mode, the rounding and the preload;
+    * the language RIGHT: English at once, on OMK's rows only - the game's
+      `Vidéo` stays the installed copy's.
+
+    Read from the viewer's page lines (the row hook's text), its
+    `options.omk*` EVENTS and the config's exact bytes after the run - every
+    line the menu did not set as it was. A second run, of the build WITHOUT the
+    remaster (`make noremaster`'s viewer): page 100 has no Remaster header.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk2 = subprocess.run(["make", "-s", "play", "REMASTER=0", "VR=0", "OBJDIR=build/obj-noremaster",
+                          "PLAY_BIN=build/noremaster/omk-play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    plain = os.path.join(eng, "build", "noremaster", "omk-play")
+    if mk.returncode != 0 or mk2.returncode != 0 or not os.path.exists(play) or not os.path.exists(plain):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    ini0 = (b"; my settings\n[Enhancements]\nradar = always   ; the minimap\n"
+            b"[Remaster]\nbloom = 1.3\n")
+    keys = ("0,0xD0,0xD0,0x1C,0xD0,0xD0,0xD0,0xD0,0x1C,0x1C,0xCD,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,"
+            "0xCD,0xD0,0x1C,0x39,0xD0,0x1C,0x39,0xD0,0xCD,0x39")
+    got = []
+    tmp = tempfile.mkdtemp()
+    try:
+        for binary in (play, plain):
+            d = os.path.join(tmp, os.path.basename(os.path.dirname(binary)))
+            os.makedirs(d)
+            open(os.path.join(d, "omk.ini"), "wb").write(ini0)
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+            r = subprocess.run([binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--software",
+                                "--nofmv", "--saves", os.path.join(d, "GAMES"), "--res", "800x600",
+                                "--frames", "640", "--keydelay", "20", "--keys", keys],
+                               capture_output=True, env=env)
+            out = (r.stdout + r.stderr).decode("latin-1")
+            pages = []
+            for ln in out.splitlines():
+                m = re.search(r"options: (page (?:1|10\d): .*) - \d+ drawn", ln)
+                if m and (not pages or pages[-1] != m.group(1)):
+                    pages.append(m.group(1))
+            evts = [(e["key"], e["value"], e["live"]) for n, e in _events(out) if n == "options.omk"]
+            got.append((pages, evts, open(os.path.join(d, "omk.ini"), "rb").read()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    root = "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|]"
+    p100 = ("page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Remaster|] "
+            "[Langue des options OMK|Fran\xe7ais] [Retour|]")
+    rows = ("[Tout au maximum|%s] [Qualit\xe9 des ombres|Original] "
+            "[Agrandissement de l'interface|Net (original)] [Taille du texte|Original] "
+            "[Radar|%s] [Images par seconde|30 (original)] [Animations|Original] "
+            "[Distance de vue illimit\xe9e|%s] [Valeurs par d\xe9faut|] [Retour|]")
+    head, pend = "page 101: [Am\xe9liorations|] ", "page 101: [Am\xe9liorations - * au prochain d\xe9marrage|] "
+    want_pages = [root, p100,
+                  head + rows % ("Non", "Toujours affich\xe9", "Non"),
+                  pend + rows % ("Oui *", "Toujours affich\xe9", "Non"),
+                  pend + rows % ("Oui *", "Toujours affich\xe9", "Oui"),
+                  head + rows % ("Non", "Comme le jeu", "Non"),
+                  p100,
+                  "page 102: [Remaster|] [Rendu|Remaster] [Personnages arrondis|Non] "
+                  "[Pr\xe9chargement des lieux|Non] [Valeurs par d\xe9faut|] [Retour|]",
+                  p100,
+                  "page 100: [Graphics (OMK)|] [Enhancements|] [Remaster|] [OMK options language|English] [Back|]",
+                  "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphics (OMK)|] [Retour|]"]
+    want_evts = [("enhancements.all", "max", "0"), ("enhancements.clipdistance", "unlimited", "1"),
+                 ("enhancements.all", "off", "0"), ("enhancements.radar", "game", "1"),
+                 ("enhancements.clipdistance", "capped", "1"), ("omk.language", "en", "1")]
+    want_ini = (b"; my settings\n[Enhancements]\n;radar = always   ; the minimap\n;all = max\n"
+                b";clipdistance = unlimited\n[Remaster]\nbloom = 1.3\n\n[OMK]\nlanguage = en\n")
+    # the build without the remaster: its page 100 has no Remaster header
+    plainPages = got[1][0]
+    p100plain = [p for p in plainPages if p.startswith("page 100: [Graphismes")][:1]
+    return (got[0][0], got[0][1], got[0][2], p100plain), \
+           (want_pages, want_evts, want_ini,
+            ["page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Langue des options OMK|Fran\xe7ais] [Retour|]"]), \
+           ("the page lines in order (root, 100, 101 as opened / after a next-start change / after a live "
+            "one / after the defaults, 102, 100 in English, the root); the options.omk events; the "
+            "config's bytes after; and the no-remaster build's page 100")
+
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -27480,7 +27628,9 @@ def c_engine_options_menu():
 
     Read from the OUTPUT on both ends: each page's line is the text the
     composer laid out through the row hook 0x00493380, and the header the run
-    WROTE is read back - clip at +20, the size at +12/+14. Then a SECOND start,
+    WROTE is read back - clip at +20, the size at +12/+14. The root carries
+    OMK's own header, "Graphismes (OMK)", above Retour (`todo/graphics-menu.md`
+    A2; `engine: graphics menu` drives it). Then a SECOND start,
     with no `--res` (bypassing the wrapper that adds one), must come up at the
     saved size. A change only marked dirty and never applied - the open
     callback's bit 2 not set - leaves the file at 50 m and 800x600.
@@ -27523,12 +27673,12 @@ def c_engine_options_menu():
     return (len(pages), focus, pages[:2] + pages[-2:], back, buttons, head,
             [d.split(" (")[0] for d in disp]), \
            (6, 1,
-            ["page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Retour|] - 5 drawn, 1 lit, 0 sliders",
+            ["page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|] - 6 drawn, 1 lit, 0 sliders",
              "page 2: [Vid\xe9o|] [R\xe9solution|800 x 600 x 16 bpp] [Distance de clipping|Proche] "
              "[Affichage du ciel|Oui] [Affichage des ombres|Oui] [Niveau d'activit\xe9 dans les rues|Important] "
              "[Niveau de d\xe9tail|Interm\xe9diaire] [Acc\xe9l\xe9ration 3D|Rendu logiciel] [Retour|] - 9 drawn, 2 lit, 0 sliders",
              "page 0: [Oui|] [Non|] [Sauvegarder les options|] - 3 drawn, 2 lit, 0 sliders",
-             "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Retour|] - 5 drawn, 1 lit, 0 sliders"],
+             "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|] - 6 drawn, 1 lit, 0 sliders"],
             1, 1, (100, 1024, 768), ["display 1024x768"]), \
            "page lines drawn (a run that reaches none fails AS a run); the focus " \
            "taken once by the Options panel's enter hook; the root and the Video " \
@@ -48966,8 +49116,12 @@ def c_licence_headers():
     # 677: + `engine/tools/clip_memo.cpp` (the audit's bug 2, `engine: clip memo`)
     # 678: + `engine/backends/vulkan/vkrender_remaster.inl` (the Vulkan split, the audit's cleanliness)
     # 679: + `engine/src/platform/packkey.h` (the packs' one FNV-1a, the audit's cleanliness)
+    # 687: OMK's own options pages (`todo/graphics-menu.md` A2) - +
+    # `engine/src/ui/omkoptions.{h,cpp}`, `omktext.{h,cpp}`, the generated
+    # `omktext_data.cpp`, `engine/backends/sdl/playomkoptions.cpp`,
+    # `engine/tools/omkmenu_probe.cpp` and `tools/omklang.py`
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (679, [], 10, []), \
+           (687, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -51191,6 +51345,7 @@ CHECKS = [
     ("slider ride",        c_slider_ride,       "todo/standing-unknowns"),
     ("options file",       c_options_file,      "todo/options-config"),
     ("options write",      c_options_write,     "todo/graphics-menu A1; platform/options.h"),
+    ("omk lang",           c_omk_lang,          "todo/graphics-menu A2b; ui/omktext.h"),
     ("settings resolve",  c_settings_resolve,  "todo/options-config"),
     ("world unit",        c_world_unit,        "PORTING"),
     ("the sky",           c_the_sky,           "todo/options-config"),
@@ -51720,6 +51875,7 @@ SLOW = [
     ("engine: sneak character", c_engine_sneak_character, "UI; todo/sneak.md 5"),
     ("engine: sneak quit", c_engine_sneak_quit, "UI; todo/sneak.md 5"),
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
+    ("engine: graphics menu", c_engine_graphics_menu, "todo/graphics-menu A2; ui/omkoptions.h"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

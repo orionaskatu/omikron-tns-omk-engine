@@ -976,6 +976,13 @@ public:
     const Surface& readback() override;
     RasterStats stats() const override { return st_; }
     const char* name() const override { return "gles2"; }
+    // all but the ambient occlusion, the relief and the mist (`Renderer::takes`)
+    unsigned takes() const override {
+        return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
+               omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
+               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
+               omk::kTakesEmitterLights;
+    }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear - what the
     // original's HARDWARE device drew, MAG/MIN LINEAR with MIP NONE
     // (`docs/ASSETS.md` 4) - and 2 TRILINEAR, the enhancement

@@ -893,6 +893,8 @@ public:
 
     RasterStats stats() const override { return st_; }
     const char* name() const override { return "citro3d (PICA200)"; }
+    // the texture filter alone (`Renderer::takes`)
+    unsigned takes() const override { return omk::kTakesTextureFilter; }
     // the counts since the last report, as one line (`c3dReport`)
     void report(long frame) {
         const double ms = 1000.0 / SYSCLOCK_ARM11;

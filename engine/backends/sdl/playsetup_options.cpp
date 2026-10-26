@@ -114,6 +114,8 @@ int PlayState::setupOptions(int argc, char** argv) {
     optTree = omk::OptionTree::loadJson(tb + "/ui_widgets.json", tb + "/ui.json");
     auto& optMenu = optMenu_.emplace(optTree);
     optMenu.setText(omk::iamStrings(fs, "IAM/Options"));
+    // ...and OMK's own pages on it (`ui/omkoptions.h`, `playomkoptions.cpp`)
+    omkOptionsSetup();
     // The world rendered at a panel's 3D VIEWPORT item's size, for the
     // composer to place (`ScreenComposer::attachView3D`).
     // The menu's animated background - `IMAGES/cloud.bmp` embossed by a

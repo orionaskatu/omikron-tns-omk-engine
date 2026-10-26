@@ -308,6 +308,13 @@ public:
     const omk::Surface& readback() override;
     omk::RasterStats stats() const override { return st_; }
     const char* name() const override { return "vulkan"; }
+    // every request of the boundary (`Renderer::takes`)
+    unsigned takes() const override {
+        return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
+               omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
+               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
+               omk::kTakesEmitterLights | omk::kTakesAmbientOcclusion | omk::kTakesRelief | omk::kTakesMist;
+    }
     ~VulkanRenderer() override;
     // A geometry the renderer holds state for tells it when it is destroyed
     // (`omk::GpuResidency`, todo/optimization.md step 26): the maps are cleared

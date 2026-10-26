@@ -533,6 +533,33 @@ public:
     // The GRADE: a 3D colour LUT of n^3 RGB entries 0..1, red fastest (a
     // .cube file's order); null or n < 2 off. The viewer picks it per city.
     virtual bool setGrade(const float* /*rgb*/, int /*n*/) { return false; }
+
+    // WHAT THIS BACKEND CAN DRAW AT ALL, of the requests above - a mask of the
+    // `kTakes*` bits, asked by OMK's options menu (`ui/omkoptions.h`) so it
+    // offers only rows the running renderer can honour. Static: "has the
+    // pass", not "is it on" (that is `drawsWater` and the rest), and a device
+    // may still reduce a value it cannot meet. The software reference takes
+    // none of them: it draws what D3D was told to draw.
+    virtual unsigned takes() const { return 0; }
+};
+
+// `Renderer::takes()`'s bits, one per request of the boundary.
+enum RendererTakes : unsigned {
+    kTakesMultisample    = 1u << 0,    // setMultisample
+    kTakesTextureFilter  = 1u << 1,    // setTextureFilter
+    kTakesSupersample    = 1u << 2,    // setSupersample
+    kTakesAnisotropy     = 1u << 3,    // setAnisotropy
+    kTakesShadowMap      = 1u << 4,    // drawsShadowMap's pass (`shadowquality = mapped`)
+    kTakesPixelLights    = 1u << 5,    // drawsPixelLights's (`lighting = perpixel`)
+    kTakesUpscale        = 1u << 6,    // setUpscale
+    kTakesBloom          = 1u << 7,    // setBloom
+    kTakesGrade          = 1u << 8,    // setGrade
+    kTakesWater          = 1u << 9,    // setWater, and the floors on its pass
+    kTakesBodyTint       = 1u << 10,   // setBodyTint
+    kTakesEmitterLights  = 1u << 11,   // setEmitterLights
+    kTakesAmbientOcclusion = 1u << 12, // setAmbientOcclusion
+    kTakesRelief         = 1u << 13,   // drawsRelief
+    kTakesMist           = 1u << 14,   // View::mist
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

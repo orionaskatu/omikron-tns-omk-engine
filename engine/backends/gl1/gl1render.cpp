@@ -1319,6 +1319,8 @@ public:
     void setFullTextures(bool full) { fullTextures_ = full; }
     int maxVertexLights() const override { return kPoseLights; }
     const char* name() const override { return "OpenGL 1.x fixed-function"; }
+    // the texture filter alone (`Renderer::takes`)
+    unsigned takes() const override { return omk::kTakesTextureFilter; }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear. No mip chain -
     // the original set MIP NONE on both arms - so trilinear is drawn bilinear
     // and said. Recorded here; applied to every texture `setTextures` made

@@ -15,6 +15,8 @@ constexpr const char* kOptions = "options";
 constexpr const char* kEnhancements = "enhancements";
 // And the remaster's, for what replaces authored art (settings.h).
 constexpr const char* kRemaster = "remaster";
+// And this port's own interface: the language of its menu rows.
+constexpr const char* kOmk = "omk";
 
 }  // namespace
 
@@ -199,6 +201,32 @@ Settings resolveSettings(const OptionsFile& ini,
         path(ini.find(kRemaster, "dir"), s.remasterDir, s.remasterDirSource);
         path(ini.find(kRemaster, "grade"), s.grade, s.gradeSource);
         path(ini.find(kRemaster, "smoothskip"), s.smoothSkip, s.smoothSkipSource);
+        if (const std::string* w = ini.find(kRemaster, "mode")) {
+            std::string v = *w;
+            for (auto& c : v) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            if (v == "remaster" || v == "on" || v == "1") {
+                s.remasterOn = true;
+                s.remasterModeSource = Settings::Source::Ini;
+            } else if (v == "original" || v == "off" || v == "0") {
+                s.remasterOn = false;
+                s.remasterModeSource = Settings::Source::Ini;
+            } else {
+                std::fprintf(stderr, "settings: [Remaster] mode = %s is not original|remaster - ignored\n",
+                             w->c_str());
+            }
+        }
+
+        // ---- [OMK], this port's own interface -----------------------------
+        if (const std::string* w = ini.find(kOmk, "language")) {
+            std::string v = *w;
+            for (auto& c : v) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            if (v == "fr" || v == "en") {
+                s.language = v;
+                s.languageSource = Settings::Source::Ini;
+            } else {
+                std::fprintf(stderr, "settings: [OMK] language = %s is not fr|en - ignored\n", w->c_str());
+            }
+        }
     }
 
     // ---- 2. the save header, which is later and therefore wins -----------

@@ -281,6 +281,21 @@ struct Settings {
     // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
     float  ao = 0.0f;
     Source aoSource = Source::Default;
+    // `mode = original|remaster`: the REMASTER'S SWITCH (`todo/graphics-menu.md`)
+    // - OMK's options menu writes it. `original` leaves every `[Remaster]` key
+    // above unread at start, as if none were there; `remaster`, the default,
+    // reads them. A switch over the keys, not a key of its own to configure.
+    bool   remasterOn = true;
+    Source remasterModeSource = Source::Default;
+
+    // ---- [OMK] - this port's own interface ---------------------------------
+    // `language = fr|en`: the LANGUAGE OF OMK'S OWN MENU ROWS (`ui/omktext.h`,
+    // `engine/lang/omk-menu.ini`). The game's own rows are the installed
+    // copy's `IAM\Options`, whose language neither the data nor the exe names
+    // - so this is set by hand. French, as the shipped data is.
+    std::string language = "fr";
+    Source languageSource = Source::Default;
+
     // whether any `[Remaster]` key asks for something: a build without
     // OMK_REMASTER says it ignores them (`playremaster_off.cpp`; the audit's
     // bug 5 - only the preset and the texture pack were named)
@@ -446,6 +461,59 @@ inline constexpr int kMaxAnimation     = 1;   // smooth
 inline constexpr int kMaxOptionClipMetres = 200;
 
 // Apply them, leaving anything an explicit key already set alone.
+// THE REMASTER PRESET'S STRENGTHS (`[Remaster] dir` / `--remaster DIR`): what
+// each key takes when the preset is on and neither its flag nor its key says
+// otherwise - read by the remaster's setup (`playremaster_setup.cpp`) and by
+// OMK's options menu, which shows them as the defaults its reset returns to.
+// The texture pack, the grades and the interface, font and film packs come
+// from the preset's FOLDER and are not here; `upscale` is not the preset's.
+struct RemasterPresetValue {
+    const char* key;
+    float value;
+};
+inline constexpr RemasterPresetValue kRemasterPreset[] = {
+    {"bloom", 1.6f},     // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
+    {"water", 0.6f},     // 0.35 before the Fresnel (2026-10-20)
+    {"floors", 1.0f},
+    {"mist", 0.5f},      // the reader's, from a sheet of 0, 0.5 and 1 (2026-10-21)
+    {"relief", 2.0f},    // 2 once the pack's generated normal maps came
+    {"ao", 2.0f},        // confirmed in play at 2 (2026-10-21)
+    {"bodylight", 1.0f},
+    {"fxlight", 1.0f},
+    {"smooth", 0.75f},   // "do it by default" (2026-10-22)
+    {"preload", 15.0f},  // 25 until the measurement of 2026-10-26
+};
+inline float remasterPresetValue(const char* key) {
+    for (const auto& p : kRemasterPreset)
+        if (std::string(p.key) == key) return p.value;
+    return 0.0f;
+}
+
+// `[Remaster] mode = original`: every `[Remaster]` key put back to its
+// default and source, as if the file had none - the flags still apply (a flag
+// is the most recent word). The mode itself stays.
+inline void dropRemasterKeys(Settings& s) {
+    const Settings d;
+    s.texturePack = d.texturePack;  s.texturePackSource = d.texturePackSource;
+    s.uiPack = d.uiPack;            s.uiPackSource = d.uiPackSource;
+    s.fontPack = d.fontPack;        s.fontPackSource = d.fontPackSource;
+    s.filmPack = d.filmPack;        s.filmPackSource = d.filmPackSource;
+    s.bloom = d.bloom;              s.bloomSource = d.bloomSource;
+    s.grade = d.grade;              s.gradeSource = d.gradeSource;
+    s.remasterDir = d.remasterDir;  s.remasterDirSource = d.remasterDirSource;
+    s.water = d.water;              s.waterSource = d.waterSource;
+    s.floors = d.floors;            s.floorsSource = d.floorsSource;
+    s.mist = d.mist;                s.mistSource = d.mistSource;
+    s.upscale = d.upscale;          s.upscaleSource = d.upscaleSource;
+    s.preload = d.preload;          s.preloadSource = d.preloadSource;
+    s.bodyLight = d.bodyLight;      s.bodyLightSource = d.bodyLightSource;
+    s.fxLight = d.fxLight;          s.fxLightSource = d.fxLightSource;
+    s.relief = d.relief;            s.reliefSource = d.reliefSource;
+    s.smooth = d.smooth;            s.smoothSource = d.smoothSource;
+    s.smoothSkip = d.smoothSkip;    s.smoothSkipSource = d.smoothSkipSource;
+    s.ao = d.ao;                    s.aoSource = d.aoSource;
+}
+
 inline void applyMaxEnhancements(Settings& s) {
     const auto take = [](int& v, int top, Settings::Source& src) {
         if (src == Settings::Source::Default) { v = top; src = Settings::Source::Ini; }

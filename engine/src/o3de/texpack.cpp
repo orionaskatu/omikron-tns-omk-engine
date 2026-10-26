@@ -70,6 +70,11 @@ bool readBlocks(const std::string& path, const Texture& t, bool light, PackBlock
     Ktx2 k;
     if (!readKtx2(std::move(bytes), k, &why)) return false;
     const BlockFormat f = blockFormat(k.vkFormat);
+    // the format its NAME promised (`.astc.ktx2`, else `.bc7` / `.bc4`): the
+    // backend that took it from that slot samples that codec alone (the
+    // remaster audit's item 7)
+    const bool astcSlot = path.size() >= 10 && path.compare(path.size() - 10, 10, ".astc.ktx2") == 0;
+    if (f.astc != astcSlot) { why = "not the codec its name says"; return false; }
     if (!f.astc && (light ? k.vkFormat != kVkBc4Unorm : k.vkFormat != kVkBc7Unorm)) { why = "the wrong block format"; return false; }
     if (!powerOfTwoFactor(k.w, t.width) || !powerOfTwoFactor(k.h, t.height)) { why = "not a power of two of the original"; return false; }
     z.vkFormat = k.vkFormat; z.w = k.w; z.h = k.h;

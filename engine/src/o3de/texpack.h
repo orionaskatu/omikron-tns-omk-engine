@@ -106,6 +106,7 @@ public:
     // decode the NORMAL MAPS too (the relief's; each another PNG the size of
     // its colour) - off unless asked
     void setNormals(bool on) { wantNormals_ = on; }
+    bool normals() const { return wantNormals_; }
     // decode the LIGHT MAPS with the colours (`colour` true): the bloom's -
     // on unless the session says no bloom will read them. The light maps
     // alone (`colour` false, the surface lights') are decoded either way.

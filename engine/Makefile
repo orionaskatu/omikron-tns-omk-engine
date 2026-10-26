@@ -336,8 +336,10 @@ release:
 # (build/obj-noremaster, build/noremaster/), so it never mixes with the
 # development build. `verify.py: engine: remaster switch`.
 .PHONY: noremaster
+# ...and without VR, as every port without the remaster builds (the Vita,
+# the 3DS, the classic Mac): what this build stands for is theirs
 noremaster:
-	$(MAKE) play play-gles REMASTER=0 OBJDIR=build/obj-noremaster PLAY_BIN=build/noremaster/omk-play \
+	$(MAKE) play play-gles REMASTER=0 VR=0 OBJDIR=build/obj-noremaster PLAY_BIN=build/noremaster/omk-play \
 	    PLAY_GL_BIN=build/noremaster/omk-play-gles
 
 # ---------------------------------------------------------------- HARDENED

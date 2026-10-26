@@ -2192,7 +2192,12 @@ bool PlayState::askSet(int slot, const std::string& stem, int area, long frame) 
     w = WorldSlot{};
     mergedValid = false;
     w.geo.revision = ++worldGeoRev;
-    setLoads[slot].reset();          // a job still running finishes into its own state
+    // a job still running finishes into its own state - kept, so the
+    // session's end waits for it (those already done let go here)
+    std::erase_if(setLoadsLeft, [](const auto& L) { return !L->job || L->job->ready(); });
+    if (setLoads[slot] && setLoads[slot]->job && !setLoads[slot]->job->ready())
+        setLoadsLeft.push_back(setLoads[slot]);
+    setLoads[slot].reset();
     slotAsked[slot] = stem;
     slotAskedArea[slot] = area;
     if (stem.empty()) return had;

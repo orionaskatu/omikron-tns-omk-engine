@@ -289,6 +289,7 @@ public:
     bool setEmitterLights(bool on) override { emitters_ = on; return true; }
     bool drawsEmitterLights() const override { return true; }
     bool takesPack() const override { return true; }
+    bool drawsRelief() const override { return true; }
     int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
     bool tilesLights() const override {
         return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;

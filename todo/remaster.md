@@ -1485,7 +1485,7 @@ the tile binning handles `flipX` and the roll.
    `lutStrip` casts NaN to a byte - refuse non-finite in `parseCube`; a glow
    whose ramp is black (`hi = 0`) computes 0/0 (`emitterlight.cpp:62-87`)
    and still takes a light slot - `hi <= 0` is dark.
-7. **Lower** (the pack is our own content): a PNG's IHDR alone reserves up
+7. ✔ (2026-10-26, "The last batch" below) **Lower** (the pack is our own content): a PNG's IHDR alone reserves up
    to ~1 GiB before inflating (`pngread.cpp:246`, `out.reserve(expect)`;
    cap at deflate's 1032:1); a KTX2's codec slot not checked against its
    content (`readBlocks`: require `f.astc` to match the slot).
@@ -1545,7 +1545,7 @@ the tile binning handles `flipX` and the roll.
   run and runs again in `readback`; `runPost` runs with the bloom on when
   no draw bound a light map, and `glCopyTexSubImage2D`s the whole frame
   (ping-pong on tilers); `reflInv` / `eye` / `clipY` sent every draw.
-* **CPU**: `uipack`'s LRU of 16 thrashes on a screen of 17+ packed bitmaps
+* **CPU** (`uipack`'s part MEASURED 2026-10-26, no change: "The last batch" below): `uipack`'s LRU of 16 thrashes on a screen of 17+ packed bitmaps
   in a fixed order (decode under `impl_->m`) - count the largest screen's
   bitmaps before changing it; a KTX2 copied whole (`std::byte` ->
   `uint8_t`); `clipAbove` allocates per non-set draw a frame and
@@ -1761,7 +1761,7 @@ but `emitter light` (the run-to-run flip above).
   uploads 1.2-1.5 ms a texture), the arrival's pool **0 new, 0.0 ms**
   against 7 new and 8.8 ms without (59 ms before the decode moved to the
   load); the frame the same bytes. `engine: preload` part 6, shown to fail
-  three ways (part 1 for the eviction). NOT DONE: on GLES the relief is not
+  three ways (part 1 for the eviction). DONE 2026-10-26 ("The last batch"): on GLES the relief is not
   drawn, yet `setNormals` still has the load decode the normal maps it
   parks - work and up to its share of the 256 MB for nothing there.
 * **`engine: block formats` red since `263e28b`, the check's measure**: its
@@ -2167,6 +2167,30 @@ but `emitter light` (the run-to-run flip above).
     would be the only gain left, a few ms; the off-frame decode of a model's
     textures when it loads (as a set's are prepared) covers the cold reads
     and every model alike, if a device (the Quest) ever shows the hitch.
+* **The last batch (2026-10-26, the reader's "go with 1 to 4")** - the
+  audit's remaining small items:
+  1. GLES's NORMAL MAPS: decoded and parked by every set's load for the
+     relief GLES never draws. `Renderer::drawsRelief` (Vulkan's true) and
+     `remasterConfigure` turn them off for a renderer without it
+     (`@evt texpack.normals`). M1, Qalisar's start, the preset on GLES: the
+     city load's pack work 1030-1170 -> ~555 ms, the peak 512 -> 436 MB, the
+     frame the same bytes. `engine: relief` part 5, shown to fail.
+  2. `engine: remaster switch`: `make noremaster` builds `VR=0`, as every
+     port without the remaster does; its symbol scan takes plain `nm`'s last
+     field (`-j` is macOS's). Item 7: the PNG inflate reserves at most 1032:1
+     over the bytes there are; a KTX2 is read only as the codec its name
+     says - both pinned in `engine: block formats` part 1, shown to fail.
+  3. THE UI PACK'S 16, measured: all 37 interface screens draw from ONE
+     upscaled sheet (`gfxint.BMP`); the 52 packed bitmaps are 11 I2D sheets,
+     full-screen pictures one at a time, three gauges and three weathers -
+     no screen comes near 16. No change.
+  4. A SET'S OWN LOAD JOB (`askSet`) is waited for at the session's end, and
+     one replaced while it ran is kept until then (`setLoadsLeft`) - each
+     captures `this`. `@evt session.loads`; `engine: tunnel door walk`'s new
+     part (the city's load 3 s late, the run ended at frame 10: one running,
+     waited for, none after), shown to fail.
+  Left of the audit: Vulkan's image memory sub-allocated (three allocations
+  a texture with the pack) - for a mobile Vulkan, not needed on a desktop.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

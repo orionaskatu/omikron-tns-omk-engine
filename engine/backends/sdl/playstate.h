@@ -753,6 +753,9 @@ struct PlayState {
     bool actorKnown{};
     int lastCamera{};
     std::shared_ptr<SetLoad> setLoads[2]{};
+    // a load replaced while its job still ran (`askSet`): kept until it
+    // returns, so the session's end can wait for it - the job captures `this`
+    std::vector<std::shared_ptr<SetLoad>> setLoadsLeft{};
     // THE PRELOAD RADIUS (`playpreload.cpp`): metres (0 off), the sets
     // prepared ahead by stem, and the doors of the resident pair
     float preloadMetres{};

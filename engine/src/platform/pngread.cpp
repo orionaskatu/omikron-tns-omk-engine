@@ -5,6 +5,7 @@
 
 #include "platform/pngread.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace omk {
@@ -243,7 +244,10 @@ bool zlibInflate(const std::uint8_t* src, std::size_t n, std::vector<std::uint8_
     if (n < 6) return false;
     const unsigned cmf = src[0], flg = src[1];
     if ((cmf & 0x0F) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0 || (flg & 0x20)) return false;
-    if (expect) out.reserve(expect);
+    // reserved at most at deflate's own ratio (1032:1) over the bytes there
+    // are: a header naming 16384x16384 over a few bytes of data reserved
+    // ~1 GiB before inflating anything (the remaster audit's item 7)
+    if (expect) out.reserve(std::min(expect, n * 1032));
     Bits b(src + 2, n - 2);
     // `expect`, when given, is also the LIMIT: a PNG's image data is exactly it
     if (!inflateRaw(b, out, expect)) return false;

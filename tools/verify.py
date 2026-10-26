@@ -19141,6 +19141,13 @@ def c_engine_tunnel_door_walk():
     * the tunnel is hidden only after that, and he ends past the door (x <
       7000) with no `NO FLOOR` on the way.
 
+    * (2026-10-26) the city's load is ANEKBAH's on its own thread (asked at
+      frame 1, in at 17): the same walk ended at frame 10 with each load 3 s
+      late (`OMK_LOAD_DELAY_MS`) leaves its job running at the session's end,
+      which WAITS for it (`@evt session.loads`, one running, none after) - a
+      set's job captures `this`, and nothing waited before. Shown to fail:
+      the wait taken out - one still running after.
+
     Needs SDL (the walker is `omk-play`'s); reports true across the board
     without it, as the frontend is optional (PORTING A8).
     """
@@ -19154,13 +19161,19 @@ def c_engine_tunnel_door_walk():
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not os.path.exists(play):
-        return (True,) * 8, (True,) * 8, "no SDL - the frontend is optional (PORTING A8)"
+        return (True,) * 9, (True,) * 9, "no SDL - the frontend is optional (PORTING A8)"
     env = dict(os.environ, SDL_VIDEODRIVER="dummy")
     r = subprocess.run([play, fr, tb, "--software", "--res", "640x480", "--nofmv",
                         "--no-crowd", "--save", save, "--area", "224",
                         "--stand", "7300,-10,-9471,270", "--speed", "3", "--frames", "300",
                         "--hold", "0*1,k200*290"], capture_output=True, text=True, env=env)
     o = r.stdout
+    rw = subprocess.run([play, fr, tb, "--software", "--res", "640x480", "--nofmv",
+                         "--no-crowd", "--save", save, "--area", "224",
+                         "--stand", "7300,-10,-9471,270", "--speed", "3", "--frames", "10",
+                         "--hold", "0*1,k200*290"], capture_output=True, text=True,
+                        env=dict(env, OMK_EVENTS="1", OMK_LOAD_DELAY_MS="3000"))
+    lw = [(int(f.get("running", -1)), int(f.get("after", -1))) for n, f in _events(rw.stdout) if n == "session.loads"]
     m = re.search(r"^player: .* at (-?[0-9.]+) ", o, re.M)
     x = float(m.group(1)) if m else 1e9
     closeAt = o.find("moved by the OUTGOING pool (Tunnel01.SCX)")
@@ -19175,11 +19188,13 @@ def c_engine_tunnel_door_walk():
             [t for t in starts if t[0] == "4" and t[1] == "224" and t[2] == "0"] != [],
             closeAt >= 0,
             hideAt > closeAt >= 0 or (hideAt >= 0 and closeAt >= 0),
-            x < 7000 and "NO FLOOR" not in o), (True,) * 8, \
+            x < 7000 and "NO FLOOR" not in o,
+            lw == [(1, 0)]), (True,) * 9, \
         ("the zone carries doors 3/4; door 3 starts in AREA 224's pool with 0 "
          "missed; every T01door01 motion comes from Tunnel01.SCX; arrive state "
          "6 and feet on AREA 0; door 4 the same; the door mesh moved; the "
-         "tunnel is hidden; he ends past the door with no NO FLOOR")
+         "tunnel is hidden; he ends past the door with no NO FLOOR; a load still "
+         "running at the session's end waited for")
 
 def c_options_file():
     r"""The game's own configuration file: `[Preferences]` and its 65 keys.
@@ -32830,6 +32845,14 @@ def c_engine_relief():
          `normals`), relief 0 none - they are decoded only when asked. Where
          the pack has none (it is made by `omktexpack.py materials`, outside
          the repo) the count is not asserted, only said.
+      5. ...and DECODED ONLY FOR A RENDERER THAT DRAWS THEM (2026-10-26): GLES
+         has no relief, and a set's load decoded and parked the pack's normal
+         maps for it all the same - `remasterConfigure` turns them off where
+         `Renderer::drawsRelief` is false (`@evt texpack.normals`, the pack's
+         own state): off on GLES, on for Vulkan. Measured (M1, Qalisar's
+         start, the preset): GLES's city load 1030-1170 -> ~555 ms, its peak
+         512 -> 436 MB, the frame the same bytes. Shown to fail: the
+         `setNormals(false)` taken out - GLES's event on.
 
     Measured once, outside the check (2026-10-21, M3): with it off, frames
     byte-identical to `e0b586b1` on the software reference and Vulkan, plain,
@@ -32885,7 +32908,7 @@ def c_engine_relief():
               and mainf.index("gradUV[2] =") < mainf.index("pc.water == 2 && vWorld.y")
               and mainf.index("gradW[2] =") < mainf.index("pc.water == 2 && vWorld.y")
               and "texture(nmap" not in fs and "textureGrad(emis" in mainf)
-    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
     pack = (omkpaths.pack_path() or "")
@@ -32894,6 +32917,7 @@ def c_engine_relief():
     tmp = tempfile.mkdtemp()
     vk = os.path.join(eng, "build", "omk-play")
     normals = {}
+    normEv = {}   # name -> [(on, relief)] of `texpack.normals`
     has_maps = any(n.endswith("_n.png") for d in ("pack", "full/pack") if os.path.isdir(os.path.join(pack, d))
                    for n in os.listdir(os.path.join(pack, d)))
     try:
@@ -32905,6 +32929,8 @@ def c_engine_relief():
                     "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
                     "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
             r = subprocess.run([vk] + args, capture_output=True, text=True, env=env, timeout=240)
+            normEv[name] = [(str(k.get("on")), str(k.get("relief"))) for n, k in _events(r.stdout + r.stderr)
+                            if n == "texpack.normals"]
             normals[name] = sum(int(k.get("normals", 0)) for n, k in _events(r.stdout + r.stderr)
                                 if n == "texpack.pool")
             if not os.path.exists(out):
@@ -32918,6 +32944,15 @@ def c_engine_relief():
         f["nofx1"] = run("nofx1", {}, "--relief", "1", "--fx-light", "0")
         f["slot0"] = run("slot0", {"OMK_NO_TILES": "1"}, "--relief", "0")
         f["slot1"] = run("slot1", {"OMK_NO_TILES": "1"}, "--relief", "1")
+        # 5. GLES: the readback's path, the preset (relief 2)
+        rg = subprocess.run([os.path.join(eng, "build", "omk-play-gles"), fr, os.path.join(ROOT, "tables"), "--save",
+                             os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                             tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "10", "--area", "0",
+                             "--stand", "1780,0,-7380,336", "--remaster", pack],
+                            capture_output=True, text=True, errors="replace", timeout=240,
+                            env=dict(os.environ, OMK_EVENTS="1", OMK_NO_GPU_PRESENT="1"))
+        normEv["gles"] = [(str(k.get("on")), str(k.get("relief"))) for n, k in _events(rg.stdout)
+                          if n == "texpack.normals"]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if any(v is None for v in f.values()):
@@ -32927,9 +32962,13 @@ def c_engine_relief():
     slot = sum(1 for x, y in zip(f["slot0"], f["slot1"]) if x != y)
     print(f"        relief 1 moves {moved} pixels; without the point lights {nofx}; untiled {slot}; "
           f"normal maps uploaded at relief 1 {normals['on']}, at 0 {normals['off']}"
-          + ("" if has_maps else " (the pack has none - `omktexpack.py materials`)"))
-    return (src_ok, moved > 50000, nofx, slot, normals["on"] > 0 or not has_maps, normals["off"]), \
-        ((True,) * 8, True, 0, 0, True, 0), \
+          + ("" if has_maps else " (the pack has none - `omktexpack.py materials`)")
+          + f"; the normal maps decoded (on, relief): Vulkan {normEv.get('on')}, GLES {normEv.get('gles')}")
+    yes, no = ("1", "true"), ("0", "false")
+    asked = (bool(normEv.get("on")) and all(o in yes and r in yes for o, r in normEv["on"]),
+             bool(normEv.get("gles")) and all(o in no and r in no for o, r in normEv["gles"]))
+    return (src_ok, moved > 50000, nofx, slot, normals["on"] > 0 or not has_maps, normals["off"], asked), \
+        ((True,) * 8, True, 0, 0, True, 0, (True, True)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 2, the tiled module and " \
         "mode 3 alone, the normal map's binding there); by Anekbah's burner relief 1 moves the frame, and " \
         "nothing without the point lights or the tiles; the pack's normal maps uploaded at relief 1 (where " \
@@ -34259,6 +34298,14 @@ def c_engine_block_formats():
     drops the mip from its filter (GLES2 has no MAX_LEVEL; incomplete samples
     black), and a light map not a power of two is CLAMPED (GLES2 repeats only
     those). Shown to fail: either guard removed - part 1's last False.
+    (2026-10-26, the audit's item 7) ...and the readers' two: a KTX2 read
+    only as the codec its NAME says (`.astc.ktx2` ASTC, else BC7 / BC4 - a
+    backend takes it from that slot and samples that codec alone), and the
+    PNG inflate's reservation capped at deflate's 1032:1 over the bytes
+    there are (a header naming 16384x16384 over a few bytes reserved ~1 GiB
+    first). Neither shows in a frame or in the resident memory (a
+    reservation is not touched), so pinned. Shown to fail: each taken out -
+    part 1's sixth False.
     """
     import subprocess, tempfile, shutil, re, zlib
     eng = os.path.join(ROOT, "engine")
@@ -34269,6 +34316,7 @@ def c_engine_block_formats():
     gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
                      "backends/gles/glesrender_remaster_shaders.inl")
     tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
+    pr = open(os.path.join(eng, "src", "platform", "pngread.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     src_ok = ("enable.textureCompressionBC = VK_TRUE; bcOk_ = true;" in vk and
               "omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);" in vk,
@@ -34279,13 +34327,14 @@ def c_engine_block_formats():
               "return chain || !mips;" in gl and
               "if (!uploadAstc(rep->colourZ, mips)) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);" in gl and
               "pot(rep->emissiveZ.w) && pot(rep->emissiveZ.h) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl and
-              "pot(e.ew) && pot(e.eh) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl)
+              "pot(e.ew) && pot(e.eh) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl,
+              "if (f.astc != astcSlot) {" in tp and "out.reserve(std::min(expect, n * 1032));" in pr)
     mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/tex_encode", "play"], cwd=eng,
                         capture_output=True, text=True)
     tool, enc = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "tex_encode")
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not all(os.path.exists(x) for x in (tool, enc, play)):
-        return (src_ok, "build"), ((True,) * 5, "built"), mk.stderr[-300:]
+        return (src_ok, "build"), ((True,) * 6, "built"), mk.stderr[-300:]
     pk = omkpaths.pack_path() or ""
     astcenc = os.path.join(pk, "astcenc", "bin", "astcenc") if pk else ""
     def chunk(t, b):
@@ -34387,7 +34436,7 @@ def c_engine_block_formats():
     print(f"        reader: {reader}; vulkan (blocks taken, PNGs alone, same frame) {vulkan}, the pack visible {visible}")
     want_made = ((7, True, "ok"), (7, True, "ok"), (7, True, "ok") if os.path.exists(astcenc) else ("skipped",))
     return (src_ok, reader, tuple(vulkan), visible, real), \
-        ((True,) * 5, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
+        ((True,) * 6, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
          _or_skip(real, (True, True, True))), \
         "the source (BC only where filterable, each backend's codecs, the grey alias and the curated light " \
         "maps on their PNGs); the reader takes what tex_encode makes and refuses a short file, a foreign format " \
@@ -34637,7 +34686,9 @@ def c_engine_remaster_switch():
     `.inl` - and the shared files keep thin calls that
     `backends/sdl/playremaster_off.cpp` stubs. `make noremaster` builds the
     viewers without it (software and GLES; Vulkan, desktop-only and the
-    remaster's through and through, is left out).
+    remaster's through and through, is left out) - and without VR, as the
+    ports build (`VR=0`, 2026-10-26: it was built with the development
+    default's VR, a configuration no port has).
     Parts:
       1. the build: `make noremaster`'s two viewers, linked;
       2. NOTHING of the remaster in them: none of a list of its symbols (the
@@ -34676,8 +34727,10 @@ def c_engine_remaster_switch():
              "LightProbes5build", "surfaceLights", "drawWithWater", "waterPlane", "cityGrades", "phasePreload",
              "fsrPass", "runPost"]
     def syms(b):
-        out = subprocess.run(["nm", "-j", b], capture_output=True, text=True).stdout
-        return {n for n in names if n in out}
+        # plain `nm` and each line's last field: `-j` is macOS's alone
+        out = subprocess.run(["nm", b], capture_output=True, text=True).stdout
+        found = "\n".join(line.split()[-1] for line in out.splitlines() if line.split())
+        return {n for n in names if n in found}
     devHas, offHas, offGlHas = syms(bins["devgl"]), syms(bins["off"]), syms(bins["offgl"])
     # `phasePreload` and `fsrPass` / `runPost` keep their names as STUBS in the
     # build without: what must be gone is the code behind them, so those three

@@ -365,6 +365,9 @@ public:
     // GLES): a set's load then decodes them ahead (`TexturePack::prepare`);
     // for one that never asks (the software reference) they would only wait
     virtual bool takesPack() const { return false; }
+    // whether it draws the RELIEF (`View::relief`, Vulkan): the pack's normal
+    // maps are decoded only for one that does (GLES never read them)
+    virtual bool drawsRelief() const { return false; }
     // up to `budget` of the listed textures uploaded; -> how many still wait
     virtual int preloadStep(int /*budget*/) { return 0; }
 

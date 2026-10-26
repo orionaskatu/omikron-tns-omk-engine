@@ -115,6 +115,15 @@ void PlayState::remasterSceneViewer() {
 
 // a GPU renderer's remaster requests (GLES; Vulkan, desktop only, asks its own)
 void PlayState::remasterConfigure(omk::Renderer& r) {
+    // the pack's NORMAL MAPS only for a renderer that draws the relief: GLES
+    // has none, and a set's load decoded and parked them for nothing - the
+    // ports' memory (`remasterSetup` asked them for the relief at start)
+    if (relief > 0.0f && !r.drawsRelief()) {
+        omk::texturePack().setNormals(false);
+        std::printf("relief: not drawn by this renderer - the pack's normal maps are not decoded\n");
+    }
+    if (relief > 0.0f)
+        omk::event("texpack.normals", {{"on", omk::texturePack().normals()}, {"relief", r.drawsRelief()}});
     if (upscale > 1.0f) r.setUpscale(upscale);   // in the supersample's place
     if (bloomStrength > 0.0f) r.setBloom(bloomStrength);
     if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass

@@ -82,7 +82,8 @@ constexpr const char* kSwitches[] = {
     "OMK_POOL_PAD",             // =<n> n spare copies of texture slot 0, to push the pool past 64 (engine: pool past 64)
     "OMK_POOL_TWICE",           // A/B: textures dropped and re-sent on an arrival, the old order
     "OMK_POST_MESSAGE",         // =<msg>@<frame> posts that message on that frame (engine: mirror park)
-    "OMK_PRELOAD_HELD",         // =<n> the preload radius holds at most n sets, not 6 - its cap within a short walk (engine: preload)
+    "OMK_PRELOAD_DELAY_MS",     // =<n> each preload's job sleeps n ms first, so a walk releases one while it prepares (engine: preload)
+    "OMK_PRELOAD_HELD",         // =<n> the preload radius holds at most n sets, not 6 (2 on software) - its cap within a short walk (engine: preload)
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned

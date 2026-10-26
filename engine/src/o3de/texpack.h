@@ -32,10 +32,10 @@
 
 #include "formats/ktx2.h"
 #include "formats/tex3dt.h"
+#include "platform/sync.h"   // Mutex: none on the classic Mac, whose libstdc++ has no thread model
 
 #include <cstdint>
 #include <deque>
-#include <mutex>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -185,7 +185,7 @@ private:
     bool wantLights_ = true;
     std::size_t excluded_ = 0;
     // guards `refused_`, `greyOf_` and `parked_`, what the callers' threads touch
-    mutable std::mutex m_;
+    mutable Mutex m_;
     std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`
     std::string dir_;
     bool opened_ = false;

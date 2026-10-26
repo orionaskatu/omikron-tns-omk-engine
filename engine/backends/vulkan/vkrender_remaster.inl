@@ -528,6 +528,8 @@ bool VulkanRenderer::uploadLut() {
 void VulkanRenderer::recordPost(VkCommandBuffer cb) {
     if (!makePost()) return;
     if (lutDirty_ && lutN_ > 1 && !uploadLut()) lutN_ = 0;
+    // the GLOW only where a draw bound a light map: with none it is black
+    const bool glow = bloom_ > 0.0f && lightMapNow_;
     const auto barrier = [&](VkImage img, VkImageLayout from, VkImageLayout to, VkAccessFlags srcA,
                              VkAccessFlags dstA, VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -558,12 +560,12 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &ds, 0, nullptr);
         const PostPush p{{1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h)},
                          {1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH)},
-                         {dx, dy}, bloom_, mode, lutN_ > 1 ? lutN_ : 0, aoOk_ ? 1 : 0};
+                         {dx, dy}, glow ? bloom_ : 0.0f, mode, lutN_ > 1 ? lutN_ : 0, aoOk_ ? 1 : 0};
         vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof p, &p);
         vkCmdDraw(cb, 3, 1, 0, 0);
         vkCmdEndRenderPass(cb);
     };
-    if (bloom_ > 0.0f) {
+    if (glow) {
         run(glowPass_, glowFb_[0], glowPipe_, glowW_, glowH_, postDs_[0], rw_, rh_, 0, 0, 0);
         barrier(glowImg_[0], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, W, R, OUT, FRAG);
         run(glowPass_, glowFb_[1], glowPipe_, glowW_, glowH_, postDs_[1], glowW_, glowH_, 1, 0, 1);

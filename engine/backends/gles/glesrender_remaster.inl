@@ -32,6 +32,7 @@ void GlesRenderer::runPost() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+gpuTexture("render targets", id, 4LL * w * h);
     };
     const int gw = std::max(1, rw_ / 4), gh = std::max(1, rh_ / 4);
     if (postW_ != rw_ || postH_ != rh_) {
@@ -52,6 +53,7 @@ void GlesRenderer::runPost() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, lutN_ * lutN_, lutN_, 0, GL_RGBA, GL_UNSIGNED_BYTE, lutData_.data());
+gpuTexture("textures", lutTex_, 4LL * lutN_ * lutN_ * lutN_);
         lutDirty_ = false;
     }
     // the frame, copied out of the world target
@@ -66,7 +68,9 @@ void GlesRenderer::runPost() {
     const GLint lSrc = postLoc_[0], lGlow = postLoc_[1], lLut = postLoc_[2], lInv = postLoc_[3],
                 lDir = postLoc_[4], lStr = postLoc_[5], lMode = postLoc_[6], lN = postLoc_[7];
     glUniform1i(lSrc, 0); glUniform1i(lGlow, 1); glUniform1i(lLut, 2);
-    glUniform1f(lStr, bloom_);
+    // (the grade alone when no draw bound a light map: the glow would be black)
+    const bool glow = bloom_ > 0.0f && lightMapNow_;
+    glUniform1f(lStr, glow ? bloom_ : 0.0f);
     glUniform1f(lN, lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f);
     glBindBuffer(GL_ARRAY_BUFFER, quad_);
     for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);
@@ -82,7 +86,7 @@ void GlesRenderer::runPost() {
         glUniform1i(lMode, mode);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     };
-    if (bloom_ > 0.0f) {
+    if (glow) {
         pass(glowFbo_[0], gw, gh, postSrc_, rw_, rh_, 0, 0, 0);
         pass(glowFbo_[1], gw, gh, glowTex_[0], gw, gh, 1, 0, 1);
         pass(glowFbo_[0], gw, gh, glowTex_[1], gw, gh, 0, 1, 1);
@@ -131,8 +135,10 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rw_, rh_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+gpuTexture("render targets", reflTex_, 4LL * rw_ * rh_);
         glBindRenderbuffer(GL_RENDERBUFFER, reflDepth_);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, rw_, rh_);
+gpuRenderbuffer("render targets", reflDepth_, 2LL * rw_ * rh_);
         glBindFramebuffer(GL_FRAMEBUFFER, reflFbo_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, reflTex_, 0);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, reflDepth_);
@@ -153,7 +159,7 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, reflTex_);
     glActiveTexture(GL_TEXTURE0);
-    begin(v);
+    beginPass(v);   // the same frame as the reflection's pass: one `frameNo_`
     waterStrength_ = strength;
     for (int k = 0; k < 3; ++k) waterEye_[k] = v.cam.eye[k];
     for (const auto& d : scene) submit(d);
@@ -171,6 +177,13 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
 // are cleared black, as the world target's are.
 void GlesRenderer::fsrPass(int vh) {
     vh = std::clamp(vh, 1, h_);
+    if (fsrVh_ == vh && fsrW_ == w_ && fsrH_ == h_) return;   // this frame's, already
+    if (fsrLoc_[0] < 0) {
+        const char* easu[6] = {"uDst", "uSrc", "uSrcTex", "uIn", "uOut", "uOutTexH"};
+        const char* rcas[5] = {"uDst", "uSrc", "uSrcTex", "uPic", "uSharp"};
+        for (int k = 0; k < 6; ++k) fsrLoc_[k] = glGetUniformLocation(easuProg_, easu[k]);
+        for (int k = 0; k < 5; ++k) fsrLoc_[6 + k] = glGetUniformLocation(rcasProg_, rcas[k]);
+    }
     if (fsrW_ != w_ || fsrH_ != h_) {
         for (const auto& [tex, fbo] : {std::pair<GLuint*, GLuint*>{&easuTex_, &easuFbo_}, {&rcasTex_, &rcasFbo_}}) {
             if (!*tex) glGenTextures(1, tex);
@@ -195,7 +208,7 @@ gpuTexture("render targets", *tex, 4LL * w_ * h_);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     const float whole[4] = {-1.0f, -1.0f, 2.0f, 2.0f};
-    const auto run = [&](GLuint fbo, GLuint prog, GLuint src) {
+    const auto run = [&](GLuint fbo, GLuint prog, GLuint src, const GLint* loc) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, w_, h_);
         glClearColor(0, 0, 0, 1);
@@ -203,24 +216,27 @@ gpuTexture("render targets", *tex, 4LL * w_ * h_);
         glViewport(0, h_ - vh, w_, vh);   // the picture's rows, the target's top
         glUseProgram(prog);
         curProg_ = prog;
-        glUniform4fv(glGetUniformLocation(prog, "uDst"), 1, whole);
-        glUniform1i(glGetUniformLocation(prog, "uSrc"), 0);
+        glUniform4fv(loc[0], 1, whole);
+        glUniform1i(loc[1], 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, src);
     };
-    run(easuFbo_, easuProg_, colour_);
-    glUniform2f(glGetUniformLocation(easuProg_, "uSrcTex"), static_cast<float>(rw_), static_cast<float>(rh_));
-    glUniform2f(glGetUniformLocation(easuProg_, "uIn"), static_cast<float>(rs(w_)), static_cast<float>(rs(vh)));
-    glUniform2f(glGetUniformLocation(easuProg_, "uOut"), static_cast<float>(w_), static_cast<float>(vh));
-    glUniform1f(glGetUniformLocation(easuProg_, "uOutTexH"), static_cast<float>(h_));
+    const GLint* e = fsrLoc_;
+    const GLint* r = fsrLoc_ + 6;
+    run(easuFbo_, easuProg_, colour_, e);
+    glUniform2f(e[2], static_cast<float>(rw_), static_cast<float>(rh_));
+    glUniform2f(e[3], static_cast<float>(rs(w_)), static_cast<float>(rs(vh)));
+    glUniform2f(e[4], static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(e[5], static_cast<float>(h_));
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    run(rcasFbo_, rcasProg_, easuTex_);
-    glUniform2f(glGetUniformLocation(rcasProg_, "uSrcTex"), static_cast<float>(w_), static_cast<float>(h_));
-    glUniform2f(glGetUniformLocation(rcasProg_, "uPic"), static_cast<float>(w_), static_cast<float>(vh));
-    glUniform1f(glGetUniformLocation(rcasProg_, "uSharp"), std::exp2(-omk::kFsrRcasStops));
+    run(rcasFbo_, rcasProg_, easuTex_, r);
+    glUniform2f(r[2], static_cast<float>(w_), static_cast<float>(h_));
+    glUniform2f(r[3], static_cast<float>(w_), static_cast<float>(vh));
+    glUniform1f(r[4], std::exp2(-omk::kFsrRcasStops));
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glEnable(GL_DEPTH_TEST);
     forgetState();
+    fsrVh_ = vh;
 }
 
 // A pack texture in ASTC (`o3de/texpack.h` PackBlocks) into the BOUND
@@ -332,8 +348,6 @@ void GlesRenderer::remasterSources(bool pointLit, const char*& sceneFragX, const
         waterVert_ = waterVertVariant(kSceneVert);
         waterPosedVertX_ = waterVertVariant(kPosedVertX);
         waterPosedVert_ = waterVertVariant(kPosedVert);
-    }
-    if (waterWant_ > 0.0f) {
         vSceneX = waterVertX_.c_str();
         vScene = waterVert_.c_str();
         vPosedX = waterPosedVertX_.c_str();

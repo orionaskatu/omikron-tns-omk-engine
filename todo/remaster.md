@@ -1538,7 +1538,7 @@ the tile binning handles `flipX` and the roll.
   composite folded into `present.frag`; the glow images made and barriered
   with the bloom at 0; post passes over the letterbox bands; the glow at
   RGBA16F (B10G11R11 half the bytes); the 21-tap blur as 11 bilinear taps.
-* **GLES**: a water frame calls `begin()` twice (`drawWaterScene` :146,
+* **GLES** (DONE 2026-10-26, "The GLES items" below): a water frame calls `begin()` twice (`drawWaterScene` :146,
   :156) - `frameNo_` twice, every body's depth ties resolved twice, the
   target cleared and the lights sent twice; `fsrPass` looks up 9 uniforms a
   run and runs again in `readback`; `runPost` runs with the bloom on when
@@ -1568,10 +1568,10 @@ the tile binning handles `flipX` and the roll.
   `waterWant_` and its six, `fxWant_`, `lightBlack_`, the variant strings,
   the `refl*` ids unguarded - on the Vita. `static constexpr` zeros under
   `#else` compile every branch out. The variant sources kept as members
-  after `link`; two consecutive `if (waterWant_ > 0)` (:273, :279); the
-  five-line `glTexParameteri` block six times; light maps, `postSrc_`, the
-  glows, the LUT and `reflTex_` never counted by `gpuTexture()` (the
-  Quest's budget).
+  after `link`; two consecutive `if (waterWant_ > 0)` (:273, :279) (DONE
+  2026-10-26); the five-line `glTexParameteri` block six times; light maps,
+  `postSrc_`, the glows, the LUT and `reflTex_` never counted by
+  `gpuTexture()` (the Quest's budget) (DONE 2026-10-26).
 * New `-Wshadow`: a `view` parameter shadowing `PlayState`'s field in
   `playremaster_draw.cpp` (22, 31, 66, 95, 118, 131) and
   `playremaster_off.cpp` (33, 35); `vkrender.cpp:997` (`qi`).
@@ -1919,8 +1919,49 @@ but `emitter light` (the run-to-run flip above).
   byte-identical (Anekbah plain and trilinear, Qalisar). `engine: emitter
   light` part 6 (three no-MSAA frames the same, and the source), shown to
   fail (2117 and 1763 pixels apart). The validation layer: only its known
-  `refl` report. GLES draws its cutouts with `discard` too and does not tile
-  - not measured there.
+  `refl` report. GLES draws its cutouts with `discard` too and does not tile:
+  measured 2026-10-26, Qalisar with the full preset at 1920x1080, 3 of 3
+  runs identical with 4x MSAA and 2 of 2 without - not affected.
+* **The GLES items (2026-10-26)** - the audit's GLES line, and Vulkan where
+  the same waste was there:
+  * THE WATER'S SECOND `begin`: GLES's `begin` is now the frame's
+    bookkeeping (the upload counters, the dead buffers, `frameNo_`) and then
+    `beginPass` - the target, its clear, the view, the lights; the water's
+    frame pass calls `beginPass` alone. The clear stays (a different target)
+    and the lights are a handful of uniforms; what mattered was `frameNo_`:
+    bumped twice, every posed body's ties were walked again in the frame's
+    pass - 15-23 posed draws a frame on Jaunpur's canal, each now walked once
+    (the reflection's pass draws every posed draw, in order, so the frame's
+    pass finds them all settled). Frames byte-identical. Vulkan's `begin` is
+    called twice too and rewrites the pose blocks at the same offsets with the
+    same data - harmless, left.
+  * `fsrPass`: its 11 uniforms looked up once (`fsrLoc_`), and ONCE a frame
+    (`fsrVh_`, forgotten at `end`) - a frame read back and then presented ran
+    both passes twice.
+  * THE POST WITH NOTHING GLOWING: GLES runs the glow passes only when a draw
+    of the frame's pass bound a light map (`lightMapNow_`), and the post only
+    for them or the grade; Vulkan runs the post only for a pool holding a
+    light map (`poolLit_`, its scene pass's target is chosen in `begin`,
+    before any draw) or the grade or the AO, and the glow passes, again, only
+    after a lit draw. A frame with no light map has a light of 0 in every
+    texel: the copy, the three passes and the screen blend moved no pixel.
+    4K, the street, bloom 1 and no pack, on the M1: Vulkan's post 1.99 ms ->
+    0 (`OMK_GPU_TIMES`); GLES's readback, which waits on the GPU, 17.1-17.9
+    -> 13.5-14.1 ms. Byte-identical on both backends (no pack, the full pack,
+    the full preset at Qalisar, the upscale, the canal with everything) but
+    one case, GLES with a grade and the bloom and no light map: 152 pixels by
+    one 565 step, the old frame's `1 - (1 - c) * (1 - 0)` rounding before
+    the LUT - the new frame is the grade-alone frame exactly.
+    `engine: bloom and grade` part 3 (the bloom with no light map at all:
+    the frame unchanged and no post built), shown to fail on each backend.
+  * THE WATER'S UNIFORMS (`reflInv`, `eye`, `clipY`) through the draw-state
+    cache, as `water` and `clip` already were.
+  * THE MEMORY: the post's copy and glows, the reflection's colour and depth
+    (a renderbuffer), the LUT, the light maps and `lightBlack_` counted; the
+    1x1 white and `lightBlack_` as "texture stand-ins", Vulkan's category.
+    The canal with the water and a grade at 640x480: 7 render targets,
+    5,068,800 bytes, where 2 were counted. `engine: profiler gpu`'s GLES
+    part, shown to fail.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

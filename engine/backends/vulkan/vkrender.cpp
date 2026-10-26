@@ -732,6 +732,8 @@ private:
     VkFramebuffer    glowFb_[2] = {};   VkFramebuffer finalFb_ = VK_NULL_HANDLE;
     VkFramebuffer    fbufPost_ = VK_NULL_HANDLE;   // `pass_` into `postSrc_`: the scene when the post runs
     bool             postNow_ = false;             // this frame's post, decided by `begin`
+    bool             poolLit_ = false;             // a texture of the pool has a light map (`setTextures`)
+    bool             lightMapNow_ = false;         // a draw of the frame's pass bound one: else the glow is black
     VkDescriptorSetLayout postDsl_ = VK_NULL_HANDLE;
     VkDescriptorPool postPool_ = VK_NULL_HANDLE;
     VkDescriptorSet  postDs_[8] = {};   // down, blur H, blur V, final; AO, AO blur H, AO blur V, AO depth
@@ -2931,6 +2933,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         packed += tex_[i].packed ? 1 : 0;
     }
     flushUploads();   // the pool's copies, submitted and waited on once
+    poolLit_ = std::any_of(tex_.begin(), tex_.end(), [](const Tex& t) { return t.emView != VK_NULL_HANDLE; });
     const double decodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double uploadMs = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
     if (preload) {
@@ -3419,8 +3422,13 @@ void VulkanRenderer::begin(const omk::View& view) {
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = passFb_ && passFb_ == reflFbuf1_ ? reflPass1_ : passFb_ && reflPass_ ? reflPass_ : pass_;
     // the post's this frame: decided here, where the scene's target is
-    // chosen - with it the scene lands in `postSrc_`, and `end` must run it
-    if (!passFb_) postNow_ = (bloom_ > 0.0f || lutN_ > 1 || aoOk_) && makePost();
+    // chosen - with it the scene lands in `postSrc_`, and `end` must run it.
+    // The bloom asks for it only with a light map in the pool: without one
+    // every texel's light is 0 and the glow would move no pixel
+    if (!passFb_) {
+        lightMapNow_ = false;
+        postNow_ = ((bloom_ > 0.0f && poolLit_) || lutN_ > 1 || aoOk_) && makePost();
+    }
     rp.framebuffer = passFb_ ? passFb_ : postNow_ ? fbufPost_ : fbuf_;
     // the RENDER size, not the output one: a render area smaller than the
     // attachment leaves the rest of it undefined, and with supersampling on
@@ -3516,6 +3524,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         (slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE) ? tex_[slot].ds
                                                                 : white_.ds;
     if (ds == VK_NULL_HANDLE) return;   // not even the white stand-in: nothing to draw with
+    lightMapNow_ |= slot < tex_.size() && tex_[slot].emView != VK_NULL_HANDLE;
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 0, 1, &ds, 0, nullptr);
     // (the water reflection's pass binds its own: the tiles of ITS camera)
     const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && ds1Refl_ != VK_NULL_HANDLE ? ds1Refl_ : ds1_;

@@ -30993,12 +30993,21 @@ def c_engine_profiler_gpu():
     textures + 3 stand-ins, the same 42; and the batched upload (`c2a78d8`)
     keeps ONE staging ring of 32 MB for the run - staging at rest is that
     ring alone (a staging buffer left over would make it two).
+
+    **GLES's remaster targets (2026-10-26, the audit's GLES item)**: the
+    post's copy and glows, the water reflection's colour and depth, the LUT,
+    the light maps and `lightBlack_` were never counted (the Quest's budget
+    reads this). On Darwin, Jaunpur's canal through `omk-play-gles` with the
+    water and a grade, 640x480: the categories sum to the total, "render
+    targets" holds 7 at exactly 5,068,800 bytes (was 2), and the 1x1 white is
+    a "texture stand-in" as on Vulkan. Shown to fail (2026-10-26): the
+    reflection's colour left uncounted - 6 targets at 3,840,000 bytes.
     """
-    import subprocess, tempfile, shutil
+    import subprocess, tempfile, shutil, platform
     sys.path.insert(0, os.path.join(ROOT, "tools"))
     import omkprof
     eng = os.path.join(ROOT, "engine")
-    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not os.path.exists(play):
         return ("skipped",), ("skipped",), "no SDL - the frontend is optional (PORTING A8)"
@@ -31013,6 +31022,31 @@ def c_engine_profiler_gpu():
         if "through VULKAN" not in r.stdout:
             return ("skipped",), ("skipped",), "no Vulkan device - the GPU backend is optional"
         frames = [f for f in omkprof.read(cap)[1] if f["frame"] >= 0]
+        # GLES, the remaster's targets: Jaunpur's canal with the water and a
+        # grade - the world target and its depth, the reflection's pair, the
+        # post's copy and its two glows
+        gl = ("skipped",)
+        gplay = os.path.join(eng, "build", "omk-play-gles")
+        if platform.system() == "Darwin" and os.path.exists(gplay):
+            grades = os.path.join(tmp, "grades"); os.makedirs(grades)
+            with open(os.path.join(grades, "JAUNPUR.cube"), "w") as f:
+                f.write("LUT_3D_SIZE 2\n" + "".join("%d %d %d\n" % (r_, g_, b_) for b_ in (0, 1) for g_ in (0, 1) for r_ in (0, 1)))
+            gcap = os.path.join(tmp, "gl.prof")
+            subprocess.run(["caffeinate", "-d", "-u", "-i", gplay, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                            "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "1",
+                            "--stand", "10524,-40,10284,180", "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                            "--res", "640x480", "--frames", "30", "--water", "0.6", "--grade", grades,
+                            "--profile", gcap],
+                           capture_output=True, text=True, env=dict(os.environ, OMK_NO_GPU_PRESENT="1"), timeout=300)
+            gf = [f["gpu"] for f in omkprof.read(gcap)[1] if f["frame"] >= 0] if os.path.exists(gcap) else []
+            if not gf or not gf[-1]:
+                gl = ("no frames",)
+            else:
+                gt = {t[0]: (t[1], t[2]) for t in gf[-1]["tags"]}
+                print("        GLES canal at frame 29: " + ", ".join(
+                    "%s %d B (%d)" % (k, v[0], v[1]) for k, v in sorted(gt.items())))
+                gl = (sum(t[1] for t in gf[-1]["tags"]) == gf[-1]["live"],
+                      gt.get("render targets"), gt.get("texture stand-ins", (0, 0))[1])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     gpus = [f["gpu"] for f in frames]
@@ -31026,13 +31060,17 @@ def c_engine_profiler_gpu():
         (gpus[-1]["live"] if every else 0) / 1048576.0,
         ", ".join("%s %.1f MB (%d)" % (k, v[0] / 1048576.0, v[1]) for k, v in sorted(last.items())),
         growth // 1024))
+    # 640x480: colour 4 + depth 2 + the reflection's 4 + 2 + the post's copy
+    # 4 bytes a pixel, the glows 2 x 4 at a quarter each way
+    gl_want = (True, (16 * 640 * 480 + 2 * 4 * 160 * 120, 7), 1)
     return (every, sums, tex[1] + stand[1], tex[0] > 8 << 20, "vertex buffers" in last,
-            last.get("staging", (0, 0)) == (32 << 20, 1), 0 <= growth < 1 << 20), \
-           (True, True, 42, True, True, True, True), \
+            last.get("staging", (0, 0)) == (32 << 20, 1), 0 <= growth < 1 << 20, gl), \
+           (True, True, 42, True, True, True, True, _or_skip(gl, gl_want)), \
         "the street through the Vulkan world renderer: GPU memory in every frame, its " \
         "categories summing to the total, the 39 texture atlases and the 3 fallbacks (the " \
         "atlases over 8 MB), vertex " \
-        "buffers, the staging ring alone at rest (32 MB, one), no growth over frames 15..29"
+        "buffers, the staging ring alone at rest (32 MB, one), no growth over frames 15..29; " \
+        "GLES's remaster targets counted (the canal: 7, the reflection's and the post's included)"
 
 
 def c_engine_frontend_gateway():
@@ -31820,6 +31858,11 @@ def c_engine_bloom_and_grade():
          * bloom on with ALL-BLACK light maps is BYTE-IDENTICAL to the bloom
            off - the copy, the passes and the screen blend move no pixel when
            there is no light;
+         * bloom on with NO light map at all (no pack) is byte-identical too,
+           and builds no post (no `remaster.post` event) - the audit's GLES
+           item (2026-10-26): GLES runs the glow only after a draw bound a
+           light map, Vulkan the post only for a pool holding one; the
+           all-black run above must still build it;
          * bloom on with ALL-WHITE light maps brightens the frame (mean
            565 luminance up by more than 3 levels), and the pool event says
            all 21 textures got a light map;
@@ -31842,6 +31885,9 @@ def c_engine_bloom_and_grade():
     all-black-light frame; the GLES bloom variant not substituted (its alpha
     left at 1) moves 224638 on GLES alone. (2026-10-24) The reader without its
     finite test (the audit's item 6) - the NaN and the infinity read (part 2).
+    (2026-10-26) The gate made always true, on GLES (`lightMapNow_` set by
+    every draw) and on Vulkan (`poolLit_` true): the unlit run builds its post
+    on that backend alone (False, True, True).
     """
     import subprocess, tempfile, shutil, re, platform
     eng = os.path.join(ROOT, "engine")
@@ -31867,9 +31913,9 @@ def c_engine_bloom_and_grade():
               # (Vulkan's post-pass also runs for the AO, `be4a245f`; decided
               # by `begin`, which then draws the scene into `postSrc_`, the
               # audit's 4K trims 2026-10-24)
-              "postNow_ = (bloom_ > 0.0f || lutN_ > 1 || aoOk_) && makePost();" in vk and
+              "postNow_ = ((bloom_ > 0.0f && poolLit_) || lutN_ > 1 || aoOk_) && makePost();" in vk and
               "if (postNow_) {\n        recordPost(cb_);" in vk and
-              "if (bloom_ > 0.0f || lutN_ > 1) runPost();" in gl,
+              "if ((bloom_ > 0.0f && lightMapNow_) || lutN_ > 1) runPost();" in gl,
               # the GLES variant over both program sets (the plain one the
               # fallback, 2026-10-21)
               "std::string f = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);" in gl)
@@ -31924,15 +31970,18 @@ def c_engine_bloom_and_grade():
             return struct.unpack_from("<%dH" % (W * H), raw, 16 + 2 * W * H)
         def judge(run):
             got = {}
-            for tag, env_ in (("none", {}), ("black", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["black"]}),
+            for tag, env_ in (("none", {}), ("unlit", {"OMK_BLOOM": "1.3"}),
+                              ("black", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["black"]}),
                               ("white", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["white"]}),
                               ("ident", {"OMK_GRADE": ident}), ("swap", {"OMK_GRADE": swap})):
                 out = os.path.join(tmp, tag + ".bin")
                 rr = run(out, dict(os.environ, OMK_EVENTS="1", **env_))
                 if rr.returncode != 0 or not os.path.exists(out):
                     return None
-                pool = [f for n, f in _events(rr.stdout) if n == "texpack.pool"]
-                got[tag] = (frame(out), pool[0].get("lights") if pool else None)
+                ev = _events(rr.stdout)
+                pool = [f for n, f in ev if n == "texpack.pool"]
+                got[tag] = (frame(out), pool[0].get("lights") if pool else None,
+                            any(n == "remaster.post" for n, f in ev))
                 os.remove(out)
             n, bk, wh, idf, sw = (got[k][0] for k in ("none", "black", "white", "ident", "swap"))
             lum = lambda px: sum(((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2 for v in px) / len(px)
@@ -31940,6 +31989,9 @@ def c_engine_bloom_and_grade():
                            abs((x & 31) - (y & 31))) for x, y in zip(n, idf))
             sw_err = sum(abs(((y >> 11) & 31) - (x & 31)) + abs((y & 31) - ((x >> 11) & 31)) for x, y in zip(n, sw)) / (2 * len(n))
             return (sum(1 for x, y in zip(n, bk) if x != y),       # 0: no light, no change
+                    # no light map at all: no post either - and the black
+                    # maps' frame above is the post's, run
+                    (got["unlit"][0] == n, got["unlit"][2], got["black"][2]),
                     got["white"][1] == "21",
                     lum(wh) - lum(n) > 3,
                     step <= 1,
@@ -31964,12 +32016,13 @@ def c_engine_bloom_and_grade():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print(f"        reader {reader}; vulkan {vres}; gles {gres}")
-    want = (0, True, True, True, True)
+    want = (0, (True, False, True), True, True, True, True)
     return (src_ok, reader, vres, gres), \
            ((True,) * 5, (True, True), _or_skip(vres, want), _or_skip(gres, want)), \
            "the source (both off by default, [Remaster] only, never all = max, the post-pass " \
            "behind its two switches, the GLES variant only with the bloom); the .cube reader; " \
-           "on Vulkan and GLES: no light = no change byte for byte, all light brightens and all " \
+           "on Vulkan and GLES: no light = no change byte for byte, no light map = no post at all, " \
+           "all light brightens and all " \
            "21 textures carry a map, an identity LUT within one 565 step, a red/blue swap LUT swaps"
 
 
@@ -32094,6 +32147,12 @@ def c_engine_water_reflection():
     meeting its object at the waterline). A flip or a sign wrong there still
     adds light only to the water and agrees across backends - both draw from
     the one `drawWithWater`.
+
+    (2026-10-26) Part 1 also holds GLES's frame pass to `beginPass` - the
+    frame the reflection's `begin` opened, one `frameNo_`, a posed body's
+    ties walked once a frame (15-23 posed draws a frame on the canal, each
+    walked twice before; the frames byte-identical). Shown to fail: the
+    second pass put back to `begin(v)` - part 1's last False alone.
     """
     import subprocess, tempfile, shutil, re, platform
     eng = os.path.join(ROOT, "engine")
@@ -32106,11 +32165,19 @@ def c_engine_water_reflection():
                      "backends/gles/glesrender_remaster_shaders.inl")
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
+    gl_water = gl[gl.index("bool GlesRenderer::drawWaterScene("):]
+    gl_water = gl_water[:gl_water.index("\n}\n")]
+    gl_pass = gl[gl.index("void GlesRenderer::beginPass(const View& view) {"):]
+    gl_pass = gl_pass[:gl_pass.index("\n}\n")]
     src_ok = (bool(re.search(r"float\s+water\s*=\s*0\.0f;", sh)),
               'kRemaster, "water"' in sc and 'kEnhancements, "water"' not in sc,
               "water" not in max_body,
               # (the variants built over both GLES program sets, 2026-10-21)
-              "if (waterWant_ > 0.0f) f = waterVariant(f);" in gl)
+              "if (waterWant_ > 0.0f) f = waterVariant(f);" in gl,
+              # GLES's frame pass is a PASS of the frame the reflection's
+              # `begin` opened (`beginPass`): one `frameNo_`, so a posed
+              # body's ties are walked once (the audit's GLES item, 2026-10-26)
+              gl_water.count("begin(") == 1 and "beginPass(v);" in gl_water and "++frameNo_" not in gl_pass)
     mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     tool = os.path.join(eng, "build", "texpack_tool")
     if mk.returncode != 0 or not os.path.exists(tool):
@@ -32194,7 +32261,7 @@ def c_engine_water_reflection():
     print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
     want = (True, True, 0, True, True, True)
     return (src_ok, finder, vres, gres, agree), \
-           ((True,) * 4, True, _or_skip(vres, want), _or_skip(gres, want),
+           ((True,) * 5, True, _or_skip(vres, want), _or_skip(gres, want),
             agree if isinstance(agree, tuple) else True), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only " \
            "when asked); the plane finder (Jaunpur at 4, Lahoreh at 12, none in Anekbah or the " \
@@ -33217,6 +33284,11 @@ def c_engine_upscale():
     -0.0 for -0.5 - part 2 (94 of 100 words); the present pass's RCAS skipped
     on the readback's raw path - part 4 (90 of 90 frames differing).
     NOT CHECKED, judged by eye: the sharpness (`kFsrRcasStops`, AMD's 0.2).
+
+    (2026-10-26) Part 1 also holds GLES's `fsrPass` to ONCE a frame - a
+    frame read back and presented ran both passes twice - and its 11
+    uniforms looked up once rather than 9 lookups a run. Shown to fail: the
+    once-a-frame return removed - part 1's last False alone.
     """
     import subprocess, tempfile, shutil, re
     eng = os.path.join(ROOT, "engine")
@@ -33227,6 +33299,9 @@ def c_engine_upscale():
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
     vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl")
+    fsr = gl[gl.index("void GlesRenderer::fsrPass(int vh) {"):]
+    fsr = fsr[:fsr.index("\n}\n")]
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     pre = ps[ps.index("upscale = upscaleFlag"):]
@@ -33235,7 +33310,13 @@ def c_engine_upscale():
               'kRemaster, "upscale"' in sc and 'kEnhancements, "upscale"' not in sc,
               "upscale" not in max_body,
               "preset" not in pre and pre.rstrip(";").endswith(": 1.0f"),
-              "up ? &presUpDs_ : &presDs_" in vk)
+              "up ? &presUpDs_ : &presDs_" in vk,
+              # GLES's two passes ONCE a frame (`readback` and the present
+              # both ask; `end` forgets them) and their 11 uniforms looked up
+              # once, not per run (the audit's GLES item, 2026-10-26)
+              "if (fsrVh_ == vh && fsrW_ == w_ && fsrH_ == h_) return;" in fsr and
+              "fsrVh_ = vh;" in fsr and "fsrVh_ = -1;" in gl and
+              fsr.count("glGetUniformLocation(") == 2 and "if (fsrLoc_[0] < 0) {" in fsr)
     # 2. the constants, against AMD's
     tmp = tempfile.mkdtemp()
     try:
@@ -33304,11 +33385,11 @@ int main() {
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if "through VULKAN" not in log and not [e for e in _events(log) if e[0] == "vulkan.upscale"]:
-        return (src_ok, con_ok, ("skipped",)), ((True,) * 5, True, ("skipped",)), "no Vulkan device"
+        return (src_ok, con_ok, ("skipped",)), ((True,) * 6, True, ("skipped",)), "no Vulkan device"
     ev = [e[1] for e in _events(log) if e[0] == "vulkan.upscale"]
     drawn = (ev[0].get("drawW"), ev[0].get("drawH")) if ev else None
     if native is None or up is None:
-        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 5, True, ("640", "480"), "frames"), \
+        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 6, True, ("640", "480"), "frames"), \
             "a run wrote no frame"
     rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
     a = [rgb(v) for v in native]
@@ -33332,7 +33413,7 @@ int main() {
           f"{min(shifts[k] for k in shifts if k != (0, 0)):.2f}); "
           f"the window at x1.5: {gm[-1] if gm else 'no verify'} (compared, differing), GPU-presented {gpu}")
     return (src_ok, con_ok, drawn, a != b, m0 < 6.0, best, gpu_ok), \
-           ((True,) * 5, True, ("640", "480"), True, True, (0, 0), True), \
+           ((True,) * 6, True, ("640", "480"), True, True, (0, 0), True), \
         "the source (off by default, [Remaster] only, never all = max, not the preset's, EASU's output " \
         "bound only upscaled); the 100 constant words AMD's; the street drawn at 640x480 for 1280x960, " \
         "the native frame upscaled (close, and registered); the window's present pass 0 pixels from " \

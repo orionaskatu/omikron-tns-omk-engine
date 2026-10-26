@@ -958,6 +958,11 @@ public:
     bool init(int w, int h) override;
     void setTextures(std::span<const Texture> t) override;
     void begin(const View& v) override;
+    // ...a PASS of the frame `begin` opened (the water's second, into the
+    // frame's own target): the target, its clear and the view, without the
+    // frame's bookkeeping - `frameNo_` once a frame, so a posed body's ties
+    // resolved in the reflection's pass are not walked again
+    void beginPass(const View& v);
     void submit(const Draw& d) override;
     void end() override;
     const Surface& readback() override;
@@ -1230,7 +1235,14 @@ private:
     // rows as `colour_`'s is; and the two programs
     GLuint easuTex_ = 0, easuFbo_ = 0, rcasTex_ = 0, rcasFbo_ = 0, easuProg_ = 0, rcasProg_ = 0;
     int fsrW_ = 0, fsrH_ = 0;
-    // EASU then RCAS over the picture's `vh` output rows -> `rcasTex_`
+#if OMK_REMASTER
+    // their uniforms, looked up once: EASU's uDst uSrc uSrcTex uIn uOut
+    // uOutTexH, RCAS's uDst uSrc uSrcTex uPic uSharp
+    GLint fsrLoc_[11] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    int fsrVh_ = -1;         // the rows `rcasTex_` holds for this frame; -1 none (`end`)
+#endif
+    // EASU then RCAS over the picture's `vh` output rows -> `rcasTex_` - once
+    // a frame: `readback` and the present both ask
     void fsrPass(int vh);
     bool ready_ = false;
     bool allocTarget();      // `colour_` and `depth_` at the render size
@@ -1359,6 +1371,7 @@ private:
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
         float tint[3] = {-1, -1, -1};
         float water = -1; int clip = -1;   // the water variant's
+        float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
         int blend = -1;                    // a `Blend`, -1 unknown
@@ -1429,6 +1442,7 @@ private:
     float  bloom_ = 0.0f;
     GLuint lightBlack_ = 0;              // the light map of a texture with none
     GLuint lastEmis_ = 0;
+    bool   lightMapNow_ = false;         // a draw of this pass bound a light map: else the glow is black
     std::string bloomFrag_, bloomFragX_; // the variants' fragment sources (plain, enhanced), kept for `link`
 #if OMK_REMASTER
     GLint  postLoc_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};   // uSrc .. uLutN, at link
@@ -1815,7 +1829,7 @@ gpuRenderbuffer("render targets", shDepth_, 2LL * kShadowSide * kShadowSide);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, wpx);
-gpuTexture("textures", white_.id, 4);
+gpuTexture("texture stand-ins", white_.id, 4);
     // the shadow map's unit holds the white texel until a depth pass fills
     // it, so no draw - the posing self-test's included - samples nothing
     if (mainLoc_.shadow >= 0) {
@@ -2101,6 +2115,7 @@ GlesRenderer::Uploaded GlesRenderer::uploadOne(const Texture& s, PackImage* rep,
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         uploadAstc(rep->emissiveZ, false);   // the grey's red, as LUMINANCE's
+gpuTexture("textures", em, rep->emissiveZ.levels.empty() ? 0LL : static_cast<long long>(rep->emissiveZ.levels[0].second));
         ++lit;
     } else if (bloom_ > 0.0f && rep && !rep->emissive.empty()) {
         const omk::PackImage& e = *rep;
@@ -2115,6 +2130,7 @@ GlesRenderer::Uploaded GlesRenderer::uploadOne(const Texture& s, PackImage* rep,
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, e.ew, e.eh, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE,
                      e.emissive.data());
+gpuTexture("textures", em, 1LL * e.ew * e.eh);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         ++lit;
     }
@@ -2709,7 +2725,12 @@ void GlesRenderer::begin(const View& view) {
     }
     ++frameNo_;
     if (frameFromPresent_ != presentSeq_) { frameFromPresent_ = presentSeq_; ++frameSeq_; }
+    beginPass(view);
+}
+
+void GlesRenderer::beginPass(const View& view) {
     st_ = RasterStats{};
+    lightMapNow_ = false;
     view_ = view;
     fog_ = view.fog;
     fogStart_ = view.fogStart;
@@ -3085,15 +3106,24 @@ void GlesRenderer::submit(const Draw& d) {
         if (waterNow_ || floorNow) {
             // (a floor samples the half-size reflection: half the scale)
             const float k = floorNow ? 0.5f : 1.0f;
-            glUniform2f(L.reflInv, k / static_cast<float>(rw_), k / static_cast<float>(rh_));
-            glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
+            if (set(!uv || U.reflK != k)) {
+                glUniform2f(L.reflInv, k / static_cast<float>(rw_), k / static_cast<float>(rh_));
+                U.reflK = k;
+            }
+            if (set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
+                glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
+                std::memcpy(U.eye, waterEye_, sizeof U.eye);
+            }
         }
         const int clip = reflectingNow_ ? 1 : 0;
         if (set(!uv || U.clip != clip)) {
             glUniform1i(L.clip, clip);
             U.clip = clip;
         }
-        if (reflectingNow_) glUniform1f(L.clipY, waterY_);
+        if (reflectingNow_ && set(!uv || U.clipY != waterY_)) {
+            glUniform1f(L.clipY, waterY_);
+            U.clipY = waterY_;
+        }
     }
     if (posed) {
         // the body's lights; a draw handed more than the program holds is
@@ -3156,10 +3186,12 @@ void GlesRenderer::submit(const Draw& d) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, z);
+gpuTexture("texture stand-ins", lightBlack_, 4);
             glActiveTexture(GL_TEXTURE0);
             lastEmis_ = 0;
         }
         const GLuint em = t.em ? t.em : lightBlack_;
+        lightMapNow_ |= t.em != 0;
         if (em != lastEmis_) {
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, em);
@@ -3301,9 +3333,15 @@ void GlesRenderer::end() {
         glBlitFramebuffer(0, 0, rw_, rh_, 0, 0, rw_, rh_, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 #endif
-    if (bloom_ > 0.0f || lutN_ > 1) runPost();
+    // the post: the GLOW only where a draw bound a light map - with none,
+    // every texel's light is 0 and the copy, the three passes and the blend
+    // would move no pixel (`runPost`)
+    if ((bloom_ > 0.0f && lightMapNow_) || lutN_ > 1) runPost();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     dirty_ = true;
+#if OMK_REMASTER
+    fsrVh_ = -1;   // a new picture: the upscale's passes again
+#endif
     // Per geometry, once, as the Vulkan backend reports it.
     static const bool tieLog = omk::envFlag("OMK_TIE_LOG");
     if (tieLog)

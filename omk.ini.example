@@ -3,6 +3,10 @@
 ;
 ;     build/omk-play <gamedata> <tables> --config omk.ini
 ;
+; Without --config, the viewer reads `omk.ini` beside its saves file
+; (`omk-saves/omk.ini`, or beside `--saves FILE`) when there is one - and OMK's
+; own options menu writes its choices there, editing only the lines it sets.
+;
 ; EVERY ROW IS COMMENTED OUT, and that is the point: with nothing set, the
 ; port runs exactly as the game does. Uncomment only what you mean to change.
 ;
@@ -293,3 +297,15 @@
 ; ...and the models left as they are, by the name the log prints
 ; ("smooth: V2H_FNM - ..."), commas between - for one that suffers.
 ;smoothskip =
+
+
+[OMK]
+; THIS PORT'S OWN INTERFACE - neither the game's settings nor a look.
+;
+; The LANGUAGE of OMK's own menu rows (the "Graphismes (OMK)" pages,
+; `todo/graphics-menu.md`): their texts are `engine/lang/omk-menu.ini`, in
+; French and English. The game's own rows keep the language of the copy
+; installed (`IAM\Options`), which neither the data nor the exe names - so
+; this is set by hand. fr (the default) or en.
+; NOT READ YET: the reader gains it with the graphics menu.
+;language = fr

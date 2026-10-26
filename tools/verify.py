@@ -6789,6 +6789,95 @@ def c_config_template():
 
 
 
+def c_options_write():
+    r"""The ini WRITER (`platform/options.h` `writeOptionsFile`,
+    `todo/graphics-menu.md` A1) - OMK's own options menu writes its choices
+    back to the config, and the file it writes into is the reader's.
+
+    So the property is not "it writes the value" but "it writes ONLY the
+    value": a hand-commented file - the template, the Vita's `omk.ini` - comes
+    back byte for byte apart from the lines an edit names. Four parts:
+
+    1. the template copied and edited: a commented-out key set on its own line
+       (uncommented, its documentation kept above it) in three sections, a key
+       the section never mentions added under it, a section added at the end -
+       and nothing else in 300-odd lines moves; the probe reads the five back;
+    2. the same values written again: the bytes do not change;
+    3. a hand-made file: CRLF endings, a value with a trailing comment, the
+       same key twice (the reader takes the LAST, so both are set), a cp1252
+       byte in a comment, no final newline - the exact bytes expected;
+    4. refusals: a value with `;` (the reader would cut it there) leaves the
+       file untouched, and a path inside the shipped tree is not created.
+    """
+    import subprocess, tempfile, shutil, difflib
+    eng = os.path.join(ROOT, "engine")
+    tpl = os.path.join(ROOT, "omk.ini.example")
+    mk = subprocess.run(["make", "-s", "build/options_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "options_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("not built",), ("built",), "options_probe did not build: " + mk.stderr[-300:]
+    want = {"enhancements.antialiasing": "4", "preferences.clipdistance": "100",
+            "omk.language": "en", "remaster.newkey": "1", "test.a": "2"}
+    edits = ["Enhancements", "antialiasing", "4", "Preferences", "clipdistance", "100",
+             "OMK", "language", "en", "Remaster", "newkey", "1", "Test", "a", "2"]
+    with tempfile.TemporaryDirectory() as td:
+        # ---- 1. the template
+        t = os.path.join(td, "t.ini")
+        shutil.copyfile(tpl, t)
+        r = subprocess.run([probe, "--edit", t] + edits, capture_output=True, text=True)
+        a = open(tpl, "rb").read().decode("cp1252").split("\n")
+        b = open(t, "rb").read().decode("cp1252").split("\n")
+        replaced, inserted, other = [], [], []
+        for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            if op == "equal":
+                continue
+            if op == "replace" and i2 - i1 == 1 and j2 - j1 == 1:
+                old, new = a[i1], b[j1]
+                k = new.split("=")[0].strip()
+                # the old line was that key, commented out
+                ok = old.lstrip(";# \t").split("=")[0].strip() == k and old.lstrip().startswith(";")
+                (replaced if ok else other).append(new)
+            elif op == "replace" and i2 - i1 == 1 and j2 - j1 > 1:
+                # the last line set, and the new section after it
+                replaced.append(b[j1])
+                inserted.extend(b[j1 + 1:j2])
+            elif op == "insert":
+                inserted.extend(b[j1:j2])
+            else:
+                other.append((op, a[i1:i2], b[j1:j2]))
+        rd = subprocess.run([probe, t], capture_output=True, text=True).stdout
+        got = dict(re.findall(r"^  (\w+\.\w+) = (\S*)$", rd, re.M))
+        part1 = (r.returncode, sorted(replaced), sorted(x for x in inserted if x.strip()), other, got)
+        exp1 = (0, ["antialiasing = 4", "clipdistance = 100", "language = en"],
+                ["[Test]", "a = 2", "newkey = 1"], [], want)
+        # ---- 2. the same again: not a byte moves
+        before = open(t, "rb").read()
+        subprocess.run([probe, "--edit", t] + edits, capture_output=True, text=True)
+        part2 = open(t, "rb").read() == before
+        # ---- 3. a hand-made file
+        h = os.path.join(td, "h.ini")
+        open(h, "wb").write(b"[Preferences]\r\nclipdistance = 50   ; row 3\r\n; Tr\xe8s\r\n"
+                            b"clipdistance=25\r\n[Enhancements]\r\nradar = game")
+        subprocess.run([probe, "--edit", h, "Preferences", "clipdistance", "200",
+                        "Enhancements", "framerate", "60"], capture_output=True, text=True)
+        part3 = open(h, "rb").read()
+        exp3 = (b"[Preferences]\r\nclipdistance = 200   ; row 3\r\n; Tr\xe8s\r\n"
+                b"clipdistance=200\r\n[Enhancements]\r\nradar = game\r\nframerate = 60")
+        # ---- 4. refusals
+        before = open(h, "rb").read()
+        rr = subprocess.run([probe, "--edit", h, "Enhancements", "radar", "a;b"],
+                            capture_output=True, text=True)
+        shipped = os.path.join(td, "IAM", "omk.ini")
+        rs = subprocess.run([probe, "--edit", shipped, "OMK", "language", "en"],
+                            capture_output=True, text=True)
+        part4 = (rr.returncode != 0, open(h, "rb").read() == before,
+                 rs.returncode != 0, os.path.exists(shipped))
+    return (part1, part2, part3, part4), (exp1, True, exp3, (True, True, True, False)), \
+           ("the template edited (lines replaced, lines added, anything else, read back); the "
+            "same edit again changes no byte; a CRLF hand file's exact bytes; a `;` value and a "
+            "path in the shipped tree refused")
+
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -51101,6 +51190,7 @@ CHECKS = [
     ("aapub prism",        c_aapub_prism,       "ASSETS 4b; CLAUDE.md 6"),
     ("slider ride",        c_slider_ride,       "todo/standing-unknowns"),
     ("options file",       c_options_file,      "todo/options-config"),
+    ("options write",      c_options_write,     "todo/graphics-menu A1; platform/options.h"),
     ("settings resolve",  c_settings_resolve,  "todo/options-config"),
     ("world unit",        c_world_unit,        "PORTING"),
     ("the sky",           c_the_sky,           "todo/options-config"),

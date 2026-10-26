@@ -4,10 +4,25 @@
 #include "platform/options.h"
 
 #include <cstdio>
+#include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
+    // `--edit FILE section key value [section key value ...]`: the WRITER
+    // (`writeOptionsFile`), on FILE in place - `verify.py: options write`
+    if (argc >= 2 && std::string(argv[1]) == "--edit") {
+        if (argc < 6 || (argc - 3) % 3 != 0) {
+            std::fprintf(stderr, "usage: options_probe --edit <file.ini> <section> <key> <value> ...\n");
+            return 2;
+        }
+        std::vector<omk::OptionsEdit> edits;
+        for (int i = 3; i + 2 < argc; i += 3) edits.push_back({argv[i], argv[i + 1], argv[i + 2]});
+        const bool ok = omk::writeOptionsFile(argv[2], edits);
+        std::printf("edit %s %zu: %s\n", argv[2], edits.size(), ok ? "written" : "REFUSED");
+        return ok ? 0 : 1;
+    }
     if (argc < 2) {
-        std::fprintf(stderr, "usage: options_probe <file.ini>\n");
+        std::fprintf(stderr, "usage: options_probe <file.ini> | --edit <file.ini> <section> <key> <value> ...\n");
         return 2;
     }
     const omk::OptionsFile o = omk::loadOptionsFile(argv[1]);

@@ -72,9 +72,22 @@ int PlayState::setupSession() {
         const auto head = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
         if (!head.empty()) saveSettings = omk::readSettingsBlock(head);
     }
-    ini = configFile.empty() ? omk::OptionsFile{} : omk::loadOptionsFile(configFile);
-    if (!configFile.empty() && !ini.loaded)
-        std::fprintf(stderr, "%s: no such config file - using defaults\n", configFile.c_str());
+    // THE CONFIG FILE: `--config`, else `omk.ini` BESIDE THE SAVES - the
+    // port's writable place, so a run with a private `--saves` (every check's)
+    // reads a private config too. Read when it is there; OMK's own options
+    // menu writes it (`platform/options.h` `writeOptionsFile`,
+    // `todo/graphics-menu.md` A1), so `configFile` is where that goes. The
+    // ports' mains name theirs (`ux0:data/omk/omk.ini`, `sdmc:/omk/omk.ini`).
+    const bool configNamed = !configFile.empty();
+    if (!configNamed) {
+        const auto cut = savesPath.find_last_of("/\\");
+        configFile = (cut == std::string::npos ? std::string() : savesPath.substr(0, cut + 1)) + "omk.ini";
+    }
+    ini = omk::loadOptionsFile(configFile);
+    if (ini.loaded)
+        std::printf("config: %s\n", configFile.c_str());
+    else if (configNamed)
+        std::printf("config: %s is not there (yet) - the defaults\n", configFile.c_str());
     // not const: the options menu writes `settings.v` as the game's apply
     // hooks write `byte_90E180`, and what reads it later reads the new value
     settings = omk::resolveSettings(ini, saveSettings);

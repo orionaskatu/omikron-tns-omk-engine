@@ -55,4 +55,38 @@ struct OptionsFile {
 // lookup falls back, which is what the engine does when a key is absent.
 OptionsFile loadOptionsFile(const std::string& path);
 
+// ---- WRITING IT BACK - OMK's own options menu (`todo/graphics-menu.md` A1)
+//
+// The engine never writes its ini (the setup dialog does), so this is the
+// port's. It is an EDIT, never a rewrite: a reader's file is commented by hand
+// (`omk.ini.example`, the Vita's `omk.ini`), and everything an edit does not
+// name - comments, blank lines, other sections, unknown keys, the line
+// endings, the bytes of a cp1252 comment - comes back byte for byte.
+//
+//   * a key that is SET has its value replaced on its own line, its spelling,
+//     the spaces around `=` and a trailing comment kept - on every active line
+//     of it in that section, since the reader takes the last and a file with
+//     two would otherwise still read the old one;
+//   * a key that is only COMMENTED OUT in its section - the template's
+//     `;language = fr` - is set on that line, uncommented, so its
+//     documentation stays above it;
+//   * otherwise it is added after the section's last setting, and a section
+//     the file has not got is added at its end.
+//
+// A section seen twice is one section, as the reader merges them.
+struct OptionsEdit {
+    std::string section, key, value;
+};
+// `text`, a whole ini, with `edits` applied in order. -> false (and `out`
+// untouched) when a value or name cannot be written: a `;` or `#` would be
+// read as a comment, a line break would split the line, a `]` or `=` in a
+// name would be a different line.
+bool editOptionsText(const std::string& text, const std::vector<OptionsEdit>& edits,
+                     std::string& out);
+// ...and on a file: read (absent is empty), edited, written whole through
+// `safeOutputPath` - the save file's way (`writeSaveFile`), no rename, which
+// not every port has. Its directory is made when missing. -> false on a
+// refused edit or path, or a failed write, said on stderr.
+bool writeOptionsFile(const std::string& path, const std::vector<OptionsEdit>& edits);
+
 }  // namespace omk

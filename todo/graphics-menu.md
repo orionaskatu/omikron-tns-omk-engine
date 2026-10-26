@@ -1,0 +1,244 @@
+# The graphics menu - OMK's options in game, and an original/remaster switch
+
+A plan, nothing built (2026-10-26). The reader: *"I would like to change the
+port new graphics options (original/remaster, enhancement) in game, saving it
+in the ini config file. This could be a new section added in the game settings
+(main menu + sneak). Don't forget that some builds do not contain the remaster
+options, so the available settings should match."* - and, beside it, the cost
+of *"an option to switch between original and remaster mode in-game, without
+going into a menu"*.
+
+Two parts: **A** the menu, written back to the ini; **B** the one-key switch.
+A is about 2-3 sessions, B about one more (two if the texture swap must not
+hitch). Read `todo/options-menu.md` first (the live screen 35),
+`todo/options-config.md` (the ini and its precedence), `todo/enhancements.md`
+and `todo/remaster.md` §"The remaster switch" (OMK_REMASTER).
+
+## What is already there
+
+* **One screen serves both hosts.** Screen 35 (`ui/options.h` `OptionsMenu`)
+  is hosted by the start menu (param 1) and the sneak's Options tab (param 0,
+  `todo/sneak.md` 5c). A page added to it appears in both with no host work.
+* **The root page has room.** Sixteen row widgets; `Opt_PageRoot` binds
+  Vidéo / Audio / Options / Contrôles, and Retour under the menu only.
+* **The tree is the exe's**: `tables/ui_widgets.json` (the builders'
+  `Opt_BindRow` calls, `tools/exetables.py`) and `tables/ui.json` (the 74
+  rows), labels from `IAM\Options`. An OMK page is therefore CODE, not a table
+  row, with labels of its own - French, as the shipped data is; the fonts
+  cover 33..255, so the accents draw. The draw hook (0x00493380, as ported)
+  already draws choice (type 0) and slider (type 1) rows, which is all the new
+  pages need.
+* **Every change is live already.** The open callback sets bit 2 of every
+  row's `+132`; `OptionsMenu::takeApplied()` is served in
+  `backends/sdl/playframe_modes_parts.cpp` (the `switch (item)` after
+  "WHAT THE APPLY HOOKS WROTE"). New rows join that switch.
+* **Nothing WRITES the ini.** `platform/options.cpp` is a reader only, and the
+  desktop reads one only under `--config` (`playsetup_session.cpp:75`); the
+  Vita passes `ux0:data/omk/omk.ini` when it exists. Page 0's `Oui`
+  (`sub_4092A0`) writes the SAVE's 3496-byte settings header, which has no
+  room for `[Enhancements]` or `[Remaster]` - and must not grow any.
+* **Builds without the remaster** (the Vita, the 3DS, the classic Mac, the
+  PowerPC Mac, `make noremaster`) link `backends/sdl/playremaster_off.cpp`; the
+  `[Remaster]` keys are parsed everywhere and said to be ignored.
+* **A backend already says what it declines**: every `Renderer::set*`
+  (`o3de/renderer.h`) returns false where there is no such pass - the software
+  reference declines nearly all of them, GL1 and the 3DS have no post-pass.
+
+## A. The menu, saved to the ini
+
+### A1. The ini writer - DONE (2026-10-26)
+
+`platform/options.h` `editOptionsText` / `writeOptionsFile`. An EDIT in
+place, not a rewrite: the Vita's `omk.ini` is a commented template
+(`backends/vita/omk.ini`) and a reader's file may be hand-written.
+
+* a key that is SET has its value replaced on its own line - its spelling, the
+  spaces around `=` and a trailing comment kept - on EVERY active line of it
+  in the section (the reader takes the last, so a file with two would
+  otherwise still read the old value);
+* a key only COMMENTED OUT in its section (`;language = fr`, the template's
+  way) is set on that line, uncommented - the last such line, since a
+  section's prose comes before its setting - so its documentation stays
+  above it;
+* otherwise it goes after the section's last setting (its header when it has
+  none), and a missing section is added at the end of the file;
+* everything else - comments, other sections, unknown keys, CRLF or LF, a
+  missing final newline, a cp1252 byte in a comment - byte for byte; the same
+  values written again change no byte (and the file is not rewritten);
+* refused, the file untouched: a `;` or `#` in a value (the reader would cut
+  it there), a line break, a `[`, `]` or `=` in a name;
+* the path through `omk::safeOutputPath`, the directory made, the file
+  written whole by `writeWholeFile` - the save file's way (`writeSaveFile`).
+  NOT a temporary file and a rename, as first planned: no port has been shown
+  to have `rename` (the classic Mac, the 3DS), and the save file, the more
+  precious of the two, is written the same way;
+* WHERE: `--config FILE`, else `omk.ini` BESIDE THE SAVES FILE
+  (`omk-saves/omk.ini`; beside `--saves FILE`, so every check's private
+  `--saves` gives a private config), read when it is there
+  (`playsetup_session.cpp`, a `config: PATH` line). The Vita, 3DS and Android
+  mains now pass their `--config` ALWAYS (they passed it only when the file
+  existed), so the menu has a path to write on a console with none yet.
+
+Check `options write` (no disassembly needed): the template edited - three
+commented keys set in three sections, a key added to a section that never
+mentions it, a section added - with nothing else moved and the five read
+back; the same edit again changing no byte; a CRLF hand file's exact bytes;
+the two refusals. Shown to fail twice: the trailing comment dropped by the
+value's rewrite (part 3), and the commented-key search disabled (part 1 - the
+keys appended instead). Run with `config template`, `options file`,
+`settings resolve`, `engine: options`, `engine: options menu`: 6 of 6.
+The Vita/3DS/Android mains were edited, not built.
+
+### A2. The pages - `ui/options.*`
+
+* the root gains **"Graphismes (OMK)"** - a header row (type 2) in a free row
+  widget, on both hosts;
+* behind it two pages: **Améliorations** (`[Enhancements]`) and, only when
+  the build defines OMK_REMASTER, **Remaster** (`[Remaster]`). A build without
+  it shows one page and no trace of the second;
+* a row is shown only when the RUNNING renderer takes it - ask the renderer
+  (its `set*` answer, or `drawsRelief` / `drawsWater` / ...), never a list of
+  backend names;
+* the OMK rows are numbered past the 74 (an index of their own, say 100+), so
+  no table of the exe's is touched, and `OptionsWalk` / `sim: options` keep
+  checking the original tree alone - the OMK header is not one of the twelve
+  ambiguous rows, it is outside the model and says so;
+* page 0's save prompt: an OMK row change does NOT set the dirty latch
+  (`dword_9103C8`) - it is written to the ini at once, and the prompt stays
+  the game's, about the game's rows.
+
+What the rows carry - the choices are the keys' own values:
+
+| page | row | key | choices |
+|---|---|---|---|
+| Améliorations | Tout au maximum | `all` | non / oui |
+| | Anticrénelage | `antialiasing` | 0 / 2 / 4 / 8 |
+| | Suréchantillonnage | `supersampling` | 1 / 2 / 3 / 4 |
+| | Filtrage des textures | `texturefiltering` | nearest / bilinear / trilinear |
+| | Anisotropie | `anisotropy` | 1 / 2 / 4 / 8 / 16 |
+| | Qualité des ombres | `shadowquality` | classic / fitted / mapped |
+| | Éclairage | `lighting` | pervertex / perpixel |
+| | Interface | `uiscaling`, `textscaling` | nearest / linear; game / fit |
+| | Radar | `radar` | game / always |
+| | Images par seconde | `framerate` | 30 / 60 / ... |
+| | Animation | `animation` | game / smooth |
+| | Distance de vue illimitée | `clipdistance = 0` | non / oui |
+| Remaster | Remaster | `dir` | off / the folder found |
+| | Bloom, Eau, Sols, Brume, Relief, Occlusion, Lumière des corps, Lumière des effets, Personnages arrondis | `bloom` `water` `floors` `mist` `relief` `ao` `bodylight` `fxlight` `smooth` | sliders, 0 to the key's top |
+| | Mise à l'échelle | `upscale` | 1 / 1.5 / 2 / 3 |
+| | Préchargement | `preload` | 0 / 15 / 25 m |
+
+The PACK PATHS (`texturepack`, `uipack`, `fontpack`, `filmpack`, `grade`,
+`smoothskip`) stay ini-only: a folder is not a menu choice. The `dir` row
+offers only off / the folder the ini or `--remaster` named.
+
+### A2b. The texts - `engine/lang/omk-menu.ini` (written 2026-10-26)
+
+The game's rows read `IAM\Options`, in the language of the copy installed,
+and neither the data nor the exe names that language. So OMK's rows carry
+their own texts: **`engine/lang/omk-menu.ini`**, a `[fr]` and an `[en]`
+section of the same 72 ids (`page.*` headings, `row.*` labels,
+`<row>.<value>` choice captions, `msg.*` on-screen lines). The reader picks:
+
+    [OMK]
+    language = fr          ; fr, the default, or en
+
+- in `omk.ini.example` already, commented and marked NOT READ YET.
+
+* the file is parsed by `loadOptionsFile` - so no `;` or `#` in a text, and
+  the ids are lower-cased;
+* UTF-8 on disk, each text through `latin1()` (`ui/options.cpp`) to the fonts'
+  codes, so Latin-1 only (straight `'`, no ligature);
+* a text missing in `en` falls back to `fr`; missing in both, the row draws
+  its id;
+* the root page's OMK section also carries `row.language`, the choice
+  between the two - written back to `[OMK] language` like every other row;
+* SHIPPING it: every port must carry it (the Vita's VPK, the 3DS romfs, the
+  classic Mac bundle). The plain way is to EMBED it at build time - a
+  generated header from the file, so no port's packaging changes - and read
+  a file of the same name beside the config when one is there, which lets a
+  reader fix a text or add a language without a build;
+* check: `[fr]` and `[en]` carry the same ids, every text is Latin-1, and
+  every id the code asks for exists (shown to fail with one id removed).
+
+### A3. Precedence - unchanged
+
+Flag > ini for both sections, as `settings.h` has it. A row a flag holds
+reads "fixé par --aa" (the game rows' "held at --sky" pattern) and does not
+move; the menu writes the ini, never the flag. `all = max` and the remaster
+preset are BASES: a row the reader changes is written as its own key, which
+beats the base from then on.
+
+### A4. Applying - three kinds
+
+1. **Live, read each frame** - apply in the `takeApplied` switch: `radar`,
+   `framerate`, `animation`, `clipdistance`, `uiscaling` / `textscaling`
+   (`applyTextScale`); and with the remaster `bloom`, the grade, `mist`,
+   `water` / `floors`, the UI and font packs (`uiPack().find` is looked up at
+   draw time).
+2. **Renderer rebuilt** - `antialiasing`, `supersampling`, `upscale`, `ao`, and
+   GLES's program variants (`setWater`, `setBodyTint`, `setEmitterLights` are
+   "asked before `init`"). GLES re-inits live already (options row 2:
+   `glRen->init` in `playframe_input_parts.cpp`); Vulkan sizes its swapchain
+   once, at start.
+3. **At load** - `texturefiltering` (mips generated at upload), the texture
+   pack, `smooth` (`remasterSmoothModel`), the film pack, `preload` (a thread).
+
+**First version: kind 1 live, kinds 2 and 3 labelled "au prochain
+démarrage"** and written to the ini. Then lift them one at a time - each lift
+for every backend it concerns (Vulkan and GLES at least, the GLES path
+reaching the Vita), per the standing rule on backends.
+
+Not yet known, to read before promising them live: whether `lighting`
+(per-vertex / per-pixel) and `shadowquality` can change between frames on
+each backend.
+
+### A5. Checks
+
+* `options file`: the round trip (A1);
+* `engine: options menu`: drive the OMK page with `--keys`, change one row of
+  each kind, and read the written ini and the `@evt` the change raised
+  (CLAUDE.md §4: events, not printf);
+* `engine: remaster switch`: a `noremaster` build's root shows Améliorations
+  and no Remaster page; the remaster build both;
+* `sim: options` untouched and green - it must not see the OMK page.
+
+## B. The original/remaster switch, one key in play
+
+Only in a build with OMK_REMASTER and a remaster configured at start (`dir`
+or `--remaster`); elsewhere the key does nothing and says so once.
+
+**The premise: arm everything at start, switch strengths.** When the remaster
+is configured, `remasterSetup` / `remasterConfigure` build it all as today,
+even when the game starts in ORIGINAL - otherwise GLES must rebuild its
+programs on the first switch. The key then flips a mode, and each feature
+reads its strength through it.
+
+| feature | where it is applied | the switch |
+|---|---|---|
+| bloom, grade, mist, water, floors, AO, relief, fx light, body light | per frame (`setBloom`, `setGrade`, `View::mist`, `View::relief`, ...) | cheap: strength 0 / restored |
+| UI pack, font pack | at draw (`uiPack().find`) | cheap: a bypass in the lookup |
+| upscale | the frame's size | cheap if left as configured: a frame-rate choice, not a look - it stays outside the switch |
+| **texture pack** | at UPLOAD (`vkrender.cpp` around 2880, `glesrender_remaster.inl`) | a bypass in `TexturePack`, then the current set's pools uploaded again and the preloaded ones dropped - a hitch of about a set's upload (~0.5 s measured on the M1 for prepare + upload, the switch itself unmeasured), behind a short fade. The no-hitch way, both versions resident, doubles the textures' VRAM - not worth it |
+| **rounded bodies** | at model load (`remasterSmoothModel`) | keep both meshes per character (small) and pick at draw - or reload the bodies on screen |
+| film pack | the next film opened | nothing to do |
+
+The key itself: not a game binding (the 14 per group are the engine's) - an
+OMK key beside ESC's level-triggered read in `inputPause`, off the bindings
+path, with a one-line `@evt remaster.mode` and the ini's `[Remaster] mode`
+key updated so the next start resumes in it.
+
+## Order
+
+1. A1, the writer, with its round trip.
+2. A2 + A2b + A3, the pages and their texts (the `[OMK] language` key read,
+   the strings file embedded), every non-live row labelled for the next start.
+3. A4's kind 1 live; then kinds 2 and 3 one by one, every backend.
+4. B: the strengths first, then the UI/font bypass, then the texture re-upload,
+   then the bodies.
+
+**Before starting:** other sessions have uncommitted work in exactly the files
+this touches - `o3de/texpack.*`, `o3de/renderer.h`,
+`backends/vulkan/vkrender.cpp`, `ui/uipack.cpp`,
+`backends/remaster/playremaster_world.cpp` (git status of 2026-10-26). Wait
+for it to land.

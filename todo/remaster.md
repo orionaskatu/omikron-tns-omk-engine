@@ -2141,6 +2141,32 @@ but `emitter light` (the run-to-run flip above).
   Quest) is what the margin is for, and where its memory is the limit.
   THE PRESET IS 15 since (the reader's "yes"); `--preload 25` or the ini's key
   gives the old reach back.
+* **Keeping the pedestrians' models, CHECKED (2026-10-26, the reader's "a lot
+  of characters are generic ... keeping the pedestrian in memory could settle
+  this")** - it already happens, and what is left is not theirs:
+  * A city's crowd is FOUR models (Anekbah PSH/PSH1/FSH/FSH1, Jaunpur's souk
+    KSH/KSH1/KWH/KWH1, Lahoreh PVH/PVH1/VFH/VFH1, Qalisar PSH/PSH1/AN1/KIL2,
+    the well CMH) - 15 in all; the street's placed extras wear them too.
+  * Walking in, they STAY on the GPU: the restaurant stages six PSH diners and
+    its arrival uploads none of them - its 5 new textures are V5H_FNM (3) and
+    SAM_FN (2), exactly; through an AIRLOCK too (the street stays resident
+    in it: 14 character textures, 7 models, before and after `area.goto 235`).
+    The same with and without the crowd drawn.
+  * Over the game (each of the 260 areas started cold with `--area N`, what
+    it stages at load - a script may stage more later): 86 of 253 non-city
+    areas stage characters; their distinct models are 113 crowd (187
+    textures) and 166 SPECIFIC (347); 34 of the 41 using crowd models within
+    two hops of a city use that city's. The specific: 91 models, 71 of them
+    in ONE area; the recurring few - ANO_FN 26 areas (1 texture), V5H_FNM 10
+    (3), ANOB_FN 8 (1), V4H_FNM 7 (3), MCG_FN 6 (2), NUR_FNM 6 (3).
+  * THE COST on the M1: an arriving character texture ~0.3 ms to read and
+    decode and ~0.6 to upload with the OS's file cache warm; the 10-17 ms
+    measured first were the external disk's COLD reads (the first run after a
+    pause, crowd or not). The restaurant's 5: ~4 ms warm, ~28 cold.
+  * So: NOT BUILT. Keeping the recurring specific models (~13 textures)
+    would be the only gain left, a few ms; the off-frame decode of a model's
+    textures when it loads (as a set's are prepared) covers the cold reads
+    and every model alike, if a device (the Quest) ever shows the hitch.
 
 ## D1 - the rounded bodies: first cut (2026-10-22)
 

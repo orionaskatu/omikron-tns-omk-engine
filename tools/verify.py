@@ -33988,8 +33988,9 @@ def c_engine_rain3d():
       1. the source: 0 by default, [Remaster] only, never `all = max`, the
          preset's 1;
       2. Vulkan, `--rain3d 1`: at frame 690 the 200 drops taken, more than 300
-         drawn - the copies' (`kRainCopies`; the 200 alone cannot) - and some
-         under a roof (`remaster.rain3d`), and the weather says
+         drawn - the copies' (`kRainCopies`; the 200 alone cannot) - some
+         under a roof, the STREAK texture in the pool (`remaster.rain3d`), and
+         the weather says
          they are drawn in the scene - no 2D streaks;
       3. Vulkan, `--rain3d 0`: the original's 2D streaks, more than 20;
       4. the rain's pixels (against `--detail 1`, no rain) on Vulkan and on
@@ -33998,11 +33999,14 @@ def c_engine_rain3d():
     Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
     Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks. Denser and
     fainter the same day (three copies a drop, 0.55 bright, faded near and
-    far): 573 of 800 drawn, 112 under a roof; 2762 and 2761 pixels.
+    far): 573 of 800 drawn, 112 under a roof; 2762 and 2761 pixels. Soft
+    (the streak texture, three times wider, 32 units long): 7324 and 7321
+    pixels, overlap 1.000.
 
     SHOWN TO FAIL (2026-10-27): the roof test skipped - part 2 (0 under a
     roof); the drops never taken (`remasterRainTake` false) - part 2, the 2D
-    streaks drawn again; the copies never made - part 2 (135 drawn).
+    streaks drawn again; the copies never made - part 2 (135 drawn); the
+    streak never pooled (`rainTexSlot` -1, the white) - part 2.
 
     NOT CHECKED, judged by eye: the brightness and width; the density, which
     is the original's 200 - half its box lies below the street, now hidden.
@@ -34073,13 +34077,14 @@ def c_engine_rain3d():
     took = ("frame 690: weather - 200 drops stepped, drawn in the scene by the remaster" in out_on,
             "frame 690: weather - 200 drops stepped, " not in out_on.replace(
                 "frame 690: weather - 200 drops stepped, drawn in the scene", ""))
-    scene = (at.get("drops"), int(at.get("drawn", 0)) > 300, int(at.get("roofed", 0)) > 0) + took
+    scene = (at.get("drops"), int(at.get("drawn", 0)) > 300, int(at.get("roofed", 0)) > 0,
+             at.get("streak")) + took
     m = re.search(r"frame 690: weather - 200 drops stepped, (\d+) streaks", out_off)
     flat = int(m.group(1)) > 20 if m else None
     print(f"        frame 690: {at}; the 2D path {m.group(1) if m else None} streaks; "
           f"Vulkan {len(mv)} pixels; GLES {gl}")
     return (src_ok, scene, flat, len(mv) > 1000, gl), \
-           ((True,) * 4, ("200", True, True, True, True), True, True, _or_skip(gl, (True, True))), \
+           ((True,) * 4, ("200", True, True, "1", True, True), True, True, _or_skip(gl, (True, True))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

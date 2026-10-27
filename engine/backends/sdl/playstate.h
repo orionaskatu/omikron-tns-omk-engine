@@ -718,6 +718,7 @@ struct PlayState {
     float rain3dStrength{};  // the rain drawn in the scene, 0 off (`playremaster_rain.cpp`)
     std::vector<omk::WeatherDrop> rainDrops{};   // ...the weather's drops it takes, last stepped
     omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
+    int rainTexSlot = -1;                        // ...their streak texture's pool slot, -1 none
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
@@ -852,6 +853,7 @@ struct PlayState {
     // the next frame's draw list takes them as strips in the scene
     bool remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits);
     void remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v);
+    void remasterPoolRain(std::vector<omk::Texture>& slots);   // the streak's texture, after the sprites
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
     bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures

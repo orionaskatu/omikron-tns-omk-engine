@@ -1589,6 +1589,7 @@ void PlayState::worldBolts() {
                 sprites.slot[id] = static_cast<int>(pool.size() - sprites.texBase);
                 pool.push_back(*st);
             }
+        remasterPoolRain(pool);   // the 3D rain's streak (`backends/remaster/`)
         if (pool.size() > 64)
             std::printf("WARNING: texture pool is %zu, past the 64 a bucket key "
                         "can address - slots will alias\n", pool.size());

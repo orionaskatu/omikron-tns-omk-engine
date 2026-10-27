@@ -1248,7 +1248,19 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   (`kRainGlow` - additive, so fainter is more see-through), faded in over the
   first 80 units from the eye and out over the box's far 400. Anekbah at
   frame 690: 573 of 800 drawn, 112 under a roof; 2762 pixels.
-* **Open**: the width at a grazing view; the snow in 3D.
+* **Soft streaks** (the same day, the reader's "do 1 and 2" after asking
+  whether to keep the hard lines): (1) each strip carries a generated
+  STREAK texture (`rainStreakTexture`, 8x32 grey, a texel's palette index
+  its brightness - soft across, a soft tip at the leading end, brightest a
+  fifth back, fading out behind), pooled after the sprites
+  (`remasterPoolRain`) and three times the line's width, so the edges are
+  the texture's; (2) 32 units long in the WORLD (`kRainLength` - a shutter
+  open half a frame on a drop falling 64 a frame), so perspective draws a
+  near drop's streak long and a far one's short. The leading end is the
+  original line's bright one (its tail, ahead along the wind). Anekbah at
+  frame 690: 7324 pixels on Vulkan, 7321 on GLES, overlap 1.000.
+* **Open**: the streaks lit by the lights round them (the neon, the
+  burner - the tiled point lights); the snow in 3D.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

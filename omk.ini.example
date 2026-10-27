@@ -329,3 +329,16 @@
 ; The menu's own "Langue des options OMK" row writes it. A copy of
 ; omk-menu.ini beside this file is read over the compiled texts.
 ;language = fr
+
+[Restored]
+; What the 1999 game PLANNED and never shipped - neither an enhancement (the
+; original meant these) nor the remaster's (they override no art);
+; todo/restore-weather.md.
+;
+; THE RESTORED WEATHER (0|1): Qalisar's and Lahoreh's showers - their shower
+; tracks (120, 121) authored, their areas shipped dry - and type 3's sand in
+; Jaunpur, Boz's place, the docks and the rooftop streets. Off by default;
+; the remaster preset (dir) turns it on unless this key or
+; --restore-weather says otherwise. Needs Niveau de detail at 2, as all the
+; game's weather.
+;weather = 0

@@ -36,6 +36,23 @@ flake). Whether the gate was closed on purpose, nothing records.
   OMK's reconstruction, not readings; say so in the code, the docs and the
   option's help text.
 
+## Progress
+
+* **2026-10-27, the reader's answers**: the switch is `[Restored] weather` /
+  `--restore-weather 0|1` - off by default, ON under the remaster preset
+  (its own key or flag still turns it off); the sand AS THE ASSET SUGGESTS
+  (one grain a drop, following the shower's ramp - OMK's design, labelled);
+  with `[Remaster] wet` the restored rain wets its floors too.
+* **Step 1 done** (`docs/ASSETS.md` 4e): the arm would blit the sand's
+  top-left 64x64 into every drop, all 200 for the whole shower.
+* **Step 2 done**: Qalisar (101) and Lahoreh (64) take type 1 at the seam in
+  `weatherFrame` (`weather.restored`); their shower tracks 120 and 121 play.
+  Qalisar's neon street (15300, -10050) is under a roof, so under the
+  original's rule its shower never begins there - its open street (1804,
+  -6890) rains, 62 streaks; with the 3D weather the neon street rains too,
+  the streaks pink by the neon, the wet street reflecting the signs.
+  `engine: weather`'s restored legs.
+
 ## Steps
 
 **1. Read before building (no code).**

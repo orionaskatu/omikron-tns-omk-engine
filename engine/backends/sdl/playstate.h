@@ -103,6 +103,7 @@ struct PlayState {
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
     float & wetFlag = opt.wetFlag;
+    int & restoreWeatherFlag = opt.restoreWeatherFlag;
     float & rain3dFlag = opt.rain3dFlag;
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
@@ -1139,6 +1140,7 @@ struct PlayState {
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
     bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
     int weatherAreaTold = -2;      // the active area the weather last saw (coming back into a shower)
+    bool restoredWeather = false;  // [Restored] weather: Qalisar's and Lahoreh's showers, the sand
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

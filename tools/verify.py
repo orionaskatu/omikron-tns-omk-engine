@@ -47613,6 +47613,14 @@ def c_engine_weather():
     there too (until 2026-10-27 `weatherFrame` ran only inside the
     GPU-window block, and such builds never rained).
 
+    THE RESTORED WEATHER (`[Restored] weather`, 2026-10-27,
+    todo/restore-weather.md): Qalisar's open street (1804, 0, -6890) with it
+    off - type 0, view bits 0, no message 23, no `weather.restored`; on - the
+    event, type 1, message 23 to its handler, track 120 (never heard in the
+    shipped game), more than 20 streaks at frame 690; Lahoreh (64) on - track
+    121. Shown to fail (2026-10-27): the override never applied - Qalisar
+    on reads as off, Lahoreh silent.
+
     Shown to fail: the detail gate removed (the detail-1 run rains), the roof
     ray ignored (the cave snows), the roof ray always meeting a mesh (the
     open air reads `None`), the streaks not recorded (none drawn);
@@ -47641,6 +47649,12 @@ def c_engine_weather():
     street = ["--stand", "1804,0,-6890,336"]
     skip = {"OMK_WEATHER_SKIP_MS": "900000"}
     o2 = run("0", street + ["--detail", "2"], 700, skip)
+    # THE RESTORED WEATHER (`[Restored] weather`, todo/restore-weather.md):
+    # Qalisar's open street off and on, Lahoreh on
+    qal = ["--stand", "1804,0,-6890,336"]
+    q0 = run("101", qal + ["--detail", "2"], 700, dict(skip, OMK_EVENTS="1"))
+    q1 = run("101", qal + ["--detail", "2", "--restore-weather", "1"], 700, dict(skip, OMK_EVENTS="1"))
+    l1 = run("64", ["--detail", "2", "--restore-weather", "1"], 60, dict(skip, OMK_EVENTS="1"))
     o1 = run("0", street + ["--detail", "1"], 100, skip)
     oc = run("145", ["--detail", "2"], 70)
     # the open air of the same area: address 404, no roof - it snows
@@ -47665,19 +47679,32 @@ def c_engine_weather():
                       r"\(a roof overhead\)", oc) or [None, None, None])
     m = re.search(r"frame 60: weather - (\d+) drops stepped, 0 streaks and (\d+) flakes", oo)
     open_air = (int(m.group(1)), int(m.group(2)) > 20) if m else None
+    def restored(out, track):
+        ev = [k for n, k in _events(out) if n == "weather.restored"]
+        m = re.search(r"frame 690: weather - 200 drops stepped, (\d+) streaks", out)
+        return (bool(ev) and ev[0].get("type") == "1",
+                "weather - message 23 posted (Game_RaiseEvent 43) to its handler" in out,
+                ("music switch to %d" % track) in out,
+                int(m.group(1)) > 20 if m else None)
+    rest = (("view bits 0x0, detail 2: none here" in q0, "message 23" in q0,
+             any(n == "weather.restored" for n, _ in _events(q0))),
+            restored(q1, 120), restored(l1, 121)[:3])
     return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
             [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
             (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
-            (cave[1], cave[2]) if cave[0] else None, open_air, bare), \
+            (cave[1], cave[2]) if cave[0] else None, open_air, rest, bare), \
            ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
             ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0"),
             (200, True),
+            ((True, False, False), (True, True, True, True), (True, True, True)),
             (29, True) if sys.platform == "darwin" and bare != "no window build here" else bare), \
            "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
            "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
            "ramp at frame 90, full strength drawing streaks; at detail 1 nothing; " \
            "Mahaleel's cave: state 2, no flake, a roof overhead; Mahaleel's open air " \
-           "(address 404): 200 flakes stepped, more than 20 drawn; and with no GPU window " \
+           "(address 404): 200 flakes stepped, more than 20 drawn; THE RESTORED WEATHER - Qalisar " \
+           "off: no weather; on: type 1, message 23, track 120, streaks; Lahoreh on: track 121; " \
+           "and with no GPU window " \
            "(host gl1, software): 29 drops at frame 90, streaks drawn"
 
 

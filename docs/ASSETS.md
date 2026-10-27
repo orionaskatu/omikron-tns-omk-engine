@@ -2541,6 +2541,21 @@ second being an outstretched arm.
   document mentions sand or dust in the city. Read with the reader's
   hypothesis (2026-10-27): a sandstorm planned for Jaunpur and the docks, its
   music a rain placeholder, left unfinished and gated off.
+  **What the arm WOULD draw, read from the assembly** (2026-10-27,
+  `todo/restore-weather.md` step 1): the blit's packet starts at `var_48`
+  (`lea edx, [esp+0B0h+var_48]` beside `lea ecx, var_10`, its +4), and
+  `sub_4810D0` takes its source rectangle from +0, +4, +0Ch, +10h and its
+  destination from +18h, +1Ch, +24h, +28h (DirectDraw's `Blt(dest, surface,
+  src, flags)`; the bitmap at +30h, the flags at +34h - 1, the colour key).
+  +0 and +4 are `var_48` / `var_44` = 0; +0Ch and +10h are `var_3C` /
+  `var_38`, which `sub_4289D0` (`I2D_GetBitmapSize`) fills from the SNOW
+  bitmap's surface description before the branch - its width (`DDSURFACEDESC`
+  +0Ch) then its height. So the source is (0, 0, 64, 64) on both arms, and
+  the sand arm blits **the top-left 64x64 quarter of the 128x128 grain field**
+  into each drop's square (its projected 15 units). And **every one of the
+  200**: `sub_481D90` walks the whole table, never `dword_4CFE1C`; its caller
+  calls it while the count is not 0 - so the sand, unlike the rain, would not
+  ramp in or fade out: all 200 from the shower's first frame to its last.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
   for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a

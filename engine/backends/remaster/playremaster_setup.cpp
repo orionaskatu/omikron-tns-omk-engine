@@ -139,6 +139,15 @@ void PlayState::remasterSetup() {
         mistStrength = mistFlag >= 0.0f ? mistFlag
                      : settings.mistSource == omk::Settings::Source::Ini ? settings.mist
                      : !preset.empty() ? pv("mist") : 0.0f;
+        // THE RESTORED WEATHER on under the preset (the reader's "enable it by
+        // default in remaster mode, with the possibility to disable it",
+        // 2026-10-27) - unless `--restore-weather` or [Restored] weather says
+        if (!preset.empty() && restoreWeatherFlag < 0 &&
+            settings.restoredWeatherSource != omk::Settings::Source::Ini && !restoredWeather) {
+            restoredWeather = true;
+            std::printf("remaster: the preset turns the RESTORED weather on - Qalisar's and Lahoreh's showers, "
+                        "the sand; --restore-weather 0 or [Restored] weather = 0 turns it off\n");
+        }
         // THE GAME'S OWN *Niveau de detail* at 2 under the preset (the reader's
         // "ok, continue", 2026-10-27): the city weather runs only there
         // (`cmp byte ptr [0x90E727], 2`, docs/ASSETS.md 4e) and the boot

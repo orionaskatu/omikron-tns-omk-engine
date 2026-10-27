@@ -307,6 +307,17 @@ struct Settings {
     std::string language = "fr";
     Source languageSource = Source::Default;
 
+    // ---- [Restored] - what the 1999 game PLANNED and never shipped ----------
+    // Neither an enhancement (the original meant these) nor the remaster's
+    // (they override no art). `todo/restore-weather.md`.
+    // `weather = 0|1`: THE RESTORED WEATHER (`o3de/weather.h`) - Qalisar's and
+    // Lahoreh's showers (their messages 23/24 and tracks 120/121 authored, their
+    // AREA type 0) and type 3's sand (its arm complete behind the caller's
+    // bit-4 test). Off by default; the remaster preset turns it on unless this
+    // key or `--restore-weather` says otherwise.
+    int    restoredWeather = 0;
+    Source restoredWeatherSource = Source::Default;
+
     // whether any `[Remaster]` key asks for something: a build without
     // OMK_REMASTER says it ignores them (`playremaster_off.cpp`; the audit's
     // bug 5 - only the preset and the texture pack were named)

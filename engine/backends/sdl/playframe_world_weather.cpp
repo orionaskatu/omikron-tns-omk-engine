@@ -40,10 +40,21 @@ void PlayState::weatherFrame(const omk::View& v) {
     if (chunk.size() >= 178)
         type = static_cast<int>(static_cast<std::uint8_t>(chunk[176])) |
                static_cast<int>(static_cast<std::uint8_t>(chunk[177])) << 8;
+    const int areaNow = session.residentSlot(session.activeSlot() & 1).area;
+    // THE RESTORED WEATHER (`[Restored] weather`, `todo/restore-weather.md`):
+    // Qalisar (101) and Lahoreh (64) subscribe to the shower's messages 23 and
+    // 24 with tracks 120/56 and 121/27 and ship type 0 - the rain, the type
+    // their shower tracks are (the reader heard each as its city's music under
+    // the rain sound); the cycle, the roof ray and the messages stay the
+    // original's own code and data. OMK's reconstruction, not a reading.
+    if (restoredWeather && type == 0 && (areaNow == 101 || areaNow == 64)) {
+        type = 1;
+        if (areaNow != weatherAreaTold)
+            omk::event("weather.restored", {{"frame", frameNo}, {"area", areaNow}, {"type", type}});
+    }
     const unsigned viewBits = omk::weatherBitsOfAreaType(type);
     // ...and whether the player has just come into this area (for the 3D
     // weather's music, below)
-    const int areaNow = session.residentSlot(session.activeSlot() & 1).area;
     const bool areaEntered = areaNow != weatherAreaTold;
     weatherAreaTold = areaNow;
     // `cmp byte ptr [0x90E727], 2` - option row 7 (the `--detail` flag holds it)

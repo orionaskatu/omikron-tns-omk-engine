@@ -278,20 +278,22 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 // THE RAIN'S RIPPLES on a wet floor (`o3de/wetfloor.h`, the remaster's): the
 // floor in cells of 48 units, each with at most one drop - at a hashed place,
 // and kept only where its hash is below the rain's strength, so a light shower
-// has few - whose ring spreads 40 units over 64 of the shimmer's clock (32
-// frames; the clock wraps at 256, a whole number of rings) and fades as it
-// goes. -> the rings' slope at `p`. GLES's twin is in
+// has few - whose ring spreads to its own size (24..48 units) over 64 of the
+// shimmer's clock (32 frames; the clock wraps at 256, a whole number of
+// rings), ONE soft crest `(1 - x^2)^2` across 6 units, rising in its first
+// tenth and fading as it goes. -> xy the rings' slope at `p` (the reflection's
+// bend), z their crest (the light). GLES's twin is in
 // `glesrender_remaster_shaders.inl` - keep the two in step.
-const float kRippleLight = 0.10;   // a ring's crest, added light (GLES: the same)
+const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
 vec3 rippleHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
     p3 += dot(p3, p3.yxz + 33.33);
     return fract((p3.xxy + p3.yzz) * p3.zyx);
 }
-vec2 ripples(vec2 p, float clock, float rain) {
+vec3 ripples(vec2 p, float clock, float rain) {
     const float cell = 48.0;
     vec2 base = floor(p / cell);
-    vec2 g = vec2(0.0);
+    vec3 g = vec3(0.0);
     for (int i = -1; i <= 1; ++i)
         for (int j = -1; j <= 1; ++j) {
             vec2 cc = base + vec2(float(i), float(j));
@@ -300,9 +302,13 @@ vec2 ripples(vec2 p, float clock, float rain) {
             float life = fract(clock / 64.0 + h.z * 4.0);
             vec2 d = p - (cc + 0.15 + 0.7 * h.xy) * cell;
             float r = length(d);
-            float x = (r - life * 40.0) / 5.0;
-            if (abs(x) < 1.0)
-                g += d / max(r, 0.001) * sin(x * 3.14159265) * (1.0 - life) * (1.0 - life);
+            float x = (r - life * (24.0 + 24.0 * fract(h.z * 13.0))) / 3.0;
+            if (abs(x) < 1.0) {
+                float a = (1.0 - life) * (1.0 - life) * smoothstep(0.0, 0.1, life);
+                float u = 1.0 - x * x;
+                g.z += u * u * a;
+                g.xy += d / max(r, 0.001) * (-4.0 * x * u) * a * 0.5;
+            }
         }
     return g;
 }
@@ -428,10 +434,10 @@ void main() {
     c *= 1.0 - wetFilm;
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
-    vec2 rip = vec2(0.0);
+    vec3 rip = vec3(0.0);
     if (wetFilm > 0.0 && rainNow > 0.0) {
         rip = ripples(vWorld.xz, sh.shimmer, rainNow);
-        c += vec3(kRippleLight * length(rip));
+        c += vec3(kRippleLight * rip.z);
     }
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
@@ -446,7 +452,7 @@ void main() {
             if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
         }
 #endif
-        if (waterMode == 3) at += rip * rs.y * 0.02 * k;   // the ripples' slope
+        if (waterMode == 3) at += rip.xy * rs.y * 0.02 * k;   // the ripples' slope
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         c += texture(refl, at / rs).rgb * pc.waterStrength * f;
     }

@@ -33860,13 +33860,14 @@ def c_engine_wet_floors():
       5. GLES: `--wet 1` moves more than 50000 pixels too, and where Vulkan's
          do - the moved pixels' intersection over union above 0.8;
       6. Vulkan: the RIPPLES move - frames 700 and 716 differ by more than
-         20000 pixels more with `--wet 1` than with `--wet 0` (the rain's
+         10000 pixels more with `--wet 1` than with `--wet 0` (the rain's
          streaks, the flame and the shimmer move both).
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
     ripples: 109018 and 109024, overlap 0.998; 700 -> 716 moves 73954 pixels
-    wet, 33097 dry.
+    wet, 33097 dry. With the single soft ring (2026-10-27): 109561 and 109569;
+    the ripples 20230 more.
 
     SHOWN TO FAIL (2026-10-27): the film never applied in `scene.frag`
     (`c *= 1.0 - wetFilm` gone) - part 3, a few thousand pixels, and part 5's
@@ -33948,7 +33949,7 @@ def c_engine_wet_floors():
     ripple = len(moved(on, on716)) - len(moved(off, off716))
     print(f"        open {world.get('open')}, covered {world.get('covered')}; frame 690 {live}; "
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 20000), \
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000), \
            ((True,) * 4, (True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \

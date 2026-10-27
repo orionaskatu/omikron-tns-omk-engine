@@ -1184,6 +1184,12 @@ only at *Niveau de détail* 2.
   eight bits (`View::rain`; GLES `uRain`, `uRippleClock`, the world's x and z
   as `vWxz`); `scene.frag`'s `ripples` and GLES's `kRipplesGlsl` are twins.
   Frames 700 -> 716 at full rain move 73954 pixels wet, 33097 dry.
+  **Softened the same day** (the reader, on the comparison picture: rings
+  "too regular, like stamped bull's-eyes" - the slope's length lit both
+  halves, two rings a drop): ONE crest `(1 - x^2)^2` across 6 units, each
+  drop's ring to its own size (24..48 units), rising over its first tenth;
+  the crest's light 0.13, the slope only bending the reflection. 700 -> 716
+  then moves 20230 more wet than dry.
 * **Next, not built**: the mist and the grade answering the shower; the snow
   settling on Mahaleel's open ground. The cave's snow static
   (ASSETS 4e) is the original's and stays in both modes.

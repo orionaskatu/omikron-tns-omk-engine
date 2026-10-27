@@ -92,36 +92,42 @@ std::string bloomVariant(const char* frag) {
     return s;
 }
 
-// ...and the WATER variant (`todo/remaster.md` A3), over either: a water draw
-// adds the reflection (unit 4) at its screen position times `uWater`, 0 on
-// every other draw. Made at `init` only when the water is asked for.
 // THE RAIN'S RIPPLES (`o3de/wetfloor.h`), `scene.frag`'s `ripples` - keep the
-// two in step: cells of 48 units, a drop where the hash is below the rain, its
-// ring 40 units over 64 of the shimmer's clock
+// two in step: cells of 48 units, a drop where the hash is below the rain, one
+// soft ring to its own size over 64 of the shimmer's clock
 constexpr const char* kRipplesGlsl =
+    "const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)\n"
     "vec3 rippleHash(vec2 p) {\n"
     "    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));\n"
     "    p3 += dot(p3, p3.yxz + 33.33);\n"
     "    return fract((p3.xxy + p3.yzz) * p3.zyx);\n"
     "}\n"
-    "vec2 ripples(vec2 p, float clock, float rain) {\n"
-    "    vec2 base = floor(p / 48.0);\n"
-    "    vec2 g = vec2(0.0);\n"
+    "vec3 ripples(vec2 p, float clock, float rain) {\n"
+    "    const float cell = 48.0;\n"
+    "    vec2 base = floor(p / cell);\n"
+    "    vec3 g = vec3(0.0);\n"
     "    for (int i = -1; i <= 1; ++i)\n"
     "        for (int j = -1; j <= 1; ++j) {\n"
     "            vec2 cc = base + vec2(float(i), float(j));\n"
     "            vec3 h = rippleHash(cc);\n"
     "            if (h.z > rain) continue;\n"
     "            float life = fract(clock / 64.0 + h.z * 4.0);\n"
-    "            vec2 d = p - (cc + 0.15 + 0.7 * h.xy) * 48.0;\n"
+    "            vec2 d = p - (cc + 0.15 + 0.7 * h.xy) * cell;\n"
     "            float r = length(d);\n"
-    "            float x = (r - life * 40.0) / 5.0;\n"
-    "            if (abs(x) < 1.0)\n"
-    "                g += d / max(r, 0.001) * sin(x * 3.14159265) * (1.0 - life) * (1.0 - life);\n"
+    "            float x = (r - life * (24.0 + 24.0 * fract(h.z * 13.0))) / 3.0;\n"
+    "            if (abs(x) < 1.0) {\n"
+    "                float a = (1.0 - life) * (1.0 - life) * smoothstep(0.0, 0.1, life);\n"
+    "                float u = 1.0 - x * x;\n"
+    "                g.z += u * u * a;\n"
+    "                g.xy += d / max(r, 0.001) * (-4.0 * x * u) * a * 0.5;\n"
+    "            }\n"
     "        }\n"
     "    return g;\n"
     "}\n";
 
+// ...and the WATER variant (`todo/remaster.md` A3), over either: a water draw
+// adds the reflection (unit 4) at its screen position times `uWater`, 0 on
+// every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\n"
@@ -134,14 +140,14 @@ std::string waterVariant(const std::string& frag) {
         // ...over a WET floor's film first (`o3de/wetfloor.h`): the rain darkens
         // it, and while it rains its RIPPLES lighten their crests and bend the
         // reflection (`scene.frag`'s rule)
-        s.insert(at, "c *= 1.0 - uWet;\n    vec2 rip = vec2(0.0);\n"
+        s.insert(at, "c *= 1.0 - uWet;\n    vec3 rip = vec3(0.0);\n"
                      "    if (uWet > 0.0 && uRain > 0.0) {\n"
                      "        rip = ripples(vWxz, uRippleClock, uRain);\n"
-                     "        c += vec3(0.10 * length(rip));\n"
+                     "        c += vec3(kRippleLight * rip.z);\n"
                      "    }\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
-                     "        vec2 at = gl_FragCoord.xy + rip * 0.02 * (0.5 / uReflInv.y);\n"
+                     "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"
                      "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f;\n"
                      "    }\n    ");
     else anchorMissed("water", "gl_FragColor = vec4(c,");

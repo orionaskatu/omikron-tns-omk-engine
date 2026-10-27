@@ -148,13 +148,20 @@ bool PlayState::remasterOpenFilm(const std::string& real, omk::Movie& mov, const
 // included - its resources were loaded (the light maps, the normal maps, the
 // floors' list, the probes) and its pass exists; one that was 0 waits for the
 // next start, which loads them. The mist needs nothing loaded and moves
-// always. The emitters' light waits too: its strength is baked into each
+// always, and the preload radius too (its phase loads what it needs). The emitters' light waits too: its strength is baked into each
 // set's surface lights when the set loads (`remasterPrepareSet`).
 bool PlayState::remasterApplyLive(const std::string& key, float v) {
     if (remasterAtStart_.empty()) return false;   // the remaster did not run
     const auto at = remasterAtStart_.find(key);
     const bool armed = at != remasterAtStart_.end() && at->second > 0.0f;
     if (key == "mist") { mistStrength = v; return true; }
+    // the PRELOAD RADIUS is read by its phase each frame, which also loads
+    // what it needs: any value moves - to 0, what it prepared is released
+    if (key == "preload") {
+        if (v <= 0.0f && preloadMetres > 0.0f) preloadReleaseAll();
+        preloadMetres = v;
+        return true;
+    }
     if (!armed) return false;
     if (key == "bloom") {
         if (!world_ || !world_->setBloom(v)) return false;

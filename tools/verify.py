@@ -6942,11 +6942,12 @@ def c_engine_graphics_menu():
     * page 100, then Améliorations (101): ONLY the rows the software renderer
       can draw (`Renderer::takes` is 0 - no MSAA, filtering, mapped shadows or
       per-pixel lighting), the running values (the file's `radar = always`);
-    * `Tout au maximum` RIGHT: written, NOT live - a `*` and the heading's
-      "au prochain démarrage";
-    * `Distance de vue illimitée` RIGHT: written and applied at once;
-    * `Valeurs par défaut`: the page's keys COMMENTED OUT, the live ones applied
-      back, the marks gone;
+    * `Tout au maximum` RIGHT: written and APPLIED LIVE (step 3d) - each
+      value it raises, the shadows FITTED as a start reduces mapped ones on a
+      renderer without a shadow map; the rows it cannot reach here not tried;
+    * `Distance de vue illimitée` RIGHT: back off, written and applied;
+    * `Valeurs par défaut`: the page's keys COMMENTED OUT, each shown row
+      applied back to its default;
     * the Remaster page: on software only the mode, the rounding and the preload;
     * the language RIGHT: English at once, on OMK's rows only - the game's
       `Vidéo` stays the installed copy's.
@@ -6994,27 +6995,36 @@ def c_engine_graphics_menu():
     root = "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|]"
     p100 = ("page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Remaster|] "
             "[Langue des options OMK|Fran\xe7ais] [Retour|]")
-    rows = ("[Tout au maximum|%s] [Qualit\xe9 des ombres|Original] "
-            "[Agrandissement de l'interface|Net (original)] [Taille du texte|Original] "
-            "[Radar|%s] [Images par seconde|30 (original)] [Animations|Original] "
+    rows = ("[Tout au maximum|%s] [Qualit\xe9 des ombres|%s] "
+            "[Agrandissement de l'interface|%s] [Taille du texte|%s] "
+            "[Radar|%s] [Images par seconde|%s] [Animations|%s] "
             "[Distance de vue illimit\xe9e|%s] [Valeurs par d\xe9faut|] [Retour|]")
-    head, pend = "page 101: [Am\xe9liorations|] ", "page 101: [Am\xe9liorations - * au prochain d\xe9marrage|] "
+    head = "page 101: [Am\xe9liorations|] "
+    plain = ("Non", "Original", "Net (original)", "Original", "Toujours affich\xe9", "30 (original)",
+             "Original", "Non")
+    # `all = max` APPLIED LIVE (step 3d): each value it raises, as a start -
+    # the shadows FITTED, the start's own reduction where there is no shadow map
+    maxed = ("Oui", "Ajust\xe9es", "Liss\xe9", "Adapt\xe9e \xe0 l'\xe9cran", "Toujours affich\xe9", "60",
+             "Fluides", "Oui")
     want_pages = [root, p100,
-                  head + rows % ("Non", "Toujours affich\xe9", "Non"),
-                  pend + rows % ("Oui *", "Toujours affich\xe9", "Non"),
-                  pend + rows % ("Oui *", "Toujours affich\xe9", "Oui"),
-                  head + rows % ("Non", "Comme le jeu", "Non"),
+                  head + rows % plain,
+                  head + rows % maxed,
+                  head + rows % (maxed[:7] + ("Non",)),
+                  head + rows % ("Non", "Original", "Net (original)", "Original", "Comme le jeu",
+                                 "30 (original)", "Original", "Non"),
                   p100,
                   "page 102: [Remaster|] [Rendu|Remaster] [Personnages arrondis|Non] "
                   "[Pr\xe9chargement des lieux|Non] [Valeurs par d\xe9faut|] [Retour|]",
                   p100,
                   "page 100: [Graphics (OMK)|] [Enhancements|] [Remaster|] [OMK options language|English] [Back|]",
                   "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphics (OMK)|] [Retour|]"]
-    want_evts = [("enhancements.all", "max", "0"), ("enhancements.clipdistance", "unlimited", "1"),
-                 ("enhancements.all", "off", "0"), ("enhancements.radar", "game", "1"),
-                 ("enhancements.clipdistance", "capped", "1"), ("omk.language", "en", "1")]
+    want_evts = [("enhancements.all", "max", "1"), ("enhancements.clipdistance", "capped", "1"),
+                 ("enhancements.all", "off", "1"), ("enhancements.shadowquality", "classic", "1"),
+                 ("enhancements.uiscaling", "nearest", "1"), ("enhancements.textscaling", "game", "1"),
+                 ("enhancements.radar", "game", "1"), ("enhancements.framerate", "30", "1"),
+                 ("enhancements.animation", "game", "1"), ("omk.language", "en", "1")]
     want_ini = (b"; my settings\n[Enhancements]\n;radar = always   ; the minimap\n;all = max\n"
-                b";clipdistance = unlimited\n[Remaster]\nbloom = 1.3\n\n[OMK]\nlanguage = en\n")
+                b";clipdistance = capped\n[Remaster]\nbloom = 1.3\n\n[OMK]\nlanguage = en\n")
     # the build without the remaster: its page 100 has no Remaster header
     plainPages = got[1][0]
     p100plain = [p for p in plainPages if p.startswith("page 100: [Graphismes")][:1]
@@ -7056,6 +7066,11 @@ def c_engine_graphics_menu_live():
       and with the pack the upscale and the AO from 0 - MSAA REFUSED there,
       its pipelines being compiled for the sample count; on GLES MSAA on and
       the supersample back off.
+    * THE TEXTURES re-uploaded (step 3d, `retexture`): trilinear and 16x
+      anisotropy on Vulkan (with the pack too) and GLES; `all = max` on GLES,
+      where every part of it is live; the preload radius from 0 (its phase
+      reading the doors). The filter cases run without the wrapper's
+      `--filter nearest`, which would hold the row.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -7072,11 +7087,15 @@ def c_engine_graphics_menu_live():
         d = os.path.join(tmp, name)
         os.makedirs(d)
         open(os.path.join(d, "omk.ini"), "w").write(ini)
+        # `--filter nearest` would HOLD the filter's row: the filter cases go without
+        filt = [] if "-tex-" in name else ["--filter", "nearest"]
         args = [binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--nofmv", "--saves",
-                os.path.join(d, "GAMES"), "--res", "640x480", "--filter", "nearest", "--save",
+                os.path.join(d, "GAMES"), "--res", "640x480"] + filt + ["--save",
                 os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
                 "1804,0,-6890,336", "--frames", "40", "--dump", os.path.join(d, "f.bin")] + extra
-        r = subprocess.run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
+        # the UNWRAPPED run: the wrapper (`_viewer_args`) would add the
+        # `--filter nearest` the filter cases must not have
+        r = _subprocess_run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
         out = (r.stdout + r.stderr).decode("latin-1")
         evts = [e["live"] for n, e in _events(out) if n == "options.omk"]
         f = os.path.join(d, "f.bin")
@@ -7111,14 +7130,29 @@ def c_engine_graphics_menu_live():
         # MSAA on Vulkan: refused live - its pipelines are compiled for the count
         got.append(case(play, vkEnv, vk, "vk-aa-4", "", "enhancements.antialiasing", "4", None))
         want.append(("vk-aa-4", True, ["0"]))
+        # THE TEXTURES (3d): a new sampler, every upload dropped and sent again
+        for name, base, key, val, line in [
+                ("tex-trilinear", "", "enhancements.texturefiltering", "trilinear",
+                 "[Enhancements]\ntexturefiltering = trilinear\n"),
+                ("tex-aniso-16", "[Enhancements]\ntexturefiltering = trilinear\n", "enhancements.anisotropy", "16",
+                 "anisotropy = 16\n")]:
+            got.append(case(play, vkEnv, vk, "vk-" + name, base, key, val, line))
+            want.append(("vk-" + name, True, True, ["1"]))
         if pack:
             for name, base, key, val, line in [("bloom-4", rem, "remaster.bloom", "4", "bloom = 4\n"),
                                                ("ao-4", rem, "remaster.ao", "4", "ao = 4\n"),
                                                ("mist-1", rem, "remaster.mist", "1", "mist = 1\n"),
                                                ("upscale-2", rem, "remaster.upscale", "2", "upscale = 2\n"),
-                                               ("ao-from-0", rem + "ao = 0\n", "remaster.ao", "2", "ao = 2\n")]:
+                                               ("ao-from-0", rem + "ao = 0\n", "remaster.ao", "2", "ao = 2\n"),
+                                               ("tex-pack-trilinear", rem + "[Enhancements]\n",
+                                                "enhancements.texturefiltering", "trilinear",
+                                                "texturefiltering = trilinear\n")]:
                 got.append(case(play, vkEnv, vk, "vk-" + name, base, key, val, line))
                 want.append(("vk-" + name, True, True, ["1"]))
+            # the PRELOAD radius from 0: its phase starts, reading the doors
+            _, ev, out = run(play, "vk-preload-live", rem, vk + ["--omk-set", "remaster.preload=15@10"], vkEnv)
+            got.append(("vk-preload", ev, any(n == "preload.doors" for n, _ in _events(out))))
+            want.append(("vk-preload", ["1"], True))
             got.append(case(play, vkEnv, vk, "vk-bloom-from-0", rem + "bloom = 0\n", "remaster.bloom", "1.6", None))
             want.append(("vk-bloom-from-0", True, ["0"]))
         if os.path.exists(gles):
@@ -7135,7 +7169,11 @@ def c_engine_graphics_menu_live():
                     # the TARGET remade (3c): MSAA on, the supersample back off
                     ("aa-4", "", "enhancements.antialiasing", "4", "[Enhancements]\nantialiasing = 4\n"),
                     ("ssaa-off", "[Enhancements]\nsupersampling = 2\n", "enhancements.supersampling", "1",
-                     "supersampling = 1\n")]:
+                     "supersampling = 1\n"),
+                    # the textures (3d), and `all = max` - every part of it live here
+                    ("tex-trilinear", "", "enhancements.texturefiltering", "trilinear",
+                     "[Enhancements]\ntexturefiltering = trilinear\n"),
+                    ("tex-all-max", "", "enhancements.all", "max", "[Enhancements]\nall = max\n")]:
                 got.append(case(gles, glEnv, [], "gles-" + name, base, key, val, line))
                 want.append(("gles-" + name, True, True, ["1"]))
     finally:
@@ -34898,7 +34936,9 @@ def c_engine_preload():
     ask = pc[pc.index("bool PlayState::askSet"):]
     src_ok = (bool(re.search(r"float\s+preload\s*=\s*0\.0f;", sh)),
               'kRemaster, "preload"' in sc and 'kEnhancements, "preload"' not in sc,
-              "preload" not in max_body and "!preset.empty() ? 15.0f : 0.0f" in ps,
+              # the preset's 15: one table since `todo/graphics-menu.md` 3a (`kRemasterPreset`)
+              "preload" not in max_body and '!preset.empty() ? pv("preload") : 0.0f' in ps and
+              bool(re.search(r'\{"preload",\s*15\.0f\}', sh)),
               ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
               "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
               "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk and

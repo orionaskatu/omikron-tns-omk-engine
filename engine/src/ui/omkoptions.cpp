@@ -103,7 +103,8 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageEnhancements, choice(kEnh, "antialiasing", numbers({0, 2, 4, 8}, 0), kTakesMultisample, false));
     add(kPageEnhancements, choice(kEnh, "supersampling", numbers({1, 2, 3, 4}, 1), kTakesSupersample, false));
     add(kPageEnhancements, choice(kEnh, "texturefiltering",
-                                  {{"nearest", 0, "", 0}, {"bilinear", 1, "", 0}, {"trilinear", 2, "", 0}},
+                                  {{"nearest", 0, "", 0}, {"bilinear", 1, "", 0},
+                                   {"trilinear", 2, "", kTakesTrilinear}},
                                   kTakesTextureFilter, false));
     add(kPageEnhancements, choice(kEnh, "anisotropy", numbers({1, 2, 4, 8, 16}, 1), kTakesAnisotropy, false));
     add(kPageEnhancements, choice(kEnh, "shadowquality",
@@ -228,8 +229,10 @@ bool OmkOptions::shown(const Row& r) const {
 }
 
 bool OmkOptions::shown(const Row& r, const Choice& c) const {
-    // the value running is always shown, whatever the renderer - it is the truth
-    return (c.needs & takes_) == c.needs || &c == &r.choices[static_cast<std::size_t>(r.current)];
+    // the value RUNNING is always shown, whatever the renderer - it is the
+    // truth; a configured one the renderer cannot draw is not (the caller
+    // reduces it, as the start does - `omkOptionsOpen`)
+    return (c.needs & takes_) == c.needs || &c == &r.choices[static_cast<std::size_t>(r.start)];
 }
 
 std::vector<int> OmkOptions::shownRows(int page) const {
@@ -361,7 +364,9 @@ bool OmkOptions::press(int page, int w, std::uint32_t bits, int& gotoPage) {
             Row& o = rows_[static_cast<std::size_t>(i)];
             if (o.type != 0 || !o.held.empty()) continue;
             edits_.push_back({o.section, o.key, "", true});
-            if (o.current != o.def) {
+            // a row not offered here (this renderer does not draw it) is unset
+            // in the file all the same, and not applied - it would be refused
+            if (o.current != o.def && shown(o)) {
                 o.current = o.def;
                 changed_.push_back(lowerId(o.section, o.key));
             }

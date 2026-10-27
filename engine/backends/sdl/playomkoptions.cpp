@@ -59,7 +59,7 @@ void PlayState::omkOptionsOpen() {
                          double v0, double v1, double top, bool underAll = true) {
         const std::string k = std::string("enhancements.") + key;
         const auto conf = [&](double fileV) {
-            return flag >= 0 ? flag : (underAll && enhanceAll) ? top : fileV;
+            return omkReduce(k, flag >= 0 ? flag : (underAll && enhanceAll) ? top : fileV);
         };
         row(k, running, conf(v0), conf(v1));
         o.setDefault(k, def);
@@ -214,6 +214,52 @@ bool PlayState::omkApplyLive(const std::string& key, double v) {
         ssaa = toSs;
         upscale = toUp;
         aoStrength = toAo;
+    } else if (key == "enhancements.all") {
+        // THE BASE under every enhancement key without its own (`all = max`,
+        // applied last by the reader): the file as it is now resolved again,
+        // and each value it moved applied as its own row would be - the change
+        // applied only if every one of them was; the rows refreshed, so one
+        // that waits keeps its `*`
+        const omk::Settings f = omk::resolveSettings(omk::loadOptionsFile(configFile), std::nullopt);
+        bool every = true;
+        const unsigned takes = world_ ? world_->takes() : 0u;
+        const auto to = [&](const char* k, int flag, double fileV, double running) {
+            const std::string key = std::string("enhancements.") + k;
+            // a key this renderer does not draw at all - its row not offered -
+            // is the start's to ignore too
+            const unsigned needs = key == "enhancements.antialiasing" ? omk::kTakesMultisample
+                                 : key == "enhancements.anisotropy" ? omk::kTakesAnisotropy
+                                 : key == "enhancements.texturefiltering" ? omk::kTakesTextureFilter : 0u;
+            if ((takes & needs) != needs) return;
+            fileV = omkReduce(key, fileV);   // what the start would run here
+            if (flag >= 0 || fileV == running) return;   // a flag holds it, or nothing moves
+            every = omkApplyLive(key, fileV) && every;
+        };
+        to("antialiasing", aaFlag, f.antiAliasing, aaSamples);
+        to("texturefiltering", filterFlag, f.textureFilter, texFilter);
+        to("anisotropy", anisoFlag, f.anisotropy, texAniso);
+        to("shadowquality", shadowQFlag, f.shadowQuality, shadowQuality);
+        to("lighting", lightingFlag, f.lighting, lighting);
+        to("uiscaling", uiScaleFlag, f.uiScaling, uiScaling);
+        to("textscaling", textScaleFlag, f.textScaling, textScaling);
+        to("radar", radarFlag, f.radarAlways ? 1 : 0, radarAlways ? 1 : 0);
+        to("framerate", frameRateFlag, f.frameRate, frameRate);
+        to("animation", smoothAnimFlag, f.smoothAnimation ? 1 : 0, smoothAnim ? 1 : 0);
+        to("clipdistance", clipFlag ? 1 : -1, f.unlimitedDrawDistance ? 1 : 0, unlimitedClip ? 1 : 0);
+        settings.enhanceAll = f.enhanceAll;
+        omkOptionsOpen();
+        return every;
+    } else if (key == "enhancements.texturefiltering" || key == "enhancements.anisotropy") {
+        // THE TEXTURES' (3d): the filter and the anisotropy are baked into the
+        // uploads on Vulkan and GLES - `retexture` drops them, and the pool is
+        // handed over again this frame as a new composition (GL1 and the 3DS
+        // re-filter in place)
+        const int toFilter = key == "enhancements.texturefiltering" ? static_cast<int>(v) : texFilter;
+        const int toAniso = key == "enhancements.anisotropy" ? static_cast<int>(v) : texAniso;
+        if (!world_ || !world_->retexture(toFilter, toAniso)) return false;
+        texFilter = toFilter;
+        texAniso = toAniso;
+        ++texPool.composition;
     } else if (key == "remaster.ao") {
         // its strength moved where the target already reads the depth
     } else if (key.rfind("remaster.", 0) == 0) {
@@ -222,4 +268,18 @@ bool PlayState::omkApplyLive(const std::string& key, double v) {
         return false;
     }
     return true;
+}
+
+// A CONFIGURED VALUE THE RENDERER CANNOT DRAW, reduced as the start reduces it
+// (`playsetup_bodies.cpp`: mapped shadows to fitted, per-pixel lighting to per
+// vertex; GL1 and the 3DS draw trilinear bilinear) - by what the renderer can
+// draw at all (`Renderer::takes`), so the menu shows what WILL run, and `all`
+// applies it
+double PlayState::omkReduce(const std::string& key, double v) const {
+    const unsigned t = world_ ? world_->takes() : 0u;
+    if (key == "enhancements.shadowquality" && v > 1.5 && !(t & omk::kTakesShadowMap)) return 1;
+    if (key == "enhancements.lighting" && v > 0.5 && !(t & omk::kTakesPixelLights)) return 0;
+    if (key == "enhancements.texturefiltering" && v > 1.5 && !(t & omk::kTakesTrilinear))
+        return (t & omk::kTakesTextureFilter) ? 1 : v;
+    return v;
 }

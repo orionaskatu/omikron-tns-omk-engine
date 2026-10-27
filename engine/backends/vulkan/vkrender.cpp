@@ -313,7 +313,8 @@ public:
         return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
                omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
                omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
-               omk::kTakesEmitterLights | omk::kTakesAmbientOcclusion | omk::kTakesRelief | omk::kTakesMist;
+               omk::kTakesEmitterLights | omk::kTakesAmbientOcclusion | omk::kTakesRelief | omk::kTakesMist |
+               omk::kTakesTrilinear;
     }
     ~VulkanRenderer() override;
     // A geometry the renderer holds state for tells it when it is destroyed
@@ -472,6 +473,8 @@ private:
     int                   filter_ = 0;        // 0 nearest (the original), 1 bilinear, 2 trilinear
     int                   aniso_ = 1;         // asked; 1 is off
     bool                  anisoOn_ = false;   // the device feature was enabled for it
+    bool                  anisoAvail_ = false; // ...the device has it (enabled whatever was asked)
+    std::vector<VkSampler> retiredSamplers_;  // `retexture`'s old ones: the 1x1 stand-ins' sets keep them
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage        colour_ = VK_NULL_HANDLE;  VkDeviceMemory colourMem_ = VK_NULL_HANDLE;
     VkImageView    colourView_ = VK_NULL_HANDLE;
@@ -829,6 +832,8 @@ public:
     // render-pass COMPATIBLE. The shadow map is a fixed size and is kept.
     bool resize(int w, int h);
     bool retarget(int samples, int ss, float up, float ao);   // ...at new enhancements (OMK's menu)
+    bool makeSampler();                                        // the textures' sampler, by filter_/anisoOn_
+    bool retexture(int filter, int aniso) override;            // ...again, the textures dropped
     // ...and the WINDOW's: fullscreen, or any resize, changes the surface's
     // extent and the swapchain is remade at it.
     bool remakeSwapchain();
@@ -1124,8 +1129,12 @@ bool VulkanRenderer::pickDevice() {
     VkPhysicalDeviceFeatures have{};
     vkGetPhysicalDeviceFeatures(phys_, &have);
     VkPhysicalDeviceFeatures enable{};
+    // ...and enabled whenever the device has it, asked or not - it changes
+    // nothing a sampler does not ask for, and OMK's options menu may ask later
+    // (`retexture`)
+    if (have.samplerAnisotropy) { enable.samplerAnisotropy = VK_TRUE; anisoAvail_ = true; }
     if (aniso_ > 1 && filter_ >= 2 && have.samplerAnisotropy) {
-        enable.samplerAnisotropy = VK_TRUE; anisoOn_ = true;
+        anisoOn_ = true;
     } else if (aniso_ > 1) {
         std::fprintf(stderr, "vulkan: anisotropy %d ignored - %s\n", aniso_,
                      filter_ < 2 ? "it needs trilinear filtering (a mip chain)"
@@ -1461,6 +1470,56 @@ bool VulkanRenderer::makeTarget() {
         std::fprintf(stderr, "vulkan: no shadow map here - its set carries the scene's lights too, refused\n");
         return false;
     }
+    return true;
+}
+
+// THE TEXTURES' SAMPLER, by `filter_` and `anisoOn_` - made at the
+// pipelines', and again by `retexture`
+bool VulkanRenderer::makeSampler() {
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
+    // takes one texel with no filtering and the two are being differenced;
+    // repeat because `% t.width` is what lets one atlas tile across a wall.
+    si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+    // ...unless the filtering ENHANCEMENT asked for bilinear (renderer.h).
+    // The colour key survives it because `upload` puts the key in ALPHA and
+    // the shader treats a filtered sample as premultiplied.
+    if (filter_ >= 1) { si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR; }
+    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    // Trilinear: the mip chain `upload` generates, blended between levels.
+    // With one level (every mode below 2) maxLod 0 samples level 0 exactly.
+    if (filter_ >= 2) { si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE; }
+    if (anisoOn_) {
+        si.anisotropyEnable = VK_TRUE;
+        si.maxAnisotropy = std::min(static_cast<float>(aniso_), props_.limits.maxSamplerAnisotropy);
+    }
+    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &sampler_), "vkCreateSampler");
+    return true;
+}
+
+// THE TEXTURE FILTER and the ANISOTROPY asked again on a running renderer
+// (OMK's options menu, `todo/graphics-menu.md` 3d). Both are baked: the
+// sampler is written into every texture's set, and trilinear's mip chain is
+// made at upload. So a new sampler (the old one RETIRED, not destroyed - the
+// 1x1 stand-ins' sets keep it, a 1x1 texel filtering alike either way) and
+// every upload dropped, the preloaded ones unpinned too; the caller hands the
+// pool over again, and it uploads as a start with the values would.
+bool VulkanRenderer::retexture(int filter, int aniso) {
+    filter_ = filter < 1 ? 0 : filter < 2 ? 1 : 2;
+    aniso_ = aniso < 1 ? 1 : aniso > 16 ? 16 : aniso;
+    if (dev_ == VK_NULL_HANDLE) return true;
+    vkDeviceWaitIdle(dev_);
+    anisoOn_ = aniso_ > 1 && filter_ >= 2 && anisoAvail_;
+    retiredSamplers_.push_back(sampler_);
+    sampler_ = VK_NULL_HANDLE;
+    if (!makeSampler()) return false;
+    setPreloadTextures({});
+    poolTextures({}, false);
+    std::printf("vulkan: retextured - %s filtering, anisotropy %d; every texture dropped, uploaded again\n",
+                filter_ == 0 ? "nearest" : filter_ == 1 ? "bilinear" : "trilinear", anisoOn_ ? aniso_ : 1);
     return true;
 }
 
@@ -1813,27 +1872,7 @@ bool VulkanRenderer::makePipelines() {
     if (fsCut) vkDestroyShaderModule(dev_, fsCut, nullptr);
     if (fsTiledCut) vkDestroyShaderModule(dev_, fsTiledCut, nullptr);
 
-    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
-    // takes one texel with no filtering and the two are being differenced;
-    // repeat because `% t.width` is what lets one atlas tile across a wall.
-    si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
-    // ...unless the filtering ENHANCEMENT asked for bilinear (renderer.h).
-    // The colour key survives it because `upload` puts the key in ALPHA and
-    // the shader treats a filtered sample as premultiplied.
-    if (filter_ >= 1) { si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR; }
-    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    // Trilinear: the mip chain `upload` generates, blended between levels.
-    // With one level (every mode below 2) maxLod 0 samples level 0 exactly.
-    if (filter_ >= 2) { si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE; }
-    if (anisoOn_) {
-        si.anisotropyEnable = VK_TRUE;
-        si.maxAnisotropy = std::min(static_cast<float>(aniso_), props_.limits.maxSamplerAnisotropy);
-    }
-    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &sampler_), "vkCreateSampler");
+    if (!makeSampler()) return false;
 
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
@@ -3912,6 +3951,7 @@ VulkanRenderer::~VulkanRenderer() {
     killTex(lightBlack_);
     killTex(normalFlat_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
+    for (VkSampler old : retiredSamplers_) vkDestroySampler(dev_, old, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);

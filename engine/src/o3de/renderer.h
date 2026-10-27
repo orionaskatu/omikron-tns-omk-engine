@@ -541,6 +541,19 @@ public:
     // may still reduce a value it cannot meet. The software reference takes
     // none of them: it draws what D3D was told to draw.
     virtual unsigned takes() const { return 0; }
+
+    // THE TEXTURE FILTER and the ANISOTROPY asked AGAIN on a running renderer
+    // (OMK's options menu, `todo/graphics-menu.md` 3d) - what `setTextureFilter`
+    // / `setAnisotropy` ask before `init`. A backend that bakes them into its
+    // uploads (a mip chain, a sampler in each texture's set) drops what it
+    // uploaded, and the caller hands the pool over again. -> false where it
+    // cannot. The default is the two setters, for a backend that re-filters
+    // its textures in place (GL1, the 3DS).
+    virtual bool retexture(int filter, int aniso) {
+        const bool f = setTextureFilter(filter);
+        setAnisotropy(aniso);
+        return f;
+    }
 };
 
 // `Renderer::takes()`'s bits, one per request of the boundary.
@@ -560,6 +573,7 @@ enum RendererTakes : unsigned {
     kTakesAmbientOcclusion = 1u << 12, // setAmbientOcclusion
     kTakesRelief         = 1u << 13,   // drawsRelief
     kTakesMist           = 1u << 14,   // View::mist
+    kTakesTrilinear      = 1u << 15,   // setTextureFilter(2): a mip chain at upload
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no

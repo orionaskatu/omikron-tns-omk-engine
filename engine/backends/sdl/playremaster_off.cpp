@@ -26,6 +26,7 @@ bool PlayState::remasterTakePreload(int, const std::string&, int, long) { return
 void PlayState::phasePreload() {}
 void PlayState::remasterFinish() {}
 void PlayState::preloadPin() {}
+void PlayState::preloadReleaseAll() {}
 void PlayState::remasterSceneViewer() {}
 void PlayState::remasterEmitterLights(WorldSlot&) {}
 void PlayState::remasterGrade() {}

@@ -391,7 +391,44 @@ key updated so the next start resumes in it.
      graphics-menu checks; every port built.
    * 3c, as read: targets: MSAA, supersampling, upscale, AO - GLES re-inits targets
      live already (row 2); Vulkan needs a rebuild of its target.
-   * 3d, re-upload: texture filter/anisotropy (mips at upload), the texture
+   * **3d DONE (2026-10-27), but for the rounded bodies.**
+     `Renderer::retexture(filter, aniso)` (the two setters by default - GL1
+     and the 3DS re-filter in place): Vulkan makes a new sampler (the old one
+     RETIRED: the 1x1 stand-ins' sets keep it) and drops every upload, and
+     enables `samplerAnisotropy` at device creation whenever the device has
+     it; GLES re-resolves the anisotropy (`resolveAnisotropy`) and drops
+     every upload. Both unpin the preloaded ones; the viewer bumps
+     `texPool.composition`, so the frame hands the pool over again and it
+     uploads as a start would. `kTakesTrilinear` (Vulkan, GLES) offers the
+     trilinear choice only where a mip chain is made. The PRELOAD radius
+     moves always (`preloadReleaseAll` when it goes to 0); `all` re-resolves
+     the file and applies each value it moved, applied only if every one
+     was (Vulkan's MSAA part waits). MEASURED, to the pixel against a start:
+     trilinear and nearest, 16x anisotropy, trilinear with the pack - on
+     Vulkan and GLES; `all = max` on GLES (Vulkan: 10091 px, its MSAA,
+     waiting). `engine: graphics menu live` holds them, its runs now
+     UNWRAPPED (`_subprocess_run`) since the wrapper's `--filter nearest`
+     held the filter's row (shown to fail with Vulkan's uploads kept).
+     FOUND ON THE WAY (the software run of `engine: graphics menu` once `all`
+     went live): a configured value the renderer cannot draw made its row
+     APPEAR mid-page (per-pixel lighting from `all = max` on software), and
+     live kept classic shadows where the start reduces mapped ones to fitted.
+     Now `PlayState::omkReduce` reduces a configured value as the start does
+     (mapped -> fitted, per-pixel -> per vertex, trilinear -> bilinear where
+     there is no mip chain), for the rows and for `all`; a hidden choice is
+     shown only while it is the one RUNNING (`OmkOptions::shown`); `all`
+     leaves alone the keys this renderer does not take at all; the reset
+     applies back only the rows shown. The check's expected sequence moved
+     with it: `all` applied live, shadows fitted (shown to fail with the
+     reduction removed). `engine: preload` had gone red at 3a (it pinned the
+     preset's literal 15, now `kRemasterPreset`) - it holds the table now.
+     **The rounded bodies stay "at the next start"**: the models keep their
+     flat rest (`m.flat`) but the player's is not kept, and actors and crowd
+     copies are cut from the rounded rest at load - live means re-cutting
+     every body on screen. Also waiting, and why: the emitters' light (baked
+     into a set's surface lights at load), a strength from 0 (its resources
+     load at start), Vulkan's MSAA (3c), `mode` (part B).
+   * 3d, as read: re-upload: texture filter/anisotropy (mips at upload), the texture
      pack, the rounded bodies (`remasterSmoothModel`, at model load).
    * The instrument for all of them: `--omk-set key=value@frame` (a harness,
      `playharness.cpp`, beside `harnessHideShow`), applied through

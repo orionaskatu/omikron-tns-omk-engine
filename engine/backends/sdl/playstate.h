@@ -786,10 +786,12 @@ struct PlayState {
     // false when it waits for the next start (`todo/graphics-menu.md` 3a)
     bool remasterApplyLive(const std::string& key, float v);
     std::map<std::string, float> remasterAtStart_;   // each strength as the start set it
+    void preloadReleaseAll();                      // the preload radius turned to 0, live
     void omkOptionsSetup();                        // OMK's pages, beside screen 35
     void omkOptionsOpen();                         // ...given this run's values, at each open
     void omkOptionsServe();                        // ...their changes written and applied
     bool omkApplyLive(const std::string& key, double v);   // ...one of them, on the running game
+    double omkReduce(const std::string& key, double v) const;   // ...as the start reduces it
     bool omkOpened_ = false;                       // omkOptionsOpen has run
     void remasterPrepareSet(SetLoad& L);           // a set's water, floors, probes, glows
     void remasterSmoothModel(CharModel& m, const std::string& name);

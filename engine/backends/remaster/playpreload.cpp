@@ -85,6 +85,35 @@ void PlayState::remasterFinish() {
     preloadDropped.clear();
 }
 
+// EVERY PRELOAD RELEASED at once - OMK's options menu turning the radius to 0
+// (`remasterApplyLive`), where `phasePreload` no longer runs to release them
+// by distance: each job still preparing cancelled and waited for, each set's
+// parked decode forgotten, the pins handed back
+void PlayState::preloadReleaseAll() {
+    const auto forgetParked = [](const SetLoad& L) {
+        std::vector<const omk::Texture*> ts;
+        for (const auto& t : L.out.tex) ts.push_back(&t);
+        omk::texturePack().forget(ts);
+    };
+    for (auto& [stem, pl] : preloads) {
+        if (!pl.L) continue;
+        if (pl.L->job && !pl.L->job->ready()) {
+            if (pl.cancel) pl.cancel();
+            pl.L->job->wait();
+        }
+        forgetParked(*pl.L);
+    }
+    for (const auto& L : preloadDropped) {
+        if (L->job) L->job->wait();
+        if (L->stoppedAt < 0) forgetParked(*L);
+    }
+    std::printf("preload: off - %zu prepared set(s) released\n", preloads.size());
+    preloads.clear();
+    preloadDropped.clear();
+    preloadDoorsKey[0] = preloadDoorsKey[1] = -1;   // the doors read again if it comes back
+    preloadPin();
+}
+
 void PlayState::preloadPin() {
     std::vector<omk::Texture> pins;
     for (const auto& [stem, p] : preloads)

@@ -968,6 +968,8 @@ public:
     void fitSupersample(int w, int h);                  // the factor the context holds
     bool setupTargets();                                // the targets around `colour_`
     bool retarget(int samples, int ss, float up);       // ...again, on a running renderer
+    void resolveAnisotropy();                           // what the context grants
+    bool retexture(int filter, int aniso) override;     // the filter again, the textures dropped
     bool relinkLighting(bool perPixel, bool shadowMap); // ...again, on a running renderer
     void setTextures(std::span<const Texture> t) override;
     void begin(const View& v) override;
@@ -986,7 +988,7 @@ public:
         return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
                omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
                omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
-               omk::kTakesEmitterLights;
+               omk::kTakesEmitterLights | omk::kTakesTrilinear;
     }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear - what the
     // original's HARDWARE device drew, MAG/MIN LINEAR with MIP NONE
@@ -1893,6 +1895,45 @@ bool GlesRenderer::retarget(int samples, int ss, float up) {
     return ok;
 }
 
+// THE ANISOTROPY the context grants - at `init`, and again by `retexture`
+void GlesRenderer::resolveAnisotropy() {
+    // the extension named, and its own
+    // maximum. Only behind trilinear, as Vulkan asks for the device feature
+    // only then; a refusal is SAID, the way `vulkan: anisotropy ignored` is.
+    anisoOn_ = 1;
+    if (aniso_ > 1) {
+        const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        GLfloat most = 1.0f;
+        const bool have = ext && std::strstr(ext, "GL_EXT_texture_filter_anisotropic");
+        if (have) glGetFloatv(kGlMaxAnisotropy, &most);
+        if (filter_ < 2)
+            std::printf("gles: anisotropy %d ignored - it needs trilinear filtering (a mip chain)\n", aniso_);
+        else if (!have || most < 2.0f)
+            std::printf("gles: anisotropy %d ignored - the context has no anisotropic filtering%s\n",
+                        aniso_, have ? " beyond 1x" : "");
+        else
+            anisoOn_ = std::min(aniso_, static_cast<int>(most));
+        if (anisoOn_ > 1) std::printf("gles: anisotropy %dx\n", anisoOn_);
+    }
+}
+
+// THE TEXTURE FILTER and the ANISOTROPY asked again on a running renderer
+// (OMK's options menu, `todo/graphics-menu.md` 3d): an upload keeps the
+// filter and the mip chain it was made with, so every upload is dropped -
+// the preloaded ones unpinned too - and the caller hands the pool over again
+bool GlesRenderer::retexture(int filter, int aniso) {
+    setTextureFilter(filter);
+    setAnisotropy(aniso);
+    if (!ready_) return true;
+    resolveAnisotropy();
+    setPreloadTextures({});
+    setTextures({});
+    forgetState();
+    std::printf("gles: retextured - %s filtering, anisotropy %d; every texture dropped, uploaded again\n",
+                filter_ == 0 ? "nearest" : filter_ == 1 ? "bilinear" : "trilinear", anisoOn_);
+    return true;
+}
+
 bool GlesRenderer::init(int w, int h) {
     w_ = w; h_ = h;
     // the environment can only turn it OFF - a probe's `setStateCache` holds
@@ -1975,24 +2016,7 @@ bool GlesRenderer::init(int w, int h) {
     gpuBuffer("vertex buffers", quad_, sizeof quad);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    // THE ANISOTROPY the context grants: the extension named, and its own
-    // maximum. Only behind trilinear, as Vulkan asks for the device feature
-    // only then; a refusal is SAID, the way `vulkan: anisotropy ignored` is.
-    anisoOn_ = 1;
-    if (aniso_ > 1) {
-        const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-        GLfloat most = 1.0f;
-        const bool have = ext && std::strstr(ext, "GL_EXT_texture_filter_anisotropic");
-        if (have) glGetFloatv(kGlMaxAnisotropy, &most);
-        if (filter_ < 2)
-            std::printf("gles: anisotropy %d ignored - it needs trilinear filtering (a mip chain)\n", aniso_);
-        else if (!have || most < 2.0f)
-            std::printf("gles: anisotropy %d ignored - the context has no anisotropic filtering%s\n",
-                        aniso_, have ? " beyond 1x" : "");
-        else
-            anisoOn_ = std::min(aniso_, static_cast<int>(most));
-        if (anisoOn_ > 1) std::printf("gles: anisotropy %dx\n", anisoOn_);
-    }
+    resolveAnisotropy();
     remasterInitCodecs();   // the pack's block formats (ASTC)
     if (omk::tieOff()) tieOn_ = false;
 #if defined(__vita__)

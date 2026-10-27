@@ -114,7 +114,7 @@ constexpr const char* kDustGlsl =
     "float dustAmount(vec3 e, vec3 w, vec4 dust) {\n"
     "    vec3 drift = vec3(dust.y, 0.0, dust.z);\n"
     "    float n = 0.25 + 0.75 * (dustNoise((mix(e, w, 0.5) + drift) * 0.0025) + dustNoise((w + drift) * 0.0025));\n"
-    "    return 1.0 - exp(-dust.x * n * length(w - e) / dust.w);\n"
+    "    return 1.0 - exp(-dust.x * n * (length(w - e) + 300.0) / dust.w);\n"
     "}\n";
 
 constexpr const char* kRipplesGlsl =

@@ -303,11 +303,14 @@ float dustNoise(vec3 x) {
                mix(mix(dustHash(i + vec3(0, 0, 1)), dustHash(i + vec3(1, 0, 1)), f.x),
                    mix(dustHash(i + vec3(0, 1, 1)), dustHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
-// -> how much of the dust's colour a point `w` seen from `e` takes
+// -> how much of the dust's colour a point `w` seen from `e` takes - with
+// `kDustNear` of dust in front of everything, so it drifts by the player too
+// (the reader: "make the moving fog go closer to the player")
+const float kDustNear = 300.0;
 float dustAmount(vec3 e, vec3 w, vec4 dust) {
     vec3 drift = vec3(dust.y, 0.0, dust.z);
     float n = 0.25 + 0.75 * (dustNoise((mix(e, w, 0.5) + drift) * 0.0025) + dustNoise((w + drift) * 0.0025));
-    return 1.0 - exp(-dust.x * n * length(w - e) / dust.w);
+    return 1.0 - exp(-dust.x * n * (length(w - e) + kDustNear) / dust.w);
 }
 
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)

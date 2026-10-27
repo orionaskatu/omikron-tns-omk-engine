@@ -78,7 +78,9 @@ flake). Whether the gate was closed on purpose, nothing records.
   the sand texture" - remaster only, since the fog is far from the original
   arm, which blits 200 pictures from `sand.bmp` and nothing else): a DUST
   FOG in both scene shaders (`View::dust`, `dustAmount`) - toward an ochre
-  lit by the set's ambient, as thick as the storm (`1 - exp(-s n d / 1400)`),
+  lit by the set's ambient, as thick as the storm (`1 - exp(-s n (d + 300) / 1100)` - the 300
+  of dust in front of everything, so it drifts by the player too: "make the
+  moving fog go closer"),
   its density `n` a 3D value noise at the fragment and the ray's middle,
   drifting with the wind on the weather's clock (held while paused), on the
   batches the game fogs (or marked -1 / -1) - and the grains back to small

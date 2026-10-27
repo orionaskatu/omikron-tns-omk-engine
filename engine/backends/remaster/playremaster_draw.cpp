@@ -45,7 +45,7 @@ void PlayState::remasterViewMist(omk::View& v) {
         v.dust = std::clamp(weatherSandLevel * rain3dStrength, 0.0f, 1.0f);
         v.dustDrift[0] = static_cast<float>(std::fmod(weatherClockMs * 0.30, 400000.0));   // 300 units a second
         v.dustDrift[1] = static_cast<float>(std::fmod(weatherClockMs * 0.04, 400000.0));
-        v.dustScale = 1400.0f;
+        v.dustScale = 1100.0f;   // 63% at full storm this far (1400 before it came nearer)
         for (int k = 0; k < 3; ++k) v.dustColour[k] = ochre[k] * amb;
     }
 }

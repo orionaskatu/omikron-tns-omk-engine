@@ -103,6 +103,7 @@ struct PlayState {
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
     float & wetFlag = opt.wetFlag;
+    float & rain3dFlag = opt.rain3dFlag;
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
     float & preloadFlag = opt.preloadFlag;
@@ -714,6 +715,9 @@ struct PlayState {
     float wetStrength{};     // the wet floors', 0 off (`o3de/wetfloor.h`)
     omk::Wetness wetness{};  // ...how wet they are now, after the shower
     bool wetTold{};          // ...whether the log last said they reflect
+    float rain3dStrength{};  // the rain drawn in the scene, 0 off (`playremaster_rain.cpp`)
+    std::vector<omk::WeatherDrop> rainDrops{};   // ...the weather's drops it takes, last stepped
+    omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
@@ -843,6 +847,11 @@ struct PlayState {
     void remasterLightsTold(const omk::View& v, const std::vector<std::pair<float, const omk::Light3do*>>& near,
                             const float at[3]);
     void remasterLitSet(std::vector<omk::Draw>& list);
+    // THE RAIN IN 3D (`playremaster_rain.cpp`): the weather hands its stepped
+    // drops over (-> true: the remaster draws them, the 2D streaks are not), and
+    // the next frame's draw list takes them as strips in the scene
+    bool remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits);
+    void remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v);
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
     bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures

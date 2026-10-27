@@ -197,6 +197,7 @@ bool PlayState::remasterApplyLive(const std::string& key, float v) {
     if (key == "water")     { waterStrength = v; return true; }
     if (key == "floors")    { floorStrength = v; return true; }
     if (key == "wet")       { wetStrength = v; return true; }
+    if (key == "rain3d")    { rain3dStrength = v; return true; }
     if (key == "relief")    { relief = v; return true; }
     if (key == "bodylight") { bodyLight = v; return true; }
     if (key == "ao") {

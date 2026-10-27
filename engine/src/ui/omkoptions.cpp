@@ -128,6 +128,7 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageRemaster, choice(kRem, "water", numbers({0, 0.3, 0.6, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "floors", numbers({0, 0.5, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "wet", numbers({0, 0.5, 1}, 0), kTakesWater, true));
+    add(kPageRemaster, choice(kRem, "rain3d", numbers({0, 0.5, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "mist", numbers({0, 0.25, 0.5, 1}, 0), kTakesMist, true));
     add(kPageRemaster, choice(kRem, "relief", numbers({0, 1, 2, 4}, 0), kTakesRelief, true));
     add(kPageRemaster, choice(kRem, "ao", numbers({0, 1, 2, 4}, 0), kTakesAmbientOcclusion, true));

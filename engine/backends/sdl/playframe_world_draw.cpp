@@ -1228,6 +1228,7 @@ void PlayState::worldMirror() {
         omk::greyClear565(view.clearColour, drawn.clearColour);
     }
     remasterLitSet(draws);   // the emitters' lights on the set (`backends/remaster/`)
+    remasterRainDraws(draws, drawn);   // the rain in the scene (`backends/remaster/`)
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
     // (it clears `fb` itself, BEFORE the eyes land in it - the deferred
     // clear here ran AFTER them from 4f6d611 on and left the frame black)

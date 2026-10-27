@@ -33955,6 +33955,114 @@ def c_engine_wet_floors():
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"
 
 
+def c_engine_rain3d():
+    r"""THE RAIN IN 3D - the remaster's (`todo/remaster.md`, "The rain in 3D";
+    `backends/remaster/playremaster_rain.cpp`). `[Remaster] rain3d = S` /
+    `--rain3d S` (0..1), the `--remaster` preset's 1, OFF unless named: the
+    game's own 200 drops (`o3de/weather.h` - the cycle, the box, the wind
+    untouched) drawn as strips IN the scene, the depth test hiding them behind
+    walls and a roof straight above (the shot soup, `sub_481200`'s world)
+    stopping them, where `sub_4815D0` draws 2D lines over the picture.
+
+    Parts (Anekbah's street at 1804, 0, -6890, `--detail 2`, the weather's
+    clock jumped past its first wait, 700 frames - the shower at full):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1;
+      2. Vulkan, `--rain3d 1`: at frame 690 the 200 drops taken, more than 50
+         drawn and some under a roof (`remaster.rain3d`), and the weather says
+         they are drawn in the scene - no 2D streaks;
+      3. Vulkan, `--rain3d 0`: the original's 2D streaks, more than 20;
+      4. the rain's pixels (against `--detail 1`, no rain) on Vulkan and on
+         GLES: more than 1000 each, the same pixels - overlap above 0.9.
+
+    Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
+    Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks.
+
+    SHOWN TO FAIL (2026-10-27): the roof test skipped - part 2 (0 under a
+    roof); the drops never taken (`remasterRainTake` false) - part 2, the 2D
+    streaks drawn again.
+
+    NOT CHECKED, judged by eye: the brightness and width; the density, which
+    is the original's 200 - half its box lies below the street, now hidden.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("rain3dStrength = rain3dFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+rain3d\s*=\s*0\.0f;", sh)),
+              'kRemaster, "rain3d"' in sc and 'kEnhancements, "rain3d"' not in sc,
+              "rain3d" not in max_body,
+              '!preset.empty() ? pv("rain3d") : 0.0f;' in pre and '{"rain3d", 1.0f}' in sh)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, detail, r3d):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                    "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                    "--frames", "700", "--detail", str(detail), "--rain3d", str(r3d), "--dump", out] + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, "", []
+            text = r.stdout + r.stderr
+            return open(out, "rb").read(), text, _events(text)
+        vkb = os.path.join(eng, "build", "omk-play")
+        on, out_on, ev = run(vkb, "on", 2, 1)
+        _, out_off, _ = run(vkb, "off", 2, 0)
+        dry, _, _ = run(vkb, "dry", 1, 1)
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            gon, _, _ = run(gb, "gon", 2, 1)
+            gdry, _, _ = run(gb, "gdry", 1, 1)
+            gl = ("no frame",) if gon is None or gdry is None else None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if on is None or dry is None:
+        return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
+    px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
+    moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
+    mv = moved(on, dry)
+    if gl is None:
+        mg = moved(gon, gdry)
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        the rain's pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+        gl = (len(mg) > 1000, iou > 0.9)
+    at = next((k for n, k in ev if n == "remaster.rain3d" and k.get("frame") == "690"), {})
+    took = ("frame 690: weather - 200 drops stepped, drawn in the scene by the remaster" in out_on,
+            "frame 690: weather - 200 drops stepped, " not in out_on.replace(
+                "frame 690: weather - 200 drops stepped, drawn in the scene", ""))
+    scene = (at.get("drops"), int(at.get("drawn", 0)) > 50, int(at.get("roofed", 0)) > 0) + took
+    m = re.search(r"frame 690: weather - 200 drops stepped, (\d+) streaks", out_off)
+    flat = int(m.group(1)) > 20 if m else None
+    print(f"        frame 690: {at}; the 2D path {m.group(1) if m else None} streaks; "
+          f"Vulkan {len(mv)} pixels; GLES {gl}")
+    return (src_ok, scene, flat, len(mv) > 1000, gl), \
+           ((True,) * 4, ("200", True, True, True, True), True, True, _or_skip(gl, (True, True))), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
+        "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
+        "pixels on Vulkan and GLES, the same"
+
+
 def c_engine_clip_memo():
     r"""THE REFLECTION'S CLIP MEMO ACROSS A RELOAD - the remaster audit's bug 2
     (`todo/remaster.md`, "The audit of the whole remaster"; `clipAbove` in
@@ -49718,8 +49826,9 @@ def c_licence_headers():
     # 691: + `engine/backends/gl1/gl1sdlhost.{h,cpp}` (the SDL build's GL window on
     # Mac OS X, `todo/handoff-classic-mac.md` 3g)
     # 693: + `engine/src/o3de/wetfloor.{h,cpp}` (the rain's wet floors, todo/remaster.md)
+    # 694: + `engine/backends/remaster/playremaster_rain.cpp` (the rain in 3D)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (693, [], 10, []), \
+           (694, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -52532,6 +52641,7 @@ SLOW = [
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
     ("engine: wet floors",   c_engine_wet_floors,   "todo/remaster.md wet floors; o3de/wetfloor.h"),
+    ("engine: rain 3d",      c_engine_rain3d,       "todo/remaster.md rain in 3D; backends/remaster/playremaster_rain.cpp"),
     ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),
     ("engine: vulkan images", c_engine_vulkan_images, "todo/remaster.md audit bug 4; backends/vulkan/vkrender.cpp makeImage2D"),
     ("engine: vulkan teardown", c_engine_vulkan_teardown, "todo/remaster.md audit cleanliness; backends/vulkan/vkrender.cpp ~VulkanRenderer"),

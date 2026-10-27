@@ -15,6 +15,7 @@ void PlayState::weatherFrame(const omk::View& v) {
     weatherLines.clear();
     weatherFlakes.clear();
     weatherRain = 0.0f;
+    rainDrops.clear();   // the remaster's 3D rain takes them afresh, or has none
     auto& session = *session_;
     weatherClockMs += frameSec * 1000.0;
     // `OMK_WEATHER_SKIP_MS=N`: an INSTRUMENT - the weather's clock jumps N ms
@@ -84,6 +85,14 @@ void PlayState::weatherFrame(const omk::View& v) {
         if (frameNo % 30 == 0)
             std::printf("frame %ld: weather - state %d, %d drops, nothing stepped%s\n", frameNo,
                         weather.state(), weather.count(), covered ? " (a roof overhead)" : "");
+        return;
+    }
+    // THE RAIN IN 3D (the remaster's, `backends/remaster/playremaster_rain.cpp`):
+    // these same drops drawn in the scene by the next frame's list, not here
+    if (remasterRainTake(drops, viewBits)) {
+        if (frameNo % 30 == 0)
+            std::printf("frame %ld: weather - %zu drops stepped, drawn in the scene by the remaster\n",
+                        frameNo, drops.size());
         return;
     }
     // the projection the world was drawn with; the near clip `sub_4751A0` at

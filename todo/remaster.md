@@ -1184,10 +1184,39 @@ only at *Niveau de détail* 2.
   eight bits (`View::rain`; GLES `uRain`, `uRippleClock`, the world's x and z
   as `vWxz`); `scene.frag`'s `ripples` and GLES's `kRipplesGlsl` are twins.
   Frames 700 -> 716 at full rain move 73954 pixels wet, 33097 dry.
-* **Next, not built**: the rain itself in 3D, depth-tested and stopped by the
-  same roofs; the mist and the grade answering the shower; the snow
+* **Next, not built**: the mist and the grade answering the shower; the snow
   settling on Mahaleel's open ground. The cave's snow static
   (ASSETS 4e) is the original's and stays in both modes.
+
+## The rain in 3D: as built (2026-10-27)
+
+The reader's "continue" after the wet floors - item 3 of the weather list.
+
+* `[Remaster] rain3d = S` / `--rain3d S` (0..1, the streaks' brightness), the
+  `--remaster` preset's **1**, off unless named; OMK's Remaster page "Pluie
+  en 3D" / "3D rain". `backends/remaster/playremaster_rain.cpp`; Vulkan and
+  GLES (`kTakesWater`'s backends), and only while the remaster shows (F10).
+* **The SAME drops**: `weatherFrame` hands the 200 it stepped to
+  `remasterRainTake` - the cycle, the count, the box a third of its size
+  ahead of the eye, the wind, all the original's, untouched - and draws no 2D
+  streak; the next frame's draw list takes them (one frame late, a few
+  units). The snow keeps the original's sprites.
+* **In the scene**: each drop a strip from the drop to its tail (12 frames of
+  wind, as the line), turned to face the eye, half a pixel each side at
+  480 lines (scaled with the frame), ADDITIVE and untextured (a pool slot past
+  every texture binds the backends' white; the mesh path's 0x2100 state),
+  from the fog colour at the drop to 0xC0C0C0 at the tail, times S. The depth
+  test hides it behind a wall - and below the street, where half the
+  original's box lies: Anekbah's street shows fewer streaks than the 2D
+  rain, the same 200 with the impossible ones gone.
+* **Stopped by a roof**: a ray straight up (4000) from each drop through the
+  set's shot soup - `sub_481200`'s world, as the wet floors' - and a drop
+  that meets one is not drawn: 31 of 200 in Anekbah's street at frame 690,
+  135 drawn (the rest off screen or behind the eye).
+* Measured (M3, 640x480): the rain's pixels 2110 on Vulkan, 2109 on GLES,
+  overlap 1.000. `verify.py: engine: rain 3d`.
+* **Open**: the density - a remaster could add drops where the original's
+  box is underground; the width at a grazing view; the snow in 3D.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

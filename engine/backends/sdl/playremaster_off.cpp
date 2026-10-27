@@ -58,6 +58,8 @@ void PlayState::remasterPointLights(omk::View&, std::vector<std::pair<float, con
 void PlayState::remasterLightsTold(const omk::View&, const std::vector<std::pair<float, const omk::Light3do*>>&,
                                    const float[3]) {}
 void PlayState::remasterLitSet(std::vector<omk::Draw>&) {}
+bool PlayState::remasterRainTake(const std::vector<omk::WeatherDrop>&, unsigned) { return false; }
+void PlayState::remasterRainDraws(std::vector<omk::Draw>&, const omk::View&) {}
 bool PlayState::remasterDrawReflected(omk::Renderer&, std::span<const omk::Draw>, const omk::View&) { return false; }
 void PlayState::bodyTint(const float[3], float out[3]) const { out[0] = out[1] = out[2] = 1.0f; }
 

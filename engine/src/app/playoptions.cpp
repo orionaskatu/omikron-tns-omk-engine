@@ -308,7 +308,8 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2, --floors 1, --wet 1, --mist 0.5, --smooth\n"
+"                   --relief 2, --ao 2, --floors 1, --wet 1, --rain3d 1, --mist\n"
+"                   0.5, --smooth\n"
 "                   0.75, --preload 25, the interface pack in DIR/ui/pack,\n"
 "                   the font pack in DIR/fonts/pack and the film pack in\n"
 "                   DIR/films/pack when there are; a specific flag or key\n"
@@ -336,6 +337,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   (option row 7 at 2), the floors under the open sky wet and\n"
 "                   reflect the scene, strength S (0..1), drying over 2 minutes\n"
 "                   after; Vulkan and GLES only; [Remaster] wet=S\n"
+"  --rain3d S       REMASTER, off by default: the game's own rain drawn in the\n"
+"                   scene - its drops hidden by walls and stopped by roofs -\n"
+"                   brightness S (0..1); Vulkan and GLES only; [Remaster]\n"
+"                   rain3d=S\n"
 "  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
 "                   light around them, strength S (0..1); Vulkan and GLES only;\n"
 "                   [Remaster] bodylight=S\n"
@@ -656,6 +661,13 @@ int PlayOptions::parse(int argc, char** argv) {
             floorsFlag = static_cast<float>(std::atof(argv[++i]));
             if (floorsFlag < 0.0f || floorsFlag > 1.0f) {
                 std::fprintf(stderr, "--floors %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--rain3d" && i + 1 < argc) {
+            rain3dFlag = static_cast<float>(std::atof(argv[++i]));
+            if (rain3dFlag < 0.0f || rain3dFlag > 1.0f) {
+                std::fprintf(stderr, "--rain3d %s: not 0..1\n", argv[i]);
                 return 2;
             }
         }

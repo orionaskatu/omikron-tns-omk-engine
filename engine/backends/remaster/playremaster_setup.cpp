@@ -61,7 +61,7 @@ void PlayState::remasterSetup() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s, floors %s, wet %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s, floors %s, wet %s, rain3d %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : pvText("bloom").c_str(),
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
@@ -72,6 +72,7 @@ void PlayState::remasterSetup() {
                         aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : pvText("ao").c_str(),
                         floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : pvText("floors").c_str(),
                         wetFlag >= 0.0f || settings.wetSource == omk::Settings::Source::Ini ? "as set" : pvText("wet").c_str(),
+                        rain3dFlag >= 0.0f || settings.rain3dSource == omk::Settings::Source::Ini ? "as set" : pvText("rain3d").c_str(),
                         mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : pvText("mist").c_str(),
                         smoothFlag >= 0.0f || settings.smoothSource == omk::Settings::Source::Ini ? "as set" : pvText("smooth").c_str());
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
@@ -176,6 +177,14 @@ void PlayState::remasterSetup() {
             std::printf("wet: %.2f - a REMASTER feature: the game's rain wets the floors under the open sky, "
                         "drawn by Vulkan and GLES only; the rain needs option row 7 at 2\n",
                         static_cast<double>(wetStrength));
+        // THE RAIN IN 3D (`playremaster_rain.cpp`): its flag, its key, the preset's 1
+        rain3dStrength = rain3dFlag >= 0.0f ? rain3dFlag
+                       : settings.rain3dSource == omk::Settings::Source::Ini ? settings.rain3d
+                       : !preset.empty() ? pv("rain3d") : 0.0f;
+        if (rain3dStrength > 0.0f)
+            std::printf("rain3d: %.2f - a REMASTER feature: the game's rain drawn in the scene, hidden by walls "
+                        "and stopped by roofs, Vulkan and GLES only; the rain needs option row 7 at 2\n",
+                        static_cast<double>(rain3dStrength));
         // the WATER reflection: its flag, its key, then the preset's 0.6 (0.35 before the Fresnel, 2026-10-20)
         waterStrength = waterFlag >= 0.0f ? waterFlag
                       : settings.waterSource == omk::Settings::Source::Ini ? settings.water
@@ -280,7 +289,7 @@ void PlayState::remasterSetup() {
     // (`remasterApplyLive`) and the switch brings back: only one ON here had
     // its resources loaded
     remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
-                        {"wet", wetStrength}, {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
+                        {"wet", wetStrength}, {"rain3d", rain3dStrength}, {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
                         {"bodylight", bodyLight}, {"fxlight", fxLight}};
 }
 

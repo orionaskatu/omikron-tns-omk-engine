@@ -70,6 +70,7 @@
 #include "o3de/vertexlight.h"
 #include "o3de/postfx.h"
 #include "o3de/framegen.h"
+#include "o3de/rtscene.h"
 #include "platform/env.h"
 #include "platform/events.h"
 
@@ -124,6 +125,27 @@ const uint32_t kFragMv[] =
 ;
 const uint32_t kFragSoftMv[] =
 #include "scene_soft_mv.frag.inc"
+;
+// HYBRID RAY TRACING's (`todo/enhancements.md` 19): the scene pass and the AO pass built -DOMK_RT
+// (`rt.glsl`: VK_KHR_ray_query; the rays' three sets as 4, 5, 6 here and 1, 2, 3 for the AO pass),
+// the scene pass's motion build and its COUNTING builds (the rays' tally), the AO's multisampled one
+const uint32_t kFragRt[] =
+#include "scene_rt.frag.inc"
+;
+const uint32_t kFragRtMv[] =
+#include "scene_rt_mv.frag.inc"
+;
+const uint32_t kFragRtc[] =
+#include "scene_rtc.frag.inc"
+;
+const uint32_t kFragRtcMv[] =
+#include "scene_rtc_mv.frag.inc"
+;
+const uint32_t kSsaoRtFrag[] =
+#include "ssao_rt.frag.inc"
+;
+const uint32_t kSsaoRtMsFrag[] =
+#include "ssao_rt_ms.frag.inc"
 ;
 const uint32_t kFgCapFrag[] =
 #include "fg_cap.frag.inc"
@@ -190,6 +212,10 @@ const uint32_t kSsaoBlurMsFrag[] =
 #include "ssao_blur_ms.frag.inc"
 ;
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
+// ...the RAY-TRACED AO's (`ssao.frag` -DOMK_RT): the camera in the world after it
+struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
+// `scene.frag`'s `RtFrame` block (-DOMK_RT), shared with the Direct3D 12 backend
+using RtFrame = omk::rt::Frame;
 
 // The map's side. 1024 is a shadow of a handful of CHARACTERS over a slab a
 // few metres across, so a texel is centimetres.
@@ -344,6 +370,15 @@ public:
         wantSsao_ = on;
         return true;
     }
+    // HYBRID RAY TRACING (`todo/enhancements.md` 19): honoured in `init` when the device has
+    // VK_KHR_ray_query (`pickDevice`, `rtInit`) - the same contract as Direct3D 12's
+    bool setRaytracing(bool on) override {
+        if (dev_ != VK_NULL_HANDLE) return false;
+        rtWant_ = on;
+        return true;
+    }
+    bool raytracingLive() const override { return rtOn_; }
+    bool rtReflectionsLive() const override { return rtReflOn_; }   // (RAY-TRACED REFLECTIONS, row 26: not yet)
     bool setMultisample(int samples) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
@@ -621,6 +656,7 @@ private:
         // THE TEXTURE PACK's k (`o3de/texpack.h`): the image is k x the
         // original, the UVs stay in the original's units (`scene.frag`)
         int scale = 1;
+        int rt = -1;      // HYBRID RAY TRACING: its place in the bindless texture table
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
@@ -674,6 +710,92 @@ private:
     bool makeSsao();
     void killSsao();
     void runSsao();
+
+    // ---- HYBRID RAY TRACING (`todo/enhancements.md` 19, 26; off unless asked) ----
+    // VK_KHR_ray_query over VK_KHR_acceleration_structure, probed and enabled at the device
+    // (`pickDevice`), made in `rtInit`; the methods and their notes are under "HYBRID RAY TRACING"
+    // below. What goes into a BLAS is `o3de/rtscene.h`'s, shared with Direct3D 12.
+    struct RtBuf {
+        VkBuffer b = VK_NULL_HANDLE; VkDeviceMemory m = VK_NULL_HANDLE;
+        void* p = nullptr; VkDeviceSize cap = 0; VkDeviceAddress va = 0;
+    };
+    struct RtBlas {
+        VkAccelerationStructureKHR as = VK_NULL_HANDLE; RtBuf asBuf; VkDeviceAddress asAddr = 0;   // the BLAS
+        RtBuf pos;                                  // corners, float3
+        RtBuf rec;                                  // 16 words a triangle
+        int recSlot = -1;                           // the records' place in the bindless table
+        std::uint32_t nOpaque = 0, nCut = 0;        // opaque triangles first, then the cutout ones
+        std::uint64_t rev = ~0ull;                  // a set's: the geometry's revision it was made from
+        std::vector<std::int32_t> triOf;            // a set's: corner / 3 -> its record, -1 none
+        std::map<std::size_t, std::pair<std::size_t, std::uint32_t>> texAt;   // draw start -> count, texture written
+        std::uint64_t texGen = 0;
+        long seen = 0;                              // the frame it was last drawn
+        bool built = false;
+    };
+    using RtTri = omk::rt::Tri;
+    using RtRun = omk::rt::Run;
+    using RtBodyNote = omk::rt::BodyNote;
+    static constexpr int kRtTexSlots = 4096, kRtRecSlots = 2048;
+    bool rtWant_ = false, rtFeat_ = false, rtOn_ = false, rtCountFeat_ = false;
+    bool rtWantRefl_ = false, rtReflOn_ = false;   // RAY-TRACED REFLECTIONS (row 26)
+    uint32_t instApi_ = VK_API_VERSION_1_1;        // the instance's API version
+    VkDeviceSize rtScratchAlign_ = 256;
+    PFN_vkCreateAccelerationStructureKHR rtCreateAs_ = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR rtDestroyAs_ = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR rtCmdBuild_ = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR rtBuildSizes_ = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR rtAsAddr_ = nullptr;
+    // set A (the TLAS, the instance table, `RtFrame`, the sampler, the rays' tally), B (the records'
+    // buffers) and C (the textures) - the last two bindless; `dslEmpty_` fills set 3 when soft
+    // particles do not
+    VkDescriptorSetLayout rtDslA_ = VK_NULL_HANDLE, rtDslB_ = VK_NULL_HANDLE, rtDslC_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout dslEmpty_ = VK_NULL_HANDLE;
+    VkDescriptorPool rtPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet rtDsA_ = VK_NULL_HANDLE, rtDsB_ = VK_NULL_HANDLE, rtDsC_ = VK_NULL_HANDLE;
+    VkSampler rtSampler_ = VK_NULL_HANDLE;
+    std::vector<int> rtTexFree_, rtRecFree_;
+    int rtTexNext_ = 0, rtRecNext_ = 0;
+    VkAccelerationStructureKHR rtTlas_ = VK_NULL_HANDLE;
+    VkDeviceSize rtTlasScratch_ = 0;
+    RtBuf rtTlasBuf_, rtInstDesc_, rtInstTab_, rtScratch_, rtFrameBuf_, rtCountBuf_;
+    std::vector<VkAccelerationStructureKHR> rtDeadAs_;   // freed at the next `begin`
+    VkCommandBuffer rtCb_ = VK_NULL_HANDLE;      // the builds', submitted just before the frame's
+    bool rtRecorded_ = false;
+    std::map<const omk::Geometry*, RtBlas> rtSet_;
+    RtBlas rtBodyAll_;                           // EVERY body of the frame, one BLAS
+    omk::rt::BodyNotes rtNotes_;
+    long rtFloorDraws_ = 0;                      // ...the ground draws this frame, for the log
+    bool rtBodyDraw_ = false;                    // the draw going to `submitOne` is a body
+    bool rtCounting_ = false;                    // this frame draws `pipeCount_` (one in 60)
+    long rtCounted_ = 0;                         // ...frames so drawn
+    VkPipeline pipeCount_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    std::uint64_t texGen_ = 1;                   // bumped when a texture's slot goes
+    long rtFrame_ = 0;
+    float rtEye_[3] = {}, rtS_[3] = {}, rtU_[3] = {}, rtF_[3] = {};
+    int rtInstances_ = 0, rtSets_ = 0, rtBodies_ = 0, rtBodyCount_ = 0, rtToldInst_ = -1, rtTold_ = 0;
+    long rtSetBuilds_ = 0, rtBodyBuilds_ = 0, rtBodyRefits_ = 0, rtBodyRebuilt_ = 0;
+    std::uint64_t rtBodySig_ = 0;
+    long long rtSetTris_ = 0, rtBodyTris_ = 0, rtAoRays_ = 0;
+    std::uint32_t rtCounts_[4] = {};
+    double rtCpuMs_ = 0.0;
+    bool rtInit();
+    void rtKill();
+    bool rtBuffer(RtBuf& r, VkDeviceSize bytes, VkBufferUsageFlags use, bool host, const char* tag);
+    void rtRetire(RtBuf& r);
+    void rtFree(RtBuf& r);
+    bool rtMapped(RtBuf& r, VkDeviceSize bytes, VkBufferUsageFlags use);
+    void rtWriteTex(int slot, VkImageView view);
+    void rtWriteRec(int slot, VkBuffer b);
+    int rtAllocTex(VkImageView view);
+    void rtFreeTex(int slot);
+    std::uint32_t rtTexWord(std::size_t slot) const;
+    void rtBind(const omk::View& view);
+    bool rtFill(RtBlas& b, const std::vector<RtTri>& tri);
+    RtBlas* rtSetFor(const omk::Geometry* g);
+    void rtNote(const omk::Draw& d);
+    void rtDrop(RtBlas& b);
+    void rtBuild();
+    void rtAfter();
 
     // ---- THE POST CHAIN (`todo/enhancements.md` 22) ----------------------
     //
@@ -982,7 +1104,9 @@ void* VulkanRenderer::createInstanceOnly() {
     if (inst_ != VK_NULL_HANDLE) return inst_;
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "omk";
-    app.apiVersion = VK_API_VERSION_1_1;
+    // HYBRID RAY TRACING needs Vulkan 1.2 (SPIR-V 1.5, buffer device address, descriptor indexing)
+    app.apiVersion = rtWant_ ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;
+    instApi_ = app.apiVersion;
     // MoltenVK is a PORTABILITY driver: without this extension and flag the
     // loader reports zero devices on macOS and the failure looks like "no GPU"
     // rather than "not asked for".
@@ -1102,7 +1226,74 @@ bool VulkanRenderer::pickDevice() {
                      filter_ < 2 ? "it needs trilinear filtering (a mip chain)"
                                  : "the device has no samplerAnisotropy feature");
     }
+    // HYBRID RAY TRACING (`todo/enhancements.md` 19): VK_KHR_ray_query and the acceleration structures
+    // it traces, the descriptor-indexing features the bindless tables need, buffer device address;
+    // asked for only when the device has all of them, else a line says what is missing and the frames
+    // are drawn without
+    VkPhysicalDeviceVulkan12Features rt12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR rtAs{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR rtRq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    rtFeat_ = false;
+    if (rtWant_) {
+        const auto has = [&](const char* name) {
+            for (const auto& e : exts)
+                if (std::strcmp(e.extensionName, name) == 0) return true;
+            return false;
+        };
+        const char* why = nullptr;
+        if (instApi_ < VK_API_VERSION_1_2 || props_.apiVersion < VK_API_VERSION_1_2)
+            why = "the device does not speak Vulkan 1.2";
+        else if (!has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) || !has(VK_KHR_RAY_QUERY_EXTENSION_NAME) ||
+                 !has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME))
+            why = "the device has no VK_KHR_ray_query / VK_KHR_acceleration_structure";
+        else if (props_.limits.maxBoundDescriptorSets < 7)
+            why = "the device binds fewer than 7 descriptor sets";
+        else {
+            VkPhysicalDeviceVulkan12Features h12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            VkPhysicalDeviceAccelerationStructureFeaturesKHR hAs{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+            VkPhysicalDeviceRayQueryFeaturesKHR hRq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+            VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            f2.pNext = &h12; h12.pNext = &hAs; hAs.pNext = &hRq;
+            vkGetPhysicalDeviceFeatures2(phys_, &f2);
+            VkPhysicalDeviceVulkan12Properties p12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR pAs{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+            VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            p2.pNext = &p12; p12.pNext = &pAs;
+            vkGetPhysicalDeviceProperties2(phys_, &p2);
+            if (!hAs.accelerationStructure || !hRq.rayQuery) why = "the device cannot trace rays in a fragment shader";
+            else if (!h12.bufferDeviceAddress) why = "the device has no buffer device address";
+            else if (!h12.runtimeDescriptorArray || !h12.descriptorBindingPartiallyBound ||
+                     !h12.shaderSampledImageArrayNonUniformIndexing || !h12.shaderStorageBufferArrayNonUniformIndexing ||
+                     !h12.descriptorBindingSampledImageUpdateAfterBind || !h12.descriptorBindingStorageBufferUpdateAfterBind)
+                why = "the device lacks the descriptor indexing the bindless tables need";
+            else if (p12.maxPerStageDescriptorUpdateAfterBindSampledImages < kRtTexSlots + 16u ||
+                     p12.maxPerStageDescriptorUpdateAfterBindStorageBuffers < kRtRecSlots + 16u ||
+                     p12.maxDescriptorSetUpdateAfterBindSampledImages < kRtTexSlots + 16u ||
+                     p12.maxDescriptorSetUpdateAfterBindStorageBuffers < kRtRecSlots + 16u)
+                why = "the device's update-after-bind descriptor limits are too small";
+            else
+                rtScratchAlign_ = std::max<VkDeviceSize>(16, pAs.minAccelerationStructureScratchOffsetAlignment);
+        }
+        if (why) {
+            std::printf("vulkan: ray tracing asked for, but %s - off\n", why);
+        } else {
+            rtFeat_ = true;
+            for (const char* name : {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                                     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME})
+                want.push_back(name);
+            rt12.bufferDeviceAddress = rt12.runtimeDescriptorArray = rt12.descriptorBindingPartiallyBound = VK_TRUE;
+            rt12.shaderSampledImageArrayNonUniformIndexing = rt12.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+            rt12.descriptorBindingSampledImageUpdateAfterBind = rt12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+            rtAs.accelerationStructure = VK_TRUE;
+            rtRq.rayQuery = VK_TRUE;
+            rt12.pNext = &rtAs; rtAs.pNext = &rtRq;
+            // the rays' tally is written from the fragment shader (one frame in 60)
+            rtCountFeat_ = have.fragmentStoresAndAtomics != VK_FALSE;
+            if (rtCountFeat_) enable.fragmentStoresAndAtomics = VK_TRUE;
+        }
+    }
     VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    if (rtFeat_) di.pNext = &rt12;
     di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &qi;
     di.pEnabledFeatures = &enable;
     di.enabledExtensionCount = static_cast<uint32_t>(want.size());
@@ -1196,14 +1387,15 @@ bool VulkanRenderer::makeTarget() {
         std::fprintf(stderr, "vulkan: no depth+stencil format\n"); return false;
     }
     ssaoOn_ = false;
-    if (wantSsao_) {
+    // (ray tracing runs the AO pass too, its rays in place of the hemisphere)
+    if (wantSsao_ || rtOn_) {
         VkFormatProperties fp{};
         vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
         // under MSAA the multisampled depth is sampled as it is (its first
         // sample), which the device must allow at this count
         const bool msOk = !msaa || (props_.limits.sampledImageDepthSampleCounts & samples_);
         ssaoOn_ = msOk && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
-        if (!resizing_)
+        if (!resizing_ && !(rtOn_ && ssaoOn_))
             std::printf(ssaoOn_ ? "vulkan: SSAO on - an ENHANCEMENT: ambient occlusion from the "
                                   "depth buffer, multiplied over the frame%s\n"
                                 : "vulkan: SSAO asked for but not available (%s)\n",
@@ -1628,9 +1820,14 @@ bool VulkanRenderer::makePipelines() {
         VKCHECK(vkCreateSampler(dev_, &ssi, nullptr, &softSampler_), "soft sampler");
         writeSoftSet();
     }
-    const VkDescriptorSetLayout sets[4] = {dsl_, dsl1_, dsl2_, dsl3_};
+    // HYBRID RAY TRACING's three sets (`rt.glsl`) follow as 4, 5 and 6; with no soft particles set 3 is empty
+    if (rtOn_ && !softOn_) {
+        VkDescriptorSetLayoutCreateInfo de{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        VKCHECK(vkCreateDescriptorSetLayout(dev_, &de, nullptr, &dslEmpty_), "descriptorSetLayout3 (empty)");
+    }
+    const VkDescriptorSetLayout sets[7] = {dsl_, dsl1_, dsl2_, softOn_ ? dsl3_ : dslEmpty_, rtDslA_, rtDslB_, rtDslC_};
     VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pli.setLayoutCount = softOn_ ? 4 : 3; pli.pSetLayouts = sets;
+    pli.setLayoutCount = rtOn_ ? 7 : softOn_ ? 4 : 3; pli.pSetLayouts = sets;
     pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
     VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &plo_), "pipelineLayout");
 
@@ -1642,7 +1839,11 @@ bool VulkanRenderer::makePipelines() {
         return m;
     };
     VkShaderModule vs = mvOn_ ? module(kVertMv, sizeof(kVertMv)) : module(kVert, sizeof(kVert));
-    VkShaderModule fs = mvOn_ ? module(kFragMv, sizeof(kFragMv)) : module(kFrag, sizeof(kFrag));
+    VkShaderModule fs = rtOn_ ? (mvOn_ ? module(kFragRtMv, sizeof(kFragRtMv)) : module(kFragRt, sizeof(kFragRt)))
+                      : mvOn_ ? module(kFragMv, sizeof(kFragMv)) : module(kFrag, sizeof(kFrag));
+    // ...and the scene pass that COUNTS its rays (`pipeCount_`, one frame in 60)
+    VkShaderModule fsCount = !(rtOn_ && rtCountFeat_) ? VK_NULL_HANDLE
+                           : mvOn_ ? module(kFragRtcMv, sizeof(kFragRtcMv)) : module(kFragRtc, sizeof(kFragRtc));
     VkShaderModule fsSoft = !softOn_ ? VK_NULL_HANDLE
                           : mvOn_ ? module(kFragSoftMv, sizeof(kFragSoftMv)) : module(kFragSoft, sizeof(kFragSoft));
     // FRAME GENERATION: the pass's second target takes the motion of OPAQUE geometry only - an additive glow
@@ -1758,6 +1959,14 @@ bool VulkanRenderer::makePipelines() {
             VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeSoft_[k]),
                     "soft pipeline");
             gp.pStages = stages; gp.pDepthStencilState = &ds;
+        }
+        if (fsCount) {
+            VkPipelineShaderStageCreateInfo cs[2] = {stages[0], stages[1]};
+            cs[1].module = fsCount;
+            gp.pStages = cs;
+            VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeCount_[k]),
+                    "counting pipeline");
+            gp.pStages = stages;
         }
         // DEPTH OF FIELD'S TRANSLUCENT SUBJECT: a blended body (a hologram, a
         // ghost) writes no depth, so the post pass saw the wall behind it and
@@ -1879,6 +2088,7 @@ bool VulkanRenderer::makePipelines() {
     vkDestroyShaderModule(dev_, vs, nullptr);
     vkDestroyShaderModule(dev_, fs, nullptr);
     if (fsSoft) vkDestroyShaderModule(dev_, fsSoft, nullptr);
+    if (fsCount) vkDestroyShaderModule(dev_, fsCount, nullptr);
 
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
@@ -3449,6 +3659,9 @@ bool VulkanRenderer::init(int w, int h) {
     rw_ = w_ * ss_; rh_ = h_ * ss_;
     srcW_ = rw_; srcH_ = rh_;
     if (!pickDevice()) return false;
+    // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`), and its REFLECTIONS on the
+    // ground (`todo/enhancements.md` 26)
+    if (rtFeat_) rtInit();
     if (!makeTarget()) return false;
     if (!makePipelines()) return false;
     // The window is 640x480 while the 3D target is the letterboxed 640x352.
@@ -3569,6 +3782,8 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vi.format = VK_FORMAT_R8G8B8A8_UNORM;
         vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
         vkCreateImageView(dev_, &vi, nullptr, &out.view);
+        // HYBRID RAY TRACING reads it bindless, from a table of its own
+        if (rtOn_) out.rt = rtAllocTex(out.view);
 
         VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
@@ -3614,6 +3829,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (old.view) vkDestroyImageView(dev_, old.view, nullptr);
         if (old.img)  vkDestroyImage(dev_, old.img, nullptr);
         if (old.mem)  freeDeviceMemory(old.mem);
+        rtFreeTex(old.rt);
         it = uploaded_.erase(it);
     }
     tex_.assign(t.size(), Tex{});
@@ -4026,6 +4242,8 @@ void VulkanRenderer::begin(const omk::View& view) {
     poseUsed_ = 0;
     poseCache_.clear();
     // the previous frame's fence has been waited on (the present ends with it)
+    for (auto as : rtDeadAs_) rtDestroyAs_(dev_, as, nullptr);   // (before the buffers they live in)
+    rtDeadAs_.clear();
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);
@@ -4119,6 +4337,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     recording_ = true;
     depthRo_ = false;
     softDraws_ = 0;
+    if (rtOn_) rtBind(view);
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
     aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
     aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
@@ -4204,6 +4423,14 @@ void VulkanRenderer::submit(const omk::Draw& d) {
     if (dofOn_) foc_.note(d);
     curBody_ = (d.meshPose && d.meshPoses) || d.castsShadow;
     if (!recording_ || !d.geo || !d.count) return;
+    // HYBRID RAY TRACING: the draw into the frame's acceleration structures, and a posed body
+    // takes the character's traced terms even with the game's shadows off (`caster` - no shadow
+    // then receives anyway)
+    if (rtOn_) {
+        rtNote(d);
+        rtBodyDraw_ = omk::rt::isBodyDraw(d);
+        rtFloorDraws_ += (d.lit & omk::kDrawFloor) != 0;
+    }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         uint32_t off = 0;
         if (poseDs_ != VK_NULL_HANDLE && writePose(d, off)) submitOne(d, true, off);
@@ -4263,6 +4490,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                    : reflStencil_   ? pipeRefl_[k]
                    : soft           ? pipeSoft_[k]
                    : subj           ? pipeSubj_[k]
+                   : rtCounting_ && pipeCount_[k] != VK_NULL_HANDLE ? pipeCount_[k]
                                     : pipe_[k];
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
@@ -4288,8 +4516,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // bit 0 the cutout; bits 8.. a TEXTURE PACK slot's k (`scene.frag`), 0 for none
     const int packK = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot].scale : 1;
     push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
-    push_.caster = d.castsShadow ? 1 : 0;
-    push_.lit = litCount_ > 0 ? d.lit : (d.lit & omk::kDrawShine);
+    push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
+    push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
+    if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and
     // it MUST be the same rule or the two backends draw different pictures.
@@ -4464,9 +4693,11 @@ bool VulkanRenderer::makeSsao() {
         }
         vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
     }
-    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(SsaoPush)};
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, static_cast<uint32_t>(rtOn_ ? sizeof(SsaoRtPush) : sizeof(SsaoPush))};
     VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pli.setLayoutCount = 1; pli.pSetLayouts = &aoDsl_;
+    // RAY-TRACED: the rays' three sets after the pass's own (`ssao.frag` -DOMK_RT_SET=1..3)
+    const VkDescriptorSetLayout aoSets[4] = {aoDsl_, rtDslA_, rtDslB_, rtDslC_};
+    pli.setLayoutCount = rtOn_ ? 4 : 1; pli.pSetLayouts = aoSets;
     pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pcr;
     VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &aoPlo_), "ssao pipeline layout");
     const auto module = [&](const uint32_t* code, size_t bytes) {
@@ -4534,9 +4765,11 @@ bool VulkanRenderer::makeSsao() {
         return true;
     };
     if (samples_ != VK_SAMPLE_COUNT_1_BIT)
-        return pipe(kSsaoMsFrag, sizeof(kSsaoMsFrag), aoPass_, false, aoPipe_) &&
+        return (rtOn_ ? pipe(kSsaoRtMsFrag, sizeof(kSsaoRtMsFrag), aoPass_, false, aoPipe_)
+                      : pipe(kSsaoMsFrag, sizeof(kSsaoMsFrag), aoPass_, false, aoPipe_)) &&
                pipe(kSsaoBlurMsFrag, sizeof(kSsaoBlurMsFrag), aoApplyPass_, true, aoBlurPipe_);
-    return pipe(kSsaoFrag, sizeof(kSsaoFrag), aoPass_, false, aoPipe_) &&
+    return (rtOn_ ? pipe(kSsaoRtFrag, sizeof(kSsaoRtFrag), aoPass_, false, aoPipe_)
+                  : pipe(kSsaoFrag, sizeof(kSsaoFrag), aoPass_, false, aoPipe_)) &&
            pipe(kSsaoBlurFrag, sizeof(kSsaoBlurFrag), aoApplyPass_, true, aoBlurPipe_);
 }
 
@@ -4575,14 +4808,22 @@ void VulkanRenderer::runSsao() {
     const float nearP = omk::kNearCut, farP = 200000.0f;
     const SsaoPush push{aoTanH_, aoTanV_, farP / (farP - nearP), -farP * nearP / (farP - nearP),
                         static_cast<float>(aoVw_), static_cast<float>(aoVh_), 80.0f, 1.0f};
-    const auto run = [&](VkRenderPass rp, VkFramebuffer fb, VkPipeline pl) {
+    // RAY-TRACED: the same push block and the camera in the world after it (every instance
+    // occludes: the set and the bodies), and the scene the rays see
+    const float aoMask = 255.0f;
+    const SsaoRtPush rp{push, {rtEye_[0], rtEye_[1], rtEye_[2], aoMask}, {rtS_[0], rtS_[1], rtS_[2], 0.0f},
+                        {rtU_[0], rtU_[1], rtU_[2], 0.0f}, {rtF_[0], rtF_[1], rtF_[2], 0.0f}};
+    if (rtOn_) rtAoRays_ += 4LL * aoVw_ * aoVh_;   // at most: a sky pixel casts none
+    const auto run = [&](VkRenderPass rp_, VkFramebuffer fb, VkPipeline pl) {
         VkRenderPassBeginInfo bi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        bi.renderPass = rp; bi.framebuffer = fb;
+        bi.renderPass = rp_; bi.framebuffer = fb;
         bi.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
         vkCmdBeginRenderPass(cb_, &bi, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
-        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, aoPlo_, 0, 1, &aoDs_, 0, nullptr);
-        vkCmdPushConstants(cb_, aoPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
+        const VkDescriptorSet aoSets[4] = {aoDs_, rtDsA_, rtDsB_, rtDsC_};
+        vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, aoPlo_, 0, rtOn_ ? 4 : 1, aoSets, 0, nullptr);
+        if (rtOn_) vkCmdPushConstants(cb_, aoPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof rp, &rp);
+        else vkCmdPushConstants(cb_, aoPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, &push);
         vkCmdDraw(cb_, 3, 1, 0, 0);
         vkCmdEndRenderPass(cb_);
     };
@@ -4593,6 +4834,613 @@ void VulkanRenderer::runSsao() {
     vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb2, 0, nullptr, 0, nullptr);
     run(aoApplyPass_, aoApplyFbuf_, aoBlurPipe_);
+}
+
+// ---- HYBRID RAY TRACING, `todo/enhancements.md` 19, 26 ----------------------
+//
+// AN ENHANCEMENT, off unless asked (`raytracing = on`, `--raytracing`): the Direct3D 12 window's
+// rays, on Vulkan, from one GLSL source (`rt.glsl`, the -DOMK_RT arms of `scene.frag` and
+// `ssao.frag`) and one description of the scene (`o3de/rtscene.h`). VK_KHR_ray_query casts INLINE
+// ray queries from the raster passes - no ray-tracing pipeline, no shader binding table - against
+// VK_KHR_acceleration_structure's BLAS and TLAS, which are built here from what the frame submits:
+//   * a SET geometry (no pose, not a caster) gets a BLAS once, from all of its opaque and cutout
+//     batches, remade when its revision moves; it stays in the TLAS for `kSetKeep` frames after it
+//     was last drawn;
+//   * the BODIES share ONE BLAS rebuilt every frame from their drawn opaque runs, posed here on the
+//     CPU by the affines `scene.vert` applies, refitted while the same runs make it;
+//   * one TLAS a frame, identity transforms, the sets' mask 1, the bodies' 2.
+// The builds go on a command buffer of their own, submitted just before the frame's in the same
+// `vkQueueSubmit` (the acceleration structures are read by the frame's fragment shaders; a barrier
+// ends the builds'). Every triangle has a 16-word RECORD (texel coordinates and baked colour of its
+// three corners, and its texture's word) in a buffer of its BLAS; the shader reads the records and
+// the textures BINDLESS - two descriptor-indexing arrays (partially bound, updated after bind: the
+// records change as draws are submitted and the pool of textures as `setTextures` is called, both
+// while the frame's command buffer is recording), indexed by slot.
+// -> the next free slot of a table, or -1
+static int rtSlot(std::vector<int>& freeList, int& next, int cap) {
+    if (!freeList.empty()) { const int s = freeList.back(); freeList.pop_back(); return s; }
+    return next < cap ? next++ : -1;
+}
+
+bool VulkanRenderer::rtBuffer(RtBuf& r, VkDeviceSize bytes, VkBufferUsageFlags use, bool host, const char* tag) {
+    r = RtBuf{};
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = bytes ? bytes : 1; bi.usage = use; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(dev_, &bi, nullptr, &r.b) != VK_SUCCESS) {
+        std::fprintf(stderr, "vulkan: ray tracing buffer of %llu bytes (%s) failed\n",
+                     static_cast<unsigned long long>(bytes), tag);
+        r = RtBuf{};
+        return false;
+    }
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(dev_, r.b, &req);
+    const auto pick = [&](VkMemoryPropertyFlags want) {
+        for (uint32_t i = 0; i < memProps_.memoryTypeCount; ++i)
+            if ((req.memoryTypeBits & (1u << i)) && (memProps_.memoryTypes[i].propertyFlags & want) == want)
+                return static_cast<int>(i);
+        return -1;
+    };
+    // what the CPU writes sits in device-local memory the host can map (Resizable BAR) when the
+    // card has it, else in system memory - the Direct3D 12 backend's upload heap
+    const VkMemoryPropertyFlags hv = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkMemoryPropertyFlags dl = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const VkMemoryPropertyFlags tries[2] = {host ? (hv | dl) : dl, host ? hv : 0};
+    VkMemoryAllocateFlagsInfo fi{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+    fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.pNext = (use & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ? &fi : nullptr;
+    bool ok = false;
+    for (int k = 0; k < 2 && !ok; ++k) {
+        const int t = pick(tries[k]);
+        if (t < 0) continue;
+        ai.memoryTypeIndex = static_cast<uint32_t>(t);
+        ok = vkAllocateMemory(dev_, &ai, nullptr, &r.m) == VK_SUCCESS;
+    }
+    if (!ok || vkBindBufferMemory(dev_, r.b, r.m, 0) != VK_SUCCESS ||
+        (host && vkMapMemory(dev_, r.m, 0, VK_WHOLE_SIZE, 0, &r.p) != VK_SUCCESS)) {
+        std::fprintf(stderr, "vulkan: ray tracing buffer of %llu bytes (%s) failed\n",
+                     static_cast<unsigned long long>(bytes), tag);
+        if (ok) freeDeviceMemory(r.m);
+        vkDestroyBuffer(dev_, r.b, nullptr);
+        r = RtBuf{};
+        return false;
+    }
+    OMK_GPU_ALLOC(tag, omk::prof::gpuKey(omk::prof::kVkMemory, r.m), ai.allocationSize);
+    r.cap = bytes;
+    if (use & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+        VkBufferDeviceAddressInfo da{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        da.buffer = r.b;
+        r.va = vkGetBufferDeviceAddress(dev_, &da);
+    }
+    return true;
+}
+
+// a buffer the GPU may still read goes with the frame's dead ones (`begin` frees them, the
+// previous frame having been waited for); one nothing reads any more is freed at once
+void VulkanRenderer::rtRetire(RtBuf& r) {
+    if (r.b) deadBufs_.push_back({r.b, r.m});
+    r = RtBuf{};
+}
+void VulkanRenderer::rtFree(RtBuf& r) {
+    if (r.b) vkDestroyBuffer(dev_, r.b, nullptr);
+    if (r.m) freeDeviceMemory(r.m);
+    r = RtBuf{};
+}
+
+// a host-visible buffer of at least `bytes`, mapped for its life; a smaller one is retired
+bool VulkanRenderer::rtMapped(RtBuf& r, VkDeviceSize bytes, VkBufferUsageFlags use) {
+    if (r.b && r.cap >= bytes) return true;
+    rtRetire(r);
+    const VkDeviceSize want = (bytes + bytes / 4 + 255) & ~static_cast<VkDeviceSize>(255);
+    return rtBuffer(r, want, use, true, "ray tracing");
+}
+
+void VulkanRenderer::rtWriteTex(int slot, VkImageView view) {
+    const VkDescriptorImageInfo ii{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = rtDsC_; wr.dstBinding = 0; wr.dstArrayElement = static_cast<uint32_t>(slot);
+    wr.descriptorCount = 1; wr.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; wr.pImageInfo = &ii;
+    vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+}
+void VulkanRenderer::rtWriteRec(int slot, VkBuffer b) {
+    const VkDescriptorBufferInfo bi{b, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = rtDsB_; wr.dstBinding = 0; wr.dstArrayElement = static_cast<uint32_t>(slot);
+    wr.descriptorCount = 1; wr.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; wr.pBufferInfo = &bi;
+    vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+}
+int VulkanRenderer::rtAllocTex(VkImageView view) {
+    const int s = rtSlot(rtTexFree_, rtTexNext_, kRtTexSlots);
+    if (s >= 0) rtWriteTex(s, view);
+    return s;
+}
+void VulkanRenderer::rtFreeTex(int slot) {
+    if (slot < 0) return;
+    rtTexFree_.push_back(slot);
+    ++texGen_;   // no ray-tracing record may name the slot now
+}
+
+// a slot's texture word for a record: the table index, and the pack's k - 1 in bits 24..
+// (`rt.glsl` `rtTexel`)
+std::uint32_t VulkanRenderer::rtTexWord(std::size_t slot) const {
+    if (slot >= tex_.size() || tex_[slot].rt < 0) return static_cast<std::uint32_t>(std::max(white_.rt, 0));
+    return static_cast<std::uint32_t>(tex_[slot].rt) | (static_cast<std::uint32_t>(tex_[slot].scale - 1) << 24);
+}
+
+bool VulkanRenderer::rtInit() {
+    const auto fn = [&](const char* n) { return vkGetDeviceProcAddr(dev_, n); };
+    rtCreateAs_ = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(fn("vkCreateAccelerationStructureKHR"));
+    rtDestroyAs_ = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(fn("vkDestroyAccelerationStructureKHR"));
+    rtCmdBuild_ = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(fn("vkCmdBuildAccelerationStructuresKHR"));
+    rtBuildSizes_ = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(fn("vkGetAccelerationStructureBuildSizesKHR"));
+    rtAsAddr_ = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(fn("vkGetAccelerationStructureDeviceAddressKHR"));
+    const auto fail = [&](const char* what) {
+        std::printf("vulkan: ray tracing - %s - off\n", what);
+        rtKill();
+        return false;
+    };
+    if (!rtCreateAs_ || !rtDestroyAs_ || !rtCmdBuild_ || !rtBuildSizes_ || !rtAsAddr_)
+        return fail("the device's acceleration structure functions are missing");
+    // the instance table's sampler for the hit's texel: NEAREST and WRAP, the original's - whatever
+    // the filtering enhancement does to the raster (`rtTexel` reads level 0)
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    si.magFilter = si.minFilter = VK_FILTER_NEAREST;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (vkCreateSampler(dev_, &si, nullptr, &rtSampler_) != VK_SUCCESS) return fail("no sampler");
+    // set A: the TLAS, the instance table, `RtFrame`, the sampler, the rays' tally
+    VkDescriptorSetLayoutBinding ba[5]{};
+    const VkDescriptorType ta[5] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_SAMPLER,
+                                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+    for (uint32_t k = 0; k < 5; ++k) {
+        ba[k].binding = k; ba[k].descriptorCount = 1; ba[k].descriptorType = ta[k];
+        ba[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    ba[3].pImmutableSamplers = &rtSampler_;
+    VkDescriptorSetLayoutCreateInfo la{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    la.bindingCount = 5; la.pBindings = ba;
+    // sets B and C: the bindless tables, partially bound and updated after bind
+    const VkDescriptorBindingFlags bf = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                                        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    VkDescriptorSetLayoutBindingFlagsCreateInfo fl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+    fl.bindingCount = 1; fl.pBindingFlags = &bf;
+    VkDescriptorSetLayoutBinding bb{}, bc{};
+    bb.binding = 0; bb.descriptorCount = kRtRecSlots; bb.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bc.binding = 0; bc.descriptorCount = kRtTexSlots; bc.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo lb{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    lb.pNext = &fl; lb.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    lb.bindingCount = 1; lb.pBindings = &bb;
+    VkDescriptorSetLayoutCreateInfo lc = lb;
+    lc.pBindings = &bc;
+    if (vkCreateDescriptorSetLayout(dev_, &la, nullptr, &rtDslA_) != VK_SUCCESS ||
+        vkCreateDescriptorSetLayout(dev_, &lb, nullptr, &rtDslB_) != VK_SUCCESS ||
+        vkCreateDescriptorSetLayout(dev_, &lc, nullptr, &rtDslC_) != VK_SUCCESS)
+        return fail("the descriptor set layouts could not be made");
+    const VkDescriptorPoolSize ps[5] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
+                                        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 + kRtRecSlots},
+                                        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+                                        {VK_DESCRIPTOR_TYPE_SAMPLER, 1},
+                                        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kRtTexSlots}};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pi.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    pi.maxSets = 3; pi.poolSizeCount = 5; pi.pPoolSizes = ps;
+    const VkDescriptorSetLayout ls[3] = {rtDslA_, rtDslB_, rtDslC_};
+    VkDescriptorSet ds[3] = {};
+    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    if (vkCreateDescriptorPool(dev_, &pi, nullptr, &rtPool_) != VK_SUCCESS) return fail("no descriptor pool");
+    ai.descriptorPool = rtPool_; ai.descriptorSetCount = 3; ai.pSetLayouts = ls;
+    if (vkAllocateDescriptorSets(dev_, &ai, ds) != VK_SUCCESS) return fail("no descriptor sets");
+    rtDsA_ = ds[0]; rtDsB_ = ds[1]; rtDsC_ = ds[2];
+    // the TLAS, sized for the most instances it can hold; the build's scratch is made with it
+    VkAccelerationStructureGeometryKHR tg{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    tg.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tg.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    VkAccelerationStructureBuildGeometryInfoKHR ti{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    ti.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    ti.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    ti.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    ti.geometryCount = 1; ti.pGeometries = &tg;
+    const uint32_t maxInst = omk::rt::kMaxInst;
+    VkAccelerationStructureBuildSizesInfoKHR sz{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+    rtBuildSizes_(dev_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ti, &maxInst, &sz);
+    rtTlasScratch_ = (sz.buildScratchSize + rtScratchAlign_ - 1) / rtScratchAlign_ * rtScratchAlign_;
+    const VkBufferUsageFlags sda = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    const bool ok =
+        rtBuffer(rtTlasBuf_, (sz.accelerationStructureSize + 255) & ~VkDeviceSize(255),
+                 VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | sda, false, "ray tracing") &&
+        rtBuffer(rtInstDesc_, sizeof(VkAccelerationStructureInstanceKHR) * maxInst,
+                 VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | sda, true, "ray tracing") &&
+        rtBuffer(rtInstTab_, 16 * maxInst, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, "ray tracing") &&
+        rtBuffer(rtFrameBuf_, 256, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "ray tracing") &&
+        rtBuffer(rtCountBuf_, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, "ray tracing");
+    if (!ok) return fail("its buffers could not be made");
+    std::memset(rtCountBuf_.p, 0, 256);
+    std::memset(rtFrameBuf_.p, 0, 256);
+    VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+    ci.buffer = rtTlasBuf_.b; ci.size = sz.accelerationStructureSize;
+    ci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    if (rtCreateAs_(dev_, &ci, nullptr, &rtTlas_) != VK_SUCCESS) return fail("the TLAS could not be made");
+    VkWriteDescriptorSetAccelerationStructureKHR wa{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+    wa.accelerationStructureCount = 1; wa.pAccelerationStructures = &rtTlas_;
+    const VkDescriptorBufferInfo bi[3] = {{rtInstTab_.b, 0, VK_WHOLE_SIZE}, {rtFrameBuf_.b, 0, VK_WHOLE_SIZE},
+                                          {rtCountBuf_.b, 0, VK_WHOLE_SIZE}};
+    VkWriteDescriptorSet wr[4]{};
+    for (auto& w : wr) { w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; w.dstSet = rtDsA_; w.descriptorCount = 1; }
+    wr[0].pNext = &wa; wr[0].dstBinding = 0; wr[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    wr[1].dstBinding = 1; wr[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; wr[1].pBufferInfo = &bi[0];
+    wr[2].dstBinding = 2; wr[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; wr[2].pBufferInfo = &bi[1];
+    wr[3].dstBinding = 4; wr[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; wr[3].pBufferInfo = &bi[2];
+    vkUpdateDescriptorSets(dev_, 4, wr, 0, nullptr);
+    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cai.commandPool = pool_; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(dev_, &cai, &rtCb_) != VK_SUCCESS) return fail("no command buffer");
+    rtOn_ = true;
+    std::printf("vulkan: RAY TRACING on - an ENHANCEMENT: VK_KHR_ray_query inline ray queries over "
+                "VK_KHR_acceleration_structure: characters lit by the set around them (no ray-traced "
+                "shadow on them), ray-traced AO in place of SSAO\n");
+    omk::event("rt_on", {{"vulkan", 1}});
+    return true;
+}
+
+void VulkanRenderer::rtDrop(RtBlas& b) {
+    if (b.as) rtDestroyAs_(dev_, b.as, nullptr);
+    rtFree(b.asBuf);
+    rtFree(b.pos);
+    rtFree(b.rec);
+    if (b.recSlot >= 0) rtRecFree_.push_back(b.recSlot);
+    b = RtBlas{};
+}
+
+// the frame's constants, the camera for the AO pass, and the three descriptor sets of the scene
+// pass (bound after the pass begins, once: every draw's pipeline layout keeps them)
+void VulkanRenderer::rtBind(const omk::View& view) {
+    ++rtFrame_;
+    rtCounting_ = rtCountFeat_ && rtFrame_ % 60 == 2;
+    rtCounted_ += rtCounting_;
+    rtNotes_.clear();
+    omk::RCamera cam = view.cam;
+    cam.w = view.letterboxed() ? view.vw : w_;
+    cam.h = view.letterboxed() ? view.vh : h_;
+    float tH = 0.0f, tV = 0.0f;
+    omk::cameraBasis(cam, rtS_, rtU_, rtF_, tH, tV);
+    for (int k = 0; k < 3; ++k) rtEye_[k] = cam.eye[k];
+    // the constants, numbers and `OMK_RT_*` tunings alike, are `o3de/rtscene.cpp`'s
+    RtFrame f{};
+    omk::rt::fillFrame(fog_ ? fogColour_ : clearColour_, rtEye_, view.skyMean, rtReflOn_, f);
+    std::memcpy(rtFrameBuf_.p, &f, sizeof f);
+    const VkDescriptorSet s[3] = {rtDsA_, rtDsB_, rtDsC_};
+    vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 4, 3, s, 0, nullptr);
+}
+
+// A BLAS's triangles - opaque ones first - into its two host-visible buffers: the corners'
+// positions (posed by the triangle's affines when it has them) and the records. Its records'
+// buffer joins the bindless table (again, when it was remade).
+bool VulkanRenderer::rtFill(RtBlas& b, const std::vector<RtTri>& tri) {
+    const std::size_t n = tri.size();
+    const VkBuffer recWas = b.rec.b;
+    if (!rtMapped(b.pos, n * 36,
+                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ||
+        !rtMapped(b.rec, n * 64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT))
+        return false;
+    if (b.recSlot < 0) b.recSlot = rtSlot(rtRecFree_, rtRecNext_, kRtRecSlots);
+    if (b.recSlot < 0) return false;
+    if (b.rec.b != recWas) rtWriteRec(b.recSlot, b.rec.b);
+    omk::rt::fillRecords(tri, static_cast<float*>(b.pos.p), static_cast<std::uint32_t*>(b.rec.p));
+    return true;
+}
+
+// A SET geometry's BLAS inputs, made on first sight and again when its corners move: every opaque
+// and cutout batch. -> null when it has none.
+VulkanRenderer::RtBlas* VulkanRenderer::rtSetFor(const omk::Geometry* g) {
+    const auto it = rtSet_.find(g);
+    if (it != rtSet_.end() && it->second.rev == g->revision)
+        return it->second.nOpaque + it->second.nCut ? &it->second : nullptr;
+    RtBlas& b = rtSet_[g];
+    b.rev = g->revision;
+    b.built = false;
+    b.texAt.clear();
+    b.texGen = texGen_;
+    std::vector<std::uint32_t> opq;
+    omk::rt::setCorners(*g, opq, b.nOpaque, b.nCut);
+    std::vector<RtTri> tris;
+    tris.reserve(opq.size());
+    const std::uint32_t white = rtTexWord(~std::size_t(0));
+    for (const std::uint32_t c : opq) tris.push_back(RtTri{g, nullptr, 0, c, white});
+    if (opq.empty() || !rtFill(b, tris)) { b.nOpaque = b.nCut = 0; return nullptr; }
+    b.triOf.assign(g->corners.size() / 3, -1);
+    for (std::size_t t = 0; t < opq.size(); ++t) b.triOf[opq[t] / 3] = static_cast<std::int32_t>(t);
+    return &b;
+}
+
+// Every opaque draw, as it is submitted: a body's run noted for this frame's BLAS (its affines
+// copied while the pointer is good), a set's texture slots written into its records when they changed.
+void VulkanRenderer::rtNote(const omk::Draw& d) {
+    if (d.blend != omk::Blend::Opaque || d.start + d.count > d.geo->corners.size()) return;
+    const std::size_t slot = omk::drawTextureSlot(d);
+    const std::uint32_t tex = rtTexWord(slot);   // the table index, with a pack's k
+    const bool posed = d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size();
+    if (posed || d.castsShadow || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0) {
+        RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
+        n.geo = d.geo;
+        if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);
+        n.runs[d.start] = RtRun{d.count, d.cutout != 0, tex};
+        return;
+    }
+    RtBlas* b = rtSetFor(d.geo);
+    if (!b) return;
+    b->seen = rtFrame_;
+    auto* rec = static_cast<std::uint32_t*>(b->rec.p);
+    if (b->texGen != texGen_) {   // a texture went: no record may name its slot
+        b->texGen = texGen_;
+        b->texAt.clear();
+        const std::uint32_t white = rtTexWord(~std::size_t(0));
+        for (std::uint32_t t = 0; t < b->nOpaque + b->nCut; ++t) rec[16 * t + 15] = white;
+    }
+    const auto at = b->texAt.find(d.start);
+    if (at != b->texAt.end() && at->second.first == d.count && at->second.second == tex) return;
+    b->texAt[d.start] = {d.count, tex};
+    for (std::size_t c = d.start; c + 3 <= d.start + d.count; c += 3) {
+        const std::int32_t t = c / 3 < b->triOf.size() ? b->triOf[c / 3] : -1;
+        if (t >= 0) rec[16 * t + 15] = tex;
+    }
+}
+
+// The frame's acceleration structures, recorded on their own command buffer (submitted before the
+// frame's): the bodies' BLAS (rebuilt, or refitted), any set BLAS not built yet, then the TLAS over
+// the sets drawn lately and this frame's bodies.
+void VulkanRenderer::rtBuild() {
+    struct Job {
+        RtBlas* b;
+        bool body, refit;
+        VkAccelerationStructureGeometryKHR gd[2];
+        VkAccelerationStructureBuildRangeInfoKHR rg[2];
+        uint32_t prim[2], ng;
+        VkAccelerationStructureBuildGeometryInfoKHR in;
+        VkDeviceSize scratch;
+    };
+    std::vector<Job> jobs;
+    rtRecorded_ = false;
+    const auto tStart = std::chrono::steady_clock::now();
+    const VkDeviceSize al = rtScratchAlign_;
+    const auto up = [&](VkDeviceSize v) { return (v + al - 1) / al * al; };
+    // 1. this frame's bodies, posed and recorded, ALL of them in ONE BLAS: a build has a fixed
+    // cost, and a street's crowd is a couple of hundred bodies of a few hundred triangles
+    {
+        std::vector<RtTri> tri;
+        int bodies = 0;
+        std::uint64_t sig = 0;
+        RtBlas& b = rtBodyAll_;
+        omk::rt::gatherBodies(rtNotes_, rtEye_, tri, b.nOpaque, b.nCut, bodies, sig);
+        b.built = false;
+        rtBodyCount_ = bodies;
+        const VkBuffer posWas = b.pos.b;
+        if (!tri.empty() && rtFill(b, tri)) {
+            b.seen = rtFrame_;
+            // REFITTED in place while the same runs of the same bodies make it (only their poses
+            // moved), rebuilt when that changes and every `kBodyRefitFrames` frames - a refit's tree
+            // loosens as the limbs travel
+            const bool refit = b.as && sig == rtBodySig_ && b.pos.b == posWas &&
+                               rtFrame_ - rtBodyRebuilt_ < omk::rt::kBodyRefitFrames;
+            if (!refit) { rtBodySig_ = sig; rtBodyRebuilt_ = rtFrame_; }
+            jobs.push_back(Job{&b, true, refit, {}, {}, {}, 0, {}, 0});
+        } else {
+            b.nOpaque = b.nCut = 0;
+        }
+    }
+    // 2. a set's, once
+    for (auto& [g, b] : rtSet_)
+        if (!b.built && b.nOpaque + b.nCut && rtFrame_ - b.seen <= omk::rt::kSetKeep)
+            jobs.push_back(Job{&b, false, false, {}, {}, {}, 0, {}, 0});
+    // their inputs and sizes, and one scratch for all of them and the TLAS
+    VkDeviceSize scratch = rtTlasScratch_;
+    for (Job& j : jobs) {
+        RtBlas& b = *j.b;
+        const auto geom = [&](VkDeviceAddress at, std::uint32_t tris, bool opaque) {
+            VkAccelerationStructureGeometryKHR& g = j.gd[j.ng];
+            g = VkAccelerationStructureGeometryKHR{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+            g.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            // a CUTOUT geometry is non-opaque: `rtTrace` reads its colour key
+            g.flags = opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+            auto& t = g.geometry.triangles;
+            t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            t.vertexData.deviceAddress = at;
+            t.vertexStride = 12;
+            t.maxVertex = 3 * tris - 1;
+            t.indexType = VK_INDEX_TYPE_NONE_KHR;
+            j.prim[j.ng] = tris;
+            j.rg[j.ng] = VkAccelerationStructureBuildRangeInfoKHR{tris, 0, 0, 0};
+            ++j.ng;
+        };
+        j.ng = 0;
+        if (b.nOpaque) geom(b.pos.va, b.nOpaque, true);
+        if (b.nCut) geom(b.pos.va + 36ull * b.nOpaque, b.nCut, false);
+        j.in = VkAccelerationStructureBuildGeometryInfoKHR{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+        j.in.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        j.in.flags = j.body ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR |
+                                  VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
+                            : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        j.in.mode = j.refit ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        j.in.geometryCount = j.ng;
+        j.in.pGeometries = j.gd;
+        VkAccelerationStructureBuildSizesInfoKHR sz{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+        rtBuildSizes_(dev_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &j.in, j.prim, &sz);
+        j.scratch = up(j.refit ? sz.updateScratchSize : sz.buildScratchSize);
+        scratch += j.scratch;
+        const VkDeviceSize need = (sz.accelerationStructureSize + 255) & ~VkDeviceSize(255);
+        if (!j.refit && (!b.as || b.asBuf.cap < need)) {
+            if (b.as) rtDeadAs_.push_back(b.as);
+            b.as = VK_NULL_HANDLE;
+            rtRetire(b.asBuf);
+            const VkDeviceSize cap = j.body ? (need + need / 4 + 255) & ~VkDeviceSize(255) : need;
+            if (rtBuffer(b.asBuf, cap, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, false, "ray tracing")) {
+                VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+                ci.buffer = b.asBuf.b; ci.size = cap;
+                ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+                if (rtCreateAs_(dev_, &ci, nullptr, &b.as) != VK_SUCCESS) b.as = VK_NULL_HANDLE;
+                else {
+                    VkAccelerationStructureDeviceAddressInfoKHR da{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+                    da.accelerationStructure = b.as;
+                    b.asAddr = rtAsAddr_(dev_, &da);
+                }
+            }
+        }
+    }
+    if (rtScratch_.cap < scratch) {
+        rtRetire(rtScratch_);
+        const VkDeviceSize cap = (scratch + scratch / 4 + 255) & ~VkDeviceSize(255);
+        if (!rtBuffer(rtScratch_, cap, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                      false, "ray tracing"))
+            return;
+    }
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkResetCommandBuffer(rtCb_, 0);
+    vkBeginCommandBuffer(rtCb_, &bi);
+    VkDeviceSize so = 0;
+    for (Job& j : jobs) {
+        if (!j.b->as) continue;
+        VkAccelerationStructureBuildGeometryInfoKHR in = j.in;
+        in.pGeometries = j.gd;
+        in.dstAccelerationStructure = j.b->as;
+        if (j.refit) in.srcAccelerationStructure = j.b->as;
+        in.scratchData.deviceAddress = rtScratch_.va + so;
+        const VkAccelerationStructureBuildRangeInfoKHR* pr = j.rg;
+        rtCmdBuild_(rtCb_, 1, &in, &pr);
+        so += j.scratch;
+        j.b->built = true;
+        ++(j.refit ? rtBodyRefits_ : j.body ? rtBodyBuilds_ : rtSetBuilds_);
+    }
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    vkCmdPipelineBarrier(rtCb_, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    // 3. the TLAS: an instance a BLAS, its custom index the row of the table
+    auto* inst = static_cast<VkAccelerationStructureInstanceKHR*>(rtInstDesc_.p);
+    auto* tab = static_cast<std::uint32_t*>(rtInstTab_.p);
+    uint32_t ni = 0;
+    int sets = 0, bodies = 0;
+    long long setTris = 0, bodyTris = 0;
+    const auto add = [&](const RtBlas& b, uint32_t mask) {
+        if (ni >= omk::rt::kMaxInst || !b.built || !b.as) return false;
+        VkAccelerationStructureInstanceKHR& d = inst[ni];
+        std::memset(&d, 0, sizeof d);
+        d.transform.matrix[0][0] = d.transform.matrix[1][1] = d.transform.matrix[2][2] = 1.0f;
+        d.instanceCustomIndex = ni;
+        d.mask = mask;
+        d.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        d.accelerationStructureReference = b.asAddr;
+        tab[4 * ni] = static_cast<std::uint32_t>(b.recSlot);
+        tab[4 * ni + 1] = b.nOpaque;
+        tab[4 * ni + 2] = mask;
+        tab[4 * ni + 3] = 0;
+        ++ni;
+        return true;
+    };
+    for (const auto& [g, b] : rtSet_)
+        if (rtFrame_ - b.seen <= omk::rt::kSetKeep && add(b, omk::rt::kMaskSet)) { ++sets; setTris += b.nOpaque + b.nCut; }
+    if (rtBodyAll_.seen == rtFrame_ && add(rtBodyAll_, omk::rt::kMaskBody)) {
+        bodies = rtBodyCount_;
+        bodyTris = rtBodyAll_.nOpaque + rtBodyAll_.nCut;
+    }
+    VkAccelerationStructureGeometryKHR tg{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    tg.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tg.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tg.geometry.instances.data.deviceAddress = rtInstDesc_.va;
+    VkAccelerationStructureBuildGeometryInfoKHR ti{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    ti.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    ti.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    ti.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    ti.geometryCount = 1; ti.pGeometries = &tg;
+    ti.dstAccelerationStructure = rtTlas_;
+    ti.scratchData.deviceAddress = rtScratch_.va + so;
+    const VkAccelerationStructureBuildRangeInfoKHR tr{ni, 0, 0, 0};
+    const VkAccelerationStructureBuildRangeInfoKHR* ptr = &tr;
+    rtCmdBuild_(rtCb_, 1, &ti, &ptr);
+    // ...and the frame's fragment shaders read it
+    VkMemoryBarrier mb2{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb2.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    mb2.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(rtCb_, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb2, 0, nullptr, 0, nullptr);
+    vkEndCommandBuffer(rtCb_);
+    rtRecorded_ = true;
+    // the CPU's share (the bodies posed, the inputs recorded), for the log
+    rtCpuMs_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tStart).count();
+    rtInstances_ = static_cast<int>(ni); rtSets_ = sets; rtBodies_ = bodies;
+    rtSetTris_ = setTris; rtBodyTris_ = bodyTris;
+}
+
+// After the frame ran: the rays' tally read back, and the log.
+void VulkanRenderer::rtAfter() {
+    std::memcpy(rtCounts_, rtCountBuf_.p, sizeof rtCounts_);
+    const int ni = rtInstances_, sets = rtSets_, bodies = rtBodies_;
+    const long long setTris = rtSetTris_, bodyTris = rtBodyTris_;
+    if ((ni != rtToldInst_ && rtTold_ < 6) || rtFrame_ % 60 == 30) {
+        rtToldInst_ = ni;
+        ++rtTold_;
+        // the tally covers every COUNTING frame so far (`rtBind`)
+        const long cf = std::max(1L, rtCounted_);
+        const unsigned indirectRays = static_cast<unsigned>(rtCounts_[1] / cf);
+        std::printf("vulkan: ray tracing live (frame %ld) - TLAS of %d instances: %d set BLAS (%lld triangles), "
+                    "%d bodies in one BLAS (%lld triangles); ~%u indirect rays a frame; "
+                    "builds %.2f ms CPU a frame, the bodies' BLAS built %ld times and refitted %ld\n", rtFrame_,
+                    ni, sets, setTris, bodies, bodyTris, indirectRays, rtCpuMs_ / rtFrame_, rtBodyBuilds_,
+                    rtBodyRefits_);
+        omk::event("rt_tlas", {{"frame", rtFrame_}, {"instances", ni}, {"sets", sets},
+                               {"bodies", bodies}, {"set_tris", static_cast<long>(setTris)},
+                               {"body_tris", static_cast<long>(bodyTris)},
+                               {"indirect_rays", indirectRays}});
+        if (rtReflOn_) {
+            const unsigned reflRays = static_cast<unsigned>(rtCounts_[2] / cf);
+            std::printf("vulkan: rt reflections (frame %ld) - %ld ground draws, ~%u reflection rays a frame\n",
+                        rtFrame_, rtFloorDraws_, reflRays);
+            omk::event("rt_refl.frame", {{"frame", rtFrame_}, {"floor_draws", rtFloorDraws_},
+                                         {"refl_rays", reflRays}});
+        }
+    }
+    rtFloorDraws_ = 0;
+}
+
+void VulkanRenderer::rtKill() {
+    if (dev_ == VK_NULL_HANDLE) return;
+    vkDeviceWaitIdle(dev_);
+    if (rtOn_ && rtCountBuf_.p) {
+        std::memcpy(rtCounts_, rtCountBuf_.p, sizeof rtCounts_);
+        std::printf("vulkan: ray tracing - %ld frames; the last TLAS %d instances (%d set BLAS, %d bodies); "
+                    "%ld set BLAS builds, %ld body BLAS builds; ~%u indirect rays in %ld counted frames\n",
+                    rtFrame_, rtInstances_, rtSets_, rtBodies_, rtSetBuilds_, rtBodyBuilds_, rtCounts_[1],
+                    rtCounted_);
+        omk::event("rt_summary", {{"frames", rtFrame_}, {"instances", rtInstances_}, {"sets", rtSets_},
+                                  {"bodies", rtBodies_}, {"set_builds", rtSetBuilds_},
+                                  {"body_builds", rtBodyBuilds_}, {"indirect_rays", rtCounts_[1]}});
+    }
+    if (rtDestroyAs_) {
+        for (auto& [g, b] : rtSet_) rtDrop(b);
+        rtDrop(rtBodyAll_);
+        for (auto as : rtDeadAs_) rtDestroyAs_(dev_, as, nullptr);
+        if (rtTlas_) rtDestroyAs_(dev_, rtTlas_, nullptr);
+    }
+    rtSet_.clear();
+    rtNotes_.clear();
+    rtDeadAs_.clear();
+    rtTlas_ = VK_NULL_HANDLE;
+    for (RtBuf* r : {&rtTlasBuf_, &rtInstDesc_, &rtInstTab_, &rtScratch_, &rtFrameBuf_, &rtCountBuf_}) rtFree(*r);
+    if (rtCb_) vkFreeCommandBuffers(dev_, pool_, 1, &rtCb_);
+    rtCb_ = VK_NULL_HANDLE;
+    if (rtPool_) vkDestroyDescriptorPool(dev_, rtPool_, nullptr);
+    rtPool_ = VK_NULL_HANDLE;
+    for (VkDescriptorSetLayout* l : {&rtDslA_, &rtDslB_, &rtDslC_, &dslEmpty_})
+        if (*l) { vkDestroyDescriptorSetLayout(dev_, *l, nullptr); *l = VK_NULL_HANDLE; }
+    if (rtSampler_) vkDestroySampler(dev_, rtSampler_, nullptr);
+    rtSampler_ = VK_NULL_HANDLE;
+    rtOn_ = false;
 }
 
 // ---- FRAME GENERATION, `todo/enhancements.md` 27 ---------------------------
@@ -5441,12 +6289,20 @@ void VulkanRenderer::end() {
     copyOwed_ = true;
     srcW_ = rw_; srcH_ = rh_;   // the whole render target is live
     vkEndCommandBuffer(cb_);
+    // HYBRID RAY TRACING: the frame's acceleration structures, on their own command buffer
+    // submitted just before the frame's (which reads them; the builds end on a barrier)
+    if (rtOn_) rtBuild();
 
+    const VkCommandBuffer cbs[2] = {rtCb_, cb_};
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount = 1; si.pCommandBuffers = &cb_;
+    si.commandBufferCount = rtRecorded_ ? 2 : 1; si.pCommandBuffers = rtRecorded_ ? cbs : &cb_;
     vkResetFences(dev_, 1, &fence_);
     vkQueueSubmit(queue_, 1, &si, fence_);
     vkWaitForFences(dev_, 1, &fence_, VK_TRUE, UINT64_MAX);
+    if (rtRecorded_) {
+        rtRecorded_ = false;
+        rtAfter();
+    }
     recording_ = false;
     cbStarted_ = false;
     shadowLive_ = false;
@@ -5579,6 +6435,8 @@ VulkanRenderer::~VulkanRenderer() {
     }
     vkDeviceWaitIdle(dev_);
     killFg();
+    rtKill();
+    for (auto& p : pipeCount_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);

@@ -1,7 +1,7 @@
 #version 450
 #ifdef OMK_RT
-// HYBRID RAY TRACING (`todo/enhancements.md` 19): the Direct3D 12 backend's
-// -DOMK_RT build only (`backends/d3d12/shaders/rt.glsl`); Vulkan never defines it.
+// HYBRID RAY TRACING (`todo/enhancements.md` 19): the -DOMK_RT build, both
+// backends' (`rt.glsl`; the descriptor sets are `OMK_RT_SET`'s three).
 #include "rt.glsl"
 #endif
 // The scene fragment shader, and it is a transcription of `raster.cpp`'s inner
@@ -124,7 +124,7 @@ layout(set = OMK_SOFT_SET, binding = 0) uniform sampler2D sceneDepth;
 // tally - one atomic per 8x8 pixels, scaled, for the log - in the -DOMK_RT_COUNT
 // build alone, drawn one frame in 60: a shader that writes a UAV loses the
 // EARLY depth test, and every hidden body fragment would cast its rays.
-layout(set = 3, binding = 2) uniform RtFrame {
+layout(set = OMK_RT_SET, binding = 2) uniform RtFrame {
     vec4 sky;      // rgb what a ray leaving the set sees; a the indirect term's strength (0 off)
     vec4 eye;      // xyz the eye; w unused
     vec4 params;   // x indirect reach; y, z, w unused
@@ -134,7 +134,7 @@ layout(set = 3, binding = 2) uniform RtFrame {
     vec4 skyUp;    // rgb the sky's mean colour (what an upward ray leaving the set sees), w 1 if any
 } rtf;
 #ifdef OMK_RT_COUNT
-layout(std430, set = 3, binding = 4) buffer RtCount { uint n[]; } rtCount;
+layout(std430, set = OMK_RT_SET, binding = 4) buffer RtCount { uint n[]; } rtCount;
 #endif
 #endif
 

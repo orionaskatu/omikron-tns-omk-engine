@@ -11,10 +11,9 @@
 // target and multiplied over the frame by the blur.
 #version 450
 #ifdef OMK_RT
-// RAY-TRACED AO (`todo/enhancements.md` 19): the Direct3D 12 backend's -DOMK_RT
-// build replaces the depth-buffer hemisphere with a few short rays against the
-// frame's TLAS (`backends/d3d12/shaders/rt.glsl`) - the set AND the bodies,
-// on screen or not. Vulkan never defines it.
+// RAY-TRACED AO (`todo/enhancements.md` 19): the -DOMK_RT build (both backends')
+// replaces the depth-buffer hemisphere with a few short rays against the
+// frame's TLAS (`rt.glsl`) - the set AND the bodies, on screen or not.
 #include "rt.glsl"
 #endif
 

@@ -461,9 +461,9 @@ public:
 
     // HYBRID RAY TRACING (`todo/enhancements.md` 19): characters lit by the
     // set around them (they receive no ray-traced shadow), ray-traced AO in SSAO's
-    // place. Same contract - a request before `init()`; only the Direct3D 12
-    // backend does it, and only on a DXR 1.1 device, which `raytracingLive`
-    // answers once `init()` has run.
+    // place. Same contract - a request before `init()`; the Direct3D 12 backend
+    // (a DXR 1.1 device) and the Vulkan one (VK_KHR_ray_query) do it, which
+    // `raytracingLive` answers once `init()` has run.
     virtual bool setRaytracing(bool /*on*/) { return false; }
     virtual bool raytracingLive() const { return false; }
     // ...and RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26) on the draws

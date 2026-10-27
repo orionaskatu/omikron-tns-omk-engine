@@ -192,12 +192,12 @@ int PlayState::setupSession() {
     // before its init (playgpu_vulkan.cpp); the backend reports whether it
     // could
     ssao = enh(ssaoFlag, settings.ambientOcclusion ? 1 : 0, omk::kMaxAmbientOcclusion) > 0;
-    // HYBRID RAY TRACING (settings.h `raytracing`), handed to the D3D12
-    // renderer before its init (playgpu_vulkan.cpp); Vulkan declines it
+    // HYBRID RAY TRACING (settings.h `raytracing`), handed to the D3D12 or the
+    // Vulkan renderer before its init (playgpu_vulkan.cpp)
     raytracing = enh(raytracingFlag, settings.raytracing ? 1 : 0, omk::kMaxRaytracing) > 0;
     if (raytracing)
-        std::printf("raytracing: asked for - the Direct3D 12 backend's alone, on a DXR 1.1 GPU "
-                    "(--d3d12, --world-d3d12); Vulkan and the software reference leave it off\n");
+        std::printf("raytracing: asked for - the Direct3D 12 (DXR 1.1) and Vulkan (VK_KHR_ray_query) "
+                    "backends'; the software reference and a GPU without ray queries leave it off\n");
     // RAY-TRACED REFLECTIONS (settings.h `rtReflections`): a part of the ray
     // tracing, so nothing without it
     rtReflections = enh(rtReflectionsFlag, settings.rtReflections ? 1 : 0, omk::kMaxRtReflections) > 0;

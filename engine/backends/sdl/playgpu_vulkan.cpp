@@ -137,10 +137,10 @@ void PlayState::gpuOpenWindow() {
             omk::Renderer* vkr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
             if (ssao) vkr->setAmbientOcclusion(true);
-            if (raytracing && !vkr->setRaytracing(true))
-                std::printf("raytracing: the Direct3D 12 backend's (--d3d12, DXR 1.1) - off on Vulkan\n");
+            if (raytracing && !vkr->setRaytracing(true))   // (the device decides, in init)
+                std::printf("raytracing: this renderer cannot take it - off\n");
             if (rtReflections && !vkr->setRtReflections(true))
-                std::printf("rt reflections: the Direct3D 12 backend's ray tracing - off on Vulkan\n");
+                std::printf("rt reflections: this renderer cannot take them - off\n");
             if (texFilter > 0) vkr->setTextureFilter(texFilter);
             if (texAniso > 1) vkr->setAnisotropy(texAniso);
             if (ssaa > 1) vkr->setSupersample(ssaa);
@@ -212,11 +212,11 @@ void PlayState::gpuOpenWorldHarness() {
         if (!wv) wv = omk::makeVulkanRenderer();
         if (wv && aaSamples > 1) wv->setMultisample(aaSamples);
         if (wv && ssao) wv->setAmbientOcclusion(true);
-        // HYBRID RAY TRACING (row 19): the D3D12 renderer takes it, Vulkan declines
+        // HYBRID RAY TRACING (row 19): both renderers take it, the device decides in `init`
         if (wv && raytracing && !wv->setRaytracing(true))
-            std::printf("raytracing: the Direct3D 12 backend's (--world-d3d12, DXR 1.1) - off on Vulkan\n");
+            std::printf("raytracing: this renderer cannot take it - off\n");
         if (wv && rtReflections && !wv->setRtReflections(true))
-            std::printf("rt reflections: the Direct3D 12 backend's ray tracing - off on Vulkan\n");
+            std::printf("rt reflections: this renderer cannot take them - off\n");
         if (wv && texFilter > 0) wv->setTextureFilter(texFilter);
         if (wv && texAniso > 1) wv->setAnisotropy(texAniso);
         if (wv && ssaa > 1) wv->setSupersample(ssaa);

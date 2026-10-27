@@ -83,6 +83,7 @@
 #include "o3de/vertexlight.h"
 #include "o3de/postfx.h"
 #include "o3de/framegen.h"
+#include "o3de/rtscene.h"
 #include "platform/env.h"
 #include "platform/events.h"
 #include "platform/datafs.h"
@@ -133,7 +134,7 @@ namespace {
 #include "dx/scene_mv.vert.h"
 #include "dx/scene_mv.frag.h"
 // ...and HYBRID RAY TRACING's (`todo/enhancements.md` 19): `scene.frag` and
-// `ssao.frag` built -DOMK_RT, shader model 6.5 (`backends/d3d12/shaders/rt.glsl`)
+// `ssao.frag` built -DOMK_RT, shader model 6.5 (`backends/vulkan/shaders/rt.glsl`)
 #include "dx/scene_rt.frag.h"
 #include "dx/scene_rt_mv.frag.h"
 #include "dx/scene_rtc.frag.h"
@@ -153,10 +154,9 @@ struct OverlayPush { float fade[4]; };
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
 // ...the RAY-TRACED AO's (`ssao.frag` -DOMK_RT): the camera in the world, after it
 struct SsaoRtPush { SsaoPush a; float eye[4], s[4], u[4], f[4]; };
-// `scene.frag`'s `RtFrame` (-DOMK_RT, set 3 binding 2: a root CBV b2 space3)
-// (`refl`, `refl2`: RAY-TRACED REFLECTIONS', `todo/enhancements.md` 26 - after
-// the three, so nothing above moves)
-struct RtFrame { float sky[4]; float eye[4]; float params[4]; float refl[4]; float refl2[4]; float skyUp[4]; };
+// `scene.frag`'s `RtFrame` (-DOMK_RT, set 3 binding 2: a root CBV b2 space3), shared
+// with the Vulkan backend (`o3de/rtscene.h`)
+using RtFrame = omk::rt::Frame;
 // `blit.frag`'s, this backend's own: the swapchain's scaled copy
 struct BlitPush { float dst[4]; float srcSize[4]; int32_t linear; float white, peak; };
 // THE POST CHAIN's (`bloom.frag`, `post.frag`, todo/enhancements.md 22)
@@ -513,7 +513,10 @@ private:
     bool rtMapped(UINT64 bytes, ID3D12Resource*& r, void*& p, UINT64& cap);
     bool rtInit();
     void rtBind(const omk::View& view);
-    struct RtTri;
+    // what goes into a BLAS is made by `o3de/rtscene.h`, for both backends
+    using RtTri = omk::rt::Tri;
+    using RtRun = omk::rt::Run;
+    using RtBodyNote = omk::rt::BodyNote;
     bool rtFill(RtBlas& b, const std::vector<RtTri>& tri);
     RtBlas* rtSetFor(const omk::Geometry* g);
     void rtNote(const omk::Draw& d);
@@ -797,15 +800,6 @@ private:
         long seen = 0;                              // the frame it was last drawn
         bool built = false;
     };
-    struct RtRun { std::size_t count; bool cutout; UINT srv; };
-    // a triangle going into a BLAS: its geometry, first corner, the affines
-    // that pose it (none for a set) and its texture's view
-    struct RtTri { const omk::Geometry* g; const float* aff; std::uint32_t poses, first; UINT tex; };
-    struct RtBodyNote {
-        const omk::Geometry* geo = nullptr;
-        std::vector<float> aff;                     // its affines, copied at submit
-        std::map<std::size_t, RtRun> runs;          // its opaque draws, by start
-    };
     bool wantRt_ = false, rtOn_ = false;
     bool wantRtRefl_ = false, rtReflOn_ = false;   // RAY-TRACED REFLECTIONS (row 26)
     long rtFloorDraws_ = 0;                        // ...the ground draws this frame, for the log
@@ -819,7 +813,7 @@ private:
     bool rtRecorded_ = false;
     std::map<const omk::Geometry*, RtBlas> rtSet_;
     RtBlas rtBodyAll_;                              // EVERY body of the frame, one BLAS
-    std::map<std::pair<const float*, const omk::Geometry*>, RtBodyNote> rtNotes_;
+    omk::rt::BodyNotes rtNotes_;
     static constexpr UINT kRtMaxInst = 2048;
     ID3D12Resource* rtTlas_ = nullptr;
     UINT64 rtTlasScratch_ = 0;
@@ -3022,7 +3016,7 @@ void D3D12Renderer::submit(const omk::Draw& d) {
     // game's shadows off (`caster` - no shadow then receives anyway)
     if (rtOn_) {
         rtNote(d);
-        rtBodyDraw_ = d.meshPose != nullptr || (d.lit & ~(omk::kDrawSoft | omk::kDrawFloor)) != 0;
+        rtBodyDraw_ = omk::rt::isBodyDraw(d);
         rtFloorDraws_ += (d.lit & omk::kDrawFloor) != 0;
     }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
@@ -3256,7 +3250,7 @@ void D3D12Renderer::runSsao() {
 // AN ENHANCEMENT, off unless asked (`raytracing = on`, `--raytracing`), and
 // this backend's alone: DXR 1.1's INLINE ray queries (tier 1.1, shader model
 // 6.5) cast from the raster passes - no ray-tracing pipeline, no shader table.
-// Three effects, in `backends/d3d12/shaders/rt.glsl` and the -DOMK_RT arms of
+// Three effects, in `backends/vulkan/shaders/rt.glsl` and the -DOMK_RT arms of
 // `scene.frag` and `ssao.frag`:
 //   1. a CHARACTER LIT BY ITS SURROUNDINGS - six cosine-weighted rays into the
 //      set from each of its fragments, a hit returning what the eye sees there
@@ -3383,57 +3377,9 @@ void D3D12Renderer::rtBind(const omk::View& view) {
     float tH = 0.0f, tV = 0.0f;
     omk::cameraBasis(cam, rtS_, rtU_, rtF_, tH, tV);
     for (int k = 0; k < 3; ++k) rtEye_[k] = cam.eye[k];
-    // `OMK_RT_NO_INDIRECT=1`: the indirect term off - the control `verify.py:
-    // engine: raytracing` and `engine: character shadows` show their checks with
-    static const bool noIndirect = omk::envFlag("OMK_RT_NO_INDIRECT");
+    // the constants, numbers and `OMK_RT_*` tunings alike, are `o3de/rtscene.cpp`'s
     RtFrame f{};
-    const float* sky = fog_ ? fogColour_ : clearColour_;
-    for (int k = 0; k < 3; ++k) { f.sky[k] = sky[k]; f.eye[k] = rtEye_[k]; }
-    // the indirect term's strength: 1, a Lambertian's - the texel times the
-    // cosine-weighted mean of the radiance arriving, which is what the baked
-    // colour times its texel IS where the ray lands
-    f.sky[3] = noIndirect ? 0.0f : 1.0f;
-    f.eye[3] = 0.0f;                         // (unused: a character takes no near occlusion)
-    f.params[0] = 1500.0f;                   // indirect reach: 38 m, the street fogs beyond
-    f.params[1] = 400.0f;                    // occlusion reach: 10 m - an arch overhead
-    f.params[2] = 0.0f;                      // (unused: a character takes no lamp shadow ray)
-    f.params[3] = -1.0f;
-    // `OMK_RT_TUNE="indirect,occlusion,reach,occlusion reach,lamp radius,margin"`
-    // replaces the six numbers above, for judging them by eye
-    static float tune[6] = {-1, -1, -1, -1, -1, -1};
-    static const bool tuned = [] {
-        const char* t = omk::envStr("OMK_RT_TUNE");
-        return t && std::sscanf(t, "%f,%f,%f,%f,%f,%f", &tune[0], &tune[1], &tune[2], &tune[3], &tune[4],
-                                &tune[5]) == 6;
-    }();
-    if (tuned) {
-        f.sky[3] = tune[0]; f.eye[3] = tune[1];
-        for (int k = 0; k < 4; ++k) f.params[k] = tune[2 + k];
-    }
-    // RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26): x the strength (0
-    // off), y F0 (Schlick), z the ray's reach, w a puddle's roughness (the
-    // cone's half-width); refl2 x the share of the ground wet, y the boost a
-    // bright (neon, lamp) texel takes, z a damp patch's roughness, w the
-    // strength a damp (not puddled) patch keeps
-    if (rtReflOn_) {
-        // the sky's mean colour (`View::skyMean`), w 1 when there is one
-        if (view.skyMean[0] >= 0.0f) {
-            for (int k = 0; k < 3; ++k) f.skyUp[k] = view.skyMean[k];
-            f.skyUp[3] = 1.0f;
-        }
-        f.refl[0] = 1.0f; f.refl[1] = 0.06f; f.refl[2] = 2400.0f; f.refl[3] = 0.015f;
-        f.refl2[0] = 0.45f; f.refl2[1] = 1.6f; f.refl2[2] = 0.08f; f.refl2[3] = 0.3f;
-        // `OMK_RT_REFL_TUNE="strength,F0,reach,roughness,wet share,boost"`, by eye
-        static float rt[6] = {-1, -1, -1, -1, -1, -1};
-        static const bool rtuned = [] {
-            const char* t = omk::envStr("OMK_RT_REFL_TUNE");
-            return t && std::sscanf(t, "%f,%f,%f,%f,%f,%f", &rt[0], &rt[1], &rt[2], &rt[3], &rt[4], &rt[5]) == 6;
-        }();
-        if (rtuned) {
-            for (int k = 0; k < 4; ++k) f.refl[k] = rt[k];
-            f.refl2[0] = rt[4]; f.refl2[1] = rt[5];
-        }
-    }
+    omk::rt::fillFrame(fog_ ? fogColour_ : clearColour_, rtEye_, view.skyMean, rtReflOn_, f);
     std::memcpy(rtFramePtr_, &f, sizeof f);
     list_->SetGraphicsRootShaderResourceView(6, rtTlas_->GetGPUVirtualAddress());
     list_->SetGraphicsRootShaderResourceView(7, rtInstTab_->GetGPUVirtualAddress());
@@ -3466,34 +3412,7 @@ bool D3D12Renderer::rtFill(RtBlas& b, const std::vector<RtTri>& tri) {
         v.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
         dev_->CreateShaderResourceView(b.rec, &v, srv_.cpu(b.recSrv));
     }
-    float* P = b.posPtr;
-    std::uint32_t* R = b.recPtr;
-    omk::Threads::shared().parallelFor(0, n, 2048, [&](std::size_t from, std::size_t to) {
-        for (std::size_t t = from; t < to; ++t) {
-            const RtTri& q = tri[t];
-            const omk::Geometry& g = *q.g;
-            const bool skin = q.aff && g.cornerMesh.size() == g.corners.size();
-            for (std::size_t k = 0; k < 3; ++k) {
-                const std::size_t c = q.first + k;
-                const omk::Corner& v = g.corners[c];
-                float x = v.x, y = v.y, z = v.z;
-                if (skin) {
-                    const std::int32_t m = g.cornerMesh[c];
-                    if (m >= 0 && static_cast<std::uint32_t>(m) < q.poses) {
-                        const float* a = q.aff + 12 * m;
-                        const float px = x, py = y, pz = z;
-                        x = a[0] * px + a[1] * py + a[2] * pz + a[3];
-                        y = a[4] * px + a[5] * py + a[6] * pz + a[7];
-                        z = a[8] * px + a[9] * py + a[10] * pz + a[11];
-                    }
-                }
-                P[9 * t + 3 * k] = x; P[9 * t + 3 * k + 1] = y; P[9 * t + 3 * k + 2] = z;
-                const float rec[5] = {v.u, v.v, v.r, v.g, v.b};
-                std::memcpy(R + 16 * t + 5 * k, rec, sizeof rec);
-            }
-            R[16 * t + 15] = q.tex;
-        }
-    });
+    omk::rt::fillRecords(tri, b.posPtr, b.recPtr);
     return true;
 }
 
@@ -3509,15 +3428,8 @@ D3D12Renderer::RtBlas* D3D12Renderer::rtSetFor(const omk::Geometry* g) {
     b.built = false;
     b.texAt.clear();
     b.texGen = texGen_;
-    std::vector<std::uint32_t> opq, cut;
-    for (const auto& bt : g->batches) {
-        if (bt.blend != omk::Blend::Opaque) continue;
-        for (std::size_t c = bt.start; c + 3 <= bt.start + bt.count && c + 3 <= g->corners.size(); c += 3)
-            (bt.cutout ? cut : opq).push_back(static_cast<std::uint32_t>(c));
-    }
-    b.nOpaque = static_cast<std::uint32_t>(opq.size());
-    b.nCut = static_cast<std::uint32_t>(cut.size());
-    opq.insert(opq.end(), cut.begin(), cut.end());
+    std::vector<std::uint32_t> opq;
+    omk::rt::setCorners(*g, opq, b.nOpaque, b.nCut);
     std::vector<RtTri> tris;
     tris.reserve(opq.size());
     for (const std::uint32_t c : opq) tris.push_back(RtTri{g, nullptr, 0, c, white_.srv});
@@ -3539,7 +3451,7 @@ void D3D12Renderer::rtNote(const omk::Draw& d) {
         RtBodyNote& n = rtNotes_[{posed ? d.meshPose : nullptr, d.geo}];
         n.geo = d.geo;
         if (posed && n.aff.empty()) n.aff.assign(d.meshPose, d.meshPose + 12 * d.meshPoses);
-        n.runs[d.start] = RtRun{d.count, d.cutout, srv};
+        n.runs[d.start] = RtRun{d.count, d.cutout != 0, srv};
         return;
     }
     RtBlas* b = rtSetFor(d.geo);
@@ -3602,36 +3514,13 @@ void D3D12Renderer::rtBuild() {
     // ...ALL of them in ONE BLAS: a build has a fixed cost, and a street's
     // crowd is a couple of hundred bodies of a few hundred triangles
     {
-        std::vector<RtTri> tri, cut;
+        std::vector<RtTri> tri;
         int bodies = 0;
-        std::uint64_t sig = 1469598103934665603ull;   // FNV-1a over the runs taken
-        const auto mix = [&](std::uint64_t v) { sig = (sig ^ v) * 1099511628211ull; };
-        for (auto& [key, n] : rtNotes_) {
-            // a body further than 4500 units (115 m) from the eye is left out:
-            // its AO has faded (`ssao.frag`, 3500..8000 of view depth) and a
-            // character's rays see the set alone
-            const omk::Corner& c0 = n.geo->corners[n.runs.begin()->first];
-            const float at[3] = {n.aff.empty() ? c0.x : n.aff[3], n.aff.empty() ? c0.y : n.aff[7],
-                                 n.aff.empty() ? c0.z : n.aff[11]};
-            const float dx = at[0] - rtEye_[0], dy = at[1] - rtEye_[1], dz = at[2] - rtEye_[2];
-            if (dx * dx + dy * dy + dz * dz > 4500.0f * 4500.0f) continue;
-            const std::size_t was = tri.size() + cut.size();
-            const std::uint32_t poses = static_cast<std::uint32_t>(n.aff.size() / 12);
-            for (const auto& [start, r] : n.runs) {
-                mix(reinterpret_cast<std::uintptr_t>(n.geo));
-                mix((static_cast<std::uint64_t>(start) << 33) ^ (static_cast<std::uint64_t>(r.count) << 1) ^ r.cutout);
-                for (std::size_t c = start; c + 3 <= start + r.count && c + 3 <= n.geo->corners.size(); c += 3)
-                    (r.cutout ? cut : tri).push_back(RtTri{n.geo, n.aff.empty() ? nullptr : n.aff.data(), poses,
-                                                           static_cast<std::uint32_t>(c), r.srv});
-            }
-            bodies += tri.size() + cut.size() > was;
-        }
+        std::uint64_t sig = 0;
         RtBlas& b = rtBodyAll_;
-        b.nOpaque = static_cast<std::uint32_t>(tri.size());
-        b.nCut = static_cast<std::uint32_t>(cut.size());
+        omk::rt::gatherBodies(rtNotes_, rtEye_, tri, b.nOpaque, b.nCut, bodies, sig);
         b.built = false;
         rtBodyCount_ = bodies;
-        tri.insert(tri.end(), cut.begin(), cut.end());
         ID3D12Resource* const posWas = b.pos;
         if (!tri.empty() && rtFill(b, tri)) {
             b.seen = rtFrame_;

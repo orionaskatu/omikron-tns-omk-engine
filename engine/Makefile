@@ -129,7 +129,7 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/vol.frag.inc build/shaders/vol_ms.frag.inc \
               build/shaders/volmix.frag.inc build/shaders/volmix_ms.frag.inc \
               build/shaders/scene_mv.vert.inc build/shaders/scene_mv.frag.inc build/shaders/scene_soft_mv.frag.inc \
-              build/shaders/fg_cap.frag.inc build/shaders/fg_splat.frag.inc build/shaders/fg_resolve.frag.inc
+              build/shaders/fg_cap.frag.inc build/shaders/fg_splat.frag.inc build/shaders/fg_resolve.frag.inc               build/shaders/scene_rt.frag.inc build/shaders/scene_rt_mv.frag.inc               build/shaders/scene_rtc.frag.inc build/shaders/scene_rtc_mv.frag.inc               build/shaders/ssao_rt.frag.inc build/shaders/ssao_rt_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
@@ -160,6 +160,33 @@ build/shaders/%_mv.frag.inc: backends/vulkan/shaders/%.frag
 build/shaders/scene_soft_mv.frag.inc: backends/vulkan/shaders/scene.frag
 	@mkdir -p build/shaders
 	$(GLSLC) -DOMK_SOFT -DOMK_SOFT_SET=3 -DOMK_MOTION -mfmt=c -o $@ $<
+
+# HYBRID RAY TRACING (`todo/enhancements.md` 19): `scene.frag` and `ssao.frag` with -DOMK_RT, which
+# includes `rt.glsl` - GL_EXT_ray_query, so GLSL 460 and Vulkan 1.2 SPIR-V (VK_KHR_ray_query; the
+# Direct3D 12 builds below are these very sources at shader model 6.5). The rays' three descriptor
+# sets sit after the scene pass's four (4, 5, 6) and after the AO pass's own (1, 2, 3); `_rtc` is the
+# counting build (the rays' tally, a storage buffer written by the fragment stage).
+VK_RT_GLSL    := -std=460 --target-env=vulkan1.2 -DOMK_RT
+VK_RT_SCENE   := $(VK_RT_GLSL) -DOMK_RT_SET=4 -DOMK_RT_SET_REC=5 -DOMK_RT_SET_TEX=6
+VK_RT_AO      := $(VK_RT_GLSL) -DOMK_RT_SET=1 -DOMK_RT_SET_REC=2 -DOMK_RT_SET_TEX=3
+build/shaders/scene_rt.frag.inc: backends/vulkan/shaders/scene.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_SCENE) -mfmt=c -o $@ $<
+build/shaders/scene_rt_mv.frag.inc: backends/vulkan/shaders/scene.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_SCENE) -DOMK_MOTION -mfmt=c -o $@ $<
+build/shaders/scene_rtc.frag.inc: backends/vulkan/shaders/scene.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_SCENE) -DOMK_RT_COUNT -mfmt=c -o $@ $<
+build/shaders/scene_rtc_mv.frag.inc: backends/vulkan/shaders/scene.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_SCENE) -DOMK_RT_COUNT -DOMK_MOTION -mfmt=c -o $@ $<
+build/shaders/ssao_rt.frag.inc: backends/vulkan/shaders/ssao.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_AO) -mfmt=c -o $@ $<
+build/shaders/ssao_rt_ms.frag.inc: backends/vulkan/shaders/ssao.frag backends/vulkan/shaders/rt.glsl
+	@mkdir -p build/shaders
+	$(GLSLC) $(VK_RT_AO) -DOMK_MS -mfmt=c -o $@ $<
 
 # SSAO's multisampled-depth builds (`sampler2DMS`), from the same sources
 build/shaders/%_ms.frag.inc: backends/vulkan/shaders/%.frag
@@ -217,24 +244,24 @@ build/shaders/dx/%_mv.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
 	$(GLSLC) -DOMK_MOTION -o $@ $<
 # HYBRID RAY TRACING (`todo/enhancements.md` 19): `scene.frag` and `ssao.frag`
-# with -DOMK_RT, which includes `backends/d3d12/shaders/rt.glsl` - DXR 1.1's
+# with -DOMK_RT, which includes `backends/vulkan/shaders/rt.glsl` - DXR 1.1's
 # inline ray queries, so GLSL 460 and Vulkan 1.2 SPIR-V, shader model 6.5 below.
 # Vulkan never compiles this arm.
-RT_GLSL := -std=460 --target-env=vulkan1.2 -DOMK_RT -Ibackends/d3d12/shaders
-build/shaders/dx/%_rt.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+RT_GLSL := -std=460 --target-env=vulkan1.2 -DOMK_RT
+build/shaders/dx/%_rt.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
 	$(GLSLC) $(RT_GLSL) -o $@ $<
-build/shaders/dx/%_rt_mv.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+build/shaders/dx/%_rt_mv.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
 	$(GLSLC) $(RT_GLSL) -DOMK_MOTION -o $@ $<
-build/shaders/dx/%_rt_ms.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+build/shaders/dx/%_rt_ms.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
 	$(GLSLC) $(RT_GLSL) -DOMK_MS -o $@ $<
 # ...and the scene pass's COUNTING build (-DOMK_RT_COUNT: the rays' tally, a UAV)
-build/shaders/dx/%_rtc.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+build/shaders/dx/%_rtc.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
 	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -o $@ $<
-build/shaders/dx/%_rtc_mv.frag.spv: backends/vulkan/shaders/%.frag backends/d3d12/shaders/rt.glsl
+build/shaders/dx/%_rtc_mv.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
 	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -DOMK_MOTION -o $@ $<
 # SOFT PARTICLES (`todo/enhancements.md` 23): `scene.frag` with -DOMK_SOFT - the

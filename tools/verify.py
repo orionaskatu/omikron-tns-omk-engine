@@ -28485,7 +28485,7 @@ def c_engine_dof_transcan():
 
 
 def c_engine_face_lines():
-    r"""`omk-play --d3d12 --raytracing`: NO LINES ALONG A FACE'S TRIANGLE EDGES.
+    r"""`omk-play --raytracing` (Direct3D 12 and Vulkan): NO LINES ALONG A FACE'S TRIANGLE EDGES.
 
     The ray-traced indirect light (`rtCharacter` in `scene.frag`) smooths its
     few rays a pixel with the pixel quad's mean, read from the fine derivatives.
@@ -28505,7 +28505,7 @@ def c_engine_face_lines():
       40, the old shader 120);
     * the same frame without ray tracing stays under 10 - the measure sees no
       line in the face's own texture.
-    Skipped without a D3D12 device with DXR 1.1.
+    Asserted on each backend that has the device (DXR 1.1; VK_KHR_ray_query).
     SHOWN TO FAIL with `float w = gl_HelperInvocation ? 0.0 : 1.0;` made
     `float w = 1.0;` in `rtCharacter`: about 120.
     """
@@ -28521,24 +28521,30 @@ def c_engine_face_lines():
     W, H = 1280, 720
     n = W * H
     with tempfile.TemporaryDirectory() as tmp:
-        def run(extra, name):
+        def run(extra, name, backend):
             win = os.path.join(tmp, name + ".rgba")
             os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
             r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
                                 "--save", save, "--slot", "2", "--call", "386", "--nofmv",
                                 "--no-crowd", "--shadow-quality", "mapped", "--res", "%dx%d" % (W, H),
-                                "--frames", "150", "--d3d12", "--saves", os.path.join(tmp, "saves-" + name)] + extra,
+                                "--frames", "150", "--saves", os.path.join(tmp, "saves-" + name)] +
+                               (["--d3d12"] if backend == "d3d12" else []) + extra,
                                capture_output=True, text=True, errors="replace",
                                env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win))
             pic = open(win, "rb").read() if os.path.exists(win) else b""
             return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
-        t_off, p_off = run([], "off")
-        if "renderer: D3D12" not in t_off:
-            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
-        t_on, p_on = run(["--raytracing"], "on")
-    if "no DXR 1.1" in t_on:
-        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
-    if not (p_off and p_on):
+        pics = {}
+        for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+            t_off, p_off = run([], "off-" + backend, backend)
+            if tag not in t_off:
+                continue
+            t_on, p_on = run(["--raytracing"], "on-" + backend, backend)
+            if "no DXR 1.1" in t_on or "ray tracing asked for, but" in t_on:
+                continue
+            pics[backend] = (p_off, p_on)
+    if not pics:
+        return ("skipped",), ("skipped",), "no Direct3D 12 (DXR 1.1) or Vulkan (ray query) device - the backends are optional"
+    if not all(a and b for a, b in pics.values()):
         return ("a window dump missing",), ("both dumps",), "every run must write OMK_WINDUMP"
     x0, y0, x1, y1 = 635, 160, 725, 215
     def ridges(d):
@@ -28557,15 +28563,16 @@ def c_engine_face_lines():
                         c += 1
                         break
         return c
-    r_on, r_off = ridges(p_on), ridges(p_off)
-    got = (r_on < 75, r_off < 10)
-    return got, (True, True), \
-        ("the forehead's line pixels: %d with ray tracing (under 75), %d without (under 10)"
-         % (r_on, r_off))
+    got, notes = [], []
+    for backend, (p_off, p_on) in pics.items():
+        r_on, r_off = ridges(p_on), ridges(p_off)
+        got += [r_on < 75, r_off < 10]
+        notes.append("%s %d with ray tracing (under 75), %d without (under 10)" % (backend, r_on, r_off))
+    return tuple(got), (True,) * len(got), "the forehead's line pixels: " + "; ".join(notes)
 
 
 def c_engine_character_shadows():
-    r"""`omk-play --d3d12 --raytracing`: A CHARACTER RECEIVES NO RAY-TRACED SHADOW.
+    r"""`omk-play --raytracing` (Direct3D 12 and Vulkan): A CHARACTER RECEIVES NO RAY-TRACED SHADOW.
 
     The player's report: the characters are a few polygons and ray tracing
     "adds a lot of shadows on their faces that do not look good". Every
@@ -28590,7 +28597,7 @@ def c_engine_character_shadows():
       face: 0.98) and the ratio's spread over the skin stays under 0.025
       (a patch, a stripe or a shadowed cheek raise it; the near occlusion's
       face: 0.034, now 0.016).
-    Skipped without a D3D12 device with DXR 1.1.
+    Asserted on each backend that has the device (DXR 1.1; VK_KHR_ray_query).
     SHOWN TO FAIL with the shadow ratio and the near occlusion of
     `rtCharacter` restored (`shade * (1.0 - rtf.eye.w * q.w)`).
     """
@@ -28606,48 +28613,57 @@ def c_engine_character_shadows():
     W, H = 1280, 720
     n = W * H
     with tempfile.TemporaryDirectory() as tmp:
-        def run(extra, name, env_extra=None):
+        def run(extra, name, backend, env_extra=None):
             win = os.path.join(tmp, name + ".rgba")
             os.makedirs(os.path.join(tmp, "saves-" + name), exist_ok=True)
             env = dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win)
             env.update(env_extra or {})
             r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
                                 "--save", save, "--slot", "0", "--stand", "3572,1071,-991,181",
-                                "--d3d12", "--nofmv", "--nodelay", "--colordepth", "32",
+                                "--nofmv", "--nodelay", "--colordepth", "32",
                                 "--res", "%dx%d" % (W, H), "--frames", "700", "--shadow-quality", "mapped",
-                                "--saves", os.path.join(tmp, "saves-" + name)] + extra,
+                                "--saves", os.path.join(tmp, "saves-" + name)] +
+                               (["--d3d12"] if backend == "d3d12" else []) + extra,
                                capture_output=True, text=True, errors="replace", env=env)
             pic = open(win, "rb").read() if os.path.exists(win) else b""
             return r.stdout + r.stderr, pic if len(pic) == 4 * n else b""
-        t_off, p_off = run([], "off")
-        if "renderer: D3D12" not in t_off:
-            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
-        t_on, p_on = run(["--raytracing"], "on")
-        if "no DXR 1.1" in t_on:
-            return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
-        _, p_noi = run(["--raytracing"], "noind", {"OMK_RT_NO_INDIRECT": "1"})
-    if not (p_off and p_on and p_noi):
+        pics = {}
+        for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+            t_off, p_off = run([], "off-" + backend, backend)
+            if tag not in t_off:
+                continue
+            t_on, p_on = run(["--raytracing"], "on-" + backend, backend)
+            if "no DXR 1.1" in t_on or "ray tracing asked for, but" in t_on:
+                continue
+            _, p_noi = run(["--raytracing"], "noind-" + backend, backend, {"OMK_RT_NO_INDIRECT": "1"})
+            pics[backend] = (p_off, p_on, p_noi)
+    if not pics:
+        return ("skipped",), ("skipped",), "no Direct3D 12 (DXR 1.1) or Vulkan (ray query) device - the backends are optional"
+    if not all(all(p) for p in pics.values()):
         return ("a window dump missing",), ("all dumps",), "every run must write OMK_WINDUMP"
     x0, y0, x1, y1 = 600, 200, 730, 340
     luma = lambda d, x, y: (d[4 * (y * W + x)] * 54 + d[4 * (y * W + x) + 1] * 183
                             + d[4 * (y * W + x) + 2] * 19) / 256.0
     blur = lambda d, x, y: sum(luma(d, x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)) / 9.0
     pts = [(x, y) for y in range(y0, y1) for x in range(x0, x1)]
-    sad = big = 0
-    for x, y in pts:
-        o = 4 * (y * W + x)
-        dm = max(abs(p_noi[o + c] - p_off[o + c]) for c in range(3))
-        sad += dm
-        big += dm > 12
-    ratio = [blur(p_on, x, y) / max(blur(p_off, x, y), 1.0) for x, y in pts]
-    mean = sum(ratio) / len(ratio)
-    spread = math.sqrt(sum((v - mean) ** 2 for v in ratio) / len(ratio))
-    mad = sad / float(len(pts))
-    got = (mad < 1.5 and big == 0, min(ratio) >= 1.0, spread < 0.025)
-    return got, (True, True, True), \
-        ("the skin without the bounce light differs from the plain frame by %.2f on average (%d pixels over "
-         "12; under 1.5, none); with it the lowest local ratio to the plain frame is %.3f (1.0 or more), its "
-         "mean %.3f, spread %.3f (under 0.025)" % (mad, big, min(ratio), mean, spread))
+    got, notes = [], []
+    for backend, (p_off, p_on, p_noi) in pics.items():
+        sad = big = 0
+        for x, y in pts:
+            o = 4 * (y * W + x)
+            dm = max(abs(p_noi[o + c] - p_off[o + c]) for c in range(3))
+            sad += dm
+            big += dm > 12
+        ratio = [blur(p_on, x, y) / max(blur(p_off, x, y), 1.0) for x, y in pts]
+        mean = sum(ratio) / len(ratio)
+        spread = math.sqrt(sum((v - mean) ** 2 for v in ratio) / len(ratio))
+        mad = sad / float(len(pts))
+        got += [mad < 1.5 and big == 0, min(ratio) >= 1.0, spread < 0.025]
+        notes.append("%s: the skin without the bounce light differs from the plain frame by %.2f on average "
+                     "(%d pixels over 12; under 1.5, none); with it the lowest local ratio to the plain frame "
+                     "is %.3f (1.0 or more), its mean %.3f, spread %.3f (under 0.025)"
+                     % (backend, mad, big, min(ratio), mean, spread))
+    return tuple(got), (True,) * len(got), "; ".join(notes)
 
 
 def c_engine_best_lod():
@@ -29223,13 +29239,126 @@ def c_engine_upscaler():
             "fell back to FSR" if dlss_fell else "NO clean fallback"))
 
 
-def c_engine_raytracing():
-    r"""`omk-play --world-d3d12 --raytracing`: HYBRID RAY TRACING (`todo/enhancements.md` 19).
+def c_engine_vulkan_parity_rt():
+    r"""The VULKAN window renders what the DIRECT3D 12 window renders WITH THE RAY TRACER: PART 3 of the parity
+    effort (`todo/enhancements.md` 19, 26). Hybrid ray tracing (characters lit by the set around them, ray-traced AO
+    in SSAO's place) and the ray-traced reflections on the wet ground run on both backends from ONE GLSL source
+    (`backends/vulkan/shaders/rt.glsl`; Direct3D 12 cross-compiles the SPIR-V to DXR 1.1 inline ray queries,
+    Vulkan runs VK_KHR_ray_query as it is) over one description of the scene (`o3de/rtscene.h`: the BLAS inputs, the
+    16-word records, the frame's constants). The rays' noise is a deterministic hash of the pixel, so the two pictures
+    should agree closely: the same launch line on `--d3d12` and on the default Vulkan window, hidden, read from what the
+    window was handed (`OMK_WINDUMP`), pixel by pixel - the largest per-channel MEAN absolute difference, the share of
+    pixels more than 8 levels off and more than 1 off. Three frames, each with `--raytracing`: the street start
+    (640x480, the crowd), a character's close-up
+    (restaurant save, slot 2, conversation 386, 960x540) and the first conversation line with Telis (slot 0,
+    frame 700, 960x540). Measured on an RX 9070 XT (both APIs): mean 0.02-0.11, 0.02-0.16% of the pixels more
+    than 8 off (worst channel 17-42), 0.5-2.0% more than 1 off, the same ray counts on the two logs. The tolerance
+    (mean <= 0.2, under 0.5% of the pixels more than 8 off, under 3% more than 1 off) is for another driver's
+    rounding of the ray code's `pow`, `sqrt` and `fract`, not a difference of method. Each frame must also differ
+    from the same frame without ray tracing on BOTH backends (mean >= 1, more than 5% of the pixels more than 1
+    off: the indirect light and the AO are real) and each log says the ray tracing is live.
+    Skipped without both backends or without ray queries on either.
+    SHOWN TO FAIL with the Vulkan ray tracing disabled (`rtWant_` never set: the log says it is off, the Vulkan
+    frames are the plain ones and no longer agree with Direct3D 12's).
+    """
+    import subprocess, tempfile
+    eng = os.path.join(ROOT, "engine")
+    appart = os.path.join(ROOT, "traces", "save-appart.bin")
+    resto = os.path.join(ROOT, "traces", "games-resto.bin")
+    if not (os.path.isdir(eng) and os.path.exists(appart) and os.path.exists(resto)):
+        return ("skipped",), ("skipped",), "engine/ or the saves absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "omk-play did not build"
+    street = ["--area", "0", "--stand", "1804,0,-6890,336", "--colordepth", "32", "--shadow-quality", "mapped"]
+    face = ["--slot", "2", "--call", "386", "--no-crowd", "--shadow-quality", "mapped", "--colordepth", "32"]
+    dlg = ["--slot", "0", "--stand", "3572,1071,-991,181", "--nodelay", "--shadow-quality", "mapped",
+           "--colordepth", "32"]
+    rt = ["--raytracing"]
+    # name: (save, resolution, frames, arguments)
+    RUNS = {
+        "street": (appart, (640, 480), "60", street),
+        "street_rt": (appart, (640, 480), "60", street + rt),
+        "face": (resto, (960, 540), "150", face),
+        "face_rt": (resto, (960, 540), "150", face + rt),
+        "dlg": (resto, (960, 540), "700", dlg),
+        "dlg_rt": (resto, (960, 540), "700", dlg + rt),
+    }
+    res = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(backend, name):
+            save, (W, H), frames, extra = RUNS[name]
+            win = os.path.join(tmp, backend + "-" + name + ".rgba")
+            saves = os.path.join(tmp, "saves-" + backend + "-" + name)
+            os.makedirs(saves, exist_ok=True)
+            args = [play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save", save, "--nofmv",
+                    "--res", "%dx%d" % (W, H), "--frames", frames, "--saves", saves] + \
+                   (["--d3d12"] if backend == "d3d12" else []) + extra
+            r = subprocess.run(args, capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_WINDUMP=win, OMK_SYNC_SETS="1"))
+            pic = open(win, "rb").read() if os.path.exists(win) else b""
+            res[(backend, name)] = (r.stdout + r.stderr, pic if len(pic) == 4 * W * H else b"")
+        run("d3d12", "street_rt")
+        run("vulkan", "street_rt")
+        d3, vk = res[("d3d12", "street_rt")][0], res[("vulkan", "street_rt")][0]
+        if "renderer: D3D12" not in d3 or "renderer: VULKAN" not in vk:
+            return ("skipped",), ("skipped",), "no Direct3D 12 or no Vulkan device - the backends are optional"
+        if "no DXR 1.1" in d3:
+            return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
+        for name in RUNS:
+            for backend in ("d3d12", "vulkan"):
+                if (backend, name) not in res:
+                    run(backend, name)
+    if not all(p for _, p in res.values()):
+        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+    def diff(a, b):
+        sa = [0, 0, 0]
+        big = off1 = mx = 0
+        n = len(a) // 4
+        for i in range(n):
+            o = 4 * i
+            m = 0
+            for c in range(3):
+                d = abs(a[o + c] - b[o + c])
+                sa[c] += d
+                if d > m:
+                    m = d
+            mx = max(mx, m)
+            big += m > 8
+            off1 += m > 1
+        return max(sa) / n, big / n, mx, off1 / n
+    pic = lambda b, name: res[(b, name)][1]
+    got, want, log = [], [], []
+    def check(label, cond, note):
+        got.append(bool(cond))
+        want.append(True)
+        log.append("%s: %s (%s)" % (label, "ok" if cond else "NO", note))
+    for name in ("street_rt", "face_rt", "dlg_rt"):
+        d = diff(pic("d3d12", name), pic("vulkan", name))
+        check(name + " agrees", d[0] <= 0.2 and d[1] < 0.005 and d[3] < 0.03,
+              "mean %.3f, >8 %.3f%%, worst %d, >1 %.2f%%" % (d[0], 100 * d[1], d[2], 100 * d[3]))
+    for b in ("d3d12", "vulkan"):
+        for name, base in (("street_rt", "street"), ("face_rt", "face"), ("dlg_rt", "dlg")):
+            d = diff(pic(b, base), pic(b, name))
+            live = "RAY TRACING on" in res[(b, name)][0]
+            check("%s on %s" % (name, b), live and d[0] >= 1.0 and d[3] > 0.05,
+                  "live: %s, mean %.2f against the plain frame, %.1f%% of the pixels more than 1 off"
+                  % (live, d[0], 100 * d[3]))
+    return tuple(got), tuple(want), "; ".join(log)
 
-    The Direct3D 12 backend on a DXR 1.1 device builds acceleration structures
+
+def c_engine_raytracing():
+    r"""`omk-play --world-d3d12 --raytracing` (and `--world-vulkan`): HYBRID RAY TRACING (`todo/enhancements.md` 19).
+
+    Both backends run it from ONE GLSL source and one scene description
+    (`o3de/rtscene.h`): Direct3D 12 on a DXR 1.1 device (inline ray queries),
+    Vulkan on VK_KHR_ray_query over VK_KHR_acceleration_structure - every
+    assertion below is made on each backend that has the device, `--world-
+    vulkan` without a debug layer. The Direct3D 12 backend builds acceleration structures
     from what the frame submits - a BLAS per set geometry (once), one BLAS for
     every posed body (rebuilt or refitted each frame), one TLAS - and casts
-    INLINE ray queries from the raster passes (`backends/d3d12/shaders/rt.glsl`,
+    INLINE ray queries from the raster passes (`backends/vulkan/shaders/rt.glsl`,
     the -DOMK_RT builds of `scene.frag` and `ssao.frag`): a character's
     fragments take the set's baked light around them (rays returning vertex
     colour x texel) and NOTHING taken away (no shadow ray, no near occlusion:
@@ -29249,8 +29378,8 @@ def c_engine_raytracing():
     * the INDIRECT term then BRIGHTENS pixels (more than 0.1% of the frame,
       the player's) and touches under 15% of it - characters only, the set's
       own pixels are not lit by it;
-    * Vulkan declines it with a line saying it is the D3D12 backend's.
-    Skipped without a D3D12 backend, a device, or DXR 1.1 on it.
+    * (a backend without the device says so and runs without: skipped for it.)
+    Skipped without a backend that has the device.
     SHOWN TO FAIL with the indirect term removed (`rtCharacter`'s
     `+ rtf.sky.a * q` made `+ 0.0 * q`): no pixel brightens.
     """
@@ -29283,16 +29412,19 @@ def c_engine_raytracing():
             text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
             data = open(out, "rb").read() if os.path.exists(out) else b""
             return text, data
-        t_off, d_off = run([], "off")
-        if "renderer: the world through D3D12" not in t_off:
-            why = "this viewer has no D3D12 backend" if "without Direct3D 12" in t_off else "no D3D12 device"
-            return ("skipped",), ("skipped",), why
-        t_on, d_on = run(["--raytracing"], "on")
-        if "no DXR 1.1" in t_on:
-            return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
-        t_noi, d_noi = run(["--raytracing"], "noind", env_extra={"OMK_RT_NO_INDIRECT": "1"})
-        t_fsr, _ = run(["--raytracing", "--upscaler", "fsr"], "fsr")
-        t_vk, _ = run(["--raytracing"], "vk", api="vulkan")
+        res = {}
+        for api, tag in (("d3d12", "renderer: the world through D3D12"), ("vulkan", "renderer: the world through VULKAN")):
+            t_off, d_off = run([], "off-" + api, api)
+            if tag not in t_off:
+                continue
+            t_on, d_on = run(["--raytracing"], "on-" + api, api)
+            if "no DXR 1.1" in t_on or "ray tracing asked for, but" in t_on:
+                continue
+            t_noi, d_noi = run(["--raytracing"], "noind-" + api, api, env_extra={"OMK_RT_NO_INDIRECT": "1"})
+            t_fsr = run(["--raytracing", "--upscaler", "fsr"], "fsr")[0] if api == "d3d12" else ""
+            res[api] = (t_off, d_off, t_on, d_on, t_noi, d_noi, t_fsr)
+    if not res:
+        return ("skipped",), ("skipped",), "no Direct3D 12 (DXR 1.1) or Vulkan (ray query) device - the backends are optional"
     def errors(t):
         return sum(1 for l in t.splitlines()
                    if "d3d12 debug [ERROR]" in l or "d3d12 debug [CORRUPTION]" in l)
@@ -29309,29 +29441,30 @@ def c_engine_raytracing():
                 elif sb > sa + 2:
                     bright += 1
         return dark, bright
-    ev = _events(t_on)
-    live = any(name == "rt_on" for name, _ in ev)
-    tlas = [f for name, f in ev if name == "rt_tlas"]
-    last = tlas[-1] if tlas else {}
-    num = lambda k: int(last.get(k, "0"))
-    ao_dark, ao_bright = compare(d_off, d_noi)
-    ind_dark, ind_bright = compare(d_noi, d_on)
-    fsr_ok = "upscaler: FSR" not in t_fsr or ("@evt rt_tlas" in t_fsr and errors(t_fsr) == 0)
-    got = (default_off, "ray tracing" in t_off.lower(), live,
-           num("sets") >= 1 and num("set_tris") > 0, num("bodies") >= 1 and num("body_tris") > 0,
-           num("indirect_rays") > 0,
-           errors(t_on) + errors(t_noi), fsr_ok,
-           ao_bright, ao_dark > n // 200,
-           ind_bright > n // 1000, ind_dark + ind_bright < n * 15 // 100,
-           "off on Vulkan" in t_vk)
-    want = (True, False, True, True, True, True, 0, True, 0, True, True, True, True)
-    return got, want, \
-        ("off by default and silent; DXR live, TLAS %s instances (%s set BLAS of %s triangles, %s bodies "
-         "of %s), ~%s indirect rays a frame; the AO darkens %d pixels, "
-         "brightens %d; the indirect term brightens %d, darkens %d (of %d)"
-         % (last.get("instances"), last.get("sets"), last.get("set_tris"), last.get("bodies"),
-            last.get("body_tris"), last.get("indirect_rays"),
-            ao_dark, ao_bright, ind_bright, ind_dark, n))
+    got, want, notes = [], [], []
+    for api, (t_off, d_off, t_on, d_on, t_noi, d_noi, t_fsr) in res.items():
+        ev = _events(t_on)
+        live = any(name == "rt_on" for name, _ in ev)
+        tlas = [f for name, f in ev if name == "rt_tlas"]
+        last = tlas[-1] if tlas else {}
+        num = lambda k: int(last.get(k, "0"))
+        ao_dark, ao_bright = compare(d_off, d_noi)
+        ind_dark, ind_bright = compare(d_noi, d_on)
+        fsr_ok = "upscaler: FSR" not in t_fsr or ("@evt rt_tlas" in t_fsr and errors(t_fsr) == 0)
+        got += [default_off, "ray tracing" in t_off.lower(), live,
+                num("sets") >= 1 and num("set_tris") > 0, num("bodies") >= 1 and num("body_tris") > 0,
+                num("indirect_rays") > 0,
+                errors(t_on) + errors(t_noi), fsr_ok,
+                ao_bright, ao_dark > n // 200,
+                ind_bright > n // 1000, ind_dark + ind_bright < n * 15 // 100]
+        want += [True, False, True, True, True, True, 0, True, 0, True, True, True]
+        notes.append("%s: off by default and silent; live, TLAS %s instances (%s set BLAS of %s triangles, "
+                     "%s bodies of %s), ~%s indirect rays a frame; the AO darkens %d pixels, brightens %d; "
+                     "the indirect term brightens %d, darkens %d (of %d)"
+                     % (api, last.get("instances"), last.get("sets"), last.get("set_tris"), last.get("bodies"),
+                        last.get("body_tris"), last.get("indirect_rays"),
+                        ao_dark, ao_bright, ind_bright, ind_dark, n))
+    return tuple(got), tuple(want), "; ".join(notes)
 
 
 def c_engine_escape_back():
@@ -47394,8 +47527,10 @@ def c_licence_headers():
     # 641: + `engine/src/formats/png.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}` and
     # `tools/texpack.py` (the texture override packs)
     # 642: + `engine/src/o3de/floormesh.h` (ray-traced reflections' ground)
+    # 644: + `postfx.h`, `framegen.h` (the census was not moved when they came)
+    # 646: + `engine/src/o3de/rtscene.{h,cpp}` (hybrid ray tracing's scene, shared by both backends)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (642, [], 1, []), \
+           (646, [], 1, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -50148,7 +50283,7 @@ SLOW = [
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
-    ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/d3d12/shaders/rt.glsl"),
+    ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/vulkan/shaders/rt.glsl"),
     ("engine: face lines", c_engine_face_lines, "todo/enhancements.md 19; scene.frag rtCharacter"),
     ("engine: character shadows", c_engine_character_shadows, "todo/enhancements.md 19; ssao.frag, scene.frag rtCharacter"),
     ("engine: best lod", c_engine_best_lod, "todo/enhancements.md 16; playframe_world_crowd.cpp"),
@@ -50160,6 +50295,7 @@ SLOW = [
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
     ("engine: vulkan parity", c_engine_vulkan_parity, "todo/enhancements.md 21, 22; vkrender.cpp, playgpu_vulkan.cpp"),
+    ("engine: vulkan parity rt", c_engine_vulkan_parity_rt, "todo/enhancements.md 19; vkrender.cpp, rt.glsl, o3de/rtscene.h"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),

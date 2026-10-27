@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // HYBRID RAY TRACING's shared half (`todo/enhancements.md` 19) - included by
-// `scene.frag` and `ssao.frag` when they are built -DOMK_RT, which only the
-// Direct3D 12 backend does (`Makefile`: glslc -std=460, spirv-cross shader
-// model 6.5, dxc ps_6_5 - DXR 1.1's INLINE ray queries). Vulkan never sees
-// this file, so its shaders compile exactly as before.
+// `scene.frag` and `ssao.frag` when they are built -DOMK_RT, for BOTH live
+// backends from this one source (`Makefile`: glslc -std=460 --target-env=
+// vulkan1.2, GL_EXT_ray_query): Vulkan uses the SPIR-V as it is
+// (VK_KHR_ray_query), Direct3D 12 takes it through spirv-cross at shader model
+// 6.5 and dxc ps_6_5 - DXR 1.1's INLINE ray queries. The three descriptor
+// sets are numbered by macros, as `OMK_SOFT_SET` is: Direct3D 12 spaces them
+// 3, 4, 5 (the defaults), Vulkan, whose scene pass already holds sets 0..3,
+// -DOMK_RT_SET=4 -DOMK_RT_SET_REC=5 -DOMK_RT_SET_TEX=6 (and the AO pass,
+// whose own set is 0, 1, 2, 3).
 //
 // The scene the rays see (`d3d12render.cpp`, "HYBRID RAY TRACING"):
 //   * ONE TLAS a frame (t0 space3): an instance per static SET geometry (mask
@@ -20,16 +25,27 @@
 //     texel coordinates and the BAKED vertex colour, the artists' lighting -
 //     and the texture's heap slot (the white texture when no draw has said).
 //   * The records and the textures are read BINDLESS: two unbounded tables
-//     over the whole shader-visible heap (t0 space4 raw buffers, t0 space5
-//     textures), indexed by heap slot.
+//     (Direct3D 12: over the whole shader-visible heap, t0 space4 raw buffers
+//     and t0 space5 textures; Vulkan: descriptor-indexing arrays, partially
+//     bound and updated after bind), indexed by slot.
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_nonuniform_qualifier : require
 
-layout(set = 3, binding = 0) uniform accelerationStructureEXT rtScene;
-layout(std430, set = 3, binding = 1) readonly buffer RtInst { uvec4 i[]; } rtInst;
-layout(set = 3, binding = 3) uniform sampler rtSmp;   // NEAREST, WRAP - the original's
-layout(std430, set = 4, binding = 0) readonly buffer RtRec { uint d[]; } rtRec[];
-layout(set = 5, binding = 0) uniform texture2D rtTex[];
+#ifndef OMK_RT_SET
+#define OMK_RT_SET 3
+#endif
+#ifndef OMK_RT_SET_REC
+#define OMK_RT_SET_REC 4
+#endif
+#ifndef OMK_RT_SET_TEX
+#define OMK_RT_SET_TEX 5
+#endif
+
+layout(set = OMK_RT_SET, binding = 0) uniform accelerationStructureEXT rtScene;
+layout(std430, set = OMK_RT_SET, binding = 1) readonly buffer RtInst { uvec4 i[]; } rtInst;
+layout(set = OMK_RT_SET, binding = 3) uniform sampler rtSmp;   // NEAREST, WRAP - the original's
+layout(std430, set = OMK_RT_SET_REC, binding = 0) readonly buffer RtRec { uint d[]; } rtRec[];
+layout(set = OMK_RT_SET_TEX, binding = 0) uniform texture2D rtTex[];
 
 const uint kRtSet = 1u, kRtBody = 2u;
 

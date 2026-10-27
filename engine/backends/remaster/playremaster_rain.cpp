@@ -47,6 +47,12 @@
 // as the rain, three copies a flake. A flake under a roof is not drawn: the
 // ice cave's flakes, which the original re-scatters every frame there once it
 // has snowed (docs/ASSETS.md 4e - a static), are gone in the remaster.
+//
+// ...and THE RESTORED SAND (`[Restored] weather`, todo/restore-weather.md):
+// type 3's drops, one grain of `Images\sand.bmp` each - cut from the field,
+// `kSandGrain3d` across a 4-texel grain (OMK's design) - as quads facing
+// the eye, OPAQUE with the colour key on black (the field's background), lit
+// by the set's lights, faded in as the snow, three copies a drop.
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
@@ -108,6 +114,9 @@ omk::Texture rainStreakTexture() {
 constexpr float kRainOffsets[kRainCopies][3] = {
     {317.0f, -251.0f, 173.0f}, {-211.0f, 389.0f, -443.0f}, {463.0f, 127.0f, -307.0f}};
 constexpr float kSnowBox = 400.0f;        // the snow's box (`sub_481D90`'s bit-4 arm)
+constexpr float kSandBox = 300.0f;        // ...and the sand's (its else branch)
+constexpr float kSandGrain3d = 1.5f;      // ...a 4-texel grain this many units across in the scene (4 read as blobs)
+constexpr float kSandNear = 60.0f;        // ...and none nearer the eye (opaque: no fade)
 constexpr float kFlakeHalf = 4.0f;        // ...a flake's half size, the original's 8 units across
 constexpr float kSnowNearFrom = 20.0f, kSnowNear = 80.0f;   // a flake's fade in from the eye
 
@@ -156,6 +165,21 @@ void PlayState::remasterPoolRain(std::vector<omk::Texture>& slots) {
         snowTexSlot = static_cast<int>(slots.size());
         slots.push_back(flake);
     }
+    // ...and the restored sand's field, cut into its grains (a texel is solid
+    // where its palette colour is not black - the key)
+    sandTexSlot = -1;
+    if (restoredWeather) {
+        static const omk::Texture field = snowTexture(fs_->read("IMAGES/sand.bmp"));
+        if (field.hasPixels()) {
+            sandTexSlot = static_cast<int>(slots.size());
+            slots.push_back(field);
+            if (sandGrains3d.empty())
+                sandGrains3d = omk::grainsOf(field.width, field.height, [&](int x, int y) {
+                    const std::uint8_t* c = field.pal.data() + 3u * field.idx.data()[y * field.width + x];
+                    return c[0] != 0 || c[1] != 0 || c[2] != 0;
+                });
+        }
+    }
 }
 
 // whether the cycle keeps a shower going under a roof: the 3D weather shows
@@ -165,8 +189,10 @@ bool PlayState::remasterWeatherRoofless() const {
 }
 
 bool PlayState::remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits) {
-    // the rain (bit 2) or the snow (bit 4); the third type draws nothing
-    if (!(viewBits & 6u) || rain3dStrength <= 0.0f || !remasterShown_ || !world_ ||
+    // the rain (bit 2) or the snow (bit 4); the third type, the sand (bit 8),
+    // with the restored weather alone
+    const bool sandToo = (viewBits & 8u) && restoredWeather;
+    if (!((viewBits & 6u) || sandToo) || rain3dStrength <= 0.0f || !remasterShown_ || !world_ ||
         !(world_->takes() & omk::kTakesWater))
         return false;
     rainDrops = drops;
@@ -190,8 +216,10 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         }
     static std::vector<float> reach;
     int litDrops = 0;
-    const bool snow = (rainBits & 2u) == 0;   // the snow's arm: bit 4 alone
-    const float box = snow ? kSnowBox : kRainBox;
+    const bool snow = (rainBits & 2u) == 0 && (rainBits & 4u) != 0;   // the snow's arm: bit 4 alone
+    const bool sand = (rainBits & 6u) == 0;                            // the restored sand: bit 8
+    if (sand && (sandTexSlot < 0 || sandGrains3d.empty())) return;
+    const float box = snow ? kSnowBox : sand ? kSandBox : kRainBox;
     const float s = std::clamp(rain3dStrength, 0.0f, 1.0f) * (snow ? 1.0f : kRainGlow);
     // the box's centre as the weather places it: a third of its size ahead
     const float dv[3] = {v.cam.at[0] - v.cam.eye[0], v.cam.at[1] - v.cam.eye[1], v.cam.at[2] - v.cam.eye[2]};
@@ -230,6 +258,49 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             const double p0[3] = {d.p[0], d.p[1], d.p[2]};
             const double up[3] = {0.0, -kRainRoofRay, 0.0};   // Y points down
             if (omk::sweepSphere(*shot, *boxes, p0, up, 0.0).has_value()) { ++roofed; continue; }
+        }
+        if (sand) {
+            // THE GRAIN: a quad facing the eye, one grain of the field
+            const std::size_t gi = static_cast<std::size_t>(&d - all.data()) % sandGrains3d.size();
+            const omk::GrainRect& gr = sandGrains3d[gi];
+            const float fwd[3] = {dv[0] / dl, dv[1] / dl, dv[2] / dl};
+            const float upW[3] = {0.0f, -1.0f, 0.0f};
+            float r[3] = {fwd[1] * upW[2] - fwd[2] * upW[1], fwd[2] * upW[0] - fwd[0] * upW[2],
+                          fwd[0] * upW[1] - fwd[1] * upW[0]};
+            const float rl = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            if (!(rl > 0.0f)) continue;
+            for (float& k : r) k /= rl;
+            const float u[3] = {r[1] * fwd[2] - r[2] * fwd[1], r[2] * fwd[0] - r[0] * fwd[2],
+                                r[0] * fwd[1] - r[1] * fwd[0]};
+            const omk::Projected pf = omk::project(v.cam, d.p);
+            if (pf.z < kSandNear || pf.z > box) continue;   // opaque: no fade, only a reach
+            float rgb[3] = {0.6f, 0.6f, 0.6f};
+            reach.clear();
+            if (!lights.empty() && omk::lightReach(d.p, lights, reach) > 0) {
+                ++litDrops;
+                for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
+                    const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
+                    const int t = static_cast<int>(std::min(255.0f, k));
+                    for (int c = 0; c < 3; ++c)
+                        rgb[c] += kRainLit * omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
+                }
+            }
+            const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
+            for (float& c : rgb) c = c / top * std::clamp(rain3dStrength, 0.0f, 1.0f);
+            const float hx = kSandGrain3d * gr.w / 8.0f, hy = kSandGrain3d * gr.h / 8.0f;
+            float q[4][3];
+            for (int k = 0; k < 3; ++k) {
+                q[0][k] = d.p[k] - r[k] * hx - u[k] * hy;
+                q[1][k] = d.p[k] + r[k] * hx - u[k] * hy;
+                q[2][k] = d.p[k] + r[k] * hx + u[k] * hy;
+                q[3][k] = d.p[k] - r[k] * hx + u[k] * hy;
+            }
+            const float u0 = static_cast<float>(gr.x), u1 = static_cast<float>(gr.x + gr.w);
+            const float v0 = static_cast<float>(gr.y), v1 = static_cast<float>(gr.y + gr.h);
+            const omk::Corner c0 = corner(q[0], rgb, u0, v1), c1 = corner(q[1], rgb, u1, v1);
+            const omk::Corner c2 = corner(q[2], rgb, u1, v0), c3 = corner(q[3], rgb, u0, v0);
+            rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c2, c0, c2, c3});
+            continue;
         }
         if (snow) {
             // THE FLAKE: a quad facing the eye, the original's 8 units across
@@ -332,18 +403,22 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     const std::size_t drawnDrops = rainGeo.corners.size() / 6;
     if (frameNo % 30 == 0) {
         std::printf("frame %ld: the %s in the scene - %zu of %zu %s drawn (the weather's %zu and %d each "
-                    "more), %d under a roof, %d lit by the set's lights\n", frameNo, snow ? "snow" : "rain",
-                    drawnDrops, all.size(), snow ? "flakes" : "drops", rainDrops.size(), kRainCopies, roofed,
+                    "more), %d under a roof, %d lit by the set's lights\n", frameNo,
+                    snow ? "snow" : sand ? "sand" : "rain", drawnDrops, all.size(),
+                    snow ? "flakes" : sand ? "grains" : "drops", rainDrops.size(), kRainCopies, roofed,
                     litDrops);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
                                        {"streak", (snow ? snowTexSlot : rainTexSlot) >= 0}, {"lit", litDrops},
-                                       {"snow", snow}});
+                                       {"snow", snow}, {"sand", sand}});
     }
     if (rainGeo.corners.empty()) return;
     omk::Batch b;
     b.material = -1;
-    b.blend = omk::Blend::Add;
+    // the sand OPAQUE with the colour key on black (`Batch::cutout`, the mesh
+    // path's 0x400), the rain and snow additive
+    b.blend = sand ? omk::Blend::Opaque : omk::Blend::Add;
+    b.cutout = sand;
     b.start = 0;
     b.count = rainGeo.corners.size();
     rainGeo.batches.push_back(b);
@@ -351,14 +426,15 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     // the streak's pool slot (`remasterPoolRain`) - or, before the pool has
     // it, a slot past every texture, which binds the backends' white; the
     // additive state bits as the mesh path's (`keyOf`, 0x2100)
-    const int texSlot = snow ? snowTexSlot : rainTexSlot;
+    const int texSlot = snow ? snowTexSlot : sand ? sandTexSlot : rainTexSlot;
     const std::uint32_t slot = texSlot >= 0 ? static_cast<std::uint32_t>(texSlot) : 0xFFFEu;
     omk::Draw dr;
-    dr.bucketKey = omk::withPoolSlot(0x2100u | (slot & 0x3Fu), slot);
+    dr.bucketKey = omk::withPoolSlot((sand ? 0x400u : 0x2100u) | (slot & 0x3Fu), slot);
     dr.geo = &rainGeo;
     dr.start = 0;
     dr.count = rainGeo.corners.size();
-    dr.blend = omk::Blend::Add;
+    dr.blend = sand ? omk::Blend::Opaque : omk::Blend::Add;
+    dr.cutout = sand;
     list.push_back(dr);
 }
 

@@ -69,6 +69,14 @@ inline unsigned weatherBitsOfAreaType(int type) {
 // (`+ (8, 0, 0)`).
 struct WeatherDrop { float p[3], q[3]; };
 
+// THE SAND'S GRAINS (`Images\sand.bmp` - a 128x128 FIELD of 63 grains, 3 to 5
+// texels each, keyed on black): the bounding rectangle of each 8-connected
+// run of `solid` texels, in reading order - what the restored sand draws one
+// of per drop (OMK's design: the arm would blit the field's top-left 64x64)
+struct GrainRect { int x, y, w, h; };
+std::vector<GrainRect> grainsOf(int w, int h, const std::function<bool(int, int)>& solid);
+inline constexpr float kSandGrainWorld = 4.0f;   // a 4-texel grain drawn this many units across (OMK's)
+
 class Weather {
 public:
     // `sub_4815D0`'s state, its per-frame half. `bits` the view's +80 & 0xE;
@@ -80,6 +88,13 @@ public:
     // The drops to draw this frame (empty when nothing draws), stepping them:
     // the rain's first `count()` (bit 2), or all 200 snowflakes (bit 4).
     // `eye` and `at` are the scene camera's two points.
+    // ...and THE SAND (bit 8 - `[Restored] weather` only: the caller masks the
+    // bit otherwise, as the original's gate leaves it out): `sub_481D90`'s else
+    // branch - box 300, speed 30, the snow's direction (x back 0.866, y down
+    // 0.3, z only wrapped), the second point 15 along x. The arm itself walks
+    // all 200 for the whole shower; the RESTORED draw takes the first
+    // `count()` as the rain does, so it ramps in and fades (OMK's design, the
+    // reader's choice "as the asset suggests", todo/restore-weather.md)
     std::vector<WeatherDrop> step(unsigned bits, const float eye[3], const float at[3]);
 
     int  state() const { return state_; }

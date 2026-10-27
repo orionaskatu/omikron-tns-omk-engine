@@ -52,6 +52,18 @@ flake). Whether the gate was closed on purpose, nothing records.
   -6890) rains, 62 streaks; with the 3D weather the neon street rains too,
   the streaks pink by the neon, the wet street reflecting the signs.
   `engine: weather`'s restored legs.
+* **Steps 3-4 done, as the asset suggests**: `Weather::step` gains the sand
+  arm (bit 8, the caller passes it only with the switch); the 2D draw cuts
+  `sand.bmp` into its 63 grains and blits one a drop (capped at ~3 px - a
+  near grain blown up to 40 px read as a block); the remaster draws them in
+  the scene (1.5 units - 4 read as glowing blobs), opaque with the colour
+  key, lit. Jaunpur's open addresses 49, 54, 59 (its start address 34 has a
+  roof over the frame-1 camera, so under the original's rule its shower
+  never begins there). `engine: weather` (2D) and `engine: rain 3d` part 10.
+* **Step 5**: the 2D grains go into `fb` like the rain and snow, which every
+  backend composites; the 3D sand is the remaster's (Vulkan, GLES).
+* **Step 7 done**: `docs/ASSETS.md` 4e, `engine/README.md`'s coverage, the
+  row "Meteo restauree" on OMK's first page (`restored.weather`, next start).
 
 ## Steps
 

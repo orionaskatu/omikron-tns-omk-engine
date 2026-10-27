@@ -6994,7 +6994,7 @@ def c_engine_graphics_menu():
         shutil.rmtree(tmp, ignore_errors=True)
     root = "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|]"
     p100 = ("page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Remaster|] "
-            "[Langue des options OMK|Fran\xe7ais] [Retour|]")
+            "[Langue des options OMK|Fran\xe7ais] [M\xe9t\xe9o restaur\xe9e|Non] [Retour|]")
     rows = ("[Tout au maximum|%s] [Qualit\xe9 des ombres|%s] "
             "[Agrandissement de l'interface|%s] [Taille du texte|%s] "
             "[Radar|%s] [Images par seconde|%s] [Animations|%s] "
@@ -7016,7 +7016,8 @@ def c_engine_graphics_menu():
                   "page 102: [Remaster|] [Rendu|Remaster] [Personnages arrondis|Non] "
                   "[Pr\xe9chargement des lieux|Non] [Valeurs par d\xe9faut|] [Retour|]",
                   p100,
-                  "page 100: [Graphics (OMK)|] [Enhancements|] [Remaster|] [OMK options language|English] [Back|]",
+                  "page 100: [Graphics (OMK)|] [Enhancements|] [Remaster|] [OMK options language|English] "
+                  "[Restored weather|Off] [Back|]",
                   "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphics (OMK)|] [Retour|]"]
     want_evts = [("enhancements.all", "max", "1"), ("enhancements.clipdistance", "capped", "1"),
                  ("enhancements.all", "off", "1"), ("enhancements.shadowquality", "classic", "1"),
@@ -7030,7 +7031,8 @@ def c_engine_graphics_menu():
     p100plain = [p for p in plainPages if p.startswith("page 100: [Graphismes")][:1]
     return (got[0][0], got[0][1], got[0][2], p100plain), \
            (want_pages, want_evts, want_ini,
-            ["page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Langue des options OMK|Fran\xe7ais] [Retour|]"]), \
+            ["page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Langue des options OMK|Fran\xe7ais] "
+             "[M\xe9t\xe9o restaur\xe9e|Non] [Retour|]"]), \
            ("the page lines in order (root, 100, 101 as opened / after a next-start change / after a live "
             "one / after the defaults, 102, 100 in English, the root); the options.omk events; the "
             "config's bytes after; and the no-remaster build's page 100")
@@ -34069,6 +34071,9 @@ def c_engine_rain3d():
          217, its track 10) and back out - Anekbah's own track 2 plays on the
          way in, then message 23 is posted again and the rain's track 119
          plays after it;
+      10. THE RESTORED SAND in the scene (`--restore-weather 1`, Jaunpur's
+         address 54): at frame 690 more than 300 grains drawn, their field
+         pooled (`remaster.rain3d` sand=1, streak=1).
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34167,6 +34172,13 @@ def c_engine_rain3d():
                 env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_WEATHER_SKIP_MS="900000"))
             return open(out, "rb").read() if os.path.exists(out) else None
         pz = [paused(1, 700), paused(1, 710), paused(0, 700), paused(0, 710)]
+        sand_out = subprocess.run(
+            [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "1", "--address", "54", "--no-crowd", "--nofmv", "--nodelay",
+             "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", "700", "--detail", "2",
+             "--rain3d", "1", "--restore-weather", "1", "--world-vulkan"],
+            capture_output=True, text=True, errors="replace", timeout=300,
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")).stdout
         snow_out = subprocess.run(
             [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
              "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
@@ -34221,10 +34233,13 @@ def c_engine_rain3d():
                      "frame 690: weather - state 0, 0 drops, nothing stepped (a roof overhead)" in roof_off)
     print(f"        under the roof: {roofed_shower}; the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
           f"Mahaleel's snow at frame 90: {sn}")
-    print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}")
-    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held), \
+    sd = next((k for n, k in _events(sand_out) if n == "remaster.rain3d" and k.get("frame") == "690"), {})
+    sand3d = (sd.get("sand"), int(sd.get("drawn", 0)) > 300, sd.get("streak"))
+    print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
+          f"the restored sand in the scene: {sd}")
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
-            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True)), \
+            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1")), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"
@@ -47619,7 +47634,11 @@ def c_engine_weather():
     event, type 1, message 23 to its handler, track 120 (never heard in the
     shipped game), more than 20 streaks at frame 690; Lahoreh (64) on - track
     121. Shown to fail (2026-10-27): the override never applied - Qalisar
-    on reads as off, Lahoreh silent.
+    on reads as off, Lahoreh silent. And JAUNPUR's SAND (address 54, its
+    open square): off - the shower runs and its track 122 plays over nothing
+    drawn, as the original; on - `sand.bmp` cut into its 63 grains and more
+    than 20 drawn at frame 690 (`weather.sand`). Shown to fail with the step
+    never given bit 8 - no grain.
 
     Shown to fail: the detail gate removed (the detail-1 run rains), the roof
     ray ignored (the cave snows), the roof ray always meeting a mesh (the
@@ -47655,6 +47674,9 @@ def c_engine_weather():
     q0 = run("101", qal + ["--detail", "2"], 700, dict(skip, OMK_EVENTS="1"))
     q1 = run("101", qal + ["--detail", "2", "--restore-weather", "1"], 700, dict(skip, OMK_EVENTS="1"))
     l1 = run("64", ["--detail", "2", "--restore-weather", "1"], 60, dict(skip, OMK_EVENTS="1"))
+    jau = ["--address", "54"]
+    j0 = run("1", jau + ["--detail", "2"], 700, dict(skip, OMK_EVENTS="1"))
+    j1 = run("1", jau + ["--detail", "2", "--restore-weather", "1"], 700, dict(skip, OMK_EVENTS="1"))
     o1 = run("0", street + ["--detail", "1"], 100, skip)
     oc = run("145", ["--detail", "2"], 70)
     # the open air of the same area: address 404, no roof - it snows
@@ -47689,14 +47711,19 @@ def c_engine_weather():
     rest = (("view bits 0x0, detail 2: none here" in q0, "message 23" in q0,
              any(n == "weather.restored" for n, _ in _events(q0))),
             restored(q1, 120), restored(l1, 121)[:3])
+    sand_ev = next((k for n, k in _events(j1) if n == "weather.sand" and k.get("frame") == "690"), {})
+    sand = ("music switch to 122" in j0, not any(n == "weather.sand" for n, _ in _events(j0)),
+            "grains of sand" not in j0, int(sand_ev.get("grains", 0)) > 20,
+            "Images\\sand.bmp 128x128 - 63 grains" in j1)
     return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
             [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
             (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
-            (cave[1], cave[2]) if cave[0] else None, open_air, rest, bare), \
+            (cave[1], cave[2]) if cave[0] else None, open_air, rest, sand, bare), \
            ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
             ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0"),
             (200, True),
             ((True, False, False), (True, True, True, True), (True, True, True)),
+            (True, True, True, True, True),
             (29, True) if sys.platform == "darwin" and bare != "no window build here" else bare), \
            "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
            "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
@@ -47704,6 +47731,8 @@ def c_engine_weather():
            "Mahaleel's cave: state 2, no flake, a roof overhead; Mahaleel's open air " \
            "(address 404): 200 flakes stepped, more than 20 drawn; THE RESTORED WEATHER - Qalisar " \
            "off: no weather; on: type 1, message 23, track 120, streaks; Lahoreh on: track 121; " \
+           "Jaunpur's sand: off - its shower and track 122 over nothing; on - more than 20 grains " \
+           "of the field's 63; " \
            "and with no GPU window " \
            "(host gl1, software): 29 drops at frame 90, streaks drawn"
 

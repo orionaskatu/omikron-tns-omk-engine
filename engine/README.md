@@ -3506,6 +3506,17 @@ hands its value in. Checks: `engine: pedestrians`, `engine: city crowd`,
 `engine: street frame`, `engine: crowd push`, `engine: head look`, `opt
 tracks`.
 
+**And 2026-10-27, the CITY WEATHER, and THE RESTORED WEATHER beyond it**
+(`docs/ASSETS.md` 4e, `todo/restore-weather.md`) — `o3de/weather.*`: the
+original's cycle, roof ray, rain lines and snow sprites, ported. Beyond the
+original, behind `[Restored] weather` / `--restore-weather` (off by default,
+on under the remaster preset): Qalisar's and Lahoreh's showers (their
+authored shower tracks 120 / 121, their shipped type 0 - the override is
+OMK's), and type 3's sand (its arm complete behind the caller's bit-4 test;
+drawn one grain of `sand.bmp` a drop, following the shower's ramp - OMK's
+design, the reader's choice). Checks: `engine: weather` (its restored legs),
+`engine: rain 3d` (the sand in the remaster's scene).
+
 **And 2026-09-16, MELEE** (`todo/fight-mode.md`, `docs/ASSETS.md`) —
 `actor/fight.{h,cpp}`: the two combat contexts `Fight_Begin` builds from the
 fighters' properties (Vie, Carac Attack, Carac Dodge, and the options row-16

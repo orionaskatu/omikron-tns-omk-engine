@@ -2556,6 +2556,21 @@ second being an outstretched arm.
   200**: `sub_481D90` walks the whole table, never `dword_4CFE1C`; its caller
   calls it while the count is not 0 - so the sand, unlike the rain, would not
   ramp in or fade out: all 200 from the shower's first frame to its last.
+* **THE RESTORED WEATHER** (OMK's, `[Restored] weather` / `--restore-weather`,
+  built 2026-10-27; `todo/restore-weather.md`). What the 1999 game planned and
+  never shipped, behind a switch of its own - neither an enhancement nor the
+  remaster's; off by default, ON under the remaster preset (its key or flag
+  still turns it off), a row "Meteo restauree" on OMK's first options page.
+  **Read**: everything the cycle, the roof ray, the messages and the tracks
+  do. **Invented, and labelled**: (1) Qalisar (101) and Lahoreh (64) take
+  type 1 at the seam where `weatherFrame` reads `+176` - the rain, the type
+  their shower tracks are; (2) the sand's draw takes the first `count` drops
+  as the rain does (so it ramps and fades, where the arm would show all 200),
+  each ONE GRAIN of `sand.bmp` - the field cut into its 63 grains (8-connected
+  runs of non-black texels), 4 units across a 4-texel grain and capped at a
+  few pixels in 2D (`kSandGrainWorld`), 1.5 units in the remaster's scene,
+  opaque with the black colour key. Jaunpur's track 122 - its city music
+  under a RAIN sound - plays with the sand, as the data has it.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
   for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a

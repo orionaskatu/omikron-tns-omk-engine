@@ -721,6 +721,8 @@ struct PlayState {
     omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
     int rainTexSlot = -1;                        // ...their streak texture's pool slot, -1 none
     int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
+    int sandTexSlot = -1;                        // ...and the restored sand's field (`Images\sand.bmp`)
+    std::vector<omk::GrainRect> sandGrains3d{};  // ...its grains, texel rectangles
     unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
@@ -1135,6 +1137,13 @@ struct PlayState {
     std::vector<WeatherFlake> weatherFlakes{};
     omk::Surface weatherSnow{};
     bool weatherSnowTried = false;
+    // THE RESTORED SAND (`[Restored] weather`): each drop one grain of
+    // `Images\sand.bmp` around its centre, drawn `half` across a 4-texel grain
+    struct WeatherGrain { int cx, cy; float half; int grain; };
+    std::vector<WeatherGrain> weatherGrains{};
+    omk::Surface weatherSand{};
+    std::vector<omk::GrainRect> weatherSandGrains{};
+    bool weatherSandTried = false;
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)

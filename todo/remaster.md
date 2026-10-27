@@ -1329,8 +1329,17 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   -1 / -1 for it as Vulkan's; the variant is built when the mist or the 3D
   weather is asked too. Anekbah's street at `--mist 0.5`: 218130 pixels on
   Vulkan, 218144 on GLES, overlap 1.000. `engine: mist` part 5.
+* **A framing seen twice, not reproduced** (2026-10-27): some comparison
+  renders of Anekbah's street start (`--stand 1804,0,-6890,336`, 700 frames,
+  800x600) came out with the camera further back than others with the same
+  arguments. Rerun 11 times - in sequence, three at once under load, and the
+  comparison's own loop - every frame byte-identical (md5 135cdc25...), the
+  follow camera 0 in each; no config beside the saves, the save unchanged
+  since August. Likely a binary rebuilt by a check (or a mutation's build)
+  between renders; the logs of those runs were not kept. Watch for it.
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on); snow on slopes.
+  only with the emitters' light on; Qalisar, the neon city, has no shower in
+  the shipped game - `todo/restore-weather.md`); snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

@@ -48,8 +48,12 @@ flake). Whether the gate was closed on purpose, nothing records.
 * **Step 2 done**: Qalisar (101) and Lahoreh (64) take type 1 at the seam in
   `weatherFrame` (`weather.restored`); their shower tracks 120 and 121 play.
   Qalisar's neon street (15300, -10050) is under a roof, so under the
-  original's rule its shower never begins there - its open street (1804,
-  -6890) rains, 62 streaks; with the 3D weather the neon street rains too,
+  original's rule its shower never begins there. Of its three start
+  addresses, 335 (10341, -260, -9507) and 337 are open; facing 90 at 335 is
+  a lamp-lit street with its signs, and it rains there. (A first test used
+  1804, -6890 - Anekbah's street start, OUTSIDE Qalisar's city: the reader
+  found it in play, 2026-10-27; the check and these notes moved to 335.)
+  With the 3D weather the neon street rains too,
   the streaks pink by the neon, the wet street reflecting the signs.
   `engine: weather`'s restored legs.
 * **Steps 3-4 done, as the asset suggests**: `Weather::step` gains the sand

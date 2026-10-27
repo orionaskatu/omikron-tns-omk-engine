@@ -47629,7 +47629,8 @@ def c_engine_weather():
     GPU-window block, and such builds never rained).
 
     THE RESTORED WEATHER (`[Restored] weather`, 2026-10-27,
-    todo/restore-weather.md): Qalisar's open street (1804, 0, -6890) with it
+    todo/restore-weather.md): Qalisar's lamp-lit street (address 335's spot,
+    10341, -260, -9507, facing 90 - open to the sky) with it
     off - type 0, view bits 0, no message 23, no `weather.restored`; on - the
     event, type 1, message 23 to its handler, track 120 (never heard in the
     shipped game), more than 20 streaks at frame 690; Lahoreh (64) on - track
@@ -47670,7 +47671,7 @@ def c_engine_weather():
     o2 = run("0", street + ["--detail", "2"], 700, skip)
     # THE RESTORED WEATHER (`[Restored] weather`, todo/restore-weather.md):
     # Qalisar's open street off and on, Lahoreh on
-    qal = ["--stand", "1804,0,-6890,336"]
+    qal = ["--stand", "10341,-260,-9507,90"]   # address 335's spot, open (1804, -6890 is OUTSIDE the city)
     q0 = run("101", qal + ["--detail", "2"], 700, dict(skip, OMK_EVENTS="1"))
     q1 = run("101", qal + ["--detail", "2", "--restore-weather", "1"], 700, dict(skip, OMK_EVENTS="1"))
     l1 = run("64", ["--detail", "2", "--restore-weather", "1"], 60, dict(skip, OMK_EVENTS="1"))

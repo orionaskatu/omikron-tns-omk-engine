@@ -1316,6 +1316,7 @@ private:
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint snow = -1;                                                     // ...or snow lying
+        GLint mist = -1;                                                     // ...and the mist
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1400,6 +1401,7 @@ private:
         float water = -1; int clip = -1;   // the water variant's
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float snow = -1;                               // ...or snow lying
+        float mist[3] = {-1, -1, -1};                  // ...and the mist
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1498,6 +1500,10 @@ private:
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     float  rain_ = 0.0f, rippleClock_ = 0.0f;  // the frame's rain and clock, the wet floors' ripples
+    // THE MIST (`View::mist`, the remaster's A4 - Vulkan's `scene.frag` rule):
+    // strength, ground, height for the frame; on while the variant is built
+    float  mist_[3] = {0.0f, 0.0f, 400.0f};
+    bool   mistOn_ = false;
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
@@ -1680,6 +1686,7 @@ bool GlesRenderer::linkScene() {
         L.rain = glGetUniformLocation(p, "uRain");
         L.rippleClock = glGetUniformLocation(p, "uRippleClock");
         L.snow = glGetUniformLocation(p, "uSnow");
+        L.mist = glGetUniformLocation(p, "uMist");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
@@ -2902,6 +2909,12 @@ void GlesRenderer::beginPass(const View& view) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     setView(view);
+#if OMK_REMASTER
+    // THE MIST's frame, and the eye its rays start from (the water's, the same)
+    mist_[0] = view.mist; mist_[1] = view.mistGround; mist_[2] = view.mistHeight;
+    mistOn_ = view.mist > 0.0f && mainLoc_.water >= 0;
+    for (int k = 0; k < 3; ++k) waterEye_[k] = view.cam.eye[k];
+#endif
     lastPose_ = nullptr;
     lastPoseGeo_ = nullptr;
     forgetState();
@@ -3327,6 +3340,14 @@ void GlesRenderer::submit(const Draw& d) {
         fs = fogStart_ * k;
         fe = fogEnd_ * k;
     }
+#if OMK_REMASTER
+    // THE MIST without the game's fog: the same batches marked -1 / -1 - no
+    // linear fog, the mist's to take (`vkrender.cpp`'s rule)
+    else if (mistOn_ && !(d.bucketKey & 0x2080u)) {
+        fs = -1.0f;
+        fe = -1.0f;
+    }
+#endif
     if (set(!uv || U.fogStart != fs || U.fogEnd != fe)) {
         glUniform1f(L.fogStart, fs);
         glUniform1f(L.fogEnd, fe);

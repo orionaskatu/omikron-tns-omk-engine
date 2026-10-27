@@ -493,6 +493,21 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
         glUniform1f(L.wet, film);
         U.wet = film;
     }
+    // THE MIST (`View::mist`): its frame's strength, ground and height - not
+    // in the reflection's pass, as Vulkan's
+    {
+        const float m0 = reflectingNow_ ? 0.0f : mist_[0];
+        if (set(!uv || U.mist[0] != m0 || U.mist[1] != mist_[1] || U.mist[2] != mist_[2])) {
+            glUniform3f(L.mist, m0, mist_[1], mist_[2]);
+            U.mist[0] = m0; U.mist[1] = mist_[1]; U.mist[2] = mist_[2];
+        }
+        // ...whose rays start at the frame's eye: the vertex variant's `uEye`
+        if (m0 > 0.0f && !(waterNow_ || floorNow) &&
+            set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
+            glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
+            std::memcpy(U.eye, waterEye_, sizeof U.eye);
+        }
+    }
     // ...or SNOW lying (`Draw::snow`): `uWet` is then its cover
     const float snowNow = film > 0.0f && d.snow ? 1.0f : 0.0f;
     if (set(!uv || U.snow != snowNow)) {

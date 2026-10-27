@@ -319,7 +319,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
 "  --mist S         REMASTER, off by default: a height fog in the set's fog\n"
 "                   colour, thick at its ground and thinning above, strength S\n"
-"                   (0..1); Vulkan only; [Remaster] mist=S\n"
+"                   (0..1); Vulkan and GLES only; [Remaster] mist=S\n"
 "  --preload M      REMASTER, off by default (the --remaster preset's 15):\n"
 "                   the sets behind every door within M metres - and behind\n"
 "                   the airlock or corridor it opens on - prepared on a thread\n"

@@ -194,9 +194,11 @@ void PlayState::remasterConfigure(omk::Renderer& r) {
         omk::event("texpack.normals", {{"on", omk::texturePack().normals()}, {"relief", r.drawsRelief()}});
     if (upscale > 1.0f) r.setUpscale(upscale);   // in the supersample's place
     if (bloomStrength > 0.0f) r.setBloom(bloomStrength);
-    // the floors, listed or wet, ride on the water's pass
-    if (std::max({waterStrength, floorStrength, wetStrength}) > 0.0f)
-        r.setWater(std::max({waterStrength, floorStrength, wetStrength}));
+    // the floors, listed or wet, ride on the water's pass - and the MIST, the
+    // shower's haze with it, on GLES takes the same variant of the programs
+    const float mistWant = mistStrength > 0.0f || rain3dStrength > 0.0f ? 1.0f : 0.0f;
+    if (std::max({waterStrength, floorStrength, wetStrength, mistWant}) > 0.0f)
+        r.setWater(std::max({waterStrength, floorStrength, wetStrength, mistWant}));
     if (bodyLight > 0.0f) r.setBodyTint(true);
     if (fxLight > 0.0f) r.setEmitterLights(true);
 }

@@ -34335,9 +34335,16 @@ def c_engine_mist():
     the mix inverted (`mix(pc.fogColour, c, m)`) - part 2's SHAPE (it still
     moved toward the fog: the first form of this check passed it).
 
+    GLES TOO (2026-10-27, the reader's "continue" - the mist was Vulkan's
+    alone, so the shower's haze never reached GLES): the water variant takes
+    the same formula after the game's fog (`uMist`, the -1 / -1 marks, the eye
+    as `vWy + vToEye.y`); part 5: on GLES `--mist 0.5` moves more than 20000
+    pixels too, where Vulkan's do - overlap above 0.8. Measured: Anekbah's
+    street 218130 on Vulkan, 218144 on GLES, overlap 1.000.
+
     NOT CHECKED, judged by eye: the strength, the height, the colour.
     """
-    import subprocess, tempfile, shutil, re
+    import subprocess, tempfile, shutil, re, platform
     eng = os.path.join(ROOT, "engine")
     fr = omkpaths.data_root()
     if not os.path.isdir(eng):
@@ -34356,7 +34363,7 @@ def c_engine_mist():
               # the preset's 0.5 from its table since graphics menu 3a (`kRemasterPreset`)
               '!preset.empty() ? pv("mist") : 0.0f;' in pre and '{"mist", 0.5f}' in sh,
               "(pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0)" in fs)
-    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
         return ("build",), ("built",), mk.stderr[-300:]
     pack = omkpaths.pack_path() or ""
@@ -34368,18 +34375,23 @@ def c_engine_mist():
     play = os.path.join(eng, "build", "omk-play")
     fog = None
     try:
-        def run(name, *extra):
+        def run(name, *extra, gles=False):
             nonlocal fog
             out = os.path.join(tmp, name + ".bin")
             args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                     "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
-                    "--area", "101", "--stand", "14300,0,-10050,270", "--dump", out, "--world-vulkan",
+                    "--area", "101", "--stand", "14300,0,-10050,270", "--dump", out,
                     "--filter", "nearest", "--remaster", pack, "--enhance-all",
                     # the post-pass off - the grade's LUT, the bloom and the AO
                     # come AFTER the mist and bend "toward the fog colour"
-                    "--bloom", "0", "--ao", "0", "--grade", nograde] + list(extra)
-            r = subprocess.run([play] + args, capture_output=True, text=True,
-                               env=dict(os.environ, SDL_VIDEODRIVER="dummy"), timeout=300)
+                    "--bloom", "0", "--ao", "0", "--grade", nograde] + list(extra) + \
+                   ([] if gles else ["--world-vulkan"])
+            if gles:
+                cmd = ["caffeinate", "-d", "-u", "-i", os.path.join(eng, "build", "omk-play-gles")]
+                env = dict(os.environ, OMK_NO_GPU_PRESENT="1")
+            else:
+                cmd, env = [play], dict(os.environ, SDL_VIDEODRIVER="dummy")
+            r = subprocess.run(cmd + args, capture_output=True, text=True, errors="replace", env=env, timeout=300)
             m = re.search(r"fog and clear colour (\d+) (\d+) (\d+)", r.stdout + r.stderr)
             if m: fog = tuple(int(v) for v in m.groups())
             if r.returncode != 0 or not os.path.exists(out):
@@ -34387,6 +34399,9 @@ def c_engine_mist():
             raw = open(out, "rb").read()
             return struct.unpack("<%dH" % (len(raw) // 2), raw)
         off, on = run("off", "--mist", "0"), run("on", "--mist", "0.5")
+        goff = gon = None
+        if platform.system() == "Darwin":
+            goff, gon = run("goff", "--mist", "0", gles=True), run("gon", "--mist", "0.5", gles=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if off is None or on is None or fog is None:
@@ -34406,7 +34421,18 @@ def c_engine_mist():
     near, far = band(408, 480), band(144, 216)
     print(f"        --mist 0.5 moves {moved} pixels, {away} away from the fog colour {fog}; "
           f"near {near:.1f}, horizon {far:.1f} a pixel")
-    return (src_ok, moved > 20000, away * 1000 < moved, near * 2 < far), ((True,) * 5, True, True, True), \
+    if platform.system() != "Darwin":
+        gl = ("skipped",)
+    elif goff is None or gon is None:
+        gl = ("no frame",)
+    else:
+        mv = {i for i, (x, y) in enumerate(zip(off, on)) if x != y}
+        mg = {i for i, (x, y) in enumerate(zip(goff, gon)) if x != y}
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        GLES: --mist 0.5 moves {len(mg)} pixels, overlap with Vulkan's {iou:.3f}")
+        gl = (len(mg) > 20000, iou > 0.8)
+    return (src_ok, moved > 20000, away * 1000 < moved, near * 2 < far, gl), \
+           ((True,) * 5, True, True, True, _or_skip(gl, (True, True))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 0.5, the -1 marks taken); " \
         "in Qalisar with the game's fog off the mist moves the frame, toward the fog colour (all but < 1/1000)"
 

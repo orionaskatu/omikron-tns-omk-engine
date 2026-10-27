@@ -158,7 +158,7 @@ void PlayState::remasterSetup() {
         }
         if (mistStrength > 0.0f)
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
-                        "Vulkan only\n", static_cast<double>(mistStrength));
+                        "Vulkan and GLES\n", static_cast<double>(mistStrength));
         // THE PRELOAD RADIUS (`backends/sdl/playpreload.cpp`): its flag, its
         // key, the preset's 15 (a memory's choice, but the remaster's packs
         // are what make an arrival cost - `--preload 0` gives it back; 25

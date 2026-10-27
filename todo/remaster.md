@@ -1130,7 +1130,7 @@ on Qalisar's street and at Jaunpur's canal.
   the horizon band 21.5 a pixel; shown to fail two ways (an inverted mix
   passed the first form). `engine: body light` and `engine: emitter light`
   compare Vulkan with GLES at `--mist 0`.
-* Open: GLES; the mist in the reflections; a lighter haze by day if the
+* Open: ~~GLES~~ (done 2026-10-27, "The mist on GLES too" below); the mist in the reflections; a lighter haze by day if the
   day's fog colours want it (unseen: the save's clock is evening).
 
 ## The rain's wet floors: as built (2026-10-27)
@@ -1321,8 +1321,16 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   showed what is covered: open ground and the low blocks' tops; the big
   blocks in front of the monastery are under it by the roof test, the ramps
   steeper than 20 degrees.
+* **The mist on GLES too** (the reader's "continue", the same day - the mist
+  was Vulkan's alone since A4, so neither it nor the shower's haze reached
+  GLES): the water variant applies `scene.frag`'s formula after the game's
+  fog (`uMist` - strength, ground, height; the eye as `vWy + vToEye.y`, the
+  vertex variant's `uEye` now set every frame), the fogless batches marked
+  -1 / -1 for it as Vulkan's; the variant is built when the mist or the 3D
+  weather is asked too. Anekbah's street at `--mist 0.5`: 218130 pixels on
+  Vulkan, 218144 on GLES, overlap 1.000. `engine: mist` part 5.
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on); the mist on GLES; snow on slopes.
+  only with the emitters' light on); snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

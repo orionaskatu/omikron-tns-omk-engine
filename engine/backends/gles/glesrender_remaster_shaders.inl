@@ -131,7 +131,7 @@ constexpr const char* kRipplesGlsl =
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\n"
-                    "uniform float uSnow;\n"
+                    "uniform float uSnow;\nuniform vec3 uMist;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
                     std::string(kRipplesGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
@@ -143,7 +143,18 @@ std::string waterVariant(const std::string& frag) {
         // reflection (`scene.frag`'s rule)
         // (all of it times the open sky at this point, `encodeOpenSky`'s)
         // (none of it on SNOW lying - `uSnow`, below)
-        s.insert(at, "float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
+        // ...after THE MIST (`View::mist`, `scene.frag`'s rule, on what the
+        // game fogs or the -1 / -1 marks): a height fog in the fog's colour,
+        // the ray's mean density in closed form from the eye (`vWy + vToEye.y`)
+        s.insert(at, "if (uMist.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
+                     "        float H = max(uMist.z, 1.0);\n"
+                     "        float h0 = max(uMist.y - (vWy + vToEye.y), 0.0), h1 = max(uMist.y - vWy, 0.0);\n"
+                     "        float dist = length(vToEye);\n"
+                     "        float mean = abs(h1 - h0) > 1.0 ? H * (exp(-h0 / H) - exp(-h1 / H)) / (h1 - h0)\n"
+                     "                                        : exp(-h0 / H);\n"
+                     "        c = mix(c, uFogColour, 1.0 - exp(-uMist.x * dist * mean / 1500.0));\n"
+                     "    }\n"
+                     "    float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
                      "    float wetHere = wetF > 0.0 ? vOpen : 1.0;\n"
                      "    c *= 1.0 - wetF * vOpen;\n    vec3 rip = vec3(0.0);\n"
                      "    if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"

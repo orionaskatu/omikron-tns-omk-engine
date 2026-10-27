@@ -111,10 +111,16 @@ constexpr const char* kDustGlsl =
     "               mix(mix(dustHash(i + vec3(0.0, 0.0, 1.0)), dustHash(i + vec3(1.0, 0.0, 1.0)), f.x),\n"
     "                   mix(dustHash(i + vec3(0.0, 1.0, 1.0)), dustHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);\n"
     "}\n"
+    "float dustCloud(vec3 p) {\n"
+    "    float g = dustNoise(p * vec3(0.0012, 0.004, 0.004));\n"
+    "    return g * g * 2.2;\n"
+    "}\n"
     "float dustAmount(vec3 e, vec3 w, vec4 dust) {\n"
     "    vec3 drift = vec3(dust.y, 0.0, dust.z);\n"
-    "    float n = 0.25 + 0.75 * (dustNoise((mix(e, w, 0.5) + drift) * 0.0025) + dustNoise((w + drift) * 0.0025));\n"
-    "    return 1.0 - exp(-dust.x * n * (length(w - e) + 300.0) / dust.w);\n"
+    "    float d = length(w - e);\n"
+    "    vec3 near = e + (w - e) * min(1.0, 250.0 / max(d, 1.0));\n"
+    "    float n = 0.1 + (dustCloud(near + drift) + dustCloud(mix(e, w, 0.5) + drift) + dustCloud(w + drift)) / 3.0 * 1.6;\n"
+    "    return 1.0 - exp(-dust.x * n * (d + 300.0) / dust.w);\n"
     "}\n";
 
 constexpr const char* kRipplesGlsl =

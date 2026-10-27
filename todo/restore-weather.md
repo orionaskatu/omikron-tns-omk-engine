@@ -87,6 +87,11 @@ flake). Whether the gate was closed on purpose, nothing records.
   soft dots of their own picture (0.8 units and at most 1.5 px each side at
   480 lines - 1.8 units read as "really too big"; a texel of black round
   each so the filter softens it), additive at 0.45 (0.9 too solid), lit; the grade's ochre halved (0.20).
+  MORE VISIBLE MOVEMENT (the reader's question): the clouds stretched along
+  the wind (noise scale 0.0012 along x, 0.004 across), contrasted (`g^2 *
+  2.2`), sampled near the eye too (250 units out), drifting at 700 units a
+  second (300 read as still) - 10 frames apart, 453092 of total colour change
+  where it was 269683.
   Jaunpur's square: 213462 pixels the fog's alone on Vulkan, the same on
   GLES; `OMK_NO_DUST=1` (an instrument) leaves it out. `engine: rain 3d`
   part 11.

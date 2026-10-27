@@ -306,11 +306,20 @@ float dustNoise(vec3 x) {
 // -> how much of the dust's colour a point `w` seen from `e` takes - with
 // `kDustNear` of dust in front of everything, so it drifts by the player too
 // (the reader: "make the moving fog go closer to the player")
+// The clouds are STRETCHED along the wind (x, the arm's: long that way,
+// narrow across), sampled near the eye too, and contrasted - gaps and thick
+// gusts sweeping past (the reader: "make the fog movements more visible").
 const float kDustNear = 300.0;
+float dustCloud(vec3 p) {
+    float g = dustNoise(p * vec3(0.0012, 0.004, 0.004));
+    return g * g * 2.2;                                   // 0..2.2, most of it thin
+}
 float dustAmount(vec3 e, vec3 w, vec4 dust) {
     vec3 drift = vec3(dust.y, 0.0, dust.z);
-    float n = 0.25 + 0.75 * (dustNoise((mix(e, w, 0.5) + drift) * 0.0025) + dustNoise((w + drift) * 0.0025));
-    return 1.0 - exp(-dust.x * n * (length(w - e) + kDustNear) / dust.w);
+    float d = length(w - e);
+    vec3 near = e + (w - e) * min(1.0, 250.0 / max(d, 1.0));
+    float n = 0.1 + (dustCloud(near + drift) + dustCloud(mix(e, w, 0.5) + drift) + dustCloud(w + drift)) / 3.0 * 1.6;
+    return 1.0 - exp(-dust.x * n * (d + kDustNear) / dust.w);
 }
 
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)

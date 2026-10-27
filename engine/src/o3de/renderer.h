@@ -467,8 +467,8 @@ public:
     virtual bool setRaytracing(bool /*on*/) { return false; }
     virtual bool raytracingLive() const { return false; }
     // ...and RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26) on the draws
-    // the frontend marks `kDrawFloor`: the same contract, honoured only with
-    // the ray tracing live; `rtReflectionsLive` answers once `init()` has run.
+    // the frontend marks `kDrawFloor`: the same contract (Direct3D 12 and
+    // Vulkan), honoured only with the ray tracing live; `rtReflectionsLive` answers once `init()` has run.
     virtual bool setRtReflections(bool /*on*/) { return false; }
     virtual bool rtReflectionsLive() const { return false; }
 

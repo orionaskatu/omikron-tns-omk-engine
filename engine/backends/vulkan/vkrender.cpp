@@ -378,7 +378,13 @@ public:
         return true;
     }
     bool raytracingLive() const override { return rtOn_; }
-    bool rtReflectionsLive() const override { return rtReflOn_; }   // (RAY-TRACED REFLECTIONS, row 26: not yet)
+    // ...and RAY-TRACED REFLECTIONS (`todo/enhancements.md` 26), only with the ray tracing live
+    bool setRtReflections(bool on) override {
+        if (dev_ != VK_NULL_HANDLE) return false;
+        rtWantRefl_ = on;
+        return true;
+    }
+    bool rtReflectionsLive() const override { return rtReflOn_; }
     bool setMultisample(int samples) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
@@ -3662,6 +3668,16 @@ bool VulkanRenderer::init(int w, int h) {
     // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`), and its REFLECTIONS on the
     // ground (`todo/enhancements.md` 26)
     if (rtFeat_) rtInit();
+    if (rtWantRefl_) {
+        rtReflOn_ = rtOn_;
+        if (rtOn_) {
+            std::printf("vulkan: RT REFLECTIONS on - an ENHANCEMENT: the ground wet in patches, one traced "
+                        "ray a pixel mirroring the set, the bodies and the neon\n");
+            omk::event("rt_refl", {{"on", 1}});
+        } else {
+            std::printf("vulkan: rt reflections asked for, but the ray tracing is not live - off\n");
+        }
+    }
     if (!makeTarget()) return false;
     if (!makePipelines()) return false;
     // The window is 640x480 while the 3D target is the letterboxed 640x352.

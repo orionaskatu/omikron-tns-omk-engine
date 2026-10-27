@@ -27733,7 +27733,7 @@ def _d3d12_street_runs(runs, W=640, H=480, backend="d3d12"):
 
 
 def c_engine_rt_reflections():
-    r"""`omk-play --raytracing --rt-reflections`: RAY-TRACED REFLECTIONS on Direct3D 12 - an enhancement, off by default.
+    r"""`omk-play --raytracing --rt-reflections`: RAY-TRACED REFLECTIONS on Direct3D 12 and on Vulkan - an enhancement, off by default.
     `todo/enhancements.md` 26. The set's GROUND meshes (`o3de/floormesh.h`:
     60% of their area facing up, single-sided, not water, grass, snow, a canal
     bottom or a roof) are drawn `kDrawFloor`, and `scene.frag`'s -DOMK_RT
@@ -27756,6 +27756,12 @@ def c_engine_rt_reflections():
         that footprint (the rest the 2x2 filter's and the bloom-free edge),
         and brightens some (the lamps, the windows, the sky in the puddles:
         at least 100 pixels by 12 or more over their channels).
+    ONE SOURCE FOR BOTH (`scene.frag -DOMK_RT`, the `rtReflect` in the shared
+    `rt.glsl`; the ground runs marked `kDrawFloor` by the frontend, the rays
+    tallied by each backend): every element above runs on the default Vulkan
+    window too, and the two windows' pictures agree - the ray-traced run and
+    the footprint run - to within mean 0.05 and 0.03% of the pixels more than
+    8 off (measured byte-identical on an RX 9070 XT).
     SHOWN TO FAIL (2026-10-19) twice: with the `rtReflect` call removed from
     `scene.frag`'s main (nothing moves), and with `floorMeshes` matching no
     mesh (no ground draw, nothing moves).
@@ -27763,48 +27769,68 @@ def c_engine_rt_reflections():
     src = open(os.path.join(ROOT, "engine", "src", "platform", "settings.h"), encoding="utf-8").read()
     defaults = "bool   rtReflections = false;" in src
     rt = ["--raytracing"]
-    r = _d3d12_street_runs([("p0", [], {}), ("pk", ["--rt-reflections"], {}),
-                            ("t0", rt, {}), ("t0b", rt, {}), ("tr", rt + ["--rt-reflections"], {}),
-                            ("tg", rt + ["--rt-reflections"], {"OMK_RT_REFL_TUNE": "40,1,2400,0.015,1,0"})])
-    if isinstance(r, tuple):
-        return r
-    t0 = r["p0"][0]
-    if "renderer: D3D12" not in t0:
-        return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
-    if "no DXR 1.1" in r["t0"][0]:
-        return ("skipped",), ("skipped",), "the D3D12 device has no DXR 1.1 inline ray queries"
-    p0, pk, a, b, tr, tg = (r[k][1] for k in ("p0", "pk", "t0", "t0b", "tr", "tg"))
-    if not all((p0, pk, a, b, tr, tg)):
-        return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
-    W, H = 640, 480
-    n = W * H
-    silent = "rt reflections" not in t0.lower() and not any(nm.startswith("rt_refl") for nm, _ in _events(t0))
-    inert = "ray tracing is off" in r["pk"][0] and pk == p0
-    ev = _events(r["tr"][0])
-    on = any(nm == "rt_refl" and f.get("on") == "1" for nm, f in ev)
-    fr = [f for nm, f in ev if nm == "rt_refl.frame"]
-    draws = max([int(f.get("floor_draws", "0")) for f in fr] or [0])
-    rays = max([int(f.get("refl_rays", "0")) for f in fr] or [0])
-    foot = top = moved = outside = up = 0
-    for i in range(n):
-        o = a[4 * i:4 * i + 3]
-        f = tg[4 * i:4 * i + 3] != o
-        if f:
-            foot += 1
-            top += i // W < H // 3
-        m = tr[4 * i:4 * i + 3]
-        if m != o:
-            moved += 1
-            outside += not f
-            up += sum(m) - sum(o) >= 12
-    print("        rt reflections: %d ground draws, ~%d rays; footprint %.1f%% (%d px in the top third), moved "
-          "%.1f%% (%d outside the footprint), %d brighter" % (draws, rays, 100.0 * foot / n, top,
-                                                            100.0 * moved / n, outside, up))
-    got = (defaults, silent, inert, a == b, on, draws > 0, rays > 0, top < 0.03 * max(foot, 1),
-           0.01 * n <= moved <= 0.6 * n, outside <= 0.03 * max(moved, 1), up >= 100)
-    return got, (True,) * 11, \
-        ("off by default and silent, inert without the ray tracing, two ray-traced runs identical; on, "
-         "ground draws and reflection rays, the pixels moved inside the ground's footprint, some brighter")
+    runs = [("p0", [], {}), ("pk", ["--rt-reflections"], {}),
+            ("t0", rt, {}), ("t0b", rt, {}), ("tr", rt + ["--rt-reflections"], {}),
+            ("tg", rt + ["--rt-reflections"], {"OMK_RT_REFL_TUNE": "40,1,2400,0.015,1,0"})]
+    outs = {}
+    for backend, tag in (("d3d12", "renderer: D3D12"), ("vulkan", "renderer: VULKAN")):
+        r = _d3d12_street_runs(runs, backend=backend)
+        if isinstance(r, tuple):
+            return r
+        if tag in r["p0"][0] and "no DXR 1.1" not in r["t0"][0] and "ray tracing asked for, but" not in r["t0"][0]:
+            outs[backend] = r
+    if not outs:
+        return ("skipped",), ("skipped",), "no Direct3D 12 (DXR 1.1) or Vulkan (ray query) device - the backends are optional"
+    got, want, notes = [defaults], [True], []
+    for backend, r in outs.items():
+        p0, pk, a, b, tr, tg = (r[k][1] for k in ("p0", "pk", "t0", "t0b", "tr", "tg"))
+        if not all((p0, pk, a, b, tr, tg)):
+            return ("a window dump missing",), ("every dump",), "every run must write OMK_WINDUMP"
+        W, H = 640, 480
+        n = W * H
+        silent = "rt reflections" not in r["p0"][0].lower() and not any(nm.startswith("rt_refl") for nm, _ in _events(r["p0"][0]))
+        inert = "ray tracing is off" in r["pk"][0] and pk == p0
+        ev = _events(r["tr"][0])
+        on = any(nm == "rt_refl" and f.get("on") == "1" for nm, f in ev)
+        fr = [f for nm, f in ev if nm == "rt_refl.frame"]
+        draws = max([int(f.get("floor_draws", "0")) for f in fr] or [0])
+        rays = max([int(f.get("refl_rays", "0")) for f in fr] or [0])
+        foot = top = moved = outside = up = 0
+        for i in range(n):
+            o = a[4 * i:4 * i + 3]
+            f = tg[4 * i:4 * i + 3] != o
+            if f:
+                foot += 1
+                top += i // W < H // 3
+            m = tr[4 * i:4 * i + 3]
+            if m != o:
+                moved += 1
+                outside += not f
+                up += sum(m) - sum(o) >= 12
+        print("        rt reflections (%s): %d ground draws, ~%d rays; footprint %.1f%% (%d px in the top third), moved "
+              "%.1f%% (%d outside the footprint), %d brighter" % (backend, draws, rays, 100.0 * foot / n, top,
+                                                                100.0 * moved / n, outside, up))
+        got += [silent, inert, a == b, on, draws > 0, rays > 0, top < 0.03 * max(foot, 1),
+               0.01 * n <= moved <= 0.6 * n, outside <= 0.03 * max(moved, 1), up >= 100]
+        want += [True, True, True, True, True, True, True, True, True, True]
+        notes.append("%s: off by default and silent, inert without the ray tracing, two ray-traced runs identical; "
+                     "on, %d ground draws and ~%d reflection rays, the pixels moved inside the ground's footprint, "
+                     "some brighter" % (backend, draws, rays))
+    if len(outs) == 2:
+        # THE TWO BACKENDS DRAW IT ALIKE: one GLSL source, the same reflection.
+        # The `t0` run is the reflection itself (mean within 0.05, under 0.03%
+        # of the pixels more than 8 off); the `tg` run is the FOOTPRINT with
+        # the strength at 40, which saturates the reflection and so amplifies
+        # the backends' tiny floating-point differences (mean within 0.15,
+        # under 0.5% of the pixels more than 8 off).
+        for name, mean, share in (("t0", 0.05, 0.0003), ("tg", 0.15, 0.005)):
+            a, b = outs["d3d12"][name][1], outs["vulkan"][name][1]
+            d = _pic_diff(a, b) if a and b else (9e9, 1.0, 255, 1.0)
+            print("        rt reflections, Vulkan against Direct3D 12 (%s): mean %.3f, >8 %.2f%%, worst %d"
+                  % (name, d[0], 100 * d[1], d[2]))
+            got.append(d[0] <= mean and d[1] < share)
+            want.append(True)
+    return tuple(got), tuple(want), "; ".join(notes)
 
 
 def c_engine_soft_particles():
@@ -29248,15 +29274,16 @@ def c_engine_vulkan_parity_rt():
     16-word records, the frame's constants). The rays' noise is a deterministic hash of the pixel, so the two pictures
     should agree closely: the same launch line on `--d3d12` and on the default Vulkan window, hidden, read from what the
     window was handed (`OMK_WINDUMP`), pixel by pixel - the largest per-channel MEAN absolute difference, the share of
-    pixels more than 8 levels off and more than 1 off. Three frames, each with `--raytracing`: the street start
-    (640x480, the crowd), a character's close-up
+    pixels more than 8 levels off and more than 1 off. Four frames, each with `--raytracing`: the street start
+    (640x480, the crowd), the same with `--rt-reflections` (a puddle in the road), a character's close-up
     (restaurant save, slot 2, conversation 386, 960x540) and the first conversation line with Telis (slot 0,
     frame 700, 960x540). Measured on an RX 9070 XT (both APIs): mean 0.02-0.11, 0.02-0.16% of the pixels more
     than 8 off (worst channel 17-42), 0.5-2.0% more than 1 off, the same ray counts on the two logs. The tolerance
     (mean <= 0.2, under 0.5% of the pixels more than 8 off, under 3% more than 1 off) is for another driver's
     rounding of the ray code's `pow`, `sqrt` and `fract`, not a difference of method. Each frame must also differ
     from the same frame without ray tracing on BOTH backends (mean >= 1, more than 5% of the pixels more than 1
-    off: the indirect light and the AO are real) and each log says the ray tracing is live.
+    off: the indirect light and the AO are real), the reflections from the ray-traced street without them
+    (more than 0.3% of the pixels more than 8 off), and each log says the ray tracing is live.
     Skipped without both backends or without ray queries on either.
     SHOWN TO FAIL with the Vulkan ray tracing disabled (`rtWant_` never set: the log says it is off, the Vulkan
     frames are the plain ones and no longer agree with Direct3D 12's).
@@ -29280,6 +29307,7 @@ def c_engine_vulkan_parity_rt():
     RUNS = {
         "street": (appart, (640, 480), "60", street),
         "street_rt": (appart, (640, 480), "60", street + rt),
+        "street_refl": (appart, (640, 480), "60", street + rt + ["--rt-reflections"]),
         "face": (resto, (960, 540), "150", face),
         "face_rt": (resto, (960, 540), "150", face + rt),
         "dlg": (resto, (960, 540), "700", dlg),
@@ -29334,7 +29362,7 @@ def c_engine_vulkan_parity_rt():
         got.append(bool(cond))
         want.append(True)
         log.append("%s: %s (%s)" % (label, "ok" if cond else "NO", note))
-    for name in ("street_rt", "face_rt", "dlg_rt"):
+    for name in ("street_rt", "street_refl", "face_rt", "dlg_rt"):
         d = diff(pic("d3d12", name), pic("vulkan", name))
         check(name + " agrees", d[0] <= 0.2 and d[1] < 0.005 and d[3] < 0.03,
               "mean %.3f, >8 %.3f%%, worst %d, >1 %.2f%%" % (d[0], 100 * d[1], d[2], 100 * d[3]))
@@ -29345,6 +29373,10 @@ def c_engine_vulkan_parity_rt():
             check("%s on %s" % (name, b), live and d[0] >= 1.0 and d[3] > 0.05,
                   "live: %s, mean %.2f against the plain frame, %.1f%% of the pixels more than 1 off"
                   % (live, d[0], 100 * d[3]))
+        d = diff(pic(b, "street_rt"), pic(b, "street_refl"))
+        live = "RT REFLECTIONS on" in res[(b, "street_refl")][0]
+        check("reflections on " + b, live and d[1] > 0.003,
+              "live: %s, %.2f%% of the pixels more than 8 off the ray-traced street" % (live, 100 * d[1]))
     return tuple(got), tuple(want), "; ".join(log)
 
 
@@ -50295,7 +50327,7 @@ SLOW = [
     ("engine: colour depth", c_engine_colour_depth, "todo/enhancements.md 21; present.frag, overlay.frag"),
     ("engine: post chain", c_engine_post_chain, "todo/enhancements.md 22; bloom.frag, post.frag"),
     ("engine: vulkan parity", c_engine_vulkan_parity, "todo/enhancements.md 21, 22; vkrender.cpp, playgpu_vulkan.cpp"),
-    ("engine: vulkan parity rt", c_engine_vulkan_parity_rt, "todo/enhancements.md 19; vkrender.cpp, rt.glsl, o3de/rtscene.h"),
+    ("engine: vulkan parity rt", c_engine_vulkan_parity_rt, "todo/enhancements.md 19, 26; vkrender.cpp, rt.glsl, o3de/rtscene.h"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
     ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),

@@ -117,7 +117,8 @@ constexpr float kRainOffsets[kRainCopies][3] = {
     {317.0f, -251.0f, 173.0f}, {-211.0f, 389.0f, -443.0f}, {463.0f, 127.0f, -307.0f}};
 constexpr float kSnowBox = 400.0f;        // the snow's box (`sub_481D90`'s bit-4 arm)
 constexpr float kSandBox = 300.0f;        // ...and the sand's (its else branch)
-constexpr float kSandGrain3d = 1.8f;      // ...a 4-texel grain this many units across in the scene
+constexpr float kSandGrain3d = 0.8f;      // ...a 4-texel grain this many units across in the scene (1.8: "really too big")
+constexpr float kSandGrainPx = 1.5f;      // ...and no more than this many pixels each side at 480 lines, near the eye
 constexpr float kSandGlow = 0.9f;         // ...its brightness, additive
 constexpr float kFlakeHalf = 4.0f;        // ...a flake's half size, the original's 8 units across
 constexpr float kSnowNearFrom = 20.0f, kSnowNear = 80.0f;   // a flake's fade in from the eye
@@ -296,8 +297,17 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             }
             const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
             for (float& c : rgb) c = c / top * std::clamp(rain3dStrength, 0.0f, 1.0f) * kSandGlow * fade;
-            // the grain and a texel of black round it, so the filter softens its edge
-            const float hx = kSandGrain3d * (gr.w + 2) / 8.0f, hy = kSandGrain3d * (gr.h + 2) / 8.0f;
+            // the grain and a texel of black round it, so the filter softens its
+            // edge - no bigger on screen than `kSandGrainPx` (what one unit
+            // across measures at its depth)
+            float hx = kSandGrain3d * (gr.w + 2) / 8.0f, hy = kSandGrain3d * (gr.h + 2) / 8.0f;
+            {
+                const float off[3] = {d.p[0] + r[0], d.p[1] + r[1], d.p[2] + r[2]};
+                const omk::Projected po = omk::project(v.cam, off);
+                const float ppu = std::hypot(po.x - pf.x, po.y - pf.y);
+                const float capW = kSandGrainPx * std::max(1.0f, static_cast<float>(fb.h) / 480.0f);
+                if (ppu > 0.0f && hx * ppu > capW) { const float k = capW / (hx * ppu); hx *= k; hy *= k; }
+            }
             float q[4][3];
             for (int k = 0; k < 3; ++k) {
                 q[0][k] = d.p[k] - r[k] * hx - u[k] * hy;

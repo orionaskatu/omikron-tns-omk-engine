@@ -33994,7 +33994,10 @@ def c_engine_rain3d():
          they are drawn in the scene - no 2D streaks;
       3. Vulkan, `--rain3d 0`: the original's 2D streaks, more than 20;
       4. the rain's pixels (against `--detail 1`, no rain) on Vulkan and on
-         GLES: more than 1000 each, the same pixels - overlap above 0.9.
+         GLES: more than 1000 each, the same pixels - overlap above 0.9;
+      5. THE SHOWER'S SKY (`remasterGrade`): with `--rain3d 1` the grade's
+         overcast reaches its full step (16) as the shower peaks
+         (`remaster.grade`), and with `--rain3d 0` it never comes.
 
     Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
     Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks. Denser and
@@ -34009,7 +34012,7 @@ def c_engine_rain3d():
     roof); the drops never taken (`remasterRainTake` false) - part 2, the 2D
     streaks drawn again; the copies never made - part 2 (135 drawn); the
     streak never pooled (`rainTexSlot` -1, the white) - part 2; the set's
-    lights never read - part 2 (0 lit).
+    lights never read - part 2 (0 lit); the overcast never stepped - part 5.
 
     NOT CHECKED, judged by eye: the brightness and width; the density, which
     is the original's 200 - half its box lies below the street, now hidden.
@@ -34056,7 +34059,7 @@ def c_engine_rain3d():
             return open(out, "rb").read(), text, _events(text)
         vkb = os.path.join(eng, "build", "omk-play")
         on, out_on, ev = run(vkb, "on", 2, 1)
-        _, out_off, _ = run(vkb, "off", 2, 0)
+        _, out_off, ev_off = run(vkb, "off", 2, 0)
         dry, _, _ = run(vkb, "dry", 1, 1)
         gl = ("skipped",)
         if platform.system() == "Darwin":
@@ -34082,12 +34085,16 @@ def c_engine_rain3d():
                 "frame 690: weather - 200 drops stepped, drawn in the scene", ""))
     scene = (at.get("drops"), int(at.get("drawn", 0)) > 300, int(at.get("roofed", 0)) > 0,
              at.get("streak"), int(at.get("lit", 0)) > 300) + took
+    overcast = (max((int(k.get("overcast", 0)) for n, k in ev if n == "remaster.grade"), default=0),
+                max((int(k.get("overcast", 0)) for n, k in ev_off if n == "remaster.grade"), default=0))
     m = re.search(r"frame 690: weather - 200 drops stepped, (\d+) streaks", out_off)
     flat = int(m.group(1)) > 20 if m else None
     print(f"        frame 690: {at}; the 2D path {m.group(1) if m else None} streaks; "
           f"Vulkan {len(mv)} pixels; GLES {gl}")
-    return (src_ok, scene, flat, len(mv) > 1000, gl), \
-           ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True))), \
+    print(f"        the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without")
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast), \
+           ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
+            (16, 0)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

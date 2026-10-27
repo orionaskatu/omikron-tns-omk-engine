@@ -104,23 +104,70 @@ void PlayState::remasterEmitterLights(WorldSlot& ws) {
 // player's feet, and off while the greyscale bank is on - a grade would tint
 // a black-and-white cutscene. A hard switch: a change of set comes with the
 // game's own fade.
+//
+// ...and THE SHOWER'S SKY (the remaster's, with the 3D rain - `[Remaster]
+// rain3d`): while the game's rain falls the grade darkens, greys and cools
+// with it - `overcastLut`, over the city's own or, where it has none, over
+// a plain one made for the while - rebuilt in `kOvercastSteps` steps as the
+// shower ramps and fades (20 s and 10 s, `o3de/weather.h`).
+namespace {
+constexpr int kOvercastSteps = 16;
+constexpr int kOvercastSide = 17;          // a plain grade's side, where the city has none
+constexpr float kOvercastDark = 0.20f;     // the darkening at full rain
+constexpr float kOvercastGrey = 0.30f;     // ...the saturation it takes away
+constexpr float kOvercastCool = 0.03f;     // ...and the blue it adds over the red
+
+// `base` (n^3 triples, red fastest; null: the identity) under an overcast of
+// `o` (0..1) into `out`
+void overcastLut(const omk::ColourLut* base, int n, float o, std::vector<float>& out) {
+    out.resize(static_cast<std::size_t>(n) * n * n * 3);
+    for (int b = 0, i = 0; b < n; ++b)
+        for (int g = 0; g < n; ++g)
+            for (int r = 0; r < n; ++r, ++i) {
+                float c[3];
+                if (base) for (int k = 0; k < 3; ++k) c[k] = base->rgb[static_cast<std::size_t>(3 * i + k)];
+                else c[0] = r / float(n - 1), c[1] = g / float(n - 1), c[2] = b / float(n - 1);
+                const float l = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2];
+                for (int k = 0; k < 3; ++k) c[k] = (l + (c[k] - l) * (1.0f - kOvercastGrey * o)) * (1.0f - kOvercastDark * o);
+                c[0] -= kOvercastCool * o * l;
+                c[2] += kOvercastCool * o * l;
+                for (int k = 0; k < 3; ++k) out[static_cast<std::size_t>(3 * i + k)] = std::clamp(c[k], 0.0f, 1.0f);
+            }
+}
+}  // namespace
+
 void PlayState::remasterGrade() {
     auto& session = *session_;
     omk::Renderer& world = *world_;
-    if (omk::cityGrades().active()) {
-        // none in the original mode (part B's switch)
-        const std::string want = session.renderGrey() || !remasterShown_ ? std::string() : worldSet;
-        if (want != gradeFor) {
-            const omk::ColourLut* lut = want.empty() ? nullptr : omk::cityGrades().forSet(want);
-            const bool took = world.setGrade(lut ? lut->rgb.data() : nullptr, lut ? lut->n : 0);
-            const std::string src = want.empty() ? "" : omk::cityGrades().sourceFor(want);
-            std::printf("frame %ld: grade %s for %s%s\n", frameNo, src.empty() ? "none" : src.c_str(),
-                        want.empty() ? "the greyscale bank" : want.c_str(),
-                        took ? "" : " - REFUSED, this renderer has no grade");
-            omk::event("remaster.grade", {{"set", want}, {"lut", src}, {"taken", took}});
-            gradeFor = want;
-        }
+    // the shower's step: the rain's drops over 200, while the 3D rain shows
+    const bool shown = !session.renderGrey() && remasterShown_;
+    const int step = shown && rain3dStrength > 0.0f
+        ? static_cast<int>(std::lround(std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) * kOvercastSteps)) : 0;
+    if (!omk::cityGrades().active() && step == 0 && gradeOvercast == 0) return;
+    // none in the original mode (part B's switch)
+    const std::string want = shown ? worldSet : std::string();
+    if (want == gradeFor && step == gradeOvercast) return;
+    const omk::ColourLut* lut = want.empty() || !omk::cityGrades().active() ? nullptr : omk::cityGrades().forSet(want);
+    bool took;
+    if (step > 0) {
+        static std::vector<float> rgb;
+        const int n = lut ? lut->n : kOvercastSide;
+        overcastLut(lut, n, static_cast<float>(step) / kOvercastSteps, rgb);
+        took = world.setGrade(rgb.data(), n);
+    } else {
+        took = world.setGrade(lut ? lut->rgb.data() : nullptr, lut ? lut->n : 0);
     }
+    if (want != gradeFor || (step > 0) != (gradeOvercast > 0)) {
+        const std::string src = lut ? omk::cityGrades().sourceFor(want) : "";
+        std::printf("frame %ld: grade %s for %s%s%s\n", frameNo, src.empty() ? "none" : src.c_str(),
+                    want.empty() ? "the greyscale bank" : want.c_str(),
+                    step > 0 ? " - under the shower's sky" : "",
+                    took ? "" : " - REFUSED, this renderer has no grade");
+    }
+    omk::event("remaster.grade", {{"set", want}, {"lut", lut ? omk::cityGrades().sourceFor(want) : ""},
+                                  {"taken", took}, {"overcast", step}});
+    gradeFor = want;
+    gradeOvercast = step;
 }
 
 // the GREYSCALE BANK through the texture pack: told where a grey texture came

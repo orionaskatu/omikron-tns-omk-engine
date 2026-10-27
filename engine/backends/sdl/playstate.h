@@ -738,6 +738,7 @@ struct PlayState {
     bool floorLive{};        // ...the floors' (for the log), at this plane
     float floorLiveY{};
     std::string gradeFor{"\x01"};
+    int gradeOvercast = 0;   // ...the shower's step it was built at, 0..16 (`remasterGrade`)
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie
     Sky sky{};

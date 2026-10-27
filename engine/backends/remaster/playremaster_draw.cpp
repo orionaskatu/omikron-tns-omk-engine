@@ -21,7 +21,10 @@
 
 // THE MIST (`View::mist`): on the shown set's ground
 void PlayState::remasterViewMist(omk::View& v) {
-    v.mist = mistStrength;
+    // ...thickened by the SHOWER while the 3D rain shows (the shower's sky,
+    // `remasterGrade`): the city's fog colour closing in as it rains
+    v.mist = std::min(1.0f, mistStrength + (rain3dStrength > 0.0f && remasterShown_
+                                                ? 0.3f * std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) : 0.0f));
     v.mistGround = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)].ground;
     // ...and the RAIN's ripples on the wet floors (`o3de/wetfloor.h`): the
     // shower's strength, which is 0 outside a rain area

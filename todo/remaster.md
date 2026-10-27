@@ -1275,8 +1275,18 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   at ~230) - the variation is the burner's warm pool and the dark corners'
   dimmer rain; all 538 drops lit. CPU per drop, so both backends alike
   (7231 pixels each).
+* **The shower's sky** (the reader's "push and continue", the same day - the
+  list's "the mist and the grade answering the shower"), with the 3D rain:
+  while it falls, the grade darkens (0.20 at full rain), greys (0.30 of the
+  saturation) and cools (0.03 blue over red, by luma) with it -
+  `overcastLut` over the city's own LUT, or a plain 17^3 one made for the
+  while where the city has none (the post pass then runs only while it
+  rains) - rebuilt in 16 steps as the shower ramps and fades
+  (`gradeOvercast`; `remaster.grade` carries the step); and the MIST thickens
+  by 0.3 at full rain in the city's own fog colour - Vulkan only, as the mist
+  is (0.5 hid the far square). Both backends grade alike.
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on); the snow in 3D.
+  only with the emitters' light on); the mist on GLES; the snow in 3D.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

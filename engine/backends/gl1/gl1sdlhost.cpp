@@ -81,6 +81,13 @@ bool sdlGl1OpenWindow(SdlFrontend& front, int w, int h) {
     // hidden for a measurement run, as the GLES window is (CLAUDE.md 5)
     const Uint32 flags = SDL_WINDOW_OPENGL |
         (omk::envFlag("OMK_HIDDEN_WINDOW") ? static_cast<Uint32>(SDL_WINDOW_HIDDEN) : front.windowFlags());
+    // `OMK_GL1_WINDOW=WxH`: an INSTRUMENT - the window opened at that size
+    // instead of the frame's, as a dragged edge or the fullscreen leaves it,
+    // so a hidden run takes the scaled present (`verify.py: engine: gl1 window fit`)
+    if (const char* sz = omk::envStr("OMK_GL1_WINDOW")) {
+        int sw = 0, sh = 0;
+        if (std::sscanf(sz, "%dx%d", &sw, &sh) == 2 && sw > 0 && sh > 0) { w = sw; h = sh; }
+    }
     g_win = SDL_CreateWindow("OMK Engine (OpenGL 1.x)", SDL_WINDOWPOS_CENTERED,
                              SDL_WINDOWPOS_CENTERED, w, h, flags);
     if (!g_win) return false;

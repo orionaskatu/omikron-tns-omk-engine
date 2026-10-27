@@ -1250,6 +1250,12 @@ void PlayState::worldMirror() {
                     mst.native ? " [native: the two passes]" : "",
                     mst.maskPixels, static_cast<double>(mst.distance));
     }
+    // THE CITY WEATHER, in EVERY build and before the present's gates (its
+    // streaks and flakes hold a GPU-window frame on the CPU path). Until
+    // 2026-10-27 this call sat inside the GPU-window block below, so the
+    // software reference and the offscreen GL1 build never rained or snowed
+    // (`todo/handoff-classic-mac.md` 3g).
+    weatherFrame(view);   // `playframe_world_weather.cpp`
     // The backend drew the picture into the top-left `vw x vh`; place
     // it, leaving the bands as the black `fb` was cleared to.
     // THE PRESENT PASS (todo/optimization.md step 4b). On a frame that
@@ -1274,7 +1280,6 @@ void PlayState::worldMirror() {
         // glReadPixels 36, the 888 -> 565 dither 35, the upload 16 -
         // against 9 ms for the game itself. `GlesRenderer::presentWorld`
         // dithers on the GPU as `present.frag` does on Vulkan.
-        weatherFrame(view);   // the city weather, before the gates (`playframe_world_weather.cpp`)
         const bool onVulkan = gpuWorldOnWindow();   // the world is the window's renderer
         // the gates in order; the first that holds names why the frame
         // stays on the CPU path (`OMK_GPU_PRESENT_STATS` counts them)

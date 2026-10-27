@@ -19,8 +19,8 @@ namespace omk {
 // window yet or no OpenGL renderer to be had.
 void* gl1WindowContext();
 // The window's size in pixels (AGL: its port bounds; SDL: the drawable) -
-// what the straight present needs to be 1:1 with the frame; 0 x 0 without
-// a window.
+// the straight present needs it to HOLD the frame (as large or larger: a
+// larger one is fitted on the card, `fitToWindow`); 0 x 0 without a window.
 void gl1WindowSize(int& w, int& h);
 // The swap, on the SDL host (`SDL_GL_SwapWindow`); AGL swaps its own context.
 void gl1WindowSwap();

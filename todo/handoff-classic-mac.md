@@ -1158,16 +1158,59 @@ same words draw right, and the menu's present fell 6.5 -> 3.9 ms. The SDL
 host's overlay takes client storage for the same reason
 (`gl1OverlayPath`). `OMK_GL1_NO_CLIENT=1` sends both by copy again.
 
-**A BUG FOUND, NOT FIXED**: `weatherFrame` runs only in GPU-window builds
+**A BUG FOUND, FIXED THE SAME DAY** (the reader's call: "fix the weather
+issue in software renderer"): `weatherFrame` ran only in GPU-window builds
 (`playframe_world_draw.cpp`, inside the `gpuWindowBuild()` gate block since
-`36b0d00`), so the software reference and the offscreen GL1 build never had
-the city's rain or snow. Moving the call out of the gate is one line, but it
-changes the software reference's frames (`engine: weather` runs the Vulkan
-build) - the reader's call.
+`36b0d00`), so the software-only `omk-play` (no Vulkan), the classic build
+without AGL and the offscreen GL1 build never had the city's rain or snow.
+The call now stands before that block, in every build (the Vulkan and GLES
+builds, where it already ran, are unchanged). `engine: weather` gained a leg
+with NO GPU window - the host `ppc-darwin.mk` gl1 build under the dummy
+driver with `OMK_GL1=0` - asserting the ramp's 29 drops at frame 90 draw
+streaks; with the call put back inside the block that leg reads `None` while
+the Vulkan legs stay green.
 
-**Next**: the reader's G4 run (`--profile` again, windowed 640x480); then a
-scaled straight present for fullscreen (the world copied on the card into a
-texture and drawn fitted - no CPU read), if the G4 is played fullscreen.
+**Next**: the reader's G4 run (`--profile` again, windowed 640x480, and
+fullscreen now that 3h scales on the card).
+
+## 3h. THE GL1 FULLSCREEN, SCALED ON THE CARD (2026-10-27)
+
+The reader's "fix then fullscreen mode". Until now the straight present (3d,
+3g) needed the window to be the frame's own size; the SDL build's fullscreen
+(`SDL_WINDOW_FULLSCREEN_DESKTOP`: the desktop's mode, the frame scaled into
+it, `sdlfront.cpp`) and any dragged edge sent every frame to the CPU
+composite - the readback again. Emulated Tiger, 1024x768 fullscreen over a
+640x480 frame, the street: median **108.7 ms** a frame, `world: mirror`
+(the readback) 76 ms of it.
+
+**The fix.** The world and the overlay are still drawn at the frame's size,
+in the back buffer's bottom-left corner (where every coordinate in `begin`,
+`readWindow` and `presentOverlay` already put them, measured from `h_`).
+Before the swap, `Gl1Renderer::fitToWindow` copies that corner into a
+texture (`glCopyTexSubImage2D` - OpenGL 1.1, the readback's own texture
+reused, no CPU read), clears the window black and draws the texture over it
+fitted at its aspect and centred, NEAREST - as the composed frame is fitted
+(`sdlGl1PresentFrame`), so a frame changing path keeps its look.
+`gpuWorldOnWindow` takes any window that HOLDS the frame (as large or
+larger); a smaller one still goes to the composite. Result, emulated Tiger
+1024x768 fullscreen: **32.1 ms**, the 30 fps cap; `gl1: fit to the window`
+0.25 ms a frame.
+
+**The emulator draws it in the wrong colours.** The emulated Radeon samples
+the copied texture with its bytes out of order, in every format tried:
+RGBA8 and RGB8 come out red (R saturated, black kept), RGB5 in the classic
+byte-swapped 565 colours. The copy itself is right - the readback reads the
+same copy with `glGetTexImage` and gets the right colours - so it is the
+emulator's sampler (the same family as the TXO_ENDIAN flaw of 3g). On this
+Mac (Apple M1, OpenGL 2.1 Metal) the fit is exact: `engine: gl1 window fit`
+(a hidden 1400x960 window over a 640x480 frame, `OMK_GL1_WINDOW`; the fit
+probe `OMK_GL1_FIT_PROBE` reads the window back) - all 1228800 picture
+pixels the corner's nearest pixel, all 115200 band pixels black; shown to
+fail with the quad's t coordinates swapped (1336 matching). The real G4's
+Radeon is expected to draw it right; if it does not, `OMK_GL1_NO_FIT=1`
+composes scaled frames on the CPU as before.
+
+**Next**: the reader's G4 run fullscreen (`--fullscreen --profile`).
 
 ## 4. What is next, in the order proposed
 
@@ -1294,6 +1337,10 @@ texture and drawn fitted - no CPU read), if the G4 is played fullscreen.
   for `ppcosx`, and restart Tiger). A plain `glTexSubImage2D` of 32-bit
   words still drew black as blue with TXO_ENDIAN 0 (3g): send 32-bit frames
   through client storage.
+* **A texture filled by `glCopyTexSubImage2D` is sampled in the wrong
+  colours by the emulated Radeon** (3h: red in RGBA8/RGB8, byte-swapped in
+  RGB5), while `glGetTexImage` reads it right. The fullscreen fit looks wrong
+  in Tiger and right on the host; judge it on the host or the G4.
 * **Still open, suspected emulation**: a wall grazed by the camera flashes
   FLAT for a frame in Tiger; the M3 never shows it (60-position sweep, worst
   169 px). Not cured by the screen-edge clip.

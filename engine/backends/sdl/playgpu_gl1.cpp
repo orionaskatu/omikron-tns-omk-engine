@@ -145,14 +145,20 @@ bool PlayState::gpuWorldOnWindow() {
     static const bool composite = omk::envFlag("OMK_GL1_COMPOSITE");
     if (!worldVk || world_ != worldVk || composite || gl1Composite || !omk::gl1OnWindow(worldVk))
         return false;
-    // ...and only 1:1: the world is drawn at the frame's size, so a window
-    // the frame is scaled into (the SDL build's fullscreen) is composed on the
-    // CPU and fitted there - the straight present would refuse it, and the
-    // frame would go out black
+    // ...and only a window that HOLDS the frame: the world is drawn at the
+    // frame's size in the back buffer's corner and scaled up on the card to
+    // a larger window (the SDL build's fullscreen, `Gl1Renderer::fitToWindow`);
+    // a SMALLER one is composed on the CPU and fitted there - the straight
+    // present would refuse it, and the frame would go out black.
+    // `OMK_GL1_NO_FIT=1` composes every scaled frame on the CPU again (the
+    // emulated Radeon samples the fit's copied texture with its bytes out of
+    // order - `todo/handoff-classic-mac.md` 3h)
+    static const bool noFit = omk::envFlag("OMK_GL1_NO_FIT");
     OMK_ZONE("gl1: window size");
     int ww = 0, wh = 0;
     omk::gl1WindowSize(ww, wh);
-    return ww == fb.w && wh == fb.h;
+    if (ww == fb.w && wh == fb.h) return true;
+    return !noFit && ww >= fb.w && wh >= fb.h;
 }
 void PlayState::gpuOverlayDecision(const char*& keep) {
     static const bool noOverlay = omk::envFlag("OMK_NO_OVERLAY");

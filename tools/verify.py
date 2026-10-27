@@ -30139,18 +30139,13 @@ def c_engine_gl1_backend():
     fr = omkpaths.data_root()
     if platform.system() != "Darwin":
         return ("skipped",), ("skipped",), "the gl1 backend is CGL: macOS only"
-    pc = subprocess.run(["pkg-config", "--cflags", "--libs", "sdl2"], capture_output=True, text=True)
-    pfx = subprocess.run(["pkg-config", "--variable=prefix", "sdl2"], capture_output=True, text=True)
-    if pc.returncode != 0 or not os.path.isdir(os.path.join(fr, "IAM")):
-        return ("skipped",), ("skipped",), "no SDL2 (pkg-config) or no game data"
-    libs = subprocess.run(["pkg-config", "--libs", "sdl2"], capture_output=True, text=True).stdout.strip()
-    b = subprocess.run(["make", "-s", "-f", "ppc-darwin.mk", "PPC_CXX=c++", "PPCFLAGS=-ffp-contract=off",
-                        "LDFLAGS=", "OUT=build/host-gl1", "SDL2_PREFIX=" + pfx.stdout.strip(),
-                        "PLAY_LIBS=" + libs + " -framework OpenGL", "play"],
-                       cwd=eng, capture_output=True, text=True)
-    binp = os.path.join(eng, "build", "host-gl1", "omk-play")
-    if b.returncode != 0 or not os.path.exists(binp):
-        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + b.stderr[-300:]
+    if not os.path.isdir(os.path.join(fr, "IAM")):
+        return ("skipped",), ("skipped",), "no game data"
+    binp, err = _host_gl1_play()
+    if binp is None and err == "no SDL2":
+        return ("skipped",), ("skipped",), "no SDL2 (pkg-config)"
+    if binp is None:
+        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + err
     tmp = tempfile.mkdtemp()
     try:
         frames, logs = {}, {}
@@ -30536,6 +30531,67 @@ def c_engine_sight_mask():
     return (g[0], g[3], g[6], g[5] > g[4] // 2), (220, 0, 0, True), \
         "all 220 sets: the shot soup's unmasked triangles are the sight soup, bitwise and in " \
         "order, and face-to-face segments hit the same face either way (most of them hitting)"
+
+
+def c_engine_gl1_window_fit():
+    r"""THE GL1 WINDOW LARGER THAN THE FRAME - the SDL build's fullscreen
+    (`todo/handoff-classic-mac.md` 3h).
+
+    The world (and the overlay) are drawn at the frame's size in the back
+    buffer's corner; `Gl1Renderer::fitToWindow` copies the corner into a
+    texture and draws it over the whole window, fitted at its aspect,
+    NEAREST, the bands black - no readback (emulated Tiger at 1024x768
+    fullscreen: 108.7 -> 32.1 ms a frame). The host `ppc-darwin.mk` gl1
+    build, a HIDDEN window opened at 1400x960 (`OMK_GL1_WINDOW`) over a
+    640x480 frame - x2.00 with 60-pixel bands each side - and the fit probe
+    (`OMK_GL1_FIT_PROBE`): on the 60th fitted frame every window pixel inside
+    the fitted rectangle compared with the corner pixel its centre samples,
+    every band pixel with black, read back from the window itself. Asserted:
+    the fit said, no present refused, all 1228800 picture pixels and all
+    115200 band pixels as they must be, and the window a picture (> 500
+    colours), not a cleared buffer.
+
+    Shown to fail (2026-10-27): the quad's t coordinates swapped (the frame
+    drawn upside down) - 1336 of 1228800 matching; restored by an edit,
+    the file touched, green again.
+    """
+    import subprocess, tempfile, shutil
+    if sys.platform != "darwin":
+        return ("skipped",), ("skipped",), "the gl1 backend is CGL: macOS only"
+    fr = omkpaths.data_root()
+    if not os.path.isdir(os.path.join(fr, "IAM")):
+        return ("skipped",), ("skipped",), "no game data"
+    binp, err = _host_gl1_play()
+    if binp is None and err == "no SDL2":
+        return ("skipped",), ("skipped",), "no SDL2 (pkg-config)"
+    if binp is None:
+        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + err
+    tmp = tempfile.mkdtemp()
+    try:
+        ppm = os.path.join(tmp, "fit.ppm")
+        out = subprocess.run(
+            [binp, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--frames", "70", "--nodelay",
+             "--res", "640x480", "--saves", tmp],
+            capture_output=True, text=True, errors="replace", timeout=600,
+            env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_GL1_WINDOW="1400x960",
+                     OMK_GL1_FIT_PROBE=ppm)).stdout
+        said = "the 640x480 frame scaled to the 1400x960 window on the card (x2.00)" in out
+        m = re.search(r"gl1 fit probe: (\d+) of (\d+) window pixels are the corner's nearest "
+                      r"pixel; (\d+) of (\d+) band pixels black", out)
+        probe = tuple(int(g) for g in m.groups()) if m else None
+        colours = 0
+        if os.path.exists(ppm):
+            d = open(ppm, "rb").read()
+            head = d.split(b"\n", 3)
+            px = head[3] if len(head) == 4 else b""
+            colours = len({px[i:i + 3] for i in range(0, len(px) - 2, 3 * 7)})
+        return (said, "REFUSED" in out, probe, colours > 500), \
+               (True, False, (1228800, 1228800, 115200, 115200), True), \
+               "the fit said; no present refused; every picture pixel the corner's nearest, " \
+               "every band pixel black (probe from the window itself); the window a picture"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def c_engine_shot_run_boxes():
@@ -47092,6 +47148,29 @@ def c_engine_ui_highscore():
            "message); the frame oscillator 5 closes it; the player walking under it"
 
 
+def _host_gl1_play():
+    """`ppc-darwin.mk`'s gl1 `omk-play`, built for THIS Mac (SDL2 from
+    pkg-config) into `engine/build/host-gl1` - `(path, None)`, or `(None, why)`.
+    Under `SDL_VIDEODRIVER=dummy` it opens no GL window, so it is the build
+    whose `gpuWindowBuild()` answers false: the offscreen GL1, or with
+    `OMK_GL1=0` the software renderer alone."""
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    pc = subprocess.run(["pkg-config", "--cflags", "--libs", "sdl2"], capture_output=True, text=True)
+    if pc.returncode != 0:
+        return None, "no SDL2"
+    pfx = subprocess.run(["pkg-config", "--variable=prefix", "sdl2"], capture_output=True, text=True)
+    libs = subprocess.run(["pkg-config", "--libs", "sdl2"], capture_output=True, text=True).stdout.strip()
+    b = subprocess.run(["make", "-s", "-f", "ppc-darwin.mk", "PPC_CXX=c++", "PPCFLAGS=-ffp-contract=off",
+                        "LDFLAGS=", "OUT=build/host-gl1", "SDL2_PREFIX=" + pfx.stdout.strip(),
+                        "PLAY_LIBS=" + libs + " -framework OpenGL", "play"],
+                       cwd=eng, capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "host-gl1", "omk-play")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return None, b.stderr[-300:]
+    return binp, None
+
+
 def c_engine_weather():
     r"""THE CITY WEATHER - `sub_4815D0` (`o3de/weather.h`, `todo/scene-gameplay-audit.md` 8).
 
@@ -47104,9 +47183,16 @@ def c_engine_weather():
     20 s ramp (29 drops at frame 90), state 2 at 200, streaks drawn; the same
     run at detail 1 - nothing; and Mahaleel's ice cave, where the roof ray
     (196.85 up through the bolts' world) keeps the snow from ever starting.
+    And on macOS, the same street in a build with NO GPU window - the host
+    `ppc-darwin.mk` gl1 build under the dummy driver, `OMK_GL1=0`, the
+    software renderer alone: the ramp's 29 drops at frame 90 draw streaks
+    there too (until 2026-10-27 `weatherFrame` ran only inside the
+    GPU-window block, and such builds never rained).
 
     Shown to fail: the detail gate removed (the detail-1 run rains), the roof
-    ray ignored (the cave snows), the streaks not recorded (none drawn).
+    ray ignored (the cave snows), the streaks not recorded (none drawn);
+    the call put back inside `if (gpuWindowBuild())` (the windowless leg
+    reads `None`, while the Vulkan legs stay green).
     """
     import dialog_triggers as T
     eng = os.path.join(ROOT, "engine")
@@ -47120,9 +47206,9 @@ def c_engine_weather():
             t = struct.unpack_from("<H", bb, 176)[0]
             if t:
                 types.setdefault(t, []).append(k)
-    def run(area, extra, frames, env=None):
+    def run(area, extra, frames, env=None, binp=None):
         return subprocess.run(
-            [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+            [binp or play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
              "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", area,
              "--no-crowd", "--frames", str(frames), "--nodelay", "--res", "800x600"] + extra,
             capture_output=True, text=True, errors="replace",
@@ -47132,6 +47218,16 @@ def c_engine_weather():
     o2 = run("0", street + ["--detail", "2"], 700, skip)
     o1 = run("0", street + ["--detail", "1"], 100, skip)
     oc = run("145", ["--detail", "2"], 70)
+    # the build with no GPU window (macOS: the host gl1 build, software only)
+    bare = "no window build here"
+    if sys.platform == "darwin":
+        hp, err = _host_gl1_play()
+        if hp is None and err != "no SDL2":
+            return ("host gl1 build failed",), ("built",), err
+        if hp:
+            ob = run("0", street + ["--detail", "2"], 100, dict(skip, OMK_GL1="0"), hp)
+            m = re.search(r"frame 90: weather - (\d+) drops stepped, (\d+) streaks", ob)
+            bare = (int(m.group(1)), int(m.group(2)) > 0) if m else None
     posted = re.findall(r"weather - message (\d+) posted \(Game_RaiseEvent 43\) (to its handler)?", o2)
     music = "music switch to 119" in o2
     states = re.findall(r"weather - state (\d+), (-?\d+) drops", o2)
@@ -47143,13 +47239,15 @@ def c_engine_weather():
     return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
             [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
             (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
-            (cave[1], cave[2]) if cave[0] else None), \
+            (cave[1], cave[2]) if cave[0] else None, bare), \
            ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
-            ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0")), \
+            ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0"),
+            (29, True) if sys.platform == "darwin" and bare != "no window build here" else bare), \
            "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
            "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
            "ramp at frame 90, full strength drawing streaks; at detail 1 nothing; " \
-           "Mahaleel's cave: state 2, no flake, a roof overhead"
+           "Mahaleel's cave: state 2, no flake, a roof overhead; and with no GPU window " \
+           "(host gl1, software): 29 drops at frame 90, streaks drawn"
 
 
 def c_engine_mirror_park():
@@ -52265,6 +52363,7 @@ SLOW = [
     ("engine: near clip",  c_engine_near_clip,  "PORTING B6"),
     ("engine: renderer",   c_engine_renderer_boundary, "PORTING A2"),
     ("engine: gl1 backend", c_engine_gl1_backend, "todo/classic-mac-port-1999.md 3c-i; PORTING B6"),
+    ("engine: gl1 window fit", c_engine_gl1_window_fit, "todo/handoff-classic-mac.md 3h; backends/gl1/gl1render.cpp fitToWindow"),
     ("engine: vulkan pose", c_engine_vulkan_pose, "backends/vulkan/vkrender.cpp posesBodies; todo/gpu-skinning.md"),
     ("engine: frontend gateway", c_engine_frontend_gateway, "todo/classic-mac-port-1999.md step 5; PORTING A1"),
     ("engine: classic build", c_engine_classic_build, "todo/classic-mac-port-1999.md step 5; platform/datafs.h"),

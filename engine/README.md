@@ -218,8 +218,9 @@ backends/gl1/gl1render.cpp   the FIXED-FUNCTION OpenGL 1.x renderer, for the
                          WINDOW's own context - AGL's in the classic build,
                          the SDL window's (`gl1sdlhost.cpp`) in
                          `ppc-darwin.mk`'s - the world is drawn into the back
-                         buffer and swapped, the interface blended over it;
-                         without a GL window (`SDL_VIDEODRIVER=dummy`) an
+                         buffer and swapped, the interface blended over it,
+                         and a window larger than the frame (fullscreen)
+                         gets it scaled up on the card (3h); without a GL window (`SDL_VIDEODRIVER=dummy`) an
                          offscreen CGL context whose frame comes back through
                          `readback()` (todo/handoff-classic-mac.md 3g). Built
                          only by `ppc-darwin.mk`'s `play` (for Tiger, or for

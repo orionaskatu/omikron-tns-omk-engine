@@ -2504,6 +2504,43 @@ second being an outstretched arm.
   two handlers are `music.play 119` (the rain's track) and `music.play 2`. Snow
   goes straight from 4 to 2 and never ends. Every frame of state 4 scatters the
   200 drops afresh. No player actor, or ACTOR_STATE 14, zeroes it.
+* **The shower's music, and two cities that never get it** (read 2026-10-27,
+  the subscription tables at AREA `+68`/`+86`). Every city subscribes to
+  messages 23 and 24 with a pair of tracks - a shower version, then its own
+  default (`+142`) back: Anekbah 119 / 2, the Impasse 119 / 88, its airlock
+  118 / 20, Jaunpur 122 / 21, **Qalisar (AREA 101) 120 / 56 and Lahoreh
+  (AREA 64) 121 / 27** - but Qalisar and Lahoreh ship weather type **0**, so
+  `sub_4815D0` never runs there and nothing posts 23 (of the visible raise
+  sites only it posts 23; the grep is a floor, SCRIPT_VM.md). Tracks 120 and
+  121 are named by no other script, and both files ship: authored, and
+  unreachable. Qalisar's `+178` (the day/night byte beside the type) IS set.
+  **The reader listened to 118-122 (2026-10-27): each is its area's music
+  mixed with the same rain sound effect** - Jaunpur's 122 included, so the
+  one city whose type (3) is not the rain still has a RAIN track, and today
+  plays it over nothing. The text agrees with weather by sector without
+  naming a dry one: the *Centres de Météorologie Aléatoire* "contrôlent les
+  cycles jours/nuits et déclenchent des averses aléatoires" (the `ZP Meteo`
+  block), and a Transcan bulletin has centre X24 of sector 12 postpone a
+  shower (conversation 59). Khonsu (177) and the rooftops (42) rain with no
+  23/24 subscription, so the music does not change there. Whether the type-0
+  cities were forgotten or switched off late, nothing in the data says.
+* **Type 3's draw is complete code behind the wrong test.** `sub_481D90`
+  itself takes `+80 & 4` for the snow and ELSE loads the sand (`sand.bmp`,
+  which ships; size 15, speed 30, box 300) through the same projection,
+  bounds and `sub_4810D0` blit - only its caller gates on bit 4 alone. The
+  caller's tail is `test al, 2` -> the rain's lines, else `test al, 4` ->
+  `sub_481D90`, else nothing. **The cycle knows the sand**: states 2 and 4
+  test `al, 0Ah` (rain OR sand) for the timed shower, `al, 4` for the snow's
+  endless one - so type 3 was written as a shower that comes and goes, and
+  only the draw's gate leaves it out. **The asset does not fit the arm**:
+  `snow.bmp` is ONE flake, 64x64 8 bpp; `sand.bmp` is 128x128, a FIELD of some
+  70 grains (cream and orange) - a texture, where the arm blits one bitmap per
+  drop - and the arm sizes the blit from the snow bitmap
+  (`I2D_GetBitmapSize(.., dword_657B34)`) on both arms; whether that size is
+  the source rectangle `sub_4810D0` takes is not read yet. No dialogue or
+  document mentions sand or dust in the city. Read with the reader's
+  hypothesis (2026-10-27): a sandstorm planned for Jaunpur and the docks, its
+  music a rain placeholder, left unfinished and gated off.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
   for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a

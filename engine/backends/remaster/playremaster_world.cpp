@@ -119,7 +119,7 @@ constexpr float kOvercastCool = 0.03f;     // ...and the blue it adds over the r
 
 // ...and THE SAND's DUSTY SKY (the restored weather's): toward an ochre of the
 // pixel's own luma, a little flattened and lifted - the air full of sand
-constexpr float kDustTint = 0.40f;         // how far toward the ochre at the storm's height
+constexpr float kDustTint = 0.20f;         // how far toward the ochre at the storm's height (0.40 before the dust fog)
 constexpr float kDustFlat = 0.12f;         // ...the contrast it takes, the floor it lifts
 
 // `base` (n^3 triples, red fastest; null: the identity) under an overcast of

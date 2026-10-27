@@ -73,6 +73,20 @@ flake). Whether the gate was closed on purpose, nothing records.
   storm's height), flattened and lifted a little (0.12), in 16 steps as the
   shower ramps (`remaster.grade` overcast -1..-16). The original look keeps
   its specks.
+* **...and redone again, the reader's idea** (in play: the streaks "look a
+  bit like rain"; "a mix of a moving fog effect and small particles using
+  the sand texture" - remaster only, since the fog is far from the original
+  arm, which blits 200 pictures from `sand.bmp` and nothing else): a DUST
+  FOG in both scene shaders (`View::dust`, `dustAmount`) - toward an ochre
+  lit by the set's ambient, as thick as the storm (`1 - exp(-s n d / 1400)`),
+  its density `n` a 3D value noise at the fragment and the ray's middle,
+  drifting with the wind on the weather's clock (held while paused), on the
+  batches the game fogs (or marked -1 / -1) - and the grains back to small
+  soft dots of their own picture (1.8 units, a texel of black round each so
+  the filter softens it), additive, lit; the grade's ochre halved (0.20).
+  Jaunpur's square: 213462 pixels the fog's alone on Vulkan, the same on
+  GLES; `OMK_NO_DUST=1` (an instrument) leaves it out. `engine: rain 3d`
+  part 11.
 * **Step 5**: the 2D grains go into `fb` like the rain and snow, which every
   backend composites; the 3D sand is the remaster's (Vulkan, GLES).
 * **Step 7 done**: `docs/ASSETS.md` 4e, `engine/README.md`'s coverage, the

@@ -114,6 +114,8 @@ layout(set = 1, binding = 2) uniform Lights {
     vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
     vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone;
                        // y, z, w: the MIST's strength, ground and height (View::mist...), both
+    vec4  dust;        // THE SAND'S DUST (View::dust): strength, the drift's x and z, the distance scale
+    vec4  dustColour;  // ...its colour, lit as the scene (rgb)
 } lg;
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
@@ -284,6 +286,30 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 // tenth and fading as it goes. -> xy the rings' slope at `p` (the reflection's
 // bend), z their crest (the light). GLES's twin is in
 // `glesrender_remaster_shaders.inl` - keep the two in step.
+// THE SAND'S DUST (the restored weather's, the remaster's - `View::dust`): a
+// fog toward an ochre lit as the scene, thickening with the storm and with
+// distance, its density broken into drifting clouds - a 3D value noise moved
+// along the wind - so gusts pass. GLES's twin in glesrender_remaster_shaders.inl.
+float dustHash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float dustNoise(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(dustHash(i), dustHash(i + vec3(1, 0, 0)), f.x),
+                   mix(dustHash(i + vec3(0, 1, 0)), dustHash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(dustHash(i + vec3(0, 0, 1)), dustHash(i + vec3(1, 0, 1)), f.x),
+                   mix(dustHash(i + vec3(0, 1, 1)), dustHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// -> how much of the dust's colour a point `w` seen from `e` takes
+float dustAmount(vec3 e, vec3 w, vec4 dust) {
+    vec3 drift = vec3(dust.y, 0.0, dust.z);
+    float n = 0.25 + 0.75 * (dustNoise((mix(e, w, 0.5) + drift) * 0.0025) + dustNoise((w + drift) * 0.0025));
+    return 1.0 - exp(-dust.x * n * length(w - e) / dust.w);
+}
+
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
 vec3 rippleHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -436,6 +462,9 @@ void main() {
         float m = 1.0 - exp(-lg.fx.y * dist * mean / 1500.0);
         c = mix(c, pc.fogColour, m);
     }
+    // ...and THE SAND'S DUST (`dustAmount` above), on the same batches
+    if (lg.dust.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
+        c = mix(c, lg.dustColour.rgb, dustAmount(lg.eye.xyz, vWorld, lg.dust));
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.

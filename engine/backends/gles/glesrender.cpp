@@ -1317,6 +1317,7 @@ private:
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint snow = -1;                                                     // ...or snow lying
         GLint mist = -1;                                                     // ...and the mist
+        GLint dust = -1, dustColour = -1;                                    // ...and the sand's dust
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1402,6 +1403,7 @@ private:
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float snow = -1;                               // ...or snow lying
         float mist[3] = {-1, -1, -1};                  // ...and the mist
+        float dust[4] = {-1, -1, -1, -1}, dustColour[3] = {-1, -1, -1};   // ...and the sand's dust
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1504,6 +1506,7 @@ private:
     // strength, ground, height for the frame; on while the variant is built
     float  mist_[3] = {0.0f, 0.0f, 400.0f};
     bool   mistOn_ = false;
+    float  dust_[4] = {0.0f, 0.0f, 0.0f, 1400.0f}, dustColour_[3] = {0.0f, 0.0f, 0.0f};   // View::dust
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
@@ -1687,6 +1690,8 @@ bool GlesRenderer::linkScene() {
         L.rippleClock = glGetUniformLocation(p, "uRippleClock");
         L.snow = glGetUniformLocation(p, "uSnow");
         L.mist = glGetUniformLocation(p, "uMist");
+        L.dust = glGetUniformLocation(p, "uDust");
+        L.dustColour = glGetUniformLocation(p, "uDustColour");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
@@ -2912,7 +2917,9 @@ void GlesRenderer::beginPass(const View& view) {
 #if OMK_REMASTER
     // THE MIST's frame, and the eye its rays start from (the water's, the same)
     mist_[0] = view.mist; mist_[1] = view.mistGround; mist_[2] = view.mistHeight;
-    mistOn_ = view.mist > 0.0f && mainLoc_.water >= 0;
+    dust_[0] = view.dust; dust_[1] = view.dustDrift[0]; dust_[2] = view.dustDrift[1]; dust_[3] = view.dustScale;
+    for (int k = 0; k < 3; ++k) dustColour_[k] = view.dustColour[k];
+    mistOn_ = (view.mist > 0.0f || view.dust > 0.0f) && mainLoc_.water >= 0;
     for (int k = 0; k < 3; ++k) waterEye_[k] = view.cam.eye[k];
 #endif
     lastPose_ = nullptr;

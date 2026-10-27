@@ -501,8 +501,18 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             glUniform3f(L.mist, m0, mist_[1], mist_[2]);
             U.mist[0] = m0; U.mist[1] = mist_[1]; U.mist[2] = mist_[2];
         }
+        // ...and THE SAND'S DUST (`View::dust`), not in the reflection's pass
+        const float d0 = reflectingNow_ ? 0.0f : dust_[0];
+        if (set(!uv || U.dust[0] != d0 || U.dust[1] != dust_[1] || U.dust[2] != dust_[2] || U.dust[3] != dust_[3])) {
+            glUniform4f(L.dust, d0, dust_[1], dust_[2], dust_[3]);
+            U.dust[0] = d0; U.dust[1] = dust_[1]; U.dust[2] = dust_[2]; U.dust[3] = dust_[3];
+        }
+        if (d0 > 0.0f && set(!uv || std::memcmp(U.dustColour, dustColour_, sizeof U.dustColour) != 0)) {
+            glUniform3f(L.dustColour, dustColour_[0], dustColour_[1], dustColour_[2]);
+            std::memcpy(U.dustColour, dustColour_, sizeof U.dustColour);
+        }
         // ...whose rays start at the frame's eye: the vertex variant's `uEye`
-        if (m0 > 0.0f && !(waterNow_ || floorNow) &&
+        if ((m0 > 0.0f || d0 > 0.0f) && !(waterNow_ || floorNow) &&
             set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
             glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
             std::memcpy(U.eye, waterEye_, sizeof U.eye);

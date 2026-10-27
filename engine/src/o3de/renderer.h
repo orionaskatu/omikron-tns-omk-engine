@@ -153,6 +153,11 @@ struct View {
     // game's shower now, 0..1 - its RIPPLES on a draw with `Draw::wet`, rings
     // timed by `shimmerClock`. 0 none. Vulkan and GLES.
     float rain = 0.0f;
+    // THE SAND'S DUST (the restored weather's, the remaster's): the storm's
+    // strength, 0 none; the drifting clouds' offset (x, z); the distance that
+    // takes 63% at strength 1; its colour, lit as the scene. Vulkan and GLES.
+    float dust = 0.0f, dustDrift[2] = {0.0f, 0.0f}, dustScale = 1400.0f;
+    float dustColour[3] = {0.0f, 0.0f, 0.0f};
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed

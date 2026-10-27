@@ -169,10 +169,15 @@ struct LightUbo {
     float   eye[4];
     // THE RELIEF (`View::relief`), at 3104: read by the TILED module alone
     float   fx[4];
+    // THE SAND'S DUST (`View::dust`, the restored weather's, the remaster's), at
+    // 3120: strength, the drift's x and z, the distance scale; its colour at 3136
+    float   dust[4];
+    float   dustColour[4];
 };
 // the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
 // bytes, four scalars, then the two vec4s)
-static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104,
+static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104 &&
+              offsetof(LightUbo, dust) == 3120 && offsetof(LightUbo, dustColour) == 3136,
               "the Lights block's layout is scene.frag's");
 
 struct ShadowUbo {
@@ -3386,7 +3391,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     deadBufs_.clear();
     fog_ = view.fog;
     fogStart_ = view.fogStart;
-    mistOn_ = view.mist > 0.0f;
+    mistOn_ = view.mist > 0.0f || view.dust > 0.0f;   // the dust takes the same marked batches
     fogEnd_ = view.fogEnd;
     for (int i = 0; i < 3; ++i)
         fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
@@ -3431,6 +3436,10 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.fx[0] = view.relief;
         // THE MIST (`View::mist`): its strength, its ground and its height
         ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;
+        ub.dust[0] = view.dust; ub.dust[1] = view.dustDrift[0]; ub.dust[2] = view.dustDrift[1];
+        ub.dust[3] = view.dustScale;
+        for (int k = 0; k < 3; ++k) ub.dustColour[k] = view.dustColour[k];
+        ub.dustColour[3] = 0.0f;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
         // keeps, and their tiles binned for THIS camera at the render size.
         // The reflection pass begins first and the frame's pass last - the

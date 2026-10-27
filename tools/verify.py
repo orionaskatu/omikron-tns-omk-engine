@@ -34078,6 +34078,12 @@ def c_engine_rain3d():
          `remaster.grade` - the ochre haze, the sand's counterpart of the
          rain's overcast; the reader: dots drifting read as "yellow/brown
          snow").
+      11. THE SAND'S DUST FOG (`View::dust`, the scene shaders): Jaunpur's
+         square at the storm's height, the dust against `OMK_NO_DUST=1` (the
+         fog alone left out - against the switch off, the grade moved most of
+         the frame by itself and a GLES without the fog still overlapped
+         0.933): more than 50000 pixels move on Vulkan, and on GLES the same
+         ones - overlap above 0.8.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34183,6 +34189,28 @@ def c_engine_rain3d():
              "--rain3d", "1", "--restore-weather", "1", "--world-vulkan"],
             capture_output=True, text=True, errors="replace", timeout=300,
             env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")).stdout
+        def dusty(binary, r):
+            out = os.path.join(tmp, "dust%s%d.bin" % ("g" if binary.endswith("gles") else "v", r))
+            env = dict(os.environ, OMK_WEATHER_SKIP_MS="900000", **({} if r else {"OMK_NO_DUST": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                  os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "1", "--address", "54",
+                                  "--no-crowd", "--nofmv", "--nodelay", "--saves", tempfile.mkdtemp(dir=tmp),
+                                  "--res", "640x480", "--filter", "nearest", "--frames", "700", "--detail", "2",
+                                  "--rain3d", "1", "--restore-weather", "1", "--dump", out]
+                           + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                           capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return open(out, "rb").read() if os.path.exists(out) else None
+        dv1, dv0 = dusty(vkb, 1), dusty(vkb, 0)
+        dg1 = dg0 = None
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            dg1, dg0 = dusty(gb, 1), dusty(gb, 0)
         snow_out = subprocess.run(
             [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
              "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
@@ -34240,11 +34268,22 @@ def c_engine_rain3d():
     sd = next((k for n, k in _events(sand_out) if n == "remaster.rain3d" and k.get("frame") == "690"), {})
     dust = min((int(k.get("overcast", 0)) for n, k in _events(sand_out) if n == "remaster.grade"), default=0)
     sand3d = (sd.get("sand"), int(sd.get("drawn", 0)) > 300, sd.get("streak"), dust)
+    dmv = moved(dv1, dv0) if dv1 and dv0 else set()
+    if dg1 and dg0:
+        dmg = moved(dg1, dg0)
+        diou = len(dmv & dmg) / max(1, len(dmv | dmg))
+        dgl = (len(dmg) > 50000, diou > 0.8)
+        print(f"        the dust: Vulkan {len(dmv)}, GLES {len(dmg)} pixels, overlap {diou:.3f}")
+    else:
+        dgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    dusted = (len(dmv) > 50000, dgl)
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
-    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d), \
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
+            dusted), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
-            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16)), \
+            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
+            (True, _or_skip(dgl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

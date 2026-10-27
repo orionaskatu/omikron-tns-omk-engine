@@ -723,7 +723,6 @@ struct PlayState {
     int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
     int sandTexSlot = -1;                        // ...and the restored sand's field (`Images\sand.bmp`)
     std::vector<omk::GrainRect> sandGrains3d{};  // ...its grains, texel rectangles
-    std::vector<std::array<float, 3>> sandGrainColour3d{};   // ...and each one's colour
     unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off

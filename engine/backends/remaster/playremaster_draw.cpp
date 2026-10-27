@@ -29,6 +29,25 @@ void PlayState::remasterViewMist(omk::View& v) {
     // ...and the RAIN's ripples on the wet floors (`o3de/wetfloor.h`): the
     // shower's strength, which is 0 outside a rain area
     v.rain = wetStrength > 0.0f ? weatherRain : 0.0f;
+    // ...and THE SAND'S DUST (the restored weather's, with the 3D weather -
+    // the reader's "a moving fog effect and small particles", 2026-10-27):
+    // as thick as the storm is strong, its clouds drifting with the wind
+    // (-x, the arm's) on the weather's own clock - held while paused - in an
+    // ochre lit as the set's ambient
+    v.dust = 0.0f;
+    // `OMK_NO_DUST=1`, an INSTRUMENT: the dust fog alone left out, the grains
+    // and the grade kept (`verify.py: engine: rain 3d` part 11)
+    static const bool noDust = omk::envFlag("OMK_NO_DUST");
+    if (!noDust && restoredWeather && rain3dStrength > 0.0f && remasterShown_ && weatherSandLevel > 0.0f) {
+        const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+        const float amb = std::clamp(0.25f + 1.6f * static_cast<float>(ws.ambientGrey) / 255.0f, 0.25f, 1.0f);
+        const float ochre[3] = {0.80f, 0.64f, 0.42f};
+        v.dust = std::clamp(weatherSandLevel * rain3dStrength, 0.0f, 1.0f);
+        v.dustDrift[0] = static_cast<float>(std::fmod(weatherClockMs * 0.30, 400000.0));   // 300 units a second
+        v.dustDrift[1] = static_cast<float>(std::fmod(weatherClockMs * 0.04, 400000.0));
+        v.dustScale = 1400.0f;
+        for (int k = 0; k < 3; ++k) v.dustColour[k] = ochre[k] * amb;
+    }
 }
 
 // THE EMITTERS' LIGHTS under per-pixel lighting: the night, the relief, the

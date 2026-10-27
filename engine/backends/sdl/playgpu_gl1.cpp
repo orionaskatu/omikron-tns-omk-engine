@@ -154,6 +154,7 @@ void PlayState::gpuOverlayDecision(const char*&) {}
 #endif
 void PlayState::gpuResize(int, int, bool&) {}
 bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
+bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // nothing to relink
 void PlayState::gpuReportTimings() {}
 void PlayState::gpuSlowFrameReport() {}
 void PlayState::gpuFinishReport() {}

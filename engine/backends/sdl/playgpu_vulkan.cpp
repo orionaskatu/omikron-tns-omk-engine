@@ -104,6 +104,7 @@ bool PlayState::gpuDriverRow(std::vector<std::string>& drivers) {
     if (vkRen) { drivers.push_back(std::string("Vulkan - ") + omk::vulkanDeviceName(vkRen)); return true; }
     return false;
 }
+bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // Vulkan builds both always
 
 void PlayState::gpuReportTimings() {}
 void PlayState::gpuSlowFrameReport() {}

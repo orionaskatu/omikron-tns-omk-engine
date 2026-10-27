@@ -298,6 +298,11 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
 
 void PlayState::gpuResize(int, int, bool&) {}
 bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
+// OMK's options menu: GLES links per-pixel lighting and the mapped shadow into
+// its programs, so a change of either RELINKS them (`relinkLighting`)
+bool PlayState::gpuRelinkLighting(bool perPixel, bool shadowMap) {
+    return glRen && omk::glesRelinkLighting(glRen, perPixel, shadowMap);
+}
 
 void PlayState::gpuReportTimings() {
     if (glRen) {

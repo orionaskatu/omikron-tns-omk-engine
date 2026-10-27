@@ -182,14 +182,22 @@ bool PlayState::omkApplyLive(const std::string& key, double v) {
         unlimitedClip = v > 0.5;
         clipInches = unlimitedClip ? std::numeric_limits<double>::infinity() : settings.clipInches();
         clipReport = true;
-    } else if (key == "enhancements.shadowquality") {
-        // the blobs (classic, fitted) are the frontend's; the mapped pass is
-        // the renderer's, and only where it was built
-        if (v > 1.5 && !(world_ && world_->drawsShadowMap())) return false;
-        shadowQuality = static_cast<int>(v);
-    } else if (key == "enhancements.lighting") {
-        if (v > 0.5 && !(world_ && world_->drawsPixelLights())) return false;
-        lighting = static_cast<int>(v);
+    } else if (key == "enhancements.shadowquality" || key == "enhancements.lighting") {
+        // The blobs (classic, fitted) are the frontend's; per-pixel lighting
+        // and the mapped pass are the renderer's. Vulkan builds both always;
+        // GLES links them into its programs, so the set a START with the new
+        // values would link is asked for - relinked (3b), the plain set again
+        // when neither is wanted - and the change refused if it did not link.
+        const bool isLight = key == "enhancements.lighting";
+        const int toLighting = isLight ? static_cast<int>(v) : lighting;
+        const int toShadow = isLight ? shadowQuality : static_cast<int>(v);
+        const bool wantPix = toLighting > 0, wantMap = toShadow >= 2;
+        if (world_ && (wantPix != world_->drawsPixelLights() || wantMap != world_->drawsShadowMap()))
+            gpuRelinkLighting(wantPix, wantMap);   // false where there is nothing to relink
+        if (wantPix && !(world_ && world_->drawsPixelLights())) return false;
+        if (wantMap && !(world_ && world_->drawsShadowMap())) return false;
+        lighting = toLighting;
+        shadowQuality = toShadow;
     } else if (key.rfind("remaster.", 0) == 0) {
         return remasterApplyLive(key.substr(9), static_cast<float>(v));
     } else {

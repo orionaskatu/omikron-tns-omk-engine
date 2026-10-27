@@ -7048,8 +7048,10 @@ def c_engine_graphics_menu_live():
       maps the bloom decodes, so a start without the bloom lights by
       +-1 step differently - a load-time difference, measured and not a fault
       of the live path.
-    * GLES (`omk-play-gles`, hidden): per-pixel lighting refused (its enhanced
-      programs are linked at start only - step 3b), fitted shadows applied.
+    * GLES (`omk-play-gles`, hidden): per-pixel lighting and mapped shadows
+      on, and the lighting back off - each a RELINK of its programs
+      (`relinkLighting`, step 3b), the plain set again when neither is
+      wanted - and fitted shadows.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -7111,11 +7113,17 @@ def c_engine_graphics_menu_live():
             want.append(("vk-bloom-from-0", True, ["0"]))
         if os.path.exists(gles):
             glEnv = {"OMK_NO_GPU_PRESENT": "1"}
-            got.append(case(gles, glEnv, [], "gles-lighting", "", "enhancements.lighting", "perpixel", None))
-            want.append(("gles-lighting", True, ["0"]))
-            got.append(case(gles, glEnv, [], "gles-shadow-fitted", "", "enhancements.shadowquality", "fitted",
-                            "[Enhancements]\nshadowquality = fitted\n"))
-            want.append(("gles-shadow-fitted", True, True, ["1"]))
+            # GLES RELINKS its programs for these two (3b) - on, and back off
+            for name, base, key, val, line in [
+                    ("lighting", "", "enhancements.lighting", "perpixel", "[Enhancements]\nlighting = perpixel\n"),
+                    ("shadow-mapped", "", "enhancements.shadowquality", "mapped",
+                     "[Enhancements]\nshadowquality = mapped\n"),
+                    ("lighting-off", "[Enhancements]\nlighting = perpixel\n", "enhancements.lighting", "pervertex",
+                     "lighting = pervertex\n"),
+                    ("shadow-fitted", "", "enhancements.shadowquality", "fitted",
+                     "[Enhancements]\nshadowquality = fitted\n")]:
+                got.append(case(gles, glEnv, [], "gles-" + name, base, key, val, line))
+                want.append(("gles-" + name, True, True, ["1"]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return got, want, \

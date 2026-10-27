@@ -964,6 +964,8 @@ public:
     }
     ~GlesRenderer() override;
     bool init(int w, int h) override;
+    bool linkScene();                                   // init's program half
+    bool relinkLighting(bool perPixel, bool shadowMap); // ...again, on a running renderer
     void setTextures(std::span<const Texture> t) override;
     void begin(const View& v) override;
     // ...a PASS of the frame `begin` opened (the water's second, into the
@@ -1583,38 +1585,12 @@ GlesRenderer::~GlesRenderer() {
 }
 
 
-bool GlesRenderer::init(int w, int h) {
-    w_ = w; h_ = h;
-    // the environment can only turn it OFF - a probe's `setStateCache` holds
-    if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
-    fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
-    if (ready_) {
-        // a resize: only the target changes
-        rw_ = rs(w_); rh_ = rs(h_);
-        fsrW_ = fsrH_ = 0;   // EASU's targets follow at the next pass
-        rgba_ = std::vector<unsigned char>();   // released, not cleared
-        return allocTarget() && (!msFbo_ || allocMultisample());
-    }
-    // the supersample factor the context can hold: a target past its largest
-    // texture or renderbuffer is refused by the driver, so it is halved here
-    // until it fits, and said
-    if (upscale_ > 1.0f && ss_ > 1) {
-        std::printf("gles: --ssaa %d ignored - the upscale takes its place\n", ss_);
-        ss_ = 1;
-    }
-    if (ss_ > 1) {
-        GLint maxTex = 0, maxRb = 0;
-        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
-        glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRb);
-        const int lim = std::min(maxTex, maxRb);
-        const int asked = ss_;
-        while (ss_ > 1 && (w * ss_ > lim || h * ss_ > lim)) ss_ /= 2;
-        if (ss_ != asked)
-            std::printf("gles: supersampling %dx does not fit (%dx%d past the context's %d) - %dx\n",
-                        asked, w * asked, h * asked, lim, ss_);
-    }
-    rw_ = rs(w_); rh_ = rs(h_);
-    rgba_ = std::vector<unsigned char>();   // released, not cleared
+// THE SCENE PROGRAMS - the half of `init` a RELINK runs again (OMK's options
+// menu, `todo/graphics-menu.md` 3b): the default two or the ENHANCED two, with
+// the remaster's variants over them, their uniforms, and the mapped shadow's
+// pass. `pixLights_` / `shadowMap_` say afterwards what was built.
+bool GlesRenderer::linkScene() {
+    pixLights_ = shadowMap_ = false;
     // THE ENHANCED PROGRAMS, in place of the default two when either
     // enhancement is asked for; a context that cannot build them keeps the
     // defaults and refuses both (`drawsPixelLights` / `drawsShadowMap`)
@@ -1648,12 +1624,7 @@ bool GlesRenderer::init(int w, int h) {
     if (!prog_)
         prog_ = link(vScene, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
                                               {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"}});
-    present_ = link(kPresentVert, kPresentFrag, {{0, "aPos"}});
-    if (!prog_ || !present_) return false;
-    // ALL THREE PROGRAMS AT START: a shader first linked mid-game would be
-    // missing from a shader cache made by one short run (`todo/vita-port.md`,
-    // the precompiled shaders). Its uniforms are still looked up on first use.
-    overlay_ = link(kPresentVert, kOverlayFrag, {{0, "aPos"}});
+    if (!prog_) return false;
     if (!enhanced) {
         // at start with the others, for the shader cache (above); a context
         // that cannot build it simply poses on the CPU
@@ -1710,14 +1681,6 @@ bool GlesRenderer::init(int w, int h) {
     };
     locsOf(prog_, mainLoc_);
     if (posed_) locsOf(posed_, posedLoc_);
-    pDst_     = glGetUniformLocation(present_, "uDst");
-    pPic_     = glGetUniformLocation(present_, "uPic");
-    pBayer_   = glGetUniformLocation(present_, "uBayer");
-    pPicSize_ = glGetUniformLocation(present_, "uPicSize");
-    pTexSize_ = glGetUniformLocation(present_, "uTexSize");
-    pFlip_    = glGetUniformLocation(present_, "uFlipY");
-    pDither_  = glGetUniformLocation(present_, "uDither");
-    pQuant_   = glGetUniformLocation(present_, "uQuantise");
 
     // The shimmer table, once: `kShimmerWave / 255`, the same values
     // `shimmerOffset` returns.
@@ -1739,14 +1702,20 @@ bool GlesRenderer::init(int w, int h) {
         if (wantShadowMap_) {
             // THE SHADOW MAP: 1024 x 1024 as Vulkan's, RGBA8 holding packed
             // depth, NEAREST (the PCF is the shader's own nine taps)
-            shProg_ = link(kShadowVert, kShadowFrag, {{kAttrPos, "aPos"}});
-            if (posed_) shPosed_ = link(kShadowPosedVert, kShadowFrag, {{kAttrPos, "aPos"}, {kAttrSlot, "aSlot"}});
+            if (!shProg_) shProg_ = link(kShadowVert, kShadowFrag, {{kAttrPos, "aPos"}});
+            if (posed_ && !shPosed_)
+                shPosed_ = link(kShadowPosedVert, kShadowFrag, {{kAttrPos, "aPos"}, {kAttrSlot, "aSlot"}});
             if (shProg_) {
                 shMvp_ = glGetUniformLocation(shProg_, "uLightMvp");
                 if (shPosed_) {
                     shPosedMvp_ = glGetUniformLocation(shPosed_, "uLightMvp");
                     shPosedPose_ = glGetUniformLocation(shPosed_, "uPose");
                 }
+            }
+            if (shProg_ && shFbo_) {
+                // a RELINK (OMK's options menu): the target made the first time stays
+                shadowMap_ = true;
+            } else if (shProg_) {
                 glGenTextures(1, &shTex_);
                 glBindTexture(GL_TEXTURE_2D, shTex_);
                 texParams(GL_NEAREST, GL_CLAMP_TO_EDGE);
@@ -1769,6 +1738,86 @@ bool GlesRenderer::init(int w, int h) {
         std::printf("gles: enhanced programs - per-pixel lighting %s, mapped shadows %s\n",
                     pixLights_ ? "on" : "off", shadowMap_ ? "on" : "off");
     }
+    return true;
+}
+
+// A RELINK: per-pixel lighting and the mapped shadow asked again, on a running
+// renderer. The new set is linked FIRST and kept only if it links - a console
+// whose shader cache lacks it (the Vita without its runtime compiler) keeps
+// the programs it had, and the change is refused. Every texture, buffer and
+// target stays; the draw-state cache forgets its program.
+bool GlesRenderer::relinkLighting(bool perPixel, bool shadowMap) {
+    if (!ready_) { wantPixLights_ = perPixel; wantShadowMap_ = shadowMap; return true; }
+    const bool oldPix = wantPixLights_, oldShadow = wantShadowMap_;
+    const GLuint oldProg = prog_, oldPosed = posed_;
+    wantPixLights_ = perPixel;
+    wantShadowMap_ = shadowMap;
+    prog_ = posed_ = 0;
+    const bool ok = linkScene() && (!perPixel || pixLights_) && (!shadowMap || shadowMap_);
+    if (!ok) {
+        if (prog_) glDeleteProgram(prog_);
+        if (posed_) glDeleteProgram(posed_);
+        wantPixLights_ = oldPix;
+        wantShadowMap_ = oldShadow;
+        prog_ = posed_ = 0;
+        linkScene();   // the set that linked before links again
+    }
+    if (oldProg) glDeleteProgram(oldProg);
+    if (oldPosed) glDeleteProgram(oldPosed);
+    curProg_ = 0;
+    forgetState();
+    std::printf("gles: relinked - per-pixel lighting %s, mapped shadows %s%s\n", pixLights_ ? "on" : "off",
+                shadowMap_ ? "on" : "off", ok ? "" : " (the asked set did not link - the old one kept)");
+    return ok;
+}
+
+bool GlesRenderer::init(int w, int h) {
+    w_ = w; h_ = h;
+    // the environment can only turn it OFF - a probe's `setStateCache` holds
+    if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
+    fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
+    if (ready_) {
+        // a resize: only the target changes
+        rw_ = rs(w_); rh_ = rs(h_);
+        fsrW_ = fsrH_ = 0;   // EASU's targets follow at the next pass
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
+        return allocTarget() && (!msFbo_ || allocMultisample());
+    }
+    // the supersample factor the context can hold: a target past its largest
+    // texture or renderbuffer is refused by the driver, so it is halved here
+    // until it fits, and said
+    if (upscale_ > 1.0f && ss_ > 1) {
+        std::printf("gles: --ssaa %d ignored - the upscale takes its place\n", ss_);
+        ss_ = 1;
+    }
+    if (ss_ > 1) {
+        GLint maxTex = 0, maxRb = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
+        glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRb);
+        const int lim = std::min(maxTex, maxRb);
+        const int asked = ss_;
+        while (ss_ > 1 && (w * ss_ > lim || h * ss_ > lim)) ss_ /= 2;
+        if (ss_ != asked)
+            std::printf("gles: supersampling %dx does not fit (%dx%d past the context's %d) - %dx\n",
+                        asked, w * asked, h * asked, lim, ss_);
+    }
+    rw_ = rs(w_); rh_ = rs(h_);
+    rgba_ = std::vector<unsigned char>();   // released, not cleared
+    if (!linkScene()) return false;
+    present_ = link(kPresentVert, kPresentFrag, {{0, "aPos"}});
+    if (!present_) return false;
+    // ALL THREE PROGRAMS AT START: a shader first linked mid-game would be
+    // missing from a shader cache made by one short run (`todo/vita-port.md`,
+    // the precompiled shaders). Its uniforms are still looked up on first use.
+    overlay_ = link(kPresentVert, kOverlayFrag, {{0, "aPos"}});
+    pDst_     = glGetUniformLocation(present_, "uDst");
+    pPic_     = glGetUniformLocation(present_, "uPic");
+    pBayer_   = glGetUniformLocation(present_, "uBayer");
+    pPicSize_ = glGetUniformLocation(present_, "uPicSize");
+    pTexSize_ = glGetUniformLocation(present_, "uTexSize");
+    pFlip_    = glGetUniformLocation(present_, "uFlipY");
+    pDither_  = glGetUniformLocation(present_, "uDither");
+    pQuant_   = glGetUniformLocation(present_, "uQuantise");
 
     // THE RENDER TARGET. Offscreen, at the ENGINE's size, because three
     // things need the picture before the window does: `readback()`, the
@@ -3854,6 +3903,13 @@ void glesSamples(Renderer* r, int* got, int* most) {
 // (`setEnhancedLighting`)
 void glesSetEnhancedLighting(Renderer* r, bool perPixel, bool shadowMap) {
     if (auto* g = dynamic_cast<GlesRenderer*>(r)) g->setEnhancedLighting(perPixel, shadowMap);
+}
+
+// ...and asked AGAIN on a running renderer (OMK's options menu): -> whether the
+// asked set linked
+bool glesRelinkLighting(Renderer* r, bool perPixel, bool shadowMap) {
+    auto* g = dynamic_cast<GlesRenderer*>(r);
+    return g && g->relinkLighting(perPixel, shadowMap);
 }
 
 // the draw-state cache on or off, for a probe that compares the two

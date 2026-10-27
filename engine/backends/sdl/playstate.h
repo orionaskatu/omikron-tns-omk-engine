@@ -1396,6 +1396,9 @@ struct PlayState {
     bool gpuWorldOnWindow();                      // the world's renderer is the window's
     void gpuOverlayDecision(const char*& keep);   // a soft gate presented as an overlay
     void gpuResize(int nw, int nh, bool& ok);     // options row 2 on the GPU target
+    // per-pixel lighting / mapped shadows asked again on the running GPU
+    // renderer - GLES relinks its programs; false where nothing is relinked
+    bool gpuRelinkLighting(bool perPixel, bool shadowMap);
     bool gpuDriverRow(std::vector<std::string>& drivers);   // options row 8's device name
     void gpuReportTimings();                      // the backend's own counters, every 60 frames
     void gpuSlowFrameReport();                    // ...and on a very slow frame

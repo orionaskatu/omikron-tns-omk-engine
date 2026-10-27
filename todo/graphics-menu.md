@@ -345,7 +345,28 @@ key updated so the next start resumes in it.
      after the device - allow a strength change when `ao_ > 0` already.
      So `OmkOptions::live` becomes per run (`setLive`, decided in
      `omkOptionsOpen`).
-   * 3b, a GLES RELINK: `GlesRenderer::init`'s program half (lines
+   * **3b DONE (2026-10-27).** `GlesRenderer::linkScene` is `init`'s program
+     half, run again by `relinkLighting(perPixel, shadowMap)`
+     (`glesRelinkLighting`, the viewer's `gpuRelinkLighting` - false in the
+     four other `playgpu_*`): the new set linked FIRST and kept only if it
+     links, else the old set linked again; textures, buffers and targets
+     stay (normals are per draw, `uploadNormals` / `cpuPose`); the shadow
+     map's target made once and kept; the draw-state cache forgets its
+     program; the bloom variant kept once built (`bloomBuilt_`). The viewer
+     asks for the set a START with the new values links - the plain set
+     again when neither is wanted. MEASURED on GLES: lighting on, mapped
+     shadows on, lighting back off, lighting on with the bloom variant,
+     mapped shadows under lighting - each the started frame to the pixel;
+     `engine: graphics menu live` holds four of them (shown to fail with the
+     relink request removed). All ports built.
+     **THE VITA, a known limit:** its shaders come from the precompiled cache
+     (`scripts/vita-shader-cache.sh`), recorded by a run with the plain
+     lighting its `omk.ini` keeps - so on a console without
+     `libshacccg.suprx` the enhanced set is not there: the relink is refused
+     (the old programs kept) and the start refuses it too. Recording a cache
+     run with `lighting = perpixel` and `shadowquality = mapped` would carry
+     them.
+   * 3b, as read: a GLES RELINK - `GlesRenderer::init`'s program half (lines
      ~1614-1767) into its own function, re-run for a change of per-pixel
      lighting, mapped shadows, bloom, water, body tint, emitter lights - the
      new set linked FIRST and swapped in only if it links (the Vita's

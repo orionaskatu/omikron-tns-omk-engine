@@ -123,6 +123,24 @@ constexpr const char* kDustGlsl =
     "    return 1.0 - exp(-dust.x * n * (d + 300.0) / dust.w);\n"
     "}\n";
 
+// THE RAIN'S VEILS (`View::veil`), `scene.frag`'s `veilAmount` - keep the two
+// in step (after kDustGlsl, whose noise it takes)
+constexpr const char* kVeilGlsl =
+    "float veilAmount(vec3 e, vec3 w, vec4 veil) {\n"
+    "    float d = length(w - e);\n"
+    "    if (d < 500.0) return 0.0;\n"
+    "    vec3 dir = (w - e) / d;\n"
+    "    float sum = 0.0;\n"
+    "    for (int k = 0; k < 3; ++k) {\n"
+    "        float t = 500.0 + float(k) * 700.0;\n"
+    "        if (t > d) break;\n"
+    "        vec3 p = e + dir * t;\n"
+    "        vec3 q = vec3((p.x + 0.577 * p.y) * 0.008, (p.y - veil.y) * 0.0007, p.z * 0.008);\n"
+    "        sum += smoothstep(0.5, 0.85, dustNoise(q));\n"
+    "    }\n"
+    "    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * 0.85;\n"
+    "}\n";
+
 constexpr const char* kRipplesGlsl =
     "const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)\n"
     "vec3 rippleHash(vec2 p) {\n"
@@ -160,8 +178,9 @@ std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\n"
                     "uniform float uSnow;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
+                    "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
-                    std::string(kRipplesGlsl) + std::string(kDustGlsl) + frag;
+                    std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
@@ -185,6 +204,10 @@ std::string waterVariant(const std::string& frag) {
                      "    if (uDust.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
                      "        vec3 dw = vec3(vWxz.x, vWy, vWxz.y);\n"
                      "        c = mix(c, uDustColour, dustAmount(dw + vToEye, dw, uDust));\n"
+                     "    }\n"
+                     "    if (uVeil.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
+                     "        vec3 vw = vec3(vWxz.x, vWy, vWxz.y);\n"
+                     "        c = mix(c, uVeilColour, veilAmount(vw + vToEye, vw, uVeil));\n"
                      "    }\n"
                      "    float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
                      "    float wetHere = wetF > 0.0 ? vOpen : 1.0;\n"

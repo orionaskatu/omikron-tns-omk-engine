@@ -116,6 +116,8 @@ layout(set = 1, binding = 2) uniform Lights {
                        // y, z, w: the MIST's strength, ground and height (View::mist...), both
     vec4  dust;        // THE SAND'S DUST (View::dust): strength, the drift's x and z, the distance scale
     vec4  dustColour;  // ...its colour, lit as the scene (rgb)
+    vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale
+    vec4  veilColour;  // ...their colour, lit as the scene (rgb)
 } lg;
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
@@ -322,6 +324,26 @@ float dustAmount(vec3 e, vec3 w, vec4 dust) {
     return 1.0 - exp(-dust.x * n * (d + kDustNear) / dust.w);
 }
 
+// THE RAIN'S VEILS (the remaster's, `View::veil`): far rain reads as sheets,
+// not streaks - long bands slanted by the wind and falling, sampled IN THE AIR
+// along the ray (at 500, 1200 and 1900 units, those nearer than the surface),
+// a light grey lit as the scene, thicker with distance. GLES's twin in
+// glesrender_remaster_shaders.inl.
+float veilAmount(vec3 e, vec3 w, vec4 veil) {
+    float d = length(w - e);
+    if (d < 500.0) return 0.0;
+    vec3 dir = (w - e) / d;
+    float sum = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        float t = 500.0 + float(k) * 700.0;
+        if (t > d) break;
+        vec3 p = e + dir * t;
+        vec3 q = vec3((p.x + 0.577 * p.y) * 0.008, (p.y - veil.y) * 0.0007, p.z * 0.008);
+        sum += smoothstep(0.5, 0.85, dustNoise(q));
+    }
+    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * 0.85;
+}
+
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
 vec3 rippleHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -477,6 +499,9 @@ void main() {
     // ...and THE SAND'S DUST (`dustAmount` above), on the same batches
     if (lg.dust.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
         c = mix(c, lg.dustColour.rgb, dustAmount(lg.eye.xyz, vWorld, lg.dust));
+    // ...and THE RAIN'S VEILS (`veilAmount` above), on the same batches
+    if (lg.veil.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
+        c = mix(c, lg.veilColour.rgb, veilAmount(lg.eye.xyz, vWorld, lg.veil));
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.

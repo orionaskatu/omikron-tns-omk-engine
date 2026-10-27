@@ -34089,6 +34089,11 @@ def c_engine_rain3d():
          shower, the 3D weather) - with the emitters' light (`--fx-light 1`)
          more than 30 drops at frame 690 take an emitter's light past a
          glint (`remaster.rain3d` neon), and with it off none.
+      13. THE RAIN'S VEILS (`View::veil`, far rain as falling sheets in
+         the air along the ray): Qalisar's lamp-lit street (address 335's
+         spot facing 90, the restored shower) against `OMK_NO_VEIL=1` - more
+         than 30000 pixels move on Vulkan, and on GLES the same ones
+         (overlap above 0.8).
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34225,6 +34230,27 @@ def c_engine_rain3d():
                 capture_output=True, text=True, errors="replace", timeout=300,
                 env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")).stdout
         neon_on, neon_off = neon(1), neon(0)
+        def veiled(binary, on):
+            out = os.path.join(tmp, "veil%s%d.bin" % ("g" if binary.endswith("gles") else "v", on))
+            env = dict(os.environ, OMK_WEATHER_SKIP_MS="900000", **({} if on else {"OMK_NO_VEIL": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                  os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                  "--stand", "10341,-260,-9507,90", "--no-crowd", "--nofmv", "--nodelay",
+                                  "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                  "--frames", "700", "--detail", "2", "--rain3d", "1", "--restore-weather", "1",
+                                  "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                           capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return open(out, "rb").read() if os.path.exists(out) else None
+        vv1, vv0 = veiled(vkb, 1), veiled(vkb, 0)
+        vg1 = vg0 = None
+        if platform.system() == "Darwin":
+            vg1, vg0 = veiled(os.path.join(eng, "build", "omk-play-gles"), 1), veiled(os.path.join(eng, "build", "omk-play-gles"), 0)
         snow_out = subprocess.run(
             [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
              "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
@@ -34294,14 +34320,23 @@ def c_engine_rain3d():
     nev = lambda out: int(next((k for n, k in _events(out) if n == "remaster.rain3d" and k.get("frame") == "690"),
                                {}).get("neon", -1))
     neoned = (nev(neon_on) > 30, nev(neon_off))
+    vmv = moved(vv1, vv0) if vv1 and vv0 else set()
+    if vg1 and vg0:
+        vmg = moved(vg1, vg0)
+        viou = len(vmv & vmg) / max(1, len(vmv | vmg))
+        vgl = (len(vmg) > 30000, viou > 0.8)
+        print(f"        the veils: Vulkan {len(vmv)}, GLES {len(vmg)} pixels, overlap {viou:.3f}")
+    else:
+        vgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    veils = (len(vmv) > 30000, vgl)
     print(f"        the rain under neon: {nev(neon_on)} drops with the emitters' light, {nev(neon_off)} without")
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted, neoned), \
+            dusted, neoned, veils), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
-            (True, _or_skip(dgl, (True, True))), (True, 0)), \
+            (True, _or_skip(dgl, (True, True))), (True, 0), (True, _or_skip(vgl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

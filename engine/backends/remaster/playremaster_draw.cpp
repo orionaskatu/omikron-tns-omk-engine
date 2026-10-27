@@ -34,6 +34,23 @@ void PlayState::remasterViewMist(omk::View& v) {
     // as thick as the storm is strong, its clouds drifting with the wind
     // (-x, the arm's) on the weather's own clock - held while paused - in an
     // ochre lit as the set's ambient
+    // ...and THE RAIN'S VEILS (with the 3D weather - the reader's "more
+    // realistic rain", 2026-10-28): far rain as falling sheets, as thick as
+    // the shower, falling 1500 units a second on the weather's clock (held
+    // while paused), a light grey lit as the set's ambient
+    v.veil = 0.0f;
+    // `OMK_NO_VEIL=1`, an INSTRUMENT: the veils alone left out
+    // (`verify.py: engine: rain 3d` part 13)
+    static const bool noVeil = omk::envFlag("OMK_NO_VEIL");
+    if (!noVeil && rain3dStrength > 0.0f && remasterShown_ && weatherRain > 0.0f) {
+        const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+        const float amb = std::clamp(0.25f + 1.6f * static_cast<float>(ws.ambientGrey) / 255.0f, 0.25f, 1.0f);
+        const float grey[3] = {0.62f, 0.66f, 0.72f};
+        v.veil = std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f);
+        v.veilFall = static_cast<float>(std::fmod(weatherClockMs * 1.5, 1400000.0));
+        v.veilScale = 2500.0f;
+        for (int k = 0; k < 3; ++k) v.veilColour[k] = grey[k] * amb;
+    }
     v.dust = 0.0f;
     // `OMK_NO_DUST=1`, an INSTRUMENT: the dust fog alone left out, the grains
     // and the grade kept (`verify.py: engine: rain 3d` part 11)

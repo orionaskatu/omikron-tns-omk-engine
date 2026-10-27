@@ -173,11 +173,16 @@ struct LightUbo {
     // 3120: strength, the drift's x and z, the distance scale; its colour at 3136
     float   dust[4];
     float   dustColour[4];
+    // THE RAIN'S VEILS (`View::veil`), at 3152: strength, the fall's offset,
+    // the distance scale; their colour at 3168
+    float   veil[4];
+    float   veilColour[4];
 };
 // the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
 // bytes, four scalars, then the two vec4s)
 static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104 &&
-              offsetof(LightUbo, dust) == 3120 && offsetof(LightUbo, dustColour) == 3136,
+              offsetof(LightUbo, dust) == 3120 && offsetof(LightUbo, dustColour) == 3136 &&
+              offsetof(LightUbo, veil) == 3152 && offsetof(LightUbo, veilColour) == 3168,
               "the Lights block's layout is scene.frag's");
 
 struct ShadowUbo {
@@ -3391,7 +3396,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     deadBufs_.clear();
     fog_ = view.fog;
     fogStart_ = view.fogStart;
-    mistOn_ = view.mist > 0.0f || view.dust > 0.0f;   // the dust takes the same marked batches
+    mistOn_ = view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f;   // the dust and veils take the marked batches
     fogEnd_ = view.fogEnd;
     for (int i = 0; i < 3; ++i)
         fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
@@ -3440,6 +3445,9 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.dust[3] = view.dustScale;
         for (int k = 0; k < 3; ++k) ub.dustColour[k] = view.dustColour[k];
         ub.dustColour[3] = 0.0f;
+        ub.veil[0] = view.veil; ub.veil[1] = view.veilFall; ub.veil[2] = view.veilScale; ub.veil[3] = 0.0f;
+        for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
+        ub.veilColour[3] = 0.0f;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
         // keeps, and their tiles binned for THIS camera at the render size.
         // The reflection pass begins first and the frame's pass last - the

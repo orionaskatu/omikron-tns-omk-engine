@@ -1372,6 +1372,17 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   brighter in a neon's light: under Qalisar's pink "?" sign the rain glows
   pink. 156 drops at frame 690 there with the emitters' light, 0 without.
   `engine: rain 3d` part 12.
+* **More realistic rain, 1 - the VEILS** (the reader's "how could the rain be
+  more realistic", then "do 1, 2 and 3", 2026-10-28): far rain reads as
+  falling sheets, not streaks - `veilAmount` in both scene shaders samples
+  three points IN THE AIR along the ray (500, 1200, 1900 units, those nearer
+  than the surface) in a value noise of long bands (0.0007 along the fall,
+  0.008 across) slanted by the wind and falling 1500 units a second on the
+  weather's clock (held while paused), a light grey lit by the set's
+  ambient, as thick as the shower and with distance (`1 - exp(-d / 2500)`,
+  0.85 at full). Qalisar's lamp-lit street: 107261 pixels the veils' own on
+  Vulkan, the same on GLES; `OMK_NO_VEIL=1` (an instrument) leaves them out.
+  `engine: rain 3d` part 13.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

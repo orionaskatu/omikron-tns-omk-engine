@@ -10,6 +10,7 @@
 #include "platform/settings.h"
 #include "actor/pose.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -198,6 +199,23 @@ bool PlayState::omkApplyLive(const std::string& key, double v) {
         if (wantMap && !(world_ && world_->drawsShadowMap())) return false;
         lighting = toLighting;
         shadowQuality = toShadow;
+    } else if (key == "enhancements.antialiasing" || key == "enhancements.supersampling" ||
+               key == "remaster.upscale" || (key == "remaster.ao" && !remasterApplyLive("ao", static_cast<float>(v)))) {
+        // THE TARGET's (3c): MSAA, the supersample, the upscale - and the AO
+        // when it was off at start (its strength alone moves without) - asked
+        // again together, the target remade; refused where it cannot be
+        // (Vulkan's MSAA: its pipelines are compiled for the sample count)
+        const int toAa = key == "enhancements.antialiasing" ? static_cast<int>(v) : aaSamples;
+        const int toSs = key == "enhancements.supersampling" ? static_cast<int>(v) : ssaa;
+        const float toUp = key == "remaster.upscale" ? static_cast<float>(v) : std::max(upscale, 1.0f);
+        const float toAo = key == "remaster.ao" ? static_cast<float>(v) : aoStrength;
+        if (!gpuRetarget(toAa, toSs, toUp, toAo)) return false;
+        aaSamples = toAa;
+        ssaa = toSs;
+        upscale = toUp;
+        aoStrength = toAo;
+    } else if (key == "remaster.ao") {
+        // its strength moved where the target already reads the depth
     } else if (key.rfind("remaster.", 0) == 0) {
         return remasterApplyLive(key.substr(9), static_cast<float>(v));
     } else {

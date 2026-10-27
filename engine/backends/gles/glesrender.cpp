@@ -965,6 +965,9 @@ public:
     ~GlesRenderer() override;
     bool init(int w, int h) override;
     bool linkScene();                                   // init's program half
+    void fitSupersample(int w, int h);                  // the factor the context holds
+    bool setupTargets();                                // the targets around `colour_`
+    bool retarget(int samples, int ss, float up);       // ...again, on a running renderer
     bool relinkLighting(bool perPixel, bool shadowMap); // ...again, on a running renderer
     void setTextures(std::span<const Texture> t) override;
     void begin(const View& v) override;
@@ -1771,21 +1774,10 @@ bool GlesRenderer::relinkLighting(bool perPixel, bool shadowMap) {
     return ok;
 }
 
-bool GlesRenderer::init(int w, int h) {
-    w_ = w; h_ = h;
-    // the environment can only turn it OFF - a probe's `setStateCache` holds
-    if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
-    fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
-    if (ready_) {
-        // a resize: only the target changes
-        rw_ = rs(w_); rh_ = rs(h_);
-        fsrW_ = fsrH_ = 0;   // EASU's targets follow at the next pass
-        rgba_ = std::vector<unsigned char>();   // released, not cleared
-        return allocTarget() && (!msFbo_ || allocMultisample());
-    }
-    // the supersample factor the context can hold: a target past its largest
-    // texture or renderbuffer is refused by the driver, so it is halved here
-    // until it fits, and said
+// THE SUPERSAMPLE FACTOR the context can hold: a target past its largest
+// texture or renderbuffer is refused by the driver, so it is halved until it
+// fits, and said - and the upscale takes its place
+void GlesRenderer::fitSupersample(int w, int h) {
     if (upscale_ > 1.0f && ss_ > 1) {
         std::printf("gles: --ssaa %d ignored - the upscale takes its place\n", ss_);
         ss_ = 1;
@@ -1801,6 +1793,119 @@ bool GlesRenderer::init(int w, int h) {
             std::printf("gles: supersampling %dx does not fit (%dx%d past the context's %d) - %dx\n",
                         asked, w * asked, h * asked, lim, ss_);
     }
+}
+
+// THE TARGETS around `colour_` (`allocTarget`'s): the multisampled pair, the
+// supersample's present, the upscale's programs - made at `init`, and again by
+// a RETARGET, which also releases the pair no longer asked for
+bool GlesRenderer::setupTargets() {
+    // the multisampled pair released where it is no longer asked for (a
+    // RETARGET, OMK's options menu - `retarget`)
+    const auto releaseMultisample = [&] {
+        if (msFbo_) {
+            deleteRenderbuffers(1, &msColour_);
+            deleteRenderbuffers(1, &msDepth_);
+            glDeleteFramebuffers(1, &msFbo_);
+            msFbo_ = msColour_ = msDepth_ = 0;
+        }
+        samples_ = 1;
+    };
+    if (wantSamples_ <= 1) releaseMultisample();
+    if (wantSamples_ > 1) {
+#if OMK_GLES_MSAA
+        GLint most = 1;
+        glGetIntegerv(GL_MAX_SAMPLES, &most);
+        maxSamples_ = most;
+        int n = wantSamples_;
+        while (n > 1 && n > most) n >>= 1;
+        if (n <= 1) releaseMultisample();
+        if (n > 1) {
+            samples_ = n;
+            if (!msFbo_) {
+                glGenFramebuffers(1, &msFbo_);
+                glGenRenderbuffers(1, &msColour_);
+                glGenRenderbuffers(1, &msDepth_);
+            }
+            if (!allocMultisample()) {
+                deleteRenderbuffers(1, &msColour_);
+                deleteRenderbuffers(1, &msDepth_);
+                glDeleteFramebuffers(1, &msFbo_);
+                msFbo_ = msColour_ = msDepth_ = 0;
+                samples_ = 1;
+            }
+        }
+        if (samples_ != wantSamples_)
+            std::printf("gles: %dx MSAA is not available here (the context allows %d) - using %dx\n",
+                        wantSamples_, most, samples_);
+#else
+        std::printf("gles: %dx MSAA refused - this GL has no multisampled render target "
+                    "(vitaGL multisamples only the display); supersampling is the anti-aliasing here\n",
+                    wantSamples_);
+#endif
+        if (samples_ > 1) std::printf("gles: %dx MSAA\n", samples_);
+    }
+    if (ss_ > 1 && !presentSS_) presentSS_ = link(kPresentVert, kPresentSSFrag, {{0, "aPos"}});
+    if (ss_ > 1 && !presentSS_) {
+        // a console with neither the runtime shader compiler nor this program
+        // in its cache: the enhancement is refused, not the renderer
+        std::printf("gles: the supersample present did not build - supersampling refused\n");
+        ss_ = 1;
+        rw_ = w_; rh_ = h_;
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
+        if (!allocTarget()) return false;
+    }
+    if (ss_ > 1) {
+        sDst_     = glGetUniformLocation(presentSS_, "uDst");
+        sPic_     = glGetUniformLocation(presentSS_, "uPic");
+        sBayer_   = glGetUniformLocation(presentSS_, "uBayer");
+        sPicSize_ = glGetUniformLocation(presentSS_, "uPicSize");
+        sTexSize_ = glGetUniformLocation(presentSS_, "uTexSize");
+        sSS_      = glGetUniformLocation(presentSS_, "uSS");
+        sDither_  = glGetUniformLocation(presentSS_, "uDither");
+        std::printf("gles: supersampling %dx - the world drawn at %dx%d\n", ss_, rw_, rh_);
+    }
+    return remasterInitUpscale();   // the upscale's programs (FSR)
+}
+
+// A RETARGET (OMK's options menu, `todo/graphics-menu.md` 3c): MSAA, the
+// supersample and the upscale asked again on a running renderer - the target
+// remade at the new render size as a display resize remakes it, the same
+// rules as at `init` (a factor the context cannot hold reduced, said). The
+// programs, textures and buffers stay.
+bool GlesRenderer::retarget(int samples, int ss, float up) {
+    wantSamples_ = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
+    ss_ = ss < 2 ? 1 : ss < 4 ? 2 : 4;
+#if OMK_REMASTER
+    upscale_ = up > 1.0f ? std::min(up, 3.0f) : 1.0f;
+#else
+    (void)up;
+#endif
+    if (!ready_) return true;
+    fitSupersample(w_, h_);
+    rw_ = rs(w_); rh_ = rs(h_);
+    fsrW_ = fsrH_ = 0;
+    rgba_ = std::vector<unsigned char>();   // released, not cleared
+    fb_ = Surface();
+    const bool ok = allocTarget() && setupTargets();
+    forgetState();
+    std::printf("gles: retargeted - %dx MSAA, %dx supersampling, upscale x%.2f, the world at %dx%d\n", samples_,
+                ss_, static_cast<double>(upscale_), rw_, rh_);
+    return ok;
+}
+
+bool GlesRenderer::init(int w, int h) {
+    w_ = w; h_ = h;
+    // the environment can only turn it OFF - a probe's `setStateCache` holds
+    if (omk::envFlag("OMK_GLES_NO_STATE_CACHE")) stateCache_ = false;
+    fb_ = Surface();   // sized by the first `readback` - a GPU-presented frame never reads it
+    if (ready_) {
+        // a resize: only the target changes
+        rw_ = rs(w_); rh_ = rs(h_);
+        fsrW_ = fsrH_ = 0;   // EASU's targets follow at the next pass
+        rgba_ = std::vector<unsigned char>();   // released, not cleared
+        return allocTarget() && (!msFbo_ || allocMultisample());
+    }
+    fitSupersample(w, h);
     rw_ = rs(w_); rh_ = rs(h_);
     rgba_ = std::vector<unsigned char>();   // released, not cleared
     if (!linkScene()) return false;
@@ -1832,57 +1937,7 @@ bool GlesRenderer::init(int w, int h) {
     glGenRenderbuffers(1, &depth_);
     glGenFramebuffers(1, &fbo_);
     if (!allocTarget()) return false;
-    if (wantSamples_ > 1) {
-#if OMK_GLES_MSAA
-        GLint most = 1;
-        glGetIntegerv(GL_MAX_SAMPLES, &most);
-        maxSamples_ = most;
-        int n = wantSamples_;
-        while (n > 1 && n > most) n >>= 1;
-        if (n > 1) {
-            samples_ = n;
-            glGenFramebuffers(1, &msFbo_);
-            glGenRenderbuffers(1, &msColour_);
-            glGenRenderbuffers(1, &msDepth_);
-            if (!allocMultisample()) {
-                deleteRenderbuffers(1, &msColour_);
-                deleteRenderbuffers(1, &msDepth_);
-                glDeleteFramebuffers(1, &msFbo_);
-                msFbo_ = msColour_ = msDepth_ = 0;
-                samples_ = 1;
-            }
-        }
-        if (samples_ != wantSamples_)
-            std::printf("gles: %dx MSAA is not available here (the context allows %d) - using %dx\n",
-                        wantSamples_, most, samples_);
-#else
-        std::printf("gles: %dx MSAA refused - this GL has no multisampled render target "
-                    "(vitaGL multisamples only the display); supersampling is the anti-aliasing here\n",
-                    wantSamples_);
-#endif
-        if (samples_ > 1) std::printf("gles: %dx MSAA\n", samples_);
-    }
-    if (ss_ > 1) presentSS_ = link(kPresentVert, kPresentSSFrag, {{0, "aPos"}});
-    if (ss_ > 1 && !presentSS_) {
-        // a console with neither the runtime shader compiler nor this program
-        // in its cache: the enhancement is refused, not the renderer
-        std::printf("gles: the supersample present did not build - supersampling refused\n");
-        ss_ = 1;
-        rw_ = w_; rh_ = h_;
-        rgba_ = std::vector<unsigned char>();   // released, not cleared
-        if (!allocTarget()) return false;
-    }
-    if (ss_ > 1) {
-        sDst_     = glGetUniformLocation(presentSS_, "uDst");
-        sPic_     = glGetUniformLocation(presentSS_, "uPic");
-        sBayer_   = glGetUniformLocation(presentSS_, "uBayer");
-        sPicSize_ = glGetUniformLocation(presentSS_, "uPicSize");
-        sTexSize_ = glGetUniformLocation(presentSS_, "uTexSize");
-        sSS_      = glGetUniformLocation(presentSS_, "uSS");
-        sDither_  = glGetUniformLocation(presentSS_, "uDither");
-        std::printf("gles: supersampling %dx - the world drawn at %dx%d\n", ss_, rw_, rh_);
-    }
-    if (!remasterInitUpscale()) return false;   // the upscale's programs (FSR)
+    if (!setupTargets()) return false;
 
     // the white 1x1 a material with no texture binds - raster.cpp leaves the
     // texel at 255 and lets the vertex colour stand alone
@@ -3910,6 +3965,13 @@ void glesSetEnhancedLighting(Renderer* r, bool perPixel, bool shadowMap) {
 bool glesRelinkLighting(Renderer* r, bool perPixel, bool shadowMap) {
     auto* g = dynamic_cast<GlesRenderer*>(r);
     return g && g->relinkLighting(perPixel, shadowMap);
+}
+
+// MSAA, the supersample and the upscale asked AGAIN on a running renderer
+// (OMK's options menu) - the target remade
+bool glesRetarget(Renderer* r, int samples, int ss, float up) {
+    auto* g = dynamic_cast<GlesRenderer*>(r);
+    return g && g->retarget(samples, ss, up);
 }
 
 // the draw-state cache on or off, for a probe that compares the two

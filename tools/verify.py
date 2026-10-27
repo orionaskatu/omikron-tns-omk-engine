@@ -7052,6 +7052,10 @@ def c_engine_graphics_menu_live():
       on, and the lighting back off - each a RELINK of its programs
       (`relinkLighting`, step 3b), the plain set again when neither is
       wanted - and fitted shadows.
+    * THE TARGET remade (step 3c, `retarget`): on Vulkan the supersample on,
+      and with the pack the upscale and the AO from 0 - MSAA REFUSED there,
+      its pipelines being compiled for the sample count; on GLES MSAA on and
+      the supersample back off.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -7100,14 +7104,20 @@ def c_engine_graphics_menu_live():
                 ("lighting", "enhancements.lighting", "perpixel", "[Enhancements]\nlighting = perpixel\n"),
                 ("shadow-mapped", "enhancements.shadowquality", "mapped", "[Enhancements]\nshadowquality = mapped\n"),
                 ("shadow-fitted", "enhancements.shadowquality", "fitted", "[Enhancements]\nshadowquality = fitted\n"),
-                ("clip", "enhancements.clipdistance", "unlimited", "[Enhancements]\nclipdistance = unlimited\n")]:
+                ("clip", "enhancements.clipdistance", "unlimited", "[Enhancements]\nclipdistance = unlimited\n"),
+                ("ssaa-2", "enhancements.supersampling", "2", "[Enhancements]\nsupersampling = 2\n")]:
             got.append(case(play, vkEnv, vk, "vk-" + name, "", key, val, line))
             want.append(("vk-" + name, True, True, ["1"]))
+        # MSAA on Vulkan: refused live - its pipelines are compiled for the count
+        got.append(case(play, vkEnv, vk, "vk-aa-4", "", "enhancements.antialiasing", "4", None))
+        want.append(("vk-aa-4", True, ["0"]))
         if pack:
-            for name, key, val, line in [("bloom-4", "remaster.bloom", "4", "bloom = 4\n"),
-                                         ("ao-4", "remaster.ao", "4", "ao = 4\n"),
-                                         ("mist-1", "remaster.mist", "1", "mist = 1\n")]:
-                got.append(case(play, vkEnv, vk, "vk-" + name, rem, key, val, line))
+            for name, base, key, val, line in [("bloom-4", rem, "remaster.bloom", "4", "bloom = 4\n"),
+                                               ("ao-4", rem, "remaster.ao", "4", "ao = 4\n"),
+                                               ("mist-1", rem, "remaster.mist", "1", "mist = 1\n"),
+                                               ("upscale-2", rem, "remaster.upscale", "2", "upscale = 2\n"),
+                                               ("ao-from-0", rem + "ao = 0\n", "remaster.ao", "2", "ao = 2\n")]:
+                got.append(case(play, vkEnv, vk, "vk-" + name, base, key, val, line))
                 want.append(("vk-" + name, True, True, ["1"]))
             got.append(case(play, vkEnv, vk, "vk-bloom-from-0", rem + "bloom = 0\n", "remaster.bloom", "1.6", None))
             want.append(("vk-bloom-from-0", True, ["0"]))
@@ -7121,7 +7131,11 @@ def c_engine_graphics_menu_live():
                     ("lighting-off", "[Enhancements]\nlighting = perpixel\n", "enhancements.lighting", "pervertex",
                      "lighting = pervertex\n"),
                     ("shadow-fitted", "", "enhancements.shadowquality", "fitted",
-                     "[Enhancements]\nshadowquality = fitted\n")]:
+                     "[Enhancements]\nshadowquality = fitted\n"),
+                    # the TARGET remade (3c): MSAA on, the supersample back off
+                    ("aa-4", "", "enhancements.antialiasing", "4", "[Enhancements]\nantialiasing = 4\n"),
+                    ("ssaa-off", "[Enhancements]\nsupersampling = 2\n", "enhancements.supersampling", "1",
+                     "supersampling = 1\n")]:
                 got.append(case(gles, glEnv, [], "gles-" + name, base, key, val, line))
                 want.append(("gles-" + name, True, True, ["1"]))
     finally:

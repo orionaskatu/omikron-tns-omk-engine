@@ -67,4 +67,5 @@ bool  vulkanPresentSurface(Renderer*, const Surface&);
 bool  vulkanPresentWorld(Renderer*, int vy, int vh);
 bool  vulkanWorldPicture(Renderer*, int vy, int vh, std::vector<unsigned char>&);
 bool  vulkanResize(Renderer*, int w, int h);
+bool  vulkanRetarget(Renderer*, int samples, int ss, float up, float ao);   // OMK's options menu
 }

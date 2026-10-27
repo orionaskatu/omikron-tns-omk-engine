@@ -106,6 +106,15 @@ bool PlayState::gpuDriverRow(std::vector<std::string>& drivers) {
 }
 bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // Vulkan builds both always
 
+// OMK's options menu: the supersample, the upscale, the ambient occlusion -
+// the target remade on both Vulkan renderers there are (`retarget`); not MSAA
+bool PlayState::gpuRetarget(int samples, int ss, float up, float ao) {
+    bool ok = vkRen || worldVk;
+    if (vkRen) ok = omk::vulkanRetarget(vkRen, samples, ss, up, ao) && ok;
+    if (worldVk) ok = omk::vulkanRetarget(worldVk, samples, ss, up, ao) && ok;
+    return ok;
+}
+
 void PlayState::gpuReportTimings() {}
 void PlayState::gpuSlowFrameReport() {}
 void PlayState::gpuFinishReport() {}

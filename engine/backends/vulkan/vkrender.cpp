@@ -828,6 +828,7 @@ public:
     // viewport is dynamic and the new pass is the same description, so it is
     // render-pass COMPATIBLE. The shadow map is a fixed size and is kept.
     bool resize(int w, int h);
+    bool retarget(int samples, int ss, float up, float ao);   // ...at new enhancements (OMK's menu)
     // ...and the WINDOW's: fullscreen, or any resize, changes the surface's
     // extent and the swapchain is remade at it.
     bool remakeSwapchain();
@@ -2133,6 +2134,31 @@ bool VulkanRenderer::resize(int w, int h) {
     if (!ok) return false;
     std::printf("vulkan: frame target remade at %dx%d\n", w_, h_);
     return surface_ == VK_NULL_HANDLE || remakeSwapchain();
+}
+
+// A RETARGET (OMK's options menu, `todo/graphics-menu.md` 3c): the
+// supersample, the upscale and the ambient occlusion asked again on a running
+// renderer - the target remade by `resize` at the same size, which reads them
+// (`makeTarget`: the render size, the readable depth). Viewport and scissor are
+// dynamic state, so the pipelines stand. NOT MSAA: the scene pipelines are
+// compiled for the sample count (`makePipelines`), so a different one is
+// refused and waits for the next start.
+bool VulkanRenderer::retarget(int samples, int ss, float up, float ao) {
+    const int want = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
+    if (dev_ != VK_NULL_HANDLE && want != wantSamples_) return false;
+    wantSamples_ = want;
+    ss_ = ss < 2 ? 1 : ss < 4 ? 2 : 4;
+    up_ = up > 1.0f ? std::min(up, 3.0f) : 1.0f;
+    ao_ = ao < 0.0f ? 0.0f : ao > 4.0f ? 4.0f : ao;
+    if (up_ > 1.0f && ss_ > 1) {
+        std::printf("vulkan: the upscale takes the supersample's place (--ssaa %d ignored)\n", ss_);
+        ss_ = 1;
+    }
+    if (dev_ == VK_NULL_HANDLE) return true;
+    const bool ok = resize(w_, h_);
+    std::printf("vulkan: retargeted - %dx supersampling, upscale x%.2f, ambient occlusion %.2f%s\n", ss_,
+                static_cast<double>(up_), static_cast<double>(ao_), aoOk_ || ao_ <= 0.0f ? "" : " (refused here)");
+    return ok;
 }
 
 bool VulkanRenderer::presentDirect() {
@@ -4017,6 +4043,11 @@ bool vulkanPresentWorld(Renderer* r, int vy, int vh) {
 bool vulkanResize(Renderer* r, int w, int h) {
     auto* v = dynamic_cast<VulkanRenderer*>(r);
     return v && v->resize(w, h);
+}
+// ...and at new enhancements (OMK's options menu, `retarget`)
+bool vulkanRetarget(Renderer* r, int samples, int ss, float up, float ao) {
+    auto* v = dynamic_cast<VulkanRenderer*>(r);
+    return v && v->retarget(samples, ss, up, ao);
 }
 bool vulkanWorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba) {
     auto* v = dynamic_cast<VulkanRenderer*>(r);

@@ -371,7 +371,25 @@ key updated so the next start resumes in it.
      lighting, mapped shadows, bloom, water, body tint, emitter lights - the
      new set linked FIRST and swapped in only if it links (the Vita's
      shaders come from a precompiled cache).
-   * 3c, targets: MSAA, supersampling, upscale, AO - GLES re-inits targets
+   * **3c DONE (2026-10-27), but for Vulkan's MSAA.** A RETARGET - the
+     target remade at new enhancements, programs/pipelines, textures and
+     buffers kept: GLES `retarget` (`init`'s target half, now
+     `fitSupersample` + `setupTargets`, which also RELEASES the multisampled
+     pair; the FSR programs linked once) - MSAA, the supersample, the
+     upscale; Vulkan `retarget` - the supersample, the upscale, the AO from
+     0, through its own `resize` (viewport and scissor are dynamic state).
+     The viewer's `gpuRetarget` (false in gl1/none/citro3d) asks for all four
+     together. MEASURED, the live frame against a start with the value, to
+     the pixel: Vulkan ssaa on/off, upscale 2, AO 0->2; GLES MSAA on/off,
+     ssaa on/off, upscale 2 - `engine: graphics menu live` holds six (shown
+     to fail with GLES's target not remade). **Vulkan's MSAA stays "at the
+     next start"**: its scene pipelines are compiled for the sample count
+     inside `makePipelines`, among the layouts - making it live means
+     splitting the pipelines out to be rebuilt, a refactor of its own.
+     Checks green after it: `engine: supersampling`, `anti-aliasing`,
+     `upscale`, `gles upscale`, `gles backend`, `remaster switch`, both
+     graphics-menu checks; every port built.
+   * 3c, as read: targets: MSAA, supersampling, upscale, AO - GLES re-inits targets
      live already (row 2); Vulkan needs a rebuild of its target.
    * 3d, re-upload: texture filter/anisotropy (mips at upload), the texture
      pack, the rounded bodies (`remasterSmoothModel`, at model load).

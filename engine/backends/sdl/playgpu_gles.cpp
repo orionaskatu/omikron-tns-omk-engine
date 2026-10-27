@@ -304,6 +304,12 @@ bool PlayState::gpuRelinkLighting(bool perPixel, bool shadowMap) {
     return glRen && omk::glesRelinkLighting(glRen, perPixel, shadowMap);
 }
 
+// OMK's options menu: MSAA, the supersample and the upscale - the target remade
+// (`retarget`); GLES has no ambient occlusion
+bool PlayState::gpuRetarget(int samples, int ss, float up, float) {
+    return glRen && omk::glesRetarget(glRen, samples, ss, up);
+}
+
 void PlayState::gpuReportTimings() {
     if (glRen) {
         double g[4];

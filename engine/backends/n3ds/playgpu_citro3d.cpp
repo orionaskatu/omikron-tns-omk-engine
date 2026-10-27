@@ -140,6 +140,7 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
 void PlayState::gpuResize(int, int, bool&) {}
 bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
 bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // nothing to relink
+bool PlayState::gpuRetarget(int, int, float, float) { return false; }   // no target to remake
 // every 60 frames, beside the phases line: the backend's own counts
 // every 60 frames, beside the phases line: the backend's own counts, and
 // THE MEMORY (`todo/3ds-port.md` step 4) - the heap's high-water mark

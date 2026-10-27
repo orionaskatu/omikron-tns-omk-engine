@@ -427,10 +427,8 @@ bool GlesRenderer::remasterInitUpscale() {
         highp = bits > 0;
 #endif
         if (omk::envFlag("OMK_GLES_NO_HIGHP")) highp = false;
-        if (highp) {
-            easuProg_ = link(kPresentVert, kEasuFrag, {{0, "aPos"}});
-            rcasProg_ = link(kPresentVert, kRcasFrag, {{0, "aPos"}});
-        }
+        if (highp && !easuProg_) easuProg_ = link(kPresentVert, kEasuFrag, {{0, "aPos"}});   // once
+        if (highp && !rcasProg_) rcasProg_ = link(kPresentVert, kRcasFrag, {{0, "aPos"}});
         if (!highp || !easuProg_ || !rcasProg_) {
             // a context that cannot build them, or run them right: refused,
             // not the renderer

@@ -1399,6 +1399,9 @@ struct PlayState {
     // per-pixel lighting / mapped shadows asked again on the running GPU
     // renderer - GLES relinks its programs; false where nothing is relinked
     bool gpuRelinkLighting(bool perPixel, bool shadowMap);
+    // MSAA, the supersample, the upscale and the AO asked again on the running
+    // GPU renderer - its target remade; false where it cannot be
+    bool gpuRetarget(int samples, int ss, float up, float ao);
     bool gpuDriverRow(std::vector<std::string>& drivers);   // options row 8's device name
     void gpuReportTimings();                      // the backend's own counters, every 60 frames
     void gpuSlowFrameReport();                    // ...and on a very slow frame

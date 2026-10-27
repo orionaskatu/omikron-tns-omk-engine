@@ -301,7 +301,7 @@ build/omk-play ../gamedata ../tables --save ../traces/save-appart.bin --area 0 \
   `cN` to drive a screen, `--ride`/`--board` for the slider. Keys and flags in
   PRACTICE §5.
 * **Web viewers**: `python3 tools/omkweb.py --port 8752` (`/dialog`,
-  `/cutscene`, `/ui`, `/world`). **Restart the server after editing any
+  `/cutscene`, `/ui`, `/model`, `/world`). **Restart the server after editing any
   `tools/*.py`** — it holds its decoders in memory. The `lights` button's
   **colour** mode is what the game draws; **grey** is this repo's old bug.
 * The game is right-handed with **Y down**: `W(v)=[x,-y,z]` is a reflection,

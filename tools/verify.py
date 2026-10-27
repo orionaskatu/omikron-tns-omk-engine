@@ -50549,10 +50549,17 @@ def c_render_drawable_mask():
     viewer in both directions and the sizes of the disagreement are the point:
     bit 0 alone accounts for every skipped PERSOS mesh (no shape test needed),
     and `flags == 0` - which the viewer drops - is NOT in the engine's mask.
+
+    Nor are the flagless meshes the aim markers the viewer rule assumed: only
+    those named Vise*/Tire* are; the rest are body parts, and six models
+    (GRU_FN, M4_FN, MOTO, SLI_FN, SLIO_FN, ZOM_FN) have NO engine-drawn mesh
+    that is not flagless, so the viewer rule draws nothing of them
+    (2026-10-27, the /model viewer).
     """
-    import glob, mesh3do
+    import glob, mesh3do, re
     MASK = 0x800043
     per_tot = per_skip = per_bit0 = per_lone = per_zero = 0
+    per_marker = bodiless = 0
     # BOTH cases. 12 of the 193 PERSOS models ship a lowercase `.3do`, and a
     # `*.3DO` glob silently drops every one of them - 213 meshes, 36 of them
     # skipped. Found 2026-08-31 when `engine/` counted 3730 through DataFs
@@ -50562,10 +50569,14 @@ def c_render_drawable_mask():
                     glob.glob(omkpaths.data("MESHES/PERSOS/*.3do"))):
         try: _h, ms = mesh3do.meshes(p)
         except Exception: continue
+        drawn = [m["flags"] & 0xFFFFFFFF for m in ms
+                 if not (m["flags"] & MASK) and m["triangles"] + m["quads"]]
+        bodiless += bool(drawn) and not any(drawn)
         for m in ms:
             f = m["flags"] & 0xFFFFFFFF
             per_tot += 1
             per_zero += (f == 0)
+            per_marker += (f == 0) and bool(re.match(r"(?i)(vise|tire)\d", m["name"]))
             if f & MASK:
                 per_skip += 1
                 per_bit0 += bool(f & 1)
@@ -50581,11 +50592,13 @@ def c_render_drawable_mask():
             if f & MASK:
                 set_skip += 1
                 viewer_draws += bool(f & 0x43) and not (f & 0x800000)
-    return (per_tot, per_skip, per_bit0, per_lone, per_zero,
-            set_tot, set_skip, viewer_draws), \
-           (3730, 547, 547, 532, 123, 12203, 434, 3), \
+    return (per_tot, per_skip, per_bit0, per_lone, per_zero, per_marker,
+            bodiless, set_tot, set_skip, viewer_draws), \
+           (3730, 547, 547, 532, 123, 9, 6, 12203, 434, 3), \
            "PERSOS meshes; skipped by 0x800043; of those by bit 0; of those " \
            "the lone-triangle shape; flagless (NOT skipped by the engine); " \
+           "of those the Vise/Tire markers; models whose every engine-drawn " \
+           "mesh is flagless; " \
            "set meshes; skipped; set meshes the viewers draw and it does not"
 
 

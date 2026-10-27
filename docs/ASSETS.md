@@ -1023,6 +1023,20 @@ frame driving the face, through the same data path the browser app uses:
   (a per-node bit, not the mesh flags). Narrowed, not closed. Across the 220
   sets the mask costs **3** meshes the viewers currently draw.
 
+  **The "markers" premise is wrong** (2026-10-27, seen in the `/model`
+  viewer, which marks meshes by the engine's mask). Of the **123** flag-0
+  PERSOS meshes only **9** are `Vise`/`Tire` aim-and-shoot markers
+  (`AST_FNM` 4, `DE3_FN` 2, one `Vise000000` in each `MCG*`). The other 114
+  are body parts: `AKG_FN`'s left foot `AgPiedg` (its right foot carries
+  0x10), the whole `MCG`/`MCGB`/`MCGV` body (`MBassin`, `MBras1d`, ... — the
+  `M` is the model's own prefix, not a proxy skeleton), every mesh of
+  `ZOM_FN` (16), most of `Nu2_fn` (14) and `Kil3_fn` (13), and the slider's
+  doors. `omkdata.model_geometry`'s `persos_drawable` therefore draws NOTHING
+  of **6** models whose every engine-drawn mesh is flagless — `GRU_FN`,
+  `M4_FN`, `MOTO`, `SLI_FN`, `SLIO_FN`, `ZOM_FN` — in the dialogue viewer. The
+  engine's mask draws them, the right answer for 114 of 123; what hides the 9
+  markers is still the open part (`verify.py: drawable mask`).
+
 * **Mesh flag 0x40000000 marks an ANIMATED set effect.** At load
   `sub_44F840` (0x0044F840) walks the scene, tests `mesh->flags & 0x40000000`,
   and registers each hit in a **256-entry** table of 7 dwords: the mesh, a

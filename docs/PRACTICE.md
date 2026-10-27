@@ -114,7 +114,7 @@ One line per directory, then the files big enough to need a warning:
 |---|---|---|
 | tools/verify.py | 868 KB, ~200k tokens | NEVER read whole. `--list` for the index; `grep -n 'def c_<name>'` for one check's body |
 | tools/goldentrace.py (68 KB), cutscene.py (36), exetables.py (52), dialog_disasm.py (44), omkdata.py (88), omkweb.py (40) | large | only when working on that tool; §2 of this file describes each |
-| tools/omkweb.html (104 KB), omkcut.html (60), omkui.html (16), stagecheck.js (20) | large | the viewer clients; only for viewer work |
+| tools/omkweb.html (104 KB), omkcut.html (60), omkui.html (16), omkmodel.html (24), stagecheck.js (20) | large | the viewer clients; only for viewer work |
 | tools/sim/ (7 modules, ~3.8k lines) | medium | the Python simulator the engine is compared against: vm, world, scene, dialogue, actor, ui, run |
 | the rest of tools/*.py | 4–24 KB each | one reader/one job each, named for it; §2 lists the ones with findings behind them |
 | tools/omkprof.py, omkprof.html, profcheck.js | small | the PROFILER's external side: `omk-play --profile run.prof`, then `omkprof.py run.prof` (summary, `--frame N`), `--serve PORT` (the page: frame graph, call tree, memory and GPU memory by category, pause / step / snapshot), `--ctl CMD`. `todo/debug-tools.md` is the whole of it; `make release` / `classic-release` / `vita-release` build without any |
@@ -1322,6 +1322,18 @@ answers nothing, because the engine's own callback refuses an empty field —
 the LIFT's grid answers `slot - 1`, and a screen whose hooks are not modelled
 says so instead of inventing one.
 `verify.py: ui page` exercises every screen and key sequence without a server.
+
+**`/model`** (`tools/omkmodel.html`) shows any `.3DO` in `MESHES\PERSOS`,
+`OBJETS`, `DECORS` and `MISC`: textures, the baked vertex colour, cutout and
+blend modes as the set viewer draws them, a wireframe, and the mesh tree with
+each mesh's flags. "Drawn" is the ENGINE's mask (`flags & 0x800043`, ASSETS 4),
+not `persos_drawable`; the skipped meshes are a toggle. `#KIND/NAME@N` opens a
+set through its own camera N. Its **other folder** tab browses any folder on
+the machine (`/api/meshdir?dir=`, then `#DIR/<folder>/NAME`, the folder
+URI-encoded): only `.3DO` files and the `.3DT` beside each are read, a name
+with a path separator is refused, and those responses are not cached since
+the folder may change; the server listens on 127.0.0.1 only. It reuses `omkdata.decor_geometry` with
+`path`/`keep`/`by_mesh`, whose default output is unchanged.
 
 **`/world`** serves the world scripts (`IAM\AREA` / `SCENE` / `GLOBAL`) as
 annotated listings — `tools/script_dump.py` rendered as HTML, every

@@ -239,6 +239,29 @@ def morph_audio(asset):
     return adp.wav(pcm, ch)
 
 
+def persos_drawable(m):
+    """A mesh with no render flags at all is not geometry - across PERSOS
+    that is 123 meshes out of 3730, all of them `Vise`/`Tire` aim and shoot
+    markers or `M*` proxy skeletons, and they show up as stray black
+    rectangles if drawn. CollisionOnly and the bullet mesh are skipped for
+    the same reason the reference importer skips them.
+
+    NOT the engine's rule, and the premise above is wrong: only 9 of the 123
+    flag-0 meshes are markers; the rest are body parts the engine draws, and
+    six models (ZOM_FN, GRU_FN, the slider...) draw nothing here. ASSETS 4."""
+    f = m["flags"] & 0xFFFFFFFF
+    if f == 0: return False
+    if f & 0x800000: return False          # CollisionOnly
+    if m["name"].lower() == "tir": return False
+    # Attachment markers: a single triangle of 3 vertices with flag bit 0.
+    # 532 of the 547 bit-0 meshes in PERSOS are exactly this shape and all
+    # are named *Epauled / *Epauleg / *Ventre (shoulders and belly); they
+    # sit far outside the model and draw as stray dark rectangles. Only 4
+    # meshes of that shape lack the flag, so the pair of tests is precise.
+    if (f & 1) and m["vertices"] <= 3 and m["triangles"] <= 1: return False
+    return True
+
+
 def model_geometry(model):
     """Whole character, ready to draw: triangle corners grouped by material.
 
@@ -322,23 +345,7 @@ def model_geometry(model):
             cur = byid.get(cur["parent"]); guard += 1
         return None
 
-    def drawable(m):
-        """A mesh with no render flags at all is not geometry - across PERSOS
-        that is 123 meshes out of 3730, all of them `Vise`/`Tire` aim and shoot
-        markers or `M*` proxy skeletons, and they show up as stray black
-        rectangles if drawn. CollisionOnly and the bullet mesh are skipped for
-        the same reason the reference importer skips them."""
-        f = m["flags"] & 0xFFFFFFFF
-        if f == 0: return False
-        if f & 0x800000: return False          # CollisionOnly
-        if m["name"].lower() == "tir": return False
-        # Attachment markers: a single triangle of 3 vertices with flag bit 0.
-        # 532 of the 547 bit-0 meshes in PERSOS are exactly this shape and all
-        # are named *Epauled / *Epauleg / *Ventre (shoulders and belly); they
-        # sit far outside the model and draw as stray dark rectangles. Only 4
-        # meshes of that shape lack the flag, so the pair of tests is precise.
-        if (f & 1) and m["vertices"] <= 3 and m["triangles"] <= 1: return False
-        return True
+    drawable = persos_drawable
 
     for m in ms:
         if not drawable(m): continue
@@ -994,7 +1001,7 @@ def _posed_feet(model, scx, anim, worldY, frame=1):
     return lo + worldY - g["pelvis"][1]
 
 
-def decor_geometry(name):
+def decor_geometry(name, path=None, keep=None, by_mesh=False):
     """A whole set, baked to world space and grouped by material.
 
     Sets are static, so unlike a character there is nothing to skin or animate
@@ -1010,8 +1017,12 @@ def decor_geometry(name):
         COLOUR, not a brightness; see `shade` below.
 
     Mesh positions are absolute, exactly as in a character model.
+
+    The model viewer (`mesh_geometry`) reuses this for every `.3DO` folder:
+    `path` names the file, `keep` replaces the set's drawable rule, and
+    `by_mesh` splits the batches per mesh so a mesh can be shown or hidden.
     """
-    p = decor_path(name)
+    p = path or decor_path(name)
     if not os.path.exists(p): return None
     h, ms = mesh3do.meshes(p)
     d = open(p, "rb").read()
@@ -1097,7 +1108,7 @@ def decor_geometry(name):
 
     groups, order, seq = {}, {}, 0
     for m in ms:
-        if not drawable(m): continue
+        if not (keep or drawable)(m): continue
         off = m["pos"]
         cut = bool(m["flags"] & 0x800)
         # The blend MODE, not a flag. Reading the render bucket key settles it
@@ -1131,7 +1142,7 @@ def decor_geometry(name):
                 corners.append(vertex(*r) + (uv[k*2], uv[k*2+1]) + shade(r[0])
                                + (phase(r[0]),))
             if corners:
-                k = (mid, cut, blend)
+                k = (mid, cut, blend) + ((m["i"],) if by_mesh else ())
                 if k not in order: order[k] = seq; seq += 1
                 groups.setdefault(k, []).extend(corners)
         for q in range(baseq[m["i"]], baseq[m["i"]] + m["quads"]):
@@ -1147,7 +1158,7 @@ def decor_geometry(name):
                 corners.append(vertex(*r) + (uv[k*2], uv[k*2+1]) + shade(r[0])
                                + (phase(r[0]),))
             if corners:
-                k = (mid, cut, blend)
+                k = (mid, cut, blend) + ((m["i"],) if by_mesh else ())
                 if k not in order: order[k] = seq; seq += 1
                 groups.setdefault(k, []).extend(
                     [corners[0], corners[1], corners[2],
@@ -1169,9 +1180,11 @@ def decor_geometry(name):
     # tried instead and is REFUTED by what it draws - ANEKBAH's shop signs then
     # show `BATITR12` where the game shows `BATITR15`. "Material order happens
     # to be right" was never an accident of numbering. See ASSETS 4b.
-    for key in sorted(groups, key=lambda k: (k[2], k[0], k[1])):
-        mid, cut, blend = key
-        batches.append({"material": mid, "cutout": cut, "blend": blend,
+    for key in sorted(groups, key=lambda k: (k[2], k[0], k[1]) + k[3:]):
+        mid, cut, blend = key[:3]
+        if by_mesh: batches.append({"mesh": key[3]})
+        else: batches.append({})
+        batches[-1].update({"material": mid, "cutout": cut, "blend": blend,
                         "start": len(verts),
                         "count": len(groups[key]),
                         "name": txs[mid]["name"] if 0 <= mid < len(txs) else "",
@@ -1185,6 +1198,96 @@ def decor_geometry(name):
     return {"name": os.path.basename(p)[:-4], "triangles": len(verts) // 3,
             "batches": batches, "verts": verts, "min": lo, "max": hi,
             "cameras": cams}
+
+
+# ------------------------------------------------------------ model viewer
+# Every .3DO the game ships, in the four folders its loaders read them from.
+MESH_KINDS = ("PERSOS", "OBJETS", "DECORS", "MISC")
+
+# kind "DIR" is any other folder the viewer is pointed at - a mod, another
+# release's MESHES, a scratch copy - named by `folder`. Only `.3DO` files (and
+# the `.3DT` beside each) are ever read out of it.
+
+def mesh_path(kind, name, folder=None):
+    if kind == "DIR":
+        d = os.path.abspath(os.path.expanduser(folder or ""))
+        if not folder or not os.path.isdir(d): return None
+    elif kind in MESH_KINDS:
+        d = omkpaths.data("MESHES/" + kind)
+    else:
+        return None
+    if "/" in name or "\\" in name: return None
+    for fn in os.listdir(d):
+        if fn.lower() == (name + ".3do").lower(): return os.path.join(d, fn)
+    return None
+
+def _mesh_rows(d):
+    rows = []
+    for fn in sorted(os.listdir(d), key=str.lower):
+        if not fn.lower().endswith(".3do"): continue
+        try: h = mesh3do.header(os.path.join(d, fn))
+        except Exception: continue
+        rows.append({"name": fn[:-4], "triangles": h["triangles"],
+                     "quads": h["quads"], "vertices": h["vertices"],
+                     "meshes": h["meshes"], "materials": h["materials"],
+                     "cameras": h["cameras"]})
+    return rows
+
+def list_folder(folder):
+    """A folder for the viewer's browser: its readable .3DO files, and its
+    subfolders with how many .3DO files each holds directly. Not cached - the
+    folder is the reader's and may change under the server."""
+    d = os.path.abspath(os.path.expanduser(folder or omkpaths.data("")))
+    if not os.path.isdir(d): return None
+    dirs = []
+    try: names = sorted(os.listdir(d), key=str.lower)
+    except OSError: names = []
+    for fn in names:
+        sub = os.path.join(d, fn)
+        if fn.startswith(".") or not os.path.isdir(sub): continue
+        try: n = sum(1 for x in os.listdir(sub) if x.lower().endswith(".3do"))
+        except OSError: continue
+        dirs.append({"name": fn, "models": n})
+    try: rows = _mesh_rows(d)
+    except OSError: rows = []
+    parent = os.path.dirname(d)
+    return {"path": d, "parent": parent if parent != d else None,
+            "dirs": dirs, "models": rows}
+
+_MESH_LIST = None
+def list_meshes():
+    """{kind: [{name, triangles, quads, vertices, meshes, materials, cameras}]}"""
+    global _MESH_LIST
+    if _MESH_LIST is not None: return _MESH_LIST
+    out = {}
+    for kind in MESH_KINDS:
+        out[kind] = _mesh_rows(omkpaths.data("MESHES/" + kind))
+    _MESH_LIST = out
+    return out
+
+def mesh_geometry(kind, name, folder=None):
+    """One .3DO for the model viewer: every mesh with any face, batched per
+    mesh, plus the mesh table saying which of them the ENGINE draws. That is
+    the one test guarding every Render_SubmitMesh call, `test [eax], 800043h`
+    (engine/src/o3de/geom3do.h kDrawableMask): skipped when flags & (0x1 | 0x2
+    | 0x40 | 0x800000), and flags == 0 IS drawn - which `persos_drawable`
+    does not do. The skipped meshes are served too, so the viewer can show
+    the collision volumes and markers on demand."""
+    p = mesh_path(kind, name, folder)
+    if not p: return None
+    h, ms = mesh3do.meshes(p)
+    g = decor_geometry(name, path=p, keep=lambda m: True, by_mesh=True)
+    g["kind"] = kind
+    g["file"] = p
+    g["header"] = {k: h[k] for k in ("triangles", "quads", "vertices",
+                                     "materials")}
+    g["meshes"] = [{"i": m["i"], "id": m["id"], "name": m["name"],
+                    "parent": m["parent"],
+                    "flags": m["flags"] & 0xFFFFFFFF, "pos": list(m["pos"]),
+                    "vertices": m["vertices"], "triangles": m["triangles"],
+                    "quads": m["quads"],
+                    "drawn": not (m["flags"] & 0x800043)} for m in ms]
+    return g
 
 
 # --------------------------------------------------------------- animation

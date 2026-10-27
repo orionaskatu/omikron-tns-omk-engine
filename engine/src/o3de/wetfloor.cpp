@@ -10,18 +10,43 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <unordered_map>
 
 namespace omk {
 
 WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes) {
     WetFloors out;
     out.open.assign(g.corners.size() / 3, 0);
+    out.cornerOpen.assign(g.corners.size(), kWetNotFloor);
     if (shot.empty()) return out;
     // straight UP (the game's Y points down), from just above the floor
     const double up[3] = {0.0, -kWetSkyRay, 0.0};
-    const auto sky = [&](double x, double y, double z) {
+    const auto ray = [&](double x, double y, double z) {
         const double p0[3] = {x, y - 2.0, z};
-        return !sweepSphere(shot, boxes, p0, up, 0.0).has_value();
+        return sweepSphere(shot, boxes, p0, up, 0.0).has_value();
+    };
+    // ...and a ROOF is wider than a cable: the soup carries the streets'
+    // overhead wires, thin lines across Anekbah's street that made whole
+    // triangles dry under them (a map of the test around the street start,
+    // 2026-10-27). Covered when three of five rays meet one - the point and
+    // four `kWetRoofSpan` around it
+    const auto sky = [&](double x, double y, double z) {
+        const double r = kWetRoofSpan;
+        const int hit = ray(x, y, z) + ray(x + r, y, z) + ray(x - r, y, z) + ray(x, y, z + r) + ray(x, y, z - r);
+        return hit < 3;
+    };
+    // ...and at a CORNER, once per place: the corners of neighbouring
+    // triangles at one point cast one ray, so they agree, and the change from
+    // wet to dry runs smoothly through the triangles a roof's edge crosses
+    std::unordered_map<std::uint64_t, std::uint8_t> atCorner;
+    const auto skyAt = [&](const Corner& c) -> std::uint8_t {
+        const auto q = [](float v) { return static_cast<std::uint64_t>(static_cast<std::uint32_t>(
+                                         static_cast<std::int32_t>(std::lround(v * 4.0f))) & 0x1FFFFFu); };
+        const std::uint64_t key = q(c.x) | q(c.y) << 21 | q(c.z) << 42;
+        if (const auto it = atCorner.find(key); it != atCorner.end()) return it->second;
+        const std::uint8_t v = sky(c.x, c.y, c.z) ? 1 : 0;
+        atCorner.emplace(key, v);
+        return v;
     };
     std::map<int, FloorPlanes::Level> byHeight;
     for (const auto& bt : g.batches) {
@@ -43,18 +68,21 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             const double area = std::fabs(ny) * 0.5;   // the horizontal area
             const double cx = (a.x + c1.x + c2.x) / 3.0, cy = (a.y + c1.y + c2.y) / 3.0,
                          cz = (a.z + c1.z + c2.z) / 3.0;
-            // the centre and three points halfway to the corners: open when at
-            // least three of the four see the sky
-            int seen = sky(cx, cy, cz);
-            for (const Corner* c : {&a, &c1, &c2})
-                seen += sky((cx + c->x) * 0.5, (cy + c->y) * 0.5, (cz + c->z) * 0.5);
-            if (seen < 3) {
+            // the three corners and the centre: wet when any of them sees the
+            // sky - how much at each point, the corners' answers blended
+            const std::uint8_t k0 = skyAt(a), k1 = skyAt(c1), k2 = skyAt(c2);
+            const int seen = k0 + k1 + k2 + (sky(cx, cy, cz) ? 1 : 0);
+            if (seen == 0) {
                 ++out.coveredTris;
                 out.coveredArea += area;
                 continue;
             }
             out.open[t / 3] = 1;
+            out.cornerOpen[t] = k0;
+            out.cornerOpen[t + 1] = k1;
+            out.cornerOpen[t + 2] = k2;
             ++out.openTris;
+            if (k0 != k1 || k0 != k2) ++out.blendedTris;
             out.openArea += area;
             // ...and the LEVEL ones are the planes the reflection may take
             // (`forLevelTriangles`' 2 units)
@@ -78,6 +106,13 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
         }
     }
     return out;
+}
+
+void encodeOpenSky(Geometry& g, const WetFloors& w) {
+    if (w.cornerOpen.size() != g.corners.size()) return;
+    for (std::size_t i = 0; i < g.corners.size(); ++i)
+        if (w.cornerOpen[i] != kWetNotFloor && g.corners[i].phase == -1.0f)
+            g.corners[i].phase = -2.0f - static_cast<float>(w.cornerOpen[i]);
 }
 
 float Wetness::step(float rain, double dtMs) {

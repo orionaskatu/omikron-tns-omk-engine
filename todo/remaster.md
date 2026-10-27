@@ -1158,6 +1158,25 @@ only at *Niveau de détail* 2.
   the CPU, so no shader carries a sky map: Anekbah 9913 open, 2217 covered.
   The edges between wet and dry are triangle edges (a street triangle is a
   few square metres) - a per-pixel map is the refinement if they show.
+* **The edge, per corner** (the same day, the reader on the comparison
+  picture - "a straight diagonal where whole floor triangles switch"): the
+  open sky is cast at each CORNER too, once per place (neighbouring
+  triangles' corners at one point agree), and a wet triangle is one whose
+  corners or centre see the sky; `encodeOpenSky` writes `-2 - open` into a
+  non-shimmering corner's phase (below -1: no shimmer, and exact under the
+  depth tie's -8192), and both shaders blend it across the triangle - the
+  film, the ripples and the reflection fade through the triangles a roof's
+  edge crosses. 2562 of Anekbah's open triangles blend; blended against not
+  (`OMK_WET_NO_BLEND=1`, an instrument) 19514 pixels. A roof over the MIDDLE
+  of a large triangle that misses its corners is lost (164 such in Anekbah);
+  a per-pixel map would keep it.
+* **A roof is wider than a cable**: a top-down map of the test round the
+  street start showed the soup's overhead WIRES as thin diagonal lines - the
+  old per-triangle majority had dried whole street triangles under them.
+  Covered now when three of five rays meet something, the point and four 30
+  units round it (`kWetRoofSpan`): wires gone, awnings and walkways kept;
+  Anekbah 11480 open, 650 covered. The 3D rain's roof test is still one ray
+  (a drop under a wire is not drawn - unseen at a wire's width).
 * **How wet** (`Wetness`): as wet as the rain is strong - the weather's drops
   over 200 (`weatherRain`, set by `weatherFrame`) - and drying linearly over
   2 minutes after (`kWetDryMs`); only where the area's weather is the RAIN,

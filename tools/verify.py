@@ -33850,8 +33850,10 @@ def c_engine_wet_floors():
     shower at full strength from ~frame 600):
       1. the source: 0 by default, [Remaster] only, never `all = max`, the
          preset's 1;
-      2. the set's floors: more than 5000 triangles open to the sky and more
-         than 1000 under a roof (`world.wet`);
+      2. the set's floors: more than 5000 triangles open to the sky, more
+         than 300 under a roof, and more than 500 of the open ones BLENDED -
+         their corners disagree, the change from wet to dry run through them
+         (`world.wet`; `encodeOpenSky`);
       3. Vulkan: at frame 690 the wetness is 1 and the floors' plane live
          (`remaster.wet`), and `--wet 1` moves more than 50000 pixels of
          `--wet 0`;
@@ -33861,19 +33863,25 @@ def c_engine_wet_floors():
          do - the moved pixels' intersection over union above 0.8;
       6. Vulkan: the RIPPLES move - frames 700 and 716 differ by more than
          10000 pixels more with `--wet 1` than with `--wet 0` (the rain's
-         streaks, the flame and the shimmer move both).
+         streaks, the flame and the shimmer move both);
+      7. the edge BLENDED in the shaders: `OMK_WET_NO_BLEND=1` (the open sky
+         left out of the corners) moves more than 5000 pixels of the frame,
+         on Vulkan and on GLES - each decodes the corners' phase.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
     ripples: 109018 and 109024, overlap 0.998; 700 -> 716 moves 73954 pixels
     wet, 33097 dry. With the single soft ring (2026-10-27): 109561 and 109569;
-    the ripples 20230 more.
+    the ripples 20230 more. The edge per corner and a roof wider than a cable
+    (the same day): 11480 open, 650 covered, 2562 blended; 136587 and 136605
+    pixels; the ripples 25068 more; blended against not, 19514 and 19569.
 
     SHOWN TO FAIL (2026-10-27): the film never applied in `scene.frag`
     (`c *= 1.0 - wetFilm` gone) - part 3, a few thousand pixels, and part 5's
     overlap; the rain area's gate dropped (`rainArea` always true) and the
     wetness held at 1 - part 4, the frames differ; the ripples never computed
-    in `scene.frag` - part 6.
+    in `scene.frag` - part 6; the open sky never decoded in `scene.frag`
+    (`openSky = 1.0`) - part 7 on Vulkan.
 
     NOT CHECKED, judged by eye: the strengths (`kWetReflect`, `kWetDarken`),
     the drying's pace, the triangle-sized edges between wet and dry.
@@ -33899,9 +33907,9 @@ def c_engine_wet_floors():
         return ("build",), ("built",), mk.stderr[-300:]
     tmp = tempfile.mkdtemp()
     try:
-        def run(binary, name, detail, wet, frames=700):
+        def run(binary, name, detail, wet, frames=700, env_extra=None):
             out = os.path.join(tmp, name + ".bin")
-            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000", **(env_extra or {}))
             if binary.endswith("gles"):
                 env["OMK_NO_GPU_PRESENT"] = "1"
                 cmd = ["caffeinate", "-d", "-u", "-i", binary]
@@ -33924,14 +33932,17 @@ def c_engine_wet_floors():
         dry0, _ = run(vkb, "dry0", 1, 0)
         on716, _ = run(vkb, "on716", 2, 1, 716)
         off716, _ = run(vkb, "off716", 2, 0, 716)
+        nb, _ = run(vkb, "nb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
+        gnb = None
         gl = ("skipped",)
         if platform.system() == "Darwin":
             gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
             goff, _ = run(os.path.join(eng, "build", "omk-play-gles"), "goff", 2, 0)
+            gnb, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gnb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
             gl = ("no frame",) if gon is None or goff is None else None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    if None in (on, off, dry, dry0, on716, off716):
+    if None in (on, off, dry, dry0, on716, off716, nb):
         return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
     px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
     moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
@@ -33943,14 +33954,21 @@ def c_engine_wet_floors():
         gl = (len(mg) > 50000, iou > 0.8)
     world = next((k for n, k in ev if n == "world.wet" and k.get("set") == "ANEKBAH"), {})
     at690 = next((k for n, k in ev if n == "remaster.wet" and k.get("frame") == "690"), {})
-    sky = (int(world.get("open", 0)) > 5000, int(world.get("covered", 0)) > 1000)
+    sky = (int(world.get("open", 0)) > 5000, int(world.get("covered", 0)) > 300,
+           int(world.get("blended", 0)) > 500)
     live = (at690.get("wetness"), at690.get("live"))
     same = dry == dry0
     ripple = len(moved(on, on716)) - len(moved(off, off716))
-    print(f"        open {world.get('open')}, covered {world.get('covered')}; frame 690 {live}; "
-          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000), \
-           ((True,) * 4, (True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True), \
+    gblend = ("skipped",) if gnb is None and platform.system() != "Darwin" else \
+        (gnb is not None and gon is not None and len(moved(gon, gnb)) > 5000)
+    blend = (len(moved(on, nb)) > 5000, gblend)
+    print(f"        open {world.get('open')}, covered {world.get('covered')}, blended {world.get('blended')}; "
+          f"frame 690 {live}; "
+          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
+          f"blended against not {len(moved(on, nb))}")
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend), \
+           ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
+            (True, _or_skip(gblend, True))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"

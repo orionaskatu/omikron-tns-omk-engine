@@ -12,6 +12,7 @@
 #include "o3de/floorreflect.h"
 #include "o3de/wetfloor.h"
 #include "o3de/texpack.h"
+#include "platform/env.h"
 #include "platform/events.h"
 #include "platform/filmpack.h"
 #include "platform/movie.h"
@@ -44,12 +45,17 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
     if (remasterArmed("wet") > 0.0f) {
         const auto t0 = std::chrono::steady_clock::now();
         w.wet = omk::wetFloors(w.geo, w.shotSoup, w.shotRunBoxes);
+        // the open sky per corner, for the shaders to blend - `OMK_WET_NO_BLEND=1`,
+        // an INSTRUMENT, leaves it out (`verify.py: engine: wet floors`)
+        static const bool noBlend = omk::envFlag("OMK_WET_NO_BLEND");
+        if (!noBlend) omk::encodeOpenSky(w.geo, w.wet);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         std::printf("wet: set %s - %zu floor triangles under the open sky (%.0f m2), %zu covered (%.0f m2), "
                     "%zu levels; %.0f ms\n", L.stem.c_str(), w.wet.openTris, w.wet.openArea / 1550.0,
                     w.wet.coveredTris, w.wet.coveredArea / 1550.0, w.wet.planes.levels.size(), ms);
         omk::event("world.wet", {{"set", L.stem}, {"open", static_cast<long>(w.wet.openTris)},
                                  {"covered", static_cast<long>(w.wet.coveredTris)},
+                                 {"blended", static_cast<long>(w.wet.blendedTris)},
                                  {"levels", static_cast<long>(w.wet.planes.levels.size())}});
     } else {
         w.wet = omk::WetFloors{};

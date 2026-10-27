@@ -130,7 +130,7 @@ constexpr const char* kRipplesGlsl =
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
-                    "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\n"
+                    "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
                     std::string(kRipplesGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
@@ -140,15 +140,17 @@ std::string waterVariant(const std::string& frag) {
         // ...over a WET floor's film first (`o3de/wetfloor.h`): the rain darkens
         // it, and while it rains its RIPPLES lighten their crests and bend the
         // reflection (`scene.frag`'s rule)
-        s.insert(at, "c *= 1.0 - uWet;\n    vec3 rip = vec3(0.0);\n"
-                     "    if (uWet > 0.0 && uRain > 0.0) {\n"
-                     "        rip = ripples(vWxz, uRippleClock, uRain);\n"
+        // (all of it times the open sky at this point, `encodeOpenSky`'s)
+        s.insert(at, "float wetHere = uWet > 0.0 ? vOpen : 1.0;\n"
+                     "    c *= 1.0 - uWet * vOpen;\n    vec3 rip = vec3(0.0);\n"
+                     "    if (uWet > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
+                     "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen;\n"
                      "        c += vec3(kRippleLight * rip.z);\n"
                      "    }\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
                      "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"
-                     "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f;\n"
+                     "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f * wetHere;\n"
                      "    }\n    ");
     else anchorMissed("water", "gl_FragColor = vec4(c,");
     // the REFLECTION pass discards what lies below the water (Y is down) - a
@@ -225,14 +227,18 @@ std::string tintVariant(const std::string& vert) {
 // whatever the program transforms - `aPos` for a set, `wp` for a posed body -
 // and the ray to the eye as `vToEye`, made here where the floats are highp
 std::string waterVertVariant(const char* vert) {
-    std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec2 vWxz;\n") + vert;
+    std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec2 vWxz;\n"
+                                "varying float vOpen;\n") + vert;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
     const auto end = at == std::string::npos ? at : s.find(", 1.0);", at);
     if (end == std::string::npos) { anchorMissed("water (vertex)", key); return s; }
     const std::string expr = s.substr(at + key.size(), end - at - key.size());
+    // ...and the open sky a wet floor's corner carries in its phase
+    // (`encodeOpenSky`: `-2 - open`, under the depth tie's -8192 shift)
     s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
-                 ").xz;\n    ");
+                 ").xz;\n    float wph = aPhase < -4096.0 ? aPhase + 8192.0 : aPhase;\n"
+                 "    vOpen = wph <= -1.5 ? clamp(-2.0 - wph, 0.0, 1.0) : 1.0;\n    ");
     return s;
 }
 

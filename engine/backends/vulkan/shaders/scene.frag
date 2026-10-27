@@ -430,13 +430,17 @@ void main() {
     // map (the tiled module's, as the relief reads it) - the slope shifts it, up to
     // ~1% of the frame's height. The water's mode 1 is as it was.
     // A WET floor (`o3de/wetfloor.h`): the rain's film darkens it, and its
-    // reflection, if it has one, is added over the darker ground
-    c *= 1.0 - wetFilm;
+    // reflection, if it has one, is added over the darker ground - all of it
+    // times how open to the sky this point is, the corners' answers blended
+    // (`encodeOpenSky`: `-2 - open` in the phase; any other phase is open)
+    float openSky = vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
+    float wetHere = wetFilm > 0.0 ? openSky : 1.0;
+    c *= 1.0 - wetFilm * openSky;
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
     vec3 rip = vec3(0.0);
-    if (wetFilm > 0.0 && rainNow > 0.0) {
-        rip = ripples(vWorld.xz, sh.shimmer, rainNow);
+    if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
+        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky;
         c += vec3(kRippleLight * rip.z);
     }
     if (waterMode == 1 || waterMode == 3) {
@@ -454,7 +458,7 @@ void main() {
 #endif
         if (waterMode == 3) at += rip.xy * rs.y * 0.02 * k;   // the ripples' slope
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
-        c += texture(refl, at / rs).rgb * pc.waterStrength * f;
+        c += texture(refl, at / rs).rgb * pc.waterStrength * f * wetHere;
     }
     // THE ALPHA, read by the post-pass (`post.frag`, `ao.frag`): 0 on a BODY
     // (`caster`: a character, the shadow map's - posed here or on the CPU),

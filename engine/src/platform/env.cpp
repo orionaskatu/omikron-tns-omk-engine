@@ -119,6 +119,7 @@ constexpr const char* kSwitches[] = {
     "OMK_WATER_LEVELS",         // texpack_tool water: every level of horizontal additive area, not the plane alone
     "OMK_WATER_NO_CPU_CLIP",    // =1 the water reflection is handed the whole scene, clipped by its shader alone (engine: water reflection)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
+    "OMK_WET_NO_BLEND",         // =1 the wet floors' open sky is not written into the corners - wet and dry meet at triangle edges (engine: wet floors)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);
 

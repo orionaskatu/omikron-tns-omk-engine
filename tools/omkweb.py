@@ -32,6 +32,7 @@ from dialog_triggers import archive as _archive
 PAGE = os.path.join(HERE, "omkweb.html")
 CUTPAGE = os.path.join(HERE, "omkcut.html")
 UIPAGE = os.path.join(HERE, "omkui.html")
+MODELPAGE = os.path.join(HERE, "omkmodel.html")
 
 def build_stamp():
     """A token that changes whenever the decoders or the page change.
@@ -290,7 +291,8 @@ class H(BaseHTTPRequestHandler):
                    json.dumps(obj).encode("utf-8"))
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        u = urllib.parse.urlparse(self.path)
+        path, self._query = u.path, u.query
         try:
             self.route(path)
         except Exception as e:
@@ -314,6 +316,42 @@ class H(BaseHTTPRequestHandler):
             return self._page(CUTPAGE)
         if path in ("/ui", "/ui/"):
             return self._page(UIPAGE)
+        if path in ("/model", "/model/"):
+            return self._page(MODELPAGE)
+
+        # ---- the model viewer: any .3DO in MESHES/<kind>
+        # kind DIR takes its folder from ?dir= (any folder on this machine;
+        # the server only listens on 127.0.0.1 and reads only .3DO/.3DT)
+        folder = (urllib.parse.parse_qs(self._query).get("dir") or [None])[0]
+        if path == "/api/meshes":
+            return self._json(omkdata.list_meshes())
+        if path == "/api/meshdir":
+            r = omkdata.list_folder(folder)
+            if r is None: return self._send(404, "text/plain", b"no such folder")
+            return self._json(r)
+        if path.startswith("/api/meshgeo/"):
+            kind, name = path[len("/api/meshgeo/"):].split("/")
+            g = omkdata.mesh_geometry(kind, urllib.parse.unquote(name), folder)
+            if not g: return self._send(404, "text/plain", b"no such model")
+            verts = g.pop("verts")
+            # 9 floats per vertex: x y z u v r g b shimmer-phase, as /api/decorgeo
+            g["stride"] = len(verts[0]) if verts else 9
+            blob = struct.pack("<%df" % (len(verts) * g["stride"]),
+                               *[c for v in verts for c in v])
+            g["count"] = len(verts)
+            return self._send(200, "application/octet-stream",
+                              self._binpack(g, blob), cache=kind != "DIR")
+        if path.startswith("/api/meshtex/"):
+            kind, name, idx = path[len("/api/meshtex/"):].split("/")
+            p = omkdata.mesh_path(kind, urllib.parse.unquote(name), folder)
+            txs = tex3dt.textures(p) if p else []
+            idx = int(idx.replace(".png", ""))
+            if not (0 <= idx < len(txs)):
+                return self._send(404, "text/plain", b"no such material")
+            t = txs[idx]
+            return self._send(200, "image/png",
+                              tex3dt.png(t["w"], t["h"], t["rgb"]),
+                              cache=kind != "DIR")
 
         if path == "/api/ui/screens":
             return self._json(_ui_screens())
@@ -674,6 +712,14 @@ class H(BaseHTTPRequestHandler):
              "record at its real coordinates over the shipped artwork. The "
              "start menu&rsquo;s answer is <i>derived</i>, not supplied.",
              "%d screens &middot; 5 panels modelled" % 37),
+            ("/model", "Models",
+             "Every <code>.3DO</code> the game ships &mdash; characters, "
+             "objects, sets and skies &mdash; turned in your hand: its "
+             "textures, the baked vertex colour, the blend modes, and the "
+             "mesh tree with the volumes and markers the engine never draws.",
+             "%s models" % " &middot; ".join(
+                 "%d %s" % (len(v), k.lower())
+                 for k, v in omkdata.list_meshes().items())),
             ("/world", "World scripts",
              "The bytecode in <code>IAM\\AREA</code>, <code>IAM\\SCENE</code> "
              "and <code>IAM\\GLOBAL</code> as annotated listings &mdash; every "

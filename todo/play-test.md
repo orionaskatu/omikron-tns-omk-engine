@@ -113,8 +113,10 @@ own rules (`todo/vita-port.md` F3).
 
 The same command with a pad plugged in (the log prints `pad: <name>`). Left
 stick or d-pad walks and turns, A/CROSS is Action and the UI's confirm, B/
-CIRCLE cancels / jumps, the right shoulder RUNS, BACK/SELECT opens the sneak,
-START is the pause screen. **The button layout and the stick's dead zone are
+CIRCLE cancels / jumps, the right shoulder RUNS, Y/TRIANGLE opens the sneak
+and X/SQUARE is the first-person view (the adventure group's own layout,
+2026-10-27; in shoot mode Y/TRIANGLE is `Arme`), BACK/SELECT switches the
+original's look and the remaster's everywhere, START is the pause screen. **The button layout and the stick's dead zone are
 this port's choices** (`src/input/pad.h`) - say if they feel wrong.
 
 ## 11. THE GAME THROUGH THE VITA'S RENDERER, on this Mac

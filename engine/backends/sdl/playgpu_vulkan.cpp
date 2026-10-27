@@ -24,6 +24,7 @@
 #include <cstring>
 #include <fstream>
 
+
 // The Vulkan window - this glue's, not the game's (the gateway: game code
 // holds no host handle). One viewer a process, so one window - D3D12's too.
 static SDL_Window* vkWin = nullptr;
@@ -96,7 +97,7 @@ void PlayState::gpuOpenWindow() {
             omk::Renderer* dx = hwnd ? omk::makeD3d12Renderer() : nullptr;
             if (dx) {
                 if (aaSamples > 1) dx->setMultisample(aaSamples);   // the enhancements
-                if (ssao) dx->setAmbientOcclusion(true);
+                if (ssao) dx->setSsao(true);
                 if (raytracing) dx->setRaytracing(true);         // row 19
                 if (rtReflections) dx->setRtReflections(true);   // row 26
                 if (texFilter > 0) dx->setTextureFilter(texFilter);
@@ -105,6 +106,7 @@ void PlayState::gpuOpenWindow() {
                 if (upscaler > 0) dx->setUpscaler(upscaler, upscaleQuality);   // row 18
                 if (postFx.any()) dx->setPostProcess(postFx);   // rows 22-24
                 if (frameGen) dx->setFrameGeneration(true);     // row 27
+                remasterConfigure(*dx);   // the remaster's, as Vulkan's and GLES's (what this backend takes: `takes()`)
             }
             if (dx && omk::d3d12AttachWindow(dx, hwnd) && dx->init(dispW, dispH)) {
                 vkRen = dx;
@@ -120,23 +122,17 @@ void PlayState::gpuOpenWindow() {
         if (wantD3d12)
             std::printf("renderer: Direct3D 12 asked for, but this viewer was built without it - Vulkan\n");
 #endif
-        if (SDL_Init(SDL_INIT_VIDEO) == 0) {
-            vkWin = SDL_CreateWindow("OMK Engine (vulkan)",
-                                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                     dispW, dispH, SDL_WINDOW_VULKAN |
-                                     // hidden for a profile of the direct present
-                                     // (`OMK_HIDDEN_WINDOW`, playgpu_gles.cpp)
-                                     (omk::envFlag("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
-                                                                       : omk::sdlFrontend(front).windowFlags()));
-        }
+        vkWin = vkSdlWindow("OMK Engine (vulkan)", dispW, dispH,
+                            // hidden for a profile of the direct present
+                            // (`OMK_HIDDEN_WINDOW`, playgpu_gles.cpp)
+                            omk::envFlag("OMK_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN
+                                                              : omk::sdlFrontend(front).windowFlags());
         if (vkWin) {
-            unsigned nx = 0;
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, nullptr);
-            std::vector<const char*> ext(nx);
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &nx, ext.data());
+            const std::vector<const char*> ext = vkSdlExtensions(vkWin);
+            const auto nx = static_cast<unsigned>(ext.size());
             omk::Renderer* vkr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vkr->setMultisample(aaSamples);   // the enhancements
-            if (ssao) vkr->setAmbientOcclusion(true);
+            if (ssao) vkr->setSsao(true);
             if (raytracing && !vkr->setRaytracing(true))   // (the device decides, in init)
                 std::printf("raytracing: this renderer cannot take it - off\n");
             if (rtReflections && !vkr->setRtReflections(true))
@@ -172,11 +168,13 @@ void PlayState::gpuOpenWindow() {
 #endif
                 omk::vulkanSetHdrDisplay(vkr, known, peak);
             }
+            remasterConfigure(*vkr);   // the remaster's (`backends/remaster/`), as GLES's
+            if (aoStrength > 0.0f) vkr->setAmbientOcclusion(aoStrength);   // ...and the AO, Vulkan's alone
             omk::vulkanNeedExtensions(vkr, ext.data(), nx);
             void* inst = omk::vulkanCreateInstance(vkr);
             VkSurfaceKHR surf{};
             if (inst &&
-                SDL_Vulkan_CreateSurface(vkWin, static_cast<VkInstance>(inst), &surf) &&
+                vkSdlSurface(vkWin, static_cast<VkInstance>(inst), &surf) &&
                 omk::vulkanAttachSurface(vkr, reinterpret_cast<unsigned long long>(surf)) &&
                 vkr->init(dispW, dispH)) {
                 vkRen = vkr;
@@ -211,7 +209,7 @@ void PlayState::gpuOpenWorldHarness() {
 #endif
         if (!wv) wv = omk::makeVulkanRenderer();
         if (wv && aaSamples > 1) wv->setMultisample(aaSamples);
-        if (wv && ssao) wv->setAmbientOcclusion(true);
+        if (wv && ssao) wv->setSsao(true);
         // HYBRID RAY TRACING (row 19): both renderers take it, the device decides in `init`
         if (wv && raytracing && !wv->setRaytracing(true))
             std::printf("raytracing: this renderer cannot take it - off\n");
@@ -231,6 +229,8 @@ void PlayState::gpuOpenWorldHarness() {
         if (wv && frameGen)
             std::printf("framegen: a way of presenting, a WINDOW's (Direct3D 12, Vulkan) - off in the "
                         "offscreen harness\n");
+        if (wv) remasterConfigure(*wv);
+        if (wv && aoStrength > 0.0f) wv->setAmbientOcclusion(aoStrength);
         if (wv && wv->init(dispW, dispH)) {
             worldVk = wv;
             std::printf("renderer: the world through %s offscreen - %s "
@@ -374,6 +374,16 @@ bool PlayState::gpuDriverRow(std::vector<std::string>& drivers) {
         return true;
     }
     return false;
+}
+bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // Vulkan builds both always
+
+// OMK's options menu: the supersample, the upscale, the ambient occlusion -
+// the target remade on both Vulkan renderers there are (`retarget`); not MSAA
+bool PlayState::gpuRetarget(int samples, int ss, float up, float ao) {
+    bool ok = vkRen || worldVk;
+    if (vkRen) ok = omk::vulkanRetarget(vkRen, samples, ss, up, ao) && ok;
+    if (worldVk) ok = omk::vulkanRetarget(worldVk, samples, ss, up, ao) && ok;
+    return ok;
 }
 
 void PlayState::gpuReportTimings() {}

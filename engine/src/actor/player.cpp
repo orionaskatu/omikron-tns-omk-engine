@@ -122,8 +122,13 @@ float headingFromClipRoot(std::span<const std::byte> clip, int frame) {
 // downward from one unit above it - probing up from far below finds the
 // ceiling. A pelvis point (a scene clip's root) and a feet point (an
 // ADDRESSES record) both land on the same floor this way.
+// ONE UNIT ABOVE IS `p[1] - 2`: `floorUnder` takes a surface more than a unit
+// below its origin, so `p[1] - 1` asked for one strictly below the point - and
+// a point already ON a floor (the walker's own, saved and put back) then kept
+// or missed it on the float rounding of its height, and missing it put him on
+// whatever lay under it.
 static double seatOnFloor(const TriangleSoup& soup, const float p[3]) {
-    if (const auto g = floorUnder(soup, p[0], p[1] - 1.0, p[2])) return *g;
+    if (const auto g = floorUnder(soup, p[0], p[1] - 2.0, p[2])) return *g;
     return p[1];
 }
 
@@ -927,9 +932,65 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     const float f0 = rt_.channel().frame();
     const int   s0 = rt_.channel().state();
     const long  tr0 = rt_.channel().stats().transitions;
+    // the pose on screen, which a blend out of a state with no clip starts from
+    const NodeTracks* shownBefore = poseTracks();
+    const int shownRow = poseFrame();
     rt_.tick(dt, word);
     const float f1 = rt_.channel().frame();
     const int   s1 = rt_.channel().state();
+    // ---- Actor_BlendToClip: the transition's blend, baked ----------------
+    //
+    // A blended transition is NOT the target clip played from frame 1. While
+    // it runs the channel's frame counts the BLEND (1 .. blendFrames) and the
+    // entry may be a pass-through with no clip, and the port used to read the
+    // clip behind its GoTo at that count - which replays the target from its
+    // start. H1Avnt's `player.move 111` is the case a reader saw: H_SNKON
+    // (19 frames) ends, the pass-through behind it blends 40 frames into
+    // H_SNKON at frame 19 - its own last pose, so the engine HOLDS - and the
+    // port raised the wrist a second time (SCENE 53, the call at the Telis
+    // lunch). `sub_471820` reads each node's two keys at the blend record's
+    // +12 (the frame left) and +16 (the start frame), as integers, and slerps
+    // them by +8 = frame / blendFrames truncated to 255ths. A from-state with
+    // no clip of its own passes 0, and `Actor_BlendToClip` snapshots the pose
+    // instead (`sub_471710` into actor+460). The root delta is NOT changed
+    // here: it still reads the clip owner (`sub_471460`'s blended root is
+    // not ported).
+    {
+        const ChannelEvent* bl = nullptr;
+        for (const auto& e : rt_.channel().events())       // the LAST clip change
+            if (e.kind == ChannelEvent::Kind::Blend || e.kind == ChannelEvent::Kind::Cut)
+                bl = e.kind == ChannelEvent::Kind::Blend ? &e : nullptr;
+        if (bl && !(rt_.channel().flags() & channel_flag::NoPlayback) &&
+            bl->to >= 0 && bl->to < static_cast<int>(S.size())) {
+            const int fromClip = (bl->from >= 0 && bl->from < static_cast<int>(S.size()))
+                                     ? S[static_cast<std::size_t>(bl->from)].clip : -1;
+            NodeTracks snap;
+            const NodeTracks* a = fromClip >= 0 ? clipTracks(fromClip) : nullptr;
+            int rowA = static_cast<int>(f0) - 1;
+            if (!a && shownBefore) {
+                snap = blendTracks(*shownBefore, shownRow, false, *shownBefore, shownRow, false, 0.0f);
+                a = &snap;
+                rowA = 0;
+            }
+            const NodeTracks* b = clipTracks(S[static_cast<std::size_t>(bl->to)].clip);
+            const int len = bl->frames > 0 ? bl->frames : 1;
+            NodeTracks out;
+            if (a && b) {
+                const int rowB = static_cast<int>(bl->startFrame) - 1;
+                for (int k = 0; k < len; ++k) {
+                    NodeTracks row = blendTracks(*a, rowA, false, *b, rowB, false,
+                                                 static_cast<float>(k + 1) / static_cast<float>(len));
+                    if (k == 0) { out.ids = row.ids; out.count = row.count; out.rootTrack = row.rootTrack; }
+                    out.quats.push_back(std::move(row.quats[0]));
+                    out.trans.push_back(row.trans[0]);
+                }
+                out.frames = len;
+            }
+            transBlend_.tracks = std::move(out);
+            transBlend_.transitions = rt_.channel().stats().transitions;
+            transBlend_.state = s1;
+        }
+    }
     frameBefore_ = f0;
     frameAfter_  = f1;
     stateBefore_ = s0;
@@ -1008,7 +1069,7 @@ void PlayerController::tick(float dt, std::uint32_t word) {
     if (fromZero) {
         if (channelOnly_) nodeDrop_ = 0.0f;        // `o3de_SetNodePos(+244..+252)`
         const int variants = variantCount();
-        const NodeTracks* baked = variants > 1 ? poseTracks() : nullptr;
+        const NodeTracks* baked = variants > 1 && !transBlendTracks() ? poseTracks() : nullptr;
         if (baked && !baked->trans.empty()) {
             // the grid's blended window, summed from its start (see below)
             const int last = static_cast<int>(baked->trans.size()) - 2 > 0
@@ -1044,7 +1105,7 @@ void PlayerController::tick(float dt, std::uint32_t word) {
         // mixes them with the same two 0..256 weights as the rotations. The
         // baked window below is exactly that blend.
         const int variants = variantCount();
-        const NodeTracks* baked = variants > 1 ? poseTracks() : nullptr;
+        const NodeTracks* baked = variants > 1 && !transBlendTracks() ? poseTracks() : nullptr;
         if (baked && !baked->trans.empty()) {
             const int a = static_cast<int>(std::floor(f0)) - 1;
             const int b = static_cast<int>(std::floor(f1)) - 1;
@@ -1317,7 +1378,15 @@ void PlayerController::cameraCollide(float dt) {
 
 // ------------------------------------------------------------- posing
 
+const NodeTracks* PlayerController::transBlendTracks() const {
+    const auto& ch = rt_.channel();
+    if (!transBlend_.tracks.valid() || ch.state() != transBlend_.state ||
+        ch.stats().transitions != transBlend_.transitions) return nullptr;
+    return &transBlend_.tracks;
+}
+
 const NodeTracks* PlayerController::poseTracks() {
+    if (const NodeTracks* bt = transBlendTracks()) return bt;   // a blend runs
     const NodeTracks* raw = clipTracks(clip());
     if (!raw) return nullptr;
     const int v = variantCount();
@@ -1540,6 +1609,10 @@ const NodeTracks* PlayerController::gridTracks(const NodeTracks& base, int n) {
 int PlayerController::poseFrame() const {
     // the channel's frame runs 1 .. clipLen; the tracks are 0-based
     int f = static_cast<int>(std::floor(rt_.channel().frame())) - 1;
+    if (const NodeTracks* bt = transBlendTracks()) {           // one row a blend frame
+        const int n = bt->frames;
+        return f < 0 ? 0 : (f >= n ? n - 1 : f);
+    }
     int n = clipFrames();
     // A variant-grid clip is played as ONE cell, so the window is `len` and
     // not the whole 125 or 188 (omk-play 69). Without this the channel walks
@@ -1567,7 +1640,8 @@ float PlayerController::poseFrameF() const {
     // the window, as `poseFrame` sizes it
     int n = clipFrames();
     const int v = variantCount();
-    if (v > 1 && n > 0) { n = (n + 1) / v; if (n > 1) --n; }
+    if (const NodeTracks* bt = transBlendTracks()) n = bt->frames;
+    else if (v > 1 && n > 0) { n = (n + 1) / v; if (n > 1) --n; }
     if (n > 0 && f + 1 >= n) return static_cast<float>(f);
     return static_cast<float>(f) + static_cast<float>(c - fl);
 }

@@ -55,6 +55,16 @@
 // and the frontend then draws the composited frame over it and swaps. Every
 // call on that path is OpenGL 1.2 or AGL, which OS 9's `OpenGLLibrary` and
 // Tiger's CFM bridge both export under that one fragment name.
+//
+// THE SDL BUILD ON MAC OS X DRAWS ON ITS WINDOW TOO (`OMK_GL1_SDL_WINDOW`,
+// `ppc-darwin.mk`): the context is the SDL window's (`backends/gl1/
+// gl1sdlhost.cpp`) and every AGL path above - the straight present, the
+// overlay, the read through a texture - is its path, the swap through the
+// host. Offscreen, a 640x480 street frame cost an iBook G4 (1.42 GHz, Radeon
+// 9550) 135 of its 183 ms in the readback alone (`todo/handoff-classic-mac.md`
+// 3g). Where the host has no GL window (`SDL_VIDEODRIVER=dummy`, which is how
+// `verify.py` runs it) the framebuffer object below is kept - decided in
+// `makeContext`, `onWindow_`.
 #if defined(OMK_GL1_AGL)
 #  include <agl.h>
 #  include <gl.h>
@@ -173,9 +183,9 @@ public:
     ~Gl1Renderer() override {
         removeGeometryListener(&Gl1Renderer::geometryGone, this);
         if (!ctx_) return;
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
         // the context is the frontend's, and it may have closed first
-        if (gl1AglContext() != ctx_) return;
+        if (onWindow_ && gl1WindowContext() != ctx_) return;
 #endif
         {
             Current current(ctx_);
@@ -184,12 +194,13 @@ public:
                 glDeleteTextures(1, &u.name);
             }
             uploaded_.clear();
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
             if (readTex_) gpuForget(omk::prof::kGlTexture, &readTex_, 1);
             if (readTex_) glDeleteTextures(1, &readTex_);
             freeOverlayTiles();
             if (probeTex_) glDeleteTextures(1, &probeTex_);
-#else
+#endif
+#if !defined(OMK_GL1_AGL)
             if (fbo_) glDeleteFramebuffersEXT(1, &fbo_);
             if (colour_) gpuForget(omk::prof::kGlRenderbuffer, &colour_, 1);
             if (colour_) glDeleteRenderbuffersEXT(1, &colour_);
@@ -198,7 +209,7 @@ public:
 #endif
         }
 #if !defined(OMK_GL1_AGL)                    // the AGL context is the frontend's
-        CGLDestroyContext(ctx_);
+        if (!onWindow_) CGLDestroyContext(ctx_);  // ...and so is the SDL window's
         if (pbuf_) CGLDestroyPBuffer(pbuf_);
 #endif
     }
@@ -207,12 +218,16 @@ public:
         if (!ctx_ && !makeContext()) return false;
         Current current(ctx_);
         w_ = w; h_ = h;
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
         // the window's own back buffer, which is the window's size - the
         // frame the viewer asks for (the display size)
-        glDrawBuffer(GL_BACK);
-        glReadBuffer(GL_BACK);
-#else
+        if (onWindow_) {
+            glDrawBuffer(GL_BACK);
+            glReadBuffer(GL_BACK);
+        }
+#endif
+#if !defined(OMK_GL1_AGL)
+        if (!onWindow_) {
         if (!fbo_) glGenFramebuffersEXT(1, &fbo_);
         if (!colour_) glGenRenderbuffersEXT(1, &colour_);
         if (!depth_) glGenRenderbuffersEXT(1, &depth_);
@@ -236,6 +251,7 @@ public:
                 return false;
             }
         }
+        }   // the offscreen target
 #endif
         fb_ = Surface(w, h, 0);
         rgba_.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
@@ -385,7 +401,7 @@ public:
             OMK_ZONE("gl1: clear");
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
         // THE LETTERBOX BARS BLACK. On AGL the picture is drawn at its
         // letterbox place in the window's own back buffer and presented as it
         // stands, so the rows above and below it are the window's - and the
@@ -393,7 +409,7 @@ public:
         // cutscene's bars come out sky-tinted. The composed frame's bars are
         // black, as the original's are; only the two bands are cleared again,
         // scissored.
-        if (v.letterboxed()) {
+        if (onWindow_ && v.letterboxed()) {
             const int top = std::max(0, std::min(v.vy, h_ - cam.h));
             const int below = h_ - top - cam.h;
             glEnable(GL_SCISSOR_TEST);
@@ -409,8 +425,8 @@ public:
         // `view.vy` rows down, where the composed frame puts it - so a frame
         // nothing is drawn over is presented as it stands (`presentWorld`,
         // todo/cpu-vs-original.md tier B); `readback` takes it from there.
-#if defined(OMK_GL1_AGL)
-        vy_ = v.letterboxed() ? std::max(0, std::min(v.vy, h_ - cam.h)) : 0;
+#if defined(OMK_GL1_ON_WINDOW)
+        vy_ = onWindow_ && v.letterboxed() ? std::max(0, std::min(v.vy, h_ - cam.h)) : 0;
 #endif
         glViewport(0, h_ - vy_ - cam.h, cam.w, cam.h);
 
@@ -850,10 +866,11 @@ public:
         // then shows as 85 85 85, not as a black frame (the report below)
         if (!toldRead_) std::memset(rgba_.data(), 0x55, rgba_.size());
         // bytes, not a packed type: endian-free on any Mac
-#if defined(OMK_GL1_AGL)
-        readWindow();
-#else
-        glReadPixels(0, 0, w_, h_, GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
+#if defined(OMK_GL1_ON_WINDOW)
+        if (onWindow_) readWindow();
+#endif
+#if !defined(OMK_GL1_AGL)
+        if (!onWindow_) glReadPixels(0, 0, w_, h_, GL_RGBA, GL_UNSIGNED_BYTE, rgba_.data());
 #endif
         // bottom-up rows into the top-down RGB565 frame, with the dither the
         // reference applies (`DITHERENABLE` 1 on both device arms)
@@ -884,7 +901,7 @@ public:
         return fb_;
     }
 
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
     // ---- THE WORLD PRESENTED STRAIGHT (todo/cpu-vs-original.md tier B) ----
     //
     // The world is in the window's back buffer at its letterbox place, the
@@ -893,16 +910,122 @@ public:
     // drawable's own depth with the DRIVER's dither (GL_DITHER, on by
     // default), as the original's 16-bit D3D device dithered (`DITHERENABLE`,
     // ASSETS 4). ~5 -> 17 fps on emulated Tiger against the composite
-    // (`handoff-classic-mac.md`). Only where the window is the frame's
-    // own size; anything else stays on the composite.
+    // (`handoff-classic-mac.md`). Where the window is LARGER than the frame
+    // (the SDL build's fullscreen, a dragged edge) the frame is still drawn
+    // at its own size, in the back buffer's bottom-left corner, and
+    // `fitToWindow` scales that corner up on the card; a window smaller than
+    // the frame cannot hold it and stays on the composite.
+    bool holdsFrame(int ww, int wh) const { return onWindow_ && ww >= w_ && wh >= h_; }
     bool presentWorld(int ww, int wh) {
-        if (ww != w_ || wh != h_) return false;
+        if (!holdsFrame(ww, wh)) return false;
         Current current(ctx_);
         flush();
+        fitToWindow(ww, wh);
         OMK_ZONE("gl1: swap");
-        aglSwapBuffers(ctx_);
+        swapWindow();
         return true;
     }
+    // THE FRAME SCALED TO THE WINDOW, on the card (`todo/handoff-classic-mac.md`
+    // 3h): the corner the frame was drawn in copied into a texture
+    // (`glCopyTexSubImage2D`, OpenGL 1.1 - no CPU read) and drawn back over
+    // the whole window, fitted at its own aspect and centred, the bands
+    // black - as the composed frame is fitted (`sdlGl1PresentFrame`), and
+    // NEAREST as it is, so a frame changing path does not change its look.
+    void fitToWindow(int ww, int wh) {
+        if (ww == w_ && wh == h_) return;
+        OMK_ZONE("gl1: fit to the window");
+        // the probe's view of the corner, BEFORE the fit covers it
+        const bool probing = fitProbeDue();
+        if (probing) readPixelsTo(fitCorner_, 0, 0, w_, h_);
+        readTexture();                       // the readback's texture, shared
+        glBindTexture(GL_TEXTURE_2D, readTex_);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w_, h_);
+        glViewport(0, 0, ww, wh);
+        glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, ww, 0, wh, -1, 1);
+        glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+        glMatrixMode(GL_TEXTURE); glLoadIdentity(); glMatrixMode(GL_MODELVIEW);
+        glDisable(GL_DEPTH_TEST); glDisable(GL_FOG); glDisable(GL_CULL_FACE); glDisable(GL_BLEND);
+        glDisable(GL_ALPHA_TEST); glDisable(GL_SCISSOR_TEST); glDisable(GL_LIGHTING);
+        if (hasColourSum_) glDisable(OMK_GL_COLOR_SUM);   // the fog's (see `end`)
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_TEXTURE_2D);
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);   // `begin` sets MODULATE again
+        glColor4f(1, 1, 1, 1);
+        const float sc = std::min(static_cast<float>(ww) / w_, static_cast<float>(wh) / h_);
+        const float dw = w_ * sc, dh = h_ * sc;
+        const float x0 = (ww - dw) * 0.5f, y0 = (wh - dh) * 0.5f;
+        const float s1 = static_cast<float>(w_) / readTexW_, t1 = static_cast<float>(h_) / readTexH_;
+        glBegin(GL_QUADS);                   // texture row 0 is the back buffer's BOTTOM row
+        glTexCoord2f(0, 0);   glVertex2f(x0, y0);
+        glTexCoord2f(s1, 0);  glVertex2f(x0 + dw, y0);
+        glTexCoord2f(s1, t1); glVertex2f(x0 + dw, y0 + dh);
+        glTexCoord2f(0, t1);  glVertex2f(x0, y0 + dh);
+        glEnd();
+        glDisable(GL_TEXTURE_2D);
+        boundTex_ = ~0u;                     // the next draw binds its own
+        if (!toldFit_) {
+            toldFit_ = true;
+            std::printf("gl1: the %dx%d frame scaled to the %dx%d window on the card (x%.2f)\n",
+                        w_, h_, ww, wh, static_cast<double>(sc));
+        }
+        if (probing) fitProbe(ww, wh, x0, y0, sc);
+    }
+    bool toldFit_ = false;
+    // THE FIT PROBE, `OMK_GL1_FIT_PROBE=<file>` (an INSTRUMENT, `verify.py:
+    // engine: gl1 window fit`): on the 60th fitted frame the corner is read
+    // before the fit and the whole window after it, and every window pixel
+    // inside the fitted rectangle is compared with the corner's pixel its
+    // centre samples (NEAREST) - said as a count, from the window's own
+    // pixels; the window is written to <file> (PPM, top row first) to look at
+    long fitFrames_ = 0;
+    std::vector<unsigned char> fitCorner_, fitWindow_;
+    bool fitProbeDue() {
+        static const char* path = omk::envStr("OMK_GL1_FIT_PROBE");
+        return path && *path && ++fitFrames_ == 60;
+    }
+    void readPixelsTo(std::vector<unsigned char>& out, int x, int y, int w, int h) {
+        out.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+    }
+    void fitProbe(int ww, int wh, float x0, float y0, float sc) {
+        glFinish();
+        readPixelsTo(fitWindow_, 0, 0, ww, wh);
+        long inside = 0, match = 0, bandsBlack = 0, bands = 0;
+        for (int Y = 0; Y < wh; ++Y)
+            for (int X = 0; X < ww; ++X) {
+                const unsigned char* p = fitWindow_.data() + (static_cast<std::size_t>(Y) * ww + X) * 4;
+                const float fx = (X + 0.5f - x0) / sc, fy = (Y + 0.5f - y0) / sc;
+                if (fx < 0 || fy < 0 || fx >= w_ || fy >= h_) {
+                    ++bands;
+                    bandsBlack += p[0] == 0 && p[1] == 0 && p[2] == 0;
+                    continue;
+                }
+                const unsigned char* q = fitCorner_.data() +
+                    (static_cast<std::size_t>(fy) * w_ + static_cast<std::size_t>(fx)) * 4;
+                ++inside;
+                match += p[0] == q[0] && p[1] == q[1] && p[2] == q[2];
+            }
+        std::printf("gl1 fit probe: %ld of %ld window pixels are the corner's nearest pixel; "
+                    "%ld of %ld band pixels black\n", match, inside, bandsBlack, bands);
+        if (FILE* f = std::fopen(omk::envStr("OMK_GL1_FIT_PROBE"), "wb")) {
+            std::fprintf(f, "P6\n%d %d\n255\n", ww, wh);
+            for (int Y = wh - 1; Y >= 0; --Y)
+                for (int X = 0; X < ww; ++X)
+                    std::fwrite(fitWindow_.data() + (static_cast<std::size_t>(Y) * ww + X) * 4, 1, 3, f);
+            std::fclose(f);
+        }
+    }
+    // the swap: AGL's on its own context, the SDL window's through its host
+    void swapWindow() {
+#if defined(OMK_GL1_AGL)
+        aglSwapBuffers(ctx_);
+#else
+        gl1WindowSwap();
+#endif
+    }
+    bool onWindow() const { return onWindow_; }
     // ...and a frame with the interface over it: the composed frame `fb`,
     // whose world rows are the KEY (0xF81F), and `mask` - how much of the
     // world shows through a pixel - drawn OVER the world as the GLES
@@ -917,7 +1040,11 @@ public:
     // emulated Tiger re-sends the whole frame for 26-31 ms each.
     bool presentOverlay(const Surface& fb, const std::uint8_t* mask, const std::uint8_t* maskRow,
                         const float fade[4], int ww, int wh, bool probe = false) {
-        if (ww != w_ || wh != h_ || fb.w != w_ || fb.h != h_) return false;
+        if (!holdsFrame(ww, wh) || fb.w != w_ || fb.h != h_) return false;
+        // the overlay goes over the world in the corner it was drawn in, at
+        // the frame's size; the window's own size is the fit's, before the swap
+        const int winW = ww, winH = wh;
+        ww = w_; wh = h_;
         int lo = fb.h, hi = -1;
         const bool fading = fade[3] > 0.0f;
         // EACH ROW AGAINST THE COPY LAST SEEN: a row whose 565 pixels and
@@ -1208,8 +1335,9 @@ public:
             std::printf("gl1: the overlay raised GL error 0x%04X (rows %d..%d, %s upload)\n",
                         static_cast<unsigned>(e), lo, hi, gl1OverlayArgb() ? "ARGB8888" : "RGBA bytes");
         }
+        fitToWindow(winW, winH);
         OMK_ZONE("gl1: swap");
-        aglSwapBuffers(ctx_);
+        swapWindow();
         return true;
     }
     // THE WHITE-SCREEN PROBE (steps 2j/2k; kept until a run confirms 2k): what the overlay frame holds and what
@@ -1319,6 +1447,8 @@ public:
     void setFullTextures(bool full) { fullTextures_ = full; }
     int maxVertexLights() const override { return kPoseLights; }
     const char* name() const override { return "OpenGL 1.x fixed-function"; }
+    // the texture filter alone (`Renderer::takes`)
+    unsigned takes() const override { return omk::kTakesTextureFilter; }
     // TEXTURE FILTERING (renderer.h): 0 nearest, 1 bilinear. No mip chain -
     // the original set MIP NONE on both arms - so trilinear is drawn bilinear
     // and said. Recorded here; applied to every texture `setTextures` made
@@ -1342,7 +1472,7 @@ public:
     }
 
 private:
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
     // THE WINDOW'S BACK BUFFER, READ THROUGH A TEXTURE. `glReadPixels` from a
     // window surface returns zeros on Tiger's emulated Radeon 9700 while the
     // same frame draws correctly when swapped (2026-10-04, probed: a cleared
@@ -1350,6 +1480,22 @@ private:
     // in the window); the copy into a texture and `glGetTexImage` go through
     // texture memory instead. Both calls are OpenGL 1.1, so Mac OS 9 has them.
     void readWindow() {
+        readTexture();
+        glBindTexture(GL_TEXTURE_2D, readTex_);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w_, h_);
+        // (the CPU's copy only where a frame is read: the fit needs none)
+        readBig_.resize(static_cast<std::size_t>(readTexW_) * static_cast<std::size_t>(readTexH_) * 4);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, readBig_.data());
+        boundTex_ = ~0u;                     // the next draw binds its own
+        // the texture's rows are the back buffer's, bottom-up, at its stride
+        for (int y = 0; y < h_; ++y)
+            std::memcpy(rgba_.data() + static_cast<std::size_t>(y) * w_ * 4,
+                        readBig_.data() + static_cast<std::size_t>(y) * readTexW_ * 4,
+                        static_cast<std::size_t>(w_) * 4);
+    }
+    // the texture the frame's corner is copied into - for the read above
+    // and the fit to a larger window (`fitToWindow`) - made at first use
+    void readTexture() {
         const GLsizei tw = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(w_)));
         const GLsizei th = static_cast<GLsizei>(nextPow2(static_cast<unsigned>(h_)));
         if (!readTex_ || readTexW_ != tw || readTexH_ != th) {
@@ -1360,17 +1506,7 @@ private:
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             gpuNote("readback", omk::prof::kGlTexture, readTex_, 4LL * tw * th);
             readTexW_ = tw; readTexH_ = th;
-            readBig_.assign(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th) * 4, 0);
         }
-        glBindTexture(GL_TEXTURE_2D, readTex_);
-        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, w_, h_);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, readBig_.data());
-        boundTex_ = ~0u;                     // the next draw binds its own
-        // the texture's rows are the back buffer's, bottom-up, at its stride
-        for (int y = 0; y < h_; ++y)
-            std::memcpy(rgba_.data() + static_cast<std::size_t>(y) * w_ * 4,
-                        readBig_.data() + static_cast<std::size_t>(y) * tw * 4,
-                        static_cast<std::size_t>(w_) * 4);
     }
     GLuint readTex_ = 0;
     GLsizei readTexW_ = 0, readTexH_ = 0;
@@ -1397,8 +1533,8 @@ private:
         if (scaleDecided_) return;
         scaleDecided_ = true;
         long freeMem = -1;
-#if defined(OMK_GL1_AGL)
-        freeMem = gl1TextureMemory();
+#if defined(OMK_GL1_ON_WINDOW)
+        if (onWindow_) freeMem = gl1TextureMemory();
 #endif
         freeMem = omk::envInt("OMK_TEXTURE_MEMORY", freeMem);
         const TextureScale sc = fullTextures_ ? TextureScale{} : originalTextureScale(freeMem);
@@ -1416,7 +1552,7 @@ private:
     std::vector<float> poseView_;          // 12 a mesh: view = P * rest
     std::vector<std::uint32_t> poseGen_;
     std::uint32_t poseDraw_ = 0;
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
     // each row as last SEEN (its 565 pixels, its mask, 0/1/2 never /
     // without / with a mask), whether it holds anything but the key, and
     // whether the texture row holds it
@@ -1433,11 +1569,14 @@ private:
     // Where the world is drawn and read from: the framebuffer object, or on
     // classic Mac OS the window's back buffer (the frontend presents after).
     void bindTarget() {
-#if defined(OMK_GL1_AGL)
-        glDrawBuffer(GL_BACK);
-        glReadBuffer(GL_BACK);
-#else
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo_);
+#if defined(OMK_GL1_ON_WINDOW)
+        if (onWindow_) {
+            glDrawBuffer(GL_BACK);
+            glReadBuffer(GL_BACK);
+        }
+#endif
+#if !defined(OMK_GL1_AGL)
+        if (!onWindow_) glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fbo_);
 #endif
     }
 
@@ -1445,7 +1584,7 @@ private:
     // The window's context, made by the frontend (`gl1host.h`); nothing to
     // attach here, and no extension needed - the back buffer is the target.
     bool makeContext() {
-        ctx_ = static_cast<GlContext>(gl1AglContext());
+        ctx_ = static_cast<GlContext>(gl1WindowContext());
         if (!ctx_) {
             std::fprintf(stderr, "gl1: no AGL context on the window\n");
             return false;
@@ -1472,6 +1611,26 @@ private:
     // 10.3 onwards - and the FBO is drawn into all the same; where pbuffers are
     // gone or refused (deprecated since 10.7) the context goes on without.
     bool makeContext() {
+#if defined(OMK_GL1_SDL_WINDOW)
+        // THE SDL WINDOW'S CONTEXT, where the host made one
+        // (`backends/gl1/gl1sdlhost.cpp`): the world is drawn into the
+        // window's back buffer and swapped, as on AGL - no framebuffer
+        // object, no pbuffer, and no readback but for a frame composed on the
+        // CPU. A host without one (no GL window) falls through to the
+        // offscreen target below.
+        if (void* win = gl1WindowContext()) {
+            ctx_ = static_cast<GlContext>(win);
+            onWindow_ = true;
+            Current current(ctx_);
+            GLint vp[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_VIEWPORT, vp);
+            std::printf("gl1: %s, OpenGL %s, on the window's back buffer (%dx%d drawable)\n",
+                        reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
+                        reinterpret_cast<const char*>(glGetString(GL_VERSION)),
+                        static_cast<int>(vp[2]), static_cast<int>(vp[3]));
+            return true;
+        }
+#endif
         for (int withPBuffer = 1; withPBuffer >= 0 && !ctx_; --withPBuffer) {
             CGLPixelFormatAttribute attrs[8];
             int k = 0;
@@ -1684,12 +1843,15 @@ private:
     }
 
     GlContext ctx_ = nullptr;
-#if !defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_AGL)
+    static constexpr bool onWindow_ = true;    // the AGL context is always the window's
+#else
+    bool onWindow_ = false;  // the SDL window's context (`OMK_GL1_SDL_WINDOW`), else offscreen
     CGLPBufferObj pbuf_ = nullptr;
 #endif
     GLuint fbo_ = 0, colour_ = 0, depth_ = 0;
     int w_ = 0, h_ = 0;
-    int vy_ = 0;             // the picture's first row in the target (AGL: its letterbox place)
+    int vy_ = 0;             // the picture's first row in the target (on a window: its letterbox place)
     std::vector<GLuint> tex_;            // per pool slot: a name `uploaded_` owns
     std::vector<float> texW_, texH_;
     // the textures on the card, by their pixel storage (`setTextures`); the
@@ -1903,7 +2065,7 @@ void gl1SetFullTextures(Renderer* r, bool full) {
     if (r) static_cast<Gl1Renderer*>(r)->setFullTextures(full);
 }
 
-#if defined(OMK_GL1_AGL)
+#if defined(OMK_GL1_ON_WINDOW)
 // `r` is the renderer `makeGl1Renderer` made (the glue holds no other)
 bool gl1PresentWorld(Renderer* r, int ww, int wh) {
     return r && static_cast<Gl1Renderer*>(r)->presentWorld(ww, wh);
@@ -1912,6 +2074,7 @@ bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
                        const std::uint8_t* maskRow, const float fade[4], int ww, int wh, bool probe) {
     return r && static_cast<Gl1Renderer*>(r)->presentOverlay(fb, mask, maskRow, fade, ww, wh, probe);
 }
+bool gl1OnWindow(Renderer* r) { return r && static_cast<Gl1Renderer*>(r)->onWindow(); }
 #endif
 
 }  // namespace omk

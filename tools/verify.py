@@ -66,6 +66,29 @@ def _play_text(eng):
                                      _g.glob(os.path.join(eng, "backends", "sdl", "*.h"))))
 
 
+# What a check may answer IN PLACE of a backend's result: only a backend it
+# could not try at all - not on this platform, its toolchain or the pack
+# absent. A run that was tried and failed ("no frame", "no vulkan device",
+# "no gl context") is NOT one: compared with itself it passed, and a crashed
+# viewer turned the remaster checks green (the review of 2026-10-21).
+_SKIP_ANSWERS = {("skipped",), ("no vulkan",), ("no gles_probe",)}
+
+
+def _engine_src(*rels):
+    """The text of these engine sources, together. The remaster switch
+    (`engine: remaster switch`) moved code out of the shared files into the
+    remaster's own (`backends/remaster/`, the GLES `.inl`): a source fact a
+    check asserts about the remaster is read across the shared file and the
+    remaster file it went to, so the check reads the same facts as before
+    and a fact missing from both still fails."""
+    eng = os.path.join(ROOT, "engine")
+    return "\n".join(open(os.path.join(eng, rel)).read() for rel in rels)
+
+
+def _or_skip(got, want):
+    return got if got in _SKIP_ANSWERS else want
+
+
 def _viewer_args(args):
     if not isinstance(args, (list, tuple)) or not args:
         return args
@@ -6250,6 +6273,44 @@ def c_engine_pedestrians():
 
 
 
+def c_engine_crowd_slope():
+    r"""The street crowd on QALISAR's slopes (a reader, 2026-10-21: the NPCs
+    "walking through a slope instead of walking on it, flickering position in
+    slope"; engine/tools/ped_probe's `slope` line).
+
+    A walker's height is the lane's: `sub_455830` moves the body toward its
+    mover and lifts it by the moved distance times the vertical over the
+    distance - no ground probe, in the engine as in the port. What it ADDS is
+    the walk clip's root y (`+24`, `footY`), summed by `sub_437FE0` in the
+    node's frame, which `sub_453330` builds from the heading. The engine hands
+    `sub_455D10` the vector {dx, 0, dz} (`v58 = 0`): the heading is flat and
+    the root's forward travel stays horizontal. The port passed the vertical
+    too, so on a 23-degree street the heading pitched by asin 0.39, the stride
+    climbed (or sank) 25 units of its own on top of the lane's, and `footY`
+    snapped back at every loop of the clip - a sawtooth up to 30 units deep.
+    (The vehicles' `sub_456C70` does pass the vertical, 19_dsound.c 143.)
+
+    Measured over 600 frames at level 3 in Qalisar (AREA 101), walking
+    bodies only: the largest |heading y| and the largest |footY|.
+    SHOWN TO FAIL with the vertical put back: 0.3873 and 29.8.
+    """
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    b = subprocess.run(["make", "-s", "build/ped_probe"], cwd=eng, capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "ped_probe")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    r = subprocess.run([binp, omkpaths.data_root(), os.path.join(ROOT, "tables"), "101", "600", "3"],
+                       capture_output=True, text=True)
+    m = re.search(r"^slope max_pitch (\S+) max_footy (\S+)", r.stdout, re.M)
+    if not m:
+        return ("no slope line",), ("a line",), "ped_probe must report"
+    pitch, foot = float(m.group(1)), float(m.group(2))
+    return (pitch, foot <= 5.0), (0.0, True), \
+        "Qalisar's walking crowd: the largest heading pitch (must be 0) and " \
+        "the largest root-track y within 5 (the clip's own bob is 2.1)"
+
 def c_engine_road_traffic():
     r"""The ROAD TRAFFIC - the sliders and the motos (docs/STREET_LIFE.md 2b;
     engine/src/actor/vehicles.cpp; engine/tools/veh_probe).
@@ -6772,6 +6833,557 @@ def c_config_template():
 
 
 
+def c_options_write():
+    r"""The ini WRITER (`platform/options.h` `writeOptionsFile`,
+    `todo/graphics-menu.md` A1) - OMK's own options menu writes its choices
+    back to the config, and the file it writes into is the reader's.
+
+    So the property is not "it writes the value" but "it writes ONLY the
+    value": a hand-commented file - the template, the Vita's `omk.ini` - comes
+    back byte for byte apart from the lines an edit names. Four parts:
+
+    1. the template copied and edited: a commented-out key set on its own line
+       (uncommented, its documentation kept above it) in three sections, a key
+       the section never mentions added under it, a section added at the end -
+       and nothing else in 300-odd lines moves; the probe reads the five back;
+    2. the same values written again: the bytes do not change;
+    3. a hand-made file: CRLF endings, a value with a trailing comment, the
+       same key twice (the reader takes the LAST, so both are set), a cp1252
+       byte in a comment, no final newline - the exact bytes expected;
+    4. refusals: a value with `;` (the reader would cut it there) leaves the
+       file untouched, and a path inside the shipped tree is not created.
+    """
+    import subprocess, tempfile, shutil, difflib
+    eng = os.path.join(ROOT, "engine")
+    tpl = os.path.join(ROOT, "omk.ini.example")
+    mk = subprocess.run(["make", "-s", "build/options_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "options_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("not built",), ("built",), "options_probe did not build: " + mk.stderr[-300:]
+    want = {"enhancements.antialiasing": "4", "preferences.clipdistance": "100",
+            "omk.language": "en", "remaster.newkey": "1", "test.a": "2"}
+    edits = ["Enhancements", "antialiasing", "4", "Preferences", "clipdistance", "100",
+             "OMK", "language", "en", "Remaster", "newkey", "1", "Test", "a", "2"]
+    with tempfile.TemporaryDirectory() as td:
+        # ---- 1. the template
+        t = os.path.join(td, "t.ini")
+        shutil.copyfile(tpl, t)
+        r = subprocess.run([probe, "--edit", t] + edits, capture_output=True, text=True)
+        a = open(tpl, "rb").read().decode("cp1252").split("\n")
+        b = open(t, "rb").read().decode("cp1252").split("\n")
+        replaced, inserted, other = [], [], []
+        for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            if op == "equal":
+                continue
+            if op == "replace" and i2 - i1 == 1 and j2 - j1 == 1:
+                old, new = a[i1], b[j1]
+                k = new.split("=")[0].strip()
+                # the old line was that key, commented out
+                ok = old.lstrip(";# \t").split("=")[0].strip() == k and old.lstrip().startswith(";")
+                (replaced if ok else other).append(new)
+            elif op == "replace" and i2 - i1 == 1 and j2 - j1 > 1:
+                # the last line set, and the new section after it
+                replaced.append(b[j1])
+                inserted.extend(b[j1 + 1:j2])
+            elif op == "insert":
+                inserted.extend(b[j1:j2])
+            else:
+                other.append((op, a[i1:i2], b[j1:j2]))
+        rd = subprocess.run([probe, t], capture_output=True, text=True).stdout
+        got = dict(re.findall(r"^  (\w+\.\w+) = (\S*)$", rd, re.M))
+        part1 = (r.returncode, sorted(replaced), sorted(x for x in inserted if x.strip()), other, got)
+        exp1 = (0, ["antialiasing = 4", "clipdistance = 100", "language = en"],
+                ["[Test]", "a = 2", "newkey = 1"], [], want)
+        # ---- 2. the same again: not a byte moves
+        before = open(t, "rb").read()
+        subprocess.run([probe, "--edit", t] + edits, capture_output=True, text=True)
+        part2 = open(t, "rb").read() == before
+        # ---- 3. a hand-made file
+        h = os.path.join(td, "h.ini")
+        open(h, "wb").write(b"[Preferences]\r\nclipdistance = 50   ; row 3\r\n; Tr\xe8s\r\n"
+                            b"clipdistance=25\r\n[Enhancements]\r\nradar = game")
+        subprocess.run([probe, "--edit", h, "Preferences", "clipdistance", "200",
+                        "Enhancements", "framerate", "60"], capture_output=True, text=True)
+        part3 = open(h, "rb").read()
+        exp3 = (b"[Preferences]\r\nclipdistance = 200   ; row 3\r\n; Tr\xe8s\r\n"
+                b"clipdistance=200\r\n[Enhancements]\r\nradar = game\r\nframerate = 60")
+        # ---- 4. refusals
+        before = open(h, "rb").read()
+        rr = subprocess.run([probe, "--edit", h, "Enhancements", "radar", "a;b"],
+                            capture_output=True, text=True)
+        shipped = os.path.join(td, "IAM", "omk.ini")
+        rs = subprocess.run([probe, "--edit", shipped, "OMK", "language", "en"],
+                            capture_output=True, text=True)
+        part4 = (rr.returncode != 0, open(h, "rb").read() == before,
+                 rs.returncode != 0, os.path.exists(shipped))
+    return (part1, part2, part3, part4), (exp1, True, exp3, (True, True, True, False)), \
+           ("the template edited (lines replaced, lines added, anything else, read back); the "
+            "same edit again changes no byte; a CRLF hand file's exact bytes; a `;` value and a "
+            "path in the shipped tree refused")
+
+
+def c_omk_lang():
+    r"""The texts of OMK's own menu rows (`engine/lang/omk-menu.ini`,
+    `ui/omktext.h`, `todo/graphics-menu.md` A2b).
+
+    Four things, each one a way a row would draw wrong or not at all:
+
+    1. the compiled copy (`engine/src/ui/omktext_data.cpp`) is what
+       `tools/omklang.py` makes of the file today - a stale one ships old texts;
+    2. `[fr]` and `[en]` carry the same ids - a text missing in English
+       silently falls back to French;
+    3. every text is Latin-1, the fonts' range - anything past it draws as
+       two wrong glyphs (`utf8ToLatin1`);
+    4. every id the pages ask for (`OmkOptions::textIds`, out of
+       `build/omkmenu_probe`) exists in both - a missing one is drawn as its id.
+    """
+    import subprocess
+    gen = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "omklang.py"), "--check"],
+                         capture_output=True, text=True)
+    secs, sec = {}, None
+    with open(os.path.join(ROOT, "engine", "lang", "omk-menu.ini"), encoding="utf-8") as f:
+        for raw in f:
+            line = re.split(r"[;#]", raw, 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sec = line[1:-1].strip().lower()
+                secs.setdefault(sec, {})
+                continue
+            if "=" in line and sec:
+                k, v = line.split("=", 1)
+                secs[sec][k.strip().lower()] = v.strip()
+    fr, en = secs.get("fr", {}), secs.get("en", {})
+    notLatin = []
+    for lang, d in secs.items():
+        for k, v in d.items():
+            try:
+                v.encode("latin-1")
+            except UnicodeEncodeError:
+                notLatin.append(lang + "." + k)
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "build/omkmenu_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "omkmenu_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("not built",), ("built",), "omkmenu_probe did not build: " + mk.stderr[-300:]
+    out = subprocess.run([probe], capture_output=True).stdout.decode("latin-1")
+    need = re.findall(r"^NEED (\S+)$", out, re.M)
+    missing = sorted(i for i in need if i not in fr or i not in en)
+    return (gen.returncode, sorted(set(fr) ^ set(en)), notLatin, len(need) > 0, missing), \
+           (0, [], [], True, []), \
+           ("the compiled copy fresh (tools/omklang.py --check); the ids in one language and "
+            "not the other; the texts outside Latin-1; whether the probe listed the pages' ids, "
+            "and those missing from either language")
+
+
+def c_engine_graphics_menu():
+    r"""engine: OMK's own options pages, live (`todo/graphics-menu.md` A2-A4).
+
+    One run, the start menu's Options -> "Graphismes (OMK)", on the SOFTWARE
+    renderer with a hand-written config beside its saves - a comment, a key with
+    a trailing comment, a remaster strength the choices lack (1.3):
+
+    * page 100, then Améliorations (101): ONLY the rows the software renderer
+      can draw (`Renderer::takes` is 0 - no MSAA, filtering, mapped shadows or
+      per-pixel lighting), the running values (the file's `radar = always`);
+    * `Tout au maximum` RIGHT: written and APPLIED LIVE (step 3d) - each
+      value it raises, the shadows FITTED as a start reduces mapped ones on a
+      renderer without a shadow map; the rows it cannot reach here not tried;
+    * `Distance de vue illimitée` RIGHT: back off, written and applied;
+    * `Valeurs par défaut`: the page's keys COMMENTED OUT, each shown row
+      applied back to its default;
+    * the Remaster page: on software only the mode, the rounding and the preload;
+    * the language RIGHT: English at once, on OMK's rows only - the game's
+      `Vidéo` stays the installed copy's.
+
+    Read from the viewer's page lines (the row hook's text), its
+    `options.omk*` EVENTS and the config's exact bytes after the run - every
+    line the menu did not set as it was. A second run, of the build WITHOUT the
+    remaster (`make noremaster`'s viewer): page 100 has no Remaster header.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk2 = subprocess.run(["make", "-s", "play", "REMASTER=0", "VR=0", "OBJDIR=build/obj-noremaster",
+                          "PLAY_BIN=build/noremaster/omk-play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    plain = os.path.join(eng, "build", "noremaster", "omk-play")
+    if mk.returncode != 0 or mk2.returncode != 0 or not os.path.exists(play) or not os.path.exists(plain):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    ini0 = (b"; my settings\n[Enhancements]\nradar = always   ; the minimap\n"
+            b"[Remaster]\nbloom = 1.3\n")
+    keys = ("0,0xD0,0xD0,0x1C,0xD0,0xD0,0xD0,0xD0,0x1C,0x1C,0xCD,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,0xD0,"
+            "0xCD,0xD0,0x1C,0x39,0xD0,0x1C,0x39,0xD0,0xCD,0x39")
+    got = []
+    tmp = tempfile.mkdtemp()
+    try:
+        for binary in (play, plain):
+            d = os.path.join(tmp, os.path.basename(os.path.dirname(binary)))
+            os.makedirs(d)
+            open(os.path.join(d, "omk.ini"), "wb").write(ini0)
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+            r = subprocess.run([binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--software",
+                                "--nofmv", "--saves", os.path.join(d, "GAMES"), "--res", "800x600",
+                                "--frames", "640", "--keydelay", "20", "--keys", keys],
+                               capture_output=True, env=env)
+            out = (r.stdout + r.stderr).decode("latin-1")
+            pages = []
+            for ln in out.splitlines():
+                m = re.search(r"options: (page (?:1|10\d): .*) - \d+ drawn", ln)
+                if m and (not pages or pages[-1] != m.group(1)):
+                    pages.append(m.group(1))
+            evts = [(e["key"], e["value"], e["live"]) for n, e in _events(out) if n == "options.omk"]
+            got.append((pages, evts, open(os.path.join(d, "omk.ini"), "rb").read()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    root = "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|]"
+    p100 = ("page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Remaster|] "
+            "[Langue des options OMK|Fran\xe7ais] [Retour|]")
+    rows = ("[Tout au maximum|%s] [Qualit\xe9 des ombres|%s] "
+            "[Agrandissement de l'interface|%s] [Taille du texte|%s] "
+            "[Radar|%s] [Images par seconde|%s] [Animations|%s] "
+            "[Distance de vue illimit\xe9e|%s] [Valeurs par d\xe9faut|] [Retour|]")
+    head = "page 101: [Am\xe9liorations|] "
+    plain = ("Non", "Original", "Net (original)", "Original", "Toujours affich\xe9", "30 (original)",
+             "Original", "Non")
+    # `all = max` APPLIED LIVE (step 3d): each value it raises, as a start -
+    # the shadows FITTED, the start's own reduction where there is no shadow map
+    maxed = ("Oui", "Ajust\xe9es", "Liss\xe9", "Adapt\xe9e \xe0 l'\xe9cran", "Toujours affich\xe9", "60",
+             "Fluides", "Oui")
+    want_pages = [root, p100,
+                  head + rows % plain,
+                  head + rows % maxed,
+                  head + rows % (maxed[:7] + ("Non",)),
+                  head + rows % ("Non", "Original", "Net (original)", "Original", "Comme le jeu",
+                                 "30 (original)", "Original", "Non"),
+                  p100,
+                  "page 102: [Remaster|] [Rendu|Remaster] [Personnages arrondis|Non] "
+                  "[Pr\xe9chargement des lieux|Non] [Valeurs par d\xe9faut|] [Retour|]",
+                  p100,
+                  "page 100: [Graphics (OMK)|] [Enhancements|] [Remaster|] [OMK options language|English] [Back|]",
+                  "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphics (OMK)|] [Retour|]"]
+    want_evts = [("enhancements.all", "max", "1"), ("enhancements.clipdistance", "capped", "1"),
+                 ("enhancements.all", "off", "1"), ("enhancements.shadowquality", "classic", "1"),
+                 ("enhancements.uiscaling", "nearest", "1"), ("enhancements.textscaling", "game", "1"),
+                 ("enhancements.radar", "game", "1"), ("enhancements.framerate", "30", "1"),
+                 ("enhancements.animation", "game", "1"), ("omk.language", "en", "1")]
+    want_ini = (b"; my settings\n[Enhancements]\n;radar = always   ; the minimap\n;all = max\n"
+                b";clipdistance = capped\n[Remaster]\nbloom = 1.3\n\n[OMK]\nlanguage = en\n")
+    # the build without the remaster: its page 100 has no Remaster header
+    plainPages = got[1][0]
+    p100plain = [p for p in plainPages if p.startswith("page 100: [Graphismes")][:1]
+    return (got[0][0], got[0][1], got[0][2], p100plain), \
+           (want_pages, want_evts, want_ini,
+            ["page 100: [Graphismes (OMK)|] [Am\xe9liorations|] [Langue des options OMK|Fran\xe7ais] [Retour|]"]), \
+           ("the page lines in order (root, 100, 101 as opened / after a next-start change / after a live "
+            "one / after the defaults, 102, 100 in English, the root); the options.omk events; the "
+            "config's bytes after; and the no-remaster build's page 100")
+
+
+def c_engine_graphics_menu_live():
+    r"""engine: OMK's options APPLIED LIVE draw what a start with them draws
+    (`todo/graphics-menu.md` 3a).
+
+    A change the menu applies at once must leave the game exactly where a start
+    with the same value would - else "live" is a different picture. Each case is
+    three runs of Anekbah's street (`--save traces/save-appart.bin --area 0
+    --stand`), 40 frames: the value STARTED from the config, the value set at
+    frame 10 by `--omk-set` (the menu's own path: `OmkOptions::choose`, the
+    write, `omkApplyLive`), and neither. The live frame must equal the started
+    one to the pixel and differ from the plain one - or, for a change the game
+    REFUSES live, equal the plain one and say "at the next start".
+
+    * Vulkan (`--world-vulkan`): per-pixel lighting, mapped and fitted shadows,
+      the unlimited draw distance - and, with the remaster's pack configured
+      (`omkpaths.pack_path`), the bloom 1.6 -> 4, the ambient occlusion 2 -> 4,
+      the mist 0.5 -> 1, and the bloom from 0, refused (its light maps load
+      only when it is on at start). The emitters' light is off in the bloom
+      cases: its surface lights are computed at a set's load from the light
+      maps the bloom decodes, so a start without the bloom lights by
+      +-1 step differently - a load-time difference, measured and not a fault
+      of the live path.
+    * GLES (`omk-play-gles`, hidden): per-pixel lighting and mapped shadows
+      on, and the lighting back off - each a RELINK of its programs
+      (`relinkLighting`, step 3b), the plain set again when neither is
+      wanted - and fitted shadows.
+    * THE TARGET remade (step 3c, `retarget`): on Vulkan the supersample on,
+      and with the pack the upscale and the AO from 0 - MSAA REFUSED there,
+      its pipelines being compiled for the sample count; on GLES MSAA on and
+      the supersample back off.
+    * THE TEXTURES re-uploaded (step 3d, `retexture`): trilinear and 16x
+      anisotropy on Vulkan (with the pack too) and GLES; `all = max` on GLES,
+      where every part of it is live; the preload radius from 0 (its phase
+      reading the doors). The filter cases run without the wrapper's
+      `--filter nearest`, which would hold the row.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    gles = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    pack = omkpaths.pack_path()
+    rem = "[Remaster]\ndir = %s\npreload = 0\nfxlight = 0\n" % pack if pack else ""
+    tmp = tempfile.mkdtemp()
+
+    def run(binary, name, ini, extra, env):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        open(os.path.join(d, "omk.ini"), "w").write(ini)
+        # `--filter nearest` would HOLD the filter's row: the filter cases go without
+        filt = [] if "-tex-" in name else ["--filter", "nearest"]
+        args = [binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--nofmv", "--saves",
+                os.path.join(d, "GAMES"), "--res", "640x480"] + filt + ["--save",
+                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                "1804,0,-6890,336", "--frames", "40", "--dump", os.path.join(d, "f.bin")] + extra
+        # the UNWRAPPED run: the wrapper (`_viewer_args`) would add the
+        # `--filter nearest` the filter cases must not have
+        r = _subprocess_run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
+        out = (r.stdout + r.stderr).decode("latin-1")
+        evts = [e["live"] for n, e in _events(out) if n == "options.omk"]
+        f = os.path.join(d, "f.bin")
+        return (open(f, "rb").read() if os.path.exists(f) else b""), evts, out
+
+    def same(a, b):
+        return len(a) > 0 and a == b
+
+    def case(binary, env, extra, name, base, key, val, startIni):
+        b, _, out = run(binary, name + "-base", base, extra, env)
+        l, ev, _ = run(binary, name + "-live", base, extra + ["--omk-set", "%s=%s@10" % (key, val)], env)
+        if startIni is None:   # refused: drawn as before, and said
+            return (name, same(l, b), ev)
+        st, _, _ = run(binary, name + "-start", base + startIni, extra, env)
+        return (name, same(l, st), not same(l, b), ev)
+
+    got, want = [], []
+    try:
+        vk = ["--world-vulkan"]
+        vkEnv = {"SDL_VIDEODRIVER": "dummy"}
+        probe, _, out = run(play, "probe", "", vk, vkEnv)
+        if "through VULKAN" not in out:
+            return ("skipped",), ("skipped",), "no Vulkan device - the GPU backend is optional"
+        for name, key, val, line in [
+                ("lighting", "enhancements.lighting", "perpixel", "[Enhancements]\nlighting = perpixel\n"),
+                ("shadow-mapped", "enhancements.shadowquality", "mapped", "[Enhancements]\nshadowquality = mapped\n"),
+                ("shadow-fitted", "enhancements.shadowquality", "fitted", "[Enhancements]\nshadowquality = fitted\n"),
+                ("clip", "enhancements.clipdistance", "unlimited", "[Enhancements]\nclipdistance = unlimited\n"),
+                ("ssaa-2", "enhancements.supersampling", "2", "[Enhancements]\nsupersampling = 2\n")]:
+            got.append(case(play, vkEnv, vk, "vk-" + name, "", key, val, line))
+            want.append(("vk-" + name, True, True, ["1"]))
+        # MSAA on Vulkan: refused live - its pipelines are compiled for the count
+        got.append(case(play, vkEnv, vk, "vk-aa-4", "", "enhancements.antialiasing", "4", None))
+        want.append(("vk-aa-4", True, ["0"]))
+        # THE TEXTURES (3d): a new sampler, every upload dropped and sent again
+        for name, base, key, val, line in [
+                ("tex-trilinear", "", "enhancements.texturefiltering", "trilinear",
+                 "[Enhancements]\ntexturefiltering = trilinear\n"),
+                ("tex-aniso-16", "[Enhancements]\ntexturefiltering = trilinear\n", "enhancements.anisotropy", "16",
+                 "anisotropy = 16\n")]:
+            got.append(case(play, vkEnv, vk, "vk-" + name, base, key, val, line))
+            want.append(("vk-" + name, True, True, ["1"]))
+        if pack:
+            for name, base, key, val, line in [("bloom-4", rem, "remaster.bloom", "4", "bloom = 4\n"),
+                                               ("ao-4", rem, "remaster.ao", "4", "ao = 4\n"),
+                                               ("mist-1", rem, "remaster.mist", "1", "mist = 1\n"),
+                                               ("upscale-2", rem, "remaster.upscale", "2", "upscale = 2\n"),
+                                               ("ao-from-0", rem + "ao = 0\n", "remaster.ao", "2", "ao = 2\n"),
+                                               ("tex-pack-trilinear", rem + "[Enhancements]\n",
+                                                "enhancements.texturefiltering", "trilinear",
+                                                "texturefiltering = trilinear\n")]:
+                got.append(case(play, vkEnv, vk, "vk-" + name, base, key, val, line))
+                want.append(("vk-" + name, True, True, ["1"]))
+            # the PRELOAD radius from 0: its phase starts, reading the doors
+            _, ev, out = run(play, "vk-preload-live", rem, vk + ["--omk-set", "remaster.preload=15@10"], vkEnv)
+            got.append(("vk-preload", ev, any(n == "preload.doors" for n, _ in _events(out))))
+            want.append(("vk-preload", ["1"], True))
+            got.append(case(play, vkEnv, vk, "vk-bloom-from-0", rem + "bloom = 0\n", "remaster.bloom", "1.6", None))
+            want.append(("vk-bloom-from-0", True, ["0"]))
+        if os.path.exists(gles):
+            glEnv = {"OMK_NO_GPU_PRESENT": "1"}
+            # GLES RELINKS its programs for these two (3b) - on, and back off
+            for name, base, key, val, line in [
+                    ("lighting", "", "enhancements.lighting", "perpixel", "[Enhancements]\nlighting = perpixel\n"),
+                    ("shadow-mapped", "", "enhancements.shadowquality", "mapped",
+                     "[Enhancements]\nshadowquality = mapped\n"),
+                    ("lighting-off", "[Enhancements]\nlighting = perpixel\n", "enhancements.lighting", "pervertex",
+                     "lighting = pervertex\n"),
+                    ("shadow-fitted", "", "enhancements.shadowquality", "fitted",
+                     "[Enhancements]\nshadowquality = fitted\n"),
+                    # the TARGET remade (3c): MSAA on, the supersample back off
+                    ("aa-4", "", "enhancements.antialiasing", "4", "[Enhancements]\nantialiasing = 4\n"),
+                    ("ssaa-off", "[Enhancements]\nsupersampling = 2\n", "enhancements.supersampling", "1",
+                     "supersampling = 1\n"),
+                    # the textures (3d), and `all = max` - every part of it live here
+                    ("tex-trilinear", "", "enhancements.texturefiltering", "trilinear",
+                     "[Enhancements]\ntexturefiltering = trilinear\n"),
+                    ("tex-all-max", "", "enhancements.all", "max", "[Enhancements]\nall = max\n")]:
+                got.append(case(gles, glEnv, [], "gles-" + name, base, key, val, line))
+                want.append(("gles-" + name, True, True, ["1"]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return got, want, \
+           ("per case: the live frame equal to the started one, different from the plain one, and the "
+            "options.omk event's live flag - a refused case equal to the plain one; the remaster cases "
+            "%s" % ("run (pack %s)" % pack if pack else "SKIPPED - no pack configured (omk.conf `pack =`)"))
+
+
+def c_engine_remaster_mode():
+    r"""engine: the ORIGINAL/REMASTER SWITCH (`todo/graphics-menu.md` B,
+    `backends/remaster/playremaster_mode.cpp`) - F10 in play, the Mode row of
+    OMK's Remaster page, `[Remaster] mode` at start.
+
+    `mode = original` ARMS the remaster as its own mode would and shows the
+    original's look; the switch moves only what a frame reads - the
+    strengths to 0 and back, the three packs hidden, the world's textures
+    uploaded again, the emitters' lights out of the sets' tables, the grade.
+    So each direction must leave the game where a START in that mode would.
+    Anekbah's street (`--save traces/save-appart.bin --area 0 --stand`), 40
+    frames, per-pixel lighting and mapped shadows (the emitters' point lights
+    and the relief drawn), the preset (`omkpaths.pack_path`) with its rounded
+    bodies (B2: both rests kept, swapped; the player's feet anchor measured on
+    both in the latch's pose) - on Vulkan and GLES:
+
+    * an original start draws what a start with no remaster at all draws, to
+      the pixel, and differs from a remaster start;
+    * the original + F10 at frame 10 (`--hold k*9,k68`) = a remaster start;
+    * the remaster + F10 = an original start - and `mode = original` WRITTEN
+      to the run's ini, so the next start resumes in it;
+    * the original + the menu's Mode row (`--omk-set remaster.mode=remaster@10`)
+      = a remaster start;
+    * the START MENU at 1280x960 with `textscaling = fit`, where the
+      interface's and the fonts' packs draw: the original + F10 (`--keys 68`)
+      = a remaster start, and an original start = no remaster.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    gles = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    pack = omkpaths.pack_path()
+    if not pack:
+        return ("skipped",), ("skipped",), "no remaster pack configured (omk.conf `pack =`)"
+    tmp = tempfile.mkdtemp()
+
+    def run(binary, name, ini, extra, env, street=True):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        open(os.path.join(d, "omk.ini"), "w").write(ini)
+        where = (["--res", "640x480", "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                  "--stand", "1804,0,-6890,336", "--frames", "40"] if street
+                 else ["--res", "1280x960", "--frames", "90"])
+        args = [binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--nofmv", "--saves",
+                os.path.join(d, "GAMES"), "--filter", "nearest"] + where + \
+               ["--dump", os.path.join(d, "f.bin")] + extra
+        r = _subprocess_run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
+        out = (r.stdout + r.stderr).decode("latin-1")
+        f = os.path.join(d, "f.bin")
+        modes = [(e.get("mode"), e.get("taken")) for n, e in _events(out) if n == "remaster.mode"]
+        written = open(os.path.join(d, "omk.ini")).read()
+        return (open(f, "rb").read() if os.path.exists(f) else b""), modes, written
+
+    def same(a, b):
+        return len(a) > 0 and a == b
+
+    got, want = [], []
+    try:
+        pp = "[Enhancements]\nlighting = perpixel\nshadowquality = mapped\n"
+        rem = pp + "[Remaster]\ndir = %s\npreload = 0\n" % pack
+        orig = rem + "mode = original\n"
+        cases = [("vk", play, {"SDL_VIDEODRIVER": "dummy"}, ["--world-vulkan"])]
+        if os.path.exists(gles):
+            cases.append(("gles", gles, {"OMK_NO_GPU_PRESENT": "1"}, []))
+        for label, binary, env, extra in cases:
+            plain, _, _ = run(binary, label + "-plain", pp, extra, env)
+            o, om, _ = run(binary, label + "-orig", orig, extra, env)
+            r, _, _ = run(binary, label + "-rem", rem, extra, env)
+            o2r, o2rm, _ = run(binary, label + "-orig-f10", orig, extra + ["--hold", "k*9,k68"], env)
+            r2o, r2om, r2ow = run(binary, label + "-rem-f10", rem, extra + ["--hold", "k*9,k68"], env)
+            m2r, _, _ = run(binary, label + "-orig-menu", orig,
+                            extra + ["--omk-set", "remaster.mode=remaster@10"], env)
+            got.append((label, same(o, plain), not same(o, r), om, same(o2r, r), o2rm, same(r2o, o), r2om,
+                        "\nmode = original\n" in r2ow, same(m2r, r)))
+            want.append((label, True, True, [("original", "1")], True, [("original", "1"), ("remaster", "1")],
+                         True, [("original", "1")], True, True))
+        # THE INTERFACE: the start menu, where the UI and font packs draw
+        base = "[Enhancements]\ntextscaling = fit\n"
+        mrem = base + "[Remaster]\ndir = %s\npreload = 0\nsmooth = 0\n" % pack
+        vkEnv = {"SDL_VIDEODRIVER": "dummy"}
+        mp, _, _ = run(play, "menu-plain", base, ["--world-vulkan"], vkEnv, street=False)
+        mo, _, _ = run(play, "menu-orig", mrem + "mode = original\n", ["--world-vulkan"], vkEnv, street=False)
+        mr, _, _ = run(play, "menu-rem", mrem, ["--world-vulkan"], vkEnv, street=False)
+        mo2r, _, _ = run(play, "menu-orig-f10", mrem + "mode = original\n", ["--world-vulkan", "--keys", "68"],
+                         vkEnv, street=False)
+        got.append(("menu", same(mo, mp), not same(mo, mr), same(mo2r, mr)))
+        want.append(("menu", True, True, True))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return got, want, \
+           ("per backend: original = no remaster, original != remaster, the original's start event, "
+            "original+F10 = remaster (and its two events), remaster+F10 = original (its event, the ini "
+            "written), original+menu = remaster; the start menu: original = no remaster, != remaster, "
+            "original+F10 = remaster (pack %s)" % pack)
+
+def c_engine_pad_layout():
+    r"""engine: THE PAD'S LAYOUT PER GROUP (`input/pad.h`, the reader's of
+    2026-10-27) - a frontend's choice, read through the engine's own tables.
+
+    `tools/pad_layout.cpp` presses each button alone under each of the four
+    groups (`installScheme`, `Input::poll`) and names the slots it sets by
+    the group's labels. The Aventure group takes its own layout
+    (`kAventure`): TRIANGLE / Y (North) opens the sneak - slot 13, also the
+    UI's close - and SQUARE / X (West) is `Vue premiere personne`, which
+    Triangle carried; the shoot group (`kShoot`) has `Arme` on TRIANGLE, where
+    Select carried it; swimming and fighting keep the shared layout, the
+    fight's kicks 1 and 2 on Square and Triangle. SELECT / BACK is no binding
+    in any group but OMK's original/remaster switch (`pad::switchPressed`).
+    And the frame feeds the pad under the INSTALLED group and hands Select to
+    the switch (`playframe_input_parts.cpp`).
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "build/pad_layout"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "pad_layout")
+    if b.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), b.stderr[-300:]
+    r = subprocess.run([tool, os.path.join(ROOT, "tables", "key_bindings.json")], capture_output=True)
+    rows = {}
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        m = re.match(r"group (\d) (\w+) slots (\S+) switch (\d) ?(.*)$", line)
+        if m:
+            rows[(int(m.group(1)), m.group(2))] = (m.group(3), m.group(4) == "1",
+                                                   [x for x in m.group(5).split("|") if x])
+    if len(rows) != 28:
+        return (len(rows),), (28,), "pad_layout output parsed - the tool's format changed"
+    got = [(g, n, rows[(g, n)]) for g, n in [
+        (0, "south"), (0, "east"), (0, "west"), (0, "north"), (0, "back"),
+        (1, "north"), (1, "back"), (2, "west"), (2, "north"), (2, "back"),
+        (3, "west"), (3, "north"), (3, "back")]]
+    want = [(0, "south", ("4", False, ["Action / Utiliser"])),
+            (0, "east", ("5", False, ["Annuler / Sauter"])),
+            (0, "west", ("7", False, ["Vue première personne"])),
+            (0, "north", ("13", False, ["Ouvrir sneak"])),
+            (0, "back", ("-", True, [])),
+            (1, "north", ("7", False, [])),
+            (1, "back", ("-", True, [])),
+            (2, "west", ("6", False, ["S'accroupir"])),
+            (2, "north", ("13", False, ["Arme"])),
+            (2, "back", ("-", True, [])),
+            (3, "west", ("6", False, ["Coup de pied 1"])),
+            (3, "north", ("7", False, ["Coup de pied 2"])),
+            (3, "back", ("-", True, []))]
+    # the code, its comments taken out (a call commented away is not wired)
+    src = open(os.path.join(eng, "backends", "sdl", "playframe_input_parts.cpp")).read()
+    src = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", src, flags=re.S))
+    wired = ("toDevices(host.pad, devices, in.group())" in src,
+             bool(re.search(r"remasterModeFrame\([^;]*pad::switchPressed\(host\.pad\)", src)))
+    return (got, wired), (want, (True, True)), \
+           ("per group, the slots a button sets and their labels, and the switch: Aventure's sneak on "
+            "Triangle, first-person view on Square; shoot mode's `Arme` on Triangle; the fight's kicks "
+            "unmoved; Select the switch in all four; the frame feeding the installed group and Select to it")
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -7033,9 +7645,8 @@ def c_enhance_all():
     # leaves it off, asserted below
     # ...and the post chain's GRADE and HDR (2026-10-19): a look, and a display
     # that must say yes - asked for by name
-    # ...and the TEXTURE PACK (2026-10-19): it names a directory, nothing a
-    # level can be the top of - asserted empty under `all = max`
-    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr", "texturepack"}
+    # (the TEXTURE PACK, which named a directory, is the remaster's now: `[Remaster] texturepack`)
+    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr"}
     keys = set(re.findall(r'k(?:Enhancements),\s*"([^"]+)"', cpp)) - {"all"} - SEPARATE
     body = hdr[hdr.index("inline void applyMaxEnhancements"):]
     body = body[:body.index("\n}")]
@@ -7081,8 +7692,8 @@ def c_enhance_all():
     atMax = bool(want) and all(allMax.get(k) == v for k, v in want.items())
     got = (len(keys), takes, covered, atMax, allMax.get("all"), override.get("aniso"),
            allMax.get("supersampling"), named_ss.get("supersampling"), allMax.get("upscaler"),
-           allMax.get("colorgrade"), allMax.get("hdr"), allMax.get("texturepack"))
-    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0, 0, 0, 0), \
+           allMax.get("colorgrade"), allMax.get("hdr"))
+    return got, (len(keys), len(keys), True, True, 1, 4, 1, 4, 0, 0, 0), \
            ("the %d `[Enhancements]` keys besides `all` and supersampling, the fields "
             "`applyMaxEnhancements` sets, that every enhancement the probe reports is "
             "one this check names, that one `all = max` puts every one at its top, "
@@ -13895,6 +14506,52 @@ def c_engine_bank_swap():
             "collides; the swap must reach the poser and the swap back must "
             "restore exactly what was there")
 
+def c_engine_blend_hold():
+    r"""`engine/`: a blended `.CTL` transition HOLDS two fixed keys.
+
+    **Tier 6 (read and explained)** - `Actor_BlendToClip` (0x0045C510) and
+    `sub_471820` read: a blend slerps the key the old clip was LEFT on toward
+    the target clip's START key by frame/blendFrames (in 255ths); no capture
+    of the original shows it.
+
+    H1Avnt's group 111, which `player.move 111` installs before the sneak call
+    at the Telis lunch (SCENE 53 pc 1148), is H_SNKON (19 frames) then a
+    pass-through blending 40 frames into H_SNKON AT FRAME 19 - its own last
+    pose - so the engine holds the raised wrist. The port played the clip
+    behind the pass-through on the blend counter, from frame 1, and a reader
+    saw Kay'l look at his sneak twice.
+
+    `build/blend_hold` puts a `PlayerController` on group 111 and prints, per
+    phase, the ticks and the largest bone angle between the pose handed to
+    the poser and H_SNKON's last frame. The RISE must move (so the measure
+    sees motion at all); the BLEND and the HOLD must stay under 1 degree (the
+    0.1 left is the weight's 255/256).
+
+    SHOWN TO FAIL: `PlayerController::transBlendTracks` returning nullptr
+    (the old reading) puts the blend at 96.1 degrees - the whole rise again.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "ANIMS"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    b = subprocess.run(["make", "-s", "build/blend_hold"], cwd=eng,
+                       capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "blend_hold")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run([binp, fr], capture_output=True, text=True).stdout
+    rows = dict((m.group(1), (int(m.group(2)), float(m.group(3)))) for m in
+                re.finditer(r"^(rise|blend|hold) ticks (\d+) dev ([\d.]+)$", out, re.M))
+    if len(rows) != 3:
+        return (len(rows),), (3,), "the probe must print its three phases"
+    return (rows["rise"][0], rows["blend"][0], rows["rise"][1] > 45.0,
+            rows["blend"][1] < 1.0, rows["hold"][1] < 1.0), \
+           (19, 40, True, True, True), \
+           ("H1Avnt group 111: the rise's ticks and the blend's; the rise moves "
+            "over 45 degrees from H_SNKON's last frame; the blend and the hold "
+            "after it stay within 1 degree of it")
+
 def c_engine_fight_letterbox():
     r"""`omk-play`: a FIGHT is full-frame, and the approach cutscene is not.
 
@@ -15290,6 +15947,9 @@ def c_env_switches():
     SHOWN TO FAIL: a `std::getenv("OMK_NOUI")` put back in a viewer file (the
     raw-read list names it); a row deleted from the table (that name is
     `unlisted`); a row added that nothing reads (`unread`).
+    (2026-10-26) The scan reads the `.inl` files too - GLES's and Vulkan's
+    remaster halves live there, and `OMK_GLES_NO_HIGHP`, read in one, showed
+    as listed and never read while it took `.cpp` and `.h` alone.
     """
     table_src = open(os.path.join(ROOT, "engine", "src", "platform", "env.cpp")).read()
     body = table_src.split("kSwitches[] = {", 1)[1].split("};", 1)[0]
@@ -15300,7 +15960,7 @@ def c_env_switches():
             if "third_party" in root:
                 continue
             for f in files:
-                if not f.endswith((".cpp", ".h")):
+                if not f.endswith((".cpp", ".h", ".inl")):   # the .inl too (2026-10-26: GLES's remaster half)
                     continue
                 p = os.path.join(root, f)
                 rel = os.path.relpath(p, ROOT)
@@ -15332,20 +15992,33 @@ def c_thread_pool():
 
     SHOWN TO FAIL: `#include "platform/threads.h"` moved below the
     `#if` in `threads_std.cpp` and `threads_none.cpp` - workers 0.
+
+    2026-10-21: TWO THREADS CALLING IT AT ONCE. Entering the bar in Qalisar
+    froze the game: its set loads on a `BackgroundJob`, whose texture-pack
+    decode is a `parallelFor`, while the frame's own `parallelFor` ran on the
+    main thread - the pool holds one call's state, the second overwrote the
+    first's chunk count, and the loader waited for ever (a `sample` of the
+    frozen process: `integrateSet` -> `BackgroundJob::wait`, the job in
+    `TexturePack::replacements` -> `parallelFor`, every worker idle). A call
+    lock per pool (`calls`, and the Vita's `omk_calls` semaphore). The
+    probe's two threads x 2000 calls: 0 wrong. SHOWN TO FAIL: the lock
+    removed - `concurrent HUNG` (its 30 s watchdog).
     """
     eng = os.path.join(ROOT, "engine")
     b = subprocess.run(["make", "-s", "build/thread_probe"], cwd=eng, capture_output=True)
     exe = os.path.join(eng, "build", "thread_probe")
     if b.returncode != 0 or not os.path.exists(exe):
         return ("build failed",), ("built",), "thread_probe must build"
-    out = subprocess.run([exe], capture_output=True, text=True).stdout
+    out = subprocess.run([exe], capture_output=True, text=True, timeout=120).stdout
     m = re.search(r"workers (\d+) \(runners (\d+)\), OMK_THREADS (\d)", out)
     mm = re.search(r"mismatches (\d+)", out)
+    cc = re.search(r"concurrent(: 2 threads x 2000 calls, (\d+) wrong| HUNG)", out)
     multi = (os.cpu_count() or 1) > 1
     return (bool(m), m and m.group(3) == "1", m and (int(m.group(1)) > 0 or not multi),
-            mm and int(mm.group(1))), (True, True, True, 0), \
+            mm and int(mm.group(1)), cc and (cc.group(2) or "HUNG")), (True, True, True, 0, "0"), \
         "thread_probe read; OMK_THREADS 1; workers > 0 on a host with more than one core " \
-        "(%s); the tiling's mismatches" % (m.group(0) if m else "no line")
+        "(%s); the tiling's mismatches; two threads calling at once: how many wrong " \
+        "(HUNG when they never finish)" % (m.group(0) if m else "no line")
 
 
 def c_events():
@@ -18513,6 +19186,17 @@ def c_engine_walker_falls():
     drops that were refused now fall - and stays at 0 stranded. This census
     stands the walker WITHOUT blockers, so it measures the ground response
     alone, as before.
+
+    2026-10-21: A FALLING BODY MEETS A RAMP (`engine: walk edges`). The
+    airborne tick now lands on a steep face that is not a wall (60 degrees or
+    flatter) and lies more than a step above the walkable floor under it, so
+    Anekbah's descents go 116 -> **115**: the one lost is a spot at 3546
+    -152 -7950 whose west step fell THROUGH a 35-degree lip to a floor below,
+    and now lands on the lip and slides back onto the walkable floor beside
+    it. The fourth column guards the rest of that change: a ramp running off
+    the model's edge into nothing slid there for ever (the move put back each
+    frame) - 4 directions in Anekbah - until a slide put back at the void
+    ends and drops past the ramp.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -18538,11 +19222,56 @@ def c_engine_walker_falls():
             got.append((ledge, down, strand, unslide))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return tuple(got), ((663, 310, 0, 0), (36, 14, 0, 0), (326, 116, 0, 0)), \
+    return tuple(got), ((663, 310, 0, 0), (36, 14, 0, 0), (326, 115, 0, 0)), \
         "per set (Aapkayl, AImpasse, Anekbah): spots standing beside a drop, " \
         "spots from which the walker actually goes down, spots on a " \
         "ledge from which nothing moves at all, and directions STILL SLIDING " \
         "after ten seconds - the last two must be 0"
+
+def c_engine_walk_edges():
+    r"""`engine/`'s walker at two edges a reader met (2026-10-20: *"falling in
+    the void, ... looping in the falling animation"*), each on a set
+    `engine/tools/walk_edges.cpp` builds itself, so nothing else is measured.
+
+    VOID: a platform, a ledge 30 lower and 15 wide, and nothing past it. The
+    30-unit drop is a SHORT fall, which keeps walking, and the walk carried him
+    past the ledge over nothing, where he fell for ever. `Actor_ApplyMotion`
+    (0x004672D0) puts a body whose ground probe finds no face at all back at
+    the last safe position, in the air as on the ground; the walker now puts
+    the frame's horizontal back (the vertical is kept - the port's, labelled
+    in `Walker::airFrame`), and he lands on the ledge at y 30.
+
+    RAMP: a 45-degree ramp from a platform down to a floor, with a deeper floor
+    UNDER it. The walker read the steep faces only while already sliding, so
+    stepping onto the ramp's top found the deep floor and fell THROUGH the
+    ramp. The engine's probe meets the nearest face; the falling body now
+    lands on a steep face that is not a wall (60 degrees or flatter) and lies
+    more than a step above the walkable floor under it, and slides down to the
+    floor at y 50.
+
+    SHOWN TO FAIL against the walker before the change: the void case ends at
+    y **7346**, still falling, the ramp case at **200**; each half mutated
+    alone fails only its own case (the put-back off: 7346, the ramp landing
+    off: 200).
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    b = subprocess.run(["make", "-s", "build/walk_edges"], cwd=eng,
+                       capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "walk_edges")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return ("build failed",), ("built",), "engine/ must build"
+    out = subprocess.run([binp], capture_output=True, text=True).stdout
+    m = re.search(r"@walk_edges void_y=(\S+) void_air=(\d) ramp_y=(\S+) ramp_air=(\d)", out)
+    if not m:
+        return ("no @walk_edges line",), ("a line",), "the tool must report"
+    got = (round(float(m.group(1))), int(m.group(2)),
+           round(float(m.group(3))), int(m.group(4)))
+    return got, (30, 0, 50, 0), \
+        "void: final y on the ledge and still airborne (0); ramp: final y on " \
+        "the floor past the ramp and still airborne or sliding (0)"
 
 def c_engine_tunnel_doors():
     r"""`engine/`: a transition's door resolves in the OUTGOING slot's object
@@ -19020,6 +19749,13 @@ def c_engine_tunnel_door_walk():
     * the tunnel is hidden only after that, and he ends past the door (x <
       7000) with no `NO FLOOR` on the way.
 
+    * (2026-10-26) the city's load is ANEKBAH's on its own thread (asked at
+      frame 1, in at 17): the same walk ended at frame 10 with each load 3 s
+      late (`OMK_LOAD_DELAY_MS`) leaves its job running at the session's end,
+      which WAITS for it (`@evt session.loads`, one running, none after) - a
+      set's job captures `this`, and nothing waited before. Shown to fail:
+      the wait taken out - one still running after.
+
     Needs SDL (the walker is `omk-play`'s); reports true across the board
     without it, as the frontend is optional (PORTING A8).
     """
@@ -19033,13 +19769,19 @@ def c_engine_tunnel_door_walk():
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not os.path.exists(play):
-        return (True,) * 8, (True,) * 8, "no SDL - the frontend is optional (PORTING A8)"
+        return (True,) * 9, (True,) * 9, "no SDL - the frontend is optional (PORTING A8)"
     env = dict(os.environ, SDL_VIDEODRIVER="dummy")
     r = subprocess.run([play, fr, tb, "--software", "--res", "640x480", "--nofmv",
                         "--no-crowd", "--save", save, "--area", "224",
                         "--stand", "7300,-10,-9471,270", "--speed", "3", "--frames", "300",
                         "--hold", "0*1,k200*290"], capture_output=True, text=True, env=env)
     o = r.stdout
+    rw = subprocess.run([play, fr, tb, "--software", "--res", "640x480", "--nofmv",
+                         "--no-crowd", "--save", save, "--area", "224",
+                         "--stand", "7300,-10,-9471,270", "--speed", "3", "--frames", "10",
+                         "--hold", "0*1,k200*290"], capture_output=True, text=True,
+                        env=dict(env, OMK_EVENTS="1", OMK_LOAD_DELAY_MS="3000"))
+    lw = [(int(f.get("running", -1)), int(f.get("after", -1))) for n, f in _events(rw.stdout) if n == "session.loads"]
     m = re.search(r"^player: .* at (-?[0-9.]+) ", o, re.M)
     x = float(m.group(1)) if m else 1e9
     closeAt = o.find("moved by the OUTGOING pool (Tunnel01.SCX)")
@@ -19054,11 +19796,13 @@ def c_engine_tunnel_door_walk():
             [t for t in starts if t[0] == "4" and t[1] == "224" and t[2] == "0"] != [],
             closeAt >= 0,
             hideAt > closeAt >= 0 or (hideAt >= 0 and closeAt >= 0),
-            x < 7000 and "NO FLOOR" not in o), (True,) * 8, \
+            x < 7000 and "NO FLOOR" not in o,
+            lw == [(1, 0)]), (True,) * 9, \
         ("the zone carries doors 3/4; door 3 starts in AREA 224's pool with 0 "
          "missed; every T01door01 motion comes from Tunnel01.SCX; arrive state "
          "6 and feet on AREA 0; door 4 the same; the door mesh moved; the "
-         "tunnel is hidden; he ends past the door with no NO FLOOR")
+         "tunnel is hidden; he ends past the door with no NO FLOOR; a load still "
+         "running at the session's end waited for")
 
 def c_options_file():
     r"""The game's own configuration file: `[Preferences]` and its 65 keys.
@@ -25862,7 +26606,11 @@ def c_render_backends():
         return "\n".join(t[i:].split("\n")[:n + 2]), n
     b1, n1 = body("readable/src/08_wave.c", "@func 0x0042FF80")
     b0, n0 = body("readable/src/20_ddraw.c", "@func 0x00460060")
-    luma1, luma0 = b1.count("587"), b0.count("587")
+    # the CODE's luma, comments stripped: a banner that describes the formula in
+    # prose (the drift audit's, `(299 R + 587 G + 114 B) / 1000`) counted as an
+    # 18th (2026-10-21)
+    code = lambda b: re.sub(r"/\*.*?\*/", "", b, flags=re.S)
+    luma1, luma0 = code(b1).count("587"), code(b0).count("587")
 
     return (banks[0], banks[1], sorted(G.values()), gated, gatedNamed,
             n[150], n[151], len(chunks), sorted(chunks),
@@ -27304,7 +28052,9 @@ def c_engine_options_menu():
 
     Read from the OUTPUT on both ends: each page's line is the text the
     composer laid out through the row hook 0x00493380, and the header the run
-    WROTE is read back - clip at +20, the size at +12/+14. Then a SECOND start,
+    WROTE is read back - clip at +20, the size at +12/+14. The root carries
+    OMK's own header, "Graphismes (OMK)", above Retour (`todo/graphics-menu.md`
+    A2; `engine: graphics menu` drives it). Then a SECOND start,
     with no `--res` (bypassing the wrapper that adds one), must come up at the
     saved size. A change only marked dirty and never applied - the open
     callback's bit 2 not set - leaves the file at 50 m and 800x600.
@@ -27347,12 +28097,12 @@ def c_engine_options_menu():
     return (len(pages), focus, pages[:2] + pages[-2:], back, buttons, head,
             [d.split(" (")[0] for d in disp]), \
            (6, 1,
-            ["page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Retour|] - 5 drawn, 1 lit, 0 sliders",
+            ["page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|] - 6 drawn, 1 lit, 0 sliders",
              "page 2: [Vid\xe9o|] [R\xe9solution|800 x 600 x 16 bpp] [Distance de clipping|Proche] "
              "[Affichage du ciel|Oui] [Affichage des ombres|Oui] [Niveau d'activit\xe9 dans les rues|Important] "
              "[Niveau de d\xe9tail|Interm\xe9diaire] [Acc\xe9l\xe9ration 3D|Rendu logiciel] [Retour|] - 9 drawn, 2 lit, 0 sliders",
              "page 0: [Oui|] [Non|] [Sauvegarder les options|] - 3 drawn, 2 lit, 0 sliders",
-             "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Retour|] - 5 drawn, 1 lit, 0 sliders"],
+             "page 1: [Vid\xe9o|] [Audio|] [Options|] [Contr\xf4les|] [Graphismes (OMK)|] [Retour|] - 6 drawn, 1 lit, 0 sliders"],
             1, 1, (100, 1024, 768), ["display 1024x768"]), \
            "page lines drawn (a run that reaches none fails AS a run); the focus " \
            "taken once by the Options panel's enter hook; the root and the Video " \
@@ -27607,7 +28357,7 @@ def c_engine_post_chain():
     if not (os.path.isdir(eng) and os.path.exists(save)):
         return ("skipped",), ("skipped",), "engine/ or the save absent"
     src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
-    defaults = all(t in src for t in ("bool   bloom = false;", "bool   dof = false;",
+    defaults = all(t in src for t in ("bool   postBloom = false;", "bool   dof = false;",
                                       "int    colorGrade = 0;", "bool   hdr = false;"))
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
@@ -28257,9 +29007,13 @@ def c_engine_anim_blend():
     * two plain runs give the same log and the same picture;
     * the `--anim-blend` run says so, and its SIMULATION is the plain run's
       in every frame - state, clip frame, position, facing;
-    * at the stop the plain run's largest one-frame step is a snap (> 30
-      degrees), and blended it is at most half of it, spread over the
-      frames after the change;
+    * at the stop the plain run's largest one-frame step is no longer a snap
+      (<= 30 degrees): since the merge of the upstream author's remaster
+      (`Actor_BlendToClip`, `player.cpp` transBlend_, 5855f0d) the engine's OWN
+      transition blend is ported for the player, which this row used to stand in
+      for - so the row's player step is already eased (8.5 degrees), and ours
+      adds at most 2 degrees to it (the other clip changes - a walker's, a
+      fighter's - are unchanged by the merge);
     * once a blend has run out the pose is the plain run's exactly (the
       fingerprints agree on every frame with no blend left past the first
       blend's end), and before the first change they agree too.
@@ -28314,7 +29068,7 @@ def c_engine_anim_blend():
     ends = len(after) > 40 and all(r_a[i][12] == r_on[i][12] for i in after)
     got = (default_off, "anim blend" in t_a, "anim blend: on" in t_on,
            r_a == r_b and d_a == d_b and len(d_a) > 0, same_sim,
-           snap > 30.0, eased <= 0.5 * snap, before, ends)
+           snap <= 30.0, eased <= snap + 2.0, before, ends)
     return got, (True, False, True, True, True, True, True, True, True), \
            ("off by default and silent; two plain runs identical; the simulation unchanged "
             "in all %d frames; the stop at frame %s: a %.1f degree one-frame step plain, "
@@ -29544,165 +30298,6 @@ def c_engine_escape_back():
          "the current list after the last key - the verb panel's verb list when off, " \
          "the Inventaire panel's tab column when on")
 
-
-
-def c_engine_texture_pack():
-    r"""`omk-play --texturepack DIR`: a TEXTURE OVERRIDE PACK - an enhancement, off by default.
-    `todo/enhancements.md` 25, `o3de/texpack.h`, `tools/texpack.py`. A pack's PNG
-    replaces a `.3DT` page for the Vulkan and Direct3D 12 uploads at k x its size
-    (matched by the original's pixels), the UVs staying in the original's texel
-    units: `scene.frag` divides by the image's size over k (k in the cutout
-    word), `rt.glsl` the same (k in the record's texture word). Built here in a
-    temp directory from the road slider `SLI_FN` (one page, `SLIDER`) by
-    `tools/texpack.py`, and rendered on the Direct3D 12 world backend, the ride
-    camera framing the traffic, `--filter nearest`, 960x540:
-      * off in the source (an empty path) and a plain run prints no pack line
-        and no `texpack` event; two plain runs are identical;
-      * a pack of the UNMODIFIED originals (`extract`, 1x - rewritten here as
-        RGBA, every scanline filter in turn, zlib level 9, as a real tool's PNG
-        comes) is indexed, put on the pool's slot, and the frame is IDENTICAL
-        to no pack - the loader, the PNG reader (inflate, the five filters,
-        RGBA) and the colour key reproduce the upload byte for byte;
-      * the same page replicated 2x (`upscale --method nearest`) is IDENTICAL
-        too: under the nearest sampler a 2x replica draws the same texel only if
-        the UVs are divided by the ORIGINAL size - this is the UV scale;
-      * the street set's own twenty pages (`ANEKBAH`, tiled by REPEAT, some
-        cutout) replicated 2x: identical as well - and with hybrid ray tracing
-        on (where the device has DXR 1.1) still identical, `rt.glsl`'s hit
-        shading of the set reading each slot with the same scale;
-      * a solid-magenta replacement (the key kept) marks the slider's
-        footprint; the built-in Lanczos 2x upscale changes the frame there and
-        NOWHERE else (within 2 px of it), and a few hundred pixels at least;
-      * `texpack.py check` reports the pack's two overrides (the page ships
-        twice, MISC/ and PERSOS/, the same pixels - indexed once).
-    SHOWN TO FAIL (2026-10-19) with `scene.frag`'s `texSz /= float(packK)`
-    removed (the slider's 2x replica differs in 3276 pixels), and with
-    `rt.glsl`'s `/ float((word >> 24) + 1u)` removed (the ray-traced run with
-    the set's 2x replica differs in ~1200: the characters' indirect light
-    samples the set's pages at the wrong texels).
-    """
-    import subprocess, tempfile, struct
-    eng = os.path.join(ROOT, "engine")
-    save = os.path.join(ROOT, "traces", "save-appart.bin")
-    if not (os.path.isdir(eng) and os.path.exists(save)):
-        return ("skipped",), ("skipped",), "engine/ or the save absent"
-    src = open(os.path.join(eng, "src", "platform", "settings.h"), encoding="utf-8").read()
-    default_off = "std::string texturePack;" in src
-    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
-    play = os.path.join(eng, "build", "omk-play")
-    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
-        return ("skipped",), ("skipped",), "omk-play did not build"
-    tool = os.path.join(ROOT, "tools", "texpack.py")
-    sys.path.insert(0, os.path.join(ROOT, "tools"))
-    import texpack
-    W, H = 960, 540
-    with tempfile.TemporaryDirectory() as tmp:
-        def py(*a):
-            return subprocess.run([sys.executable, "-I", tool] + list(a), capture_output=True, text=True)
-        p1, n2, l2, mg, s1, s2 = (os.path.join(tmp, n) for n in ("p1", "n2", "l2", "mg", "s1", "s2"))
-        py("extract", p1, "--model", "sli_fn")
-        py("extract", s1, "--model", "anekbah")
-        py("upscale", s1, s2, "--factor", "2", "--method", "nearest", "--jobs", "2")
-        py("upscale", p1, n2, "--factor", "2", "--method", "nearest", "--jobs", "1")
-        py("upscale", p1, l2, "--factor", "2", "--jobs", "2")
-        # ...and the 1x pack rewritten the way a real tool's PNG comes: RGBA
-        # (alpha 255), every scanline filter in turn (0 none .. 4 Paeth) and
-        # zlib at level 9 - so the engine's reader is held to all five
-        import zlib
-        def filtered(path):
-            w, h, ch, px = texpack.png_read(path)
-            rgba = bytearray()
-            for k in range(w * h):
-                rgba += bytes(px[ch * k:ch * k + 3]) + b"\xff"
-            st, raw, prev = 4 * w, bytearray(), bytearray(4 * w)
-            for y in range(h):
-                ln, ft = rgba[y * st:(y + 1) * st], y % 5
-                raw.append(ft)
-                for i in range(st):
-                    a = ln[i - 4] if i >= 4 else 0
-                    b, c = prev[i], (prev[i - 4] if i >= 4 else 0)
-                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
-                    pr = (0, a, b, (a + b) >> 1,
-                          a if pa <= pb and pa <= pc else (b if pb <= pc else c))[ft]
-                    raw.append((ln[i] - pr) & 255)
-                prev = ln
-            def chunk(t, d):
-                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-                                   + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
-        for d, _, files in os.walk(p1):
-            for fn in files:
-                filtered(os.path.join(d, fn))
-        chk = py("check", l2).stdout
-        # magenta wherever the page is not the key, at 2x
-        for d, _, files in os.walk(p1):
-            for fn in files:
-                w, h, ch, px = texpack.png_read(os.path.join(d, fn))
-                rgb, key = texpack.keyed_rgb(w, h, ch, px)
-                out = bytearray(3 * w * h)
-                for k in range(w * h):
-                    if not key[k]:
-                        out[3 * k:3 * k + 3] = b"\xff\x00\xff"
-                ww, hh, out2 = texpack.upscale_builtin(w, h, out, 2, "nearest")
-                dd = os.path.join(mg, os.path.relpath(d, p1))
-                os.makedirs(dd, exist_ok=True)
-                texpack.png_write(os.path.join(dd, fn), ww, hh, out2)
-
-        def run(name, extra):
-            dump = os.path.join(tmp, name + ".bin")
-            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
-                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
-                                "--ride", "--world-d3d12", "--nofmv", "--nodelay", "--filter", "nearest",
-                                "--res", "%dx%d" % (W, H), "--frames", "90",
-                                "--eye", "4700,-170,-480", "--at", "4839,-90,-677",
-                                "--saves", os.path.join(tmp, "saves", "GAMES"), "--dump", dump] + extra,
-                               capture_output=True, text=True, errors="replace",
-                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_SYNC_SETS="1",
-                                        OMK_EVENTS="1"))
-            data = open(dump, "rb").read() if os.path.exists(dump) else b""
-            return r.stdout + r.stderr, data if len(data) == 2 * W * H else b""
-        t_a, d_a = run("a", [])
-        if "world through D3D12" not in t_a or not d_a:
-            return ("skipped",), ("skipped",), "no Direct3D 12 device - the backend is optional"
-        t_b, d_b = run("b", [])
-        t_1, d_1 = run("p1", ["--texturepack", p1])
-        t_n, d_n = run("n2", ["--texturepack", n2])
-        t_m, d_m = run("mg", ["--texturepack", mg])
-        t_l, d_l = run("l2", ["--texturepack", l2])
-        t_s, d_s = run("s2", ["--texturepack", s2])
-        t_ra, d_ra = run("ra", ["--raytracing"])
-        t_rn, d_rn = run("rn", ["--raytracing", "--texturepack", s2])
-    silent = "texture pack" not in t_a and not any(n.startswith("texpack") for n, _ in _events(t_a))
-    def loaded(t):
-        ev = _events(t)
-        ind = max([int(f.get("indexed", "0")) for n, f in ev if n == "texpack.load"] or [0])
-        rep = max([int(f.get("replaced", "0")) for n, f in ev if n == "texpack.pool"] or [0])
-        return ind, rep
-    rt = "RAY TRACING on" in t_ra
-    n = W * H
-    def px(d):
-        return struct.unpack("<%dH" % n, d) if d else ()
-    a, m, l = px(d_a), px(d_m), px(d_l)
-    foot = [m[i] != a[i] for i in range(n)] if m else []
-    near = bytearray(n)
-    for i in range(n):
-        if foot and foot[i]:
-            x, y = i % W, i // W
-            for yy in range(max(0, y - 2), min(H, y + 3)):
-                near[yy * W + max(0, x - 2):yy * W + min(W, x + 3)] = b"\1" * (min(W, x + 3) - max(0, x - 2))
-    moved = sum(1 for i in range(n) if l and l[i] != a[i])
-    outside = sum(1 for i in range(n) if l and l[i] != a[i] and not near[i])
-    diff_n = sum(1 for x, y in zip(px(d_a), px(d_n)) if x != y)
-    print("        texture pack: footprint %d px, the Lanczos 2x moved %d (%d outside it); the 2x replica "
-          "differs in %d; ray tracing %s" % (sum(foot), moved, outside, diff_n, "on" if rt else "unavailable"))
-    got = (default_off, silent, d_a == d_b, loaded(t_1), d_1 == d_a, loaded(t_n), d_n == d_a,
-           loaded(t_s), d_s == d_a, (not rt) or d_rn == d_ra, sum(foot) > 200, moved >= 200, outside,
-           "check: 2 overrides (x2 2), 0 rejected" in chk)
-    return got, (True, True, True, (1, 1), True, (1, 1), True, (20, 20), True, True, True, True, 0, True), \
-        ("off by default and silent, two plain runs identical; the 1x pack of the originals and the "
-         "nearest 2x replicas (the slider's page, the set's twenty) indexed, on the pool and "
-         "pixel-identical to no pack (with ray tracing too); "
-         "the Lanczos 2x changes the slider's footprint and nothing outside it; `check` reports it")
 
 
 def c_engine_close_flush():
@@ -31809,18 +32404,13 @@ def c_engine_gl1_backend():
     fr = omkpaths.data_root()
     if platform.system() != "Darwin":
         return ("skipped",), ("skipped",), "the gl1 backend is CGL: macOS only"
-    pc = subprocess.run(["pkg-config", "--cflags", "--libs", "sdl2"], capture_output=True, text=True)
-    pfx = subprocess.run(["pkg-config", "--variable=prefix", "sdl2"], capture_output=True, text=True)
-    if pc.returncode != 0 or not os.path.isdir(os.path.join(fr, "IAM")):
-        return ("skipped",), ("skipped",), "no SDL2 (pkg-config) or no game data"
-    libs = subprocess.run(["pkg-config", "--libs", "sdl2"], capture_output=True, text=True).stdout.strip()
-    b = subprocess.run(["make", "-s", "-f", "ppc-darwin.mk", "PPC_CXX=c++", "PPCFLAGS=-ffp-contract=off",
-                        "LDFLAGS=", "OUT=build/host-gl1", "SDL2_PREFIX=" + pfx.stdout.strip(),
-                        "PLAY_LIBS=" + libs + " -framework OpenGL", "play"],
-                       cwd=eng, capture_output=True, text=True)
-    binp = os.path.join(eng, "build", "host-gl1", "omk-play")
-    if b.returncode != 0 or not os.path.exists(binp):
-        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + b.stderr[-300:]
+    if not os.path.isdir(os.path.join(fr, "IAM")):
+        return ("skipped",), ("skipped",), "no game data"
+    binp, err = _host_gl1_play()
+    if binp is None and err == "no SDL2":
+        return ("skipped",), ("skipped",), "no SDL2 (pkg-config)"
+    if binp is None:
+        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + err
     tmp = tempfile.mkdtemp()
     try:
         frames, logs = {}, {}
@@ -32206,6 +32796,106 @@ def c_engine_sight_mask():
     return (g[0], g[3], g[6], g[5] > g[4] // 2), (220, 0, 0, True), \
         "all 220 sets: the shot soup's unmasked triangles are the sight soup, bitwise and in " \
         "order, and face-to-face segments hit the same face either way (most of them hitting)"
+
+
+def c_engine_gl1_window_fit():
+    r"""THE GL1 WINDOW LARGER THAN THE FRAME - the SDL build's fullscreen
+    (`todo/handoff-classic-mac.md` 3h).
+
+    The world (and the overlay) are drawn at the frame's size in the back
+    buffer's corner; `Gl1Renderer::fitToWindow` copies the corner into a
+    texture and draws it over the whole window, fitted at its aspect,
+    NEAREST, the bands black - no readback (emulated Tiger at 1024x768
+    fullscreen: 108.7 -> 32.1 ms a frame). The host `ppc-darwin.mk` gl1
+    build, a HIDDEN window opened at 1400x960 (`OMK_GL1_WINDOW`) over a
+    640x480 frame - x2.00 with 60-pixel bands each side - and the fit probe
+    (`OMK_GL1_FIT_PROBE`): on the 60th fitted frame every window pixel inside
+    the fitted rectangle compared with the corner pixel its centre samples,
+    every band pixel with black, read back from the window itself. Asserted:
+    the fit said, no present refused, all 1228800 picture pixels and all
+    115200 band pixels as they must be, and the window a picture (> 500
+    colours), not a cleared buffer.
+
+    Shown to fail (2026-10-27): the quad's t coordinates swapped (the frame
+    drawn upside down) - 1336 of 1228800 matching; restored by an edit,
+    the file touched, green again.
+    """
+    import subprocess, tempfile, shutil
+    if sys.platform != "darwin":
+        return ("skipped",), ("skipped",), "the gl1 backend is CGL: macOS only"
+    fr = omkpaths.data_root()
+    if not os.path.isdir(os.path.join(fr, "IAM")):
+        return ("skipped",), ("skipped",), "no game data"
+    binp, err = _host_gl1_play()
+    if binp is None and err == "no SDL2":
+        return ("skipped",), ("skipped",), "no SDL2 (pkg-config)"
+    if binp is None:
+        return ("build failed",), ("built",), "ppc-darwin.mk play (host) must build: " + err
+    tmp = tempfile.mkdtemp()
+    try:
+        ppm = os.path.join(tmp, "fit.ppm")
+        out = subprocess.run(
+            [binp, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--frames", "70", "--nodelay",
+             "--res", "640x480", "--saves", tmp],
+            capture_output=True, text=True, errors="replace", timeout=600,
+            env=dict(os.environ, OMK_HIDDEN_WINDOW="1", OMK_GL1_WINDOW="1400x960",
+                     OMK_GL1_FIT_PROBE=ppm)).stdout
+        said = "the 640x480 frame scaled to the 1400x960 window on the card (x2.00)" in out
+        m = re.search(r"gl1 fit probe: (\d+) of (\d+) window pixels are the corner's nearest "
+                      r"pixel; (\d+) of (\d+) band pixels black", out)
+        probe = tuple(int(g) for g in m.groups()) if m else None
+        colours = 0
+        if os.path.exists(ppm):
+            d = open(ppm, "rb").read()
+            head = d.split(b"\n", 3)
+            px = head[3] if len(head) == 4 else b""
+            colours = len({px[i:i + 3] for i in range(0, len(px) - 2, 3 * 7)})
+        return (said, "REFUSED" in out, probe, colours > 500), \
+               (True, False, (1228800, 1228800, 115200, 115200), True), \
+               "the fit said; no present refused; every picture pixel the corner's nearest, " \
+               "every band pixel black (probe from the window itself); the window a picture"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def c_engine_shot_run_boxes():
+    r"""THE WORLD RAY THROUGH THE MESHES' BOXES (2026-10-27,
+    `todo/handoff-classic-mac.md` 3g). The original's world ray `sub_444810`
+    walks the set with `o3de_ForEachMeshInBox`, visiting only the meshes whose
+    box meets the ray's; the port's `sweepSphere` tried every face of the shot
+    soup - and the weather's ROOF RAY casts it every frame of a city with
+    weather, 8.9 ms a frame on the emulated Tiger's street. Now each mesh's run
+    of faces carries a box (`omk::soupRunBoxes`, made with the shot soup) and
+    the ray skips a run whose box misses its own; the faces kept go through the
+    SAME per-face test in ascending order, so the answer cannot change.
+
+    `engine/tools/shot_ray --runs` over all 220 decor sets: 400 rays a set -
+    the roof ray, face to face, horizontal, through a face - cast both ways:
+    the same hit or miss, the same t, normal and triangle. 560504 triangles in
+    11735 runs, 88000 rays, 51094 hits, 0 differing; 15.4% of the faces tried.
+
+    Shown to fail (2026-10-27): the run test comparing the box's max Y with
+    the ray's min Z (`b[4] < lo[2]`) - 496 of 1200 rays differ over Anekbah,
+    AImpasse and Sprison.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "build/shot_ray"], cwd=eng, capture_output=True, text=True)
+    if b.returncode != 0:
+        return ("build failed",), ("built",), "engine/tools/shot_ray must build"
+    sets = sorted(glob.glob(os.path.join(omkpaths.data_root(), "MESHES", "DECORS", "*.[3][dD][oO]")))
+    r = subprocess.run([os.path.join(eng, "build", "shot_ray"), "--runs"] + sets,
+                       capture_output=True, text=True)
+    print("        " + r.stdout.strip())
+    m = re.search(r"runs: (\d+) sets, (\d+) shot triangles in (\d+) mesh runs; (\d+) rays, (\d+) hit, "
+                  r"(\d+) differ; faces tried (\d+) of the linear scan's (\d+)", r.stdout)
+    if not m:
+        return ("no row",), ("row",), "the probe's line must parse"
+    g = tuple(int(x) for x in m.groups())
+    return (g[0], g[5], g[4] > g[3] // 2, g[6] * 4 < g[7]), (220, 0, True, True), \
+        "all 220 sets: the world ray through the meshes' boxes answers as the linear scan - " \
+        "the same hit, t, normal and triangle (most rays hitting) - trying under a quarter of the faces"
 
 
 def c_engine_indexed_textures():
@@ -32761,6 +33451,95 @@ def c_engine_street_memory():
         "read a chunk at a time, the archives holding directories only"
 
 
+def c_engine_gpu_readback_on_demand():
+    r"""THE READBACK BUFFERS ON DEMAND (`todo/perf-audit.md` B2-B5, 2026-10-20):
+    a GPU-presented frame is never read back, so the CPU copies of it are made
+    by the first `readback` and not at the renderer's start.
+
+    The street start, 60 frames at 640x480 with `--profile`, each window
+    hidden with its present kept (`OMK_HIDDEN_WINDOW`):
+
+      * **Vulkan**: the capture's GPU memory at the last frame holds NO
+        `readback` buffer (2.3 MB here, 63 MB at 4K when `readBuf_` and
+        `presRead_` were made at the start), and the pose buffer (`buffers`)
+        is at most 2 MB (8 MB before; the street's busiest frame writes
+        288 KB);
+      * **Vulkan with `--dump`**: the one frame read back still is - a
+        640x480 dump, and a `readback` buffer at the end (the lazy path ran);
+      * **GLES** (where `atos` exists): no more than 0.5 MB live from
+        `GlesRenderer::init` (`rgba_` was 1.17 MB here, 33 MB at 4K) and
+        under 1 MB from `uploadGeometry` (the scratch released after the
+        set's 139245-corner upload, 4.8 MB before).
+
+    Frames: an old/new comparison of 2026-10-20 (Vulkan, GLES, Vulkan with
+    `--ssaa 2`, GLES read back every frame) found the dumps and logs
+    identical, and `OMK_VERIFY_GPU_PRESENT` 0 pixels differing.
+
+    Shown to fail (2026-10-20): `readBuf_` made again in the target's
+    allocation (red: `readback` 1.17 MB); `kPoseBytes` back to 8 MB (red);
+    `rgba_` assigned at `init` (red: 1.17 MB from `GlesRenderer::init`);
+    `TrimScratch` keeping everything (red: 4.79 MB from `uploadGeometry`).
+
+    The `buffers` figure was red in the sweep of 2026-10-21: 34.2 MB - the
+    tiled point lights' storage (16 MB, 2026-10-20; 32 since the reflection's
+    half) made at every init. They are now made only for a renderer told
+    `setEmitterLights(true)` (`[Remaster] fxlight`), the one way a frame sends
+    them: back to the 2 MB pose buffer alone.
+    """
+    import subprocess, tempfile, shutil
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omkprof
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    vk, gl = (os.path.join(eng, "build", b) for b in ("omk-play", "omk-play-gles"))
+    if mk.returncode != 0 or not os.path.exists(vk) or not os.path.exists(gl):
+        return ("skipped",), ("skipped",), "no SDL + Vulkan + GL build here - the backends are optional"
+    tmp = tempfile.mkdtemp()
+    MB = 1048576.0
+
+    def run(play, cap, *extra):
+        saves = os.path.join(tmp, "saves-" + os.path.basename(cap))
+        os.mkdir(saves)
+        subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                        "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                        "--stand", "1804,0,-6890,336", "--nofmv", "--res", "640x480",
+                        "--filter", "nearest", "--saves", saves, "--frames", "60",
+                        "--profile", cap] + list(extra),
+                       capture_output=True, text=True, errors="replace",
+                       env=dict(os.environ, OMK_HIDDEN_WINDOW="1"))
+        c = omkprof.Capture(cap)
+        c.poll()
+        g = next((f["gpu"] for f in reversed(c.frames) if f.get("gpu")), None)
+        return c, ({t[0]: t[1] / MB for t in g["tags"]} if g else None)
+
+    try:
+        _, vkGpu = run(vk, os.path.join(tmp, "vk.prof"), "--vulkan")
+        dump = os.path.join(tmp, "d.bin")
+        _, vkDumpGpu = run(vk, os.path.join(tmp, "vkd.prof"), "--vulkan", "--dump", dump)
+        dumped = os.path.getsize(dump) if os.path.exists(dump) else 0
+        glCap, _ = run(gl, os.path.join(tmp, "gl.prof"))
+        glInit = glUpload = None
+        if shutil.which("atos") and glCap.sites:
+            byFn = omkprof.symbolizeSites(glCap.sites, gl)
+            glInit = sum(v[0] for k, v in byFn.items() if "GlesRenderer::init(" in k) / MB
+            glUpload = sum(v[0] for k, v in byFn.items() if "GlesRenderer::uploadGeometry(" in k) / MB
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if vkGpu is None or vkDumpGpu is None:
+        return ("gpu memory", vkGpu is not None, vkDumpGpu is not None), ("gpu memory", True, True), \
+            "both Vulkan runs must report their GPU memory (no Vulkan window here?)"
+    print("        vulkan: readback %.2f MB, pose buffer %.2f MB; with --dump: readback %.2f MB, "
+          "dump %d bytes; gles: init %s MB, upload scratch %s MB"
+          % (vkGpu.get("readback", 0.0), vkGpu.get("buffers", 0.0), vkDumpGpu.get("readback", 0.0),
+             dumped, "?" if glInit is None else "%.2f" % glInit,
+             "?" if glUpload is None else "%.2f" % glUpload))
+    glOk = (True, True) if glInit is None else (glInit <= 0.5, glUpload < 1.0)
+    return ("readback" not in vkGpu, vkGpu.get("buffers", 99.0) <= 2.0,
+            vkDumpGpu.get("readback", 0.0) > 0, dumped == 640 * 480 * 2) + glOk, (True,) * 6, \
+        "a GPU-presented run holds no readback buffer and a 2 MB pose buffer; a dump still reads " \
+        "its frame back; the GLES readback copy and the set-sized upload scratch are not kept"
+
+
 def c_engine_profiler():
     r"""The PROFILER (`todo/debug-tools.md` step 1): `omk-play --profile`.
 
@@ -33037,8 +33816,11 @@ def c_engine_release_build():
         return ("build failed",), ("built",), (mk.stdout + mk.stderr + mk2.stderr)[-400:]
     def scan(b):
         syms = subprocess.run(["nm", "-C", b], capture_output=True, text=True).stdout
-        data = open(b, "rb").read()
-        return sum(1 for l in syms.splitlines() if "omk::prof::" in l), data.count(b"OMKSNAP1")
+        # the snapshot WRITER, by its symbol: the marker's bytes were counted
+        # until Apple clang 21 (2026-10-21) folded the `"OMKSNAP1"` loop into
+        # immediate stores and the literal left the binary
+        return (sum(1 for l in syms.splitlines() if "omk::prof::" in l),
+                sum(1 for l in syms.splitlines() if "omk::prof::snapshot(" in l))
     tmp = tempfile.mkdtemp()
     try:
         dumps = []
@@ -33128,12 +33910,35 @@ def c_engine_profiler_gpu():
     images, then dropped the white one's handle (`white_ = Tex{}`) without
     destroying it and uploaded another. The pool is now kept across changes
     (`setTextures`) and the white image with it.
+
+    **40 -> 42 on 2026-10-21**, not a leak: the remaster's two 1x1 fallbacks,
+    made once at init and bound wherever a texture has no pack file -
+    `lightBlack_` (binding 1, the light map of one with none; the bloom,
+    2026-10-20) and `normalFlat_` (binding 3, the flat normal map; the relief,
+    2026-10-21). Both exist with the remaster off, so the street counts them;
+    the no-growth figure still guards the leak this pin once caught.
+
+    **2026-10-24, two moves found red on the M1, neither a leak**: the three
+    1x1 fallbacks (white, `lightBlack_`, `normalFlat_`) are their own
+    category since the audit's bug 4 (`6319abd`, "texture stand-ins") - 39
+    textures + 3 stand-ins, the same 42; and the batched upload (`c2a78d8`)
+    keeps ONE staging ring of 32 MB for the run - staging at rest is that
+    ring alone (a staging buffer left over would make it two).
+
+    **GLES's remaster targets (2026-10-26, the audit's GLES item)**: the
+    post's copy and glows, the water reflection's colour and depth, the LUT,
+    the light maps and `lightBlack_` were never counted (the Quest's budget
+    reads this). On Darwin, Jaunpur's canal through `omk-play-gles` with the
+    water and a grade, 640x480: the categories sum to the total, "render
+    targets" holds 7 at exactly 5,068,800 bytes (was 2), and the 1x1 white is
+    a "texture stand-in" as on Vulkan. Shown to fail (2026-10-26): the
+    reflection's colour left uncounted - 6 targets at 3,840,000 bytes.
     """
-    import subprocess, tempfile, shutil
+    import subprocess, tempfile, shutil, platform
     sys.path.insert(0, os.path.join(ROOT, "tools"))
     import omkprof
     eng = os.path.join(ROOT, "engine")
-    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     play = os.path.join(eng, "build", "omk-play")
     if mk.returncode != 0 or not os.path.exists(play):
         return ("skipped",), ("skipped",), "no SDL - the frontend is optional (PORTING A8)"
@@ -33148,6 +33953,31 @@ def c_engine_profiler_gpu():
         if "through VULKAN" not in r.stdout:
             return ("skipped",), ("skipped",), "no Vulkan device - the GPU backend is optional"
         frames = [f for f in omkprof.read(cap)[1] if f["frame"] >= 0]
+        # GLES, the remaster's targets: Jaunpur's canal with the water and a
+        # grade - the world target and its depth, the reflection's pair, the
+        # post's copy and its two glows
+        gl = ("skipped",)
+        gplay = os.path.join(eng, "build", "omk-play-gles")
+        if platform.system() == "Darwin" and os.path.exists(gplay):
+            grades = os.path.join(tmp, "grades"); os.makedirs(grades)
+            with open(os.path.join(grades, "JAUNPUR.cube"), "w") as f:
+                f.write("LUT_3D_SIZE 2\n" + "".join("%d %d %d\n" % (r_, g_, b_) for b_ in (0, 1) for g_ in (0, 1) for r_ in (0, 1)))
+            gcap = os.path.join(tmp, "gl.prof")
+            subprocess.run(["caffeinate", "-d", "-u", "-i", gplay, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                            "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "1",
+                            "--stand", "10524,-40,10284,180", "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                            "--res", "640x480", "--frames", "30", "--water", "0.6", "--grade", grades,
+                            "--profile", gcap],
+                           capture_output=True, text=True, env=dict(os.environ, OMK_NO_GPU_PRESENT="1"), timeout=300)
+            gf = [f["gpu"] for f in omkprof.read(gcap)[1] if f["frame"] >= 0] if os.path.exists(gcap) else []
+            if not gf or not gf[-1]:
+                gl = ("no frames",)
+            else:
+                gt = {t[0]: (t[1], t[2]) for t in gf[-1]["tags"]}
+                print("        GLES canal at frame 29: " + ", ".join(
+                    "%s %d B (%d)" % (k, v[0], v[1]) for k, v in sorted(gt.items())))
+                gl = (sum(t[1] for t in gf[-1]["tags"]) == gf[-1]["live"],
+                      gt.get("render targets"), gt.get("texture stand-ins", (0, 0))[1])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     gpus = [f["gpu"] for f in frames]
@@ -33155,17 +33985,23 @@ def c_engine_profiler_gpu():
     sums = every and all(sum(t[1] for t in g["tags"]) == g["live"] for g in gpus)
     last = {t[0]: (t[1], t[2]) for t in (gpus[-1]["tags"] if every else [])}
     tex = last.get("textures", (0, 0))
+    stand = last.get("texture stand-ins", (0, 0))
     growth = (gpus[-1]["live"] - gpus[15]["live"]) if every else -1
     print("        GPU at frame 29: %.1f MB - %s; frames 15..29 grew %+d KB" % (
         (gpus[-1]["live"] if every else 0) / 1048576.0,
         ", ".join("%s %.1f MB (%d)" % (k, v[0] / 1048576.0, v[1]) for k, v in sorted(last.items())),
         growth // 1024))
-    return (every, sums, tex[1], tex[0] > 8 << 20, "vertex buffers" in last, "staging" in last,
-            0 <= growth < 1 << 20), \
-           (True, True, 40, True, True, False, True), \
+    # 640x480: colour 4 + depth 2 + the reflection's 4 + 2 + the post's copy
+    # 4 bytes a pixel, the glows 2 x 4 at a quarter each way
+    gl_want = (True, (16 * 640 * 480 + 2 * 4 * 160 * 120, 7), 1)
+    return (every, sums, tex[1] + stand[1], tex[0] > 8 << 20, "vertex buffers" in last,
+            last.get("staging", (0, 0)) == (32 << 20, 1), 0 <= growth < 1 << 20, gl), \
+           (True, True, 42, True, True, True, True, _or_skip(gl, gl_want)), \
         "the street through the Vulkan world renderer: GPU memory in every frame, its " \
-        "categories summing to the total, the 40 texture atlases over 8 MB, vertex " \
-        "buffers, no staging left at rest, no growth over frames 15..29"
+        "categories summing to the total, the 39 texture atlases and the 3 fallbacks (the " \
+        "atlases over 8 MB), vertex " \
+        "buffers, the staging ring alone at rest (32 MB, one), no growth over frames 15..29; " \
+        "GLES's remaster targets counted (the canal: 7, the reflection's and the post's included)"
 
 
 def c_engine_frontend_gateway():
@@ -33223,6 +34059,138 @@ def c_engine_frontend_gateway():
             "sdlfront.cpp, which must include SDL, is stopped by the poison"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def c_engine_sdl3():
+    r"""SDL3 AND SDL2 BOTH BUILD AND RUN THE SAME (PORTING A8: "3 is preferred
+    and 2 is accepted" - the Makefile takes SDL3 wherever `pkg-config` has
+    it). SDL3 did not BUILD from the remaster's audit (2026-10-24) to
+    2026-10-26 - the audio device, text input and the Vulkan window had kept
+    SDL2's calls - and every build on a machine with both needed
+    `SDL_PKG=sdl2`; nothing checked it. Where `pkg-config` has both:
+      1. each flavour builds `omk-play` and `omk-play-gles` (private binaries,
+         `build/sdl/`; SDL3's objects in their own `-sdl3` directories, so
+         neither flavour's object is ever linked into the other);
+      2. the software reference's street frame, 60 frames, the SAME BYTES;
+      3. GLES on the readback's path (`OMK_NO_GPU_PRESENT`): GLES2 on both
+         (SDL3's `SDL_InitSubSystem` is true on success - a `== 0` left
+         SDL3 on the software reference) and the same bytes;
+      4. Vulkan's window (hidden, `OMK_VERIFY_GPU_PRESENT`): VULKAN on both,
+         every compared frame 0 pixels from the CPU's;
+      5. THE AUDIO DEVICE (`OMK_AUDIO_DEVICE`, SDL's `disk` driver): opened
+         on both and its output non-silent - SDL3's is a stream pulled
+         through `feed3`, SDL2's a callback.
+    NOT THE SAME SAMPLES: SDL2's device reopens at the world's 22050 Hz,
+    SDL3's stays at 44100 and its stream resamples (measured 2026-10-26: SDL3's
+    every other frame matching SDL2's within 1e-6 where the gaps fell alike).
+    SHOWN TO FAIL (2026-10-26), one at a time: the GLES window's init back to
+    `== 0` - part 3 (SDL3 on the software reference); `feed3` not handed to
+    the stream - part 5 (SDL3's device silent).
+    """
+    import subprocess, tempfile, shutil, re, array
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    have = [p for p in ("sdl3", "sdl2")
+            if subprocess.run(["pkg-config", "--exists", p], capture_output=True).returncode == 0]
+    if len(have) < 2:
+        return ("skipped",), ("skipped",), "pkg-config has %s - both are needed" % (have or "neither")
+    env0 = {k: v for k, v in os.environ.items() if k != "MAKEFLAGS"}   # the flavour is this check's
+    out = os.path.join(eng, "build", "sdl")
+    bins, built = {}, []
+    for p in ("sdl3", "sdl2"):
+        bins[p] = (os.path.join(out, "omk-play-" + p), os.path.join(out, "omk-play-gles-" + p))
+        mk = subprocess.run(["make", "-s", "play", "play-gles", "SDL_PKG=" + p, "PLAY_BIN=" + bins[p][0],
+                             "PLAY_GL_BIN=" + bins[p][1]], cwd=eng, capture_output=True, text=True, env=env0)
+        built.append(mk.returncode == 0 and all(os.path.exists(b) for b in bins[p]) and
+                     ("against " + p) in mk.stdout)
+        if not built[-1]:
+            return (tuple(built), "build"), ((True, True), "built"), (mk.stdout + mk.stderr)[-400:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, env, *extra, frames="60"):
+            dump = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([binary, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--area", "0", "--stand",
+                                "1804,0,-6890,336", "--filter", "nearest", "--frames", frames, "--dump", dump] +
+                               list(extra), capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(env0, **env))
+            return (open(dump, "rb").read() if os.path.exists(dump) else None), r.stdout
+        got = {}
+        for p in ("sdl3", "sdl2"):
+            play, gles = bins[p]
+            raw = os.path.join(tmp, p + ".raw")
+            sw, swlog = run(play, p + "-sw", {"SDL_VIDEODRIVER": "dummy", "SDL_AUDIODRIVER": "disk",
+                                              "OMK_AUDIO_DEVICE": "1", "SDL_DISKAUDIOFILE": raw,
+                                              "SDL_AUDIO_DISK_OUTPUT_FILE": raw}, frames="120")
+            pcm = array.array("f", open(raw, "rb").read()[:os.path.getsize(raw) // 4 * 4]) \
+                if os.path.exists(raw) else array.array("f")
+            gl, gllog = run(gles, p + "-gl", {"OMK_NO_GPU_PRESENT": "1"})
+            _, vklog = run(play, p + "-vk", {"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"}, "--vulkan")
+            vm = re.findall(r"gpu present verify: frame \d+, (\d+) frames compared, (\d+) differ", vklog)
+            got[p] = dict(sw=sw, gl=gl, gles="renderer: GLES2" in gllog, vk="renderer: VULKAN" in vklog,
+                          vkok=bool(vm) and int(vm[-1][0]) >= 20 and vm[-1][1] == "0",
+                          dev="audio: device " in swlog, peak=max(map(abs, pcm)) if pcm else 0.0,
+                          samples=len(pcm))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    a, b = got["sdl3"], got["sdl2"]
+    print(f"        software frames {'the same' if a['sw'] and a['sw'] == b['sw'] else 'DIFFER'}; GLES "
+          f"{a['gles']}/{b['gles']}, frames {'the same' if a['gl'] and a['gl'] == b['gl'] else 'DIFFER'}; "
+          f"Vulkan's window {a['vk']}/{b['vk']}, verified {a['vkok']}/{b['vkok']}; audio device "
+          f"{a['dev']}/{b['dev']}, {a['samples']}/{b['samples']} samples, peak {a['peak']:.3f}/{b['peak']:.3f} "
+          f"(sdl3/sdl2)")
+    return (tuple(built), a["sw"] is not None and a["sw"] == b["sw"],
+            (a["gles"], b["gles"], a["gl"] is not None and a["gl"] == b["gl"]),
+            (a["vk"], b["vk"], a["vkok"], b["vkok"]),
+            (a["dev"], b["dev"], a["peak"] > 0.05, b["peak"] > 0.05)), \
+        ((True, True), True, (True, True, True), (True,) * 4, (True,) * 4), \
+        "both flavours built; the software frame the same bytes; GLES up on both and the same bytes; " \
+        "Vulkan's window up on both and 0 pixels from the CPU's; the audio device open on both and sounding"
+
+
+def c_engine_vulkan_teardown():
+    r"""VULKAN'S TEARDOWN LEAVES NOTHING (the remaster audit's cleanliness,
+    2026-10-26): `~VulkanRenderer` never destroyed the mapped shadow's image,
+    view, pass, framebuffer, pipeline, sampler and layout, set 1's layout, or
+    the shadow and lights UBOs - older than the remaster. The viewer never
+    deletes its renderer (the process's end takes it), so `shadow_probe`,
+    which makes one with the shadow map and deletes it, runs under the Khronos
+    validation layer where one is installed (skipped otherwise): the layer
+    inserted (the loader's own line) and no `VUID-vkDestroyDevice-device-05137`
+    - an object outliving its device.
+    SHOWN TO FAIL (2026-10-26): the destructor's new block removed - 2 such
+    reports (2 buffers, 3 memories, the image, view, framebuffer, pass and
+    pipeline listed).
+    """
+    import subprocess, glob
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    layer = None
+    for d in ("/opt/homebrew/share/vulkan/explicit_layer.d", "/usr/local/share/vulkan/explicit_layer.d",
+              "/usr/share/vulkan/explicit_layer.d"):
+        if os.path.exists(os.path.join(d, "VkLayer_khronos_validation.json")):
+            layer = d
+            break
+    if not layer:
+        return ("skipped",), ("skipped",), "no Khronos validation layer installed"
+    mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "shadow_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return ("build",), ("built",), (mk.stdout + mk.stderr)[-300:]
+    prefix = os.path.dirname(os.path.dirname(os.path.dirname(layer)))   # <prefix>/share/vulkan/explicit_layer.d
+    env = dict(os.environ, VK_INSTANCE_LAYERS="VK_LAYER_KHRONOS_validation", VK_LOADER_DEBUG="layer",
+               DYLD_FALLBACK_LIBRARY_PATH=os.path.join(prefix, "lib"))
+    r = subprocess.run([probe], capture_output=True, text=True, errors="replace", timeout=300, env=env)
+    out = r.stdout + r.stderr
+    if "no Vulkan" in out or "device" not in out:
+        return ("skipped",), ("skipped",), "no Vulkan device"
+    inserted = 'Insert instance layer "VK_LAYER_KHRONOS_validation"' in out
+    leaks = out.count("VUID-vkDestroyDevice-device-05137")
+    print(f"        layer inserted {inserted}; the probe exit {r.returncode}; objects outliving the device: {leaks}")
+    return (inserted, r.returncode, leaks), (True, 0, 0), \
+        "the validation layer inserted; shadow_probe ran; nothing left alive at vkDestroyDevice"
 
 
 def c_engine_classic_build():
@@ -33506,7 +34474,7 @@ def c_engine_mipmaps():
     sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
     sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
     pl = _play_text(eng)
-    vk = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
     # any renderer variable, not an enumerated one - see `engine: anti-aliasing`
     ga = len(re.findall(r"if \((?:\w+ && )?texAniso > 1\) \w+->setAnisotropy\(texAniso\)", pl))
     src_ok = (bool(re.search(r"int\s+anisotropy\s*=\s*1;", sh)),
@@ -33598,6 +34566,3670 @@ def c_engine_mipmaps():
            "(skipped without Vulkan): the nearest frame is byte-identical to the " \
            "default, the mean neighbour gradient orders trilinear < anisotropic " \
            "< bilinear, and coverage agreement with software stays >= 0.98"
+
+
+def c_texture_pack_curation():
+    r"""THE CURATION's MECHANISM (`todo/remaster.md` B2, `o3de/texpack.h`): a pack's
+    `exclude.txt`, a key a line (comments after `#`), leaves those textures AS
+    SHIPPED - their colour and their normal map out, their light map kept.
+    A made pack of two textures (one with a normal map and a light map), the
+    first excluded: the engine opens one replacement, no normal map, the light
+    map, and says one excluded (`texpack_tool open`). Without the file, both.
+
+    SHOWN TO FAIL (2026-10-21): the file never read - 2 replacements, 0
+    excluded; the normal map kept - 1 normal map.
+    """
+    import subprocess, tempfile, shutil, sys
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build failed",), ("built",), "texpack_tool must build"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    try:
+        a, b = "00000000000000aa", "00000000000000bb"
+        px = bytes([200, 100, 50, 255]) * 16
+        for name in (a + ".png", b + ".png", a + "_n.png", a + "_e.png"):
+            omktexpack.write_png(os.path.join(tmp, name), 4, 4, px, 4)
+        def opened():
+            r = subprocess.run([tool, "open", tmp], capture_output=True, text=True, timeout=60)
+            m = re.search(r"@pack files (\d+) lights (\d+) normals (\d+) excluded (\d+)", r.stdout)
+            return tuple(int(v) for v in m.groups()) if m else ("no @pack line",)
+        before = opened()
+        open(os.path.join(tmp, "exclude.txt"), "w").write("# the curation\n" + a + "  # TEST lettering\n")
+        after = opened()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return (before, after), ((2, 1, 1, 0), (1, 1, 0, 1)), \
+        "a made pack (files, light maps, normal maps, excluded): without exclude.txt both textures; with it " \
+        "the listed one as shipped - its normal map out, its light map kept"
+
+
+def c_engine_texture_pack():
+    r"""THE TEXTURE PACK - the remaster's first feature (`todo/remaster.md` B4),
+    OFF unless `[Remaster] texturepack = DIR` / `--texture-pack DIR` names one.
+
+    A pack is a directory of `<key>.png`, the key the engine's `textureKey`
+    (FNV-1a 64 over a texture's size, indices and palette; `o3de/texpack.h`).
+    Vulkan and GLES upload a replacement at its own size - a power-of-two
+    multiple of the original - while the UVs stay in the ORIGINAL's texels:
+    GLES keeps dividing by the original size, the Vulkan shader is told the
+    factor (`texScaled`, a push field 0 on every shipped texture, so the
+    default path divides exactly as before). The software reference never
+    consults it. NOT A PORT: tier 3 for the keys and the PNG reader
+    (differentials against an independent implementation), and the frames
+    are an invariant of this port's own, not of the original.
+
+    Six parts:
+      1. the source: the default is empty; the key is read under [Remaster]
+         and nowhere under [Enhancements] (so `all = max` can never turn it
+         on); both backends consult the pack only behind `pack.shown()`
+         (open, and not hidden by the original/remaster switch);
+      2. THE KEYS, both ways: `texpack_tool keys` (the engine's decoder and
+         `textureKey`) against `omktexpack.texture_key` over tex3dt.py's own
+         decode, on every one of the 2534 shipped textures - a pack made by
+         the tool is found by the engine, or it is not;
+      3. THE PNG READER (`platform/pngread.*`, an inflate written here):
+         60 images Python writes with every row filter (0-4), colour types 0,
+         2, 3 (with tRNS), 4 and 6, zlib levels 0 / 1 / 9, smooth rows and
+         noisy four-level ones (where Paeth's ties fall; smooth rows almost
+         never tie) decode to exactly what was written, and a stream with a
+         broken Adler-32 is refused; and ON THE THREAD POOL (`texpack_tool
+         pngpar`): a fixed-Huffman PNG decoded 64 times at once, its first use
+         parallel, in 20 fresh processes, every copy alike. The fixed codes
+         were first built lazily behind a plain bool: two workers rebuilt them
+         at once and the viewer hung decoding a pool (Jaunpur, 2026-10-20);
+         that build put back answers 7 of 20 runs with copies apart (as low
+         as 0 of 64 alike);
+      4. Vulkan (`run_vulkan`, Aapkayl through 4555's neighbour) and
+      5. GLES (`gles_probe --frame`, macOS) - under the NEAREST sampler, a
+         pack holding every texture at 4x by nearest neighbour draws the frame
+         BYTE-IDENTICAL to no pack (which pins the UV scale: a wrong factor
+         samples the wrong texel), while a pack of one colour changes it and
+         puts that colour on screen; the pool event says all 21 replaced;
+      6. THE GREYSCALE BANK (ops 150/151): the viewer greys a pool's
+         palettes, which changes every key; `texpack_tool grey` greys each
+         Aapkayl texture as the viewer does, aliases it (`aliasGrey`), and
+         asks the nearest pack - all 21 must come back as the engine's own
+         greyed texture enlarged, alpha included (keyed where the grey is 0).
+         Measured once in the viewer too (area 237, `--op-at 30:150`): the
+         grey pool replaced 34 of 36 on Vulkan and GLES, 1 without the alias,
+         the nearest pack byte-identical to none and the full pack 0 colourful
+         pixels.
+
+    Measured 2026-10-20 (M3): keys 2534/2534; nearest pack 0 pixels moved on
+    both backends; the solid pack 217040 (Vulkan) / 217039 (GLES) moved,
+    29173 / 29171 magenta. Also measured once, outside the check: with no pack
+    the Vulkan frames of Aapkayl and ABar06 under nearest, bilinear,
+    trilinear+16x and 4x MSAA, and the full viewer's 45-frame street dump on
+    Vulkan and GLES, are byte-identical to the build before the feature; and
+    a pack of all 1255 unique textures at 4x nearest draws the street
+    byte-identical too (31 and 39 of the pool replaced).
+
+    Shown to fail (2026-10-20): the shader dividing by the replacement's own
+    size (`texScaled` ignored) moves the Vulkan nearest frame; GLES handing
+    the replacement's size to `texSize` moves the GLES one (212851 / 212852
+    pixels); the Python key hashing 767 palette bytes agrees on 619 of 2534
+    (the textures whose last byte is 0 anyway) and the packs it makes are
+    found by neither backend; Paeth's `pb <= pc` made `pb < pc` decodes 45
+    of 60 and the Sub filter reading the byte before rather than the pixel
+    before 48 of 60. NOT a test: `pa <= pb` made `pa < pb` - an EQUIVALENT
+    mutant, which passing is right about. pa = pb with a != b means
+    a + b = 2c, so pc = 0 and Paeth takes c either way; that comparison only
+    ever decides between equal values.
+    And part 6: `aliasGrey` made a no-op answers (21, 0, 0); the grey
+    replacement left unkeyed where its luma is 0 answers 13 of 21 exact - 8
+    of Aapkayl's textures hold near-black colours the grey palette keys.
+    """
+    import subprocess, tempfile, shutil, re, random, zlib, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    model = os.path.join(fr, "MESHES", "DECORS", "Aapkayl.3DO")
+    if not (os.path.isdir(eng) and os.path.exists(model)):
+        return ("skipped",), ("skipped",), "engine/ or Aapkayl.3DO absent"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack, tex3dt
+
+    # ---- 1. the source
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    po = open(os.path.join(eng, "src", "app", "playoptions.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"std::string\s+texturePack;", sh)),
+              'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
+              "texturePack" not in max_body,
+              '"--texture-pack"' in po,
+              # ...`shown()` since the original/remaster switch (`todo/graphics-menu.md`
+              # B): open and hidden is the original mode, which uploads as shipped
+              vk.count("pack.replacements(") == 1 and
+              re.search(r"if \(pack\.shown\(\)\) \{[^}]*pack\.replacements\(", vk) is not None and
+              # GLES since the remaster switch: the same gate as `packOn` (`packActive`)
+              # and the pack's call as `packDecode`, its body in the remaster's `.inl`
+              gl.count("texturePack().replacements(") == 1 and
+              re.search(r"if \(packOn\) \{[^}]*packDecode\(", gl) is not None)
+
+    for target in ("build/texpack_tool",):
+        mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
+        if mk.returncode != 0:
+            return ("build", target), ("built",), mk.stderr[-300:]
+    tool = os.path.join(eng, "build", "texpack_tool")
+    tmp = tempfile.mkdtemp()
+    try:
+        # ---- 2. the keys
+        r = subprocess.run([tool, "keys", fr], capture_output=True, text=True, timeout=300)
+        rows = [ln.split() for ln in r.stdout.splitlines()]
+        agree = differ = 0
+        cache = {}
+        for rel, mat, key, _wh in rows:
+            if rel not in cache:
+                cache = {rel: tex3dt.textures(os.path.join(fr, rel))}
+            tx = cache[rel][int(mat)]
+            k = omktexpack.texture_key(tx["w"], tx["h"], tx["idx"], tx["pal"])
+            agree += k == key
+            differ += k != key
+        keys = (len(rows) > 0, agree, differ)
+
+        # ---- 3. the PNG reader
+        rnd = random.Random(20261020)
+        def png(path, w, h, ctype, rows_px, filt, level, plte=None, trns=None, bad_adler=False):
+            ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+            raw = b""
+            prev = bytes(w * ch)
+            for y, row in enumerate(rows_px):
+                f = filt[y % len(filt)]
+                out = bytearray(len(row))
+                for i, v in enumerate(row):
+                    a = row[i - ch] if i >= ch else 0
+                    b = prev[i] if y else 0
+                    c = prev[i - ch] if (y and i >= ch) else 0
+                    if f == 0: p = 0
+                    elif f == 1: p = a
+                    elif f == 2: p = b
+                    elif f == 3: p = (a + b) >> 1
+                    else:
+                        pp = a + b - c; pa, pb, pc = abs(pp - a), abs(pp - b), abs(pp - c)
+                        p = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                    out[i] = (v - p) & 255
+                raw += bytes([f]) + bytes(out)
+                prev = row
+            z = zlib.compress(raw, level)
+            if bad_adler:
+                z = z[:-1] + bytes([z[-1] ^ 1])
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            body = chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))
+            if plte: body += chunk(b"PLTE", plte)
+            if trns: body += chunk(b"tRNS", trns)
+            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + body + chunk(b"IDAT", z) + chunk(b"IEND", b""))
+        def expect(ctype, rows_px, plte, trns):
+            out = bytearray()
+            for row in rows_px:
+                if ctype == 0: out += b"".join(bytes((v, v, v, 255)) for v in row)
+                elif ctype == 2: out += b"".join(row[i:i + 3] + b"\xff" for i in range(0, len(row), 3))
+                elif ctype == 3: out += b"".join(plte[3 * v:3 * v + 3] + bytes([trns[v] if v < len(trns) else 255]) for v in row)
+                elif ctype == 4: out += b"".join(bytes((row[i], row[i], row[i], row[i + 1])) for i in range(0, len(row), 2))
+                else: out += row
+            return bytes(out)
+        cases = good = 0
+        for ctype in (0, 2, 3, 4, 6):
+          for noisy in (False, True):
+            for filt, level in (([0], 0), ([1], 1), ([2], 9), ([3], 6), ([4], 9), ([0, 1, 2, 3, 4], 6)):
+                w, h = 37, 23
+                ch = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[ctype]
+                plte = bytes(rnd.randrange(256) for _ in range(3 * 40)) if ctype == 3 else None
+                trns = bytes(rnd.randrange(256) for _ in range(17)) if ctype == 3 else None
+                # smooth-ish rows, so every filter actually predicts something
+                rows_px = []
+                for y in range(h):
+                    # ...and NOISY ones of four levels, where Paeth's TIES
+                    # (a + b = 2c, a != b) are common - smooth rows never tie
+                    rows_px.append(bytes((rnd.randrange(40) if ctype == 3 else
+                                          rnd.randrange(4) * 60 if noisy else
+                                          (x * 7 + y * 3 + rnd.randrange(9)) & 255) for x in range(w * ch)))
+                p = os.path.join(tmp, "t.png")
+                png(p, w, h, ctype, rows_px, filt, level, plte, trns)
+                out = os.path.join(tmp, "t.raw")
+                rr = subprocess.run([tool, "png", p, out], capture_output=True, text=True, timeout=300)
+                cases += 1
+                if rr.returncode == 0:
+                    raw = open(out, "rb").read()
+                    good += raw[:8] == struct.pack("<ii", w, h) and raw[8:] == expect(ctype, rows_px, plte, trns or b"")
+        bad = os.path.join(tmp, "bad.png")
+        png(bad, 8, 8, 2, [bytes(24)] * 8, [0], 6, bad_adler=True)
+        refused = subprocess.run([tool, "png", bad, os.path.join(tmp, "b.raw")],
+                                 capture_output=True, text=True, timeout=300).returncode != 0
+        # ...and ON THE POOL, first use included: a fixed-code stream decoded 64
+        # times at once in each of 20 fresh processes, every copy alike
+        W2, H2 = 256, 64
+        rawimg = b"".join(b"\0" + bytes((x * 3 + y + rnd.randrange(16)) & 255 for x in range(W2 * 3)) for y in range(H2))
+        co = zlib.compressobj(1, zlib.DEFLATED, 15, 9, zlib.Z_FIXED)
+        fz = co.compress(rawimg) + co.flush()
+        def chunk2(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+        fixed = os.path.join(tmp, "fixed.png")
+        open(fixed, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk2(b"IHDR", struct.pack(">IIBBBBB", W2, H2, 8, 2, 0, 0, 0))
+                                + chunk2(b"IDAT", fz) + chunk2(b"IEND", b""))
+        par = sum(1 for _ in range(20)
+                  if subprocess.run([tool, "pngpar", fixed, "64"], capture_output=True, text=True,
+                                    timeout=60).stdout.strip() == "pngpar 64 same 64")
+        pngs = (good, cases, refused, par)
+
+        # ---- the two test packs, from the originals
+        work = os.path.join(tmp, "work")
+        so = sys.stdout
+        try:
+            sys.stdout = open(os.devnull, "w")
+            omktexpack.cmd_export(work, ["DECORS/Aapkayl.3DO"])
+            shutil.copytree(work, work + "-solid")
+            omktexpack.cmd_build(work, 4, None, ["DECORS/Aapkayl.3DO"])
+            omktexpack.cmd_build(work + "-solid", 0, ((255, 0, 255), 4), ["DECORS/Aapkayl.3DO"])
+        finally:
+            sys.stdout.close()
+            sys.stdout = so
+        near, solid = os.path.join(work, "pack"), os.path.join(work + "-solid", "pack")
+        # ---- 6. the greyscale bank through the pack
+        rg = subprocess.run([tool, "grey", near, model], capture_output=True, text=True, timeout=300)
+        mg = re.search(r"grey: (\d+) textures, (\d+) replaced, (\d+) exact", rg.stdout)
+        greyres = tuple(int(v) for v in mg.groups()) if mg else ("no grey line",)
+        CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
+
+        def gpu_frame(path):
+            raw = open(path, "rb").read()
+            W, H, _a, _b = struct.unpack_from("<4i", raw, 0)
+            return struct.unpack_from("<%dH" % (W * H), raw, 16 + 2 * W * H)
+
+        def judge(run):
+            got = {}
+            for tag, pack in (("none", None), ("near", near), ("solid", solid)):
+                out = os.path.join(tmp, tag + ".bin")
+                env = dict(os.environ, OMK_EVENTS="1")
+                if pack:
+                    env["OMK_TEXTURE_PACK"] = pack
+                rr = run(out, env)
+                if rr.returncode != 0 or not os.path.exists(out):
+                    return None
+                pool = [f for n, f in _events(rr.stdout) if n == "texpack.pool"]
+                got[tag] = (gpu_frame(out), (pool[0]["textures"], pool[0]["replaced"]) if pool else None)
+                os.remove(out)
+            n, a, s = got["none"][0], got["near"][0], got["solid"][0]
+            return (got["none"][1] is None,                               # no pack: never consulted
+                    got["near"][1] == ("21", "21"),
+                    sum(1 for x, y in zip(n, a) if x != y),              # 0: the UV scale is exact
+                    sum(1 for x, y in zip(n, s) if x != y) > 100000,     # the replacement is drawn
+                    sum(1 for v in s if v == 0xF81F) > 10000)
+
+        mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+        vkbin = os.path.join(eng, "build", "run_vulkan")
+        vres = ("no vulkan",)
+        if mk.returncode == 0 and os.path.exists(vkbin):
+            v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
+                                                      capture_output=True, text=True, env=env, timeout=300))
+            vres = v if v is not None else ("no vulkan device",)
+        gres = ("skipped",)
+        if platform.system() == "Darwin":
+            mk = subprocess.run(["make", "-s", "build/gles_probe"], cwd=eng, capture_output=True, text=True)
+            gp = os.path.join(eng, "build", "gles_probe")
+            gres = ("no gles_probe",)
+            if mk.returncode == 0 and os.path.exists(gp):
+                g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
+                                                          capture_output=True, text=True, env=env, timeout=300))
+                gres = g if g is not None else ("no gl context",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        keys {keys[1]} agree / {keys[2]} differ; png {pngs[0]}/{pngs[1]}, bad adler refused {pngs[2]}; "
+          f"grey {greyres}; vulkan {vres}; gles {gres}")
+    want_frame = (True, True, 0, True, True)
+    return (src_ok, keys, pngs, greyres, vres, gres), \
+           ((True,) * 5, (True, 2534, 0), (60, 60, True, 20), (21, 21, 21),
+            _or_skip(vres, want_frame), _or_skip(gres, want_frame)), \
+           "the source (default empty, read under [Remaster] only, never by all = max, both " \
+           "backends behind pack.shown()); the keys, engine against Python, 2534 of 2534; the " \
+           "PNG reader exact on 60 images over every filter and colour type and refusing a bad " \
+           "Adler-32; greyed as the greyscale bank greys them, all 21 answered with the " \
+           "grey texture exactly; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
+           "one-colour pack is drawn, all 21 textures replaced"
+
+
+def c_engine_bloom_and_grade():
+    r"""THE BLOOM AND THE CITY GRADE - the remaster's post-pass (`todo/remaster.md`
+    step 2), two `[Remaster]` options, both OFF unless named: `bloom = S` /
+    `--bloom S` (a glow from the texture pack's LIGHT MAPS, `<key>_e.png`) and
+    `grade = DIR` / `--grade DIR` (a `.cube` LUT per city, `o3de/colourgrade.h`).
+
+    With the bloom on, the scene shader writes each texel's light into the
+    world target's alpha (Vulkan: a push field and binding 1 of the texture's
+    set; GLES: a BLOOM VARIANT of the scene programs, made from their source
+    at `init`, so the defaults - and the Vita's shader cache - are untouched).
+    After the scene: the frame copied aside, the light downsampled and blurred
+    at a quarter, then one pass back into the target with the glow
+    screen-blended and the grade applied (a 3D LUT as an N*N x N strip).
+    NOT A PORT, no oracle in the original: tier 3 for the LUT reader, and the
+    frames are this port's own invariants.
+
+    Parts:
+      1. the source: both default off; read under [Remaster], never by
+         `all = max`; the post-pass recorded only behind its two switches on
+         both backends; the GLES variant built only with the bloom;
+      2. THE .cube READER (`texpack_tool cube`): a LUT `omktexpack.write_cube`
+         writes reads back with its size and its first and last entries; a
+         1D LUT, a short table, a NaN and an infinity are refused;
+      3. on Vulkan (`run_vulkan`) and GLES (`gles_probe --frame`), Aapkayl
+         through 4555's neighbour, the nearest sampler:
+         * bloom on with ALL-BLACK light maps is BYTE-IDENTICAL to the bloom
+           off - the copy, the passes and the screen blend move no pixel when
+           there is no light;
+         * bloom on with NO light map at all (no pack) is byte-identical too,
+           and builds no post (no `remaster.post` event) - the audit's GLES
+           item (2026-10-26): GLES runs the glow only after a draw bound a
+           light map, Vulkan the post only for a pool holding one; the
+           all-black run above must still build it;
+         * bloom on with ALL-WHITE light maps brightens the frame (mean
+           565 luminance up by more than 3 levels), and the pool event says
+           all 21 textures got a light map;
+         * an IDENTITY LUT moves no channel by more than one 565 step;
+         * a LUT that SWAPS red and blue gives back the ungraded frame's blue
+           as its red and its red as its blue (mean difference < 0.6 of a
+           5-bit step) - which pins the strip's layout (blue the slice, red
+           fastest) and the shader's lookup together.
+
+    Measured too, once, outside the check (2026-10-20, M3): with neither on,
+    every frame tried byte-identical to the build before (Vulkan 6 probe runs
+    and the street, GLES the street, with and without the full pack); the
+    engine's Qalisar grade against `omktexpack.grade_rgb` on the same frame
+    within the 565 step (mean 1.4-3.9 of 255); Vulkan against GLES with both
+    on 180 of 960000 pixels apart by more than ~16 levels.
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan LUT sliced by RED
+    instead of blue fails the identity and the swap (both False); the Vulkan
+    scene shader writing a light of 1 everywhere moves 224610 pixels of the
+    all-black-light frame; the GLES bloom variant not substituted (its alpha
+    left at 1) moves 224638 on GLES alone. (2026-10-24) The reader without its
+    finite test (the audit's item 6) - the NaN and the infinity read (part 2).
+    (2026-10-26) The gate made always true, on GLES (`lightMapNow_` set by
+    every draw) and on Vulkan (`poolLit_` true): the unlit run builds its post
+    on that backend alone (False, True, True).
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    model = os.path.join(fr, "MESHES", "DECORS", "Aapkayl.3DO")
+    if not (os.path.isdir(eng) and os.path.exists(model)):
+        return ("skipped",), ("skipped",), "engine/ or Aapkayl.3DO absent"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+
+    # ---- 1. the source
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+bloom\s*=\s*0\.0f;", sh)) and bool(re.search(r"std::string\s+grade;", sh)),
+              'kRemaster, "bloom"' in sc and 'kRemaster, "grade"' in sc and
+              # (OMK's own post-chain bloom - a different feature - is `[Enhancements] bloom`, `postBloom`)
+              'kEnhancements, "grade"' not in sc,
+              "bloom" not in max_body and "grade" not in max_body,
+              # (Vulkan's post-pass also runs for the AO, `be4a245f`; decided
+              # by `begin`, which then draws the scene into `postSrc_`, the
+              # audit's 4K trims 2026-10-24)
+              "postNow_ = ((bloom_ > 0.0f && poolLit_) || lutN_ > 1 || aoOk_) && makeRmPost();" in vk and
+              "if (postNow_) {\n        recordPost(cb_);" in vk and
+              "if ((bloom_ > 0.0f && lightMapNow_) || lutN_ > 1) runPost();" in gl,
+              # the GLES variant over both program sets (the plain one the
+              # fallback, 2026-10-21)
+              # (and kept once built, `bloomBuilt_`: the live relink keeps it, graphics menu 3b)
+              "std::string f = bloom_ > 0.0f || bloomBuilt_ ? bloomVariant(base) : std::string(base);" in gl)
+
+    for target in ("build/texpack_tool",):
+        mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
+        if mk.returncode != 0:
+            return ("build", target), ("built",), mk.stderr[-300:]
+    tool = os.path.join(eng, "build", "texpack_tool")
+    tmp = tempfile.mkdtemp()
+    try:
+        # ---- 2. the reader
+        cube = os.path.join(tmp, "q.cube")
+        omktexpack.write_cube(cube, "neon2", 9)
+        r = subprocess.run([tool, "cube", cube], capture_output=True, text=True, timeout=300).stdout
+        m = re.match(r"cube (\d+) first ([\d.]+) ([\d.]+) ([\d.]+) last ([\d.]+) ([\d.]+) ([\d.]+)", r)
+        f0 = omktexpack.grade_rgb("neon2", 0, 0, 0); f1 = omktexpack.grade_rgb("neon2", 1, 1, 1)
+        read_ok = bool(m) and int(m.group(1)) == 9 and \
+            all(abs(float(m.group(2 + i)) - f0[i]) < 1e-5 for i in range(3)) and \
+            all(abs(float(m.group(5 + i)) - f1[i]) < 1e-5 for i in range(3))
+        bad1 = os.path.join(tmp, "b1.cube"); open(bad1, "w").write("LUT_1D_SIZE 4\n0 0 0\n")
+        bad2 = os.path.join(tmp, "b2.cube"); open(bad2, "w").write("LUT_3D_SIZE 2\n0 0 0\n1 1 1\n")
+        table = "\n".join(["0 0 0"] * 7)
+        bad3 = os.path.join(tmp, "b3.cube"); open(bad3, "w").write(f"LUT_3D_SIZE 2\n{table}\nnan 0 0\n")
+        bad4 = os.path.join(tmp, "b4.cube"); open(bad4, "w").write(f"LUT_3D_SIZE 2\n{table}\n0 inf 0\n")
+        refused = all(subprocess.run([tool, "cube", b], capture_output=True, text=True, timeout=300).stdout.startswith("refused")
+                      for b in (bad1, bad2, bad3, bad4))
+        reader = (read_ok, refused)
+
+        # ---- the test packs and LUTs
+        tex = omktexpack.shipped(["DECORS/Aapkayl.3DO"])
+        packs = {}
+        for name, v in (("black", 0), ("white", 255)):
+            d = os.path.join(tmp, name); os.makedirs(d)
+            for k, e in tex.items():
+                omktexpack.write_png(os.path.join(d, k + "_e.png"), e["w"], e["h"], bytes([v]) * (3 * e["w"] * e["h"]), 3)
+            packs[name] = d
+        def lut(path, f, n=17):
+            with open(path, "w") as o:
+                o.write(f"LUT_3D_SIZE {n}\n")
+                for bi in range(n):
+                    for gi in range(n):
+                        for ri in range(n):
+                            o.write("%.6f %.6f %.6f\n" % f(ri / (n - 1), gi / (n - 1), bi / (n - 1)))
+        ident = os.path.join(tmp, "id.cube"); lut(ident, lambda r, g, b: (r, g, b))
+        swap = os.path.join(tmp, "sw.cube"); lut(swap, lambda r, g, b: (b, g, r))
+        CAM = ["3526,1015,-905", "3412,1032,-882", "83"]
+
+        def frame(path):
+            raw = open(path, "rb").read()
+            W, H, _a, _b = struct.unpack_from("<4i", raw, 0)
+            return struct.unpack_from("<%dH" % (W * H), raw, 16 + 2 * W * H)
+        def judge(run):
+            got = {}
+            for tag, env_ in (("none", {}), ("unlit", {"OMK_BLOOM": "1.3"}),
+                              ("black", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["black"]}),
+                              ("white", {"OMK_BLOOM": "1.3", "OMK_TEXTURE_PACK": packs["white"]}),
+                              ("ident", {"OMK_GRADE": ident}), ("swap", {"OMK_GRADE": swap})):
+                out = os.path.join(tmp, tag + ".bin")
+                rr = run(out, dict(os.environ, OMK_EVENTS="1", **env_))
+                if rr.returncode != 0 or not os.path.exists(out):
+                    return None
+                ev = _events(rr.stdout)
+                pool = [f for n, f in ev if n == "texpack.pool"]
+                got[tag] = (frame(out), pool[0].get("lights") if pool else None,
+                            any(n == "remaster.post" for n, f in ev))
+                os.remove(out)
+            n, bk, wh, idf, sw = (got[k][0] for k in ("none", "black", "white", "ident", "swap"))
+            lum = lambda px: sum(((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2 for v in px) / len(px)
+            step = max(max(abs(((x >> 11) & 31) - ((y >> 11) & 31)), abs(((x >> 5) & 63) - ((y >> 5) & 63)),
+                           abs((x & 31) - (y & 31))) for x, y in zip(n, idf))
+            sw_err = sum(abs(((y >> 11) & 31) - (x & 31)) + abs((y & 31) - ((x >> 11) & 31)) for x, y in zip(n, sw)) / (2 * len(n))
+            return (sum(1 for x, y in zip(n, bk) if x != y),       # 0: no light, no change
+                    # no light map at all: no post either - and the black
+                    # maps' frame above is the post's, run
+                    (got["unlit"][0] == n, got["unlit"][2], got["black"][2]),
+                    got["white"][1] == "21",
+                    lum(wh) - lum(n) > 3,
+                    step <= 1,
+                    sw_err < 0.6)
+
+        mk = subprocess.run(["make", "-s", "vulkan"], cwd=eng, capture_output=True, text=True)
+        vkbin = os.path.join(eng, "build", "run_vulkan")
+        vres = ("no vulkan",)
+        if mk.returncode == 0 and os.path.exists(vkbin):
+            v = judge(lambda out, env: subprocess.run([vkbin, fr, model] + CAM + [out, "640x352", "0", "0", "1"],
+                                                      capture_output=True, text=True, env=env, timeout=300))
+            vres = v if v is not None else ("no vulkan device",)
+        gres = ("skipped",)
+        if platform.system() == "Darwin":
+            mk = subprocess.run(["make", "-s", "build/gles_probe"], cwd=eng, capture_output=True, text=True)
+            gp = os.path.join(eng, "build", "gles_probe")
+            gres = ("no gles_probe",)
+            if mk.returncode == 0 and os.path.exists(gp):
+                g = judge(lambda out, env: subprocess.run([gp, fr, "--frame", model] + CAM + ["640x352", "0", out],
+                                                          capture_output=True, text=True, env=env, timeout=300))
+                gres = g if g is not None else ("no gl context",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        reader {reader}; vulkan {vres}; gles {gres}")
+    want = (0, (True, False, True), True, True, True, True)
+    return (src_ok, reader, vres, gres), \
+           ((True,) * 5, (True, True), _or_skip(vres, want), _or_skip(gres, want)), \
+           "the source (both off by default, [Remaster] only, never all = max, the post-pass " \
+           "behind its two switches, the GLES variant only with the bloom); the .cube reader; " \
+           "on Vulkan and GLES: no light = no change byte for byte, no light map = no post at all, " \
+           "all light brightens and all " \
+           "21 textures carry a map, an identity LUT within one 565 step, a red/blue swap LUT swaps"
+
+
+def c_engine_remaster_preset():
+    r"""THE REMASTER PRESET - `--remaster DIR` / `[Remaster] dir = DIR`: the three
+    remaster options from one folder (`todo/remaster.md`): the texture pack in
+    `DIR/pack` (or `DIR/full/pack`, `omktexpack.py export full`'s), the bloom
+    at 1.6 (the previews' 1.3, raised with the neons' bloom, 2026-10-20), the city grades in `DIR/grades`. A BASE, as
+    `all = max` is for `[Enhancements]`: a specific flag or key beats it.
+
+    Run on the software reference (it draws none of them, but the session
+    resolves and reports them - the `@evt` lines), Anekbah, three frames, a
+    preset folder made here (an empty pack, one `ANEKBAH.cube`):
+      1. the preset alone: the pack opened from `DIR/pack`, the bloom at 1.6,
+         the grade chosen for ANEKBAH (refused - `taken=0` - by software);
+      2. `full/pack` found when there is no `pack/`;
+      3. `--bloom 0` and `--texture-pack OTHER` beat it: no bloom, the other
+         pack, the grade still the preset's;
+      4. no preset: none of it;
+      5. *NIVEAU DE DETAIL* (2026-10-27): with no save - the boot default 1 -
+         the preset raises option row 7 to 2, where the game's weather runs
+         (`remaster.detail`, and the weather's gate line at detail 2);
+         `--detail 1` holds it at 1; no preset, 1.
+
+    Shown to fail (2026-10-20): the preset not consulted for the bloom
+    answers no 1.60 line in part 1. (2026-10-27) the raise skipped - part 5,
+    the preset's run at 1.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "no SDL - the frontend is optional (PORTING A8)"
+    tmp = tempfile.mkdtemp()
+    try:
+        dir_a = os.path.join(tmp, "a"); os.makedirs(os.path.join(dir_a, "pack")); os.makedirs(os.path.join(dir_a, "grades"))
+        dir_b = os.path.join(tmp, "b"); os.makedirs(os.path.join(dir_b, "full", "pack"))
+        other = os.path.join(tmp, "other"); os.makedirs(other)
+        with open(os.path.join(dir_a, "grades", "ANEKBAH.cube"), "w") as f:
+            f.write("LUT_3D_SIZE 2\n" + "".join("%d %d %d\n" % (r, g, b) for b in (0, 1) for g in (0, 1) for r in (0, 1)))
+        env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+        def run(*extra):
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--frames", "3",
+                                "--nofmv", "--software"] + list(extra), capture_output=True, text=True, env=env, timeout=300)
+            ev = _events(r.stdout)
+            opened = [f["dir"] for n, f in ev if n == "texpack.open"]
+            grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
+            bloom = any(ln.startswith("bloom: 1.60") for ln in r.stdout.splitlines())
+            return (opened[0] if opened else None, bloom, grade[0] if grade else None)
+        def detail(*extra):
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--area", "0",
+                                "--frames", "2", "--nofmv", "--software", "--saves", tempfile.mkdtemp(dir=tmp)]
+                               + list(extra), capture_output=True, text=True, errors="replace", env=env,
+                               timeout=300)
+            m = re.search(r"weather - AREA \+176 type \d+, view bits 0x\w+, detail (\d)", r.stdout)
+            return (any(n == "remaster.detail" for n, _ in _events(r.stdout)), int(m.group(1)) if m else None)
+        got = (run("--remaster", dir_a),
+               run("--remaster", dir_b)[0],
+               run("--remaster", dir_a, "--bloom", "0", "--texture-pack", other),
+               run(),
+               (detail("--remaster", dir_a), detail("--remaster", dir_a, "--detail", "1"), detail()))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = ((os.path.join(dir_a, "pack"), True, ("ANEKBAH", "0")),
+            os.path.join(dir_b, "full", "pack"),
+            (other, False, ("ANEKBAH", "0")),
+            (None, False, None),
+            ((True, 2), (False, 1), (False, 1)))
+    return got, want, "the preset alone (its pack, bloom 1.6, its grade for ANEKBAH); " \
+                      "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing; " \
+                      "the preset raising Niveau de detail to 2, --detail 1 holding it, none without"
+
+
+def c_engine_water_reflection():
+    r"""THE WATER REFLECTS - the remaster's A3 (`todo/remaster.md`), `[Remaster]
+    water = S` / `--water S` (and `--remaster DIR`'s 0.6), OFF unless named.
+
+    The plane is the SET's own data (`o3de/renderer.h` waterPlane): the height
+    carrying the most area of HORIZONTAL faces drawn ADDITIVELY - the game's
+    water is additive; its glass and mirrors are too, but stand upright - and
+    a plane only past 1e6 square units. Each frame with the camera above it,
+    `drawWithWater` splits the draws into the water's own triangles and the
+    rest, mirrors the eye and target in the plane (the image flipped
+    vertically: a half turn of roll and a screen-X flip), clips the scene to
+    what is above it, and hands that to the backend: the reflection into a
+    target of its own (Vulkan: the scene's render pass, a second framebuffer;
+    GLES: an FBO and a WATER VARIANT of the scene programs, made at init), then
+    the frame with the water draws adding it at their screen position.
+    NOT A PORT, no oracle: the original has mirrors (flag 0x100000), not this.
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES variant built only when asked;
+      2. THE PLANE FINDER (`texpack_tool water`): Jaunpur's water found at
+         y 4 and Lahoreh's at 12; Anekbah and Kay'l's apartment have none
+         (of the 1100-odd sets, 7 have a plane - Lahoreh, mayerem, jaunpur,
+         PAstar, LMoexter, ACSvent, L_Khonsu; PAstar is Astaroth's, an open
+         question for a play test);
+      3. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, 30 frames
+         at 640x480 on Jaunpur's canal: the water on moves pixels, and none
+         it darkens - the reflection is ADDED; Anekbah (no water) with the
+         water on is byte-identical to the water off; on the canal Vulkan
+         and GLES agree within 1% of the pixels (by ~16 levels); and THE
+         PER-FRAGMENT CLIP: at strength 1, the whole scene handed to the
+         reflection (`OMK_WATER_NO_CPU_CLIP=1`) draws within 500 pixels of the
+         CPU-clipped frame - the backend removes what lies below the water
+         itself, which is what keeps a swimmer's submerged half out of the
+         reflection (posed bodies are never CPU-clipped; the reader's play
+         test, 2026-10-20, showed his legs reflected above his head). Measured
+         77 pixels apart on Vulkan; with the clip disabled 2861.
+      4. THE FRESNEL (Schlick, F0 0.02): the strength is the GRAZING one, and
+         the water looked down into - the frame's lower half, nearer the
+         camera - mirrors less. At strength 1 the light the reflection adds
+         per moved pixel, lower half over upper, is under 1.15: measured 0.96
+         (Vulkan and GLES alike); with the term mutated to 1 on both, 1.38.
+         The reader's screenshot of 2026-10-20 (the quay's own reflection
+         right under the camera, too strong) is what it answers.
+
+    Measured too, once, outside the check (2026-10-20, M3): with the water
+    off every frame tried is byte-identical to the build before (Vulkan and
+    GLES, the street and the canal with the full pack; `run_vulkan` with 4x
+    MSAA and trilinear); at 1200x800 the canal's reflection moves 52101
+    pixels on Vulkan, Lahoreh's 129097, and Vulkan and GLES are 3363 / 3326
+    pixels apart.
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan water draws left
+    unflagged (no reflection added) - Vulkan moves nothing and the backends
+    part; the GLES variant not inserting its line - GLES never reflects; the
+    plane threshold raised to 1e9 - no set has water, nothing reflects.
+
+    NOT CHECKED, judged by eye on the canal and Lahoreh's lake: the
+    reflection's ORIENTATION and alignment (upside down about the plane,
+    meeting its object at the waterline). A flip or a sign wrong there still
+    adds light only to the water and agrees across backends - both draw from
+    the one `drawWithWater`.
+
+    (2026-10-26) Part 1 also holds GLES's frame pass to `beginPass` - the
+    frame the reflection's `begin` opened, one `frameNo_`, a posed body's
+    ties walked once a frame (15-23 posed draws a frame on the canal, each
+    walked twice before; the frames byte-identical). Shown to fail: the
+    second pass put back to `begin(v)` - part 1's last False alone.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    gl_water = gl[gl.index("bool GlesRenderer::drawWaterScene("):]
+    gl_water = gl_water[:gl_water.index("\n}\n")]
+    gl_pass = gl[gl.index("void GlesRenderer::beginPass(const View& view) {"):]
+    gl_pass = gl_pass[:gl_pass.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+water\s*=\s*0\.0f;", sh)),
+              'kRemaster, "water"' in sc and 'kEnhancements, "water"' not in sc,
+              "water" not in max_body,
+              # (the variants built over both GLES program sets, 2026-10-21)
+              "if (waterWant_ > 0.0f) f = waterVariant(f);" in gl,
+              # GLES's frame pass is a PASS of the frame the reflection's
+              # `begin` opened (`beginPass`): one `frameNo_`, so a posed
+              # body's ties are walked once (the audit's GLES item, 2026-10-26)
+              gl_water.count("begin(") == 1 and "beginPass(v);" in gl_water and "++frameNo_" not in gl_pass)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), mk.stderr[-300:]
+    dec = os.path.join(fr, "MESHES", "DECORS")
+    r = subprocess.run([tool, "water"] + [os.path.join(dec, n + ".3DO") for n in ("jaunpur", "Lahoreh", "Anekbah", "Aapkayl")],
+                       capture_output=True, text=True).stdout.split("\n")
+    planes = tuple((ln.split()[1], ln.split()[2]) for ln in r if ln.strip())
+    finder = planes == (("1", "4.0"), ("1", "12.0"), ("0", "100.0"), ("0", "1080.0"))
+
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(binary, out, *extra):
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                                       "--res", "640x480", "--frames", "30", "--dump", out,
+                                       "--filter", "nearest"] + list(extra)
+                                + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            if rr.returncode != 0 or not os.path.exists(out):
+                return None, None
+            raw = open(out, "rb").read()
+            live = [f for n, f in _events(rr.stdout) if n == "remaster.water"]
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), (live[0]["live"] if live else None)
+        canal = ["--area", "1", "--stand", "10524,-40,10284,180"]
+        street = ["--area", "0", "--stand", "1804,0,-6890,336"]
+        lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+        res = {}
+        for kind, binary in (("vulkan", os.path.join(eng, "build", "omk-play")),
+                             ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if kind == "gles" and platform.system() != "Darwin":
+                res[kind] = ("skipped",); continue
+            off, _ = frame(binary, os.path.join(tmp, "off.bin"), *canal, "--water", "0")
+            on, live = frame(binary, os.path.join(tmp, "on.bin"), *canal, "--water", "0.6")
+            soff, _ = frame(binary, os.path.join(tmp, "soff.bin"), *street, "--water", "0")
+            son, _ = frame(binary, os.path.join(tmp, "son.bin"), *street, "--water", "0.6")
+            if None in (off, on, soff, son):
+                res[kind] = ("no frame",); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
+            # the PER-FRAGMENT clip (what keeps a swimmer's submerged half out
+            # of the reflection - the reader's play test, 2026-10-20): at 1.0,
+            # everything handed to the reflection draws within a few hundred
+            # pixels of the CPU-clipped frame
+            cpu, _ = frame(binary, os.path.join(tmp, "cpu.bin"), *canal, "--water", "1")
+            os.environ["OMK_WATER_NO_CPU_CLIP"] = "1"
+            try:
+                shd, _ = frame(binary, os.path.join(tmp, "shd.bin"), *canal, "--water", "1")
+            finally:
+                del os.environ["OMK_WATER_NO_CPU_CLIP"]
+            clip = sum(1 for x, y in zip(cpu, shd) if x != y) < 500 if cpu and shd else None
+            # the FRESNEL: the light added per moved pixel, lower half (near,
+            # looked down into) over upper (far, grazing), at strength 1
+            fres = None
+            if cpu:
+                half = len(off) // 2
+                def added(a, z):
+                    d = [lum(cpu[i]) - lum(off[i]) for i in range(a, z) if cpu[i] != off[i]]
+                    return sum(d) / len(d) if d else None
+                lo, hi = added(half, len(off)), added(0, half)
+                fres = lo / hi < 1.15 if lo and hi else None
+                print(f"        {kind} fresnel: added light lower/upper half {lo / hi if lo and hi else None}")
+            res[kind] = (live == "1", moved > 2000, darker, soff == son, clip, fres)
+            res[kind + "_on"] = on
+        agree = ("skipped",)
+        if "gles_on" in res and "vulkan_on" in res:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = res["vulkan_on"], res["gles_on"]
+            agree = sum(1 for x, y in zip(a, b) if big(x, y)) < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    vres, gres = res.get("vulkan"), res.get("gles")
+    print(f"        planes {planes}; vulkan {vres}; gles {gres}; agree {agree}")
+    want = (True, True, 0, True, True, True)
+    return (src_ok, finder, vres, gres, agree), \
+           ((True,) * 5, True, _or_skip(vres, want), _or_skip(gres, want),
+            agree if isinstance(agree, tuple) else True), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only " \
+           "when asked); the plane finder (Jaunpur at 4, Lahoreh at 12, none in Anekbah or the " \
+           "apartment); on Vulkan and GLES the canal's water only brightens, Anekbah with the " \
+           "water on is byte-identical to off, the shader's clip matches the CPU's, the Fresnel " \
+           "dims the near water, and the two backends agree within 1%"
+
+
+def c_engine_body_light():
+    r"""THE BODIES LIT BY THEIR SURROUNDINGS - the remaster's A5
+    (`todo/remaster.md`, `o3de/lightprobe.h`), `[Remaster] bodylight = S` /
+    `--body-light S` (and `--remaster DIR`'s 1, the reader's), OFF unless named.
+
+    The original starts every lit body from one grey, the scene's `+416` (the
+    set's ambient); the set itself is shaded by colours the artists BAKED into
+    its vertices. `LightProbes` sums the set's opaque corners into 2 m cells at
+    load and, around a body, takes the cells' weighted mean - (1 - d^2/R^2)^2
+    on each cell's centroid, R 6 m - and where the probe is brighter than
+    `mean` (its mean colour at body height over the set's floors) the body
+    starts from the grey PLUS `S (probe - mean)` per channel, where darker
+    from the grey SHADED `1 - S (1 - probe / mean)`; the average place keeps
+    the original's grey. Handed over as a tint of the grey. Brightening
+    ADDED: a set's grey can be nearly black (Anekbah's is 10 of 255) and a
+    multiple of it did not show (the reader, 2026-10-20, of the ratio and of a
+    contrast curve); darkening MULTIPLIED: added, it took a body by
+    Anekbah's fire - a sprite whose glow is not painted into its alcove - to
+    black (the reader's play test, 2026-10-20). The set's lights add on top. NOT A PORT, no oracle
+    (tier 6): the invariants are the rule's own.
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES variant made only when asked and its tint defaulted to 1 (a
+         uniform starts at 0: the pose self-test's bodies drew BLACK and all
+         went the CPU way, 2026-10-20);
+      2. THE PROBE (`texpack_tool probe`): Anekbah's floor mean 0.4431 and
+         Jaunpur's 0.6958; at a grey of 0.2, Anekbah's stretch at (1804, -90,
+         -6890) tints red 0.990 (blue 0.763), its lit stretch 600 units on
+         2.210, the fire's alcove at (1741, -90, -7517) 0.518 - shaded, not
+         black (to 0.01). The
+         set is read by SURFACE, each triangle cut into pieces no longer than
+         a cell: read by its corners, Lahoreh's large floor triangles left
+         spots with no corner in reach (2026-10-20);
+      3. CONTINUITY: along 1.2 km walks in both, the tint of a 0.2 grey
+         moves at most 0.1 per 10 units - its start colour 0.02 (measured
+         0.0403 and 0.0208) - a body walking never pops;
+      4. in the GAME SESSION, Vulkan (`--world-vulkan`) and GLES, Anekbah's
+         street at 640x480 with the preset (its emitters' light off): the
+         body light at 1 moves more than 1000 pixels and less than 5% of the frame (bodies, not the set),
+         and Vulkan and GLES agree within 1%; and again under `--enhance-all`
+         (PER-PIXEL lighting shades a body from the scene's grey and ignores
+         its corners - `Draw::lit` 1 - so a tinted body is drawn in mode 2,
+         from its corner colour, the grey x tint: the reader plays with it,
+         2026-10-20). Measured 3250 / 3208 pixels moved.
+
+    Measured once, outside the check (2026-10-20, M3): with the body light
+    off, frames byte-identical to the build before on the software
+    reference, Vulkan and GLES, plain and with `--remaster`, on Anekbah's
+    street and Jaunpur's canal (10 of 10), and under `--enhance-all` on both
+    backends; at 1 Vulkan moves 3011 pixels of the street, GLES 3042 (the
+    street start is a little darker than Anekbah's mean: shaded, mildly).
+
+    Shown to fail (2026-10-20), one at a time: the Vulkan shader's tint
+    dropped - Vulkan moves 0 pixels; the GLES variant inserting nothing -
+    GLES moves 0; the cell weight made a step (1 inside the reach) - the
+    walk jumps 0.13 per 10 units and the probe's values move; the bodies
+    left in mode 1 under per-pixel lighting - 0 pixels move under
+    `--enhance-all` on both. (The backends'
+    agreement does NOT catch a backend without the tint: its changes are
+    small per pixel - part 4's move count does.)
+
+    NOT CHECKED, judged by eye: whether the tint LOOKS right - the reader's
+    previews.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+bodyLight\s*=\s*0\.0f;", sh)),
+              'kRemaster, "bodylight"' in sc and 'kEnhancements, "bodylight"' not in sc,
+              "bodyLight" not in max_body,
+              "tintPosedVert_ = tintVariant(" in gl and 'glGetUniformLocation(posed_, "uLightTint"), 1.0f, 1.0f, 1.0f' in gl)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), mk.stderr[-300:]
+    dec = os.path.join(fr, "MESHES", "DECORS")
+    def probe(model, pts):
+        out = subprocess.run([tool, "probe", os.path.join(dec, model + ".3DO")] + pts,
+                             capture_output=True, text=True).stdout.split("\n")
+        mean = float(out[0].split()[1]) if out and out[0].startswith("mean") else None   # "mean M box ..." 
+        return mean, [[float(x) for x in ln.split()[6:9]] for ln in out[1:] if ln.strip()]
+    am, at = probe("Anekbah", ["1804,-90,-6890", "1804,-90,-6290", "1741,-90,-7517"])
+    jm, _ = probe("jaunpur", [])
+    values = (am is not None and abs(am - 0.4431) < 0.001, jm is not None and abs(jm - 0.6958) < 0.001,
+              len(at) == 3 and abs(at[0][0] - 0.990) < 0.01 and abs(at[1][0] - 2.210) < 0.01
+              and abs(at[2][0] - 0.518) < 0.01)
+    steps = []
+    for model, base in (("Anekbah", (1804, -90, -6890)), ("jaunpur", (10524, -130, 10284))):
+        _, t = probe(model, ["%d,%d,%d" % (base[0], base[1], base[2] + i * 10) for i in range(121)])
+        steps.append(max(max(abs(a - b) for a, b in zip(t[i], t[i + 1])) for i in range(len(t) - 1)) if len(t) == 121 else 9)
+    smooth = all(x < 0.1 for x in steps)
+    print(f"        probe means {am} {jm}; tints {at}; walk steps {steps}")
+
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(binary, out, *extra):
+            env = dict(os.environ)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            rr = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                       os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp),
+                                       "--res", "640x480", "--frames", "30", "--dump", out, "--filter", "nearest",
+                                       "--area", "0", "--stand", "1804,0,-6890,336",
+                                       # (the mist is Vulkan's alone: the backends are compared without it)
+                                       "--remaster", (omkpaths.pack_path() or ""), "--mist", "0",
+                                       "--fx-light", "0"] + list(extra)   # the body light alone
+                                + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            if rr.returncode != 0 or not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        res, frames = {}, {}
+        packed = os.path.isdir((omkpaths.pack_path() or ""))
+        for kind, binary in (("vulkan", os.path.join(eng, "build", "omk-play")),
+                             ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if not packed or (kind == "gles" and platform.system() != "Darwin"):
+                res[kind] = ("skipped",); continue
+            off = frame(binary, os.path.join(tmp, "off.bin"), "--body-light", "0")
+            on = frame(binary, os.path.join(tmp, "on.bin"), "--body-light", "1")
+            eoff = frame(binary, os.path.join(tmp, "eoff.bin"), "--body-light", "0", "--enhance-all")
+            eon = frame(binary, os.path.join(tmp, "eon.bin"), "--body-light", "1", "--enhance-all")
+            if None in (off, on, eoff, eon):
+                res[kind] = ("no frame",); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            emoved = sum(1 for x, y in zip(eoff, eon) if x != y)
+            res[kind] = (moved > 1000, moved < len(on) // 20, emoved > 1000, emoved < len(eon) // 20)
+            print(f"        {kind}: under --enhance-all it moves {emoved} pixels")
+            frames[kind] = on
+            print(f"        {kind}: the body light at 1 moves {moved} pixels")
+        agree = ("skipped",)
+        if len(frames) == 2:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = frames["vulkan"], frames["gles"]
+            agree = sum(1 for x, y in zip(a, b) if big(x, y)) < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    vres, gres = res.get("vulkan"), res.get("gles")
+    want = (True, True, True, True)
+    return (src_ok, values, smooth, vres, gres, agree), \
+           ((True,) * 4, (True,) * 3, True, _or_skip(vres, want), _or_skip(gres, want),
+            agree if isinstance(agree, tuple) else True), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
+           "asked, its tint defaulted to 1); the probe's means and tints on Anekbah and Jaunpur; " \
+           "the tint continuous along two walks; on Vulkan and GLES the bodies move and the backends agree"
+
+def c_engine_emitter_light():
+    r"""THE EMITTERS' LIGHT - the remaster's A5b (`todo/remaster.md`,
+    `o3de/emitterlight.h`), `[Remaster] fxlight = S` / `--fx-light S` (and
+    `--remaster DIR`'s 1), OFF unless named.
+
+    A set's flames and neon halos are ADDITIVE PARTICLES that light nothing
+    in the original: Kay'l by Anekbah's gas burner was as dark as the alley
+    (the reader's play test, 2026-10-20, "Lighting is not correct near the
+    fire"). Each GLOWING emitter becomes a `Light3do` of the set's own kind,
+    appended to the slot's table, so every path that lights a body takes it:
+    a standing glow (life <= 2 frames - a lamp's halo) or a stream whose
+    SPRITE is saturated (a flame; the steam's grey sprite is not). They are
+    POINT lights - a negative inner radius, which no shipped record has -
+    shining from the emitter to the lit point, wrapping 0.3 round the far
+    side. Under per-pixel lighting they light the SET too: its opaque draws in
+    mode 3, the baked colour plus the point lights alone (its own lights are
+    in the bake); the frame's point lights are the 4 nearest the CAMERA
+    within 20 m, faded in over the last 5 m. NOT A PORT, no oracle (tier 6).
+
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         GLES point-light variant made only when asked;
+      2. THE RULE on the data (`world.fxlights`): Anekbah 117 glows and 12
+         flames of 153 emitters (its 24 steam and smoke dark), Qalisar 89 and
+         8, Jaunpur 15 and 0;
+      3. by Anekbah's burner (1780, 0, -7380) under `--enhance-all` with the
+         preset, on Vulkan and GLES: an emitter's light reaches the player
+         (`remaster.fxlight`), the light moves more than 100000 pixels (the
+         SET lit, not only the bodies) and darkens almost none (lights add),
+         and the two backends agree within 1%;
+      4. THE CURATED LIST AND THE NIGHT (the reader's play tests in Qalisar,
+         2026-10-20 - "go with the curated list", the Blade Runner night):
+         with `--remaster`'s grades folder, Qalisar's surface lights come
+         from `lights.txt` (`world.fxsurfaces` curated, and some) and its
+         night is 0.5 (`remaster.night`); Anekbah's too, with no night (the
+         four cities' drafts, 2026-10-20); Kay'l's flat, which the list does
+         not name, keeps the automatic rules;
+      5. THE TILES (`o3de/lighttiles.h`, "go" on the per-tile lists,
+         2026-10-20): on Vulkan, Qalisar's every point light within the clip
+         distance is binned to 32-pixel tiles x 16 depth slices (more than
+         200 lights), no cluster at its cap (a full one dropped lights as the
+         camera moved - "flickering big shadows"), and the TIGHT box test draws
+         the frame byte-identical to `OMK_TILES_LOOSE=1` (no test, no cap) -
+         13118 entries against 182000-odd at 640x480;
+      6. THE CUTOUT'S DEPTH (2026-10-26): Qalisar's frame of part 5 WITHOUT
+         MSAA (`--aa 1`) three times, the same bytes each run, and an opaque
+         cutout draw binding the late-depth pipelines (`pipeCut_`,
+         `pipeTiledCut_`, `scene.frag` OMK_LATE_DEPTH). With the tiled module
+         a keyed texel's `discard` let some depth through on Apple's GPUs -
+         ~2000 pixels behind the pink sign different on EVERY run, the atlas's
+         neighbours showing; the hashing that ruled out every input is in
+         `todo/remaster.md`.
+
+    Measured once, outside the check (2026-10-20, M3): with it off, frames
+    byte-identical to `26e042ff` on the software reference, Vulkan and GLES,
+    plain, `--remaster` and `--remaster --enhance-all`, by the burner and in
+    Qalisar (14 of 14; again after the slots, the night, the list and the
+    bloom hook, at the old bloom 1.3); on, by the burner at 640x480 with the
+    preset, ~252800 pixels move, Vulkan and GLES 448 apart.
+
+    Shown to fail (2026-10-20), one at a time: the list covering no set -
+    Qalisar not curated (part 4); a flame judged by the
+    PRODUCT's saturation (the burner's ramp cancels its orange) - 0 flames,
+    1477 pixels move; the GLES variant inserting nothing (its point lights
+    read as spots) - GLES moves 276331 and the backends part; mode 3 never
+    set - the set unlit, 7874 pixels move.
+    (2026-10-26) Part 6: the cutout draws left on the plain pipelines - the
+    three no-MSAA frames apart (the source item too).
+
+    NOT CHECKED, judged by eye: the colours and the strength.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"float\s+fxLight\s*=\s*0\.0f;", sh)),
+              'kRemaster, "fxlight"' in sc and 'kEnhancements, "fxlight"' not in sc,
+              "fxLight" not in max_body,
+              # (the variants built over both GLES program sets, 2026-10-21:
+              # the point lights over the enhanced one alone)
+              "if (points) f = pointLightVariant(f);" in gl and
+              "bloomFragX_ = fragOf(kSceneFragX, pointLit);" in gl)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = (omkpaths.pack_path() or "")
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, out, area, stand, *extra):
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            # a FRESH saves folder each run: a run writes there (the clock),
+            # and a later run read it - the backends compared from two states
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30", "--area", area]
+            if stand: args += ["--stand", stand]
+            if out: args += ["--dump", out]
+            rr = subprocess.run(cmd + args + list(extra) + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                                capture_output=True, text=True, env=env, timeout=240)
+            ev = _events(rr.stdout)
+            px = None
+            if out and os.path.exists(out):
+                raw = open(out, "rb").read()
+                px = struct.unpack("<%dH" % (len(raw) // 2), raw)
+            return ev, px
+        vk = os.path.join(eng, "build", "omk-play")
+        counts = {}
+        for area, stand in (("0", "1804,0,-6890,336"), ("101", "15516,0,-10182,270"), ("1", "10524,-40,10284,90")):
+            ev, _ = run(vk, None, area, stand, "--enhance-all", "--fx-light", "1")
+            for n, f in ev:
+                if n == "world.fxlights":
+                    counts[f["set"]] = (int(f["glows"]), int(f["flames"]), int(f["dark"]))
+        rule = (counts.get("ANEKBAH"), counts.get("QALISAR"), counts.get("JAUNPUR"))
+        # THE LIST AND THE NIGHT, with the preset's grades folder: Qalisar is
+        # curated (`lights.txt` names it) and kept at night 0.5 (`night.txt`);
+        # Anekbah, named by neither, keeps the automatic rules and its light
+        curate = ("skipped",)
+        if os.path.isdir(os.path.join(pack, "grades")):
+            def fxs(ev):
+                surf = [f for n_, f in ev if n_ == "world.fxsurfaces"]
+                night = [float(f["dim"]) for n_, f in ev if n_ == "remaster.night"]
+                return (surf[0]["curated"] if surf else None, int(surf[0]["lights"]) if surf else 0, night)
+            q = fxs(run(vk, None, "101", "15300,0,-10050,270", "--remaster", pack, "--mist", "0", "--enhance-all")[0])
+            a = fxs(run(vk, None, "0", "1804,0,-6890,336", "--remaster", pack, "--mist", "0", "--enhance-all")[0])
+            k = fxs(run(vk, None, "237", None, "--remaster", pack, "--mist", "0", "--enhance-all")[0])
+            curate = (q[0] in ("1", "true", True), q[1] > 0, q[2] == [0.5], a[0] in ("1", "true", True), a[2] == [],
+                      k[0] in ("0", "false", False))
+            print(f"        qalisar {q}; anekbah {a}; kayl's flat {k}")
+        # THE TILES (`o3de/lighttiles.h`): Qalisar's every point light binned
+        # on Vulkan, no cluster full, and the tight box test drawing the same
+        # frame byte for byte as the loose instrument (every light in every
+        # cluster it might touch, no cap) - a light it leaves out reaches none
+        # of the cluster's fragments
+        tiles = ("skipped",)
+        if os.path.isdir(pack):
+            ev, tight = run(vk, os.path.join(tmp, "tight.bin"), "101", "15300,0,-10050,270",
+                            "--remaster", pack, "--mist", "0", "--enhance-all", "--filter", "trilinear")
+            os.environ["OMK_TILES_LOOSE"] = "1"
+            try:
+                _, loose = run(vk, os.path.join(tmp, "loose.bin"), "101", "15300,0,-10050,270",
+                               "--remaster", pack, "--mist", "0", "--enhance-all", "--filter", "trilinear")
+            finally:
+                del os.environ["OMK_TILES_LOOSE"]
+            tl = [f for n_, f in ev if n_ == "remaster.tiles"]
+            t0 = tl[0] if tl else {}
+            tiles = (int(t0.get("lights", 0)) > 200, int(t0.get("full", -1)) == 0,
+                     tight is not None and tight == loose)
+            print(f"        tiles {t0}; tight == loose {tight == loose if tight else None}")
+        cut = ("skipped",)
+        if os.path.isdir(pack):
+            vkc = open(os.path.join(eng, "backends", "vulkan", "vkrender.cpp")).read()
+            mkf = open(os.path.join(eng, "Makefile")).read()
+            fsrc = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+            cut_src = ("if (d.cutout && use == pipe_[0] && pipeCut_) use = pipeCut_;" in vkc and
+                       "else if (d.cutout && use == pipeTiled_[0] && pipeTiledCut_) use = pipeTiledCut_;" in vkc and
+                       mkf.count("-DOMK_LATE_DEPTH") == 2 and
+                       bool(re.search(r"#ifdef OMK_LATE_DEPTH\n(\s*//[^\n]*\n)*\s*gl_FragDepth = gl_FragCoord\.z;", fsrc)))
+            noaa = [run(vk, os.path.join(tmp, "noaa%d.bin" % i), "101", "15300,0,-10050,270", "--remaster", pack,
+                        "--mist", "0", "--enhance-all", "--filter", "trilinear", "--aa", "1")[1] for i in range(3)]
+            cut = (cut_src, noaa[0] is not None and noaa[0] == noaa[1] == noaa[2])
+            apart = [sum(1 for x, y in zip(noaa[0], q) if x != y) if noaa[0] and q else None for q in noaa[1:]]
+            print(f"        without MSAA, three runs: {apart} pixels apart from the first")
+        res, frames = {}, {}
+        lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+        for kind, binary in (("vulkan", vk), ("gles", os.path.join(eng, "build", "omk-play-gles"))):
+            if not os.path.isdir(pack) or (kind == "gles" and platform.system() != "Darwin"):
+                res[kind] = ("skipped",); continue
+            # the filter NAMED: `_viewer_args` adds `--filter nearest` to a run
+            # that names none, which the Vulkan harness takes and GLES did not
+            # here - the two compared at two filters, 3346 pixels apart
+            _, off = run(binary, os.path.join(tmp, "off.bin"), "0", "1780,0,-7380,336",
+                         "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "0", "--filter", "trilinear")
+            ev, on = run(binary, os.path.join(tmp, "on.bin"), "0", "1780,0,-7380,336",
+                         "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+            if off is None or on is None:
+                res[kind] = ("no frame",); continue
+            # the backends' AGREEMENT with Vulkan's lights as GLES's: GLES does
+            # not tile yet, so Vulkan is set beside it the nearest-slots way
+            if kind == "vulkan":
+                os.environ["OMK_NO_TILES"] = "1"
+                try:
+                    _, same = run(binary, os.path.join(tmp, "same.bin"), "0", "1780,0,-7380,336",
+                                  "--remaster", pack, "--mist", "0", "--enhance-all", "--fx-light", "1", "--filter", "trilinear")
+                finally:
+                    del os.environ["OMK_NO_TILES"]
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            darker = sum(1 for x, y in zip(off, on) if lum(y) < lum(x) - 2)
+            reach = any(n == "remaster.fxlight" for n, _ in ev)
+            res[kind] = (reach, moved > 100000, darker < len(on) // 1000)
+            frames[kind] = same if kind == "vulkan" and same is not None else on
+            print(f"        {kind}: the emitters' light moves {moved} pixels, {darker} darker; reaches {reach}")
+        agree = ("skipped",)
+        if len(frames) == 2:
+            big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+            a, b = frames["vulkan"], frames["gles"]
+            apart = sum(1 for x, y in zip(a, b) if big(x, y))
+            print(f"        vulkan and gles: {apart} pixels apart of {len(a)}")
+            agree = apart < len(a) // 100
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        rule {rule}")
+    vres, gres = res.get("vulkan"), res.get("gles")
+    want = (True, True, True)
+    return (src_ok, rule, curate, tiles, vres, gres, agree, cut), \
+           ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
+            _or_skip(curate, (True,) * 6),
+            _or_skip(tiles, (True,) * 3),
+            _or_skip(vres, want), _or_skip(gres, want),
+            agree if isinstance(agree, tuple) else True,
+            _or_skip(cut, (True, True))), \
+           "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
+           "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
+           "light reaches the player, lights the set, only adds, and Vulkan and GLES agree"
+
+def c_engine_relief():
+    r"""THE RELIEF - the remaster's B3 (`todo/remaster.md`), `[Remaster]
+    relief = S` / `--relief S` (0..4), OFF unless named, and `--remaster
+    DIR`'s 1 (the reader's, 2026-10-21, from a sheet of 0, 1, 2 and 4).
+
+    The sets carry no normal maps and no tangents. Under the emitters' point
+    lights the texture's own BRIGHTNESS is read as height - four taps a texel
+    apart on the bound texture (the pack's where there is one) - and tilts
+    the normal in the COTANGENT frame of the surface's screen derivatives
+    (`scene.frag` `relief()`). Only the point lights see it (the painted light
+    has no direction), only on the SET (mode 3 - a body's painted cloth read
+    as grain), and only in Vulkan's TILED module. NOT A PORT, no oracle
+    (tier 6).
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1; in the shader inside `#ifdef OMK_TILED` and on mode 3;
+         and (2026-10-25) NO IMPLICIT LOD past a non-uniform discard:
+         `main` takes the UV and position gradients (`gradUV`, `gradW`)
+         before the water's discard, `relief()` takes them as arguments and
+         reads only through `textureGrad` (no `texture()`, no `dFdx`), and
+         the normal map and the glow's light map elsewhere through
+         `textureGrad` too - past a discard or `relief()`'s early return the
+         quad is not whole and the LOD UNDEFINED: on the M1 the relief's taps
+         drew `engine: emitter light`'s tight frame differently run to run
+         (5 frames in 10; 18 of 18 the same after);
+      2. by Anekbah's burner (1780, 0, -7380) with the preset and
+         `--enhance-all` on Vulkan: relief 1 moves more than 50000 pixels;
+      3. ...and NOTHING where the point lights are not: relief 1 with
+         `--fx-light 0`, and relief 1 under `OMK_NO_TILES=1` (the
+         nearest-slots path), each byte-identical to its relief-0 frame;
+      4. THE PACK'S NORMAL MAPS (2026-10-21, `<key>_n.png`,
+         `o3de/normalmap.h`): the shader reads binding 3 in the tiled module
+         alone, the flat stand-in's alpha 0 meaning "none"; relief 1 uploads
+         normal maps for the burner's set (the `texpack.pool` event's
+         `normals`), relief 0 none - they are decoded only when asked. Where
+         the pack has none (it is made by `omktexpack.py materials`, outside
+         the repo) the count is not asserted, only said.
+      5. ...and DECODED ONLY FOR A RENDERER THAT DRAWS THEM (2026-10-26): GLES
+         has no relief, and a set's load decoded and parked the pack's normal
+         maps for it all the same - `remasterConfigure` turns them off where
+         `Renderer::drawsRelief` is false (`@evt texpack.normals`, the pack's
+         own state): off on GLES, on for Vulkan. Measured (M1, Qalisar's
+         start, the preset): GLES's city load 1030-1170 -> ~555 ms, its peak
+         512 -> 436 MB, the frame the same bytes. Shown to fail: the
+         `setNormals(false)` taken out - GLES's event on.
+
+    Measured once, outside the check (2026-10-21, M3): with it off, frames
+    byte-identical to `e0b586b1` on the software reference and Vulkan, plain,
+    `--remaster` and `--remaster --enhance-all`, by the burner and in Qalisar
+    (12 of 12). At x4 the slope was barely seen (the median moved pixel 8 of
+    255 at 1); x8 now.
+
+    Part 1's eighth item SHOWN TO FAIL (2026-10-25): one tap put back to
+    `texture(tex, ...)`, and the gradients moved after the water's discard -
+    each red alone.
+
+    Shown to fail (2026-10-21), one at a time: the strength never read - 0
+    pixels move (part 2); the mode-3 guard dropped, the bodies grained too -
+    part 1 (the frame moves 83677, the bodies' share); the uniform always 1 -
+    the relief-0 frame relieved too, 0 move (part 2). Part 4: `setNormals`
+    never called - 0 normal maps at relief 1; always called - relief 0
+    uploads them too.
+
+    The preset's 1 became 2 (2026-10-21, the reader's "relief 2 is better"
+    once the generated maps came).
+
+    NOT CHECKED, judged by eye: the strength, and whether bright reads as
+    raised.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("relief = reliefFlag"):]
+    pre = pre[:pre.index(";")] + ";"
+    tiled = fs[fs.index("#ifdef OMK_TILED\n// THE RELIEF"):]
+    tiled = tiled[:tiled.index("#endif")]
+    body = fs[fs.index("vec3 relief("):]
+    body = body[:body.index("\n}\n")]
+    mainf = fs[fs.index("void main()"):]
+    src_ok = (bool(re.search(r"float\s+relief\s*=\s*0\.0f;", sh)),
+              'kRemaster, "relief"' in sc and 'kEnhancements, "relief"' not in sc,
+              "relief" not in max_body,
+              # the preset's 2.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("relief") : 0.0f;' in pre and '{"relief", 2.0f}' in sh,
+              "vec3 relief(" in tiled and fs.count("relief(") == 2,
+              bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(\(pc\.lit & 3\) == 3\) nL = relief\(", fs)),
+              bool(re.search(r"#ifdef OMK_TILED\s*\n(//[^\n]*\n)*layout\(set = 0, binding = 3\) uniform sampler2D nmap;", fs))
+              and "nm.a > 0.0" in tiled,
+              # no implicit LOD past a non-uniform discard (2026-10-25)
+              "texture(" not in body.replace("textureGrad(", "").replace("textureSize(", "") and "dFd" not in body
+              and mainf.index("gradUV[2] =") < mainf.index("waterMode == 2 && vWorld.y")
+              and mainf.index("gradW[2] =") < mainf.index("waterMode == 2 && vWorld.y")
+              and "texture(nmap" not in fs and "textureGrad(emis" in mainf)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = (omkpaths.pack_path() or "")
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 8, ("skipped",)), "no texture pack"
+    tmp = tempfile.mkdtemp()
+    vk = os.path.join(eng, "build", "omk-play")
+    normals = {}
+    normEv = {}   # name -> [(on, relief)] of `texpack.normals`
+    has_maps = any(n.endswith("_n.png") for d in ("pack", "full/pack") if os.path.isdir(os.path.join(pack, d))
+                   for n in os.listdir(os.path.join(pack, d)))
+    try:
+        def run(name, env_extra, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **env_extra)
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
+                    "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
+            r = subprocess.run([vk] + args, capture_output=True, text=True, env=env, timeout=240)
+            normEv[name] = [(str(k.get("on")), str(k.get("relief"))) for n, k in _events(r.stdout + r.stderr)
+                            if n == "texpack.normals"]
+            normals[name] = sum(int(k.get("normals", 0)) for n, k in _events(r.stdout + r.stderr)
+                                if n == "texpack.pool")
+            if not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        f = {}
+        f["off"] = run("off", {}, "--relief", "0")
+        f["on"] = run("on", {}, "--relief", "1")
+        f["nofx0"] = run("nofx0", {}, "--relief", "0", "--fx-light", "0")
+        f["nofx1"] = run("nofx1", {}, "--relief", "1", "--fx-light", "0")
+        f["slot0"] = run("slot0", {"OMK_NO_TILES": "1"}, "--relief", "0")
+        f["slot1"] = run("slot1", {"OMK_NO_TILES": "1"}, "--relief", "1")
+        # 5. GLES: the readback's path, the preset (relief 2)
+        rg = subprocess.run([os.path.join(eng, "build", "omk-play-gles"), fr, os.path.join(ROOT, "tables"), "--save",
+                             os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                             tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "10", "--area", "0",
+                             "--stand", "1780,0,-7380,336", "--remaster", pack],
+                            capture_output=True, text=True, errors="replace", timeout=240,
+                            env=dict(os.environ, OMK_EVENTS="1", OMK_NO_GPU_PRESENT="1"))
+        normEv["gles"] = [(str(k.get("on")), str(k.get("relief"))) for n, k in _events(rg.stdout)
+                          if n == "texpack.normals"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if any(v is None for v in f.values()):
+        return (src_ok, ("no frame",)), ((True,) * 8, ("frames",)), "a run wrote no frame"
+    moved = sum(1 for x, y in zip(f["off"], f["on"]) if x != y)
+    nofx = sum(1 for x, y in zip(f["nofx0"], f["nofx1"]) if x != y)
+    slot = sum(1 for x, y in zip(f["slot0"], f["slot1"]) if x != y)
+    print(f"        relief 1 moves {moved} pixels; without the point lights {nofx}; untiled {slot}; "
+          f"normal maps uploaded at relief 1 {normals['on']}, at 0 {normals['off']}"
+          + ("" if has_maps else " (the pack has none - `omktexpack.py materials`)")
+          + f"; the normal maps decoded (on, relief): Vulkan {normEv.get('on')}, GLES {normEv.get('gles')}")
+    yes, no = ("1", "true"), ("0", "false")
+    asked = (bool(normEv.get("on")) and all(o in yes and r in yes for o, r in normEv["on"]),
+             bool(normEv.get("gles")) and all(o in no and r in no for o, r in normEv["gles"]))
+    return (src_ok, moved > 50000, nofx, slot, normals["on"] > 0 or not has_maps, normals["off"], asked), \
+        ((True,) * 8, True, 0, 0, True, 0, (True, True)), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 2, the tiled module and " \
+        "mode 3 alone, the normal map's binding there); by Anekbah's burner relief 1 moves the frame, and " \
+        "nothing without the point lights or the tiles; the pack's normal maps uploaded at relief 1 (where " \
+        "it has them) and none at 0"
+
+
+def c_engine_normal_maps():
+    r"""THE GENERATED NORMAL MAPS' TWO TOOLS (`todo/remaster.md` B3,
+    `o3de/normalmap.h`): `texpack_tool normals` and `texpack_tool islands`.
+
+    1. THE GENERATOR on a made-up texture, 256 x 256 (a 64 x 64 original's
+       4x): dark left, bright right - a step at x = 128. Without a coverage
+       the step is a SLOPE (the normal tilts there; brighter is higher, so it
+       leans to -u: R below 128); with a coverage marking a chart BORDER on
+       the step (`.cov` value 2 at the original's column 32) the map is FLAT
+       on the border's texels (columns 128-131) and fades back over 16 texels
+       at 1024 across (4 here), and away from it the two maps are the same.
+    2. ISLANDS over the shipped models: 1253 textures, 664258 faces, 0 of
+       them spanning more than their texture, 48484 regions (2026-10-21) -
+       what the region fade stands on (BATITR09, Qalisar's floor).
+
+    SHOWN TO FAIL (2026-10-21): the fade's `nx *= keep[i]` removed - part 1
+    (the border not flat); the region union never made (`up[root(..)] =`
+    dropped) - part 2's region count.
+    """
+    import subprocess, tempfile, shutil, struct, sys
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return ("build failed",), ("built",), "texpack_tool must build"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    try:
+        W = 256
+        rgba = bytearray()
+        for y in range(W):
+            for x in range(W):
+                v = 60 if x < W // 2 else 200
+                rgba += bytes((v, v, v, 255))
+        png = os.path.join(tmp, "t.png")
+        omktexpack.write_png(png, W, W, bytes(rgba), 4)
+        C = 64
+        cov = bytearray(b"\x01" * (C * C))
+        for y in range(C):
+            cov[y * C + C // 2] = 2
+        cp = os.path.join(tmp, "t.cov")
+        open(cp, "wb").write(struct.pack("<ii", C, C) + bytes(cov))
+        def gen(cov_arg, name):
+            out = os.path.join(tmp, name)
+            r = subprocess.run([tool, "normals", png, out, "-", cov_arg], capture_output=True, text=True, timeout=120)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None
+            b = open(out, "rb").read()
+            return b[8:] if struct.unpack_from("<ii", b, 0) == (W, W) else None
+        plain, faded = gen("-", "p.raw"), gen(cp, "f.raw")
+        if plain is None or faded is None:
+            part1 = ("no map",)
+        else:
+            px = lambda m, x, y: m[(y * W + x) * 4:(y * W + x) * 4 + 3]
+            row = W // 2
+            step_tilts = px(plain, W // 2, row)[0] < 120
+            border_flat = all(abs(px(faded, x, row)[0] - 128) <= 1 and abs(px(faded, x, row)[1] - 128) <= 1
+                              for x in range(W // 2, W // 2 + W // C))   # the border column's texels
+            far_same = all(px(plain, x, row) == px(faded, x, row) for x in (W // 8, 3 * W // 8 - 8, 5 * W // 8 + 8))
+            part1 = (step_tilts, border_flat, far_same)
+        r = subprocess.run([tool, "islands", omkpaths.data_root(), tmp], capture_output=True, text=True, timeout=600)
+        m = re.search(r"@islands textures=(\d+) covered_whole=(\d+) faces=(\d+) tiling_faces=(\d+) "
+                      r"regions=(\d+) border_texels=(\d+)", r.stdout)
+        part2 = tuple(int(m.group(k)) for k in (1, 3, 4, 5)) if m else ("no @islands line",)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        generator {part1}; islands {part2}")
+    return (part1, part2), ((True, True, True), (1253, 664258, 0, 48484)), \
+        "the generator: a step is a slope, flat on a chart border, untouched away from it; islands over " \
+        "the shipped models: textures, faces, faces spanning more than their texture, regions"
+
+
+def c_engine_floors():
+    r"""THE REFLECTING FLOORS and THE LIT REFLECTIONS - the remaster's A3 beyond
+    the water (`todo/remaster.md`, `o3de/floorreflect.h`). `[Remaster] floors =
+    S` / `--floors S` (0..1), the `--remaster` preset's 1, OFF unless named:
+    the floors a grades folder's `floors.txt` lists mirror the scene through
+    the water's pass, one plane a frame (the water first); and the water's
+    reflection pass takes the TILED point lights, binned for its own camera
+    into the tiles buffer's second half (Vulkan's `ds1Refl_`).
+
+    Parts (Qalisar's street, 1804... the neon street at 15300, 0, -10050, with
+    the pack, `--enhance-all`, and this check's own `floors.txt` - the draft in
+    `omktexpack.py`'s CITY_FLOORS - so the reader's curated list cannot move it):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1; a floor's draw is shader mode 3; the reflection reads its
+         tiles (no `pc.water != 2`);
+      2. Vulkan: `--floors 1` moves more than 5000 pixels of `--floors 0`, and
+         the `remaster.floors` event says the plane is live at y 0;
+      3. Vulkan: the floor's reflection LIT - `OMK_REFL_UNLIT=1` (its tiles
+         left empty, as before) moves more than 200 pixels of it;
+      4. GLES: `--floors 1` moves more than 5000 pixels there too;
+      5. GLES's floors where VULKAN's are: the pixels the floors move by more
+         than a few steps (2 red, 4 green, 2 blue) on each backend overlap,
+         intersection over union above 0.4 - the two light the reflection
+         their own ways (tiles, nearest slots), so the frames are not compared.
+
+    Measured 2026-10-24 (M1): 4570 pixels moved on Vulkan, 3874 on GLES, the
+    overlap 0.670 (against the untiled Vulkan, `OMK_NO_TILES=1`: 0.826).
+
+    Measured once, outside the check (2026-10-21, M3): with `--floors 0`
+    byte-identical to `7929d606` on the software reference, Vulkan and GLES,
+    by the burner, in Qalisar and at Jaunpur's canal (14 of 15) - the 15th the
+    canal under `--enhance-all` on Vulkan, its water's reflection now lit
+    (1060 pixels); with `OMK_REFL_UNLIT=1` that frame is `7929d606`'s again.
+
+    SHOWN TO FAIL (2026-10-21): a floor's draw never given mode 3 - part 2
+    (0 pixels); the reflection's tiles skipped again (`pc.water != 2`) - part
+    1 and part 3 (0 pixels). (2026-10-24) GLES's reflection drawn full size
+    and sampled as half (the audit's bug 1: `setView` putting the full
+    viewport back over `begin`'s half one) - part 5, 0.003 (282 pixels moved,
+    the lower-left quarter magnified 2x).
+
+    NOT CHECKED, judged by eye: the list, the strengths, the relief's shift.
+    """
+    import subprocess, tempfile, shutil, re, sys, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("floorStrength = floorsFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+floors\s*=\s*0\.0f;", sh)),
+              'kRemaster, "floors"' in sc and 'kEnhancements, "floors"' not in sc,
+              "floors" not in max_body,
+              # the preset's 1.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("floors") : 0.0f;' in pre and '{"floors", 1.0f}' in sh,
+              "push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;" in vk,
+              "if (lg.tiles != 0) {" in fs and "lg.tiles != 0 && pc.water != 2" not in fs)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = omkpaths.pack_path() or ""
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack (omk.conf pack =)"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    tmp = tempfile.mkdtemp()
+    grades = os.path.join(tmp, "grades")
+    os.makedirs(grades)
+    open(os.path.join(grades, "floors.txt"), "w").write(omktexpack.CITY_FLOORS)
+    try:
+        def run(binary, name, env_extra, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", **env_extra)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "101", "--stand", "15300,0,-10050,270", "--dump", out, "--filter", "nearest",
+                    "--remaster", pack, "--grade", grades, "--enhance-all"] + list(extra) + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, []
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), _events(r.stdout + r.stderr)
+        diff = lambda a, b: sum(1 for x, y in zip(a, b) if x != y)
+        vkb = os.path.join(eng, "build", "omk-play")
+        off, _ = run(vkb, "off", {}, "--floors", "0")
+        on, ev = run(vkb, "on", {}, "--floors", "1")
+        unlit, _ = run(vkb, "unlit", {"OMK_REFL_UNLIT": "1"}, "--floors", "1")
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            goff, _ = run(gb, "goff", {}, "--floors", "0")
+            gon, _ = run(gb, "gon", {}, "--floors", "1")
+            if goff is None or gon is None:
+                gl = ("no frame",)
+            else:
+                big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
+                    abs(((x >> 5) & 63) - ((y >> 5) & 63)) > 4 or abs((x & 31) - (y & 31)) > 2
+                mv = {i for i, (x, y) in enumerate(zip(off, on)) if big(x, y)} if off and on else set()
+                mg = {i for i, (x, y) in enumerate(zip(goff, gon)) if big(x, y)}
+                iou = len(mv & mg) / max(1, len(mv | mg))
+                print(f"        floors' pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+                gl = (diff(goff, gon) > 5000, iou > 0.4)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if None in (off, on, unlit):
+        return (src_ok, ("no frame",)), ((True,) * 6, ("frames",)), "a Vulkan run wrote no frame"
+    live = [k for n, k in ev if n == "remaster.floors"]
+    moved, lit = diff(off, on), diff(on, unlit)
+    print(f"        floors 1 moves {moved} pixels on Vulkan; the reflection's lights {lit}; "
+          f"events {live[:2]}; GLES {gl}")
+    return (src_ok, moved > 5000, bool(live) and live[0].get("live") in ("1", "true") and
+            float(live[0].get("y", "nan")) == 0.0, lit > 200, gl), \
+           ((True,) * 6, True, True, True, _or_skip(gl, (True, True))), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
+        "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
+        "lights, and on GLES - where Vulkan's do"
+
+
+def c_engine_wet_floors():
+    r"""THE RAIN'S WET FLOORS - the remaster's (`todo/remaster.md`, "The rain's
+    wet floors"; `o3de/wetfloor.h`). `[Remaster] wet = S` / `--wet S` (0..1),
+    the `--remaster` preset's 1, OFF unless named: while the game's own shower
+    falls (`sub_4815D0`, docs/ASSETS.md 4e - a RAIN area, option row 7 at 2),
+    the set's opaque floors facing up within ~20 degrees, under the OPEN SKY
+    (four rays up through the shot soup, the original's roof world), darken
+    (`Draw::wet`) and - those on the frame's plane - reflect through the
+    floors' pass, as wet as the rain is strong and drying over 2 minutes.
+
+    Parts (Anekbah's street at 1804, 0, -6890, `--detail 2`, the weather's
+    clock jumped past its first wait - `OMK_WEATHER_SKIP_MS`, 700 frames, the
+    shower at full strength from ~frame 600):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1;
+      2. the set's floors: more than 5000 triangles open to the sky, more
+         than 300 under a roof, and more than 500 of the open ones BLENDED -
+         their corners disagree, the change from wet to dry run through them
+         (`world.wet`; `encodeOpenSky`);
+      3. Vulkan: at frame 690 the wetness is 1 and the floors' plane live
+         (`remaster.wet`), and `--wet 1` moves more than 50000 pixels of
+         `--wet 0`;
+      4. Vulkan at `--detail 1` - no rain: `--wet 1` is `--wet 0`'s frame,
+         byte for byte;
+      5. GLES: `--wet 1` moves more than 50000 pixels too, and where Vulkan's
+         do - the moved pixels' intersection over union above 0.8;
+      6. Vulkan: the RIPPLES move - frames 700 and 716 differ by more than
+         10000 pixels more with `--wet 1` than with `--wet 0` (the rain's
+         streaks, the flame and the shimmer move both);
+      7. the edge BLENDED in the shaders: `OMK_WET_NO_BLEND=1` (the open sky
+         left out of the corners) moves more than 5000 pixels of the frame,
+         on Vulkan and on GLES - each decodes the corners' phase;
+      8. THE SNOW LYING (`coverRuns`): Mahaleel's open air (address 404, 120
+         frames) - at frame 90 more than 300 floor triangles covered
+         (`remaster.snow`), `--wet 1` moving more than 3000 pixels of `--wet
+         0` on Vulkan and on GLES, the same pixels (overlap above 0.8); and no
+         snow lying in Anekbah's rain.
+
+    Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
+    load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
+    ripples: 109018 and 109024, overlap 0.998; 700 -> 716 moves 73954 pixels
+    wet, 33097 dry. With the single soft ring (2026-10-27): 109561 and 109569;
+    the ripples 20230 more. The edge per corner and a roof wider than a cable
+    (the same day): 11480 open, 650 covered, 2562 blended; 136587 and 136605
+    pixels; the ripples 25068 more; blended against not, 19514 and 19569.
+
+    SHOWN TO FAIL (2026-10-27): the film never applied in `scene.frag`
+    (`c *= 1.0 - wetFilm` gone) - part 3, a few thousand pixels, and part 5's
+    overlap; the rain area's gate dropped (`rainArea` always true) and the
+    wetness held at 1 - part 4, the frames differ; the ripples never computed
+    in `scene.frag` - part 6; the open sky never decoded in `scene.frag`
+    (`openSky = 1.0`) - part 7 on Vulkan; the snow's cycle never told the
+    remaster (`weatherSnowing` false) - part 8.
+
+    NOT CHECKED, judged by eye: the strengths (`kWetReflect`, `kWetDarken`),
+    the drying's pace, the triangle-sized edges between wet and dry.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("wetStrength = wetFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+wet\s*=\s*0\.0f;", sh)),
+              'kRemaster, "wet"' in sc and 'kEnhancements, "wet"' not in sc,
+              "wet" not in max_body,
+              '!preset.empty() ? pv("wet") : 0.0f;' in pre and '{"wet", 1.0f}' in sh)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, detail, wet, frames=700, env_extra=None):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000", **(env_extra or {}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                    "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                    "--frames", str(frames), "--detail", str(detail), "--wet", str(wet), "--dump", out] + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, []
+            return open(out, "rb").read(), _events(r.stdout + r.stderr)
+        vkb = os.path.join(eng, "build", "omk-play")
+        on, ev = run(vkb, "on", 2, 1)
+        off, _ = run(vkb, "off", 2, 0)
+        dry, _ = run(vkb, "dry", 1, 1)
+        dry0, _ = run(vkb, "dry0", 1, 0)
+        on716, _ = run(vkb, "on716", 2, 1, 716)
+        off716, _ = run(vkb, "off716", 2, 0, 716)
+        nb, _ = run(vkb, "nb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
+        gnb = None
+        def snow_run(binary, name, wet):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            r = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                      os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "145",
+                                      "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
+                                      "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter",
+                                      "nearest", "--frames", "120", "--detail", "2", "--wet", str(wet),
+                                      "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return (open(out, "rb").read() if os.path.exists(out) else None), _events(r.stdout)
+        sv1, sev = snow_run(vkb, "sv1", 1)
+        sv0, _ = snow_run(vkb, "sv0", 0)
+        sg1 = sg0 = None
+        if platform.system() == "Darwin":
+            sg1, _ = snow_run(os.path.join(eng, "build", "omk-play-gles"), "sg1", 1)
+            sg0, _ = snow_run(os.path.join(eng, "build", "omk-play-gles"), "sg0", 0)
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
+            goff, _ = run(os.path.join(eng, "build", "omk-play-gles"), "goff", 2, 0)
+            gnb, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gnb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
+            gl = ("no frame",) if gon is None or goff is None else None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if None in (on, off, dry, dry0, on716, off716, nb):
+        return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
+    px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
+    moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
+    mv = moved(on, off)
+    if gl is None:
+        mg = moved(gon, goff)
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        wet floors' pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+        gl = (len(mg) > 50000, iou > 0.8)
+    world = next((k for n, k in ev if n == "world.wet" and k.get("set") == "ANEKBAH"), {})
+    at690 = next((k for n, k in ev if n == "remaster.wet" and k.get("frame") == "690"), {})
+    sky = (int(world.get("open", 0)) > 5000, int(world.get("covered", 0)) > 300,
+           int(world.get("blended", 0)) > 500)
+    live = (at690.get("wetness"), at690.get("live"))
+    same = dry == dry0
+    ripple = len(moved(on, on716)) - len(moved(off, off716))
+    gblend = ("skipped",) if gnb is None and platform.system() != "Darwin" else \
+        (gnb is not None and gon is not None and len(moved(gon, gnb)) > 5000)
+    blend = (len(moved(on, nb)) > 5000, gblend)
+    lying = next((k for n, k in sev if n == "remaster.snow" and k.get("frame") == "90"), {})
+    smv = moved(sv1, sv0) if sv1 and sv0 else set()
+    if sg1 and sg0:
+        sgm = moved(sg1, sg0)
+        siou = len(smv & sgm) / max(1, len(smv | sgm))
+        sgl = (len(sgm) > 3000, siou > 0.8)
+    else:
+        sgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
+              not any(n == "remaster.snow" for n, _ in ev))
+    print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
+          f"GLES {sgl}")
+    print(f"        open {world.get('open')}, covered {world.get('covered')}, blended {world.get('blended')}; "
+          f"frame 690 {live}; "
+          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
+          f"blended against not {len(moved(on, nb))}")
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed), \
+           ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
+            (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True)), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
+        "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"
+
+
+def c_engine_rain3d():
+    r"""THE RAIN IN 3D - the remaster's (`todo/remaster.md`, "The rain in 3D";
+    `backends/remaster/playremaster_rain.cpp`). `[Remaster] rain3d = S` /
+    `--rain3d S` (0..1), the `--remaster` preset's 1, OFF unless named: the
+    game's own 200 drops (`o3de/weather.h` - the cycle, the box, the wind
+    untouched) drawn as strips IN the scene, the depth test hiding them behind
+    walls and a roof straight above (the shot soup, `sub_481200`'s world)
+    stopping them, where `sub_4815D0` draws 2D lines over the picture.
+
+    Parts (Anekbah's street at 1804, 0, -6890, `--detail 2`, the weather's
+    clock jumped past its first wait, 700 frames - the shower at full):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1;
+      2. Vulkan, `--rain3d 1`: at frame 690 the 200 drops taken, more than 300
+         drawn - the copies' (`kRainCopies`; the 200 alone cannot) - some
+         under a roof, the STREAK texture in the pool, more than 300 drops
+         LIT by the set's lights (`remaster.rain3d`), and the weather says
+         they are drawn in the scene - no 2D streaks;
+      3. Vulkan, `--rain3d 0`: the original's 2D streaks, more than 20;
+      4. the rain's pixels (against `--detail 1`, no rain) on Vulkan and on
+         GLES: more than 1000 each, the same pixels - overlap above 0.9;
+      5. THE SHOWER'S SKY (`remasterGrade`): with `--rain3d 1` the grade's
+         overcast reaches its full step (16) as the shower peaks
+         (`remaster.grade`), and with `--rain3d 0` it never comes;
+      6. THE SNOW in the scene: Mahaleel's open air (address 404, 120
+         frames) - at frame 90 more than 300 flakes drawn with the original's
+         own `Images\snow.bmp` (`remaster.rain3d` snow=1, streak=1), and no
+         2D flake (the weather says they are drawn in the scene);
+      7. A ROOF DOES NOT END IT (the reader: the shower stopped at once, its
+         music playing on): under a roof at 3629, 0, -9030 facing 0, with
+         `--rain3d 1` the shower ramps to its full state 2 (the rain music on,
+         track 119), and with `--rain3d 0` the original's rule holds - no
+         shower there (state 0, a roof overhead, at frame 690);
+      8. BACK INTO A SHOWER (the reader: it rained on, its sound gone, after a
+         visit indoors): from 2860, 0, -6068 facing 0 the held walk
+         (`k200*60,0*20,k203*45,k200*150`) goes into the restaurant (area
+         217, its track 10) and back out - Anekbah's own track 2 plays on the
+         way in, then message 23 is posted again and the rain's track 119
+         plays after it;
+      9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
+         at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
+         bytes, and with `--rain3d 0` the original's 2D rain still moves
+         there (its world kept behind screen 31, its drops stepped per drawn
+         frame - the original's).
+
+    Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
+    Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks. Denser and
+    fainter the same day (three copies a drop, 0.55 bright, faded near and
+    far): 573 of 800 drawn, 112 under a roof; 2762 and 2761 pixels. Soft
+    (the streak texture, three times wider, 32 units long): 7324 and 7321
+    pixels, overlap 1.000. The near streaks faded (40..260): 538 drawn. Lit
+    by the set's lights (the same day): all 538 lit - Anekbah's two fills
+    reach the whole street; 7231 pixels on each, overlap 1.000.
+
+    SHOWN TO FAIL (2026-10-27): the roof test skipped - part 2 (0 under a
+    roof); the drops never taken (`remasterRainTake` false) - part 2, the 2D
+    streaks drawn again; the copies never made - part 2 (135 drawn); the
+    streak never pooled (`rainTexSlot` -1, the white) - part 2; the set's
+    lights never read - part 2 (0 lit); the overcast never stepped - part 5;
+    the snow not taken (`viewBits & 2u` alone) - part 6, the 2D flakes back;
+    `remasterWeatherRoofless` false - part 7; the return's message never
+    posted - part 8; the pause's early return gone - part 9.
+
+    NOT CHECKED, judged by eye: the brightness and width; the density, which
+    is the original's 200 - half its box lies below the street, now hidden.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("rain3dStrength = rain3dFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+rain3d\s*=\s*0\.0f;", sh)),
+              'kRemaster, "rain3d"' in sc and 'kEnhancements, "rain3d"' not in sc,
+              "rain3d" not in max_body,
+              '!preset.empty() ? pv("rain3d") : 0.0f;' in pre and '{"rain3d", 1.0f}' in sh)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, detail, r3d):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                    "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                    "--frames", "700", "--detail", str(detail), "--rain3d", str(r3d), "--dump", out] + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, "", []
+            text = r.stdout + r.stderr
+            return open(out, "rb").read(), text, _events(text)
+        vkb = os.path.join(eng, "build", "omk-play")
+        on, out_on, ev = run(vkb, "on", 2, 1)
+        _, out_off, ev_off = run(vkb, "off", 2, 0)
+        dry, _, _ = run(vkb, "dry", 1, 1)
+        def roof(r3d):
+            return subprocess.run(
+                [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                 "--area", "0", "--stand", "3629,0,-9030,0", "--no-crowd", "--nofmv", "--nodelay",
+                 "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", "700",
+                 "--detail", "2", "--rain3d", str(r3d), "--world-vulkan"],
+                capture_output=True, text=True, errors="replace", timeout=300,
+                env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_WEATHER_SKIP_MS="900000")).stdout
+        roof_on, roof_off = roof(1), roof(0)
+        back = subprocess.run(
+            [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "0", "--stand", "2860,0,-6068,0", "--no-crowd", "--nofmv", "--nodelay",
+             "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", "500", "--detail", "2",
+             "--rain3d", "1", "--world-vulkan", "--hold", "k200*60,0*20,k203*45,k200*150"],
+            capture_output=True, text=True, errors="replace", timeout=300,
+            env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_WEATHER_SKIP_MS="900000")).stdout
+        def paused(r3d, n):
+            out = os.path.join(tmp, "pause%d-%d.bin" % (r3d, n))
+            subprocess.run(
+                [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                 "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                 "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", str(n), "--detail", "2",
+                 "--rain3d", str(r3d), "--world-vulkan", "--keys", "0,1", "--keydelay", "650", "--dump", out],
+                capture_output=True, text=True, errors="replace", timeout=300,
+                env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_WEATHER_SKIP_MS="900000"))
+            return open(out, "rb").read() if os.path.exists(out) else None
+        pz = [paused(1, 700), paused(1, 710), paused(0, 700), paused(0, 710)]
+        snow_out = subprocess.run(
+            [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
+             "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest", "--frames", "120",
+             "--detail", "2", "--rain3d", "1", "--world-vulkan"],
+            capture_output=True, text=True, errors="replace", timeout=300,
+            env=dict(os.environ, OMK_EVENTS="1", SDL_VIDEODRIVER="dummy")).stdout
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            gon, _, _ = run(gb, "gon", 2, 1)
+            gdry, _, _ = run(gb, "gdry", 1, 1)
+            gl = ("no frame",) if gon is None or gdry is None else None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if on is None or dry is None:
+        return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
+    px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
+    moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
+    mv = moved(on, dry)
+    if gl is None:
+        mg = moved(gon, gdry)
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        the rain's pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+        gl = (len(mg) > 1000, iou > 0.9)
+    at = next((k for n, k in ev if n == "remaster.rain3d" and k.get("frame") == "690"), {})
+    took = ("frame 690: weather - 200 drops stepped, drawn in the scene by the remaster" in out_on,
+            "frame 690: weather - 200 drops stepped, " not in out_on.replace(
+                "frame 690: weather - 200 drops stepped, drawn in the scene", ""))
+    scene = (at.get("drops"), int(at.get("drawn", 0)) > 300, int(at.get("roofed", 0)) > 0,
+             at.get("streak"), int(at.get("lit", 0)) > 300) + took
+    overcast = (max((int(k.get("overcast", 0)) for n, k in ev if n == "remaster.grade"), default=0),
+                max((int(k.get("overcast", 0)) for n, k in ev_off if n == "remaster.grade"), default=0))
+    m = re.search(r"frame 690: weather - 200 drops stepped, (\d+) streaks", out_off)
+    flat = int(m.group(1)) > 20 if m else None
+    print(f"        frame 690: {at}; the 2D path {m.group(1) if m else None} streaks; "
+          f"Vulkan {len(mv)} pixels; GLES {gl}")
+    sn = next((k for n, k in _events(snow_out) if n == "remaster.rain3d" and k.get("frame") == "90"), {})
+    snowed = (sn.get("snow"), int(sn.get("drawn", 0)) > 300, sn.get("streak"),
+              "frame 90: weather - 200 drops stepped, drawn in the scene by the remaster" in snow_out)
+    seq = [ln for ln in back.splitlines()
+           if "music switch to" in ln or "back into the shower" in ln or "feet on area" in ln]
+    seq_s = " | ".join(seq)
+    i217 = seq_s.find("feet on area 217")
+    back_in = seq_s.find("feet on area 0", i217) if i217 >= 0 else -1
+    reenter = (i217 >= 0 and back_in >= 0,
+               back_in >= 0 and seq_s.find("music switch to 119", back_in) > seq_s.find("music switch to 2", back_in) >= 0
+               and "back into the shower: message 23 posted again to its handler" in seq_s[back_in:])
+    held = (None if None in pz else (pz[0] == pz[1], pz[2] != pz[3]))
+    roofed_shower = (bool(re.search(r"weather - state 2, 200 drops, a roof overhead", roof_on)),
+                     "music switch to 119" in roof_on,
+                     "frame 690: weather - state 0, 0 drops, nothing stepped (a roof overhead)" in roof_off)
+    print(f"        under the roof: {roofed_shower}; the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
+          f"Mahaleel's snow at frame 90: {sn}")
+    print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}")
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held), \
+           ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
+            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True)), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
+        "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
+        "pixels on Vulkan and GLES, the same"
+
+
+def c_engine_clip_memo():
+    r"""THE REFLECTION'S CLIP MEMO ACROSS A RELOAD - the remaster audit's bug 2
+    (`todo/remaster.md`, "The audit of the whole remaster"; `clipAbove` in
+    `src/o3de/renderer.cpp`). The memo keeps, per geometry and plane height,
+    the runs of each SET draw above the water's or the floors' plane. A world
+    slot reloaded IN PLACE (`w = std::move(L.out)`) keeps its geometry's
+    address and destroys nothing, so a memo keyed by the address alone drew
+    the OLD set's runs for the new one. Now keyed by `Geometry::revision`
+    too: a new revision empties it, and the set motion patch's
+    (`dirtyFrom`/`dirtyTo`/`dirtyCorners`) drops only the draws over a moved
+    corner.
+
+    Tier 6 (read and explained - a model of the remaster's own code, no
+    original behind it). `engine/tools/clip_memo.cpp` drives `drawWithWater`
+    with ONE `Geometry` holding sets in turn and a renderer recording what it
+    is handed to reflect: the first set (6 corners above), set B moved into
+    the same object (3), B's first triangle moved below by the patch, its
+    corners unsorted as the patch leaves them (0), and a draw the patch left
+    alone (6) - four `@clip` rows, each its runs against the wanted.
+
+    SHOWN TO FAIL (2026-10-24): the memo ignoring the revision (the old
+    behaviour) - `reload` 6 for 3, `moved` 6 for 0; the patch's draws never
+    dropped - `moved` 3 for 0.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "build/clip_memo"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    r = subprocess.run([os.path.join(eng, "build", "clip_memo")], capture_output=True, text=True, timeout=60)
+    rows = {}
+    for line in r.stdout.splitlines():
+        f = line.split()
+        if len(f) == 5 and f[0] == "@clip":
+            rows[f[1]] = (int(f[2]), int(f[3]), f[4])
+    print(f"        {rows}")
+    got = tuple(rows.get(k, ("missing",))[:2] for k in ("first", "reload", "moved", "kept"))
+    return (got, r.returncode), (((6, 6), (3, 3), (0, 0), (6, 6)), 0), \
+        "one geometry reloaded in place: the reflection's clip follows the new set, and the motion patch's " \
+        "moved triangles, keeping the draws it left alone"
+
+def c_engine_vulkan_images():
+    r"""VULKAN'S IMAGES, CHECKED - the remaster audit's bug 4 (`todo/remaster.md`,
+    "The audit of the whole remaster"). Every image the Vulkan backend makes -
+    render targets, the shadow map, the present and upscale images, the
+    post-pass's, the grade's strip, the reflection's, every texture - goes
+    through ONE `makeImage2D`: the image, its memory bound, its view, or none
+    of them and a line saying which step failed. The two texture uploads
+    checked nothing before: out of device memory (the 4x pack with its maps)
+    they bound memory to a null image and copied into it.
+
+    Tier 6 (read and explained; no original behind it). Parts (Qalisar's
+    street, `--remaster --enhance-all --floors 1`, 640x480, 30 frames):
+      1. the source: ONE `vkCreateImage` in `vkrender.cpp` and its
+         `vkrender_remaster.inl`, the helper's;
+         and the texture uploads BATCHED (the audit's performance item 2):
+         both record into `uploadCb()`, staged by `stage()`, and the pool
+         ends in one `flushUploads()` - no `oneShotBegin` between them;
+      2. `OMK_VK_IMAGE_FAIL=textures` (an instrument: every image of the
+         category refused as out of memory): the run ends normally, writes
+         its frame, says what it refused, and the frame is not the normal one
+         (the textures white);
+      3. `OMK_VK_IMAGE_FAIL="shadow map"`: the renderer REFUSED - set 1 is
+         made with the shadow map and carries the scene's lights, and a
+         frame without it faulted in MoltenVK's first draw - and a frame
+         written all the same (the frontend's fallback).
+
+    SHOWN TO FAIL (2026-10-24): the texture upload going on past a refused
+    image (the old unchecked sequence) - part 2, the run killed by SIGSEGV
+    (-11), no frame; the shadow map's refusal not refusing the renderer (the
+    old "fitted blobs" message) - part 3, SIGBUS (-10) in the first draw.
+    A texture uploaded on its own one-shot again (`oneShotBegin` in place of
+    `uploadCb`) - part 1.
+    NOT CHECKED: a device really out of memory; GLES (its textures are
+    `glTexImage2D`s the driver backs).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    pool = vk[vk.index("void VulkanRenderer::poolTextures("):]
+    pool = pool[:pool.index("\nbool VulkanRenderer::uploadGeometry(")]
+    src_ok = (len(re.findall(r"vkCreateImage\(dev_", vk)) == 1,
+              "bool VulkanRenderer::makeImage2D(" in vk,
+              pool.count("uploadCb()") == 2 and pool.count("stage(bytes, sb, so, dst)") == 2 and
+              "oneShotBegin()" not in pool and pool.count("flushUploads();") == 1)
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, "build"), ((True,) * 3, "built"), mk.stderr[-300:]
+    pk = omkpaths.pack_path()
+    if not pk:
+        return (src_ok, ("skipped",)), ((True,) * 3, ("skipped",)), "no remaster pack"
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(name, refuse):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+            if refuse:
+                env["OMK_VK_IMAGE_FAIL"] = refuse
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30", "--area", "101",
+                                "--stand", "15300,0,-10050,270", "--dump", out, "--filter", "nearest",
+                                "--remaster", pk, "--enhance-all", "--floors", "1", "--world-vulkan"],
+                               capture_output=True, text=True, errors="replace", env=env, timeout=600)
+            px = open(out, "rb").read() if os.path.exists(out) else None
+            said = bool(refuse) and f"vulkan: {refuse} " in r.stderr and "refused" in r.stderr
+            return r.returncode, px, said, r.stderr
+        rc0, base, _, _ = run("base", None)
+        rcT, texF, saidT, _ = run("tex", "textures")
+        rcS, shF, saidS, errS = run("shadow", "shadow map")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    tex = (rcT, texF is not None, saidT, texF is not None and base is not None and texF != base)
+    shadow = (rcS, shF is not None, saidS, "its set carries the scene's lights too, refused" in errS)
+    print(f"        textures refused: exit {rcT}, frame {texF is not None}, said {saidT}; "
+          f"the shadow map refused: exit {rcS}, frame {shF is not None}, the renderer refused {shadow[3]}")
+    return (src_ok, rc0 == 0 and base is not None, tex, shadow), \
+        ((True,) * 3, True, (0, True, True, True), (0, True, True, True)), \
+        "one checked image helper; textures refused draw white and the run goes on; the shadow map refused " \
+        "refuses the renderer cleanly, a frame written all the same"
+
+def c_engine_mist():
+    r"""THE MIST - the remaster's A4 beyond the AO (`todo/remaster.md`), `[Remaster]
+    mist = S` / `--mist S` (0..1), the `--remaster` preset's 0.5, OFF unless
+    named. Vulkan. A height fog in the set's OWN fog colour (each city's,
+    changing with the clock - `sub_41E7A0`), density 1 at the set's ground
+    (`groundLevel`: the height with the most level opaque area) falling as
+    exp(-h / 400) above it, integrated along each ray (15 m to 63% at strength
+    1), on the batches the game fogs - or, its fog off (an unlimited clip,
+    `--enhance-all`), the same batches marked -1 / -1 by the backend.
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 0.5; the shader's guard takes the -1 marks;
+      2. Qalisar's street (14300, 0, -10050) with the pack and
+         `--enhance-all` (its fog OFF), the post-pass off (`--bloom 0 --ao 0`,
+         no grade - they come after the mist: with them 41 of 228217 moved
+         pixels went away from the fog): `--mist 0.5` moves more than 20000
+         pixels, and they move TOWARD the fog colour (a mix with it) - all
+         but fewer than 1 in 1000: an ADDITIVE glow (a street lamp's halo,
+         which the mist leaves alone, as the game's fog does) added over a
+         background the mist moved can end further from it (48 of 260094);
+         and its SHAPE: the near ground (the frame's bottom 15%) changes less
+         than half as much as the band at the horizon (30-45% down) - 5.7
+         against 21.5 a pixel. An inverted mix moves toward the fog too, and
+         only this tells them apart.
+
+    Measured once, outside the check (2026-10-21, M3): with it off
+    byte-identical to `5f4cb214` on the software reference, Vulkan and GLES,
+    plain, `--remaster` and `--enhance-all`, by the burner, in Qalisar and at
+    Jaunpur's canal (15 of 15) - `fx` declared in the plain module too.
+
+    SHOWN TO FAIL (2026-10-21): the fogless batches never marked - part 2
+    (0 pixels, the first cut's bug: `--enhance-all` turns the game's fog off);
+    the mix inverted (`mix(pc.fogColour, c, m)`) - part 2's SHAPE (it still
+    moved toward the fog: the first form of this check passed it).
+
+    GLES TOO (2026-10-27, the reader's "continue" - the mist was Vulkan's
+    alone, so the shower's haze never reached GLES): the water variant takes
+    the same formula after the game's fog (`uMist`, the -1 / -1 marks, the eye
+    as `vWy + vToEye.y`); part 5: on GLES `--mist 0.5` moves more than 20000
+    pixels too, where Vulkan's do - overlap above 0.8. Measured: Anekbah's
+    street 218130 on Vulkan, 218144 on GLES, overlap 1.000.
+
+    NOT CHECKED, judged by eye: the strength, the height, the colour.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("mistStrength = mistFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+mist\s*=\s*0\.0f;", sh)),
+              'kRemaster, "mist"' in sc and 'kEnhancements, "mist"' not in sc,
+              "mist" not in max_body,
+              # the preset's 0.5 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("mist") : 0.0f;' in pre and '{"mist", 0.5f}' in sh,
+              "(pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0)" in fs)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = omkpaths.pack_path() or ""
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 5, ("skipped",)), "no texture pack (omk.conf pack =)"
+    tmp = tempfile.mkdtemp()
+    nograde = os.path.join(tmp, "no-grades")   # an empty grades folder: no grade
+    os.makedirs(nograde)
+    play = os.path.join(eng, "build", "omk-play")
+    fog = None
+    try:
+        def run(name, *extra, gles=False):
+            nonlocal fog
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "101", "--stand", "14300,0,-10050,270", "--dump", out,
+                    "--filter", "nearest", "--remaster", pack, "--enhance-all",
+                    # the post-pass off - the grade's LUT, the bloom and the AO
+                    # come AFTER the mist and bend "toward the fog colour"
+                    "--bloom", "0", "--ao", "0", "--grade", nograde] + list(extra) + \
+                   ([] if gles else ["--world-vulkan"])
+            if gles:
+                cmd = ["caffeinate", "-d", "-u", "-i", os.path.join(eng, "build", "omk-play-gles")]
+                env = dict(os.environ, OMK_NO_GPU_PRESENT="1")
+            else:
+                cmd, env = [play], dict(os.environ, SDL_VIDEODRIVER="dummy")
+            r = subprocess.run(cmd + args, capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            m = re.search(r"fog and clear colour (\d+) (\d+) (\d+)", r.stdout + r.stderr)
+            if m: fog = tuple(int(v) for v in m.groups())
+            if r.returncode != 0 or not os.path.exists(out):
+                return None
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw)
+        off, on = run("off", "--mist", "0"), run("on", "--mist", "0.5")
+        goff = gon = None
+        if platform.system() == "Darwin":
+            goff, gon = run("goff", "--mist", "0", gles=True), run("gon", "--mist", "0.5", gles=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if off is None or on is None or fog is None:
+        return (src_ok, ("no frame",)), ((True,) * 5, ("frames",)), "a run wrote no frame or no fog colour"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    dist = lambda a: sum(abs(x - y) for x, y in zip(a, fog))
+    moved = away = 0
+    for x, y in zip(off, on):
+        if x == y:
+            continue
+        moved += 1
+        if dist(rgb(y)) > dist(rgb(x)) + 12:   # three channels' 565 rounding
+            away += 1
+    W = 640
+    band = lambda y0, y1: sum(sum(abs(p - q) for p, q in zip(rgb(off[y * W + x]), rgb(on[y * W + x])))
+                              for y in range(y0, y1) for x in range(W)) / ((y1 - y0) * W)
+    near, far = band(408, 480), band(144, 216)
+    print(f"        --mist 0.5 moves {moved} pixels, {away} away from the fog colour {fog}; "
+          f"near {near:.1f}, horizon {far:.1f} a pixel")
+    if platform.system() != "Darwin":
+        gl = ("skipped",)
+    elif goff is None or gon is None:
+        gl = ("no frame",)
+    else:
+        mv = {i for i, (x, y) in enumerate(zip(off, on)) if x != y}
+        mg = {i for i, (x, y) in enumerate(zip(goff, gon)) if x != y}
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        GLES: --mist 0.5 moves {len(mg)} pixels, overlap with Vulkan's {iou:.3f}")
+        gl = (len(mg) > 20000, iou > 0.8)
+    return (src_ok, moved > 20000, away * 1000 < moved, near * 2 < far, gl), \
+           ((True,) * 5, True, True, True, _or_skip(gl, (True, True))), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 0.5, the -1 marks taken); " \
+        "in Qalisar with the game's fog off the mist moves the frame, toward the fog colour (all but < 1/1000)"
+
+
+def c_engine_upscale():
+    r"""THE UPSCALE - the remaster's A6 (`todo/remaster.md`), `[Remaster]
+    upscale = F` / `--upscale F` (1..3), OFF unless named and NOT in the
+    `--remaster` preset (a frame rate's choice, not a look). Vulkan. The frame
+    is drawn F times smaller each way (`rs()`: every render size through one
+    rule) and brought up to the output by AMD FSR 1 - EASU (`easu.frag`) then
+    RCAS's sharpening inside the present pass, BEFORE the original's 565
+    dither, so the dither stays the output pixel's. AMD's shader code is
+    vendored verbatim (MIT, `third_party/ffx_fsr1.h`).
+    Parts:
+      1. the source: 1 by default, [Remaster] only, never `all = max`, not the
+         preset's; the present pass binds EASU's output only upscaled;
+      2. the CONSTANTS: `src/o3de/fsrcon.h`'s transcription against AMD's own
+         `FsrEasuCon` / `FsrRcasCon` (the header under `A_CPU`), compiled side
+         by side - every word, for six size triples and four sharpnesses;
+      3. Anekbah's street at 1280x960 through the offscreen harness (the
+         READBACK's path, EASU and RCAS run raw): the renderer's own event
+         says it drew 640x480 at x2; the frame is not the native one, and it
+         is the native one UPSCALED - the mean difference under 6 a channel,
+         and REGISTERED: of the 25 shifts within two pixels, none matches the
+         native frame better than none - a picture placed wrong (its rows, its
+         viewport) fails it. A ONE-pixel offset does not: the mutation below
+         moved EASU's by one output pixel and (0, 0) still won, 3.35 against
+         4.02 - the two frames differ in detail more than in place, so the
+         constants are part 2's to guard;
+      4. the window's path (`--vulkan`, hidden) at x1.5: every frame presented
+         by the GPU, and `OMK_VERIFY_GPU_PRESENT` - the present pass's RCAS
+         and dither against the readback's raw RCAS and the CPU's dither -
+         0 pixels apart over 90 frames (no dump: a dumped frame is the CPU's).
+    Measured once, outside the check (2026-10-22, M3): off, byte-identical to
+    `451c0aa5` (`--vulkan`, `--world-vulkan`, `--ssaa 2`, `--remaster
+    --enhance-all`, 4 of 4), and the present pass at `--ssaa 2` still 0
+    pixels from the CPU's; the Khronos validation layer silent on both paths
+    (the world, and the pause menu over it - `presentSurface` into the
+    output-size image).
+    SHOWN TO FAIL (2026-10-22), one at a time: `fsrcon.h`'s con[2] with
+    -0.0 for -0.5 - part 2 (94 of 100 words); the present pass's RCAS skipped
+    on the readback's raw path - part 4 (90 of 90 frames differing).
+    NOT CHECKED, judged by eye: the sharpness (`kFsrRcasStops`, AMD's 0.2).
+
+    (2026-10-26) Part 1 also holds GLES's `fsrPass` to ONCE a frame - a
+    frame read back and presented ran both passes twice - and its 11
+    uniforms looked up once rather than 9 lookups a run. Shown to fail: the
+    once-a-frame return removed - part 1's last False alone.
+
+    (2026-10-26) Part 1 also holds Vulkan's present pass to real barriers
+    (the audit's item 8): `runPresentPass`'s two transitions of `colour_`
+    were TOP_OF_PIPE with no access both ways - nothing ordered after the
+    frame's writes nor before the readback's copy, only the host's waits -
+    and its render pass now states its external dependencies. Byte-identical
+    (x2 and `--ssaa 2`, M1), the Khronos layer silent before and after - its
+    sync validation did not see the old barriers, nor a hazard planted in
+    the EASU pass's dependency that moved 7 pixels, so this is a source pin.
+    Shown to fail: the old barrier restored - part 1's last False alone.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl")
+    fsr = gl[gl.index("void GlesRenderer::fsrPass(int vh) {"):]
+    fsr = fsr[:fsr.index("\n}\n")]
+    vpp = vk[vk.index("bool VulkanRenderer::runPresentPass("):]
+    vpp = vpp[:vpp.index("\n}\n")]
+    vmp = vk[vk.index("bool VulkanRenderer::makePresentPass() {"):]
+    vmp = vmp[:vmp.index("\n}\n")]
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("upscale = upscaleFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+upscale\s*=\s*1\.0f;", sh)),
+              'kRemaster, "upscale"' in sc and 'kEnhancements, "upscale"' not in sc,
+              "upscale" not in max_body,
+              "preset" not in pre and pre.rstrip(";").endswith(": 1.0f"),
+              "up ? &presUpDs_ : &presDs_" in vk,
+              # GLES's two passes ONCE a frame (`readback` and the present
+              # both ask; `end` forgets them) and their 11 uniforms looked up
+              # once, not per run (the audit's GLES item, 2026-10-26)
+              "if (fsrVh_ == vh && fsrW_ == w_ && fsrH_ == h_) return;" in fsr and
+              "fsrVh_ = vh;" in fsr and "fsrVh_ = -1;" in gl and
+              fsr.count("glGetUniformLocation(") == 2 and "if (fsrLoc_[0] < 0) {" in fsr,
+              # Vulkan's present pass ordered both ways (the audit's item 8):
+              # no TOP_OF_PIPE in its transitions, its render pass's two
+              # external dependencies
+              "TOP_OF_PIPE" not in vpp and vpp.count("VK_ACCESS_TRANSFER_READ_BIT") == 1 and
+              "VK_ACCESS_SHADER_READ_BIT" in vpp and
+              "rpi.dependencyCount = 2; rpi.pDependencies = dep;" in vmp)
+    # 2. the constants, against AMD's
+    tmp = tempfile.mkdtemp()
+    try:
+        prog = os.path.join(tmp, "con.cpp")
+        open(prog, "w").write(r"""
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <math.h>
+#include <stdlib.h>
+#define A_CPU 1
+#include "ffx_a.h"
+#include "ffx_fsr1.h"
+#include "o3de/fsrcon.h"
+int main() {
+    const float s[6][6] = {{1920,1080,1920,1080,3840,2160}, {2560,1440,2560,1440,3840,2160},
+                           {640,480,640,480,1280,960}, {853,427,853,640,1280,640},
+                           {427,320,1280,960,640,480}, {1,1,7,5,3,2}};
+    int same = 0, all = 0;
+    for (auto& v : s) {
+        AU1 a[4][4]; std::uint32_t b[16];
+        FsrEasuCon(a[0], a[1], a[2], a[3], v[0], v[1], v[2], v[3], v[4], v[5]);
+        omk::fsrEasuCon(b, v[0], v[1], v[2], v[3], v[4], v[5]);
+        for (int k = 0; k < 16; ++k) { ++all; same += a[k / 4][k % 4] == b[k]; }
+    }
+    const float sts[4] = {0.0f, 0.2f, 1.0f, 2.0f};
+    for (float st : sts) {
+        AU1 r[4]; FsrRcasCon(r, st);
+        ++all; same += r[0] == omk::fsrRcasCon(st);
+    }
+    std::printf("%d %d\n", same, all);
+}
+""")
+        exe = os.path.join(tmp, "con")
+        cc = subprocess.run(["c++", "-std=c++20", "-w", "-I" + os.path.join(eng, "third_party"),
+                             "-I" + os.path.join(eng, "src"), prog, "-o", exe], capture_output=True, text=True)
+        con = tuple(int(v) for v in subprocess.run([exe], capture_output=True, text=True).stdout.split()) \
+            if cc.returncode == 0 else ("no compile", cc.stderr[-200:])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    con_ok = len(con) == 2 and con[0] == con[1] == 100
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    play = os.path.join(eng, "build", "omk-play")
+    tmp = tempfile.mkdtemp()
+    W, H = 1280, 960
+    try:
+        def run(name, *extra, env=None, dump=True):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "%dx%d" % (W, H),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--filter", "nearest"] + \
+                   (["--dump", out] if dump else []) + list(extra)
+            r = subprocess.run([play] + args, capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, OMK_EVENTS="1", **(env or {})))
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            px = struct.unpack("<%dH" % (len(raw) // 2), raw) if len(raw) == W * H * 2 else None
+            return px, r.stdout
+        native, _ = run("native", "--world-vulkan", "--frames", "60", env={"SDL_VIDEODRIVER": "dummy"})
+        up, log = run("up", "--world-vulkan", "--frames", "60", "--upscale", "2", env={"SDL_VIDEODRIVER": "dummy"})
+        # no dump: the dumped frame is composed on the CPU
+        _, wlog = run("win", "--vulkan", "--frames", "90", "--upscale", "1.5", dump=False,
+                      env={"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if "through VULKAN" not in log and not [e for e in _events(log) if e[0] == "vulkan.upscale"]:
+        return (src_ok, con_ok, ("skipped",)), ((True,) * 7, True, ("skipped",)), "no Vulkan device"
+    ev = [e[1] for e in _events(log) if e[0] == "vulkan.upscale"]
+    drawn = (ev[0].get("drawW"), ev[0].get("drawH")) if ev else None
+    if native is None or up is None:
+        return (src_ok, con_ok, drawn, "no frame"), ((True,) * 7, True, ("640", "480"), "frames"), \
+            "a run wrote no frame"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    a = [rgb(v) for v in native]
+    b = [rgb(v) for v in up]
+    def mad(dx, dy):   # the mean channel difference, b shifted by (dx, dy), over the inner frame
+        tot = n = 0
+        for y in range(40, H - 40, 4):
+            for x in range(40, W - 40, 4):
+                p, q = a[y * W + x], b[(y + dy) * W + x + dx]
+                tot += abs(p[0] - q[0]) + abs(p[1] - q[1]) + abs(p[2] - q[2]); n += 3
+        return tot / n
+    shifts = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+    m0 = shifts[(0, 0)]
+    best = min(shifts, key=shifts.get)
+    gm = re.findall(r"gpu present verify: frame \d+, (\d+) frames compared, (\d+) differ", wlog)
+    gpu = re.findall(r"present: (\d+) of (\d+) straight from the GPU", wlog)
+    gpu_ok = bool(gm) and int(gm[-1][0]) >= 60 and gm[-1][1] == "0" and len(gpu) >= 1 and \
+        all(x == y for x, y in gpu)
+    print(f"        constants {con}; drawn {drawn}; x2 against native: mean {m0:.2f} a channel, the best "
+          f"of 25 shifts {best} ({shifts[best]:.2f}; the best other "
+          f"{min(shifts[k] for k in shifts if k != (0, 0)):.2f}); "
+          f"the window at x1.5: {gm[-1] if gm else 'no verify'} (compared, differing), GPU-presented {gpu}")
+    return (src_ok, con_ok, drawn, a != b, m0 < 6.0, best, gpu_ok), \
+           ((True,) * 7, True, ("640", "480"), True, True, (0, 0), True), \
+        "the source (off by default, [Remaster] only, never all = max, not the preset's, EASU's output " \
+        "bound only upscaled); the 100 constant words AMD's; the street drawn at 640x480 for 1280x960, " \
+        "the native frame upscaled (close, and registered); the window's present pass 0 pixels from " \
+        "the readback's over 90 frames, every one the GPU's"
+
+
+def c_engine_smooth_bodies():
+    r"""THE ROUNDED BODIES - the remaster's D1 (`todo/remaster.md`), `[Remaster]
+    smooth = S` / `--smooth S` (0..1), OFF unless named or the `--remaster`
+    preset's 0.75 (the reader's "do it by default", 2026-10-22). Every backend: the character's REST geometry is
+    subdivided once at load (`o3de/smoothbody.h`) - each triangle 3x3, every
+    new point pulled toward its corners' tangent planes by S (Phong
+    tessellation), the face, the joints' skinned triangles, creases and open
+    boundaries left where they were. NOT A PORT, no oracle (tier 6): what is
+    checked is that it breaks nothing the shipped models carry.
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 0.75; the subdivision at both loads (`charModelFor`, the player);
+      2. `smooth_probe` over every `MESHES/PERSOS/*.3DO` (191) at 3 and 0.75:
+         every original corner bit for bit (KEPT), the output's open edges
+         never more than the input predicts (WATERTIGHT - a crack, even by an
+         ulp, opens 2 x 3 more), no new corner on the face's mesh, no new point
+         flung, and the models split are (over 40000 of 89107); and NO FOLD - no new triangle facing
+         against the one it came from (culled from behind it is a hole: the
+         reader's "the arm becomes empty", 2026-10-22);
+      3. Qalisar's bar at `--smooth 0.75`: the models say they were split
+         (`@evt body.smooth`) and the frame moves; `--smooth-skip psh_fn`
+         (any case) leaves that one model alone and rounds the rest (the
+         reader's "keep it easily changeable", 2026-10-22).
+    Measured 2026-10-22: 44354 of 89107 triangles split, 30659 kept at a
+    joint (corners of two meshes), 13871 the face; 84002 open edges against
+    84012 predicted - 10 closed by a sub-edge landing on another edge exactly
+    (CMH_FN, Del_fn, GD1_FNM, NMD_FN), never one more.
+    SHOWN TO FAIL (2026-10-22): the first cut itself - each triangle summing
+    its corners in its own order, the two sides of an edge an ulp apart -
+    318889 open against 84012, all 191 models (part 2; the canonical order
+    taken out again: 201656, 191); the face split - 64 models' open edges
+    off, and the face test, which first counted the face's ORIGINAL corners
+    (kept either way) and so could not fail, now asks for no new corner on
+    the face's mesh.
+    THE FOLDS (2026-10-22, the reader's play: "when the npc move their arm,
+    the arm become empty"): the full pull on a thin limb of few sides folded
+    453 sub-triangles over at 0.75 (145 at 0.5, 68 at 0.35 - no strength was
+    free of them); culled from behind, a fold is a hole that opens as the
+    limb turns. Now one pull PER EDGE, shared by its two triangles, and a
+    GUARD: a triangle that would fold has its interior unpulled, then its
+    edges' pulls 0, until none folds - 0 at 0.75, 211 of 44354 interiors
+    flattened. (Damping every edge by its ends' angle also cured it, and
+    flattened nearly every body back - judged on a crop, not kept.) Shown
+    to fail: the guard out - 453; the skip list ignored (`smoothes`
+    returning true) - part 3's skipped model rounded.
+    NOT CHECKED, judged by eye: the roundness, S.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    pc = _engine_src("backends/sdl/playstate.cpp", "backends/remaster/playremaster_bodies.cpp")
+    pl = _engine_src("backends/sdl/playframe_control_parts.cpp", "backends/remaster/playremaster_bodies.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("smoothBodies = smoothFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+smooth\s*=\s*0\.0f;", sh)),
+              'kRemaster, "smooth"' in sc and 'kEnhancements, "smooth"' not in sc,
+              not re.search(r"\bs\.smooth\s*=", max_body),   # (`smoothAnimation` is its own)
+              # the preset's 0.75 from its table since step 3a (`kRemasterPreset`)
+              bool(re.search(r'!preset\.empty\(\)\s*\?\s*pv\("smooth"\)\s*:\s*0\.0f;$', pre)) and
+              bool(re.search(r'\{"smooth",\s*0\.75f\}', sh)),
+              "omk::smoothBody(m.rest" in pc and "omk::smoothBody(playerBody.rest" in pl)
+    mk = subprocess.run(["make", "-s", "build/smooth_probe"], cwd=eng, capture_output=True, text=True)
+    probe = os.path.join(eng, "build", "smooth_probe")
+    if mk.returncode != 0 or not os.path.exists(probe):
+        return (src_ok, "probe build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    out = subprocess.run([probe, fr, "3", "0.75"], capture_output=True, text=True).stdout
+    m = re.search(r"@smooth (.*)", out)
+    f = dict(zip(*[iter(m.group(1).split())] * 2)) if m else {}
+    g = lambda k: int(f.get(k, -1))
+    corpus = (g("models"), g("split") > 40000, g("kept_bad"), g("open_bad"), g("face_bad"), g("far_bad"),
+              g("flipped"))
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, corpus, ("skipped",)), ((True,) * 5, (191, True, 0, 0, 0, 0, 0), ("skipped",)), \
+            "no SDL - the frontend is optional (PORTING A8)"
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(name, *extra):
+            o = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv",
+                                "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "60",
+                                "--area", "124", "--stand", "14300,-190,-11150,180", "--filter", "nearest",
+                                "--dump", o] + list(extra), capture_output=True, text=True, errors="replace",
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"), timeout=300)
+            return (open(o, "rb").read() if os.path.exists(o) else None), r.stdout
+        off, _ = run("off")
+        on, log = run("on", "--smooth", "0.75")
+        _, skipLog = run("skip", "--smooth", "0.75", "--smooth-skip", "psh_fn")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ev = [e[1] for e in _events(log) if e[0] == "body.smooth"]
+    split = sum(int(e.get("split", 0)) for e in ev)
+    skipped = sorted(e[1].get("model", "") for e in _events(skipLog) if e[0] == "body.smooth")
+    rounded = sorted(e.get("model", "") for e in ev)
+    frame = (len(ev) > 3, split > 1000, off is not None and on is not None and off != on,
+             "PSH_FN" in rounded and "PSH_FN" not in skipped and len(skipped) == len(rounded) - 1)
+    print(f"        corpus: {m.group(1) if m else 'no @smooth line'}; the bar: {len(ev)} models smoothed, "
+          f"{split} triangles split, the frame moved {frame[2]}")
+    return (src_ok, corpus, frame), ((True,) * 5, (191, True, 0, 0, 0, 0, 0), (True, True, True, True)), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 0.75, at both loads); " \
+        "the 191 shipped characters subdivided with every original corner kept, no crack, the face whole " \
+        "and nothing flung; in Qalisar's bar the models split, the frame moves, and a skipped model stays as it is"
+
+
+def c_engine_ui_pack():
+    r"""THE INTERFACE PACK - the remaster's Tier E (`todo/remaster.md`),
+    `[Remaster] uipack = DIR` / `--ui-pack DIR`, the `--remaster` preset's
+    `ui/pack` when there is one; OFF unless named. Every backend (the 2D is
+    the CPU's): a bitmap `surfaceFromBmp` loads is noted when the pack has its
+    key (`uiKey`, FNV-1a over the 565 bitmap - `texpack_tool uikeys` hands
+    the tool the engine's own), and `blt`, ENLARGING it, draws from the HD
+    version, the rectangle scaled. NOT A PORT, no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the note in `surfaceFromBmp`, the HD draw in `blt` behind an
+         enlarging blit;
+      2. `uikeys` over the shipped data: 56 bitmaps, 52 distinct (four are
+         another's bytes);
+      3. a pack MADE HERE, one file: the menus' sheet's (`sneak.bmp`) key, the sheet 4x in
+         one colour (magenta) with alpha 0 exactly where it is keyed, blitted
+         to 2560x1920 by `texpack_tool uiblit` (the interface's `blt`, key
+         source, filter 1): with the pack every drawn pixel is magenta and
+         the DRAWN SET is the original's, texel for texel (the key's
+         silhouette kept); without it, no magenta;
+      4. the real pack where `omk.conf`'s `pack` has one (`ui/pack`): the
+         same sheet drawn from it (`@uiblit hd 1`).
+    SHOWN TO FAIL (2026-10-22): `blt`'s HD draw off - hd 0, no magenta
+    (part 3); the HD bitmap's key ignored (every texel its colour) - the
+    drawn set off by 1561440 pixels (part 3).
+    NOT CHECKED, judged by eye: the upscaled pictures themselves.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    su = open(os.path.join(eng, "src", "ui", "surface.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    src_ok = (bool(re.search(r"std::string\s+uiPack;", sh)),
+              'kRemaster, "uipack"' in sc and 'kEnhancements, "uipack"' not in sc,
+              "uiPack" not in max_body,
+              "uiPack().attach(s);" in su,
+              "if ((dw > sw || dh > sh) && (!keySrc || srcKey == 0))" in su)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    keys = [l.split() for l in subprocess.run([tool, "uikeys", fr], capture_output=True,
+                                              text=True).stdout.splitlines() if l.strip()]
+    corpus = (len(keys), len({k[0] for k in keys}))
+    sheet = next((k for k in keys if k[1].lower().endswith("bitmaps/sneak.bmp")), None) or \
+        next((k for k in keys if k[2] == "640x480"), None)
+    if not sheet:
+        return (src_ok, corpus, "no sheet"), ((True,) * 5, (56, 52), "a 640x480 sheet"), "uikeys found none"
+    key, rel = sheet[0], sheet[1]
+    W, H = 2560, 1920
+    tmp = tempfile.mkdtemp()
+    try:
+        def blit(pack):
+            out = os.path.join(tmp, "o.raw")
+            r = subprocess.run([tool, "uiblit", fr, pack, rel, str(W), str(H), out], capture_output=True, text=True)
+            m = re.search(r"@uiblit hd (\d)", r.stdout)
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            return (struct.unpack("<%dH" % (W * H), raw) if len(raw) == W * H * 2 else None), \
+                   (int(m.group(1)) if m else -1)
+        plain, _ = blit("-")
+        w0, h0 = 640, 480
+        pk = os.path.join(tmp, "pack")
+        os.makedirs(pk)
+        # the keyed texels, read back through the tool at 1:1 - green shows through them
+        out1 = os.path.join(tmp, "k.raw")
+        subprocess.run([tool, "uiblit", fr, "-", rel, str(w0), str(h0), out1], capture_output=True)
+        one = struct.unpack("<%dH" % (w0 * h0), open(out1, "rb").read())
+        keyed = [v == 0x07E0 for v in one]
+        rows = []
+        for y in range(h0 * 4):
+            row = bytearray()
+            for x in range(w0 * 4):
+                row += b"\xff\x00\xff\x00" if keyed[(y // 4) * w0 + x // 4] else b"\xff\x00\xff\xff"
+            rows.append(b"\x00" + bytes(row))
+        def chunk(t, b):
+            return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w0 * 4, h0 * 4, 8, 6, 0, 0, 0)) +
+               chunk(b"IDAT", zlib.compress(b"".join(rows), 6)) + chunk(b"IEND", b""))
+        open(os.path.join(pk, key + ".png"), "wb").write(png)
+        made, hd = blit(pk)
+        real = (omkpaths.pack_path() or "")
+        real = os.path.join(real, "ui", "pack") if real else ""
+        _, realHd = blit(real) if real and os.path.isfile(os.path.join(real, key + ".png")) else (None, ("skipped",))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if plain is None or made is None:
+        return (src_ok, corpus, "no frame"), ((True,) * 5, (56, 52), "frames"), "a blit wrote nothing"
+    MAG = 0xF81F
+    drawnPlain = [v != 0x07E0 for v in plain]
+    drawnMade = [v != 0x07E0 for v in made]
+    allMag = all(v == MAG for v, d in zip(made, drawnMade) if d)
+    sameSet = sum(1 for a, b in zip(drawnPlain, drawnMade) if a != b)
+    noMag = sum(1 for v in plain if v == MAG)
+    print(f"        uikeys: {corpus[0]} bitmaps, {corpus[1]} distinct; {rel} ({key}) at {W}x{H}: with the made pack "
+          f"hd {hd}, every drawn pixel magenta {allMag}, drawn set differing in {sameSet}; without it "
+          f"{noMag} magenta; the real pack: hd {realHd}")
+    return (src_ok, corpus, (hd, allMag, sameSet, noMag), realHd), \
+           ((True,) * 5, (56, 52), (1, True, 0, 0), _or_skip(realHd, 1)), \
+        "the source (off by default, [Remaster] only, never all = max, noted at load, drawn from when " \
+        "enlarged); 56 bitmaps keyed; a made pack draws the start sheet from its HD version with the key's " \
+        "silhouette exact, and nothing without it; the real pack drawn from where there is one"
+
+
+def c_engine_font_pack():
+    r"""THE FONT PACK - the remaster's Tier E (`todo/remaster.md`), `[Remaster]
+    fontpack = DIR` / `--font-pack DIR`, the `--remaster` preset's
+    `fonts/pack` when there is one; OFF unless named. Every backend (text is
+    the CPU's). Where `textscaling fit` ENLARGES a glyph, `TextLayout::drawRun`
+    asks `fontPack()` for its face's coverage 8x finer (`<key>.png`, the key
+    FNV-1a over the `.FNT` blob, laid out by `hdLayout` from the face alone)
+    and brings it DOWN to the glyph scale by area averages (`drawGlyphHd`).
+    `engine/tools/font_hd.cpp` makes it: the alien script (MENUINTR, SNEAK)
+    from the disc's own `FONTS/OMIKRON.TTF` ("Omikron One", 1998), fitted to
+    each shipped glyph, the rest by enlarging each glyph's antialiased
+    coverage smoothly and drawing its half-coverage contour sharp. NOT A PORT,
+    no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the HD draw only inside `scaled()`; the preset's `fonts/pack`;
+      2. `font_hd` over the 13 shipped faces at 8x: every face written, the
+         TTF taking at least 150 of MENUINTR's 223 glyphs and 120 of SNEAK's
+         (182 and 156, 2026-10-22), and every face's HD glyphs brought back
+         down within 0.08 of the shipped coverage (mean |difference|) and
+         0.9..1.1 of its mass;
+      3. a pack of two of those faces (JOURNAL, MENUINTR) and `texpack_tool
+         fontline` (the engine's `TextLayout`) at 9/2, a 4K glyph scale: the
+         faces decoded, the line differs from the runtime's own enlargement,
+         and its INK lands where the runtime's does - each glyph's box (the
+         columns and rows over half coverage) within 2 pixels of it; at 1/1
+         the pack changes nothing; a file one row short is refused.
+    SHOWN TO FAIL (2026-10-22): `drawGlyphHd` stepping `k` HD pixels a
+    screen pixel (the glyph scale ignored) - both lines' ink boxes off
+    (part 3); the HD path taken unscaled whenever a pack is open - both 1/1
+    lines moved (part 3).
+    TRIED AND DROPPED, recorded in `font_hd.cpp`: back-projection, which broke
+    thin strokes. NOT CHECKED, judged by eye: the letters themselves.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    tx = open(os.path.join(eng, "src", "ui", "text.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    run_body = tx[tx.index("int TextLayout::drawRun"):]
+    run_body = run_body[:run_body.index("\n}\n")]
+    scaled = run_body[run_body.index("scaled()"):]
+    src_ok = (bool(re.search(r"std::string\s+fontPack;", sh)),
+              'kRemaster, "fontpack"' in sc and 'kEnhancements, "fontpack"' not in sc,
+              "fontPack" not in max_body,
+              "fontPack().find" in scaled[:scaled.index("drawGlyphScaled")],
+              'preset + "/fonts/pack"' in ps)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/font_hd"], cwd=eng, capture_output=True, text=True)
+    tool, hd = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "font_hd")
+    if mk.returncode != 0 or not os.path.exists(tool) or not os.path.exists(hd):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    fonts = os.path.join(fr, "FONTS")
+    ttf = next((os.path.join(fonts, n) for n in sorted(os.listdir(fonts)) if n.lower() == "omikron.ttf"), None)
+    tmp = tempfile.mkdtemp()
+    try:
+        raw = os.path.join(tmp, "raw")
+        os.makedirs(raw)
+        r = subprocess.run([hd, fr, os.path.join(ROOT, "tables"), raw, "8"] +
+                           ([ttf, "MENUINTR,SNEAK"] if ttf else []), capture_output=True, text=True)
+        faces = {}
+        for m in re.finditer(r"^@fonthd (\S+) key (\S+) k 8 glyphs (\d+) ttf (\d+) em \S+ residual (\S+) mass (\S+)",
+                             r.stdout, re.M):
+            faces[m.group(1)] = (m.group(2), int(m.group(4)), float(m.group(5)), float(m.group(6)))
+        corpus = (len(faces), faces.get("MENUINTR", (0, 0))[1] >= 150, faces.get("SNEAK", (0, 0))[1] >= 120,
+                  all(f[2] < 0.08 and 0.9 <= f[3] <= 1.1 for f in faces.values()))
+        if not ttf:
+            corpus = corpus[:1] + (("skipped",), ("skipped",)) + corpus[3:]
+        pack = os.path.join(tmp, "pack")
+        os.makedirs(pack)
+        def chunk(t, b):
+            return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+        def png(path, w, h, px):
+            rows = b"".join(b"\x00" + px[y * w:(y + 1) * w] for y in range(h))
+            open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)) +
+                                   chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b""))
+        for name in ("JOURNAL", "MENUINTR"):
+            if name in faces:
+                b = open(os.path.join(raw, faces[name][0] + ".raw"), "rb").read()
+                w, h = struct.unpack_from("<ii", b)
+                png(os.path.join(pack, faces[name][0] + ".png"), w, h, b[8:8 + w * h])
+        short = os.path.join(tmp, "short")
+        os.makedirs(short)
+        if "JOURNAL" in faces:
+            b = open(os.path.join(raw, faces["JOURNAL"][0] + ".raw"), "rb").read()
+            w, h = struct.unpack_from("<ii", b)
+            png(os.path.join(short, faces["JOURNAL"][0] + ".png"), w, h - 1, b[8:8 + w * (h - 1)])
+        def line(pk, face, text, num, den):
+            out = os.path.join(tmp, "l.raw")
+            q = subprocess.run([tool, "fontline", fr, os.path.join(ROOT, "tables"), pk, face, str(num), str(den), "1",
+                                text, out], capture_output=True, text=True)
+            m = re.search(r"@fontline hd (\d+) w (\d+) h (\d+)", q.stdout)
+            if not m:
+                return None, -1
+            w, h = int(m.group(2)), int(m.group(3))
+            b = open(out, "rb").read()
+            return (w, h, struct.unpack_from("<%dH" % (w * h), b, 8)), int(m.group(1))
+        def boxes(img):
+            # each glyph's ink box: runs of columns with a pixel over half, and their rows
+            w, h, px = img
+            lit = [[((px[y * w + x] >> 5) & 63) >= 32 for x in range(w)] for y in range(h)]
+            cols = [any(lit[y][x] for y in range(h)) for x in range(w)]
+            out, x = [], 0
+            while x < w:
+                if cols[x]:
+                    x0 = x
+                    while x < w and cols[x]:
+                        x += 1
+                    rows = [y for y in range(h) if any(lit[y][x0:x])]
+                    out.append((x0, x - 1, rows[0], rows[-1]))
+                x += 1
+            return out
+        lines = []
+        for face, text in (("J", "Omikron Nomad Soul"), ("I", "Omikron")):
+            base, _ = line("-", face, text, 9, 2)
+            withPk, dec = line(pack, face, text, 9, 2)
+            nat0, _ = line("-", face, text, 1, 1)
+            nat1, _ = line(pack, face, text, 1, 1)
+            if not base or not withPk or not nat0 or not nat1:
+                lines.append(("no line", face))
+                continue
+            b0, b1 = boxes(base), boxes(withPk)
+            near = len(b0) == len(b1) and len(b0) > 3 and \
+                all(max(abs(p - q) for p, q in zip(u, v)) <= 2 for u, v in zip(b0, b1))
+            lines.append((dec >= 1, base[2] != withPk[2], near, nat0[2] == nat1[2]))
+        _, refused = line(short, "J", "Omikron", 9, 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        font_hd: {len(faces)} faces, MENUINTR {faces.get('MENUINTR', (0, 0))[1]} and SNEAK "
+          f"{faces.get('SNEAK', (0, 0))[1]} from the TTF, worst residual "
+          f"{max((f[2] for f in faces.values()), default=0):.4f}; the lines (decoded, differs, ink boxes "
+          f"within 2, inert at 1/1): {lines}; a short file decoded {refused}")
+    want_corpus = (13, True, True, True) if ttf else (13, ("skipped",), ("skipped",), True)
+    return (src_ok, corpus, tuple(lines), refused), \
+           ((True,) * 5, want_corpus, ((True,) * 4,) * 2, 0), \
+        "the source (off by default, [Remaster] only, never all = max, drawn only when the text is " \
+        "enlarged, the preset's fonts/pack); the 13 faces made 8x finer, the alien script from the disc's " \
+        "TTF, each back down within 0.08 of the shipped coverage; through the engine at 4K's scale the " \
+        "pack is drawn, its ink where the runtime's is, nothing at 1/1, a wrong-size file refused"
+
+
+def c_engine_gles_upscale():
+    r"""THE UPSCALE ON GLES - the remaster's A6 (`todo/remaster.md`), the same
+    `--upscale F` / `[Remaster] upscale = F` as Vulkan's (`engine: upscale`,
+    whose part 1 says it is off by default and not the preset's). The frame
+    drawn F times smaller through the same rule (`rs()`) and brought up by
+    AMD's FSR 1 TRANSCRIBED into GLSL 1.00/1.20 (`kEasuFrag`, `kRcasFrag` -
+    no unsigned integers, no `textureGather` there): EASU, then RCAS at
+    `kFsrRcasStops` (shared with Vulkan), then the present pass's own 565
+    dither, untouched.
+    Parts:
+      1. the source: the frontend hands the factor to the GLES renderer; the
+         readback reads RCAS's target upscaled; the view's viewport through
+         `rs()`; both backends' sharpness one constant;
+      2. Anekbah's street at 1280x960 on the READBACK's path
+         (`OMK_NO_GPU_PRESENT`): the renderer says it drew 640x480 at x2
+         (`@evt gles.upscale`); the frame is not the native one and is the
+         native one UPSCALED - mean under 6 a channel, and registered: of the
+         25 shifts within two pixels none matches better than none;
+      3. a LETTERBOXED frame - the supermarket fight's approach cutscene,
+         frame 300 (`engine: fight letterbox`'s bars): the picture's own rows
+         (the `picH_` the readback runs FSR over), registered the same way;
+      4. the WINDOW (hidden) at x1.5 with `OMK_VERIFY_GPU_PRESENT`: every
+         frame the GPU's, and the window's pixels those of the readback's
+         frame, 0 differing over 90 frames.
+    Measured 2026-10-22 (M3, the Qalisar street): x2 against native a mean of
+    2.0 grey levels, registered at (0, 0); against Vulkan's x2 2.5.
+    SHOWN TO FAIL (2026-10-22): the readback reading the world target in
+    place of RCAS's - part 2 (the 640x480 picture in a 1280x960 frame);
+    RCAS skipped in the present (EASU's target presented) - part 4.
+    NOT CHECKED, judged by eye: the sharpness.
+      5. (2026-10-26, the audit's item 9) WITHOUT HIGHP in the fragment
+         stage - fp16 on a Mali-400 class GPU, where FSR's constants flush
+         and its coordinates lose their texel - the upscale is REFUSED
+         (`@evt gles.upscale.refused`, none of `gles.upscale`) and the frame
+         is the native one, byte for byte; `OMK_GLES_NO_HIGHP` stands for such
+         a device (the Mac's GL is fp32). Shown to fail: the highp test
+         taken out of the link and the refusal (the code before) - the frame
+         upscaled, `gles.upscale` and no refusal.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    pg = open(os.path.join(eng, "backends", "sdl", "playgpu_gles.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    src_ok = ("remasterConfigure(*gr)" in pg and "r.setUpscale(upscale)" in
+              _engine_src("backends/remaster/playremaster_world.cpp"),
+              "upscale_ > 1.0f ? rcasFbo_ : fbo_" in gl,
+              "glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));" in gl,
+              "omk::kFsrRcasStops" in gl and "omk::fsrRcasCon(omk::kFsrRcasStops)" in vk and "kRcasStops =" not in vk)
+    mk = subprocess.run(["make", "-s", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return (src_ok, "build"), ((True,) * 4, "built"), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    W, H = 1280, 960
+    try:
+        def run(name, *extra, env=None, dump=True, where=("--area", "0", "--stand", "1804,0,-6890,336")):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "%dx%d" % (W, H),
+                    "--filter", "nearest"] + list(where) + (["--dump", out] if dump else []) + list(extra)
+            r = subprocess.run(["caffeinate", "-d", "-u", "-i", play] + args, capture_output=True, text=True,
+                               errors="replace", timeout=600, env=dict(os.environ, OMK_EVENTS="1", **(env or {})))
+            raw = open(out, "rb").read() if os.path.exists(out) else b""
+            px = struct.unpack("<%dH" % (len(raw) // 2), raw) if len(raw) == W * H * 2 else None
+            return px, r.stdout
+        hidden = {"OMK_NO_GPU_PRESENT": "1"}
+        native, _ = run("native", "--frames", "60", env=hidden)
+        up, log = run("up", "--frames", "60", "--upscale", "2", env=hidden)
+        fight = ("--fight-supermarket",)
+        lbNative, _ = run("lbn", "--frames", "300", env=hidden, where=fight)
+        lbUp, _ = run("lbu", "--frames", "300", "--upscale", "2", env=hidden, where=fight)
+        _, wlog = run("win", "--frames", "90", "--upscale", "1.5", dump=False,
+                      env={"OMK_HIDDEN_WINDOW": "1", "OMK_VERIFY_GPU_PRESENT": "1"})
+        noHigh, nhlog = run("nohp", "--frames", "60", "--upscale", "2", env=dict(hidden, OMK_GLES_NO_HIGHP="1"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ev = [e[1] for e in _events(log) if e[0] == "gles.upscale"]
+    drawn = (ev[0].get("rw"), ev[0].get("rh")) if ev else None
+    if None in (native, up, lbNative, lbUp):
+        return (src_ok, drawn, "no frame"), ((True,) * 4, ("640", "480"), "frames"), "a run wrote no frame"
+    rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+    def registered(p, q):
+        a, b = [rgb(v) for v in p], [rgb(v) for v in q]
+        def mad(dx, dy):
+            tot = n = 0
+            for y in range(40, H - 40, 4):
+                for x in range(40, W - 40, 4):
+                    u, v = a[y * W + x], b[(y + dy) * W + x + dx]
+                    tot += abs(u[0] - v[0]) + abs(u[1] - v[1]) + abs(u[2] - v[2]); n += 3
+            return tot / n
+        sh = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+        best = min(sh, key=sh.get)
+        return (p != q, sh[(0, 0)] < 6.0, best), sh[(0, 0)]
+    whole, m0 = registered(native, up)
+    letter, m1 = registered(lbNative, lbUp)
+    bars = (sum(1 for x in range(W) if lbNative[x]), sum(1 for x in range(W) if lbUp[x]))
+    gm = re.findall(r"gles present verify: frame (\d+), (\d+) pixels differ; (\d+) of (\d+) frames differed", wlog)
+    gpu = re.findall(r"present: (\d+) of (\d+) straight from the GPU", wlog)
+    win = bool(gm) and int(gm[-1][3]) >= 60 and gm[-1][2] == "0" and bool(gpu) and all(x == y for x, y in gpu)
+    nh = [e for e in _events(nhlog) if e[0] in ("gles.upscale", "gles.upscale.refused")]
+    refused = ([e[0] for e in nh] == ["gles.upscale.refused"] and str(nh[0][1].get("highp")).lower() in ("0", "false"),
+               noHigh is not None and noHigh == native)
+    print(f"        without highp: {[e[0] for e in nh]}, the frame {'the native one' if refused[1] else 'NOT the native one'}")
+    print(f"        drawn {drawn}; x2 against native: mean {m0:.2f} a channel, {whole}; letterboxed: mean "
+          f"{m1:.2f}, {letter}, its top row lit {bars}; the window at x1.5: {gm[-1] if gm else 'no verify'}, GPU-presented {gpu}")
+    return (src_ok, drawn, whole, letter, bars, win, refused), \
+           ((True,) * 4, ("640", "480"), (True, True, (0, 0)), (True, True, (0, 0)), (0, 0), True, (True, True)), \
+        "the source (the factor handed to GLES, the readback reading RCAS's target, the viewport by rs(), " \
+        "one sharpness for both backends); the street drawn at 640x480 for 1280x960 and the native frame " \
+        "upscaled, whole and letterboxed (close, and registered); the window's pixels the readback's over " \
+        "90 frames, every one the GPU's"
+
+
+def c_engine_film_pack():
+    r"""THE FILM PACK - the remaster's Tier E (`todo/remaster.md`), `[Remaster]
+    filmpack = DIR` / `--film-pack DIR`, the `--remaster` preset's
+    `films/pack` when there is one; OFF unless named. Every backend: the boot
+    chain's three FLIS films (`docs/BOOT.md`) played from upscaled copies -
+    `<key>.mpg`, MPEG-1 program streams like the originals, the original's MP2
+    sound copied untouched - by the SAME decoder at the same clock, smoothed
+    (bilinear) to the display where the shipped films stay nearest.
+    `tools/omktexpack.py films` makes them (ffmpeg, Real-ESRGAN's video
+    model, x4). NOT A PORT, no oracle (tier 6).
+    Parts:
+      1. the source: empty by default, [Remaster] only, never `all = max`;
+         the player asks the pack before the original and smooths only its
+         film; the preset's `films/pack`;
+      2. the KEY: the engine's `filmKey` (`texpack_tool filmkey`) and the
+         tool's `film_key` agree on the three shipped films, and tell them
+         apart - or a pack made by one is never found by the other;
+      3. a pack MADE HERE (with ffmpeg; skipped without it): EIDOS's first
+         six seconds at twice the size, under EIDOS's key. Its 150th frame
+         through `texpack_tool filmframe` (the player's `Movie`, 1280x960):
+         from the pack (hd 1, 640x480), and the original's frame ENLARGED -
+         under 8 a channel from the original drawn the old way, and
+         REGISTERED, none of the 25 shifts within two pixels better than none;
+         without the pack, the original (hd 0, 320x240);
+      4. the real pack where `omk.conf`'s `pack` has one (`films/pack`): each
+         of the three found, 1280x960, every frame decoded - the original's
+         count or ONE MORE (pl_mpeg never emits a stream's last picture,
+         ffmpeg does: EIDOS 386/387, GAME 3211/3212, QUANTIC 703/703), and IN
+         STEP: the pack's frame N, of N-1, N and N+1, the nearest to the
+         original's N, on frames that move (EIDOS 100, QUANTIC 300, GAME 3000) -
+         a frame added at the START would show N-1 there, the picture a
+         frame behind the copied sound.
+    SHOWN TO FAIL (2026-10-22): `FilmPack::find` answering nothing - hd 0
+    (parts 3 and 4); the smoothed picture drawn 8 rows low - part 3's
+    registration.
+    NOT CHECKED, judged by eye: the upscale itself.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    pp = open(os.path.join(eng, "backends", "sdl", "playsetup_play.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    # the player asks the pack first (`remasterOpenFilm`, the remaster's own
+    # file since the switch), and smooths only the pack's film
+    pick = pp[pp.index("remasterOpenFilm(*real, mov, name)"):]
+    pick = pick[:pick.index("continue;")]
+    src_ok = (bool(re.search(r"std::string\s+filmPack;", sh)),
+              'kRemaster, "filmpack"' in sc and 'kEnhancements, "filmpack"' not in sc,
+              "filmPack" not in max_body,
+              "mov.open(*real)" in pick and (lambda rw: rw.index("mov.open(hd)") < rw.index("mov.setSmooth(true)"))(
+                  _engine_src("backends/remaster/playremaster_world.cpp")),
+              'preset + "/films/pack"' in ps)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "texpack_tool")
+    if mk.returncode != 0 or not os.path.exists(tool):
+        return (src_ok, "tool build"), ((True,) * 5, "built"), mk.stderr[-300:]
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack
+    flis = os.path.join(fr, next(n for n in os.listdir(fr) if n.upper() == "FLIS"))
+    films = {n: next((os.path.join(flis, f) for f in os.listdir(flis) if f.upper() == n + ".MPG"), None)
+             for n in ("EIDOS", "QUANTIC", "GAME")}
+    eng_keys = dict(l.split()[::-1] for l in subprocess.run([tool, "filmkey"] + list(films.values()),
+                                                           capture_output=True, text=True).stdout.splitlines())
+    py_keys = {films[n]: omktexpack.film_key(films[n]) for n in films}
+    keys = (sum(1 for f in py_keys if eng_keys.get(f) == py_keys[f]), len(set(py_keys.values())))
+    W, H = 1280, 960
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(pack, name, n, w=W, h=H):
+            out = os.path.join(tmp, "f.raw")
+            r = subprocess.run([tool, "filmframe", fr, pack, "FLIS/%s.mpg" % name, str(w), str(h), str(n), out],
+                               capture_output=True, text=True)
+            m = re.search(r"@filmframe hd (\d) size (\d+)x(\d+) frames (\d+) duration (\S+)", r.stdout)
+            if not m:
+                return None, None
+            raw = open(out, "rb").read()
+            return (struct.unpack("<%dH" % (w * h), raw) if len(raw) == w * h * 2 else None), \
+                (int(m.group(1)), "%sx%s" % (m.group(2), m.group(3)), int(m.group(4)), float(m.group(5)))
+        made = ("skipped",)
+        ff = shutil.which("ffmpeg")
+        if ff:
+            pk = os.path.join(tmp, "pack")
+            os.makedirs(pk)
+            subprocess.run([ff, "-v", "error", "-y", "-i", films["EIDOS"], "-t", "6", "-map", "0:v:0", "-map", "0:a:0",
+                            "-vf", "scale=640:480:flags=lanczos", "-c:v", "mpeg1video", "-q:v", "2", "-c:a", "copy",
+                            "-f", "mpeg", os.path.join(pk, py_keys[films["EIDOS"]] + ".mpg")], check=True)
+            orig, oi = frame("-", "EIDOS", 150)
+            hd, hi = frame(pk, "EIDOS", 150)
+            if orig is None or hd is None:
+                made = ("no frame", oi, hi)
+            else:
+                rgb = lambda v: (((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31)
+                a, b = [rgb(v) for v in orig], [rgb(v) for v in hd]
+                def mad(dx, dy):
+                    tot = n = 0
+                    # a step of 3, NOT 4: every 4th pixel is one phase of
+                    # the original's 4x4 blocks, which pulled the best shift
+                    # to (1, 2) on a frame registered at (0, 0) when sampled
+                    # whole (2026-10-22)
+                    for y in range(40, H - 40, 3):
+                        for x in range(40, W - 40, 3):
+                            u, v = a[y * W + x], b[(y + dy) * W + x + dx]
+                            tot += abs(u[0] - v[0]) + abs(u[1] - v[1]) + abs(u[2] - v[2]); n += 3
+                    return tot / n
+                shifts = {(dx, dy): mad(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3)}
+                lit = sum(1 for v in orig if v)
+                made = ((oi[0], oi[1]), (hi[0], hi[1]), orig != hd, lit > W * H // 10,
+                        shifts[(0, 0)] < 8.0, min(shifts, key=shifts.get))
+                print(f"        made pack: EIDOS frame 150 from {hi[1]} - mean {shifts[(0, 0)]:.2f} a channel from "
+                      f"the original's, best shift {min(shifts, key=shifts.get)}, {lit} pixels lit")
+        real = omkpaths.pack_path() or ""
+        real = os.path.join(real, "films", "pack") if real else ""
+        realRes = ("skipped",)
+        if real and os.path.isdir(real) and all(os.path.isfile(os.path.join(real, py_keys[f] + ".mpg"))
+                                                for f in py_keys):
+            got = []
+            late = {"EIDOS": 100, "QUANTIC": 300, "GAME": 3000}   # frames that MOVE (QUANTIC 600 is still: a tie)
+            for n in films:
+                _, o = frame("-", n, 1 << 20, 64, 48)
+                _, p = frame(real, n, 1 << 20, 64, 48)
+                ref, _ = frame("-", n, late[n], 320, 240)
+                near = {}
+                for m in (late[n] - 1, late[n], late[n] + 1):
+                    px, _ = frame(real, n, m, 320, 240)
+                    g = lambda v: ((v >> 11) * 8 * 30 + ((v >> 5) & 63) * 4 * 59 + (v & 31) * 8 * 11) // 100
+                    near[m - late[n]] = sum(abs(g(x) - g(y)) for x, y in zip(ref, px)) if ref and px else 1 << 40
+                step = min(near, key=near.get)
+                got.append((p[0], p[1], p[2] - o[2] in (0, 1), step) if o and p else ("no film", n))
+                print(f"        the real pack: {n} {p} against the original's {o}; frame {late[n]} in step "
+                      f"{step:+d}")
+            realRes = tuple(got)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        keys: {keys[0]} of 3 agree, {keys[1]} distinct")
+    want_made = (((0, "320x240"), (1, "640x480"), True, True, True, (0, 0)) if made != ("skipped",)
+                 else ("skipped",))
+    want_real = ((1, "1280x960", True, 0),) * 3 if realRes != ("skipped",) else ("skipped",)
+    return (src_ok, keys, made, realRes), ((True,) * 5, (3, 3), want_made, want_real), \
+        "the source (off by default, [Remaster] only, never all = max, the pack's film before the " \
+        "original's and smoothed, the preset's films/pack); the engine's key and the tool's agree on the " \
+        "three films; a made pack's film played in the original's place, enlarged and registered on it; " \
+        "the real pack's three found, 1280x960, frame for frame the originals' count"
+
+
+def c_engine_block_formats():
+    r"""THE TEXTURE PACK IN GPU BLOCK FORMATS (`todo/remaster.md`): beside each
+    pack PNG, `<key>.bc7.ktx2` (BC7; BC4 for a light map) for desktop GPUs and
+    `<key>.astc.ktx2` for Android and the Quest, each a KTX2 with its whole mip
+    chain (`tools/tex_encode.cpp`, `omktexpack.py compress`). A backend says
+    which it samples - Vulkan BC where the device samples and filters BC7 and
+    BC4, GLES ASTC where the context names `GL_KHR_texture_compression_astc_
+    ldr` - and the pack then READS the file instead of decoding the PNG: no
+    inflate on the frame a texture arrives, a quarter of the memory or less.
+    The reader is THE ENGINE'S (`formats/ktx2.h`), self-checking.
+    Parts:
+      1. the source: BC enabled only with both formats filterable, the codecs
+         handed to the pack by each backend, the grey alias on its PNG and
+         the bloom's curated LIGHT MAPS too (their pixels are worked on);
+      2. the READER on files made here (`tex_encode` over a 64x64 gradient):
+         BC7, BC4 (and ASTC 6x6 where `omk.conf`'s pack holds astcenc) read
+         back with 7 levels and their round trip over 40 dB; then a copy one
+         byte short, one claiming R8G8B8A8, one with a level's length off by
+         a block - each REFUSED;
+      3. through VULKAN (`--world-vulkan`): a pack made here - every texture
+         of ANEKBAH a solid colour at 4x, PNG and BC7 (a solid block is exact)
+         - a 16-texel checker of two colours, every 4x4 block one colour, so
+         BC7-exact to its third level - drawn on the street with the blocks
+         and with `OMK_NO_BLOCK_FORMATS` (the PNGs): the pool says it took
+         blocks in the one and none in the other; NEAREST the frames are THE
+         SAME BYTES, TRILINEAR (the KTX2's own chain against the blit
+         ladder's, its smallest levels lossy) within one 565 step a pixel on
+         average; the pack visible (the frame not the shipped one);
+      4. the real pack where `omk.conf`'s `pack` has its BC files: the walk
+         into Anekbah's restaurant (`engine: area load`'s) with the blocks
+         and with the PNGs - the arrival's pool read from blocks, and the
+         read-and-decode the FRAME does (the pools nothing was prepared for,
+         the whole walk: the street's second, the characters') at most a
+         third of the PNGs'. (2026-10-24: the arrival's pool alone measured
+         this until the set's load decoded it ahead, `263e28b` - since then
+         ~0.6 ms either way, the sum left the characters' 5 textures and went
+         red on their noise, 28.5 against 65.8 ms.)
+    SHOWN TO FAIL (2026-10-22), one at a time: the reader without its
+    level-length test - the third bad copy read (part 2); the blocks uploaded
+    without the pack's UV factor - both frames off (part 3); every level
+    copied from level 0's offset - the trilinear frame off, the nearest one
+    (level 0 alone) not (part 3). (2026-10-24) The frame's own read and
+    decode, the check run under `OMK_NO_BLOCK_FORMATS=1` - part 4, 168.3
+    against 82.8 ms (its first item too: no block taken).
+    NOT CHECKED, judged by eye: the encoders' quality beyond the round trip.
+    (2026-10-26, the audit's item 9) Part 1 also pins two GLES guards no
+    shipped file reaches - every ASTC of the pack holds its whole chain, and
+    every light map is a power of two: an ASTC whose chain is not whole
+    drops the mip from its filter (GLES2 has no MAX_LEVEL; incomplete samples
+    black), and a light map not a power of two is CLAMPED (GLES2 repeats only
+    those). Shown to fail: either guard removed - part 1's last False.
+    (2026-10-26, the audit's item 7) ...and the readers' two: a KTX2 read
+    only as the codec its NAME says (`.astc.ktx2` ASTC, else BC7 / BC4 - a
+    backend takes it from that slot and samples that codec alone), and the
+    PNG inflate's reservation capped at deflate's 1032:1 over the bytes
+    there are (a header naming 16384x16384 over a few bytes reserved ~1 GiB
+    first). Neither shows in a frame or in the resident memory (a
+    reservation is not touched), so pinned. Shown to fail: each taken out -
+    part 1's sixth False.
+    """
+    import subprocess, tempfile, shutil, re, zlib
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = _engine_src("backends/gles/glesrender.cpp", "backends/gles/glesrender_remaster.inl",
+                     "backends/gles/glesrender_remaster_shaders.inl")
+    tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
+    pr = open(os.path.join(eng, "src", "platform", "pngread.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    src_ok = ("enable.textureCompressionBC = VK_TRUE; bcOk_ = true;" in vk and
+              "omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);" in vk,
+              "GL_KHR_texture_compression_astc_ldr" in gl and
+              "omk::texturePack().setCodecs(astcOk_ ? omk::kCodecAstc : 0u);" in gl,
+              "if (colour && codecs_ && !grey) {" in tp and "jb.light != nullptr && !rawLight" in tp,
+              "setLightHook(&omk::curateBloom, &omk::bloomCurated)" in ps,
+              "return chain || !mips;" in gl and
+              "if (!uploadAstc(rep->colourZ, mips)) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, f);" in gl and
+              "pot(rep->emissiveZ.w) && pot(rep->emissiveZ.h) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl and
+              "pot(e.ew) && pot(e.eh) ? GL_REPEAT : GL_CLAMP_TO_EDGE" in gl,
+              "if (f.astc != astcSlot) {" in tp and "out.reserve(std::min(expect, n * 1032));" in pr)
+    mk = subprocess.run(["make", "-s", "build/texpack_tool", "build/tex_encode", "play"], cwd=eng,
+                        capture_output=True, text=True)
+    tool, enc = os.path.join(eng, "build", "texpack_tool"), os.path.join(eng, "build", "tex_encode")
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not all(os.path.exists(x) for x in (tool, enc, play)):
+        return (src_ok, "build"), ((True,) * 6, "built"), mk.stderr[-300:]
+    pk = omkpaths.pack_path() or ""
+    astcenc = os.path.join(pk, "astcenc", "bin", "astcenc") if pk else ""
+    def chunk(t, b):
+        return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+    def png(path, w, h, rgba):
+        rows = b"".join(b"\x00" + rgba[y * w * 4:(y + 1) * w * 4] for y in range(h))
+        open(path, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+                               chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b""))
+    def reads(*paths):
+        out = subprocess.run([tool, "ktx2"] + list(paths), capture_output=True, text=True).stdout.splitlines()
+        return [l.split()[1] for l in out]
+    tmp = tempfile.mkdtemp()
+    try:
+        # 2. the reader
+        g = os.path.join(tmp, "g.png")
+        png(g, 64, 64, bytes(v for y in range(64) for x in range(64) for v in (x * 4, y * 4, (x + y) * 2, 255)))
+        made = []
+        for codec, extra in (("bc7", []), ("bc4", []), ("astc", [astcenc, "6x6"])):
+            if codec == "astc" and not os.path.exists(astcenc):
+                made.append(("skipped",))
+                continue
+            k = os.path.join(tmp, codec + ".ktx2")
+            r = subprocess.run([enc, codec, g, k] + extra, capture_output=True, text=True)
+            m = re.search(r"levels (\d+) psnr (\S+)", r.stdout)
+            made.append((int(m.group(1)), float(m.group(2)) > 40.0, reads(k)[0]) if m else ("failed", r.stderr[-120:]))
+        b7 = open(os.path.join(tmp, "bc7.ktx2"), "rb").read()
+        bad = []
+        for name, data in (("short", b7[:-1]), ("format", b7[:12] + struct.pack("<I", 37) + b7[16:]),
+                           ("length", b7[:88] + struct.pack("<Q", struct.unpack_from("<Q", b7, 88)[0] - 16) + b7[96:])):
+            open(os.path.join(tmp, name + ".ktx2"), "wb").write(data)
+            bad.append(reads(os.path.join(tmp, name + ".ktx2"))[0])
+        reader = (tuple(made), tuple(bad))
+        # 3. through Vulkan: a solid colour per ANEKBAH texture, PNG and BC7
+        keys = [l.split() for l in subprocess.run([tool, "keys", fr], capture_output=True, text=True).stdout.splitlines()]
+        mine = {k[2]: k[3] for k in keys if len(k) >= 4 and "ANEKBAH.3DO" in k[0].upper()}
+        pack = os.path.join(tmp, "pack")
+        os.makedirs(pack)
+        for key, size in mine.items():
+            w, h = (int(v) * 4 for v in size.split("x"))
+            c = bytes.fromhex(key[:6]) + b"\xff"
+            d = bytes(255 - v for v in c[:3]) + b"\xff"
+            # a 16-texel checker of the key's colour and its inverse: every
+            # 4x4 block one colour (BC7-exact) down to the third level - a
+            # wrong UV scale or a level's offset shows, a solid would not
+            png(os.path.join(pack, key + ".png"), w, h,
+                b"".join((c if ((x >> 4) ^ (y >> 4)) & 1 else d) for y in range(h) for x in range(w)))
+            subprocess.run([enc, "bc7", os.path.join(pack, key + ".png"), os.path.join(pack, key + ".bc7.ktx2")],
+                           capture_output=True)
+        def frame(name, *extra, env=None):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                                "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                "1804,0,-6890,336", "--frames", "30", "--dump", out] + list(extra),
+                               capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **(env or {})))
+            pools = [e[1] for e in _events(r.stdout) if e[0] == "texpack.pool"]
+            return (open(out, "rb").read() if os.path.exists(out) else None), sum(int(p.get("blocks", 0)) for p in pools)
+        none, _ = frame("none", "--filter", "nearest")
+        vulkan = []
+        for filt in ("nearest", "trilinear"):
+            zf, zb = frame("z" + filt, "--filter", filt, "--texture-pack", pack)
+            pf, pb = frame("p" + filt, "--filter", filt, "--texture-pack", pack, env={"OMK_NO_BLOCK_FORMATS": "1"})
+            # nearest: the same bytes; trilinear: the lossy small levels
+            # (squares under a block) - a mean under one 565 step
+            same = zf is not None and pf is not None and zf == pf
+            if filt == "trilinear" and zf is not None and pf is not None and len(zf) == len(pf):
+                a = struct.unpack("<%dH" % (len(zf) // 2), zf)
+                b = struct.unpack("<%dH" % (len(pf) // 2), pf)
+                diff = sum(abs(((x >> 5) & 63) - ((y >> 5) & 63)) for x, y in zip(a, b)) / len(a)
+                print(f"        trilinear: blocks against PNGs, mean {diff:.3f} of a green step")
+                same = diff < 1.0
+            vulkan.append((zb > 0, pb == 0, same))
+        visible = none is not None and frame("vis", "--filter", "nearest", "--texture-pack", pack)[0] != none
+        # 4. the real pack
+        real = ("skipped",)
+        rp = os.path.join(pk, "full", "pack") if pk else ""
+        if rp and os.path.isdir(rp) and any(n.endswith(".bc7.ktx2") for n in os.listdir(rp)):
+            def walk(env=None):
+                r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                                    "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                    os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                    "6411,0,450,90", "--frames", "120", "--hold", "k200*100", "--texture-pack", rp],
+                                   capture_output=True, text=True, errors="replace", timeout=900,
+                                   env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **(env or {})))
+                pools = [e[1] for e in _events(r.stdout) if e[0] == "texpack.pool" and int(e[1].get("fresh", 0)) > 0]
+                arr = pools[2:] if len(pools) > 2 else []   # the first two are the street's own
+                # decoded on the frame: the pools the set's load prepared nothing for
+                own = [p for p in pools if int(p.get("prepared", 0)) == 0]
+                return sum(int(p.get("blocks", 0)) for p in arr), sum(float(p.get("decodeMs", 0)) for p in own), \
+                    sum(int(p.get("fresh", 0)) for p in own)
+            zb, zms, zn = walk()
+            pb, pms, pn = walk({"OMK_NO_BLOCK_FORMATS": "1"})
+            print(f"        the restaurant's arrival: {zb} textures from blocks; the walk's own read and decode "
+                  f"({zn} and {pn} textures, nothing prepared) {zms:.1f} ms from blocks, {pms:.1f} ms from the PNGs")
+            real = (zb > 0, pb == 0, pms > 0 and zms <= pms / 3)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        reader: {reader}; vulkan (blocks taken, PNGs alone, same frame) {vulkan}, the pack visible {visible}")
+    want_made = ((7, True, "ok"), (7, True, "ok"), (7, True, "ok") if os.path.exists(astcenc) else ("skipped",))
+    return (src_ok, reader, tuple(vulkan), visible, real), \
+        ((True,) * 6, (want_made, ("refused",) * 3), ((True, True, True),) * 2, True,
+         _or_skip(real, (True, True, True))), \
+        "the source (BC only where filterable, each backend's codecs, the grey alias and the curated light " \
+        "maps on their PNGs); the reader takes what tex_encode makes and refuses a short file, a foreign format " \
+        "and a wrong level length; through Vulkan a block pack draws the same bytes as its PNGs nearest, " \
+        "and within a step trilinear; the real pack's arrival read from blocks at a third of the PNGs' cost or less"
+
+
+def c_engine_preload():
+    r"""THE PRELOAD RADIUS (`todo/remaster.md`; first planned for the Quest,
+    `todo/quest-port.md` §4): `--preload M` / `[Remaster] preload = M`, the
+    `--remaster` preset's 15 (25 until 2026-10-26's measurement), 0 off. The sets behind every door within M
+    metres - TWO HOPS, a door from the street mostly opening on an airlock or
+    corridor (a "Sas") with the room behind it (the reader's two points,
+    2026-10-22) - prepared on a thread and their textures put on the GPU a few
+    a frame and kept; released past M + 10; `askSet` takes them. NOTHING of
+    the game's logic moves: the engine still loads into its two resident
+    slots at its own moments; only the data is ready when it asks.
+    Parts:
+      1. the source: off by default, [Remaster] only, never `all = max`, the
+         preset's 15; `askSet` takes a prepared set before it starts one; the
+         Vulkan pool's eviction spares a pinned texture, and GLES's; the
+         pack's parked decodes COUNTED (`parkedRefs_`): AAPKAYL and ARESTO
+         share `APPART10`, parked once, and a released AAPKAYL's `forget`
+         dropped it from the restaurant - part 3 red (fewer decoded ahead
+         than uploaded) in 4 of 6 runs once part 7's cancel forgot a job
+         returning past its last stage (2026-10-26). A timing, so a pin;
+      2. the DOOR GRAPH (`door_census`, the static scan of each door zone's
+         scripts for `area.goto` / `area.preload` the Session uses): Anekbah's
+         doors reach the restaurant at one hop and ABAR06 through its airlock
+         ABAR06SS at two; Qalisar's reach QBAR through QBARSAS; and from QBAR,
+         its sas and then QALISAR - the street its load evicted;
+      3. the walk into Anekbah's restaurant (`engine: area load`'s) on
+         `--world-vulkan` under `--remaster` with `--preload 25`: ARESTO
+         taken ready (`@evt preload.take`), its textures uploaded ahead
+         (`texpack.preload`, at least its 7) - every one DECODED AHEAD on
+         the set's load thread (`TexturePack::prepare`, the event's
+         `prepared`; the audit's performance item 1) - and the arrival's pool - the
+         first after the transition's `area.goto 46` - bringing NONE new,
+         against at least 7 without; without, nothing taken or uploaded ahead;
+         and ARESTO the ONLY set wanted, on Vulkan and on GLES - the
+         distances wait for the player's hand-over, where `--stand` moves
+         him: from the area's first address, before it, the walk also
+         wanted AAPKAYL and AHALL27 (2.5 m there, 48.7 m ten frames later;
+         Qalisar's ANEKBAH and TUNELAQ1 the same way) - 2026-10-26;
+      4. the frame the walk ends on THE SAME BYTES with and without - the
+         preload moves when work is done, never what is drawn;
+      5. THE CAP AND THE RELEASE (the audit's bug 3, 2026-10-23): a walk down
+         Qalisar's street (15300, -10050, west) with `OMK_PRELOAD_HELD=1` - the
+         cap 1, so a short walk reaches it: never more than one held (wants
+         less drops and takes), at least one set released for a NEARER door
+         (`@evt preload.drop ... for=`, its metres above the want's) and that
+         set then wanted, and every release past the keep radius beyond 35 m;
+      6. GLES'S PINS (the audit's item, 2026-10-24: `setPreloadTextures` /
+         `preloadStep` in `glesrender_remaster.inl`): part 3's walk on
+         `omk-play-gles` (`OMK_NO_GPU_PRESENT`), 120 frames standing first
+         (the walk starts 4.7 m from the door: GLES's uncapped frames beside
+         other checks reached it before the set's thread was done, the pins
+         never sent - timing, not the pins) - ARESTO's textures up ahead,
+         every one decoded ahead (the pack hands GLES the parked result
+         without its normal maps), the arrival's pool bringing none new
+         against at least 7 without, and the frame the same bytes.
+    SHOWN TO FAIL (2026-10-22): `askSet` not taking the prepared set - part 3
+    (nothing taken, the arrival's pool 7 new again). The eviction ignoring
+    the pin is caught by PART 1 ALONE: this walk changes no pool between the
+    uploads ahead and the arrival, so the eviction never runs in it.
+    (2026-10-24) The cap never yielding (the audit's bug 3, `break` at the
+    cap) - part 5: QSEXSHP1 held the whole walk, QBAR never wanted. The set's
+    load not preparing the pack's decode - part 3, 0 of 7 prepared.
+    GLES's `setPreloadTextures` queueing nothing - part 6 (none ahead, the
+    arrival's pool 7 new); the pack's parked result refused to a pool asking
+    no normal maps (the old take) - part 6, 0 of 7 prepared. GLES's eviction
+    ignoring the pin is part 1's alone, as Vulkan's.
+      7. THE CANCEL AND THE UNKEPT CAP (the audit's preload item, 2026-10-26):
+         part 5's walk with each preload's job sleeping 3 s first
+         (`OMK_PRELOAD_DELAY_MS`) - a set released while it prepares is
+         CANCELLED (`@evt preload.cancelled`, after its drop) before its read
+         (stage 0 - QSEXSHP1, released for QBAR's nearer door), and counted in flight until it returns: the next want
+         says one running, and none ever more than one (two in flight);
+         `remasterFinish` waits for the jobs at the end. The cap where the
+         renderer keeps no textures (`keepsPreload`, the software reference)
+         is 2 (Qalisar's stand, 60 frames), Vulkan's and GLES's 6 (parts 3
+         and 6's walks).
+    NOT CHECKED here: an airlock walked end to end (part 2 reads the graph a
+    walk follows); the characters of the area arriving (not preloaded).
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    pc = open(os.path.join(eng, "backends", "sdl", "playstate.cpp")).read()
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    gl = open(os.path.join(eng, "backends", "gles", "glesrender.cpp")).read()
+    tp = open(os.path.join(eng, "src", "o3de", "texpack.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    ask = pc[pc.index("bool PlayState::askSet"):]
+    src_ok = (bool(re.search(r"float\s+preload\s*=\s*0\.0f;", sh)),
+              'kRemaster, "preload"' in sc and 'kEnhancements, "preload"' not in sc,
+              # the preset's 15: one table since `todo/graphics-menu.md` 3a (`kRemasterPreset`)
+              "preload" not in max_body and '!preset.empty() ? pv("preload") : 0.0f' in ps and
+              bool(re.search(r'\{"preload",\s*15\.0f\}', sh)),
+              ask.index("remasterTakePreload(slot, stem, area, frame)") < ask.index("std::make_shared<SetLoad>()") and
+              "preloads.find(stem)" in _engine_src("backends/remaster/playpreload.cpp"),
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in vk and
+              "if (it->second.used || it->second.pinned) { ++it; continue; }" in gl,
+              "if (--parkedRefs_[k] > 0) continue;" in tp and "++parkedRefs_[keys[i]]; continue;" in tp)
+    mk = subprocess.run(["make", "-s", "build/door_census", "play", "play-gles"], cwd=eng, capture_output=True,
+                        text=True)
+    census, play = os.path.join(eng, "build", "door_census"), os.path.join(eng, "build", "omk-play")
+    playgl = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not all(os.path.exists(x) for x in (census, play, playgl)):
+        return (src_ok, "build"), ((True,) * 6, "built"), mk.stderr[-300:]
+    out = subprocess.run([census, fr, os.path.join(ROOT, "tables"), "0", "101", "124"], capture_output=True,
+                         text=True).stdout
+    hops = {}
+    for block in out.split("== area ")[1:]:
+        root = int(block.split()[0])
+        hops[root] = {int(m.group(1)): set(re.findall(r"(?<!\S)(\d+) [A-Z0-9_-]+\(", m.group(2)))
+                      for m in re.finditer(r"hop (\d): ?(.*)", block)}
+    graph = ("46" in hops.get(0, {}).get(1, set()),
+             "235" in hops.get(0, {}).get(1, set()) and "234" in hops.get(0, {}).get(2, set()),
+             "239" in hops.get(101, {}).get(1, set()) and "124" in hops.get(101, {}).get(2, set()),
+             "239" in hops.get(124, {}).get(1, set()) and "101" in hops.get(124, {}).get(2, set()))
+    pk = omkpaths.pack_path()
+    if not pk:
+        return (src_ok, graph, ("skipped",)), ((True,) * 6, (True,) * 4, ("skipped",)), "no remaster pack"
+    gles_env = dict(os.environ, OMK_EVENTS="1", OMK_NO_GPU_PRESENT="1")
+    tmp = tempfile.mkdtemp()
+    try:
+        def walk(name, preload, gles=False):
+            dump = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([playgl if gles else play, fr, os.path.join(ROOT, "tables")] +
+                               ([] if gles else ["--world-vulkan"]) + ["--res", "640x480",
+                                "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                                "6411,0,450,90", "--frames", "260" if gles else "140", "--hold",
+                                "0*120,k200*120" if gles else "k200*120", "--remaster", pk,
+                                "--preload", str(preload), "--dump", dump],
+                               capture_output=True, text=True, errors="replace", timeout=900,
+                               env=gles_env if gles else dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1"))
+            ev = _events(r.stdout)
+            goto = r.stdout.find("area.goto 46")
+            pool = r"gles: texture pool of \d+ - \d+ kept on the GPU, (\d+) uploaded" if gles \
+                else r"vulkan: texture pool - (\d+) new"
+            pools = [int(m.group(1)) for m in re.finditer(pool, r.stdout[goto:])] if goto >= 0 else []
+            took = [e[1] for e in ev if e[0] == "preload.take" and e[1].get("set") == "ARESTO"]
+            ahead = sum(int(e[1].get("fresh", 0)) for e in ev if e[0] == "texpack.preload")
+            prepared = sum(int(e[1].get("prepared", 0)) for e in ev if e[0] == "texpack.preload")
+            # the arrival: the first pool the transition brings, 0 when none brings anything
+            first = pools[0] if pools else 0
+            heldAt.update(e[1].get("held") for e in ev if e[0] == "preload.want")
+            wantSets[name] = {e[1].get("set") for e in ev if e[0] == "preload.want"}
+            return (open(dump, "rb").read() if os.path.exists(dump) else None), took, ahead, first, goto >= 0, prepared
+        heldAt = set()   # the cap each want reported, GPU walks
+        wantSets = {}    # each walk's wanted sets
+        on, took, ahead, arrivalOn, wentOn, prepared = walk("on", 25)
+        off, tookOff, aheadOff, arrivalOff, wentOff, _ = walk("off", 0)
+        glOn, glTook, glAhead, glArrOn, glWentOn, glPrepared = walk("glon", 25, True)
+        glOff, _, glAheadOff, glArrOff, glWentOff, _ = walk("gloff", 0, True)
+        gpuHeld = set(heldAt)
+        gles = (glWentOn and glWentOff, bool(glTook), glAhead >= 7 and glPrepared == glAhead, glArrOn == 0,
+                glArrOff >= 7 and glAheadOff == 0, glOn is not None and glOn == glOff)
+        r = subprocess.run([play, fr, os.path.join(ROOT, "tables"), "--world-vulkan", "--res", "640x480",
+                            "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp), "--save",
+                            os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101", "--stand",
+                            "15300,0,-10050,270", "--frames", "400", "--hold", "k200*380", "--remaster", pk,
+                            "--preload", "25"],
+                           capture_output=True, text=True, errors="replace", timeout=900,
+                           env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_PRELOAD_HELD="1"))
+        held = most = 0
+        evicted, wanted, released = [], [], []
+        for n, f in _events(r.stdout):
+            if n == "preload.want":
+                held += 1
+                wanted.append((f.get("set"), len(evicted)))
+            elif n in ("preload.drop", "preload.take"):
+                held -= 1
+                if n == "preload.drop":
+                    (evicted if "for" in f else released).append(f)
+            most = max(most, held)
+        cap = (most == 1, bool(evicted),
+               all(float(e["metres"]) > float(e["forMetres"]) for e in evicted),
+               all(any(w == e["for"] and k == i + 1 for w, k in wanted) for i, e in enumerate(evicted)),
+               all(float(f["metres"]) > 35.0 or float(f["metres"]) < 0.0 for f in released))
+        # 7. the cancel: part 5's walk, every job 3 s late
+        def qalisar(*extra, env, frames="400", hold="k200*380"):
+            return subprocess.run([play, fr, os.path.join(ROOT, "tables")] + list(extra) +
+                                  ["--res", "640x480", "--nofmv", "--no-crowd", "--saves", tempfile.mkdtemp(dir=tmp),
+                                   "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                   "--stand", "15300,0,-10050,270", "--frames", frames, "--hold", hold,
+                                   "--remaster", pk, "--preload", "25"],
+                                  capture_output=True, text=True, errors="replace", timeout=900,
+                                  env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **env)).stdout
+        ev7 = _events(qalisar("--world-vulkan", env={"OMK_PRELOAD_HELD": "1", "OMK_PRELOAD_DELAY_MS": "3000"}))
+        seq = [(n, f) for n, f in ev7 if n in ("preload.want", "preload.drop", "preload.cancelled")]
+        cancelled = [(k, f) for k, (n, f) in enumerate(seq) if n == "preload.cancelled"]
+        dropAt = {}
+        for k, (n, f) in enumerate(seq):
+            if n == "preload.drop": dropAt.setdefault(f.get("set"), k)
+        # a want after a cancelled set's drop, while only it can be running (the cap 1: nothing held)
+        counted = [int(f.get("running", -1)) for k, (n, f) in enumerate(seq) if n == "preload.want" and
+                   any(dropAt.get(c.get("set"), 1 << 30) < k < ck for ck, c in cancelled)]
+        runs = [int(f.get("running", -1)) for n, f in seq if n == "preload.want"]
+        soft = {f.get("held") for n, f in _events(qalisar(env={}, frames="60", hold="0*60"))
+                if n == "preload.want"}
+        cancel = (bool(cancelled), all(dropAt.get(c.get("set"), 1 << 30) < k for k, c in cancelled),
+                  all(str(c.get("stage")) == "0" for _, c in cancelled), bool(counted) and min(counted) >= 1,
+                  bool(runs) and max(runs) <= 1, soft == {"2"}, gpuHeld == {"6"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        door graph {graph}; wanted {sorted(wantSets.get('on', ()))} (GLES "
+          f"{sorted(wantSets.get('glon', ()))}); with --preload 25: ARESTO taken {took}, {ahead} textures uploaded ahead "
+          f"({prepared} decoded ahead), "
+          f"the arrival's first pool {arrivalOn} new; without: {arrivalOff} new, {len(tookOff)} taken; the frames "
+          f"{'the same' if on and on == off else 'DIFFER'}; the cap at 1: at most {most} held, released for a "
+          f"nearer door {[(e['set'], e['metres'], e['for'], e['forMetres']) for e in evicted]}, past the radius "
+          f"{[(f['set'], f['metres']) for f in released]}; GLES: {glAhead} up ahead ({glPrepared} decoded ahead), "
+          f"the arrival's pool {glArrOn} new, without {glArrOff}; the frames "
+          f"{'the same' if glOn and glOn == glOff else 'DIFFER'}; 3 s late: cancelled "
+          f"{[(c.get('set'), c.get('stage')) for _, c in cancelled]}, the wants after their drops counting "
+          f"{counted} running, at most {max(runs) if runs else None}; held {sorted(soft)} on software, "
+          f"{sorted(gpuHeld)} on the GPU walks")
+    walked = (wentOn and wentOff, bool(took) and str(took[0].get("ready")).lower() in ("1", "true"), ahead >= 7,
+              arrivalOn < 7, arrivalOff >= 7, not tookOff and aheadOff == 0, prepared == ahead,
+              wantSets.get("on") == {"ARESTO"} and wantSets.get("glon") == {"ARESTO"})
+    return (src_ok, graph, walked, on is not None and on == off, cap, gles, cancel), \
+        ((True,) * 6, (True,) * 4, (True,) * 8, True, (True,) * 5, (True,) * 6, (True,) * 7), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 15, askSet takes the " \
+        "prepared set first, a pinned texture spared, a shared decode counted); the door graph two hops deep, airlocks included, both " \
+        "ways; the restaurant prepared ahead and taken ready, its textures up before the arrival, whose pool " \
+        "brings fewer than its 7; the same frame with and without; at the cap a nearer door takes the farthest " \
+        "held's place, and a release is past the keep radius; GLES pins its preload the same way; a set " \
+        "released while it prepares cancelled before its read and counted in flight till it returns; 2 held " \
+        "on software, 6 on the GPU"
+
+
+def c_engine_remaster_switch():
+    r"""THE REMASTER SWITCH (`todo/remaster.md`, the reader's "do the OMK_REMASTER
+    switch ... keep remaster code in another files as much as possible",
+    2026-10-23): `REMASTER=1` (the Makefile's default, and Android's) defines
+    OMK_REMASTER; the Vita, the 3DS, the classic Mac and the PowerPC builds
+    never do. The remaster's code lives in its own files - its modules
+    (`src/o3de/texpack.cpp` and the rest, compiled EMPTY without it),
+    `backends/remaster/` (the frontend's half) and the GLES backend's two
+    `.inl` - and the shared files keep thin calls that
+    `backends/sdl/playremaster_off.cpp` stubs. `make noremaster` builds the
+    viewers without it (software and GLES; Vulkan, desktop-only and the
+    remaster's through and through, is left out) - and without VR, as the
+    ports build (`VR=0`, 2026-10-26: it was built with the development
+    default's VR, a configuration no port has).
+    Parts:
+      1. the build: `make noremaster`'s two viewers, linked;
+      2. NOTHING of the remaster in them: none of a list of its symbols (the
+         packs, the KTX2 and PNG readers, the smoothing, the light probes, the
+         surface lights, the FSR shaders, the preload) in either binary - and
+         every one of them IN the development build's (the list cannot pass by
+         naming what never existed);
+      3. ORIGINAL MODE UNCHANGED: Anekbah's street with its crowd, 60 frames,
+         the same bytes from the development build and from `noremaster` -
+         software, and GLES on the readback's path (`OMK_NO_GPU_PRESENT`);
+      4. a remaster option on a build without it SAID ("remaster: not
+         built"), never silently dropped: the preset (`--remaster`), a plain
+         flag (`--bloom 1`) and an ini key (`[Remaster] water = 1` through
+         `--config`) - the audit's bug 5, 2026-10-23: only the preset, the
+         texture pack, the upscale, the preload and the smoothing were named.
+    SHOWN TO FAIL (2026-10-23), one at a time: `uiPack().attach` back in
+    `surface.cpp` without its `#if` - `make noremaster` does not link (part
+    1); the set's own lights (`readLights`) moved behind the switch by mistake
+    - both frames differ (part 3). (2026-10-24) The old test (the preset, the
+    texture pack, upscale, preload, smooth) - part 4, `--bloom 1` and the
+    ini's `water` silent.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    mk = subprocess.run(["make", "-s", "play", "play-gles", "noremaster"], cwd=eng, capture_output=True, text=True)
+    bins = {"dev": os.path.join(eng, "build", "omk-play"), "devgl": os.path.join(eng, "build", "omk-play-gles"),
+            "off": os.path.join(eng, "build", "noremaster", "omk-play"),
+            "offgl": os.path.join(eng, "build", "noremaster", "omk-play-gles")}
+    built = tuple(os.path.exists(b) for b in bins.values())
+    if mk.returncode != 0 or not all(built):
+        return ("build", built), ("built", (True,) * 4), mk.stderr[-400:]
+    names = ["TexturePack", "UiPack", "FontPack", "FilmPack", "readKtx2", "decodePng", "smoothBody",
+             "LightProbes5build", "surfaceLights", "drawWithWater", "waterPlane", "cityGrades", "phasePreload",
+             "fsrPass", "runPost"]
+    def syms(b):
+        # plain `nm` and each line's last field: `-j` is macOS's alone
+        out = subprocess.run(["nm", b], capture_output=True, text=True).stdout
+        found = "\n".join(line.split()[-1] for line in out.splitlines() if line.split())
+        return {n for n in names if n in found}
+    devHas, offHas, offGlHas = syms(bins["devgl"]), syms(bins["off"]), syms(bins["offgl"])
+    # `phasePreload` and `fsrPass` / `runPost` keep their names as STUBS in the
+    # build without: what must be gone is the code behind them, so those three
+    # are asked of the development build only
+    stubs = {"phasePreload", "fsrPass", "runPost"}
+    symbols = (sorted(set(names) - devHas), sorted((offHas | offGlHas) - stubs))
+    tmp = tempfile.mkdtemp()
+    try:
+        def frame(name, b, *extra, env=None):
+            out = os.path.join(tmp, name + ".bin")
+            r = subprocess.run([b, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--nofmv", "--saves",
+                                tempfile.mkdtemp(dir=tmp), "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--res", "640x480", "--frames", "60", "--filter", "nearest", "--dump", out] + list(extra),
+                               capture_output=True, text=True, errors="replace", timeout=600,
+                               env=dict(os.environ, **(env or {})))
+            return (open(out, "rb").read() if os.path.exists(out) else None), r.stdout
+        sw_dev, _ = frame("swdev", bins["dev"], "--software", env={"SDL_VIDEODRIVER": "dummy"})
+        sw_off, _ = frame("swoff", bins["off"], "--software", env={"SDL_VIDEODRIVER": "dummy"})
+        gl_dev, _ = frame("gldev", bins["devgl"], env={"OMK_NO_GPU_PRESENT": "1"})
+        gl_off, _ = frame("gloff", bins["offgl"], env={"OMK_NO_GPU_PRESENT": "1"})
+        quiet = {"SDL_VIDEODRIVER": "dummy"}
+        _, said = frame("said", bins["off"], "--software", "--remaster", tmp, "--frames", "1", env=quiet)
+        _, saidFlag = frame("saidflag", bins["off"], "--software", "--bloom", "1", "--frames", "1", env=quiet)
+        ini = os.path.join(tmp, "remaster.ini")
+        open(ini, "w").write("[Remaster]\nwater = 1\n")
+        _, saidIni = frame("saidini", bins["off"], "--software", "--config", ini, "--frames", "1", env=quiet)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    same = (sw_dev is not None and sw_dev == sw_off, gl_dev is not None and gl_dev == gl_off)
+    told = tuple("remaster: not built" in x for x in (said, saidFlag, saidIni))
+    sizes = {k: os.path.getsize(v) for k, v in bins.items()}
+    print(f"        sizes: software {sizes['dev']} -> {sizes['off']}, GLES {sizes['devgl']} -> {sizes['offgl']}; "
+          f"symbols missing from the development build {symbols[0]}, left without the remaster {symbols[1]}; "
+          f"the same frames (software, GLES) {same}; said {told}")
+    return (built, symbols, same, told), ((True,) * 4, ([], []), (True, True), (True, True, True)), \
+        "make noremaster's two viewers built; none of the remaster's symbols in them, every one in the " \
+        "development build; original mode the same bytes with and without it, software and GLES; a " \
+        "remaster option on a build without it said - the preset, a plain flag, an ini key"
+
+
+def c_engine_ao():
+    r"""THE AMBIENT OCCLUSION - the remaster's A4 (`todo/remaster.md`), `[Remaster]
+    ao = S` / `--ao S` (0..4), OFF unless named; `--remaster DIR`'s preset 2
+    (the reader's, 2026-10-21, after confirming it in play at 2). Vulkan only.
+
+    Contact shade from the frame's own DEPTH (`ao.frag`): the depth kept and
+    made readable only when asked (`makeTarget`), reduced to a half-size view
+    z, then 8 samples a pixel on a disk of 60 game units (the Alchemy
+    estimator), two blurs weighted by depth, and the final post step
+    MULTIPLYING the frame by it - never on a light map's texels, faded out by
+    the game's own fog. The sets' vertex colours hold the painted occlusion;
+    this only adds contact. NOT A PORT, no oracle (tier 6).
+
+    Parts:
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 2; the depth SAMPLED and STORED only under `aoOk_`;
+      2. by Anekbah's burner (1780, 0, -7380) with the preset and
+         `--enhance-all` (the MULTISAMPLED depth): `--ao 2` moves more than
+         1000 pixels, brightens none (it only multiplies), and leaves the
+         PLAYER's box (290..374 x 185..444 at 640x480) all but alone - under
+         1000 of its 22100 pixels move;
+      3. the same with `--aa 1` (the plain depth, the other shader module).
+
+    **The set's alone, 2026-10-22** (the reader: "too strong" on the
+    characters - chins, armpits and legs smudged black, a halo on the wall
+    behind a figure): a BODY neither takes the occlusion nor casts it.
+    `scene.frag` writes a body's alpha 0 (`caster`), the set's 1/255 and its
+    glow above; the half-size depth pass takes a body's pixel for the sky. By
+    the burner `--ao 2` moved 12310 pixels before, 7605 of them in the
+    player's box; after, 2085, 404 there (the wall's edge). The ground under
+    a figure keeps the cast shadow (`todo/enhancements.md` 5). Shown to fail
+    (2026-10-22): the body's mark taken out of `scene.frag` - 12300 pixels
+    move, 7605 in the player's box (part 2 red).
+
+    Measured once, outside the check (2026-10-21, M3, loaded): 4K Qalisar
+    with the preset and `--enhance-all`, 44.7 fps off, 40.3 at 2 (2.4 ms);
+    the first cut read the 4K multisampled depth 17 times a pixel - 31 fps -
+    and keeping the depth alone cost nothing (45). Off: byte-identical to
+    `7ac3b75f` on the software reference and Vulkan, plain, `--remaster` and
+    `--enhance-all`, by the burner and in Qalisar (12 of 12).
+
+    Shown to fail (2026-10-21), one at a time: the strength never sent - 0
+    pixels move (part 2 and 3); the occlusion divided in - 9339 pixels
+    brighter.
+
+    NOT CHECKED, judged by eye: the strength and the radius.
+    """
+    import subprocess, tempfile, shutil, re
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/sdl/playsetup_session.cpp", "backends/remaster/playremaster_setup.cpp")
+    vk = _engine_src("backends/vulkan/vkrender.cpp", "backends/vulkan/vkrender_remaster.inl")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("aoStrength = aoFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+ao\s*=\s*0\.0f;", sh)),
+              'kRemaster, "ao"' in sc and 'kEnhancements, "ao"' not in sc,
+              "ao" not in re.findall(r"take\w*\(s\.(\w+)", max_body),
+              # the preset's 2.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("ao") : 0.0f;' in pre and '{"ao", 2.0f}' in sh,
+              # (TRANSIENT without the AO - lazily allocated, the 4K trims)
+              "(aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)" in vk,
+              "att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;" in vk)
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = (omkpaths.pack_path() or "")
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack"
+    tmp = tempfile.mkdtemp()
+    play = os.path.join(eng, "build", "omk-play")
+    lum = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+    try:
+        def run(name, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
+                    "--area", "0", "--stand", "1780,0,-7380,336", "--dump", out, "--world-vulkan",
+                    "--remaster", pack, "--enhance-all", "--filter", "trilinear"] + list(extra)
+            rr = subprocess.run([play] + args, capture_output=True, text=True,
+                                env=dict(os.environ, SDL_VIDEODRIVER="dummy"), timeout=240)
+            if not os.path.exists(out):
+                return None, rr.stdout
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), rr.stdout
+        res = []
+        for label, extra in (("multisampled", ()), ("plain", ("--aa", "1"))):
+            off, _ = run("off" + label, "--ao", "0", *extra)
+            on, log = run("on" + label, "--ao", "2", *extra)
+            if off is None or on is None:
+                res.append(("no frame",)); continue
+            moved = sum(1 for x, y in zip(off, on) if x != y)
+            brighter = sum(1 for x, y in zip(off, on) if lum(y) > lum(x) + 2)
+            ms = "from the multisampled depth" in log
+            body = sum(1 for y in range(185, 445) for x in range(290, 375)
+                       if off[y * 640 + x] != on[y * 640 + x])
+            print(f"        {label}: --ao 2 moves {moved} pixels, {brighter} brighter, {body} in the player's "
+                  f"box; multisampled {ms}")
+            res.append((moved > 1000, brighter, body < 1000, ms))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = [(True, 0, True, True), (True, 0, True, False)]
+    want = [_or_skip(r, w) for w, r in zip(want, res)]
+    return (src_ok, *res), ((True,) * 6, *want), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 2, the depth kept only " \
+        "when asked); by Anekbah's burner --ao 2 shades the frame, brightens nothing and leaves the " \
+        "player alone, from the multisampled depth and the plain one"
 
 
 def c_engine_text_scaling():
@@ -40706,6 +45338,12 @@ def c_engine_shoot_landing():
     drops onto floor 3 near x 42235: a fall of 199.3 (5.06 m) at frame 171,
     message 11 to the area's handler, and the health property from 200 (the
     `--shoot-health 1000` the store clamps at 200) to 155.
+
+    2026-10-21: 171 -> **191**, the same fall and the same message. A falling
+    body now meets a ramp (`engine: walk edges`): at frame ~162 he lands on a
+    sloped face at y ~995, 64 above floor 3 and no steeper than 60 degrees,
+    slides on it while the shoot mover pushes him, and falls off it onto the
+    floor - where he used to fall straight through it.
     """
     import subprocess, re
     fr = omkpaths.data_root()
@@ -40728,7 +45366,7 @@ def c_engine_shoot_landing():
     stat = re.findall(r"^frame (\d+): SHOOT STAT \(sub_423A40\) - the player's health -> (-?\d+)",
                       o, re.M)
     got = (lands, stat[:1])
-    want = ([("171", "199.3", "5.06", "11", "to its handler")], [("172", "155")])
+    want = ([("191", "199.3", "5.06", "11", "to its handler")], [("192", "155")])
     return got, want, ("the catacombs' drop onto floor 3: the landing's fall and the message it "
                        "posts (11 at 5 m and over, 10 from 3 m), the area's handler running, "
                        "and the 45 it takes from the health property the next frame")
@@ -45203,6 +49841,29 @@ def c_engine_ui_highscore():
            "message); the frame oscillator 5 closes it; the player walking under it"
 
 
+def _host_gl1_play():
+    """`ppc-darwin.mk`'s gl1 `omk-play`, built for THIS Mac (SDL2 from
+    pkg-config) into `engine/build/host-gl1` - `(path, None)`, or `(None, why)`.
+    Under `SDL_VIDEODRIVER=dummy` it opens no GL window, so it is the build
+    whose `gpuWindowBuild()` answers false: the offscreen GL1, or with
+    `OMK_GL1=0` the software renderer alone."""
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    pc = subprocess.run(["pkg-config", "--cflags", "--libs", "sdl2"], capture_output=True, text=True)
+    if pc.returncode != 0:
+        return None, "no SDL2"
+    pfx = subprocess.run(["pkg-config", "--variable=prefix", "sdl2"], capture_output=True, text=True)
+    libs = subprocess.run(["pkg-config", "--libs", "sdl2"], capture_output=True, text=True).stdout.strip()
+    b = subprocess.run(["make", "-s", "-f", "ppc-darwin.mk", "PPC_CXX=c++", "PPCFLAGS=-ffp-contract=off",
+                        "LDFLAGS=", "OUT=build/host-gl1", "SDL2_PREFIX=" + pfx.stdout.strip(),
+                        "PLAY_LIBS=" + libs + " -framework OpenGL", "play"],
+                       cwd=eng, capture_output=True, text=True)
+    binp = os.path.join(eng, "build", "host-gl1", "omk-play")
+    if b.returncode != 0 or not os.path.exists(binp):
+        return None, b.stderr[-300:]
+    return binp, None
+
+
 def c_engine_weather():
     r"""THE CITY WEATHER - `sub_4815D0` (`o3de/weather.h`, `todo/scene-gameplay-audit.md` 8).
 
@@ -45214,10 +49875,21 @@ def c_engine_weather():
     message 23 run by AREA 0's handler, the music switching to track 119, the
     20 s ramp (29 drops at frame 90), state 2 at 200, streaks drawn; the same
     run at detail 1 - nothing; and Mahaleel's ice cave, where the roof ray
-    (196.85 up through the bolts' world) keeps the snow from ever starting.
+    (196.85 up through the bolts' world) keeps the snow from starting - and
+    the same area's OPEN AIR (address 404, `--stand 10842,63,30678`), where it
+    snows: 200 flakes stepped, more than 20 drawn by frame 60 (Mahaleel is
+    reached in play; SASNEIGE, AREA 147, is the unreachable snow area).
+    And on macOS, the same street in a build with NO GPU window - the host
+    `ppc-darwin.mk` gl1 build under the dummy driver, `OMK_GL1=0`, the
+    software renderer alone: the ramp's 29 drops at frame 90 draw streaks
+    there too (until 2026-10-27 `weatherFrame` ran only inside the
+    GPU-window block, and such builds never rained).
 
     Shown to fail: the detail gate removed (the detail-1 run rains), the roof
-    ray ignored (the cave snows), the streaks not recorded (none drawn).
+    ray ignored (the cave snows), the roof ray always meeting a mesh (the
+    open air reads `None`), the streaks not recorded (none drawn);
+    the call put back inside `if (gpuWindowBuild())` (the windowless leg
+    reads `None`, while the Vulkan legs stay green).
     """
     import dialog_triggers as T
     eng = os.path.join(ROOT, "engine")
@@ -45231,9 +49903,9 @@ def c_engine_weather():
             t = struct.unpack_from("<H", bb, 176)[0]
             if t:
                 types.setdefault(t, []).append(k)
-    def run(area, extra, frames, env=None):
+    def run(area, extra, frames, env=None, binp=None):
         return subprocess.run(
-            [play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+            [binp or play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
              "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", area,
              "--no-crowd", "--frames", str(frames), "--nodelay", "--res", "800x600"] + extra,
             capture_output=True, text=True, errors="replace",
@@ -45243,6 +49915,18 @@ def c_engine_weather():
     o2 = run("0", street + ["--detail", "2"], 700, skip)
     o1 = run("0", street + ["--detail", "1"], 100, skip)
     oc = run("145", ["--detail", "2"], 70)
+    # the open air of the same area: address 404, no roof - it snows
+    oo = run("145", ["--stand", "10842,63,30678,0", "--detail", "2"], 70)
+    # the build with no GPU window (macOS: the host gl1 build, software only)
+    bare = "no window build here"
+    if sys.platform == "darwin":
+        hp, err = _host_gl1_play()
+        if hp is None and err != "no SDL2":
+            return ("host gl1 build failed",), ("built",), err
+        if hp:
+            ob = run("0", street + ["--detail", "2"], 100, dict(skip, OMK_GL1="0"), hp)
+            m = re.search(r"frame 90: weather - (\d+) drops stepped, (\d+) streaks", ob)
+            bare = (int(m.group(1)), int(m.group(2)) > 0) if m else None
     posted = re.findall(r"weather - message (\d+) posted \(Game_RaiseEvent 43\) (to its handler)?", o2)
     music = "music switch to 119" in o2
     states = re.findall(r"weather - state (\d+), (-?\d+) drops", o2)
@@ -45251,16 +49935,22 @@ def c_engine_weather():
     quiet = ("row 7 is not 2" in o1, "message 23" in o1, "streaks and" in o1)
     cave = (re.search(r"frame 60: weather - state (\d+), (\d+) drops, nothing stepped "
                       r"\(a roof overhead\)", oc) or [None, None, None])
+    m = re.search(r"frame 60: weather - (\d+) drops stepped, 0 streaks and (\d+) flakes", oo)
+    open_air = (int(m.group(1)), int(m.group(2)) > 20) if m else None
     return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
             [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
             (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
-            (cave[1], cave[2]) if cave[0] else None), \
+            (cave[1], cave[2]) if cave[0] else None, open_air, bare), \
            ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
-            ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0")), \
+            ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0"),
+            (200, True),
+            (29, True) if sys.platform == "darwin" and bare != "no window build here" else bare), \
            "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
            "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
            "ramp at frame 90, full strength drawing streaks; at detail 1 nothing; " \
-           "Mahaleel's cave: state 2, no flake, a roof overhead"
+           "Mahaleel's cave: state 2, no flake, a roof overhead; Mahaleel's open air " \
+           "(address 404): 200 flakes stepped, more than 20 drawn; and with no GPU window " \
+           "(host gl1, software): 29 drops at frame 90, streaks drawn"
 
 
 def c_engine_mirror_park():
@@ -47489,7 +52179,7 @@ def c_licence_headers():
     roots = [("tools", (".py",)),
              ("engine/src", (".h", ".cpp", ".c")),
              ("engine/tools", (".h", ".cpp", ".c")),
-             ("engine/backends", (".h", ".cpp", ".c")),
+             ("engine/backends", (".h", ".cpp", ".c", ".inl")),
              ("scripts", (".sh",))]
     missing, authored = [], 0
     for rel, exts in roots:
@@ -47506,8 +52196,9 @@ def c_licence_headers():
                     missing.append(os.path.relpath(os.path.join(base, f), ROOT))
 
     # and the vendored tree must carry none of ours
-    vendored = sorted(_g.glob(os.path.join(ROOT, "engine/third_party/*.h")) +
-                      _g.glob(os.path.join(ROOT, "engine/third_party/*.c")))
+    # every level: `bc7enc/` keeps its six files together with their LICENSE
+    vendored = sorted(p for ext in ("h", "c", "cpp")
+                      for p in _g.glob(os.path.join(ROOT, "engine/third_party/**/*." + ext), recursive=True))
     mislabelled = [os.path.relpath(p, ROOT) for p in vendored
                    if TAG in open(p, encoding="utf-8",
                                   errors="replace").read(600)]
@@ -47556,18 +52247,66 @@ def c_licence_headers():
     # (the GPU backends' shared pose, light, tie and blend)
     # 633: + `engine/backends/d3d12/d3d12render.{h,cpp}` (the Direct3D 12 backend)
     # 636: + `engine/backends/d3d12/upscale.h`, `upscale_fsr.cpp`, `upscale_dlss.cpp` (FSR / DLSS)
-    # 641: + `engine/src/formats/png.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}` and
-    # `tools/texpack.py` (the texture override packs)
     # 642: + `engine/src/o3de/floormesh.h` (ray-traced reflections' ground)
     # 644: + `postfx.h`, `framegen.h` (the census was not moved when they came)
     # 646: + `engine/src/o3de/rtscene.{h,cpp}` (hybrid ray tracing's scene, shared by both backends)
+    # 704: the merge of the upstream author's remaster (2026-10-27): our `formats/png.{h,cpp}` and `tools/texpack.py`
+    # left for theirs (`platform/pngread`, `omktexpack.py`), our 10 files (the D3D12 backend and its upscalers,
+    # `floormesh.h`, `postfx.h`, `framegen.h`, `rtscene.{h,cpp}`) kept beside their 694
+    # 637: + `engine/src/platform/pngread.{h,cpp}`, `engine/src/o3de/texpack.{h,cpp}`,
+    # `engine/tools/texpack_tool.cpp` and `tools/omktexpack.py` (the remaster's
+    # texture pack, todo/remaster.md B4)
+    # 638: + `engine/tools/blend_hold.cpp` (engine: blend hold)
+    # 640: + `engine/src/o3de/colourgrade.{h,cpp}` (the remaster's city grades,
+    # todo/remaster.md step 2)
+    # 642: + `engine/src/o3de/lightprobe.{h,cpp}` (the remaster's body light,
+    # todo/remaster.md A5)
+    # 644: + `engine/src/o3de/emitterlight.{h,cpp}` (the emitters' light, A5b)
+    # 646: + `engine/src/o3de/lighttiles.{h,cpp}` (its tiled point lights)
+    # 647: + `engine/tools/walk_edges.cpp` (`engine: walk edges`)
+    # 649: + `engine/src/o3de/normalmap.{h,cpp}` (the generated normal maps, B3)
+    # 651: + `engine/src/o3de/floorreflect.{h,cpp}` (the reflecting floors, A3)
+    # 652: + `engine/src/o3de/fsrcon.h` (the upscale's constants, A6); and the
+    # vendored 1 -> 3, AMD's `ffx_a.h` and `ffx_fsr1.h` (MIT) beside pl_mpeg.h
+    # 655: + `engine/src/o3de/smoothbody.{h,cpp}` and `engine/tools/smooth_probe.cpp`
+    # (the rounded bodies, D1)
+    # 657: + `engine/src/ui/uipack.{h,cpp}` (the interface pack, Tier E)
+    # 660: + `engine/src/ui/fontpack.{h,cpp}` and `engine/tools/font_hd.cpp`
+    # (the font pack, Tier E); and the vendored 3 -> 4, `stb_truetype.h`
+    # (MIT or public domain), which font_hd alone includes
+    # 662: + `engine/src/platform/filmpack.{h,cpp}` (the film pack, Tier E)
+    # 665: + `engine/src/formats/ktx2.{h,cpp}` and `engine/tools/tex_encode.cpp`
+    # (the pack in GPU block formats); and the vendored 4 -> 10, the walk now
+    # recursive and taking .cpp: `bc7enc/` - bc7enc.c/.h, bc7decomp.cpp/.h,
+    # rgbcx.h, rgbcx_table4.h (MIT or public domain), tex_encode alone
+    # 667: + `engine/backends/sdl/playpreload.cpp` and `engine/tools/door_census.cpp`
+    # (the preload radius)
+    # 674: the remaster switch - + `engine/backends/remaster/playremaster_{setup,
+    # world,bodies,draw}.cpp` and `backends/sdl/playremaster_off.cpp` (the
+    # preload MOVED there, not added), and the walk now takes `.inl` under
+    # engine/backends: `backends/gles/glesrender_remaster{,_shaders}.inl`
+    # 676: + `engine/src/formats/blockdecode.{h,cpp}` (the pack without its
+    # PNGs: bc7decomp / rgbcx compiled there, tex_encode links them)
+    # 677: + `engine/tools/clip_memo.cpp` (the audit's bug 2, `engine: clip memo`)
+    # 678: + `engine/backends/vulkan/vkrender_remaster.inl` (the Vulkan split, the audit's cleanliness)
+    # 679: + `engine/src/platform/packkey.h` (the packs' one FNV-1a, the audit's cleanliness)
+    # 687: OMK's own options pages (`todo/graphics-menu.md` A2) - +
+    # `engine/src/ui/omkoptions.{h,cpp}`, `omktext.{h,cpp}`, the generated
+    # `omktext_data.cpp`, `engine/backends/sdl/playomkoptions.cpp`,
+    # `engine/tools/omkmenu_probe.cpp` and `tools/omklang.py`
+    # 688: + `engine/backends/remaster/playremaster_mode.cpp` (the original/remaster switch, B)
+    # 689: + `engine/tools/pad_layout.cpp` (the pad's layout per group, `engine: pad layout`)
+    # 691: + `engine/backends/gl1/gl1sdlhost.{h,cpp}` (the SDL build's GL window on
+    # Mac OS X, `todo/handoff-classic-mac.md` 3g)
+    # 693: + `engine/src/o3de/wetfloor.{h,cpp}` (the rain's wet floors, todo/remaster.md)
+    # 694: + `engine/backends/remaster/playremaster_rain.cpp` (the rain in 3D)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (646, [], 1, []), \
+           (704, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
-           "stamped with OMK's licence (must be empty - pl_mpeg.h " \
-           "is MIT and is not ours to relicense)"
+           "stamped with OMK's licence (must be empty - pl_mpeg.h, the FSR " \
+           "headers, stb_truetype.h and bc7enc/ are MIT and are not ours to relicense)"
 
 
 def c_dialogue_mode():
@@ -48130,10 +52869,17 @@ def c_render_drawable_mask():
     viewer in both directions and the sizes of the disagreement are the point:
     bit 0 alone accounts for every skipped PERSOS mesh (no shape test needed),
     and `flags == 0` - which the viewer drops - is NOT in the engine's mask.
+
+    Nor are the flagless meshes the aim markers the viewer rule assumed: only
+    those named Vise*/Tire* are; the rest are body parts, and six models
+    (GRU_FN, M4_FN, MOTO, SLI_FN, SLIO_FN, ZOM_FN) have NO engine-drawn mesh
+    that is not flagless, so the viewer rule draws nothing of them
+    (2026-10-27, the /model viewer).
     """
-    import glob, mesh3do
+    import glob, mesh3do, re
     MASK = 0x800043
     per_tot = per_skip = per_bit0 = per_lone = per_zero = 0
+    per_marker = bodiless = 0
     # BOTH cases. 12 of the 193 PERSOS models ship a lowercase `.3do`, and a
     # `*.3DO` glob silently drops every one of them - 213 meshes, 36 of them
     # skipped. Found 2026-08-31 when `engine/` counted 3730 through DataFs
@@ -48143,10 +52889,14 @@ def c_render_drawable_mask():
                     glob.glob(omkpaths.data("MESHES/PERSOS/*.3do"))):
         try: _h, ms = mesh3do.meshes(p)
         except Exception: continue
+        drawn = [m["flags"] & 0xFFFFFFFF for m in ms
+                 if not (m["flags"] & MASK) and m["triangles"] + m["quads"]]
+        bodiless += bool(drawn) and not any(drawn)
         for m in ms:
             f = m["flags"] & 0xFFFFFFFF
             per_tot += 1
             per_zero += (f == 0)
+            per_marker += (f == 0) and bool(re.match(r"(?i)(vise|tire)\d", m["name"]))
             if f & MASK:
                 per_skip += 1
                 per_bit0 += bool(f & 1)
@@ -48162,11 +52912,13 @@ def c_render_drawable_mask():
             if f & MASK:
                 set_skip += 1
                 viewer_draws += bool(f & 0x43) and not (f & 0x800000)
-    return (per_tot, per_skip, per_bit0, per_lone, per_zero,
-            set_tot, set_skip, viewer_draws), \
-           (3730, 547, 547, 532, 123, 12203, 434, 3), \
+    return (per_tot, per_skip, per_bit0, per_lone, per_zero, per_marker,
+            bodiless, set_tot, set_skip, viewer_draws), \
+           (3730, 547, 547, 532, 123, 9, 6, 12203, 434, 3), \
            "PERSOS meshes; skipped by 0x800043; of those by bit 0; of those " \
            "the lone-triangle shape; flagless (NOT skipped by the engine); " \
+           "of those the Vise/Tire markers; models whose every engine-drawn " \
+           "mesh is flagless; " \
            "set meshes; skipped; set meshes the viewers draw and it does not"
 
 
@@ -49785,6 +54537,8 @@ CHECKS = [
     ("aapub prism",        c_aapub_prism,       "ASSETS 4b; CLAUDE.md 6"),
     ("slider ride",        c_slider_ride,       "todo/standing-unknowns"),
     ("options file",       c_options_file,      "todo/options-config"),
+    ("options write",      c_options_write,     "todo/graphics-menu A1; platform/options.h"),
+    ("omk lang",           c_omk_lang,          "todo/graphics-menu A2b; ui/omktext.h"),
     ("settings resolve",  c_settings_resolve,  "todo/options-config"),
     ("world unit",        c_world_unit,        "PORTING"),
     ("the sky",           c_the_sky,           "todo/options-config"),
@@ -50000,6 +54754,7 @@ CHECKS = [
     ("opcode names", c_opcode_names, "todo/code-readability-audit.md; tools/gen_opcodes.py"),
     ("env switches", c_env_switches, "todo/code-readability-audit.md; engine/src/platform/env.cpp"),
     ("thread pool", c_thread_pool, "todo/code-readability-audit.md; engine/src/platform/threads.cpp"),
+    ("texture pack curation", c_texture_pack_curation, "todo/remaster.md B2; o3de/texpack.h"),
     ("engine: events", c_events, "todo/code-readability-audit.md; engine/src/platform/events.h"),
     ("engine: draw core", c_engine_draw_core, "todo/code-readability-audit.md; engine/src/o3de/drawcore.h"),
     ("tutorial anchors", c_tutorial_anchors, "tutorial/README.md"),
@@ -50064,6 +54819,7 @@ SLOW = [
     ("engine: spawn from tables", c_engine_spawn_from_tables, "SCRIPT_VM; FILE_FORMATS; engine/README"),
     ("engine: city crowd", c_engine_city_crowd, "STREET_LIFE 1; SCRIPT_VM"),
     ("engine: pedestrians", c_engine_pedestrians, "STREET_LIFE 2; actor/sliders.h"),
+    ("engine: crowd slope", c_engine_crowd_slope, "STREET_LIFE 2; a reader, 2026-10-21"),
     ("engine: road traffic", c_engine_road_traffic, "STREET_LIFE 2b; actor/vehicles.cpp"),
     ("engine: street frame", c_engine_street_frame, "STREET_LIFE; todo/street-life 4"),
     ("engine: character shadow", c_engine_character_shadow, "ASSETS 4d; o3de/shadow.h"),
@@ -50104,6 +54860,7 @@ SLOW = [
     ("engine: fight AI",   c_engine_fight_ai,   "engine/README"),
     ("engine: melee",      c_engine_melee,      "engine/README"),
     ("engine: bank swap",  c_engine_bank_swap,  "todo/fight-mode 15.6; actor/player.h"),
+    ("engine: blend hold", c_engine_blend_hold, "actor/player.h TransBlend; UI 3i"),
     ("engine: fight letterbox", c_engine_fight_letterbox, "todo/fight-mode 15.4"),
     ("engine: fight separation", c_engine_fight_separation, "todo/fight-mode 15.8d"),
     ("engine: fight collision", c_engine_fight_collision, "todo/fight-mode 15.8a"),
@@ -50209,6 +54966,7 @@ SLOW = [
     ("engine: path turn",    c_engine_path_turn,    "todo/omk-play; FILE_FORMATS 5c"),
     ("engine: cupboard take", c_engine_cupboard_take, "todo/omk-play; ASSETS"),
     ("engine: walker falls", c_engine_walker_falls, "todo/omk-play"),
+    ("engine: walk edges",   c_engine_walk_edges,   "actor/walk.cpp; a reader, 2026-10-20"),
     ("engine: probe grid", c_engine_probe_grid, "todo/optimization.md 2; o3de/collision.h"),
     ("engine: tie equivalence", c_engine_tie_equivalence, "todo/optimization.md 3; o3de/depthtie.h"),
     ("engine: body tie", c_engine_body_tie, "todo/vita-port.md 2026-09-22; o3de/geom3do.h tieClass"),
@@ -50238,6 +54996,7 @@ SLOW = [
     ("engine: 3ds build", c_engine_3ds_build, "todo/3ds-port.md step 0; backends/n3ds/Makefile"),
     ("engine: vita printf", c_engine_vita_printf, "todo/vita-port.md; backends/vita/c99format.h"),
     ("engine: sweep grid", c_engine_sweep_grid, "todo/optimization.md 11; o3de/collision.h"),
+    ("engine: shot run boxes", c_engine_shot_run_boxes, "todo/handoff-classic-mac.md 3g; o3de/collision.h"),
     ("engine: props", c_engine_props, "todo/omk-play"),
     ("sprite ids scene-local", c_sprite_ids_are_scene_local, "docs/ASSETS"),
     ("engine: scene sounds", c_engine_scene_sounds, "engine/README"),
@@ -50262,6 +55021,7 @@ SLOW = [
     ("engine: input",      c_engine_input,      "PORTING B6"),
     ("engine: input poll", c_engine_input_poll, "todo/vita-port.md F3; input/bindings.h"),
     ("engine: menu stick", c_engine_menu_stick, "todo/handoff-quest-port.md; input/pad.h"),
+    ("engine: pad layout", c_engine_pad_layout, "todo/graphics-menu B; input/pad.h"),
     ("engine: audio",      c_engine_audio,      "PORTING B6"),
     ("engine: shoot AI",   c_engine_shoot_ai,   "engine/README"),
     ("engine: I2D",        c_engine_i2d,        "engine/README"),
@@ -50310,6 +55070,9 @@ SLOW = [
     ("engine: sneak character", c_engine_sneak_character, "UI; todo/sneak.md 5"),
     ("engine: sneak quit", c_engine_sneak_quit, "UI; todo/sneak.md 5"),
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
+    ("engine: graphics menu", c_engine_graphics_menu, "todo/graphics-menu A2; ui/omkoptions.h"),
+    ("engine: graphics menu live", c_engine_graphics_menu_live, "todo/graphics-menu 3a; playomkoptions.cpp"),
+    ("engine: remaster mode", c_engine_remaster_mode, "todo/graphics-menu B; playremaster_mode.cpp"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
@@ -50330,7 +55093,6 @@ SLOW = [
     ("engine: vulkan parity rt", c_engine_vulkan_parity_rt, "todo/enhancements.md 19, 26; vkrender.cpp, rt.glsl, o3de/rtscene.h"),
     ("engine: soft particles", c_engine_soft_particles, "todo/enhancements.md 23; scene.frag (OMK_SOFT)"),
     ("engine: volumetrics", c_engine_volumetrics, "todo/enhancements.md 24; vol.frag, volmix.frag"),
-    ("engine: texture pack", c_engine_texture_pack, "todo/enhancements.md 25; o3de/texpack.h, tools/texpack.py"),
     ("engine: framegen", c_engine_framegen, "todo/enhancements.md 27; fg_cap.frag, fg_splat.frag, fg_resolve.frag"),
     ("engine: rt reflections", c_engine_rt_reflections, "todo/enhancements.md 26; scene.frag (OMK_RT), o3de/floormesh.h"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
@@ -50348,6 +55110,7 @@ SLOW = [
     ("engine: near clip",  c_engine_near_clip,  "PORTING B6"),
     ("engine: renderer",   c_engine_renderer_boundary, "PORTING A2"),
     ("engine: gl1 backend", c_engine_gl1_backend, "todo/classic-mac-port-1999.md 3c-i; PORTING B6"),
+    ("engine: gl1 window fit", c_engine_gl1_window_fit, "todo/handoff-classic-mac.md 3h; backends/gl1/gl1render.cpp fitToWindow"),
     ("engine: vulkan pose", c_engine_vulkan_pose, "backends/vulkan/vkrender.cpp posesBodies; todo/gpu-skinning.md"),
     ("engine: frontend gateway", c_engine_frontend_gateway, "todo/classic-mac-port-1999.md step 5; PORTING A1"),
     ("engine: classic build", c_engine_classic_build, "todo/classic-mac-port-1999.md step 5; platform/datafs.h"),
@@ -50355,6 +55118,7 @@ SLOW = [
     ("engine: music ring", c_engine_music_ring, "audio/hostmix.h; todo/debug-tools.md"),
     ("engine: crowd memory", c_engine_crowd_memory, "STREET_LIFE; todo/debug-tools.md"),
     ("engine: street memory", c_engine_street_memory, "todo/ram-vs-original.md tier A"),
+    ("engine: gpu readback on demand", c_engine_gpu_readback_on_demand, "todo/perf-audit.md B2-B5"),
     ("engine: device sounds", c_engine_device_sounds, "todo/ram-vs-original.md tier B; audio/hostmix.h"),
     ("engine: sight mask", c_engine_sight_mask, "todo/ram-vs-original.md tier B; o3de/collision.h"),
     ("engine: indexed textures", c_engine_indexed_textures, "todo/ram-vs-original.md tier C; formats/tex3dt.h"),
@@ -50370,9 +55134,35 @@ SLOW = [
     ("engine: profiler control", c_engine_profiler_control, "todo/debug-tools.md step 3"),
     ("engine: profiler gpu", c_engine_profiler_gpu, "todo/debug-tools.md step 5"),
     ("engine: release build", c_engine_release_build, "todo/debug-tools.md"),
+    ("engine: sdl3",     c_engine_sdl3,         "PORTING A8; backends/sdl/sdlfront.cpp; engine/Makefile SDL_PKG"),
     ("engine: anti-aliasing", c_engine_anti_aliasing, "ASSETS 4"),
     ("engine: texture filter", c_engine_texture_filter, "ASSETS 4"),
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),
+    ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
+    ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
+    ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
+    ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),
+    ("engine: body light", c_engine_body_light, "todo/remaster.md A5; o3de/lightprobe.h"),
+    ("engine: emitter light", c_engine_emitter_light, "todo/remaster.md A5b; o3de/emitterlight.h"),
+    ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
+    ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
+    ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
+    ("engine: wet floors",   c_engine_wet_floors,   "todo/remaster.md wet floors; o3de/wetfloor.h"),
+    ("engine: rain 3d",      c_engine_rain3d,       "todo/remaster.md rain in 3D; backends/remaster/playremaster_rain.cpp"),
+    ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),
+    ("engine: vulkan images", c_engine_vulkan_images, "todo/remaster.md audit bug 4; backends/vulkan/vkrender.cpp makeImage2D"),
+    ("engine: vulkan teardown", c_engine_vulkan_teardown, "todo/remaster.md audit cleanliness; backends/vulkan/vkrender.cpp ~VulkanRenderer"),
+    ("engine: mist",         c_engine_mist,         "todo/remaster.md A4; scene.frag"),
+    ("engine: upscale",      c_engine_upscale,      "todo/remaster.md A6; o3de/fsrcon.h; easu.frag"),
+    ("engine: smooth bodies", c_engine_smooth_bodies, "todo/remaster.md D1; o3de/smoothbody.h"),
+    ("engine: ui pack",      c_engine_ui_pack,      "todo/remaster.md Tier E; ui/uipack.h"),
+    ("engine: font pack",    c_engine_font_pack,    "todo/remaster.md Tier E; ui/fontpack.h"),
+    ("engine: gles upscale", c_engine_gles_upscale, "todo/remaster.md A6; backends/gles/glesrender.cpp"),
+    ("engine: film pack",    c_engine_film_pack,    "todo/remaster.md Tier E; platform/filmpack.h"),
+    ("engine: block formats", c_engine_block_formats, "todo/remaster.md; formats/ktx2.h; o3de/texpack.h"),
+    ("engine: preload",      c_engine_preload,      "todo/remaster.md; backends/remaster/playpreload.cpp"),
+    ("engine: remaster switch", c_engine_remaster_switch, "todo/remaster.md; engine/Makefile REMASTER"),
+    ("engine: ao", c_engine_ao, "todo/remaster.md A4; ao.frag"),
     ("engine: ui scaling", c_engine_ui_scaling, "UI"),
     ("engine: text scaling", c_engine_text_scaling, "todo/enhancements.md; UI"),
     ("engine: unlimited clip", c_engine_unlimited_clip, "ASSETS 4; todo/options-config"),

@@ -15,7 +15,9 @@
 // 12 areas ship a type (8 more set only `+176`'s byte 2, the decor slot's
 // `+109`): 1 (the RAIN - grey streaks) in Anekbah, the Impasse and its
 // airlock, the rooftops, Khonsu; 2 (SNOW - `Images\snow.bmp` blitted) in
-// Mahaleel and SASNEIGE (no zone and no address: unreachable); 3 in Jaunpur,
+// Mahaleel (145, reached in play; its ice cave's roof holds the snow off, the
+// open part snows) and SASNEIGE (147: no zone and no address, unreachable);
+// 3 in Jaunpur,
 // Boz's interior, the docks and the two rooftop streets -
 // whose cycle RUNS (messages 23 and 24 are posted) but which DRAWS NOTHING:
 // the sprite arm is called on `test al, 4` alone, so its sand branch

@@ -514,14 +514,14 @@ void PlayState::adventureScreenInput() {
             // with either bit of 0x41 untested, the rule `sub_444460` applies.
             if (!fightRun.camRaySet && !noFightCamRay)
                 fightRun.fight->setCameraRay([&](const float a[3], const float b[3], float hit[3]) {
-                    const omk::TriangleSoup* shot = nullptr;
+                    const WorldSlot* shot = nullptr;
                     for (const auto& ws : worldSlots)
-                        if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws.shotSoup;
-                    if (!shot || shot->empty()) return false;
+                        if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws;
+                    if (!shot || shot->shotSoup.empty()) return false;
                     const double p0[3] = {a[0], a[1], a[2]};
                     const double d[3] = {double(b[0]) - a[0], double(b[1]) - a[1],
                                          double(b[2]) - a[2]};
-                    const auto h = omk::sweepSphere(*shot, p0, d, 0.0);
+                    const auto h = omk::sweepSphere(shot->shotSoup, shot->shotRunBoxes, p0, d, 0.0);
                     if (!h || h->t > 1.0) return false;
                     for (int k = 0; k < 3; ++k) hit[k] = static_cast<float>(p0[k] + h->t * d[k]);
                     return true;
@@ -1626,14 +1626,14 @@ void PlayState::adventureRide() {
         }
         rw.setSpeed = [&](int slot, double s) { session.sliders().setVehicleSpeed(slot, static_cast<float>(s)); };
         // `sub_444810`, the bolts' world ray: the shown set's `shotSoup`
-        const omk::TriangleSoup* rideShot = nullptr;
+        const WorldSlot* rideShot = nullptr;
         for (const auto& ws : worldSlots)
-            if (!ws.stem.empty() && ws.stem == worldSet) rideShot = &ws.shotSoup;
+            if (!ws.stem.empty() && ws.stem == worldSet) rideShot = &ws;
         if (rideShot)
             rw.ray = [rideShot](double ax, double az, double bx, double bz, double py, double hit[3]) {
                 const double p0[3] = {ax, py, az};
                 const double d[3] = {bx - ax, 0.0, bz - az};
-                const auto h = omk::sweepSphere(*rideShot, p0, d, 0.0);
+                const auto h = omk::sweepSphere(rideShot->shotSoup, rideShot->shotRunBoxes, p0, d, 0.0);
                 if (!h) return false;
                 for (int k = 0; k < 3; ++k) hit[k] = p0[k] + h->t * d[k];
                 return true;

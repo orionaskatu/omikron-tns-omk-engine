@@ -31,9 +31,13 @@ LDFLAGS  := -static-libstdc++ -static-libgcc
 DEPFLAGS := -MMD -MP
 
 # The same sets as Makefile: every src/ subsystem, every tool but the ones
-# that need a GPU backend.
+# that need a GPU backend - and those that need THE REMASTER, which this
+# build never defines (OMK_REMASTER; its modules - the PNG and KTX2 readers,
+# the font keys, the rounded bodies - compile empty here): the pack tools
+# `texpack_tool`, `tex_encode` and `font_hd`, and `smooth_probe`.
 SRC   := $(wildcard src/*/*.cpp)
-TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp,$(wildcard tools/*.cpp))
+TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp \
+                      tools/texpack_tool.cpp tools/tex_encode.cpp tools/font_hd.cpp tools/smooth_probe.cpp,$(wildcard tools/*.cpp))
 
 OUT      := build/ppc-darwin8
 OBJDIR   := $(OUT)/obj
@@ -77,14 +81,20 @@ $(OUT)/%: $(OBJDIR)/tools/%.o $(SRCOBJS)
 # todo/play-split.md S6.
 SDL2_PREFIX ?=
 # PLAY_GPU picks the GPU-window file: `gl1` (the default) draws the world with
-# the fixed-function OpenGL 1.x backend, `backends/gl1/` - step 4 - offscreen,
-# its frame presented on the CPU; `none` is the software reference alone.
+# the fixed-function OpenGL 1.x backend, `backends/gl1/` - step 4 - on the
+# window (below); `none` is the software reference alone.
 PLAY_GPU ?= gl1
 PLAY_SRCS := $(filter-out backends/sdl/playgpu_%.cpp backends/sdl/playharness.cpp,$(wildcard backends/sdl/*.cpp)) \
              backends/sdl/playgpu_$(PLAY_GPU).cpp
+# ...and ON ITS WINDOW (`OMK_GL1_SDL_WINDOW`): the window carries a GL context,
+# the world is drawn into its back buffer and swapped - no readback but for a
+# frame composed on the CPU (`backends/gl1/gl1sdlhost.cpp`). Offscreen, the
+# readback was 135 of a 183 ms street frame on an iBook G4
+# (todo/handoff-classic-mac.md 3g). A run without a GL window (the dummy video
+# driver) keeps the offscreen target; `OMK_GL1_OFFSCREEN=1` asks for it.
 PLAY_OBJS := $(patsubst backends/sdl/%.cpp,$(OBJDIR)/play/%.o,$(PLAY_SRCS)) \
-             $(if $(filter gl1,$(PLAY_GPU)),$(OBJDIR)/gl1/gl1render.o)
-PLAY_FLAGS := -I$(SDL2_PREFIX)/include/SDL2 -D_THREAD_SAFE
+             $(if $(filter gl1,$(PLAY_GPU)),$(OBJDIR)/gl1/gl1render.o $(OBJDIR)/gl1/gl1sdlhost.o)
+PLAY_FLAGS := -I$(SDL2_PREFIX)/include/SDL2 -D_THREAD_SAFE $(if $(filter gl1,$(PLAY_GPU)),-DOMK_GL1_SDL_WINDOW)
 # what that build's `sdl2-config --static-libs` names (-lobjc: its Cocoa half)
 PLAY_LIBS := $(SDL2_PREFIX)/lib/libSDL2.a -lm -liconv -lobjc -framework OpenGL -framework Cocoa \
              -framework Carbon -framework IOKit -framework CoreAudio -framework AudioToolbox \
@@ -100,7 +110,7 @@ $(OBJDIR)/play/%.o: backends/sdl/%.cpp | check-cxx
 
 $(OBJDIR)/gl1/%.o: backends/gl1/%.cpp | check-cxx
 	@mkdir -p $(@D)
-	$(PPC_CXX) $(CXXFLAGS) $(PPCFLAGS) $(DEPFLAGS) -c -o $@ $<
+	$(PPC_CXX) $(CXXFLAGS) $(PPCFLAGS) $(DEPFLAGS) $(PLAY_FLAGS) -c -o $@ $<
 
 $(OUT)/omk-play: $(PLAY_OBJS) $(SRCOBJS)
 	@mkdir -p $(@D)

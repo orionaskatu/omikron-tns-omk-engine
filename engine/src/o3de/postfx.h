@@ -27,7 +27,8 @@ namespace omk::postfx {
 
 // `bloom.frag`'s and `post.frag`'s push blocks, field for field
 struct BloomPush { float texel[4]; float params[4]; float target[4]; };
-struct PostPush { float frame[4], depthAB[4], dof[4], tone[4], lift[4], gam[4], gain[4], tintS[4], tintH[4]; };
+// (`lut`: x the remaster's grade LUT's side, 0 none - the Direct3D 12 build's alone, `post.frag` -DOMK_DX)
+struct PostPush { float frame[4], depthAB[4], dof[4], tone[4], lift[4], gam[4], gain[4], tintS[4], tintH[4], lut[4]; };
 
 // the stencil value a TRANSLUCENT BODY's pixels take for depth of field
 inline constexpr std::uint32_t kSubjectStencil = 2;

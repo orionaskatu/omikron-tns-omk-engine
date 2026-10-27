@@ -25,11 +25,22 @@ Renderer* makeGl1Renderer();
 // size the original's rule gives the card's free memory (`docs/ASSETS.md` 4b).
 // Before the first texture pool.
 void gl1SetFullTextures(Renderer* r, bool full);
-#if defined(OMK_GL1_AGL)
+// THE WORLD ON THE WINDOW: the classic build's AGL context (`OMK_GL1_AGL`),
+// and the SDL build's on Mac OS X (`OMK_GL1_SDL_WINDOW`, `ppc-darwin.mk`) -
+// the world drawn into the window's own back buffer and swapped, not into a
+// framebuffer object that is read back every frame. The SDL build decides at
+// run time: a host that gives no GL window (`SDL_VIDEODRIVER=dummy`, a
+// refused context) keeps the offscreen target and its readback.
+#if defined(OMK_GL1_AGL) || defined(OMK_GL1_SDL_WINDOW)
+#  define OMK_GL1_ON_WINDOW 1
+#endif
+
+#if defined(OMK_GL1_ON_WINDOW)
 // The world presented straight from the window's back buffer, and the same
 // with the composed interface over it (`gl1render.cpp`, tier B of
 // todo/cpu-vs-original.md). -> false where the window is not the frame's
-// size, and the caller presents the composed frame itself.
+// size, or the world is not on the window, and the caller presents the
+// composed frame itself.
 bool gl1PresentWorld(Renderer* r, int ww, int wh);
 // `probe` logs what the overlay frame held and three back-buffer pixels
 // before the swap (the white-screen probe, `todo/handoff-classic-mac.md` 3f
@@ -39,5 +50,7 @@ bool gl1PresentWorld(Renderer* r, int ww, int wh);
 bool gl1PresentOverlay(Renderer* r, const Surface& fb, const std::uint8_t* mask,
                        const std::uint8_t* maskRow, const float fade[4], int ww, int wh,
                        bool probe = false);
+// Whether the world is drawn on the window (false: the offscreen target).
+bool gl1OnWindow(Renderer* r);
 #endif
 }  // namespace omk

@@ -148,7 +148,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --address-enable N,...  set destination (address) bits, for a slider row a\n"
 "                   save has not opened\n"
 "  --config <ini>   the game's own config file - [Preferences], and this\n"
-"                   port's [Options] for density and level of detail\n"
+"                   port's [Options], [Enhancements], [Remaster], [OMK]; read\n"
+"                   when it exists, and OMK's own menu writes there. Default:\n"
+"                   omk.ini beside the --saves file\n"
 "  --clip <metres>  options row 3, the clip distance (25/50/100/150/200);\n"
 "                   a --save's own header supplies it otherwise\n"
 "  --sky 0|1        options row 4, Affichage du ciel\n"
@@ -178,6 +180,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --shoot-health N HARNESS: the player's health (actor property 1) written as\n"
 "                   N when shoot mode starts, so the record, the gauge and the\n"
 "                   property agree as a save carrying N would make them\n"
+"  --omk-set KEY=VALUE@FRAME  HARNESS: one of OMK's own options (enhancements.\n"
+"                   lighting, remaster.bloom...) changed at that frame as its\n"
+"                   menu changes it - written, and applied when it can be\n"
 "  --hide-show A,H,S,F HARNESS: character.hide A at frame H and character.show\n"
 "                   A, F at frame S, through the Session's own ops 78/79\n"
 "                   (todo/drift-audit.md M1)\n"
@@ -322,10 +327,6 @@ int PlayOptions::parse(int argc, char** argv) {
 "                   so the window shows about twice the frames (the Direct3D 12\n"
 "                   and Vulkan windows; half a frame of latency; the simulation and a\n"
 "                   --frames run's N frames unchanged); [Enhancements] framegen=on\n"
-"  --texturepack DIR  ENHANCEMENT: a texture override pack - upscaled PNGs of\n"
-"                   the models' and sets' textures, DIR/<group>/<model>/<MAT>.png\n"
-"                   as `tools/texpack.py extract` lays them out (Vulkan and\n"
-"                   Direct3D 12); [Enhancements] texturepack=DIR\n"
 "  --raytracing     ENHANCEMENT: hybrid ray tracing - characters lit by the set\n"
 "                   around them (no ray-traced shadow on them), ray-traced AO; the\n"
 "                   Direct3D 12 backend on a DXR 1.1 GPU only; [Enhancements]\n"
@@ -342,6 +343,83 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --best-lod       ENHANCEMENT: every pedestrian on its most detailed body at\n"
 "                   any distance (the game steps down every 10 m);\n"
 "                   [Enhancements] lod=best\n"
+"  --texture-pack DIR  REMASTER, off by default: replace textures with the\n"
+"                   pack in DIR (<key>.png files, tools/omktexpack.py makes\n"
+"                   them); Vulkan, GLES, Direct3D 12; [Remaster] texturepack=DIR\n"
+"  --ui-pack DIR    REMASTER, off by default: the interface's bitmaps (menus,\n"
+"                   HUD, documents, the map) drawn from the upscaled pack in\n"
+"                   DIR (tools/omktexpack.py ui makes it) when the window\n"
+"                   enlarges them; every backend; [Remaster] uipack=DIR\n"
+"  --font-pack DIR  REMASTER, off by default: the fonts' glyphs drawn from the\n"
+"                   finer ones in DIR (tools/omktexpack.py fonts makes it)\n"
+"                   where --text-scaling fit enlarges them; every backend;\n"
+"                   [Remaster] fontpack=DIR\n"
+"  --film-pack DIR  REMASTER, off by default: the intro films played from the\n"
+"                   upscaled copies in DIR (tools/omktexpack.py films makes\n"
+"                   them), smoothed to the display; [Remaster] filmpack=DIR\n"
+"  --bloom S        REMASTER, off by default: a glow from the texture pack's\n"
+"                   light maps (<key>_e.png), strength S (1.3 the previews');\n"
+"                   Vulkan and GLES only; [Remaster] bloom=S\n"
+"  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
+"                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
+"                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
+"                   --relief 2, --ao 2, --floors 1, --wet 1, --rain3d 1, --mist\n"
+"                   0.5, --smooth\n"
+"                   0.75, --preload 25, the interface pack in DIR/ui/pack,\n"
+"                   the font pack in DIR/fonts/pack and the film pack in\n"
+"                   DIR/films/pack when there are; a specific flag or key\n"
+"                   beats it;\n"
+"                   [Remaster] dir=DIR\n"
+"  --water S        REMASTER, off by default: the water reflects the scene,\n"
+"                   strength S (0..1); Vulkan and GLES only; [Remaster] water=S\n"
+"  --mist S         REMASTER, off by default: a height fog in the set's fog\n"
+"                   colour, thick at its ground and thinning above, strength S\n"
+"                   (0..1); Vulkan and GLES only; [Remaster] mist=S\n"
+"  --preload M      REMASTER, off by default (the --remaster preset's 15):\n"
+"                   the sets behind every door within M metres - and behind\n"
+"                   the airlock or corridor it opens on - prepared on a thread\n"
+"                   and their textures put on the GPU ahead, released past\n"
+"                   M + 10; no load on arriving, more memory held; 0 off;\n"
+"                   [Remaster] preload=M\n"
+"  --upscale F      REMASTER, off by default: draw the frame F times smaller\n"
+"                   each way (1..3; 1.5 FSR's quality, 2 its performance) and\n"
+"                   bring it up with AMD FSR 1 - the 4K frame rate; Vulkan\n"
+"                   and GLES, in --ssaa's place; [Remaster] upscale=F\n"
+"  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
+"                   lists reflect the scene, strength S (0..1) times theirs;\n"
+"                   Vulkan and GLES only; [Remaster] floors=S\n"
+"  --wet S          REMASTER, off by default: the game's own weather on the\n"
+"                   ground (option row 7 at 2) - while its rain falls the floors\n"
+"                   under the open sky wet and reflect the scene, drying over 2\n"
+"                   minutes after; where its snow falls, snow lies on them;\n"
+"                   strength S (0..1); Vulkan and GLES only; [Remaster] wet=S\n"
+"  --rain3d S       REMASTER, off by default: the game's own rain and snow drawn\n"
+"                   in the scene - hidden by walls, stopped by roofs, lit by the\n"
+"                   set's lights, the sky darkening with the shower -\n"
+"                   brightness S (0..1); Vulkan and GLES only; [Remaster]\n"
+"                   rain3d=S\n"
+"  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
+"                   light around them, strength S (0..1); Vulkan and GLES only;\n"
+"                   [Remaster] bodylight=S\n"
+"  --fx-light S     REMASTER, off by default: the set's flames and glows light\n"
+"                   the bodies near them, strength S (0..4); Vulkan and GLES\n"
+"                   only; [Remaster] fxlight=S\n"
+"  --ao S           REMASTER, off by default: ambient occlusion at contacts, from\n"
+"                   the frame's depth, strength S (0..4); Vulkan only;\n"
+"                   [Remaster] ao=S\n"
+"  --relief S       REMASTER, off by default: the textures' relief under the\n"
+"                   emitters' lights, strength S (0..4); Vulkan only;\n"
+"                   [Remaster] relief=S\n"
+"  --smooth S       REMASTER, off by default: the characters ROUNDED - each\n"
+"                   triangle split 3x3 and pulled toward its corners' normals\n"
+"                   by S (0..1, 0.75 Phong's own); every backend; [Remaster]\n"
+"                   smooth=S\n"
+"  --smooth-skip A,B  the models --smooth leaves as they are, by the name the\n"
+"                   log prints (\"smooth: V2H_FNM - ...\"); [Remaster]\n"
+"                   smoothskip=A,B\n"
+"  --grade DIR      REMASTER, off by default: a colour grade per city, DIR's\n"
+"                   <SET>.cube files and map.txt (tools/omktexpack.py grades);\n"
+"                   Vulkan and GLES only; [Remaster] grade=DIR\n"
 "  --software       force the software rasteriser\n"
 "  --d3d12          the window on the Direct3D 12 backend instead of Vulkan\n"
 "                   (Windows); [Preferences] renderer = vulkan|d3d12\n"
@@ -539,7 +617,6 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--no-shadows") shadowFlag = 0;
         else if (a == "--detail" && i + 1 < argc) detailFlag = std::atoi(argv[++i]);
         else if (a == "--config" && i + 1 < argc) configFile = argv[++i];
-        else if (a == "--texturepack" && i + 1 < argc) texturePackArg = argv[++i];
         // `--clip 0` is the ENHANCEMENT, not a zero distance: the option's
         // five values stop at 200 m and 0 is outside them, so it says "no cap".
         else if (a == "--clip" && i + 1 < argc) { clipArg = std::atoi(argv[++i]); clipFlag = true; }
@@ -565,7 +642,10 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--rt-reflections") rtReflectionsFlag = 1;
         else if (a == "--best-lod") bestLodFlag = 1;
         else if (a == "--vehicle-shine") vehicleShineFlag = 1;
-        else if (a == "--bloom") bloomFlag = 1;
+        // `--bloom` alone is the ENHANCEMENT's post-chain bloom; `--bloom S` (a number after it) is the
+        // REMASTER's glow from the pack's light maps, taken further down
+        else if (a == "--bloom" && !(i + 1 < argc && ((argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') || argv[i + 1][0] == '.')))
+            postBloomFlag = 1;
         else if (a == "--dof") dofFlag = 1;
         else if (a == "--hdr") hdrFlag = 1;
         else if (a == "--soft-particles") softParticlesFlag = 1;
@@ -597,6 +677,104 @@ int PlayOptions::parse(int argc, char** argv) {
             radarFlag = omk::radarMode(argv[++i]);
             if (radarFlag < 0) {
                 std::fprintf(stderr, "--radar %s: not a mode (game|always)\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
+        else if (a == "--ui-pack" && i + 1 < argc) uiPackFlag = argv[++i];
+        else if (a == "--font-pack" && i + 1 < argc) fontPackFlag = argv[++i];
+        else if (a == "--film-pack" && i + 1 < argc) filmPackFlag = argv[++i];
+        else if (a == "--bloom" && i + 1 < argc) {
+            bloomFlag = static_cast<float>(std::atof(argv[++i]));
+            if (bloomFlag < 0.0f || bloomFlag > 4.0f) {
+                std::fprintf(stderr, "--bloom %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--grade" && i + 1 < argc) gradeFlag = argv[++i];
+        else if (a == "--remaster" && i + 1 < argc) remasterFlag = argv[++i];
+        else if (a == "--ao" && i + 1 < argc) {
+            aoFlag = static_cast<float>(std::atof(argv[++i]));
+            if (aoFlag < 0.0f || aoFlag > 4.0f) {
+                std::fprintf(stderr, "--ao %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--smooth-skip" && i + 1 < argc) smoothSkipFlag = argv[++i];
+        else if (a == "--smooth" && i + 1 < argc) {
+            smoothFlag = static_cast<float>(std::atof(argv[++i]));
+            if (smoothFlag < 0.0f || smoothFlag > 1.0f) {
+                std::fprintf(stderr, "--smooth %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--relief" && i + 1 < argc) {
+            reliefFlag = static_cast<float>(std::atof(argv[++i]));
+            if (reliefFlag < 0.0f || reliefFlag > 4.0f) {
+                std::fprintf(stderr, "--relief %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--fx-light" && i + 1 < argc) {
+            fxLightFlag = static_cast<float>(std::atof(argv[++i]));
+            if (fxLightFlag < 0.0f || fxLightFlag > 4.0f) {
+                std::fprintf(stderr, "--fx-light %s: not 0..4\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--body-light" && i + 1 < argc) {
+            bodyLightFlag = static_cast<float>(std::atof(argv[++i]));
+            if (bodyLightFlag < 0.0f || bodyLightFlag > 1.0f) {
+                std::fprintf(stderr, "--body-light %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--upscale" && i + 1 < argc) {
+            upscaleFlag = static_cast<float>(std::atof(argv[++i]));
+            if (upscaleFlag < 1.0f || upscaleFlag > 3.0f) {
+                std::fprintf(stderr, "--upscale %s: not 1..3\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--preload" && i + 1 < argc) {
+            preloadFlag = static_cast<float>(std::atof(argv[++i]));
+            if (preloadFlag < 0.0f || preloadFlag > 100.0f) {
+                std::fprintf(stderr, "--preload %s: not 0..100 metres\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--mist" && i + 1 < argc) {
+            mistFlag = static_cast<float>(std::atof(argv[++i]));
+            if (mistFlag < 0.0f || mistFlag > 1.0f) {
+                std::fprintf(stderr, "--mist %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--floors" && i + 1 < argc) {
+            floorsFlag = static_cast<float>(std::atof(argv[++i]));
+            if (floorsFlag < 0.0f || floorsFlag > 1.0f) {
+                std::fprintf(stderr, "--floors %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--rain3d" && i + 1 < argc) {
+            rain3dFlag = static_cast<float>(std::atof(argv[++i]));
+            if (rain3dFlag < 0.0f || rain3dFlag > 1.0f) {
+                std::fprintf(stderr, "--rain3d %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--wet" && i + 1 < argc) {
+            wetFlag = static_cast<float>(std::atof(argv[++i]));
+            if (wetFlag < 0.0f || wetFlag > 1.0f) {
+                std::fprintf(stderr, "--wet %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--water" && i + 1 < argc) {
+            waterFlag = static_cast<float>(std::atof(argv[++i]));
+            if (waterFlag < 0.0f || waterFlag > 1.0f) {
+                std::fprintf(stderr, "--water %s: not 0..1\n", argv[i]);
                 return 2;
             }
         }
@@ -703,6 +881,14 @@ int PlayOptions::parse(int argc, char** argv) {
                                  "106 107 116 117 150 151 152)\n", cur.c_str());
                 cur.clear();
             }
+        }
+        else if (a == "--omk-set" && i + 1 < argc) {
+            const std::string v = argv[++i];
+            const auto eq = v.find('='), at = v.rfind('@');
+            if (eq != std::string::npos && at != std::string::npos && at > eq)
+                omkSets.push_back({v.substr(0, eq), v.substr(eq + 1, at - eq - 1), std::atol(v.c_str() + at + 1)});
+            else
+                std::fprintf(stderr, "--omk-set %s: not key=value@frame - ignored\n", v.c_str());
         }
         else if (a == "--hide-show" && i + 1 < argc)
             std::sscanf(argv[++i], "%d,%d,%d,%d", &hideShow[0], &hideShow[1],

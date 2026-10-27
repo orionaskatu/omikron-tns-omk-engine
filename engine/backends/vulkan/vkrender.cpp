@@ -71,10 +71,16 @@
 #include "o3de/postfx.h"
 #include "o3de/framegen.h"
 #include "o3de/rtscene.h"
+#include "o3de/texpack.h"
+#include "o3de/colourgrade.h"
+#include "o3de/lighttiles.h"
+#include "o3de/fsrcon.h"
+#include "platform/events.h"
 #include "platform/env.h"
 #include "platform/events.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -83,6 +89,7 @@
 #include <set>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <map>
 #include <tuple>
@@ -156,6 +163,19 @@ const uint32_t kFgSplatFrag[] =
 const uint32_t kFgResolveFrag[] =
 #include "fg_resolve.frag.inc"
 ;
+// ...and with the TILED point lights (`o3de/lighttiles.h`): its own module,
+// bound only on a frame whose tiles are on (`scene.frag`, -DOMK_TILED)
+const uint32_t kFragTiled[] =
+#include "scene_tiled.frag.inc"
+;
+// ...and both with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH): the
+// opaque cutout draws' modules
+const uint32_t kFragCut[] =
+#include "scene_cut.frag.inc"
+;
+const uint32_t kFragTiledCut[] =
+#include "scene_tiled_cut.frag.inc"
+;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
 ;
@@ -167,7 +187,7 @@ const uint32_t kFsqFrag[] =
 const uint32_t kPresentFrag[] =
 #include "present.frag.inc"
 ;
-struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
+struct PresentPush { int32_t vy, vh, w, dither, ss, depth, rcas; uint32_t rcasCon; int32_t raw; };
 // THE INTERFACE AS AN OVERLAY at colour depth 32 (`overlay.frag`, shared with
 // the Direct3D 12 backend; `todo/enhancements.md` 21): C and M over the world
 const uint32_t kOverlayFrag[] =
@@ -194,6 +214,26 @@ const uint32_t kPostFrag[] =
 const uint32_t kPostMsFrag[] =
 #include "post_ms.frag.inc"
 ;
+// THE UPSCALE (`todo/remaster.md` A6): AMD FSR 1's EASU, vendored (MIT,
+// `third_party/ffx_fsr1.h`); its RCAS is in the present pass above
+const uint32_t kEasuFrag[] =
+#include "easu.frag.inc"
+;
+// THE REMASTER'S POST-PASS (`todo/remaster.md` step 2): bloom and grade.
+const uint32_t kRmPostFrag[] =
+#include "rmpost.frag.inc"
+;
+struct RmPostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; int32_t ao; };
+// THE AMBIENT OCCLUSION (`todo/remaster.md` A4): from the frame's depth, half
+// size, plain and multisampled
+const uint32_t kAoFrag[] =
+#include "ao.frag.inc"
+;
+const uint32_t kAoMsFrag[] =
+#include "ao_ms.frag.inc"
+;
+constexpr float kAoRadius = 60.0f;   // the occlusion's reach, game units (~60 cm): contact, not shade
+struct AoPush { float view[4], depth[4]; float radius, strength; int32_t mode, pad; float srcInv[2]; };
 // The DEPTH-ONLY pass of the mapped shadow (`todo/enhancements.md` 6).
 const uint32_t kShadowVert[] =
 #include "shadow.vert.inc"
@@ -230,14 +270,23 @@ struct GpuLightStd140 {
     float colourI[4];   // rgb colour 0..1, a intensity
 };
 struct LightUbo {
-    GpuLightStd140 l[8];
+    GpuLightStd140 l[omk::View::kMaxGpuLights];   // 8 the set's, the rest the remaster's points
     int32_t count;
     float   base;      // View::litBase, in the std140 padding that was here
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151) - padding too
-    int32_t pad;
-    float   eye[4];    // the camera's position (vehicle shine's view vector)
+    int32_t tiles;     // 1: the TILED point lights (`o3de/lighttiles.h`) are bound - padding once
+    // THE WATER's Fresnel (`todo/remaster.md` A3): the eye, at 3088. Written by
+    // every `begin`, and the frame's own pass is the last one - the only one
+    // that reads it (the reflection pass draws no water)
+    float   eye[4];
+    // THE RELIEF (`View::relief`), at 3104: read by the TILED module alone
+    float   fx[4];
     float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
+// the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
+// bytes, four scalars, then the two vec4s)
+static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104,
+              "the Lights block's layout is scene.frag's");
 
 // Up to three mapped shadows a frame, one per LAYER of the shadow image: the
 // strongest lights reaching the casters (`View::shadow` + `extraShadows`).
@@ -307,16 +356,35 @@ struct Push {
     int32_t cull;      // 96  the BACK-FACE CULL: 0 both sides, +1 discard
                        //     where !gl_FrontFacing, -1 where gl_FrontFacing
     int32_t posed;     // 100 a body POSED HERE: set 2 holds its affines and lights
+    // THE TEXTURE PACK (`o3de/texpack.h`, `todo/remaster.md` B4): the bound
+    // texture is a replacement `texScaleU` x `texScaleV` the original's size,
+    // and the UVs are still in the ORIGINAL's texels. 0 for every shipped
+    // texture, and the shader then divides exactly as it did before.
+    int32_t texScaled; // 104
+    float texScaleU;   // 108
+    float texScaleV;   // 112
+    // THE BLOOM (`todo/remaster.md` step 2, `post.frag`): 0 off; 1 on - the
+    // alpha written is the texel's LIGHT, from the pack's light map
+    int32_t bloomMode; // 116
+    // THE WATER REFLECTION (`todo/remaster.md` A3): a water draw adds the
+    // reflection (binding 2) times the strength; 0 on every other draw. The
+    // low four bits the mode; above them a WET floor's darkening, 0..255
+    // (`Draw::wet`, `o3de/wetfloor.h`), and above that the rain's, 0..255 (its
+    // ripples, `View::rain`)
+    int32_t water;     // 120
+    float waterStrength; // 124
 };
-static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
-// ...and with FRAME GENERATION on (`scene.vert` built -DOMK_MOTION), the same 104 bytes and then the
-// JITTER at 104 (clip units - zero here: no upscaler) and the PREVIOUS frame's view-projection at 112
+// 128 is every device's guaranteed push-constant size: the block is full
+static_assert(sizeof(Push) == 128, "the push block is 128 bytes");
+// ...and with FRAME GENERATION on (`scene.vert` built -DOMK_MOTION), the same 128 bytes and then the
+// JITTER at 128 (clip units - zero here: no upscaler) and the PREVIOUS frame's view-projection at 144
 struct PushMv {
     Push p;
-    float jitter[2];      // 104
-    float prevMvp[16];    // 112
+    float jitter[2];      // 128
+    float pad_[2];        // 136 (the shader's mat4 sits on a 16)
+    float prevMvp[16];    // 144
 };
-static_assert(sizeof(PushMv) == 176, "the motion push block is 176 bytes");
+static_assert(sizeof(PushMv) == 208 && offsetof(PushMv, prevMvp) == 144, "the motion push block is 208 bytes");
 // Which `gl_FrontFacing` is the software rasterizer's FRONT (a negative area in
 // `raster.cpp`): this pipeline's `frontFace` and Vulkan's Y-down viewport.
 // Measured, not derived - the wrong sign culls every front face and the room
@@ -326,7 +394,13 @@ constexpr int32_t kCullSign = 1;
 class VulkanRenderer : public omk::Renderer {
 public:
     bool init(int w, int h) override;
-    void setTextures(std::span<const omk::Texture> t) override;
+    void setTextures(std::span<const omk::Texture> t) override { poolTextures(t, false); }
+    void setPreloadTextures(std::span<const omk::Texture> t) override;
+    bool keepsPreload() const override { return true; }
+    int preloadStep(int budget) override;
+    // the pool's textures uploaded where new; `preload`: ONLY that, pinned -
+    // nothing evicted, the frame's pool (`tex_`) untouched
+    void poolTextures(std::span<const omk::Texture> t, bool preload);
     void begin(const omk::View& v) override;
     void shadowPass(const omk::View& v, std::span<const omk::Draw> casters) override;
     bool drawsPixelLights() const override { return true; }
@@ -339,6 +413,23 @@ public:
     // posed on the CPU instead (`cpuPose`) - so no path draws it wrong.
     bool posesBodies() const override { return poseDs_ != VK_NULL_HANDLE; }
     int maxVertexLights() const override { return poseDs_ != VK_NULL_HANDLE ? kPoseLights : 0; }
+    bool setWater(float) override { return true; }   // nothing to build ahead
+    bool setBodyTint(bool) override { return true; }  // the pose block always carries it
+    bool drawsBodyTint() const override { return true; }
+    // scene.frag takes a point light always; ON says the frame will send the
+    // emitters' lights, and only then are the tiled lights' buffers made (32 MB)
+    bool setEmitterLights(bool on) override { emitters_ = on; return true; }
+    bool drawsEmitterLights() const override { return true; }
+    bool takesPack() const override { return true; }
+    bool drawsRelief() const override { return true; }
+    int maxPixelLights() const override { return omk::View::kMaxGpuLights; }
+    bool tilesLights() const override {
+        return pointsBuf_ != VK_NULL_HANDLE && tilesBuf_ != VK_NULL_HANDLE && pipeTiled_[0] != VK_NULL_HANDLE;
+    }
+    bool drawsWater() const override { return true; }
+    bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                        std::span<const omk::Draw> above, std::span<const omk::Draw> water,
+                        float strength, float planeY) override;
     bool drawMirrorScene(const omk::View& v, const omk::View& refl,
                          std::span<const omk::Draw> scene,
                          std::span<const omk::Draw> sceneClipped,
@@ -349,6 +440,14 @@ public:
     const omk::Surface& readback() override;
     omk::RasterStats stats() const override { return st_; }
     const char* name() const override { return "vulkan"; }
+    // every request of the boundary (`Renderer::takes`)
+    unsigned takes() const override {
+        return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
+               omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesUpscale |
+               omk::kTakesBloom | omk::kTakesGrade | omk::kTakesWater | omk::kTakesBodyTint |
+               omk::kTakesEmitterLights | omk::kTakesAmbientOcclusion | omk::kTakesRelief | omk::kTakesMist | omk::kTakesRain3d |
+               omk::kTakesTrilinear;
+    }
     ~VulkanRenderer() override;
     // A geometry the renderer holds state for tells it when it is destroyed
     // (`omk::GpuResidency`, todo/optimization.md step 26): the maps are cleared
@@ -365,7 +464,7 @@ public:
     static void geometryGone(void* self, const omk::Geometry* g);
     // The enhancement (renderer.h). Recorded here and honoured in makeTarget,
     // where the device's own limits get the last word.
-    bool setAmbientOcclusion(bool on) override {
+    bool setSsao(bool on) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         wantSsao_ = on;
         return true;
@@ -432,12 +531,37 @@ public:
         aniso_ = n < 1 ? 1 : n > 16 ? 16 : n;
         return true;
     }
+    // THE BLOOM's strength, 0 off; any time - it changes no pipeline
+    bool setBloom(float s) override { bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s; return true; }
+    // THE AMBIENT OCCLUSION's strength, 0 off - turned ON before `init`: it
+    // keeps the frame's depth readable, which the target is made with. Once
+    // the target has it (`aoOk_`), the strength moves at any time - it is the
+    // pass's push constant (OMK's options menu, `todo/graphics-menu.md` 3a).
+    bool setAmbientOcclusion(float s) override {
+        if (dev_ != VK_NULL_HANDLE && !aoOk_) return false;
+        ao_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
+        return true;
+    }
+    // THE GRADE: `rgb` the LUT's N^3 entries, red fastest (a .cube's order),
+    // 0..1; n 0 turns it off. Any time - uploaded before the next frame's pass.
+    bool setGrade(const float* rgb, int n) override {
+        if (!rgb || n < 2) { lutN_ = 0; return true; }
+        omk::lutStrip(rgb, n, lutData_);
+        lutN_ = n; lutDirty_ = true;
+        return true;
+    }
     bool setSupersample(int n) override {
         if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
         ss_ = n < 2 ? 1 : n < 4 ? 2 : 4;
         return true;
     }
+    bool setUpscale(float f) override {
+        if (dev_ != VK_NULL_HANDLE) return false;   // too late: the target exists
+        up_ = f > 1.0f ? std::min(f, 3.0f) : 1.0f;
+        return true;
+    }
     int supersample() const { return ss_; }
+    float upscale() const { return up_; }
     int textureFilter() const { return filter_; }
     int anisotropy() const { return anisoOn_ ? aniso_ : 1; }
     // The largest count the device's colour, depth and stencil limits all
@@ -468,14 +592,34 @@ private:
     }
     bool makeBuffer(VkDeviceSize n, VkBufferUsageFlags use,
                     VkMemoryPropertyFlags props, VkBuffer& b, VkDeviceMemory& m);
+    bool makeImage2D(const VkImageCreateInfo& ii, VkImageAspectFlags aspect, const char* what,
+                     VkImage& img, VkDeviceMemory& mem, VkImageView* view);
     VkCommandBuffer oneShotBegin();
     void oneShotEnd(VkCommandBuffer cb);
+    // THE BATCHED UPLOAD (the remaster audit's performance item 2): a pool's
+    // texture copies recorded into ONE command buffer (`uploadCb`), submitted
+    // and waited on once (`flushUploads`), their bytes staged in one
+    // persistent host-visible RING - not a staging buffer, an allocation, a
+    // submit and a `vkQueueWaitIdle` a texture
+    VkCommandBuffer uploadCb();
+    bool stage(VkDeviceSize bytes, VkBuffer& buf, VkDeviceSize& off, unsigned char*& ptr);
+    void flushUploads();
+    static constexpr VkDeviceSize kRingBytes = VkDeviceSize{32} << 20;
+    VkCommandBuffer batchCb_ = VK_NULL_HANDLE;
+    std::vector<std::pair<VkBuffer, VkDeviceMemory>> batchOwn_;   // staging past the ring's size
+    VkBuffer ring_ = VK_NULL_HANDLE; VkDeviceMemory ringMem_ = VK_NULL_HANDLE;
+    unsigned char* ringPtr_ = nullptr;
+    VkDeviceSize ringAt_ = 0;
+    bool ringFailed_ = false;
     bool uploadGeometry(const omk::Geometry* g);
 
     VkInstance        inst_ = VK_NULL_HANDLE;
     VkPhysicalDevice  phys_ = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties props_{};
+    bool r8Ok_ = false;   // R8 blits and filters: the light maps one channel (`setTextures`)
+    bool bcOk_ = false;   // BC7 and BC4 sampled and filtered: the pack's block files (`setTextures`)
     VkPhysicalDeviceMemoryProperties memProps_{};
+    long long lazyBytes_ = 0; int lazyImages_ = 0;   // TRANSIENT attachments in lazily allocated memory
     VkDevice          dev_  = VK_NULL_HANDLE;
     VkQueue           queue_ = VK_NULL_HANDLE;
     uint32_t          qfam_ = 0;
@@ -490,6 +634,16 @@ private:
     // at triangle edges and a cutout's silhouette is a colour key inside one.
     int rw_ = 0, rh_ = 0;
     int ss_ = 1;             // 1 off, else 2 or 4
+    // ...or THE UPSCALE (`todo/remaster.md` A6): the frame drawn `up_` times
+    // SMALLER each way and brought up to the output by FSR 1 in the present
+    // pass (`runPresentPass`); 1 off, and it takes the supersample's place
+    float up_ = 1.0f;
+    // a picture `v` output pixels long, in RENDER pixels - the one rule every
+    // size the frame is drawn at goes through (EASU's viewport is the same)
+    int rs(int v) const {
+        return up_ > 1.0f ? std::max(1, static_cast<int>(std::lround(static_cast<float>(v) / up_))) : v * ss_;
+    }
+    int picH_ = 0;           // the last frame's picture height, output pixels (`readback`'s upscale)
     // Which region of `colour_` the present blit should take. `end()` fills
     // the whole render target; `presentSurface` uploads a finished picture at
     // the OUTPUT size into its top-left, and blitting the whole thing then
@@ -502,6 +656,8 @@ private:
     int                   filter_ = 0;        // 0 nearest (the original), 1 bilinear, 2 trilinear
     int                   aniso_ = 1;         // asked; 1 is off
     bool                  anisoOn_ = false;   // the device feature was enabled for it
+    bool                  anisoAvail_ = false; // ...the device has it (enabled whatever was asked)
+    std::vector<VkSampler> retiredSamplers_;  // `retexture`'s old ones: the 1x1 stand-ins' sets keep them
     VkSampleCountFlagBits samples_ = VK_SAMPLE_COUNT_1_BIT;
     VkImage        colour_ = VK_NULL_HANDLE;  VkDeviceMemory colourMem_ = VK_NULL_HANDLE;
     VkImageView    colourView_ = VK_NULL_HANDLE;
@@ -616,6 +772,7 @@ private:
     void killVol();
     void runVol();
     void writeSoftSet();
+    VkRenderPass   reflPass_ = VK_NULL_HANDLE;   // the water reflection's, under the AO (its depth not stored)
     VkFramebuffer  fbuf_ = VK_NULL_HANDLE;
     VkBuffer       readBuf_ = VK_NULL_HANDLE; VkDeviceMemory readMem_ = VK_NULL_HANDLE;
 
@@ -623,6 +780,18 @@ private:
     VkDescriptorPool      dpool_ = VK_NULL_HANDLE;
     VkPipelineLayout      plo_ = VK_NULL_HANDLE;
     VkPipeline            pipe_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    VkPipeline            pipeTiled_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};   // the tiled module's
+    // an OPAQUE CUTOUT draw's: its depth written by the shader, so a discarded
+    // keyed texel writes none (`scene.frag` OMK_LATE_DEPTH) - plain and tiled
+    VkPipeline            pipeCut_ = VK_NULL_HANDLE, pipeTiledCut_ = VK_NULL_HANDLE;
+    // THE FLOORS' REFLECTION at ONE sample when the frame has MSAA: its own
+    // render pass and the scene pipelines again at 1 sample (a pipeline's
+    // count is fixed) - the reflection's per-fragment lights ran four times a
+    // pixel for an image the relief blurs anyway. The water's keeps the MSAA.
+    VkRenderPass          reflPass1_ = VK_NULL_HANDLE;
+    VkPipeline            pipe1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    VkPipeline            pipeTiled1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
+    bool                  tilesNow_ = false;   // this frame's tiles are on: the tiled pipelines
     // The mirror pass's three extra states. `pipeStencil_` marks the mirror's
     // pixels, `pipeDepthReset_` clears depth inside that mark, and `pipeRefl_`
     // is `pipe_` again with the stencil TEST on so the reflection lands only
@@ -642,34 +811,80 @@ private:
     VkPipeline      shPipe_ = VK_NULL_HANDLE;  VkPipelineLayout shPlo_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout dsl1_ = VK_NULL_HANDLE;
     VkDescriptorSet       ds1_  = VK_NULL_HANDLE;
+    VkDescriptorSet       ds1Refl_ = VK_NULL_HANDLE;   // ...the water reflection's: its own tiles
+    omk::LightTiles       tilesRefl_;                  // ...binned for the reflected camera
     VkBuffer        shUbo_ = VK_NULL_HANDLE;   VkDeviceMemory shUboMem_ = VK_NULL_HANDLE;
     void*           shUboPtr_ = nullptr;
     VkBuffer        litUbo_ = VK_NULL_HANDLE;  VkDeviceMemory litUboMem_ = VK_NULL_HANDLE;
     void*           litUboPtr_ = nullptr;
+    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`), set 1's bindings 3 and 4:
+    // every point light of the frame, then the tiles' lists - host-visible,
+    // written each frame as the lights UBO is
+    static constexpr VkDeviceSize kPointsBytes = omk::kMaxPoints * sizeof(GpuLightStd140);
+    static constexpr VkDeviceSize kTileWordsMax = 1u << 22;   // 16 MB: 64 x 40-odd tiles x 16 slices x 48, and room
+    VkBuffer        pointsBuf_ = VK_NULL_HANDLE; VkDeviceMemory pointsMem_ = VK_NULL_HANDLE;
+    void*           pointsPtr_ = nullptr;
+    VkBuffer        tilesBuf_ = VK_NULL_HANDLE;  VkDeviceMemory tilesMem_ = VK_NULL_HANDLE;
+    void*           tilesPtr_ = nullptr;
+    bool            emitters_ = false;   // `setEmitterLights`: the two buffers above made at init
+    omk::LightTiles tiles_;
+    bool            tilesTold_ = false, tilesOverTold_ = false;
     // The command buffer is opened by whichever of `shadowPass` and `begin`
     // runs first, and only once - the depth pass has to be recorded BEFORE the
     // frame's own render pass begins.
     bool            cbStarted_ = false;
+    // THE GPU'S OWN TIME per pass (`OMK_GPU_TIMES=1`, an instrument - the
+    // reader's 4K slowdown was GPU-bound and the CPU's phases could not say
+    // where): a timestamp at each pass boundary of the frame's one command
+    // buffer, OUTSIDE every render pass, read after the frame's fence (no
+    // extra wait); the means per pass every 60 frames, as `gpu.time` too.
+    VkQueryPool     tsPool_ = VK_NULL_HANDLE;
+    static constexpr uint32_t kStamps = 8;
+    uint32_t        tsCount_ = 0;
+    const char*     tsLabel_[kStamps] = {};
+    double          tsSum_[kStamps] = {};      // ms, by the label's slot in `kStampNames`
+    int             tsFrames_ = 0;
+    void stamp(const char* label) {
+        if (!tsPool_ || tsCount_ >= kStamps) return;
+        if (tsCount_ == 0) vkCmdResetQueryPool(cb_, tsPool_, 0, kStamps);
+        vkCmdWriteTimestamp(cb_, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, tsPool_, tsCount_);
+        tsLabel_[tsCount_++] = label;
+    }
+    void readStamps();
     bool            shadowLive_ = false;   // a depth pass was recorded this frame
     int             litCount_ = 0;         // lights uploaded for this frame
     float           shimmerClock_ = 0.0f;  // the View's, held for the uniform
+    float           rain_ = 0.0f;          // the View's rain, for the wet floors' ripples
+    bool            enhOff_ = false;       // `View::enhOff`: the original's look shows - ours left out
     bool            dither_ = true;        // the engine's DITHERENABLE, see surface.h
     int             colourDepth_ = 16;           // the View's colour depth: 32 = no 565 in the present
 
     struct Tex {
         VkImage img = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE; VkDescriptorSet ds = VK_NULL_HANDLE;
-        // THE TEXTURE PACK's k (`o3de/texpack.h`): the image is k x the
-        // original, the UVs stay in the original's units (`scene.frag`)
-        int scale = 1;
         int rt = -1;      // HYBRID RAY TRACING: its place in the bindless texture table
+        // a TEXTURE PACK replacement's factor over the original (texpack.h)
+        float su = 1.0f, sv = 1.0f;
+        bool packed = false;
+        // its LIGHT MAP, the pack's `<key>_e.png` (binding 1; `lightBlack_`
+        // when there is none)
+        VkImage emImg = VK_NULL_HANDLE; VkDeviceMemory emMem = VK_NULL_HANDLE;
+        VkImageView emView = VK_NULL_HANDLE;
+        // its NORMAL MAP, the pack's `<key>_n.png` (binding 3, the relief's;
+        // `normalFlat_` when there is none)
+        VkImage nmImg = VK_NULL_HANDLE; VkDeviceMemory nmMem = VK_NULL_HANDLE;
+        VkImageView nmView = VK_NULL_HANDLE;
     };
     std::vector<Tex> tex_;                // per pool slot: handles `uploaded_` owns
     Tex              white_;              // a material with no texture
+    Tex              lightBlack_;         // the light map of a texture that has none
+    Tex              normalFlat_;         // the normal map of one that has none: flat, ALPHA 0 - "none"
     // the textures on the device, by their pixel storage (`setTextures`); the
     // entry holds that storage so its address is not reused while cached
-    struct Uploaded { Tex t; omk::PixelBuffer idx, pal, pack; bool used = false; };
-    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int, const std::uint8_t*>, Uploaded> uploaded_;
+    // `pinned`: a preloaded set's (`setPreloadTextures`) - kept while listed
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; bool pinned = false; };
+    std::vector<omk::Texture> preQueue_;   // the preload's textures not yet on the device
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
 
     std::map<const omk::Geometry*, std::pair<VkBuffer, VkDeviceMemory>> vbo_;
     // THE POSE BUFFER (set 2): host-visible, written from the start at every
@@ -677,10 +892,13 @@ private:
     // a header (lights, from-black, the base grey, the affines' count), the
     // lights (two vec4 each, `kPoseLights` places), then three vec4 an affine
     static constexpr int kPoseLights = 16, kPoseMaxMeshes = 256;
-    static constexpr VkDeviceSize kPoseBytes = 8u << 20;
-    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
-    // ...and with motion vectors the previous affines follow the current ones
-    static constexpr VkDeviceSize kPoseRangeMv = (1 + 2 * kPoseLights + 6 * kPoseMaxMeshes) * 16;
+    // 2 MB: the Anekbah street walk's busiest frame writes 288 KB (25 staged
+    // bodies and the crowd, measured 2026-10-20); a frame past it poses the
+    // rest on the CPU (`writePose` refuses)
+    static constexpr VkDeviceSize kPoseBytes = 2u << 20;
+    static constexpr VkDeviceSize kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes + 1) * 16;   // (+ the body light's tint vec4)
+    // ...and with motion vectors the previous affines follow the current ones and the tint
+    static constexpr VkDeviceSize kPoseRangeMv = (1 + 2 * kPoseLights + 6 * kPoseMaxMeshes + 1) * 16;
     VkDeviceSize poseRange_ = kPoseRange;
     VkDescriptorSetLayout dsl2_ = VK_NULL_HANDLE;
     VkBuffer poseBuf_ = VK_NULL_HANDLE;
@@ -923,6 +1141,7 @@ private:
     // the fog, held between begin() and each submit()
     bool             fog_ = false;
     float            fogStart_ = 0.0f, fogEnd_ = 0.0f;
+    bool             mistOn_ = false;   // the frame has the mist (`View::mist`): the fogless batches marked for it
     float            fogColour_[3] = {0.0f, 0.0f, 0.0f};
     float            clearColour_[3] = {0.0f, 0.0f, 0.0f};   // View::clearColour
     omk::RasterStats st_;
@@ -967,7 +1186,7 @@ private:
     VkSampler        presSampler_ = VK_NULL_HANDLE;
     VkBuffer         presRead_ = VK_NULL_HANDLE; VkDeviceMemory presReadMem_ = VK_NULL_HANDLE;
     bool makePresentPass();
-    bool runPresentPass(int vy, int vh, bool mid = false);   // `mid`: the in-between picture (frame generation)
+    bool runPresentPass(int vy, int vh, bool mid = false, bool raw = false);   // `mid`: the in-between picture (frame generation); `raw`: the 8-bit value (the remaster's `readback`)
     bool presentImage(VkImage src, int sw, int sh, bool defer = false);   // `defer`: its present is the pacing thread's
     // a 2D colour image of the given format (device-local) with its view; and
     // the reverse
@@ -995,6 +1214,106 @@ private:
     void ovDraw(const float fade[4]);
     bool copyPresentOut(std::vector<unsigned char>& rgba);
 
+    // ---- THE UPSCALE (`todo/remaster.md` A6) -----------------------------
+    // EASU's output at the OUTPUT size (`easu.frag`), which the present pass
+    // reads through `presUpDs_` and sharpens (RCAS); made on first use
+    VkImage          easuImg_ = VK_NULL_HANDLE;  VkDeviceMemory easuMem_ = VK_NULL_HANDLE;
+    VkImageView      easuView_ = VK_NULL_HANDLE;
+    VkRenderPass     easuPass_ = VK_NULL_HANDLE; VkFramebuffer easuFb_ = VK_NULL_HANDLE;
+    VkDescriptorPool easuPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet  easuDs_ = VK_NULL_HANDLE;   // `colour_`, LINEAR: EASU's gathers
+    VkDescriptorSet  presUpDs_ = VK_NULL_HANDLE; // `easuView_`: the present pass's input
+    VkPipelineLayout easuPlo_ = VK_NULL_HANDLE;  VkPipeline easuPipe_ = VK_NULL_HANDLE;
+    VkSampler        easuSampler_ = VK_NULL_HANDLE;
+    bool makeUpscale();
+    void killUpscale();
+
+    // ---- THE REMASTER'S POST-PASS (`todo/remaster.md` step 2) -----------
+    // The BLOOM from the texture pack's light maps and the city's colour
+    // GRADE, after the scene's render pass and before the readback and the
+    // present pass, so every way a frame leaves sees them. The scene is drawn
+    // into `postSrc_` (`fbufPost_`); two quarter-size half-float images take
+    // the glow (down, blur, blur); one pass writes the finished frame into
+    // `colour_`. Made on first use for the target's size; `resize` drops it.
+    float            bloom_ = 0.0f;
+    VkImage          postSrc_ = VK_NULL_HANDLE;  VkDeviceMemory postSrcMem_ = VK_NULL_HANDLE;
+    VkImageView      postSrcView_ = VK_NULL_HANDLE;
+    VkImage          glowImg_[2] = {};  VkDeviceMemory glowMem_[2] = {};
+    VkImageView      glowView_[2] = {};
+    VkRenderPass     glowPass_ = VK_NULL_HANDLE, finalPass_ = VK_NULL_HANDLE;
+    VkFramebuffer    glowFb_[2] = {};   VkFramebuffer finalFb_ = VK_NULL_HANDLE;
+    VkFramebuffer    fbufPost_ = VK_NULL_HANDLE;   // `pass_` into `postSrc_`: the scene when the post runs
+    bool             postNow_ = false;             // this frame's post, decided by `begin`
+    bool             poolLit_ = false;             // a texture of the pool has a light map (`setTextures`)
+    bool             lightMapNow_ = false;         // a draw of the frame's pass bound one: else the glow is black
+    VkDescriptorSetLayout rmPostDsl_ = VK_NULL_HANDLE;
+    VkDescriptorPool rmPostPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet  rmPostDs_[8] = {};   // down, blur H, blur V, final; AO, AO blur H, AO blur V, AO depth
+    VkSampler        postSampler_ = VK_NULL_HANDLE;
+    VkPipelineLayout rmPostPlo_ = VK_NULL_HANDLE;
+    VkPipeline       glowPipe_ = VK_NULL_HANDLE, finalPipe_ = VK_NULL_HANDLE;
+    int              glowW_ = 0, glowH_ = 0;
+    // THE AMBIENT OCCLUSION: the depth's DEPTH-aspect view (`depthView_` has
+    // both aspects, which a sampler may not read), two half-size R8 images
+    // (AO, blur, blur), and the camera the frame's pass was drawn with
+    float            ao_ = 0.0f;
+    bool             aoOk_ = false;      // the depth format can be sampled
+    VkImageView      depthRead_ = VK_NULL_HANDLE;
+    VkImage          rmAoImg_[2] = {};  VkDeviceMemory rmAoMem_[2] = {};
+    VkImageView      rmAoView_[2] = {};
+    VkFramebuffer    aoFb_[2] = {};
+    VkRenderPass     rmAoPass_ = VK_NULL_HANDLE;
+    VkPipeline       rmAoPipe_ = VK_NULL_HANDLE;
+    // ...and the half-size VIEW Z every occlusion pass reads (R32F, its own pass)
+    VkImage          zImg_ = VK_NULL_HANDLE;  VkDeviceMemory zMem_ = VK_NULL_HANDLE;
+    VkImageView      zView_ = VK_NULL_HANDLE;
+    VkFramebuffer    zFb_ = VK_NULL_HANDLE;
+    VkRenderPass     zPass_ = VK_NULL_HANDLE;
+    VkPipeline       zPipe_ = VK_NULL_HANDLE;
+    int              aoW_ = 0, aoH_ = 0;
+    float            aoView4_[4] = {1, 1, 1, 1};   // tanH, tanV, picture w, h (render pixels)
+    // the GRADE: an N*N x N RGBA8 strip, N 0 for none
+    int              lutN_ = 0;
+    std::vector<unsigned char> lutData_;
+    bool             lutDirty_ = false;
+    VkImage          lutImg_ = VK_NULL_HANDLE;  VkDeviceMemory lutMem_ = VK_NULL_HANDLE;
+    VkImageView      lutView_ = VK_NULL_HANDLE;
+    // ---- THE WATER REFLECTION (`todo/remaster.md` A3) ----------------------
+    // A second scene target the size of the first, drawn through the camera
+    // reflected in the water plane by the SAME render pass (so every pipeline
+    // fits it) into its own framebuffer, then sampled by the water draws of
+    // the main pass. Made on first use; `resize` drops it.
+    VkImage          reflColour_ = VK_NULL_HANDLE, reflMs_ = VK_NULL_HANDLE, reflDepth_ = VK_NULL_HANDLE;
+    VkDeviceMemory   reflColourMem_ = VK_NULL_HANDLE, reflMsMem_ = VK_NULL_HANDLE, reflDepthMem_ = VK_NULL_HANDLE;
+    VkImageView      reflColourView_ = VK_NULL_HANDLE, reflMsView_ = VK_NULL_HANDLE, reflDepthView_ = VK_NULL_HANDLE;
+    VkFramebuffer    reflFbuf_ = VK_NULL_HANDLE;
+    // ...and the floors' at one sample (`reflPass1_`): the same colour image,
+    // a depth of its own at half size
+    VkFramebuffer    reflFbuf1_ = VK_NULL_HANDLE;
+    VkImage          reflDepth1_ = VK_NULL_HANDLE;
+    VkDeviceMemory   reflDepth1Mem_ = VK_NULL_HANDLE;
+    VkImageView      reflDepth1View_ = VK_NULL_HANDLE;
+    VkFramebuffer    passFb_ = VK_NULL_HANDLE;   // `begin`'s target when set, `fbuf_` otherwise
+    bool             waterNow_ = false;
+    bool             reflectingNow_ = false;   // the reflection pass: clip below `waterY_`
+    // the REFLECTING FLOORS' frame (no water draws): its reflection drawn at
+    // half size into the image's top-left quarter, the floors sampling it
+    // there (`scene.frag` mode 3) - one image and one binding for both
+    bool             reflHalf_ = false;
+    bool reflHalfNow() const { return reflHalf_ && passFb_ != VK_NULL_HANDLE; }
+    float            waterStrength_ = 0.0f, waterY_ = 0.0f;
+    bool makeReflection();
+    void killReflection();
+    void bindReflection(VkDescriptorSet ds);
+    bool makeRmPost();
+    bool makePostAt();
+    int  postFailW_ = -1, postFailH_ = -1;   // the size `makePostAt` last failed at: not retried every frame
+    void killRmPost();
+    void killLut();
+    bool uploadLut();
+    void bindPostSets();
+    void recordPost(VkCommandBuffer cb);
+
 public:
     void needExtensions(const char* const* names, unsigned n) {
         wantInstExts_.assign(names, names + n);
@@ -1009,6 +1328,9 @@ public:
     // viewport is dynamic and the new pass is the same description, so it is
     // render-pass COMPATIBLE. The shadow map is a fixed size and is kept.
     bool resize(int w, int h);
+    bool retarget(int samples, int ss, float up, float ao);   // ...at new enhancements (OMK's menu)
+    bool makeSampler();                                        // the textures' sampler, by filter_/anisoOn_
+    bool retexture(int filter, int aniso) override;            // ...again, the textures dropped
     // ...and the WINDOW's: fullscreen, or any resize, changes the surface's
     // extent and the swapchain is remade at it.
     bool remakeSwapchain();
@@ -1081,6 +1403,73 @@ bool VulkanRenderer::makeBuffer(VkDeviceSize n, VkBufferUsageFlags use,
     return true;
 }
 
+// ONE IMAGE, CHECKED (the remaster audit's bug 4, 2026-10-23): `ii`'s image,
+// device-local memory allocated and bound, and - where `view` is given - a 2D
+// view of all its levels with `aspect`. Or NONE of them: a step that fails
+// destroys what the ones before it made, leaves every handle null and says
+// so (once per `what`, which is also the GPU profiler's category). The image
+// sequences were written out by hand ten times, and the two texture uploads
+// checked nothing - out of device memory (the 4x pack with its light and
+// normal maps) they bound memory to a null image and copied into it. A
+// texture that fails now has no image and no set, and draws white.
+bool VulkanRenderer::makeImage2D(const VkImageCreateInfo& ii, VkImageAspectFlags aspect, const char* what,
+                                 VkImage& img, VkDeviceMemory& mem, VkImageView* view) {
+    img = VK_NULL_HANDLE; mem = VK_NULL_HANDLE;
+    if (view) *view = VK_NULL_HANDLE;
+    const auto fail = [&](const char* step, VkResult r) {
+        if (mem) freeDeviceMemory(mem);
+        if (img) vkDestroyImage(dev_, img, nullptr);
+        img = VK_NULL_HANDLE; mem = VK_NULL_HANDLE;
+        static std::set<std::string> told;
+        if (told.insert(what).second)
+            std::fprintf(stderr, "vulkan: %s %ux%u - %s failed (%d), refused%s\n", what, ii.extent.width,
+                         ii.extent.height, step, static_cast<int>(r),
+                         r == VK_ERROR_OUT_OF_DEVICE_MEMORY ? ": out of device memory" : "");
+        return false;
+    };
+    // `OMK_VK_IMAGE_FAIL=<what>`, an instrument: every image of that category
+    // refused as if the device were out of memory (`verify.py: engine: vulkan
+    // images`)
+    static const char* refuse = omk::envStr("OMK_VK_IMAGE_FAIL");
+    if (refuse && std::strcmp(refuse, what) == 0) return fail("the image", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    VkResult r = vkCreateImage(dev_, &ii, nullptr, &img);
+    if (r != VK_SUCCESS) { img = VK_NULL_HANDLE; return fail("the image", r); }
+    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    // a TRANSIENT attachment (never loaded nor stored: the MSAA samples, a
+    // depth nothing reads) in LAZILY ALLOCATED memory where the device has
+    // it - MEMORYLESS on Apple's GPUs, the samples living in tile memory
+    // alone (the audit's 4K trims: 4x MSAA at 4K is ~133 MB of colour and
+    // ~166 MB of depth and stencil that were real allocations)
+    bool lazy = false;
+    if (ii.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)
+        for (uint32_t i = 0; i < memProps_.memoryTypeCount; ++i)
+            if ((req.memoryTypeBits & (1u << i)) &&
+                (memProps_.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT)) {
+                ai.memoryTypeIndex = i;
+                lazy = true;
+                break;
+            }
+    r = vkAllocateMemory(dev_, &ai, nullptr, &mem);
+    if (r != VK_SUCCESS) { mem = VK_NULL_HANDLE; return fail("its memory", r); }
+    if (lazy) {
+        lazyBytes_ += static_cast<long long>(ai.allocationSize);
+        ++lazyImages_;
+    }
+    OMK_GPU_ALLOC(what, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
+    r = vkBindImageMemory(dev_, img, mem, 0);
+    if (r != VK_SUCCESS) return fail("binding its memory", r);
+    if (!view) return true;
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = ii.format;
+    vi.subresourceRange = {aspect, 0, ii.mipLevels, 0, 1};
+    r = vkCreateImageView(dev_, &vi, nullptr, view);
+    if (r != VK_SUCCESS) { *view = VK_NULL_HANDLE; return fail("its view", r); }
+    return true;
+}
+
 VkCommandBuffer VulkanRenderer::oneShotBegin() {
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool = pool_; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1100,6 +1489,64 @@ void VulkanRenderer::oneShotEnd(VkCommandBuffer cb) {
     vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(queue_);
     vkFreeCommandBuffers(dev_, pool_, 1, &cb);
+}
+
+VkCommandBuffer VulkanRenderer::uploadCb() {
+    if (batchCb_ == VK_NULL_HANDLE) batchCb_ = oneShotBegin();
+    return batchCb_;
+}
+
+// `bytes` of staging, 16-aligned (a block format's texel block, and the
+// copy's 4): from the ring - the batch flushed first when it is full - or,
+// past the ring's size, a buffer of its own freed at the flush
+bool VulkanRenderer::stage(VkDeviceSize bytes, VkBuffer& buf, VkDeviceSize& off, unsigned char*& ptr) {
+    const VkDeviceSize need = (bytes + 15) & ~VkDeviceSize{15};
+    if (need <= kRingBytes && !ringFailed_) {
+        if (ring_ == VK_NULL_HANDLE) {
+            void* p = nullptr;
+            if (makeBuffer(kRingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           ring_, ringMem_) &&
+                vkMapMemory(dev_, ringMem_, 0, kRingBytes, 0, &p) == VK_SUCCESS) {
+                ringPtr_ = static_cast<unsigned char*>(p);
+            } else {
+                ringFailed_ = true;   // a buffer a texture, as before
+                std::fprintf(stderr, "vulkan: the upload ring refused - a staging buffer a texture\n");
+            }
+        }
+        if (ringPtr_) {
+            if (ringAt_ + need > kRingBytes) flushUploads();
+            buf = ring_; off = ringAt_; ptr = ringPtr_ + ringAt_;
+            ringAt_ += need;
+            return true;
+        }
+    }
+    VkBuffer b = VK_NULL_HANDLE; VkDeviceMemory m = VK_NULL_HANDLE;
+    if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, b, m))
+        return false;
+    void* p = nullptr;
+    if (vkMapMemory(dev_, m, 0, bytes, 0, &p) != VK_SUCCESS) {
+        vkDestroyBuffer(dev_, b, nullptr);
+        freeDeviceMemory(m);
+        return false;
+    }
+    batchOwn_.push_back({b, m});
+    buf = b; off = 0; ptr = static_cast<unsigned char*>(p);
+    return true;
+}
+
+void VulkanRenderer::flushUploads() {
+    if (batchCb_ != VK_NULL_HANDLE) {
+        oneShotEnd(batchCb_);
+        batchCb_ = VK_NULL_HANDLE;
+    }
+    for (auto& [b, m] : batchOwn_) {
+        vkDestroyBuffer(dev_, b, nullptr);
+        freeDeviceMemory(m);
+    }
+    batchOwn_.clear();
+    ringAt_ = 0;
 }
 
 // The instance ALONE, so the window layer can make a surface from it before a
@@ -1163,6 +1610,13 @@ bool VulkanRenderer::pickDevice() {
     vkEnumeratePhysicalDevices(inst_, &n, devs.data());
     phys_ = devs[0];
     vkGetPhysicalDeviceProperties(phys_, &props_);
+    {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_R8_UNORM, &fp);
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+                                          VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        r8Ok_ = (fp.optimalTilingFeatures & need) == need;
+    }
     vkGetPhysicalDeviceMemoryProperties(phys_, &memProps_);
 
     uint32_t qn = 0;
@@ -1225,8 +1679,12 @@ bool VulkanRenderer::pickDevice() {
         enable.independentBlend = VK_TRUE;
         if (qs[qfam_].queueCount >= 2) qi.queueCount = 2;
     }
+    // ...and enabled whenever the device has it, asked or not - it changes
+    // nothing a sampler does not ask for, and OMK's options menu may ask later
+    // (`retexture`)
+    if (have.samplerAnisotropy) { enable.samplerAnisotropy = VK_TRUE; anisoAvail_ = true; }
     if (aniso_ > 1 && filter_ >= 2 && have.samplerAnisotropy) {
-        enable.samplerAnisotropy = VK_TRUE; anisoOn_ = true;
+        anisoOn_ = true;
     } else if (aniso_ > 1) {
         std::fprintf(stderr, "vulkan: anisotropy %d ignored - %s\n", aniso_,
                      filter_ < 2 ? "it needs trilinear filtering (a mip chain)"
@@ -1298,6 +1756,22 @@ bool VulkanRenderer::pickDevice() {
             if (rtCountFeat_) enable.fragmentStoresAndAtomics = VK_TRUE;
         }
     }
+    // THE PACK'S BLOCK FORMATS (`o3de/texpack.h`): BC7 for the colours and
+    // the normal maps, BC4 for the light maps - read from the pack's KTX2
+    // files when the device samples and filters both (Apple's GPUs through
+    // MoltenVK do). `OMK_NO_BLOCK_FORMATS=1` keeps the PNGs, for comparison.
+    if (have.textureCompressionBC && !omk::envFlag("OMK_NO_BLOCK_FORMATS")) {
+        bool all = true;
+        for (const VkFormat f : {VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK}) {
+            VkFormatProperties fp{};
+            vkGetPhysicalDeviceFormatProperties(phys_, f, &fp);
+            const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                              VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+            all = all && (fp.optimalTilingFeatures & need) == need;
+        }
+        if (all) { enable.textureCompressionBC = VK_TRUE; bcOk_ = true; }
+    }
+    omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);
     VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     if (rtFeat_) di.pNext = &rt12;
     di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &qi;
@@ -1316,6 +1790,15 @@ bool VulkanRenderer::pickDevice() {
     cai.commandPool = pool_; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cai.commandBufferCount = 1;
     VKCHECK(vkAllocateCommandBuffers(dev_, &cai, &cb_), "vkAllocateCommandBuffers");
+    if (omk::envFlag("OMK_GPU_TIMES")) {
+        if (props_.limits.timestampComputeAndGraphics && props_.limits.timestampPeriod > 0.0f) {
+            VkQueryPoolCreateInfo qpi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qpi.queryType = VK_QUERY_TYPE_TIMESTAMP; qpi.queryCount = kStamps;
+            if (vkCreateQueryPool(dev_, &qpi, nullptr, &tsPool_) != VK_SUCCESS) tsPool_ = VK_NULL_HANDLE;
+        }
+        std::printf("vulkan: the GPU's time per pass %s\n", tsPool_ ? "- every 60 frames (OMK_GPU_TIMES)"
+                                                                 : "refused: the device has no timestamps");
+    }
     VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VKCHECK(vkCreateFence(dev_, &fi, nullptr, &fence_), "vkCreateFence");
     return true;
@@ -1354,19 +1837,7 @@ bool VulkanRenderer::makeTarget() {
         ii.samples = samples; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = use; ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &img), "vkCreateImage");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &mem), "vkAllocateMemory(image)");
-        OMK_GPU_ALLOC("render targets", omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, img, mem, 0), "vkBindImageMemory");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
-        vi.subresourceRange = {asp, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &view), "vkCreateImageView");
-        return true;
+        return makeImage2D(ii, asp, "render targets", img, mem, &view);
     };
     if (!image(VK_FORMAT_R8G8B8A8_UNORM,
                // SAMPLED for the present pass, which reads the frame where it is
@@ -1374,7 +1845,9 @@ bool VulkanRenderer::makeTarget() {
                    VK_IMAGE_USAGE_SAMPLED_BIT,
                VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT,
                colour_, colourMem_, colourView_)) return false;
-    if (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    // (TRANSIENT: resolved within the pass, never stored - `makeImage2D`)
+    if (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM,
+                       VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                        VK_IMAGE_ASPECT_COLOR_BIT, samples_,
                        msColour_, msColourMem_, msColourView_)) return false;
     // A depth+STENCIL format, because the mirror pass confines its reflection
@@ -1485,9 +1958,22 @@ bool VulkanRenderer::makeTarget() {
     }
     mvOn_ = fgOn_;
     poseRange_ = mvOn_ ? kPoseRangeMv : kPoseRange;
-    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_ || fgOn_;
-    if (!image(dsFmt_, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                   (depthKept ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_SAMPLED_BIT) : 0u),
+    // ...SAMPLED and KEPT where the ambient occlusion reads it - and only there
+    aoOk_ = false;
+    if (ao_ > 0.0f) {
+        VkFormatProperties fp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, dsFmt_, &fp);
+        aoOk_ = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+        if (!aoOk_) std::fprintf(stderr, "vulkan: the depth format cannot be sampled - no ambient occlusion\n");
+    }
+    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_ || fgOn_ || aoOk_;
+    // (TRANSIENT where nothing reads it after the pass - the AO's absence - SAMPLED where the AO or any
+    // of this backend's depth readers does: the post chain, SSAO, soft particles, volumetrics, the warp)
+    VkImageUsageFlags depthUse = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        (aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT);
+    if (depthKept) depthUse = (depthUse & ~static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)) |
+                              VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (!image(dsFmt_, depthUse,
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
     if (mvOn_ && !makeImage2d(VK_FORMAT_R16G16_SFLOAT, rw_, rh_,
@@ -1509,6 +1995,12 @@ bool VulkanRenderer::makeTarget() {
         vi.subresourceRange = {VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
         VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &stencilSampleView_), "stencil sample view");
     }
+    if (aoOk_) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = depth_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = dsFmt_;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &depthRead_), "vkCreateImageView(depth read)");
+    }
 
     // Attachment 0 is what the pipelines rasterise into: `colour_` itself
     // without MSAA, `msColour_` with it - in which case it is not kept
@@ -1528,9 +2020,12 @@ bool VulkanRenderer::makeTarget() {
     att[1].format = dsFmt_;
     att[1].samples = samples_;
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].storeOp = depthKept ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    if (depthKept) att[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;   // (this backend's own depth readers too)
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // the stencil lives within the pass (the mirror's, cleared at its start):
+    // nothing loads it after, so it is not stored (the audit's 4K trims)
+    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     att[1].finalLayout = depthKept ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                                  : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -1582,6 +2077,15 @@ bool VulkanRenderer::makeTarget() {
         rpi.dependencyCount = 2; rpi.pDependencies = softDep;
     }
     VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &pass_), "vkCreateRenderPass");
+    // ...and with the AO, the WATER REFLECTION's own: the same but for the
+    // depth's store - nothing reads the reflection's depth, and storing it is
+    // a full extra depth write (on a tiled GPU at 4K). Store ops do not touch
+    // compatibility: its framebuffer and every pipeline stay `pass_`'s.
+    if (aoOk_) {
+        att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        if (vkCreateRenderPass(dev_, &rpi, nullptr, &reflPass_) != VK_SUCCESS) reflPass_ = VK_NULL_HANDLE;
+        att[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
     if (softOn_) {
         // the continuations: what the first segment left is loaded; the final layouts are the
         // initial ones, so a frame may be cut as often as it likes
@@ -1615,11 +2119,17 @@ bool VulkanRenderer::makeTarget() {
     fi.layers = 1;
     VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &fbuf_), "vkCreateFramebuffer");
 
-    if (!makeBuffer(static_cast<VkDeviceSize>(rw_) * rh_ * 4,
-                    VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    readBuf_, readMem_)) return false;
-    fb_ = omk::Surface(w_, h_, 0);
+    // `readBuf_` and `fb_` are made by the first `readback`: a GPU-presented
+    // run never reads a frame back, and at 4K they are 33 + 16 MB
+    fb_ = omk::Surface();
+    if (lazyImages_ > 0) {
+        static bool said = false;
+        if (!said)
+            std::printf("vulkan: %d render-target attachments TRANSIENT in lazily allocated memory, %.0f MB "
+                        "(memoryless on Apple's GPUs)\n", lazyImages_, static_cast<double>(lazyBytes_) / 1048576.0);
+        said = true;
+        omk::event("vulkan.memoryless", {{"images", lazyImages_}, {"mb", static_cast<double>(lazyBytes_) / 1048576.0}});
+    }
     writeSoftSet();   // (the depth was remade: a resize points the set at the new one)
     // a RESIZE stops here: what follows is sized once and kept
     if (resizing_) return true;
@@ -1646,14 +2156,7 @@ bool VulkanRenderer::makeTarget() {
         ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        if (vkCreateImage(dev_, &ii, nullptr, &shImg_) == VK_SUCCESS) {
-            VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, shImg_, &req);
-            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            vkAllocateMemory(dev_, &ai, nullptr, &shMem_);
-            OMK_GPU_ALLOC("shadow map", omk::prof::gpuKey(omk::prof::kVkMemory, shMem_), ai.allocationSize);
-            vkBindImageMemory(dev_, shImg_, shMem_, 0);
+        if (makeImage2D(ii, VK_IMAGE_ASPECT_DEPTH_BIT, "shadow map", shImg_, shMem_, nullptr)) {
             VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             // the SAMPLED view spans every layer (`sampler2DArray`)...
             vi.image = shImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; vi.format = shFmt_;
@@ -1666,6 +2169,21 @@ bool VulkanRenderer::makeTarget() {
                 lv.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1,
                                        static_cast<uint32_t>(L), 1};
                 vkCreateImageView(dev_, &lv, nullptr, &shLayerView_[L]);
+            }
+            // SHADER_READ from the start: every frame's scene set binds it,
+            // and a run whose shadow pass never draws (no mapped shadows)
+            // read it UNDEFINED (the validation layer's VUID-vkCmdDraw-None-09600,
+            // found 2026-10-24); its pass starts from UNDEFINED as before
+            {
+                VkCommandBuffer cb = oneShotBegin();
+                VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.image = shImg_; b.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowLayers};
+                b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                     0, 0, nullptr, 0, nullptr, 1, &b);
+                oneShotEnd(cb);
             }
 
             VkAttachmentDescription da{};
@@ -1728,6 +2246,26 @@ bool VulkanRenderer::makeTarget() {
                        litUbo_, litUboMem_);
             vkMapMemory(dev_, litUboMem_, 0, sizeof(LightUbo), 0, &litUboPtr_);
             if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
+            // the tiled point lights' buffers, only for a frame that sends
+            // the emitters' lights: without them no tiled pipeline is bound,
+            // and the 32 MB stayed mapped for nothing (`verify.py: engine:
+            // gpu readback on demand`, 2026-10-21)
+            if (emitters_) {
+                makeBuffer(kPointsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           pointsBuf_, pointsMem_);
+                vkMapMemory(dev_, pointsMem_, 0, kPointsBytes, 0, &pointsPtr_);
+                // TWO HALVES: the frame's camera's tiles, then the water
+                // reflection's - binned for ITS camera (`ds1Refl_`)
+                makeBuffer(kTileWordsMax * 4 * 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           tilesBuf_, tilesMem_);
+                vkMapMemory(dev_, tilesMem_, 0, kTileWordsMax * 4 * 2, 0, &tilesPtr_);
+                if (tilesPtr_) {
+                    std::memset(tilesPtr_, 0, 16);
+                    std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+                }
+            }
         }
     }
     // volumetrics: the lamps' uniform block, written every frame
@@ -1759,25 +2297,87 @@ bool VulkanRenderer::makeTarget() {
                     "where they meet the opaque depth\n", static_cast<double>(softRange_));
         omk::event("softparticles", {{"on", 1}, {"samples", static_cast<int>(samples_)}});
     }
-    if (shFbuf_ == VK_NULL_HANDLE)
-        std::fprintf(stderr, "vulkan: no shadow map here - `--shadow-quality mapped` "
-                             "will draw the fitted blobs instead\n");
+    // NO SHADOW MAP, NO RENDERER: set 1 is made with it - the shadow map, the
+    // lights' uniforms, the tiled lights' buffers - and every scene pipeline
+    // reads that set, so a frame without it bound draws on nothing (MoltenVK
+    // faults in its first draw: `OMK_VK_IMAGE_FAIL="shadow map"`, 2026-10-24).
+    // Refused here like a render target, and the frontend falls back. (It
+    // used to say the fitted blobs would stand in - they never could.)
+    if (shFbuf_ == VK_NULL_HANDLE) {
+        std::fprintf(stderr, "vulkan: no shadow map here - its set carries the scene's lights too, refused\n");
+        return false;
+    }
+    return true;
+}
+
+// THE TEXTURES' SAMPLER, by `filter_` and `anisoOn_` - made at the
+// pipelines', and again by `retexture`
+bool VulkanRenderer::makeSampler() {
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
+    // takes one texel with no filtering and the two are being differenced;
+    // repeat because `% t.width` is what lets one atlas tile across a wall.
+    si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+    // ...unless the filtering ENHANCEMENT asked for bilinear (renderer.h).
+    // The colour key survives it because `upload` puts the key in ALPHA and
+    // the shader treats a filtered sample as premultiplied.
+    if (filter_ >= 1) { si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR; }
+    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    // Trilinear: the mip chain `upload` generates, blended between levels.
+    // With one level (every mode below 2) maxLod 0 samples level 0 exactly.
+    if (filter_ >= 2) { si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE; }
+    if (anisoOn_) {
+        si.anisotropyEnable = VK_TRUE;
+        si.maxAnisotropy = std::min(static_cast<float>(aniso_), props_.limits.maxSamplerAnisotropy);
+    }
+    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &sampler_), "vkCreateSampler");
+    return true;
+}
+
+// THE TEXTURE FILTER and the ANISOTROPY asked again on a running renderer
+// (OMK's options menu, `todo/graphics-menu.md` 3d). Both are baked: the
+// sampler is written into every texture's set, and trilinear's mip chain is
+// made at upload. So a new sampler (the old one RETIRED, not destroyed - the
+// 1x1 stand-ins' sets keep it, a 1x1 texel filtering alike either way) and
+// every upload dropped, the preloaded ones unpinned too; the caller hands the
+// pool over again, and it uploads as a start with the values would.
+bool VulkanRenderer::retexture(int filter, int aniso) {
+    filter_ = filter < 1 ? 0 : filter < 2 ? 1 : 2;
+    aniso_ = aniso < 1 ? 1 : aniso > 16 ? 16 : aniso;
+    if (dev_ == VK_NULL_HANDLE) return true;
+    vkDeviceWaitIdle(dev_);
+    anisoOn_ = aniso_ > 1 && filter_ >= 2 && anisoAvail_;
+    retiredSamplers_.push_back(sampler_);
+    sampler_ = VK_NULL_HANDLE;
+    if (!makeSampler()) return false;
+    setPreloadTextures({});
+    poolTextures({}, false);
+    std::printf("vulkan: retextured - %s filtering, anisotropy %d; every texture dropped, uploaded again\n",
+                filter_ == 0 ? "nearest" : filter_ == 1 ? "bilinear" : "trilinear", anisoOn_ ? aniso_ : 1);
     return true;
 }
 
 bool VulkanRenderer::makePipelines() {
-    VkDescriptorSetLayoutBinding b{};
-    b.binding = 0; b.descriptorCount = 1;
-    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // SET 0 a texture's: binding 0 the texture, 1 its LIGHT MAP (the bloom's;
+    // black without one), 2 the WATER pass's reflection (black without one),
+    // 3 its NORMAL MAP (the relief's; flat, alpha 0, without one)
+    VkDescriptorSetLayoutBinding b2tex[4]{};
+    for (uint32_t k = 0; k < 4; ++k) {
+        b2tex[k].binding = k; b2tex[k].descriptorCount = 1;
+        b2tex[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b2tex[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
     VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli.bindingCount = 1; dli.pBindings = &b;
+    dli.bindingCount = 4; dli.pBindings = b2tex;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &dsl_), "descriptorSetLayout");
 
     // SET 1 is per FRAME - the shadow map and the light's transform. It exists
     // whether or not a shadow is drawn, because a pipeline layout is fixed at
     // creation and `strength = 0` is how a frame says it has no shadow.
-    VkDescriptorSetLayoutBinding b1[3]{};
+    VkDescriptorSetLayoutBinding b1[5]{};
     b1[0].binding = 0; b1[0].descriptorCount = 1;
     b1[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1787,8 +2387,14 @@ bool VulkanRenderer::makePipelines() {
     b1[2].binding = 2; b1[2].descriptorCount = 1;
     b1[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     b1[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // ...3 the frame's point lights and 4 their TILES (`o3de/lighttiles.h`)
+    for (uint32_t k = 3; k < 5; ++k) {
+        b1[k].binding = k; b1[k].descriptorCount = 1;
+        b1[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        b1[k].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
     VkDescriptorSetLayoutCreateInfo dli1{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dli1.bindingCount = 3; dli1.pBindings = b1;
+    dli1.bindingCount = 5; dli1.pBindings = b1;
     VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli1, nullptr, &dsl1_), "descriptorSetLayout1");
 
     // SET 2 is the POSE BUFFER (`posesBodies`): one dynamic storage buffer,
@@ -1847,6 +2453,12 @@ bool VulkanRenderer::makePipelines() {
     VkShaderModule vs = mvOn_ ? module(kVertMv, sizeof(kVertMv)) : module(kVert, sizeof(kVert));
     VkShaderModule fs = rtOn_ ? (mvOn_ ? module(kFragRtMv, sizeof(kFragRtMv)) : module(kFragRt, sizeof(kFragRt)))
                       : mvOn_ ? module(kFragMv, sizeof(kFragMv)) : module(kFrag, sizeof(kFrag));
+    // THE REMASTER'S modules (the tiled point lights, the cutout's late depth - built from the plain
+    // scene shader: not on a ray-traced, motion-vector or soft frame, whose passes keep their own)
+    const bool plainBuild = !rtOn_ && !mvOn_;
+    VkShaderModule fsTiled = plainBuild ? module(kFragTiled, sizeof(kFragTiled)) : VK_NULL_HANDLE;
+    VkShaderModule fsCut = plainBuild ? module(kFragCut, sizeof(kFragCut)) : VK_NULL_HANDLE;
+    VkShaderModule fsTiledCut = plainBuild ? module(kFragTiledCut, sizeof(kFragTiledCut)) : VK_NULL_HANDLE;
     // ...and the scene pass that COUNTS its rays (`pipeCount_`, one frame in 60)
     VkShaderModule fsCount = !(rtOn_ && rtCountFeat_) ? VK_NULL_HANDLE
                            : mvOn_ ? module(kFragRtcMv, sizeof(kFragRtcMv)) : module(kFragRtc, sizeof(kFragRtc));
@@ -1992,6 +2604,91 @@ bool VulkanRenderer::makePipelines() {
             VKCHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeSubj_[k]),
                     "subject pipeline");
         }
+        // ...and the same with the TILED fragment module
+        if (fsTiled) {
+            VkPipelineShaderStageCreateInfo st2[2] = {stages[0], stages[1]};
+            st2[1].module = fsTiled;
+            gp.pStages = st2;
+            if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled_[k]) != VK_SUCCESS)
+                pipeTiled_[k] = VK_NULL_HANDLE;
+            gp.pStages = stages;
+        }
+        // ...and the OPAQUE CUTOUT's, the depth the shader's (only an opaque
+        // draw writes depth); without one a cutout draw keeps the plain
+        if (k == 0) {
+            VkPipelineShaderStageCreateInfo st3[2] = {stages[0], stages[1]};
+            gp.pStages = st3;
+            st3[1].module = fsCut;
+            if (!fsCut || vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeCut_) != VK_SUCCESS)
+                pipeCut_ = VK_NULL_HANDLE;
+            st3[1].module = fsTiledCut;
+            if (!fsTiled || !fsTiledCut ||
+                vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiledCut_) != VK_SUCCESS)
+                pipeTiledCut_ = VK_NULL_HANDLE;
+            gp.pStages = stages;
+        }
+    }
+    // ---- THE FLOORS' REFLECTION at one sample (`reflPass1_`), with MSAA on
+    if (samples_ != VK_SAMPLE_COUNT_1_BIT) {
+        VkAttachmentDescription a1[2]{};
+        a1[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+        a1[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        a1[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        a1[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        a1[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        a1[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a1[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        a1[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;   // as the MSAA pass's resolve leaves it
+        a1[1].format = dsFmt_;
+        a1[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        a1[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        a1[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a1[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        a1[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        a1[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        a1[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference c1{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference d1{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub1{};
+        sub1.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub1.colorAttachmentCount = 1; sub1.pColorAttachments = &c1;
+        sub1.pDepthStencilAttachment = &d1;
+        VkRenderPassCreateInfo rp1{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rp1.attachmentCount = 2; rp1.pAttachments = a1;
+        rp1.subpassCount = 1; rp1.pSubpasses = &sub1;
+        if (vkCreateRenderPass(dev_, &rp1, nullptr, &reflPass1_) != VK_SUCCESS) reflPass1_ = VK_NULL_HANDLE;
+        VkPipelineMultisampleStateCreateInfo ms1{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        ms1.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        for (int k = 0; k < 3 && reflPass1_; ++k) {
+            const VkPipelineColorBlendAttachmentState cba = blendState(k);
+            ds.depthWriteEnable = omk::blendRule(kModes[k]).depthWrite ? VK_TRUE : VK_FALSE;
+            VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            cb.attachmentCount = 1; cb.pAttachments = &cba;
+            VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            gp.stageCount = 2; gp.pStages = stages;
+            gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+            gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+            gp.pMultisampleState = &ms1; gp.pDepthStencilState = &ds;
+            gp.pColorBlendState = &cb;
+            gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = reflPass1_;
+            if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipe1_[k]) != VK_SUCCESS)
+                pipe1_[k] = VK_NULL_HANDLE;
+            if (fsTiled) {
+                VkPipelineShaderStageCreateInfo st2[2] = {stages[0], stages[1]};
+                st2[1].module = fsTiled;
+                gp.pStages = st2;
+                if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeTiled1_[k]) != VK_SUCCESS)
+                    pipeTiled1_[k] = VK_NULL_HANDLE;
+            }
+        }
+        // all or none: a missing one and the floors keep the MSAA pass
+        for (int k = 0; k < 3; ++k)
+            if (!pipe1_[k] || (fsTiled && !pipeTiled1_[k])) {
+                for (auto& p : pipe1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
+                for (auto& p : pipeTiled1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
+                if (reflPass1_) { vkDestroyRenderPass(dev_, reflPass1_, nullptr); reflPass1_ = VK_NULL_HANDLE; }
+                break;
+            }
     }
     // ---- the mirror pass's pipelines.
     //
@@ -2095,36 +2792,22 @@ bool VulkanRenderer::makePipelines() {
     vkDestroyShaderModule(dev_, fs, nullptr);
     if (fsSoft) vkDestroyShaderModule(dev_, fsSoft, nullptr);
     if (fsCount) vkDestroyShaderModule(dev_, fsCount, nullptr);
+    if (fsTiled) vkDestroyShaderModule(dev_, fsTiled, nullptr);
+    if (fsCut) vkDestroyShaderModule(dev_, fsCut, nullptr);
+    if (fsTiledCut) vkDestroyShaderModule(dev_, fsTiledCut, nullptr);
 
-    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    // NEAREST, and REPEAT. Nearest because the software rasterizer's `sample()`
-    // takes one texel with no filtering and the two are being differenced;
-    // repeat because `% t.width` is what lets one atlas tile across a wall.
-    si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
-    // ...unless the filtering ENHANCEMENT asked for bilinear (renderer.h).
-    // The colour key survives it because `upload` puts the key in ALPHA and
-    // the shader treats a filtered sample as premultiplied.
-    if (filter_ >= 1) { si.magFilter = VK_FILTER_LINEAR; si.minFilter = VK_FILTER_LINEAR; }
-    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    // Trilinear: the mip chain `upload` generates, blended between levels.
-    // With one level (every mode below 2) maxLod 0 samples level 0 exactly.
-    if (filter_ >= 2) { si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; si.maxLod = VK_LOD_CLAMP_NONE; }
-    if (anisoOn_) {
-        si.anisotropyEnable = VK_TRUE;
-        si.maxAnisotropy = std::min(static_cast<float>(aniso_), props_.limits.maxSamplerAnisotropy);
-    }
-    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &sampler_), "vkCreateSampler");
+    if (!makeSampler()) return false;
 
     // 64 sets: the engine's texture pool is 58 slots, plus the white fallback.
     // Plus set 1, the per-frame shadow set, and its one uniform buffer.
-    VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 130},
+    // two samplers a texture's set since the light map (binding 1)
+    VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 531},   // four a texture's set
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1}};
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1},
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};   // set 1's tiled lights
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    dpi.maxSets = 131; dpi.poolSizeCount = 3; dpi.pPoolSizes = ps;
+    // (+1: the reflection's own set 1, `ds1Refl_`)
+    dpi.maxSets = 132; dpi.poolSizeCount = 4; dpi.pPoolSizes = ps;
     // a texture's set is freed on its own when it leaves the pool (`setTextures`)
     dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
@@ -2222,14 +2905,14 @@ bool VulkanRenderer::makePipelines() {
     return true;
 }
 
-// SET 1, rebuilt. It has to be a function because `setTextures` RESETS the
-// descriptor pool, and a reset frees every set allocated from it - this one
-// included. The first version allocated it once in `makePipelines` and the
-// game's first `setTextures` quietly destroyed it, so the fragment shader read
-// a strength of 0 and no shadow was ever drawn. The synthetic probe passed an
-// EMPTY texture list, took the early-out and never reset, which is why it
-// worked while the game did not: the bug was in the difference between the two
-// callers, not in the shadow.
+// SET 1, made once by `makePipelines` and kept as long as the pool: a
+// texture's set now leaves the pool on its own (`FREE_DESCRIPTOR_SET`), and
+// nothing resets it. (It was a function because `setTextures` once RESET the
+// pool, freeing every set - this one included - and was remade after each:
+// the first version, made once, was quietly destroyed by the game's first
+// `setTextures` and no shadow was ever drawn, while the synthetic probe's EMPTY
+// texture list never reset and worked - the bug was in the difference between
+// the two callers, not in the shadow.)
 void VulkanRenderer::makeShadowSet() {
     if (shFbuf_ == VK_NULL_HANDLE || dpool_ == VK_NULL_HANDLE) return;
     VkDescriptorSetAllocateInfo sai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -2243,7 +2926,14 @@ void VulkanRenderer::makeShadowSet() {
     VkDescriptorImageInfo imgi{shSampler_, shView_,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorBufferInfo lbufi{litUbo_, 0, sizeof(LightUbo)};
-    VkWriteDescriptorSet wr[3]{};
+    VkDescriptorBufferInfo pbufi{pointsBuf_, 0, kPointsBytes};
+    VkDescriptorBufferInfo tbufi{tilesBuf_, 0, kTileWordsMax * 4};
+    // ...and the water REFLECTION's twin, its tiles the buffer's second half
+    if (pointsBuf_ && tilesBuf_) {
+        if (ds1Refl_) { vkFreeDescriptorSets(dev_, dpool_, 1, &ds1Refl_); ds1Refl_ = VK_NULL_HANDLE; }
+        if (vkAllocateDescriptorSets(dev_, &sai, &ds1Refl_) != VK_SUCCESS) ds1Refl_ = VK_NULL_HANDLE;
+    }
+    VkWriteDescriptorSet wr[5]{};
     wr[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     wr[0].dstSet = ds1_; wr[0].dstBinding = 0; wr[0].descriptorCount = 1;
     wr[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2256,7 +2946,19 @@ void VulkanRenderer::makeShadowSet() {
     wr[2].dstSet = ds1_; wr[2].dstBinding = 2; wr[2].descriptorCount = 1;
     wr[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     wr[2].pBufferInfo = &lbufi;
-    vkUpdateDescriptorSets(dev_, 3, wr, 0, nullptr);
+    for (uint32_t k = 3; k < 5; ++k) {
+        wr[k] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[k].dstSet = ds1_; wr[k].dstBinding = k; wr[k].descriptorCount = 1;
+        wr[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        wr[k].pBufferInfo = k == 3 ? &pbufi : &tbufi;
+    }
+    vkUpdateDescriptorSets(dev_, pointsBuf_ && tilesBuf_ ? 5 : 3, wr, 0, nullptr);
+    if (ds1Refl_) {
+        VkDescriptorBufferInfo rbufi{tilesBuf_, kTileWordsMax * 4, kTileWordsMax * 4};
+        for (auto& w : wr) w.dstSet = ds1Refl_;
+        wr[4].pBufferInfo = &rbufi;
+        vkUpdateDescriptorSets(dev_, 5, wr, 0, nullptr);
+    }
 }
 
 // The swapchain, and the presentation path.
@@ -2443,15 +3145,18 @@ bool VulkanRenderer::resize(int w, int h) {
     if (fbuf_) { vkDestroyFramebuffer(dev_, fbuf_, nullptr); fbuf_ = VK_NULL_HANDLE; }
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
     for (auto& cp : passCont_) if (cp) { vkDestroyRenderPass(dev_, cp, nullptr); cp = VK_NULL_HANDLE; }
+    if (reflPass_) { vkDestroyRenderPass(dev_, reflPass_, nullptr); reflPass_ = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     img(motionView_, motion_, motionMem_);
     killSsao();
     killVol();
+    if (depthRead_) { vkDestroyImageView(dev_, depthRead_, nullptr); depthRead_ = VK_NULL_HANDLE; }
     if (depthSampleView_) { vkDestroyImageView(dev_, depthSampleView_, nullptr); depthSampleView_ = VK_NULL_HANDLE; }
     img(depthView_, depth_, depthMem_);
     buf(readBuf_, readMem_);
     buf(upBuf_, upMem_);
+    killUpscale();   // before the present's pool and layout, which it borrows
     // the present pass reads `colourView_`, so all of it goes; its guard is
     // `presPipe_`, and it is rebuilt at the new size on its next use
     if (presPipe_) { vkDestroyPipeline(dev_, presPipe_, nullptr); presPipe_ = VK_NULL_HANDLE; }
@@ -2467,8 +3172,10 @@ bool VulkanRenderer::resize(int w, int h) {
     killPost();
     killHdrBlit();
     if (stencilSampleView_) { vkDestroyImageView(dev_, stencilSampleView_, nullptr); stencilSampleView_ = VK_NULL_HANDLE; }
+    killRmPost();   // it reads `colour_` and is sized by the target
+    killReflection();
     w_ = w; h_ = h;
-    rw_ = w_ * ss_; rh_ = h_ * ss_;
+    rw_ = rs(w_); rh_ = rs(h_);
     srcW_ = rw_; srcH_ = rh_;
     resizing_ = true;
     const bool ok = makeTarget();
@@ -2476,6 +3183,31 @@ bool VulkanRenderer::resize(int w, int h) {
     if (!ok) return false;
     std::printf("vulkan: frame target remade at %dx%d\n", w_, h_);
     return surface_ == VK_NULL_HANDLE || remakeSwapchain();
+}
+
+// A RETARGET (OMK's options menu, `todo/graphics-menu.md` 3c): the
+// supersample, the upscale and the ambient occlusion asked again on a running
+// renderer - the target remade by `resize` at the same size, which reads them
+// (`makeTarget`: the render size, the readable depth). Viewport and scissor are
+// dynamic state, so the pipelines stand. NOT MSAA: the scene pipelines are
+// compiled for the sample count (`makePipelines`), so a different one is
+// refused and waits for the next start.
+bool VulkanRenderer::retarget(int samples, int ss, float up, float ao) {
+    const int want = samples < 2 ? 1 : samples < 4 ? 2 : samples < 8 ? 4 : 8;
+    if (dev_ != VK_NULL_HANDLE && want != wantSamples_) return false;
+    wantSamples_ = want;
+    ss_ = ss < 2 ? 1 : ss < 4 ? 2 : 4;
+    up_ = up > 1.0f ? std::min(up, 3.0f) : 1.0f;
+    ao_ = ao < 0.0f ? 0.0f : ao > 4.0f ? 4.0f : ao;
+    if (up_ > 1.0f && ss_ > 1) {
+        std::printf("vulkan: the upscale takes the supersample's place (--ssaa %d ignored)\n", ss_);
+        ss_ = 1;
+    }
+    if (dev_ == VK_NULL_HANDLE) return true;
+    const bool ok = resize(w_, h_);
+    std::printf("vulkan: retargeted - %dx supersampling, upscale x%.2f, ambient occlusion %.2f%s\n", ss_,
+                static_cast<double>(up_), static_cast<double>(ao_), aoOk_ || ao_ <= 0.0f ? "" : " (refused here)");
+    return ok;
 }
 
 bool VulkanRenderer::presentDirect() {
@@ -2559,7 +3291,7 @@ bool VulkanRenderer::presentImage(VkImage src, int sw, int sh, bool defer) {
                    swapImgs_[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    // LINEAR only when there is something to average: at ss 1
                    // this must stay NEAREST or every existing frame changes.
-                   1, &blit, ss_ > 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+                   1, &blit, ss_ > 1 || up_ > 1.0f ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
 
     barrier(swapImgs_[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
@@ -2629,12 +3361,16 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
                     lut + 4 * static_cast<std::size_t>(s.px[static_cast<std::size_t>(i)]), 4);
     vkUnmapMemory(dev_, upMem_);
 
+    // UPSCALED, `colour_` is smaller than the picture: it goes into the
+    // present pass's output-size image instead, and is presented from there
+    const bool up = up_ > 1.0f;
+    if (up && !makePresentPass()) return false;
     VkCommandBuffer cb = oneShotBegin();
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.oldLayout = up ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = colour_;
+    b.image = up ? presImg_ : colour_;
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -2642,8 +3378,8 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
     VkBufferImageCopy cp{};
     cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     cp.imageExtent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
-    vkCmdCopyBufferToImage(cb, upBuf_, colour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
-    srcW_ = w_; srcH_ = h_;   // only the top-left holds the uploaded picture
+    vkCmdCopyBufferToImage(cb, upBuf_, up ? presImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    if (!up) { srcW_ = w_; srcH_ = h_; }   // only the top-left holds the uploaded picture
     b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2651,7 +3387,7 @@ bool VulkanRenderer::presentSurface(const omk::Surface& s) {
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
     oneShotEnd(cb);
-    return presentDirect();
+    return up ? presentImage(presImg_, w_, h_) : presentDirect();
 }
 
 // ---- THE PRESENT PASS (todo/optimization.md step 4b) --------------------------
@@ -2665,21 +3401,14 @@ bool VulkanRenderer::makePresentPass() {
         ii.extent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        // TRANSFER_DST: `presentSurface` uploads into it when the upscale
+        // leaves `colour_` smaller than the output
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                   VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &presImg_), "present image");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, presImg_, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &presMem_), "present image memory");
-        OMK_GPU_ALLOC("present image", omk::prof::gpuKey(omk::prof::kVkMemory, presMem_), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, presImg_, presMem_, 0), "present image bind");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = presImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = fmt;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &presView_), "present image view");
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "present image", presImg_, presMem_, &presView_))
+            return false;
     }
     {
         // every pixel is written, so nothing is loaded; it ends where the
@@ -2695,9 +3424,23 @@ bool VulkanRenderer::makePresentPass() {
         VkSubpassDescription sub{};
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+        // in: after the last frame's blit or copy read it and `presentSurface`
+        // wrote it; out: before the next blit or copy reads it
+        VkSubpassDependency dep[2]{};
+        dep[0].srcSubpass = VK_SUBPASS_EXTERNAL; dep[0].dstSubpass = 0;
+        dep[0].srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        dep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep[1].srcSubpass = 0; dep[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dep[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
         rpi.attachmentCount = 1; rpi.pAttachments = &a;
         rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+        rpi.dependencyCount = 2; rpi.pDependencies = dep;
         VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &presPass_), "present render pass");
         VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fi.renderPass = presPass_; fi.attachmentCount = 1; fi.pAttachments = &presView_;
@@ -2747,7 +3490,13 @@ bool VulkanRenderer::makePresentPass() {
         };
         VkShaderModule qv = module(kFsqVert, sizeof(kFsqVert));
         VkShaderModule qf = module(kPresentFrag, sizeof(kPresentFrag));
-        if (!qv || !qf) { std::fprintf(stderr, "vulkan: present shader module\n"); return false; }
+        if (!qv || !qf) {
+            // (the one that was made, not leaked)
+            if (qv) vkDestroyShaderModule(dev_, qv, nullptr);
+            if (qf) vkDestroyShaderModule(dev_, qf, nullptr);
+            std::fprintf(stderr, "vulkan: present shader module\n");
+            return false;
+        }
         VkPipelineShaderStageCreateInfo st[2]{};
         st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                  VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
@@ -2780,45 +3529,82 @@ bool VulkanRenderer::makePresentPass() {
         vkDestroyShaderModule(dev_, qf, nullptr);
         if (pr != VK_SUCCESS) { std::fprintf(stderr, "vulkan: present pipeline\n"); return false; }
     }
-    return makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * (hdrOn_ ? 8 : 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      presRead_, presReadMem_);
+    return true;   // `presRead_` is `worldPicture`'s, made on its first call
 }
 
 // `colour_` (TRANSFER_SRC, as `end()` and `presentSurface` leave it) through the
 // present shader into `presImg_`, and back to TRANSFER_SRC.
-bool VulkanRenderer::runPresentPass(int vy, int vh, bool mid) {
+bool VulkanRenderer::runPresentPass(int vy, int vh, bool mid, bool raw) {
     if (!makePresentPass()) return false;
     if (mid && fgMidDs_ == VK_NULL_HANDLE) return false;
+    const bool up = up_ > 1.0f;
+    if (up && !makeUpscale()) return false;
+    vh = std::clamp(vh, 1, h_);
     // THE POST CHAIN's display-size picture when it ran this frame (the
-    // supersample folded already), else the scene's colour
-    const bool post = postLive_ && postImg_ != VK_NULL_HANDLE && presDsPost_ != VK_NULL_HANDLE;
+    // supersample folded already), else the scene's colour - under the remaster's UPSCALE the
+    // chain stands down (`postLive_` is false there), and `up` takes the EASU's picture below
+    const bool post = !up && postLive_ && postImg_ != VK_NULL_HANDLE && presDsPost_ != VK_NULL_HANDLE;
     // ...or, `mid`, FRAME GENERATION's in-between picture (already in the sampled layout: no transitions)
     const VkImage srcImg = post ? postImg_ : colour_;
     const VkDescriptorSet srcDs = mid ? fgMidDs_ : post ? presDsPost_ : presDs_;
     VkCommandBuffer cb = oneShotBegin();
-    const auto layout = [&](VkImageLayout from, VkImageLayout to) {
+    // Real scopes both ways (the audit's item 8): the top of the pipe and no
+    // access ordered nothing, and only the host's wait on the frame's fence
+    // kept it right
+    const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags srcA, VkAccessFlags dstA,
+                            VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.oldLayout = from; b.newLayout = to;
         b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = srcImg;
         b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        b.srcAccessMask = 0; b.dstAccessMask = 0;
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
     };
-    if (!mid) layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // its last writer: the scene's or the post's pass, or `presentSurface`'s copy
+    if (!mid) layout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    if (up) {
+        // EASU: the drawn picture, `rs(w_) x rs(vh)` of `colour_`'s top-left,
+        // up to the picture's `w_ x vh` in `easuImg_`'s
+        VkRenderPassBeginInfo ep{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        ep.renderPass = easuPass_; ep.framebuffer = easuFb_;
+        ep.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(vh)}};
+        vkCmdBeginRenderPass(cb, &ep, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, easuPipe_);
+        const VkViewport vp{0, 0, static_cast<float>(w_), static_cast<float>(vh), 0.0f, 1.0f};
+        vkCmdSetViewport(cb, 0, 1, &vp);
+        vkCmdSetScissor(cb, 0, 1, &ep.renderArea);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, easuPlo_, 0, 1, &easuDs_, 0, nullptr);
+        std::uint32_t con[16];
+        omk::fsrEasuCon(con, static_cast<float>(rs(w_)), static_cast<float>(rs(vh)), static_cast<float>(rw_),
+                        static_cast<float>(rh_), static_cast<float>(w_), static_cast<float>(vh));
+        vkCmdPushConstants(cb, easuPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof con, con);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb);   // `easuImg_` left SHADER_READ_ONLY for the pass below
+    }
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rp.renderPass = presPass_; rp.framebuffer = presFbuf_;
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_)}};
     vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPipe_);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, &srcDs, 0, nullptr);
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, (post || mid) ? 1 : ss_, hdrOn_ ? 32 : colourDepth_};
+    const VkDescriptorSet* presIn = up ? &presUpDs_ : &presDs_;
+    if (!up && (post || mid)) presIn = &srcDs;   // the post chain's picture, or the in-between one
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, presIn,
+                            0, nullptr);
+    // (`depth`: 32 passes the picture through; `rcas`/`raw`: the remaster's upscale, `present.frag`)
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, up ? 1 : (post || mid) ? 1 : ss_, hdrOn_ ? 32 : colourDepth_,
+                         up ? 1 : 0, up ? omk::fsrRcasCon(omk::kFsrRcasStops) : 0u, raw ? 1 : 0};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRenderPass(cb);
-    if (!mid) layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    // after the EASU's or this pass's reads, before the readback's copy or
+    // `presentDirect`'s blit
+    if (!mid) layout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+           0, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+           VK_PIPELINE_STAGE_TRANSFER_BIT);
     oneShotEnd(cb);
     return true;
 }
@@ -2840,7 +3626,13 @@ bool VulkanRenderer::worldPicture(int vy, int vh, std::vector<unsigned char>& rg
 
 // `presImg_` (TRANSFER_SRC, as the present pass and the overlay leave it) read back
 bool VulkanRenderer::copyPresentOut(std::vector<unsigned char>& rgba) {
-    if (presImg_ == VK_NULL_HANDLE || presRead_ == VK_NULL_HANDLE) return false;
+    if (presImg_ == VK_NULL_HANDLE) return false;
+    // (made on the first call: the picture is 8 bytes a pixel on an HDR swapchain)
+    if (presRead_ == VK_NULL_HANDLE &&
+        !makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * (hdrOn_ ? 8 : 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    presRead_, presReadMem_))
+        return false;
     VkCommandBuffer cb = oneShotBegin();
     VkBufferImageCopy cp{};
     cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -3290,7 +4082,7 @@ void VulkanRenderer::killPost() {
 
 void VulkanRenderer::runPost() {
     postLive_ = false;
-    if (!postWant_ || postFailed_) return;
+    if (!postWant_ || postFailed_ || enhOff_) return;
     // DEPTH OF FIELD on cinematic frames only; the rest of the chain always
     const bool dof = dofOn_ && foc_.dofLive(postReq_.dof);
     if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof)) return;
@@ -3386,6 +4178,7 @@ void VulkanRenderer::runPost() {
 
 bool VulkanRenderer::makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use, VkImage& img,
                                  VkDeviceMemory& mem, VkImageView& view, const char* label) {
+    // (through `makeImage2D`, the one checked image helper: a refusal says so once and fails cleanly)
     VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ii.imageType = VK_IMAGE_TYPE_2D; ii.format = f;
     ii.extent = {static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1};
@@ -3393,19 +4186,7 @@ bool VulkanRenderer::makeImage2d(VkFormat f, int w, int h, VkImageUsageFlags use
     ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
     ii.usage = use; ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VKCHECK(vkCreateImage(dev_, &ii, nullptr, &img), label);
-    VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, img, &req);
-    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    ai.allocationSize = req.size;
-    ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &mem), label);
-    OMK_GPU_ALLOC(label, omk::prof::gpuKey(omk::prof::kVkMemory, mem), ai.allocationSize);
-    VKCHECK(vkBindImageMemory(dev_, img, mem, 0), label);
-    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vi.image = img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = f;
-    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &view), label);
-    return true;
+    return makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, label, img, mem, &view);
 }
 
 void VulkanRenderer::freeImage2d(VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
@@ -3662,7 +4443,18 @@ bool VulkanRenderer::probeUpload(const unsigned char* rgba) {
 
 bool VulkanRenderer::init(int w, int h) {
     w_ = w; h_ = h;
-    rw_ = w_ * ss_; rh_ = h_ * ss_;
+    if (up_ > 1.0f && ss_ > 1) {
+        std::printf("vulkan: the upscale takes the supersample's place (--ssaa %d ignored)\n", ss_);
+        ss_ = 1;
+    }
+    rw_ = rs(w_); rh_ = rs(h_);
+    if (up_ > 1.0f) {
+        std::printf("vulkan: the frame drawn at %dx%d and upscaled to %dx%d by FSR 1 (x%.2f) - "
+                    "a REMASTER feature\n", rw_, rh_, w_, h_, static_cast<double>(up_));
+        omk::event("vulkan.upscale", {{"factor", static_cast<double>(up_)}, {"drawW", static_cast<long>(rw_)},
+                                      {"drawH", static_cast<long>(rh_)}, {"outW", static_cast<long>(w_)},
+                                      {"outH", static_cast<long>(h_)}});
+    }
     srcW_ = rw_; srcH_ = rh_;
     if (!pickDevice()) return false;
     // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`), and its REFLECTIONS on the
@@ -3686,20 +4478,83 @@ bool VulkanRenderer::init(int w, int h) {
     return true;
 }
 
-void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
+void VulkanRenderer::setPreloadTextures(std::span<const omk::Texture> t) {
+    const auto keyOf = [](const omk::Texture& x) {
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+    };
+    for (auto& [key, u] : uploaded_) u.pinned = false;
+    preQueue_.clear();
+    for (const auto& x : t) {
+        if (!x.hasPixels()) continue;
+        if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.pinned = true;
+        else preQueue_.push_back(x);   // shares its pixel buffers: the key stays
+    }
+}
+
+int VulkanRenderer::preloadStep(int budget) {
+    if (preQueue_.empty() || budget <= 0) return static_cast<int>(preQueue_.size());
+    const std::size_t n = std::min(preQueue_.size(), static_cast<std::size_t>(budget));
+    std::vector<omk::Texture> now(preQueue_.end() - static_cast<std::ptrdiff_t>(n), preQueue_.end());
+    preQueue_.resize(preQueue_.size() - n);
+    poolTextures(now, true);
+    return static_cast<int>(preQueue_.size());
+}
+
+void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload) {
     // One VkImage and one descriptor set per material, plus a white 1x1 for a
     // material with no texture - which `raster.cpp` handles by leaving the
     // texel at 255 and letting the vertex colour stand alone.
     // `fill` writes tw*th RGBA texels, alpha the colour key
-    auto upload = [&](auto&& fill, int tw, int th, Tex& out) {
-        const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * 4;
-        VkBuffer sb; VkDeviceMemory sm;
-        if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        sb, sm)) return;
-        void* p = nullptr;
-        vkMapMemory(dev_, sm, 0, bytes, 0, &p);
-        auto* dst = static_cast<unsigned char*>(p);
+    // `withSet` false: the image alone - a light map, a normal map, a 1x1
+    // stand-in, bound into ANOTHER texture's set (each had one allocated,
+    // written and freed at once)
+    // `one`: ONE channel (R8), `fill` writing a byte a texel - a light map,
+    // which the shader reads `.r` of; a quarter of its memory as RGBA (each
+    // 1024x1024 map 4 MB -> 1 MB). Only where the device blits and filters
+    // R8 (`r8Ok_`), else RGBA as before.
+    // an uploaded image's view, and its descriptor set unless `withSet` false
+    auto viewAndSet = [&](Tex& out, VkFormat fmt, uint32_t levels, bool withSet) {
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = fmt;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+        if (vkCreateImageView(dev_, &vi, nullptr, &out.view) != VK_SUCCESS) {
+            // no view, no texture: it draws white (and a map stands aside)
+            out.view = VK_NULL_HANDLE;
+            freeDeviceMemory(out.mem);
+            vkDestroyImage(dev_, out.img, nullptr);
+            out.img = VK_NULL_HANDLE; out.mem = VK_NULL_HANDLE;
+            return;
+        }
+        if (!withSet) return;
+        // HYBRID RAY TRACING reads it bindless, from a table of its own
+        if (rtOn_) out.rt = rtAllocTex(out.view);
+
+        VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
+        if (vkAllocateDescriptorSets(dev_, &dai, &out.ds) != VK_SUCCESS) {
+            // said, never written into: the draw then takes the white set
+            out.ds = VK_NULL_HANDLE;
+            static bool told = false;
+            if (!told) { told = true; std::fprintf(stderr, "vulkan: the texture descriptor pool is exhausted\n"); }
+            return;
+        }
+        VkDescriptorImageInfo dii{sampler_, out.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr.dstSet = out.ds; wr.dstBinding = 0; wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr.pImageInfo = &dii;
+        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+    };
+    // `what`: the image's category - "textures", or the 1x1 stand-ins every
+    // missing texture or map falls back to
+    auto upload = [&](auto&& fill, int tw, int th, Tex& out, bool withSet = true, bool one = false,
+                      const char* what = "textures") {
+        const VkFormat fmt = one ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(tw) * th * (one ? 1 : 4);
+        VkBuffer sb; VkDeviceSize so = 0;
+        unsigned char* dst = nullptr;
+        if (!stage(bytes, sb, so, dst)) return;
         // Alpha carries the COLOUR KEY: 0 where the texel is black, the key
         // the cutout path (flag 0x800) discards on, 255 elsewhere. With the
         // nearest sampler the shader's test on it is the same test on the
@@ -3708,7 +4563,6 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         // clean. A non-cutout batch never reads alpha, so a black texel
         // still draws black.
         fill(dst);
-        vkUnmapMemory(dev_, sm);
 
         // THE MIP CHAIN - the trilinear enhancement's, generated here by a
         // ladder of half-size linear blits, because the .3DT ships ONE level
@@ -3720,23 +4574,17 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (filter_ >= 2)
             for (int m = std::max(tw, th); m > 1; m >>= 1) ++levels;
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
         ii.extent = {static_cast<uint32_t>(tw), static_cast<uint32_t>(th), 1};
         ii.mipLevels = levels; ii.arrayLayers = 1;
         ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                  | (levels > 1 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        vkCreateImage(dev_, &ii, nullptr, &out.img);
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, out.img, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        vkAllocateMemory(dev_, &ai, nullptr, &out.mem);
-        OMK_GPU_ALLOC("textures", omk::prof::gpuKey(omk::prof::kVkMemory, out.mem), ai.allocationSize);
-        vkBindImageMemory(dev_, out.img, out.mem, 0);
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, what, out.img, out.mem, nullptr))
+            return;   // no image: the texture draws white (its staging left to the flush)
 
-        VkCommandBuffer cb = oneShotBegin();
+        VkCommandBuffer cb = uploadCb();
         VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -3747,6 +4595,7 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
         VkBufferImageCopy cp{};
+        cp.bufferOffset = so;
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         cp.imageExtent = {static_cast<uint32_t>(tw), static_cast<uint32_t>(th), 1};
         vkCmdCopyBufferToImage(cb, sb, out.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
@@ -3773,43 +4622,77 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         }
         // Level 0..levels-2 are now TRANSFER_SRC, the last TRANSFER_DST; the
         // last level is moved to SRC too so ONE barrier can hand the whole
-        // image to the shader. With one level that is level 0 (DST -> SRC ->
-        // shader), a layout change and nothing else.
-        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, levels - 1, 1, 0, 1};
-        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        bar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        // image to the shader. With one level there is no ladder: level 0 goes
+        // from DST to the shader - the image has no TRANSFER_SRC usage then
+        // (the validation layer's VUID-VkImageMemoryBarrier-oldLayout-01212,
+        // found 2026-10-24).
+        if (levels > 1) {
+            bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, levels - 1, 1, 0, 1};
+            bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            bar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        }
         bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
-        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        bar.oldLayout = levels > 1 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        bar.srcAccessMask = levels > 1 ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
-        oneShotEnd(cb);
-        vkDestroyBuffer(dev_, sb, nullptr);
-        freeDeviceMemory(sm);
-
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = out.img; vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vi.format = VK_FORMAT_R8G8B8A8_UNORM;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
-        vkCreateImageView(dev_, &vi, nullptr, &out.view);
-        // HYBRID RAY TRACING reads it bindless, from a table of its own
-        if (rtOn_) out.rt = rtAllocTex(out.view);
-
-        VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        dai.descriptorPool = dpool_; dai.descriptorSetCount = 1; dai.pSetLayouts = &dsl_;
-        vkAllocateDescriptorSets(dev_, &dai, &out.ds);
-        VkDescriptorImageInfo dii{sampler_, out.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        wr.dstSet = out.ds; wr.dstBinding = 0; wr.descriptorCount = 1;
-        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        wr.pImageInfo = &dii;
-        vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+        // (submitted with the pool's other copies - `flushUploads`)
+        viewAndSet(out, fmt, levels, withSet);
+    };
+    // ...and a texture of the pack's BLOCK FORMATS (`o3de/texpack.h`
+    // PackBlocks): the file's levels copied as they are - no blit ladder,
+    // a block image cannot be blitted, and the KTX2 carries its own chain
+    // made the ladder's way (`tools/tex_encode.cpp`). Only its level 0 when
+    // the sampler takes no mips, as the RGBA path makes none.
+    auto uploadZ = [&](const omk::PackBlocks& z, Tex& out, bool withSet = true) {
+        const VkFormat fmt = static_cast<VkFormat>(z.vkFormat);
+        const uint32_t levels = filter_ >= 2 ? static_cast<uint32_t>(z.levels.size()) : 1u;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(z.bytes.size());
+        VkBuffer sb; VkDeviceSize so = 0;
+        unsigned char* dst = nullptr;
+        if (!stage(bytes, sb, so, dst)) return;
+        std::memcpy(dst, z.bytes.data(), z.bytes.size());
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = fmt;
+        ii.extent = {static_cast<uint32_t>(z.w), static_cast<uint32_t>(z.h), 1};
+        ii.mipLevels = levels; ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (!makeImage2D(ii, VK_IMAGE_ASPECT_COLOR_BIT, "textures", out.img, out.mem, nullptr))
+            return;   // no image: the texture draws white (its staging left to the flush)
+        VkCommandBuffer cb = uploadCb();
+        VkImageMemoryBarrier bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.srcQueueFamilyIndex = bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = out.img;
+        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+        bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        std::vector<VkBufferImageCopy> cps(levels);
+        for (uint32_t l = 0; l < levels; ++l) {
+            cps[l] = VkBufferImageCopy{};
+            cps[l].bufferOffset = so + z.levels[l].first;
+            cps[l].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+            cps[l].imageExtent = {std::max(1u, static_cast<uint32_t>(z.w) >> l),
+                                  std::max(1u, static_cast<uint32_t>(z.h) >> l), 1};
+        }
+        vkCmdCopyBufferToImage(cb, sb, out.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, cps.data());
+        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        viewAndSet(out, fmt, levels, withSet);
     };
 
     // THE POOL, UPLOADED ONLY WHERE IT IS NEW, as the GLES, 3DS and GL1
@@ -3824,21 +4707,51 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
     // A set is freed on its own and only the new ones are allocated -
     // reallocating them all on a per-frame call exhausts the descriptor pool
     // and crashes.
-    if (white_.img == VK_NULL_HANDLE)
-        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
-    // ...and the TEXTURE PACK's replacement (`o3de/texpack.h`), when the slot
-    // has one: a different picture under the same indices
-    const auto keyOf = [](const omk::Texture& x) {
-        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height,
-                               x.hasPack() ? x.packRgba.data() : nullptr);
+    // binding 1 of a texture's set: its light map, or the shared black one;
+    // binding 3 its normal map, or the shared flat one
+    const auto bindLight = [&](VkDescriptorSet ds, VkImageView view, VkImageView normal) {
+        VkDescriptorImageInfo dii[2] = {{sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                                        {sampler_, normal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        VkWriteDescriptorSet wr[2]{};
+        for (int k = 0; k < 2; ++k) {
+            wr[k].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            wr[k].dstSet = ds; wr[k].dstBinding = k == 0 ? 1 : 3; wr[k].descriptorCount = 1;
+            wr[k].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            wr[k].pImageInfo = &dii[k];
+        }
+        vkUpdateDescriptorSets(dev_, 2, wr, 0, nullptr);
+        bindReflection(ds);
     };
+    if (normalFlat_.img == VK_NULL_HANDLE) {
+        upload([](unsigned char* d) { d[0] = 128; d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, normalFlat_, false,
+               false, "texture stand-ins");
+    }
+    if (lightBlack_.img == VK_NULL_HANDLE) {
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 0; }, 1, 1, lightBlack_, false, false,
+               "texture stand-ins");
+        // an upload's set is written with binding 0 alone: the black one's
+        // view stands in for the light map and the reflection until bound
+    }
+    if (white_.img == VK_NULL_HANDLE) {
+        upload([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_, true, false,
+               "texture stand-ins");
+        // (the stand-ins refused - 4 bytes each, so a device already out of
+        // memory: no set to write into, and a draw with none is skipped)
+        if (white_.ds && lightBlack_.view && normalFlat_.view)
+            bindLight(white_.ds, lightBlack_.view, normalFlat_.view);
+    }
+    const auto keyOf = [](const omk::Texture& x) {
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
+    };
+    if (!preload) {
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
         if (x.hasPixels())
             if (auto hit = uploaded_.find(keyOf(x)); hit != uploaded_.end()) hit->second.used = true;
+    }
     bool waited = false;
-    for (auto it = uploaded_.begin(); it != uploaded_.end(); ) {
-        if (it->second.used) { ++it; continue; }
+    for (auto it = uploaded_.begin(); !preload && it != uploaded_.end(); ) {
+        if (it->second.used || it->second.pinned) { ++it; continue; }
         if (!waited) { vkDeviceWaitIdle(dev_); waited = true; }
         Tex& old = it->second.t;
         if (old.ds)   vkFreeDescriptorSets(dev_, dpool_, 1, &old.ds);
@@ -3846,29 +4759,129 @@ void VulkanRenderer::setTextures(std::span<const omk::Texture> t) {
         if (old.img)  vkDestroyImage(dev_, old.img, nullptr);
         if (old.mem)  freeDeviceMemory(old.mem);
         rtFreeTex(old.rt);
+        if (old.emView) vkDestroyImageView(dev_, old.emView, nullptr);
+        if (old.emImg)  vkDestroyImage(dev_, old.emImg, nullptr);
+        if (old.emMem)  freeDeviceMemory(old.emMem);
+        if (old.nmView) vkDestroyImageView(dev_, old.nmView, nullptr);
+        if (old.nmImg)  vkDestroyImage(dev_, old.nmImg, nullptr);
+        if (old.nmMem)  freeDeviceMemory(old.nmMem);
         it = uploaded_.erase(it);
     }
-    tex_.assign(t.size(), Tex{});
+    if (!preload) tex_.assign(t.size(), Tex{});
+    // THE TEXTURE PACK (`o3de/texpack.h`), consulted only when one was opened:
+    // a texture it holds is uploaded from the pack's pixels at the pack's size
+    const omk::TexturePack& pack = omk::texturePack();
+    std::vector<omk::PackImage> reps;
+    int lit = 0;
+    // what a pool change COSTS the frame it lands on - the pack's decode and
+    // every upload - said when it brings anything new (the preload's measure)
+    using clk = std::chrono::steady_clock;
+    const auto t0 = clk::now();
+    int fresh = 0, blocksUp = 0;
+    long prepared = 0;
+    if (pack.shown()) {
+        // every texture this pool brings that the device does not hold yet,
+        // decoded together on the thread pool
+        std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
+        for (std::size_t i = 0; i < t.size(); ++i)
+            if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
+        const std::size_t taken0 = pack.parkedTaken();
+        reps = pack.replacements(toDecode);
+        prepared = static_cast<long>(pack.parkedTaken() - taken0);   // decoded ahead, on a load's thread
+    }
+    const auto t1 = clk::now();
+    int packed = 0, normals = 0;
     for (std::size_t i = 0; i < t.size(); ++i) {
         const omk::Texture& x = t[i];
         if (!x.hasPixels()) continue;
         auto hit = uploaded_.find(keyOf(x));
         if (hit == uploaded_.end()) {
             Uploaded u;
-            u.idx = x.idx; u.pal = x.pal; u.used = true;
-            if (x.hasPack()) {
-                // the pack's picture, already keyed as `toRgbaKeyed` keys
-                u.pack = x.packRgba;
-                upload([&](unsigned char* d) { std::memcpy(d, x.packRgba.data(), x.packRgba.size()); },
-                       x.width * x.packScale, x.height * x.packScale, u.t);
-                u.t.scale = x.packScale;
+            u.idx = x.idx; u.pal = x.pal; u.used = !preload; u.pinned = preload;
+            if (pack.shown() && reps[i].ok && !reps[i].colourZ.empty()) {
+                const omk::PackImage& rep = reps[i];
+                uploadZ(rep.colourZ, u.t);
+                u.t.su = static_cast<float>(rep.w) / static_cast<float>(x.width);
+                u.t.sv = static_cast<float>(rep.h) / static_cast<float>(x.height);
+                u.t.packed = true;
+                ++blocksUp;
+            } else if (pack.shown() && reps[i].ok) {
+                const omk::PackImage& rep = reps[i];
+                const int rw = rep.w, rh = rep.h;
+                upload([&](unsigned char* d) { std::memcpy(d, rep.rgba.data(), rep.rgba.size()); }, rw, rh, u.t);
+                u.t.su = static_cast<float>(rw) / static_cast<float>(x.width);
+                u.t.sv = static_cast<float>(rh) / static_cast<float>(x.height);
+                u.t.packed = true;
             } else {
                 upload([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, u.t);
             }
+            // ...and its LIGHT MAP, when the pack has one: grey in RGBA, the
+            // red channel what `scene.frag` reads
+            if (pack.shown() && !reps[i].emissiveZ.empty()) {
+                Tex em;
+                uploadZ(reps[i].emissiveZ, em, false);
+                u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
+                ++lit;
+            } else if (pack.shown() && !reps[i].emissive.empty()) {
+                const omk::PackImage& rep = reps[i];
+                Tex em;
+                if (r8Ok_)
+                    upload([&](unsigned char* d) { std::memcpy(d, rep.emissive.data(), rep.emissive.size()); },
+                           rep.ew, rep.eh, em, false, true);
+                else
+                    upload([&](unsigned char* d) {
+                        for (std::size_t q = 0; q < rep.emissive.size(); ++q)
+                            d[4 * q] = d[4 * q + 1] = d[4 * q + 2] = rep.emissive[q], d[4 * q + 3] = 255;
+                    }, rep.ew, rep.eh, em, false);
+                u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
+                ++lit;
+            }
+            // ...and its NORMAL MAP (the relief's), when the pack has one
+            if (pack.shown() && !reps[i].normalZ.empty()) {
+                Tex nm;
+                uploadZ(reps[i].normalZ, nm, false);
+                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
+                ++normals;
+            } else if (pack.shown() && !reps[i].normal.empty()) {
+                const omk::PackImage& rep = reps[i];
+                Tex nm;
+                upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm, false);
+                u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
+                ++normals;
+            }
+            if (u.t.ds && lightBlack_.view && normalFlat_.view)
+                bindLight(u.t.ds, u.t.emView ? u.t.emView : lightBlack_.view,
+                          u.t.nmView ? u.t.nmView : normalFlat_.view);
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
+            ++fresh;
+        } else if (preload) {
+            hit->second.pinned = true;
         }
+        if (preload) continue;
         tex_[i] = hit->second.t;
+        packed += tex_[i].packed ? 1 : 0;
     }
+    flushUploads();   // the pool's copies, submitted and waited on once
+    poolLit_ = std::any_of(tex_.begin(), tex_.end(), [](const Tex& t) { return t.emView != VK_NULL_HANDLE; });
+    const double decodeMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    const double uploadMs = std::chrono::duration<double, std::milli>(clk::now() - t1).count();
+    if (preload) {
+        if (fresh > 0)
+            std::printf("vulkan: preload - %d textures uploaded ahead (%d from block files), read and decode %.1f ms, "
+                        "uploads %.1f ms; %zu still to come\n", fresh, blocksUp, decodeMs, uploadMs, preQueue_.size());
+        omk::event("texpack.preload", {{"fresh", fresh}, {"blocks", blocksUp}, {"prepared", prepared}, {"decodeMs", decodeMs},
+                                       {"uploadMs", uploadMs}, {"waiting", static_cast<long>(preQueue_.size())}});
+        return;
+    }
+    if (fresh > 0)
+        std::printf("vulkan: texture pool - %d new of %zu (%d from the pack's block files), the pack's read and "
+                    "decode %.1f ms, the uploads %.1f ms\n", fresh, t.size(), blocksUp, decodeMs, uploadMs);
+    if (pack.shown())
+        omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
+                                    {"replaced", packed}, {"lights", lit}, {"normals", normals},
+                                    {"lightChannels", r8Ok_ ? 1 : 4}, {"fresh", fresh}, {"blocks", blocksUp},
+                                    {"prepared", prepared},
+                                    {"decodeMs", decodeMs}, {"uploadMs", uploadMs}});
 }
 
 bool VulkanRenderer::uploadGeometry(const omk::Geometry* g) {
@@ -4021,8 +5034,12 @@ void VulkanRenderer::resolveTies(const omk::Draw& d) {
 
 void VulkanRenderer::setViewport(const omk::View& view) {
     // ...in RENDER pixels, so the letterbox's strip scales with the frame.
-    const int vw = (view.letterboxed() ? view.vw : w_) * ss_;
-    const int vh = (view.letterboxed() ? view.vh : h_) * ss_;
+    picH_ = view.letterboxed() ? view.vh : h_;
+    int vw = rs(view.letterboxed() ? view.vw : w_);
+    int vh = rs(picH_);
+    // the FLOORS' reflection: drawn at HALF size into the image's top-left
+    // quarter (`reflHalf_`) - a quarter of the pixels; the water's, whole
+    if (reflHalfNow()) { vw = (vw + 1) / 2; vh = (vh + 1) / 2; }
     const VkViewport vp{0, 0, static_cast<float>(vw), static_cast<float>(vh),
                         0.0f, 1.0f};
     const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(vw), static_cast<uint32_t>(vh)}};
@@ -4198,6 +5215,8 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
         vkResetCommandBuffer(cb_, 0);
         vkBeginCommandBuffer(cb_, &bi);
         cbStarted_ = true;
+        tsCount_ = 0;
+        stamp("start");
     }
     // a posed caster is placed on the CPU: the depth-only pipeline has no set 2
     std::vector<omk::Draw> placed;
@@ -4233,6 +5252,7 @@ void VulkanRenderer::shadowPass(const omk::View& v, std::span<const omk::Draw> c
     }
     vkCmdEndRenderPass(cb_);
     }
+    stamp("shadow");
 
     if (shUboPtr_) {
         ShadowUbo ub{};
@@ -4267,6 +5287,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     deadBufs_.clear();
     fog_ = view.fog;
     fogStart_ = view.fogStart;
+    mistOn_ = view.mist > 0.0f;
     fogEnd_ = view.fogEnd;
     for (int i = 0; i < 3; ++i)
         fogColour_[i] = static_cast<float>(view.fogColour[i]) / 255.0f;
@@ -4274,8 +5295,20 @@ void VulkanRenderer::begin(const omk::View& view) {
         clearColour_[i] = static_cast<float>(view.clearColour[i]) / 255.0f;
     for (int i = 0; i < 3; ++i) frameEye_[i] = view.cam.eye[i];   // the MAIN view's (`pushView`)
     pushView(view);
+    // the ambient occlusion's camera: the last pass begun is the frame's own
+    if (aoOk_) {
+        omk::RCamera c = view.cam;
+        c.w = view.letterboxed() ? view.vw : w_;
+        c.h = view.letterboxed() ? view.vh : h_;
+        float s3[3], u3[3], f3[3], tH = 1.0f, tV = 1.0f;
+        omk::cameraBasis(c, s3, u3, f3, tH, tV);
+        aoView4_[0] = tH; aoView4_[1] = tV;
+        aoView4_[2] = static_cast<float>(rs(c.w)); aoView4_[3] = static_cast<float>(rs(c.h));
+    }
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
+    rain_ = view.rain;
+    if (passFb_ == VK_NULL_HANDLE) enhOff_ = view.enhOff;   // (the water reflection's begin is not the frame's)
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
     foc_.begin(view, w_, h_, dofOn_);   // the post chain's view and depth of field's focus
@@ -4310,6 +5343,76 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
+        ub.eye[3] = view.setDim;   // the night (`View::setDim`), w of the eye's vec4
+        ub.fx[0] = view.relief;
+        // THE MIST (`View::mist`): its strength, its ground and its height
+        ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;
+        // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
+        // keeps, and their tiles binned for THIS camera at the render size.
+        // The reflection pass begins first and the frame's pass last - the
+        // last binning is the one both read, and the reflection skips them.
+        ub.tiles = 0;
+        tilesNow_ = false;
+        // `OMK_REFL_UNLIT=1`, an instrument: the reflection's tiles left empty,
+        // as before - what `verify.py: engine: floors` compares against
+        static const bool reflUnlit = omk::envFlag("OMK_REFL_UNLIT");
+        if (passFb_ != VK_NULL_HANDLE && reflUnlit && !view.points.empty() && tilesPtr_ && pipeTiled_[0]) {
+            // the tiled pipelines, as the reflection drew with, and NO tiles
+            // (0 across): the module the same, its lights none
+            std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+            ub.tiles = 1;
+            tilesNow_ = true;
+        } else if (passFb_ != VK_NULL_HANDLE && !view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0] &&
+            ds1Refl_ != VK_NULL_HANDLE) {
+            // THE WATER REFLECTION'S begin: its tiles binned for the REFLECTED
+            // camera into the buffer's second half, which its own set 1 binds
+            // (the points are the frame's - the world's lights light the world
+            // wherever it is seen from; the frame's begin writes them again)
+            const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
+            omk::RCamera bc = view.cam;
+            bc.w = view.letterboxed() ? view.vw : w_;
+            bc.h = view.letterboxed() ? view.vh : h_;
+            const int hd = reflHalf_ ? 2 : 1;   // the floors' reflection is drawn at half size
+            omk::binLights(bc, (rs(bc.w) + hd - 1) / hd, (rs(bc.h) + hd - 1) / hd,
+                           std::span<const omk::View::GpuLight>(view.points.data(), np), tilesRefl_);
+            if (tilesRefl_.words.size() <= kTileWordsMax) {
+                std::memcpy(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, tilesRefl_.words.data(),
+                            tilesRefl_.words.size() * 4);
+                ub.tiles = 1;
+                tilesNow_ = true;
+            }
+        } else if (!view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0]) {
+            const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
+            auto* gp = static_cast<GpuLightStd140*>(pointsPtr_);
+            for (std::size_t i = 0; i < np; ++i) {
+                const auto& l = view.points[i];
+                for (int k = 0; k < 3; ++k) { gp[i].posA[k] = l.pos[k]; gp[i].dirB[k] = l.dir[k]; gp[i].colourI[k] = l.colour[k]; }
+                gp[i].posA[3] = l.radiusA; gp[i].dirB[3] = l.radiusB; gp[i].colourI[3] = l.intensity;
+            }
+            omk::RCamera bc = view.cam;
+            bc.w = view.letterboxed() ? view.vw : w_;
+            bc.h = view.letterboxed() ? view.vh : h_;
+            omk::binLights(bc, rs(bc.w), rs(bc.h), std::span<const omk::View::GpuLight>(view.points.data(), np), tiles_);
+            if (tiles_.words.size() <= kTileWordsMax) {
+                std::memcpy(tilesPtr_, tiles_.words.data(), tiles_.words.size() * 4);
+                ub.tiles = 1;
+                tilesNow_ = true;
+            } else if (!tilesOverTold_) {
+                tilesOverTold_ = true;   // said, never silent: every point light goes with it
+                std::fprintf(stderr, "vulkan: the tiled lights' lists (%zu words) past the buffer's %llu - "
+                             "the point lights off this frame\n", tiles_.words.size(),
+                             static_cast<unsigned long long>(kTileWordsMax));
+            }
+            if (!tilesTold_) {
+                tilesTold_ = true;
+                omk::event("remaster.tiles", {{"lights", static_cast<long>(np)}, {"listed", tiles_.listed},
+                                              {"full", tiles_.full}, {"tile", tiles_.tile}});
+                std::printf("vulkan: the tiled point lights - %zu lights over %dx%d tiles of %d px, %ld listed, "
+                            "%d tiles full (a REMASTER feature)\n", np, tiles_.across, tiles_.down, tiles_.tile,
+                            tiles_.listed, tiles_.full);
+            }
+        }
+        // (the soft particles' fade constants - outside the tiled lights' branch above)
         if (softOn_) {
             const float nearP = omk::kNearCut, farP = 200000.0f;
             ub.soft[0] = farP / (farP - nearP);
@@ -4328,6 +5431,8 @@ void VulkanRenderer::begin(const omk::View& view) {
         vkResetCommandBuffer(cb_, 0);
         vkBeginCommandBuffer(cb_, &bi);
         cbStarted_ = true;
+        tsCount_ = 0;
+        stamp("start");
     }
     // A frame with no shadow pass says so through the uniform, because the
     // descriptor set is bound either way.
@@ -4338,15 +5443,27 @@ void VulkanRenderer::begin(const omk::View& view) {
         std::memcpy(shUboPtr_, &ub, sizeof ub);
     }
     VkClearValue clear[3]{};   // [2]: the motion vectors, cleared to none (the zero)
-    // the engine clears to the scene's fog colour (`View::clearColour`)
-    clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], 1.0f}};
+    // the engine clears to the scene's fog colour (`View::clearColour`); with
+    // the BLOOM its alpha is the light map's value, so what no surface covers
+    // clears to 0 - not light (at 1 the fog past the clip distance glowed)
+    clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], bloom_ > 0.0f ? 0.0f : 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp.renderPass = pass_; rp.framebuffer = fbuf_;
+    rp.renderPass = passFb_ && passFb_ == reflFbuf1_ ? reflPass1_ : passFb_ && reflPass_ ? reflPass_ : pass_;
+    // the post's this frame: decided here, where the scene's target is
+    // chosen - with it the scene lands in `postSrc_`, and `end` must run it.
+    // The bloom asks for it only with a light map in the pool: without one
+    // every texel's light is 0 and the glow would move no pixel
+    if (!passFb_) {
+        lightMapNow_ = false;
+        postNow_ = ((bloom_ > 0.0f && poolLit_) || lutN_ > 1 || aoOk_) && makeRmPost();
+    }
+    rp.framebuffer = passFb_ ? passFb_ : postNow_ ? fbufPost_ : fbuf_;
     // the RENDER size, not the output one: a render area smaller than the
     // attachment leaves the rest of it undefined, and with supersampling on
     // the resolve then averages four blocks of uninitialised memory.
-    rp.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+    rp.renderArea = {{0, 0}, {static_cast<uint32_t>(reflHalfNow() ? (rw_ + 1) / 2 : rw_),
+                              static_cast<uint32_t>(reflHalfNow() ? (rh_ + 1) / 2 : rh_)}};
     rp.clearValueCount = mvOn_ ? 3 : 2; rp.pClearValues = clear;
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     setViewport(view);
@@ -4394,7 +5511,9 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
     for (int i = 0; i < nl; ++i) std::memcpy(f + 4 + 8 * i, d.vertexLights + 8 * i, 8 * sizeof(float));
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));   // three vec4 an affine
-    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    float* t = a + 12 * d.meshPoses;                                 // ...and the body light's tint
+    t[0] = d.lightTint[0]; t[1] = d.lightTint[1]; t[2] = d.lightTint[2]; t[3] = 1.0f;
+    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses + 1) * 16;
     // ...and with motion vectors, the body's PREVIOUS affines right after them (`scene.vert` -DOMK_MOTION),
     // from the last frame's block of the same `meshPose` - or the current ones again for a body new this
     // frame, which then shows only the camera's motion rather than a wrong one of its own
@@ -4404,7 +5523,7 @@ bool VulkanRenderer::writePose(const omk::Draw& d, uint32_t& off) {
         // (and across a cut, where nothing has a previous position)
         const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
                                 ? prev->second.data() : d.meshPose;
-        std::memcpy(a + n, from, n * sizeof(float));
+        std::memcpy(a + n + 4, from, n * sizeof(float));  // (after the tint's vec4)
         curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
         poseUsed_ += 3 * d.meshPoses * 16;
     }
@@ -4495,7 +5614,7 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // depth is READ-ONLY - so its shader can sample the depth it is tested against - and the next draw
     // that writes depth (or the stencil) opens a writable segment again (the engine's order puts the
     // sprites after the opaque)
-    const bool soft = softOn_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePipeline_ && !reflStencil_ &&
+    const bool soft = softOn_ && !enhOff_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePipeline_ && !reflStencil_ &&
                       pipeSoft_[k] != VK_NULL_HANDLE;
     const bool subj = foc_.subjStencil && k > 0 && curBody_ && !soft && !forcePipeline_ && !reflStencil_ &&
                       pipeSubj_[k] != VK_NULL_HANDLE;
@@ -4507,7 +5626,12 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                    : soft           ? pipeSoft_[k]
                    : subj           ? pipeSubj_[k]
                    : rtCounting_ && pipeCount_[k] != VK_NULL_HANDLE ? pipeCount_[k]
+                   : passFb_ && passFb_ == reflFbuf1_ ? (tilesNow_ && pipeTiled1_[k] ? pipeTiled1_[k] : pipe1_[k])
+                   : tilesNow_ && pipeTiled_[k] ? pipeTiled_[k]
                                     : pipe_[k];
+    // an opaque CUTOUT draw: the same pipeline with the shader's depth
+    if (d.cutout && use == pipe_[0] && pipeCut_) use = pipeCut_;
+    else if (d.cutout && use == pipeTiled_[0] && pipeTiledCut_) use = pipeTiledCut_;
     vkCmdBindPipeline(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, use);
 
     // The texture is the key's LOW SIX BITS and nothing else (ASSETS 4b) -
@@ -4516,10 +5640,14 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     const VkDescriptorSet ds =
         (slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE) ? tex_[slot].ds
                                                                 : white_.ds;
+    if (ds == VK_NULL_HANDLE) return;   // not even the white stand-in: nothing to draw with
+    lightMapNow_ |= slot < tex_.size() && tex_[slot].emView != VK_NULL_HANDLE;
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 0, 1, &ds, 0, nullptr);
-    if (ds1_ != VK_NULL_HANDLE)
+    // (the water reflection's pass binds its own: the tiles of ITS camera)
+    const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && ds1Refl_ != VK_NULL_HANDLE ? ds1Refl_ : ds1_;
+    if (ds1 != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 1, 1,
-                                &ds1_, 0, nullptr);
+                                &ds1, 0, nullptr);
     if (soft)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 3, 1, &softDs_, 0, nullptr);
     // set 2, the pose buffer - bound for every draw (the shader declares it),
@@ -4529,10 +5657,29 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
                                 &poseDs_, 1, &poseOff);
     push_.posed = posed ? 1 : 0;
 
-    // bit 0 the cutout; bits 8.. a TEXTURE PACK slot's k (`scene.frag`), 0 for none
-    const int packK = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot].scale : 1;
-    push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
+    push_.cutout = d.cutout ? 1 : 0;
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
+    push_.bloomMode = bloom_ > 0.0f ? 1 : 0;
+    // ...and a REFLECTING FLOOR's run (`Draw::reflect`), the water's rule at
+    // its own strength - in the frame's pass, never the reflection's
+    const bool floorNow = !reflectingNow_ && d.reflect > 0.0f;
+    push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;
+    // ...and a WET floor's darkening (`Draw::wet`), in the mode's high bits -
+    // the block is full: 0..255 above the low four
+    if (!reflectingNow_ && d.wet > 0.0f) {
+        push_.water |= static_cast<int32_t>(std::lround(std::min(d.wet, 1.0f) * 255.0f)) << 4;
+        // ...and the RAIN's strength for its ripples, the eight bits above
+        push_.water |= static_cast<int32_t>(std::lround(std::clamp(rain_, 0.0f, 1.0f) * 255.0f)) << 12;
+        // ...and bit 20: it is SNOW lying, not rain (`Draw::snow`)
+        if (d.snow) push_.water |= 1 << 20;
+    }
+    push_.waterStrength = reflectingNow_ ? waterY_ : floorNow ? waterStrength_ * d.reflect : waterStrength_;
+    {
+        const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
+        push_.texScaled = bound.packed ? 1 : 0;
+        push_.texScaleU = bound.su;
+        push_.texScaleV = bound.sv;
+    }
     push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
     if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
     // THE FOG's two exclusions, applied here because this is where the bucket
@@ -4547,6 +5694,13 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         const float fogScale = (d.bucketKey & 0x800u) ? 2.0f : 1.0f;
         push_.fogStart = fogStart_ * fogScale;
         push_.fogEnd   = fogEnd_ * fogScale;
+        for (int i = 0; i < 3; ++i) push_.fogColour[i] = fogColour_[i];
+    } else if (mistOn_ && !(d.bucketKey & 0x2080u)) {
+        // THE MIST without the game's fog (an unlimited clip has none): the
+        // same batches, marked -1 / -1 - no linear fog (`fogEnd > fogStart`
+        // fails), the mist's to take (`scene.frag`)
+        push_.fogStart = -1.0f;
+        push_.fogEnd = -1.0f;
         for (int i = 0; i < 3; ++i) push_.fogColour[i] = fogColour_[i];
     }
     const auto it = vbo_.find(d.geo);
@@ -4623,28 +5777,8 @@ bool VulkanRenderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
 bool VulkanRenderer::makeSsao() {
     if (aoBlurPipe_ != VK_NULL_HANDLE) return true;
     if (!ssaoOn_ || depthSampleView_ == VK_NULL_HANDLE) return false;
-    {
-        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R8_UNORM;
-        ii.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
-        ii.mipLevels = 1; ii.arrayLayers = 1;
-        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &aoImg_), "ssao image");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, aoImg_, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &aoMem_), "ssao memory");
-        OMK_GPU_ALLOC("ssao", omk::prof::gpuKey(omk::prof::kVkMemory, aoMem_), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, aoImg_, aoMem_, 0), "ssao bind");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = aoImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R8_UNORM;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &aoView_), "ssao view");
-    }
+    if (!makeImage2d(VK_FORMAT_R8_UNORM, rw_, rh_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     aoImg_, aoMem_, aoView_, "ssao image")) return false;
     const auto pass = [&](VkFormat fmt, VkAttachmentLoadOp load, VkImageLayout from,
                           VkImageLayout to, VkImageView view, VkRenderPass& rp,
                           VkFramebuffer& fb) -> bool {
@@ -4806,6 +5940,7 @@ void VulkanRenderer::killSsao() {
 }
 
 void VulkanRenderer::runSsao() {
+    if (enhOff_) return;
     if (!makeSsao() || aoVw_ <= 0 || aoVh_ <= 0) return;
     // the frame's depth and colour writes, before the passes read them
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -4977,11 +6112,11 @@ void VulkanRenderer::rtFreeTex(int slot) {
     ++texGen_;   // no ray-tracing record may name the slot now
 }
 
-// a slot's texture word for a record: the table index, and the pack's k - 1 in bits 24..
+// a slot's texture word for a record: the table index, and the pack's scale per axis in bits 24.. (`omk::rtTexScaleBits`)
 // (`rt.glsl` `rtTexel`)
 std::uint32_t VulkanRenderer::rtTexWord(std::size_t slot) const {
     if (slot >= tex_.size() || tex_[slot].rt < 0) return static_cast<std::uint32_t>(std::max(white_.rt, 0));
-    return static_cast<std::uint32_t>(tex_[slot].rt) | (static_cast<std::uint32_t>(tex_[slot].scale - 1) << 24);
+    return static_cast<std::uint32_t>(tex_[slot].rt) | omk::rtTexScaleBits(tex_[slot].packed ? tex_[slot].su : 1.0f, tex_[slot].packed ? tex_[slot].sv : 1.0f);
 }
 
 bool VulkanRenderer::rtInit() {
@@ -5126,6 +6261,7 @@ void VulkanRenderer::rtBind(const omk::View& view) {
     // the constants, numbers and `OMK_RT_*` tunings alike, are `o3de/rtscene.cpp`'s
     RtFrame f{};
     omk::rt::fillFrame(fog_ ? fogColour_ : clearColour_, rtEye_, view.skyMean, rtReflOn_, f);
+    if (view.enhOff) { f.sky[3] = 0.0f; f.refl[0] = 0.0f; }   // the original's look: no traced light, no reflections
     std::memcpy(rtFrameBuf_.p, &f, sizeof f);
     const VkDescriptorSet s[3] = {rtDsA_, rtDsB_, rtDsC_};
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 4, 3, s, 0, nullptr);
@@ -5766,7 +6902,7 @@ void VulkanRenderer::fgTick() {
 
 // At a world present: whether an in-between frame goes out first - and if so it is in `fgMidImg_`.
 bool VulkanRenderer::fgMidFrame() {
-    if (!fgOn_) return false;
+    if (!fgOn_ || enhOff_) return false;
     fgTick();
     ++fgReal_;
     bool mid = false;
@@ -5865,7 +7001,13 @@ void VulkanRenderer::fgInterpolate(int n, int p, float k) {
 
 // a display-size RGBA8 image (in the sampled layout) read back (the probe's)
 bool VulkanRenderer::fgRead(VkImage img, std::vector<unsigned char>& out) {
-    if (hdrOn_ || !makePresentPass() || presRead_ == VK_NULL_HANDLE) return false;
+    if (hdrOn_ || !makePresentPass()) return false;
+    // (the readback buffer is made on the first call, as `copyPresentOut`'s is)
+    if (presRead_ == VK_NULL_HANDLE &&
+        !makeBuffer(static_cast<VkDeviceSize>(w_) * h_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    presRead_, presReadMem_))
+        return false;
     VkCommandBuffer cb = oneShotBegin();
     const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags srcA, VkAccessFlags dstA,
                             VkPipelineStageFlags srcS, VkPipelineStageFlags dstS) {
@@ -6011,28 +7153,9 @@ bool VulkanRenderer::makeVol() {
     if (!volOn_ || depthSampleView_ == VK_NULL_HANDLE || volUbo_ == VK_NULL_HANDLE) return false;
     volW_ = (rw_ + 1) / 2;
     volH_ = (rh_ + 1) / 2;
-    {
-        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        ii.imageType = VK_IMAGE_TYPE_2D; ii.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        ii.extent = {static_cast<uint32_t>(volW_), static_cast<uint32_t>(volH_), 1};
-        ii.mipLevels = 1; ii.arrayLayers = 1;
-        ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VKCHECK(vkCreateImage(dev_, &ii, nullptr, &volImg_), "volumetrics image");
-        VkMemoryRequirements req; vkGetImageMemoryRequirements(dev_, volImg_, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = memType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        VKCHECK(vkAllocateMemory(dev_, &ai, nullptr, &volMem_), "volumetrics memory");
-        OMK_GPU_ALLOC("volumetrics", omk::prof::gpuKey(omk::prof::kVkMemory, volMem_), ai.allocationSize);
-        VKCHECK(vkBindImageMemory(dev_, volImg_, volMem_, 0), "volumetrics bind");
-        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        vi.image = volImg_; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &volView_), "volumetrics view");
-    }
+    if (!makeImage2d(VK_FORMAT_R16G16B16A16_SFLOAT, volW_, volH_,
+                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     volImg_, volMem_, volView_, "volumetrics image")) return false;
     const auto pass = [&](VkFormat fmt, VkAttachmentLoadOp load, VkImageLayout from, VkImageLayout to,
                           VkImageView view, int fw, int fh, VkRenderPass& rp, VkFramebuffer& fb) -> bool {
         VkAttachmentDescription a{};
@@ -6185,7 +7308,7 @@ void VulkanRenderer::killVol() {
 
 void VulkanRenderer::runVol() {
     ++volFrame_;
-    if (volCount_ <= 0 || aoVw_ <= 0 || aoVh_ <= 0) return;
+    if (enhOff_ || volCount_ <= 0 || aoVw_ <= 0 || aoVh_ <= 0) return;
     if (!makeVol()) {
         static bool told = false;
         if (!told) std::fprintf(stderr, "volumetrics: the passes could not be made - the frame without them\n");
@@ -6244,6 +7367,27 @@ void VulkanRenderer::runVol() {
     }
 }
 
+// the frame's stamps, read after its fence: each pass's time is from the stamp
+// before it to its own (the first, "start", none)
+void VulkanRenderer::readStamps() {
+    static const char* const kNames[kStamps] = {"shadow", "reflection", "scene", "post"};
+    if (!tsPool_ || tsCount_ < 2) return;
+    uint64_t t[kStamps] = {};
+    if (vkGetQueryPoolResults(dev_, tsPool_, 0, tsCount_, sizeof t, t, sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+    for (uint32_t i = 1; i < tsCount_; ++i)
+        for (uint32_t n = 0; n < kStamps && kNames[n]; ++n)
+            if (std::strcmp(tsLabel_[i], kNames[n]) == 0)
+                tsSum_[n] += static_cast<double>(t[i] - t[i - 1]) * props_.limits.timestampPeriod / 1e6;
+    if (++tsFrames_ < 60) return;
+    std::printf("vulkan: GPU ms a frame (mean of 60) - shadow %.2f, reflection %.2f, scene %.2f, post %.2f\n",
+                tsSum_[0] / 60.0, tsSum_[1] / 60.0, tsSum_[2] / 60.0, tsSum_[3] / 60.0);
+    omk::event("gpu.time", {{"shadow", tsSum_[0] / 60.0}, {"reflection", tsSum_[1] / 60.0},
+                            {"scene", tsSum_[2] / 60.0}, {"post", tsSum_[3] / 60.0}});
+    for (auto& v : tsSum_) v = 0.0;
+    tsFrames_ = 0;
+}
+
 void VulkanRenderer::end() {
     postLive_ = false;
     cpuPoseSlot_.clear();
@@ -6283,6 +7427,11 @@ void VulkanRenderer::end() {
         }
     if (!recording_) return;
     vkCmdEndRenderPass(cb_);
+    stamp("scene");
+    if (postNow_) {
+        recordPost(cb_);
+        stamp("post");
+    }
     if (softOn_ && softDraws_ > 0 && !softTold_) {
         softTold_ = true;
         std::printf("vulkan: soft particles - %ld sprite batches faded against the depth on this frame\n",
@@ -6315,6 +7464,7 @@ void VulkanRenderer::end() {
     vkResetFences(dev_, 1, &fence_);
     vkQueueSubmit(queue_, 1, &si, fence_);
     vkWaitForFences(dev_, 1, &fence_, VK_TRUE, UINT64_MAX);
+    readStamps();
     if (rtRecorded_) {
         rtRecorded_ = false;
         rtAfter();
@@ -6340,18 +7490,30 @@ const omk::Surface& VulkanRenderer::readback() {
     // buffer on every call silently threw that composite away and the frame
     // came back nearly black on Vulkan while software was correct. So a frame
     // is converted once, when `end()` says there is a new one.
+    if (fb_.w != w_ || fb_.h != h_) fb_ = omk::Surface(w_, h_, 0);
     if (!dirty_) return fb_;
     dirty_ = false;
+    // UPSCALED, the picture is read at the OUTPUT size, through the same EASU
+    // and RCAS as the present pass's (`raw`: undithered), and quantised below
+    // as a frame drawn at that size would be
+    const bool up = up_ > 1.0f;
+    const int cw = up ? w_ : rw_, ch = up ? h_ : rh_;
+    if (readBuf_ == VK_NULL_HANDLE &&
+        !makeBuffer(static_cast<VkDeviceSize>(cw) * ch * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    readBuf_, readMem_))
+        return fb_;
     if (copyOwed_) {                 // the copy `end()` does not record
         copyOwed_ = false;
+        if (up && !runPresentPass(0, picH_ > 0 ? picH_ : h_, false, true)) return fb_;
         VkCommandBuffer cb = oneShotBegin();
         VkBufferImageCopy cp{};
         cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        // the scene's colour, or THE POST CHAIN's display-size picture when it
-        // ran (its supersample folded already)
-        const bool postRead = postLive_ && !hdrOn_;   // (HDR's is FP16, and HDR's frames go out on the GPU)
-        cp.imageExtent = {static_cast<uint32_t>(postRead ? w_ : rw_), static_cast<uint32_t>(postRead ? h_ : rh_), 1};
-        vkCmdCopyImageToBuffer(cb, postRead ? postImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        // the scene's colour; THE POST CHAIN's display-size picture when it ran (its supersample folded
+        // already); or, UPSCALED (the remaster's EASU/RCAS - the chain then stands down), the present image
+        const bool postRead = postLive_ && !hdrOn_ && !up;   // (HDR's is FP16, and HDR's frames go out on the GPU)
+        cp.imageExtent = {static_cast<uint32_t>(postRead ? w_ : cw), static_cast<uint32_t>(postRead ? h_ : ch), 1};
+        vkCmdCopyImageToBuffer(cb, postRead ? postImg_ : up ? presImg_ : colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                readBuf_, 1, &cp);
         oneShotEnd(cb);              // submitted and waited: the bytes are there
     }
@@ -6453,6 +7615,10 @@ VulkanRenderer::~VulkanRenderer() {
     killFg();
     rtKill();
     for (auto& p : pipeCount_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    killPost();
+    killRmPost();
+    killLut();
+    killReflection();
     for (auto& bm : deadBufs_) {
         vkDestroyBuffer(dev_, bm.first, nullptr);
         freeDeviceMemory(bm.second);
@@ -6466,19 +7632,42 @@ VulkanRenderer::~VulkanRenderer() {
         if (t.view) vkDestroyImageView(dev_, t.view, nullptr);
         if (t.img)  vkDestroyImage(dev_, t.img, nullptr);
         if (t.mem)  freeDeviceMemory(t.mem);
+        if (t.emView) vkDestroyImageView(dev_, t.emView, nullptr);
+        if (t.emImg)  vkDestroyImage(dev_, t.emImg, nullptr);
+        if (t.emMem)  freeDeviceMemory(t.emMem);
+        if (t.nmView) vkDestroyImageView(dev_, t.nmView, nullptr);
+        if (t.nmImg)  vkDestroyImage(dev_, t.nmImg, nullptr);
+        if (t.nmMem)  freeDeviceMemory(t.nmMem);
     };
     for (auto& [key, u] : uploaded_) killTex(u.t);   // the slots' handles are theirs
     uploaded_.clear();
     tex_.clear();
     killTex(white_);
+    killTex(lightBlack_);
+    killTex(normalFlat_);
     if (sampler_) vkDestroySampler(dev_, sampler_, nullptr);
+    for (VkSampler old : retiredSamplers_) vkDestroySampler(dev_, old, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
+    if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    if (pipeCut_) vkDestroyPipeline(dev_, pipeCut_, nullptr);
+    if (pipeTiledCut_) vkDestroyPipeline(dev_, pipeTiledCut_, nullptr);
+    for (auto& p : pipe1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    for (auto& p : pipeTiled1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
+    if (reflPass1_) vkDestroyRenderPass(dev_, reflPass1_, nullptr);
     if (plo_) vkDestroyPipelineLayout(dev_, plo_, nullptr);
     if (dsl_) vkDestroyDescriptorSetLayout(dev_, dsl_, nullptr);
     if (dsl2_) vkDestroyDescriptorSetLayout(dev_, dsl2_, nullptr);
     if (poseBuf_) vkDestroyBuffer(dev_, poseBuf_, nullptr);
     if (poseMem_) freeDeviceMemory(poseMem_);
+    if (pointsBuf_) vkDestroyBuffer(dev_, pointsBuf_, nullptr);
+    if (pointsMem_) freeDeviceMemory(pointsMem_);
+    flushUploads();   // (nothing pending outside a pool; its own buffers, if any)
+    if (ring_) vkDestroyBuffer(dev_, ring_, nullptr);
+    if (ringMem_) freeDeviceMemory(ringMem_);
+    if (tilesBuf_) vkDestroyBuffer(dev_, tilesBuf_, nullptr);
+    if (tilesMem_) freeDeviceMemory(tilesMem_);
     if (readBuf_) vkDestroyBuffer(dev_, readBuf_, nullptr);
     if (readMem_) freeDeviceMemory(readMem_);
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);
@@ -6488,6 +7677,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (softSampler_) vkDestroySampler(dev_, softSampler_, nullptr);
     if (softPool_) vkDestroyDescriptorPool(dev_, softPool_, nullptr);
     if (dsl3_) vkDestroyDescriptorSetLayout(dev_, dsl3_, nullptr);
+    if (reflPass_) vkDestroyRenderPass(dev_, reflPass_, nullptr);
     if (colourView_) vkDestroyImageView(dev_, colourView_, nullptr);
     if (colour_) vkDestroyImage(dev_, colour_, nullptr);
     if (colourMem_) freeDeviceMemory(colourMem_);
@@ -6500,9 +7690,11 @@ VulkanRenderer::~VulkanRenderer() {
     if (volUbo_) vkDestroyBuffer(dev_, volUbo_, nullptr);
     if (volUboMem_) freeDeviceMemory(volUboMem_);
     if (depthSampleView_) vkDestroyImageView(dev_, depthSampleView_, nullptr);
+    if (depthRead_) vkDestroyImageView(dev_, depthRead_, nullptr);
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);
     if (depthMem_) freeDeviceMemory(depthMem_);
+    killUpscale();
     if (presPipe_) vkDestroyPipeline(dev_, presPipe_, nullptr);
     if (presPlo_) vkDestroyPipelineLayout(dev_, presPlo_, nullptr);
     if (presSampler_) vkDestroySampler(dev_, presSampler_, nullptr);
@@ -6525,6 +7717,22 @@ VulkanRenderer::~VulkanRenderer() {
     if (pipeStencil_) vkDestroyPipeline(dev_, pipeStencil_, nullptr);
     if (pipeDepthReset_) vkDestroyPipeline(dev_, pipeDepthReset_, nullptr);
     for (auto& pp : pipeRefl_) if (pp) vkDestroyPipeline(dev_, pp, nullptr);
+    // the mapped shadow and set 1's layout and buffers - older than the
+    // remaster, and never destroyed until the audit's cleanliness (2026-10-26);
+    // set 1 itself goes with the pool
+    if (shPipe_) vkDestroyPipeline(dev_, shPipe_, nullptr);
+    if (shPlo_) vkDestroyPipelineLayout(dev_, shPlo_, nullptr);
+    if (shFbuf_) vkDestroyFramebuffer(dev_, shFbuf_, nullptr);
+    if (shPass_) vkDestroyRenderPass(dev_, shPass_, nullptr);
+    if (shSampler_) vkDestroySampler(dev_, shSampler_, nullptr);
+    if (shView_) vkDestroyImageView(dev_, shView_, nullptr);
+    if (shImg_) vkDestroyImage(dev_, shImg_, nullptr);
+    if (shMem_) freeDeviceMemory(shMem_);
+    if (dsl1_) vkDestroyDescriptorSetLayout(dev_, dsl1_, nullptr);
+    if (shUbo_) vkDestroyBuffer(dev_, shUbo_, nullptr);
+    if (shUboMem_) freeDeviceMemory(shUboMem_);   // unmapped by the free
+    if (litUbo_) vkDestroyBuffer(dev_, litUbo_, nullptr);
+    if (litUboMem_) freeDeviceMemory(litUboMem_);
     if (pfence_) vkDestroyFence(dev_, pfence_, nullptr);
     if (acquired_) vkDestroySemaphore(dev_, acquired_, nullptr);
     if (drawn_) vkDestroySemaphore(dev_, drawn_, nullptr);
@@ -6535,6 +7743,14 @@ VulkanRenderer::~VulkanRenderer() {
     if (surface_ && inst_) vkDestroySurfaceKHR(inst_, surface_, nullptr);
     if (inst_) vkDestroyInstance(inst_, nullptr);
 }
+
+// THE REMASTER'S HALF (`vkrender_remaster.inl`): the upscale, the post pass,
+// the water reflection. Always compiled - this backend is built only with
+// OMK_REMASTER (the Makefile drops it otherwise), so no stubs.
+#if !OMK_REMASTER
+#error "the Vulkan backend is built with OMK_REMASTER only"
+#endif
+#include "vkrender_remaster.inl"
 
 }  // namespace
 
@@ -6596,6 +7812,11 @@ bool vulkanWindowPicture(Renderer* r, std::vector<unsigned char>& rgba) {
     return static_cast<VulkanRenderer*>(r)->windowPicture(rgba);
 }
 
+// ...and at new enhancements (OMK's options menu, `retarget`)
+bool vulkanRetarget(Renderer* r, int samples, int ss, float up, float ao) {
+    auto* v = dynamic_cast<VulkanRenderer*>(r);
+    return v && v->retarget(samples, ss, up, ao);
+}
 bool vulkanWorldPicture(Renderer* r, int vy, int vh, std::vector<unsigned char>& rgba) {
     auto* v = dynamic_cast<VulkanRenderer*>(r);
     return v && v->worldPicture(vy, vh, rgba);

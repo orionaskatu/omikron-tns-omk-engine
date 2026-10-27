@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE FRAME'S WORLD PHASE - whoever is on screen, and the world when no screen is over it.
 // Part of `main`'s loop body, split out by `todo/play-split.md`; see `playframe.h` for what the names below refer to.
+#include "platform/events.h"
 #include "playframe.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
@@ -34,12 +35,13 @@ int PlayState::phaseWorld() {
         // (`engine: sprite table` sees it).
         const auto bindSetEmittersNow = [&]() {
             if (!session.scene().loaded() || session.scene().setEmittersBound()) return;
-            for (const WorldSlot& ws : worldSlots) {
+            for (WorldSlot& ws : worldSlots) {
                 if (ws.stem.empty() || ws.area != session.sceneArea()) continue;
                 const int bound = session.sceneMutable().bindSetEmitters(ws.emitters);
                 if (bound > 0)
                     std::printf("world: frame %ld  %s binds %d ambient emitters into %s\n",
                                 frameNo, ws.stem.c_str(), bound, session.scene().file().c_str());
+                remasterEmitterLights(ws);   // the emitters' light (`backends/remaster/`)
                 break;
             }
         };
@@ -200,6 +202,7 @@ int PlayState::phaseWorld() {
         {
             bool changed = false, skyChanged = false;
             phaseWorldSets(changed, skyChanged);
+            phasePreload();
             // A NEW SKY is a new section of the texture pool and nothing else:
             // not the whole rebuild below - both sets' soups and grids again,
             // and a new `worldGen`, which bakes the depth tie again - one frame

@@ -2,7 +2,9 @@
 // THE WORLD DRAWN: the particles, the visible set, the lights, the shadows, the mirror and the present pass.
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
+#include "o3de/emitterlight.h"
 #include "playframe.h"
+#include "platform/events.h"
 #include <cstring>
 #include <cctype>
 #include "platform/env.h"
@@ -165,7 +167,8 @@ void PlayState::worldDrawLists() {
     while (shimmerClock >= omk::kShimmerWrap) shimmerClock -= omk::kShimmerWrap;
     view.shimmerClock = shimmerClock;
     view.dither = dither;
-    view.colourDepth = colourDepth;
+    view.colourDepth = enhShown_ ? colourDepth : 16;   // (the original's look: its 565)
+    view.enhOff = !enhShown_;
     const bool litPerPixel = lighting > 0;
     // TWO BASES, and the difference is a property of the models.
     //
@@ -181,10 +184,23 @@ void PlayState::worldDrawLists() {
     // `LightObject` and `sub_440CA0` lights every character exactly as it
     // lights a walker, from the scene's `+416`, so a character takes `1`
     // like the crowd, and `1` starts from that grey (`View::litBase`)
-    // rather than from black. Mode `2` stays in the shaders, unused here.
-    const int litCrowd  = litPerPixel ? 1 : 0;
-    const int litStaged = litPerPixel ? 1 : 0;
+    // rather than from black. Mode `2` adds the lights to the corner colour:
+    // the traffic's, and a body under the remaster's body light (below).
+    const int litStaged = litPerPixel ? 1 : 0;   // the crowd's and the characters'
+    // THE BODY LIGHT under per-pixel lighting (`bodyTintPerPixel`): the
+    // bodies - not the traffic - in mode 2, from their corner colour, which
+    // is the grey x tint (the CPU's corners; a GPU-posed body starts from the
+    // grey, `lightsFromBlack`, and `scene.vert` tints it)
+    const bool tintPix = bodyTintPerPixel();
+    const int litBody = tintPix ? 2 : litStaged;
+    // THE TRAFFIC under per-pixel lighting: mode 2, its BAKED colour plus the
+    // lights. The engine never lights a vehicle - per vertex it draws in its
+    // own colours (no `vertexLights`, not from the grey) - and mode 1 started
+    // it from the scene's grey, 10 of 255 in Anekbah: a slider away from a
+    // light drew BLACK (the reader's play test, 2026-10-20)
+    const int litTraffic = litPerPixel ? 2 : 0;
     view.litBase = static_cast<float>(std::clamp(activeAmbientGrey, 0, 255)) / 255.0f;
+    remasterViewMist(view);   // the mist (`backends/remaster/`)
     view.lights.clear();
     // HYBRID RAY TRACING (`todo/enhancements.md` 19) traces these lamps from a
     // vertex-lit character too, to find the ones a wall hides - so it is handed
@@ -197,9 +213,23 @@ void PlayState::worldDrawLists() {
             at[1] = playerBody.posed.corners.front().y;
             at[2] = playerBody.posed.corners.front().z;
         }
-        std::vector<std::pair<float, const omk::Light3do*>> near;
+        // THE EMITTERS' LIGHTS (`backends/remaster/`): the night, the relief,
+        // the tiled point lights - and, when they take slots, how many
+        bool fxPix = false;
+        float kFxView = 0.0f;
+        const int kFxSlots = remasterViewLights(view, fxPix, kFxView);
+        // (kept from frame to frame: the selection runs every frame)
+        static std::vector<std::pair<float, const omk::Light3do*>> near, fx;
+        near.clear(); fx.clear();
         for (const WorldSlot& ws2 : worldSlots)
             for (const auto& l : ws2.lights) {
+                if (fxPix && omk::pointLight(l)) {
+                    const float ex = view.cam.eye[0] - l.pos[0], ey = view.cam.eye[1] - l.pos[1],
+                                ez = view.cam.eye[2] - l.pos[2];
+                    const float e2 = ex * ex + ey * ey + ez * ez;
+                    if (e2 < kFxView * kFxView) fx.emplace_back(e2, &l);
+                    continue;
+                }
                 const float dx = at[0] - l.pos[0], dy = at[1] - l.pos[1],
                             dz = at[2] - l.pos[2];
                 const float d2 = dx * dx + dy * dy + dz * dz;
@@ -207,18 +237,29 @@ void PlayState::worldDrawLists() {
                 if (!(l.radiusA > l.radiusB)) continue;
                 near.emplace_back(d2, &l);
             }
-        std::sort(near.begin(), near.end(),
-                  [](const auto& a, const auto& b) { return a.first < b.first; });
-        if (near.size() > static_cast<std::size_t>(omk::View::kMaxGpuLights))
-            near.resize(static_cast<std::size_t>(omk::View::kMaxGpuLights));
-        for (const auto& [d2, l] : near) {
+        const auto byDistance = [](const auto& a, const auto& b) { return a.first < b.first; };
+        std::sort(near.begin(), near.end(), byDistance);
+        std::sort(fx.begin(), fx.end(), byDistance);
+        float fxCut = kFxView;
+        remasterPointLights(view, fx, kFxView, kFxSlots, fxCut);
+        const std::size_t ownSlots = std::min<std::size_t>(static_cast<std::size_t>(omk::View::kOwnGpuLights),
+            static_cast<std::size_t>(world_->maxPixelLights()) - fx.size());
+        if (near.size() > ownSlots) near.resize(ownSlots);
+        static std::vector<float> fade;
+        fade.assign(near.size(), 1.0f);
+        for (const auto& [e2, l] : fx) {
+            near.emplace_back(e2, l);
+            fade.push_back(std::clamp((fxCut - std::sqrt(e2)) / (0.35f * fxCut), 0.0f, 1.0f));
+        }
+        for (std::size_t li = 0; li < near.size(); ++li) {
+            const omk::Light3do* l = near[li].second;
             omk::View::GpuLight g{};
             for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
             g.radiusA = l->radiusA; g.radiusB = l->radiusB;
             g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
             g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
             g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
-            g.intensity = l->f32;
+            g.intensity = l->f32 * fade[li];
             view.lights.push_back(g);
         }
         if (!lightsTold && litPerPixel) {
@@ -226,6 +267,7 @@ void PlayState::worldDrawLists() {
             std::printf("frame %ld: per-pixel lighting - %zu of the set's lights "
                         "reach the player, nearest first\n", frameNo, view.lights.size());
         }
+        remasterLightsTold(view, near, at);   // the first frame an emitter's light is among them
     }
     // ---- THE LAMPS IN THE AIR (`volumetrics`, `todo/enhancements.md` 24) --
     //
@@ -313,7 +355,7 @@ void PlayState::worldDrawLists() {
     // set. The vehicles are told by their model's name - the two tables
     // `vehModelTable` reads out of the image (`sli_fn`, `moto`).
     const auto shine = [&](const auto& up) {
-        if (!vehicleShine) return 0;
+        if (!vehicleShine || !enhShown_) return 0;
         const std::string& m = up->model;
         const auto is = [&](const char* n) {
             const std::size_t k = std::strlen(n);
@@ -332,13 +374,14 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litStaged | shine(up), castShadows});
+                                 litBody | shine(up), castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
                 draws.back().vertexLights = up->lightCount ? up->lights.data() : nullptr;
                 draws.back().vertexLightCount = up->lightCount;
-                draws.back().lightsFromBlack = up->lightsBlack;
+                draws.back().lightsFromBlack = up->lightsBlack || tintPix;
                 draws.back().lightBase = up->lightBase;
+                std::copy(up->lightTint, up->lightTint + 3, draws.back().lightTint);
             }
             continue;
         }
@@ -346,7 +389,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged | shine(up), castShadows});
+                             litBody | shine(up), castShadows});
     }
     for (const auto& up : crowd.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -356,14 +399,15 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->restGeo, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd, castShadows});
+                                 litBody, castShadows});
                 omk::Draw& dr = draws.back();
                 dr.meshPose = up->affine.data();
                 dr.meshPoses = up->mo->meshes.size();
                 dr.vertexLights = up->lightCount ? up->lights.data() : nullptr;
                 dr.vertexLightCount = up->lightCount;
-                dr.lightsFromBlack = up->lightsBlack;
+                dr.lightsFromBlack = up->lightsBlack || tintPix;
                 dr.lightBase = up->lightBase;
+                std::copy(up->lightTint, up->lightTint + 3, dr.lightTint);
             }
             continue;
         }
@@ -371,7 +415,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd, castShadows});
+                             litBody, castShadows});
     }
     for (const auto& up : traffic.staged) {
         if (!up->drawn || !up->mo) continue;
@@ -381,7 +425,7 @@ void PlayState::worldDrawLists() {
                 draws.push_back({keyOf(b.blend, b.cutout,
                                        static_cast<std::uint32_t>(b.material + base)),
                                  up->atRest, b.start, b.count, b.blend, b.cutout,
-                                 litCrowd | shine(up), castShadows});
+                                 litTraffic | shine(up), castShadows});
                 draws.back().meshPose = up->affine.data();
                 draws.back().meshPoses = up->mo->meshes.size();
             }
@@ -391,7 +435,7 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout,
                                    static_cast<std::uint32_t>(b.material + base)),
                              &up->posed, b.start, b.count, b.blend, b.cutout,
-                             litCrowd | shine(up), castShadows});
+                             litTraffic | shine(up), castShadows});
     }
     // which path drew him, said when it changes - and counted, for the
     // runs that compare the two
@@ -416,20 +460,21 @@ void PlayState::worldDrawLists() {
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
                              &playerBody.rest, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litBody, castShadows});
             draws.back().meshPose = playerBody.affine.data();
             draws.back().meshPoses = playerBody.meshes.size();
             draws.back().vertexLights = playerBody.lightCount ? playerBody.lights.data() : nullptr;
             draws.back().vertexLightCount = playerBody.lightCount;
-            draws.back().lightsFromBlack = playerBody.lightsBlack;
+            draws.back().lightsFromBlack = playerBody.lightsBlack || tintPix;
             draws.back().lightBase = playerBody.lightBase;
+            std::copy(playerBody.lightTint, playerBody.lightTint + 3, draws.back().lightTint);
         }
     } else if (drawPlayer && !playerOffView)
         for (const auto& b : playerBody.posed.batches)
             draws.push_back({keyOf(b.blend, b.cutout, static_cast<std::uint32_t>(
                                        b.material + static_cast<int>(playerTexBase))),
                              &playerBody.posed, b.start, b.count, b.blend, b.cutout,
-                             litStaged, castShadows});
+                             litBody, castShadows});
     // FIRST PERSON: only the meshes the hide spared - flag 0x200000,
     // the left arm - cut out of the posed body batch by batch.
     static omk::Geometry playerArm;
@@ -1382,11 +1427,17 @@ void PlayState::worldMirror() {
         for (int k = 0; k < 3; ++k) drawn.fogColour[k] = static_cast<std::uint8_t>(y);
         omk::greyClear565(view.clearColour, drawn.clearColour);
     }
+    remasterLitSet(draws);   // the emitters' lights on the set (`backends/remaster/`)
+    remasterRainDraws(draws, drawn);   // the rain in the scene (`backends/remaster/`)
+    remasterSnowCover(draws);          // the snow lying on the open floors (`backends/remaster/`)
     // a headset's two eyes, drawn there instead (backends/vr; empty without OMK_VR)
     // (it clears `fb` itself, BEFORE the eyes land in it - the deferred
     // clear here ran AFTER them from 4f6d611 on and left the frame black)
     if (vrWorldDraw(drawn, noMirror ? omk::MirrorPlane{} : wmp)) return;
-    const auto mst = omk::drawWithMirror(world, draws, drawn,
+    // THE WATER and the REFLECTING FLOORS (`backends/remaster/`), where they
+    // draw the frame; otherwise the set's own mirror, as the engine draws it
+    const bool reflected = remasterDrawReflected(world, draws, drawn);
+    const auto mst = reflected ? omk::MirrorStats{} : omk::drawWithMirror(world, draws, drawn,
                                          noMirror ? omk::MirrorPlane{} : wmp);
     mark("world begin..end (submit, GL)");
     if (mst.active != mirrorLive || (mst.maskPixels > 0 && !mirrorSeen)) {
@@ -1395,11 +1446,18 @@ void PlayState::worldMirror() {
         std::printf("frame %ld: the set's mirror is %s%s (%ld px, camera "
                     "%.0f in front)\n", frameNo,
                     mst.active ? "REFLECTING"
+                    : reflected ? "SET ASIDE - the water or a floor reflects instead (one reflection a frame)"
                     : session.mirrorParked() ? "PARKED - ops 134/135 hold dword_534F48 at 0"
                                              : "out of view - the camera is behind it",
                     mst.native ? " [native: the two passes]" : "",
                     mst.maskPixels, static_cast<double>(mst.distance));
     }
+    // THE CITY WEATHER, in EVERY build and before the present's gates (its
+    // streaks and flakes hold a GPU-window frame on the CPU path). Until
+    // 2026-10-27 this call sat inside the GPU-window block below, so the
+    // software reference and the offscreen GL1 build never rained or snowed
+    // (`todo/handoff-classic-mac.md` 3g).
+    weatherFrame(view);   // `playframe_world_weather.cpp`
     // The backend drew the picture into the top-left `vw x vh`; place
     // it, leaving the bands as the black `fb` was cleared to.
     // THE PRESENT PASS (todo/optimization.md step 4b). On a frame that
@@ -1424,7 +1482,6 @@ void PlayState::worldMirror() {
         // glReadPixels 36, the 888 -> 565 dither 35, the upload 16 -
         // against 9 ms for the game itself. `GlesRenderer::presentWorld`
         // dithers on the GPU as `present.frag` does on Vulkan.
-        weatherFrame(view);   // the city weather, before the gates (`playframe_world_weather.cpp`)
         const bool onVulkan = gpuWorldOnWindow();   // the world is the window's renderer
         // the gates in order; the first that holds names why the frame
         // stays on the CPU path (`OMK_GPU_PRESENT_STATS` counts them)

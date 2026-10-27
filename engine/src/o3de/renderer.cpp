@@ -15,9 +15,15 @@
 // that order.
 #include "o3de/renderer.h"
 #include "platform/profile.h"
+#include "platform/env.h"
 #include <cstdio>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <map>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace omk {
@@ -207,6 +213,225 @@ void runPass(Renderer& r, const View& v, std::span<const Draw> ds) {
 }
 
 }  // namespace
+
+// THE WATER and the REFLECTING FLOORS' helpers (`todo/remaster.md` A3, A4's
+// mist ground): the remaster's alone - compiled only with OMK_REMASTER
+#if OMK_REMASTER
+WaterPlane waterPlane(const Geometry& g) {
+    WaterPlane out;
+    std::map<int, std::pair<double, long>> byHeight;   // y / 4 -> area, triangles
+    forLevelTriangles(g, [](const Batch& b) { return b.blend == Blend::Add; },
+                      [&](const Corner& a, const Corner& c1, const Corner& c2) {
+        const double ux = c1.x - a.x, uz = c1.z - a.z, vx = c2.x - a.x, vz = c2.z - a.z;
+        const double area = std::fabs(ux * vz - uz * vx) * 0.5;
+        auto& e = byHeight[static_cast<int>(std::lround(a.y / 4.0f))];
+        e.first += area; ++e.second;
+    });
+    for (const auto& [k, e] : byHeight) {
+        if (e.first > out.area) { out.area = e.first; out.y = static_cast<float>(k) * 4.0f; out.triangles = e.second; }
+        if (e.first >= 1e4) out.levels.push_back({static_cast<float>(k) * 4.0f, e.first, e.second});
+    }
+    out.found = out.area >= 1e6;
+    return out;
+}
+
+namespace {
+
+// THE REFLECTION'S CLIP, remembered: `inFrontOf` tests every triangle of every
+// draw against the plane, every frame - the SET's draws are the same frame
+// after frame, so the runs a (start, count) of its geometry keeps above a
+// plane are too. The set's alone: a particle's or a decal's geometry is ONE
+// object rewritten every frame, and a memo of it drew a stale clip (1 pixel
+// in Qalisar, 2026-10-21). Kept per plane height; forgotten when the plane
+// moves or a geometry is destroyed (its address may come back for another).
+// ...and per REVISION (the audit's bug 2, 2026-10-23): a world slot reloaded
+// IN PLACE (`w = std::move(L.out)`) keeps the geometry's address and destroys
+// nothing, so the next set - its plane at the same height, a draw of the same
+// (start, count) - drew the OLD set's runs. A new revision empties the memo,
+// unless it is the set motion patch's (`Geometry::dirtyCorners`, from the
+// revision the memo holds): then only the draws over a moved corner go - a
+// door may cross the plane.
+// Main thread only, as every caller of `drawWithWater` is.
+struct ClipMemo {
+    using Runs = std::vector<std::pair<std::size_t, std::size_t>>;
+    struct Entry {
+        std::uint64_t revision = 0;
+        std::unordered_map<std::uint64_t, Runs> byDraw;   // (start << 32) | count -> its runs
+    };
+    float y = 0.0f;
+    bool listening = false;
+    std::unordered_map<const Geometry*, Entry> runs;
+    std::vector<std::uint32_t> moved;   // the patch's corners, SORTED (`dirtyCorners` is not)
+    static void gone(void* ctx, const Geometry* g) { static_cast<ClipMemo*>(ctx)->runs.erase(g); }
+
+    // the entry for `g` at its current revision
+    Entry& at(const Geometry& g) {
+        Entry& e = runs[&g];
+        if (e.revision == g.revision) return e;
+        if (!e.byDraw.empty() && g.dirtyTo == g.revision && g.dirtyFrom == e.revision) {
+            moved.assign(g.dirtyCorners.begin(), g.dirtyCorners.end());
+            std::sort(moved.begin(), moved.end());
+            for (auto it = e.byDraw.begin(); it != e.byDraw.end();) {
+                const std::uint64_t start = it->first >> 32, end = start + (it->first & 0xFFFFFFFFu);
+                const auto m = std::lower_bound(moved.begin(), moved.end(), start);
+                if (m != moved.end() && *m < end) it = e.byDraw.erase(it);
+                else ++it;
+            }
+        } else {
+            e.byDraw.clear();
+        }
+        e.revision = g.revision;
+        return e;
+    }
+};
+
+void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std::vector<Draw>& out) {
+    static ClipMemo memo;
+    if (!memo.listening) { addGeometryListener(&ClipMemo::gone, &memo); memo.listening = true; }
+    if (memo.y != y) { memo.runs.clear(); memo.y = y; }
+    const float n[3] = {0.0f, -1.0f, 0.0f};
+    out.clear();
+    static std::vector<Draw> one;
+    ClipMemo::Entry* kept = stable ? &memo.at(*stable) : nullptr;
+    for (const auto& d : in) {
+        if (!d.geo) continue;
+        if (d.geo != stable) {
+            one.assign(1, d);
+            for (const auto& o : inFrontOf(one, n, y, 1.0f)) out.push_back(o);
+            continue;
+        }
+        auto& byDraw = kept->byDraw;
+        const std::uint64_t key = (static_cast<std::uint64_t>(d.start) << 32) | static_cast<std::uint64_t>(d.count);
+        auto it = byDraw.find(key);
+        if (it == byDraw.end()) {
+            one.assign(1, d);
+            std::vector<std::pair<std::size_t, std::size_t>> r;
+            for (const auto& o : inFrontOf(one, n, y, 1.0f)) r.emplace_back(o.start, o.count);
+            it = byDraw.emplace(key, std::move(r)).first;
+        }
+        for (const auto& [st, cn] : it->second) { Draw o = d; o.start = st; o.count = cn; out.push_back(o); }
+    }
+}
+
+}  // namespace
+
+float groundLevel(const Geometry& g) {
+    std::map<int, double> byHeight;   // y / 4 -> level opaque area
+    forLevelTriangles(g, [](const Batch& b) { return b.blend == Blend::Opaque; },
+                      [&](const Corner& a, const Corner& c1, const Corner& c2) {
+        byHeight[static_cast<int>(std::lround(a.y / 4.0f))] +=
+            std::fabs((c1.x - a.x) * (c2.z - a.z) - (c1.z - a.z) * (c2.x - a.x)) * 0.5;
+    });
+    int best = 0;
+    double most = 0.0;
+    for (const auto& [k, area] : byHeight)
+        if (area > most) { most = area; best = k; }
+    return static_cast<float>(best) * 4.0f;
+}
+
+bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
+                   const Geometry* setGeo, const WaterPlane& wp, float strength,
+                   const std::vector<float>* floorStrength,
+                   const std::vector<std::uint8_t>* wetTris, float wetReflect, float wetDarken) {
+    if (!wp.found || strength <= 0.0f || !setGeo || !r.drawsWater()) return false;
+    // above the water: the game's Y points DOWN, so a smaller y
+    if (v.cam.eye[1] >= wp.y - 1.0f) return false;
+    static std::vector<Draw> scene, water;
+    scene.clear(); water.clear();
+    const auto onPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= 4.0f; };
+    bool floored = false;
+    for (const auto& d : draws) {
+        if (floorStrength || wetTris) {
+            // THE FLOORS: a listed floor's runs on the plane reflect, in place
+            // - and a WET one's (`o3de/wetfloor.h`), triangle by triangle
+            float s = 0.0f;
+            const bool setOpaque = d.geo == setGeo && d.blend == Blend::Opaque && !d.meshPose;
+            if (setOpaque && floorStrength) {
+                const auto& bs = d.geo->batches;
+                const auto b = std::upper_bound(bs.begin(), bs.end(), d.start,
+                                                [](std::size_t at, const Batch& x) { return at < x.start; });
+                if (b != bs.begin()) {
+                    const Batch& bb = *(b - 1);
+                    if (bb.material >= 0 && static_cast<std::size_t>(bb.material) < floorStrength->size())
+                        s = (*floorStrength)[static_cast<std::size_t>(bb.material)];
+                }
+            }
+            const bool wet = setOpaque && wetTris && wetReflect > 0.0f;
+            if (s <= 0.0f && !wet) { scene.push_back(d); continue; }
+            const Geometry& g = *d.geo;
+            std::size_t runStart = d.start;
+            float runValue = -1.0f, runWet = 0.0f;
+            const auto flush = [&](std::size_t end) {
+                if (runValue < 0.0f || end <= runStart) return;
+                Draw o = d; o.start = runStart; o.count = end - runStart;
+                o.reflect = runValue;
+                o.wet = runWet;
+                floored |= runValue > 0.0f;
+                scene.push_back(o);
+            };
+            for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
+                const bool open = wet && t / 3 < wetTris->size() && (*wetTris)[t / 3];
+                float value = 0.0f;
+                if (onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2])) {
+                    value = s;
+                    if (open) value = std::max(value, wetReflect);
+                }
+                const float dark = open ? wetDarken : 0.0f;
+                if (value != runValue || dark != runWet) { flush(t); runStart = t; runValue = value; runWet = dark; }
+            }
+            flush(d.start + d.count);
+            continue;
+        }
+        if (d.geo != setGeo || d.blend != Blend::Add || d.meshPose) { scene.push_back(d); continue; }
+        const Geometry& g = *d.geo;
+        // runs of the draw: water triangles to `water`, the others to `scene`
+        std::size_t runStart = d.start;
+        int runKind = -1;
+        const auto flush = [&](std::size_t end) {
+            if (runKind < 0 || end <= runStart) return;
+            Draw o = d; o.start = runStart; o.count = end - runStart;
+            (runKind ? water : scene).push_back(o);
+        };
+        for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
+            const int kind = onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2]) ? 1 : 0;
+            if (kind != runKind) { flush(t); runStart = t; runKind = kind; }
+        }
+        flush(d.start + d.count);
+    }
+    if (water.empty() && !floored) return false;
+    // the reflected view: `p' = p - 2 (n.p + d) n` with n = (0, -1, 0), d = y -
+    // a y' = 2 y_w - y - and the image flipped VERTICALLY, which the camera
+    // says as a half turn of roll and a screen-X flip (the reflection
+    // reverses the roll's sense)
+    View rv = v;
+    rv.cam.eye[1] = 2.0f * wp.y - v.cam.eye[1];
+    rv.cam.at[1] = 2.0f * wp.y - v.cam.at[1];
+    rv.cam.rollDeg = 180.0f - v.cam.rollDeg;
+    rv.cam.flipX = !v.cam.flipX;
+    // what the reflection may show: the triangles ABOVE the plane, and the
+    // draws a backend poses (the sky, the bodies) whole - their corners are
+    // at rest, so a test on them would be a test on the wrong place
+    static std::vector<Draw> above, posed, clipped, flat;
+    above.clear(); posed.clear(); flat.clear();
+    for (const auto& d : scene) (d.meshPose ? posed : flat).push_back(d);
+    clipAbove(flat, wp.y, setGeo, clipped);   // `inFrontOf`'s runs, the set's remembered
+    above.assign(posed.begin(), posed.end());
+    above.insert(above.end(), clipped.begin(), clipped.end());
+    // `OMK_WATER_NO_CPU_CLIP=1`, an instrument: everything to the reflection,
+    // so the backend's per-fragment clip alone removes what is below the
+    // water - which is what it does for the posed bodies anyway
+    // (`verify.py: engine: water reflection`)
+    static const bool noCpuClip = omk::envFlag("OMK_WATER_NO_CPU_CLIP");
+    if (noCpuClip) above.assign(scene.begin(), scene.end());
+    if (v.shadow.on) {
+        static std::vector<Draw> casters;
+        casters.clear();
+        for (const auto& d : draws) if (d.castsShadow) casters.push_back(d);
+        if (!casters.empty()) r.shadowPass(v, casters);
+    }
+    return r.drawWaterScene(v, rv, scene, above, water, strength, wp.y);
+}
+#endif  // OMK_REMASTER
 
 MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
                            std::span<const Texture> tex, const View& v,

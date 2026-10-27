@@ -3,6 +3,10 @@
 ;
 ;     build/omk-play <gamedata> <tables> --config omk.ini
 ;
+; Without --config, the viewer reads `omk.ini` beside its saves file
+; (`omk-saves/omk.ini`, or beside `--saves FILE`) when there is one - and OMK's
+; own options menu writes its choices there, editing only the lines it sets.
+;
 ; EVERY ROW IS COMMENTED OUT, and that is the point: with nothing set, the
 ; port runs exactly as the game does. Uncomment only what you mean to change.
 ;
@@ -344,18 +348,6 @@
 ;softparticles = off
 ;volumetrics = off
 ;
-; TEXTURE PACK - a directory of replacement textures: upscaled (e.g. AI
-; upscaled) PNGs of the models' and the sets' small palettised pages, laid out
-; DIR/<group>/<model>/<MATERIAL>.png as `python3 tools/texpack.py extract DIR`
-; writes them (then `texpack.py upscale DIR DIR4 --factor 4 [--tool
-; realesrgan-ncnn-vulkan.exe]`, `texpack.py check DIR4`). Each replacement must
-; be a whole multiple of the original's size (2x, 4x...), 8-bit RGB or RGBA;
-; pure black stays the colour key. The game data is never touched. Empty (the
-; default) is off; a relative path is taken from this file's directory. The
-; Vulkan and Direct3D 12 renderers only. It names a directory, so `all = max`
-; does not give it. `--texturepack DIR`. `todo/enhancements.md` 25.
-;texturepack =
-;
 ; UPSCALER - temporal upscaling: the frame drawn below the display size and
 ; rebuilt by AMD FSR (FSR 4 where the GPU runs it) or NVIDIA DLSS from its
 ; colour, depth and motion vectors. The Direct3D 12 renderer only
@@ -366,3 +358,97 @@
 ; ...and its render size: native (1.0x), quality (1.5x), balanced (1.7x),
 ; performance (2.0x), ultraperformance (3.0x).
 ;upscalequality = quality
+[Remaster]
+; THE REMASTER (`todo/remaster.md`): what the original never had and does not
+; claim to be - every key OFF unless written, never turned on by
+; [Enhancements] all = max. `dir` turns most of them on at once (the
+; preset); a key written here beats the preset, a flag beats the key.
+;
+; The preset: a folder holding the texture pack (pack/ or full/pack/) and
+; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
+; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
+; relief 2, ao 2, floors 1, wet 1, rain3d 1, mist 0.5, smooth 0.75, preload 15
+; (`kRemasterPreset` in engine/src/platform/settings.h).
+;dir = /path/to/omk-pack
+;
+; The SWITCH over everything in this section: `original` starts with the
+; original game's look - the section read and made ready all the same, so
+; F10 in play - SELECT on a pad - (or "Rendu" on OMK's
+; Remaster page) shows the remaster's at once, and back; each writes this
+; key, so the next start resumes in the mode
+; left. `remaster`, the default, starts with it. A remaster flag on the
+; command line shows the remaster whatever this says. Outside the switch:
+; the upscale and the preload (frame rate, not looks). The rounded bodies
+; (smooth) are rounded at load in both modes and kept flat beside: F10
+; swaps them too.
+;mode = remaster
+;
+; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an
+; upscaled pack when the window enlarges them - tools/omktexpack.py ui makes
+; it; the preset takes DIR/ui/pack when there is one.
+;uipack = /path/to/omk-pack/ui/pack
+;
+; The FONTS' glyphs drawn finer where textscaling = fit enlarges the text -
+; tools/omktexpack.py fonts makes it; the preset takes DIR/fonts/pack.
+;fontpack = /path/to/omk-pack/fonts/pack
+;
+; THE PRELOAD RADIUS, in metres (0 off; the preset's 15): the sets behind
+; every door within it - and behind the airlock or corridor each opens on -
+; prepared ahead and their textures put on the GPU, released 10 m further.
+; No load on arriving, more memory held: leave it 0 on a small device.
+;preload = 15
+;
+; The intro FILMS played from upscaled copies - tools/omktexpack.py films
+; makes them; the preset takes DIR/films/pack.
+;filmpack = /path/to/omk-pack/films/pack
+;
+; The HD texture pack alone (a folder of <key>.png), and the city grades
+; alone (a folder of <SET>.cube and map.txt). The pack: Vulkan, GLES and Direct3D 12 (its PNG colours there); the grades: Vulkan, GLES and Direct3D 12 (the shared post chain takes the LUT first).
+;texturepack = /path/to/pack
+;grade = /path/to/grades
+;
+; Strengths, 0 = off: the glow of the pack's light maps (0..4); the water's
+; reflection (0..1, its grazing strength); the bodies lit by the set's
+; painted light (0..1); the set's flames and glows lighting what is near
+; them (0..4); the textures' relief under those lights (0..4, Vulkan); the
+; ambient occlusion at contacts (0..4, Vulkan); the floors floors.txt lists
+; reflecting (0..1); the floors under the open sky wet by the game's own
+; rain, darker and reflecting while it falls and drying after, and snow lying
+; on them where its snow falls (0..1; the weather needs Niveau de detail at 2); the same rain and snow drawn in the scene,
+; hidden by walls and stopped by roofs (0..1, their brightness); a height mist in each
+; city's fog colour (0..1).
+;bloom = 0
+;water = 0
+;bodylight = 0
+;fxlight = 0
+;relief = 0
+;ao = 0
+;floors = 0
+;wet = 0
+;rain3d = 0
+;mist = 0
+;
+; Not in the preset - a frame rate's choice, not a look: the frame drawn
+; F times smaller each way and brought up by AMD FSR 1 (1..3, 1 = off;
+; 1.5 its quality mode, 2 its performance one; Vulkan).
+;upscale = 1
+;
+; The characters ROUNDED: each triangle split 3x3 and pulled toward its
+; corners' normals by S (0..1, 0.75 Phong's own; every backend).
+;smooth = 0
+; ...and the models left as they are, by the name the log prints
+; ("smooth: V2H_FNM - ..."), commas between - for one that suffers.
+;smoothskip =
+
+
+[OMK]
+; THIS PORT'S OWN INTERFACE - neither the game's settings nor a look.
+;
+; The LANGUAGE of OMK's own menu rows (the "Graphismes (OMK)" pages,
+; `todo/graphics-menu.md`): their texts are `engine/lang/omk-menu.ini`, in
+; French and English. The game's own rows keep the language of the copy
+; installed (`IAM\Options`), which neither the data nor the exe names - so
+; this is set by hand. fr (the default) or en.
+; The menu's own "Langue des options OMK" row writes it. A copy of
+; omk-menu.ini beside this file is read over the compiled texts.
+;language = fr

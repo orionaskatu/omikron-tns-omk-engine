@@ -3,6 +3,7 @@
 // the window closed. Split out of `main`'s body by `todo/play-split.md`;
 // returns `main`'s exit code.
 #include "playstate.h"
+#include "platform/events.h"
 
 int PlayState::finish() {
     auto& session = *session_;
@@ -97,6 +98,24 @@ int PlayState::finish() {
         omk::readActorProperty(playerRecordSpan(), 1, vie);
         std::printf("player: Vie %d (the DB player record's property 1); %ld run-overs posted\n",
                     static_cast<int>(vie), session.runOvers());
+    }
+    remasterFinish();
+    // ...and the sets' own loads: every job still running waited for - each
+    // captures `this`, and the state they write is about to go
+    {
+        int running = 0;
+        const auto wait = [&](const std::shared_ptr<SetLoad>& L) {
+            if (!L || !L->job) return;
+            running += L->job->ready() ? 0 : 1;
+            L->job->wait();
+        };
+        for (const auto& L : setLoads) wait(L);
+        for (const auto& L : setLoadsLeft) wait(L);
+        int still = 0;
+        for (const auto& L : setLoads) still += L && L->job && !L->job->ready() ? 1 : 0;
+        for (const auto& L : setLoadsLeft) still += L->job && !L->job->ready() ? 1 : 0;
+        omk::event("session.loads", {{"running", running}, {"after", still}});
+        setLoadsLeft.clear();
     }
     std::printf("session: %d areas entered, %d ui answers, %d zones turned away by "
                 "the height band\n",

@@ -84,6 +84,8 @@
 #include "o3de/postfx.h"
 #include "o3de/framegen.h"
 #include "o3de/rtscene.h"
+#include "o3de/texpack.h"
+#include "o3de/colourgrade.h"
 #include "platform/env.h"
 #include "platform/events.h"
 #include "platform/datafs.h"
@@ -148,7 +150,7 @@ namespace {
 #include "dx/fg_resolve.frag.h"
 
 // ---- the blocks the shaders read, VERBATIM from `vkrender.cpp` ------------
-struct PresentPush { int32_t vy, vh, w, dither, ss, depth; };
+struct PresentPush { int32_t vy, vh, w, dither, ss, depth, rcas, rcasCon, raw; };   // (the last three: the remaster's upscale, Vulkan's - zero here)
 // the overlay pass's (`overlay.frag`, colour depth 32): the colour fade
 struct OverlayPush { float fade[4]; };
 struct SsaoPush { float tanH, tanV, A, B, vw, vh, radius, strength; };
@@ -180,12 +182,13 @@ struct GpuLightStd140 {
     float colourI[4];   // rgb colour 0..1, a intensity
 };
 struct LightUbo {
-    GpuLightStd140 l[8];
+    GpuLightStd140 l[omk::View::kMaxGpuLights];   // 64 (the remaster's tiled point lights raised it)
     int32_t count;
     float   base;      // View::litBase
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151)
-    int32_t pad;
-    float   eye[4];    // the camera's position (vehicle shine's view vector)
+    int32_t tiles;     // the TILED lights module's - never bound here, 0
+    float   eye[4];    // the camera's position (vehicle shine's view vector, the water's Fresnel); w the NIGHT (View::setDim)
+    float   fx[4];     // x the relief (none here); y, z, w the MIST's strength, ground and height
     float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
 struct ShadowUbo {
@@ -224,18 +227,27 @@ struct Push {
     int32_t cull;      // 96
     int32_t posed;     // 100
 };
-static_assert(sizeof(Push) == 104, "the push block is 104 bytes");
-constexpr UINT kPushDwords = sizeof(Push) / 4;
+static_assert(sizeof(Push) == 104, "the push block's common part is 104 bytes");
+// ...and what `scene.frag` -DOMK_DX adds after it: THE TEXTURE PACK's replacement (the remaster's,
+// `o3de/texpack.h`) is `su` x `sv` times the original, the UVs staying in the original's texels (1, 1 on
+// every shipped texture). This backend has no bloom, no water pass: nothing else rides.
+struct PushSc {
+    Push p;
+    std::uint32_t texScale;   // 104: (u - 1) | (v - 1) << 4, `scene.frag`'s `texScale`
+};
+static_assert(sizeof(PushSc) == 108, "the plain push block is 108 bytes");
+constexpr UINT kPushDwords = sizeof(PushSc) / 4;
 // ...and with an UPSCALER on (`scene.vert` built -DOMK_MOTION), the same 104
 // bytes and then the JITTER at 104 (clip units) and the PREVIOUS frame's
-// view-projection at 112 - 44 root constants, inside the 64 a root signature
-// holds with the rest of it.
+// view-projection at 112, the pack's scale after them at 176 - 45 root
+// constants, inside the 64 a root signature holds with the rest of it.
 struct PushMv {
     Push p;
     float jitter[2];      // 104
     float prevMvp[16];    // 112
+    std::uint32_t texScale;   // 176
 };
-static_assert(sizeof(PushMv) == 176, "the motion push block is 176 bytes");
+static_assert(sizeof(PushMv) == 180, "the motion push block is 180 bytes");
 constexpr UINT kPushMvDwords = sizeof(PushMv) / 4;
 // Vulkan's `kCullSign`, and the same value is right here because the
 // Y-flipped vertex stage puts every triangle on the same pixels with the same
@@ -258,14 +270,15 @@ constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
 constexpr UINT kSlotOvPic = 6;    // the OVERLAY's 565 colour plane (colour depth 32)...
 constexpr UINT kSlotOvMask = 7;   // ...and its mask plane, the next slot (one table)
 // THE POST CHAIN (todo/enhancements.md 22): `post.frag`'s ONE table - the
-// source, bloom level 0, the depth, its stencil plane - then the chain's output
+// source, bloom level 0, the depth, its stencil plane, the grade's LUT - then the chain's output
 // and the levels
 constexpr UINT kSlotPostSrc = 8;
 constexpr UINT kSlotPostBloom = 9;
 constexpr UINT kSlotPostDepth = 10;
 constexpr UINT kSlotPostStencil = 11;
-constexpr UINT kSlotPostOut = 12;
-constexpr UINT kSlotBloom0 = 13;
+constexpr UINT kSlotPostLut = 12;   // the REMASTER's city grade (`setGrade`): the table's fifth, a null view without one
+constexpr UINT kSlotPostOut = 13;
+constexpr UINT kSlotBloom0 = 14;
 // the stencil value a TRANSLUCENT BODY's pixels take for depth of field
 constexpr UINT kSubjectStencil = omk::postfx::kSubjectStencil;
 constexpr int kBloomLevels = omk::postfx::kBloomLevels;   // half the display size down to 1/64
@@ -382,7 +395,7 @@ public:
 
     // The enhancements (renderer.h): requests before `init`, honoured in
     // `makeTarget` where the device's own limits get the last word.
-    bool setAmbientOcclusion(bool on) override {
+    bool setSsao(bool on) override {
         if (dev_) return false;
         wantSsao_ = on;
         return true;
@@ -445,6 +458,21 @@ public:
         volWant_ = p.volumetrics;
         return true;
     }
+    // THE REMASTER'S CITY GRADE (`todo/remaster.md` step 2; the shower's overcast rides on it too): a 3D
+    // colour LUT of n^3 RGB entries, red fastest (`Renderer::setGrade`), applied FIRST in the post chain
+    // (`post.frag` -DOMK_DX, before this backend's own `colorgrade`, as Vulkan's remaster pass runs
+    // before its chain). Asked before `init` with a null table it only WANTS the chain (the grades
+    // arrive per set, later); null or n < 2 afterwards is off.
+    bool setGrade(const float* rgb, int n) override;
+    // what this backend can draw of the remaster's requests (`ui/omkoptions.h` offers only those)
+    unsigned takes() const override {
+        return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
+               omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesGrade |
+               omk::kTakesBodyTint | omk::kTakesMist | omk::kTakesRain3d | omk::kTakesTrilinear;
+    }
+    // the body light: `Draw::lightTint` rides in the pose buffer's tint vec4 (`writePose`, `scene.vert`)
+    bool setBodyTint(bool) override { return true; }
+    bool drawsBodyTint() const override { return true; }
     bool softParticlesLive() const override { return softOn_; }
     bool volumetricsLive() const override { return volOn_; }
     // FRAME GENERATION (`todo/enhancements.md` 27): asked for here, decided in
@@ -659,12 +687,17 @@ private:
     bool shadowLive_ = false;
     int litCount_ = 0;
     float shimmerClock_ = 0.0f;
+    std::uint32_t texScale_ = 0;   // the bound texture's pack scale, for the push block
+    bool enhOff_ = false;          // `View::enhOff`: the original's look shows - ours left out
     bool dither_ = true;
     int colourDepth_ = 16;   // the View's colour depth: 32 = the present pass leaves the picture 8-bit
 
     // ---- THE POST CHAIN (`todo/enhancements.md` 22) ----
     PostProcess postReq_{};
     bool postWant_ = false;            // anything asked at all
+    bool lutWant_ = false;             // the remaster's grade is coming (`setGrade` before `init`)
+    int lutN_ = 0;                     // the LUT's side, 0 none
+    ID3D12Resource* lutImg_ = nullptr;
     bool postLive_ = false;            // the chain ran on THIS frame: the display half reads `postImg_`
     // (`omk::postfx::Focus`: the frame's picture rectangle, cinematic or not, the
     // depth of field's focus - the nearest body, the View's named subjects -
@@ -728,16 +761,16 @@ private:
     // ---- the textures ----
     // `scale`: THE TEXTURE PACK's k (`o3de/texpack.h`) - the image is k x the
     // original, the UVs stay in the original's units (`scene.frag`, `rt.glsl`)
-    struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); int scale = 1; };
+    struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); float su = 1.0f, sv = 1.0f; bool packed = false; };
     std::vector<Tex> tex_;
     Tex white_;
-    struct Uploaded { Tex t; omk::PixelBuffer idx, pal, pack; bool used = false; };
-    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int, const std::uint8_t*>, Uploaded> uploaded_;
+    struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
+    std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
     // a slot's texture word for a ray-tracing record: the heap index, and the
     // pack's k - 1 in bits 24.. (`rt.glsl` `rtTexel`; the heap is 4096)
     UINT rtTexWord(std::size_t slot) const {
         if (slot >= tex_.size() || tex_[slot].srv == UINT(-1)) return white_.srv;
-        return tex_[slot].srv | (static_cast<UINT>(tex_[slot].scale - 1) << 24);
+        return tex_[slot].srv | omk::rtTexScaleBits(tex_[slot].su, tex_[slot].sv);
     }
 
     // ---- the geometry: upload-heap buffers, mapped for their life ----
@@ -765,7 +798,7 @@ private:
     // ---- THE POSE BUFFER (Vulkan's set 2): the same blocks, a root SRV ----
     static constexpr int kPoseLights = 16, kPoseMaxMeshes = 256;
     static constexpr UINT64 kPoseBytes = 8u << 20;
-    static constexpr UINT64 kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes) * 16;
+    static constexpr UINT64 kPoseRange = (1 + 2 * kPoseLights + 3 * kPoseMaxMeshes + 1) * 16;   // (+ the tint)
     static constexpr UINT64 kPoseAlign = 256;
     ID3D12Resource* poseBuf_ = nullptr;
     void* posePtr_ = nullptr;
@@ -2118,7 +2151,7 @@ bool D3D12Renderer::runPresentPass(int vy, int vh, Res* over) {
     l->SetPipelineState(presPipe_);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // (HDR: the picture passed through - its highlights run past 1.0)
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, over ? 1 : displaySs(), hdrOn_ ? 32 : colourDepth_};
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, over ? 1 : displaySs(), hdrOn_ ? 32 : colourDepth_, 0, 0, 0};
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(over ? kSlotFgMid : displaySlot()));
     l->DrawInstanced(3, 1, 0, 0);
@@ -2369,12 +2402,22 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
     };
     if (!white_.img)
         queue([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
-    // ...and the TEXTURE PACK's replacement (`o3de/texpack.h`), when the slot
-    // has one: a different picture under the same indices
     const auto keyOf = [](const omk::Texture& x) {
-        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height,
-                               x.hasPack() ? x.packRgba.data() : nullptr);
+        return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
     };
+    // THE REMASTER's TEXTURE PACK (`o3de/texpack.h`, the project's one: `[Remaster] texturepack`, content-keyed
+    // PNGs): consulted only when one is open and shown. What the pool brings that the device does not hold
+    // yet is decoded together on the thread pool, as Vulkan's pool does; this backend takes the PNGs'
+    // colours alone (no block formats, light maps or relief here), at the pack's size - the UVs stay in the
+    // original's texels (`Tex::su`/`sv`, the push block's `texScale*`)
+    const omk::TexturePack& pack = omk::texturePack();
+    std::vector<omk::PackImage> reps;
+    if (pack.shown()) {
+        std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
+        for (std::size_t i = 0; i < t.size(); ++i)
+            if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
+        reps = pack.replacements(toDecode, true, false);
+    }
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
         if (x.hasPixels())
@@ -2397,13 +2440,15 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = true;
-            if (x.hasPack()) u.pack = x.packRgba;
             hit = uploaded_.emplace(keyOf(x), std::move(u)).first;
-            if (x.hasPack()) {
+            if (pack.shown() && i < reps.size() && reps[i].ok && !reps[i].rgba.empty()) {
                 // the pack's picture, already keyed as `toRgbaKeyed` keys
-                hit->second.t.scale = x.packScale;
-                queue([&](unsigned char* d) { std::memcpy(d, x.packRgba.data(), x.packRgba.size()); },
-                      x.width * x.packScale, x.height * x.packScale, hit->second.t);
+                const omk::PackImage& rep = reps[i];
+                hit->second.t.su = static_cast<float>(rep.w) / static_cast<float>(x.width);
+                hit->second.t.sv = static_cast<float>(rep.h) / static_cast<float>(x.height);
+                hit->second.t.packed = true;
+                queue([&](unsigned char* d) { std::memcpy(d, rep.rgba.data(), rep.rgba.size()); },
+                      rep.w, rep.h, hit->second.t);
             } else {
                 queue([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, hit->second.t);
             }
@@ -2831,6 +2876,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     for (int i = 0; i < 3; ++i) frameEye_[i] = view.cam.eye[i];   // the MAIN view's (`pushView`)
     pushView(view);
     shimmerClock_ = view.shimmerClock;
+    enhOff_ = view.enhOff;
     dither_ = view.dither;
     colourDepth_ = view.colourDepth;
     foc_.begin(view, w_, h_, postReq_.dof);   // the post chain's view and depth of field's focus
@@ -2854,6 +2900,8 @@ void D3D12Renderer::begin(const omk::View& view) {
         ub.base = view.litBase;
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
+        ub.eye[3] = view.setDim;   // the remaster's night (1: a multiply by one)
+        ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;   // THE MIST
         if (softOn_) {
             const float nearP = omk::kNearCut, farP = 200000.0f;
             ub.soft[0] = farP / (farP - nearP);
@@ -2968,7 +3016,11 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
     for (int i = 0; i < nl; ++i) std::memcpy(f + 4 + 8 * i, d.vertexLights + 8 * i, 8 * sizeof(float));
     float* a = f + 4 + 8 * kPoseLights;
     std::memcpy(a, d.meshPose, d.meshPoses * 12 * sizeof(float));
-    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses) * 16;
+    // ...then the vec4 after the affines: the body light's tint (`scene.vert`; the remaster's A5,
+    // 1, 1, 1 unless it is on)
+    float* t = a + 12 * d.meshPoses;
+    t[0] = d.lightTint[0]; t[1] = d.lightTint[1]; t[2] = d.lightTint[2]; t[3] = 1.0f;
+    poseUsed_ = at + (1 + 2 * kPoseLights + 3 * d.meshPoses + 1) * 16;
     // ...and with an upscaler, the body's PREVIOUS affines right after them
     // (`scene.vert` -DOMK_MOTION), from the last frame's block of the same
     // `meshPose` - or the current ones again for a body new this frame, which
@@ -2979,7 +3031,7 @@ bool D3D12Renderer::writePose(const omk::Draw& d, UINT64& off) {
         // (and across a cut, where nothing has a previous position)
         const float* from = !resetOwed_ && prev != prevAffines_.end() && prev->second.size() == n
                                 ? prev->second.data() : d.meshPose;
-        std::memcpy(a + n, from, n * sizeof(float));
+        std::memcpy(a + n + 4, from, n * sizeof(float));
         curAffines_[d.meshPose].assign(d.meshPose, d.meshPose + n);
         poseUsed_ += 3 * d.meshPoses * 16;
     }
@@ -3038,7 +3090,7 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     // twin with the depth bound READ-ONLY - so its shader can read the depth it
     // is tested against - and the next draw that writes depth binds it
     // writable again (the engine's order puts the sprites after the opaque)
-    const bool soft = softOn_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePso_ && !reflStencil_;
+    const bool soft = softOn_ && !enhOff_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePso_ && !reflStencil_;
     if (soft && !depthRo_) depthReadOnly(true);
     else if (depthRo_ && (k == 0 || forcePso_)) depthReadOnly(false);
     softDraws_ += soft;
@@ -3060,10 +3112,12 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     // a posed one
     if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress() + poseOff);
     push_.posed = posed ? 1 : 0;
-    // bit 0 the cutout; bits 8.. a TEXTURE PACK slot's k (`scene.frag`), 0 for none -
-    // in a word already there, because the root signature has no dword to spare
-    const int packK = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot].scale : 1;
-    push_.cutout = (d.cutout ? 1 : 0) | (packK > 1 ? packK << 8 : 0);
+    push_.cutout = d.cutout ? 1 : 0;
+    {
+        const Tex& bound = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot] : white_;
+        const auto k = [](float s) { const long r = static_cast<long>(s + 0.5f); return static_cast<std::uint32_t>(r < 1 ? 0 : r > 16 ? 15 : r - 1); };
+        texScale_ = bound.packed ? (k(bound.su) | (k(bound.sv) << 4)) : 0u;
+    }
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
     push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
     if (!rtReflOn_) push_.lit &= ~omk::kDrawFloor;
@@ -3096,9 +3150,11 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         push_.cull = c ? (flipX_ ? -kCullSign : kCullSign) : 0;
         if (mvOn_) {
             pm_.p = push_;
+            pm_.texScale = texScale_;
             list_->SetGraphicsRoot32BitConstants(0, kPushMvDwords, &pm_, 0);
         } else {
-            list_->SetGraphicsRoot32BitConstants(0, kPushDwords, &push_, 0);
+            const PushSc ps{push_, texScale_};
+            list_->SetGraphicsRoot32BitConstants(0, kPushDwords, &ps, 0);
         }
         list_->DrawInstanced(static_cast<UINT>(j - i), 1, static_cast<UINT>(i), 0);
         i = j;
@@ -3205,6 +3261,7 @@ bool D3D12Renderer::makeSsao() {
 }
 
 void D3D12Renderer::runSsao() {
+    if (enhOff_) return;
     if (!makeSsao() || aoVw_ <= 0 || aoVh_ <= 0) return;
     // the frame's depth, read where it was written
     depth_.to(list_, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -3380,6 +3437,7 @@ void D3D12Renderer::rtBind(const omk::View& view) {
     // the constants, numbers and `OMK_RT_*` tunings alike, are `o3de/rtscene.cpp`'s
     RtFrame f{};
     omk::rt::fillFrame(fog_ ? fogColour_ : clearColour_, rtEye_, view.skyMean, rtReflOn_, f);
+    if (view.enhOff) { f.sky[3] = 0.0f; f.refl[0] = 0.0f; }   // the original's look: no traced light, no reflections
     std::memcpy(rtFramePtr_, &f, sizeof f);
     list_->SetGraphicsRootShaderResourceView(6, rtTlas_->GetGPUVirtualAddress());
     list_->SetGraphicsRootShaderResourceView(7, rtInstTab_->GetGPUVirtualAddress());
@@ -4095,6 +4153,7 @@ bool D3D12Renderer::makeVol() {
 }
 
 void D3D12Renderer::runVol() {
+    if (enhOff_) return;
     ++volFrame_;
     if (volCount_ <= 0 || aoVw_ <= 0 || aoVh_ <= 0) return;
     if (!makeVol()) {
@@ -4220,22 +4279,23 @@ bool D3D12Renderer::makePost() {
         D3D12_ROOT_PARAMETER p1[2] = {
             rs::constants(0, kPushSpace, sizeof(BloomPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&r1, D3D12_SHADER_VISIBILITY_PIXEL)};
-        D3D12_STATIC_SAMPLER_DESC s[4] = {
+        D3D12_STATIC_SAMPLER_DESC s[5] = {
             rs::sampler(0, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
             rs::sampler(1, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
             rs::sampler(2, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
-            rs::sampler(3, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
+            rs::sampler(3, 0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f),
+            rs::sampler(4, 0, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f)};
         D3D12_ROOT_SIGNATURE_DESC d{};
         d.NumParameters = 2; d.pParameters = p1;
         d.NumStaticSamplers = 1; d.pStaticSamplers = s;
         bloomRs_ = makeRootSig(d, "bloom");
-        // the final pass: ONE table of four (source, bloom level 0, depth, its stencil)
-        const D3D12_DESCRIPTOR_RANGE r3 = rs::srvs(0, 0, 4);
+        // the final pass: ONE table of five (source, bloom level 0, depth, its stencil, the grade's LUT)
+        const D3D12_DESCRIPTOR_RANGE r3 = rs::srvs(0, 0, 5);
         D3D12_ROOT_PARAMETER p3[2] = {
             rs::constants(0, kPushSpace, sizeof(PostPush) / 4, D3D12_SHADER_VISIBILITY_PIXEL),
             rs::table(&r3, D3D12_SHADER_VISIBILITY_PIXEL)};
         d.pParameters = p3;
-        d.NumStaticSamplers = 4;
+        d.NumStaticSamplers = 5;
         postRs_ = makeRootSig(d, "post");
         if (!bloomRs_ || !postRs_) return false;
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
@@ -4322,15 +4382,81 @@ bool D3D12Renderer::makePost() {
     sv.Format = DXGI_FORMAT_X32_TYPELESS_G8X24_UINT;
     if (samples_ <= 1) sv.Texture2D.PlaneSlice = 1;
     dev_->CreateShaderResourceView(depth_.r, &sv, srv_.cpu(kSlotPostStencil));
+    // ...and the grade's LUT strip (a null view while none: the shader reads it only when asked)
+    D3D12_SHADER_RESOURCE_VIEW_DESC lv{};
+    lv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    lv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    lv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    lv.Texture2D.MipLevels = 1;
+    dev_->CreateShaderResourceView(lutImg_, &lv, srv_.cpu(kSlotPostLut));
     return true;
+}
+
+// `Renderer::setGrade`, see the class: the strip (`o3de/colourgrade.h` lutStrip) uploaded into an image of
+// its own, the post table's fifth view pointed at it
+bool D3D12Renderer::setGrade(const float* rgb, int n) {
+    if (!dev_) {   // before `init`: the grades are coming - the chain is wanted, whatever the request holds
+        lutWant_ = true;
+        return true;
+    }
+    flush();   // the last frame may still read the old image
+    freeRes(lutImg_);
+    lutN_ = 0;
+    if (rgb && n >= 2) {
+        std::vector<unsigned char> strip;
+        omk::lutStrip(rgb, n, strip);
+        const UINT w = static_cast<UINT>(n * n), h = static_cast<UINT>(n);
+        lutImg_ = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, w, h, 1, 1, 1, D3D12_RESOURCE_FLAG_NONE,
+                            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, "grade");
+        if (lutImg_) {
+            D3D12_RESOURCE_DESC rd = lutImg_->GetDesc();
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+            UINT64 total = 0;
+            dev_->GetCopyableFootprints(&rd, 0, 1, 0, &fp, nullptr, nullptr, &total);
+            ID3D12Resource* sb = makeBuffer(total, D3D12_HEAP_TYPE_UPLOAD, "staging");
+            if (sb) {
+                unsigned char* dst = nullptr;
+                sb->Map(0, nullptr, reinterpret_cast<void**>(&dst));
+                for (UINT y = 0; y < h; ++y)
+                    std::memcpy(dst + fp.Offset + static_cast<UINT64>(y) * fp.Footprint.RowPitch,
+                                strip.data() + static_cast<std::size_t>(y) * w * 4, static_cast<std::size_t>(w) * 4);
+                sb->Unmap(0, nullptr);
+                ID3D12GraphicsCommandList* l = oneShotBegin();
+                D3D12_TEXTURE_COPY_LOCATION td{}, sl{};
+                td.pResource = lutImg_; td.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                sl.pResource = sb; sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; sl.PlacedFootprint = fp;
+                l->CopyTextureRegion(&td, 0, 0, 0, &sl, nullptr);
+                D3D12_RESOURCE_BARRIER b{};
+                b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                b.Transition.pResource = lutImg_;
+                b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+                b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                l->ResourceBarrier(1, &b);
+                oneShotEnd();
+                freeRes(sb);
+                lutN_ = n;
+            } else freeRes(lutImg_);
+        }
+    }
+    if (bloomRs_) {   // the post table exists: its fifth view follows the image
+        D3D12_SHADER_RESOURCE_VIEW_DESC lv{};
+        lv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        lv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        lv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        lv.Texture2D.MipLevels = 1;
+        dev_->CreateShaderResourceView(lutImg_, &lv, srv_.cpu(kSlotPostLut));
+    }
+    return lutN_ > 1 || !(rgb && n >= 2);
 }
 
 void D3D12Renderer::runPost() {
     postLive_ = false;
-    if (!postWant_) return;
+    if (enhOff_) return;   // the original's look shows
+    if (!postWant_ && !lutWant_) return;
     // DEPTH OF FIELD on cinematic frames only; the rest of the chain always
     const bool dof = foc_.dofLive(postReq_.dof);
-    if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof)) return;
+    if (!(postReq_.bloom || postReq_.grade > 0 || hdrOn_ || dof || lutN_ > 1)) return;
     if (!makePost()) {
         static bool told = false;
         if (!told) std::fprintf(stderr, "post: the chain could not be made - the frame without it\n");
@@ -4387,8 +4513,9 @@ void D3D12Renderer::runPost() {
     target(postImg_, rtvPost_, w_, h_);
     l->SetGraphicsRootSignature(postRs_);
     l->SetPipelineState(postPipe_);
-    const PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, sourceSs(),
+    PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, sourceSs(),
                                                hdrOn_ ? hdrPeak_ : 0.0f);
+    pp.lut[0] = lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f;
     l->SetGraphicsRoot32BitConstants(0, sizeof pp / 4, &pp, 0);
     l->SetGraphicsRootDescriptorTable(1, srv_.gpu(kSlotPostSrc));
     l->DrawInstanced(3, 1, 0, 0);
@@ -4655,6 +4782,7 @@ void D3D12Renderer::fgTick() {
 // At a world present: whether an in-between frame goes out first - and if so
 // it is in `fgMid_`.
 bool D3D12Renderer::fgMidFrame() {
+    if (enhOff_) return false;
     if (!fgOn_) return false;
     fgTick();
     ++fgReal_;
@@ -5057,6 +5185,7 @@ D3D12Renderer::~D3D12Renderer() {
     for (ID3D12Resource*& b : deadBufs_) freeRes(b);
     for (auto& [g, b] : vbo_) freeRes(b.res);
     for (auto& [key, u] : uploaded_) freeRes(u.t.img);
+    freeRes(lutImg_);
     freeRes(white_.img);
     killTarget();
     freeRes(shadow_.r);

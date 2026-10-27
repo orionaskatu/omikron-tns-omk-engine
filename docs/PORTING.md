@@ -201,7 +201,13 @@ What is actually needed, and nothing beyond it:
 found.** First, this named SDL3 and the machine the frontend was written on has
 only SDL2. The surface `backends/sdl/` uses is a dozen calls both
 versions have, so it builds against either and the Makefile prefers 3
-(`pkg-config --exists sdl3 || sdl2`). Second, **pl_mpeg is now integrated** and two things about it were wrong here.
+(`pkg-config --exists sdl3 || sdl2`). (2026-10-26: SDL3 had stopped
+building unnoticed - the audio device, text input and the Vulkan window kept
+SDL2's calls, and an `SDL_InitSubSystem(...) == 0` left GLES on the software
+reference under SDL3, whose calls answer true on success. Fixed, and held by
+`verify.py: engine: sdl3`, which builds and runs both where both exist.
+SDL3's device stays at its own rate and its stream resamples; SDL2's device
+reopens at the stream's.) Second, **pl_mpeg is now integrated** and two things about it were wrong here.
 It is **MIT**, not public domain (`SPDX-License-Identifier: MIT`, Dominic
 Szablewski) - corrected in `engine/third_party/README.md`, which records the
 provenance. And rule 2 needed a distinction it did not draw: it keeps

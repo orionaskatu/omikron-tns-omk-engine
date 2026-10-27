@@ -19,7 +19,7 @@
 //                            (the boot then fails "no VM opcode table")
 //   sdmc:/omk/saves/GAMES    where saves go (never into the data tree -
 //                            CLAUDE.md 1)
-//   sdmc:/omk/omk.ini        the game's own config file, when present
+//   sdmc:/omk/omk.ini        the config, read when present; OMK's menu writes it
 //   sdmc:/omk/args.txt       EXTRA arguments, one per line, when present
 //                            (`#` starts a comment) - how a run is given
 //                            `--area`, `--save` or `--nofmv` without a rebuild;
@@ -214,7 +214,9 @@ int main(int, char**) {
     // after this default is ignored, measured in Azahar), so a default put
     // first would always win.
     std::vector<std::string> args = {"omk-play", kRoot, kTables, "--saves", kSaves};
-    if (exists(kIni)) { args.push_back("--config"); args.push_back(kIni); }
+    // always named: read when it is there, and where OMK's options menu writes
+    args.push_back("--config");
+    args.push_back(kIni);
 #endif
     // args.txt: one argument a line as on the Vita, and a line may also hold
     // several separated by spaces - `--profile sdmc:/omk/run.prof` is how a

@@ -260,8 +260,8 @@ struct Settings {
     // `colorgrade = off|cyber|warm|noir|filmic` and `hdr = off|on` (HDR10
     // output on an HDR display), those two asked for BY NAME only: a grade is
     // a look, not more of the picture, and HDR needs the display to say yes.
-    bool   bloom = false;
-    Source bloomSource = Source::Default;
+    bool   postBloom = false;   // (the REMASTER's own `bloom` strength is below)
+    Source postBloomSource = Source::Default;
     bool   dof = false;
     Source dofSource = Source::Default;
     int    colorGrade = 0;        // 0 off, 1 cyber, 2 warm, 3 noir, 4 filmic
@@ -285,14 +285,6 @@ struct Settings {
     // half an interval of latency. In `all = max`.
     bool   frameGen = false;
     Source frameGenSource = Source::Default;
-
-    // `texturepack = <directory>`: a TEXTURE OVERRIDE PACK (`o3de/texpack.h`,
-    // `todo/enhancements.md` 25) - upscaled replacements of the `.3DT` pages,
-    // drawn by the Vulkan and Direct3D 12 renderers. Empty (the default) is
-    // off. A relative path is taken from the ini's own directory. It names a
-    // directory, so `all = max` cannot give it: asked for by name only.
-    std::string texturePack;
-    Source texturePackSource = Source::Default;
 
     // `clipdistance = 0` under `[Enhancements]`: UNLIMITED DRAW DISTANCE.
     //
@@ -325,6 +317,124 @@ struct Settings {
     // the order. And it touches nothing outside `[Enhancements]` - the game's
     // own option rows are not enhancements and this must never move them.
     bool   enhanceAll = false;
+
+    // ---- [Remaster] - what OVERRIDES authored art, OFF unless named -------
+    // (`todo/remaster.md`). A section of its own, apart from `[Enhancements]`
+    // and never touched by `all = max`: an enhancement draws the game's own
+    // data better, a remaster feature replaces some of it.
+    //
+    // `texturepack = DIR`: a directory of replacement textures
+    // (`o3de/texpack.h`), drawn by the Vulkan and GLES backends. Empty is off.
+    std::string texturePack;
+    Source texturePackSource = Source::Default;
+    // `uipack = DIR`: the INTERFACE PACK (`ui/uipack.h`) - the 640x480
+    // bitmaps drawn from upscaled ones when enlarged. Empty is off.
+    std::string uiPack;
+    Source uiPackSource = Source::Default;
+    // `fontpack = DIR`: the FONT PACK (`ui/fontpack.h`) - the faces' glyphs
+    // drawn finer where `textscaling fit` enlarges them. Empty is off.
+    std::string fontPack;
+    Source fontPackSource = Source::Default;
+    // `filmpack = DIR`: the FILM PACK (`platform/filmpack.h`) - the intro
+    // films played from upscaled copies. Empty is off.
+    std::string filmPack;
+    Source filmPackSource = Source::Default;
+    // `bloom = S`: a glow from the pack's LIGHT MAPS (`<key>_e.png`), S the
+    // strength (the previews' 1.3), 0 off. Needs a texture pack with light
+    // maps; Vulkan and GLES only.
+    float  bloom = 0.0f;
+    Source bloomSource = Source::Default;
+    // `grade = DIR`: a colour grade per city, DIR's `.cube` files
+    // (`o3de/colourgrade.h`). Empty is off.
+    std::string grade;
+    Source gradeSource = Source::Default;
+    // `dir = DIR`: THE REMASTER PRESET - the three above from one folder:
+    // its `pack/` (or `full/pack/`, `tools/omktexpack.py export full`'s), the
+    // bloom at the previews' 1.3, its `grades/`. A BASE, as `all = max` is for
+    // `[Enhancements]`: any specific key or flag beats it.
+    std::string remasterDir;
+    Source remasterDirSource = Source::Default;
+    // `water = S`: the WATER REFLECTS (`o3de/renderer.h` drawWithWater), S
+    // the reflection's strength, 0 off; Vulkan and GLES only.
+    float  water = 0.0f;
+    Source waterSource = Source::Default;
+    // `floors = S`: the FLOORS the grades' `floors.txt` lists reflect
+    // (`o3de/floorreflect.h`), S times each one's strength. 0 = off.
+    float  floors = 0.0f;
+    Source floorsSource = Source::Default;
+    // `wet = S`: the game's weather ON THE GROUND (`o3de/wetfloor.h`): its RAIN
+    // wets the floors under the open sky while the shower falls, and where its
+    // SNOW falls, snow lies on them; S their strength. 0 = off.
+    float  wet = 0.0f;
+    Source wetSource = Source::Default;
+    // `rain3d = S`: the game's RAIN and SNOW drawn IN THE SCENE
+    // (`playremaster_rain.cpp`) - walls hide them, a roof stops them, the set's
+    // lights light them, the sky darkens with the shower - S their brightness. 0 = off.
+    float  rain3d = 0.0f;
+    Source rain3dSource = Source::Default;
+    // `mist = S`: the MIST, a height fog in the set's fog colour (`View::mist`). 0 = off.
+    float  mist = 0.0f;
+    Source mistSource = Source::Default;
+    // `upscale = F`: THE UPSCALE, the frame drawn F times smaller each way and
+    // brought up by AMD FSR 1 (`Renderer::setUpscale`), 1..3. 1 = off.
+    float  upscale = 1.0f;
+    Source upscaleSource = Source::Default;
+    // `preload = M`: THE PRELOAD RADIUS - the sets behind every door within M
+    // metres (two hops: an airlock and what is beyond it) prepared on a thread
+    // and their textures put on the GPU ahead, released past M + 10. 0 off.
+    // More memory for no load on arriving; the `--remaster` preset's 15.
+    float  preload = 0.0f;
+    Source preloadSource = Source::Default;
+    // `bodylight = S`: the BODIES LIT BY THEIR SURROUNDINGS (`o3de/lightprobe.h`),
+    // S the tint's strength, 0 off; Vulkan and GLES only.
+    float  bodyLight = 0.0f;
+    Source bodyLightSource = Source::Default;
+    // `fxlight = S`: the EMITTERS LIGHT (`o3de/emitterlight.h`) - the set's
+    // flames and glows become point lights, S their strength, 0 off; Vulkan
+    // and GLES only.
+    float  fxLight = 0.0f;
+    Source fxLightSource = Source::Default;
+    // `relief = S`: the RELIEF - the textures' brightness read as height under
+    // the emitters' point lights (`View::relief`), S its strength, 0 off.
+    float  relief = 0.0f;
+    Source reliefSource = Source::Default;
+    // `smooth = S`: THE ROUNDED BODIES - each character triangle split 3x3 and
+    // pulled toward its corners' normals by S (`o3de/smoothbody.h`). 0 = off.
+    float  smooth = 0.0f;
+    Source smoothSource = Source::Default;
+    // `smoothskip = A,B`: the models the rounding leaves as they are, by name
+    // - the way out for one that suffers, the rest still rounded
+    std::string smoothSkip;
+    Source smoothSkipSource = Source::Default;
+    // `ao = S`: the AMBIENT OCCLUSION at contacts, from the frame's depth
+    // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
+    float  ao = 0.0f;
+    Source aoSource = Source::Default;
+    // `mode = original|remaster`: the REMASTER'S SWITCH (`todo/graphics-menu.md`
+    // B) - OMK's options menu and F10 write it. `original` arms every
+    // `[Remaster]` key above as `remaster`, the default, does, and starts with
+    // the original's look shown (`playremaster_mode.cpp`): F10 brings the
+    // remaster's. A switch over the keys, not a key of its own to configure.
+    bool   remasterOn = true;
+    Source remasterModeSource = Source::Default;
+
+    // ---- [OMK] - this port's own interface ---------------------------------
+    // `language = fr|en`: the LANGUAGE OF OMK'S OWN MENU ROWS (`ui/omktext.h`,
+    // `engine/lang/omk-menu.ini`). The game's own rows are the installed
+    // copy's `IAM\Options`, whose language neither the data nor the exe names
+    // - so this is set by hand. French, as the shipped data is.
+    std::string language = "fr";
+    Source languageSource = Source::Default;
+
+    // whether any `[Remaster]` key asks for something: a build without
+    // OMK_REMASTER says it ignores them (`playremaster_off.cpp`; the audit's
+    // bug 5 - only the preset and the texture pack were named)
+    bool anyRemaster() const {
+        return !texturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
+               !grade.empty() || !remasterDir.empty() || !smoothSkip.empty() || bloom > 0.0f || water > 0.0f ||
+               floors > 0.0f || wet > 0.0f || rain3d > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
+               smooth > 0.0f || fxLight > 0.0f || bodyLight > 0.0f;
+    }
 
     // ---- what the clip distance DERIVES, all in world units (inches) ----
     //
@@ -558,6 +668,36 @@ inline constexpr int kMaxBestLod = 1;             // the crowd's best skeleton a
 inline constexpr int kMaxOptionClipMetres = 200;
 
 // Apply them, leaving anything an explicit key already set alone.
+// THE REMASTER PRESET'S STRENGTHS (`[Remaster] dir` / `--remaster DIR`): what
+// each key takes when the preset is on and neither its flag nor its key says
+// otherwise - read by the remaster's setup (`playremaster_setup.cpp`) and by
+// OMK's options menu, which shows them as the defaults its reset returns to.
+// The texture pack, the grades and the interface, font and film packs come
+// from the preset's FOLDER and are not here; `upscale` is not the preset's.
+struct RemasterPresetValue {
+    const char* key;
+    float value;
+};
+inline constexpr RemasterPresetValue kRemasterPreset[] = {
+    {"bloom", 1.6f},     // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
+    {"water", 0.6f},     // 0.35 before the Fresnel (2026-10-20)
+    {"floors", 1.0f},
+    {"wet", 1.0f},
+    {"rain3d", 1.0f},
+    {"mist", 0.5f},      // the reader's, from a sheet of 0, 0.5 and 1 (2026-10-21)
+    {"relief", 2.0f},    // 2 once the pack's generated normal maps came
+    {"ao", 2.0f},        // confirmed in play at 2 (2026-10-21)
+    {"bodylight", 1.0f},
+    {"fxlight", 1.0f},
+    {"smooth", 0.75f},   // "do it by default" (2026-10-22)
+    {"preload", 15.0f},  // 25 until the measurement of 2026-10-26
+};
+inline float remasterPresetValue(const char* key) {
+    for (const auto& p : kRemasterPreset)
+        if (std::string(p.key) == key) return p.value;
+    return 0.0f;
+}
+
 inline void applyMaxEnhancements(Settings& s) {
     const auto take = [](int& v, int top, Settings::Source& src) {
         if (src == Settings::Source::Default) { v = top; src = Settings::Source::Ini; }
@@ -588,7 +728,7 @@ inline void applyMaxEnhancements(Settings& s) {
     takeFlag(s.bestLod, kMaxBestLod, s.bestLodSource);
     takeFlag(s.vehicleShine, kMaxVehicleShine, s.vehicleShineSource);
     take(s.colourDepth,   kMaxColourDepth,   s.colourDepthSource);
-    takeFlag(s.bloom, kMaxBloom, s.bloomSource);
+    takeFlag(s.postBloom, kMaxBloom, s.postBloomSource);
     takeFlag(s.dof, kMaxDof, s.dofSource);
     takeFlag(s.softParticles, kMaxSoftParticles, s.softParticlesSource);
     takeFlag(s.volumetrics, kMaxVolumetrics, s.volumetricsSource);

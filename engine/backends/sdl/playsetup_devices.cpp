@@ -59,7 +59,9 @@ int PlayState::setupDevices() {
     // software reference's window below. A GPU window is handed to the
     // frontend there, so F11 and the resolution row act on whichever is up.
     gpuOpenWindow();
-    if (!vkRen && !glRen && !front.open(dispW, dispH, "OMK Engine (software)")) {
+    // (a window the GPU file opened for a backend made later - the GL1 one on
+    // Mac OS X, `gpuOpenWorldHarness` - is the window too)
+    if (!vkRen && !glRen && !front.windowId() && !front.open(dispW, dispH, "OMK Engine (software)")) {
         std::fprintf(stderr, "SDL: %s\n", front.lastError().c_str());
         return 1;
     }

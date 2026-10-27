@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/options.h"
+#include "ui/omkoptions.h"
 
 #include "platform/json.h"
 
@@ -226,10 +227,15 @@ int parentPage(int p) {
 // Page 0's three items, list 0x004DD3B0 in its item-array order: `Oui`
 // (0x004DD310, callback 0x00492AB0), `Non` (0x004DD358, child the root) and
 // the caption (0x004DD2C8, bank A 0x20000004 - never selectable).
+struct PromptItem { int string, y; bool selectable; };
+constexpr PromptItem kPrompt[3] = {{61, 200, true}, {60, 240, true}, {71, 160, false}};
+
+}  // namespace
+
 // `ui.json` carries the captions as UTF-8, and the interface's fonts are
 // indexed by the cp1252 byte the shipped `IAM\Options` holds - so "Très"
 // would draw two wrong glyphs. Every caption is Latin-1, which maps 1:1.
-std::string latin1(const std::string& u) {
+std::string utf8ToLatin1(const std::string& u) {
     std::string o;
     for (std::size_t i = 0; i < u.size(); ++i) {
         const auto c = static_cast<unsigned char>(u[i]);
@@ -243,11 +249,6 @@ std::string latin1(const std::string& u) {
     }
     return o;
 }
-
-struct PromptItem { int string, y; bool selectable; };
-constexpr PromptItem kPrompt[3] = {{61, 200, true}, {60, 240, true}, {71, 160, false}};
-
-}  // namespace
 
 OptionsMenu::OptionsMenu(const OptionTree& t) : t_(&t), rows_(74) {
     // `+92`, the values each choice's caption stands for
@@ -420,6 +421,10 @@ void OptionsMenu::changed(int item) {
 
 int OptionsMenu::rowAt(int w) const {
     if (page_ == 0) return -1;
+    if (OmkOptions::isPage(page_)) return -1;   // OMK's pages answer for themselves
+    // OMK's header at widget 4, the start menu's Retour moved to 5
+    if (page_ == 1 && omk_ && (w == 4 || w == 5))
+        return w == 4 ? kOmkRootItem : param_ == 1 ? kRowBack : -1;
     // `Opt_PageRoot`'s branch: row 4 is `Retour` with no page behind it when
     // the START MENU hosts the screen, and empty under the sneak, whose own
     // tabs are the way out (0x004912F0)
@@ -431,7 +436,8 @@ int OptionsMenu::rowAt(int w) const {
 }
 
 int OptionsMenu::rowPage(int w) const {
-    if (page_ == 0 || (page_ == 1 && w == 4)) return -1;
+    if (page_ == 1 && omk_ && w == 4) return OmkOptions::kPageGraphics;
+    if (page_ == 0 || OmkOptions::isPage(page_) || (page_ == 1 && (w == 4 || (omk_ && w == 5)))) return -1;
     const auto* p = t_->page(page_);
     if (!p) return -1;
     const auto it = p->bind.find(w);
@@ -440,8 +446,10 @@ int OptionsMenu::rowPage(int w) const {
 
 bool OptionsMenu::selectableRow(int w) const {
     if (page_ == 0) return w >= 0 && w < 3 && kPrompt[w].selectable;
+    if (OmkOptions::isPage(page_)) return omk_ && omk_->selectable(page_, w);
     const int item = rowAt(w);
     if (item < 0) return false;
+    if (item == kOmkRootItem) return true;
     const auto r = t_->rows.find(item);
     if (r == t_->rows.end()) return false;
     // `Opt_BindRow`: a header with no page behind it is a CAPTION
@@ -518,6 +526,16 @@ bool OptionsMenu::press(std::uint32_t bits) {
     // the confirm when nothing moved - so a row with a page behind it is
     // entered generically, without a case in `Opt_RowInput`
     if (bits & (kUiUp | kUiDown)) { moved_ = moveVertical((bits & kUiUp) ? -1 : 1); return true; }
+    // OMK's pages: BACK to their parent (never through page 0's prompt - their
+    // changes are written as they are made), the rest theirs
+    if (OmkOptions::isPage(page_)) {
+        if (!omk_) return false;
+        if (bits & kUiBack) { gotoPage(OmkOptions::parent(page_)); return true; }
+        int to = -1;
+        const bool used = omk_->press(page_, sel_, bits, to);
+        if (to >= 0) gotoPage(to);
+        return used;
+    }
     const int item = rowAt(sel_);
     if ((bits & kUiConfirm) && item >= 0 && rowPage(sel_) >= 0) {
         gotoPage(rowPage(sel_));
@@ -579,6 +597,20 @@ void OptionsMenu::listColour(std::uint8_t rgb[3]) const {
 
 std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
     std::vector<Widget> out;
+    // `Opt_LayOutPage` (0x004910B0): spread the bound rows down 280 pixels -
+    // 140 for three or fewer - from y 80 under the sneak, 120 under the menu
+    const auto layOut = [&](std::vector<Widget>& ws) {
+        const int n = static_cast<int>(ws.size());
+        const int extent = n > 3 ? 280 : 140;
+        const int step = n <= 1 ? 0 : (extent - 20 * n) / (n - 1) + 20;
+        int y = param_ == 0 ? 80 : 120;
+        for (auto& w : ws) { w.y = y; y += step; }
+    };
+    if (OmkOptions::isPage(page_)) {
+        if (omk_) out = omk_->widgets(page_, sel_);
+        layOut(out);
+        return out;
+    }
     if (page_ == 0) {
         for (int k = 0; k < 3; ++k) {
             Widget w;
@@ -598,6 +630,20 @@ std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
     for (int row = 0; row < t_->rowWidgets; ++row) {
         const int item = rowAt(row);
         if (item < 0) continue;
+        if (item == kOmkRootItem) {
+            // OMK's header: drawn as the root's own headers are
+            Widget w;
+            w.row = row;
+            w.item = item;
+            w.type = 2;
+            w.label = omk_->text("page.graphics");
+            w.font = 'S';
+            w.align = 8;
+            w.selectable = true;
+            w.selected = row == sel_;
+            out.push_back(std::move(w));
+            continue;
+        }
         const auto ro = t_->rows.find(item);
         if (ro == t_->rows.end()) continue;
         const auto& o = ro->second;
@@ -605,7 +651,7 @@ std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
         w.row = row;
         w.item = item;
         w.type = o.type;
-        w.label = o.labelId >= 0 && !str(o.labelId).empty() ? str(o.labelId) : latin1(o.label);
+        w.label = o.labelId >= 0 && !str(o.labelId).empty() ? str(o.labelId) : utf8ToLatin1(o.label);
         // `Opt_BindRow`: white and no alignment first, then by type
         const bool caption = o.type == 2 && rowPage(row) < 0;
         w.font = (o.type == 2 || o.type == 6) ? 'S' : 'J';
@@ -619,7 +665,7 @@ std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
             static_cast<std::size_t>(st.current) < o.choices.size()) {
             const std::size_t k = static_cast<std::size_t>(st.current);
             const int cid = k < o.choiceIds.size() ? o.choiceIds[k] : -1;
-            w.value = cid >= 0 && !str(cid).empty() ? str(cid) : latin1(o.choices[k].first);
+            w.value = cid >= 0 && !str(cid).empty() ? str(cid) : utf8ToLatin1(o.choices[k].first);
         }
         else if (o.type == 4) {
             const auto d = devices_.find(item);
@@ -630,13 +676,7 @@ std::vector<OptionsMenu::Widget> OptionsMenu::widgets() const {
             w.slider = sliderValue(item);
         out.push_back(std::move(w));
     }
-    // `Opt_LayOutPage` (0x004910B0): spread the bound rows down 280 pixels -
-    // 140 for three or fewer - from y 80 under the sneak, 120 under the menu
-    const int n = static_cast<int>(out.size());
-    const int extent = n > 3 ? 280 : 140;
-    const int step = n <= 1 ? 0 : (extent - 20 * n) / (n - 1) + 20;
-    int y = param_ == 0 ? 80 : 120;
-    for (auto& w : out) { w.y = y; y += step; }
+    layOut(out);
     return out;
 }
 

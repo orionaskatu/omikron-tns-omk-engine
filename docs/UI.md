@@ -3083,6 +3083,13 @@ vignette quads `v3 = (HIWORD(g_ScreenSize) << 6) / 480` tall, which is 64 at
 fade vignette are the same two bands, and a script's `fade.to_black` darkens
 exactly the strip that is already there.
 
+**On a wide frame the two part, and the port keeps the strip** (2026-10-20).
+Every display the original ran was 4:3, where `h*64/480` and the strip round a
+1.818:1 picture are the same rows (64 at 480, 80 at 600). At 1920x1080 the
+strip is 12 rows and `h*64/480` is 144, so a fade drew 4:3 bars over the
+picture and faded them off - a reader's report. The fade's bands are sized
+from the WIDTH like the strip (`playframe_screens_huds.cpp`), identical at 4:3.
+
 **What turns it on is whether the player has control**, not the shape of the
 camera. `intro-75` is a cutscene on a scripted world camera and it is
 letterboxed; free roaming is not, whatever camera is installed — and a great
@@ -4592,6 +4599,33 @@ Read for the port's live menu (`todo/options-menu.md`, `ui/options.h`
   `Slider_Init`); Accel 3D re-picks the driver, its last entry string 68
   `Rendu logiciel`. The volumes are attenuations, `(100 - v) * 0.4` out and
   `100 - 2.5 a` back.
+
+### The port's own pages - NOT the exe's (2026-10-26)
+
+`omk-play` hangs three pages of its own on this screen
+(`todo/graphics-menu.md`, `ui/omkoptions.h`): "Graphismes (OMK)" with
+`[Enhancements]`, `[Remaster]` and the language of these rows, written back to
+the config. Everything above is still the exe's, with one visible difference:
+**the root page carries a fifth header, "Graphismes (OMK)", in row widget 4,
+and the start menu's `Retour` moves to widget 5.** The pages are numbered 100
+to 102, past every page record; BACK from them never passes page 0's prompt
+(their rows are written as they change, and the prompt saves the game's
+header). Their texts are not `IAM\Options`'s but `engine/lang/omk-menu.ini`'s,
+French or English by `[OMK] language` - the installed copy's language being
+named nowhere in the data or the exe. `OptionsMenu` without `attachOmk` is the
+exe's screen exactly, and `OptionsWalk` (the model `sim: options` checks)
+never sees them.
+
+**F10, OMK's own key, is not the exe's either** (2026-10-27,
+`backends/remaster/playremaster_mode.cpp`): in a build with the remaster it
+switches the original's look and the remaster's on the running game - the
+Remaster page's "Rendu" row is the same switch - and writes `[Remaster] mode`.
+It is read beside ESC, off every binding table; DIK 0x44 is no default
+binding of the game's (`tables/key_bindings.json`). On a PAD it is SELECT /
+BACK in every group: the adventure group's sneak moves to TRIANGLE / Y and
+its first-person view to SQUARE / X, shoot mode's `Arme` to TRIANGLE
+(`input/pad.h` `kAventure`, `kShoot`, `engine: pad layout`) - the pad's
+layout per group, as the game's own tables are.
 
 
 ---

@@ -60,6 +60,9 @@ const std::map<int, int>& keymap() {
         // the engine's mapping such a player cannot swim at all. Left SHIFT,
         // which reaches no binding, runs.
         {SDL_SCANCODE_LCTRL, 0x1D},
+        // ...and OMK's own: F10 switches the original and the remaster's look
+        // (`backends/remaster/playremaster_mode.cpp`), off every binding path
+        {SDL_SCANCODE_F10, 0x44},
     };
     return m;
 }
@@ -127,10 +130,14 @@ int optionDisplayModes(int curW, int curH, std::vector<std::string>& names) {
     std::vector<std::pair<int, int>> modes;
 #if defined(OMK_SDL3)
     int n = 0;
-    if (SDL_DisplayMode** ms = SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(), &n)) {
+    const SDL_DisplayID disp = SDL_GetPrimaryDisplay();
+    if (SDL_DisplayMode** ms = SDL_GetFullscreenDisplayModes(disp, &n)) {
         for (int i = 0; i < n; ++i) modes.push_back({ms[i]->w, ms[i]->h});
         SDL_free(ms);
     }
+    // ...and the DESKTOP's, which SDL2's list carried and SDL3's need not
+    // (its dummy driver lists none but it)
+    if (const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(disp)) modes.push_back({dm->w, dm->h});
 #else
     const int n = SDL_GetNumDisplayModes(0);
     for (int i = 0; i < n; ++i) {
@@ -186,7 +193,11 @@ void SdlFrontend::setWindowTitle(const std::string& t) {
 // the name field's keyboard is `todo/quest-port.md` step 6.
 void SdlFrontend::startTextInput() {
 #if !defined(__vita__) && !defined(__ANDROID__)
+#  if defined(OMK_SDL3)
+    if (SDL_Window* w = active()) SDL_StartTextInput(w);   // SDL3's is per window
+#  else
     SDL_StartTextInput();
+#  endif
 #endif
 }
 // THE NAME FIELD'S KEYBOARD ON ANDROID (the Quest, step 6c): SDL's text
@@ -202,7 +213,11 @@ void SdlFrontend::fieldKeyboard(bool on) {
     static int was = -1;
     if (was == (on ? 1 : 0)) return;
     was = on ? 1 : 0;
+#  if defined(OMK_SDL3)
+    if (SDL_Window* w = active()) { if (on) SDL_StartTextInput(w); else SDL_StopTextInput(w); }
+#  else
     if (on) SDL_StartTextInput(); else SDL_StopTextInput();
+#  endif
     std::printf("[in] the name field %s - the system keyboard %s\n", on ? "has the focus" : "lost the focus",
                 on ? "asked for (SDL_StartTextInput)" : "put away (SDL_StopTextInput)");
 #else
@@ -519,6 +534,19 @@ void SdlFrontend::feed(void* user, Uint8* out, int len) {
     self->mix_.mix(reinterpret_cast<float*>(out), static_cast<std::size_t>(len) / sizeof(float));
 }
 
+#if defined(OMK_SDL3)
+void SdlFrontend::feed3(void* user, SDL_AudioStream* s, int more, int) {
+    auto* self = static_cast<SdlFrontend*>(user);
+    if (more <= 0) return;
+    // whole frames, rounded up: SDL asks again for what is still short
+    const int frame = static_cast<int>(sizeof(float)) * self->achan_;
+    const int bytes = (more + frame - 1) / frame * frame;
+    self->abuf_.assign(static_cast<std::size_t>(bytes) / sizeof(float), 0.0f);
+    feed(user, reinterpret_cast<Uint8*>(self->abuf_.data()), bytes);
+    SDL_PutAudioStreamData(s, self->abuf_.data(), bytes);
+}
+#endif
+
 bool SdlFrontend::openAudio(int rate, int channels) {
     // One device, not one per movie: reopening it per file was how the
     // previous movie's audio kept playing under the next.
@@ -530,24 +558,40 @@ bool SdlFrontend::openAudio(int rate, int channels) {
     arate_ = rate; achan_ = channels;
     SDL_AudioSpec want{};
     want.freq = rate;
+#if defined(OMK_SDL3)
+    // SDL3's spec is the format alone - native-order floats (`SDL_AUDIO_F32`
+    // is the host's order there) - and the callback is the stream's
+    want.format = SDL_AUDIO_F32;
+    want.channels = channels;
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");   // SDL2's `samples`
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return false;
+    astream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &want,
+                                         &SdlFrontend::feed3, this);   // MIXED, not queued
+    if (!astream_) return false;
+    SDL_ResumeAudioStreamDevice(astream_);
+    // what the DEVICE runs at - the stream converts to it
+    SDL_AudioSpec got{};
+    int frames = 0;
+    if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(astream_), &got, &frames))
+        std::printf("audio: device %d Hz, %d channels, %d frames a period (SDL3: the stream converts from "
+                    "%d Hz, %d)\n", got.freq, got.channels, frames, rate, channels);
+    return true;
+#else
     // native-order floats, which is what the mixer hands over: AUDIO_F32 is
-    // LITTLE-endian in SDL2 (and SDL3's old name maps it to F32LE), so on a
-    // big-endian Mac every sample played byte-reversed - noise on PowerPC
+    // LITTLE-endian in SDL2, so on a big-endian Mac every sample played
+    // byte-reversed - noise on PowerPC
     want.format = AUDIO_F32SYS;
     want.channels = static_cast<Uint8>(channels);
     want.samples = 1024;
     want.callback = &SdlFrontend::feed;   // MIXED, not queued
     want.userdata = this;
-#if defined(OMK_SDL3)
-    astream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
-                                         &want, nullptr, nullptr);
-    if (astream_) SDL_ResumeAudioStreamDevice(astream_);
-    return astream_ != nullptr;
-#else
     if (SDL_Init(SDL_INIT_AUDIO) != 0) return false;
-    adev_ = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
-    if (adev_) SDL_PauseAudioDevice(adev_, 0);
-    return adev_ != 0;
+    SDL_AudioSpec got{};
+    adev_ = SDL_OpenAudioDevice(nullptr, 0, &want, &got, 0);
+    if (!adev_) return false;
+    SDL_PauseAudioDevice(adev_, 0);
+    std::printf("audio: device %d Hz, %d channels, %d frames a period\n", got.freq, got.channels, got.samples);
+    return true;
 #endif
 }
 

@@ -404,19 +404,23 @@ const omk::Geometry & PlayState::lodRestFor(const std::string& model, const Char
             m = next;
         }
     }
+    // cut from the FLAT rest where the model was rounded (`CharModel::flat`):
+    // the crowd's bodies are posed on the CPU every frame, and four times
+    // the corners cost 4K Qalisar 58 -> 34 fps (2026-10-22)
+    const omk::Geometry& from = mo.flat.corners.empty() ? mo.rest : mo.flat;
     omk::Geometry g;
     g.batches.clear();
-    for (const auto& b : mo.rest.batches) {
+    for (const auto& b : from.batches) {
         omk::Batch nb = b;
         nb.start = g.corners.size(); nb.count = 0;
         for (std::size_t c = b.start; c + 3 <= b.start + b.count; c += 3) {
-            const auto mi = mo.rest.cornerMesh[c];
+            const auto mi = from.cornerMesh[c];
             if (mi < 0 || static_cast<std::size_t>(mi) >= keep.size() || !keep[static_cast<std::size_t>(mi)]) continue;
             for (int k = 0; k < 3; ++k) {
-                g.corners.push_back(mo.rest.corners[c + static_cast<std::size_t>(k)]);
-                g.cornerMesh.push_back(mo.rest.cornerMesh[c + static_cast<std::size_t>(k)]);
-                if (!mo.rest.cornerVertex.empty()) g.cornerVertex.push_back(mo.rest.cornerVertex[c + static_cast<std::size_t>(k)]);
-                if (!mo.rest.cornerDeclared.empty()) g.cornerDeclared.push_back(mo.rest.cornerDeclared[c + static_cast<std::size_t>(k)]);
+                g.corners.push_back(from.corners[c + static_cast<std::size_t>(k)]);
+                g.cornerMesh.push_back(from.cornerMesh[c + static_cast<std::size_t>(k)]);
+                if (!from.cornerVertex.empty()) g.cornerVertex.push_back(from.cornerVertex[c + static_cast<std::size_t>(k)]);
+                if (!from.cornerDeclared.empty()) g.cornerDeclared.push_back(from.cornerDeclared[c + static_cast<std::size_t>(k)]);
             }
             nb.count += 3;
         }
@@ -1593,6 +1597,7 @@ CharModel * PlayState::charModelFor(const std::string& name) {
         if (const auto mt = fs.resolve("MESHES/PERSOS/" + name + ".3DT"))
             m.tex = omk::textures(md, omk::DataFs::readPath(*mt));
         m.face = omk::faceMeshOf(m.meshes);
+        remasterSmoothModel(m, name);   // the rounded bodies (`backends/remaster/`)
         m.boneIdx.build(m.meshes, omk::MeshNameIndex::shadowNames());
         for (std::size_t i = 0; i < m.meshes.size() && m.root < 0; ++i) {
             bool hasParent = false;
@@ -2060,16 +2065,22 @@ void PlayState::prepareSet(SetLoad& L) {
         return std::chrono::duration<double, std::milli>(clk::now() - a).count();
     };
     WorldSlot& w = L.out;
+    const auto stop = [&L](int stage) {
+        if (!L.cancelled || !L.cancelled()) return false;
+        L.stoppedAt = stage;
+        return true;
+    };
 #if !defined(__vita__) && !defined(macintosh)   // no std::this_thread on either
     if (L.delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(L.delayMs));
 #endif
+    if (stop(0)) return;
     auto t = clk::now();
     const auto d = omk::DataFs::readPath(L.path3do);
     std::vector<std::byte> td;
     if (!L.path3dt.empty()) td = omk::DataFs::readPath(L.path3dt);
     L.bytes = d.size() + td.size();
     L.ms[0] = since(t);
-    if (d.empty()) return;
+    if (d.empty() || stop(1)) return;
     w.stem = L.stem;
     w.area = L.area;
     t = clk::now();
@@ -2113,9 +2124,11 @@ void PlayState::prepareSet(SetLoad& L) {
         }
     }
     L.ms[1] = since(t);
+    if (stop(2)) return;
     t = clk::now();
     if (!L.path3dt.empty()) w.tex = omk::textures(d, td);
     L.ms[2] = since(t);
+    if (stop(3)) return;
     t = clk::now();
     w.soup = omk::collisionSoup(d, omk::SoupKind::Walkable, &w.soupMesh);
     w.steep = omk::collisionSoup(d, omk::SoupKind::Steep, &w.steepMesh);
@@ -2134,13 +2147,19 @@ void PlayState::prepareSet(SetLoad& L) {
             if (w.shotMeshRuns.empty() || w.shotMeshRuns.back().second != shotMesh[tri])
                 w.shotMeshRuns.push_back({static_cast<std::uint32_t>(tri), shotMesh[tri]});
         w.shotMeshRuns.shrink_to_fit();
+        std::vector<std::uint32_t> runFirst;
+        runFirst.reserve(w.shotMeshRuns.size());
+        for (const auto& run : w.shotMeshRuns) runFirst.push_back(run.first);
+        w.shotRunBoxes = omk::soupRunBoxes(w.shotSoup, runFirst);
     }
     w.restXyzOfMesh.clear(); w.restSoupOfMesh.clear(); w.restSteepOfMesh.clear();
     L.ms[3] = since(t);
+    if (stop(4)) return;   // before the pack's decode, the most of a preload's work
     t = clk::now();
     w.mirror = omk::mirrorPlane(d);
     if (const auto mh = omk::readHeader(d)) {
         w.lights = omk::readLights(d, *mh);
+        w.setLights = w.lights.size();
         w.ambientGrey = static_cast<int>(static_cast<std::int64_t>(
             static_cast<double>(mh->ambient) * 255.0));
         w.meshes = omk::readMeshes(d, *mh);
@@ -2154,6 +2173,10 @@ void PlayState::prepareSet(SetLoad& L) {
                         w.meshes.size());
         }
     }
+    // THE REMASTER'S PART of a set (`backends/remaster/playremaster_world.cpp`):
+    // its water and ground, its reflecting floors, its light probes, its
+    // glowing surfaces' lights - nothing without OMK_REMASTER
+    remasterPrepareSet(L);
     // THE SET'S OWN EMITTERS - `Sfx_BindAmbientEffects`, the environment
     // family. Every mesh flagged 0x40000000 whose first four name bytes
     // match a section-D tag registers that binding's effect at the mesh's
@@ -2182,10 +2205,18 @@ bool PlayState::askSet(int slot, const std::string& stem, int area, long frame) 
     w = WorldSlot{};
     mergedValid = false;
     w.geo.revision = ++worldGeoRev;
-    setLoads[slot].reset();          // a job still running finishes into its own state
+    // a job still running finishes into its own state - kept, so the
+    // session's end waits for it (those already done let go here)
+    std::erase_if(setLoadsLeft, [](const auto& L) { return !L->job || L->job->ready(); });
+    if (setLoads[slot] && setLoads[slot]->job && !setLoads[slot]->job->ready())
+        setLoadsLeft.push_back(setLoads[slot]);
+    setLoads[slot].reset();
     slotAsked[slot] = stem;
     slotAskedArea[slot] = area;
     if (stem.empty()) return had;
+    // PREPARED AHEAD (`backends/remaster/playpreload.cpp`): the preload
+    // radius's set for this area, taken as it is
+    if (remasterTakePreload(slot, stem, area, frame)) return had;
     const auto o = fs.resolve("MESHES/DECORS/" + stem + ".3DO");
     if (!o) { std::printf("world: no set %s.3DO\n", stem.c_str()); return had; }
     auto L = std::make_shared<SetLoad>();
@@ -2235,9 +2266,13 @@ bool PlayState::integrateSet(SetLoad& L, long frame) {
         worldReady = true;
     }
     std::printf("world: slot %d set %s (AREA %d) - %zu corners, %zu batches, "
-                "%zu textures, %zu walkable triangles%s\n",
+                "%zu textures, %zu walkable triangles%s%s\n",
                 L.slot, L.stem.c_str(), L.area, w.geo.corners.size(), w.geo.batches.size(),
-                w.tex.size(), w.soup.size() / 9, w.mirror.found ? ", mirror" : "");
+                w.tex.size(), w.soup.size() / 9, w.mirror.found ? ", mirror" : "",
+                w.water.found ? ", water" : "");
+    if (w.water.found)
+        omk::event("world.water", {{"set", L.stem}, {"y", static_cast<double>(w.water.y)},
+                                   {"area", static_cast<long>(w.water.area)}, {"triangles", w.water.triangles}});
     std::printf("set load: %s - %zu KB read in %.1f ms, geometry %.1f, textures %.1f, "
                 "soups %.1f, the rest %.1f; asked at frame %ld, in at frame %ld - %s, "
                 "the frame waited %.1f ms for it, the Session's load %d frame(s)\n",

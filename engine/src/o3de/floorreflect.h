@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// THE REFLECTING FLOORS - the remaster's A3 beyond the water (`todo/remaster.md`).
+// NOT IN THE ORIGINAL: its floors mirror nothing.
+//
+// Which textures of which set are WET or POLISHED, and how much: the grades'
+// `floors.txt`, curated by eye as `lights.txt` is -
+//
+//     SET TEXTURE = STRENGTH       # 0..1, times `[Remaster] floors`
+//
+// A set's floors are then its LEVEL opaque triangles of those textures,
+// grouped by height (levels within `kFloorMerge` of each other are one, at
+// the highest - a kerb's 4 units); each frame mirrors in ONE of them, the
+// level below the eye with the most listed floor within `kFloorNear` of it
+// (`chooseFloor`), through the water's own pass (`drawWithWater`) - the water
+// first when its plane reflects.
+#pragma once
+
+#include "formats/tex3dt.h"
+#include "o3de/geom3do.h"
+#include "o3de/renderer.h"
+
+#include <cstddef>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace omk {
+
+inline constexpr float kFloorMerge = 8.0f;      // levels this close are one plane (game units)
+inline constexpr float kFloorNear = 4000.0f;    // the floor that counts for the choice: within ~100 m (inches)
+
+class FloorList {
+public:
+    bool open(const std::string& path);   // false (and inactive) when absent
+    bool active() const { return opened_; }
+    std::size_t size() const { return count_; }
+    // the strength of `texture` in `set` (a `*` line for any set), 0 when unlisted
+    float strength(const std::string& set, const std::string& texture) const;
+private:
+    bool opened_ = false;
+    std::size_t count_ = 0;
+    std::unordered_map<std::string, float> byKey_;   // "SET TEXTURE", upper case
+};
+// the session's list (`floors.txt` beside the city grades)
+FloorList& floorList();
+
+struct FloorPlanes {
+    // per MATERIAL of the set's geometry (`Batch::material`): its strength, 0
+    // for a texture the list does not name
+    std::vector<float> strength;
+    struct Level {
+        float y = 0.0f;              // the plane (the game's Y points DOWN)
+        double area = 0.0;
+        std::vector<float> tris;     // x, z, area of each listed triangle on it
+    };
+    std::vector<Level> levels;
+    bool any() const { return !levels.empty(); }
+};
+FloorPlanes floorPlanes(const Geometry& g, std::span<const Texture> tex, const FloorList& list,
+                        const std::string& set);
+
+// The plane to mirror in for an eye at `eye`: the level BELOW it (a larger y)
+// with the most listed floor within `kFloorNear` of it on the ground; not
+// `found` when none has any.
+WaterPlane chooseFloor(const FloorPlanes& f, const float eye[3]);
+
+}  // namespace omk

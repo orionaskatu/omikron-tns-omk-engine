@@ -79,7 +79,9 @@ int PlayState::setupOptions(int argc, char** argv) {
     // The viewer takes the whole program: it wants no boot chain, no widget
     // tree and no movies, and mixing it into the interface loop would make
     // both harder to read than either is worth.
-    if (!scene.empty())
+    if (!scene.empty()) {
+        // ...and so the TEXTURE PACK too comes from its flag alone here
+        remasterSceneViewer();
         return sceneViewer(dataRoot, scene, camIndex, haveEye ? eyeA : nullptr,
                            haveAt ? atA : nullptr, fovA, letterbox, frames, dump,
                            startVulkan, noDelay, aaFlag < 0 ? 0 : aaFlag,
@@ -87,6 +89,7 @@ int PlayState::setupOptions(int argc, char** argv) {
                            // the scene viewer runs BEFORE settings resolve, so
                            // it takes the flag alone; `--config` is the game's
                            ssaaFlag < 0 ? 1 : ssaaFlag, dither);
+    }
 
     const auto& fs = fs_.emplace(dataRoot);
     uiWidgets = omk::UiWidgets::loadJson(tb + "/ui_widgets.json");
@@ -111,6 +114,8 @@ int PlayState::setupOptions(int argc, char** argv) {
     optTree = omk::OptionTree::loadJson(tb + "/ui_widgets.json", tb + "/ui.json");
     auto& optMenu = optMenu_.emplace(optTree);
     optMenu.setText(omk::iamStrings(fs, "IAM/Options"));
+    // ...and OMK's own pages on it (`ui/omkoptions.h`, `playomkoptions.cpp`)
+    omkOptionsSetup();
     // The world rendered at a panel's 3D VIEWPORT item's size, for the
     // composer to place (`ScreenComposer::attachView3D`).
     // The menu's animated background - `IMAGES/cloud.bmp` embossed by a

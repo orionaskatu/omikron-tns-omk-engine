@@ -249,10 +249,13 @@ python3 tools/verify.py --slow --jobs 6  # THE FULL SWEEP - minutes
   a docs-only edit needs none (unless the doc quotes a number a check asserts).
 * **"The full sweep" means `--slow`.** Plain `verify.py` skips most `engine:`
   checks. Write which one ran, with its count.
-* **The full sweep runs every 5-10 FINISHED TASKS** (a task is one thing the
-  reader asked for); `todo/sweep-log.md` holds the counter — increment on a
-  commit, reset when a sweep is recorded. Pre-build (`make`, `make play
-  play-gles vulkan`) and `caffeinate -d -u -i` before one.
+* **The full sweep is the READER's to start** — never run it unless asked in
+  that message. After 5-10 finished tasks one is *advisable*: the counter in
+  `todo/sweep-log.md` is a reminder for the reader, who runs it when they will
+  not be testing or asking for other work (2026-10-20). Keep the counter
+  (increment per finished task, reset when a sweep is recorded) and at most
+  say that one is due. When asked: pre-build (`make`, `make play play-gles
+  vulkan`) and `caffeinate -d -u -i`.
 * **Every check is expensive.** A red check is fixed ALONE: rerun that check,
   and the section only once it is green. Before running anything, ask what it
   can tell you that you do not already know.
@@ -288,13 +291,17 @@ build/omk-play ../gamedata ../tables --save ../traces/save-appart.bin --area 0 \
   dither and the shimmer are FIDELITY, on by default — the original's hardware
   device filtered and dithered. Before building an enhancement, check whether
   the game already does it and the port dropped it. `todo/enhancements.md`.
+* **Remaster code lives in remaster files** (OMK_REMASTER, `todo/remaster.md`
+  "The remaster switch"): its modules, `engine/backends/remaster/`, the GLES
+  `.inl`; a shared file gets a one-line call stubbed in
+  `playremaster_off.cpp`. `verify.py: engine: remaster switch` holds it.
 * The view is not letterboxed by default (`--letterbox` for laying a shot
   beside a dialogue capture).
 * Instruments: `--flicker <dir>` (but read the log first), `--keys`/`--type`/
   `cN` to drive a screen, `--ride`/`--board` for the slider. Keys and flags in
   PRACTICE §5.
 * **Web viewers**: `python3 tools/omkweb.py --port 8752` (`/dialog`,
-  `/cutscene`, `/ui`, `/world`). **Restart the server after editing any
+  `/cutscene`, `/ui`, `/model`, `/world`). **Restart the server after editing any
   `tools/*.py`** — it holds its decoders in memory. The `lights` button's
   **colour** mode is what the game draws; **grey** is this repo's old bug.
 * The game is right-handed with **Y down**: `W(v)=[x,-y,z]` is a reflection,

@@ -42,6 +42,17 @@
 //
 //     gles_probe <gamedata> --pose <character.3DO> <line.3DM> <frame> <yaw>
 //
+// And THE FRAME ITSELF, for a check that compares two GLES frames rather than
+// the backend against the reference - written as `run_vulkan` writes its own
+// (four int32 W H litSw litGl, then the software and the GLES RGB565 frames):
+//
+//     gles_probe <gamedata> --frame <model.3DO> <eye> <at> <hfov> <WxH> <filter> <out.bin>
+//
+// `OMK_TEXTURE_PACK=DIR` opens a REMASTER texture pack (`o3de/texpack.h`) for
+// that frame - the instrument's switch; the engine never reads it
+// (`verify.py: engine: texture pack`); `OMK_BLOOM=S` and `OMK_GRADE=file.cube`
+// the remaster's post-pass (`verify.py: engine: bloom and grade`).
+//
 // poses the character on the line's frame, turns it by `yaw` degrees and moves
 // it, and draws it through the GLES backend TWICE: posed on the CPU
 // (`applyPose` and the placement written out, what the viewer does today) and
@@ -63,6 +74,9 @@
 #include "formats/tex3dt.h"
 #include "o3de/geom3do.h"
 #include "o3de/renderer.h"
+#include "o3de/colourgrade.h"
+#include "o3de/texpack.h"
+#include "platform/env.h"
 #include "platform/datafs.h"
 #include "ui/surface.h"
 #include "o3de/vecmath.h"
@@ -483,6 +497,77 @@ void posedDraw(omk::Draw& d, bool posed) {
     d.meshPoses = 1;
 }
 
+// `--frame`: one GLES frame of a set, written beside the software reference's.
+int frameMode(int argc, char** argv) {
+    if (argc < 10) {
+        std::fprintf(stderr, "usage: gles_probe <gamedata> --frame <model.3DO> <eye> <at> <hfov> "
+                             "<WxH> <filter> <out.bin>\n");
+        return 2;
+    }
+    const std::string model = argv[3];
+    const auto d = omk::DataFs::readPath(model);
+    if (d.empty()) { std::fprintf(stderr, "cannot read %s\n", model.c_str()); return 1; }
+    const auto t = omk::DataFs::readPath(model.substr(0, model.size() - 4) + ".3DT");
+    const auto geo = omk::buildGeometry(d, omk::DrawFilter::Engine);
+    const auto tex = t.empty() ? std::vector<omk::Texture>{} : omk::textures(d, t);
+    std::vector<omk::Draw> draws;
+    for (const auto& b : geo.batches) {
+        omk::Draw dr;
+        dr.bucketKey = static_cast<std::uint32_t>(b.material) & 0x3Fu;
+        dr.geo = &geo; dr.start = b.start; dr.count = b.count;
+        dr.blend = b.blend; dr.cutout = b.cutout;
+        draws.push_back(dr);
+    }
+    omk::RCamera cam;
+    triple(argv[4], cam.eye); triple(argv[5], cam.at);
+    cam.hfovDeg = static_cast<float>(std::atof(argv[6]));
+    int W = 640, H = 352;
+    std::sscanf(argv[7], "%dx%d", &W, &H);
+    cam.w = W; cam.h = H;
+    omk::View v; v.cam = cam; v.dither = false;
+    if (const char* pack = omk::envStr("OMK_TEXTURE_PACK"); pack && *pack) {
+        if (!omk::texturePack().open(pack)) return 1;
+        std::printf("texture pack: %s, %zu entries\n", pack, omk::texturePack().size());
+    }
+    auto run = [&](omk::Renderer& r) -> const omk::Surface* {
+        if (!r.init(W, H)) return nullptr;
+        r.setTextures(tex);
+        r.begin(v);
+        for (const auto& dr : draws) r.submit(dr);
+        r.end();
+        return &r.readback();
+    };
+    omk::SoftwareRenderer sw;
+    const omk::Surface swF = *run(sw);
+    omk::Renderer* gl = omk::makeGlesRenderer();
+    const int filter = std::atoi(argv[8]);
+    if (filter > 0) gl->setTextureFilter(filter);
+    // the REMASTER's post-pass, as `run_vulkan` takes it (`engine: bloom and grade`)
+    if (const char* b = omk::envStr("OMK_BLOOM"); b && *b) gl->setBloom(static_cast<float>(std::atof(b)));
+    omk::ColourLut lut;
+    if (const char* gr = omk::envStr("OMK_GRADE"); gr && *gr) {
+        std::string why;
+        if (!omk::parseCube(omk::readTextFile(gr), lut, &why)) { std::fprintf(stderr, "%s: %s\n", gr, why.c_str()); return 1; }
+        gl->setGrade(lut.rgb.data(), lut.n);
+    }
+    const omk::Surface* g = run(*gl);
+    if (!g) { std::fprintf(stderr, "gles renderer failed to come up\n"); return 1; }
+    const Coverage c = compare(swF, *g);
+    std::printf("frame %dx%d  software lit %ld  gles lit %ld  coverage %.4f\n", W, H, c.sw, c.gl, c.agree());
+    if (!omk::safeOutputPath(argv[9])) return 2;
+    std::FILE* o = std::fopen(argv[9], "wb");
+    if (!o) return 1;
+    const std::int32_t hdr[4] = {W, H, static_cast<std::int32_t>(c.sw), static_cast<std::int32_t>(c.gl)};
+    std::fwrite(hdr, sizeof hdr, 1, o);
+    for (const omk::Surface* s : {&swF, g})
+        for (auto px : s->px) {
+            const unsigned char b[2] = {static_cast<unsigned char>(px & 0xFF), static_cast<unsigned char>(px >> 8)};
+            std::fwrite(b, 2, 1, o);
+        }
+    std::fclose(o);
+    return 0;
+}
+
 int perpixelMode(bool posed) {
     omk::Renderer* r = omk::makeGlesRenderer();
     omk::glesSetEnhancedLighting(r, true, false);
@@ -617,7 +702,8 @@ int main(int argc, char** argv) {
     const bool poseArg = argc > 2 && std::string(argv[2]) == "--pose";
     const bool ppArg = argc > 2 && std::string(argv[2]) == "--perpixel";
     const bool shArg = argc > 4 && std::string(argv[2]) == "--shadow";
-    if (argc < 6 && !poseArg && !ppArg && !shArg) {
+    const bool frameArg = argc > 2 && std::string(argv[2]) == "--frame";
+    if (argc < 6 && !poseArg && !ppArg && !shArg && !frameArg) {
         std::fprintf(stderr, "usage: gles_probe <gamedata> <model.3DO> <eye> <at> <hfov> [WxH]\n");
         return 2;
     }
@@ -643,6 +729,12 @@ int main(int argc, char** argv) {
         const int rc = ppArg ? perpixelMode(argc > 3 && std::string(argv[3]) == "posed")
                              : shadowMode(argv[3], static_cast<float>(std::atof(argv[4])),
                                           argc > 5 && std::string(argv[5]) == "posed");
+        CGLSetCurrentContext(nullptr);
+        CGLDestroyContext(ctx);
+        return rc;
+    }
+    if (frameArg) {
+        const int rc = frameMode(argc, argv);
         CGLSetCurrentContext(nullptr);
         CGLDestroyContext(ctx);
         return rc;

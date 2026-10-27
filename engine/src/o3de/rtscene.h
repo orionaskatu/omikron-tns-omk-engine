@@ -27,6 +27,20 @@
 #include <utility>
 #include <vector>
 
+namespace omk {
+// A TEXTURE PACK's replacement is `su` x `sv` times the original in each direction (the remaster's pack,
+// `o3de/texpack.h`; the UVs stay in the ORIGINAL's texel units): what a record's texture word carries
+// above its 24-bit heap index - `su` - 1 in bits 24..27 and `sv` - 1 in 28..31 (1..16 each), which
+// `rt.glsl`'s `rtTexel` divides the texture's size by. 1, 1 (no bits) for a shipped texture.
+inline std::uint32_t rtTexScaleBits(float su, float sv) {
+    const auto k = [](float s) {
+        const long r = static_cast<long>(s + 0.5f);
+        return static_cast<std::uint32_t>(r < 1 ? 1 : r > 16 ? 16 : r);
+    };
+    return ((k(su) - 1u) << 24) | ((k(sv) - 1u) << 28);
+}
+}  // namespace omk
+
 namespace omk::rt {
 
 inline constexpr unsigned kMaxInst = 2048;        // instances in the TLAS

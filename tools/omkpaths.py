@@ -68,6 +68,10 @@ _DEFAULTS = {
     # Retro68's install (bin/, powerpc-apple-macos/), for the classic Mac OS
     # build - an optional TOOL, absent unless configured
     "retro68": "retro68",
+    # the REMASTER's texture pack (`tools/omktexpack.py`'s OUT: pack/ or
+    # full/pack/, grades/, lights) - the game's pixels, never committed, so
+    # absent unless configured; the remaster checks then report skipped
+    "pack": "omk-pack",
 }
 
 _ENV = {
@@ -77,6 +81,7 @@ _ENV = {
     "header": "OMK_DECOMP_H",
     "clean":  "OMK_CLEAN",
     "retro68": "OMK_RETRO68",
+    "pack": "OMK_PACK",
 }
 
 # Overrides installed by set_*() - the tools' own flags.
@@ -291,6 +296,12 @@ def decomp_path():
 def header_path():
     """`Runtime.exe.h`, or None."""
     return _optional("header")
+
+
+def pack_path():
+    """The remaster's texture pack folder (the one `--remaster DIR` takes), or
+    None: `$OMK_PACK`, or `pack = ...` in omk.conf."""
+    return _optional("pack")
 
 
 def retro68_path():

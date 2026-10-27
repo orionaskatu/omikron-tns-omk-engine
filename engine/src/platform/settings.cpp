@@ -2,6 +2,7 @@
 #include "platform/settings.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace omk {
 namespace {
@@ -12,6 +13,10 @@ constexpr const char* kPrefs = "preferences";
 constexpr const char* kOptions = "options";
 // And its section for what the original never had (settings.h).
 constexpr const char* kEnhancements = "enhancements";
+// And the remaster's, for what replaces authored art (settings.h).
+constexpr const char* kRemaster = "remaster";
+// And this port's own interface: the language of its menu rows.
+constexpr const char* kOmk = "omk";
 
 }  // namespace
 
@@ -190,7 +195,7 @@ Settings resolveSettings(const OptionsFile& ini,
         }
         if (const std::string* w = ini.find(kEnhancements, "bloom")) {
             const int m = escapeBackMode(*w);     // the same off|on words
-            if (m >= 0) { s.bloom = m > 0; s.bloomSource = Settings::Source::Ini; }
+            if (m >= 0) { s.postBloom = m > 0; s.postBloomSource = Settings::Source::Ini; }
             else std::fprintf(stderr, "settings: bloom = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
@@ -236,19 +241,13 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: framegen = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
-        if (const std::string* w = ini.find(kEnhancements, "texturepack")) {
-            // relative to the ini's directory, so a pack beside the ini is
-            // found whatever directory the game is started from
-            std::string p = *w;
-            const bool absolute = !p.empty() && (p[0] == '/' || p[0] == '\\' ||
-                                                 (p.size() > 1 && p[1] == ':'));
-            if (!p.empty() && !absolute) {
-                const auto cut = ini.path.find_last_of("/\\");
-                if (cut != std::string::npos) p = ini.path.substr(0, cut + 1) + p;
-            }
-            s.texturePack = p;
-            s.texturePackSource = Settings::Source::Ini;
-        }
+        // a key that MOVED: the texture pack is the REMASTER's one (`[Remaster] texturepack = DIR`, the
+        // content-keyed pack `tools/omktexpack.py` builds - Vulkan, GLES and Direct3D 12); the old
+        // `<group>/<model>/<material>.png` pack format is gone with its tool
+        for (const char* gone : {"texturepack"})
+            if (ini.find(kEnhancements, gone))
+                std::fprintf(stderr, "settings: [Enhancements] %s is no longer read - the texture pack is "
+                             "[Remaster] texturepack = DIR (a pack tools/omktexpack.py builds) - ignored\n", gone);
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }
@@ -283,6 +282,73 @@ Settings resolveSettings(const OptionsFile& ini,
         // field and `applyMaxEnhancements` leaves it alone. That is what makes
         // `all` a base rather than an override, whatever order the file is in.
         if (wantAll) { s.enhanceAll = true; applyMaxEnhancements(s); }
+
+        // ---- [Remaster], off unless written ------------------------------
+        // a PATH (trimmed, its quotes taken off) and a STRENGTH in 0..max -
+        // each key once, a value out of range said and ignored
+        const auto path = [](const std::string* w, std::string& to, Settings::Source& src) {
+            if (!w) return;
+            std::string v = *w;
+            while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.pop_back();
+            while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.erase(v.begin());
+            if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
+            if (!v.empty()) { to = v; src = Settings::Source::Ini; }
+        };
+        const auto strength = [](const std::string* w, const char* key, float max, float& to,
+                                 Settings::Source& src) {
+            if (!w) return;
+            char* end = nullptr;
+            const float b = std::strtof(w->c_str(), &end);
+            if (end != w->c_str() && b >= 0.0f && b <= max) { to = b; src = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: %s = %s is not 0..%g - ignored\n", key, w->c_str(),
+                              static_cast<double>(max));
+        };
+        path(ini.find(kRemaster, "texturepack"), s.texturePack, s.texturePackSource);
+        path(ini.find(kRemaster, "uipack"), s.uiPack, s.uiPackSource);
+        path(ini.find(kRemaster, "fontpack"), s.fontPack, s.fontPackSource);
+        path(ini.find(kRemaster, "filmpack"), s.filmPack, s.filmPackSource);
+        strength(ini.find(kRemaster, "bloom"), "bloom", 4.0f, s.bloom, s.bloomSource);
+        strength(ini.find(kRemaster, "water"), "water", 1.0f, s.water, s.waterSource);
+        strength(ini.find(kRemaster, "floors"), "floors", 1.0f, s.floors, s.floorsSource);
+        strength(ini.find(kRemaster, "wet"), "wet", 1.0f, s.wet, s.wetSource);
+        strength(ini.find(kRemaster, "rain3d"), "rain3d", 1.0f, s.rain3d, s.rain3dSource);
+        strength(ini.find(kRemaster, "mist"), "mist", 1.0f, s.mist, s.mistSource);
+        strength(ini.find(kRemaster, "upscale"), "upscale", 3.0f, s.upscale, s.upscaleSource);
+        strength(ini.find(kRemaster, "preload"), "preload", 100.0f, s.preload, s.preloadSource);
+        strength(ini.find(kRemaster, "ao"), "ao", 4.0f, s.ao, s.aoSource);
+        strength(ini.find(kRemaster, "relief"), "relief", 4.0f, s.relief, s.reliefSource);
+        strength(ini.find(kRemaster, "smooth"), "smooth", 1.0f, s.smooth, s.smoothSource);
+        strength(ini.find(kRemaster, "fxlight"), "fxlight", 4.0f, s.fxLight, s.fxLightSource);
+        strength(ini.find(kRemaster, "bodylight"), "bodylight", 1.0f, s.bodyLight, s.bodyLightSource);
+        path(ini.find(kRemaster, "dir"), s.remasterDir, s.remasterDirSource);
+        path(ini.find(kRemaster, "grade"), s.grade, s.gradeSource);
+        path(ini.find(kRemaster, "smoothskip"), s.smoothSkip, s.smoothSkipSource);
+        if (const std::string* w = ini.find(kRemaster, "mode")) {
+            std::string v = *w;
+            for (auto& c : v) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            if (v == "remaster" || v == "on" || v == "1") {
+                s.remasterOn = true;
+                s.remasterModeSource = Settings::Source::Ini;
+            } else if (v == "original" || v == "off" || v == "0") {
+                s.remasterOn = false;
+                s.remasterModeSource = Settings::Source::Ini;
+            } else {
+                std::fprintf(stderr, "settings: [Remaster] mode = %s is not original|remaster - ignored\n",
+                             w->c_str());
+            }
+        }
+
+        // ---- [OMK], this port's own interface -----------------------------
+        if (const std::string* w = ini.find(kOmk, "language")) {
+            std::string v = *w;
+            for (auto& c : v) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+            if (v == "fr" || v == "en") {
+                s.language = v;
+                s.languageSource = Settings::Source::Ini;
+            } else {
+                std::fprintf(stderr, "settings: [OMK] language = %s is not fr|en - ignored\n", w->c_str());
+            }
+        }
     }
 
     // ---- 2. the save header, which is later and therefore wins -----------

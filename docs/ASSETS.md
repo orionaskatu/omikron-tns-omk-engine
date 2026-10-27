@@ -1023,6 +1023,20 @@ frame driving the face, through the same data path the browser app uses:
   (a per-node bit, not the mesh flags). Narrowed, not closed. Across the 220
   sets the mask costs **3** meshes the viewers currently draw.
 
+  **The "markers" premise is wrong** (2026-10-27, seen in the `/model`
+  viewer, which marks meshes by the engine's mask). Of the **123** flag-0
+  PERSOS meshes only **9** are `Vise`/`Tire` aim-and-shoot markers
+  (`AST_FNM` 4, `DE3_FN` 2, one `Vise000000` in each `MCG*`). The other 114
+  are body parts: `AKG_FN`'s left foot `AgPiedg` (its right foot carries
+  0x10), the whole `MCG`/`MCGB`/`MCGV` body (`MBassin`, `MBras1d`, ... — the
+  `M` is the model's own prefix, not a proxy skeleton), every mesh of
+  `ZOM_FN` (16), most of `Nu2_fn` (14) and `Kil3_fn` (13), and the slider's
+  doors. `omkdata.model_geometry`'s `persos_drawable` therefore draws NOTHING
+  of **6** models whose every engine-drawn mesh is flagless — `GRU_FN`,
+  `M4_FN`, `MOTO`, `SLI_FN`, `SLIO_FN`, `ZOM_FN` — in the dialogue viewer. The
+  engine's mask draws them, the right answer for 114 of 123; what hides the 9
+  markers is still the open part (`verify.py: drawable mask`).
+
 * **Mesh flag 0x40000000 marks an ANIMATED set effect.** At load
   `sub_44F840` (0x0044F840) walks the scene, tests `mesh->flags & 0x40000000`,
   and registers each hit in a **256-entry** table of 7 dwords: the mesh, a
@@ -2473,7 +2487,8 @@ second being an outstretched arm.
   into the 3D view's `+80` bits 2/4/8, and the view's display-list draw calls
   `sub_4815D0` whenever `+80 & 0xE`. Twelve areas ship a type - **1, the rain**:
   Anekbah, the Impasse and its airlock, the rooftops, Khonsu; **2, the snow**:
-  Mahaleel and SASNEIGE (which no zone or address reaches); **3**: Jaunpur,
+  Mahaleel (AREA 145, reached in play) and SASNEIGE (AREA 147, which no zone
+  or address reaches); **3**: Jaunpur,
   Boz's interior, the docks, the two rooftop streets - and **3 draws nothing**:
   `sub_481D90` is called on `test al, 4` alone, so its `sand.bmp` arm (size 15,
   speed 30, box 300) is unreachable. The cycle still runs there and posts its
@@ -2492,8 +2507,32 @@ second being an outstretched arm.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
   for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a
-  waiting one. In Mahaleel's ice cave the ceiling (`Neige01`) holds the snow
-  off for good: state 2 never runs its own case, so no flake is ever counted.
+  waiting one. In Mahaleel's ice cave (address 401, the area's default start)
+  the ceiling (`Neige01`) holds the snow off for as long as Kay'l stays under it:
+  state 2 never runs its own case, so no flake is counted. Out in the open
+  part it snows: measured 2026-10-27 at address 404 (10842, 63, 30678) and at
+  the plaza by the staged PLG actors (7400, -186, 32180), 200 flakes stepped and
+  46-67 drawn by frame 60. Once counted, the 200 STAY: walking back under the
+  ceiling, `sub_481200` sends 2 to 4 and case 4's snow arm sends it straight
+  back to 2 without touching `dword_4CFE1C` - and case 4 re-scatters all 200
+  every frame, so the cave then shows 200 flakes at fresh random places each
+  frame, a static rather than a fall (read off `sub_4815D0`/`sub_481200`, and
+  run 2026-10-27 on the port's `Weather`: cave, open, cave - count 0, 200,
+  200, the open air drifting 17.3 a frame, the cave jumping at random). The
+  original's quirk, kept.
+* **The screen bound, not the view.** Both draws keep a drop only if its two
+  points lie in `g_ScreenSize` - the whole screen - and the rain's software
+  line (`sub_4806C0`, mode 2) is clipped to `0..w-1 x 0..h-1`; the snow is a
+  DirectDraw `Blt` of a rectangle in screen coordinates. Nothing narrows
+  either to the 3D view, so with the camera-mode letterbox up (UI 3j) flakes
+  and streaks fall over the black bands too, as the port draws them. Open:
+  the D3D path of the rain's line (`DrawPrimitive` on pre-transformed
+  vertices) may be clipped to the viewport; no capture of the original
+  settles it.
+* **The remaster's wet floors** (not the original's - it wets nothing): the
+  shower's strength drives `[Remaster] wet`, the floors under the open sky by
+  this same roof world darkening and reflecting while it falls
+  (`o3de/wetfloor.h`, `todo/remaster.md` "The rain's wet floors").
 * **The drops.** 200 points in a box a third of its size ahead of the eye,
   stepped per FRAME (no delta) and drawn from the position before the step.
   Rain: box 1000, `(0.5, 0.866, 0) x 64` a frame (0x4D0784/0x4D0788/0x657B3C

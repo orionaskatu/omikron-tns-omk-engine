@@ -126,6 +126,10 @@ src/ui/          the interface
     widgets      the widget tree, Ui_DispatchInput, the name field, the
                  load panel
     options      screen 35 - thirteen pages over sixteen shared row widgets
+    omkoptions   OMK's own pages on it: [Enhancements], [Remaster], the
+                 language - offered by build and renderer, written to the ini
+    omktext      their French and English texts (engine/lang/omk-menu.ini,
+                 compiled in by tools/omklang.py)
     text         Text_LayOutBlock - the markup, the faces, the advances,
                  and Text_DrawRun's 32-entry coverage ramp
     screendraw   COMPOSE a screen: the background (the panel's bank-B arm -
@@ -210,11 +214,18 @@ backends/gl1/gl1render.cpp   the FIXED-FUNCTION OpenGL 1.x renderer, for the
                          `key & 0x3F`, 16-bit textures, the colour key as an
                          alpha test - and with the original's CPU side:
                          vertices transformed, clipped (near plane and screen
-                         edges) and culled on the CPU, fog per vertex. An
-                         offscreen CGL context; its frame comes back through
-                         `readback()`. Built only by `ppc-darwin.mk`'s `play`
-                         (for Tiger, or for the host with the host compiler,
-                         which is what `engine: gl1 backend` runs).
+                         edges) and culled on the CPU, fog per vertex. On the
+                         WINDOW's own context - AGL's in the classic build,
+                         the SDL window's (`gl1sdlhost.cpp`) in
+                         `ppc-darwin.mk`'s - the world is drawn into the back
+                         buffer and swapped, the interface blended over it,
+                         and a window larger than the frame (fullscreen)
+                         gets it scaled up on the card (3h); without a GL window (`SDL_VIDEODRIVER=dummy`) an
+                         offscreen CGL context whose frame comes back through
+                         `readback()` (todo/handoff-classic-mac.md 3g). Built
+                         only by `ppc-darwin.mk`'s `play` (for Tiger, or for
+                         the host with the host compiler, which is what
+                         `engine: gl1 backend` runs) and `make classic`.
 backends/classic/        the CLASSIC MAC OS build - Carbon, one PEF binary for
                          Mac OS 9 and Mac OS X, with Retro68 (`make classic
                          RETRO68=...`): `OMKBoot`, `tools/omk.cpp` as an
@@ -309,6 +320,15 @@ build/omk-play ../fr ../tables                          # the game (Vulkan
                                                         # device for it)
 build/omk-play ../fr ../tables --software               # the reference
 build/omk-play ../fr ../tables --fps                    # the frame rate
+make app                                     # macOS: build/OMK.app, the same
+build/OMK.app/Contents/MacOS/omk-play ../fr ../tables --fullscreen
+                                             # binary as a GAME - play at 4K
+                                             # this way (todo/remaster.md: the
+                                             # bare binary's GPU clock drop)
+make noremaster                              # the viewers WITHOUT the remaster
+                                             # (REMASTER=0, what the Vita, 3DS
+                                             # and classic Mac build) into
+                                             # build/noremaster/ - todo/remaster.md
 build/omk-play ../fr ../tables --scene Aapkayl          # V swaps the backend
 build/omk-play ../fr ../tables --scene Aapkayl \
     --eye 3526,1015,-905 --at 3412,1032,-882 --fov 83   # dialog 402's camera
@@ -3674,6 +3694,53 @@ no depth texture). Each measured by the Vulkan check's own criteria through
 decimal where the two can be compared. vitaGL refuses MSAA (its multisampling
 is the display's) and anisotropy (1x), and says so. `todo/enhancements.md`,
 "On the GLES backend".
+
+**And 2026-10-20, THE TEXTURE PACK - the first REMASTER feature, not an
+enhancement** (`todo/remaster.md` B). It replaces authored pixels, so it lives
+under `[Remaster]` (`texturepack = DIR`, `--texture-pack DIR`), apart from
+`[Enhancements]`, and `all = max` never turns it on. A pack is a directory of
+`<key>.png`, the key FNV-1a 64 over a texture's size, indices and palette
+(`o3de/texpack.h`); 2534 shipped textures are 1255 unique ones.
+`tools/omktexpack.py` exports them (wrapped by 16 texels for seamless tiling,
+the colour key filled and given its own mask), drives Real-ESRGAN, and builds
+the pack ANCHORED to the shipped texels by back-projection. Vulkan and GLES
+upload a replacement at its own size, a power-of-two multiple; the UVs stay in
+the original's texels (GLES's `texSize` is the original's, the Vulkan shader
+is told the factor through a push field that is 0 on every shipped texture).
+The software reference, GL1 and the 3DS never consult it. The PNG reader is
+this port's own (`platform/pngread.*`, an inflate with no dependency). **Tier
+3** for the keys (engine against Python, 2534 of 2534) and the reader (against
+Python's zlib, 60 images); the frames are an invariant of this port's own,
+not of the original: under the nearest sampler a 4x nearest-neighbour pack
+draws byte-identical to none on both backends, and with no pack every frame
+is byte-identical to the build before the feature (measured on Vulkan and
+GLES, the street included). Check: `engine: texture pack` (shown to fail five
+ways).
+
+**And 2026-10-20, THE BLOOM AND THE CITY GRADES - remaster step 2**
+(`todo/remaster.md`). `[Remaster] bloom = S` / `--bloom S`: a glow from the
+texture pack's light maps (`<key>_e.png`), written into the world target's
+alpha by the scene shader (Vulkan: push `bloomMode`, binding 1; GLES: a bloom
+VARIANT of the scene programs, the defaults untouched), then downsampled,
+blurred and screen-blended by the post-pass. `[Remaster] grade = DIR` /
+`--grade DIR`: a `.cube` LUT per city (`o3de/colourgrade.*`), chosen for the
+set under the player's feet, off in the greyscale bank. Both off by default,
+both Vulkan and GLES only; with neither on every frame tried is
+byte-identical to the build before. **Not a port, no oracle in the
+original**: tier 3 for the `.cube` reader, the frames this port's own
+invariants. Check: `engine: bloom and grade` (shown to fail three ways).
+
+**And 2026-10-20, THE WATER REFLECTS - remaster A3** (`todo/remaster.md`).
+`[Remaster] water = S` / `--water S`: the set's water plane found from its
+own data (the height with the most horizontal ADDITIVE area,
+`waterPlane`), the scene drawn through the camera mirrored in it into a
+target of the backend's own (Vulkan: the scene's render pass, a second
+framebuffer; GLES: an FBO and a water variant of the scene programs), and the
+water's own draws adding it at their screen position. Off by default; with
+it off every frame tried is byte-identical to the build before. **Not a
+port**: the original has mirrors (flag `0x100000`), not this. Check:
+`engine: water reflection` (shown to fail three ways; the orientation is
+judged by eye).
 
 **And 2026-09-09, THE SHIMMER - a defect, not an enhancement.** Mesh flag
 `0x8000000` oscillates the vertex colour of 233 set meshes, the far skyline of

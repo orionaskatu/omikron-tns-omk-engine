@@ -73,7 +73,6 @@ struct PlayState {
     bool & boardArg = opt.boardArg;
     int & boardAfter = opt.boardAfter;
     std::string & configFile = opt.configFile;
-    std::string & texturePackArg = opt.texturePackArg;
     bool & densityFlag = opt.densityFlag;
     bool & clipFlag = opt.clipFlag;
     int & clipArg = opt.clipArg;
@@ -105,13 +104,33 @@ struct PlayState {
     int & bestLodFlag = opt.bestLodFlag;
     int & vehicleShineFlag = opt.vehicleShineFlag;
     int & colourDepthFlag = opt.colourDepthFlag;
-    int & bloomFlag = opt.bloomFlag;
+    int & postBloomFlag = opt.postBloomFlag;
     int & dofFlag = opt.dofFlag;
     int & colorGradeFlag = opt.colorGradeFlag;
     int & hdrFlag = opt.hdrFlag;
     int & softParticlesFlag = opt.softParticlesFlag;
     int & volumetricsFlag = opt.volumetricsFlag;
     int & frameGenFlag = opt.frameGenFlag;
+    std::string & texturePackFlag = opt.texturePackFlag;
+    std::string & uiPackFlag = opt.uiPackFlag;
+    std::string & fontPackFlag = opt.fontPackFlag;
+    std::string & filmPackFlag = opt.filmPackFlag;
+    float & bloomFlag = opt.bloomFlag;
+    std::string & gradeFlag = opt.gradeFlag;
+    std::string & remasterFlag = opt.remasterFlag;
+    float & waterFlag = opt.waterFlag;
+    float & floorsFlag = opt.floorsFlag;
+    float & wetFlag = opt.wetFlag;
+    float & rain3dFlag = opt.rain3dFlag;
+    float & mistFlag = opt.mistFlag;
+    float & upscaleFlag = opt.upscaleFlag;
+    float & preloadFlag = opt.preloadFlag;
+    float & bodyLightFlag = opt.bodyLightFlag;
+    float & fxLightFlag = opt.fxLightFlag;
+    float & reliefFlag = opt.reliefFlag;
+    float & smoothFlag = opt.smoothFlag;
+    std::string & smoothSkipFlag = opt.smoothSkipFlag;
+    float & aoFlag = opt.aoFlag;
     bool & dither = opt.dither;
     bool & mouseInvertX = opt.mouseInvertX;
     bool & mouseInvertY = opt.mouseInvertY;
@@ -155,6 +174,7 @@ struct PlayState {
     bool & noScriptSprites = opt.noScriptSprites;
     std::vector<int> & scxPlay = opt.scxPlay;
     int (&hideShow)[4] = opt.hideShow;
+    std::vector<omk::PlayOptions::OmkSet> & omkSets = opt.omkSets;
     long & gameRestartAt = opt.gameRestartAt;
     std::vector<std::pair<long, int>> & opAt = opt.opAt;
     bool & openSneak = opt.openSneak;
@@ -220,6 +240,9 @@ struct PlayState {
     std::optional<omk::ScreenComposer> comp_;
     omk::OptionTree optTree{};
     std::optional<omk::OptionsMenu> optMenu_;
+    // OMK's own pages on it, and their texts (`playomkoptions.cpp`)
+    std::optional<omk::OmkOptions> omkOpt_;
+    omk::OmkText omkText_{};
     omk::Surface view3dPic{};
     omk::MenuCloud cloud{};
     omk::ControlSchemes schemes{};
@@ -271,6 +294,15 @@ struct PlayState {
     bool vehicleShine{};     // [Enhancements] vehicleshine: sliders and motos shine (the GPU backends)
     int  colourDepth{16};    // [Enhancements] colordepth: 32 = the window's picture at 8 bits a channel
     omk::Renderer::PostProcess postFx{};   // [Enhancements] bloom, dof, colorgrade, hdr, softparticles, volumetrics (D3D12)
+    // THE ORIGINAL/REMASTER SWITCH (`playremaster_mode.cpp`) also holds OMK's ENHANCEMENTS: false while the
+    // original's look shows - bloom, depth of field, grade, HDR, 32-bit colour, soft particles, volumetrics,
+    // ray tracing and its reflections, frame generation, SSAO, vehicle shine, animation blend and the best
+    // LOD are put away (the renderers read `View::enhOff`; the frontend's own are checked at their use)
+    bool enhShown_ = true;
+    bool enhActive() const {
+        return animBlend || bestLod || vehicleShine || colourDepth >= 32 || postFx.any() || ssao || raytracing ||
+               rtReflections || frameGen;
+    }
     bool frameGen{};         // [Enhancements] framegen: an in-between frame on the motion vectors (D3D12, Vulkan windows)
     bool escBackLatch{};     // ESC was taken as BACK: it opens no pause until it is released
     bool escBackPrevDown{};  // ESC or Backspace down last frame - BACK is sent on the edge
@@ -403,6 +435,7 @@ struct PlayState {
         int   lightCount{};
         bool  lightsBlack{};
         float lightBase{};
+        float lightTint[3]{1.0f, 1.0f, 1.0f};   // the body light's (`o3de/lightprobe.h`)
         long posedFrame{};
         std::vector<omk::CollisionSphere> spheres{};   // the crowd push tests these
         float reach{};   // his model's +88
@@ -694,10 +727,6 @@ struct PlayState {
     // source palette -> {the source, held so its address cannot be reused
     // while the key names it; its grey}
     std::map<const std::uint8_t*, std::pair<omk::PixelBuffer, omk::PixelBuffer>> greyPalettes{};
-    // ...and a TEXTURE PACK's replacements, greyed by luma (`greyRgba`), the same way
-    std::map<const std::uint8_t*, std::pair<omk::PixelBuffer, omk::PixelBuffer>> greyPacks{};
-    // [Enhancements] texturepack (`o3de/texpack.h`): applied to the pool as it is handed over
-    omk::TexturePack texPack{};
     std::size_t playerTexBase{};
     struct Sprites {
         std::size_t texBase{};
@@ -725,6 +754,40 @@ struct PlayState {
     bool worldReady{};
     std::array<WorldSlot, 2> worldSlots{};
     std::string worldSet{};   // the ACTIVE slot's stem - the set under his feet
+    // THE REMASTER's post-pass (`todo/remaster.md` step 2): the bloom's
+    // strength (0 off) and the set the city grade was last chosen for
+    float bloomStrength{};
+    float waterStrength{};   // the water reflection's, 0 off
+    float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
+    float wetStrength{};     // the wet floors', 0 off (`o3de/wetfloor.h`)
+    omk::Wetness wetness{};  // ...how wet they are now, after the shower
+    bool wetTold{};          // ...whether the log last said they reflect
+    float rain3dStrength{};  // the rain drawn in the scene, 0 off (`playremaster_rain.cpp`)
+    std::vector<omk::WeatherDrop> rainDrops{};   // ...the weather's drops it takes, last stepped
+    omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
+    int rainTexSlot = -1;                        // ...their streak texture's pool slot, -1 none
+    int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
+    unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
+    float mistStrength{};    // the mist's (`View::mist`), 0 off
+    float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
+    float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
+    float fxLight{};         // the emitters' light's (`o3de/emitterlight.h`), 0 off
+    float relief{};          // the relief's (`View::relief`), 0 off
+    float smoothBodies{};    // the rounded bodies' pull (`o3de/smoothbody.h`), 0 off
+    std::set<std::string> smoothSkip;   // ...and the models left as they are (upper case)
+    // whether `model` is rounded: the option on and the name not skipped
+    bool smoothes(const std::string& model) const {
+        if (smoothBodies <= 0.0f) return false;
+        std::string up = model;
+        for (auto& ch : up) ch = static_cast<char>(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+        return !smoothSkip.count(up);
+    }
+    float aoStrength{};      // the ambient occlusion's (`Renderer::setAmbientOcclusion`), 0 off
+    bool waterLive{};        // the frame drew through the water pass (for the log)
+    bool floorLive{};        // ...the floors' (for the log), at this plane
+    float floorLiveY{};
+    std::string gradeFor{"\x01"};
+    int gradeOvercast = 0;   // ...the shower's step it was built at, 0..16 (`remasterGrade`)
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`
     unsigned int worldGen{};   // bumped by every `rebuildWorld`: re-bake the tie
     Sky sky{};
@@ -741,6 +804,8 @@ struct PlayState {
     } shadow{};
     float pedFootOffMax{};
     bool lightsTold{};
+    bool fxLightsTold{};   // the first frame an emitter's light reached the player said
+    float nightWas = 1.0f; // the night (`View::setDim`) last said
     float shimmerClock{};   // `dword_907310`, wrapped at 256
     std::vector<omk::DecorSoup> worldDecors{};   // every LOADED slot's soup, for decorUnder
     std::uint64_t worldGeoRev{};
@@ -751,6 +816,100 @@ struct PlayState {
     bool actorKnown{};
     int lastCamera{};
     std::shared_ptr<SetLoad> setLoads[2]{};
+    // a load replaced while its job still ran (`askSet`): kept until it
+    // returns, so the session's end can wait for it - the job captures `this`
+    std::vector<std::shared_ptr<SetLoad>> setLoadsLeft{};
+    // THE PRELOAD RADIUS (`playpreload.cpp`): metres (0 off), the sets
+    // prepared ahead by stem, and the doors of the resident pair
+    float preloadMetres{};
+    struct Preloaded {
+        int area = -1;
+        std::shared_ptr<SetLoad> L;
+        bool sent = false;    // its textures handed to the renderer's preload
+        double dist = 0;      // to its nearest door, game units
+        std::function<void()> cancel;   // stops its job at its next stage
+    };
+    std::map<std::string, Preloaded> preloads{};
+    // released while still preparing: cancelled, and counted in flight
+    // until their jobs return
+    std::vector<std::shared_ptr<SetLoad>> preloadDropped{};
+    std::vector<omk::Session::DoorTarget> preloadDoors{};
+    int preloadDoorsKey[2] = {-2, -2};
+    long preloadTaken{}, preloadMade{};
+    void phasePreload();
+    // ---- THE REMASTER (`backends/remaster/`; empty stubs in
+    // `backends/sdl/playremaster_off.cpp` for a build without OMK_REMASTER)
+    void remasterSetup();                          // the packs, strengths, preset
+    bool remasterBuilt() const;                    // false in `playremaster_off.cpp`
+    // a [Remaster] strength moved by OMK's options menu, on the running game -
+    // false when it waits for the next start (`todo/graphics-menu.md` 3a)
+    bool remasterApplyLive(const std::string& key, float v);
+    std::map<std::string, float> remasterAtStart_;   // each strength as the start set it
+    // THE ORIGINAL/REMASTER SWITCH (`backends/remaster/playremaster_mode.cpp`,
+    // `todo/graphics-menu.md` B): F10, the Mode row, `[Remaster] mode`
+    bool remasterShown_ = true;                    // false: the original's look, the remaster armed
+    bool remasterStartHidden_ = false;             // `mode = original`: switched at the first frame
+    bool remasterKeyDown_ = false;                 // F10's last state, for its edge
+    bool remasterNothingTold_ = false;
+    std::map<std::string, float> remasterHeld_;    // the strengths while the original shows
+    // the ROUNDED BODIES both ways (B2): each rounded model's rest NOT shown -
+    // the flat one while the remaster shows, the rounded one while the
+    // original does - swapped into `CharModel::rest` by the switch
+    struct RemasterBody { omk::Geometry other; bool roundShown = true; bool active = false; };
+    std::map<std::string, RemasterBody> remasterBodies_;
+    RemasterBody remasterPlayerBody_;              // ...and the player's (`playerBody.rest`)
+    void remasterSwapBodies(bool round);
+    // the player's feet anchor (`playerFeet`) measured on the KEPT body in the
+    // pose the latch read - what a start showing that body would latch
+    void remasterFeetLatched(const std::vector<omk::MeshPose>& pose);
+    float remasterOtherFeet_ = 0.0f;
+    bool remasterShow(bool on, const char* why);   // false when nothing was armed
+    void remasterModeFrame(bool f10);              // each frame, beside ESC's read: F10 down
+    void remasterSlotsFrame(bool all);             // the sets' lights brought to the mode
+    void remasterSlotLights(WorldSlot& ws, bool emitters);
+    bool remasterSwitchable() const;
+    float remasterArmed(const char* key) const;    // the start's strength, its resources loaded when > 0
+    float remasterRunning(const char* key, float v) const;   // ...what the remaster mode runs with
+    float* remasterStrength(const std::string& key);
+    void preloadReleaseAll();                      // the preload radius turned to 0, live
+    void omkOptionsSetup();                        // OMK's pages, beside screen 35
+    void omkOptionsOpen();                         // ...given this run's values, at each open
+    void omkOptionsServe();                        // ...their changes written and applied
+    bool omkApplyLive(const std::string& key, double v);   // ...one of them, on the running game
+    double omkReduce(const std::string& key, double v) const;   // ...as the start reduces it
+    bool omkOpened_ = false;                       // omkOptionsOpen has run
+    void remasterPrepareSet(SetLoad& L);           // a set's water, floors, probes, glows
+    void remasterSmoothModel(CharModel& m, const std::string& name);
+    void remasterSmoothPlayer();
+    bool remasterTakePreload(int slot, const std::string& stem, int area, long frame);
+    void remasterFinish();                         // the preload's jobs stopped and waited for
+    void remasterSceneViewer();                    // the scene viewer's texture pack
+    void remasterEmitterLights(WorldSlot& ws);     // a set's table: its lights, glows, flames
+    void remasterGrade();                          // the city grade for the set underfoot
+    void remasterAliasGrey(const omk::Texture& colour, const omk::Texture& grey);
+    void remasterConfigure(omk::Renderer& r);      // a GPU renderer's remaster requests
+    // the draw (`backends/remaster/playremaster_draw.cpp`)
+    // the intro film's upscaled copy, opened into `mov` (smoothed) - false: none
+    bool remasterOpenFilm(const std::string& real, omk::Movie& mov, const char* name);
+    void remasterViewMist(omk::View& v);
+    int  remasterViewLights(omk::View& v, bool& fxPix, float& kFxView);
+    void remasterPointLights(omk::View& v, std::vector<std::pair<float, const omk::Light3do*>>& fx,
+                             float kFxView, int kFxSlots, float& fxCut);
+    void remasterLightsTold(const omk::View& v, const std::vector<std::pair<float, const omk::Light3do*>>& near,
+                            const float at[3]);
+    void remasterLitSet(std::vector<omk::Draw>& list);
+    // THE RAIN IN 3D (`playremaster_rain.cpp`): the weather hands its stepped
+    // drops over (-> true: the remaster draws them, the 2D streaks are not), and
+    // the next frame's draw list takes them as strips in the scene
+    bool remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits);
+    void remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v);
+    void remasterPoolRain(std::vector<omk::Texture>& slots);   // the streak's texture, after the sprites
+    bool remasterWeatherRoofless() const;   // the 3D weather showing: a roof does not end the shower
+    void remasterSnowCover(std::vector<omk::Draw>& list);      // the snow lying (`o3de/wetfloor.h` coverRuns)
+    bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
+    bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
+    // the pinned list: every prepared preload's textures
+    void preloadPin();
     std::string slotAsked[2]{};
     int slotAskedArea[2] = {-1, -1};
     bool syncSets{};   // A/B only
@@ -1024,6 +1183,9 @@ struct PlayState {
     bool weatherSnowTried = false;
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
+    float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
+    bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
+    int weatherAreaTold = -2;      // the active area the weather last saw (coming back into a shower)
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};
@@ -1128,6 +1290,16 @@ struct PlayState {
                           std::size_t& hiddenMeshes, std::size_t& hiddenDrawn,
                           std::size_t& movingCulled, std::size_t& movingDrawn);   // from `worldDrawLists`
     void worldDrawClassicShadows();   // from `worldDrawLists`
+    // THE BODY LIGHT's tint for a body at `p` (`o3de/lightprobe.h`): the
+    // shown slot's painted light, 1, 1, 1 when off or not drawn
+    void bodyTint(const float p[3], float out[3]) const;
+    // ...and under PER-PIXEL lighting (`--lighting`, `--enhance-all`), where
+    // the shader lights a body from the scene's grey and ignores its corner
+    // colours (`Draw::lit` 1): a tinted body is drawn in mode 2 instead - the
+    // lights added to its corner colour - with that colour the grey x tint
+    bool bodyTintPerPixel() const {
+        return lighting > 0 && bodyLight > 0.0f && world_ && world_->drawsBodyTint();
+    }
     void worldDrawParticles(bool scriptSprites, float fxNear, float fxFar, int& spriteSlotBase);   // from `worldDrawLists`
     void worldDrawSky();   // from `worldDrawLists`
     void worldDrawShadowLight(bool castShadows);   // from `worldDrawLists`
@@ -1292,6 +1464,7 @@ struct PlayState {
     void harnessFightHealth(omk::FightStats& ps);   // --fight-health: the player's Vie at Fight_Begin
     void harnessScxPlay();   // --scx-play: scene objects started by handle, once
     void harnessHideShow();  // --hide-show: opcodes 79 then 78 on one actor
+    void harnessOmkSet();    // --omk-set: one of OMK's options changed at a frame
     void harnessGameRestart();   // --game-restart: op 152's write at a frame
     void harnessFlickerNote(std::size_t& runsDrawn, std::size_t& runsCulled, std::size_t& litBodies);   // the frame's facts for the flicker catcher
     void harnessSnaps();   // --snaps: the framebuffer every N frames from the hand-over
@@ -1322,6 +1495,12 @@ struct PlayState {
     bool gpuWorldOnWindow();                      // the world's renderer is the window's
     void gpuOverlayDecision(const char*& keep);   // a soft gate presented as an overlay
     void gpuResize(int nw, int nh, bool& ok);     // options row 2 on the GPU target
+    // per-pixel lighting / mapped shadows asked again on the running GPU
+    // renderer - GLES relinks its programs; false where nothing is relinked
+    bool gpuRelinkLighting(bool perPixel, bool shadowMap);
+    // MSAA, the supersample, the upscale and the AO asked again on the running
+    // GPU renderer - its target remade; false where it cannot be
+    bool gpuRetarget(int samples, int ss, float up, float ao);
     bool gpuDriverRow(std::vector<std::string>& drivers);   // options row 8's device name
     void gpuReportTimings();                      // the backend's own counters, every 60 frames
     void gpuSlowFrameReport();                    // ...and on a very slow frame

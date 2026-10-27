@@ -19,7 +19,9 @@ namespace {
 constexpr const char* kSwitches[] = {
     "OMK_ACTIVE_POOL_ONLY",     // A/B: a staged body's program looked up in the active pool alone - the old, wrong lookup (engine: walk-in scene)
     "OMK_ANIMBLEND_LOG",        // log: the player's drawn pose every frame - state, clip, frame, the largest mesh rotation since the last frame, the blend (engine: anim blend)
-    "OMK_BODYLOG",            // log: every staged body's line every frame, culled or not (engine: beat handover)
+    "OMK_AUDIO_DEVICE",         // the world's audio device opened in a --frames run too, which never opens it (engine: sdl3)
+    "OMK_BLOOM",                // run_vulkan: the remaster's bloom at S (engine: bloom and grade)
+    "OMK_BODYLOG",              // log: every staged body's line every frame, culled or not (engine: beat handover)
     "OMK_CAMEYE",               // log: the resolved camera eye every frame (camera travel)
     "OMK_CAMLOG",               // =1 log: transitions, camera requests and moves, scene ops, zone prunes, and the camera as drawn (engine: player move)
     "OMK_CAM_OBSTRUCT_PROBE",   // log: one line a frame from the camera obstruction test, `sub_417070` (engine: camera obstruction)
@@ -43,10 +45,18 @@ constexpr const char* kSwitches[] = {
     "OMK_FSR_DEBUG",            // the FSR context made with the SDK's own parameter checks (engine: upscaler)
     "OMK_GL1",                  // =0: the GL1 build draws with the software reference (engine: gl1 backend)
     "OMK_GL1_COMPOSITE",        // GL1: the interface composed on the CPU instead of drawn as an overlay
+    "OMK_GL1_FIT_PROBE",        // =<file> GL1: the window fit's pixels read back and compared on the 60th fitted frame, the window written there (engine: gl1 window fit)
+    "OMK_GL1_NO_CLIENT",        // GL1 on Mac OS X: GL_APPLE_client_storage left unused for the window's texture
+    "OMK_GL1_NO_FIT",           // GL1: every scaled frame composed on the CPU again, not fitted on the card (todo/handoff-classic-mac.md 3h)
     "OMK_GL1_NO_SKIP",          // GL1: the whole-mesh frustum skip off, to show it changes no pixel (engine: gl1 backend)
+    "OMK_GL1_OFFSCREEN",        // GL1, the SDL build on Mac OS X: the offscreen target and its readback kept, not the window's own context
+    "OMK_GL1_WINDOW",           // =WxH GL1: the window opened at that size instead of the frame's - the scaled present (engine: gl1 window fit)
+    "OMK_GLES_NO_HIGHP",        // GLES: the fragment stage taken for one with no highp float - the upscale refused (engine: gles upscale)
     "OMK_GLES_NO_STATE_CACHE",  // GLES: the draw-state cache off (engine: gles state cache)
     "OMK_GLES_WINDUMP",         // =<path> GLES: the window's own picture written on the last frame (engine: gles overlay)
     "OMK_GPU_PRESENT_STATS",    // log: the GPU present's counts every 30 frames (engine: gpu present)
+    "OMK_GPU_TIMES",            // Vulkan: the GPU's time per pass (shadow, reflection, scene, post), every 60 frames
+    "OMK_GRADE",                // =<file.cube> run_vulkan: the remaster's grade (engine: bloom and grade)
     "OMK_HDR_FORCE",            // D3D12, hdr = on: the scRGB swapchain even on a display that reports no HDR (a test of the path)
     "OMK_HIDDEN_WINDOW",        // the GPU window created hidden, the present kept - for profiling (engine: gles overlay)
     "OMK_KOTRACE",              // =1 log: a knocked-out fighter's channel, tick by tick
@@ -61,6 +71,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NOCLOUD",              // the start menu's cloud left out of a screen render (engine: screen scale)
     "OMK_NOUI",                 // the interface left out of the frame - the HUD, the bars, the fight gauges (engine: fight letterbox)
     "OMK_NO_AMBIENT_CLAMP",     // A/B: a set's ambient floor not clamped (engine: ambient clamp)
+    "OMK_NO_BLOCK_FORMATS",     // the pack's KTX2 block files not read - its PNGs uploaded, for comparison (engine: block formats)
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
@@ -80,6 +91,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_SWEEP_GRID",        // A/B: the body and camera sweeps as a linear scan instead of through the grids
     "OMK_NO_TIE",               // the coincident-face depth tie off (engine: sign tie)
     "OMK_NO_TIE_BAKE",          // A/B: the depth tie per frame instead of baked (engine: gles tie bake)
+    "OMK_NO_TILES",             // the tiled point lights off: the nearest 60 instead (engine: emitter light)
     "OMK_NO_ZONE_BAND",         // a trigger zone's height band not tested
     "OMK_PANEL_CHECK",          // 3DS: the bottom-screen panel checks what it draws
     "OMK_PED_LOD_MAX",          // =<n> no walker skeleton past level n (default 3)
@@ -88,9 +100,12 @@ constexpr const char* kSwitches[] = {
     "OMK_POOL_TWICE",           // A/B: textures dropped and re-sent on an arrival, the old order
     "OMK_POST_MESSAGE",         // =<msg>@<frame> posts that message on that frame (engine: mirror park)
     "OMK_POST_TIMING",          // log: the D3D12 post chain's GPU time (timestamps), every 60 frames
+    "OMK_PRELOAD_DELAY_MS",     // =<n> each preload's job sleeps n ms first, so a walk releases one while it prepares (engine: preload)
+    "OMK_PRELOAD_HELD",         // =<n> the preload radius holds at most n sets, not 6 (2 on software) - its cap within a short walk (engine: preload)
     "OMK_PRESENT_CHECK",        // GLES: the row-by-row present compared with the whole one
     "OMK_PRESENT_ROWS",         // GLES: the present row by row always - the Vita's path on a desktop
     "OMK_PROGYAW_NEG",          // diagnostic: a scene call's Euler applied with its sign turned
+    "OMK_REFL_UNLIT",           // Vulkan: the water/floor reflection without its own tiled lights, as before (engine: floors)
     "OMK_ROOTSPIN_NEG",         // diagnostic: a scene clip's root delta turned the other way, the body left alone
     "OMK_RT_NO_INDIRECT",       // A/B: raytracing without the indirect light on characters (engine: raytracing)
     "OMK_RT_REFL_TUNE",         // rt reflections: =<strength>,<F0>,<reach>,<roughness>,<wet share>,<emissive boost>, by eye
@@ -106,8 +121,10 @@ constexpr const char* kSwitches[] = {
     "OMK_SWIMTRACE",            // log: the swimmer's probes every tick
     "OMK_SYNC_SETS",            // A/B: a set loaded on the frame's own thread instead of a job
     "OMK_TEXTURE_MEMORY",       // =<bytes> GL1: the free texture memory to size the textures by (engine: gl1 backend)
+    "OMK_TEXTURE_PACK",         // =<dir> run_vulkan / gles_probe: the texture pack (engine: texture pack)
     "OMK_TIE_LOG",              // log: the depth tie's decisions per upload (engine: gles tie bake)
     "OMK_TIE_STATS",            // log: how each large geometry's revisions were answered, every 30 frames (engine: dirty corners)
+    "OMK_TILES_LOOSE",          // the tiled lights binned without their box test or cap (engine: emitter light)
     "OMK_TRACE_ACTOR",          // =<actor> log: that body's placement and pose source every frame (program placement)
     "OMK_TRACE_MOTION",         // log: each moving mesh's motion as it is applied
     "OMK_TRANSIENT_MOTIONS",    // A/B: a scene's mesh motions per tick - the old, wrong reading (engine: node rest)
@@ -117,11 +134,15 @@ constexpr const char* kSwitches[] = {
     "OMK_VERIFY_GROUND",        // the floor probe through the grid and the scan both, counted (engine: ground grid)
     "OMK_VERIFY_PATCH",         // the full merge beside the in-place one, compared bit for bit (engine: patch index)
     "OMK_VERIFY_SPLIT",         // the two-layer grid against the linear scan every moving frame (engine: split grid)
+    "OMK_VK_IMAGE_FAIL",        // =<what> Vulkan: every image of that category refused as out of memory (engine: vulkan images)
     "OMK_VMTRACE",              // log: every instruction a script context executes, with its status
     "OMK_VOL_TIMING",           // log: the D3D12 volumetric lamp light's GPU time (timestamps), every 60 frames
     "OMK_VOL_TUNE",             // =<density>,<core>,<glow> volumetrics: the air's density, a lamp's core and glow (shares of its reach), by eye
     "OMK_VRLOG",                // =1 log: the VR camera's head and aim (engine: vr modes)
+    "OMK_WATER_LEVELS",         // texpack_tool water: every level of horizontal additive area, not the plane alone
+    "OMK_WATER_NO_CPU_CLIP",    // =1 the water reflection is handed the whole scene, clipped by its shader alone (engine: water reflection)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
+    "OMK_WET_NO_BLEND",         // =1 the wet floors' open sky is not written into the corners - wet and dry meet at triangle edges (engine: wet floors)
     "OMK_WINDUMP",              // =<path> D3D12/Vulkan: the window's picture (RGBA8; D3D12's back buffer) written on the last frame (engine: colour depth)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);

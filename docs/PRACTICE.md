@@ -42,6 +42,7 @@ section or trap you need. CLAUDE.md §0 is the reading budget.
 | todo/street-life.md | ~2k | the street-life work: six steps, each ending in a commit and a report |
 | todo/options-config.md | ~6k | the graphical options: the config file, the save header, the clip distance, the sky, the fog. Four steps, three done |
 | todo/options-menu.md | ~3k | the OPTIONS MENU live (screen 35, hosted by the start menu and the sneak) and FULLSCREEN: what was read (the open callback's live-apply bit, page 0's save prompt, the row draw hook), what each Video row does in the viewer, what is not done |
+| todo/graphics-menu.md | ~3k | PLAN (2026-10-26): OMK's [Enhancements]/[Remaster] as an in-game page of screen 35, written back to the ini (none is written today); which options apply live, at a renderer rebuild, or at load; the one-key original/remaster switch and its cost |
 | todo/engine-spec-1999.md | ~2k | the official 1999 engine spec sheet, audited line by line against what this repo can show. EXTERNAL evidence; two open leads (the .3DO light table, the claimed BSP) |
 | todo/mesh-lights.md | ~2k | the .3DO light table: 304-byte records, the count at desc+240 (NOT +232, which the loader overwrites). Four steps, one done |
 | todo/player-vertical.md | ~9k | the player's VERTICAL: why the walk floated (a port bug, not the clips), the jump's impulse read out of `MDJUMP0A`/`01`, and the landing bands. All three steps done; §4-6 carry the measurements and the three things left declared |
@@ -66,6 +67,7 @@ section or trap you need. CLAUDE.md §0 is the reading budget.
 | todo/handoff-quest-port.md | ~5k | **read FIRST to pick up the META QUEST**: OMK runs IMMERSIVE on the reader's Quest 2 - per-eye at the runtime's resolution (options row 2 is the eye scale), 72 fps, first person on the Touch controllers, the interface as a transparent layer, screens as world-fixed windows over a shaded world. Steps 1-5 and 6a/6b done and played, the videophone monitor built but not played, 6c (the keyboard) and 7 next. The code (`backends/openxr/`, `backends/android/`, `backends/vr/`, `scripts/android-build.sh`), the device recipes, reading the headset's own stats line, the traps (static libc++, `am start` refused while the controllers sleep, the shell's drifting cwd) |
 | todo/quest-port.md | ~8k | a META QUEST VR prototype, steps 1-3 of 7 DONE - **§5 is the implementation plan** (seven steps, ~6-8 days, the first three on the Mac through `--vr-sim`; the head a RENDER transform, game logic on the authored camera): why this code and not a Unity rewrite, the M1 E-core proxy (sim+draw ~2 ms a frame), the first test version's camera rule (authored cameras become the headset's origin, adventure first person) in five steps of ~4-6 days, the traps (inches vs metres, the Y-down reflection), and the PRELOAD mode (interiors prepared on a thread at 25 m, released at ~40 m, the texture cache's two-resident rule kept) |
 | todo/sixty-fps.md | ~3k | 60 FPS as an enhancement (rows 11/12): what the original does (variable step, NO frame cap, poses TRUNCATED to a key by `_ftol`), the port's frame-locked sites, and five steps |
+| todo/remaster.md | ~3k | the REMASTER mode, PLANNED 2026-10-20 and nothing built: a `[Remaster]` section apart from `[Enhancements]` (it overrides authored art), generated packs never in the repo; tiers A (renderer: HDR/grade, bloom on the game's own emitters, reflections, light probes from the vertex colours), B (the AI-upscaled texture pack - the best ratio), C (a re-bake, NOT recommended), D (models: tessellation, hand-remodels on the shipped skeletons, AI 3D for props only), E (interface, films, widescreen); four steps |
 | todo/code-readability-audit.md | ~4k | the CODE READABILITY AUDIT of 2026-10-12 (read-only, at `0ffcc08`): measured (8 distinct warnings, 1 TODO, 25 functions over 300 lines - `worldStaged` 3572 - four god objects, 217 viewer statics, 86 `OMK_*` switches, LE readers re-written in 29 files, no opcode enum) and scored per area; the problems ranked by how much they hurt a hand edit, the strengths to keep, cheap and expensive fixes, and what to clean before `tutorial/` is written |
 | todo/next-tasks.md | ~4k | the reader's list of what to do next, 19 items triaged: size, how much evidence the tree already holds, and a suggested order. Read it to pick up work |
 | todo/pending/*.md (E1, E2, T1..T17) | ~2–8k each | a specific past task's deliverable; each starts with an "Integrated" line — read only the one you need |
@@ -112,7 +114,7 @@ One line per directory, then the files big enough to need a warning:
 |---|---|---|
 | tools/verify.py | 868 KB, ~200k tokens | NEVER read whole. `--list` for the index; `grep -n 'def c_<name>'` for one check's body |
 | tools/goldentrace.py (68 KB), cutscene.py (36), exetables.py (52), dialog_disasm.py (44), omkdata.py (88), omkweb.py (40) | large | only when working on that tool; §2 of this file describes each |
-| tools/omkweb.html (104 KB), omkcut.html (60), omkui.html (16), stagecheck.js (20) | large | the viewer clients; only for viewer work |
+| tools/omkweb.html (104 KB), omkcut.html (60), omkui.html (16), omkmodel.html (24), stagecheck.js (20) | large | the viewer clients; only for viewer work |
 | tools/sim/ (7 modules, ~3.8k lines) | medium | the Python simulator the engine is compared against: vm, world, scene, dialogue, actor, ui, run |
 | the rest of tools/*.py | 4–24 KB each | one reader/one job each, named for it; §2 lists the ones with findings behind them |
 | tools/omkprof.py, omkprof.html, profcheck.js | small | the PROFILER's external side: `omk-play --profile run.prof`, then `omkprof.py run.prof` (summary, `--frame N`), `--serve PORT` (the page: frame graph, call tree, memory and GPU memory by category, pause / step / snapshot), `--ctl CMD`. `todo/debug-tools.md` is the whole of it; `make release` / `classic-release` / `vita-release` build without any |
@@ -1320,6 +1322,18 @@ answers nothing, because the engine's own callback refuses an empty field —
 the LIFT's grid answers `slot - 1`, and a screen whose hooks are not modelled
 says so instead of inventing one.
 `verify.py: ui page` exercises every screen and key sequence without a server.
+
+**`/model`** (`tools/omkmodel.html`) shows any `.3DO` in `MESHES\PERSOS`,
+`OBJETS`, `DECORS` and `MISC`: textures, the baked vertex colour, cutout and
+blend modes as the set viewer draws them, a wireframe, and the mesh tree with
+each mesh's flags. "Drawn" is the ENGINE's mask (`flags & 0x800043`, ASSETS 4),
+not `persos_drawable`; the skipped meshes are a toggle. `#KIND/NAME@N` opens a
+set through its own camera N. Its **other folder** tab browses any folder on
+the machine (`/api/meshdir?dir=`, then `#DIR/<folder>/NAME`, the folder
+URI-encoded): only `.3DO` files and the `.3DT` beside each are read, a name
+with a path separator is refused, and those responses are not cached since
+the folder may change; the server listens on 127.0.0.1 only. It reuses `omkdata.decor_geometry` with
+`path`/`keep`/`by_mesh`, whose default output is unchanged.
 
 **`/world`** serves the world scripts (`IAM\AREA` / `SCENE` / `GLOBAL`) as
 annotated listings — `tools/script_dump.py` rendered as HTML, every

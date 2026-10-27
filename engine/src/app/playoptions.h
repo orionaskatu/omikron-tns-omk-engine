@@ -114,7 +114,6 @@ struct PlayOptions {
     // because a flag typed on the command line is the most recent word of
     // all; `densityFlag`/`clipFlag` record whether one was.
     std::string configFile;
-    std::string texturePackArg;   // --texturepack DIR, [Enhancements] texturepack
     bool densityFlag = false, clipFlag = false;
     int clipArg = 0;
     int skyFlag = -1;      // --sky 0|1, options row 4; -1 = take it from the settings
@@ -142,7 +141,7 @@ struct PlayOptions {
     int rtReflectionsFlag = -1; // --rt-reflections, [Enhancements] rtreflections = on
     int vehicleShineFlag = -1; // --vehicle-shine, [Enhancements] vehicleshine = on
     int colourDepthFlag = -1;  // --colordepth 16|32, [Enhancements] colordepth
-    int bloomFlag = -1;        // --bloom, [Enhancements] bloom = on
+    int postBloomFlag = -1;    // --bloom (no strength after it), [Enhancements] bloom = on
     int dofFlag = -1;          // --dof, [Enhancements] dof = on
     int colorGradeFlag = -1;   // --colorgrade G, [Enhancements] colorgrade
     int hdrFlag = -1;          // --hdr, [Enhancements] hdr = on
@@ -152,6 +151,34 @@ struct PlayOptions {
     int bestLodFlag = -1;    // --best-lod, [Enhancements] lod = best
     int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler
     int upscaleQualityFlag = -1; // --upscale-quality Q, [Enhancements] upscalequality
+    std::string texturePackFlag;  // --texture-pack DIR, [Remaster] texturepack; "" = the settings'
+    std::string uiPackFlag;       // --ui-pack DIR, [Remaster] uipack; "" = the settings'
+    std::string fontPackFlag;     // --font-pack DIR, [Remaster] fontpack; "" = the settings'
+    std::string filmPackFlag;     // --film-pack DIR, [Remaster] filmpack; "" = the settings'
+    float bloomFlag = -1.0f;      // --bloom S, [Remaster] bloom; < 0 = the settings'
+    std::string gradeFlag;        // --grade DIR, [Remaster] grade; "" = the settings'
+    std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four
+    float waterFlag = -1.0f;      // --water S, [Remaster] water; < 0 = the settings'
+    float floorsFlag = -1.0f;     // --floors S, [Remaster] floors; < 0 = the settings'
+    float wetFlag = -1.0f;        // --wet S, [Remaster] wet; < 0 = the settings'
+    float rain3dFlag = -1.0f;     // --rain3d S, [Remaster] rain3d; < 0 = the settings'
+    float mistFlag = -1.0f;       // --mist S, [Remaster] mist; < 0 = the settings'
+    float upscaleFlag = -1.0f;    // --upscale F, [Remaster] upscale; < 0 = the settings'
+    float preloadFlag = -1.0f;    // --preload M, [Remaster] preload; < 0 = the settings'
+    float bodyLightFlag = -1.0f;  // --body-light S, [Remaster] bodylight; < 0 = the settings'
+    float fxLightFlag = -1.0f;    // --fx-light S, [Remaster] fxlight; < 0 = the settings'
+    float reliefFlag = -1.0f;     // --relief S, [Remaster] relief; < 0 = the settings'
+    float smoothFlag = -1.0f;     // --smooth S, [Remaster] smooth; < 0 = the settings'
+    std::string smoothSkipFlag;   // --smooth-skip A,B, [Remaster] smoothskip; "" = the settings'
+    float aoFlag = -1.0f;         // --ao S, [Remaster] ao; < 0 = the settings'
+    // whether any remaster flag above was given - `Settings::anyRemaster`'s
+    // twin for the command line (a 0 strength asks for nothing)
+    bool anyRemaster() const {
+        return !texturePackFlag.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
+               !gradeFlag.empty() || !remasterFlag.empty() || !smoothSkipFlag.empty() || bloomFlag > 0.0f ||
+               waterFlag > 0.0f || floorsFlag > 0.0f || wetFlag > 0.0f || rain3dFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
+               bodyLightFlag > 0.0f || fxLightFlag > 0.0f || reliefFlag > 0.0f || smoothFlag > 0.0f || aoFlag > 0.0f;
+    }
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26
     // (DITHERENABLE) to 1 on both device arms, so on is what the engine does.
     // The flag exists to lay a dithered frame beside an undithered one.
@@ -229,6 +256,14 @@ struct PlayOptions {
     // --hide-show A,H,S,F: opcode 79 on actor A at frame H, then opcode 78
     // with second field F at frame S - a hidden body's return, on demand
     int hideShow[4] = {-1, -1, -1, 0};
+    // A HARNESS FLAG: `--omk-set key=value@frame` (repeatable) - one of OMK's
+    // own options changed at that frame through the path its menu takes
+    // (`OmkOptions::choose`, then the write and the live apply), so a check
+    // can lay a live change beside a start with the same value
+    // (`todo/graphics-menu.md` 3a). `key` as the menu names it:
+    // `enhancements.lighting`, `remaster.bloom`.
+    struct OmkSet { std::string key, value; long frame = 0; };
+    std::vector<OmkSet> omkSets;
     // --game-restart N: op 152 run as a context at frame N
     long gameRestartAt = -1;
     // --op-at F:OP[,F:OP...]: a NO-OPERAND opcode run as a context at frame

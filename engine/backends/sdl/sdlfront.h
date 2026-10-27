@@ -66,6 +66,12 @@ public:
     void present(const omk::Surface& fb) override;
 
     static void feed(void* user, Uint8* out, int len);
+#if defined(OMK_SDL3)
+    // SDL3 PULLS through its stream: asked for `more` bytes, `feed` mixes
+    // them into `abuf_` (the audio thread's alone) and the stream takes them
+    static void feed3(void* user, SDL_AudioStream* s, int more, int total);
+    std::vector<float> abuf_;
+#endif
 
     bool openAudio(int rate, int channels) override;
 

@@ -195,6 +195,7 @@ void PlayState::controlBinding() {
             playerBody.meshes.clear();
             if (const auto mh = omk::readHeader(md)) playerBody.meshes = omk::readMeshes(md, *mh);
             playerBody.headMesh = omk::headMeshOf(playerBody.meshes);
+            remasterSmoothPlayer();   // the rounded bodies (`backends/remaster/`)
             playerBody.boneIdx.build(playerBody.meshes, omk::MeshNameIndex::shadowNames());
             // his PUSH spheres: the model's own list, hung from the feet
             // (`pushSpheresOf` - HO1_FN's four of 10.9), which is what
@@ -482,7 +483,7 @@ void PlayState::controlFlight() {
             const double p0[3] = {a[0], a[1], a[2]};
             const double d[3] = {double(b[0]) - a[0], double(b[1]) - a[1],
                                  double(b[2]) - a[2]};
-            const auto h = omk::sweepSphere(*shotSoup, p0, d, 0.0);
+            const auto h = omk::sweepSphere(*shotSoup, shotSlot->shotRunBoxes, p0, d, 0.0);
             if (!h) return false;
             for (int k = 0; k < 3; ++k) hit[k] = static_cast<float>(p0[k] + h->t * d[k]);
             mesh = shotSlot->shotMeshOf(h->tri);    // the node `sub_444BB0` was visiting

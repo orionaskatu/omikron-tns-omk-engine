@@ -165,7 +165,7 @@ void PlayState::worldCrowdPedestrians() {
                 // [Enhancements] animblend: a walk/idle swap (`sub_455E20`
                 // restarts the clock on the new clip) eased over 0.2 s; a LOD
                 // step changes the meshes composed, and starts over
-                if (animBlend) {
+                if (animBlend && enhShown_) {
                     if (p.blendLevel != j.level) p.blend.frame = -1;
                     p.blendLevel = j.level;
                     if (omk::blendPose(p.blend, pose, static_cast<std::int64_t>(
@@ -203,6 +203,8 @@ void PlayState::worldCrowdPedestrians() {
                         p.lightCount = reachN;
                         p.lightsBlack = lit;
                         p.lightBase = crowdBase;
+                        const float at[3] = {w.body[0], w.body[1], w.body[2]};
+                        bodyTint(at, p.lightTint);   // the remaster's body light, 1 when off
                     }
                 }
                 if (!p.gpu) { OMK_MEM_TAG("crowd: posed slots"); omk::applyPose(p.posed, rest, p.mo->meshes, pose); }
@@ -310,6 +312,14 @@ void PlayState::worldCrowdPedestrians() {
                 // carries the decision to the shader.
                 const double pedLight0 = phaseNow();
                 if (p.gpu) j.lit += p.lightCount;
+                if (!p.gpu && !(lightCrowd && lighting == 0) && bodyTintPerPixel()) {
+                    // the body light under per-pixel lighting: the grey x tint
+                    // as the corner colour, which `Draw::lit` 2 starts from
+                    const float at[3] = {w.body[0], w.body[1], w.body[2]};
+                    float tn[3];
+                    bodyTint(at, tn);
+                    for (auto& c : p.posed.corners) { c.r = crowdBase * tn[0]; c.g = crowdBase * tn[1]; c.b = crowdBase * tn[2]; }
+                }
                 if (!p.gpu && lightCrowd && lighting == 0) {
                     // THE BASE IS THE SET'S AMBIENT GREY, and that is the
                     // part that had to be read rather than assumed - twice.
@@ -326,8 +336,10 @@ void PlayState::worldCrowdPedestrians() {
                     // there is no baked light in them to keep - the .3DO
                     // lights ARE their lighting, and adding to white
                     // changes exactly zero pixels.
-                    for (auto& c : p.posed.corners) c.r = c.g = c.b = crowdBase;
                     const float at[3] = {w.body[0], w.body[1], w.body[2]};
+                    float tn[3];
+                    bodyTint(at, tn);   // the remaster's body light, 1 when off
+                    for (auto& c : p.posed.corners) { c.r = crowdBase * tn[0]; c.g = crowdBase * tn[1]; c.b = crowdBase * tn[2]; }
                     for (const WorldSlot& ws2 : worldSlots)
                         if (!ws2.lights.empty())
                             j.lit += omk::applyLights(p.posed, 0, p.posed.corners.size(),
@@ -599,6 +611,7 @@ void PlayState::worldCrowdPlayer() {
                 }
             playerFeetKnown = true;
             if (standing) playerStandLatched = true;
+            remasterFeetLatched(pose);   // ...the kept body's too (`backends/remaster/`, the switch)
         }
         // THE ROOT TRANSLATION'S VERTICAL, which is the crouch.
         //
@@ -705,6 +718,7 @@ void PlayState::worldCrowdPlayer() {
             }
             if (playerGpu) { playerBody.lightCount = reachN; playerBody.lightsBlack = true; }
         }
+        bodyTint(playerLitAt, playerBody.lightTint);   // the remaster's body light, 1 when off
         // ROTATE ABOUT THE PELVIS, not the model's origin. A `.3DO`'s
         // meshes carry ABSOLUTE positions and the body is not built
         // around (0,0,0): `HO1_FN`'s root `UBassin` sits at
@@ -799,8 +813,18 @@ void PlayState::worldCrowdPlayer() {
         }
         playerMeshAtKnown = true;
         lastRootDrop = rootDrop;
+        if (!playerLit && !playerGpu && bodyTintPerPixel())   // the body light per pixel: grey x tint
+            for (auto& c : playerBody.posed.corners) {
+                c.r = playerBody.lightBase * playerBody.lightTint[0];
+                c.g = playerBody.lightBase * playerBody.lightTint[1];
+                c.b = playerBody.lightBase * playerBody.lightTint[2];
+            }
         if (playerLit && !playerGpu) {
-            for (auto& c : playerBody.posed.corners) c.r = c.g = c.b = playerBody.lightBase;
+            for (auto& c : playerBody.posed.corners) {
+                c.r = playerBody.lightBase * playerBody.lightTint[0];
+                c.g = playerBody.lightBase * playerBody.lightTint[1];
+                c.b = playerBody.lightBase * playerBody.lightTint[2];
+            }
             for (const WorldSlot& ws2 : worldSlots)
                 if (!ws2.lights.empty())
                     omk::applyLights(playerBody.posed, 0, playerBody.posed.corners.size(), playerLitAt, ws2.lights);
@@ -905,7 +929,7 @@ void PlayState::worldCrowdWalkers(const std::vector<omk::Pedestrian>& ws, bool c
             while (level + 1 < nL && depth >= omk::kLodDistances[level]) ++level;
             // `lod = best` (an ENHANCEMENT): no step down - the path
             // `OMK_PED_LOD_MAX=0` already proves draws what no LOD draws
-            level = std::max(0, std::min(level, bestLod ? 0 : pedLodMax));
+            level = std::max(0, std::min(level, bestLod && enhShown_ ? 0 : pedLodMax));
             if (bestLod && !bestLodTold && depth >= omk::kLodDistances[0]) {
                 bestLodTold = true;
                 std::printf("lod: best - a walker at %.0f view depth drawn on level %d "

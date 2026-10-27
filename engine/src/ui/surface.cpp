@@ -2,9 +2,12 @@
 #include "platform/threads.h"
 #include "formats/bytes.h"
 #include "ui/surface.h"
+#include "platform/threads.h"
 #include "ui/overlay.h"
+#include "ui/uipack.h"
 
 #include <cmath>
+#include <functional>
 
 #include <algorithm>
 #include <cstring>
@@ -18,7 +21,8 @@ using omk::le::u32;
 
 }  // namespace
 
-Surface surfaceFromBmp(std::span<const std::byte> d) {
+namespace {
+Surface decodeBmp(std::span<const std::byte> d) {
     Surface s;
     if (d.size() < 54 || static_cast<char>(d[0]) != 'B' || static_cast<char>(d[1]) != 'M')
         return s;
@@ -79,6 +83,28 @@ Surface surfaceFromBmp(std::span<const std::byte> d) {
     }
     return s;
 }
+}  // namespace
+
+Surface surfaceFromBmp(std::span<const std::byte> d) {
+    Surface s = decodeBmp(d);
+    // THE INTERFACE PACK (`ui/uipack.h`): noted when the pack has an HD
+    // version of exactly this bitmap; nothing when no pack is open
+#if OMK_REMASTER
+    uiPack().attach(s);
+#endif
+    return s;
+}
+
+namespace {
+
+// A blit's rows, split over the shared pool when it is big (a quarter of a
+// 640x480 frame and up), whole on the caller's thread otherwise
+void rows(int dw, int dh, const std::function<void(std::size_t, std::size_t)>& body) {
+    if (static_cast<long>(dw) * dh < 76800) { body(0, static_cast<std::size_t>(dh)); return; }
+    Threads::shared().parallelFor(0, static_cast<std::size_t>(dh), 16, body);
+}
+
+}  // namespace
 
 bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
          std::uint32_t flags, std::uint16_t srcKey, std::uint16_t dstKey,
@@ -92,6 +118,21 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
 
     const bool keySrc  = (flags & kBltKeySrc)  != 0;
     const bool keyDest = (flags & kBltKeyDest) != 0;
+
+    // ---- THE INTERFACE PACK (`ui/uipack.h`, the remaster's) --------------
+    // An ENLARGING blit of a bitmap the pack has an HD version of draws from
+    // that, its rectangle scaled by the factor - the same blit, a finer
+    // source. Its key is the original's (0), so a key-source blit with any
+    // other key keeps the original. The HD surface is not noted, so this
+    // recurses once.
+#if OMK_REMASTER
+    if ((dw > sw || dh > sh) && (!keySrc || srcKey == 0))
+        if (const auto hd = uiPack().find(src)) {
+            const int k = hd->w / src.w;
+            return blt(dst, dr, *hd, Rect{sr.left * k, sr.top * k, sr.right * k, sr.bottom * k},
+                       flags, srcKey, dstKey, filter);
+        }
+#endif
 
     // ---- THE INTERFACE SCALING ENHANCEMENT (surface.h) -------------------
     //
@@ -119,6 +160,12 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
     thread_local std::vector<double> colWx;
     colNear.resize(static_cast<std::size_t>(dw));
     for (int x = 0; x < dw; ++x) colNear[static_cast<std::size_t>(x)] = sw == dw ? x : x * sw / dw;
+    // the CALLER's tables, by reference: inside a row run on a pool worker the
+    // `thread_local` names would be THAT thread's copies, empty
+    const std::vector<int>& nearCol = colNear;
+    const std::vector<int>& x0Col = colX0;
+    const std::vector<int>& x1Col = colX1;
+    const std::vector<double>& wxCol = colWx;
     if (filter >= 1 && (sw != dw || sh != dh)) {
         colX0.resize(static_cast<std::size_t>(dw));
         colX1.resize(static_cast<std::size_t>(dw));
@@ -134,19 +181,13 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
             colX1[static_cast<std::size_t>(x)] = x1;
             colWx[static_cast<std::size_t>(x)] = wx;
         }
-        // ROWS IN PARALLEL (Windows port, 2026-10-16): this loop is per-pixel
-        // double arithmetic over the whole destination - 29 ms a frame at
-        // 1920x1080 and 118 ms at 3840x2160 on one core, which made every
-        // interface screen crawl at 4K. Each row reads the source and writes
-        // only its own destination row, so the chunks are disjoint and the
-        // result is bit-identical to the inline loop (threads.h's rule).
-        const std::vector<int>& cX0 = colX0;
-        const std::vector<int>& cX1 = colX1;
-        const std::vector<double>& cWx = colWx;
-        const std::vector<int>& cNear = colNear;
-        Threads::shared().parallelFor(0, static_cast<std::size_t>(dh), 32,
-                                      [&](std::size_t rowFrom, std::size_t rowTo) {
-        for (int y = static_cast<int>(rowFrom); y < static_cast<int>(rowTo); ++y) {
+        // THE ROWS ON THE THREAD POOL: each is computed alone and writes only
+        // itself (a dest-keyed test reads its own pixel), so split they are
+        // byte-identical - and a 640x480 screen stretched to 4K is 8.3
+        // million of them: the start menu took 88 ms a frame on the M3, the
+        // reader's inventory 38. A small blit stays inline.
+        const auto rowsF = [&](std::size_t yFrom, std::size_t yTo) {
+        for (int y = static_cast<int>(yFrom); y < static_cast<int>(yTo); ++y) {
             // Pixel CENTRES, which is what puts the resampled grid where the
             // nearest one is rather than half a texel off it.
             const double fy = (y + 0.5) * sh / dh - 0.5;
@@ -157,14 +198,14 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
             y1 = y1 < 0 ? 0 : y1 > sh - 1 ? sh - 1 : y1;
             const int ny = sh == dh ? y : y * sh / dh;   // the nearest path's row
             for (int x = 0; x < dw; ++x) {
-                const int nx = cNear[static_cast<std::size_t>(x)];
+                const int nx = nearCol[static_cast<std::size_t>(x)];
                 const std::uint16_t nearest = src.at(sr.left + nx, sr.top + ny);
                 if (keySrc && nearest == srcKey) continue;
                 if (keyDest && dst.at(dr.left + x, dr.top + y) != dstKey) continue;
 
-                const int x0 = cX0[static_cast<std::size_t>(x)];
-                const int x1 = cX1[static_cast<std::size_t>(x)];
-                const double wx = cWx[static_cast<std::size_t>(x)];
+                const int x0 = x0Col[static_cast<std::size_t>(x)];
+                const int x1 = x1Col[static_cast<std::size_t>(x)];
+                const double wx = wxCol[static_cast<std::size_t>(x)];
 
                 const std::uint16_t t[4] = {src.at(sr.left + x0, sr.top + y0),
                                             src.at(sr.left + x1, sr.top + y0),
@@ -196,23 +237,26 @@ bool blt(Surface& dst, Rect dr, const Surface& src, Rect sr,
                         quantise888(q(r / tot), q(g / tot), q(b / tot)));
             }
         }
-        });
+        };
+        rows(dw, dh, rowsF);
         return true;
     }
 
-    for (int y = 0; y < dh; ++y) {
+    rows(dw, dh, [&](std::size_t yFrom, std::size_t yTo) {
+    for (int y = static_cast<int>(yFrom); y < static_cast<int>(yTo); ++y) {
         // nearest-neighbour, which is what a 1999 blitter does; when the
         // rectangles are the same size this is the identity and the whole
         // thing is a row copy with two optional tests.
         const int sy = sr.top + (sh == dh ? y : y * sh / dh);
         for (int x = 0; x < dw; ++x) {
-            const int sx = sr.left + colNear[static_cast<std::size_t>(x)];
+            const int sx = sr.left + nearCol[static_cast<std::size_t>(x)];
             const std::uint16_t v = src.at(sx, sy);
             if (keySrc && v == srcKey) continue;
             if (keyDest && dst.at(dr.left + x, dr.top + y) != dstKey) continue;
             dst.set(dr.left + x, dr.top + y, v);
         }
     }
+    });
     return true;
 }
 

@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "platform/events.h"
 
 int PlayState::setupPlay() {
     const auto& fs = *fs_;
@@ -134,7 +135,10 @@ int PlayState::setupPlay() {
                 continue;
             }
             omk::Movie mov;
-            if (!real || !mov.open(*real)) {
+            // THE FILM PACK (`backends/remaster/`): the same film upscaled,
+            // the same sound; the original when the pack has none for it
+            if (real && remasterOpenFilm(*real, mov, name)) {
+            } else if (!real || !mov.open(*real)) {
                 std::printf("  %s: not decodable, skipped\n", name);
                 continue;
             }
@@ -263,7 +267,8 @@ int PlayState::setupPlay() {
     // would be dropped without a word: no music, no effects, no voices.
     // The world plays at the primary's 22050 (`kDeviceRate`),
     // and a device the films opened at their 44100 is REOPENED at it.
-    if (!frames) {
+    // (`OMK_AUDIO_DEVICE=1`, an instrument: in a `--frames` run too)
+    if (!frames || omk::envFlag("OMK_AUDIO_DEVICE")) {
         if (front.reopenAudio(kDeviceRate, 2))
             std::printf("audio: device open at %d Hz stereo for the world\n", kDeviceRate);
         else

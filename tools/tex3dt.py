@@ -120,8 +120,12 @@ def textures_bytes(d, t):
             c = idx[k] * 3
             if c + 2 < len(pal):
                 rgb[k*3:k*3+3] = pal[c:c+3]
+        # `idx` (w*h palette indices) and `pal` (the file's palette bytes) are
+        # the texture's own form, which `tools/omktexpack.py` keys a texture
+        # pack by - the engine's `textureKey` over the same bytes
         out.append({"name": name, "w": w, "h": ht, "bpp": bpp,
-                    "exact": exact, "rgb": bytes(rgb), "consumed": off})
+                    "exact": exact, "rgb": bytes(rgb), "consumed": off,
+                    "idx": bytes(idx[:w * ht]), "pal": bytes(pal)})
     return out
 
 def png(w, h, rgb):

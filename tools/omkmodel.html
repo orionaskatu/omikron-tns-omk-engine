@@ -1,0 +1,487 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Omikron model viewer</title>
+<style>
+:root{--bg:#12141a;--panel:#1a1d26;--line:#2a2f3d;--fg:#d8dce6;--dim:#8a91a3;
+      --acc:#6fb3ff;--ok:#7fd18a;--warn:#e8a75a;--bad:#e8756a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+#app{display:grid;grid-template-columns:260px 1fr 320px;height:100%}
+.side{background:var(--panel);display:flex;flex-direction:column;min-height:0}
+#left{border-right:1px solid var(--line)}
+#right{border-left:1px solid var(--line);overflow:auto}
+.side h2{margin:0;padding:12px 14px 8px;font-size:12px;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.08em;
+  display:flex;justify-content:space-between;align-items:center}
+.side h2 a{font-size:11px;text-transform:none;letter-spacing:0}
+#kinds{display:flex;gap:4px;padding:0 12px 8px;flex-wrap:wrap}
+#kinds button,.tg button{background:#0e1015;color:var(--dim);border:1px solid var(--line);
+  border-radius:5px;font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+#kinds button.on,.tg button.on{color:#fff;background:#2b3550;border-color:#3d4a6e}
+#search{margin:0 12px 8px;padding:6px 8px;background:#0e1015;color:var(--fg);
+  border:1px solid var(--line);border-radius:5px;font:inherit}
+#list{overflow:auto;flex:1;padding:0 6px 14px}
+#folder{padding:0 12px 6px;display:none}
+#folder.on{display:block}
+#fpath{display:flex;gap:4px}
+#fpath input{flex:1;min-width:0;padding:5px 7px;background:#0e1015;color:var(--fg);
+  border:1px solid var(--line);border-radius:5px;font:inherit;font-size:11.5px}
+#fpath button{background:#0e1015;color:var(--fg);border:1px solid var(--line);
+  border-radius:5px;font:inherit;font-size:11.5px;cursor:pointer}
+#fdirs{max-height:30vh;overflow:auto;margin-top:5px;border-bottom:1px solid var(--line);padding-bottom:5px}
+#fdirs .it{padding:2px 8px;font-size:12px}
+#ferr{color:var(--bad);font-size:11.5px}
+.it{width:100%;text-align:left;padding:4px 10px;margin:1px 0;background:none;border:0;
+  border-radius:5px;color:var(--fg);font:inherit;cursor:pointer;
+  display:flex;justify-content:space-between;gap:8px}
+.it:hover{background:#232734}
+.it.on{background:#2b3550;color:#fff}
+.it span{color:var(--dim);font-size:11px}
+#view{position:relative;min-width:0}
+#gl{width:100%;height:100%;display:block;cursor:grab}
+#gl:active{cursor:grabbing}
+#hud{position:absolute;left:12px;top:10px;pointer-events:none;color:var(--dim);font-size:12px}
+#hud b{color:var(--fg);font-size:14px}
+#help{position:absolute;left:12px;bottom:10px;color:#5d6475;font-size:11px;pointer-events:none}
+.tg{position:absolute;right:12px;top:10px;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:70%}
+.sec{padding:4px 14px 12px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:1px 12px;font-size:12px}
+.kv span{overflow-wrap:anywhere}
+.kv span:nth-child(odd){color:var(--dim)}
+.mesh{display:flex;gap:6px;align-items:center;font-size:11.5px;padding:1px 0;cursor:pointer;white-space:nowrap}
+.mesh:hover{background:#232734}
+.mesh.sel{background:#3a3220}
+.mesh .f{color:var(--dim);margin-left:auto;font-size:10.5px}
+.mesh.hid .n{color:var(--warn)}
+.mesh input{margin:0}
+.mats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.mat{font-size:10px;color:var(--dim);text-align:center;overflow:hidden;cursor:pointer}
+.mat img{width:100%;aspect-ratio:1;object-fit:contain;background:#000;
+  image-rendering:pixelated;border:1px solid var(--line);border-radius:3px}
+.mat.sel img{border-color:var(--warn)}
+#cams{width:100%;background:#0e1015;color:var(--fg);border:1px solid var(--line);
+  border-radius:5px;font:inherit;font-size:12px;padding:3px}
+.note{color:#5d6475;font-size:11px}
+</style>
+<body>
+<div id="app">
+  <div id="left" class="side">
+    <h2>models <a href="/">home</a></h2>
+    <div id="kinds"></div>
+    <div id="folder">
+      <div id="fpath"><input id="fin" spellcheck="false" placeholder="a folder path"
+        title="any folder on this machine; only its .3DO files (and the .3DT beside each) are read"><button id="fgo">open</button></div>
+      <div id="ferr"></div><div id="fdirs"></div>
+    </div>
+    <input id="search" placeholder="filter by name">
+    <div id="list"></div>
+  </div>
+  <div id="view">
+    <canvas id="gl"></canvas>
+    <div id="hud"></div>
+    <div class="tg" id="toggles"></div>
+    <div id="help">drag: turn &middot; shift/right-drag: pan &middot; wheel: zoom &middot; double-click: refit</div>
+  </div>
+  <div id="right" class="side">
+    <h2>model</h2><div class="sec kv" id="info"></div>
+    <div id="camsec" style="display:none"><h2>cameras</h2>
+      <div class="sec"><select id="cams"></select>
+      <div class="note">the eye and look-at stored in the file; the field of
+      view is taken as horizontal, as the dialogue cameras' is (not confirmed
+      for these)</div></div></div>
+    <h2>meshes <a href="#" id="allm">all</a></h2><div class="sec" id="meshes"></div>
+    <h2>materials</h2><div class="sec mats" id="mats"></div>
+  </div>
+</div>
+<script>
+"use strict";
+const BUILD="__BUILD__", $=s=>document.querySelector(s);
+const KINDS={PERSOS:"characters",OBJETS:"objects",DECORS:"sets",MISC:"skies & misc",DIR:"folder"};
+let catalog={}, kind="PERSOS", cur=null;     // cur: the loaded model
+// kind DIR: any other folder, browsed through /api/meshdir. `folder` is the
+// one listed (remembered across visits); a model keeps the folder it came from.
+let folder=localStorage.getItem("omkmodel.dir")||"";
+const enc=encodeURIComponent;
+const hashFor=(k,name,dir)=>k==="DIR"?`DIR/${enc(dir)}/${enc(name)}`:`${k}/${enc(name)}`;
+const dirQ=dir=>dir?`&dir=${enc(dir)}`:"";
+const opt={tex:true, lit:true, wire:false, hidden:false, cull:false, grid:true};
+
+// ------------------------------------------------------------------ WebGL
+const cv=$("#gl"), gl=cv.getContext("webgl2",{antialias:true})||cv.getContext("webgl",{antialias:true});
+const GL2=(typeof WebGL2RenderingContext!=="undefined")&&gl instanceof WebGL2RenderingContext;
+function shader(t,src){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(s);return s;}
+function program(vs,fs){const p=gl.createProgram();
+  gl.attachShader(p,shader(gl.VERTEX_SHADER,vs));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);return p;}
+const prog=program(`
+  attribute vec3 aPos; attribute vec2 aUV; attribute vec3 aLit;
+  uniform mat4 uMVP; varying vec2 vUV; varying vec3 vLit;
+  void main(){ vUV=aUV; vLit=aLit; gl_Position=uMVP*vec4(aPos,1.0); }`,`
+  precision mediump float;
+  varying vec2 vUV; varying vec3 vLit;
+  uniform sampler2D uTex; uniform float uHasTex, uCutout, uLit, uSel;
+  void main(){
+    vec3 c = uHasTex>0.5 ? texture2D(uTex,vUV).rgb : vec3(0.72,0.70,0.68);
+    // MaterialCutout (mesh flag 0x800): solid black is the key colour
+    if(uCutout>0.5 && c.r+c.g+c.b < 0.02) discard;
+    // the baked vertex COLOUR (ASSETS 4c) - white on characters, the whole
+    // lighting design on a set
+    c *= uLit>0.5 ? vLit : vec3(1.0);
+    if(uSel>0.5) c = mix(c, vec3(1.0,0.75,0.2), 0.45);
+    gl_FragColor=vec4(c,1.0);
+  }`);
+const lprog=program(`
+  attribute vec3 aPos; uniform mat4 uMVP;
+  void main(){ gl_Position=uMVP*vec4(aPos,1.0); }`,`
+  precision mediump float; uniform vec4 uCol;
+  void main(){ gl_FragColor=uCol; }`);
+const U={}; for(const n of ["uMVP","uTex","uHasTex","uCutout","uLit","uSel"]) U[n]=gl.getUniformLocation(prog,n);
+const LU={mvp:gl.getUniformLocation(lprog,"uMVP"),col:gl.getUniformLocation(lprog,"uCol")};
+const A={pos:gl.getAttribLocation(prog,"aPos"),uv:gl.getAttribLocation(prog,"aUV"),lit:gl.getAttribLocation(prog,"aLit")};
+const LA=gl.getAttribLocation(lprog,"aPos");
+const bufs={pos:gl.createBuffer(),uv:gl.createBuffer(),lit:gl.createBuffer(),wire:gl.createBuffer(),grid:gl.createBuffer()};
+gl.enable(gl.DEPTH_TEST); gl.clearColor(0.07,0.08,0.10,1);
+
+/* The game is right-handed with Y DOWN. A point is drawn at W(v)=[x,-y,z] -
+ * a reflection - so the projection negates X to undo the mirror, exactly as
+ * the dialogue viewer does (CLAUDE.md §5). */
+function persp(f,a,n,fa){const t=1/Math.tan(f/2);return[-t/a,0,0,0, 0,t,0,0,
+  0,0,(fa+n)/(n-fa),-1, 0,0,2*fa*n/(n-fa),0];}
+function mul(a,b){const o=new Array(16);for(let i=0;i<4;i++)for(let j=0;j<4;j++){
+  let s=0;for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s;}return o;}
+function lookAt(e,c){
+  const f=[c[0]-e[0],c[1]-e[1],c[2]-e[2]];let l=Math.hypot(...f)||1;f[0]/=l;f[1]/=l;f[2]/=l;
+  let up=[0,1,0]; if(Math.abs(f[1])>0.999) up=[0,0,1];
+  const s=[f[1]*up[2]-f[2]*up[1],f[2]*up[0]-f[0]*up[2],f[0]*up[1]-f[1]*up[0]];
+  l=Math.hypot(...s)||1;s[0]/=l;s[1]/=l;s[2]/=l;
+  const u=[s[1]*f[2]-s[2]*f[1],s[2]*f[0]-s[0]*f[2],s[0]*f[1]-s[1]*f[0]];
+  return[s[0],u[0],-f[0],0, s[1],u[1],-f[1],0, s[2],u[2],-f[2],0,
+    -(s[0]*e[0]+s[1]*e[1]+s[2]*e[2]),-(u[0]*e[0]+u[1]*e[1]+u[2]*e[2]),(f[0]*e[0]+f[1]*e[1]+f[2]*e[2]),1];}
+const FLIP=[1,0,0,0, 0,-1,0,0, 0,0,1,0, 0,0,0,1];
+
+// orbit camera, in the drawn (Y-up) space
+// a model faces -Z (the face mesh sits toward -Z of the head), so start in front
+const cam={yaw:Math.PI-0.6,pitch:0.25,dist:100,at:[0,0,0],fov:50*Math.PI/180,fixed:null};
+function fit(){
+  if(!cur) return;
+  const lo=cur.lo, hi=cur.hi;
+  cam.at=[(lo[0]+hi[0])/2,-(lo[1]+hi[1])/2,(lo[2]+hi[2])/2];
+  const r=Math.max(1,Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])/2);
+  cam.dist=r/Math.sin(cam.fov/2)*1.05; cam.fixed=null; $("#cams").value="";
+}
+function eye(){const cp=Math.cos(cam.pitch);
+  return[cam.at[0]+cam.dist*cp*Math.sin(cam.yaw),cam.at[1]+cam.dist*Math.sin(cam.pitch),
+         cam.at[2]+cam.dist*cp*Math.cos(cam.yaw)];}
+
+function resize(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;
+  const w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}}
+
+function draw(){
+  resize(); gl.viewport(0,0,cv.width,cv.height);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  if(!cur) return;
+  const asp=cv.width/cv.height, r=cur.radius;
+  let V, P;
+  if(cam.fixed){                       // a camera the file carries
+    const c=cam.fixed;
+    V=lookAt([c.pos[0],-c.pos[1],c.pos[2]],[c.target[0],-c.target[1],c.target[2]]);
+    const hf=c.fov*Math.PI/180, vf=2*Math.atan(Math.tan(hf/2)/asp);
+    P=persp(vf,asp,Math.max(1,r*0.001),r*8);
+  } else {
+    V=lookAt(eye(),cam.at);
+    P=persp(cam.fov,asp,Math.max(0.05,cam.dist*0.005),cam.dist+r*4);
+  }
+  const MVP=new Float32Array(mul(P,mul(V,FLIP)));
+
+  if(opt.grid && !cam.fixed){          // the floor plane y = feet, for scale
+    gl.useProgram(lprog); gl.uniformMatrix4fv(LU.mvp,false,MVP);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufs.grid); gl.enableVertexAttribArray(LA);
+    gl.vertexAttribPointer(LA,3,gl.FLOAT,false,0,0);
+    gl.uniform4f(LU.col,0.2,0.23,0.3,1); gl.drawArrays(gl.LINES,0,cur.gridN);
+  }
+
+  gl.useProgram(prog); gl.uniformMatrix4fv(U.uMVP,false,MVP);
+  for(const [a,b,n] of [[A.pos,bufs.pos,3],[A.uv,bufs.uv,2],[A.lit,bufs.lit,3]]){
+    gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.enableVertexAttribArray(a);
+    gl.vertexAttribPointer(a,n,gl.FLOAT,false,0,0);}
+  gl.uniform1f(U.uLit,opt.lit?1:0);
+  if(opt.cull){gl.enable(gl.CULL_FACE);} else gl.disable(gl.CULL_FACE);
+  /* Blend modes from the bucket key (ASSETS 4b/4c): mesh 0x1000 turns depth
+   * writes off and blending on; 0x2000 -> ONE/ONE, 0x4000 -> ZERO/INVSRCCOLOR.
+   * The server sorts those batches last, additive before multiply. */
+  let blending="";
+  for(const b of cur.batches){
+    if(!cur.show[b.mesh]) continue;
+    const mode=b.blend||"";
+    if(mode!==blending){ blending=mode;
+      if(mode){gl.enable(gl.BLEND);gl.depthMask(false);
+        if(mode==="mul") gl.blendFunc(gl.ZERO,gl.ONE_MINUS_SRC_COLOR); else gl.blendFunc(gl.ONE,gl.ONE);}
+      else {gl.disable(gl.BLEND);gl.depthMask(true);} }
+    const t=opt.tex&&cur.tex[b.material];
+    gl.uniform1f(U.uHasTex,t?1:0); gl.uniform1f(U.uCutout,b.cutout?1:0);
+    gl.uniform1f(U.uSel,(b.mesh===cur.sel||b.material===cur.selMat)?1:0);
+    if(t){gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,t);gl.uniform1i(U.uTex,0);}
+    gl.drawArrays(gl.TRIANGLES,b.start,b.count);
+  }
+  if(blending){gl.disable(gl.BLEND);gl.depthMask(true);}
+  gl.disable(gl.CULL_FACE);
+
+  if(opt.wire){
+    gl.useProgram(lprog); gl.uniformMatrix4fv(LU.mvp,false,MVP);
+    gl.bindBuffer(gl.ARRAY_BUFFER,bufs.wire); gl.enableVertexAttribArray(LA);
+    gl.vertexAttribPointer(LA,3,gl.FLOAT,false,0,0);
+    gl.uniform4f(LU.col,0.45,0.85,1.0,0.9); gl.depthFunc(gl.LEQUAL);
+    for(const b of cur.batches) if(cur.show[b.mesh]) gl.drawArrays(gl.LINES,b.start*2,b.count*2);
+    gl.depthFunc(gl.LESS);
+  }
+}
+let queued=false; function redraw(){ if(!queued){queued=true;requestAnimationFrame(()=>{queued=false;draw();});} }
+new ResizeObserver(redraw).observe(cv);
+
+// ------------------------------------------------------------- input
+let drag=null;
+cv.addEventListener("contextmenu",e=>e.preventDefault());
+cv.addEventListener("pointerdown",e=>{drag={x:e.clientX,y:e.clientY,pan:e.shiftKey||e.button===2};
+  cv.setPointerCapture(e.pointerId);});
+cv.addEventListener("pointerup",()=>drag=null);
+cv.addEventListener("pointermove",e=>{ if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if(cam.fixed){cam.fixed=null;$("#cams").value="";}
+  if(drag.pan){ // move the target in the view plane; X is mirrored by persp
+    const k=cam.dist*0.0018, cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw);
+    cam.at[0]+= dx*k*cy; cam.at[2]-= dx*k*sy; cam.at[1]+= dy*k;
+  } else { cam.yaw+=dx*0.008; cam.pitch=Math.max(-1.55,Math.min(1.55,cam.pitch+dy*0.008)); }
+  redraw();});
+cv.addEventListener("wheel",e=>{e.preventDefault();
+  if(cam.fixed){cam.fixed=null;$("#cams").value="";}
+  cam.dist*=Math.exp(e.deltaY*0.0012); redraw();},{passive:false});
+cv.addEventListener("dblclick",()=>{fit();redraw();});
+
+// ------------------------------------------------------------- toggles
+const TOG=[["tex","textures"],["lit","vertex colour"],["wire","wireframe"],
+           ["hidden","undrawn meshes"],["cull","cull backs"],["grid","floor"]];
+for(const [k,label] of TOG){
+  const b=document.createElement("button"); b.textContent=label; b.className=opt[k]?"on":"";
+  b.title={hidden:"show the meshes the engine skips (flags & 0x800043: collision volumes, markers)",
+           cull:"hide back faces - which winding is the front is not established here, so this is for inspection only",
+           lit:"the baked per-vertex colour (ASSETS 4c)"}[k]||"";
+  b.onclick=()=>{opt[k]=!opt[k]; b.className=opt[k]?"on":"";
+    if(k==="hidden"&&cur){applyHidden();renderMeshes();} redraw();};
+  $("#toggles").append(b);
+}
+
+// ------------------------------------------------------------- catalog
+function renderKinds(){
+  $("#kinds").innerHTML="";
+  for(const k in KINDS){
+    const b=document.createElement("button");
+    b.textContent=k==="DIR"?"other folder…":`${KINDS[k]} ${(catalog[k]||[]).length}`;
+    b.className=k===kind?"on":"";
+    b.onclick=()=>{kind=k;renderKinds();
+      if(k==="DIR"&&!catalog.DIR) openFolder(folder); else renderList();};
+    $("#kinds").append(b);
+  }
+  $("#folder").className=kind==="DIR"?"on":"";
+}
+async function openFolder(path){
+  const r=await fetch(`/api/meshdir?v=${BUILD}${dirQ(path)}`);
+  if(!r.ok){$("#ferr").textContent=`not a folder: ${path}`;return false;}
+  const d=await r.json(); $("#ferr").textContent="";
+  folder=d.path; localStorage.setItem("omkmodel.dir",folder);
+  catalog.DIR=d.models; $("#fin").value=folder;
+  const F=$("#fdirs"); F.innerHTML="";
+  const sub=(label,path,n)=>{const b=document.createElement("button"); b.className="it";
+    b.innerHTML=`${esc(label)}<span>${n?n+" .3DO":""}</span>`; b.onclick=()=>openFolder(path); F.append(b);};
+  if(d.parent) sub("..",d.parent,0);
+  for(const x of d.dirs) sub(x.name+"/",d.path.replace(/\/$/,"")+"/"+x.name,x.models);
+  if(!d.models.length) $("#ferr").textContent="no .3DO files in this folder";
+  renderList(); return true;
+}
+$("#fgo").onclick=()=>openFolder($("#fin").value.trim());
+$("#fin").addEventListener("keydown",e=>{if(e.key==="Enter") openFolder($("#fin").value.trim());});
+function renderList(){
+  const q=$("#search").value.trim().toLowerCase(), L=$("#list"); L.innerHTML="";
+  for(const m of catalog[kind]||[]){
+    if(q&&!m.name.toLowerCase().includes(q)) continue;
+    const b=document.createElement("button");
+    b.className="it"+(cur&&cur.kind===kind&&cur.name===m.name&&(kind!=="DIR"||cur.dir===folder)?" on":"");
+    b.innerHTML=`${m.name}<span>${m.triangles+2*m.quads}</span>`;
+    b.title=`${m.triangles} triangles, ${m.quads} quads, ${m.meshes} meshes, ${m.materials} materials`;
+    b.onclick=()=>{location.hash=hashFor(kind,m.name,folder);}; L.append(b);
+  }
+}
+$("#search").addEventListener("input",renderList);
+
+// ------------------------------------------------------------- loading
+let loadSeq=0;
+async function load(k,name,dir){
+  const seq=++loadSeq;
+  $("#hud").innerHTML=`<b>${esc(name)}</b><br>loading&hellip;`;
+  const r=await fetch(`/api/meshgeo/${k}/${enc(name)}?v=${BUILD}${dirQ(k==="DIR"&&dir)}`);
+  if(!r.ok){$("#hud").innerHTML=`<b>${esc(name)}</b><br>${esc(await r.text())}`;return;}
+  const buf=await r.arrayBuffer(); if(seq!==loadSeq) return;
+  const hl=new DataView(buf).getUint32(0,true);
+  const meta=JSON.parse(new TextDecoder().decode(new Uint8Array(buf,4,hl)));
+  const data=new Float32Array(buf,4+hl);
+  const n=meta.count, S=meta.stride;
+  const P=new Float32Array(n*3), UV=new Float32Array(n*2), L=new Float32Array(n*3), W=new Float32Array(n*6);
+  /* Texture coordinates are the raw bytes over the material's WIDTH on both
+   * axes (ASSETS: the triangle record). */
+  for(const b of meta.batches){ const w=b.w||256;
+    for(let i=b.start;i<b.start+b.count;i++){
+      P[i*3]=data[i*S];P[i*3+1]=data[i*S+1];P[i*3+2]=data[i*S+2];
+      UV[i*2]=data[i*S+3]/w; UV[i*2+1]=data[i*S+4]/w;
+      L[i*3]=data[i*S+5];L[i*3+1]=data[i*S+6];L[i*3+2]=data[i*S+7];
+    }
+    // wireframe: the three edges of each triangle, two points per corner
+    for(let t=b.start;t<b.start+b.count;t+=3) for(let e=0;e<3;e++){
+      const a=t+e, c=t+(e+1)%3, o=(t+e)*6;
+      W[o]=P[a*3];W[o+1]=P[a*3+1];W[o+2]=P[a*3+2];W[o+3]=P[c*3];W[o+4]=P[c*3+1];W[o+5]=P[c*3+2];}
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.pos);gl.bufferData(gl.ARRAY_BUFFER,P,gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.uv);gl.bufferData(gl.ARRAY_BUFFER,UV,gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.lit);gl.bufferData(gl.ARRAY_BUFFER,L,gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.wire);gl.bufferData(gl.ARRAY_BUFFER,W,gl.STATIC_DRAW);
+  if(cur) for(const t of Object.values(cur.tex)) gl.deleteTexture(t);
+  cur={kind:k,name:meta.name,dir:k==="DIR"?dir:"",meta,batches:meta.batches,P,tex:{},show:{},user:{},sel:-1,selMat:-1};
+  applyHidden(); bounds(); fit();
+  renderList(); renderInfo(); renderMeshes(); renderMats(); renderCams(); redraw();
+  // textures last, so the geometry shows at once
+  const mats=[...new Set(meta.batches.map(b=>b.material))];
+  await Promise.all(mats.map(async m=>{
+    const img=new Image(); img.src=texURL(m);
+    await img.decode().catch(()=>{}); if(!img.width||seq!==loadSeq) return;
+    const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,img);
+    const pot=v=>(v&(v-1))===0, rep=GL2||(pot(img.width)&&pot(img.height));
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,rep?gl.REPEAT:gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,rep?gl.REPEAT:gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    cur.tex[m]=t; redraw();
+  }));
+}
+const texURL=m=>`/api/meshtex/${cur.kind}/${enc(cur.name)}/${m}.png?v=${BUILD}${dirQ(cur.dir)}`;
+
+function applyHidden(){
+  for(const m of cur.meta.meshes)
+    cur.show[m.i] = m.i in cur.user ? cur.user[m.i] : (m.drawn||opt.hidden);
+}
+/* Framing and the floor use only the meshes the engine draws: a character's
+ * attachment markers sit far outside the model and would shrink it to a dot. */
+function bounds(){
+  const lo=[1e30,1e30,1e30], hi=[-1e30,-1e30,-1e30], drawn={};
+  for(const m of cur.meta.meshes) drawn[m.i]=m.drawn;
+  for(const b of cur.batches){ if(!drawn[b.mesh]) continue;
+    for(let i=b.start;i<b.start+b.count;i++) for(let a=0;a<3;a++){
+      const v=cur.P[i*3+a]; if(v<lo[a])lo[a]=v; if(v>hi[a])hi[a]=v; } }
+  if(lo[0]>hi[0]){lo.fill(0);hi.fill(1);}
+  cur.lo=lo; cur.hi=hi; cur.radius=Math.max(1,Math.hypot(hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2])/2);
+  // a floor grid at the lowest point (the game's largest Y), 10 lines a side
+  const g=[], y=-hi[1], cx=(lo[0]+hi[0])/2, cz=(lo[2]+hi[2])/2, R=cur.radius*1.4, N=10;
+  for(let i=-N;i<=N;i++){const s=R*i/N;
+    g.push(cx+s,y,cz-R, cx+s,y,cz+R, cx-R,y,cz+s, cx+R,y,cz+s);}
+  // the grid is drawn through FLIP like the model, so store it in game Y
+  for(let i=1;i<g.length;i+=3) g[i]=-g[i];
+  gl.bindBuffer(gl.ARRAY_BUFFER,bufs.grid);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g),gl.STATIC_DRAW);
+  cur.gridN=g.length/3;
+}
+
+// ------------------------------------------------------------- panels
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function renderInfo(){
+  const m=cur.meta, row=m.header;
+  const sz=[0,1,2].map(a=>(cur.hi[a]-cur.lo[a]).toFixed(1)).join(" × ");
+  const blends=m.batches.filter(b=>b.blend).length, cut=m.batches.filter(b=>b.cutout).length;
+  $("#info").innerHTML=[
+    ["file",cur.kind==="DIR"?esc(m.file):`MESHES\\${cur.kind}\\${esc(cur.name)}.3DO`],
+    ["triangles",`${row.triangles} + ${row.quads} quads`],
+    ["vertices",row.vertices],["meshes",`${m.meshes.length} (${m.meshes.filter(x=>x.drawn).length} drawn)`],
+    ["materials",row.materials],["batches",`${m.batches.length} (${cut} cutout, ${blends} blended)`],
+    ["size",sz],["cameras",m.cameras.length]
+  ].map(([k,v])=>`<span>${k}</span><span>${v}</span>`).join("");
+  $("#hud").innerHTML=`<b>${esc(cur.name)}</b><br>${KINDS[cur.kind]} &middot; ${m.triangles} triangles drawn as served`;
+}
+const FLAGS=[[0x800000,"collision"],[0x1000,"blend"],[0x2000,"add"],[0x4000,"mul"],
+             [0x800,"cutout"],[0x8000000,"shimmer"],[1,"bit0"],[2,"bit1"],[0x40,"bit6"]];
+function renderMeshes(){
+  const ms=cur.meta.meshes, byId={}, kids={};
+  for(const m of ms) byId[m.id]=m;
+  for(const m of ms){const p=byId[m.parent]?m.parent:"root"; (kids[p]=kids[p]||[]).push(m);}
+  const out=[], walk=(k,d)=>{for(const m of kids[k]||[]){out.push([m,d]); if(d<24) walk(m.id,d+1);}};
+  walk("root",0);
+  // a parent chain that never reaches a root still gets listed
+  const listed=new Set(out.map(([m])=>m.i));
+  for(const m of ms) if(!listed.has(m.i)) out.push([m,0]);
+  const E=$("#meshes"); E.innerHTML="";
+  for(const [m,d] of out){
+    const faces=m.triangles+m.quads;
+    const div=document.createElement("div");
+    div.className="mesh"+(m.drawn?"":" hid")+(m.i===cur.sel?" sel":"");
+    const tags=FLAGS.filter(([f])=>m.flags&f).map(([,n])=>n).join(" ");
+    div.title=`#${m.i} id ${m.id} · flags 0x${m.flags.toString(16).padStart(8,"0")} · `+
+      `${m.vertices} vertices, ${m.triangles} triangles, ${m.quads} quads · `+
+      `pos ${m.pos.map(v=>v.toFixed(1)).join(", ")}`+(m.drawn?"":" · skipped by the engine (flags & 0x800043)");
+    div.innerHTML=`<span style="width:${d*10}px;flex:none"></span>`+
+      `<input type="checkbox" ${cur.show[m.i]?"checked":""} ${faces?"":"disabled"}>`+
+      `<span class="n">${esc(m.name)||"(unnamed)"}</span><span class="f">${tags} ${faces||""}</span>`;
+    div.querySelector("input").onclick=e=>{e.stopPropagation();
+      cur.user[m.i]=e.target.checked; applyHidden(); redraw();};
+    div.onclick=()=>{cur.sel=cur.sel===m.i?-1:m.i; cur.selMat=-1; renderMeshes(); renderMats(); redraw();};
+    E.append(div);
+  }
+}
+$("#allm").onclick=e=>{e.preventDefault(); if(!cur) return; cur.user={}; applyHidden(); renderMeshes(); redraw();};
+function renderMats(){
+  const E=$("#mats"); E.innerHTML="";
+  const seen=new Map(); for(const b of cur.batches) if(!seen.has(b.material)) seen.set(b.material,b);
+  for(const [m,b] of [...seen].sort((a,b)=>a[0]-b[0])){
+    const d=document.createElement("div"); d.className="mat"+(m===cur.selMat?" sel":"");
+    d.title=`material ${m}: ${b.name} ${b.w}×${b.h}`;
+    d.innerHTML=`<img loading="lazy" src="${texURL(m)}"><div>${esc(b.name||m)}</div>`;
+    d.onclick=()=>{cur.selMat=cur.selMat===m?-1:m; cur.sel=-1; renderMats(); renderMeshes(); redraw();};
+    E.append(d);
+  }
+}
+function renderCams(){
+  const c=cur.meta.cameras||[], S=$("#cams");
+  $("#camsec").style.display=c.length?"":"none";
+  S.innerHTML=`<option value="">free orbit</option>`+
+    c.map((k,i)=>`<option value="${i}">${esc(k.name)} (fov ${k.fov})</option>`).join("");
+  S.onchange=()=>{const h=hashFor(cur.kind,cur.name,cur.dir);
+    history.replaceState(null,"",S.value===""?`#${h}`:`#${h}@${S.value}`);
+    cam.fixed=S.value===""?null:c[+S.value]; redraw();};
+}
+function pickCam(n){
+  if(!cur||n===undefined||!cur.meta.cameras[+n]) return;
+  $("#cams").value=n; cam.fixed=cur.meta.cameras[+n]; redraw();
+}
+
+// ------------------------------------------------------------- routing
+async function route(){
+  // #KIND/NAME, #DIR/<folder>/NAME (each part URI-encoded, so the folder's
+  // own slashes are %2F), and @N on the end to open through camera N
+  const parts=location.hash.slice(1).split("/"), k=parts[0];
+  if(!(k in KINDS)||parts.length<(k==="DIR"?3:2)) return;
+  const dir=k==="DIR"?decodeURIComponent(parts[1]):"";
+  const [name,cn]=decodeURIComponent(parts.slice(k==="DIR"?2:1).join("/")).split("@");
+  if(kind!==k){kind=k; renderKinds();}
+  if(k==="DIR"&&dir!==folder) await openFolder(dir);
+  if(cur&&cur.kind===k&&cur.name===name&&cur.dir===dir) return pickCam(cn);
+  load(k,name,dir).then(()=>pickCam(cn));
+}
+addEventListener("hashchange",route);
+(async()=>{
+  catalog=await fetch(`/api/meshes?v=${BUILD}`).then(r=>r.json());
+  renderKinds(); renderList();
+  if(location.hash.length>1) route();
+  else { const first=(catalog.PERSOS||[]).find(m=>/^AKG/i.test(m.name))||(catalog.PERSOS||[])[0];
+         if(first) location.hash=`PERSOS/${encodeURIComponent(first.name)}`; }
+})();
+</script>

@@ -24,13 +24,12 @@ namespace {
 // dies on a garbage index), so a shared counter here would be raced
 // by every worker and could be left non-zero - silently running every later
 // call inline. Instead: a WORKER is recognised by its thread id (`isWorker`)
-// and runs a nested call inline, and the one outside caller keeps this plain
-// count, which no worker ever touches.
-int gCallerDepth = 0;
-struct CallerGuard {
-    CallerGuard() { ++gCallerDepth; }
-    ~CallerGuard() { --gCallerDepth; }
-};
+// and runs a nested call inline; the CALLER that holds the pool is recorded
+// by its thread id (`Impl::owner`), so its own chunk splitting again runs
+// inline too. A plain count of the caller's depth served while one thread
+// called the pool; with two (a set loading on a BackgroundJob beside the
+// frame, 2026-10-21) its unsynchronised ++/-- could be lost - left at -1, a
+// nested call would wait on the semaphore its own thread holds.
 }  // namespace
 
 
@@ -66,6 +65,10 @@ struct Threads::Impl {
     std::atomic<int> taken{0};
     SceUID work = -1;      // signalled once per worker that has a chunk
     SceUID done = -1;      // signalled by each worker when its chunk is done
+    // one CALL at a time from different threads - see `threads_std.cpp`'s
+    // `calls`: a binary semaphore held across a whole call
+    SceUID calls = -1;
+    std::atomic<SceUID> owner{-1};   // the thread holding `calls`, -1 none
     bool stop = false;
     Worker* slots = nullptr;
     int count = 0;
@@ -114,7 +117,8 @@ Threads::Threads(int workers) : impl_(new Impl) {
     const int want = workers > 0 ? workers : hardwareDefault();
     impl_->work = sceKernelCreateSema("omk_work", 0, 0, 64, nullptr);
     impl_->done = sceKernelCreateSema("omk_done", 0, 0, 64, nullptr);
-    if (impl_->work < 0 || impl_->done < 0) return;          // no threads: inline
+    impl_->calls = sceKernelCreateSema("omk_calls", 0, 1, 1, nullptr);
+    if (impl_->work < 0 || impl_->done < 0 || impl_->calls < 0) return;   // no threads: inline
     impl_->slots = new Impl::Worker[static_cast<std::size_t>(want)];
     for (int i = 0; i < want; ++i) {
         impl_->slots[i].pool = impl_.get();
@@ -140,6 +144,7 @@ Threads::~Threads() {
     delete[] impl_->slots;
     sceKernelDeleteSema(impl_->work);
     sceKernelDeleteSema(impl_->done);
+    sceKernelDeleteSema(impl_->calls);
 }
 
 int Threads::workers() const { return impl_ ? impl_->count : 0; }
@@ -149,15 +154,18 @@ void Threads::parallelFor(std::size_t begin, std::size_t end, std::size_t grain,
                           const std::function<void(std::size_t, std::size_t)>& body) {
     if (begin >= end) return;
     // nested - a worker's chunk splitting again, or the caller's own chunk -
-    // runs inline (see `gCallerDepth`)
-    if (impl_ && impl_->isWorker(sceKernelGetThreadId())) { body(begin, end); return; }
-    if (gCallerDepth > 0) { body(begin, end); return; }
-    CallerGuard depth;
+    // runs inline (see `Impl::owner`)
+    const SceUID self = sceKernelGetThreadId();
+    if (impl_ && (impl_->isWorker(self) || impl_->owner.load() == self)) { body(begin, end); return; }
     const std::size_t n = end - begin;
     const int cap = workers() + 1;
     int chunks = grain ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(cap), (n + grain - 1) / grain)) : cap;
     if (chunks < 1) chunks = 1;
     if (chunks == 1) { body(begin, end); return; }
+    // another thread's call holds the pool: this one runs inline rather than
+    // wait for it (the same answer - `threads.h`'s rule)
+    if (sceKernelPollSema(impl_->calls, 1) < 0) { body(begin, end); return; }
+    impl_->owner.store(self);
     impl_->from = begin; impl_->to = end; impl_->grain = grain;
     impl_->body = &body; impl_->chunks = chunks;
     impl_->taken.store(0);                        // before any worker is woken
@@ -166,6 +174,8 @@ void Threads::parallelFor(std::size_t begin, std::size_t end, std::size_t grain,
     impl_->slice(chunks - 1, lo, hi);             // the caller takes the last chunk
     if (lo < hi) body(lo, hi);
     for (int i = 0; i < chunks - 1; ++i) sceKernelWaitSema(impl_->done, 1, nullptr);
+    impl_->owner.store(-1);
+    sceKernelSignalSema(impl_->calls, 1);
 }
 
 namespace hostthread {

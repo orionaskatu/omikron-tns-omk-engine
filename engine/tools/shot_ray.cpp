@@ -4,6 +4,15 @@
 //     shot_ray <set.3DO> x0 y0 z0 x1 y1 z1
 //     shot_ray --kinds <set.3DO>
 //     shot_ray --mask <set.3DO>...
+//     shot_ray --runs <set.3DO>...
+//
+// `--runs` proves the world ray through the meshes' boxes (`soupRunBoxes`,
+// the original's `o3de_ForEachMeshInBox` broad phase; `todo/
+// handoff-classic-mac.md` 3g) answers as the linear scan does: per set, the
+// shot soup's mesh runs boxed, then the weather's ROOF RAY (5 m straight up
+// from a point above a face), segments face to face, horizontal segments and
+// segments through a face, each cast both ways - the same hit or miss, the
+// same t, normal and triangle - and how many faces each tried.
 //
 // `--mask` proves the SIGHT ray can run over the SHOT soup (`cutoutMask`,
 // todo/ram-vs-original.md tier B): per set, the shot soup's unmasked
@@ -26,6 +35,7 @@
 #include "o3de/collision.h"
 #include "platform/datafs.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -147,8 +157,69 @@ static int mask(int argc, char** argv) {
     return badSoup || badRay ? 1 : 0;
 }
 
+static int runs(int argc, char** argv) {
+    long sets = 0, tris = 0, runCount = 0, rays = 0, hits = 0, bad = 0;
+    double triedRuns = 0.0, triedLinear = 0.0;
+    for (int k = 2; k < argc; ++k) {
+        const auto d = omk::DataFs::readPath(argv[k]);
+        std::vector<int> meshOf;
+        const auto shot = omk::collisionSoup(d, omk::SoupKind::Shot, &meshOf);
+        // the runs as the viewer makes them (`playstate.cpp`, shotMeshRuns)
+        std::vector<std::uint32_t> first;
+        for (std::size_t t = 0; t < meshOf.size(); ++t)
+            if (first.empty() || meshOf[t] != meshOf[t - 1]) first.push_back(static_cast<std::uint32_t>(t));
+        const auto boxes = omk::soupRunBoxes(shot, first);
+        ++sets;
+        const std::size_t n = shot.size() / 9;
+        tris += static_cast<long>(n);
+        runCount += static_cast<long>(first.size());
+        if (n < 2) continue;
+        std::uint32_t r = 2024u;
+        const auto pick = [&]() { r = r * 1664525u + 1013904223u; return (r >> 8) % n; };
+        const auto centre = [&](std::size_t t, double p[3]) {
+            for (int c = 0; c < 3; ++c)
+                p[c] = (shot[9 * t + c] + shot[9 * t + 3 + c] + shot[9 * t + 6 + c]) / 3.0;
+        };
+        for (int i = 0; i < 400; ++i) {
+            double a[3], b[3];
+            centre(pick(), a);
+            centre(pick(), b);
+            double dv[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+            switch (i % 4) {
+            case 0: a[1] -= 50.0; dv[0] = 0.0; dv[1] = -196.85039; dv[2] = 0.0; break;   // the roof ray (Y down)
+            case 1: break;                                                              // face to face
+            case 2: a[1] -= 90.0; dv[1] = 0.0; break;                                   // horizontal
+            default:                                                                    // through a face
+                for (int c = 0; c < 3; ++c) a[c] -= 0.5 * dv[c];
+            }
+            const auto h1 = omk::sweepSphere(shot, a, dv, 0.0);
+            const auto h2 = omk::sweepSphere(shot, boxes, a, dv, 0.0);
+            ++rays;
+            if (h1) ++hits;
+            if (bool(h1) != bool(h2) ||
+                (h1 && (h1->t != h2->t || h1->tri != h2->tri || h1->n[0] != h2->n[0] ||
+                        h1->n[1] != h2->n[1] || h1->n[2] != h2->n[2]))) ++bad;
+            // the faces each tried: every one, or those of the runs whose box meets the ray's
+            double lo[3], hi[3];
+            for (int c = 0; c < 3; ++c) { lo[c] = std::min(a[c], a[c] + dv[c]); hi[c] = std::max(a[c], a[c] + dv[c]); }
+            triedLinear += static_cast<double>(n);
+            for (std::size_t q = 0; q < first.size(); ++q) {
+                const float* bx = &boxes.box[6 * q];
+                if (bx[3] < lo[0] || bx[0] > hi[0] || bx[4] < lo[1] || bx[1] > hi[1] ||
+                    bx[5] < lo[2] || bx[2] > hi[2]) continue;
+                triedRuns += static_cast<double>((q + 1 < first.size() ? first[q + 1] : n) - first[q]);
+            }
+        }
+    }
+    std::printf("runs: %ld sets, %ld shot triangles in %ld mesh runs; %ld rays, %ld hit, %ld differ; "
+                "faces tried %.0f of the linear scan's %.0f (%.2f%%)\n", sets, tris, runCount, rays,
+                hits, bad, triedRuns, triedLinear, triedLinear > 0 ? 100.0 * triedRuns / triedLinear : 0.0);
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && std::string(argv[1]) == "--kinds") return kinds(argv[2]);
+    if (argc >= 3 && std::string(argv[1]) == "--runs") return runs(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "--mask") return mask(argc, argv);
     if (argc < 8) {
         std::fprintf(stderr, "usage: shot_ray <set.3DO> x0 y0 z0 x1 y1 z1 | --kinds <set.3DO>\n");

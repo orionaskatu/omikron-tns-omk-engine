@@ -18,11 +18,13 @@
 #include "platform/env.h"
 #include "o3de/vecmath.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 
 namespace omk {
 namespace {
@@ -276,6 +278,81 @@ int Session::slotOf(int area) const {
     if (area < 0) return -1;
     for (int s = 0; s < 2; ++s) if (slots_[s].area == area) return s;
     return -1;
+}
+
+std::string Session::setOfArea(int area) const {
+    const int s = slotOf(area);
+    return s >= 0 ? slots_[s].set : headerName(readChunk(iam_, "AREA", area), 88, 9);
+}
+
+std::vector<std::byte> Session::areaChunkOf(int area) const {
+    const int s = slotOf(area);
+    return s >= 0 ? slots_[s].areaChunk : readChunk(iam_, "AREA", area);
+}
+
+void zoneDestinations(const Zone& z, std::span<const std::byte> code, const OpcodeTable& table,
+                      std::vector<int>& out) {
+    for (int which = 0; which < 2; ++which) {   // enter, activate
+        const std::int32_t off = z.scripts[which];
+        if (off <= 0 || static_cast<std::size_t>(off) >= code.size()) continue;
+        std::size_t pc = static_cast<std::size_t>(off);
+        for (int guard = 0; guard < 512 && pc < code.size(); ++guard) {
+            const auto op = static_cast<std::uint8_t>(code[pc]);
+            const int n = table.operandLength(op);
+            if (n < 0 || pc + 1 + static_cast<std::size_t>(n) > code.size()) break;
+            if ((op == op::AreaGoto || op == op::AreaPreload) && n >= 2) {
+                const int field = static_cast<std::uint8_t>(code[pc + 1]) |
+                                  static_cast<std::uint8_t>(code[pc + 2]) << 8;
+                // 0xFFFF none, 0x4000 an indirect (a message's sender) - not a place
+                if (field != 0xFFFF && !(field & 0x4000) &&
+                    std::find(out.begin(), out.end(), field) == out.end())
+                    out.push_back(field);
+            }
+            if (op == op::End) break;
+            pc += 1 + static_cast<std::size_t>(n);
+        }
+    }
+}
+
+std::vector<Session::DoorTarget> Session::doorTargets(int depth) const {
+    std::vector<DoorTarget> out;
+    const auto add = [&](const DoorTarget& d) {
+        if (slotOf(d.area) >= 0) return;   // resident already
+        for (const auto& o : out)
+            if (o.area == d.area && o.zone == d.zone) return;
+        DoorTarget e = d;
+        e.set = setOfArea(d.area);
+        if (!e.set.empty()) out.push_back(std::move(e));
+    };
+    std::map<int, std::vector<int>> beyond;   // a first hop's own destinations, read once
+    for (const LiveZone& lz : zones_.registered()) {
+        std::vector<int> dest;
+        zoneDestinations(lz.zone, lz.code, table_, dest);
+        for (const int a : dest) {
+            DoorTarget d;
+            lz.zone.centre(d.pos);
+            d.area = a;
+            d.zone = lz.zone.id;
+            add(d);
+            if (depth < 2) continue;
+            auto it = beyond.find(a);
+            if (it == beyond.end()) {
+                std::vector<int> next;
+                const auto chunk = areaChunkOf(a);
+                for (const Zone& z : zonesOf(chunk, ChunkKind::Area))
+                    zoneDestinations(z, chunk, table_, next);
+                it = beyond.emplace(a, std::move(next)).first;
+            }
+            for (const int b : it->second) {
+                if (b == a) continue;
+                DoorTarget e = d;
+                e.area = b;
+                e.via = a;
+                add(e);
+            }
+        }
+    }
+    return out;
 }
 
 int Session::loadSlicesFor(int area) const {

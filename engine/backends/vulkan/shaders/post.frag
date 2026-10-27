@@ -55,7 +55,28 @@ layout(push_constant) uniform Post {
     vec4 gain;     // rgb gain, w highlight desaturation
     vec4 tintS;    // rgb shadow tint, w its weight
     vec4 tintH;    // rgb highlight tint, w its weight
+    vec4 lut;      // x: the remaster's grade LUT's side (0 none) - the Direct3D 12 build's (-DOMK_DX)
 } pc;
+
+#ifdef OMK_DX
+// THE REMASTER'S CITY GRADE (`rmpost.frag`'s, here for the Direct3D 12 backend, whose chain this is - and
+// the shower's overcast rides on it): a 3D LUT stored as an N*N x N strip (blue slices side by side),
+// looked up trilinearly. Applied FIRST, on the 8-bit picture, before this chain's own grade.
+layout(set = 0, binding = 4) uniform sampler2D rmLut;
+vec3 rmGraded(vec3 c) {
+    float n = pc.lut.x;
+    c = clamp(c, 0.0, 1.0);
+    float bs = c.b * (n - 1.0);
+    float b0 = floor(bs);
+    float b1 = min(b0 + 1.0, n - 1.0);
+    float t = bs - b0;
+    vec2 inv = vec2(1.0 / (n * n), 1.0 / n);
+    vec2 rg = c.rg * (n - 1.0) + 0.5;
+    vec3 a = texture(rmLut, (vec2(b0 * n, 0.0) + rg) * inv).rgb;
+    vec3 b = texture(rmLut, (vec2(b1 * n, 0.0) + rg) * inv).rgb;
+    return mix(a, b, t);
+}
+#endif
 
 layout(location = 0) out vec4 o;
 
@@ -150,6 +171,10 @@ void main() {
         }
         c = acc / tot;
     }
+#ifdef OMK_DX
+    // the REMASTER's city grade (and the shower's overcast), before everything of this chain's own
+    if (pc.lut.x > 1.0) c = rmGraded(c);
+#endif
     bool tone = pc.tone.x > 0.0 || pc.tone.y != 1.0;
     if (tone) {
         // 3-5. linear, expanded, bloom, the shoulder, back

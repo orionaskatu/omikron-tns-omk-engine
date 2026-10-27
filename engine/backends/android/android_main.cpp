@@ -12,7 +12,7 @@
 //     gamedata/        the game's data tree (MESHES/, IAM/, ...), pushed
 //     tables/          the tables lifted out of the exe, pushed
 //     saves/GAMES      where saves go (never into the data tree - CLAUDE.md §1)
-//     omk.ini          the game's own config file, when present
+//     omk.ini          the config, read when present; OMK's menu writes it
 //     args.txt         EXTRA arguments, one per line, AFTER the defaults (the
 //                      viewer keeps the last `--res`, and the last of each
 //                      enhancement flag), '#' starts a comment
@@ -177,7 +177,9 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int, char**) {
                 "--aa", "4", "--filter", "trilinear", "--anisotropy", "16",
                 "--text-scaling", "fit"};
     const std::string ini = home + "/omk.ini";
-    if (std::ifstream(ini)) { run.args.push_back("--config"); run.args.push_back(ini); }
+    // always named: read when it is there, and where OMK's options menu writes
+    run.args.push_back("--config");
+    run.args.push_back(ini);
     if (std::ifstream extra{home + "/args.txt"}) {
         std::string line;
         while (std::getline(extra, line)) {

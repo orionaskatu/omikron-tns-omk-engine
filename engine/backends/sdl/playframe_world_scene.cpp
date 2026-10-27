@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseWorld`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/events.h"
 #include "platform/env.h"
 #include "o3de/vecmath.h"
 
@@ -783,14 +784,14 @@ void PlayState::worldCameraTake() {
     // original's lens inside is not established - only that a canal
     // three metres wide cannot hold a camera three metres behind him.
     if (swimCam) {
-        const omk::TriangleSoup* shot = nullptr;
+        const WorldSlot* shot = nullptr;
         for (const auto& ws : worldSlots)
-            if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws.shotSoup;
-        if (shot && !shot->empty()) {
+            if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws;
+        if (shot && !shot->shotSoup.empty()) {
             const double p0[3] = {tc.at[0], tc.at[1], tc.at[2]};
             const double d[3] = {double(tc.eye[0]) - tc.at[0], double(tc.eye[1]) - tc.at[1],
                                  double(tc.eye[2]) - tc.at[2]};
-            const auto h = omk::sweepSphere(*shot, p0, d, 0.0);
+            const auto h = omk::sweepSphere(shot->shotSoup, shot->shotRunBoxes, p0, d, 0.0);
             if (h && h->t < 1.0) {
                 const double t = h->t * 0.9;
                 for (int k = 0; k < 3; ++k)
@@ -1472,6 +1473,7 @@ void PlayState::worldBolts() {
     OMK_ZONE("world: bolts");   // the profiler (todo/debug-tools.md 6)
     auto& session = *session_;
     omk::Renderer& world = *world_;
+    remasterGrade();   // the city grade (`backends/remaster/`)
     // ---- THE BOLTS (`actor/projectile.h`) ------------------------
     //
     // Each live entry is a clone of the held gun's `tir` node, drawn
@@ -1612,6 +1614,7 @@ void PlayState::worldBolts() {
                 sprites.slot[id] = static_cast<int>(pool.size() - sprites.texBase);
                 pool.push_back(*st);
             }
+        remasterPoolRain(pool);   // the 3D rain's streak (`backends/remaster/`)
         if (pool.size() > 64)
             std::printf("WARNING: texture pool is %zu, past the 64 a bucket key "
                         "can address - slots will alias\n", pool.size());
@@ -1630,10 +1633,6 @@ void PlayState::worldBolts() {
             std::printf("frame %ld: texture pool handed over %s (%zu slots)\n", frameNo,
                         session.renderGrey() ? "GREYED (sub_42FE80)" : "in colour (sub_42FC10)",
                         pool.size());
-        // THE TEXTURE PACK (`o3de/texpack.h`): a replacement rides on the
-        // slot's texture, matched by its colour pixels - so before the grey
-        // bank, which greys the replacement by luma as it greys the palette
-        if (texPack.active()) texPack.apply(pool);
         poolGrey = session.renderGrey();
         if (poolGrey)
             for (auto& t : pool) {
@@ -1642,18 +1641,14 @@ void PlayState::worldBolts() {
                 if (it == greyPalettes.end())
                     it = greyPalettes.emplace(t.pal.data(),
                                               std::make_pair(t.pal, omk::greyPalette(t.pal))).first;
+                // the TEXTURE PACK keyed this texture by its colour palette;
+                // told where the grey one came from, it greys the replacement
+                const omk::Texture colour = t;
                 t.pal = it->second.second;
-                if (t.hasPack()) {
-                    auto gp = greyPacks.find(t.packRgba.data());
-                    if (gp == greyPacks.end())
-                        gp = greyPacks.emplace(t.packRgba.data(),
-                                               std::make_pair(t.packRgba, omk::greyRgba(t.packRgba))).first;
-                    t.packRgba = gp->second.second;
-                }
+                remasterAliasGrey(colour, t);
             }
         else {
             greyPalettes.clear();
-            greyPacks.clear();
         }
         world.setTextures(pool);
         // The sprite section comes and goes with the effects, several

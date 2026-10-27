@@ -14,6 +14,18 @@ GroundVerify gVerify;
 inline bool sameAnswer(const std::optional<double>& a, const std::optional<double>& b) {
     return a.has_value() == b.has_value() && (!a || std::memcmp(&*a, &*b, sizeof(double)) == 0);
 }
+
+// A steep face steeper than this is a WALL, never ground to land or slide on:
+// 60 degrees. The port's own bound (the engine has none - its probe and its
+// sweep agree about walls; the split soups here do not).
+constexpr double kWallCos = 0.5;
+
+// Is the steep face `s` the GROUND under him, over the walkable `floor` (if
+// any)? Not a wall, and more than a step above that floor: within a step the
+// floor answers, which keeps a stair's slanted riser from standing him on it.
+inline bool steepOver(const GroundHit& s, const std::optional<double>& floor) {
+    return -s.n[1] >= kWallCos && (!floor || s.y < *floor - kStepUp);
+}
 }  // namespace
 
 void setGroundVerify(bool on) { gVerifyOn = on; }
@@ -140,6 +152,7 @@ void Walker::land(double y) {
     fall_ = 0.0;
     vy_ = vx_ = vz_ = 0.0;
     airborne_ = sliding_ = shortFall_ = false;
+    throughSteep_ = false;
     jumping_ = false;            // MDJUMP03: dword_6A52CC = 0
 }
 
@@ -155,11 +168,14 @@ StepResult Walker::step(double dx, double dz, double dt) {
         // safe stance is swept, airborne or not - and the probe then answers
         // from where the sweep left him. Only a BANDED fall (below) goes
         // straight down, because its clip (`H_FALL`) is a held pose.
+        // ...and the frame STARTS where he stood before the move, so a step
+        // that carries him off the set's edge is put back (`airFrame`).
+        const double fromX = pos_[0], fromZ = pos_[2];
         double push[2] = {0.0, 0.0};
         slide(dx, dz, push);
         pos_[0] += dx;
         pos_[2] += dz;
-        return tick(dt);
+        return airFrame(dt, fromX, fromZ);
     }
     if (airborne_ || sliding_) {
         if (tick(dt) != StepResult::Moved) {
@@ -443,8 +459,11 @@ StepResult Walker::settle(double dt) {
 }
 
 StepResult Walker::tick(double dt) {
-    if (!airborne_ && !sliding_) return settle();
+    if (!airborne_ && !sliding_) return settle(dt);
+    return airFrame(dt, pos_[0], pos_[2]);
+}
 
+StepResult Walker::airFrame(double dt, double fromX, double fromZ) {
     // Actor_ApplyMotion: the vertical speed accelerates and is clamped, and
     // the frame's descent is that speed over 30. A slide does not accelerate -
     // the ground response WRITES the speed every frame it is on a steep face -
@@ -479,60 +498,104 @@ StepResult Walker::tick(double dt) {
     }
 
     const double ny = pos_[1] + dy;              // Y grows downward
-    auto g = ground(pos_[0], pos_[1], pos_[2]);
-    // A FALLING BODY PASSES THROUGH A 0x20000000 MESH. `Walk_GroundResponse`'s
-    // descent lands him only `if (v68 <= 0.0 && (mesh & 0x20000000) == 0)`
-    // (`21_d3d.c` 2548), so a water SURFACE is not somewhere to land: he goes
-    // through it to what is under it - the canal's bed, whose 0x8000000 is what
-    // takes him into the water (`todo/swimming.md`). Without this a jump or a
-    // drop off a quay stood him on the water.
-    if (g && floorFlags_ && grid_ && floorFlags_->size() * 9 == soup_.size()) {
-        double from = pos_[1] - kStepUp - 1.0;
-        g.reset();
-        for (int guard = 0; guard < 8; ++guard) {
-            std::uint32_t tri = 0;
-            const auto h = floorUnder(soup_, *grid_, pos_[0], from, pos_[2], tri);
-            if (!h) break;
-            if (tri < floorFlags_->size() && ((*floorFlags_)[tri] & 0x20000000u)) {
-                from = *h + 0.01;                // under the surface, and again
-                continue;
+    std::optional<double> g;
+    std::optional<GroundHit> sf;
+    bool anything = false;                       // the engine's probe hit SOME face
+    const auto probe = [&] {
+        g = ground(pos_[0], pos_[1], pos_[2]);
+        // A FALLING BODY PASSES THROUGH A 0x20000000 MESH. `Walk_GroundResponse`'s
+        // descent lands him only `if (v68 <= 0.0 && (mesh & 0x20000000) == 0)`
+        // (`21_d3d.c` 2548), so a water SURFACE is not somewhere to land: he goes
+        // through it to what is under it - the canal's bed, whose 0x8000000 is what
+        // takes him into the water (`todo/swimming.md`). Without this a jump or a
+        // drop off a quay stood him on the water.
+        if (g && floorFlags_ && grid_ && floorFlags_->size() * 9 == soup_.size()) {
+            double from = pos_[1] - kStepUp - 1.0;
+            g.reset();
+            for (int guard = 0; guard < 8; ++guard) {
+                std::uint32_t tri = 0;
+                const auto h = floorUnder(soup_, *grid_, pos_[0], from, pos_[2], tri);
+                if (!h) break;
+                if (tri < floorFlags_->size() && ((*floorFlags_)[tri] & 0x20000000u)) {
+                    from = *h + 0.01;                // under the surface, and again
+                    continue;
+                }
+                g = h;
+                break;
             }
-            g = h;
-            break;
         }
+        // ...AND THE STEEP FACE HE IS ON, because `ground()` reads the WALKABLE
+        // soup ALONE. That split is this port's own: the engine casts ONE probe
+        // at the whole collision set and `Walk_GroundResponse` then asks
+        // `cos(30) > -normal.y` of whatever it hit, so a ramp past the limit is
+        // ground it stands the actor on and slides him down - never a hole.
+        //
+        // Splitting the soup in two and asking only the walkable half means every
+        // frame of a slide answers "nothing under him", and `fc34909` - which
+        // ends a slide when the ground runs out, and is right for its own case -
+        // then turns the slide into a free fall one frame in. Measured in the
+        // catacombs: HApyramb01's flank rises 157 units over 118 (53 degrees, in
+        // the steep soup), and the walker sinks THROUGH it - on the face at y 914
+        // at frame 80, 41 units under it by frame 90 and 3900 under it by 270:
+        // he goes through the ground.
+        //
+        // Probed from a step-height above the feet, exactly as `ground` and as
+        // `step`'s own steep arm are: `surfaceUnder` wants a surface strictly
+        // below its origin, so casting from the feet of an actor standing on the
+        // face finds the face he is standing on not at all.
+        //
+        // ...and ONLY WHILE HE IS ALREADY SLIDING. The steep soup is "every
+        // collision face past 30 degrees", which is the WALLS as well as the
+        // ramps, and a downward ray can rest on any wall that is not exactly
+        // vertical. The engine cannot: its ground probe is a swept SPHERE and
+        // `Actor_Move` has already stopped the body at the wall horizontally.
+        // Consulting it for a falling actor too costs 81 of Aapkayl's 663 ledge
+        // spots, which stop resolving inside ten seconds because they latch onto
+        // a wall and slide off the model; keeping a slide on its ramp needs none
+        // of that. LABELLED as the narrowing it is.
+        //
+        // ...NARROWED, NOT SHUT (2026-10-21): a body falling onto a RAMP went
+        // through it - to the floor under it, or with none, into the void. So a
+        // falling body meets a steep face too when `steepOver` says it is ground
+        // and not a wall: no steeper than 60 degrees, and more than a step above
+        // the walkable floor under it (or with none). Both bounds are this port's.
+        sf = steep_ ? surfaceUnder(*steep_, pos_[0], pos_[1] - kStepUp - 1.0, pos_[2])
+                    : std::optional<GroundHit>{};
+        anything = g.has_value() || sf.has_value();
+        if (sf && !sliding_ && (throughSteep_ || !steepOver(*sf, g))) sf.reset();
+    };
+    probe();
+    // NOTHING UNDER WHERE THE FRAME MOVED HIM, AND HE IS PUT BACK.
+    // `Actor_ApplyMotion` (0x004672D0) answers a probe that finds no floor at
+    // all by restoring the last safe position (+232..+240) - in the air as on
+    // the ground - so the engine's actor never moves over nothing. This let
+    // the frame's horizontal stand and fell for ever: a short fall's walk, a
+    // jump or a slide that carried him past the edge of the set dropped him
+    // into the void with the fall clip looping. The horizontal is put back
+    // and its velocity spent; the vertical is kept, which is this port's - the
+    // engine restores the height too, which holds a body pushing into the
+    // void IN THE AIR until the push stops. "Nothing" is the engine's: no face
+    // of either soup, a wall included - a steep face the landing below will
+    // not stand him on is still something under him, and the drift goes on.
+    if (!anything && (pos_[0] != fromX || pos_[2] != fromZ)) {
+        pos_[0] = fromX;
+        pos_[2] = fromZ;
+        vx_ = vz_ = 0.0;
+        // ...and a SLIDE whose face runs off into nothing ends there. The
+        // engine would hold him on the ramp's lip for as long as it pushes
+        // (both put back, every frame); this port's, LABELLED: he drops past
+        // the ramp to whatever is under it, as he did before ramps were
+        // ground. Only a ramp that ends over the void - the model's edge,
+        // where play's walls stand first - comes here.
+        if (sliding_) {
+            sliding_ = false;
+            airborne_ = true;
+            shortFall_ = true;
+            apex_ = pos_[1];
+            throughSteep_ = true;
+        }
+        probe();
     }
-    // ...AND THE STEEP FACE HE IS ON, because `ground()` reads the WALKABLE
-    // soup ALONE. That split is this port's own: the engine casts ONE probe
-    // at the whole collision set and `Walk_GroundResponse` then asks
-    // `cos(30) > -normal.y` of whatever it hit, so a ramp past the limit is
-    // ground it stands the actor on and slides him down - never a hole.
-    //
-    // Splitting the soup in two and asking only the walkable half means every
-    // frame of a slide answers "nothing under him", and `fc34909` - which
-    // ends a slide when the ground runs out, and is right for its own case -
-    // then turns the slide into a free fall one frame in. Measured in the
-    // catacombs: HApyramb01's flank rises 157 units over 118 (53 degrees, in
-    // the steep soup), and the walker sinks THROUGH it - on the face at y 914
-    // at frame 80, 41 units under it by frame 90 and 3900 under it by 270:
-    // he goes through the ground.
-    //
-    // Probed from a step-height above the feet, exactly as `ground` and as
-    // `step`'s own steep arm are: `surfaceUnder` wants a surface strictly
-    // below its origin, so casting from the feet of an actor standing on the
-    // face finds the face he is standing on not at all.
-    //
-    // ...and ONLY WHILE HE IS ALREADY SLIDING. The steep soup is "every
-    // collision face past 30 degrees", which is the WALLS as well as the
-    // ramps, and a downward ray can rest on any wall that is not exactly
-    // vertical. The engine cannot: its ground probe is a swept SPHERE and
-    // `Actor_Move` has already stopped the body at the wall horizontally.
-    // Consulting it for a falling actor too costs 81 of Aapkayl's 663 ledge
-    // spots, which stop resolving inside ten seconds because they latch onto
-    // a wall and slide off the model; keeping a slide on its ramp needs none
-    // of that. LABELLED as the narrowing it is.
-    const auto sf = (steep_ && sliding_)
-                        ? surfaceUnder(*steep_, pos_[0], pos_[1] - kStepUp - 1.0, pos_[2])
-                        : std::optional<GroundHit>{};
     // A SLIDE LASTS EXACTLY AS LONG AS THE FACE DOES, and that - not "the
     // ground ran out" - is the engine's rule. `Walk_GroundResponse`'s slide
     // arm (21_d3d.c 2587) writes `+220 = dword_910340` only on the frames its

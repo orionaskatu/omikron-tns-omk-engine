@@ -47,6 +47,20 @@ VR ?= 1
 ifeq ($(VR),1)
 override CXXFLAGS += -DOMK_VR=1
 endif
+# THE REMASTER (`todo/remaster.md`): `REMASTER=1` (the default here) defines
+# OMK_REMASTER - the texture, interface, font and film packs, the block
+# formats, the lighting, the upscale, the preload. Its code lives in its own
+# files: the modules (`src/o3de/texpack.*` and the rest, compiled EMPTY
+# without it), `backends/remaster/` (the frontend's half, this Makefile and
+# Android's only) and `backends/gles/glesrender_remaster.cpp`; the shared
+# files keep thin calls that `backends/sdl/playremaster_off.cpp` stubs. The
+# Vita, the classic Mac, the 3DS and the PowerPC builds never define it.
+# `make noremaster` builds the viewers without it (`verify.py: engine:
+# remaster switch`).
+REMASTER ?= 1
+ifeq ($(REMASTER),1)
+override CXXFLAGS += -DOMK_REMASTER=1
+endif
 
 SRC   := $(wildcard src/*/*.cpp)
 # `run_vulkan.cpp` is EXCLUDED from the default set on purpose: it links the
@@ -55,6 +69,12 @@ SRC   := $(wildcard src/*/*.cpp)
 # the `vulkan` target instead. Sweeping it in here broke exactly that property
 # the first time, with an undefined-symbol link error on a clean build.
 TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp,$(wildcard tools/*.cpp))
+# ...and without the remaster, its own tools: they ARE its modules' drivers
+REMASTER_TOOLS := tools/texpack_tool.cpp tools/tex_encode.cpp tools/font_hd.cpp tools/door_census.cpp \
+                  tools/smooth_probe.cpp
+ifneq ($(REMASTER),1)
+TOOLS := $(filter-out $(REMASTER_TOOLS),$(TOOLS))
+endif
 BINS  := $(patsubst tools/%.cpp,build/%,$(TOOLS))
 
 OBJDIR   ?= build/obj
@@ -62,8 +82,9 @@ OBJDIR   ?= build/obj
 # track flags: an object built with one value linked beside one built with the
 # other is memory corruption, not a stale feature. So the object tree records
 # the VR value it was built with, and a different one empties it first.
-ifneq ($(shell cat $(OBJDIR)/.vr 2>/dev/null),$(VR))
-$(shell rm -rf $(OBJDIR) && mkdir -p $(OBJDIR) && echo $(VR) > $(OBJDIR)/.vr)
+# (OMK_REMASTER too: it changes the same layouts' meaning - the stamp holds both)
+ifneq ($(shell cat $(OBJDIR)/.vr 2>/dev/null),$(VR)$(REMASTER))
+$(shell rm -rf $(OBJDIR) && mkdir -p $(OBJDIR) && echo $(VR)$(REMASTER) > $(OBJDIR)/.vr)
 endif
 # the viewer's binary - `make release` puts its own elsewhere
 PLAY_BIN ?= build/omk-play
@@ -117,10 +138,20 @@ SDL_DEFS   := $(if $(filter sdl3,$(SDL_PKG)),-DOMK_SDL3)
 # the binary carries them and there is no runtime path to get wrong. The GLSL
 # stays in the tree and readable; the .inc files are build output.
 VK_PKG    := $(shell pkg-config --exists vulkan && echo vulkan)
+# the Vulkan backend is desktop-only and carries the remaster through and
+# through (its post passes, its pack uploads): a build without it has none
 VK_CFLAGS := $(if $(VK_PKG),$(shell pkg-config --cflags vulkan))
 VK_LIBS   := $(if $(VK_PKG),$(shell pkg-config --libs vulkan))
 GLSLC     := $(shell command -v glslc 2>/dev/null)
-VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
+# (both: the viewer takes Vulkan when EITHER is there - `$(VK_PKG)$(GLSLC)`)
+ifneq ($(REMASTER),1)
+VK_PKG :=
+VK_CFLAGS :=
+VK_LIBS :=
+GLSLC :=
+endif
+VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/shaders/scene_tiled.frag.inc \
+              build/shaders/scene_cut.frag.inc build/shaders/scene_tiled_cut.frag.inc \
               build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
@@ -129,11 +160,36 @@ VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc \
               build/shaders/vol.frag.inc build/shaders/vol_ms.frag.inc \
               build/shaders/volmix.frag.inc build/shaders/volmix_ms.frag.inc \
               build/shaders/scene_mv.vert.inc build/shaders/scene_mv.frag.inc build/shaders/scene_soft_mv.frag.inc \
-              build/shaders/fg_cap.frag.inc build/shaders/fg_splat.frag.inc build/shaders/fg_resolve.frag.inc               build/shaders/scene_rt.frag.inc build/shaders/scene_rt_mv.frag.inc               build/shaders/scene_rtc.frag.inc build/shaders/scene_rtc_mv.frag.inc               build/shaders/ssao_rt.frag.inc build/shaders/ssao_rt_ms.frag.inc
+              build/shaders/fg_cap.frag.inc build/shaders/fg_splat.frag.inc build/shaders/fg_resolve.frag.inc               build/shaders/scene_rt.frag.inc build/shaders/scene_rt_mv.frag.inc               build/shaders/scene_rtc.frag.inc build/shaders/scene_rtc_mv.frag.inc               build/shaders/ssao_rt.frag.inc build/shaders/ssao_rt_ms.frag.inc \
+              build/shaders/easu.frag.inc build/shaders/rmpost.frag.inc \
+              build/shaders/ao.frag.inc build/shaders/ao_ms.frag.inc
 
 build/shaders/%.inc: backends/vulkan/shaders/%
 	@mkdir -p build/shaders
-	$(GLSLC) -mfmt=c -o $@ $<
+	$(GLSLC) -mfmt=c -Ithird_party -o $@ $<
+
+# the remaster's upscale (A6): AMD FSR 1, vendored, included by both
+build/shaders/present.frag.inc build/shaders/easu.frag.inc: third_party/ffx_a.h third_party/ffx_fsr1.h
+
+# the scene's fragment shader again, with the remaster's TILED point lights
+# (`o3de/lighttiles.h`) - its own module, bound only when the tiles are on
+build/shaders/scene_tiled.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_TILED -fshader-stage=frag -o $@ $<
+
+# ...and both again with the CUTOUT's late depth (`scene.frag` OMK_LATE_DEPTH):
+# the opaque cutout draws' pipelines alone
+build/shaders/scene_cut.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_LATE_DEPTH -fshader-stage=frag -o $@ $<
+build/shaders/scene_tiled_cut.frag.inc: backends/vulkan/shaders/scene.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_TILED -DOMK_LATE_DEPTH -fshader-stage=frag -o $@ $<
+
+# the ambient occlusion's again, for a MULTISAMPLED depth (`--aa`)
+build/shaders/ao_ms.frag.inc: backends/vulkan/shaders/ao.frag
+	@mkdir -p build/shaders
+	$(GLSLC) -mfmt=c -DOMK_MS -fshader-stage=frag -o $@ $<
 
 # HDR OUTPUT's blit into an scRGB swapchain (`blit.frag -DOMK_HDR`), the same GLSL
 # the Direct3D 12 backend cross-compiles
@@ -230,19 +286,23 @@ D3D_LIBS    := -ld3d12 -ldxgi -ldxguid
 
 build/shaders/dx/%.spv: backends/vulkan/shaders/%
 	@mkdir -p $(@D)
-	$(GLSLC) -o $@ $<
+	$(GLSLC) -DOMK_DX -o $@ $<
+# the present pass without the remaster's upscale sharpening (Vulkan's alone, `-Ithird_party`)
+build/shaders/dx/present.frag.spv: backends/vulkan/shaders/present.frag
+	@mkdir -p $(@D)
+	$(GLSLC) -DOMK_DX -DOMK_NO_RCAS -o $@ $<
 build/shaders/dx/%_ms.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_MS -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_MS -o $@ $<
 # THE UPSCALERS' scene pass (`todo/enhancements.md` 18): the same two files
 # with -DOMK_MOTION - a jitter, the previous view-projection and a second
 # target for the motion vectors. Vulkan never compiles this arm.
 build/shaders/dx/%_mv.vert.spv: backends/vulkan/shaders/%.vert
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_MOTION -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_MOTION -o $@ $<
 build/shaders/dx/%_mv.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_MOTION -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_MOTION -o $@ $<
 # HYBRID RAY TRACING (`todo/enhancements.md` 19): `scene.frag` and `ssao.frag`
 # with -DOMK_RT, which includes `backends/vulkan/shaders/rt.glsl` - DXR 1.1's
 # inline ray queries, so GLSL 460 and Vulkan 1.2 SPIR-V, shader model 6.5 below.
@@ -250,42 +310,42 @@ build/shaders/dx/%_mv.frag.spv: backends/vulkan/shaders/%.frag
 RT_GLSL := -std=460 --target-env=vulkan1.2 -DOMK_RT
 build/shaders/dx/%_rt.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
-	$(GLSLC) $(RT_GLSL) -o $@ $<
+	$(GLSLC) -DOMK_DX $(RT_GLSL) -o $@ $<
 build/shaders/dx/%_rt_mv.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
-	$(GLSLC) $(RT_GLSL) -DOMK_MOTION -o $@ $<
+	$(GLSLC) -DOMK_DX $(RT_GLSL) -DOMK_MOTION -o $@ $<
 build/shaders/dx/%_rt_ms.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
-	$(GLSLC) $(RT_GLSL) -DOMK_MS -o $@ $<
+	$(GLSLC) -DOMK_DX $(RT_GLSL) -DOMK_MS -o $@ $<
 # ...and the scene pass's COUNTING build (-DOMK_RT_COUNT: the rays' tally, a UAV)
 build/shaders/dx/%_rtc.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
-	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -o $@ $<
+	$(GLSLC) -DOMK_DX $(RT_GLSL) -DOMK_RT_COUNT -o $@ $<
 build/shaders/dx/%_rtc_mv.frag.spv: backends/vulkan/shaders/%.frag backends/vulkan/shaders/rt.glsl
 	@mkdir -p $(@D)
-	$(GLSLC) $(RT_GLSL) -DOMK_RT_COUNT -DOMK_MOTION -o $@ $<
+	$(GLSLC) -DOMK_DX $(RT_GLSL) -DOMK_RT_COUNT -DOMK_MOTION -o $@ $<
 # SOFT PARTICLES (`todo/enhancements.md` 23): `scene.frag` with -DOMK_SOFT - the
 # opaque depth read beside the depth test - for the effect sprites alone; plain
 # and with the upscaler's motion target. Vulkan never compiles this arm.
 build/shaders/dx/scene_soft.frag.spv: backends/vulkan/shaders/scene.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_SOFT -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_SOFT -o $@ $<
 build/shaders/dx/scene_soft_mv.frag.spv: backends/vulkan/shaders/scene.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_SOFT -DOMK_MOTION -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_SOFT -DOMK_MOTION -o $@ $<
 # the D3D12 backend's own (`blit.frag`, the swapchain's scaled copy)
 build/shaders/dx/%.spv: backends/d3d12/shaders/%
 	@mkdir -p $(@D)
-	$(GLSLC) -o $@ $<
+	$(GLSLC) -DOMK_DX -o $@ $<
 # ...and its own variants: THE POST CHAIN's final pass reading a multisampled
 # depth (-DOMK_MS), and the blit into an HDR (scRGB) swapchain (-DOMK_HDR),
 # `todo/enhancements.md` 22
 build/shaders/dx/%_ms.frag.spv: backends/d3d12/shaders/%.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_MS -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_MS -o $@ $<
 build/shaders/dx/%_hdr.frag.spv: backends/vulkan/shaders/%.frag
 	@mkdir -p $(@D)
-	$(GLSLC) -DOMK_HDR -o $@ $<
+	$(GLSLC) -DOMK_DX -DOMK_HDR -o $@ $<
 build/shaders/dx/%.hlsl: build/shaders/dx/%.spv
 	$(SPIRV_CROSS) $< --hlsl --shader-model $(if $(findstring _rt,$*),65,60) $(if $(filter %.vert,$*),--flip-vert-y) \
 	    | sed -e 's/^cbuffer \([A-Za-z_0-9]*\)\([^A-Za-z_0-9 :]*\)$$/cbuffer \1 : register(b0, space7)\2/' > $@
@@ -357,9 +417,13 @@ endif
 # different flags, so their objects must never mix), with `-MMD -MP` like the
 # engine objects, and `build/omk-play` / `build/omk-play-gles` are real file
 # targets. `play` and `play-gles` stay the entry points and print as before.
-PLAY_SW_DIR := $(OBJDIR)/play-sw
-PLAY_VK_DIR := $(OBJDIR)/play-vk
-PLAY_GL_DIR := $(OBJDIR)/play-gles
+# ...and per SDL: the frontend's objects carry `-DOMK_SDL3` or not, and an
+# SDL3 object linked into an SDL2 build imported calls that build never made
+# (the remaster audit's trap, 2026-10-24) - SDL3's in their own directories
+PLAY_SDL_SUFFIX := $(if $(filter sdl3,$(SDL_PKG)),-sdl3)
+PLAY_SW_DIR := $(OBJDIR)/play-sw$(PLAY_SDL_SUFFIX)
+PLAY_VK_DIR := $(OBJDIR)/play-vk$(PLAY_SDL_SUFFIX)
+PLAY_GL_DIR := $(OBJDIR)/play-gles$(PLAY_SDL_SUFFIX)
 PLAY_SW_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS)
 PLAY_VK_FLAGS := $(SDL_CFLAGS) $(SDL_DEFS) $(VK_CFLAGS) -DOMK_VULKAN -Ibuild/shaders \
                  $(if $(D3D_ON),-DOMK_D3D12)
@@ -375,8 +439,9 @@ INSTRUMENTS ?= 1
 PLAY_SDL_SRCS := $(filter-out backends/sdl/playharness$(if $(filter 0,$(INSTRUMENTS)),,_off).cpp \
                  backends/sdl/playgpu_%.cpp,$(wildcard backends/sdl/*.cpp))
 # A stamp per value, so switching INSTRUMENTS RELINKS: the swapped object is
-# older than the binary, and make compares nothing else.
-INSTR_STAMP := $(OBJDIR)/instruments-$(INSTRUMENTS).stamp
+# older than the binary, and make compares nothing else. The SDL package is
+# in it for the same reason.
+INSTR_STAMP := $(OBJDIR)/instruments-$(INSTRUMENTS)-$(SDL_PKG).stamp
 $(INSTR_STAMP):
 	@mkdir -p $(@D)
 	@rm -f $(OBJDIR)/instruments-*.stamp
@@ -385,12 +450,26 @@ $(INSTR_STAMP):
 # code that talks to a backend lives there, so the rest carries no #if for it
 # ...and the VR half (`backends/vr/`), whose files compile empty without OMK_VR
 PLAY_VR_SRCS := $(wildcard backends/vr/*.cpp)
+# ...and the REMASTER's (`backends/remaster/`), empty without OMK_REMASTER
+PLAY_RM_SRCS := $(wildcard backends/remaster/*.cpp)
 PLAY_SW_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_SW_DIR)/%.o) $(PLAY_SW_DIR)/playgpu_none.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_SW_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_SW_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_SW_DIR)/%.o)
 PLAY_VK_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_VK_DIR)/%.o) $(PLAY_VK_DIR)/playgpu_vulkan.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_VK_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_VK_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_VK_DIR)/%.o)
 PLAY_GL_OBJS := $(PLAY_SDL_SRCS:backends/sdl/%.cpp=$(PLAY_GL_DIR)/%.o) $(PLAY_GL_DIR)/playgpu_gles.o \
-                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_GL_DIR)/%.o)
+                $(PLAY_VR_SRCS:backends/vr/%.cpp=$(PLAY_GL_DIR)/%.o) \
+                $(PLAY_RM_SRCS:backends/remaster/%.cpp=$(PLAY_GL_DIR)/%.o)
+$(PLAY_SW_DIR)/%.o: backends/remaster/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_SW_FLAGS) -c -o $@ $<
+$(PLAY_VK_DIR)/%.o: backends/remaster/%.cpp | $(VK_SHADERS)
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) -c -o $@ $<
+$(PLAY_GL_DIR)/%.o: backends/remaster/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_GL_FLAGS) -c -o $@ $<
 $(PLAY_SW_DIR)/%.o: backends/vr/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_SW_FLAGS) -c -o $@ $<
@@ -457,6 +536,17 @@ release:
 	$(MAKE) play OBJDIR=build/obj-release PLAY_BIN=build/release/omk-play INSTRUMENTS=0 \
 	    CXXFLAGS="$(RELEASE_FLAGS)"
 
+# THE VIEWERS WITHOUT THE REMASTER (`REMASTER=0`): what the Vita, the 3DS and
+# the classic Mac build, on this machine - its own object tree and binaries
+# (build/obj-noremaster, build/noremaster/), so it never mixes with the
+# development build. `verify.py: engine: remaster switch`.
+.PHONY: noremaster
+# ...and without VR, as every port without the remaster builds (the Vita,
+# the 3DS, the classic Mac): what this build stands for is theirs
+noremaster:
+	$(MAKE) play play-gles REMASTER=0 VR=0 OBJDIR=build/obj-noremaster PLAY_BIN=build/noremaster/omk-play \
+	    PLAY_GL_BIN=build/noremaster/omk-play-gles
+
 # ---------------------------------------------------------------- HARDENED
 #
 # `make hardened`: every tool again, with the standard library's own bounds
@@ -492,6 +582,25 @@ ifeq ($(SDL_PKG),)
 	@echo "everything else builds and the suite passes without it (PORTING A8)."
 else
 	@echo "built $(PLAY_BIN) against $(PLAY_WITH)"
+endif
+
+# ------------------------------------------------------------ THE MACOS APP
+#
+# `make app`: `build/OMK.app`, the same `omk-play` inside a bundle whose
+# Info.plist (`backends/sdl/OMK-Info.plist`) says it is a GAME - which a bare
+# binary cannot, so macOS never offers it Game Mode (the highest CPU and GPU
+# priority when the app is frontmost and full screen, F11). Run it as
+# `build/OMK.app/Contents/MacOS/omk-play ARGS` or `open build/OMK.app --args`.
+# Optional, macOS only; the checks run the bare binary.
+.PHONY: app
+app: play
+ifeq ($(shell uname),Darwin)
+	@mkdir -p build/OMK.app/Contents/MacOS
+	@cp backends/sdl/OMK-Info.plist build/OMK.app/Contents/Info.plist
+	@cp $(PLAY_BIN) build/OMK.app/Contents/MacOS/omk-play
+	@echo "built build/OMK.app around $(PLAY_BIN) - Game Mode eligible full screen"
+else
+	@echo "make app: macOS only"
 endif
 
 # ------------------------------------------------------------ THE PS VITA
@@ -632,17 +741,18 @@ build/gles_probe: backends/gles/gles_probe.cpp backends/gles/glesrender.cpp $(SR
 # Optional like `play`, and needs SDL the same way. `build/omk-play-gles`.
 GL_LIBS := $(if $(filter Darwin,$(UNAME_S)),-framework OpenGL,-lGLESv2)
 ifneq ($(SDL_PKG),)
-build/omk-play-gles: $(PLAY_GL_OBJS) $(PLAY_GL_DIR)/glesrender.o $(SRCOBJS) $(INSTR_STAMP)
+PLAY_GL_BIN ?= build/omk-play-gles
+$(PLAY_GL_BIN): $(PLAY_GL_OBJS) $(PLAY_GL_DIR)/glesrender.o $(SRCOBJS) $(INSTR_STAMP)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(GL_LIBS)
 endif
 
 .PHONY: play-gles
-play-gles: $(if $(SDL_PKG),build/omk-play-gles)
+play-gles: $(if $(SDL_PKG),$(PLAY_GL_BIN))
 ifeq ($(SDL_PKG),)
 	@echo "no SDL found - the GLES frontend is optional (PORTING A8)."
 else
-	@echo "built build/omk-play-gles against $(SDL_PKG) + GL"
+	@echo "built $(PLAY_GL_BIN) against $(SDL_PKG) + GL"
 endif
 
 # One object per source. The mkdir is in the recipe rather than an order-only

@@ -10,6 +10,8 @@
 #include "../openxr/xrhost.h"
 #endif
 
+#include <algorithm>
+
 // The GLES window - this glue's, not the game's (the gateway: game code holds
 // no host handle). One viewer a process, so one window.
 static SDL_Window* glWin = nullptr;
@@ -62,7 +64,12 @@ void PlayState::gpuOpenWindow() {
     // readback is G6. The window is whatever size the host gives - 960x544 on
     // a Vita - and the frame is scaled into it at its own aspect.
     if (!vkRen && !forceSoftware) {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+#if defined(OMK_SDL3)
+        const bool videoUp = SDL_InitSubSystem(SDL_INIT_VIDEO);   // SDL3: true on success
+#else
+        const bool videoUp = SDL_InitSubSystem(SDL_INIT_VIDEO) == 0;
+#endif
+        if (videoUp) {
 #if !defined(__APPLE__)
             // GLES 2 where the platform has it (the Vita's vitaGL, Linux,
             // WebGL); macOS's legacy GL 2.1 profile takes no attributes
@@ -104,6 +111,7 @@ void PlayState::gpuOpenWindow() {
             if (texFilter > 0) gr->setTextureFilter(texFilter);
             if (texAniso > 1) gr->setAnisotropy(texAniso);
             if (ssaa > 1) gr->setSupersample(ssaa);
+            remasterConfigure(*gr);   // the remaster's (`backends/remaster/`)
             // per-pixel lighting and the mapped shadow: their programs are
             // linked at `init` only when asked, and what it could build is
             // what `drawsPixelLights` / `drawsShadowMap` answer later
@@ -290,6 +298,17 @@ void PlayState::gpuOverlayDecision(const char*& keep) {
 
 void PlayState::gpuResize(int, int, bool&) {}
 bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
+// OMK's options menu: GLES links per-pixel lighting and the mapped shadow into
+// its programs, so a change of either RELINKS them (`relinkLighting`)
+bool PlayState::gpuRelinkLighting(bool perPixel, bool shadowMap) {
+    return glRen && omk::glesRelinkLighting(glRen, perPixel, shadowMap);
+}
+
+// OMK's options menu: MSAA, the supersample and the upscale - the target remade
+// (`retarget`); GLES has no ambient occlusion
+bool PlayState::gpuRetarget(int samples, int ss, float up, float) {
+    return glRen && omk::glesRetarget(glRen, samples, ss, up);
+}
 
 void PlayState::gpuReportTimings() {
     if (glRen) {

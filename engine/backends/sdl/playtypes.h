@@ -33,6 +33,8 @@
 #include "actor/moves.h"
 #include "actor/walk.h"
 #include "o3de/collision.h"
+#include "o3de/floorreflect.h"
+#include "o3de/wetfloor.h"
 #include "o3de/geom3do.h"
 #include "o3de/particles.h"
 #include "o3de/pointplace.h"
@@ -57,6 +59,7 @@
 #include "script/props.h"
 #include "o3de/raster.h"
 #include "o3de/render.h"
+#include "o3de/lightprobe.h"
 #include "o3de/renderer.h"
 #include "platform/boot.h"
 #include "platform/movie.h"
@@ -81,6 +84,7 @@
 #include <fstream>
 #include <vector>
 #include <map>
+#include <functional>
 #include <memory>
 #include <thread>
 #include <mutex>
@@ -146,6 +150,10 @@ struct HoldRun { std::vector<int> keys; int frames = 0; };
 // on the name alone.
 struct CharModel {
     omk::Geometry rest;
+    // the rest BEFORE the rounding (`o3de/smoothbody.h`), kept for the crowd's
+    // copies (`lodRestFor`) - posed on the CPU every frame, too many to round;
+    // empty when the model was not rounded
+    omk::Geometry flat;
     std::vector<omk::Mesh> meshes;
     std::vector<omk::Texture> tex;
     omk::FaceMesh face;
@@ -252,6 +260,7 @@ struct Staged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
+    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     bool  litTold = false;       // the first lit frame said in the log
     float drawAt[3] = {0, 0, 0};   // where he was actually put, for a set piece
     bool  drawAtKnown = false;     // ...and whether a frame has put him yet
@@ -457,6 +466,7 @@ struct PedStaged {
     int   lightCount = 0;
     bool  lightsBlack = false;
     float lightBase = 0.0f;      // ...from this grey, the set's ambient (L1)
+    float lightTint[3] = {1.0f, 1.0f, 1.0f};   // ...times the body light's (`o3de/lightprobe.h`)
     // THE WALKER'S OWN POSE BUFFER, kept across frames: `composePose`
     // fills it in place (todo/optimization.md step 18's leftovers) where
     // it built a fresh vector for every body every frame.
@@ -696,6 +706,11 @@ struct WorldSlot {
     omk::Geometry geo;
     std::vector<omk::Texture> tex;
     omk::MirrorPlane mirror;
+    omk::WaterPlane water;   // the remaster's water reflection (`o3de/renderer.h`)
+    omk::FloorPlanes floors; // ...and its reflecting floors (`o3de/floorreflect.h`), when on
+    omk::WetFloors wet;      // ...and its floors under the open sky (`o3de/wetfloor.h`), when on
+    float ground = 0.0f;     // its dominant floor's height - the mist's (`omk::groundLevel`)
+    omk::LightProbes probes; // the remaster's body light (`o3de/lightprobe.h`), built when on
     omk::TriangleSoup soup;      // its WALKABLE soup: the feet's decor probe
     // and the faces PAST the slope limit: `Walk_GroundResponse` stands the
     // actor on a steep face and slides him off it, so dropping them made a
@@ -731,6 +746,9 @@ struct WorldSlot {
     // them and the street's moving population receives them - the static
     // set is shaded by a colour baked into every vertex and needs none.
     std::vector<omk::Light3do> lights;
+    std::size_t setLights = 0;   // ...the set's own, before the emitters' (`o3de/emitterlight.h`)
+    std::vector<omk::Light3do> fxSurface;   // ...its glowing SURFACES' (the pack's light maps), after them
+    bool fxIn = false;   // ...the emitters' and surfaces' in `lights` (the remaster's switch, part B)
     // ...and its AMBIENT grey, the byte `Read3DO_Init` writes into the
     // scene's `+416` (`(int64)(desc+184 * 255.0)`): what a lit vertex starts
     // from (todo/drift-audit.md L1)
@@ -822,6 +840,11 @@ struct WorldSlot {
     // moves is not followed, which is this port's and labelled.
     omk::TriangleSoup shotSoup;
     std::vector<std::uint8_t> shotCutout;
+    // ...and its meshes' boxes (`shotMeshRuns`), the original's broad phase
+    // (`o3de_ForEachMeshInBox`): the weather's roof ray every frame tried
+    // every face of the set without them - 9 ms a frame on the emulated
+    // Tiger's street (`todo/handoff-classic-mac.md` 3g)
+    omk::SoupRunBoxes shotRunBoxes;
 };
 
 // ------------------------------------------------------------- THE SKY
@@ -889,6 +912,11 @@ struct SetLoad {
     long askedFrame = 0;
     int delayMs = 0;                 // `OMK_LOAD_DELAY_MS`
     int heldFrames = 0;              // frames the Session's load waited on the job
+    // asked between the job's stages: true stops it there, `found` false - a
+    // preloaded set released while it prepares (`playpreload.cpp`); unset, it
+    // runs to its end
+    std::function<bool()> cancelled;
+    int stoppedAt = -1;              // the stage (as `ms`) a cancel stopped it before; -1 none
     std::unique_ptr<omk::BackgroundJob> job;
 };
 

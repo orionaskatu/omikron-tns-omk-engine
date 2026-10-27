@@ -62,6 +62,11 @@ public:
     // reversed. Nearest-neighbour, because a filter is a resampler nobody here
     // can check.
     bool nextFrame(Surface& dst);
+    // ...or BILINEAR, for a film the remaster's pack replaced (`platform/
+    // filmpack.h`): already 4x the original's size, brought to the display by
+    // a non-integer factor, where repeated texels show as uneven steps. The
+    // shipped films stay nearest.
+    void setSmooth(bool on) { smooth_ = on; }
     // Decode the next frame and DISCARD it - no conversion, no scaling. An
     // MPEG frame cannot be skipped undecoded (the next ones predict from it),
     // but everything after the decode can: this is how a player that has
@@ -86,6 +91,7 @@ private:
     std::unique_ptr<Impl> p_;
     MovieInfo info_;
     long frames_ = 0, blocks_ = 0;
+    bool smooth_ = false;
     double audioAt_ = 0.0;
 };
 

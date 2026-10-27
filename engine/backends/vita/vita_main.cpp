@@ -14,7 +14,7 @@
 //   ux0:data/omk/saves/GAMES    where saves go (the port never writes into
 //                               the data tree - CLAUDE.md §1)
 //   ux0:data/omk/omk-play-YYYYMMDD-HHMMSS.log / .err   each run's log, dated
-//   ux0:data/omk/omk.ini        the game's own config file, when present
+//   ux0:data/omk/omk.ini        the config, read when present; OMK's menu writes it
 //   ux0:data/omk/args.txt       EXTRA arguments, one per line, when present -
 //                               how a device run is given `--area`, `--save`,
 //                               `--fps` or `--nofmv` without a rebuild
@@ -125,7 +125,9 @@ int main(int, char**) {
 
     std::vector<std::string> args = {"omk-play", kRoot, kTables,
                                      "--saves", kSaves, "--res", "960x544"};
-    if (exists(kIni)) { args.push_back("--config"); args.push_back(kIni); }
+    // always named: read when it is there, and where OMK's options menu writes
+    args.push_back("--config");
+    args.push_back(kIni);
     if (std::ifstream extra{kExtra}) {
         std::string line;
         while (std::getline(extra, line)) {

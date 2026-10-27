@@ -55,6 +55,8 @@
 #include "o3de/render.h"
 #include "ui/surface.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -147,6 +149,24 @@ struct View {
     // or the clock's in a day/night area - which is what the engine's own lit
     // path starts every vertex from (`sub_494E80`). It was black.
     float litBase = 0.0f;
+    // THE NIGHT (`CityGrades::nightOf`, the remaster's): under per-pixel
+    // lighting with the emitters' lights, the share of the SET's painted
+    // light (mode 3) and of a lit body's start that stays - the point lights
+    // add on top whole. 1 unless the remaster says otherwise.
+    float setDim = 1.0f;
+    // THE RELIEF (the remaster's B3, `[Remaster] relief = S`): the texture's
+    // brightness read as height, tilting the normal the POINT lights see -
+    // Vulkan's tiled module (`scene.frag`); 0 nothing.
+    float relief = 0.0f;
+    // THE MIST (the remaster's A4, `[Remaster] mist = S`): a height fog in the
+    // set's fog colour, thickest at `mistGround` (the set's dominant floor -
+    // the game's Y points DOWN) and thinning over `mistHeight` above it,
+    // integrated along each ray - on what the game fogs; 0 nothing. Vulkan.
+    float mist = 0.0f, mistGround = 0.0f, mistHeight = 400.0f;
+    // THE RAIN on the WET FLOORS (`o3de/wetfloor.h`, the remaster's): the
+    // game's shower now, 0..1 - its RIPPLES on a draw with `Draw::wet`, rings
+    // timed by `shimmerClock`. 0 none. Vulkan and GLES.
+    float rain = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed
@@ -215,7 +235,12 @@ struct View {
     // Up to this many, nearest first. Anekbah has 155 and a body is reached by
     // a handful; the cap is the uniform block's, and it is stated rather than
     // silently truncating in the middle of a street.
-    static constexpr int kMaxGpuLights = 8;
+    static constexpr int kMaxGpuLights = 64;
+    // ...of which the SET's own lights are at most this many - the eight the
+    // per-pixel enhancement always took; the rest are the remaster's point
+    // lights (`o3de/emitterlight.h`), on a renderer whose `maxPixelLights`
+    // says it has the room
+    static constexpr int kOwnGpuLights = 8;
     std::vector<GpuLight> lights;   // empty = light per vertex, as before
     // ...and THE LAMPS IN THE AIR (`volumetrics`, `todo/enhancements.md` 24),
     // an ENHANCEMENT: the same `.3DO` records, chosen for the CAMERA rather
@@ -225,6 +250,11 @@ struct View {
     // (`volumetricsLive`); nothing else reads it.
     static constexpr int kMaxAirLights = 16;
     std::vector<GpuLight> airLights;
+    // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): on a
+    // renderer that says `tilesLights`, EVERY emitters' point light the frame
+    // keeps, binned to screen tiles there - `lights` then holds the set's own
+    // alone. Empty unless the remaster's emitters' light is on.
+    std::vector<GpuLight> points;
 
     // ---------------------------------------------- THE SHIMMER's clock
     //
@@ -252,6 +282,13 @@ struct View {
     // neither quantised nor dithered (`colordepth = 32`, `todo/enhancements.md`
     // 21). The CPU readback (`readback()`) is 565 either way.
     int colourDepth = 16;
+
+    // THE ORIGINAL/REMASTER SWITCH over OMK's ENHANCEMENTS (`backends/remaster/playremaster_mode.cpp`, F10,
+    // `[Remaster] mode = original`): true while the original's look shows - the GPU backends then leave
+    // out what they ADD to the frame (the post chain's bloom, depth of field, grade and HDR, SSAO, soft
+    // particles, volumetric lamp light, ray-traced light and reflections, the in-between frames). The
+    // frame's own picture is the original's, as drawn with every enhancement unasked.
+    bool enhOff = false;
 };
 
 // One submission. This is the whole vocabulary a backend gets, and every field
@@ -335,6 +372,24 @@ struct Draw {
     // `lightsFromBlack` stays for the flag; this is its value
     // (todo/drift-audit.md L1).
     float           lightBase        = 0.0f;
+    // THE BODY LIGHT (`o3de/lightprobe.h`, the remaster's A5): the start
+    // colour - the grey above, or the baked colour - multiplied by this,
+    // the painted light around the body. 1, 1, 1 on every draw unless the
+    // option is on AND the renderer says it draws it (`drawsBodyTint`).
+    float           lightTint[3]     = {1.0f, 1.0f, 1.0f};
+    // A REFLECTING FLOOR's draw (`o3de/floorreflect.h`, the remaster's): its
+    // triangles on the frame's reflection plane, adding the reflection as the
+    // water does, at this times the pass's strength. 0 on every other draw;
+    // set only by `drawWithWater`, for its own frame.
+    float           reflect          = 0.0f;
+    // A WET FLOOR's draw (`o3de/wetfloor.h`, the remaster's): its colour
+    // darkened by this fraction, the rain's film - with or without `reflect`
+    // (a wet floor off the frame's plane darkens only). Set only by
+    // `drawWithWater`, for its own frame.
+    float           wet              = 0.0f;
+    // ...and SNOW lying on it instead (`o3de/wetfloor.h` coverRuns): `wet` is
+    // then how white it turns, not how dark
+    bool            snow             = false;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and
@@ -370,6 +425,26 @@ public:
     // The resident texture pool, indexed the way the shipped data indexes it -
     // by the batch's material. Called when a set is loaded, not per frame.
     virtual void setTextures(std::span<const Texture> t) = 0;
+    // THE PRELOAD RADIUS (`todo/remaster.md`): the textures of the sets
+    // prepared ahead, near doors - uploaded a few at a time by `preloadStep`
+    // and KEPT (pinned) while they are listed, so a set arriving finds them
+    // on the device. A new list replaces the old; what drops off it is
+    // evicted by the next `setTextures` as usual. No-ops by default: a
+    // backend that keeps no uploads (the software reference) has nothing to
+    // hold.
+    virtual void setPreloadTextures(std::span<const Texture> /*t*/) {}
+    // whether it keeps them (Vulkan, GLES): without, a set prepared ahead
+    // saves only its read and build, and fewer are held
+    virtual bool keepsPreload() const { return false; }
+    // whether this backend draws the TEXTURE PACK's replacements (Vulkan,
+    // GLES): a set's load then decodes them ahead (`TexturePack::prepare`);
+    // for one that never asks (the software reference) they would only wait
+    virtual bool takesPack() const { return false; }
+    // whether it draws the RELIEF (`View::relief`, Vulkan): the pack's normal
+    // maps are decoded only for one that does (GLES never read them)
+    virtual bool drawsRelief() const { return false; }
+    // up to `budget` of the listed textures uploaded; -> how many still wait
+    virtual int preloadStep(int /*budget*/) { return 0; }
 
     virtual void begin(const View& v) = 0;
     virtual void submit(const Draw& d) = 0;
@@ -437,6 +512,46 @@ public:
     // answers and what the software reference answers on purpose.
     virtual void shadowPass(const View& /*v*/, std::span<const Draw> /*casters*/) {}
 
+    // THE WATER REFLECTION (`todo/remaster.md` A3) - a REMASTER feature, not
+    // the original's: the scene through `reflected` (the camera mirrored in
+    // the water plane), `above` (the draws above it, the sky included) into a
+    // target of the backend's own, then `scene` as usual and `water` - the
+    // water's own draws - adding that reflection at their screen position
+    // times `strength`. The boundary decides all of it (`drawWithWater`);
+    // false where the backend has no such pass, and the caller draws as usual.
+    // ...asked for when the renderer is MADE (before `init`): a backend may
+    // have to build its programs for it (GLES). False where there is none.
+    virtual bool setWater(float /*strength*/) { return false; }
+    // THE BODY LIGHT (`o3de/lightprobe.h`): `Draw::lightTint` honoured on a
+    // posed body. Asked before `init` (GLES builds a variant of its posing
+    // programs); `drawsBodyTint` says afterwards whether it is drawn - the
+    // frontend hands a tint only then, so a backend without it draws exactly
+    // what it drew.
+    virtual bool setBodyTint(bool /*on*/) { return false; }
+    virtual bool drawsBodyTint() const { return false; }
+    // THE EMITTERS' LIGHT (`o3de/emitterlight.h`): point lights - a negative
+    // inner radius - honoured by the per-pixel lighting. Asked before `init`;
+    // the frontend adds the emitters' lights to a set's table only when
+    // `drawsEmitterLights`, so a backend without them lights what it lit.
+    virtual bool setEmitterLights(bool /*on*/) { return false; }
+    virtual bool drawsEmitterLights() const { return false; }
+    // how many of `View::lights` the per-pixel lighting reads
+    virtual int maxPixelLights() const { return View::kOwnGpuLights; }
+    // whether it bins `View::points` to tiles itself (`o3de/lighttiles.h`)
+    virtual bool tilesLights() const { return false; }
+    // `planeY`: the water's height. The reflection pass DISCARDS what lies
+    // below it per fragment - the CPU clip cannot see a posed body's place,
+    // and a swimmer's legs were reflected above the water (a reader's play
+    // test, 2026-10-20).
+    // whether `drawWaterScene` can be drawn at all - asked BEFORE the frame's
+    // shadow pass, which a refusal would otherwise have the mirror path run
+    // again
+    virtual bool drawsWater() const { return false; }
+    virtual bool drawWaterScene(const View& /*v*/, const View& /*reflected*/,
+                                std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
+                                std::span<const Draw> /*water*/, float /*strength*/, float /*planeY*/) {
+        return false;
+    }
     virtual bool drawMirrorScene(const View& /*v*/, const View& /*reflected*/,
                                  std::span<const Draw> /*scene*/,
                                  std::span<const Draw> /*sceneClipped*/,
@@ -457,7 +572,7 @@ public:
     // SSAO (`todo/enhancements.md` 15): screen-space ambient occlusion from
     // the depth buffer, multiplied over the frame. Same contract - a request
     // before `init()`; only the Vulkan backend does it.
-    virtual bool setAmbientOcclusion(bool /*on*/) { return false; }
+    virtual bool setSsao(bool /*on*/) { return false; }
 
     // HYBRID RAY TRACING (`todo/enhancements.md` 19): characters lit by the
     // set around them (they receive no ray-traced shadow), ray-traced AO in SSAO's
@@ -491,6 +606,12 @@ public:
     // Same contract as the other two: a request, before `init()`, that the
     // software reference declines.
     virtual bool setSupersample(int /*n*/) { return false; }
+    // ...and its opposite, THE UPSCALE (`todo/remaster.md` A6): render the
+    // frame `factor` times SMALLER each way and bring it up to the output with
+    // AMD's FSR 1 (EASU, then RCAS's sharpening) before the present's dither.
+    // 1 is off; it takes the place of the supersample. A REMASTER feature, for
+    // the 4K frame rate - before `init()`, Vulkan only.
+    virtual bool setUpscale(float /*factor*/) { return false; }
     // And anisotropic filtering, `n` samples along the footprint's long axis
     // (1 off, up to 16). Only meaningful with mode 2.
     virtual bool setAnisotropy(int /*n*/) { return false; }
@@ -537,6 +658,59 @@ public:
     // their WINDOW (it is a way of presenting); the others answer false. It never
     // changes a rendered frame, `readback()` or the simulation.
     virtual bool setFrameGeneration(bool /*on*/) { return false; }
+    // THE REMASTER'S POST-PASS (`todo/remaster.md` step 2), both off unless
+    // asked, both refused (false) where the backend has none - the software
+    // reference draws what the original drew, GL1 and the 3DS have no pass.
+    // The BLOOM: a glow from the texture pack's light maps, `strength` 0 off.
+    virtual bool setBloom(float /*strength*/) { return false; }
+    // The AMBIENT OCCLUSION (`todo/remaster.md` A4): contact shade from the
+    // frame's depth, `strength` 0 off - before `init`, as it keeps the depth.
+    virtual bool setAmbientOcclusion(float /*strength*/) { return false; }
+    // The GRADE: a 3D colour LUT of n^3 RGB entries 0..1, red fastest (a
+    // .cube file's order); null or n < 2 off. The viewer picks it per city.
+    virtual bool setGrade(const float* /*rgb*/, int /*n*/) { return false; }
+
+    // WHAT THIS BACKEND CAN DRAW AT ALL, of the requests above - a mask of the
+    // `kTakes*` bits, asked by OMK's options menu (`ui/omkoptions.h`) so it
+    // offers only rows the running renderer can honour. Static: "has the
+    // pass", not "is it on" (that is `drawsWater` and the rest), and a device
+    // may still reduce a value it cannot meet. The software reference takes
+    // none of them: it draws what D3D was told to draw.
+    virtual unsigned takes() const { return 0; }
+
+    // THE TEXTURE FILTER and the ANISOTROPY asked AGAIN on a running renderer
+    // (OMK's options menu, `todo/graphics-menu.md` 3d) - what `setTextureFilter`
+    // / `setAnisotropy` ask before `init`. A backend that bakes them into its
+    // uploads (a mip chain, a sampler in each texture's set) drops what it
+    // uploaded, and the caller hands the pool over again. -> false where it
+    // cannot. The default is the two setters, for a backend that re-filters
+    // its textures in place (GL1, the 3DS).
+    virtual bool retexture(int filter, int aniso) {
+        const bool f = setTextureFilter(filter);
+        setAnisotropy(aniso);
+        return f;
+    }
+};
+
+// `Renderer::takes()`'s bits, one per request of the boundary.
+enum RendererTakes : unsigned {
+    kTakesMultisample    = 1u << 0,    // setMultisample
+    kTakesTextureFilter  = 1u << 1,    // setTextureFilter
+    kTakesSupersample    = 1u << 2,    // setSupersample
+    kTakesAnisotropy     = 1u << 3,    // setAnisotropy
+    kTakesShadowMap      = 1u << 4,    // drawsShadowMap's pass (`shadowquality = mapped`)
+    kTakesPixelLights    = 1u << 5,    // drawsPixelLights's (`lighting = perpixel`)
+    kTakesUpscale        = 1u << 6,    // setUpscale
+    kTakesBloom          = 1u << 7,    // setBloom
+    kTakesGrade          = 1u << 8,    // setGrade
+    kTakesWater          = 1u << 9,    // setWater, and the floors on its pass
+    kTakesBodyTint       = 1u << 10,   // setBodyTint
+    kTakesEmitterLights  = 1u << 11,   // setEmitterLights
+    kTakesAmbientOcclusion = 1u << 12, // setAmbientOcclusion
+    kTakesRelief         = 1u << 13,   // drawsRelief
+    kTakesMist           = 1u << 14,   // View::mist
+    kTakesTrilinear      = 1u << 15,   // setTextureFilter(2): a mip chain at upload
+    kTakesRain3d         = 1u << 16,   // the weather's drops drawn as strips in the scene (plain Draws; no water pass needed)
 };
 
 // The REFERENCE implementation: `drawGeometry` behind the boundary, with no
@@ -632,5 +806,73 @@ MirrorStats drawWithMirror(Renderer& r, const Geometry& g,
 // transparency instead of reflecting).
 MirrorStats drawWithMirror(Renderer& r, std::span<const Draw> draws,
                            const View& v, const MirrorPlane& mp);
+
+// THE WATER (`todo/remaster.md` A3) - a REMASTER feature, not the original's.
+// A set's water plane, found from its own geometry: the height carrying the
+// most area of HORIZONTAL faces drawn ADDITIVELY (the game's water is additive;
+// so are glass and mirrors, which stand upright). `found` only when that area
+// is a surface rather than a trim (at least 1e6 square units).
+struct WaterPlane {
+    bool   found = false;
+    float  y = 0.0f;         // the plane's height (the game's Y points DOWN)
+    double area = 0.0;       // the horizontal additive area at that height
+    long   triangles = 0;
+    // EVERY level past the floor, by height (the largest is `y`): a set may
+    // hold its water at more than one (Jaunpur's canals)
+    struct Level { float y; double area; long triangles; };
+    std::vector<Level> levels;
+};
+// ...the functions are the remaster's, compiled with it alone (a shared
+// caller would fail only at a `noremaster` link - the audit's cleanliness)
+#if OMK_REMASTER
+WaterPlane waterPlane(const Geometry& g);
+
+// Every LEVEL triangle (its three corners within 2 units of one height) of the
+// batches `want(batch)` takes: `f(a, c1, c2)`, in order. Bounded by the
+// corners as well as the batch. The water's plane, the ground and the
+// reflecting floors walk a set this way (one copy, where there were three).
+template <class Want, class F>
+void forLevelTriangles(const Geometry& g, Want&& want, F&& f) {
+    for (const auto& b : g.batches) {
+        if (!want(b)) continue;
+        const std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(b.start) + b.count, g.corners.size());
+        for (std::size_t t = b.start; t + 2 < end; t += 3) {
+            const Corner& a = g.corners[t];
+            const Corner& c1 = g.corners[t + 1];
+            const Corner& c2 = g.corners[t + 2];
+            if (std::fabs(a.y - c1.y) > 2.0f || std::fabs(a.y - c2.y) > 2.0f) continue;   // not level
+            f(a, c1, c2);
+        }
+    }
+}
+
+// A set's GROUND: the height carrying the most LEVEL opaque area (`texpack_tool
+// floors` lists them) - Qalisar's, Anekbah's and Lahoreh's street at 0,
+// Jaunpur's quay at -120. The mist's floor. 0 for a geometry with none.
+float groundLevel(const Geometry& g);
+
+// The frame with the water REFLECTING, when the backend has the pass
+// (`Renderer::drawWaterScene`) and the camera is above the plane: the draws
+// split into the water's own triangles (additive, on the plane, of `setGeo`)
+// and the rest; the reflected view (the eye and target mirrored in the plane,
+// the image flipped vertically - a 180-degree roll and a screen-X flip); the
+// draws above the plane for the reflection. False - and nothing drawn - when
+// any of that does not hold, and the caller draws as it would have.
+//
+// ...or the REFLECTING FLOORS (`o3de/floorreflect.h`): `floorStrength` per
+// material of `setGeo` (null for the water), and `wp` the floor's plane. The
+// listed floors' triangles on it stay in the scene, IN ORDER (a decal and a
+// depth tie ride on it), each run carrying its `Draw::reflect`.
+// ...and the WET FLOORS (`o3de/wetfloor.h`): `wetTris` one byte per triangle
+// of `setGeo`, 1 under the open sky, whose triangles on the plane reflect at
+// `wetReflect` too (the larger of it and their material's), and every one of
+// them, on the plane or not, darkened by `wetDarken` (`Draw::wet`). Either
+// list may be null; both null is the water.
+bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
+                   const Geometry* setGeo, const WaterPlane& wp, float strength,
+                   const std::vector<float>* floorStrength = nullptr,
+                   const std::vector<std::uint8_t>* wetTris = nullptr, float wetReflect = 0.0f,
+                   float wetDarken = 0.0f);
+#endif  // OMK_REMASTER
 
 }  // namespace omk

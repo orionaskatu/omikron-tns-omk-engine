@@ -13,14 +13,31 @@ layout(push_constant) uniform Push {
     int   lit;         // 92, and it must come AFTER the vec3
     int   cull;        // 96, the back-face cull - see scene.frag
     int   posed;       // 100, a body POSED here from set 2
+#ifndef OMK_DX
+    int   texScaled;   // 104, a TEXTURE PACK replacement - see scene.frag
+    float texScaleU;   // 108
+    float texScaleV;   // 112
+    int   bloomMode;   // 116, the BLOOM's light map - see scene.frag
+    int   water;       // 120, the WATER reflection - see scene.frag
+    float waterStrength; // 124
+#endif
 #ifdef OMK_MOTION
-    // THE UPSCALER's two (`d3d12render.cpp`, built with -DOMK_MOTION for the
-    // Direct3D 12 backend only - Vulkan compiles this block without them, so
-    // its push block stays 104 bytes): the sub-pixel JITTER in clip units,
-    // added after the transform, and the PREVIOUS frame's view-projection,
-    // for the motion vectors. After `posed`, so nothing above moves.
+    // THE UPSCALER's two (`d3d12render.cpp`, built with -DOMK_MOTION - the Direct3D 12 backend, and
+    // Vulkan's frame generation): the sub-pixel JITTER in clip units, added after the transform, and
+    // the PREVIOUS frame's view-projection, for the motion vectors. After everything else, so
+    // nothing above moves.
+#ifdef OMK_DX
     vec2  jitter;      // 104
     mat4  prevMvp;     // 112
+#else
+    vec2  jitter;      // 128
+    mat4  prevMvp;     // 144
+#endif
+#endif
+#ifdef OMK_DX
+    // THE DIRECT3D 12 BUILD (-DOMK_DX) has no bloom and no water pass, and a root signature of 64
+    // dwords: it carries the texture pack's scale alone, after the motion block (104, or 176 with it)
+    uint  texScale;    // the pack's scale per axis, minus 1: u in bits 0..3, v in 4..7 (0: none)
 #endif
 } pc;
 
@@ -28,7 +45,8 @@ layout(push_constant) uniform Push {
 // the 3DS pose): a posed draw's corners are its REST corners and this block,
 // at the body's offset - d[0] (lights, from black, base grey, affines), then
 // kLights lights of two vec4 (direction x strength, colour bytes), then three
-// vec4 an affine: world = R rest + t, the rows of a 3x4 (`renderer.h`).
+// vec4 an affine: world = R rest + t, the rows of a 3x4 (`renderer.h`), then
+// one vec4 the body light's tint (rgb).
 const int kLights = 16;
 layout(std430, set = 2, binding = 0) readonly buffer Pose { vec4 d[]; } pose;
 
@@ -78,10 +96,10 @@ void main() {
             pos = vec3(dot(r0.xyz, inPos) + r0.w, dot(r1.xyz, inPos) + r1.w, dot(r2.xyz, inPos) + r2.w);
             nrm = vec3(dot(r0.xyz, inNrm), dot(r1.xyz, inNrm), dot(r2.xyz, inNrm));
 #ifdef OMK_MOTION
-            // ...and its PREVIOUS affines, which the D3D12 backend writes right
-            // after the current ones (the current again for a body it has not
-            // seen before: no object motion rather than a wrong one)
-            int pb = 1 + 2 * kLights + 3 * int(h.w) + 3 * m;
+            // ...and its PREVIOUS affines, which the D3D12 and Vulkan backends write
+            // after the current ones AND the body light's tint vec4 (the current
+            // again for a body not seen before: no object motion rather than a wrong one)
+            int pb = 1 + 2 * kLights + 3 * int(h.w) + 1 + 3 * m;
             vec4 p0 = pose.d[pb], p1 = pose.d[pb + 1], p2 = pose.d[pb + 2];
             prevPos = vec3(dot(p0.xyz, inPos) + p0.w, dot(p1.xyz, inPos) + p1.w, dot(p2.xyz, inPos) + p2.w);
 #endif
@@ -90,9 +108,14 @@ void main() {
         // scene's grey where the body starts black, else from its colour; t =
         // -(N.L) truncated toward zero and clamped to 0..255, the ramp
         // `(t * c) >> 8` (exact in float), each light added and clamped
+        // ...from a start colour times THE BODY LIGHT's tint (the remaster's
+        // A5, `o3de/lightprobe.h`), the vec4 after the affines - 1, 1, 1
+        // unless it is on, which multiplies nothing
+        vec3 tint = pose.d[1 + 2 * kLights + 3 * int(h.w + 0.5)].rgb;
+        col = inCol * tint;
         int n = int(h.x);
         if (n > 0 || h.y > 0.5) {
-            vec3 lit = h.y > 0.5 ? vec3(h.z) : inCol;
+            vec3 lit = (h.y > 0.5 ? vec3(h.z) : inCol) * tint;
             for (int i = 0; i < kLights; ++i) {
                 if (i >= n) break;
                 vec4 L = pose.d[1 + 2 * i], C = pose.d[2 + 2 * i];

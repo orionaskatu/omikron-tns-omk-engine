@@ -83,26 +83,6 @@ inline PixelBuffer greyPalette(const PixelBuffer& pal) {
     return out;
 }
 
-// A TEXTURE PACK's replacement (`o3de/texpack.h`) under the bank: it has no
-// palette to grey, so each RGBA texel goes to the same luma in all three
-// bytes - `greyPalette`'s rule applied per texel, which is what the palette
-// arm computes for every texel of the original - and a texel whose luma is 0
-// becomes the KEY (alpha 0), as a palette entry greyed to black is keyed by
-// `toRgbaKeyed` after the greying. So a 1x pack of the originals greys to
-// exactly the palette arm's upload.
-inline PixelBuffer greyRgba(const PixelBuffer& rgba) {
-    PixelBuffer out;
-    if (rgba.size() % 4 != 0) return rgba;
-    out.assign(rgba.size(), 0);
-    std::uint8_t* o = out.mutableData();
-    for (std::size_t i = 0; i < rgba.size(); i += 4) {
-        const int y = lumaGrey(rgba[i], rgba[i + 1], rgba[i + 2]);
-        o[i] = o[i + 1] = o[i + 2] = static_cast<std::uint8_t>(y);
-        o[i + 3] = y == 0 ? 0 : rgba[i + 3];
-    }
-    return out;
-}
-
 // `word_4EB8D8`, built by `sub_431010` (0x00431010) for an RGB565 screen, and
 // the clear colour taken through it. The builder walks 64 x 64 x 64 levels -
 // R outermost, B innermost - with the accumulator `3000 + 1196 i + 2348 j +

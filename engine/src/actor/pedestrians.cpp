@@ -793,7 +793,15 @@ void Sliders::bodyStep(int wi, float dt) {
         setHeading(m, m.side[0], 0.0f, m.side[1]);
         wanted = oldFlags & ~0x100u;
     } else {
-        wanted = gait(m, to, dist, kGaitNear, kGaitFar) == 0 ? (oldFlags | 0x100u) : (oldFlags & ~0x100u);
+        // ...aimed FLAT: `sub_455830` hands `sub_455D10` the vector {dx, 0,
+        // dz} (`v58 = 0`) with the 3D distance. Passing the vertical too
+        // pitched the heading on a slope, `pedRootDelta` turned the stride's
+        // forward travel into a climb of its own on top of the lane's - 25
+        // units a stride in Qalisar - and `footY` snapped back at every loop
+        // of the clip: the crowd flickered up and down every slope. The
+        // vehicles' `sub_456C70` does pass the vertical (19_dsound.c 143).
+        const float flat[3] = {to[0], 0.0f, to[2]};
+        wanted = gait(m, flat, dist, kGaitNear, kGaitFar) == 0 ? (oldFlags | 0x100u) : (oldFlags & ~0x100u);
     }
     if ((m.flags ^ wanted) & 0x100u) {
         if (wanted & 0x100u) { setClip(m, clips_.randomOfType(m.sex, 11, rng_)); m.flags |= mover_flag::Idling; }

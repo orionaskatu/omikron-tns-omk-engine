@@ -35,6 +35,14 @@
 
 namespace omk {
 
+class OmkOptions;
+
+// UTF-8 (`ui.json`'s captions, `engine/lang/omk-menu.ini`) to the 8-bit codes
+// the interface's fonts are indexed by - the cp1252 byte the shipped
+// `IAM\Options` holds. Latin-1 maps one to one; anything past it is kept as
+// its bytes, so a text must stay inside Latin-1.
+std::string utf8ToLatin1(const std::string& u);
+
 // One row of the 74-row option table, out of tables/ui.json.
 struct OptionRow {
     int         index = 0;
@@ -121,6 +129,13 @@ private:
 class OptionsMenu {
 public:
     explicit OptionsMenu(const OptionTree& t);
+
+    // OMK'S OWN PAGES (`ui/omkoptions.h`): with them attached, the root gains a
+    // "Graphismes (OMK)" header above Retour - row widget 4, Retour moving to
+    // 5 under the start menu - and pages 100.. are theirs. Without, the screen
+    // is the exe's exactly.
+    void attachOmk(OmkOptions* o) { omk_ = o; }
+    static constexpr int kOmkRootItem = 1000;   // the root header's item, past the 74
 
     // `IAM\Options`, the screen's own strings: the row labels by `+24`, and
     // the prompt's 71 / 61 / 60 and Accel 3D's 68.
@@ -209,6 +224,7 @@ private:
     bool moveVertical(int step);
 
     const OptionTree* t_;
+    OmkOptions* omk_ = nullptr;
     std::vector<std::string> text_;
     std::vector<RowState> rows_;               // 74
     std::map<int, std::vector<std::string>> devices_;

@@ -149,16 +149,10 @@ int sceneViewer(const std::string& fr, const std::string& setName,
     // device's queue choice needs the surface.
 #if defined(OMK_VULKAN)
     if (startVulkan) {
-        if (SDL_Init(SDL_INIT_VIDEO) == 0) {
-            vkWin = SDL_CreateWindow("OMK Engine - scene viewer (vulkan)",
-                                     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                     640, 480, SDL_WINDOW_VULKAN);
-        }
+        vkWin = vkSdlWindow("OMK Engine - scene viewer (vulkan)", 640, 480, 0);
         if (vkWin) {
-            unsigned n = 0;
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &n, nullptr);
-            std::vector<const char*> ext(n);
-            SDL_Vulkan_GetInstanceExtensions(vkWin, &n, ext.data());
+            const std::vector<const char*> ext = vkSdlExtensions(vkWin);
+            const auto n = static_cast<unsigned>(ext.size());
             omk::Renderer* vr = omk::makeVulkanRenderer();
             if (aaSamples > 1) vr->setMultisample(aaSamples);
             if (texFilter > 0) vr->setTextureFilter(texFilter);
@@ -170,7 +164,7 @@ int sceneViewer(const std::string& fr, const std::string& setName,
             // includes SDL_vulkan.h, which declares the handle types but not
             // Vulkan's constants - and A8 rule 2 keeps vulkan.h out of here.
             VkSurfaceKHR surf{};
-            if (inst && SDL_Vulkan_CreateSurface(vkWin, static_cast<VkInstance>(inst), &surf)
+            if (inst && vkSdlSurface(vkWin, static_cast<VkInstance>(inst), &surf)
                 && omk::vulkanAttachSurface(vr, reinterpret_cast<unsigned long long>(surf))
                 && vr->init(PW, PH)) {
                 delete live;

@@ -41,6 +41,10 @@ set(SDL_TEST OFF CACHE BOOL "" FORCE)
 add_subdirectory(${OMK_SDL2_SRC} ${CMAKE_BINARY_DIR}/sdl2)
 
 add_compile_definitions(OMK_VR=1)
+# ...and THE REMASTER (`engine/Makefile`'s REMASTER): the Quest and Android
+# phones run it - the packs read as ASTC (`o3de/texpack.h`); its frontend
+# half is `backends/remaster/`, its GLES half included by `glesrender.cpp`
+add_compile_definitions(OMK_REMASTER=1)
 
 # ---- the engine: every ported source, exactly the Makefile's glob
 file(GLOB OMK_SRC ${ENGINE}/src/*/*.cpp)
@@ -62,6 +66,7 @@ else()
   list(FILTER OMK_PLAY_SRC EXCLUDE REGEX "/playharness\\.cpp$")
 endif()
 file(GLOB OMK_VR_SRC ${ENGINE}/backends/vr/*.cpp)
+file(GLOB OMK_REMASTER_SRC ${ENGINE}/backends/remaster/*.cpp)
 
 # ---- OpenXR (step 5): the Khronos loader, from its Android AAR
 # (`android-build.sh` fetches and unpacks it into OMK_OPENXR_DIR)
@@ -79,6 +84,7 @@ add_library(main SHARED
   ${OMK_PLAY_SRC}
   ${ENGINE}/backends/sdl/playgpu_gles.cpp
   ${OMK_VR_SRC}
+  ${OMK_REMASTER_SRC}
   ${ENGINE}/backends/gles/glesrender.cpp)
 # `play.cpp`'s `main` becomes `omk_play_main`, which `android_main.cpp` calls
 # (the Vita's arrangement); SDL_MAIN_HANDLED keeps SDL_main.h's own

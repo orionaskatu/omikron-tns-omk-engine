@@ -4,6 +4,7 @@
 // `PlayState::run` calls the sections in
 // order. Returns -1 to go on, or the exit code `main` returns.
 #include "playstate.h"
+#include "platform/events.h"
 
 int PlayState::setupSession() {
     const auto& fs = *fs_;
@@ -71,9 +72,22 @@ int PlayState::setupSession() {
         const auto head = omk::readSaveFile(savesPath, dataRoot + "/IAM/GAMES");
         if (!head.empty()) saveSettings = omk::readSettingsBlock(head);
     }
-    ini = configFile.empty() ? omk::OptionsFile{} : omk::loadOptionsFile(configFile);
-    if (!configFile.empty() && !ini.loaded)
-        std::fprintf(stderr, "%s: no such config file - using defaults\n", configFile.c_str());
+    // THE CONFIG FILE: `--config`, else `omk.ini` BESIDE THE SAVES - the
+    // port's writable place, so a run with a private `--saves` (every check's)
+    // reads a private config too. Read when it is there; OMK's own options
+    // menu writes it (`platform/options.h` `writeOptionsFile`,
+    // `todo/graphics-menu.md` A1), so `configFile` is where that goes. The
+    // ports' mains name theirs (`ux0:data/omk/omk.ini`, `sdmc:/omk/omk.ini`).
+    const bool configNamed = !configFile.empty();
+    if (!configNamed) {
+        const auto cut = savesPath.find_last_of("/\\");
+        configFile = (cut == std::string::npos ? std::string() : savesPath.substr(0, cut + 1)) + "omk.ini";
+    }
+    ini = omk::loadOptionsFile(configFile);
+    if (ini.loaded)
+        std::printf("config: %s\n", configFile.c_str());
+    else if (configNamed)
+        std::printf("config: %s is not there (yet) - the defaults\n", configFile.c_str());
     // not const: the options menu writes `settings.v` as the game's apply
     // hooks write `byte_90E180`, and what reads it later reads the new value
     settings = omk::resolveSettings(ini, saveSettings);
@@ -174,6 +188,9 @@ int PlayState::setupSession() {
     smoothAnim = enh(smoothAnimFlag, settings.smoothAnimation ? 1 : 0,
                                 omk::kMaxAnimation) > 0;
     omk::setPoseSmoothing(smoothAnim);
+    // THE REMASTER (`backends/remaster/playremaster_setup.cpp`): its packs,
+    // its strengths and its preset - nothing here without OMK_REMASTER
+    remasterSetup();
     if (smoothAnim)
         std::printf("animation: smooth - an ENHANCEMENT: bodies are slerped between "
                     "two keys; the original truncates to one (`Anim_ApplyNodeFrame`'s _ftol)\n");
@@ -220,20 +237,12 @@ int PlayState::setupSession() {
     if (vehicleShine)
         std::printf("vehicle shine: on - an ENHANCEMENT: sliders and motos get lamp highlights "
                     "and a sky reflection; the original paints their shine into the texture\n");
-    // THE TEXTURE PACK (settings.h `texturePack`): `--texturepack` over the
-    // ini's key; indexed here, applied to the pool where it is handed over
-    // (playframe_world_scene.cpp). Named only - `--enhance-all` cannot name a
-    // directory.
-    {
-        const std::string pack = !texturePackArg.empty() ? texturePackArg : settings.texturePack;
-        if (!pack.empty()) texPack.open(pack, dataRoot);
-    }
     // COLOUR DEPTH (settings.h `colourDepth`), carried on the View to the present pass
     colourDepth = enh(colourDepthFlag, settings.colourDepth, omk::kMaxColourDepth) >= 32 ? 32 : 16;
     // THE POST CHAIN (settings.h `bloom`, `dof`, `colorGrade`, `hdr`), handed
     // to the GPU renderer (D3D12 or Vulkan) before its init (playgpu_vulkan.cpp). The grade
     // and HDR are asked for by name only - `--enhance-all` leaves them off.
-    postFx.bloom = enh(bloomFlag, settings.bloom ? 1 : 0, omk::kMaxBloom) > 0;
+    postFx.bloom = enh(postBloomFlag, settings.postBloom ? 1 : 0, omk::kMaxBloom) > 0;
     postFx.dof = enh(dofFlag, settings.dof ? 1 : 0, omk::kMaxDof) > 0;
     postFx.grade = colorGradeFlag >= 0 ? colorGradeFlag : settings.colorGrade;
     postFx.hdr = hdrFlag >= 0 ? hdrFlag > 0 : settings.hdr;

@@ -53,3 +53,9 @@
 # the classic Mac OS build (`make classic`, `verify.py: engine: classic build`).
 # Optional: without it that check reports skipped.
 #retro68 = /path/to/retro68
+
+# The remaster's texture pack - the folder `omk-play --remaster DIR` takes
+# (tools/omktexpack.py builds it; the game's pixels, never committed).
+# Optional: without it the remaster checks report skipped.
+# Environment: OMK_PACK
+#pack = /path/to/omk-pack

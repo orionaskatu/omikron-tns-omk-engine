@@ -15,6 +15,8 @@ bool PlayState::gpuWorldOnWindow() { return false; }
 void PlayState::gpuOverlayDecision(const char*&) {}
 void PlayState::gpuResize(int, int, bool&) {}
 bool PlayState::gpuDriverRow(std::vector<std::string>&) { return false; }
+bool PlayState::gpuRelinkLighting(bool, bool) { return false; }   // nothing to relink
+bool PlayState::gpuRetarget(int, int, float, float) { return false; }   // no target to remake
 void PlayState::gpuReportTimings() {}
 void PlayState::gpuSlowFrameReport() {}
 void PlayState::gpuFinishReport() {}

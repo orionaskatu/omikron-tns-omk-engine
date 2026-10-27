@@ -884,6 +884,55 @@ std::optional<SweepHit> sweepSphere(const TriangleSoup& tris,
     return best;
 }
 
+SoupRunBoxes soupRunBoxes(const TriangleSoup& tris, std::span<const std::uint32_t> runFirst) {
+    OMK_MEM_TAG("collision");
+    SoupRunBoxes r;
+    r.tris = tris.size() / 9;
+    r.first.assign(runFirst.begin(), runFirst.end());
+    r.box.assign(r.first.size() * 6, 0.0f);
+    for (std::size_t k = 0; k < r.first.size(); ++k) {
+        const std::size_t t0 = r.first[k];
+        const std::size_t t1 = k + 1 < r.first.size() ? r.first[k + 1] : r.tris;
+        float* b = &r.box[6 * k];
+        for (int a = 0; a < 3; ++a) { b[a] = HUGE_VALF; b[3 + a] = -HUGE_VALF; }   // empty: meets nothing
+        for (std::size_t t = t0; t < t1 && t < r.tris; ++t)
+            for (int v = 0; v < 3; ++v)
+                for (int a = 0; a < 3; ++a) {
+                    const float x = tris[9 * t + 3 * v + a];
+                    b[a] = std::min(b[a], x);
+                    b[3 + a] = std::max(b[3 + a], x);
+                }
+    }
+    return r;
+}
+
+std::optional<SweepHit> sweepSphere(const TriangleSoup& tris, const SoupRunBoxes& runs,
+                                    const double p0[3], const double d[3], double radius) {
+    if (runs.tris != tris.size() / 9 || runs.first.empty() || runs.first[0] != 0 ||
+        runs.box.size() != 6 * runs.first.size())
+        return sweepSphere(tris, p0, d, radius);
+    ensurePlaced(tris);
+    std::optional<SweepHit> best;
+    double lo[3], hi[3];
+    sweptBox(p0, d, radius, lo, hi);
+    for (std::size_t k = 0; k < runs.first.size(); ++k) {
+        const float* b = &runs.box[6 * k];
+        // `sweepOne`'s own test on the run's box: a face's min is >= b[a] and
+        // its max <= b[3 + a], so a run this rejects holds no face it keeps
+        // (a NaN bound fails both comparisons, and the faces are tried)
+        if (b[3] < lo[0] || b[0] > hi[0] || b[4] < lo[1] || b[1] > hi[1] ||
+            b[5] < lo[2] || b[2] > hi[2])
+            continue;
+        const std::size_t t1 = k + 1 < runs.first.size() ? runs.first[k + 1] : runs.tris;
+        for (std::size_t t = runs.first[k]; t < t1; ++t) {
+            const std::size_t i = 9 * t;
+            sweepOne(&tris[i], &tris[i + 3], &tris[i + 6], p0, d, radius, lo, hi, best,
+                     static_cast<std::int64_t>(t));
+        }
+    }
+    return best;
+}
+
 std::vector<std::uint8_t> cutoutMask(std::span<const std::byte> d, const std::vector<int>& meshOf) {
     OMK_MEM_TAG("collision");
     std::vector<std::uint8_t> out(meshOf.size(), 0);

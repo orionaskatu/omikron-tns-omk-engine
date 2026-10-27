@@ -214,11 +214,17 @@ backends/gl1/gl1render.cpp   the FIXED-FUNCTION OpenGL 1.x renderer, for the
                          `key & 0x3F`, 16-bit textures, the colour key as an
                          alpha test - and with the original's CPU side:
                          vertices transformed, clipped (near plane and screen
-                         edges) and culled on the CPU, fog per vertex. An
-                         offscreen CGL context; its frame comes back through
-                         `readback()`. Built only by `ppc-darwin.mk`'s `play`
-                         (for Tiger, or for the host with the host compiler,
-                         which is what `engine: gl1 backend` runs).
+                         edges) and culled on the CPU, fog per vertex. On the
+                         WINDOW's own context - AGL's in the classic build,
+                         the SDL window's (`gl1sdlhost.cpp`) in
+                         `ppc-darwin.mk`'s - the world is drawn into the back
+                         buffer and swapped, the interface blended over it;
+                         without a GL window (`SDL_VIDEODRIVER=dummy`) an
+                         offscreen CGL context whose frame comes back through
+                         `readback()` (todo/handoff-classic-mac.md 3g). Built
+                         only by `ppc-darwin.mk`'s `play` (for Tiger, or for
+                         the host with the host compiler, which is what
+                         `engine: gl1 backend` runs) and `make classic`.
 backends/classic/        the CLASSIC MAC OS build - Carbon, one PEF binary for
                          Mac OS 9 and Mac OS X, with Retro68 (`make classic
                          RETRO68=...`): `OMKBoot`, `tools/omk.cpp` as an

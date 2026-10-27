@@ -784,14 +784,14 @@ void PlayState::worldCameraTake() {
     // original's lens inside is not established - only that a canal
     // three metres wide cannot hold a camera three metres behind him.
     if (swimCam) {
-        const omk::TriangleSoup* shot = nullptr;
+        const WorldSlot* shot = nullptr;
         for (const auto& ws : worldSlots)
-            if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws.shotSoup;
-        if (shot && !shot->empty()) {
+            if (!ws.stem.empty() && ws.stem == worldSet) shot = &ws;
+        if (shot && !shot->shotSoup.empty()) {
             const double p0[3] = {tc.at[0], tc.at[1], tc.at[2]};
             const double d[3] = {double(tc.eye[0]) - tc.at[0], double(tc.eye[1]) - tc.at[1],
                                  double(tc.eye[2]) - tc.at[2]};
-            const auto h = omk::sweepSphere(*shot, p0, d, 0.0);
+            const auto h = omk::sweepSphere(shot->shotSoup, shot->shotRunBoxes, p0, d, 0.0);
             if (h && h->t < 1.0) {
                 const double t = h->t * 0.9;
                 for (int k = 0; k < 3; ++k)

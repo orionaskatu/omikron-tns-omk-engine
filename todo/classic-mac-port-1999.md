@@ -503,7 +503,10 @@ world-harness slot (`backends/sdl/playgpu_gl1.cpp`, the `--world-vulkan`
 slot): it draws the world offscreen and its `readback()` frame is composited
 and presented on the CPU like the software reference's. `ppc-darwin.mk`'s
 `play` builds it by default (`PLAY_GPU=gl1`; `none` for software alone,
-`OMK_GL1=0` at run time to compare).
+`OMK_GL1=0` at run time to compare). (Since 2026-10-27 it draws on the SDL
+window's own context and presents straight where it has one - the offscreen
+readback was 135 of 183 ms a frame on an iBook G4; `todo/handoff-classic-mac.md`
+3g.)
 
 Modelled on the ORIGINAL's Direct3D path (the reader's direction), which an
 agent read out of `Render_FlushBuckets`, `Raster_DrawTriangles` and

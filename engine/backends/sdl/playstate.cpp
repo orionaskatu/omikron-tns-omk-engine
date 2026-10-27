@@ -2146,6 +2146,10 @@ void PlayState::prepareSet(SetLoad& L) {
             if (w.shotMeshRuns.empty() || w.shotMeshRuns.back().second != shotMesh[tri])
                 w.shotMeshRuns.push_back({static_cast<std::uint32_t>(tri), shotMesh[tri]});
         w.shotMeshRuns.shrink_to_fit();
+        std::vector<std::uint32_t> runFirst;
+        runFirst.reserve(w.shotMeshRuns.size());
+        for (const auto& run : w.shotMeshRuns) runFirst.push_back(run.first);
+        w.shotRunBoxes = omk::soupRunBoxes(w.shotSoup, runFirst);
     }
     w.restXyzOfMesh.clear(); w.restSoupOfMesh.clear(); w.restSteepOfMesh.clear();
     L.ms[3] = since(t);

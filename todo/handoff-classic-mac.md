@@ -1093,6 +1093,82 @@ straight YCbCr to the upload format; the boot's loads after the window is
 up (step 2d above, all but the first area); the voice lines decoded in pieces across frames (the `audio` stalls) - DONE,
 step 2c above.
 
+## 3g. THE SDL BUILD ON ITS WINDOW - the reader's iBook G4 (2026-10-27)
+
+**The report.** The reader ran the SDL `omk-play` (`ppc-darwin.mk`) on an
+**iBook G4 1.42 GHz, 512 MB, Mobility Radeon 9550**: 6-8 fps, on a machine
+that runs heavier games than the original. Its `--profile` capture (954
+frames, the street at 640x480): median **182.6 ms** a frame, of which
+`world: mirror`'s OWN time 135.4 ms - and the section after `world end,
+submit` 136 ms: the GL1 backend's `readback()`. The SDL build drew the world
+offscreen (an FBO on a context of its own, a 16x16 pbuffer as its drawable)
+and every frame read it back with `glReadPixels(GL_RGBA, GL_UNSIGNED_BYTE)` -
+the CPU waiting there for the card to finish, then the bytes through the
+driver - dithered it on the CPU and presented it through an `SDL_Renderer`.
+The simulation and the submit were ~25 ms; the mirror is not involved
+(`gl1: begin` 0.9 a frame - one pass, no CPU-mirror fallback). Only the AGL
+build had the straight present (3d).
+
+**The fix, two steps**, both measured on the emulated Tiger (ppcosxkvm,
+Radeon 9700, the street start at 640x480 with the 30 fps cap on, `--profile`,
+100 s each; `OMK_GL1_OFFSCREEN=1` on the same binary for the old path):
+
+1. **The world on the SDL window** (`OMK_GL1_SDL_WINDOW`, set by
+   `ppc-darwin.mk`'s `play`): the window carries an OpenGL context
+   (`backends/gl1/gl1sdlhost.cpp`) instead of an `SDL_Renderer`, the GL1
+   backend takes that context and every AGL path is its path - the world
+   drawn into the back buffer at its letterbox place and swapped, the
+   interface blended over it (the overlay), a read through a texture where a
+   frame must be composed. A frame composed on the CPU (a menu, a film, a
+   screen that reads the picture) goes up as one ARGB8888 texture, only the
+   band of changed rows, and is fitted at its aspect. Decided at RUN TIME
+   (`Gl1Renderer::onWindow_`): no GL window (`SDL_VIDEODRIVER=dummy`, which is
+   how `engine: gl1 backend` runs) keeps the offscreen target. The straight
+   present needs the window 1:1 with the frame (`gpuWorldOnWindow`); a
+   scaled window - the SDL build's fullscreen - is composed on the CPU and
+   fitted, i.e. still pays the readback. Median **76.0 -> 46.1 ms**; the
+   readback 42 ms -> 0, the present 5 -> ~1 ms.
+2. **The roof ray through the meshes' boxes.** Step 1 made the build a
+   GPU-window build, which runs the CITY WEATHER (`weatherFrame` is called
+   only inside `if (gpuWindowBuild())`, see the bug below): its roof ray
+   (`sub_481200` -> `sub_444810`) cast `sweepSphere` over EVERY face of the
+   shot soup each frame - `world: weather` 8.9 ms with no rain falling. The
+   original walks only the meshes whose box meets the ray
+   (`o3de_ForEachMeshInBox`); `omk::soupRunBoxes` gives each mesh's run of
+   the shot soup a box (`WorldSlot::shotRunBoxes`), and the bolts, the fight
+   and swim cameras and the slider ride take it too. The same faces through
+   the same test in the same order: `engine: shot run boxes`, 88000 rays over
+   the 220 sets, 0 differing, 15% of the faces tried. `world: weather` **8.9
+   -> 0.05 ms**; the frame median **46.1 -> 32.2 ms - the 30 fps cap** (5.2 ms
+   a frame now waits in `frame: pace`).
+
+**Looked at in Tiger**: the street, the start menu (composed) and a fight's
+subtitles over the world (the overlay), colours right. NOT yet run on the
+iBook G4: emulated timings are indicative only (the emulated readback was 42
+ms, the G4's 135).
+
+**The emulator's byte order again (5, ppcosxkvm).** The composed frame first
+went up with a plain `glTexSubImage2D` of BGRA 8-8-8-8-REV words and drew
+black as BLUE on the emulated Radeon, though `OMK_R300_TEXLOG=1` shows the
+texture bound with TXO_ENDIAN 0, which the local patch reverses - so the
+emulator gets the plain copy's bytes wrong some other way. Through Apple's
+CLIENT STORAGE (the card reads our memory, as SDL 2.0.3's own renderer sends
+its window texture, which drew right in Tiger and on the reader's G4) the
+same words draw right, and the menu's present fell 6.5 -> 3.9 ms. The SDL
+host's overlay takes client storage for the same reason
+(`gl1OverlayPath`). `OMK_GL1_NO_CLIENT=1` sends both by copy again.
+
+**A BUG FOUND, NOT FIXED**: `weatherFrame` runs only in GPU-window builds
+(`playframe_world_draw.cpp`, inside the `gpuWindowBuild()` gate block since
+`36b0d00`), so the software reference and the offscreen GL1 build never had
+the city's rain or snow. Moving the call out of the gate is one line, but it
+changes the software reference's frames (`engine: weather` runs the Vulkan
+build) - the reader's call.
+
+**Next**: the reader's G4 run (`--profile` again, windowed 640x480); then a
+scaled straight present for fullscreen (the world copied on the card into a
+texture and drawn fitted - no CPU read), if the G4 is played fullscreen.
+
 ## 4. What is next, in the order proposed
 
 1. ~~**The filtering DEFAULT**~~ - **DONE 2026-10-03**, the reader's
@@ -1214,7 +1290,10 @@ step 2c above.
   32-bit textures with TXO_ENDIAN 2 drew byte-reversed (black as BLUE) -
   SDL 2.0.3's window texture is the only one. `ppcosx update` discards it;
   re-apply, `ninja qemu-system-ppc`, then `scripts/bundle-dylibs.py` on it.
-  `OMK_R300_TEXLOG=1` logs each distinct texture setup.
+  `OMK_R300_TEXLOG=1` logs each distinct texture setup (set it on the HOST,
+  for `ppcosx`, and restart Tiger). A plain `glTexSubImage2D` of 32-bit
+  words still drew black as blue with TXO_ENDIAN 0 (3g): send 32-bit frames
+  through client storage.
 * **Still open, suspected emulation**: a wall grazed by the camera flashes
   FLAT for a frame in Tiger; the M3 never shows it (60-position sweep, worst
   169 px). Not cured by the screen-edge clip.

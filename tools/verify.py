@@ -30538,6 +30538,45 @@ def c_engine_sight_mask():
         "order, and face-to-face segments hit the same face either way (most of them hitting)"
 
 
+def c_engine_shot_run_boxes():
+    r"""THE WORLD RAY THROUGH THE MESHES' BOXES (2026-10-27,
+    `todo/handoff-classic-mac.md` 3g). The original's world ray `sub_444810`
+    walks the set with `o3de_ForEachMeshInBox`, visiting only the meshes whose
+    box meets the ray's; the port's `sweepSphere` tried every face of the shot
+    soup - and the weather's ROOF RAY casts it every frame of a city with
+    weather, 8.9 ms a frame on the emulated Tiger's street. Now each mesh's run
+    of faces carries a box (`omk::soupRunBoxes`, made with the shot soup) and
+    the ray skips a run whose box misses its own; the faces kept go through the
+    SAME per-face test in ascending order, so the answer cannot change.
+
+    `engine/tools/shot_ray --runs` over all 220 decor sets: 400 rays a set -
+    the roof ray, face to face, horizontal, through a face - cast both ways:
+    the same hit or miss, the same t, normal and triangle. 560504 triangles in
+    11735 runs, 88000 rays, 51094 hits, 0 differing; 15.4% of the faces tried.
+
+    Shown to fail (2026-10-27): the run test comparing the box's max Y with
+    the ray's min Z (`b[4] < lo[2]`) - 496 of 1200 rays differ over Anekbah,
+    AImpasse and Sprison.
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "build/shot_ray"], cwd=eng, capture_output=True, text=True)
+    if b.returncode != 0:
+        return ("build failed",), ("built",), "engine/tools/shot_ray must build"
+    sets = sorted(glob.glob(os.path.join(omkpaths.data_root(), "MESHES", "DECORS", "*.[3][dD][oO]")))
+    r = subprocess.run([os.path.join(eng, "build", "shot_ray"), "--runs"] + sets,
+                       capture_output=True, text=True)
+    print("        " + r.stdout.strip())
+    m = re.search(r"runs: (\d+) sets, (\d+) shot triangles in (\d+) mesh runs; (\d+) rays, (\d+) hit, "
+                  r"(\d+) differ; faces tried (\d+) of the linear scan's (\d+)", r.stdout)
+    if not m:
+        return ("no row",), ("row",), "the probe's line must parse"
+    g = tuple(int(x) for x in m.groups())
+    return (g[0], g[5], g[4] > g[3] // 2, g[6] * 4 < g[7]), (220, 0, True, True), \
+        "all 220 sets: the world ray through the meshes' boxes answers as the linear scan - " \
+        "the same hit, t, normal and triangle (most rays hitting) - trying under a quarter of the faces"
+
+
 def c_engine_indexed_textures():
     r"""TEXTURES KEPT AS THE FILE HOLDS THEM (2026-10-05,
     `todo/ram-vs-original.md` tier C). `SetMaterialsMemory` (0x004406B0) keeps
@@ -49448,8 +49487,10 @@ def c_licence_headers():
     # `engine/tools/omkmenu_probe.cpp` and `tools/omklang.py`
     # 688: + `engine/backends/remaster/playremaster_mode.cpp` (the original/remaster switch, B)
     # 689: + `engine/tools/pad_layout.cpp` (the pad's layout per group, `engine: pad layout`)
+    # 691: + `engine/backends/gl1/gl1sdlhost.{h,cpp}` (the SDL build's GL window on
+    # Mac OS X, `todo/handoff-classic-mac.md` 3g)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (689, [], 10, []), \
+           (691, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -52131,6 +52172,7 @@ SLOW = [
     ("engine: 3ds build", c_engine_3ds_build, "todo/3ds-port.md step 0; backends/n3ds/Makefile"),
     ("engine: vita printf", c_engine_vita_printf, "todo/vita-port.md; backends/vita/c99format.h"),
     ("engine: sweep grid", c_engine_sweep_grid, "todo/optimization.md 11; o3de/collision.h"),
+    ("engine: shot run boxes", c_engine_shot_run_boxes, "todo/handoff-classic-mac.md 3g; o3de/collision.h"),
     ("engine: props", c_engine_props, "todo/omk-play"),
     ("sprite ids scene-local", c_sprite_ids_are_scene_local, "docs/ASSETS"),
     ("engine: scene sounds", c_engine_scene_sounds, "engine/README"),

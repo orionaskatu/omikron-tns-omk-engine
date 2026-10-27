@@ -120,7 +120,7 @@ pascal void soundPlayed(SndChannelPtr chan, SndCommand* cmd) {
 }  // namespace
 
 namespace {
-CarbonFrontend* g_carbon = nullptr;     // the one frontend, for gl1AglContext
+CarbonFrontend* g_carbon = nullptr;     // the one frontend, for gl1WindowContext
 
 #if defined(OMK_GL1_AGL)
 // THE UPLOAD FORMATS a composed frame can go to the card in. Which one a
@@ -1283,14 +1283,14 @@ void CarbonFrontend::filmShow() {
 #endif
 }
 
-void* gl1AglContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
+void* gl1WindowContext() { return g_carbon ? g_carbon->glContext() : nullptr; }
 #if defined(OMK_GL1_AGL)
 bool gl1OverlayArgb() { return g_overlayArgb; }
 Gl1UploadPath gl1OverlayPath() { return g_overlayPath; }
 long gl1TextureMemory() { return g_textureMemory; }
 #endif
 
-void gl1AglWindowSize(int& w, int& h) {
+void gl1WindowSize(int& w, int& h) {
     w = h = 0;
     if (!g_carbon || !g_carbon->windowId()) return;
     ::Rect b;

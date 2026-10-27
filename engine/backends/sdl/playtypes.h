@@ -833,6 +833,11 @@ struct WorldSlot {
     // moves is not followed, which is this port's and labelled.
     omk::TriangleSoup shotSoup;
     std::vector<std::uint8_t> shotCutout;
+    // ...and its meshes' boxes (`shotMeshRuns`), the original's broad phase
+    // (`o3de_ForEachMeshInBox`): the weather's roof ray every frame tried
+    // every face of the set without them - 9 ms a frame on the emulated
+    // Tiger's street (`todo/handoff-classic-mac.md` 3g)
+    omk::SoupRunBoxes shotRunBoxes;
 };
 
 // ------------------------------------------------------------- THE SKY

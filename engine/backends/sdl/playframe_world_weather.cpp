@@ -10,6 +10,7 @@
 // the frame's own camera. Run before the present's gates so a frame that
 // draws weather keeps `fb` composed.
 void PlayState::weatherFrame(const omk::View& v) {
+    OMK_ZONE("world: weather");   // the profiler (todo/debug-tools.md 6)
     weatherLines.clear();
     weatherFlakes.clear();
     auto& session = *session_;
@@ -46,7 +47,7 @@ void PlayState::weatherFrame(const omk::View& v) {
         if (!ws.stem.empty() && ws.stem == worldSet) {
             const double p0[3] = {v.cam.eye[0], v.cam.eye[1], v.cam.eye[2]};
             const double d[3] = {0.0, -196.85039, 0.0};
-            covered = omk::sweepSphere(ws.shotSoup, p0, d, 0.0).has_value();
+            covered = omk::sweepSphere(ws.shotSoup, ws.shotRunBoxes, p0, d, 0.0).has_value();
         }
     // `!g_PlayerActorRec || +404 == 14`: no player ACTOR, or in the water.
     // The viewer builds its controller a frame after the session places him,

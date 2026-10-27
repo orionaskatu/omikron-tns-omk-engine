@@ -483,7 +483,7 @@ void PlayState::controlFlight() {
             const double p0[3] = {a[0], a[1], a[2]};
             const double d[3] = {double(b[0]) - a[0], double(b[1]) - a[1],
                                  double(b[2]) - a[2]};
-            const auto h = omk::sweepSphere(*shotSoup, p0, d, 0.0);
+            const auto h = omk::sweepSphere(*shotSoup, shotSlot->shotRunBoxes, p0, d, 0.0);
             if (!h) return false;
             for (int k = 0; k < 3; ++k) hit[k] = static_cast<float>(p0[k] + h->t * d[k]);
             mesh = shotSlot->shotMeshOf(h->tri);    // the node `sub_444BB0` was visiting

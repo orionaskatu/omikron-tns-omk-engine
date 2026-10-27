@@ -1,23 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// THE AGL HOST - the one call between the fixed-function backend and the
-// CLASSIC Mac frontend (`backends/classic/carbonfront.cpp`), for the build
-// that compiles `gl1render.cpp` with `OMK_GL1_AGL`.
+// THE WINDOW HOST - the calls between the fixed-function backend and the
+// frontend whose window it draws into: the CLASSIC Mac frontend
+// (`backends/classic/carbonfront.cpp`, `OMK_GL1_AGL`) and the SDL one on Mac
+// OS X (`backends/gl1/gl1sdlhost.cpp`, `OMK_GL1_SDL_WINDOW`).
 //
 // On classic Mac OS the OpenGL context belongs to the WINDOW: AGL attaches it
 // to the frontend's window port, and the frame is presented through it
 // (`glDrawPixels` and `aglSwapBuffers`) rather than by CopyBits, which an AGL
 // surface over the window would hide on Mac OS X. So the frontend makes and
 // owns the context, on first ask - a run that never asks (`OMK_GL1=0`, or no
-// OpenGL installed) keeps the window plain and presents by CopyBits.
+// OpenGL installed) keeps the window plain and presents by CopyBits. The SDL
+// host's context is SDL's window's (`SDL_GL_CreateContext`), its CGL object.
 #pragma once
 
 namespace omk {
-// -> the frontend's AGLContext, made on the first call and current, or
-// nullptr when there is no window yet or no OpenGL renderer to be had.
-void* gl1AglContext();
-// The window's size in pixels (its port bounds) - what the straight present
-// needs to be 1:1 with the frame; 0 x 0 without a window.
-void gl1AglWindowSize(int& w, int& h);
+// -> the frontend's context (AGL: an AGLContext, made on the first call and
+// current; SDL: the window's CGLContextObj), or nullptr when there is no
+// window yet or no OpenGL renderer to be had.
+void* gl1WindowContext();
+// The window's size in pixels (AGL: its port bounds; SDL: the drawable) -
+// what the straight present needs to be 1:1 with the frame; 0 x 0 without
+// a window.
+void gl1WindowSize(int& w, int& h);
+// The swap, on the SDL host (`SDL_GL_SwapWindow`); AGL swaps its own context.
+void gl1WindowSwap();
 // The overlay texture's upload format, measured when the context was made
 // (`CarbonFrontend::probeUploads`): true for BGRA as 8-8-8-8-REV - the
 // 32-bit ARGB that Mac OS X's drivers take without converting - false for

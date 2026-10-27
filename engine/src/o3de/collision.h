@@ -144,6 +144,25 @@ std::optional<SweepHit> sweepSphere(const TriangleSoup& tris, const double p0[3]
 std::optional<SweepHit> sweepSphere(const TriangleSoup& tris,
                                     const std::vector<std::uint8_t>& skip,
                                     const double p0[3], const double d[3], double radius);
+// THE SOUP'S MESHES AS BOXES - the original's broad phase for its world rays:
+// `o3de_ForEachMeshInBox` visits only the meshes whose box meets the ray's
+// (`sub_444810` / `sub_444460`, docs/ASSETS.md), where the linear scan above
+// tries every face of the set. `first[i]` is run i's first triangle (a run is
+// one mesh, in soup order); `box` six floats a run, min xyz then max xyz.
+struct SoupRunBoxes {
+    std::vector<std::uint32_t> first;
+    std::vector<float> box;
+    std::size_t tris = 0;        // the soup's triangle count they were made for
+};
+SoupRunBoxes soupRunBoxes(const TriangleSoup& tris, std::span<const std::uint32_t> runFirst);
+// ...and `sweepSphere` through them: a run whose box misses the swept box is
+// skipped whole - every face in it fails the per-face box test the linear
+// scan makes (the run's box holds each face's, compared the same way) - and
+// the others' faces go through that same test in ascending order, so the same
+// earliest hit and the same face on a tie. The linear scan when the boxes are
+// not this soup's.
+std::optional<SweepHit> sweepSphere(const TriangleSoup& tris, const SoupRunBoxes& runs,
+                                    const double p0[3], const double d[3], double radius);
 // One byte a triangle of a `Shot` soup: 1 where its mesh carries the cutout
 // bit 0x800, which `sub_444460` skips for the sight (`SoupKind::Sight`).
 // `meshOf` is the soup's own (`collisionSoup`'s third argument).

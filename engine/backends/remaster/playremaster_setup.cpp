@@ -139,6 +139,23 @@ void PlayState::remasterSetup() {
         mistStrength = mistFlag >= 0.0f ? mistFlag
                      : settings.mistSource == omk::Settings::Source::Ini ? settings.mist
                      : !preset.empty() ? pv("mist") : 0.0f;
+        // THE GAME'S OWN *Niveau de detail* at 2 under the preset (the reader's
+        // "ok, continue", 2026-10-27): the city weather runs only there
+        // (`cmp byte ptr [0x90E727], 2`, docs/ASSETS.md 4e) and the boot
+        // default is 1, so the remaster's rain - its wet floors, its 3D rain,
+        // its sky - would never be seen. Unless `--detail` or the ini's
+        // [Options] levelofdetail names it; option row 7 still lowers it in
+        // play, live. It is the original's option at its top, not a look:
+        // F10's original mode keeps it, and with it the original's 2D rain.
+        if (!preset.empty() && detailFlag < 0 && settings.levelOfDetail != omk::Settings::Source::Ini &&
+            settings.v.levelOfDetail < 2) {
+            std::printf("remaster: the preset raises Niveau de detail %d -> 2 (option row 7), where the game's "
+                        "own weather runs; --detail or [Options] levelofdetail holds it\n",
+                        settings.v.levelOfDetail);
+            settings.v.levelOfDetail = 2;
+            shadowDetail = 2;
+            omk::event("remaster.detail", {{"level", 2}});
+        }
         if (mistStrength > 0.0f)
             std::printf("mist: %.2f - a REMASTER feature: a height fog in the set's fog colour, drawn by "
                         "Vulkan only\n", static_cast<double>(mistStrength));

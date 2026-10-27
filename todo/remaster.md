@@ -1285,6 +1285,17 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   (`gradeOvercast`; `remaster.grade` carries the step); and the MIST thickens
   by 0.3 at full rain in the city's own fog colour - Vulkan only, as the mist
   is (0.5 hid the far square). Both backends grade alike.
+* **The preset turns the game's weather on** (the reader's "ok, continue",
+  the same day): *Niveau de detail* - option row 7, Faible 0 / Intermediaire
+  1 / Important 2, 2 the top - gates the city weather (`cmp byte ptr
+  [0x90E727], 2`) and boots at 1, so none of the above was seen unless a
+  save or `--detail` said 2. The preset raises it to 2 at start unless
+  `--detail` or the ini's [Options] levelofdetail names it
+  (`remaster.detail`); option row 7 lowers it in play, live. It is the
+  original's own option at its top, so it is also the classic shadows'
+  finest tier, and at 2 the weather's cycle draws on the engine's one
+  `rand()` from the first frame, as the game's does - F10's original mode
+  keeps it (and the original's 2D rain). `engine: remaster preset` part 5.
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
   only with the emitters' light on); the mist on GLES; the snow in 3D.
 

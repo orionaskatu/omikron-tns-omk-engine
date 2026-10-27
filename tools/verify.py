@@ -32843,10 +32843,15 @@ def c_engine_remaster_preset():
       2. `full/pack` found when there is no `pack/`;
       3. `--bloom 0` and `--texture-pack OTHER` beat it: no bloom, the other
          pack, the grade still the preset's;
-      4. no preset: none of it.
+      4. no preset: none of it;
+      5. *NIVEAU DE DETAIL* (2026-10-27): with no save - the boot default 1 -
+         the preset raises option row 7 to 2, where the game's weather runs
+         (`remaster.detail`, and the weather's gate line at detail 2);
+         `--detail 1` holds it at 1; no preset, 1.
 
     Shown to fail (2026-10-20): the preset not consulted for the bloom
-    answers no 1.60 line in part 1.
+    answers no 1.60 line in part 1. (2026-10-27) the raise skipped - part 5,
+    the preset's run at 1.
     """
     import subprocess, tempfile, shutil
     eng = os.path.join(ROOT, "engine")
@@ -32873,18 +32878,28 @@ def c_engine_remaster_preset():
             grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
             bloom = any(ln.startswith("bloom: 1.60") for ln in r.stdout.splitlines())
             return (opened[0] if opened else None, bloom, grade[0] if grade else None)
+        def detail(*extra):
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--area", "0",
+                                "--frames", "2", "--nofmv", "--software", "--saves", tempfile.mkdtemp(dir=tmp)]
+                               + list(extra), capture_output=True, text=True, errors="replace", env=env,
+                               timeout=300)
+            m = re.search(r"weather - AREA \+176 type \d+, view bits 0x\w+, detail (\d)", r.stdout)
+            return (any(n == "remaster.detail" for n, _ in _events(r.stdout)), int(m.group(1)) if m else None)
         got = (run("--remaster", dir_a),
                run("--remaster", dir_b)[0],
                run("--remaster", dir_a, "--bloom", "0", "--texture-pack", other),
-               run())
+               run(),
+               (detail("--remaster", dir_a), detail("--remaster", dir_a, "--detail", "1"), detail()))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     want = ((os.path.join(dir_a, "pack"), True, ("ANEKBAH", "0")),
             os.path.join(dir_b, "full", "pack"),
             (other, False, ("ANEKBAH", "0")),
-            (None, False, None))
+            (None, False, None),
+            ((True, 2), (False, 1), (False, 1)))
     return got, want, "the preset alone (its pack, bloom 1.6, its grade for ANEKBAH); " \
-                      "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing"
+                      "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing; " \
+                      "the preset raising Niveau de detail to 2, --detail 1 holding it, none without"
 
 
 def c_engine_water_reflection():

@@ -113,7 +113,7 @@ void PlayState::remasterEmitterLights(WorldSlot& ws) {
 namespace {
 constexpr int kOvercastSteps = 16;
 constexpr int kOvercastSide = 17;          // a plain grade's side, where the city has none
-constexpr float kOvercastDark = 0.20f;     // the darkening at full rain
+constexpr float kOvercastDark = 0.08f;     // the darkening at full rain (0.20 made the street too dark - the reader)
 constexpr float kOvercastGrey = 0.30f;     // ...the saturation it takes away
 constexpr float kOvercastCool = 0.03f;     // ...and the blue it adds over the red
 

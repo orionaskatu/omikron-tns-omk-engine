@@ -158,6 +158,12 @@ void PlayState::remasterPoolRain(std::vector<omk::Texture>& slots) {
     }
 }
 
+// whether the cycle keeps a shower going under a roof: the 3D weather shows
+// (it stops the drops at the roof itself)
+bool PlayState::remasterWeatherRoofless() const {
+    return rain3dStrength > 0.0f && remasterShown_ && world_ && (world_->takes() & omk::kTakesWater);
+}
+
 bool PlayState::remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits) {
     // the rain (bit 2) or the snow (bit 4); the third type draws nothing
     if (!(viewBits & 6u) || rain3dStrength <= 0.0f || !remasterShown_ || !world_ ||

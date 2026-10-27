@@ -38,7 +38,7 @@ inline constexpr double kWetFlat = 0.94;         // a wet floor's normal at leas
 inline constexpr double kWetRoofSpan = 30.0;     // a roof covers three of five rays this far apart (a wire does not)
 inline constexpr double kWetDryMs = 120000.0;    // a soaked floor dry again, after the rain
 inline constexpr float kWetReflect = 0.5f;       // a soaked floor's reflection, times `[Remaster] wet`
-inline constexpr float kWetDarken = 0.35f;       // ...and how much darker its film makes it (`Draw::wet`)
+inline constexpr float kWetDarken = 0.22f;       // ...and how much darker its film makes it (`Draw::wet`; 0.35 too dark)
 inline constexpr std::uint8_t kWetNotFloor = 255;
 
 

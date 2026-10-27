@@ -1329,6 +1329,20 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   -1 / -1 for it as Vulkan's; the variant is built when the mist or the 3D
   weather is asked too. Anekbah's street at `--mist 0.5`: 218130 pixels on
   Vulkan, 218144 on GLES, overlap 1.000. `engine: mist` part 5.
+* **In play, the reader's three reports** (2026-10-27, Anekbah with the
+  preset): (1) TOO DARK - measured at the street start, the mean luma 45.8
+  in the original, 27.4 with the preset dry (the noir grade and the mist),
+  16.1 with the shower: the overcast's 0.20, the shower's haze (0.3 toward
+  Anekbah's near-black fog colour 12 25 35) and the wet film's 0.35. Now
+  0.08, 0.1 and 0.22: 21.9 with the shower (-20% where it was -41%). (2)
+  THE RAIN STOPPED AT ONCE and (3) ITS MUSIC PLAYED ON: the original's roof
+  ray - the camera under a roof sends a running shower to its 200 ms fade
+  and posts no message 24, so track 119 stays (docs/ASSETS.md 4e). With the
+  3D weather the cycle no longer takes the roof (`remasterWeatherRoofless`):
+  the drops stop at it themselves, and the shower runs its course - under the
+  roof at 3629, -9030 it ramps to full, message 24 at 2 min 36 s, the 10 s
+  fade, the music back to track 2. The original's rule in the original mode
+  and without the 3D weather. `engine: rain 3d` part 7.
 * **A framing seen twice, not reproduced** (2026-10-27): some comparison
   renders of Anekbah's street start (`--stand 1804,0,-6890,336`, 700 frames,
   800x600) came out with the camera further back than others with the same

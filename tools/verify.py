@@ -34057,7 +34057,12 @@ def c_engine_rain3d():
       6. THE SNOW in the scene: Mahaleel's open air (address 404, 120
          frames) - at frame 90 more than 300 flakes drawn with the original's
          own `Images\snow.bmp` (`remaster.rain3d` snow=1, streak=1), and no
-         2D flake (the weather says they are drawn in the scene).
+         2D flake (the weather says they are drawn in the scene);
+      7. A ROOF DOES NOT END IT (the reader: the shower stopped at once, its
+         music playing on): under a roof at 3629, 0, -9030 facing 0, with
+         `--rain3d 1` the shower ramps to its full state 2 (the rain music on,
+         track 119), and with `--rain3d 0` the original's rule holds - no
+         shower there (state 0, a roof overhead, at frame 690).
 
     Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
     Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks. Denser and
@@ -34073,7 +34078,8 @@ def c_engine_rain3d():
     streaks drawn again; the copies never made - part 2 (135 drawn); the
     streak never pooled (`rainTexSlot` -1, the white) - part 2; the set's
     lights never read - part 2 (0 lit); the overcast never stepped - part 5;
-    the snow not taken (`viewBits & 2u` alone) - part 6, the 2D flakes back.
+    the snow not taken (`viewBits & 2u` alone) - part 6, the 2D flakes back;
+    `remasterWeatherRoofless` false - part 7.
 
     NOT CHECKED, judged by eye: the brightness and width; the density, which
     is the original's 200 - half its box lies below the street, now hidden.
@@ -34122,6 +34128,15 @@ def c_engine_rain3d():
         on, out_on, ev = run(vkb, "on", 2, 1)
         _, out_off, ev_off = run(vkb, "off", 2, 0)
         dry, _, _ = run(vkb, "dry", 1, 1)
+        def roof(r3d):
+            return subprocess.run(
+                [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                 "--area", "0", "--stand", "3629,0,-9030,0", "--no-crowd", "--nofmv", "--nodelay",
+                 "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", "700",
+                 "--detail", "2", "--rain3d", str(r3d), "--world-vulkan"],
+                capture_output=True, text=True, errors="replace", timeout=300,
+                env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_WEATHER_SKIP_MS="900000")).stdout
+        roof_on, roof_off = roof(1), roof(0)
         snow_out = subprocess.run(
             [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
              "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
@@ -34162,11 +34177,14 @@ def c_engine_rain3d():
     sn = next((k for n, k in _events(snow_out) if n == "remaster.rain3d" and k.get("frame") == "90"), {})
     snowed = (sn.get("snow"), int(sn.get("drawn", 0)) > 300, sn.get("streak"),
               "frame 90: weather - 200 drops stepped, drawn in the scene by the remaster" in snow_out)
-    print(f"        the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
+    roofed_shower = (bool(re.search(r"weather - state 2, 200 drops, a roof overhead", roof_on)),
+                     "music switch to 119" in roof_on,
+                     "frame 690: weather - state 0, 0 drops, nothing stepped (a roof overhead)" in roof_off)
+    print(f"        under the roof: {roofed_shower}; the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
           f"Mahaleel's snow at frame 90: {sn}")
-    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed), \
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
-            (16, 0), ("1", True, "1", True)), \
+            (16, 0), ("1", True, "1", True), (True, True, True)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

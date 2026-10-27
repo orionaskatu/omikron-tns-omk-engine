@@ -66,7 +66,13 @@ void PlayState::weatherFrame(const omk::View& v) {
         return static_cast<int>((gun.randSeed >> 16) & 0x7FFFu);
     };
     const long now = static_cast<long>(weatherClockMs);
-    weather.tick(viewBits, now, covered, noPlayer, crt, [&](int m) {
+    // THE REMASTER's 3D weather (`backends/remaster/playremaster_rain.cpp`)
+    // stops at a roof drop by drop, so its cycle does not end at one: in the
+    // original the roof ray sends a running shower to its 200 ms fade and
+    // posts no message 24 - the shower gone at once, its music playing on
+    // (the reader's two reports, 2026-10-27). The original's rule otherwise.
+    const bool roofEnds = covered && !remasterWeatherRoofless();
+    weather.tick(viewBits, now, roofEnds, noPlayer, crt, [&](int m) {
         const bool ran = session.postMessage(m, -1);    // event 43; the sender word is unset
         std::printf("frame %ld: weather - message %d posted (Game_RaiseEvent 43) %s\n",
                     frameNo, m, ran ? "to its handler" : "- no handler subscribes");

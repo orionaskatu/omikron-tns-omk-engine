@@ -1315,6 +1315,7 @@ private:
         GLint grey = -1;   // View::grey, both scene fragment programs
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
+        GLint snow = -1;                                                     // ...or snow lying
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1398,6 +1399,7 @@ private:
         float tint[3] = {-1, -1, -1};
         float water = -1; int clip = -1;   // the water variant's
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
+        float snow = -1;                               // ...or snow lying
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1677,6 +1679,7 @@ bool GlesRenderer::linkScene() {
         L.wet = glGetUniformLocation(p, "uWet");
         L.rain = glGetUniformLocation(p, "uRain");
         L.rippleClock = glGetUniformLocation(p, "uRippleClock");
+        L.snow = glGetUniformLocation(p, "uSnow");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");

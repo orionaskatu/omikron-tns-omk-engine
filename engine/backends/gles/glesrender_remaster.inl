@@ -373,6 +373,7 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
             glUniform1f(glGetUniformLocation(p, "uWater"), 0.0f);
             glUniform1f(glGetUniformLocation(p, "uWet"), 0.0f);
             glUniform1f(glGetUniformLocation(p, "uRain"), 0.0f);
+            glUniform1f(glGetUniformLocation(p, "uSnow"), 0.0f);
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
@@ -491,6 +492,12 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
     if (set(!uv || U.wet != film)) {
         glUniform1f(L.wet, film);
         U.wet = film;
+    }
+    // ...or SNOW lying (`Draw::snow`): `uWet` is then its cover
+    const float snowNow = film > 0.0f && d.snow ? 1.0f : 0.0f;
+    if (set(!uv || U.snow != snowNow)) {
+        glUniform1f(L.snow, snowNow);
+        U.snow = snowNow;
     }
     // ...and its RIPPLES: the rain's strength and the shimmer's clock
     const float rain = film > 0.0f ? rain_ : 0.0f;

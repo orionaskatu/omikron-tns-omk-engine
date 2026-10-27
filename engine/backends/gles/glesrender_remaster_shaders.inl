@@ -131,6 +131,7 @@ constexpr const char* kRipplesGlsl =
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\n"
+                    "uniform float uSnow;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
                     std::string(kRipplesGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
@@ -141,9 +142,11 @@ std::string waterVariant(const std::string& frag) {
         // it, and while it rains its RIPPLES lighten their crests and bend the
         // reflection (`scene.frag`'s rule)
         // (all of it times the open sky at this point, `encodeOpenSky`'s)
-        s.insert(at, "float wetHere = uWet > 0.0 ? vOpen : 1.0;\n"
-                     "    c *= 1.0 - uWet * vOpen;\n    vec3 rip = vec3(0.0);\n"
-                     "    if (uWet > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
+        // (none of it on SNOW lying - `uSnow`, below)
+        s.insert(at, "float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
+                     "    float wetHere = wetF > 0.0 ? vOpen : 1.0;\n"
+                     "    c *= 1.0 - wetF * vOpen;\n    vec3 rip = vec3(0.0);\n"
+                     "    if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
                      "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen;\n"
                      "        c += vec3(kRippleLight * rip.z);\n"
                      "    }\n    if (uWater > 0.0) {\n"
@@ -153,6 +156,17 @@ std::string waterVariant(const std::string& frag) {
                      "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f * wetHere;\n"
                      "    }\n    ");
     else anchorMissed("water", "gl_FragColor = vec4(c,");
+    // SNOW LYING (`o3de/wetfloor.h` coverRuns, `scene.frag`'s rule): the floor
+    // turned white under its own light - `c / texel`, the light alone - by the
+    // cover (`uWet`) times the open sky, BEFORE the fog, which takes it as the rest
+    const std::string lit = "vec3 c = clamp(t.rgb * shade";
+    const auto lp = s.find(lit);
+    const auto le = lp == std::string::npos ? lp : s.find(";\n", lp);
+    if (le != std::string::npos)
+        s.insert(le + 2, "    if (uSnow > 0.5 && uWet > 0.0)\n"
+                         "        c = mix(c, clamp(c / max(t.rgb, vec3(0.04)) * 0.9, 0.0, 1.0), uWet * vOpen *\n"
+                         "                clamp((1.0 - dot(t.rgb, vec3(0.299, 0.587, 0.114))) * 1.4, 0.0, 1.0));\n");
+    else anchorMissed("snow", lit);
     // the REFLECTION pass discards what lies below the water (Y is down) - a
     // posed body's place is the GPU's, so the CPU clip cannot do it
     const std::string m = "void main() {";

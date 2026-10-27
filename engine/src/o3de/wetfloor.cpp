@@ -115,6 +115,33 @@ void encodeOpenSky(Geometry& g, const WetFloors& w) {
             g.corners[i].phase = -2.0f - static_cast<float>(w.cornerOpen[i]);
 }
 
+std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const std::vector<std::uint8_t>& open,
+                      float amount) {
+    if (!setGeo || amount <= 0.0f || open.empty()) return 0;
+    static std::vector<Draw> out;
+    out.clear();
+    std::size_t covered = 0;
+    for (const auto& d : draws) {
+        if (d.geo != setGeo || d.blend != Blend::Opaque || d.meshPose) { out.push_back(d); continue; }
+        std::size_t runStart = d.start;
+        int runKind = -1;
+        const auto flush = [&](std::size_t end) {
+            if (runKind < 0 || end <= runStart) return;
+            Draw o = d; o.start = runStart; o.count = end - runStart;
+            if (runKind) { o.wet = amount; o.snow = true; }
+            out.push_back(o);
+        };
+        for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
+            const int kind = t / 3 < open.size() && open[t / 3] ? 1 : 0;
+            covered += static_cast<std::size_t>(kind);
+            if (kind != runKind) { flush(t); runStart = t; runKind = kind; }
+        }
+        flush(d.start + d.count);
+    }
+    draws.swap(out);
+    return covered;
+}
+
 float Wetness::step(float rain, double dtMs) {
     const float r = std::clamp(rain, 0.0f, 1.0f);
     const float dried = w_ - static_cast<float>(std::max(0.0, dtMs) / kWetDryMs);

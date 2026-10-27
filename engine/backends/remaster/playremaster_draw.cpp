@@ -206,4 +206,22 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     return watered || floored;
 }
 
+// THE SNOW LYING (`o3de/wetfloor.h` coverRuns, `[Remaster] wet` - the weather
+// on the ground): where the game's SNOW falls - Mahaleel; its cycle never stops
+// (docs/ASSETS.md 4e) and needs option row 7 at 2 - the set's floors under the
+// open sky turn white under their own light, the corners' open sky blending
+// the edge. No reflection pass: the frame's own draws, split into runs.
+void PlayState::remasterSnowCover(std::vector<omk::Draw>& list) {
+    if (wetStrength <= 0.0f || !weatherSnowing || !remasterShown_ || !world_ || !(world_->takes() & omk::kTakesWater))
+        return;
+    const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+    if (shownSlot.wet.open.empty()) return;
+    const std::size_t covered = omk::coverRuns(list, &shownSlot.geo, shownSlot.wet.open,
+                                               std::clamp(wetStrength, 0.0f, 1.0f) * omk::kSnowCover);
+    if (frameNo % 30 == 0) {
+        std::printf("frame %ld: the snow lies on %zu floor triangles under the open sky\n", frameNo, covered);
+        omk::event("remaster.snow", {{"frame", frameNo}, {"covered", static_cast<long>(covered)}});
+    }
+}
+
 #endif  // OMK_REMASTER

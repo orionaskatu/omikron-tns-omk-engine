@@ -324,6 +324,9 @@ struct Draw {
     // (a wet floor off the frame's plane darkens only). Set only by
     // `drawWithWater`, for its own frame.
     float           wet              = 0.0f;
+    // ...and SNOW lying on it instead (`o3de/wetfloor.h` coverRuns): `wet` is
+    // then how white it turns, not how dark
+    bool            snow             = false;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and

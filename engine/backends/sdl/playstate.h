@@ -857,6 +857,7 @@ struct PlayState {
     bool remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits);
     void remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v);
     void remasterPoolRain(std::vector<omk::Texture>& slots);   // the streak's texture, after the sprites
+    void remasterSnowCover(std::vector<omk::Draw>& list);      // the snow lying (`o3de/wetfloor.h` coverRuns)
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
     bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures
@@ -1135,6 +1136,7 @@ struct PlayState {
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
+    bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

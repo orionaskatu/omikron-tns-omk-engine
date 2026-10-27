@@ -290,8 +290,8 @@
 ; them (0..4); the textures' relief under those lights (0..4, Vulkan); the
 ; ambient occlusion at contacts (0..4, Vulkan); the floors floors.txt lists
 ; reflecting (0..1); the floors under the open sky wet by the game's own
-; rain, darker and reflecting while it falls and drying after (0..1; the rain
-; needs Niveau de detail at 2); the same rain and snow drawn in the scene,
+; rain, darker and reflecting while it falls and drying after, and snow lying
+; on them where its snow falls (0..1; the weather needs Niveau de detail at 2); the same rain and snow drawn in the scene,
 ; hidden by walls and stopped by roofs (0..1, their brightness); a height mist in each
 ; city's fog colour (0..1, Vulkan).
 ;bloom = 0

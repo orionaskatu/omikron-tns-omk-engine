@@ -33881,7 +33881,12 @@ def c_engine_wet_floors():
          streaks, the flame and the shimmer move both);
       7. the edge BLENDED in the shaders: `OMK_WET_NO_BLEND=1` (the open sky
          left out of the corners) moves more than 5000 pixels of the frame,
-         on Vulkan and on GLES - each decodes the corners' phase.
+         on Vulkan and on GLES - each decodes the corners' phase;
+      8. THE SNOW LYING (`coverRuns`): Mahaleel's open air (address 404, 120
+         frames) - at frame 90 more than 300 floor triangles covered
+         (`remaster.snow`), `--wet 1` moving more than 3000 pixels of `--wet
+         0` on Vulkan and on GLES, the same pixels (overlap above 0.8); and no
+         snow lying in Anekbah's rain.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -33896,7 +33901,8 @@ def c_engine_wet_floors():
     overlap; the rain area's gate dropped (`rainArea` always true) and the
     wetness held at 1 - part 4, the frames differ; the ripples never computed
     in `scene.frag` - part 6; the open sky never decoded in `scene.frag`
-    (`openSky = 1.0`) - part 7 on Vulkan.
+    (`openSky = 1.0`) - part 7 on Vulkan; the snow's cycle never told the
+    remaster (`weatherSnowing` false) - part 8.
 
     NOT CHECKED, judged by eye: the strengths (`kWetReflect`, `kWetDarken`),
     the drying's pace, the triangle-sized edges between wet and dry.
@@ -33949,6 +33955,29 @@ def c_engine_wet_floors():
         off716, _ = run(vkb, "off716", 2, 0, 716)
         nb, _ = run(vkb, "nb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
         gnb = None
+        def snow_run(binary, name, wet):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            r = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                      os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "145",
+                                      "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
+                                      "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter",
+                                      "nearest", "--frames", "120", "--detail", "2", "--wet", str(wet),
+                                      "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return (open(out, "rb").read() if os.path.exists(out) else None), _events(r.stdout)
+        sv1, sev = snow_run(vkb, "sv1", 1)
+        sv0, _ = snow_run(vkb, "sv0", 0)
+        sg1 = sg0 = None
+        if platform.system() == "Darwin":
+            sg1, _ = snow_run(os.path.join(eng, "build", "omk-play-gles"), "sg1", 1)
+            sg0, _ = snow_run(os.path.join(eng, "build", "omk-play-gles"), "sg0", 0)
         gl = ("skipped",)
         if platform.system() == "Darwin":
             gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
@@ -33977,13 +34006,25 @@ def c_engine_wet_floors():
     gblend = ("skipped",) if gnb is None and platform.system() != "Darwin" else \
         (gnb is not None and gon is not None and len(moved(gon, gnb)) > 5000)
     blend = (len(moved(on, nb)) > 5000, gblend)
+    lying = next((k for n, k in sev if n == "remaster.snow" and k.get("frame") == "90"), {})
+    smv = moved(sv1, sv0) if sv1 and sv0 else set()
+    if sg1 and sg0:
+        sgm = moved(sg1, sg0)
+        siou = len(smv & sgm) / max(1, len(smv | sgm))
+        sgl = (len(sgm) > 3000, siou > 0.8)
+    else:
+        sgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
+              not any(n == "remaster.snow" for n, _ in ev))
+    print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
+          f"GLES {sgl}")
     print(f"        open {world.get('open')}, covered {world.get('covered')}, blended {world.get('blended')}; "
           f"frame 690 {live}; "
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend), \
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
-            (True, _or_skip(gblend, True))), \
+            (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"

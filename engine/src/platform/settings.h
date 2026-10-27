@@ -243,8 +243,9 @@ struct Settings {
     // (`o3de/floorreflect.h`), S times each one's strength. 0 = off.
     float  floors = 0.0f;
     Source floorsSource = Source::Default;
-    // `wet = S`: the RAIN WETS THE FLOORS under the open sky (`o3de/wetfloor.h`)
-    // while the game's own shower falls, S times their reflection. 0 = off.
+    // `wet = S`: the game's weather ON THE GROUND (`o3de/wetfloor.h`): its RAIN
+    // wets the floors under the open sky while the shower falls, and where its
+    // SNOW falls, snow lies on them; S their strength. 0 = off.
     float  wet = 0.0f;
     Source wetSource = Source::Default;
     // `rain3d = S`: the game's RAIN and SNOW drawn IN THE SCENE

@@ -1306,9 +1306,23 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   original's fall over the letterbox). Address 404 at frame 90: 650 of 800
   drawn, against the original's 68 sprites. The option says rain and snow
   (`Pluie et neige en 3D`).
+* **The snow lying** (the reader's "go", the same day), under `[Remaster]
+  wet` - now the weather ON THE GROUND ("Sols mouilles ou enneiges"): where
+  the game's snow falls (Mahaleel - its cycle never stops, so the cover is
+  there whenever the weather runs, `weatherSnowing`), the set's floors under
+  the open sky turn white under their own baked light - `c / texel`, the
+  light alone, times 0.9 - by 0.85 x the corners' open sky x how DARK the
+  texel is (so a snow texture keeps its own drawing - whitening it flat lost
+  the ground's shading - and stone and wood go white), BEFORE the fog.
+  `coverRuns` splits the frame's own set draws into covered runs
+  (`Draw::snow`, `Draw::wet` its cover): no reflection pass. Vulkan bit 20
+  of the push block's `water`; GLES `uSnow`. Address 404 at frame 90: 772
+  triangles covered, 8994 pixels on Vulkan, 8995 on GLES. A red debug view
+  showed what is covered: open ground and the low blocks' tops; the big
+  blocks in front of the monastery are under it by the roof test, the ramps
+  steeper than 20 degrees.
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on); the mist on GLES; snow settling on
-  Mahaleel's open ground.
+  only with the emitters' light on); the mist on GLES; snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

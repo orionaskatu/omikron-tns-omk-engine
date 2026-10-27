@@ -317,6 +317,9 @@ void main() {
     int waterMode = pc.water & 15;                            // the water's mode (`Push`)
     float wetFilm = float((pc.water >> 4) & 255) / 255.0;     // a wet floor's darkening
     float rainNow = float((pc.water >> 12) & 255) / 255.0;    // ...and the rain on it
+    bool snowLying = (pc.water & (1 << 20)) != 0;              // ...or snow lying on it, bit 20
+    // the open sky at this point, the corners' answers blended (`encodeOpenSky`)
+    float openSky = vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
 #ifdef OMK_LATE_DEPTH
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
@@ -398,6 +401,17 @@ void main() {
         shade = vec3(y / 255.0);
     }
     vec3 c = clamp(t.rgb * shade * litness(), 0.0, 1.0);
+    // SNOW LYING (`o3de/wetfloor.h` coverRuns): the floor turned white under
+    // its own light - `c / texel`, the light alone - by the cover times the
+    // open sky here, before the fog takes it like the rest
+    if (snowLying && wetFilm > 0.0) {
+        // ...the more the darker the texel: a snow texture keeps its own
+        // drawing, stone and wood go white
+        vec3 lightHere = c / max(t.rgb, vec3(0.04));
+        float darkTexel = clamp((1.0 - dot(t.rgb, vec3(0.299, 0.587, 0.114))) * 1.4, 0.0, 1.0);
+        c = mix(c, clamp(lightHere * 0.9, 0.0, 1.0), wetFilm * openSky * darkTexel);
+        wetFilm = 0.0;   // no rain's film, no ripples, on snow
+    }
     // THE FOG, and it is raster.cpp's line transcribed. Linear -
     // `FOGTABLEMODE` 3 at density 1.0, the only mode the engine sets - over
     // the range the clip distance sizes. The CPU side has already applied the
@@ -433,7 +447,6 @@ void main() {
     // reflection, if it has one, is added over the darker ground - all of it
     // times how open to the sky this point is, the corners' answers blended
     // (`encodeOpenSky`: `-2 - open` in the phase; any other phase is open)
-    float openSky = vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
     float wetHere = wetFilm > 0.0 ? openSky : 1.0;
     c *= 1.0 - wetFilm * openSky;
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on

@@ -67,6 +67,15 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
 // stopping at a triangle's. Run on the set's own geometry before its upload.
 void encodeOpenSky(Geometry& g, const WetFloors& w);
 
+// SNOW LYING (the remaster's, `[Remaster] wet` in a snow area): the set's
+// opaque draws split into runs, a run of `open` triangles carrying `Draw::wet`
+// = `amount` and `Draw::snow` - the shaders turn it white under its own baked
+// light, blended by each corner's open sky (`encodeOpenSky`). No reflection
+// pass: the frame's own draws, in order. -> the triangles covered.
+std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const std::vector<std::uint8_t>& open,
+                      float amount);
+inline constexpr float kSnowCover = 0.85f;   // how white a fully covered floor turns
+
 class Wetness {
 public:
     // `rain` the shower now, 0..1; `dtMs` the frame's -> the floors' wetness, 0..1

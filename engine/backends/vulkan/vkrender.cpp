@@ -3657,6 +3657,8 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         push_.water |= static_cast<int32_t>(std::lround(std::min(d.wet, 1.0f) * 255.0f)) << 4;
         // ...and the RAIN's strength for its ripples, the eight bits above
         push_.water |= static_cast<int32_t>(std::lround(std::clamp(rain_, 0.0f, 1.0f) * 255.0f)) << 12;
+        // ...and bit 20: it is SNOW lying, not rain (`Draw::snow`)
+        if (d.snow) push_.water |= 1 << 20;
     }
     push_.waterStrength = reflectingNow_ ? waterY_ : floorNow ? waterStrength_ * d.reflect : waterStrength_;
     {

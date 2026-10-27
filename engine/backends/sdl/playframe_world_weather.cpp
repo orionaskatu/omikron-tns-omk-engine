@@ -15,6 +15,7 @@ void PlayState::weatherFrame(const omk::View& v) {
     weatherLines.clear();
     weatherFlakes.clear();
     weatherRain = 0.0f;
+    weatherSnowing = false;
     rainDrops.clear();   // the remaster's 3D rain takes them afresh, or has none
     auto& session = *session_;
     weatherClockMs += frameSec * 1000.0;
@@ -43,6 +44,7 @@ void PlayState::weatherFrame(const omk::View& v) {
                           : "row 7 is not 2, so sub_4815D0 does nothing");
     }
     if (!gate) return;
+    weatherSnowing = (viewBits & 4u) != 0;   // the snow's cycle runs: it never stops (ASSETS 4e)
     // `sub_481200`: the eye to 196.85 above it through `sub_444810` - the
     // shown set's shot soup, as the bolts' world ray
     bool covered = false;

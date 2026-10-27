@@ -34,7 +34,7 @@ void PlayState::remasterSetup() {
         omk::texturePack().setShown(false);
         omk::uiPack().setShown(false);
         omk::fontPack().setShown(false);
-        std::printf("remaster: [Remaster] mode = original - the remaster armed and hidden (F10 shows it)\n");
+        std::printf("remaster: [Remaster] mode = original - the remaster armed and hidden (F10 or a pad's SELECT shows it)\n");
     } else if (!settings.remasterOn) {
         settings.remasterOn = true;
         std::printf("remaster: [Remaster] mode = original, but a remaster flag on the command line - "

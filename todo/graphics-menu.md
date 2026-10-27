@@ -491,6 +491,28 @@ key updated so the next start resumes in it.
      load (3d): an original start leaves them flat (`smoothBodies` 0) and
      F10 does not round them; a remaster start keeps them round through F10.
      That is B2: keep both meshes per character and pick at draw.
+   * **THE PAD (2026-10-27), the reader's layout:** "use triangle/X (or
+     equivalent) to open the sneak and select (or equivalent) to change the
+     mode", then "sneak is available only in adventure mode, so put it on
+     triangle and put the current triangle option on square (the original
+     game already has different key mapping depending of the mode)".
+     `input/pad.h`: `toDevices(pad, devices, group)` maps under the
+     INSTALLED group - Aventure takes `kAventure` (TRIANGLE / Y = button 9,
+     `Ouvrir sneak` and the UI's close; SQUARE / X = button 3, `Vue premiere
+     personne`, which Triangle carried; Square's button 2 is unbound there);
+     then "in shoot mode, move the weapon switch from select to triangle so
+     select is free": the shoot group takes `kShoot` (TRIANGLE = button 9,
+     `Arme`; its button 3 is unbound there); swimming and fighting keep
+     `kButtons`, so the fight's kicks stay on Square and Triangle. SELECT /
+     BACK is in no layout: the switch in all four groups
+     (`pad::switchPressed`, read beside F10 in `inputPause`).
+     Free on a pad and never read, for the record: L2/R2 (the triggers) and
+     L3/R3 (the stick clicks) - none on the Vita, which has no remaster
+     either (there SELECT says once that nothing is configured).
+     `engine: pad layout` (new, `tools/pad_layout.cpp`): each button under
+     each group through the engine's tables, and the frame's wiring (comments
+     stripped - a mutation commented out first passed it); shown to fail
+     with Triangle back on first-person view and with Select unwired.
    * **B2 DONE (2026-10-27): the rounded bodies switch too.** Rounded at
      load in BOTH modes (`smoothBodies` armed; `mode = original` no longer
      zeroes it), each model's other rest kept beside it

@@ -250,8 +250,9 @@
 ;
 ; The SWITCH over everything in this section: `original` starts with the
 ; original game's look - the section read and made ready all the same, so
-; F10 in play (or "Rendu" on OMK's Remaster page) shows the remaster's at
-; once, and back; both write this key, so the next start resumes in the mode
+; F10 in play - SELECT on a pad - (or "Rendu" on OMK's
+; Remaster page) shows the remaster's at once, and back; each writes this
+; key, so the next start resumes in the mode
 ; left. `remaster`, the default, starts with it. A remaster flag on the
 ; command line shows the remaster whatever this says. Outside the switch:
 ; the upscale and the preload (frame rate, not looks). The rounded bodies

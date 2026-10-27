@@ -4621,7 +4621,11 @@ never sees them.
 switches the original's look and the remaster's on the running game - the
 Remaster page's "Rendu" row is the same switch - and writes `[Remaster] mode`.
 It is read beside ESC, off every binding table; DIK 0x44 is no default
-binding of the game's (`tables/key_bindings.json`).
+binding of the game's (`tables/key_bindings.json`). On a PAD it is SELECT /
+BACK in every group: the adventure group's sneak moves to TRIANGLE / Y and
+its first-person view to SQUARE / X, shoot mode's `Arme` to TRIANGLE
+(`input/pad.h` `kAventure`, `kShoot`, `engine: pad layout`) - the pad's
+layout per group, as the game's own tables are.
 
 
 ---

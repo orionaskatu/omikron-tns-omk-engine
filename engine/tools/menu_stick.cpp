@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
                 omk::pad::Pad p;
                 c.at(f, p);
                 omk::DeviceState st;
-                omk::pad::toDevices(p, st);
+                omk::pad::toDevices(p, st, 0);
                 if (pass == 1) ms.apply(st.joyX, st.joyY);
                 const std::uint32_t e = in.frame(st);
                 // slots 0..3: turn left, turn right, forward, back

@@ -7282,6 +7282,64 @@ def c_engine_remaster_mode():
             "written), original+menu = remaster; the start menu: original = no remaster, != remaster, "
             "original+F10 = remaster (pack %s)" % pack)
 
+def c_engine_pad_layout():
+    r"""engine: THE PAD'S LAYOUT PER GROUP (`input/pad.h`, the reader's of
+    2026-10-27) - a frontend's choice, read through the engine's own tables.
+
+    `tools/pad_layout.cpp` presses each button alone under each of the four
+    groups (`installScheme`, `Input::poll`) and names the slots it sets by
+    the group's labels. The Aventure group takes its own layout
+    (`kAventure`): TRIANGLE / Y (North) opens the sneak - slot 13, also the
+    UI's close - and SQUARE / X (West) is `Vue premiere personne`, which
+    Triangle carried; the shoot group (`kShoot`) has `Arme` on TRIANGLE, where
+    Select carried it; swimming and fighting keep the shared layout, the
+    fight's kicks 1 and 2 on Square and Triangle. SELECT / BACK is no binding
+    in any group but OMK's original/remaster switch (`pad::switchPressed`).
+    And the frame feeds the pad under the INSTALLED group and hands Select to
+    the switch (`playframe_input_parts.cpp`).
+    """
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    b = subprocess.run(["make", "-s", "build/pad_layout"], cwd=eng, capture_output=True, text=True)
+    tool = os.path.join(eng, "build", "pad_layout")
+    if b.returncode != 0 or not os.path.exists(tool):
+        return ("build",), ("built",), b.stderr[-300:]
+    r = subprocess.run([tool, os.path.join(ROOT, "tables", "key_bindings.json")], capture_output=True)
+    rows = {}
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        m = re.match(r"group (\d) (\w+) slots (\S+) switch (\d) ?(.*)$", line)
+        if m:
+            rows[(int(m.group(1)), m.group(2))] = (m.group(3), m.group(4) == "1",
+                                                   [x for x in m.group(5).split("|") if x])
+    if len(rows) != 28:
+        return (len(rows),), (28,), "pad_layout output parsed - the tool's format changed"
+    got = [(g, n, rows[(g, n)]) for g, n in [
+        (0, "south"), (0, "east"), (0, "west"), (0, "north"), (0, "back"),
+        (1, "north"), (1, "back"), (2, "west"), (2, "north"), (2, "back"),
+        (3, "west"), (3, "north"), (3, "back")]]
+    want = [(0, "south", ("4", False, ["Action / Utiliser"])),
+            (0, "east", ("5", False, ["Annuler / Sauter"])),
+            (0, "west", ("7", False, ["Vue première personne"])),
+            (0, "north", ("13", False, ["Ouvrir sneak"])),
+            (0, "back", ("-", True, [])),
+            (1, "north", ("7", False, [])),
+            (1, "back", ("-", True, [])),
+            (2, "west", ("6", False, ["S'accroupir"])),
+            (2, "north", ("13", False, ["Arme"])),
+            (2, "back", ("-", True, [])),
+            (3, "west", ("6", False, ["Coup de pied 1"])),
+            (3, "north", ("7", False, ["Coup de pied 2"])),
+            (3, "back", ("-", True, []))]
+    # the code, its comments taken out (a call commented away is not wired)
+    src = open(os.path.join(eng, "backends", "sdl", "playframe_input_parts.cpp")).read()
+    src = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", src, flags=re.S))
+    wired = ("toDevices(host.pad, devices, in.group())" in src,
+             bool(re.search(r"remasterModeFrame\([^;]*pad::switchPressed\(host\.pad\)", src)))
+    return (got, wired), (want, (True, True)), \
+           ("per group, the slots a button sets and their labels, and the switch: Aventure's sneak on "
+            "Triangle, first-person view on Square; shoot mode's `Arme` on Triangle; the fight's kicks "
+            "unmoved; Select the switch in all four; the frame feeding the installed group and Select to it")
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -49384,8 +49442,9 @@ def c_licence_headers():
     # `omktext_data.cpp`, `engine/backends/sdl/playomkoptions.cpp`,
     # `engine/tools/omkmenu_probe.cpp` and `tools/omklang.py`
     # 688: + `engine/backends/remaster/playremaster_mode.cpp` (the original/remaster switch, B)
+    # 689: + `engine/tools/pad_layout.cpp` (the pad's layout per group, `engine: pad layout`)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (688, [], 10, []), \
+           (689, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -52091,6 +52150,7 @@ SLOW = [
     ("engine: input",      c_engine_input,      "PORTING B6"),
     ("engine: input poll", c_engine_input_poll, "todo/vita-port.md F3; input/bindings.h"),
     ("engine: menu stick", c_engine_menu_stick, "todo/handoff-quest-port.md; input/pad.h"),
+    ("engine: pad layout", c_engine_pad_layout, "todo/graphics-menu B; input/pad.h"),
     ("engine: audio",      c_engine_audio,      "PORTING B6"),
     ("engine: shoot AI",   c_engine_shoot_ai,   "engine/README"),
     ("engine: I2D",        c_engine_i2d,        "engine/README"),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE ORIGINAL/REMASTER SWITCH (`todo/graphics-menu.md` B) - one key in play
-// (F10), the Mode row of OMK's Remaster page, and `[Remaster] mode` at start:
+// (F10; a pad's SELECT, `pad::switchPressed`),
+// the Mode row of OMK's Remaster page, and `[Remaster] mode` at start:
 // the remaster's look put away and brought back on the running game.
 //
 // Everything the remaster needs is ARMED at start whatever the mode
@@ -147,15 +148,16 @@ void PlayState::remasterSlotsFrame(bool all) {
     }
 }
 
-// EACH FRAME, beside ESC's read (`inputPause`, F10 = DIK 0x44 in the devices
-// the scripted streams joined, so `--hold k68` presses it): the start's mode
-// once the renderer exists, the key's edge, the sets' lights
+// EACH FRAME, beside ESC's read (`inputPause`; `down`: F10 = DIK 0x44 in the
+// devices the scripted streams joined, so `--hold k68` presses it, or the
+// pad's SELECT): the start's mode once the renderer exists, the key's edge,
+// the sets' lights
 void PlayState::remasterModeFrame(bool down) {
     if (remasterStartHidden_) {
         remasterStartHidden_ = false;
         remasterShow(false, "[Remaster] mode = original at start");
     }
-    if (down && !remasterKeyDown_ && remasterShow(!remasterShown_, "F10")) {
+    if (down && !remasterKeyDown_ && remasterShow(!remasterShown_, "F10 / SELECT")) {
         // ...and the next start resumes in it
         const bool ok = !configFile.empty() &&
             omk::writeOptionsFile(configFile, {{"Remaster", "mode", remasterShown_ ? "remaster" : "original"}});

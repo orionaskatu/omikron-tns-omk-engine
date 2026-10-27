@@ -160,9 +160,10 @@ void PlayState::inputPause() {
     // how a port ends up with its own control scheme.
     for (int b : host.mouse) devices.mouse.push_back(b);
     // ...and a GAMEPAD, as the engine's own JOYSTICK device
-    // (`input/pad.h`): buttons 48 + k, the stick on slots 0..3 through
-    // `Input_Poll`'s hardwired axes. Zero when there is no pad.
-    omk::pad::toDevices(host.pad, devices);
+    // (`input/pad.h`): buttons 48 + k under the installed group's layout,
+    // the stick on slots 0..3 through `Input_Poll`'s hardwired axes. Zero
+    // when there is no pad.
+    omk::pad::toDevices(host.pad, devices, in.group());
     // ...and under a SCREEN the stick is one direction with hysteresis, so a
     // held push is one press (`pad::MenuStick`, the Quest's report)
     {
@@ -204,7 +205,9 @@ void PlayState::inputPause() {
                      != devices.keyboard.end();
     // ...and F10 the same way, OMK's own: the original/remaster switch
     // (`backends/remaster/playremaster_mode.cpp`)
-    remasterModeFrame(std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x44) != devices.keyboard.end());
+    // ...and SELECT / BACK on a pad (`pad::switchPressed`)
+    remasterModeFrame(std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x44) != devices.keyboard.end() ||
+                      omk::pad::switchPressed(host.pad));
     if (esc && !walk && playerScreen < 0) {
         playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "

@@ -16,6 +16,9 @@
 //     layout, and a 1999 PC stick numbered its buttons however its driver
 //     did. The table below puts the four actions every group uses most on the
 //     four face buttons, and is a proposal to be play-tested;
+//   * WHICH GROUP sees which layout. The game's own tables already differ per
+//     group (`Input_InstallScheme`), and the Aventure group takes its own
+//     (`kAventure`, the reader's of 2026-10-27): the sneak on a face button;
 //   * the stick's DEAD ZONE. The engine compares the axis against 0 over a
 //     range of -1000..1000 and sets none itself - that was the Windows
 //     driver's job - so an analog stick, which never rests exactly at centre,
@@ -41,8 +44,12 @@ enum Button : std::uint32_t {
     RightStickUp = 1u << 12, RightStickDown = 1u << 13, RightStickSide = 1u << 14,
 };
 
-// Button -> DirectInput button index k (code 48 + k, slot 4 + k by default).
-// The Aventure label of each slot, for orientation:
+// Button -> DirectInput button index k (code 48 + k, slot 4 + k by default),
+// the layout of the swimming and fighting groups; the adventure and shoot
+// groups take their own below. The Aventure label of each slot, for
+// orientation. SELECT / BACK is in none of them: it is OMK's original/
+// remaster switch in every group (`switchPressed`), and button 9 - slot 13,
+// which swimming and fighting leave unbound - is TRIANGLE's where it is bound.
 struct Map { Button button; int index; };
 inline constexpr Map kButtons[] = {
     {South,          0},   // slot 4   Action / Utiliser     (the UI's confirm)
@@ -54,8 +61,40 @@ inline constexpr Map kButtons[] = {
     {LeftShoulder,   6},   // slot 10  Pas de cote / Glisser a gauche
     {RightShoulder,  7},   // slot 11  Courir / Glisser a droite
     {RightStickDown, 8},   // slot 12  Regarder En-Bas
-    {Back,           9},   // slot 13  Ouvrir sneak / Arme   (the UI's close)
 };
+
+// THE AVENTURE GROUP'S LAYOUT (group 0 - also what the screens run under):
+// the sneak, which only this group binds, on TRIANGLE / Y (North) - button
+// 9, also the UI's close, so the same button shuts it - and `Vue premiere
+// personne`, which North carried, on SQUARE / X (West), whose button 2 this
+// group leaves unbound.
+inline constexpr Map kAventure[] = {
+    {South,          0},   // slot 4   Action / Utiliser
+    {East,           1},   // slot 5   Annuler / Sauter
+    {West,           3},   // slot 7   Vue premiere personne
+    {North,          9},   // slot 13  Ouvrir sneak          (the UI's close)
+    {RightStickSide, 4},
+    {RightStickUp,   5},
+    {LeftShoulder,   6},   // slot 10  Pas de cote
+    {RightShoulder,  7},   // slot 11  Courir
+    {RightStickDown, 8},
+};
+// THE SHOOT GROUP'S (group 2, `Shoot_Enter`'s): `Arme` on TRIANGLE / Y -
+// button 9, where SELECT carried it - whose button 3 this group leaves
+// unbound; the rest as `kButtons`.
+inline constexpr int kShootGroup = 2;
+inline constexpr Map kShoot[] = {
+    {South,          0},   // slot 4   Tir
+    {East,           1},   // slot 5   Sauter
+    {West,           2},   // slot 6   S'accroupir
+    {North,          9},   // slot 13  Arme
+    {RightStickSide, 4},   // slot 8   Action / Utiliser
+    {RightStickUp,   5},   // slot 9   Regarder En-Haut
+    {LeftShoulder,   6},   // slot 10  Glisser a gauche
+    {RightShoulder,  7},   // slot 11  Glisser a droite
+    {RightStickDown, 8},   // slot 12  Regarder En-Bas
+};
+
 
 // START is the menu key, ESCAPE on the keyboard: `Input::rebind` refuses code
 // 1 as a binding and `play.cpp` reads it straight from `HostInput::held`,
@@ -76,6 +115,12 @@ struct Pad {
     int lx = 0, ly = 0, rx = 0, ry = 0;
 };
 
+// SELECT / BACK as THE ORIGINAL/REMASTER SWITCH (`backends/remaster/
+// playremaster_mode.cpp`, F10's twin), in every group - the sneak and `Arme`,
+// which it carried, moved to TRIANGLE (the reader's, 2026-10-27). Not a
+// binding: the frontend reads it, as it reads START for ESCAPE.
+inline bool switchPressed(const Pad& p) { return (p.buttons & Back) != 0; }
+
 // Fold the right stick into its three button bits.
 inline std::uint32_t withRightStick(const Pad& p) {
     std::uint32_t b = p.buttons;
@@ -85,14 +130,20 @@ inline std::uint32_t withRightStick(const Pad& p) {
     return b;
 }
 
-// One frame of the pad -> the engine's joystick: button codes into
-// `joystick`, the axes into `joyX`/`joyY` (the d-pad drives them fully).
-// Adds to `joystick`; never clears what the caller put in. START is not here
-// (see `kEscape`).
-inline void toDevices(const Pad& p, DeviceState& st) {
+// One frame of the pad -> the engine's joystick under the installed GROUP
+// (`Input::group`): button codes into `joystick`, the axes into `joyX`/`joyY`
+// (the d-pad drives them fully). Adds to `joystick`; never clears what the
+// caller put in. START is not here (see `kEscape`), nor SELECT (the switch,
+// `switchPressed`).
+inline void toDevices(const Pad& p, DeviceState& st, int group) {
     const std::uint32_t b = withRightStick(p);
-    for (const auto& m : kButtons)
-        if (b & m.button) st.joystick.push_back(48 + m.index);
+    const auto feed = [&](const auto& layout) {
+        for (const auto& m : layout)
+            if (b & m.button) st.joystick.push_back(48 + m.index);
+    };
+    if (group == 0) feed(kAventure);
+    else if (group == kShootGroup) feed(kShoot);
+    else feed(kButtons);
     const auto dz = [](int v) { return (v > -kDeadZone && v < kDeadZone) ? 0 : v; };
     int x = dz(p.lx), y = dz(p.ly);
     if (b & DpadLeft)  x = -1000;

@@ -31,9 +31,13 @@ LDFLAGS  := -static-libstdc++ -static-libgcc
 DEPFLAGS := -MMD -MP
 
 # The same sets as Makefile: every src/ subsystem, every tool but the ones
-# that need a GPU backend.
+# that need a GPU backend - and those that need THE REMASTER, which this
+# build never defines (OMK_REMASTER; its modules - the PNG and KTX2 readers,
+# the font keys, the rounded bodies - compile empty here): the pack tools
+# `texpack_tool`, `tex_encode` and `font_hd`, and `smooth_probe`.
 SRC   := $(wildcard src/*/*.cpp)
-TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp,$(wildcard tools/*.cpp))
+TOOLS := $(filter-out tools/run_vulkan.cpp tools/shadow_probe.cpp tools/perpixel_probe.cpp tools/present_probe.cpp \
+                      tools/texpack_tool.cpp tools/tex_encode.cpp tools/font_hd.cpp tools/smooth_probe.cpp,$(wildcard tools/*.cpp))
 
 OUT      := build/ppc-darwin8
 OBJDIR   := $(OUT)/obj

@@ -306,7 +306,32 @@ key updated so the next start resumes in it.
 1. ✔ A1, the writer, with its round trip (`52cd093`).
 2. ✔ A2 + A2b + A3 + A4's kind 1: the pages, their texts, the reset, the
    live rows; every other row labelled for the next start.
-3. A4's kinds 2 and 3 made live one by one, every backend.
+3. A4's kinds 2 and 3 made live one by one, every backend - READ, NOT BUILT
+   (2026-10-27), in four sub-steps:
+   * 3a, the frontend's own: `shadowquality` and `lighting` are read per
+     frame (`playframe_world_*.cpp`); Vulkan always builds both
+     (`drawsPixelLights`/`drawsShadowMap` true), so they go live by the
+     field alone - gate on those two queries, as `playsetup_bodies.cpp:263`
+     does at start. Remaster strengths: live when ON AT START (their
+     resources - light maps, normal maps, floors.txt, lights.txt - load only
+     then); 0 -> on waits for the next start. Vulkan: `setBloom`, `setGrade`
+     any time, water/tint nothing to build; `setAmbientOcclusion` refuses
+     after the device - allow a strength change when `ao_ > 0` already.
+     So `OmkOptions::live` becomes per run (`setLive`, decided in
+     `omkOptionsOpen`).
+   * 3b, a GLES RELINK: `GlesRenderer::init`'s program half (lines
+     ~1614-1767) into its own function, re-run for a change of per-pixel
+     lighting, mapped shadows, bloom, water, body tint, emitter lights - the
+     new set linked FIRST and swapped in only if it links (the Vita's
+     shaders come from a precompiled cache).
+   * 3c, targets: MSAA, supersampling, upscale, AO - GLES re-inits targets
+     live already (row 2); Vulkan needs a rebuild of its target.
+   * 3d, re-upload: texture filter/anisotropy (mips at upload), the texture
+     pack, the rounded bodies (`remasterSmoothModel`, at model load).
+   * The instrument for all of them: `--omk-set key=value@frame` (a harness,
+     `playharness.cpp`, beside `harnessHideShow`), applied through
+     `omkOptionsServe`; each live path checked as "a live change at frame N
+     draws what a start with the setting draws".
 4. B: the strengths first, then the UI/font bypass, then the texture re-upload,
    then the bodies.
 

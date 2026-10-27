@@ -45,7 +45,11 @@ constexpr double kRainRoofRay = 4000.0;   // how far up a roof stops a drop (`kW
 constexpr float kRainBox = 1000.0f;       // the rain's box (`dword_4D0780`, `o3de/weather.cpp`)
 constexpr int kRainCopies = 3;            // the drops each original one brings
 constexpr float kRainGlow = 0.55f;        // a strip's brightness against the original line's
-constexpr float kRainNear = 80.0f;        // ...faded in over this from the eye
+// ...faded in from `kRainNearFrom` to `kRainNear` from the eye, smoothly: a drop
+// a step away is a long bright streak across the frame (the reader's "fade the
+// near streaks", 2026-10-27 - it was 0..80, linear)
+constexpr float kRainNearFrom = 40.0f;
+constexpr float kRainNear = 260.0f;
 constexpr float kRainLength = 32.0f;      // a streak's length in the world: half a frame's fall
 constexpr float kRainHalfPx = 1.5f;       // ...its half width in pixels at 480 lines, the texture's soft edge in it
 constexpr int kStreakW = 8, kStreakH = 32;   // the streak texture, across and along
@@ -172,7 +176,8 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         if (!(ppu > 0.0f)) continue;
         const float w = halfPx / ppu;
         // seen through: faint near the eye and far off
-        const float fade = std::clamp(pa.z / kRainNear, 0.0f, 1.0f) *
+        const float nearT = std::clamp((pa.z - kRainNearFrom) / (kRainNear - kRainNearFrom), 0.0f, 1.0f);
+        const float fade = nearT * nearT * (3.0f - 2.0f * nearT) *
                            std::clamp((kRainBox - pa.z) / (kRainBox * 0.4f), 0.0f, 1.0f);
         if (!(fade > 0.0f)) continue;
         // the original line's grey at its bright end (0xC0), the streak's

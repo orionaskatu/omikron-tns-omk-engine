@@ -1259,6 +1259,10 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   near drop's streak long and a far one's short. The leading end is the
   original line's bright one (its tail, ahead along the wind). Anekbah at
   frame 690: 7324 pixels on Vulkan, 7321 on GLES, overlap 1.000.
+* **The near streaks faded** (the reader on the third comparison: a drop a
+  step from the eye drew one long bright streak down the frame): faded in
+  smoothly from 40 to 260 units (it was linear over 0..80); Anekbah 538
+  drawn, 7139 pixels.
 * **Open**: the streaks lit by the lights round them (the neon, the
   burner - the tiled point lights); the snow in 3D.
 

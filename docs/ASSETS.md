@@ -2473,7 +2473,8 @@ second being an outstretched arm.
   into the 3D view's `+80` bits 2/4/8, and the view's display-list draw calls
   `sub_4815D0` whenever `+80 & 0xE`. Twelve areas ship a type - **1, the rain**:
   Anekbah, the Impasse and its airlock, the rooftops, Khonsu; **2, the snow**:
-  Mahaleel and SASNEIGE (which no zone or address reaches); **3**: Jaunpur,
+  Mahaleel (AREA 145, reached in play) and SASNEIGE (AREA 147, which no zone
+  or address reaches); **3**: Jaunpur,
   Boz's interior, the docks, the two rooftop streets - and **3 draws nothing**:
   `sub_481D90` is called on `test al, 4` alone, so its `sand.bmp` arm (size 15,
   speed 30, box 300) is unreachable. The cycle still runs there and posts its
@@ -2492,8 +2493,14 @@ second being an outstretched arm.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4
   for 200 ms (and posts NO 24 - the rain's track plays on) and restarts a
-  waiting one. In Mahaleel's ice cave the ceiling (`Neige01`) holds the snow
-  off for good: state 2 never runs its own case, so no flake is ever counted.
+  waiting one. In Mahaleel's ice cave (address 401, the area's default start)
+  the ceiling (`Neige01`) holds the snow off for as long as Kay'l stays under it:
+  state 2 never runs its own case, so no flake is counted. Out in the open
+  part it snows: measured 2026-10-27 at address 404 (10842, 63, 30678) and at
+  the plaza by the staged PLG actors (7400, -186, 32180), 200 flakes stepped and
+  46-67 drawn by frame 60. By the cycle as read (not yet run), once counted the
+  200 stay: walking back under the ceiling sends 2 to 4 and straight back to 2
+  without touching the count, so the cave then snows.
 * **The drops.** 200 points in a box a third of its size ahead of the eye,
   stepped per FRAME (no delta) and drawn from the position before the step.
   Rain: box 1000, `(0.5, 0.866, 0) x 64` a frame (0x4D0784/0x4D0788/0x657B3C

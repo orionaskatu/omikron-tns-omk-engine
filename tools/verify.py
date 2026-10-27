@@ -47182,7 +47182,10 @@ def c_engine_weather():
     message 23 run by AREA 0's handler, the music switching to track 119, the
     20 s ramp (29 drops at frame 90), state 2 at 200, streaks drawn; the same
     run at detail 1 - nothing; and Mahaleel's ice cave, where the roof ray
-    (196.85 up through the bolts' world) keeps the snow from ever starting.
+    (196.85 up through the bolts' world) keeps the snow from starting - and
+    the same area's OPEN AIR (address 404, `--stand 10842,63,30678`), where it
+    snows: 200 flakes stepped, more than 20 drawn by frame 60 (Mahaleel is
+    reached in play; SASNEIGE, AREA 147, is the unreachable snow area).
     And on macOS, the same street in a build with NO GPU window - the host
     `ppc-darwin.mk` gl1 build under the dummy driver, `OMK_GL1=0`, the
     software renderer alone: the ramp's 29 drops at frame 90 draw streaks
@@ -47190,7 +47193,8 @@ def c_engine_weather():
     GPU-window block, and such builds never rained).
 
     Shown to fail: the detail gate removed (the detail-1 run rains), the roof
-    ray ignored (the cave snows), the streaks not recorded (none drawn);
+    ray ignored (the cave snows), the roof ray always meeting a mesh (the
+    open air reads `None`), the streaks not recorded (none drawn);
     the call put back inside `if (gpuWindowBuild())` (the windowless leg
     reads `None`, while the Vulkan legs stay green).
     """
@@ -47218,6 +47222,8 @@ def c_engine_weather():
     o2 = run("0", street + ["--detail", "2"], 700, skip)
     o1 = run("0", street + ["--detail", "1"], 100, skip)
     oc = run("145", ["--detail", "2"], 70)
+    # the open air of the same area: address 404, no roof - it snows
+    oo = run("145", ["--stand", "10842,63,30678,0", "--detail", "2"], 70)
     # the build with no GPU window (macOS: the host gl1 build, software only)
     bare = "no window build here"
     if sys.platform == "darwin":
@@ -47236,17 +47242,21 @@ def c_engine_weather():
     quiet = ("row 7 is not 2" in o1, "message 23" in o1, "streaks and" in o1)
     cave = (re.search(r"frame 60: weather - state (\d+), (\d+) drops, nothing stepped "
                       r"\(a roof overhead\)", oc) or [None, None, None])
+    m = re.search(r"frame 60: weather - (\d+) drops stepped, 0 streaks and (\d+) flakes", oo)
+    open_air = (int(m.group(1)), int(m.group(2)) > 20) if m else None
     return (sorted((t, len(v)) for t, v in types.items()), posted[:1], music,
             [st for st, _ in states][:4], int(ramp.group(1)) if ramp else None,
             (int(full.group(1)), int(full.group(2)) > 20) if full else None, quiet,
-            (cave[1], cave[2]) if cave[0] else None, bare), \
+            (cave[1], cave[2]) if cave[0] else None, open_air, bare), \
            ([(1, 5), (2, 2), (3, 5)], [("23", "to its handler")], True,
             ["0", "0", "1", "2"], 29, (200, True), (True, False, False), ("2", "0"),
+            (200, True),
             (29, True) if sys.platform == "darwin" and bare != "no window build here" else bare), \
            "the AREA +176 types (rain, snow, the undrawn third) by count; Anekbah at " \
            "detail 2 past the first wait: message 23 handled, track 119, the states, the " \
            "ramp at frame 90, full strength drawing streaks; at detail 1 nothing; " \
-           "Mahaleel's cave: state 2, no flake, a roof overhead; and with no GPU window " \
+           "Mahaleel's cave: state 2, no flake, a roof overhead; Mahaleel's open air " \
+           "(address 404): 200 flakes stepped, more than 20 drawn; and with no GPU window " \
            "(host gl1, software): 29 drops at frame 90, streaks drawn"
 
 

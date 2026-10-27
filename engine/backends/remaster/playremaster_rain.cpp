@@ -12,6 +12,14 @@
 // original's 1-pixel line is at 640x480 (scaled with the frame's height).
 // The snow keeps the original's sprites. Vulkan and GLES (`kTakesWater`'s
 // backends). Compiled empty without OMK_REMASTER (`playremaster_off.cpp`).
+//
+// DENSER AND FAINTER than the original's lines (the reader, on the comparison
+// picture, 2026-10-27: half the original's box lies below the street, so the
+// 3D rain showed far fewer streaks): each drop brings `kRainCopies` more at
+// fixed offsets inside the same box, wrapped as the box wraps - they move with
+// it, so the cycle's count and its ramp hold - and every strip is `kRainGlow`
+// as bright, fading in over the first `kRainNear` units from the eye and out
+// over the box's far end: rain is seen through, not drawn over.
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
@@ -25,6 +33,13 @@
 
 namespace {
 constexpr double kRainRoofRay = 4000.0;   // how far up a roof stops a drop (`kWetSkyRay`'s)
+constexpr float kRainBox = 1000.0f;       // the rain's box (`dword_4D0780`, `o3de/weather.cpp`)
+constexpr int kRainCopies = 3;            // the drops each original one brings
+constexpr float kRainGlow = 0.55f;        // a strip's brightness against the original line's
+constexpr float kRainNear = 80.0f;        // ...faded in over this from the eye
+// the copies' offsets in the box, fixed (any spread that is not a lattice)
+constexpr float kRainOffsets[kRainCopies][3] = {
+    {317.0f, -251.0f, 173.0f}, {-211.0f, 389.0f, -443.0f}, {463.0f, 127.0f, -307.0f}};
 }  // namespace
 
 bool PlayState::remasterRainTake(const std::vector<omk::WeatherDrop>& drops, unsigned viewBits) {
@@ -44,9 +59,27 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     const omk::SoupRunBoxes* boxes = nullptr;
     for (const auto& ws : worldSlots)
         if (!ws.stem.empty() && ws.stem == worldSet) { shot = &ws.shotSoup; boxes = &ws.shotRunBoxes; }
-    const float s = std::clamp(rain3dStrength, 0.0f, 1.0f);
-    const float head[3] = {v.fogColour[0] / 255.0f * s, v.fogColour[1] / 255.0f * s, v.fogColour[2] / 255.0f * s};
-    const float tail = 192.0f / 255.0f * s;
+    const float s = std::clamp(rain3dStrength, 0.0f, 1.0f) * kRainGlow;
+    // the box's centre as the weather places it: a third of its size ahead
+    const float dv[3] = {v.cam.at[0] - v.cam.eye[0], v.cam.at[1] - v.cam.eye[1], v.cam.at[2] - v.cam.eye[2]};
+    const float dl = std::sqrt(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
+    if (!(dl > 0.0f)) return;
+    float centre[3];
+    for (int k = 0; k < 3; ++k) centre[k] = v.cam.eye[k] + dv[k] / dl * kRainBox / 3.0f;
+    // the original's drops and their copies, wrapped into the box
+    static std::vector<omk::WeatherDrop> all;
+    all.assign(rainDrops.begin(), rainDrops.end());
+    for (const auto& d : rainDrops)
+        for (const auto& o : kRainOffsets) {
+            omk::WeatherDrop c = d;
+            for (int k = 0; k < 3; ++k) {
+                float rel = d.p[k] - centre[k] + o[k];
+                rel -= kRainBox * std::floor((rel + kRainBox * 0.5f) / kRainBox);
+                c.p[k] = centre[k] + rel;
+                c.q[k] = c.p[k] + (d.q[k] - d.p[k]);
+            }
+            all.push_back(c);
+        }
     // the original's line is 1 pixel at 640x480: half a pixel each side,
     // scaled with the frame
     const float halfPx = 0.5f * std::max(1.0f, static_cast<float>(fb.h) / 480.0f);
@@ -58,7 +91,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         c.phase = -1.0f;
         return c;
     };
-    for (const auto& d : rainDrops) {
+    for (const auto& d : all) {
         if (shot && boxes) {
             const double p0[3] = {d.p[0], d.p[1], d.p[2]};
             const double up[3] = {0.0, -kRainRoofRay, 0.0};   // Y points down
@@ -78,6 +111,13 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         const float ppu = std::hypot(pb.x - pa.x, pb.y - pa.y);
         if (!(ppu > 0.0f)) continue;
         const float w = halfPx / ppu;
+        // seen through: faint near the eye and far off
+        const float fade = std::clamp(pa.z / kRainNear, 0.0f, 1.0f) *
+                           std::clamp((kRainBox - pa.z) / (kRainBox * 0.4f), 0.0f, 1.0f);
+        if (!(fade > 0.0f)) continue;
+        const float head[3] = {v.fogColour[0] / 255.0f * s * fade, v.fogColour[1] / 255.0f * s * fade,
+                               v.fogColour[2] / 255.0f * s * fade};
+        const float tail = 192.0f / 255.0f * s * fade;
         const float p0[3] = {d.p[0] - side[0] * w, d.p[1] - side[1] * w, d.p[2] - side[2] * w};
         const float p1[3] = {d.p[0] + side[0] * w, d.p[1] + side[1] * w, d.p[2] + side[2] * w};
         const float q0[3] = {d.q[0] - side[0] * w, d.q[1] - side[1] * w, d.q[2] - side[2] * w};
@@ -88,8 +128,9 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     }
     const std::size_t drawnDrops = rainGeo.corners.size() / 6;
     if (frameNo % 30 == 0) {
-        std::printf("frame %ld: the rain in the scene - %zu of %zu drops drawn, %d under a roof\n", frameNo,
-                    drawnDrops, rainDrops.size(), roofed);
+        std::printf("frame %ld: the rain in the scene - %zu of %zu drops drawn (the weather's %zu and %d each "
+                    "more), %d under a roof\n", frameNo, drawnDrops, all.size(), rainDrops.size(), kRainCopies,
+                    roofed);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed}});
     }

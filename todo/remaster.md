@@ -1221,8 +1221,15 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   135 drawn (the rest off screen or behind the eye).
 * Measured (M3, 640x480): the rain's pixels 2110 on Vulkan, 2109 on GLES,
   overlap 1.000. `verify.py: engine: rain 3d`.
-* **Open**: the density - a remaster could add drops where the original's
-  box is underground; the width at a grazing view; the snow in 3D.
+* **Denser and fainter** (the same day, the reader on the comparison
+  picture - "far fewer streaks"; asked whether transparency would help: yes,
+  rain is seen through): each drop brings three more at fixed offsets in the
+  same box (`kRainCopies`), wrapped as the box wraps, so they move with it
+  and the cycle's count and ramp hold; every strip 0.55 as bright
+  (`kRainGlow` - additive, so fainter is more see-through), faded in over the
+  first 80 units from the eye and out over the box's far 400. Anekbah at
+  frame 690: 573 of 800 drawn, 112 under a roof; 2762 pixels.
+* **Open**: the width at a grazing view; the snow in 3D.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

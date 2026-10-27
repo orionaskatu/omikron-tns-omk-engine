@@ -2498,9 +2498,23 @@ second being an outstretched arm.
   state 2 never runs its own case, so no flake is counted. Out in the open
   part it snows: measured 2026-10-27 at address 404 (10842, 63, 30678) and at
   the plaza by the staged PLG actors (7400, -186, 32180), 200 flakes stepped and
-  46-67 drawn by frame 60. By the cycle as read (not yet run), once counted the
-  200 stay: walking back under the ceiling sends 2 to 4 and straight back to 2
-  without touching the count, so the cave then snows.
+  46-67 drawn by frame 60. Once counted, the 200 STAY: walking back under the
+  ceiling, `sub_481200` sends 2 to 4 and case 4's snow arm sends it straight
+  back to 2 without touching `dword_4CFE1C` - and case 4 re-scatters all 200
+  every frame, so the cave then shows 200 flakes at fresh random places each
+  frame, a static rather than a fall (read off `sub_4815D0`/`sub_481200`, and
+  run 2026-10-27 on the port's `Weather`: cave, open, cave - count 0, 200,
+  200, the open air drifting 17.3 a frame, the cave jumping at random). The
+  original's quirk, kept.
+* **The screen bound, not the view.** Both draws keep a drop only if its two
+  points lie in `g_ScreenSize` - the whole screen - and the rain's software
+  line (`sub_4806C0`, mode 2) is clipped to `0..w-1 x 0..h-1`; the snow is a
+  DirectDraw `Blt` of a rectangle in screen coordinates. Nothing narrows
+  either to the 3D view, so with the camera-mode letterbox up (UI 3j) flakes
+  and streaks fall over the black bands too, as the port draws them. Open:
+  the D3D path of the rain's line (`DrawPrimitive` on pre-transformed
+  vertices) may be clipped to the viewport; no capture of the original
+  settles it.
 * **The drops.** 200 points in a box a third of its size ahead of the eye,
   stepped per FRAME (no delta) and drawn from the position before the step.
   Rain: box 1000, `(0.5, 0.866, 0) x 64` a frame (0x4D0784/0x4D0788/0x657B3C

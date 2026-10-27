@@ -32624,7 +32624,8 @@ def c_engine_bloom_and_grade():
               "if ((bloom_ > 0.0f && lightMapNow_) || lutN_ > 1) runPost();" in gl,
               # the GLES variant over both program sets (the plain one the
               # fallback, 2026-10-21)
-              "std::string f = bloom_ > 0.0f ? bloomVariant(base) : std::string(base);" in gl)
+              # (and kept once built, `bloomBuilt_`: the live relink keeps it, graphics menu 3b)
+              "std::string f = bloom_ > 0.0f || bloomBuilt_ ? bloomVariant(base) : std::string(base);" in gl)
 
     for target in ("build/texpack_tool",):
         mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
@@ -33454,7 +33455,8 @@ def c_engine_relief():
     src_ok = (bool(re.search(r"float\s+relief\s*=\s*0\.0f;", sh)),
               'kRemaster, "relief"' in sc and 'kEnhancements, "relief"' not in sc,
               "relief" not in max_body,
-              "!preset.empty() ? 2.0f : 0.0f;" in pre,
+              # the preset's 2.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("relief") : 0.0f;' in pre and '{"relief", 2.0f}' in sh,
               "vec3 relief(" in tiled and fs.count("relief(") == 2,
               bool(re.search(r"#ifdef OMK_TILED\s*\n\s*if \(pc\.lit == 3\) nL = relief\(", fs)),
               bool(re.search(r"#ifdef OMK_TILED\s*\n(//[^\n]*\n)*layout\(set = 0, binding = 3\) uniform sampler2D nmap;", fs))
@@ -33666,7 +33668,8 @@ def c_engine_floors():
     src_ok = (bool(re.search(r"float\s+floors\s*=\s*0\.0f;", sh)),
               'kRemaster, "floors"' in sc and 'kEnhancements, "floors"' not in sc,
               "floors" not in max_body,
-              "!preset.empty() ? 1.0f : 0.0f;" in pre,
+              # the preset's 1.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("floors") : 0.0f;' in pre and '{"floors", 1.0f}' in sh,
               "push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;" in vk,
               "if (lg.tiles != 0) {" in fs and "lg.tiles != 0 && pc.water != 2" not in fs)
     mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
@@ -33918,7 +33921,8 @@ def c_engine_mist():
     src_ok = (bool(re.search(r"float\s+mist\s*=\s*0\.0f;", sh)),
               'kRemaster, "mist"' in sc and 'kEnhancements, "mist"' not in sc,
               "mist" not in max_body,
-              "!preset.empty() ? 0.5f : 0.0f;" in pre,
+              # the preset's 0.5 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("mist") : 0.0f;' in pre and '{"mist", 0.5f}' in sh,
               "(pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0)" in fs)
     mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
@@ -35395,7 +35399,8 @@ def c_engine_ao():
     src_ok = (bool(re.search(r"float\s+ao\s*=\s*0\.0f;", sh)),
               'kRemaster, "ao"' in sc and 'kEnhancements, "ao"' not in sc,
               "ao" not in re.findall(r"take\w*\(s\.(\w+)", max_body),
-              "!preset.empty() ? 2.0f : 0.0f;" in pre,
+              # the preset's 2.0 from its table since graphics menu 3a (`kRemasterPreset`)
+              '!preset.empty() ? pv("ao") : 0.0f;' in pre and '{"ao", 2.0f}' in sh,
               # (TRANSIENT without the AO - lazily allocated, the 4K trims)
               "(aoOk_ ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)" in vk,
               "att[1].storeOp = aoOk_ ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;" in vk)

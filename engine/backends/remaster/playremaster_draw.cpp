@@ -10,6 +10,7 @@
 #include "o3de/colourgrade.h"
 #include "o3de/emitterlight.h"
 #include "o3de/floorreflect.h"
+#include "o3de/wetfloor.h"
 #include "o3de/lighttiles.h"
 #include "platform/env.h"
 #include "platform/events.h"
@@ -143,12 +144,49 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     }
     // ...and where it does not, the REFLECTING FLOORS (`o3de/floorreflect.h`):
     // the listed floor's level below the eye with the most of it near, through
-    // the same pass - one reflection a frame
+    // the same pass - one reflection a frame. And the WET ones
+    // (`o3de/wetfloor.h`): in a RAIN area, the floors under the open sky, as
+    // wet as the game's own shower is strong and drying after it
+    const float wet = wetStrength > 0.0f ? wetness.step(weatherRain, frameSec * 1000.0) : 0.0f;
+    const bool rainArea = weatherBitsTold != 0xFFFFu && (weatherBitsTold & 2u) != 0;
+    const float wetReflect = rainArea ? wetStrength * wet * omk::kWetReflect : 0.0f;
+    const float wetDarken = rainArea ? wetStrength * wet * omk::kWetDarken : 0.0f;
+    const bool wetOn = wetReflect > 0.0f && shownSlot.wet.any();
+    const bool listOn = floorStrength > 0.0f && shownSlot.floors.any();
     omk::WaterPlane floorPlane;
-    if (!watered && floorStrength > 0.0f && shownSlot.floors.any())
+    if (!watered && listOn)
         floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
+    if (!watered && wetOn) {
+        const omk::WaterPlane wp = omk::chooseFloor(shownSlot.wet.planes, drawn.cam.eye);
+        if (wp.found && (!floorPlane.found || wp.area > floorPlane.area)) floorPlane = wp;
+    }
+    // with the rain, the pass at 1 and each run its own: the listed floors'
+    // strength times `floors`, the wet ones' `wetReflect`
+    static std::vector<float> listed;
+    const std::vector<float>* listStrength = listOn ? &shownSlot.floors.strength : nullptr;
+    float passStrength = floorStrength;
+    if (wetOn) {
+        passStrength = 1.0f;
+        if (listOn) {
+            listed.assign(shownSlot.floors.strength.begin(), shownSlot.floors.strength.end());
+            for (auto& s : listed) s *= floorStrength;
+            listStrength = &listed;
+        }
+    }
     const bool floored = floorPlane.found &&
-        omk::drawWithWater(world, list, drawn, &shownSlot.geo, floorPlane, floorStrength, &shownSlot.floors.strength);
+        omk::drawWithWater(world, list, drawn, &shownSlot.geo, floorPlane, passStrength, listStrength,
+                           wetOn ? &shownSlot.wet.open : nullptr, wetReflect, wetDarken);
+    if (wetStrength > 0.0f && (wetOn != wetTold || frameNo % 30 == 0)) {
+        if (wetOn != wetTold)
+            std::printf("frame %ld: the wet floors %s (wetness %.2f, reflection %.2f)\n", frameNo,
+                        wetOn ? "REFLECT - the rain has wet the floors under the open sky"
+                              : "are dry (no rain here, or it has dried)",
+                        static_cast<double>(wet), static_cast<double>(wetReflect));
+        wetTold = wetOn;
+        omk::event("remaster.wet", {{"frame", frameNo}, {"rain", weatherRain}, {"wetness", wet},
+                                    {"reflect", wetReflect}, {"live", wetOn && floored},
+                                    {"y", static_cast<double>(floorPlane.y)}});
+    }
     if (floored != floorLive || (floored && floorPlane.y != floorLiveY)) {
         floorLive = floored;
         floorLiveY = floorPlane.y;

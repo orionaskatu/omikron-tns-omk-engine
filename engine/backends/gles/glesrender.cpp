@@ -1314,6 +1314,7 @@ private:
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
+        GLint wet = -1;                                                      // ...and a wet floor's film
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1396,6 +1397,7 @@ private:
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
         float tint[3] = {-1, -1, -1};
         float water = -1; int clip = -1;   // the water variant's
+        float wet = -1;                    // ...a wet floor's film
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1671,6 +1673,7 @@ bool GlesRenderer::linkScene() {
         L.litBase = glGetUniformLocation(p, "uLitBase");
         L.grey = glGetUniformLocation(p, "uGrey");
         L.water = glGetUniformLocation(p, "uWater");
+        L.wet = glGetUniformLocation(p, "uWet");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");

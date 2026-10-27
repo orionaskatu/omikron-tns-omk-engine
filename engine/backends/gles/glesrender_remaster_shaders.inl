@@ -96,13 +96,14 @@ std::string bloomVariant(const char* frag) {
 // adds the reflection (unit 4) at its screen position times `uWater`, 0 on
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
-    std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\n"
+    std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
     if (at != std::string::npos)
-        s.insert(at, "if (uWater > 0.0) {\n"
+        // ...over a WET floor's film first (`o3de/wetfloor.h`): the rain darkens it
+        s.insert(at, "c *= 1.0 - uWet;\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
                      "        c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater * f;\n"

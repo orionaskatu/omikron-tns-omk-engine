@@ -2515,6 +2515,10 @@ second being an outstretched arm.
   the D3D path of the rain's line (`DrawPrimitive` on pre-transformed
   vertices) may be clipped to the viewport; no capture of the original
   settles it.
+* **The remaster's wet floors** (not the original's - it wets nothing): the
+  shower's strength drives `[Remaster] wet`, the floors under the open sky by
+  this same roof world darkening and reflecting while it falls
+  (`o3de/wetfloor.h`, `todo/remaster.md` "The rain's wet floors").
 * **The drops.** 200 points in a box a third of its size ahead of the eye,
   stepped per FRAME (no delta) and drawn from the position before the step.
   Rain: box 1000, `(0.5, 0.866, 0) x 64` a frame (0x4D0784/0x4D0788/0x657B3C

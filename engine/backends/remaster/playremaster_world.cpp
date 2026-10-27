@@ -10,12 +10,14 @@
 #include "o3de/colourgrade.h"
 #include "o3de/emitterlight.h"
 #include "o3de/floorreflect.h"
+#include "o3de/wetfloor.h"
 #include "o3de/texpack.h"
 #include "platform/events.h"
 #include "platform/filmpack.h"
 #include "platform/movie.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <vector>
 
@@ -37,6 +39,21 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
     // (part B's switch) has its floors, probes and glows for the remaster's
     w.floors = remasterArmed("floors") > 0.0f ? omk::floorPlanes(w.geo, w.tex, omk::floorList(), L.stem)
                                               : omk::FloorPlanes{};
+    // ...and its floors under the OPEN SKY, for the rain to wet
+    // (`o3de/wetfloor.h`): the shot soup's roofs, the original's own
+    if (remasterArmed("wet") > 0.0f) {
+        const auto t0 = std::chrono::steady_clock::now();
+        w.wet = omk::wetFloors(w.geo, w.shotSoup, w.shotRunBoxes);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("wet: set %s - %zu floor triangles under the open sky (%.0f m2), %zu covered (%.0f m2), "
+                    "%zu levels; %.0f ms\n", L.stem.c_str(), w.wet.openTris, w.wet.openArea / 1550.0,
+                    w.wet.coveredTris, w.wet.coveredArea / 1550.0, w.wet.planes.levels.size(), ms);
+        omk::event("world.wet", {{"set", L.stem}, {"open", static_cast<long>(w.wet.openTris)},
+                                 {"covered", static_cast<long>(w.wet.coveredTris)},
+                                 {"levels", static_cast<long>(w.wet.planes.levels.size())}});
+    } else {
+        w.wet = omk::WetFloors{};
+    }
     if (remasterArmed("bodylight") > 0.0f) {
         w.probes.build(w.geo);
         omk::event("world.probes", {{"set", L.stem}, {"mean", static_cast<double>(w.probes.meanLuma())}});
@@ -124,8 +141,9 @@ void PlayState::remasterConfigure(omk::Renderer& r) {
         omk::event("texpack.normals", {{"on", omk::texturePack().normals()}, {"relief", r.drawsRelief()}});
     if (upscale > 1.0f) r.setUpscale(upscale);   // in the supersample's place
     if (bloomStrength > 0.0f) r.setBloom(bloomStrength);
-    if (std::max(waterStrength, floorStrength) > 0.0f)   // the floors ride on the water's pass
-        r.setWater(std::max(waterStrength, floorStrength));
+    // the floors, listed or wet, ride on the water's pass
+    if (std::max({waterStrength, floorStrength, wetStrength}) > 0.0f)
+        r.setWater(std::max({waterStrength, floorStrength, wetStrength}));
     if (bodyLight > 0.0f) r.setBodyTint(true);
     if (fxLight > 0.0f) r.setEmitterLights(true);
 }
@@ -178,6 +196,7 @@ bool PlayState::remasterApplyLive(const std::string& key, float v) {
     }
     if (key == "water")     { waterStrength = v; return true; }
     if (key == "floors")    { floorStrength = v; return true; }
+    if (key == "wet")       { wetStrength = v; return true; }
     if (key == "relief")    { relief = v; return true; }
     if (key == "bodylight") { bodyLight = v; return true; }
     if (key == "ao") {

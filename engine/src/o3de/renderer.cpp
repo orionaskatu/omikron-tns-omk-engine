@@ -331,7 +331,8 @@ float groundLevel(const Geometry& g) {
 
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
-                   const std::vector<float>* floorStrength) {
+                   const std::vector<float>* floorStrength,
+                   const std::vector<std::uint8_t>* wetTris, float wetReflect, float wetDarken) {
     if (!wp.found || strength <= 0.0f || !setGeo || !r.drawsWater()) return false;
     // above the water: the game's Y points DOWN, so a smaller y
     if (v.cam.eye[1] >= wp.y - 1.0f) return false;
@@ -340,10 +341,12 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     const auto onPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= 4.0f; };
     bool floored = false;
     for (const auto& d : draws) {
-        if (floorStrength) {
+        if (floorStrength || wetTris) {
             // THE FLOORS: a listed floor's runs on the plane reflect, in place
+            // - and a WET one's (`o3de/wetfloor.h`), triangle by triangle
             float s = 0.0f;
-            if (d.geo == setGeo && d.blend == Blend::Opaque && !d.meshPose) {
+            const bool setOpaque = d.geo == setGeo && d.blend == Blend::Opaque && !d.meshPose;
+            if (setOpaque && floorStrength) {
                 const auto& bs = d.geo->batches;
                 const auto b = std::upper_bound(bs.begin(), bs.end(), d.start,
                                                 [](std::size_t at, const Batch& x) { return at < x.start; });
@@ -353,20 +356,28 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                         s = (*floorStrength)[static_cast<std::size_t>(bb.material)];
                 }
             }
-            if (s <= 0.0f) { scene.push_back(d); continue; }
+            const bool wet = setOpaque && wetTris && wetReflect > 0.0f;
+            if (s <= 0.0f && !wet) { scene.push_back(d); continue; }
             const Geometry& g = *d.geo;
             std::size_t runStart = d.start;
-            int runKind = -1;
+            float runValue = -1.0f, runWet = 0.0f;
             const auto flush = [&](std::size_t end) {
-                if (runKind < 0 || end <= runStart) return;
+                if (runValue < 0.0f || end <= runStart) return;
                 Draw o = d; o.start = runStart; o.count = end - runStart;
-                o.reflect = runKind ? s : 0.0f;
-                floored |= runKind == 1;
+                o.reflect = runValue;
+                o.wet = runWet;
+                floored |= runValue > 0.0f;
                 scene.push_back(o);
             };
             for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
-                const int kind = onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2]) ? 1 : 0;
-                if (kind != runKind) { flush(t); runStart = t; runKind = kind; }
+                const bool open = wet && t / 3 < wetTris->size() && (*wetTris)[t / 3];
+                float value = 0.0f;
+                if (onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2])) {
+                    value = s;
+                    if (open) value = std::max(value, wetReflect);
+                }
+                const float dark = open ? wetDarken : 0.0f;
+                if (value != runValue || dark != runWet) { flush(t); runStart = t; runValue = value; runWet = dark; }
             }
             flush(d.start + d.count);
             continue;

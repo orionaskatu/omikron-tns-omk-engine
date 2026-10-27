@@ -247,7 +247,9 @@ struct Push {
     // alpha written is the texel's LIGHT, from the pack's light map
     int32_t bloomMode; // 116
     // THE WATER REFLECTION (`todo/remaster.md` A3): a water draw adds the
-    // reflection (binding 2) times the strength; 0 on every other draw
+    // reflection (binding 2) times the strength; 0 on every other draw. The
+    // low four bits the mode; above them a WET floor's darkening, 0..255
+    // (`Draw::wet`, `o3de/wetfloor.h`)
     int32_t water;     // 120
     float waterStrength; // 124
 };
@@ -3646,6 +3648,10 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     // its own strength - in the frame's pass, never the reflection's
     const bool floorNow = !reflectingNow_ && d.reflect > 0.0f;
     push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;
+    // ...and a WET floor's darkening (`Draw::wet`), in the mode's high bits -
+    // the block is full: 0..255 above the low four
+    if (!reflectingNow_ && d.wet > 0.0f)
+        push_.water |= static_cast<int32_t>(std::lround(std::min(d.wet, 1.0f) * 255.0f)) << 4;
     push_.waterStrength = reflectingNow_ ? waterY_ : floorNow ? waterStrength_ * d.reflect : waterStrength_;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;

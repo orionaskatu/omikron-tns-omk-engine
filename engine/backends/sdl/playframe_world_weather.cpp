@@ -4,6 +4,7 @@
 #include "playframe.h"
 #include "platform/env.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 // `sub_4815D0`'s frame: the gate, the roof ray, the cycle, the drops through
@@ -13,6 +14,7 @@ void PlayState::weatherFrame(const omk::View& v) {
     OMK_ZONE("world: weather");   // the profiler (todo/debug-tools.md 6)
     weatherLines.clear();
     weatherFlakes.clear();
+    weatherRain = 0.0f;
     auto& session = *session_;
     weatherClockMs += frameSec * 1000.0;
     // `OMK_WEATHER_SKIP_MS=N`: an INSTRUMENT - the weather's clock jumps N ms
@@ -66,6 +68,11 @@ void PlayState::weatherFrame(const omk::View& v) {
         std::printf("frame %ld: weather - message %d posted (Game_RaiseEvent 43) %s\n",
                     frameNo, m, ran ? "to its handler" : "- no handler subscribes");
     });
+    // the RAIN's strength for the remaster's wet floors (`o3de/wetfloor.h`):
+    // its drops over their 200, the snow and the undrawn third none
+    if (viewBits & 2u)
+        weatherRain = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
+                      static_cast<float>(omk::kWeatherDrops);
     if (weather.state() != weatherStateTold) {
         weatherStateTold = weather.state();
         std::printf("frame %ld: weather - state %d, %d drops%s, next change at %ld ms (now %ld)\n",

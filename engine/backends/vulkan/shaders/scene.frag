@@ -59,7 +59,9 @@ layout(push_constant) uniform Push {
     // adds the reflected scene (binding 2) at its own screen position, times
     // `waterStrength`; 2 this is the REFLECTION pass, and `waterStrength` is
     // the water's height - what lies below it is discarded; 3 a REFLECTING
-    // FLOOR's draw, as 1 with its relief (`o3de/floorreflect.h`); 0 otherwise
+    // FLOOR's draw, as 1 with its relief (`o3de/floorreflect.h`); 0 otherwise.
+    // Those are the LOW FOUR BITS: above them a WET floor's darkening, 0..255
+    // (`o3de/wetfloor.h`) - `waterMode` and `wetFilm` below
     int   water;          // 120
     float waterStrength;  // 124
 } pc;
@@ -273,6 +275,8 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 #endif
 
 void main() {
+    int waterMode = pc.water & 15;                            // the water's mode (`Push`)
+    float wetFilm = float((pc.water >> 4) & 255) / 255.0;     // a wet floor's darkening
 #ifdef OMK_LATE_DEPTH
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
@@ -300,7 +304,7 @@ void main() {
     // `textureGrad`; the colour read above them stays as the original's.
     vec2 gradUV[2] = vec2[2](dFdx(vUV / texels), dFdy(vUV / texels));
     vec3 gradW[2] = vec3[2](dFdx(vWorld), dFdy(vWorld));
-    if (pc.water == 2 && vWorld.y > pc.waterStrength) discard;   // below the water (Y is down)
+    if (waterMode == 2 && vWorld.y > pc.waterStrength) discard;   // below the water (Y is down)
     // Alpha is the KEY, written at upload: 0 on a black texel, 1 elsewhere.
     // Under the nearest sampler (the original's) this is exactly the old
     // `rgb == 0` test on the same texel. Under the bilinear ENHANCEMENT the
@@ -370,7 +374,7 @@ void main() {
     // 63% of the light at strength 1 (40 m read as nothing over a street). Not in the water's reflection pass
     // (its eye is the frame's); 0 nothing. The batches it takes are the ones
     // the game fogs - or, its fog off, the ones the backend marks -1 / -1.
-    if (lg.fx.y > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && pc.water != 2) {
+    if (lg.fx.y > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2) {
         float H = max(lg.fx.w, 1.0);
         float h0 = max(lg.fx.z - lg.eye.y, 0.0), h1 = max(lg.fx.z - vWorld.y, 0.0);
         float dist = length(vWorld - lg.eye.xyz);
@@ -385,20 +389,23 @@ void main() {
     // lookup broken up by the floor's RELIEF where the pack has its normal
     // map (the tiled module's, as the relief reads it) - the slope shifts it, up to
     // ~1% of the frame's height. The water's mode 1 is as it was.
-    if (pc.water == 1 || pc.water == 3) {
+    // A WET floor (`o3de/wetfloor.h`): the rain's film darkens it, and its
+    // reflection, if it has one, is added over the darker ground
+    c *= 1.0 - wetFilm;
+    if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
         vec2 rs = vec2(textureSize(refl, 0));
         // (a floor's reflection is at HALF size, in the image's top-left quarter)
-        float k = pc.water == 3 ? 0.5 : 1.0;
+        float k = waterMode == 3 ? 0.5 : 1.0;
         vec2 at = gl_FragCoord.xy * k;
 #ifdef OMK_TILED
-        if (pc.water == 3) {
+        if (waterMode == 3) {
             vec4 nm = textureGrad(nmap, vUV / texels, gradUV[0], gradUV[1]);
             if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
         }
 #endif
-        if (pc.water == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
+        if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         c += texture(refl, at / rs).rgb * pc.waterStrength * f;
     }
     // THE ALPHA, read by the post-pass (`post.frag`, `ao.frag`): 0 on a BODY

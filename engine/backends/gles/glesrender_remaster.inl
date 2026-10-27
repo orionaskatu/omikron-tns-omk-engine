@@ -369,6 +369,7 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
             glUseProgram(p);
             glUniform1i(glGetUniformLocation(p, "uRefl"), 4);
             glUniform1f(glGetUniformLocation(p, "uWater"), 0.0f);
+            glUniform1f(glGetUniformLocation(p, "uWet"), 0.0f);
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
@@ -481,6 +482,12 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
     if (set(!uv || U.water != w)) {
         glUniform1f(L.water, w);
         U.water = w;
+    }
+    // ...and a WET floor's film (`Draw::wet`), in the frame's pass alone
+    const float film = reflectingNow_ ? 0.0f : std::min(d.wet, 1.0f);
+    if (set(!uv || U.wet != film)) {
+        glUniform1f(L.wet, film);
+        U.wet = film;
     }
     if (waterNow_ || floorNow) {
         // (a floor samples the half-size reflection: half the scale)

@@ -315,6 +315,11 @@ struct Draw {
     // water does, at this times the pass's strength. 0 on every other draw;
     // set only by `drawWithWater`, for its own frame.
     float           reflect          = 0.0f;
+    // A WET FLOOR's draw (`o3de/wetfloor.h`, the remaster's): its colour
+    // darkened by this fraction, the rain's film - with or without `reflect`
+    // (a wet floor off the frame's plane darkens only). Set only by
+    // `drawWithWater`, for its own frame.
+    float           wet              = 0.0f;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and
@@ -726,9 +731,16 @@ float groundLevel(const Geometry& g);
 // material of `setGeo` (null for the water), and `wp` the floor's plane. The
 // listed floors' triangles on it stay in the scene, IN ORDER (a decal and a
 // depth tie ride on it), each run carrying its `Draw::reflect`.
+// ...and the WET FLOORS (`o3de/wetfloor.h`): `wetTris` one byte per triangle
+// of `setGeo`, 1 under the open sky, whose triangles on the plane reflect at
+// `wetReflect` too (the larger of it and their material's), and every one of
+// them, on the plane or not, darkened by `wetDarken` (`Draw::wet`). Either
+// list may be null; both null is the water.
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
-                   const std::vector<float>* floorStrength = nullptr);
+                   const std::vector<float>* floorStrength = nullptr,
+                   const std::vector<std::uint8_t>* wetTris = nullptr, float wetReflect = 0.0f,
+                   float wetDarken = 0.0f);
 #endif  // OMK_REMASTER
 
 }  // namespace omk

@@ -102,6 +102,7 @@ struct PlayState {
     std::string & remasterFlag = opt.remasterFlag;
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
+    float & wetFlag = opt.wetFlag;
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
     float & preloadFlag = opt.preloadFlag;
@@ -710,6 +711,9 @@ struct PlayState {
     float bloomStrength{};
     float waterStrength{};   // the water reflection's, 0 off
     float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
+    float wetStrength{};     // the wet floors', 0 off (`o3de/wetfloor.h`)
+    omk::Wetness wetness{};  // ...how wet they are now, after the shower
+    bool wetTold{};          // ...whether the log last said they reflect
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
@@ -1116,6 +1120,7 @@ struct PlayState {
     bool weatherSnowTried = false;
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
+    float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

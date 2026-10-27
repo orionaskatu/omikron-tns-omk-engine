@@ -61,7 +61,7 @@ void PlayState::remasterSetup() {
                 if (presetPack.empty() && omk::hostfs::isDirectory(preset + sub)) presetPack = preset + sub;
             if (omk::hostfs::isDirectory(preset + "/grades")) presetGrades = preset + "/grades";
             std::printf("remaster: %s - the preset: texture pack %s, bloom %s, grades %s, water %s, body light %s, "
-                        "fx light %s, relief %s, ao %s, floors %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
+                        "fx light %s, relief %s, ao %s, floors %s, wet %s, mist %s, smooth %s (a specific flag or key beats each)\n", preset.c_str(),
                         presetPack.empty() ? "none found" : presetPack.c_str(),
                         bloomFlag >= 0.0f || settings.bloomSource == omk::Settings::Source::Ini ? "as set" : pvText("bloom").c_str(),
                         presetGrades.empty() ? "none found" : presetGrades.c_str(),
@@ -71,6 +71,7 @@ void PlayState::remasterSetup() {
                         reliefFlag >= 0.0f || settings.reliefSource == omk::Settings::Source::Ini ? "as set" : pvText("relief").c_str(),
                         aoFlag >= 0.0f || settings.aoSource == omk::Settings::Source::Ini ? "as set" : pvText("ao").c_str(),
                         floorsFlag >= 0.0f || settings.floorsSource == omk::Settings::Source::Ini ? "as set" : pvText("floors").c_str(),
+                        wetFlag >= 0.0f || settings.wetSource == omk::Settings::Source::Ini ? "as set" : pvText("wet").c_str(),
                         mistFlag >= 0.0f || settings.mistSource == omk::Settings::Source::Ini ? "as set" : pvText("mist").c_str(),
                         smoothFlag >= 0.0f || settings.smoothSource == omk::Settings::Source::Ini ? "as set" : pvText("smooth").c_str());
             omk::event("remaster.preset", {{"dir", preset}, {"pack", presetPack}, {"grades", presetGrades}});
@@ -166,6 +167,15 @@ void PlayState::remasterSetup() {
         floorStrength = floorsFlag >= 0.0f ? floorsFlag
                       : settings.floorsSource == omk::Settings::Source::Ini ? settings.floors
                       : !preset.empty() ? pv("floors") : 0.0f;
+        // the WET FLOORS (`o3de/wetfloor.h`): its flag, its key, the preset's 1 -
+        // no list: every level floor under the open sky, in a rain area
+        wetStrength = wetFlag >= 0.0f ? wetFlag
+                    : settings.wetSource == omk::Settings::Source::Ini ? settings.wet
+                    : !preset.empty() ? pv("wet") : 0.0f;
+        if (wetStrength > 0.0f)
+            std::printf("wet: %.2f - a REMASTER feature: the game's rain wets the floors under the open sky, "
+                        "drawn by Vulkan and GLES only; the rain needs option row 7 at 2\n",
+                        static_cast<double>(wetStrength));
         // the WATER reflection: its flag, its key, then the preset's 0.6 (0.35 before the Fresnel, 2026-10-20)
         waterStrength = waterFlag >= 0.0f ? waterFlag
                       : settings.waterSource == omk::Settings::Source::Ini ? settings.water
@@ -270,7 +280,7 @@ void PlayState::remasterSetup() {
     // (`remasterApplyLive`) and the switch brings back: only one ON here had
     // its resources loaded
     remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
-                        {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
+                        {"wet", wetStrength}, {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
                         {"bodylight", bodyLight}, {"fxlight", fxLight}};
 }
 

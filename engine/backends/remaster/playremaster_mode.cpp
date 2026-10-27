@@ -27,13 +27,14 @@
 
 namespace {
 // the strengths the switch holds - each read by the frame
-constexpr const char* kHeld[] = {"bloom", "water", "floors", "mist", "relief", "ao", "bodylight", "fxlight"};
+constexpr const char* kHeld[] = {"bloom", "water", "floors", "wet", "mist", "relief", "ao", "bodylight", "fxlight"};
 }  // namespace
 
 float* PlayState::remasterStrength(const std::string& key) {
     if (key == "bloom") return &bloomStrength;
     if (key == "water") return &waterStrength;
     if (key == "floors") return &floorStrength;
+    if (key == "wet") return &wetStrength;
     if (key == "mist") return &mistStrength;
     if (key == "relief") return &relief;
     if (key == "ao") return &aoStrength;

@@ -244,7 +244,7 @@
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
 ; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
 ; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, mist 0.5, smooth 0.75, preload 15
+; relief 2, ao 2, floors 1, wet 1, mist 0.5, smooth 0.75, preload 15
 ; (`kRemasterPreset` in engine/src/platform/settings.h).
 ;dir = /path/to/omk-pack
 ;
@@ -289,7 +289,10 @@
 ; painted light (0..1); the set's flames and glows lighting what is near
 ; them (0..4); the textures' relief under those lights (0..4, Vulkan); the
 ; ambient occlusion at contacts (0..4, Vulkan); the floors floors.txt lists
-; reflecting (0..1); a height mist in each city's fog colour (0..1, Vulkan).
+; reflecting (0..1); the floors under the open sky wet by the game's own
+; rain, darker and reflecting while it falls and drying after (0..1; the rain
+; needs Niveau de detail at 2); a height mist in each city's fog colour (0..1,
+; Vulkan).
 ;bloom = 0
 ;water = 0
 ;bodylight = 0
@@ -297,6 +300,7 @@
 ;relief = 0
 ;ao = 0
 ;floors = 0
+;wet = 0
 ;mist = 0
 ;
 ; Not in the preset - a frame rate's choice, not a look: the frame drawn

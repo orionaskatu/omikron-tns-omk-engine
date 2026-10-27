@@ -199,7 +199,7 @@ What the rows carry - the choices are the keys' own values:
 | | Animation | `animation` | game / smooth |
 | | Distance de vue illimitée | `clipdistance = 0` | non / oui |
 | Remaster | Remaster | `dir` | off / the folder found |
-| | Bloom, Eau, Sols, Brume, Relief, Occlusion, Lumière des corps, Lumière des effets, Personnages arrondis | `bloom` `water` `floors` `mist` `relief` `ao` `bodylight` `fxlight` `smooth` | sliders, 0 to the key's top |
+| | Bloom, Eau, Sols, Sols mouillés, Brume, Relief, Occlusion, Lumière des corps, Lumière des effets, Personnages arrondis | `bloom` `water` `floors` `wet` `mist` `relief` `ao` `bodylight` `fxlight` `smooth` | sliders, 0 to the key's top |
 | | Mise à l'échelle | `upscale` | 1 / 1.5 / 2 / 3 |
 | | Préchargement | `preload` | 0 / 15 / 25 m |
 

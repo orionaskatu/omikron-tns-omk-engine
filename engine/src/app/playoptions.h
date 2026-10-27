@@ -143,6 +143,7 @@ struct PlayOptions {
     std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four
     float waterFlag = -1.0f;      // --water S, [Remaster] water; < 0 = the settings'
     float floorsFlag = -1.0f;     // --floors S, [Remaster] floors; < 0 = the settings'
+    float wetFlag = -1.0f;        // --wet S, [Remaster] wet; < 0 = the settings'
     float mistFlag = -1.0f;       // --mist S, [Remaster] mist; < 0 = the settings'
     float upscaleFlag = -1.0f;    // --upscale F, [Remaster] upscale; < 0 = the settings'
     float preloadFlag = -1.0f;    // --preload M, [Remaster] preload; < 0 = the settings'
@@ -157,7 +158,7 @@ struct PlayOptions {
     bool anyRemaster() const {
         return !texturePackFlag.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
                !gradeFlag.empty() || !remasterFlag.empty() || !smoothSkipFlag.empty() || bloomFlag > 0.0f ||
-               waterFlag > 0.0f || floorsFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
+               waterFlag > 0.0f || floorsFlag > 0.0f || wetFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
                bodyLightFlag > 0.0f || fxLightFlag > 0.0f || reliefFlag > 0.0f || smoothFlag > 0.0f || aoFlag > 0.0f;
     }
     // `--dither 0|1`. NOT an enhancement: `sub_4638C0` sets D3DRENDERSTATE 26

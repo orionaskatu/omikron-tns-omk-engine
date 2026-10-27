@@ -243,6 +243,10 @@ struct Settings {
     // (`o3de/floorreflect.h`), S times each one's strength. 0 = off.
     float  floors = 0.0f;
     Source floorsSource = Source::Default;
+    // `wet = S`: the RAIN WETS THE FLOORS under the open sky (`o3de/wetfloor.h`)
+    // while the game's own shower falls, S times their reflection. 0 = off.
+    float  wet = 0.0f;
+    Source wetSource = Source::Default;
     // `mist = S`: the MIST, a height fog in the set's fog colour (`View::mist`). 0 = off.
     float  mist = 0.0f;
     Source mistSource = Source::Default;
@@ -303,7 +307,7 @@ struct Settings {
     bool anyRemaster() const {
         return !texturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
                !grade.empty() || !remasterDir.empty() || !smoothSkip.empty() || bloom > 0.0f || water > 0.0f ||
-               floors > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
+               floors > 0.0f || wet > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
                smooth > 0.0f || fxLight > 0.0f || bodyLight > 0.0f;
     }
 
@@ -476,6 +480,7 @@ inline constexpr RemasterPresetValue kRemasterPreset[] = {
     {"bloom", 1.6f},     // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
     {"water", 0.6f},     // 0.35 before the Fresnel (2026-10-20)
     {"floors", 1.0f},
+    {"wet", 1.0f},
     {"mist", 0.5f},      // the reader's, from a sheet of 0, 0.5 and 1 (2026-10-21)
     {"relief", 2.0f},    // 2 once the pack's generated normal maps came
     {"ao", 2.0f},        // confirmed in play at 2 (2026-10-21)

@@ -1133,6 +1133,51 @@ on Qalisar's street and at Jaunpur's canal.
 * Open: GLES; the mist in the reflections; a lighter haze by day if the
   day's fog colours want it (unseen: the save's clock is evening).
 
+## The rain's wet floors: as built (2026-10-27)
+
+The reader's "how could the weather be improved in remaster mode (ex: wet
+floor when raining)", then "go with 1 + 2" - 1 the floors wet by the game's
+own shower, 2 a map of what is open to the sky so a floor under a roof stays
+dry. The game's rain is docs/ASSETS.md 4e: Anekbah, the Impasse and its
+airlock, the rooftops, Khonsu; one shower every ~11-18 minutes of wall clock,
+only at *Niveau de détail* 2.
+
+* `[Remaster] wet = S` / `--wet S` (0..1), the `--remaster` preset's **1**,
+  off unless named; OMK's Remaster page "Sols mouillés" / "Wet floors".
+  Vulkan and GLES (the floors' pass). `o3de/wetfloor.{h,cpp}`, compiled empty
+  without OMK_REMASTER; the frame's half in `playremaster_draw.cpp`.
+* **Which floors** (`wetFloors`, at the set's load, ~100 ms for Anekbah):
+  every OPAQUE triangle of the set FACING UP within ~20 degrees of level
+  (`kWetFlat` 0.94 - a third of Anekbah's street is gently sloped, and a
+  level-only rule left it dry along a triangle edge; the floors wind with the
+  normal's y negative, 4576 to 97 on the street, so a ceiling is not one).
+* **Open to the sky, the original's own roof**: four rays straight up
+  (`kWetSkyRay` 4000, ~100 m) from the triangle's centre and three points
+  halfway to its corners, through the set's SHOT soup - `sub_481200`'s
+  world, the bolts' - open when three or more meet nothing. Per TRIANGLE, on
+  the CPU, so no shader carries a sky map: Anekbah 9913 open, 2217 covered.
+  The edges between wet and dry are triangle edges (a street triangle is a
+  few square metres) - a per-pixel map is the refinement if they show.
+* **How wet** (`Wetness`): as wet as the rain is strong - the weather's drops
+  over 200 (`weatherRain`, set by `weatherFrame`) - and drying linearly over
+  2 minutes after (`kWetDryMs`); only where the area's weather is the RAIN,
+  so a city left behind does not carry its puddles indoors. No rain (row 7
+  not 2, a dry area, the dry wait) - no change at all, byte for byte.
+* **What it does to them**: every wet triangle darkens by `wet x wetness x
+  0.35` (`Draw::wet`; Vulkan carries it in the push block's `water` int above
+  its four mode bits - the block is full at 128 bytes; GLES as `uWet` in the
+  water variant); those on the frame's plane - the LEVEL ones, by
+  `chooseFloor` over the wet planes or the listed floors, the larger near the
+  eye - reflect at `wet x wetness x 0.5` through the floors' pass, with the
+  water's Fresnel. The listed floors keep their own strength beside it.
+* Measured (M3, Anekbah's street at full rain, 640x480): 109969 pixels moved
+  on Vulkan, 109950 on GLES. `verify.py: engine: wet floors`.
+* **Next, not built**: ripples on the wet floors (the relief's normal-map
+  path, animated); the rain itself in 3D, depth-tested and stopped by the
+  same roofs; the mist and the grade answering the shower; the snow
+  settling on Mahaleel's open ground. The cave's snow static
+  (ASSETS 4e) is the original's and stays in both modes.
+
 ## Tier E - the interface pack: as built (2026-10-22)
 
 The reader's "do the upscaled interface". `--ui-pack DIR` / `[Remaster]

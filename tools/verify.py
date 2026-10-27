@@ -33558,8 +33558,8 @@ def c_engine_relief():
               and "nm.a > 0.0" in tiled,
               # no implicit LOD past a non-uniform discard (2026-10-25)
               "texture(" not in body.replace("textureGrad(", "").replace("textureSize(", "") and "dFd" not in body
-              and mainf.index("gradUV[2] =") < mainf.index("pc.water == 2 && vWorld.y")
-              and mainf.index("gradW[2] =") < mainf.index("pc.water == 2 && vWorld.y")
+              and mainf.index("gradUV[2] =") < mainf.index("waterMode == 2 && vWorld.y")
+              and mainf.index("gradW[2] =") < mainf.index("waterMode == 2 && vWorld.y")
               and "texture(nmap" not in fs and "textureGrad(emis" in mainf)
     mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
     if mk.returncode != 0:
@@ -33833,6 +33833,117 @@ def c_engine_floors():
         "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
         "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
         "lights, and on GLES - where Vulkan's do"
+
+
+def c_engine_wet_floors():
+    r"""THE RAIN'S WET FLOORS - the remaster's (`todo/remaster.md`, "The rain's
+    wet floors"; `o3de/wetfloor.h`). `[Remaster] wet = S` / `--wet S` (0..1),
+    the `--remaster` preset's 1, OFF unless named: while the game's own shower
+    falls (`sub_4815D0`, docs/ASSETS.md 4e - a RAIN area, option row 7 at 2),
+    the set's opaque floors facing up within ~20 degrees, under the OPEN SKY
+    (four rays up through the shot soup, the original's roof world), darken
+    (`Draw::wet`) and - those on the frame's plane - reflect through the
+    floors' pass, as wet as the rain is strong and drying over 2 minutes.
+
+    Parts (Anekbah's street at 1804, 0, -6890, `--detail 2`, the weather's
+    clock jumped past its first wait - `OMK_WEATHER_SKIP_MS`, 700 frames, the
+    shower at full strength from ~frame 600):
+      1. the source: 0 by default, [Remaster] only, never `all = max`, the
+         preset's 1;
+      2. the set's floors: more than 5000 triangles open to the sky and more
+         than 1000 under a roof (`world.wet`);
+      3. Vulkan: at frame 690 the wetness is 1 and the floors' plane live
+         (`remaster.wet`), and `--wet 1` moves more than 50000 pixels of
+         `--wet 0`;
+      4. Vulkan at `--detail 1` - no rain: `--wet 1` is `--wet 0`'s frame,
+         byte for byte;
+      5. GLES: `--wet 1` moves more than 50000 pixels too, and where Vulkan's
+         do - the moved pixels' intersection over union above 0.8.
+
+    Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
+    load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0.
+
+    SHOWN TO FAIL (2026-10-27): the film never applied in `scene.frag`
+    (`c *= 1.0 - wetFilm` gone) - part 3, a few thousand pixels, and part 5's
+    overlap; the rain area's gate dropped (`rainArea` always true) and the
+    wetness held at 1 - part 4, the frames differ.
+
+    NOT CHECKED, judged by eye: the strengths (`kWetReflect`, `kWetDarken`),
+    the drying's pace, the triangle-sized edges between wet and dry.
+    """
+    import subprocess, tempfile, shutil, re, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/remaster/playremaster_setup.cpp")
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("wetStrength = wetFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+wet\s*=\s*0\.0f;", sh)),
+              'kRemaster, "wet"' in sc and 'kEnhancements, "wet"' not in sc,
+              "wet" not in max_body,
+              '!preset.empty() ? pv("wet") : 0.0f;' in pre and '{"wet", 1.0f}' in sh)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    tmp = tempfile.mkdtemp()
+    try:
+        def run(binary, name, detail, wet):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                    "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                    "--frames", "700", "--detail", str(detail), "--wet", str(wet), "--dump", out] + \
+                   ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, []
+            return open(out, "rb").read(), _events(r.stdout + r.stderr)
+        vkb = os.path.join(eng, "build", "omk-play")
+        on, ev = run(vkb, "on", 2, 1)
+        off, _ = run(vkb, "off", 2, 0)
+        dry, _ = run(vkb, "dry", 1, 1)
+        dry0, _ = run(vkb, "dry0", 1, 0)
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
+            goff, _ = run(os.path.join(eng, "build", "omk-play-gles"), "goff", 2, 0)
+            gl = ("no frame",) if gon is None or goff is None else None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if None in (on, off, dry, dry0):
+        return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
+    px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
+    moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
+    mv = moved(on, off)
+    if gl is None:
+        mg = moved(gon, goff)
+        iou = len(mv & mg) / max(1, len(mv | mg))
+        print(f"        wet floors' pixels: Vulkan {len(mv)}, GLES {len(mg)}, overlap {iou:.3f}")
+        gl = (len(mg) > 50000, iou > 0.8)
+    world = next((k for n, k in ev if n == "world.wet" and k.get("set") == "ANEKBAH"), {})
+    at690 = next((k for n, k in ev if n == "remaster.wet" and k.get("frame") == "690"), {})
+    sky = (int(world.get("open", 0)) > 5000, int(world.get("covered", 0)) > 1000)
+    live = (at690.get("wetness"), at690.get("live"))
+    same = dry == dry0
+    print(f"        open {world.get('open')}, covered {world.get('covered')}; frame 690 {live}; "
+          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}")
+    return (src_ok, sky, live, len(mv) > 50000, same, gl), \
+           ((True,) * 4, (True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True))), \
+        "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
+        "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan"
 
 
 def c_engine_clip_memo():
@@ -49597,8 +49708,9 @@ def c_licence_headers():
     # 689: + `engine/tools/pad_layout.cpp` (the pad's layout per group, `engine: pad layout`)
     # 691: + `engine/backends/gl1/gl1sdlhost.{h,cpp}` (the SDL build's GL window on
     # Mac OS X, `todo/handoff-classic-mac.md` 3g)
+    # 693: + `engine/src/o3de/wetfloor.{h,cpp}` (the rain's wet floors, todo/remaster.md)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (691, [], 10, []), \
+           (693, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -52410,6 +52522,7 @@ SLOW = [
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
+    ("engine: wet floors",   c_engine_wet_floors,   "todo/remaster.md wet floors; o3de/wetfloor.h"),
     ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),
     ("engine: vulkan images", c_engine_vulkan_images, "todo/remaster.md audit bug 4; backends/vulkan/vkrender.cpp makeImage2D"),
     ("engine: vulkan teardown", c_engine_vulkan_teardown, "todo/remaster.md audit cleanliness; backends/vulkan/vkrender.cpp ~VulkanRenderer"),

@@ -308,7 +308,7 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --remaster DIR   REMASTER, all of it from one folder: the texture pack in\n"
 "                   DIR/pack (or DIR/full/pack), --bloom 1.6, the grades in\n"
 "                   DIR/grades, --water 0.6, --body-light 1, --fx-light 1,\n"
-"                   --relief 2, --ao 2, --floors 1, --mist 0.5, --smooth\n"
+"                   --relief 2, --ao 2, --floors 1, --wet 1, --mist 0.5, --smooth\n"
 "                   0.75, --preload 25, the interface pack in DIR/ui/pack,\n"
 "                   the font pack in DIR/fonts/pack and the film pack in\n"
 "                   DIR/films/pack when there are; a specific flag or key\n"
@@ -332,6 +332,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
 "                   lists reflect the scene, strength S (0..1) times theirs;\n"
 "                   Vulkan and GLES only; [Remaster] floors=S\n"
+"  --wet S          REMASTER, off by default: while the game's own rain falls\n"
+"                   (option row 7 at 2), the floors under the open sky wet and\n"
+"                   reflect the scene, strength S (0..1), drying over 2 minutes\n"
+"                   after; Vulkan and GLES only; [Remaster] wet=S\n"
 "  --body-light S   REMASTER, off by default: the bodies take the set's painted\n"
 "                   light around them, strength S (0..1); Vulkan and GLES only;\n"
 "                   [Remaster] bodylight=S\n"
@@ -652,6 +656,13 @@ int PlayOptions::parse(int argc, char** argv) {
             floorsFlag = static_cast<float>(std::atof(argv[++i]));
             if (floorsFlag < 0.0f || floorsFlag > 1.0f) {
                 std::fprintf(stderr, "--floors %s: not 0..1\n", argv[i]);
+                return 2;
+            }
+        }
+        else if (a == "--wet" && i + 1 < argc) {
+            wetFlag = static_cast<float>(std::atof(argv[++i]));
+            if (wetFlag < 0.0f || wetFlag > 1.0f) {
+                std::fprintf(stderr, "--wet %s: not 0..1\n", argv[i]);
                 return 2;
             }
         }

@@ -255,7 +255,7 @@ bool GlesRenderer::setGrade(const float* rgb, int n) {
     return true;
 }
 
-bool GlesRenderer::packActive() const { return texturePack().active(); }
+bool GlesRenderer::packActive() const { return texturePack().shown(); }   // hidden: the original mode (part B)
 
 std::vector<PackImage> GlesRenderer::packDecode(std::span<const Texture* const> ts) const {
     return texturePack().replacements(ts, true, false);

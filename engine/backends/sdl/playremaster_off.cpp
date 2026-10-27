@@ -19,6 +19,14 @@ void PlayState::remasterSetup() {
 }
 bool PlayState::remasterBuilt() const { return false; }   // OMK's options offer no Remaster page
 bool PlayState::remasterApplyLive(const std::string&, float) { return false; }
+bool PlayState::remasterShow(bool, const char*) { return false; }
+void PlayState::remasterModeFrame(bool) {}
+void PlayState::remasterSlotsFrame(bool) {}
+void PlayState::remasterSlotLights(WorldSlot&, bool) {}
+bool PlayState::remasterSwitchable() const { return false; }
+float PlayState::remasterArmed(const char*) const { return 0.0f; }
+float PlayState::remasterRunning(const char*, float v) const { return v; }
+float* PlayState::remasterStrength(const std::string&) { return nullptr; }
 void PlayState::remasterPrepareSet(SetLoad&) {}
 void PlayState::remasterSmoothModel(CharModel&, const std::string&) {}
 void PlayState::remasterSmoothPlayer() {}

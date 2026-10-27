@@ -281,10 +281,11 @@ struct Settings {
     // (`Renderer::setAmbientOcclusion`), S its strength, 0 off. Vulkan only.
     float  ao = 0.0f;
     Source aoSource = Source::Default;
-    // `mode = original|remaster`: the REMASTER'S SWITCH (`todo/graphics-menu.md`)
-    // - OMK's options menu writes it. `original` leaves every `[Remaster]` key
-    // above unread at start, as if none were there; `remaster`, the default,
-    // reads them. A switch over the keys, not a key of its own to configure.
+    // `mode = original|remaster`: the REMASTER'S SWITCH (`todo/graphics-menu.md`
+    // B) - OMK's options menu and F10 write it. `original` arms every
+    // `[Remaster]` key above as `remaster`, the default, does, and starts with
+    // the original's look shown (`playremaster_mode.cpp`): F10 brings the
+    // remaster's. A switch over the keys, not a key of its own to configure.
     bool   remasterOn = true;
     Source remasterModeSource = Source::Default;
 
@@ -487,31 +488,6 @@ inline float remasterPresetValue(const char* key) {
     for (const auto& p : kRemasterPreset)
         if (std::string(p.key) == key) return p.value;
     return 0.0f;
-}
-
-// `[Remaster] mode = original`: every `[Remaster]` key put back to its
-// default and source, as if the file had none - the flags still apply (a flag
-// is the most recent word). The mode itself stays.
-inline void dropRemasterKeys(Settings& s) {
-    const Settings d;
-    s.texturePack = d.texturePack;  s.texturePackSource = d.texturePackSource;
-    s.uiPack = d.uiPack;            s.uiPackSource = d.uiPackSource;
-    s.fontPack = d.fontPack;        s.fontPackSource = d.fontPackSource;
-    s.filmPack = d.filmPack;        s.filmPackSource = d.filmPackSource;
-    s.bloom = d.bloom;              s.bloomSource = d.bloomSource;
-    s.grade = d.grade;              s.gradeSource = d.gradeSource;
-    s.remasterDir = d.remasterDir;  s.remasterDirSource = d.remasterDirSource;
-    s.water = d.water;              s.waterSource = d.waterSource;
-    s.floors = d.floors;            s.floorsSource = d.floorsSource;
-    s.mist = d.mist;                s.mistSource = d.mistSource;
-    s.upscale = d.upscale;          s.upscaleSource = d.upscaleSource;
-    s.preload = d.preload;          s.preloadSource = d.preloadSource;
-    s.bodyLight = d.bodyLight;      s.bodyLightSource = d.bodyLightSource;
-    s.fxLight = d.fxLight;          s.fxLightSource = d.fxLightSource;
-    s.relief = d.relief;            s.reliefSource = d.reliefSource;
-    s.smooth = d.smooth;            s.smoothSource = d.smoothSource;
-    s.smoothSkip = d.smoothSkip;    s.smoothSkipSource = d.smoothSkipSource;
-    s.ao = d.ao;                    s.aoSource = d.aoSource;
 }
 
 inline void applyMaxEnhancements(Settings& s) {

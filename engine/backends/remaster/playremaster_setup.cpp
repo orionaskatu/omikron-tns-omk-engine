@@ -23,13 +23,22 @@
 bool PlayState::remasterBuilt() const { return true; }
 
 void PlayState::remasterSetup() {
-    // `[Remaster] mode = original` (OMK's options menu, `todo/graphics-menu.md`):
-    // the section's keys unread, as if the file had none; a flag still applies
-    if (!settings.remasterOn) {
-        omk::dropRemasterKeys(settings);
-        std::printf("remaster: [Remaster] mode = original - its keys are not read%s\n",
-                    opt.anyRemaster() ? " (the command line's remaster flags still are)" : "");
-        omk::event("remaster.mode", {{"mode", std::string("original")}});
+    // `[Remaster] mode = original` (OMK's options menu, `todo/graphics-menu.md`
+    // B): everything ARMED as the remaster mode would, and the original's look
+    // shown - the packs hidden from here, before the first bitmap and pool;
+    // the strengths put away at the first frame, once the renderer has built
+    // their passes (`remasterModeFrame`), so F10 brings them back. A remaster
+    // flag on the command line is the most recent word: it shows the remaster.
+    if (!settings.remasterOn && !opt.anyRemaster()) {
+        remasterStartHidden_ = true;
+        omk::texturePack().setShown(false);
+        omk::uiPack().setShown(false);
+        omk::fontPack().setShown(false);
+        std::printf("remaster: [Remaster] mode = original - the remaster armed and hidden (F10 shows it)\n");
+    } else if (!settings.remasterOn) {
+        settings.remasterOn = true;
+        std::printf("remaster: [Remaster] mode = original, but a remaster flag on the command line - "
+                    "the remaster shown\n");
     }
     // the preset's strengths (`settings.h` kRemasterPreset), and as text for its line
     const auto pv = [](const char* key) { return omk::remasterPresetValue(key); };
@@ -184,6 +193,13 @@ void PlayState::remasterSetup() {
         smoothBodies = smoothFlag >= 0.0f ? smoothFlag
                      : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth
                      : !preset.empty() ? pv("smooth") : 0.0f;
+        // ...cut from the rest at load: an ORIGINAL start leaves them flat, and
+        // the switch does not round them (`todo/graphics-menu.md` B)
+        if (remasterStartHidden_ && smoothBodies > 0.0f) {
+            std::printf("smooth: %.2f, not in the original mode - the characters flat until a start in the "
+                        "remaster's\n", static_cast<double>(smoothBodies));
+            smoothBodies = 0.0f;
+        }
         if (smoothBodies > 0.0f)
             std::printf("smooth: %.2f - a REMASTER feature: the characters rounded, each triangle split 3x3 "
                         "(Phong tessellation), every backend\n", static_cast<double>(smoothBodies));
@@ -258,11 +274,11 @@ void PlayState::remasterSetup() {
         }
     }
     // each strength as the start set it - what OMK's options menu may move live
-    // (`remasterApplyLive`): only one ON here had its resources loaded
-    if (settings.remasterOn || opt.anyRemaster())
-        remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
-                            {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
-                            {"bodylight", bodyLight}, {"fxlight", fxLight}};
+    // (`remasterApplyLive`) and the switch brings back: only one ON here had
+    // its resources loaded
+    remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
+                        {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
+                        {"bodylight", bodyLight}, {"fxlight", fxLight}};
 }
 
 #endif  // OMK_REMASTER

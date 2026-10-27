@@ -1382,8 +1382,9 @@ remaster's own files and ~2,200 inside shared ones (an inventory, 2026-10-22).
   emitters' light table; the grade; the grey alias; the films; a GPU
   renderer's requests), `playremaster_bodies.cpp` (the smoothing, the body
   tint), `playremaster_draw.cpp` (the mist, the emitters' point lights with
-  the night and the relief, the water and floor reflections), and
-  `playpreload.cpp`. The shared files keep one-line calls
+  the night and the relief, the water and floor reflections),
+  `playpreload.cpp`, and `playremaster_mode.cpp` (the original/remaster
+  switch, F10 - `todo/graphics-menu.md` B). The shared files keep one-line calls
   (`remasterSetup()`, `remasterPrepareSet(L)`, `remasterDrawReflected(...)`
   ...), `backends/sdl/playremaster_off.cpp` stubs them (`playvr_off.cpp`'s
   pattern) - the per-pixel lighting stub reproduces exactly what the code

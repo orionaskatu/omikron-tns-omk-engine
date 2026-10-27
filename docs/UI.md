@@ -4616,6 +4616,13 @@ named nowhere in the data or the exe. `OptionsMenu` without `attachOmk` is the
 exe's screen exactly, and `OptionsWalk` (the model `sim: options` checks)
 never sees them.
 
+**F10, OMK's own key, is not the exe's either** (2026-10-27,
+`backends/remaster/playremaster_mode.cpp`): in a build with the remaster it
+switches the original's look and the remaster's on the running game - the
+Remaster page's "Rendu" row is the same switch - and writes `[Remaster] mode`.
+It is read beside ESC, off every binding table; DIK 0x44 is no default
+binding of the game's (`tables/key_bindings.json`).
+
 
 ---
 

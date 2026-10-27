@@ -786,6 +786,21 @@ struct PlayState {
     // false when it waits for the next start (`todo/graphics-menu.md` 3a)
     bool remasterApplyLive(const std::string& key, float v);
     std::map<std::string, float> remasterAtStart_;   // each strength as the start set it
+    // THE ORIGINAL/REMASTER SWITCH (`backends/remaster/playremaster_mode.cpp`,
+    // `todo/graphics-menu.md` B): F10, the Mode row, `[Remaster] mode`
+    bool remasterShown_ = true;                    // false: the original's look, the remaster armed
+    bool remasterStartHidden_ = false;             // `mode = original`: switched at the first frame
+    bool remasterKeyDown_ = false;                 // F10's last state, for its edge
+    bool remasterNothingTold_ = false;
+    std::map<std::string, float> remasterHeld_;    // the strengths while the original shows
+    bool remasterShow(bool on, const char* why);   // false when nothing was armed
+    void remasterModeFrame(bool f10);              // each frame, beside ESC's read: F10 down
+    void remasterSlotsFrame(bool all);             // the sets' lights brought to the mode
+    void remasterSlotLights(WorldSlot& ws, bool emitters);
+    bool remasterSwitchable() const;
+    float remasterArmed(const char* key) const;    // the start's strength, its resources loaded when > 0
+    float remasterRunning(const char* key, float v) const;   // ...what the remaster mode runs with
+    float* remasterStrength(const std::string& key);
     void preloadReleaseAll();                      // the preload radius turned to 0, live
     void omkOptionsSetup();                        // OMK's pages, beside screen 35
     void omkOptionsOpen();                         // ...given this run's values, at each open

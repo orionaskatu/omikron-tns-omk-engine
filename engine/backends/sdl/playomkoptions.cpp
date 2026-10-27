@@ -105,14 +105,14 @@ void PlayState::omkOptionsOpen() {
                 const float def = preset && presetKey ? omk::remasterPresetValue(key) : off;
                 return flag >= 0.0f ? flag : f.*src == omk::Settings::Source::Ini ? f.*field : def;
             };
-            // a start in ORIGINAL ran none of it: the rows show what the remaster
-            // mode would run, not the zeros
-            row(k, remasterAtStart_.empty() ? conf(f1, preset1) : running, conf(f0, preset0), conf(f1, preset1));
+            // what the remaster mode runs - held while the original shows (part B)
+            row(k, remasterAtStart_.empty() ? conf(f1, preset1) : remasterRunning(key, running), conf(f0, preset0),
+                conf(f1, preset1));
             o.setDefault(k, preset1 && presetKey ? omk::remasterPresetValue(key) : off);
             o.setHeld(k, flag >= 0.0f ? flagName : "");
         };
         using S = omk::Settings;
-        row("remaster.mode", settings.remasterOn ? 1 : 0, f0.remasterOn ? 1 : 0, f1.remasterOn ? 1 : 0);
+        row("remaster.mode", remasterShown_ ? 1 : 0, f0.remasterOn ? 1 : 0, f1.remasterOn ? 1 : 0);
         o.setDefault("remaster.mode", 1);
         rem("bloom", bloomStrength, bloomFlag, "--bloom", &S::bloom, &S::bloomSource);
         rem("water", waterStrength, waterFlag, "--water", &S::water, &S::waterSource);
@@ -199,6 +199,8 @@ bool PlayState::omkApplyLive(const std::string& key, double v) {
         if (wantMap && !(world_ && world_->drawsShadowMap())) return false;
         lighting = toLighting;
         shadowQuality = toShadow;
+    } else if (key == "remaster.ao" && !remasterShown_) {
+        return remasterApplyLive("ao", static_cast<float>(v));   // held for the remaster's return (part B)
     } else if (key == "enhancements.antialiasing" || key == "enhancements.supersampling" ||
                key == "remaster.upscale" || (key == "remaster.ao" && !remasterApplyLive("ao", static_cast<float>(v)))) {
         // THE TARGET's (3c): MSAA, the supersample, the upscale - and the AO

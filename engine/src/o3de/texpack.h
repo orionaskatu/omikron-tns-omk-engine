@@ -98,6 +98,12 @@ public:
     // said on stderr, when DIR is not a directory. An empty directory opens.
     bool open(const std::string& dir);
     bool active() const { return opened_; }
+    // THE ORIGINAL/REMASTER SWITCH (`todo/graphics-menu.md` B): a pack open but
+    // hidden is not drawn - the backends' uploads ask `shown`, and draw the
+    // shipped texels - while the surface lights' light maps (`active`) are
+    // still read, so a set loaded in the original mode has them for the switch
+    void setShown(bool on) { shown_ = on; }
+    bool shown() const { return opened_ && shown_; }
     std::size_t size() const { return files_.size(); }
     std::size_t lightMaps() const { return lights_.size(); }
     std::size_t normalMaps() const { return normals_.size(); }
@@ -191,6 +197,7 @@ private:
     std::unordered_map<std::uint64_t, std::string> normals_;  // `<key>_n.png`
     std::string dir_;
     bool opened_ = false;
+    bool shown_ = true;
     std::unordered_map<std::uint64_t, std::string> files_;
     std::unordered_map<std::uint64_t, std::string> lights_;   // `<key>_e.png`
     std::unordered_map<std::uint64_t, std::uint64_t> greyOf_;   // grey key -> colour key

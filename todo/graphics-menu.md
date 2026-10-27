@@ -135,7 +135,9 @@ texts), `backends/sdl/playomkoptions.cpp` (the viewer's half), a seam in
   folder. Instead **`[Remaster] mode = original|remaster`** (`Settings::
   remasterOn`): `original` drops every `[Remaster]` key at start
   (`dropRemasterKeys`, the flags still apply), `remaster` - the default -
-  reads them. It is also the key part B's switch will write;
+  reads them. It is also the key part B's switch will write. (SINCE PART B,
+  2026-10-27: `original` ARMS the keys as `remaster` does and starts with
+  the original's look shown - `dropRemasterKeys` is gone, see B);
 * the strengths are CHOICE rows over fixed values (0, 0.5, 1, 1.6, 2.5, 4 for
   the bloom...), not sliders: the file gets clean numbers, and a slider's
   0..100 is the game's volume scale, not a strength's;
@@ -436,6 +438,63 @@ key updated so the next start resumes in it.
      draws what a start with the setting draws".
 4. B: the strengths first, then the UI/font bypass, then the texture re-upload,
    then the bodies.
+   * **B1 DONE (2026-10-27): everything but the bodies, in one step.**
+     `backends/remaster/playremaster_mode.cpp`, `remasterShow(on, why)`:
+     the strengths (bloom, water, floors, mist, relief, AO, body light, fx
+     light) held in `remasterHeld_` and set to 0 - `setBloom(0)` /
+     `setAmbientOcclusion(0)` on the renderer - and brought back; the three
+     packs HIDDEN (`setShown`: `UiPack::find` / `FontPack::find` answer
+     nothing, `TexturePack::shown()` false - the backends' uploads ask
+     `shown()` where they asked `active()`, the surface lights' light maps
+     still read `active()`) and the world's textures sent again through 3d's
+     `retexture` + `++texPool.composition`; the emitters' and surfaces'
+     lights taken out of each set's table (`remasterSlotLights`: `lights`
+     cut to `setLights`, `WorldSlot::fxIn` saying which way a slot is, a
+     load in flight across a switch brought round the next frame); the grade
+     off (`remasterGrade` wants none), the film pack not asked. A set's
+     preparation reads what the START armed (`remasterArmed`), not what
+     runs: a set loaded in the original mode has its floors, probes and
+     glows for the switch back. **`mode = original` now ARMS** - every key
+     read, every pass built, the packs hidden from `remasterSetup` (before
+     the splash's bitmap and the first pool), the strengths put away at the
+     first frame once the renderer has built their passes
+     (`remasterStartHidden_`); `dropRemasterKeys` is gone. A remaster flag on
+     the command line shows the remaster whatever the file says.
+     **THE KEY: F10** (DIK 0x44, added to `sdlfront.cpp`'s keymap), read
+     beside ESC off the devices the scripted streams joined - so `--hold
+     k*9,k68` and `--keys 68` press it - edge-triggered, writing
+     `[Remaster] mode` to the config so the next start resumes in the mode
+     left, `@evt remaster.mode mode= why= taken=`. Nothing armed (no `dir`,
+     key or flag): said once, `taken=0`. The Mode row of page 102 is the
+     same switch, live (`remasterApplyLive("mode")`); while the original
+     shows, a strength moved on page 102 is held for the remaster's return
+     (refused when it was 0 at start, as before), and the rows show the
+     held values (`remasterRunning`).
+     MEASURED, to the pixel (`engine: remaster mode`, Vulkan and GLES, the
+     street with per-pixel lighting and mapped shadows, the preset with
+     `smooth = 0`): an original start = a start with no remaster at all; the
+     original + F10 = a remaster start; the remaster + F10 = an original
+     start (and the ini written); the original + the Mode row = a remaster
+     start; the start menu at 1280x960 with `textscaling = fit` (the UI and
+     font packs drawn): original = no remaster, original + F10 = remaster.
+     Shown to fail with the texture pack left shown, the sets' lights left
+     as they were, the UI pack left shown.
+     THE COST of a switch, the M1, the street's 39 textures: to the
+     remaster, one frame of 37 ms on Vulkan (the pack's decode 19.5 ms from
+     its block files, the uploads 17.6) and 234.5 ms on GLES (PNGs); to the
+     original 4-5 ms. In an original start the load's `prepare` does not
+     decode the hidden pack, so the first switch decodes on its frame -
+     preparing ahead while hidden would trade that for memory and load time
+     a player who stays original never uses. No fade yet.
+     **OUTSIDE THE SWITCH**: the upscale and the preload radius (a frame
+     rate's choices), and THE ROUNDED BODIES - cut from the rounded rest at
+     load (3d): an original start leaves them flat (`smoothBodies` 0) and
+     F10 does not round them; a remaster start keeps them round through F10.
+     That is B2: keep both meshes per character and pick at draw.
+     Checks after it: `engine: remaster mode` (new), `graphics menu`,
+     `graphics menu live`, `remaster switch`, `preload`, `texture pack` (its
+     source gate now `pack.shown()`), `options write`, `play usage`,
+     `licence headers` (688).
 
 (The other sessions' work in `texpack`, `renderer.h`, `vkrender.cpp` and
 `uipack.cpp` that this plan waited for landed in `bfbfc92`, 2026-10-26.)

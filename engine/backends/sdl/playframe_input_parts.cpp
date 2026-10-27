@@ -202,6 +202,9 @@ void PlayState::inputPause() {
     // open is a screen nothing can check.
     const bool esc = std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x01)
                      != devices.keyboard.end();
+    // ...and F10 the same way, OMK's own: the original/remaster switch
+    // (`backends/remaster/playremaster_mode.cpp`)
+    remasterModeFrame(std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x44) != devices.keyboard.end());
     if (esc && !walk && playerScreen < 0) {
         playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "

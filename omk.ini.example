@@ -248,10 +248,15 @@
 ; (`kRemasterPreset` in engine/src/platform/settings.h).
 ;dir = /path/to/omk-pack
 ;
-; The SWITCH over everything in this section: `original` reads none of it at
-; start, as if the section were empty (a remaster flag on the command line
-; still applies); `remaster`, the default, reads it. OMK's options menu
-; writes it ("Rendu", on its Remaster page).
+; The SWITCH over everything in this section: `original` starts with the
+; original game's look - the section read and made ready all the same, so
+; F10 in play (or "Rendu" on OMK's Remaster page) shows the remaster's at
+; once, and back; both write this key, so the next start resumes in the mode
+; left. `remaster`, the default, starts with it. A remaster flag on the
+; command line shows the remaster whatever this says. Outside the switch:
+; the upscale and the preload (frame rate, not looks), and the rounded
+; bodies (smooth), cut at load - an `original` start leaves them flat, and
+; F10 does not round them until a start in `remaster`.
 ;mode = remaster
 ;
 ; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an

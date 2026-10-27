@@ -2951,7 +2951,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
     const auto t0 = clk::now();
     int fresh = 0, blocksUp = 0;
     long prepared = 0;
-    if (pack.active()) {
+    if (pack.shown()) {
         // every texture this pool brings that the device does not hold yet,
         // decoded together on the thread pool
         std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
@@ -2970,14 +2970,14 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
         if (hit == uploaded_.end()) {
             Uploaded u;
             u.idx = x.idx; u.pal = x.pal; u.used = !preload; u.pinned = preload;
-            if (pack.active() && reps[i].ok && !reps[i].colourZ.empty()) {
+            if (pack.shown() && reps[i].ok && !reps[i].colourZ.empty()) {
                 const omk::PackImage& rep = reps[i];
                 uploadZ(rep.colourZ, u.t);
                 u.t.su = static_cast<float>(rep.w) / static_cast<float>(x.width);
                 u.t.sv = static_cast<float>(rep.h) / static_cast<float>(x.height);
                 u.t.packed = true;
                 ++blocksUp;
-            } else if (pack.active() && reps[i].ok) {
+            } else if (pack.shown() && reps[i].ok) {
                 const omk::PackImage& rep = reps[i];
                 const int rw = rep.w, rh = rep.h;
                 upload([&](unsigned char* d) { std::memcpy(d, rep.rgba.data(), rep.rgba.size()); }, rw, rh, u.t);
@@ -2989,12 +2989,12 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
             }
             // ...and its LIGHT MAP, when the pack has one: grey in RGBA, the
             // red channel what `scene.frag` reads
-            if (pack.active() && !reps[i].emissiveZ.empty()) {
+            if (pack.shown() && !reps[i].emissiveZ.empty()) {
                 Tex em;
                 uploadZ(reps[i].emissiveZ, em, false);
                 u.t.emImg = em.img; u.t.emMem = em.mem; u.t.emView = em.view;
                 ++lit;
-            } else if (pack.active() && !reps[i].emissive.empty()) {
+            } else if (pack.shown() && !reps[i].emissive.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex em;
                 if (r8Ok_)
@@ -3009,12 +3009,12 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
                 ++lit;
             }
             // ...and its NORMAL MAP (the relief's), when the pack has one
-            if (pack.active() && !reps[i].normalZ.empty()) {
+            if (pack.shown() && !reps[i].normalZ.empty()) {
                 Tex nm;
                 uploadZ(reps[i].normalZ, nm, false);
                 u.t.nmImg = nm.img; u.t.nmMem = nm.mem; u.t.nmView = nm.view;
                 ++normals;
-            } else if (pack.active() && !reps[i].normal.empty()) {
+            } else if (pack.shown() && !reps[i].normal.empty()) {
                 const omk::PackImage& rep = reps[i];
                 Tex nm;
                 upload([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); }, rep.nw, rep.nh, nm, false);
@@ -3048,7 +3048,7 @@ void VulkanRenderer::poolTextures(std::span<const omk::Texture> t, bool preload)
     if (fresh > 0)
         std::printf("vulkan: texture pool - %d new of %zu (%d from the pack's block files), the pack's read and "
                     "decode %.1f ms, the uploads %.1f ms\n", fresh, t.size(), blocksUp, decodeMs, uploadMs);
-    if (pack.active())
+    if (pack.shown())
         omk::event("texpack.pool", {{"backend", "vulkan"}, {"textures", static_cast<long>(t.size())},
                                     {"replaced", packed}, {"lights", lit}, {"normals", normals},
                                     {"lightChannels", r8Ok_ ? 1 : 4}, {"fresh", fresh}, {"blocks", blocksUp},

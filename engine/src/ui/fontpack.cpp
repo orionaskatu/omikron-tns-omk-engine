@@ -78,7 +78,7 @@ FontPack::Stats FontPack::stats() const {
 }
 
 std::shared_ptr<const HdFont> FontPack::find(const Font& f) {
-    if (!active_ || !f.valid) return nullptr;
+    if (!active_ || !shown_ || !f.valid) return nullptr;
     ScopedLock l(impl_->m);
     const auto it = impl_->byFont.find(&f);
     if (it != impl_->byFont.end()) return it->second;

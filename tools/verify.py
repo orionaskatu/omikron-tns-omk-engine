@@ -7184,6 +7184,104 @@ def c_engine_graphics_menu_live():
             "%s" % ("run (pack %s)" % pack if pack else "SKIPPED - no pack configured (omk.conf `pack =`)"))
 
 
+def c_engine_remaster_mode():
+    r"""engine: the ORIGINAL/REMASTER SWITCH (`todo/graphics-menu.md` B,
+    `backends/remaster/playremaster_mode.cpp`) - F10 in play, the Mode row of
+    OMK's Remaster page, `[Remaster] mode` at start.
+
+    `mode = original` ARMS the remaster as its own mode would and shows the
+    original's look; the switch moves only what a frame reads - the
+    strengths to 0 and back, the three packs hidden, the world's textures
+    uploaded again, the emitters' lights out of the sets' tables, the grade.
+    So each direction must leave the game where a START in that mode would.
+    Anekbah's street (`--save traces/save-appart.bin --area 0 --stand`), 40
+    frames, per-pixel lighting and mapped shadows (the emitters' point lights
+    and the relief drawn), the preset (`omkpaths.pack_path`) with the bodies
+    flat (`smooth = 0`: an original start leaves them flat, the switch does
+    not round them) - on Vulkan and GLES:
+
+    * an original start draws what a start with no remaster at all draws, to
+      the pixel, and differs from a remaster start;
+    * the original + F10 at frame 10 (`--hold k*9,k68`) = a remaster start;
+    * the remaster + F10 = an original start - and `mode = original` WRITTEN
+      to the run's ini, so the next start resumes in it;
+    * the original + the menu's Mode row (`--omk-set remaster.mode=remaster@10`)
+      = a remaster start;
+    * the START MENU at 1280x960 with `textscaling = fit`, where the
+      interface's and the fonts' packs draw: the original + F10 (`--keys 68`)
+      = a remaster start, and an original start = no remaster.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    gles = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    pack = omkpaths.pack_path()
+    if not pack:
+        return ("skipped",), ("skipped",), "no remaster pack configured (omk.conf `pack =`)"
+    tmp = tempfile.mkdtemp()
+
+    def run(binary, name, ini, extra, env, street=True):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        open(os.path.join(d, "omk.ini"), "w").write(ini)
+        where = (["--res", "640x480", "--save", os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                  "--stand", "1804,0,-6890,336", "--frames", "40"] if street
+                 else ["--res", "1280x960", "--frames", "90"])
+        args = [binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--nofmv", "--saves",
+                os.path.join(d, "GAMES"), "--filter", "nearest"] + where + \
+               ["--dump", os.path.join(d, "f.bin")] + extra
+        r = _subprocess_run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
+        out = (r.stdout + r.stderr).decode("latin-1")
+        f = os.path.join(d, "f.bin")
+        modes = [(e.get("mode"), e.get("taken")) for n, e in _events(out) if n == "remaster.mode"]
+        written = open(os.path.join(d, "omk.ini")).read()
+        return (open(f, "rb").read() if os.path.exists(f) else b""), modes, written
+
+    def same(a, b):
+        return len(a) > 0 and a == b
+
+    got, want = [], []
+    try:
+        pp = "[Enhancements]\nlighting = perpixel\nshadowquality = mapped\n"
+        rem = pp + "[Remaster]\ndir = %s\npreload = 0\nsmooth = 0\n" % pack
+        orig = rem + "mode = original\n"
+        cases = [("vk", play, {"SDL_VIDEODRIVER": "dummy"}, ["--world-vulkan"])]
+        if os.path.exists(gles):
+            cases.append(("gles", gles, {"OMK_NO_GPU_PRESENT": "1"}, []))
+        for label, binary, env, extra in cases:
+            plain, _, _ = run(binary, label + "-plain", pp, extra, env)
+            o, om, _ = run(binary, label + "-orig", orig, extra, env)
+            r, _, _ = run(binary, label + "-rem", rem, extra, env)
+            o2r, o2rm, _ = run(binary, label + "-orig-f10", orig, extra + ["--hold", "k*9,k68"], env)
+            r2o, r2om, r2ow = run(binary, label + "-rem-f10", rem, extra + ["--hold", "k*9,k68"], env)
+            m2r, _, _ = run(binary, label + "-orig-menu", orig,
+                            extra + ["--omk-set", "remaster.mode=remaster@10"], env)
+            got.append((label, same(o, plain), not same(o, r), om, same(o2r, r), o2rm, same(r2o, o), r2om,
+                        "\nmode = original\n" in r2ow, same(m2r, r)))
+            want.append((label, True, True, [("original", "1")], True, [("original", "1"), ("remaster", "1")],
+                         True, [("original", "1")], True, True))
+        # THE INTERFACE: the start menu, where the UI and font packs draw
+        base = "[Enhancements]\ntextscaling = fit\n"
+        mrem = base + "[Remaster]\ndir = %s\npreload = 0\nsmooth = 0\n" % pack
+        vkEnv = {"SDL_VIDEODRIVER": "dummy"}
+        mp, _, _ = run(play, "menu-plain", base, ["--world-vulkan"], vkEnv, street=False)
+        mo, _, _ = run(play, "menu-orig", mrem + "mode = original\n", ["--world-vulkan"], vkEnv, street=False)
+        mr, _, _ = run(play, "menu-rem", mrem, ["--world-vulkan"], vkEnv, street=False)
+        mo2r, _, _ = run(play, "menu-orig-f10", mrem + "mode = original\n", ["--world-vulkan", "--keys", "68"],
+                         vkEnv, street=False)
+        got.append(("menu", same(mo, mp), not same(mo, mr), same(mo2r, mr)))
+        want.append(("menu", True, True, True))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return got, want, \
+           ("per backend: original = no remaster, original != remaster, the original's start event, "
+            "original+F10 = remaster (and its two events), remaster+F10 = original (its event, the ini "
+            "written), original+menu = remaster; the start menu: original = no remaster, != remaster, "
+            "original+F10 = remaster (pack %s)" % pack)
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -32109,7 +32207,8 @@ def c_engine_texture_pack():
     Six parts:
       1. the source: the default is empty; the key is read under [Remaster]
          and nowhere under [Enhancements] (so `all = max` can never turn it
-         on); both backends consult the pack only behind `pack.active()`;
+         on); both backends consult the pack only behind `pack.shown()`
+         (open, and not hidden by the original/remaster switch);
       2. THE KEYS, both ways: `texpack_tool keys` (the engine's decoder and
          `textureKey`) against `omktexpack.texture_key` over tex3dt.py's own
          decode, on every one of the 2534 shipped textures - a pack made by
@@ -32188,8 +32287,10 @@ def c_engine_texture_pack():
               'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
               "texturePack" not in max_body,
               '"--texture-pack"' in po,
+              # ...`shown()` since the original/remaster switch (`todo/graphics-menu.md`
+              # B): open and hidden is the original mode, which uploads as shipped
               vk.count("pack.replacements(") == 1 and
-              re.search(r"if \(pack\.active\(\)\) \{[^}]*pack\.replacements\(", vk) is not None and
+              re.search(r"if \(pack\.shown\(\)\) \{[^}]*pack\.replacements\(", vk) is not None and
               # GLES since the remaster switch: the same gate as `packOn` (`packActive`)
               # and the pack's call as `packDecode`, its body in the remaster's `.inl`
               gl.count("texturePack().replacements(") == 1 and
@@ -32370,7 +32471,7 @@ def c_engine_texture_pack():
            ((True,) * 5, (True, 2534, 0), (60, 60, True, 20), (21, 21, 21),
             _or_skip(vres, want_frame), _or_skip(gres, want_frame)), \
            "the source (default empty, read under [Remaster] only, never by all = max, both " \
-           "backends behind pack.active()); the keys, engine against Python, 2534 of 2534; the " \
+           "backends behind pack.shown()); the keys, engine against Python, 2534 of 2534; the " \
            "PNG reader exact on 60 images over every filter and colour type and refusing a bad " \
            "Adler-32; greyed as the greyscale bank greys them, all 21 answered with the " \
            "grey texture exactly; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
@@ -49280,8 +49381,9 @@ def c_licence_headers():
     # `engine/src/ui/omkoptions.{h,cpp}`, `omktext.{h,cpp}`, the generated
     # `omktext_data.cpp`, `engine/backends/sdl/playomkoptions.cpp`,
     # `engine/tools/omkmenu_probe.cpp` and `tools/omklang.py`
+    # 688: + `engine/backends/remaster/playremaster_mode.cpp` (the original/remaster switch, B)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (687, [], 10, []), \
+           (688, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -52037,6 +52139,7 @@ SLOW = [
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
     ("engine: graphics menu", c_engine_graphics_menu, "todo/graphics-menu A2; ui/omkoptions.h"),
     ("engine: graphics menu live", c_engine_graphics_menu_live, "todo/graphics-menu 3a; playomkoptions.cpp"),
+    ("engine: remaster mode", c_engine_remaster_mode, "todo/graphics-menu B; playremaster_mode.cpp"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

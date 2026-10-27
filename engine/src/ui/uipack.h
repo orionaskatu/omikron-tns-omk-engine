@@ -45,10 +45,14 @@ public:
     void attach(const Surface& s);
     // the HD version of `src` when it is a noted bitmap, unchanged since; null otherwise
     std::shared_ptr<const Surface> find(const Surface& src);
+    // the ORIGINAL/REMASTER switch (`todo/graphics-menu.md` B): hidden, `find`
+    // answers nothing and the shipped bitmaps draw - the pack stays open
+    void setShown(bool on) { shown_ = on; }
     struct Stats { std::size_t attached = 0, decoded = 0, refused = 0, drawn = 0; };
     Stats stats() const;
 private:
     bool active_ = false;
+    bool shown_ = true;
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };

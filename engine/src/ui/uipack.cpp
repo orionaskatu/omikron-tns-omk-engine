@@ -114,7 +114,7 @@ void UiPack::attach(const Surface& s) {
 }
 
 std::shared_ptr<const Surface> UiPack::find(const Surface& src) {
-    if (!active_ || !src.valid()) return nullptr;
+    if (!active_ || !shown_ || !src.valid()) return nullptr;
     ScopedLock l(impl_->m);
     const auto it = impl_->noted.find(src.px.data());
     if (it == impl_->noted.end()) return nullptr;

@@ -60,6 +60,9 @@ const std::map<int, int>& keymap() {
         // the engine's mapping such a player cannot swim at all. Left SHIFT,
         // which reaches no binding, runs.
         {SDL_SCANCODE_LCTRL, 0x1D},
+        // ...and OMK's own: F10 switches the original and the remaster's look
+        // (`backends/remaster/playremaster_mode.cpp`), off every binding path
+        {SDL_SCANCODE_F10, 0x44},
     };
     return m;
 }

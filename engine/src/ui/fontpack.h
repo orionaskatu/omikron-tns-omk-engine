@@ -56,10 +56,14 @@ public:
     // the HD coverage of `f`, or null: no pack, no file for it, or a file
     // whose size no `k` lays out (counted `refused`)
     std::shared_ptr<const HdFont> find(const Font& f);
+    // the ORIGINAL/REMASTER switch (`todo/graphics-menu.md` B): hidden, `find`
+    // answers nothing and the shipped faces draw - the pack stays open
+    void setShown(bool on) { shown_ = on; }
     struct Stats { std::size_t decoded = 0, refused = 0; };
     Stats stats() const;
 private:
     bool active_ = false;
+    bool shown_ = true;
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };

@@ -37,7 +37,12 @@ constexpr const char* kSwitches[] = {
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)
     "OMK_GL1",                  // =0: the GL1 build draws with the software reference (engine: gl1 backend)
     "OMK_GL1_COMPOSITE",        // GL1: the interface composed on the CPU instead of drawn as an overlay
+    "OMK_GL1_FIT_PROBE",        // =<file> GL1: the window fit's pixels read back and compared on the 60th fitted frame, the window written there (engine: gl1 window fit)
+    "OMK_GL1_NO_CLIENT",        // GL1 on Mac OS X: GL_APPLE_client_storage left unused for the window's texture
+    "OMK_GL1_NO_FIT",           // GL1: every scaled frame composed on the CPU again, not fitted on the card (todo/handoff-classic-mac.md 3h)
     "OMK_GL1_NO_SKIP",          // GL1: the whole-mesh frustum skip off, to show it changes no pixel (engine: gl1 backend)
+    "OMK_GL1_OFFSCREEN",        // GL1, the SDL build on Mac OS X: the offscreen target and its readback kept, not the window's own context
+    "OMK_GL1_WINDOW",           // =WxH GL1: the window opened at that size instead of the frame's - the scaled present (engine: gl1 window fit)
     "OMK_GLES_NO_HIGHP",        // GLES: the fragment stage taken for one with no highp float - the upscale refused (engine: gles upscale)
     "OMK_GLES_NO_STATE_CACHE",  // GLES: the draw-state cache off (engine: gles state cache)
     "OMK_GLES_WINDUMP",         // =<path> GLES: the window's own picture written on the last frame (engine: gles overlay)

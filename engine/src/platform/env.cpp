@@ -76,6 +76,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_OVERLAY",           // the interface composed on the CPU instead of drawn as an overlay (engine: gles overlay)
     "OMK_NO_PED_LOD",           // A/B: every walker on its largest skeleton
     "OMK_NO_PROGSPIN",          // diagnostic: a scene call's Euler not applied to the body
+    "OMK_NO_PUDDLES",           // =1 the wet floors an even film, no puddles (engine: wet floors)
     "OMK_NO_ROOTSPIN",          // diagnostic: a scene clip's root motion not turned by the call's Euler (engine: scene facing)
     "OMK_NO_SIDECULL",          // A/B: the staged-body side cull off (engine: unlimited clip)
     "OMK_NO_STREAM",            // GLES: the streamed upload off where it is on by default

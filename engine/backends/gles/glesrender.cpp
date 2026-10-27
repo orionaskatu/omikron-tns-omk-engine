@@ -2924,7 +2924,7 @@ void GlesRenderer::beginPass(const View& view) {
     mist_[0] = view.mist; mist_[1] = view.mistGround; mist_[2] = view.mistHeight;
     dust_[0] = view.dust; dust_[1] = view.dustDrift[0]; dust_[2] = view.dustDrift[1]; dust_[3] = view.dustScale;
     for (int k = 0; k < 3; ++k) dustColour_[k] = view.dustColour[k];
-    veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale;
+    veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale; veil_[3] = view.puddles;
     for (int k = 0; k < 3; ++k) veilColour_[k] = view.veilColour[k];
     mistOn_ = (view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f) && mainLoc_.water >= 0;
     for (int k = 0; k < 3; ++k) waterEye_[k] = view.cam.eye[k];

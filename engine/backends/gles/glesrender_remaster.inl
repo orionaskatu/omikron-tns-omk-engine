@@ -513,9 +513,9 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
         }
         // ...and THE RAIN'S VEILS (`View::veil`), not in the reflection's pass
         const float v0 = reflectingNow_ ? 0.0f : veil_[0];
-        if (set(!uv || U.veil[0] != v0 || U.veil[1] != veil_[1] || U.veil[2] != veil_[2])) {
-            glUniform4f(L.veil, v0, veil_[1], veil_[2], 0.0f);
-            U.veil[0] = v0; U.veil[1] = veil_[1]; U.veil[2] = veil_[2];
+        if (set(!uv || U.veil[0] != v0 || U.veil[1] != veil_[1] || U.veil[2] != veil_[2] || U.veil[3] != veil_[3])) {
+            glUniform4f(L.veil, v0, veil_[1], veil_[2], veil_[3]);   // w the PUDDLES' strength
+            U.veil[0] = v0; U.veil[1] = veil_[1]; U.veil[2] = veil_[2]; U.veil[3] = veil_[3];
         }
         if (v0 > 0.0f && set(!uv || std::memcmp(U.veilColour, veilColour_, sizeof U.veilColour) != 0)) {
             glUniform3f(L.veilColour, veilColour_[0], veilColour_[1], veilColour_[2]);

@@ -106,6 +106,24 @@ WaterPlane chooseFloor(const FloorPlanes& f, const float eye[3]) {
     return out;
 }
 
+WaterPlane chooseFloorNear(const FloorPlanes& f, const float eye[3], float refY) {
+    WaterPlane out;
+    float bestGap = 0.0f;
+    const float r2 = kFloorNear * kFloorNear;
+    for (const auto& L : f.levels) {
+        if (eye[1] >= L.y - 1.0f) continue;   // not below the eye (Y is down)
+        double near = 0.0;
+        for (std::size_t i = 0; i + 2 < L.tris.size(); i += 3) {
+            const float dx = L.tris[i] - eye[0], dz = L.tris[i + 1] - eye[2];
+            if (dx * dx + dz * dz <= r2) near += L.tris[i + 2];
+        }
+        if (near < kWetPlaneMin) continue;
+        const float gap = std::fabs(L.y - refY);
+        if (!out.found || gap < bestGap) { bestGap = gap; out.found = true; out.y = L.y; out.area = near; }
+    }
+    return out;
+}
+
 }  // namespace omk
 
 #endif  // OMK_REMASTER

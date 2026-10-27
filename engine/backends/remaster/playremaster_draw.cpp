@@ -38,6 +38,10 @@ void PlayState::remasterViewMist(omk::View& v) {
     // realistic rain", 2026-10-28): far rain as falling sheets, as thick as
     // the shower, falling 1500 units a second on the weather's clock (held
     // while paused), a light grey lit as the set's ambient
+    // THE PUDDLES on the wet floors - `OMK_NO_PUDDLES=1`, an INSTRUMENT, an
+    // even film instead (`verify.py: engine: wet floors` part 9)
+    static const bool noPuddles = omk::envFlag("OMK_NO_PUDDLES");
+    v.puddles = noPuddles ? 0.0f : 1.0f;
     v.veil = 0.0f;
     // `OMK_NO_VEIL=1`, an INSTRUMENT: the veils alone left out
     // (`verify.py: engine: rain 3d` part 13)
@@ -199,8 +203,10 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     if (!watered && listOn)
         floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
     if (!watered && wetOn) {
-        const omk::WaterPlane wp = omk::chooseFloor(shownSlot.wet.planes, drawn.cam.eye);
-        if (wp.found && (!floorPlane.found || wp.area > floorPlane.area)) floorPlane = wp;
+        // the wet level nearest the height the camera looks at - the street
+        // the player stands in - takes the reflection (its puddles mirror)
+        const omk::WaterPlane wp = omk::chooseFloorNear(shownSlot.wet.planes, drawn.cam.eye, drawn.cam.at[1]);
+        if (wp.found) floorPlane = wp;
     }
     // with the rain, the pass at 1 and each run its own: the listed floors'
     // strength times `floors`, the wet ones' `wetReflect`

@@ -33888,7 +33888,11 @@ def c_engine_wet_floors():
          frames) - at frame 90 more than 300 floor triangles covered
          (`remaster.snow`), `--wet 1` moving more than 3000 pixels of `--wet
          0` on Vulkan and on GLES, the same pixels (overlap above 0.8); and no
-         snow lying in Anekbah's rain.
+         snow lying in Anekbah's rain;
+      9. THE PUDDLES (`puddleMask`, the reader's "more realistic rain"):
+         Anekbah at full rain against `OMK_NO_PUDDLES=1` (an even film) -
+         more than 10000 pixels move on Vulkan, and on GLES the same ones
+         (overlap above 0.8).
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -33974,6 +33978,12 @@ def c_engine_wet_floors():
                                       "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                                capture_output=True, text=True, errors="replace", env=env, timeout=300)
             return (open(out, "rb").read() if os.path.exists(out) else None), _events(r.stdout)
+        pz1, _ = run(vkb, "pz1", 2, 1)
+        pz0, _ = run(vkb, "pz0", 2, 1, 700, {"OMK_NO_PUDDLES": "1"})
+        gz1 = gz0 = None
+        if platform.system() == "Darwin":
+            gz1, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gz1", 2, 1)
+            gz0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gz0", 2, 1, 700, {"OMK_NO_PUDDLES": "1"})
         sv1, sev = snow_run(vkb, "sv1", 1)
         sv0, _ = snow_run(vkb, "sv0", 0)
         sg1 = sg0 = None
@@ -34016,6 +34026,15 @@ def c_engine_wet_floors():
         sgl = (len(sgm) > 3000, siou > 0.8)
     else:
         sgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    pmv = moved(pz1, pz0) if pz1 and pz0 else set()
+    if gz1 and gz0:
+        pmg = moved(gz1, gz0)
+        piou = len(pmv & pmg) / max(1, len(pmv | pmg))
+        pgl = (len(pmg) > 10000, piou > 0.8)
+        print(f"        the puddles: Vulkan {len(pmv)}, GLES {len(pmg)} pixels, overlap {piou:.3f}")
+    else:
+        pgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    puddled = (len(pmv) > 10000, pgl)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34024,12 +34043,13 @@ def c_engine_wet_floors():
           f"frame 690 {live}; "
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed), \
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
-            (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True)), \
+            (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
+            (True, _or_skip(pgl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
-        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles"
 
 
 def c_engine_rain3d():

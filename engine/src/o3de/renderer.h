@@ -163,6 +163,9 @@ struct View {
     // fallen; the distance that takes 63%; their colour. Vulkan and GLES.
     float veil = 0.0f, veilFall = 0.0f, veilScale = 2500.0f;
     float veilColour[3] = {0.0f, 0.0f, 0.0f};
+    // THE PUDDLES on the wet floors (the remaster's): their strength, 0 an
+    // even film. Vulkan and GLES.
+    float puddles = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed

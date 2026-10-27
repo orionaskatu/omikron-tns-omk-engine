@@ -3445,7 +3445,8 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.dust[3] = view.dustScale;
         for (int k = 0; k < 3; ++k) ub.dustColour[k] = view.dustColour[k];
         ub.dustColour[3] = 0.0f;
-        ub.veil[0] = view.veil; ub.veil[1] = view.veilFall; ub.veil[2] = view.veilScale; ub.veil[3] = 0.0f;
+        ub.veil[0] = view.veil; ub.veil[1] = view.veilFall; ub.veil[2] = view.veilScale;
+        ub.veil[3] = view.puddles;   // the PUDDLES' strength, in the veils' spare
         for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
         ub.veilColour[3] = 0.0f;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame

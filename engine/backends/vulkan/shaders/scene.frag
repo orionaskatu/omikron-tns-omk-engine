@@ -116,7 +116,8 @@ layout(set = 1, binding = 2) uniform Lights {
                        // y, z, w: the MIST's strength, ground and height (View::mist...), both
     vec4  dust;        // THE SAND'S DUST (View::dust): strength, the drift's x and z, the distance scale
     vec4  dustColour;  // ...its colour, lit as the scene (rgb)
-    vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale
+    vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
+                       // w the PUDDLES' strength (View::puddles)
     vec4  veilColour;  // ...their colour, lit as the scene (rgb)
 } lg;
 
@@ -344,6 +345,15 @@ float veilAmount(vec3 e, vec3 w, vec4 veil) {
     return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * 0.85;
 }
 
+// THE PUDDLES' MASK: 0 between them, 1 in one - a value noise of the ground's
+// x and z (about 2.5 m patches), its edge soft over a fifth of its range.
+// GLES's twin in glesrender_remaster_shaders.inl.
+float puddleMask(vec2 xz) {
+    float n = dustNoise(vec3(xz.x * 0.004, 0.0, xz.y * 0.004)) * 0.7 +
+              dustNoise(vec3(xz.x * 0.011, 3.7, xz.y * 0.011)) * 0.3;
+    return smoothstep(0.52, 0.68, n);
+}
+
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
 vec3 rippleHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -513,18 +523,24 @@ void main() {
     // reflection, if it has one, is added over the darker ground - all of it
     // times how open to the sky this point is, the corners' answers blended
     // (`encodeOpenSky`: `-2 - open` in the phase; any other phase is open)
-    float wetHere = wetFilm > 0.0 ? openSky : 1.0;
-    c *= 1.0 - wetFilm * openSky;
+    // PUDDLES (the reader's "more realistic rain", 2 of 3): patches of standing
+    // water across the wet floor - a noise mask on the ground (`puddleMask`):
+    // in one, the film darker, the reflection much stronger, the ripples more;
+    // between them, the film and the reflection lighter
+    float puddle = wetFilm > 0.0 ? puddleMask(vWorld.xz) * lg.veil.w : 0.0;
+    float wetHere = wetFilm > 0.0 ? openSky * mix(0.5, 2.2, puddle) : 1.0;
+    c *= 1.0 - wetFilm * openSky * mix(0.5, 1.8, puddle);
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
     vec3 rip = vec3(0.0);
     if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
-        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky;
+        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(0.6, 1.6, puddle);
         c += vec3(kRippleLight * rip.z);
     }
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
+        f = max(f, 0.18 * puddle);   // standing water mirrors, looked into too
         vec2 rs = vec2(textureSize(refl, 0));
         // (a floor's reflection is at HALF size, in the image's top-left quarter)
         float k = waterMode == 3 ? 0.5 : 1.0;

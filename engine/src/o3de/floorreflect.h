@@ -64,5 +64,12 @@ FloorPlanes floorPlanes(const Geometry& g, std::span<const Texture> tex, const F
 // with the most listed floor within `kFloorNear` of it on the ground; not
 // `found` when none has any.
 WaterPlane chooseFloor(const FloorPlanes& f, const float eye[3]);
+// ...or, for the WET floors (`o3de/wetfloor.h`), the level below the eye
+// NEAREST `refY` - the height the camera looks at, the player's - with at
+// least `kWetPlaneMin` of it near: the street he stands in, where the level
+// with the most floor may be another (Qalisar's lamp street at -260 against
+// its lower level at 0)
+inline constexpr double kWetPlaneMin = 1.5e5;   // square units near (~100 m2)
+WaterPlane chooseFloorNear(const FloorPlanes& f, const float eye[3], float refY);
 
 }  // namespace omk

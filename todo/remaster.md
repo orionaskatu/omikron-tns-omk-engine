@@ -1383,6 +1383,22 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   0.85 at full). Qalisar's lamp-lit street: 107261 pixels the veils' own on
   Vulkan, the same on GLES; `OMK_NO_VEIL=1` (an instrument) leaves them out.
   `engine: rain 3d` part 13.
+* **More realistic rain, 2 - the PUDDLES** (2026-10-28): the wet film is
+  no longer even - `puddleMask` in both scene shaders lays a two-octave
+  value noise over the floor's world x/z (0.004 and 0.011 per unit,
+  `smoothstep(0.52, 0.68)`), and where it is high the floor is a puddle:
+  the film darkens it up to 1.8x the even film (0.5x between), its mirror
+  is 2.2x as strong (0.5x between), the ripples 1.6x, and Fresnel never
+  falls below 0.18 so a puddle mirrors even seen from above. Only under
+  the open sky, only where the floor is wet. The puddle strength rides in
+  the veil vector's w (`View::puddles`; `OMK_NO_PUDDLES=1`, an instrument,
+  gives the even film back). For the puddles to mirror the street the
+  player stands on, the wet plane is now `chooseFloorNear` (the listed
+  level below the eye NEAREST the camera's target height, with at least
+  `kWetPlaneMin` = 1.5e5 square units near) rather than the one with the
+  most area near: in Qalisar the largest level was not the street.
+  Anekbah's street at full rain: 61427 pixels move on Vulkan, 61405 on
+  GLES, overlap 0.989. `engine: wet floors` part 9.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

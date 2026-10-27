@@ -1364,9 +1364,15 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   follow camera 0 in each; no config beside the saves, the save unchanged
   since August. Likely a binary rebuilt by a check (or a mutation's build)
   between renders; the logs of those runs were not kept. Watch for it.
-* **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on; Qalisar, the neon city, has no shower in
-  the shipped game - `todo/restore-weather.md`); snow on slopes.
+* **The rain under neon** (the reader's "rain effect on neon", 2026-10-27):
+  each drop's light in two halves - the set's own lights, then the
+  EMITTERS' (the neon, the glowing surfaces, the flames - in the slot's table
+  with the emitters' light on), these weighed 2.0 (the set's 0.5) and
+  replacing up to 70% of the grey base as they grow, the drop up to 1.8x
+  brighter in a neon's light: under Qalisar's pink "?" sign the rain glows
+  pink. 156 drops at frame 690 there with the emitters' light, 0 without.
+  `engine: rain 3d` part 12.
+* **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

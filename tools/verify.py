@@ -34084,6 +34084,11 @@ def c_engine_rain3d():
          the frame by itself and a GLES without the fog still overlapped
          0.933): more than 50000 pixels move on Vulkan, and on GLES the same
          ones - overlap above 0.8.
+      12. THE RAIN UNDER NEON (the reader's "rain effect on neon"):
+         Qalisar's neon street (15300, 0, -10050 facing 270, the restored
+         shower, the 3D weather) - with the emitters' light (`--fx-light 1`)
+         more than 30 drops at frame 690 take an emitter's light past a
+         glint (`remaster.rain3d` neon), and with it off none.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34211,6 +34216,15 @@ def c_engine_rain3d():
         if platform.system() == "Darwin":
             gb = os.path.join(eng, "build", "omk-play-gles")
             dg1, dg0 = dusty(gb, 1), dusty(gb, 0)
+        def neon(fx):
+            return subprocess.run(
+                [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                 "--area", "101", "--stand", "15300,0,-10050,270", "--no-crowd", "--nofmv", "--nodelay",
+                 "--saves", tempfile.mkdtemp(dir=tmp), "--res", "320x240", "--frames", "700", "--detail", "2",
+                 "--rain3d", "1", "--restore-weather", "1", "--fx-light", str(fx), "--world-vulkan"],
+                capture_output=True, text=True, errors="replace", timeout=300,
+                env=dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")).stdout
+        neon_on, neon_off = neon(1), neon(0)
         snow_out = subprocess.run(
             [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
              "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
@@ -34277,13 +34291,17 @@ def c_engine_rain3d():
     else:
         dgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
     dusted = (len(dmv) > 50000, dgl)
+    nev = lambda out: int(next((k for n, k in _events(out) if n == "remaster.rain3d" and k.get("frame") == "690"),
+                               {}).get("neon", -1))
+    neoned = (nev(neon_on) > 30, nev(neon_off))
+    print(f"        the rain under neon: {nev(neon_on)} drops with the emitters' light, {nev(neon_off)} without")
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted), \
+            dusted, neoned), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
-            (True, _or_skip(dgl, (True, True)))), \
+            (True, _or_skip(dgl, (True, True))), (True, 0)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

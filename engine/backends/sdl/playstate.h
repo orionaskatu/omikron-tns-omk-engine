@@ -1138,6 +1138,7 @@ struct PlayState {
     int weatherStateTold = -1;
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
     bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
+    int weatherAreaTold = -2;      // the active area the weather last saw (coming back into a shower)
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

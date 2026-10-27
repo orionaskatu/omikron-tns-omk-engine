@@ -3,6 +3,7 @@
 // (`o3de/weather.h` has the reading; `todo/scene-gameplay-audit.md` 8).
 #include "playframe.h"
 #include "platform/env.h"
+#include "platform/events.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -12,6 +13,12 @@
 // draws weather keeps `fb` composed.
 void PlayState::weatherFrame(const omk::View& v) {
     OMK_ZONE("world: weather");   // the profiler (todo/debug-tools.md 6)
+    // PAUSED, with the remaster's 3D weather: the drops held where they are
+    // (the reader: the rain went on moving in the pause menu). The original
+    // keeps the world drawn behind screen 31 (its +112 bit 0x40000, docs/UI.md)
+    // and `sub_4815D0` steps its drops per drawn frame, its clock stopped - so
+    // its 2D rain moves there too, and the original mode keeps that.
+    if (uiPause && remasterWeatherRoofless()) return;
     weatherLines.clear();
     weatherFlakes.clear();
     weatherRain = 0.0f;
@@ -34,6 +41,11 @@ void PlayState::weatherFrame(const omk::View& v) {
         type = static_cast<int>(static_cast<std::uint8_t>(chunk[176])) |
                static_cast<int>(static_cast<std::uint8_t>(chunk[177])) << 8;
     const unsigned viewBits = omk::weatherBitsOfAreaType(type);
+    // ...and whether the player has just come into this area (for the 3D
+    // weather's music, below)
+    const int areaNow = session.residentSlot(session.activeSlot() & 1).area;
+    const bool areaEntered = areaNow != weatherAreaTold;
+    weatherAreaTold = areaNow;
     // `cmp byte ptr [0x90E727], 2` - option row 7 (the `--detail` flag holds it)
     const bool gate = viewBits != 0 && shadowDetail == 2 && !worldSet.empty();
     if (viewBits != weatherBitsTold) {
@@ -82,6 +94,19 @@ void PlayState::weatherFrame(const omk::View& v) {
     if (viewBits & 2u)
         weatherRain = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
                       static_cast<float>(omk::kWeatherDrops);
+    // COMING BACK INTO A SHOWER, with the remaster's 3D weather: the area's
+    // own entry plays its track over the rain's (event 9 - Anekbah's 2), and
+    // the shower's message 23, which played track 119, came when it began; so
+    // a shower still running here is announced again - its handler plays the
+    // rain's track (the reader: it rained on, its sound gone, after a visit
+    // indoors). The original leaves the area's track playing.
+    if (areaEntered && (viewBits & 2u) && (weather.state() == 1 || weather.state() == 2) &&
+        remasterWeatherRoofless()) {
+        const bool ran = session.postMessage(23, -1);
+        std::printf("frame %ld: weather - back into the shower: message 23 posted again %s\n", frameNo,
+                    ran ? "to its handler" : "- no handler subscribes");
+        omk::event("remaster.rain3d.reenter", {{"frame", frameNo}, {"area", areaNow}, {"ran", ran}});
+    }
     if (weather.state() != weatherStateTold) {
         weatherStateTold = weather.state();
         std::printf("frame %ld: weather - state %d, %d drops%s, next change at %ld ms (now %ld)\n",

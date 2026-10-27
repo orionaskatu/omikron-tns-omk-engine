@@ -1343,6 +1343,19 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   roof at 3629, -9030 it ramps to full, message 24 at 2 min 36 s, the 10 s
   fade, the music back to track 2. The original's rule in the original mode
   and without the 3D weather. `engine: rain 3d` part 7.
+* **In play again, with `--vulkan`** (the same day; 7% of frames over 33 ms
+  where `--world-vulkan`'s CPU present had 63%): (4) IT RAINED ON, ITS
+  SOUND GONE - after a visit indoors (the restaurant, area 217, its track
+  10) the street plays its own track on the way back in (event 9 -
+  Anekbah's 2) while the shower still runs, and message 23, which played the
+  rain's 119, came only when it began. Coming back into a rain area with a
+  shower running (state 1 or 2), the 3D weather posts message 23 again -
+  its handler plays 119 after the area's 2 (`remaster.rain3d.reenter`). (5)
+  THE RAIN MOVED IN THE PAUSE MENU: the original keeps the world drawn behind
+  screen 31 (+112 bit 0x40000, docs/UI.md) and steps its drops per drawn
+  frame, its clock stopped - so its 2D rain moves there too, and the
+  original mode keeps that; with the 3D weather the drops are held while
+  paused. `engine: rain 3d` parts 8 and 9.
 * **A framing seen twice, not reproduced** (2026-10-27): some comparison
   renders of Anekbah's street start (`--stand 1804,0,-6890,336`, 700 frames,
   800x600) came out with the camera further back than others with the same

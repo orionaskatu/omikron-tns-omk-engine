@@ -491,6 +491,35 @@ key updated so the next start resumes in it.
      load (3d): an original start leaves them flat (`smoothBodies` 0) and
      F10 does not round them; a remaster start keeps them round through F10.
      That is B2: keep both meshes per character and pick at draw.
+   * **B2 DONE (2026-10-27): the rounded bodies switch too.** Rounded at
+     load in BOTH modes (`smoothBodies` armed; `mode = original` no longer
+     zeroes it), each model's other rest kept beside it
+     (`PlayState::remasterBodies_`, `remasterPlayerBody_`: the flat rest
+     while the rounded one shows, the rounded one while the original's look
+     does) and swapped into `CharModel::rest` / `playerBody.rest` by the
+     switch (`remasterSwapBodies`, `playremaster_bodies.cpp`) with a new
+     revision - every actor reads the rest each frame (`applyPose` re-sizes
+     its posed copy), the crowd's copies are cut from `CharModel::flat`
+     either way. A build without OMK_REMASTER rounds and keeps nothing: the
+     whole of it is in `backends/remaster/`, stubbed in
+     `playremaster_off.cpp` (`engine: remaster switch` green).
+     FOUND ON THE WAY: THE PLAYER'S FEET. His anchor (`playerFeet`, omk-play
+     69) is his POSED body's lowest corner, LATCHED - swapped bodies kept
+     the other body's anchor (16k bytes off), and re-latching at the switch
+     measured another frame of the standing breath than the start's (1.3k
+     bytes off). Now the latch also poses the KEPT body in the same pose
+     (`remasterFeetLatched`, one call in `playframe_world_crowd.cpp`) and
+     the switch swaps the two anchors; the underwater shimmer's phase is
+     set on the rest swapped in. MEASURED, to the pixel, Vulkan and GLES,
+     the street with per-pixel lighting and mapped shadows and the preset's
+     `smooth = 0.75`: original + F10 = a remaster start, remaster + F10 = an
+     original start, an original start = no remaster. `engine: remaster
+     mode` now runs with the bodies rounded; shown to fail with the bodies
+     not swapped and with the feet anchor not swapped. Load cost of an
+     original start: the rounding it skipped before, and one flat copy per
+     rounded model. `engine: smooth bodies` had been red since 3a (it pinned
+     the preset's literal 0.75, now `kRemasterPreset`'s) - it holds the
+     table, shown to fail with the table's value moved.
      Checks after it: `engine: remaster mode` (new), `graphics menu`,
      `graphics menu live`, `remaster switch`, `preload`, `texture pack` (its
      source gate now `pack.shown()`), `options write`, `play usage`,

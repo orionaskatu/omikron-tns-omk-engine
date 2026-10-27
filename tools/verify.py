@@ -7196,9 +7196,9 @@ def c_engine_remaster_mode():
     So each direction must leave the game where a START in that mode would.
     Anekbah's street (`--save traces/save-appart.bin --area 0 --stand`), 40
     frames, per-pixel lighting and mapped shadows (the emitters' point lights
-    and the relief drawn), the preset (`omkpaths.pack_path`) with the bodies
-    flat (`smooth = 0`: an original start leaves them flat, the switch does
-    not round them) - on Vulkan and GLES:
+    and the relief drawn), the preset (`omkpaths.pack_path`) with its rounded
+    bodies (B2: both rests kept, swapped; the player's feet anchor measured on
+    both in the latch's pose) - on Vulkan and GLES:
 
     * an original start draws what a start with no remaster at all draws, to
       the pixel, and differs from a remaster start;
@@ -7246,7 +7246,7 @@ def c_engine_remaster_mode():
     got, want = [], []
     try:
         pp = "[Enhancements]\nlighting = perpixel\nshadowquality = mapped\n"
-        rem = pp + "[Remaster]\ndir = %s\npreload = 0\nsmooth = 0\n" % pack
+        rem = pp + "[Remaster]\ndir = %s\npreload = 0\n" % pack
         orig = rem + "mode = original\n"
         cases = [("vk", play, {"SDL_VIDEODRIVER": "dummy"}, ["--world-vulkan"])]
         if os.path.exists(gles):
@@ -34176,7 +34176,9 @@ def c_engine_smooth_bodies():
     src_ok = (bool(re.search(r"float\s+smooth\s*=\s*0\.0f;", sh)),
               'kRemaster, "smooth"' in sc and 'kEnhancements, "smooth"' not in sc,
               not re.search(r"\bs\.smooth\s*=", max_body),   # (`smoothAnimation` is its own)
-              bool(re.search(r"!preset\.empty\(\)\s*\?\s*0\.75f\s*:\s*0\.0f;$", pre)),
+              # the preset's 0.75 from its table since step 3a (`kRemasterPreset`)
+              bool(re.search(r'!preset\.empty\(\)\s*\?\s*pv\("smooth"\)\s*:\s*0\.0f;$', pre)) and
+              bool(re.search(r'\{"smooth",\s*0\.75f\}', sh)),
               "omk::smoothBody(m.rest" in pc and "omk::smoothBody(playerBody.rest" in pl)
     mk = subprocess.run(["make", "-s", "build/smooth_probe"], cwd=eng, capture_output=True, text=True)
     probe = os.path.join(eng, "build", "smooth_probe")

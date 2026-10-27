@@ -193,13 +193,6 @@ void PlayState::remasterSetup() {
         smoothBodies = smoothFlag >= 0.0f ? smoothFlag
                      : settings.smoothSource == omk::Settings::Source::Ini ? settings.smooth
                      : !preset.empty() ? pv("smooth") : 0.0f;
-        // ...cut from the rest at load: an ORIGINAL start leaves them flat, and
-        // the switch does not round them (`todo/graphics-menu.md` B)
-        if (remasterStartHidden_ && smoothBodies > 0.0f) {
-            std::printf("smooth: %.2f, not in the original mode - the characters flat until a start in the "
-                        "remaster's\n", static_cast<double>(smoothBodies));
-            smoothBodies = 0.0f;
-        }
         if (smoothBodies > 0.0f)
             std::printf("smooth: %.2f - a REMASTER feature: the characters rounded, each triangle split 3x3 "
                         "(Phong tessellation), every backend\n", static_cast<double>(smoothBodies));

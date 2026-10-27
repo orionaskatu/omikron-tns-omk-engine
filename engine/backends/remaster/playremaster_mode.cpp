@@ -7,10 +7,9 @@
 // (`remasterSetup`), so the switch moves only what a frame reads: the
 // strengths to 0 and back (held in `remasterHeld_`), the three packs hidden
 // (`setShown`) and the world's textures uploaded again, the emitters' lights
-// taken out of the sets' tables, the grade, the films. Outside it: the
-// upscale and the preload radius (a frame rate's choices, not a look) and,
-// for now, the rounded bodies (cut from the rest at load: an original start
-// leaves them flat, a switch keeps what the start made).
+// taken out of the sets' tables, the grade, the films, the rounded bodies'
+// rests swapped with the flat ones kept beside them. Outside it: the upscale
+// and the preload radius (a frame rate's choices, not a look).
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
@@ -125,6 +124,7 @@ bool PlayState::remasterShow(bool on, const char* why) {
         }
     }
     remasterSlotsFrame(true);
+    remasterSwapBodies(on);   // the rounded bodies (B2, `playremaster_bodies.cpp`)
     gradeFor = "\x01";   // `remasterGrade` chooses again
     std::printf("remaster: %s - the %s mode%s\n", why, on ? "remaster" : "original",
                 retextured ? ", the world's textures uploaded again" : "");

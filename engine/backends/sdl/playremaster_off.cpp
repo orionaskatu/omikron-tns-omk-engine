@@ -27,6 +27,8 @@ bool PlayState::remasterSwitchable() const { return false; }
 float PlayState::remasterArmed(const char*) const { return 0.0f; }
 float PlayState::remasterRunning(const char*, float v) const { return v; }
 float* PlayState::remasterStrength(const std::string&) { return nullptr; }
+void PlayState::remasterSwapBodies(bool) {}
+void PlayState::remasterFeetLatched(const std::vector<omk::MeshPose>&) {}
 void PlayState::remasterPrepareSet(SetLoad&) {}
 void PlayState::remasterSmoothModel(CharModel&, const std::string&) {}
 void PlayState::remasterSmoothPlayer() {}

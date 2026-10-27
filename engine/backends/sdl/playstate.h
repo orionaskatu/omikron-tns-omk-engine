@@ -793,6 +793,17 @@ struct PlayState {
     bool remasterKeyDown_ = false;                 // F10's last state, for its edge
     bool remasterNothingTold_ = false;
     std::map<std::string, float> remasterHeld_;    // the strengths while the original shows
+    // the ROUNDED BODIES both ways (B2): each rounded model's rest NOT shown -
+    // the flat one while the remaster shows, the rounded one while the
+    // original does - swapped into `CharModel::rest` by the switch
+    struct RemasterBody { omk::Geometry other; bool roundShown = true; bool active = false; };
+    std::map<std::string, RemasterBody> remasterBodies_;
+    RemasterBody remasterPlayerBody_;              // ...and the player's (`playerBody.rest`)
+    void remasterSwapBodies(bool round);
+    // the player's feet anchor (`playerFeet`) measured on the KEPT body in the
+    // pose the latch read - what a start showing that body would latch
+    void remasterFeetLatched(const std::vector<omk::MeshPose>& pose);
+    float remasterOtherFeet_ = 0.0f;
     bool remasterShow(bool on, const char* why);   // false when nothing was armed
     void remasterModeFrame(bool f10);              // each frame, beside ESC's read: F10 down
     void remasterSlotsFrame(bool all);             // the sets' lights brought to the mode

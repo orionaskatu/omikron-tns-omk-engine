@@ -561,6 +561,7 @@ void PlayState::worldCrowdPlayer() {
                 }
             playerFeetKnown = true;
             if (standing) playerStandLatched = true;
+            remasterFeetLatched(pose);   // ...the kept body's too (`backends/remaster/`, the switch)
         }
         // THE ROOT TRANSLATION'S VERTICAL, which is the crouch.
         //

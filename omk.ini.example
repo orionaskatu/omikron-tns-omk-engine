@@ -254,9 +254,9 @@
 ; once, and back; both write this key, so the next start resumes in the mode
 ; left. `remaster`, the default, starts with it. A remaster flag on the
 ; command line shows the remaster whatever this says. Outside the switch:
-; the upscale and the preload (frame rate, not looks), and the rounded
-; bodies (smooth), cut at load - an `original` start leaves them flat, and
-; F10 does not round them until a start in `remaster`.
+; the upscale and the preload (frame rate, not looks). The rounded bodies
+; (smooth) are rounded at load in both modes and kept flat beside: F10
+; swaps them too.
 ;mode = remaster
 ;
 ; The INTERFACE's bitmaps (menus, HUD, documents, the map) drawn from an

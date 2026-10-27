@@ -1263,8 +1263,20 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   step from the eye drew one long bright streak down the frame): faded in
   smoothly from 40 to 260 units (it was linear over 0..80); Anekbah 538
   drawn, 7139 pixels.
-* **Open**: the streaks lit by the lights round them (the neon, the
-  burner - the tiled point lights); the snow in 3D.
+* **Lit by the set's lights** (the reader's "option 3", the same day): each
+  drop takes the set's own lights that reach it - and the emitters', the
+  flames and glows, when the emitters' light put them in the slot's table -
+  on `lightReach`'s rule (the squared reach, the linear falloff, `intensity
+  * 256`), as a surface facing each light, through the engine's ramp
+  `(t * c) >> 8`, over a dimmer base (0.35 of the line's grey); the lights
+  at 0.5, and past white the colour scaled down whole, not clipped per
+  channel, so a drop by the burner stays warm. Anekbah's street has two
+  FILLS reaching everywhere (a warm 255,171,79 at k 128 and a blue 94,149,217
+  at ~230) - the variation is the burner's warm pool and the dark corners'
+  dimmer rain; all 538 drops lit. CPU per drop, so both backends alike
+  (7231 pixels each).
+* **Open**: the neon's own colour on the rain (the neon are emitters - lit
+  only with the emitters' light on); the snow in 3D.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

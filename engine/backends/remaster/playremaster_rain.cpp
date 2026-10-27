@@ -29,11 +29,21 @@
 // camera's shutter open half a frame on a drop falling 64 units a frame - so
 // perspective makes a near drop's streak long and a far one's short, where
 // the original's 12 units drew every drop alike.
+//
+// ...and LIT (the reader's "option 3", 2026-10-27): each drop takes the light
+// of the set's own lights that reach it - and the emitters' (the flames, the
+// glows) when the remaster's emitters' light put them in the slot's table -
+// on the engine's own rule (`o3de/vertexlight.h` `lightReach`: the squared
+// reach, the linear falloff, `intensity * 256`), as a surface facing each
+// light would (a streak has none), its colour through the engine's ramp
+// `(t * c) >> 8`: rain glints orange by the burner and in a lamp's pool, and
+// is dimmer where nothing lights it.
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
 #include "o3de/collision.h"
 #include "o3de/raster.h"
+#include "o3de/vertexlight.h"
 #include "platform/events.h"
 
 #include <algorithm>
@@ -53,6 +63,9 @@ constexpr float kRainNear = 260.0f;
 constexpr float kRainLength = 32.0f;      // a streak's length in the world: half a frame's fall
 constexpr float kRainHalfPx = 1.5f;       // ...its half width in pixels at 480 lines, the texture's soft edge in it
 constexpr int kStreakW = 8, kStreakH = 32;   // the streak texture, across and along
+constexpr float kRainUnlit = 0.35f;       // a drop no light reaches, against the line's grey
+constexpr float kRainLit = 0.5f;          // ...and the lights' colour added on it - Anekbah's
+                                          // street has two fills reaching everywhere, ~0.8 together
 
 // THE STREAK, generated: a grey texel per palette index (index = brightness)
 // - across, a soft bell; along it, from the leading end (v 0), a short soft
@@ -112,8 +125,15 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     // the roofs: the shown set's shot soup, as the weather's own ray
     const omk::TriangleSoup* shot = nullptr;
     const omk::SoupRunBoxes* boxes = nullptr;
+    std::span<const omk::Light3do> lights;
     for (const auto& ws : worldSlots)
-        if (!ws.stem.empty() && ws.stem == worldSet) { shot = &ws.shotSoup; boxes = &ws.shotRunBoxes; }
+        if (!ws.stem.empty() && ws.stem == worldSet) {
+            shot = &ws.shotSoup;
+            boxes = &ws.shotRunBoxes;
+            lights = ws.lights;
+        }
+    static std::vector<float> reach;
+    int litDrops = 0;
     const float s = std::clamp(rain3dStrength, 0.0f, 1.0f) * kRainGlow;
     // the box's centre as the weather places it: a third of its size ahead
     const float dv[3] = {v.cam.at[0] - v.cam.eye[0], v.cam.at[1] - v.cam.eye[1], v.cam.at[2] - v.cam.eye[2]};
@@ -139,11 +159,11 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     // with the frame - its texture's soft edge inside that
     const float halfPx = kRainHalfPx * std::max(1.0f, static_cast<float>(fb.h) / 480.0f);
     int roofed = 0;
-    const auto corner = [](const float p[3], float g, float u, float tv) {
+    const auto corner = [](const float p[3], const float rgb[3], float u, float tv) {
         omk::Corner c{};
         c.x = p[0]; c.y = p[1]; c.z = p[2];
         c.u = u; c.v = tv;
-        c.r = c.g = c.b = g;
+        c.r = rgb[0]; c.g = rgb[1]; c.b = rgb[2];
         c.phase = -1.0f;
         return c;
     };
@@ -180,26 +200,42 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         const float fade = nearT * nearT * (3.0f - 2.0f * nearT) *
                            std::clamp((kRainBox - pa.z) / (kRainBox * 0.4f), 0.0f, 1.0f);
         if (!(fade > 0.0f)) continue;
-        // the original line's grey at its bright end (0xC0), the streak's
-        // texture shaping it
-        const float g = 192.0f / 255.0f * s * fade;
+        // the original line's grey at its bright end (0xC0), dimmed where
+        // nothing lights it, and the lights that reach the drop added - each
+        // as `ramp[c][t]` with `t` its whole strength; the streak's texture
+        // shaping it all
+        float rgb[3] = {192.0f / 255.0f * kRainUnlit, 192.0f / 255.0f * kRainUnlit, 192.0f / 255.0f * kRainUnlit};
+        reach.clear();
+        if (!lights.empty() && omk::lightReach(lead, lights, reach) > 0) {
+            ++litDrops;
+            for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
+                const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
+                const int t = static_cast<int>(std::min(255.0f, k));
+                for (int c = 0; c < 3; ++c)
+                    rgb[c] += kRainLit * omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
+            }
+        }
+        // past white, scaled down whole rather than clipped per channel: the
+        // burner's drops stay orange instead of going white
+        const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
+        for (float& c : rgb) c = c / top * s * fade;
         const float W = static_cast<float>(kStreakW), H = static_cast<float>(kStreakH);
         const float l0[3] = {lead[0] - side[0] * w, lead[1] - side[1] * w, lead[2] - side[2] * w};
         const float l1[3] = {lead[0] + side[0] * w, lead[1] + side[1] * w, lead[2] + side[2] * w};
         const float t0[3] = {trail[0] - side[0] * w, trail[1] - side[1] * w, trail[2] - side[2] * w};
         const float t1[3] = {trail[0] + side[0] * w, trail[1] + side[1] * w, trail[2] + side[2] * w};
-        const omk::Corner c0 = corner(l0, g, 0.0f, 0.0f), c1 = corner(l1, g, W, 0.0f);
-        const omk::Corner c2 = corner(t0, g, 0.0f, H), c3 = corner(t1, g, W, H);
+        const omk::Corner c0 = corner(l0, rgb, 0.0f, 0.0f), c1 = corner(l1, rgb, W, 0.0f);
+        const omk::Corner c2 = corner(t0, rgb, 0.0f, H), c3 = corner(t1, rgb, W, H);
         rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c3, c0, c3, c2});
     }
     const std::size_t drawnDrops = rainGeo.corners.size() / 6;
     if (frameNo % 30 == 0) {
         std::printf("frame %ld: the rain in the scene - %zu of %zu drops drawn (the weather's %zu and %d each "
-                    "more), %d under a roof\n", frameNo, drawnDrops, all.size(), rainDrops.size(), kRainCopies,
-                    roofed);
+                    "more), %d under a roof, %d lit by the set's lights\n", frameNo, drawnDrops, all.size(),
+                    rainDrops.size(), kRainCopies, roofed, litDrops);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
-                                       {"streak", rainTexSlot >= 0}});
+                                       {"streak", rainTexSlot >= 0}, {"lit", litDrops}});
     }
     if (rainGeo.corners.empty()) return;
     omk::Batch b;

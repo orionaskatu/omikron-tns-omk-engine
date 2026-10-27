@@ -2568,8 +2568,8 @@ second being an outstretched arm.
   as the rain does (so it ramps and fades, where the arm would show all 200),
   each ONE GRAIN of `sand.bmp` - the field cut into its 63 grains (8-connected
   runs of non-black texels), 4 units across a 4-texel grain and capped at a
-  few pixels in 2D (`kSandGrainWorld`), 1.5 units in the remaster's scene,
-  opaque with the black colour key. Jaunpur's track 122 - its city music
+  few pixels in 2D (`kSandGrainWorld`); in the remaster's scene a short
+  streak along the wind in the grain's colour, under a dusty ochre grade. Jaunpur's track 122 - its city music
   under a RAIN sound - plays with the sand, as the data has it.
 * **The roof.** `sub_481200` casts the eye to 196.85 (5 m) ABOVE it through
   `sub_444810`, the bolts' world; meeting a mesh sends a running weather to 4

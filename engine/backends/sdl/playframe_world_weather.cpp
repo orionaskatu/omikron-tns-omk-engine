@@ -23,6 +23,7 @@ void PlayState::weatherFrame(const omk::View& v) {
     weatherFlakes.clear();
     weatherGrains.clear();
     weatherRain = 0.0f;
+    weatherSandLevel = 0.0f;
     weatherSnowing = false;
     rainDrops.clear();   // the remaster's 3D rain takes them afresh, or has none
     auto& session = *session_;
@@ -103,6 +104,9 @@ void PlayState::weatherFrame(const omk::View& v) {
     });
     // the RAIN's strength for the remaster's wet floors (`o3de/wetfloor.h`):
     // its drops over their 200, the snow and the undrawn third none
+    if ((viewBits & 8u) && restoredWeather)
+        weatherSandLevel = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
+                           static_cast<float>(omk::kWeatherDrops);
     if (viewBits & 2u)
         weatherRain = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
                       static_cast<float>(omk::kWeatherDrops);

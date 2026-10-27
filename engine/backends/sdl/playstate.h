@@ -723,6 +723,7 @@ struct PlayState {
     int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
     int sandTexSlot = -1;                        // ...and the restored sand's field (`Images\sand.bmp`)
     std::vector<omk::GrainRect> sandGrains3d{};  // ...its grains, texel rectangles
+    std::vector<std::array<float, 3>> sandGrainColour3d{};   // ...and each one's colour
     unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
@@ -1147,6 +1148,7 @@ struct PlayState {
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
+    float weatherSandLevel = 0.0f;   // ...the restored sand's, likewise (its dusty sky's input)
     bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
     int weatherAreaTold = -2;      // the active area the weather last saw (coming back into a shower)
     bool restoredWeather = false;  // [Restored] weather: Qalisar's and Lahoreh's showers, the sand

@@ -34072,8 +34072,12 @@ def c_engine_rain3d():
          way in, then message 23 is posted again and the rain's track 119
          plays after it;
       10. THE RESTORED SAND in the scene (`--restore-weather 1`, Jaunpur's
-         address 54): at frame 690 more than 300 grains drawn, their field
-         pooled (`remaster.rain3d` sand=1, streak=1).
+         address 54): at frame 690 more than 300 grains drawn as streaks
+         along the wind in their own colours (`remaster.rain3d` sand=1,
+         streak=1), and the grade's DUSTY sky at its full step (-16 in
+         `remaster.grade` - the ochre haze, the sand's counterpart of the
+         rain's overcast; the reader: dots drifting read as "yellow/brown
+         snow").
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34234,12 +34238,13 @@ def c_engine_rain3d():
     print(f"        under the roof: {roofed_shower}; the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
           f"Mahaleel's snow at frame 90: {sn}")
     sd = next((k for n, k in _events(sand_out) if n == "remaster.rain3d" and k.get("frame") == "690"), {})
-    sand3d = (sd.get("sand"), int(sd.get("drawn", 0)) > 300, sd.get("streak"))
+    dust = min((int(k.get("overcast", 0)) for n, k in _events(sand_out) if n == "remaster.grade"), default=0)
+    sand3d = (sd.get("sand"), int(sd.get("drawn", 0)) > 300, sd.get("streak"), dust)
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
-            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1")), \
+            (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

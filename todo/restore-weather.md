@@ -64,6 +64,15 @@ flake). Whether the gate was closed on purpose, nothing records.
   key, lit. Jaunpur's open addresses 49, 54, 59 (its start address 34 has a
   roof over the frame-1 camera, so under the original's rule its shower
   never begins there). `engine: weather` (2D) and `engine: rain 3d` part 10.
+* **The remaster's sand redone** (the reader in play, 2026-10-27: "more like
+  yellow/brown snow than sand"): in the scene each grain is now a short soft
+  streak along the arm's wind (x back 0.866, y down 0.3 - mostly sideways),
+  half a frame of it long (15 units), the rain's streak texture tinted with
+  that grain's own colour in the field, additive, lit; and the shower has a
+  DUSTY SKY - the grade toward an ochre of each pixel's luma (0.40 at the
+  storm's height), flattened and lifted a little (0.12), in 16 steps as the
+  shower ramps (`remaster.grade` overcast -1..-16). The original look keeps
+  its specks.
 * **Step 5**: the 2D grains go into `fb` like the rain and snow, which every
   backend composites; the 3D sand is the remaster's (Vulkan, GLES).
 * **Step 7 done**: `docs/ASSETS.md` 4e, `engine/README.md`'s coverage, the

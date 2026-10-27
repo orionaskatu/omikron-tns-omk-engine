@@ -117,9 +117,14 @@ constexpr float kOvercastDark = 0.08f;     // the darkening at full rain (0.20 m
 constexpr float kOvercastGrey = 0.30f;     // ...the saturation it takes away
 constexpr float kOvercastCool = 0.03f;     // ...and the blue it adds over the red
 
+// ...and THE SAND's DUSTY SKY (the restored weather's): toward an ochre of the
+// pixel's own luma, a little flattened and lifted - the air full of sand
+constexpr float kDustTint = 0.40f;         // how far toward the ochre at the storm's height
+constexpr float kDustFlat = 0.12f;         // ...the contrast it takes, the floor it lifts
+
 // `base` (n^3 triples, red fastest; null: the identity) under an overcast of
-// `o` (0..1) into `out`
-void overcastLut(const omk::ColourLut* base, int n, float o, std::vector<float>& out) {
+// `o` (0..1) into `out` - or, `dust`, the sand's ochre haze
+void overcastLut(const omk::ColourLut* base, int n, float o, std::vector<float>& out, bool dust = false) {
     out.resize(static_cast<std::size_t>(n) * n * n * 3);
     for (int b = 0, i = 0; b < n; ++b)
         for (int g = 0; g < n; ++g)
@@ -128,6 +133,15 @@ void overcastLut(const omk::ColourLut* base, int n, float o, std::vector<float>&
                 if (base) for (int k = 0; k < 3; ++k) c[k] = base->rgb[static_cast<std::size_t>(3 * i + k)];
                 else c[0] = r / float(n - 1), c[1] = g / float(n - 1), c[2] = b / float(n - 1);
                 const float l = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2];
+                if (dust) {
+                    const float ochre[3] = {1.12f, 0.96f, 0.72f};
+                    for (int k = 0; k < 3; ++k) {
+                        c[k] += (l * ochre[k] - c[k]) * kDustTint * o;
+                        c[k] = c[k] * (1.0f - kDustFlat * o) + kDustFlat * o * 0.45f * ochre[k];
+                    }
+                    for (int k = 0; k < 3; ++k) out[static_cast<std::size_t>(3 * i + k)] = std::clamp(c[k], 0.0f, 1.0f);
+                    continue;
+                }
                 for (int k = 0; k < 3; ++k) c[k] = (l + (c[k] - l) * (1.0f - kOvercastGrey * o)) * (1.0f - kOvercastDark * o);
                 c[0] -= kOvercastCool * o * l;
                 c[2] += kOvercastCool * o * l;
@@ -141,27 +155,31 @@ void PlayState::remasterGrade() {
     omk::Renderer& world = *world_;
     // the shower's step: the rain's drops over 200, while the 3D rain shows
     const bool shown = !session.renderGrey() && remasterShown_;
-    const int step = shown && rain3dStrength > 0.0f
-        ? static_cast<int>(std::lround(std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) * kOvercastSteps)) : 0;
+    // ...the rain's, or the restored sand's (its dusty sky - a negative step)
+    const bool dust = weatherSandLevel > 0.0f;
+    const int mag = shown && rain3dStrength > 0.0f
+        ? static_cast<int>(std::lround(std::clamp((dust ? weatherSandLevel : weatherRain) * rain3dStrength,
+                                                  0.0f, 1.0f) * kOvercastSteps)) : 0;
+    const int step = dust ? -mag : mag;
     if (!omk::cityGrades().active() && step == 0 && gradeOvercast == 0) return;
     // none in the original mode (part B's switch)
     const std::string want = shown ? worldSet : std::string();
     if (want == gradeFor && step == gradeOvercast) return;
     const omk::ColourLut* lut = want.empty() || !omk::cityGrades().active() ? nullptr : omk::cityGrades().forSet(want);
     bool took;
-    if (step > 0) {
+    if (step != 0) {
         static std::vector<float> rgb;
         const int n = lut ? lut->n : kOvercastSide;
-        overcastLut(lut, n, static_cast<float>(step) / kOvercastSteps, rgb);
+        overcastLut(lut, n, static_cast<float>(std::abs(step)) / kOvercastSteps, rgb, step < 0);
         took = world.setGrade(rgb.data(), n);
     } else {
         took = world.setGrade(lut ? lut->rgb.data() : nullptr, lut ? lut->n : 0);
     }
-    if (want != gradeFor || (step > 0) != (gradeOvercast > 0)) {
+    if (want != gradeFor || (step != 0) != (gradeOvercast != 0)) {
         const std::string src = lut ? omk::cityGrades().sourceFor(want) : "";
         std::printf("frame %ld: grade %s for %s%s%s\n", frameNo, src.empty() ? "none" : src.c_str(),
                     want.empty() ? "the greyscale bank" : want.c_str(),
-                    step > 0 ? " - under the shower's sky" : "",
+                    step > 0 ? " - under the shower's sky" : step < 0 ? " - in the sand's dusty air" : "",
                     took ? "" : " - REFUSED, this renderer has no grade");
     }
     omk::event("remaster.grade", {{"set", want}, {"lut", lut ? omk::cityGrades().sourceFor(want) : ""},

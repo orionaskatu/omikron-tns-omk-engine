@@ -393,6 +393,7 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
         std::printf("gles: the body light - the posing program's variant (%s)\n",
                     posed_ ? "built" : "not built - the bodies tinted on the CPU");
     }
+    bloomBuilt_ = bloom_ > 0.0f;   // the variant `remasterSources` linked
     if (bloom_ > 0.0f) {
         // the light maps on unit 3 (0 the texture, 1 the present's matrix, 2 the shadow map)
         for (const GLuint p : {prog_, posed_}) {

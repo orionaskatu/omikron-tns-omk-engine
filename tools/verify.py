@@ -7026,6 +7026,104 @@ def c_engine_graphics_menu():
             "config's bytes after; and the no-remaster build's page 100")
 
 
+def c_engine_graphics_menu_live():
+    r"""engine: OMK's options APPLIED LIVE draw what a start with them draws
+    (`todo/graphics-menu.md` 3a).
+
+    A change the menu applies at once must leave the game exactly where a start
+    with the same value would - else "live" is a different picture. Each case is
+    three runs of Anekbah's street (`--save traces/save-appart.bin --area 0
+    --stand`), 40 frames: the value STARTED from the config, the value set at
+    frame 10 by `--omk-set` (the menu's own path: `OmkOptions::choose`, the
+    write, `omkApplyLive`), and neither. The live frame must equal the started
+    one to the pixel and differ from the plain one - or, for a change the game
+    REFUSES live, equal the plain one and say "at the next start".
+
+    * Vulkan (`--world-vulkan`): per-pixel lighting, mapped and fitted shadows,
+      the unlimited draw distance - and, with the remaster's pack configured
+      (`omkpaths.pack_path`), the bloom 1.6 -> 4, the ambient occlusion 2 -> 4,
+      the mist 0.5 -> 1, and the bloom from 0, refused (its light maps load
+      only when it is on at start). The emitters' light is off in the bloom
+      cases: its surface lights are computed at a set's load from the light
+      maps the bloom decodes, so a start without the bloom lights by
+      +-1 step differently - a load-time difference, measured and not a fault
+      of the live path.
+    * GLES (`omk-play-gles`, hidden): per-pixel lighting refused (its enhanced
+      programs are linked at start only - step 3b), fitted shadows applied.
+    """
+    import subprocess, tempfile, shutil
+    eng = os.path.join(ROOT, "engine")
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    gles = os.path.join(eng, "build", "omk-play-gles")
+    if mk.returncode != 0 or not os.path.exists(play):
+        return ("skipped",), ("skipped",), "omk-play did not build (no SDL?)"
+    pack = omkpaths.pack_path()
+    rem = "[Remaster]\ndir = %s\npreload = 0\nfxlight = 0\n" % pack if pack else ""
+    tmp = tempfile.mkdtemp()
+
+    def run(binary, name, ini, extra, env):
+        d = os.path.join(tmp, name)
+        os.makedirs(d)
+        open(os.path.join(d, "omk.ini"), "w").write(ini)
+        args = [binary, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--nofmv", "--saves",
+                os.path.join(d, "GAMES"), "--res", "640x480", "--filter", "nearest", "--save",
+                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0", "--stand",
+                "1804,0,-6890,336", "--frames", "40", "--dump", os.path.join(d, "f.bin")] + extra
+        r = subprocess.run(args, capture_output=True, env=dict(os.environ, OMK_EVENTS="1", **env))
+        out = (r.stdout + r.stderr).decode("latin-1")
+        evts = [e["live"] for n, e in _events(out) if n == "options.omk"]
+        f = os.path.join(d, "f.bin")
+        return (open(f, "rb").read() if os.path.exists(f) else b""), evts, out
+
+    def same(a, b):
+        return len(a) > 0 and a == b
+
+    def case(binary, env, extra, name, base, key, val, startIni):
+        b, _, out = run(binary, name + "-base", base, extra, env)
+        l, ev, _ = run(binary, name + "-live", base, extra + ["--omk-set", "%s=%s@10" % (key, val)], env)
+        if startIni is None:   # refused: drawn as before, and said
+            return (name, same(l, b), ev)
+        st, _, _ = run(binary, name + "-start", base + startIni, extra, env)
+        return (name, same(l, st), not same(l, b), ev)
+
+    got, want = [], []
+    try:
+        vk = ["--world-vulkan"]
+        vkEnv = {"SDL_VIDEODRIVER": "dummy"}
+        probe, _, out = run(play, "probe", "", vk, vkEnv)
+        if "through VULKAN" not in out:
+            return ("skipped",), ("skipped",), "no Vulkan device - the GPU backend is optional"
+        for name, key, val, line in [
+                ("lighting", "enhancements.lighting", "perpixel", "[Enhancements]\nlighting = perpixel\n"),
+                ("shadow-mapped", "enhancements.shadowquality", "mapped", "[Enhancements]\nshadowquality = mapped\n"),
+                ("shadow-fitted", "enhancements.shadowquality", "fitted", "[Enhancements]\nshadowquality = fitted\n"),
+                ("clip", "enhancements.clipdistance", "unlimited", "[Enhancements]\nclipdistance = unlimited\n")]:
+            got.append(case(play, vkEnv, vk, "vk-" + name, "", key, val, line))
+            want.append(("vk-" + name, True, True, ["1"]))
+        if pack:
+            for name, key, val, line in [("bloom-4", "remaster.bloom", "4", "bloom = 4\n"),
+                                         ("ao-4", "remaster.ao", "4", "ao = 4\n"),
+                                         ("mist-1", "remaster.mist", "1", "mist = 1\n")]:
+                got.append(case(play, vkEnv, vk, "vk-" + name, rem, key, val, line))
+                want.append(("vk-" + name, True, True, ["1"]))
+            got.append(case(play, vkEnv, vk, "vk-bloom-from-0", rem + "bloom = 0\n", "remaster.bloom", "1.6", None))
+            want.append(("vk-bloom-from-0", True, ["0"]))
+        if os.path.exists(gles):
+            glEnv = {"OMK_NO_GPU_PRESENT": "1"}
+            got.append(case(gles, glEnv, [], "gles-lighting", "", "enhancements.lighting", "perpixel", None))
+            want.append(("gles-lighting", True, ["0"]))
+            got.append(case(gles, glEnv, [], "gles-shadow-fitted", "", "enhancements.shadowquality", "fitted",
+                            "[Enhancements]\nshadowquality = fitted\n"))
+            want.append(("gles-shadow-fitted", True, True, ["1"]))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return got, want, \
+           ("per case: the live frame equal to the started one, different from the plain one, and the "
+            "options.omk event's live flag - a refused case equal to the plain one; the remaster cases "
+            "%s" % ("run (pack %s)" % pack if pack else "SKIPPED - no pack configured (omk.conf `pack =`)"))
+
+
 def c_engine_perpixel_lighting():
     r"""`lighting = perpixel` - the ENHANCEMENT of `todo/enhancements.md` 7.
 
@@ -51876,6 +51974,7 @@ SLOW = [
     ("engine: sneak quit", c_engine_sneak_quit, "UI; todo/sneak.md 5"),
     ("engine: options menu", c_engine_options_menu, "UI 4; todo/options-menu.md"),
     ("engine: graphics menu", c_engine_graphics_menu, "todo/graphics-menu A2; ui/omkoptions.h"),
+    ("engine: graphics menu live", c_engine_graphics_menu_live, "todo/graphics-menu 3a; playomkoptions.cpp"),
     ("engine: start menu quit", c_engine_start_quit, "UI; todo/start-menu.md"),
     ("engine: close flush", c_engine_close_flush, "UI 3h; todo/sneak.md"),
     ("engine: sneak memos", c_engine_sneak_memos, "UI; todo/sneak.md 2c"),

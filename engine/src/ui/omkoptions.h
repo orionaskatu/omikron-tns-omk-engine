@@ -19,8 +19,9 @@
 // it - the running RENDERER cannot draw is left out (`Renderer::takes`).
 //
 // A change is WRITTEN to the ini (`takeEdits`, the caller's `writeOptionsFile`)
-// and, for the rows that can, APPLIED at once (`takeChanged`); the others carry
-// a `*` and the page's heading says they apply at the next start. A row a
+// and, where the running game can take it, APPLIED at once (`takeChanged`,
+// `settle`); the others carry a `*` and the page's heading says they apply at
+// the next start. A row a
 // command-line flag holds says so and cannot move - the flag is the most
 // recent word, as for the game's rows. "Valeurs par défaut" UNSETS the page's
 // keys (commented out in the file), so each falls back to what the reader
@@ -53,6 +54,10 @@ public:
     // `setValue` also makes it the row's starting value - the one a later
     // change is pending against.
     void setValue(const std::string& key, double v);
+    // ...and a row whose FILE says other than what runs (a change waiting for
+    // the next start, the menu reopened): `running` is its start, `configured`
+    // its current value - shown with its `*`
+    void setValue(const std::string& key, double running, double configured);
     void setDefault(const std::string& key, double v);
     void setHeld(const std::string& key, const std::string& flag);
     double value(const std::string& key) const;
@@ -73,11 +78,19 @@ public:
     bool press(int page, int w, std::uint32_t bits, int& gotoPage);
 
     // what changed since the last call: the ini edits, and the keys whose
-    // value moved (the caller applies the live ones)
+    // value moved - the caller tries each on the running game
     std::vector<OptionsEdit> takeEdits();
     std::vector<std::string> takeChanged();
-    // whether `key` applies at once (else at the next start)
-    bool live(const std::string& key) const;
+    // ...and says which it APPLIED: the row's value is then what runs, and it
+    // loses its `*`. One not settled waits for the next start. Whether a
+    // change can apply is the running game's to say, not the row's - it can
+    // depend on the value (mapped shadows only where the shadow map was
+    // built) and on what the start loaded (`todo/graphics-menu.md` 3a).
+    void settle(const std::string& key);
+    // set `key` to the choice the file would write as `ini` (a number may be
+    // one the list lacks), as LEFT / RIGHT would - the `--omk-set` harness.
+    // -> false for a row there is not, or one a flag holds.
+    bool choose(const std::string& key, const std::string& ini);
 
     // a text in the chosen language (the root's header, "page.graphics")
     std::string text(const std::string& id) const { return tx(id); }
@@ -99,7 +112,6 @@ private:
         int page = -1;            // a header's page
         std::vector<Choice> choices;
         unsigned needs = 0;       // `kTakes*` the row wants
-        bool live = false;
         bool remaster = false;    // only with OMK_REMASTER
         // state
         int current = 0, start = 0, def = 0;

@@ -180,6 +180,9 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --shoot-health N HARNESS: the player's health (actor property 1) written as\n"
 "                   N when shoot mode starts, so the record, the gauge and the\n"
 "                   property agree as a save carrying N would make them\n"
+"  --omk-set KEY=VALUE@FRAME  HARNESS: one of OMK's own options (enhancements.\n"
+"                   lighting, remaster.bloom...) changed at that frame as its\n"
+"                   menu changes it - written, and applied when it can be\n"
 "  --hide-show A,H,S,F HARNESS: character.hide A at frame H and character.show\n"
 "                   A, F at frame S, through the Session's own ops 78/79\n"
 "                   (todo/drift-audit.md M1)\n"
@@ -747,6 +750,14 @@ int PlayOptions::parse(int argc, char** argv) {
                                  "106 107 116 117 150 151 152)\n", cur.c_str());
                 cur.clear();
             }
+        }
+        else if (a == "--omk-set" && i + 1 < argc) {
+            const std::string v = argv[++i];
+            const auto eq = v.find('='), at = v.rfind('@');
+            if (eq != std::string::npos && at != std::string::npos && at > eq)
+                omkSets.push_back({v.substr(0, eq), v.substr(eq + 1, at - eq - 1), std::atol(v.c_str() + at + 1)});
+            else
+                std::fprintf(stderr, "--omk-set %s: not key=value@frame - ignored\n", v.c_str());
         }
         else if (a == "--hide-show" && i + 1 < argc)
             std::sscanf(argv[++i], "%d,%d,%d,%d", &hideShow[0], &hideShow[1],

@@ -349,10 +349,12 @@ public:
     }
     // THE BLOOM's strength, 0 off; any time - it changes no pipeline
     bool setBloom(float s) override { bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s; return true; }
-    // THE AMBIENT OCCLUSION's strength, 0 off - before `init`: it keeps the
-    // frame's depth readable, which the target is made with
+    // THE AMBIENT OCCLUSION's strength, 0 off - turned ON before `init`: it
+    // keeps the frame's depth readable, which the target is made with. Once
+    // the target has it (`aoOk_`), the strength moves at any time - it is the
+    // pass's push constant (OMK's options menu, `todo/graphics-menu.md` 3a).
     bool setAmbientOcclusion(float s) override {
-        if (dev_ != VK_NULL_HANDLE) return false;
+        if (dev_ != VK_NULL_HANDLE && !aoOk_) return false;
         ao_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
         return true;
     }

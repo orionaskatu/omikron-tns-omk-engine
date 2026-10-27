@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace omk {
 
@@ -51,7 +52,7 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
         return r;
     };
     const auto choice = [](const char* section, const char* key, std::vector<Choice> cs, unsigned needs,
-                           bool live, bool remaster) {
+                           bool remaster) {
         Row r;
         r.type = 0;
         r.label = std::string("row.") + key;
@@ -59,7 +60,6 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
         r.key = key;
         r.choices = std::move(cs);
         r.needs = needs;
-        r.live = live;
         r.remaster = remaster;
         return r;
     };
@@ -94,46 +94,46 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageGraphics, header("page.enhancements", kPageEnhancements, false));
     add(kPageGraphics, header("page.remaster", kPageRemaster, true));
     add(kPageGraphics, choice(kOmk, "language", {{"fr", 0, "language.fr", 0}, {"en", 1, "language.en", 0}},
-                              0, true, false));
+                              0, false));
     tail(kPageGraphics);
 
     // ---- 101, Améliorations: `[Enhancements]`, in `todo/enhancements.md`'s order
     add(kPageEnhancements, caption("page.enhancements"));
-    add(kPageEnhancements, choice(kEnh, "all", twoState("off", "max"), 0, false, false));
-    add(kPageEnhancements, choice(kEnh, "antialiasing", numbers({0, 2, 4, 8}, 0), kTakesMultisample, false, false));
-    add(kPageEnhancements, choice(kEnh, "supersampling", numbers({1, 2, 3, 4}, 1), kTakesSupersample, false, false));
+    add(kPageEnhancements, choice(kEnh, "all", twoState("off", "max"), 0, false));
+    add(kPageEnhancements, choice(kEnh, "antialiasing", numbers({0, 2, 4, 8}, 0), kTakesMultisample, false));
+    add(kPageEnhancements, choice(kEnh, "supersampling", numbers({1, 2, 3, 4}, 1), kTakesSupersample, false));
     add(kPageEnhancements, choice(kEnh, "texturefiltering",
                                   {{"nearest", 0, "", 0}, {"bilinear", 1, "", 0}, {"trilinear", 2, "", 0}},
-                                  kTakesTextureFilter, false, false));
-    add(kPageEnhancements, choice(kEnh, "anisotropy", numbers({1, 2, 4, 8, 16}, 1), kTakesAnisotropy, false, false));
+                                  kTakesTextureFilter, false));
+    add(kPageEnhancements, choice(kEnh, "anisotropy", numbers({1, 2, 4, 8, 16}, 1), kTakesAnisotropy, false));
     add(kPageEnhancements, choice(kEnh, "shadowquality",
                                   {{"classic", 0, "", 0}, {"fitted", 1, "", 0}, {"mapped", 2, "", kTakesShadowMap}},
-                                  0, false, false));
+                                  0, false));
     add(kPageEnhancements, choice(kEnh, "lighting",
-                                  {{"pervertex", 0, "", 0}, {"perpixel", 1, "", kTakesPixelLights}}, 0, false, false));
-    add(kPageEnhancements, choice(kEnh, "uiscaling", {{"nearest", 0, "", 0}, {"linear", 1, "", 0}}, 0, true, false));
-    add(kPageEnhancements, choice(kEnh, "textscaling", {{"game", 0, "", 0}, {"fit", 1, "", 0}}, 0, true, false));
-    add(kPageEnhancements, choice(kEnh, "radar", {{"game", 0, "", 0}, {"always", 1, "", 0}}, 0, true, false));
-    add(kPageEnhancements, choice(kEnh, "framerate", numbers({30, 60, 120}, -1), 0, true, false));
-    add(kPageEnhancements, choice(kEnh, "animation", {{"game", 0, "", 0}, {"smooth", 1, "", 0}}, 0, true, false));
-    add(kPageEnhancements, choice(kEnh, "clipdistance", twoState("capped", "unlimited"), 0, true, false));
+                                  {{"pervertex", 0, "", 0}, {"perpixel", 1, "", kTakesPixelLights}}, 0, false));
+    add(kPageEnhancements, choice(kEnh, "uiscaling", {{"nearest", 0, "", 0}, {"linear", 1, "", 0}}, 0, false));
+    add(kPageEnhancements, choice(kEnh, "textscaling", {{"game", 0, "", 0}, {"fit", 1, "", 0}}, 0, false));
+    add(kPageEnhancements, choice(kEnh, "radar", {{"game", 0, "", 0}, {"always", 1, "", 0}}, 0, false));
+    add(kPageEnhancements, choice(kEnh, "framerate", numbers({30, 60, 120}, -1), 0, false));
+    add(kPageEnhancements, choice(kEnh, "animation", {{"game", 0, "", 0}, {"smooth", 1, "", 0}}, 0, false));
+    add(kPageEnhancements, choice(kEnh, "clipdistance", twoState("capped", "unlimited"), 0, false));
     tail(kPageEnhancements);
 
     // ---- 102, Remaster: the switch, then each strength (`settings.h`'s ranges)
     add(kPageRemaster, caption("page.remaster"));
     add(kPageRemaster, choice(kRem, "mode", {{"original", 0, "mode.original", 0}, {"remaster", 1, "mode.remaster", 0}},
-                              0, false, true));
-    add(kPageRemaster, choice(kRem, "bloom", numbers({0, 0.5, 1, 1.6, 2.5, 4}, 0), kTakesBloom, false, true));
-    add(kPageRemaster, choice(kRem, "water", numbers({0, 0.3, 0.6, 1}, 0), kTakesWater, false, true));
-    add(kPageRemaster, choice(kRem, "floors", numbers({0, 0.5, 1}, 0), kTakesWater, false, true));
-    add(kPageRemaster, choice(kRem, "mist", numbers({0, 0.25, 0.5, 1}, 0), kTakesMist, false, true));
-    add(kPageRemaster, choice(kRem, "relief", numbers({0, 1, 2, 4}, 0), kTakesRelief, false, true));
-    add(kPageRemaster, choice(kRem, "ao", numbers({0, 1, 2, 4}, 0), kTakesAmbientOcclusion, false, true));
-    add(kPageRemaster, choice(kRem, "bodylight", numbers({0, 0.5, 1}, 0), kTakesBodyTint, false, true));
-    add(kPageRemaster, choice(kRem, "fxlight", numbers({0, 1, 2, 4}, 0), kTakesEmitterLights, false, true));
-    add(kPageRemaster, choice(kRem, "smooth", numbers({0, 0.5, 0.75, 1}, 0), 0, false, true));
-    add(kPageRemaster, choice(kRem, "upscale", numbers({1, 1.5, 2, 3}, 1), kTakesUpscale, false, true));
-    add(kPageRemaster, choice(kRem, "preload", numbers({0, 15, 25, 50}, 0), 0, false, true));
+                              0, true));
+    add(kPageRemaster, choice(kRem, "bloom", numbers({0, 0.5, 1, 1.6, 2.5, 4}, 0), kTakesBloom, true));
+    add(kPageRemaster, choice(kRem, "water", numbers({0, 0.3, 0.6, 1}, 0), kTakesWater, true));
+    add(kPageRemaster, choice(kRem, "floors", numbers({0, 0.5, 1}, 0), kTakesWater, true));
+    add(kPageRemaster, choice(kRem, "mist", numbers({0, 0.25, 0.5, 1}, 0), kTakesMist, true));
+    add(kPageRemaster, choice(kRem, "relief", numbers({0, 1, 2, 4}, 0), kTakesRelief, true));
+    add(kPageRemaster, choice(kRem, "ao", numbers({0, 1, 2, 4}, 0), kTakesAmbientOcclusion, true));
+    add(kPageRemaster, choice(kRem, "bodylight", numbers({0, 0.5, 1}, 0), kTakesBodyTint, true));
+    add(kPageRemaster, choice(kRem, "fxlight", numbers({0, 1, 2, 4}, 0), kTakesEmitterLights, true));
+    add(kPageRemaster, choice(kRem, "smooth", numbers({0, 0.5, 0.75, 1}, 0), 0, true));
+    add(kPageRemaster, choice(kRem, "upscale", numbers({1, 1.5, 2, 3}, 1), kTakesUpscale, true));
+    add(kPageRemaster, choice(kRem, "preload", numbers({0, 15, 25, 50}, 0), 0, true));
     tail(kPageRemaster);
     for (auto& r : rows_) r.remaster = r.remaster || r.section == kRem;
 }
@@ -176,6 +176,17 @@ void OmkOptions::setValue(const std::string& key, double v) {
     r->def = choiceFor(r->choices, def);
 }
 
+void OmkOptions::setValue(const std::string& key, double running, double configured) {
+    setValue(key, running);
+    Row* r = find(key);
+    if (!r) return;
+    const double st = r->choices[static_cast<std::size_t>(r->start)].v;
+    const double def = r->choices[static_cast<std::size_t>(r->def)].v;
+    r->current = choiceFor(r->choices, configured);
+    r->start = choiceFor(r->choices, st);
+    r->def = choiceFor(r->choices, def);
+}
+
 void OmkOptions::setDefault(const std::string& key, double v) {
     Row* r = find(key);
     if (!r) return;
@@ -200,9 +211,8 @@ std::string OmkOptions::iniValue(const std::string& key) const {
     return r ? r->choices[static_cast<std::size_t>(r->current)].ini : std::string();
 }
 
-bool OmkOptions::live(const std::string& key) const {
-    const Row* r = find(key);
-    return r && r->live;
+void OmkOptions::settle(const std::string& key) {
+    if (Row* r = find(key)) r->start = r->current;
 }
 
 // ---- what is offered ---------------------------------------------------------
@@ -271,7 +281,7 @@ std::vector<OptionsMenu::Widget> OmkOptions::widgets(int page, int sel) const {
     bool pending = false;
     for (const int i : rows) {
         const Row& r = rows_[static_cast<std::size_t>(i)];
-        if (r.type == 0 && !r.live && r.current != r.start) pending = true;
+        if (r.type == 0 && r.current != r.start) pending = true;
     }
     for (std::size_t k = 0; k < rows.size(); ++k) {
         const Row& r = rows_[static_cast<std::size_t>(rows[k])];
@@ -292,7 +302,7 @@ std::vector<OptionsMenu::Widget> OmkOptions::widgets(int page, int sel) const {
         w.selected = static_cast<int>(k) == sel;
         if (r.type == 0) {
             w.value = caption(r, r.choices[static_cast<std::size_t>(r.current)]);
-            if (!r.live && r.current != r.start) w.value += " *";
+            if (r.current != r.start) w.value += " *";
             if (!r.held.empty()) {
                 std::string h = tx("msg.heldby");
                 const auto at = h.find("%s");
@@ -365,6 +375,26 @@ bool OmkOptions::press(int page, int w, std::uint32_t bits, int& gotoPage) {
     default:
         return false;
     }
+}
+
+bool OmkOptions::choose(const std::string& key, const std::string& ini) {
+    Row* r = find(key);
+    if (!r || r->type != 0 || !r->held.empty()) return false;
+    for (std::size_t i = 0; i < r->choices.size(); ++i)
+        if (r->choices[i].ini == ini) { change(*r, static_cast<int>(i)); return true; }
+    char* end = nullptr;
+    const double v = std::strtod(ini.c_str(), &end);
+    if (end == ini.c_str() || *end) return false;
+    // a number the list lacks: added in its order, as `setValue` adds one
+    const double cur = r->choices[static_cast<std::size_t>(r->current)].v;
+    const double st = r->choices[static_cast<std::size_t>(r->start)].v;
+    const double def = r->choices[static_cast<std::size_t>(r->def)].v;
+    const int to = choiceFor(r->choices, v);
+    r->current = choiceFor(r->choices, cur);
+    r->start = choiceFor(r->choices, st);
+    r->def = choiceFor(r->choices, def);
+    change(*r, to);
+    return true;
 }
 
 std::vector<OptionsEdit> OmkOptions::takeEdits() {

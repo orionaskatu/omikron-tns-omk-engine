@@ -32,6 +32,7 @@ void PlayState::harnessFoeAt(const float *&) {}
 void PlayState::harnessFightHealth(omk::FightStats&) {}
 void PlayState::harnessScxPlay() {}
 void PlayState::harnessHideShow() {}
+void PlayState::harnessOmkSet() {}
 void PlayState::harnessGameRestart() {}
 void PlayState::harnessFlickerNote(std::size_t&, std::size_t&, std::size_t&) {}
 void PlayState::harnessSnaps() {}

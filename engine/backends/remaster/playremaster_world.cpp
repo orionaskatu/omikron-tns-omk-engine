@@ -143,4 +143,34 @@ bool PlayState::remasterOpenFilm(const std::string& real, omk::Movie& mov, const
     return true;
 }
 
+// A STRENGTH MOVED BY OMK'S OPTIONS MENU (`todo/graphics-menu.md` 3a), on the
+// running game. The rule: a strength that was ON AT START moves at once, 0
+// included - its resources were loaded (the light maps, the normal maps, the
+// floors' list, the probes) and its pass exists; one that was 0 waits for the
+// next start, which loads them. The mist needs nothing loaded and moves
+// always. The emitters' light waits too: its strength is baked into each
+// set's surface lights when the set loads (`remasterPrepareSet`).
+bool PlayState::remasterApplyLive(const std::string& key, float v) {
+    if (remasterAtStart_.empty()) return false;   // the remaster did not run
+    const auto at = remasterAtStart_.find(key);
+    const bool armed = at != remasterAtStart_.end() && at->second > 0.0f;
+    if (key == "mist") { mistStrength = v; return true; }
+    if (!armed) return false;
+    if (key == "bloom") {
+        if (!world_ || !world_->setBloom(v)) return false;
+        bloomStrength = v;
+        return true;
+    }
+    if (key == "water")     { waterStrength = v; return true; }
+    if (key == "floors")    { floorStrength = v; return true; }
+    if (key == "relief")    { relief = v; return true; }
+    if (key == "bodylight") { bodyLight = v; return true; }
+    if (key == "ao") {
+        if (!world_ || !world_->setAmbientOcclusion(v)) return false;
+        aoStrength = v;
+        return true;
+    }
+    return false;
+}
+
 #endif  // OMK_REMASTER

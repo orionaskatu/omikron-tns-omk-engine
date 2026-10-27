@@ -403,6 +403,7 @@ void PlayState::inputTick() {
     // case 5 is the only thing that releases it.
     harnessScxPlay();
     harnessHideShow();
+    harnessOmkSet();
     harnessGameRestart();
     if (spriteAnchorSet) session.sceneMutable().setSpriteAnchor(spriteAnchor);
     // ---- AND THE SESSION RUNS UNDER A SCREEN, which it did not ------

@@ -308,7 +308,33 @@ key updated so the next start resumes in it.
    live rows; every other row labelled for the next start.
 3. A4's kinds 2 and 3 made live one by one, every backend - READ, NOT BUILT
    (2026-10-27), in four sub-steps:
-   * 3a, the frontend's own: `shadowquality` and `lighting` are read per
+   * **3a DONE (2026-10-27).** Who decides "live" moved from the row to the
+     running game: `PlayState::omkApplyLive` tries each change and the menu
+     `settle`s the ones applied - a row keeps its `*` only while its change
+     waits. Live now: `shadowquality` (the blobs everywhere; mapped where
+     `drawsShadowMap`), `lighting` (where `drawsPixelLights`), and the
+     remaster's strengths ON AT START (`remasterApplyLive`,
+     `remasterAtStart_`): bloom (Vulkan any time; GLES once its variant is
+     linked - `bloomBuilt_`, which now also gates the light maps' upload),
+     water, floors, relief, body light, AO (Vulkan, once its target is
+     readable - `aoOk_`), and the mist always. Waiting: a strength from 0,
+     the emitters' light (baked into a set's surface lights at load), and on
+     GLES per-pixel lighting and mapped shadows (3b). The menu reopened shows
+     the FILE's value where it moved since the start (with its `*`), what
+     runs elsewhere (`omkOptionsOpen`: the file as read at start and now);
+     a start in `mode = original` shows what the remaster would run.
+     `--omk-set key=value@frame` (`playharness.cpp`) is the instrument.
+     MEASURED (`engine: graphics menu live`): on Vulkan lighting, mapped and
+     fitted shadows, the unlimited distance, bloom 1.6->4, AO 2->4, mist
+     0.5->1 draw what a start with the value draws, to the pixel; bloom from
+     0 refused and drawn as before; on GLES lighting refused, fitted shadows
+     exact. Shown to fail with the lighting's apply emptied. ONE MEASURED
+     RESIDUE: bloom 1.6 -> 0 live differs from a start at 0 by +-1 step in
+     279 pixels (Vulkan; 406 on GLES) - and by none with the emitters' light
+     off: their surface lights are computed at load from the light maps the
+     bloom decodes. A load-time dependency, not the live path's.
+     All ports built after it (Vita, 3DS, classic, PowerPC, Android).
+   * 3a, as read: `shadowquality` and `lighting` are read per
      frame (`playframe_world_*.cpp`); Vulkan always builds both
      (`drawsPixelLights`/`drawsShadowMap` true), so they go live by the
      field alone - gate on those two queries, as `playsetup_bodies.cpp:263`

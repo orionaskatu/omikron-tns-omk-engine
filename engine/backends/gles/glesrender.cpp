@@ -1005,10 +1005,12 @@ public:
         return true;
     }
 #if OMK_REMASTER
-    // THE REMASTER's bloom: BEFORE `init` - its scene programs are linked
-    // there (`bloomVariant`)
+    // THE REMASTER's bloom: turned ON before `init` - its scene programs are
+    // linked there (`bloomVariant`). Once they have it (`bloomBuilt_`) the
+    // strength is a uniform and moves at any time, 0 included (OMK's options
+    // menu, `todo/graphics-menu.md` 3a).
     bool setBloom(float s) override {
-        if (prog_) return false;
+        if (prog_ && !bloomBuilt_) return false;
         bloom_ = s < 0.0f ? 0.0f : s > 4.0f ? 4.0f : s;
         return true;
     }
@@ -1467,6 +1469,7 @@ private:
 #if OMK_REMASTER
     // the POST-PASS (`todo/remaster.md` step 2)
     float  bloom_ = 0.0f;
+    bool   bloomBuilt_ = false;   // the scene programs carry the bloom variant
     GLuint lightBlack_ = 0;              // the light map of a texture with none
     GLuint lastEmis_ = 0;
     std::string bloomFrag_, bloomFragX_; // the variants' fragment sources (plain, enhanced), kept for `link`
@@ -1492,6 +1495,7 @@ private:
     int    reflW_ = 0, reflH_ = 0;
 #else
     static constexpr float  bloom_ = 0.0f, waterWant_ = 0.0f;
+    static constexpr bool   bloomBuilt_ = false;
     static constexpr GLuint lightBlack_ = 0, postProg_ = 0, passFbo_ = 0;
     static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false, fxWant_ = false;
     static constexpr int    lutN_ = 0;
@@ -2118,7 +2122,7 @@ GlesRenderer::Uploaded GlesRenderer::uploadOne(const Texture& s, PackImage* rep,
     // texture: another is CLAMPED, or it is incomplete and its glow silently
     // black (the audit's item 9)
     GLuint em = 0;
-    if (bloom_ > 0.0f && rep && astcBlocks(rep->emissiveZ)) {
+    if (bloomBuilt_ && rep && astcBlocks(rep->emissiveZ)) {
         glGenTextures(1, &em);
         glBindTexture(GL_TEXTURE_2D, em);
         texParams(GL_LINEAR, pot(rep->emissiveZ.w) && pot(rep->emissiveZ.h) ? GL_REPEAT : GL_CLAMP_TO_EDGE);

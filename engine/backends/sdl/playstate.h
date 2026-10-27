@@ -154,6 +154,7 @@ struct PlayState {
     bool & noScriptSprites = opt.noScriptSprites;
     std::vector<int> & scxPlay = opt.scxPlay;
     int (&hideShow)[4] = opt.hideShow;
+    std::vector<omk::PlayOptions::OmkSet> & omkSets = opt.omkSets;
     long & gameRestartAt = opt.gameRestartAt;
     std::vector<std::pair<long, int>> & opAt = opt.opAt;
     bool & openSneak = opt.openSneak;
@@ -781,9 +782,15 @@ struct PlayState {
     // `backends/sdl/playremaster_off.cpp` for a build without OMK_REMASTER)
     void remasterSetup();                          // the packs, strengths, preset
     bool remasterBuilt() const;                    // false in `playremaster_off.cpp`
+    // a [Remaster] strength moved by OMK's options menu, on the running game -
+    // false when it waits for the next start (`todo/graphics-menu.md` 3a)
+    bool remasterApplyLive(const std::string& key, float v);
+    std::map<std::string, float> remasterAtStart_;   // each strength as the start set it
     void omkOptionsSetup();                        // OMK's pages, beside screen 35
     void omkOptionsOpen();                         // ...given this run's values, at each open
     void omkOptionsServe();                        // ...their changes written and applied
+    bool omkApplyLive(const std::string& key, double v);   // ...one of them, on the running game
+    bool omkOpened_ = false;                       // omkOptionsOpen has run
     void remasterPrepareSet(SetLoad& L);           // a set's water, floors, probes, glows
     void remasterSmoothModel(CharModel& m, const std::string& name);
     void remasterSmoothPlayer();
@@ -1358,6 +1365,7 @@ struct PlayState {
     void harnessFightHealth(omk::FightStats& ps);   // --fight-health: the player's Vie at Fight_Begin
     void harnessScxPlay();   // --scx-play: scene objects started by handle, once
     void harnessHideShow();  // --hide-show: opcodes 79 then 78 on one actor
+    void harnessOmkSet();    // --omk-set: one of OMK's options changed at a frame
     void harnessGameRestart();   // --game-restart: op 152's write at a frame
     void harnessFlickerNote(std::size_t& runsDrawn, std::size_t& runsCulled, std::size_t& litBodies);   // the frame's facts for the flicker catcher
     void harnessSnaps();   // --snaps: the framebuffer every N frames from the hand-over

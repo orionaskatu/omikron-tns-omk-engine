@@ -257,6 +257,12 @@ void PlayState::remasterSetup() {
             if (bloomStrength > 0.0f) omk::texturePack().setLightHook(&omk::curateBloom, &omk::bloomCurated);
         }
     }
+    // each strength as the start set it - what OMK's options menu may move live
+    // (`remasterApplyLive`): only one ON here had its resources loaded
+    if (settings.remasterOn || opt.anyRemaster())
+        remasterAtStart_ = {{"bloom", bloomStrength}, {"water", waterStrength}, {"floors", floorStrength},
+                            {"mist", mistStrength}, {"relief", relief}, {"ao", aoStrength},
+                            {"bodylight", bodyLight}, {"fxlight", fxLight}};
 }
 
 #endif  // OMK_REMASTER

@@ -516,6 +516,22 @@ void PlayState::harnessHideShow() {
     }
 }
 
+// --omk-set key=value@frame: one of OMK's own options changed at that frame,
+// through the path its menu takes - `OmkOptions::choose` as LEFT/RIGHT would,
+// then the write and the live apply (`omkOptionsServe`). The rows are given
+// this run's values first, as opening the menu gives them.
+void PlayState::harnessOmkSet() {
+    if (omkSets.empty() || !omkOpt_) return;
+    for (const auto& s : omkSets) {
+        if (s.frame != frameNo) continue;
+        if (!omkOpened_) omkOptionsOpen();
+        const bool ok = omkOpt_->choose(s.key, s.value);
+        std::printf("--omk-set: frame %ld  %s = %s%s (a harness change, as the menu's)\n", frameNo,
+                    s.key.c_str(), s.value.c_str(), ok ? "" : " - NO such row, or a flag holds it");
+        omkOptionsServe();
+    }
+}
+
 // --game-restart: op 152 itself, run as a context in the active slot at a
 // frame - `[end] game.restart end` from offset 1, through the same arm a
 // script reaches, so the opcode and the pump's answer are both exercised

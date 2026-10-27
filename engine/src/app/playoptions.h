@@ -237,6 +237,14 @@ struct PlayOptions {
     // --hide-show A,H,S,F: opcode 79 on actor A at frame H, then opcode 78
     // with second field F at frame S - a hidden body's return, on demand
     int hideShow[4] = {-1, -1, -1, 0};
+    // A HARNESS FLAG: `--omk-set key=value@frame` (repeatable) - one of OMK's
+    // own options changed at that frame through the path its menu takes
+    // (`OmkOptions::choose`, then the write and the live apply), so a check
+    // can lay a live change beside a start with the same value
+    // (`todo/graphics-menu.md` 3a). `key` as the menu names it:
+    // `enhancements.lighting`, `remaster.bloom`.
+    struct OmkSet { std::string key, value; long frame = 0; };
+    std::vector<OmkSet> omkSets;
     // --game-restart N: op 152 run as a context at frame N
     long gameRestartAt = -1;
     // --op-at F:OP[,F:OP...]: a NO-OPERAND opcode run as a context at frame

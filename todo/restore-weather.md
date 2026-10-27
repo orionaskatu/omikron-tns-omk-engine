@@ -84,7 +84,7 @@ flake). Whether the gate was closed on purpose, nothing records.
   batches the game fogs (or marked -1 / -1) - and the grains back to small
   soft dots of their own picture (0.8 units and at most 1.5 px each side at
   480 lines - 1.8 units read as "really too big"; a texel of black round
-  each so the filter softens it), additive, lit; the grade's ochre halved (0.20).
+  each so the filter softens it), additive at 0.45 (0.9 too solid), lit; the grade's ochre halved (0.20).
   Jaunpur's square: 213462 pixels the fog's alone on Vulkan, the same on
   GLES; `OMK_NO_DUST=1` (an instrument) leaves it out. `engine: rain 3d`
   part 11.

@@ -119,7 +119,7 @@ constexpr float kSnowBox = 400.0f;        // the snow's box (`sub_481D90`'s bit-
 constexpr float kSandBox = 300.0f;        // ...and the sand's (its else branch)
 constexpr float kSandGrain3d = 0.8f;      // ...a 4-texel grain this many units across in the scene (1.8: "really too big")
 constexpr float kSandGrainPx = 1.5f;      // ...and no more than this many pixels each side at 480 lines, near the eye
-constexpr float kSandGlow = 0.9f;         // ...its brightness, additive
+constexpr float kSandGlow = 0.45f;        // ...its brightness, additive - its see-through (0.9: too solid, the reader)
 constexpr float kFlakeHalf = 4.0f;        // ...a flake's half size, the original's 8 units across
 constexpr float kSnowNearFrom = 20.0f, kSnowNear = 80.0f;   // a flake's fade in from the eye
 

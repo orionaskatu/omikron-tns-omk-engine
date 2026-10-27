@@ -61,7 +61,8 @@ layout(push_constant) uniform Push {
     // the water's height - what lies below it is discarded; 3 a REFLECTING
     // FLOOR's draw, as 1 with its relief (`o3de/floorreflect.h`); 0 otherwise.
     // Those are the LOW FOUR BITS: above them a WET floor's darkening, 0..255
-    // (`o3de/wetfloor.h`) - `waterMode` and `wetFilm` below
+    // (`o3de/wetfloor.h`), and above that the RAIN's, 0..255 (`View::rain`, its
+    // ripples) - `waterMode`, `wetFilm` and `rainNow` below
     int   water;          // 120
     float waterStrength;  // 124
 } pc;
@@ -274,9 +275,42 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 }
 #endif
 
+// THE RAIN'S RIPPLES on a wet floor (`o3de/wetfloor.h`, the remaster's): the
+// floor in cells of 48 units, each with at most one drop - at a hashed place,
+// and kept only where its hash is below the rain's strength, so a light shower
+// has few - whose ring spreads 40 units over 64 of the shimmer's clock (32
+// frames; the clock wraps at 256, a whole number of rings) and fades as it
+// goes. -> the rings' slope at `p`. GLES's twin is in
+// `glesrender_remaster_shaders.inl` - keep the two in step.
+const float kRippleLight = 0.10;   // a ring's crest, added light (GLES: the same)
+vec3 rippleHash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yxz + 33.33);
+    return fract((p3.xxy + p3.yzz) * p3.zyx);
+}
+vec2 ripples(vec2 p, float clock, float rain) {
+    const float cell = 48.0;
+    vec2 base = floor(p / cell);
+    vec2 g = vec2(0.0);
+    for (int i = -1; i <= 1; ++i)
+        for (int j = -1; j <= 1; ++j) {
+            vec2 cc = base + vec2(float(i), float(j));
+            vec3 h = rippleHash(cc);
+            if (h.z > rain) continue;
+            float life = fract(clock / 64.0 + h.z * 4.0);
+            vec2 d = p - (cc + 0.15 + 0.7 * h.xy) * cell;
+            float r = length(d);
+            float x = (r - life * 40.0) / 5.0;
+            if (abs(x) < 1.0)
+                g += d / max(r, 0.001) * sin(x * 3.14159265) * (1.0 - life) * (1.0 - life);
+        }
+    return g;
+}
+
 void main() {
     int waterMode = pc.water & 15;                            // the water's mode (`Push`)
     float wetFilm = float((pc.water >> 4) & 255) / 255.0;     // a wet floor's darkening
+    float rainNow = float((pc.water >> 12) & 255) / 255.0;    // ...and the rain on it
 #ifdef OMK_LATE_DEPTH
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
@@ -392,6 +426,13 @@ void main() {
     // A WET floor (`o3de/wetfloor.h`): the rain's film darkens it, and its
     // reflection, if it has one, is added over the darker ground
     c *= 1.0 - wetFilm;
+    // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
+    // their crests, and bending the reflection below
+    vec2 rip = vec2(0.0);
+    if (wetFilm > 0.0 && rainNow > 0.0) {
+        rip = ripples(vWorld.xz, sh.shimmer, rainNow);
+        c += vec3(kRippleLight * length(rip));
+    }
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
@@ -405,6 +446,7 @@ void main() {
             if (nm.a > 0.0) at += (nm.rg * 2.0 - 1.0) * rs.y * 0.012 * k;
         }
 #endif
+        if (waterMode == 3) at += rip * rs.y * 0.02 * k;   // the ripples' slope
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         c += texture(refl, at / rs).rgb * pc.waterStrength * f;
     }

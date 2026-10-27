@@ -149,6 +149,10 @@ struct View {
     // the game's Y points DOWN) and thinning over `mistHeight` above it,
     // integrated along each ray - on what the game fogs; 0 nothing. Vulkan.
     float mist = 0.0f, mistGround = 0.0f, mistHeight = 400.0f;
+    // THE RAIN on the WET FLOORS (`o3de/wetfloor.h`, the remaster's): the
+    // game's shower now, 0..1 - its RIPPLES on a draw with `Draw::wet`, rings
+    // timed by `shimmerClock`. 0 none. Vulkan and GLES.
+    float rain = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed

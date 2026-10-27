@@ -153,6 +153,8 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     beginPass(v);   // the same frame as the reflection's pass: one `frameNo_`
     waterStrength_ = strength;
     for (int k = 0; k < 3; ++k) waterEye_[k] = v.cam.eye[k];
+    rain_ = v.rain;                 // the wet floors' ripples (`View::rain`)
+    rippleClock_ = v.shimmerClock;
     for (const auto& d : scene) submit(d);
     waterNow_ = true;
     for (const auto& d : water) submit(d);
@@ -370,6 +372,7 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
             glUniform1i(glGetUniformLocation(p, "uRefl"), 4);
             glUniform1f(glGetUniformLocation(p, "uWater"), 0.0f);
             glUniform1f(glGetUniformLocation(p, "uWet"), 0.0f);
+            glUniform1f(glGetUniformLocation(p, "uRain"), 0.0f);
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
@@ -488,6 +491,16 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
     if (set(!uv || U.wet != film)) {
         glUniform1f(L.wet, film);
         U.wet = film;
+    }
+    // ...and its RIPPLES: the rain's strength and the shimmer's clock
+    const float rain = film > 0.0f ? rain_ : 0.0f;
+    if (set(!uv || U.rain != rain)) {
+        glUniform1f(L.rain, rain);
+        U.rain = rain;
+    }
+    if (rain > 0.0f && set(!uv || U.rippleClock != rippleClock_)) {
+        glUniform1f(L.rippleClock, rippleClock_);
+        U.rippleClock = rippleClock_;
     }
     if (waterNow_ || floorNow) {
         // (a floor samples the half-size reflection: half the scale)

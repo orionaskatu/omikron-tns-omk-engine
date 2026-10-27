@@ -249,7 +249,8 @@ struct Push {
     // THE WATER REFLECTION (`todo/remaster.md` A3): a water draw adds the
     // reflection (binding 2) times the strength; 0 on every other draw. The
     // low four bits the mode; above them a WET floor's darkening, 0..255
-    // (`Draw::wet`, `o3de/wetfloor.h`)
+    // (`Draw::wet`, `o3de/wetfloor.h`), and above that the rain's, 0..255 (its
+    // ripples, `View::rain`)
     int32_t water;     // 120
     float waterStrength; // 124
 };
@@ -566,6 +567,7 @@ private:
     bool            shadowLive_ = false;   // a depth pass was recorded this frame
     int             litCount_ = 0;         // lights uploaded for this frame
     float           shimmerClock_ = 0.0f;  // the View's, held for the uniform
+    float           rain_ = 0.0f;          // the View's rain, for the wet floors' ripples
     bool            dither_ = true;        // the engine's DITHERENABLE, see surface.h
 
     struct Tex {
@@ -3403,6 +3405,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     }
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
+    rain_ = view.rain;
     dither_ = view.dither;
     litCount_ = 0;
     if (litUboPtr_) {
@@ -3650,8 +3653,11 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     push_.water = waterNow_ ? 1 : floorNow ? 3 : reflectingNow_ ? 2 : 0;
     // ...and a WET floor's darkening (`Draw::wet`), in the mode's high bits -
     // the block is full: 0..255 above the low four
-    if (!reflectingNow_ && d.wet > 0.0f)
+    if (!reflectingNow_ && d.wet > 0.0f) {
         push_.water |= static_cast<int32_t>(std::lround(std::min(d.wet, 1.0f) * 255.0f)) << 4;
+        // ...and the RAIN's strength for its ripples, the eight bits above
+        push_.water |= static_cast<int32_t>(std::lround(std::clamp(rain_, 0.0f, 1.0f) * 255.0f)) << 12;
+    }
     push_.waterStrength = reflectingNow_ ? waterY_ : floorNow ? waterStrength_ * d.reflect : waterStrength_;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;

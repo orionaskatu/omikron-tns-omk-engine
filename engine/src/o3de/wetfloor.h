@@ -17,9 +17,10 @@
 //    over its 200), drying linearly over `kWetDryMs` once it eases. Only in
 //    an area whose weather is the RAIN (AREA +176 type 1) and only while the
 //    cycle runs (option row 7 at 2): no shower, no wet floor.
-// The wet triangles reflect through the reflecting floors' pass
-// (`o3de/floorreflect.h`, `drawWithWater`) - one plane a frame, the level
-// below the eye with the most of them near.
+// The wet triangles darken (`Draw::wet`), and reflect through the reflecting
+// floors' pass (`o3de/floorreflect.h`, `drawWithWater`) - one plane a frame,
+// the level below the eye with the most of them near; while it rains, RIPPLES
+// spread on them (`View::rain`, the shaders' `ripples`).
 #pragma once
 
 #include "o3de/collision.h"

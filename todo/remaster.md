@@ -1172,8 +1172,19 @@ only at *Niveau de détail* 2.
   water's Fresnel. The listed floors keep their own strength beside it.
 * Measured (M3, Anekbah's street at full rain, 640x480): 109969 pixels moved
   on Vulkan, 109950 on GLES. `verify.py: engine: wet floors`.
-* **Next, not built**: ripples on the wet floors (the relief's normal-map
-  path, animated); the rain itself in 3D, depth-tested and stopped by the
+* **The RIPPLES** (2026-10-27, the same day's "push and continue"): while it
+  rains, rings spread on every wet floor - the floor in cells of 48 units,
+  at most one drop each at a hashed place, kept where the hash is below the
+  rain's strength (a light shower has few); the ring grows 40 units over 64
+  of the SHIMMER's clock (32 frames - the engine's own per-frame clock, which
+  wraps at 256, a whole number of rings - so a fixed frame count draws the
+  same rings) and fades as it goes. Its crest adds 0.10 of light, and on the
+  frame's plane its slope bends the reflection's lookup (2% of the frame's
+  height). The rain's strength rides in the push block's `water` int's next
+  eight bits (`View::rain`; GLES `uRain`, `uRippleClock`, the world's x and z
+  as `vWxz`); `scene.frag`'s `ripples` and GLES's `kRipplesGlsl` are twins.
+  Frames 700 -> 716 at full rain move 73954 pixels wet, 33097 dry.
+* **Next, not built**: the rain itself in 3D, depth-tested and stopped by the
   same roofs; the mist and the grade answering the shower; the snow
   settling on Mahaleel's open ground. The cave's snow static
   (ASSETS 4e) is the original's and stays in both modes.

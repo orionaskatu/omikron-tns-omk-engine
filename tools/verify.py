@@ -33858,15 +33858,21 @@ def c_engine_wet_floors():
       4. Vulkan at `--detail 1` - no rain: `--wet 1` is `--wet 0`'s frame,
          byte for byte;
       5. GLES: `--wet 1` moves more than 50000 pixels too, and where Vulkan's
-         do - the moved pixels' intersection over union above 0.8.
+         do - the moved pixels' intersection over union above 0.8;
+      6. Vulkan: the RIPPLES move - frames 700 and 716 differ by more than
+         20000 pixels more with `--wet 1` than with `--wet 0` (the rain's
+         streaks, the flame and the shimmer move both).
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
-    load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0.
+    load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
+    ripples: 109018 and 109024, overlap 0.998; 700 -> 716 moves 73954 pixels
+    wet, 33097 dry.
 
     SHOWN TO FAIL (2026-10-27): the film never applied in `scene.frag`
     (`c *= 1.0 - wetFilm` gone) - part 3, a few thousand pixels, and part 5's
     overlap; the rain area's gate dropped (`rainArea` always true) and the
-    wetness held at 1 - part 4, the frames differ.
+    wetness held at 1 - part 4, the frames differ; the ripples never computed
+    in `scene.frag` - part 6.
 
     NOT CHECKED, judged by eye: the strengths (`kWetReflect`, `kWetDarken`),
     the drying's pace, the triangle-sized edges between wet and dry.
@@ -33892,7 +33898,7 @@ def c_engine_wet_floors():
         return ("build",), ("built",), mk.stderr[-300:]
     tmp = tempfile.mkdtemp()
     try:
-        def run(binary, name, detail, wet):
+        def run(binary, name, detail, wet, frames=700):
             out = os.path.join(tmp, name + ".bin")
             env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000")
             if binary.endswith("gles"):
@@ -33904,7 +33910,7 @@ def c_engine_wet_floors():
             args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                     "--area", "0", "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
                     "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
-                    "--frames", "700", "--detail", str(detail), "--wet", str(wet), "--dump", out] + \
+                    "--frames", str(frames), "--detail", str(detail), "--wet", str(wet), "--dump", out] + \
                    ([] if binary.endswith("gles") else ["--world-vulkan"])
             r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
             if r.returncode != 0 or not os.path.exists(out):
@@ -33915,6 +33921,8 @@ def c_engine_wet_floors():
         off, _ = run(vkb, "off", 2, 0)
         dry, _ = run(vkb, "dry", 1, 1)
         dry0, _ = run(vkb, "dry0", 1, 0)
+        on716, _ = run(vkb, "on716", 2, 1, 716)
+        off716, _ = run(vkb, "off716", 2, 0, 716)
         gl = ("skipped",)
         if platform.system() == "Darwin":
             gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
@@ -33922,7 +33930,7 @@ def c_engine_wet_floors():
             gl = ("no frame",) if gon is None or goff is None else None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    if None in (on, off, dry, dry0):
+    if None in (on, off, dry, dry0, on716, off716):
         return (src_ok, ("no frame",)), ((True,) * 4, ("frames",)), "a Vulkan run wrote no frame"
     px = lambda b: [b[i] | b[i + 1] << 8 for i in range(0, len(b), 2)]
     moved = lambda a, b: {i for i, (x, y) in enumerate(zip(px(a), px(b))) if x != y}
@@ -33937,13 +33945,14 @@ def c_engine_wet_floors():
     sky = (int(world.get("open", 0)) > 5000, int(world.get("covered", 0)) > 1000)
     live = (at690.get("wetness"), at690.get("live"))
     same = dry == dry0
+    ripple = len(moved(on, on716)) - len(moved(off, off716))
     print(f"        open {world.get('open')}, covered {world.get('covered')}; frame 690 {live}; "
-          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl), \
-           ((True,) * 4, (True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True))), \
+          f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more")
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 20000), \
+           ((True,) * 4, (True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
-        "reflecting on Vulkan; no rain, no change; GLES where Vulkan"
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving"
 
 
 def c_engine_clip_memo():

@@ -95,18 +95,54 @@ std::string bloomVariant(const char* frag) {
 // ...and the WATER variant (`todo/remaster.md` A3), over either: a water draw
 // adds the reflection (unit 4) at its screen position times `uWater`, 0 on
 // every other draw. Made at `init` only when the water is asked for.
+// THE RAIN'S RIPPLES (`o3de/wetfloor.h`), `scene.frag`'s `ripples` - keep the
+// two in step: cells of 48 units, a drop where the hash is below the rain, its
+// ring 40 units over 64 of the shimmer's clock
+constexpr const char* kRipplesGlsl =
+    "vec3 rippleHash(vec2 p) {\n"
+    "    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));\n"
+    "    p3 += dot(p3, p3.yxz + 33.33);\n"
+    "    return fract((p3.xxy + p3.yzz) * p3.zyx);\n"
+    "}\n"
+    "vec2 ripples(vec2 p, float clock, float rain) {\n"
+    "    vec2 base = floor(p / 48.0);\n"
+    "    vec2 g = vec2(0.0);\n"
+    "    for (int i = -1; i <= 1; ++i)\n"
+    "        for (int j = -1; j <= 1; ++j) {\n"
+    "            vec2 cc = base + vec2(float(i), float(j));\n"
+    "            vec3 h = rippleHash(cc);\n"
+    "            if (h.z > rain) continue;\n"
+    "            float life = fract(clock / 64.0 + h.z * 4.0);\n"
+    "            vec2 d = p - (cc + 0.15 + 0.7 * h.xy) * 48.0;\n"
+    "            float r = length(d);\n"
+    "            float x = (r - life * 40.0) / 5.0;\n"
+    "            if (abs(x) < 1.0)\n"
+    "                g += d / max(r, 0.001) * sin(x * 3.14159265) * (1.0 - life) * (1.0 - life);\n"
+    "        }\n"
+    "    return g;\n"
+    "}\n";
+
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
-                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" + frag;
+                    "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\n"
+                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
+                    std::string(kRipplesGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
     if (at != std::string::npos)
-        // ...over a WET floor's film first (`o3de/wetfloor.h`): the rain darkens it
-        s.insert(at, "c *= 1.0 - uWet;\n    if (uWater > 0.0) {\n"
+        // ...over a WET floor's film first (`o3de/wetfloor.h`): the rain darkens
+        // it, and while it rains its RIPPLES lighten their crests and bend the
+        // reflection (`scene.frag`'s rule)
+        s.insert(at, "c *= 1.0 - uWet;\n    vec2 rip = vec2(0.0);\n"
+                     "    if (uWet > 0.0 && uRain > 0.0) {\n"
+                     "        rip = ripples(vWxz, uRippleClock, uRain);\n"
+                     "        c += vec3(0.10 * length(rip));\n"
+                     "    }\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
-                     "        c += texture2D(uRefl, gl_FragCoord.xy * uReflInv).rgb * uWater * f;\n"
+                     "        vec2 at = gl_FragCoord.xy + rip * 0.02 * (0.5 / uReflInv.y);\n"
+                     "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f;\n"
                      "    }\n    ");
     else anchorMissed("water", "gl_FragColor = vec4(c,");
     // the REFLECTION pass discards what lies below the water (Y is down) - a
@@ -183,13 +219,14 @@ std::string tintVariant(const std::string& vert) {
 // whatever the program transforms - `aPos` for a set, `wp` for a posed body -
 // and the ray to the eye as `vToEye`, made here where the floats are highp
 std::string waterVertVariant(const char* vert) {
-    std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\n") + vert;
+    std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec2 vWxz;\n") + vert;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
     const auto end = at == std::string::npos ? at : s.find(", 1.0);", at);
     if (end == std::string::npos) { anchorMissed("water (vertex)", key); return s; }
     const std::string expr = s.substr(at + key.size(), end - at - key.size());
-    s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    ");
+    s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
+                 ").xz;\n    ");
     return s;
 }
 

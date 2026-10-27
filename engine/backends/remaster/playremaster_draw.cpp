@@ -23,6 +23,9 @@
 void PlayState::remasterViewMist(omk::View& v) {
     v.mist = mistStrength;
     v.mistGround = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)].ground;
+    // ...and the RAIN's ripples on the wet floors (`o3de/wetfloor.h`): the
+    // shower's strength, which is 0 outside a rain area
+    v.rain = wetStrength > 0.0f ? weatherRain : 0.0f;
 }
 
 // THE EMITTERS' LIGHTS under per-pixel lighting: the night, the relief, the

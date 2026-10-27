@@ -1314,7 +1314,7 @@ private:
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
-        GLint wet = -1;                                                      // ...and a wet floor's film
+        GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1397,7 +1397,7 @@ private:
         int lights = -1; float lightBlack = -1, lightBase = -1; std::vector<float> lightVals;
         float tint[3] = {-1, -1, -1};
         float water = -1; int clip = -1;   // the water variant's
-        float wet = -1;                    // ...a wet floor's film
+        float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1495,6 +1495,7 @@ private:
     bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
+    float  rain_ = 0.0f, rippleClock_ = 0.0f;  // the frame's rain and clock, the wet floors' ripples
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
@@ -1674,6 +1675,8 @@ bool GlesRenderer::linkScene() {
         L.grey = glGetUniformLocation(p, "uGrey");
         L.water = glGetUniformLocation(p, "uWater");
         L.wet = glGetUniformLocation(p, "uWet");
+        L.rain = glGetUniformLocation(p, "uRain");
+        L.rippleClock = glGetUniformLocation(p, "uRippleClock");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");

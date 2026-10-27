@@ -34012,7 +34012,11 @@ def c_engine_rain3d():
          GLES: more than 1000 each, the same pixels - overlap above 0.9;
       5. THE SHOWER'S SKY (`remasterGrade`): with `--rain3d 1` the grade's
          overcast reaches its full step (16) as the shower peaks
-         (`remaster.grade`), and with `--rain3d 0` it never comes.
+         (`remaster.grade`), and with `--rain3d 0` it never comes;
+      6. THE SNOW in the scene: Mahaleel's open air (address 404, 120
+         frames) - at frame 90 more than 300 flakes drawn with the original's
+         own `Images\snow.bmp` (`remaster.rain3d` snow=1, streak=1), and no
+         2D flake (the weather says they are drawn in the scene).
 
     Measured 2026-10-27 (M3): 135 drawn, 31 under a roof; 2110 pixels on
     Vulkan, 2109 on GLES, overlap 1.000; the 2D path 61 streaks. Denser and
@@ -34027,7 +34031,8 @@ def c_engine_rain3d():
     roof); the drops never taken (`remasterRainTake` false) - part 2, the 2D
     streaks drawn again; the copies never made - part 2 (135 drawn); the
     streak never pooled (`rainTexSlot` -1, the white) - part 2; the set's
-    lights never read - part 2 (0 lit); the overcast never stepped - part 5.
+    lights never read - part 2 (0 lit); the overcast never stepped - part 5;
+    the snow not taken (`viewBits & 2u` alone) - part 6, the 2D flakes back.
 
     NOT CHECKED, judged by eye: the brightness and width; the density, which
     is the original's 200 - half its box lies below the street, now hidden.
@@ -34076,6 +34081,13 @@ def c_engine_rain3d():
         on, out_on, ev = run(vkb, "on", 2, 1)
         _, out_off, ev_off = run(vkb, "off", 2, 0)
         dry, _, _ = run(vkb, "dry", 1, 1)
+        snow_out = subprocess.run(
+            [vkb, fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+             "--area", "145", "--stand", "10842,63,30678,0", "--no-crowd", "--nofmv", "--nodelay",
+             "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest", "--frames", "120",
+             "--detail", "2", "--rain3d", "1", "--world-vulkan"],
+            capture_output=True, text=True, errors="replace", timeout=300,
+            env=dict(os.environ, OMK_EVENTS="1", SDL_VIDEODRIVER="dummy")).stdout
         gl = ("skipped",)
         if platform.system() == "Darwin":
             gb = os.path.join(eng, "build", "omk-play-gles")
@@ -34106,10 +34118,14 @@ def c_engine_rain3d():
     flat = int(m.group(1)) > 20 if m else None
     print(f"        frame 690: {at}; the 2D path {m.group(1) if m else None} streaks; "
           f"Vulkan {len(mv)} pixels; GLES {gl}")
-    print(f"        the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without")
-    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast), \
+    sn = next((k for n, k in _events(snow_out) if n == "remaster.rain3d" and k.get("frame") == "90"), {})
+    snowed = (sn.get("snow"), int(sn.get("drawn", 0)) > 300, sn.get("streak"),
+              "frame 90: weather - 200 drops stepped, drawn in the scene by the remaster" in snow_out)
+    print(f"        the overcast's top step: {overcast[0]} with the 3D rain, {overcast[1]} without; "
+          f"Mahaleel's snow at frame 90: {sn}")
+    return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
-            (16, 0)), \
+            (16, 0), ("1", True, "1", True)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same"

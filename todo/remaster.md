@@ -1296,8 +1296,19 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   finest tier, and at 2 the weather's cycle draws on the engine's one
   `rand()` from the first frame, as the game's does - F10's original mode
   keeps it (and the original's 2D rain). `engine: remaster preset` part 5.
+* **The snow in the scene too** (the same day): Mahaleel's 200 flakes -
+  the bit-4 arm's box of 400 and drift, untouched - as quads facing the eye,
+  the original's 8 units across, with the original's own `Images\snow.bmp`
+  (an 8-bit BMP keyed on black: additive, so the key holds), three copies a
+  flake (the offsets scaled to the box), faded in over 20..80 units, lit as
+  the rain, stopped by roofs - so the ice cave's re-scattered static (ASSETS
+  4e) is gone in the remaster, and the flakes stay inside the picture (the
+  original's fall over the letterbox). Address 404 at frame 90: 650 of 800
+  drawn, against the original's 68 sprites. The option says rain and snow
+  (`Pluie et neige en 3D`).
 * **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on); the mist on GLES; the snow in 3D.
+  only with the emitters' light on); the mist on GLES; snow settling on
+  Mahaleel's open ground.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

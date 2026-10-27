@@ -291,8 +291,8 @@
 ; ambient occlusion at contacts (0..4, Vulkan); the floors floors.txt lists
 ; reflecting (0..1); the floors under the open sky wet by the game's own
 ; rain, darker and reflecting while it falls and drying after (0..1; the rain
-; needs Niveau de detail at 2); the same rain drawn in the scene, hidden by
-; walls and stopped by roofs (0..1, its brightness); a height mist in each
+; needs Niveau de detail at 2); the same rain and snow drawn in the scene,
+; hidden by walls and stopped by roofs (0..1, their brightness); a height mist in each
 ; city's fog colour (0..1, Vulkan).
 ;bloom = 0
 ;water = 0

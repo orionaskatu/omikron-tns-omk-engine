@@ -247,8 +247,9 @@ struct Settings {
     // while the game's own shower falls, S times their reflection. 0 = off.
     float  wet = 0.0f;
     Source wetSource = Source::Default;
-    // `rain3d = S`: the game's RAIN drawn IN THE SCENE (`playremaster_rain.cpp`)
-    // - walls hide its drops, a roof stops them - S its streaks' brightness. 0 = off.
+    // `rain3d = S`: the game's RAIN and SNOW drawn IN THE SCENE
+    // (`playremaster_rain.cpp`) - walls hide them, a roof stops them, the set's
+    // lights light them, the sky darkens with the shower - S their brightness. 0 = off.
     float  rain3d = 0.0f;
     Source rain3dSource = Source::Default;
     // `mist = S`: the MIST, a height fog in the set's fog colour (`View::mist`). 0 = off.

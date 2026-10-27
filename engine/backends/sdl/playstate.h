@@ -719,6 +719,8 @@ struct PlayState {
     std::vector<omk::WeatherDrop> rainDrops{};   // ...the weather's drops it takes, last stepped
     omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
     int rainTexSlot = -1;                        // ...their streak texture's pool slot, -1 none
+    int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
+    unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off

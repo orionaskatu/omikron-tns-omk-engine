@@ -173,7 +173,7 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc glslang-tools python3 mesa-vulkan-drivers
+          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc glslang-tools python3 mesa-vulkan-drivers gdb
 
       # FSR 3.1 over Vulkan: AMD's FidelityFX SDK v1.1.4 (MIT) has no Linux library, so
       # linux/ffx-vk/ builds one from its source. Only the parts the build needs are taken.
@@ -203,8 +203,8 @@ jobs:
       - name: FSR 3.1 library test (software Vulkan)
         continue-on-error: true
         run: |
-          g++ -std=c++17 -I upscalers/fsr-vk/ffx-api/include linux/ffx-vk/test_context.cpp -o ffx-test -ldl -lvulkan
-          ./ffx-test upscalers/lib
+          g++ -std=c++17 -g -I upscalers/fsr-vk/ffx-api/include linux/ffx-vk/test_context.cpp -o ffx-test -ldl -lvulkan
+          ./ffx-test upscalers/lib || { gdb -batch -ex run -ex bt --args ./ffx-test upscalers/lib 2>&1 | tail -30; exit 1; }
 
       - name: Build
         working-directory: engine
@@ -217,7 +217,7 @@ jobs:
           cp engine/build/omk-play dist/
           # the build must have the FSR 3.1 library and its glue, or the release would miss the upscaler
           [ -f upscalers/lib/libamd_fidelityfx_vk.so ] || { echo "MISSING libamd_fidelityfx_vk.so"; exit 1; }
-          cp upscalers/lib/libamd_fidelityfx_vk.so dist/
+          strip --strip-unneeded -o dist/libamd_fidelityfx_vk.so upscalers/lib/libamd_fidelityfx_vk.so
           ldd dist/libamd_fidelityfx_vk.so
           strings engine/build/omk-play | grep -q libamd_fidelityfx_vk.so || { echo "the viewer was built without the FSR 3.1 glue"; exit 1; }
           cp -r tables dist/tables

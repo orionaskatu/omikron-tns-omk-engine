@@ -26,6 +26,7 @@ static void message(uint32_t type, const wchar_t* msg) {
 }
 
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc < 2) { std::printf("usage: test_context <folder>\n"); return 2; }
     const std::string path = std::string(argv[1]) + "/libamd_fidelityfx_vk.so";
     void* lib = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);

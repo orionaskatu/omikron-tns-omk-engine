@@ -1399,6 +1399,23 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   most area near: in Qalisar the largest level was not the street.
   Anekbah's street at full rain: 61427 pixels move on Vulkan, 61405 on
   GLES, overlap 0.989. `engine: wet floors` part 9.
+* **More realistic rain, 3 - the SPLASHES** (2026-10-28): where the rain
+  meets open ground ahead of the eye, a drop's crown -
+  `playremaster_rain.cpp`. 700 a second at the full shower (fewer as its
+  count ramps), each landing at random over the half-disc 60..1100 units
+  ahead within 0.9 rad of the view's heading, on the floor a ray down
+  through the shot soup meets (a face no steeper than `n.y` 0.7), and only
+  where the roof ray up from there meets nothing. Each lives 240 ms on the
+  weather's clock (none spawned or aged while paused, none from
+  `OMK_WEATHER_SKIP_MS`'s jump): an upright sprite turned to the eye, its
+  own size (0.6..1.2 of 4.5 x 6 units) and way round, rising as it fades,
+  additive, lit as the drops (the set's lights, the neon). The picture is
+  generated (`splashTexture`: a rim, two flaring walls, a spray, four beads,
+  blurred twice - the first, sharp one at 7 x 9 read as an icon of a crown).
+  Their own fixed sequence, not `rand()`, so the backends draw the same
+  ones. Anekbah at full rain: 115 live at frame 690; 1287 pixels on Vulkan,
+  1288 on GLES, overlap 0.999; `OMK_NO_SPLASHES=1` (an instrument) leaves
+  them out. `engine: rain 3d` part 14.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

@@ -79,6 +79,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_PUDDLES",           // =1 the wet floors an even film, no puddles (engine: wet floors)
     "OMK_NO_ROOTSPIN",          // diagnostic: a scene clip's root motion not turned by the call's Euler (engine: scene facing)
     "OMK_NO_SIDECULL",          // A/B: the staged-body side cull off (engine: unlimited clip)
+    "OMK_NO_SPLASHES",          // =1 no splashes where the 3D rain meets the floor (engine: rain 3d)
     "OMK_NO_STREAM",            // GLES: the streamed upload off where it is on by default
     "OMK_NO_SWEEP_GRID",        // A/B: the body and camera sweeps as a linear scan instead of through the grids
     "OMK_NO_TIE",               // the coincident-face depth tie off (engine: sign tie)

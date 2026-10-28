@@ -724,6 +724,12 @@ struct PlayState {
     int sandTexSlot = -1;                        // ...and the restored sand's field (`Images\sand.bmp`)
     std::vector<omk::GrainRect> sandGrains3d{};  // ...its grains, texel rectangles
     unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
+    struct RainSplash { float p[3]; double born; };   // a drop's crown on the floor, born on the weather's clock
+    std::vector<RainSplash> rainSplashes{};      // ...the live ones (`playremaster_rain.cpp`)
+    double splashClock = -1.0;                   // ...the weather's clock they were last spawned at
+    double splashOwed = 0.0;                     // ...the fraction of a splash carried to the next frame
+    std::uint32_t splashSeed = 0x2F6B1D35u;      // ...where they land: a fixed sequence, the same on every backend
+    int splashTexSlot = -1;                      // ...their crown texture's pool slot, -1 none
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off

@@ -55,6 +55,19 @@
 // DUST, a fog of drifting ochre clouds (`View::dust`, the scene shaders) under
 // a lightly warmed grade (`remasterGrade`): dots alone read as snow, streaks
 // as rain (the reader, 2026-10-27).
+//
+// ...and THE SPLASHES (the reader's "more realistic rain", 3 of 3,
+// 2026-10-28): where the rain meets open ground ahead of the eye, a drop's
+// CROWN - an upright soft sprite of a generated picture (`splashTexture`: a
+// bright rim at the foot, two walls flaring out, beads thrown off their top)
+// turned to face the eye, rising and fading in `kSplashLife` on the weather's
+// clock (held while paused), additive and lit as the drops. They land at
+// random in the half-disc ahead (`kSplashNear`..`kSplashFar`, the view's
+// width), on the floor a ray down through the shot soup meets, and only
+// where the roof ray up from there meets nothing; `kSplashRate` a second at
+// the full shower, fewer as its count ramps. Their own sequence, not
+// `rand()`, so the backends draw the same ones. `OMK_NO_SPLASHES=1` (an
+// instrument) leaves them out.
 #if OMK_REMASTER
 
 #include "../sdl/playstate.h"
@@ -124,6 +137,70 @@ constexpr float kSandGlow = 0.45f;        // ...its brightness, additive - its s
 constexpr float kFlakeHalf = 4.0f;        // ...a flake's half size, the original's 8 units across
 constexpr float kSnowNearFrom = 20.0f, kSnowNear = 80.0f;   // a flake's fade in from the eye
 
+constexpr double kSplashRate = 700.0;     // the splashes a second at the full shower (its 200 drops)
+constexpr double kSplashLife = 240.0;     // ...each one's life, ms on the weather's clock
+constexpr float kSplashNear = 60.0f, kSplashFar = 1100.0f;   // ...landing this far ahead of the eye
+constexpr float kSplashHalfAngle = 0.9f;  // ...within this many radians of the view's heading
+constexpr float kSplashW = 4.5f, kSplashH = 6.0f;   // ...a crown's half width and height at its fullest (7, 9: icons)
+constexpr float kSplashGlow = 0.6f;       // ...its brightness, additive
+constexpr int kSplashTex = 32;            // the crown texture's side
+
+// THE CROWN, generated as the streak: a grey texel per palette index. Its
+// foot at the bottom row: a faint rim (the ring seen edge on, brighter at its
+// ends), two thin walls flaring out and up from it, a soft spray between them
+// and four beads thrown off above - then blurred twice, a SPLASH and not a
+// drawn crown (the sharp one read as an icon)
+omk::Texture splashTexture() {
+    omk::Texture t;
+    t.name = "OMK_RAIN_SPLASH";
+    t.width = t.height = kSplashTex;
+    t.bpp = 8;
+    t.exact = true;
+    t.pal.assign(768, 0);
+    std::uint8_t* pal = t.pal.mutableData();
+    for (int i = 0; i < 256; ++i) pal[3 * i] = pal[3 * i + 1] = pal[3 * i + 2] = static_cast<std::uint8_t>(i);
+    const float beads[4][4] = {{-0.78f, 0.62f, 0.09f, 0.55f}, {-0.22f, 0.86f, 0.08f, 0.45f},
+                               {0.30f, 0.74f, 0.07f, 0.5f}, {0.82f, 0.56f, 0.09f, 0.6f}};
+    const auto bell = [](float d, float r) { return std::exp(-(d * d) / (2.0f * r * r)); };
+    std::vector<float> l(static_cast<std::size_t>(kSplashTex) * kSplashTex, 0.0f);
+    for (int y = 0; y < kSplashTex; ++y)
+        for (int x = 0; x < kSplashTex; ++x) {
+            const float X = (static_cast<float>(x) + 0.5f) / kSplashTex * 2.0f - 1.0f;   // -1..1 across
+            const float Y = 1.0f - (static_cast<float>(y) + 0.5f) / kSplashTex;          // 0 the foot
+            float v = std::clamp((0.95f - std::abs(X)) / 0.2f, 0.0f, 1.0f) * bell(Y - 0.06f, 0.04f) *
+                      (0.35f + 0.65f * X * X);
+            if (Y > 0.04f && Y < 0.55f) {   // the walls: from (+-0.5, 0.05) out to (+-0.8, 0.5)
+                const float s = (Y - 0.05f) / 0.45f;
+                v = std::max(v, 0.6f * (1.0f - s) * bell(std::abs(X) - (0.5f + 0.3f * s), 0.06f));
+            }
+            v = std::max(v, 0.3f * bell(X, 0.25f) * bell(Y - 0.3f, 0.18f));   // the spray
+            for (const auto& b : beads) v = std::max(v, b[3] * bell(std::hypot(X - b[0], Y - b[1]), b[2]));
+            l[static_cast<std::size_t>(y) * kSplashTex + x] = v;
+        }
+    for (int pass = 0; pass < 2; ++pass) {   // a 3x3 box, twice
+        std::vector<float> o(l.size(), 0.0f);
+        for (int y = 0; y < kSplashTex; ++y)
+            for (int x = 0; x < kSplashTex; ++x) {
+                float sum = 0.0f;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int xx = x + dx, yy = y + dy;
+                        if (xx >= 0 && yy >= 0 && xx < kSplashTex && yy < kSplashTex)
+                            sum += l[static_cast<std::size_t>(yy) * kSplashTex + xx];
+                    }
+                o[static_cast<std::size_t>(y) * kSplashTex + x] = sum / 9.0f;
+            }
+        l.swap(o);
+    }
+    t.idx.assign(l.size(), 0);
+    std::uint8_t* px = t.idx.mutableData();
+    float top = 0.0f;
+    for (float v : l) top = std::max(top, v);
+    for (std::size_t i = 0; i < l.size(); ++i)
+        px[i] = static_cast<std::uint8_t>(std::lround(255.0f * std::clamp(l[i] / top, 0.0f, 1.0f)));
+    return t;
+}
+
 // `Images\snow.bmp`, the original's flake: an 8-bit BMP, bottom-up, its
 // palette as stored - an empty Texture on anything else
 omk::Texture snowTexture(std::span<const std::byte> d) {
@@ -158,10 +235,15 @@ omk::Texture snowTexture(std::span<const std::byte> d) {
 // rain in 3D was armed at the start
 void PlayState::remasterPoolRain(std::vector<omk::Texture>& slots) {
     rainTexSlot = -1;
+    splashTexSlot = -1;
     if (remasterArmed("rain3d") <= 0.0f) return;
     static const omk::Texture streak = rainStreakTexture();
     rainTexSlot = static_cast<int>(slots.size());
     slots.push_back(streak);
+    // ...and the splashes' crown
+    static const omk::Texture crown = splashTexture();
+    splashTexSlot = static_cast<int>(slots.size());
+    slots.push_back(crown);
     // ...and the snow's flake, the original's own picture
     static const omk::Texture flake = snowTexture(fs_->read("IMAGES/snow.bmp"));
     snowTexSlot = -1;
@@ -207,7 +289,11 @@ bool PlayState::remasterRainTake(const std::vector<omk::WeatherDrop>& drops, uns
 void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v) {
     rainGeo.corners.clear();
     rainGeo.batches.clear();
-    if (rainDrops.empty()) return;
+    if (rainDrops.empty()) {
+        rainSplashes.clear();
+        splashClock = -1.0;
+        return;
+    }
     // the roofs: the shown set's shot soup, as the weather's own ray
     const omk::TriangleSoup* shot = nullptr;
     const omk::SoupRunBoxes* boxes = nullptr;
@@ -258,6 +344,36 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         c.r = rgb[0]; c.g = rgb[1]; c.b = rgb[2];
         c.phase = -1.0f;
         return c;
+    };
+    // the light at `p`: `base` grey, and the set's own lights that reach it
+    // added - each as `ramp[c][t]` with `t` its whole strength - then the
+    // EMITTERS' - the neon, the glowing surfaces, the flames, in the slot's
+    // table when the remaster's emitters' light put them there - weighed
+    // `kRainNeon` and taking the grey base's place as they grow: a drop by a
+    // pink sign glows pink (the reader's "rain effect on neon", 2026-10-27).
+    // Whether the set's lights reached it, and the emitters' luminance
+    const auto lightAt = [&](const float p[3], float base, float rgb[3]) {
+        bool lit = false;
+        float neon[3] = {0.0f, 0.0f, 0.0f};
+        for (int c = 0; c < 3; ++c) rgb[c] = base;
+        for (int part = 0; part < 2; ++part) {
+            const std::span<const omk::Light3do> ls = part == 0 ? lights.first(setLightCount)
+                                                                : lights.subspan(setLightCount);
+            reach.clear();
+            if (ls.empty() || omk::lightReach(p, ls, reach) == 0) continue;
+            if (part == 0) lit = true;
+            for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
+                const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
+                const int t = static_cast<int>(std::min(255.0f, k));
+                for (int c = 0; c < 3; ++c) {
+                    const float add = omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
+                    (part == 0 ? rgb[c] : neon[c]) += (part == 0 ? kRainLit : kRainNeon) * add;
+                }
+            }
+        }
+        const float neonL = std::min(1.0f, 0.299f * neon[0] + 0.587f * neon[1] + 0.114f * neon[2]);
+        for (int c = 0; c < 3; ++c) rgb[c] = rgb[c] * (1.0f - 0.7f * neonL) + neon[c];
+        return std::pair<bool, float>{lit, neonL};
     };
     for (const auto& d : all) {
         if (shot && boxes) {
@@ -396,34 +512,12 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
                            std::clamp((box - pa.z) / (box * 0.4f), 0.0f, 1.0f);
         if (!(fade > 0.0f)) continue;
         // the original line's grey at its bright end (0xC0), dimmed where
-        // nothing lights it, and the lights that reach the drop added - each
-        // as `ramp[c][t]` with `t` its whole strength; the streak's texture
-        // shaping it all
-        float rgb[3] = {192.0f / 255.0f * kRainUnlit, 192.0f / 255.0f * kRainUnlit, 192.0f / 255.0f * kRainUnlit};
-        // the set's own lights, then the EMITTERS' - the neon, the glowing
-        // surfaces, the flames, in the slot's table when the remaster's
-        // emitters' light put them there - weighed `kRainNeon` and taking the
-        // grey base's place as they grow: a drop by a pink sign glows pink
-        // (the reader's "rain effect on neon", 2026-10-27)
-        float neon[3] = {0.0f, 0.0f, 0.0f};
-        for (int part = 0; part < 2; ++part) {
-            const std::span<const omk::Light3do> ls = part == 0 ? lights.first(setLightCount)
-                                                                : lights.subspan(setLightCount);
-            reach.clear();
-            if (ls.empty() || omk::lightReach(lead, ls, reach) == 0) continue;
-            if (part == 0) ++litDrops;
-            for (std::size_t i = 0; i + 7 < reach.size(); i += 8) {
-                const float k = std::sqrt(reach[i] * reach[i] + reach[i + 1] * reach[i + 1] + reach[i + 2] * reach[i + 2]);
-                const int t = static_cast<int>(std::min(255.0f, k));
-                for (int c = 0; c < 3; ++c) {
-                    const float add = omk::lightRamp(static_cast<std::uint8_t>(reach[i + 4 + c]), t) / 255.0f;
-                    (part == 0 ? rgb[c] : neon[c]) += (part == 0 ? kRainLit : kRainNeon) * add;
-                }
-            }
-        }
-        const float neonL = std::min(1.0f, 0.299f * neon[0] + 0.587f * neon[1] + 0.114f * neon[2]);
+        // nothing lights it, and the lights that reach the drop added; the
+        // streak's texture shaping it all
+        float rgb[3];
+        const auto [lit, neonL] = lightAt(lead, 192.0f / 255.0f * kRainUnlit, rgb);
+        if (lit) ++litDrops;
         if (neonL > 0.05f) ++neonDrops;
-        for (int c = 0; c < 3; ++c) rgb[c] = rgb[c] * (1.0f - 0.7f * neonL) + neon[c];
         // past white, scaled down whole rather than clipped per channel: the
         // burner's drops stay orange instead of going white - and a drop in a
         // neon's light catches it, brighter (up to 1.8x)
@@ -439,37 +533,117 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c3, c0, c3, c2});
     }
     const std::size_t drawnDrops = rainGeo.corners.size() / 6;
+    // THE SPLASHES - the rain's alone: spawned as the weather's clock runs
+    // (so none while paused, and none from the skip's jump), aged on it
+    const std::size_t rainCorners = rainGeo.corners.size();
+    int splashRoofed = 0;
+    static const bool noSplashes = omk::envFlag("OMK_NO_SPLASHES");
+    if (snow || sand || noSplashes || !shot || !boxes) {
+        rainSplashes.clear();
+        splashClock = -1.0;
+    } else {
+        const double now = weatherClockMs;
+        const double dt = splashClock < 0.0 ? 0.0 : std::clamp(now - splashClock, 0.0, 100.0);
+        splashClock = now;
+        std::erase_if(rainSplashes, [&](const RainSplash& sp) { return now - sp.born >= kSplashLife; });
+        splashOwed += kSplashRate * dt / 1000.0 * std::min(1.0, static_cast<double>(rainDrops.size()) / 200.0);
+        const auto rnd = [&] {
+            splashSeed = splashSeed * 1664525u + 1013904223u;
+            return static_cast<float>(splashSeed >> 8) / 16777216.0f;
+        };
+        const float heading = std::atan2(dv[2], dv[0]);
+        for (; splashOwed >= 1.0; splashOwed -= 1.0) {
+            // uniform over the half-disc's area, then down to the floor
+            const float r = std::sqrt(kSplashNear * kSplashNear +
+                                      rnd() * (kSplashFar * kSplashFar - kSplashNear * kSplashNear));
+            const float a = heading + (rnd() * 2.0f - 1.0f) * kSplashHalfAngle;
+            const double bornAt = now - rnd() * dt;   // spread over the frame, so they do not pulse
+            const double p0[3] = {v.cam.eye[0] + std::cos(a) * r, v.cam.eye[1], v.cam.eye[2] + std::sin(a) * r};
+            const double down[3] = {0.0, kRainRoofRay, 0.0};   // Y points down
+            const auto ground = omk::sweepSphere(*shot, *boxes, p0, down, 0.0);
+            if (!ground || ground->n[1] > -0.7) continue;   // nothing below, or a wall's slope
+            const double fy = p0[1] + down[1] * ground->t;
+            const double from[3] = {p0[0], fy - 2.0, p0[2]};
+            const double up[3] = {0.0, -kRainRoofRay, 0.0};
+            if (omk::sweepSphere(*shot, *boxes, from, up, 0.0).has_value()) { ++splashRoofed; continue; }
+            rainSplashes.push_back({{static_cast<float>(p0[0]), static_cast<float>(fy), static_cast<float>(p0[2])},
+                                    bornAt});
+        }
+        // each a crown standing on the floor, turned to the eye, rising as it fades
+        const float glow = std::clamp(rain3dStrength, 0.0f, 1.0f) * kSplashGlow;
+        const float S = static_cast<float>(kSplashTex);
+        for (const auto& sp : rainSplashes) {
+            const float t = static_cast<float>(std::clamp((now - sp.born) / kSplashLife, 0.0, 1.0));
+            const float ex = v.cam.eye[0] - sp.p[0], ez = v.cam.eye[2] - sp.p[2];
+            const float el = std::hypot(ex, ez);
+            if (!(el > 1.0f)) continue;
+            const float rx = ez / el, rz = -ex / el;   // across the eye's line, level
+            const float fade = std::clamp((kSplashFar - el) / (kSplashFar * 0.3f), 0.0f, 1.0f) *
+                               (1.0f - t) * (1.0f - t);
+            if (!(fade > 0.0f)) continue;
+            // each its own size (0.6..1.2) and way round, from where it fell
+            std::uint32_t h = static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[0] * 7.0f)) * 73856093u ^
+                              static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[2] * 7.0f)) * 19349663u;
+            h ^= h >> 13; h *= 0x5BD1E995u; h ^= h >> 15;
+            const float size = 0.6f + 0.6f * static_cast<float>(h & 0xFFu) / 255.0f;
+            const bool mirror = (h & 0x100u) != 0;
+            const float rise = std::sqrt(t);
+            const float hw = size * kSplashW * (0.55f + 0.45f * rise), hh = size * kSplashH * (0.35f + 0.65f * rise);
+            const float mid[3] = {sp.p[0], sp.p[1] - hh * 0.5f, sp.p[2]};
+            float rgb[3];
+            lightAt(mid, kRainUnlit, rgb);
+            const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
+            for (float& c : rgb) c = c / top * glow * fade;
+            const float foot = sp.p[1] - 0.5f, head = sp.p[1] - hh;   // just above the floor
+            const float q0[3] = {sp.p[0] - rx * hw, foot, sp.p[2] - rz * hw};
+            const float q1[3] = {sp.p[0] + rx * hw, foot, sp.p[2] + rz * hw};
+            const float q2[3] = {sp.p[0] + rx * hw, head, sp.p[2] + rz * hw};
+            const float q3[3] = {sp.p[0] - rx * hw, head, sp.p[2] - rz * hw};
+            const float uA = mirror ? S : 0.0f, uB = S - uA;
+            const omk::Corner c0 = corner(q0, rgb, uA, S), c1 = corner(q1, rgb, uB, S);
+            const omk::Corner c2 = corner(q2, rgb, uB, 0.0f), c3 = corner(q3, rgb, uA, 0.0f);
+            rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c2, c0, c2, c3});
+        }
+    }
+    const std::size_t drawnSplashes = (rainGeo.corners.size() - rainCorners) / 6;
     if (frameNo % 30 == 0) {
         std::printf("frame %ld: the %s in the scene - %zu of %zu %s drawn (the weather's %zu and %d each "
-                    "more), %d under a roof, %d lit by the set's lights\n", frameNo,
+                    "more), %d under a roof, %d lit by the set's lights; %zu splashes on the floor\n", frameNo,
                     snow ? "snow" : sand ? "sand" : "rain", drawnDrops, all.size(),
                     snow ? "flakes" : sand ? "grains" : "drops", rainDrops.size(), kRainCopies, roofed,
-                    litDrops);
+                    litDrops, drawnSplashes);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
                                        {"streak", (snow ? snowTexSlot : rainTexSlot) >= 0}, {"lit", litDrops},
-                                       {"snow", snow}, {"sand", sand}, {"neon", neonDrops}});
+                                       {"snow", snow}, {"sand", sand}, {"neon", neonDrops},
+                                       {"splashes", static_cast<long>(drawnSplashes)},
+                                       {"splashRoofed", splashRoofed}});
     }
     if (rainGeo.corners.empty()) return;
-    omk::Batch b;
-    b.material = -1;
-    b.blend = omk::Blend::Add;   // the rain, the snow and the sand's streaks additive
-    b.start = 0;
-    b.count = rainGeo.corners.size();
-    rainGeo.batches.push_back(b);
     ++rainGeo.revision;
     // the streak's pool slot (`remasterPoolRain`) - or, before the pool has
     // it, a slot past every texture, which binds the backends' white; the
-    // additive state bits as the mesh path's (`keyOf`, 0x2100)
-    const int texSlot = snow ? snowTexSlot : sand ? sandTexSlot : rainTexSlot;
-    const std::uint32_t slot = texSlot >= 0 ? static_cast<std::uint32_t>(texSlot) : 0xFFFEu;
-    omk::Draw dr;
-    dr.bucketKey = omk::withPoolSlot(0x2100u | (slot & 0x3Fu), slot);
-    dr.geo = &rainGeo;
-    dr.start = 0;
-    dr.count = rainGeo.corners.size();
-    dr.blend = omk::Blend::Add;
-    list.push_back(dr);
+    // additive state bits as the mesh path's (`keyOf`, 0x2100). The drops
+    // first, then the splashes with their crown
+    const auto add = [&](int texSlot, std::size_t start, std::size_t count) {
+        if (count == 0) return;
+        omk::Batch b;
+        b.material = -1;
+        b.blend = omk::Blend::Add;   // the rain, the snow and the sand's streaks additive, the splashes too
+        b.start = start;
+        b.count = count;
+        rainGeo.batches.push_back(b);
+        const std::uint32_t slot = texSlot >= 0 ? static_cast<std::uint32_t>(texSlot) : 0xFFFEu;
+        omk::Draw dr;
+        dr.bucketKey = omk::withPoolSlot(0x2100u | (slot & 0x3Fu), slot);
+        dr.geo = &rainGeo;
+        dr.start = start;
+        dr.count = count;
+        dr.blend = omk::Blend::Add;
+        list.push_back(dr);
+    };
+    add(snow ? snowTexSlot : sand ? sandTexSlot : rainTexSlot, 0, rainCorners);
+    add(splashTexSlot, rainCorners, rainGeo.corners.size() - rainCorners);
 }
 
 #endif  // OMK_REMASTER

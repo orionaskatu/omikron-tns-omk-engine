@@ -66,7 +66,19 @@ int main(int argc, char** argv) {
     qci.pQueuePriorities = &prio;
     VkPhysicalDeviceFeatures feats{};
     vkGetPhysicalDeviceFeatures(pd, &feats);   // what the device has, all of it
+    // the extensions the viewer enables for the upscaler (vkrender.cpp), when the device has them
+    uint32_t en = 0;
+    vkEnumerateDeviceExtensionProperties(pd, nullptr, &en, nullptr);
+    std::vector<VkExtensionProperties> have(en);
+    vkEnumerateDeviceExtensionProperties(pd, nullptr, &en, have.data());
+    std::vector<const char*> exts;
+    for (const char* want : {"VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation", "VK_EXT_subgroup_size_control"})
+        for (const auto& e : have)
+            if (std::string(e.extensionName) == want) { exts.push_back(want); break; }
+    for (const char* e : exts) std::printf("extension: %s\n", e);
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    dci.enabledExtensionCount = static_cast<uint32_t>(exts.size());
+    dci.ppEnabledExtensionNames = exts.data();
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     dci.pEnabledFeatures = &feats;

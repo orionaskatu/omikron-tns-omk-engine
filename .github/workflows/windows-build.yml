@@ -5,7 +5,19 @@ name: Windows build
 on:
   push:
     branches: [fixes]
-  workflow_dispatch:
+    # a push that only touches documentation does not build; one that also touches
+    # code (or omk.ini, the tables, this workflow...) does
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'book/**'
+      - 'tutorial/**'
+      - 'transcript/**'
+      - 'manual/**'
+      - 'todo/**'
+      - 'LICENSE'
+      - 'LICENSING.md'
+  workflow_dispatch:   # or start it by hand from the Actions tab
 
 permissions:
   contents: write   # to create the release

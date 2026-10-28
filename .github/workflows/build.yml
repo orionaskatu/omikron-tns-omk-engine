@@ -204,7 +204,7 @@ jobs:
         continue-on-error: true
         run: |
           g++ -std=c++17 -g -I upscalers/fsr-vk/ffx-api/include linux/ffx-vk/test_context.cpp -o ffx-test -ldl -lvulkan
-          ./ffx-test upscalers/lib || { gdb -batch -ex run -ex bt --args ./ffx-test upscalers/lib 2>&1 | tail -30; exit 1; }
+          ./ffx-test upscalers/lib || { gdb -batch -ex run -ex bt -ex "frame 0" -ex "info locals" -ex "p backendContext->maxEffectContexts" -ex "p backendContext->pEffectContexts" -ex "p backendInterface->scratchBufferSize" -ex "p sizeof(BackendContext_VK)" -ex "p sizeof(BackendContext_VK::EffectContext)" --args ./ffx-test upscalers/lib 2>&1 | tail -40; exit 1; }
 
       - name: Build
         working-directory: engine

@@ -38,7 +38,7 @@ sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ff
 python3 "$here/gen_shaders.py" --sdk "$sdk" --out "$out/shaders" \
     --glslang "${GLSLANG:-glslangValidator}" --jobs "$jobs"
 
-flags=(-std=c++17 -O2 -g -fPIC -fvisibility=hidden -w -include "$here/compat.h"
+flags=(-std=c++17 -O0 -g -fPIC -fvisibility=hidden -w -include "$here/compat.h"
        -DFFX_BACKEND_VK -DFFX_FSR3UPSCALER
        -I"$out/include" -I"$out/shaders"
        -I"$sdk/ffx-api/src" -I"$sdk/ffx-api/include" -I"$out/sdkinclude"

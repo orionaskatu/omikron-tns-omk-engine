@@ -1485,7 +1485,10 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   body's shadows - lit by `shade` alone. The darkening and the colour kept.
   Anekbah 640x480: 34803 pixels on Vulkan, 34804 on GLES, overlap 0.994;
   133 brighter by more than 48 (part 11 now asks more than 60; the floor
-  rule's 0 still told apart), Kay'l on the CPU 143. The reader: "better".
+  rule's 0 still told apart), Kay'l on the CPU 143. The reader: "better",
+  then "a bit stronger": `kWetBodySheen` 0.75, `kWetBodySky` 1.0, more beads
+  (`kWetBodyBeadLo` 0.5) - 292 brighter, Kay'l on the CPU 300, overlap
+  0.993. The reader: "better" again.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

@@ -405,13 +405,13 @@ vec3 ripples(vec2 p, float clock, float rain) {
 // A WET BODY (`Draw::wetBody`) - GLES's twin in glesrender_remaster_shaders.inl
 const float kWetBodyDark = 0.3;         // its darkening at full wet: wet cloth and skin go darker...
 const float kWetBodySat = 0.35;         // ...and deeper in colour (the saturation's gain)
-const float kWetBodySheen = 0.55;       // its SHEEN, the lit street mirrored by the water, at full wet
+const float kWetBodySheen = 0.75;       // its SHEEN, the lit street mirrored by the water, at full wet
 const float kWetBodyRim = 5.0;          // ...toward the grazing angles (the Fresnel's power)...
 const float kWetBodyRimFilm = 0.25;     // ...faint where no bead sits: an even rim is a plastic film
-const float kWetBodySky = 0.8;          // ...and where a bead faces up, mirroring the sky's glow
+const float kWetBodySky = 1.0;          // ...and where a bead faces up, mirroring the sky's glow
 const float kWetBodySkyPower = 16.0;    // ...in a tight highlight (the power on the reflection's lift)
 const float kWetBodyBeadScale = 48.0;   // the BEADS of water, a noise on the body's texture (it moves
-const float kWetBodyBeadLo = 0.55;      // with the body, where the world's would slide over it)...
+const float kWetBodyBeadLo = 0.5;       // with the body, where the world's would slide over it)...
 const float kWetBodyBeadHi = 0.8;       // ...thresholded to patches between these
 
 // THE TRICKLES on a WET WALL (`o3de/wetfloor.h`, the reader's "wet walls and

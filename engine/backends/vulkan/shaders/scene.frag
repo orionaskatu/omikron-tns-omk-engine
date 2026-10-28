@@ -402,13 +402,52 @@ vec3 ripples(vec2 p, float clock, float rain) {
     return g;
 }
 
+// THE TRICKLES on a WET WALL (`o3de/wetfloor.h`, the reader's "wet walls and
+// characters", 2026-10-28): thin lines of water down some columns of the
+// wall - a bead running down each, a glint, its wet trail above it darker
+// (-> trail, bead) - on the ripples'
+// clock. GLES's twin in glesrender_remaster_shaders.inl.
+const float kWetWallFilm = 0.6;       // a wet wall's film against a floor's: the water runs off
+const float kTrickleAcross0 = 0.83;   // a trickle's columns run along this level direction...
+const float kTrickleAcross1 = 0.56;   // ...(any wall but one rare heading)
+const float kTrickleSpan = 5.0;       // ...one column every this many units
+const float kTrickleShare = 0.45;     // ...this share of them running at the full shower
+const float kTrickleWidth = 0.12;     // ...a line's half width, of its column
+const float kTrickleLength = 40.0;    // ...a bead and its wet trail, units of fall
+const float kTrickleRate = 0.0625;    // ...cycles a clock step: 16 in the clock's 256, so it wraps whole
+const float kTrickleDark = 0.35;        // ...the wet trail above a bead, darker by this
+const float kTrickleRuns = 0.5;       // ...a cycle's run there or not, this share running
+const float kTrickleMeander = 0.04;   // ...wandering this much of its column either way
+const float kTrickleWave = 0.07;      // ...over this many radians a unit of fall
+const float kTrickleFar = 900.0;      // ...gone this far from the eye, finer than a pixel
+const float kTrickleLight = 0.22;      // ...a bead's light, added
+vec2 trickles(vec3 w, float clock, float rain) {
+    float u = (w.x * kTrickleAcross0 + w.z * kTrickleAcross1) / kTrickleSpan;
+    float col = floor(u);
+    vec3 h = rippleHash(vec2(col, 17.0));
+    if (h.z > kTrickleShare * rain) return vec2(0.0);
+    float speed = kTrickleRate * (1.0 + floor(h.y * 2.0));
+    float v = w.y / kTrickleLength - clock * speed + h.x * 7.0;
+    // ...a run now and then down the column, not every cycle
+    if (rippleHash(vec2(col, floor(v))).x > kTrickleRuns) return vec2(0.0);
+    float f = fract(v);
+    // ...meandering a little as it runs
+    float centre = 0.3 + 0.4 * h.x + kTrickleMeander * sin(w.y * kTrickleWave + h.y * 6.28);
+    float line = 1.0 - smoothstep(kTrickleWidth * 0.5, kTrickleWidth, abs(fract(u) - centre));
+    float bead = smoothstep(0.82, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));
+    float trail = smoothstep(0.1, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));
+    return line * vec2(trail, bead);
+}
+
 void main() {
     int waterMode = pc.water & 15;                            // the water's mode (`Push`)
     float wetFilm = float((pc.water >> 4) & 255) / 255.0;     // a wet floor's darkening
     float rainNow = float((pc.water >> 12) & 255) / 255.0;    // ...and the rain on it
     bool snowLying = (pc.water & (1 << 20)) != 0;              // ...or snow lying on it, bit 20
     // the open sky at this point, the corners' answers blended (`encodeOpenSky`)
-    float openSky = vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
+    // - a WALL's (`-6 - open`) below -5.5, a floor's (`-2 - open`) below -1.5
+    bool wetWall = vPhase <= -5.5;
+    float openSky = wetWall ? clamp(-6.0 - vPhase, 0.0, 1.0) : vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
 #ifdef OMK_LATE_DEPTH
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
@@ -546,13 +585,18 @@ void main() {
     // water across the wet floor - a noise mask on the ground (`puddleMask`):
     // in one, the film darker, the reflection much stronger, the ripples more;
     // between them, the film and the reflection lighter
-    float puddle = wetFilm > 0.0 ? puddleMask(vWorld.xz) * lg.veil.w : 0.0;
+    // A WALL takes a lighter film and its TRICKLES instead - no puddle, no ripples
+    float puddle = wetFilm > 0.0 && !wetWall ? puddleMask(vWorld.xz) * lg.veil.w : 0.0;
     float wetHere = wetFilm > 0.0 ? openSky * mix(kPuddleMirror.x, kPuddleMirror.y, puddle) : 1.0;
-    c *= 1.0 - wetFilm * openSky * mix(kPuddleFilm.x, kPuddleFilm.y, puddle);
+    c *= 1.0 - wetFilm * openSky * (wetWall ? kWetWallFilm : mix(kPuddleFilm.x, kPuddleFilm.y, puddle));
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
     vec3 rip = vec3(0.0);
-    if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
+    if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0 && wetWall) {
+        float near = 1.0 - smoothstep(kTrickleFar * 0.6, kTrickleFar, length(lg.eye.xyz - vWorld));
+        vec2 tr = trickles(vWorld, sh.shimmer, rainNow) * openSky * near;
+        c = c * (1.0 - kTrickleDark * tr.x) + vec3(kTrickleLight * tr.y);
+    } else if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
         rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(kPuddleRipples.x, kPuddleRipples.y, puddle);
         c += vec3(kRippleLight * rip.z);
     }

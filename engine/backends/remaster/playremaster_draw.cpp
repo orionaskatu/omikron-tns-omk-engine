@@ -239,7 +239,7 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     }
     const bool floored = floorPlane.found &&
         omk::drawWithWater(world, list, drawn, &shownSlot.geo, floorPlane, passStrength, listStrength,
-                           wetOn ? &shownSlot.wet.open : nullptr, wetReflect, wetDarken);
+                           wetOn ? &shownSlot.wet.rained : nullptr, wetReflect, wetDarken);
     if (wetStrength > 0.0f && (wetOn != wetTold || frameNo % 30 == 0)) {
         if (wetOn != wetTold)
             std::printf("frame %ld: the wet floors %s (wetness %.2f, reflection %.2f)\n", frameNo,

@@ -1425,6 +1425,28 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   at 1600, soft edges included); each drop has its own brightness,
   `kRainOwnMin` 0.35..1, kept as it falls; and the strips are 0.4 bright
   where they were 0.55 (`kRainGlow`).
+* **Wet walls** (the reader's "wet walls and characters", step 1,
+  2026-10-28): `wetFloors` also takes a set's opaque triangles within ~20
+  degrees of upright (`kWetWallSteep` 0.34 on the normal's y) and calls a
+  wall's corner wet when a point `kWetWallOut` (8 units) in front of it
+  sees the sky - ONE roof ray, not the floors' five (five took Anekbah's
+  load from 196 to 500 ms on an M1; one, 337 ms; Qalisar 121 -> ~200).
+  `WetFloors::rained` (1 a floor, 2 a wall) is the wet pass's list - the
+  snow keeps `open`, the floors alone. A wall's corner carries `-6 - open`
+  in its phase (`kOpenSkyWall`; a floor's `-2 - open`), so both shaders
+  tell the two apart below -5.5 (GLES: the new `vWall` varying). A wet wall
+  darkens `kWetWallFilm` (0.6) of a floor's film and takes no puddle, no
+  ripples and no reflection, but its TRICKLES (`trickles`, scene.frag and
+  `kTrickleGlsl`): in some 5-unit columns, now and then a bead runs down
+  on the ripples' clock (16 or 32 cycles in its 256, so it wraps whole),
+  meandering a little, a glint (`kTrickleLight`) with its wet trail above
+  it darker (`kTrickleDark`), gone past 900 units. The columns run along
+  a fixed level direction (0.83, 0.56), so a wall at one rare heading
+  would show one wide column - GLES has no normal to do better.
+  Anekbah: 22152 wall triangles the rain reaches; at full rain 61374
+  pixels move on Vulkan, 61410 on GLES, overlap 0.999 (measured with the
+  five rays); `OMK_NO_WET_WALLS=1` (an instrument) wets the floors alone.
+  `engine: wet floors` part 10.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

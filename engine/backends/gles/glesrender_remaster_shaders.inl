@@ -173,11 +173,14 @@ constexpr const char* kPuddleGlsl =
 constexpr const char* kTrickleGlsl =
     "const float kWetBodyDark = 0.3;\n"
     "const float kWetBodySat = 0.35;\n"
-    "const float kWetBodySheen = 0.9;\n"
-    "const float kWetBodyRim = 4.0;\n"
-    "const float kWetBodySky = 0.6;\n"
-    "const float kWetBodySkyPower = 12.0;\n"
-    "const float kWetBodySheenFloor = 0.15;\n"
+    "const float kWetBodySheen = 0.75;\n"
+    "const float kWetBodyRim = 5.0;\n"
+    "const float kWetBodyRimFilm = 0.25;\n"
+    "const float kWetBodySky = 1.0;\n"
+    "const float kWetBodySkyPower = 16.0;\n"
+    "const float kWetBodyBeadScale = 48.0;\n"
+    "const float kWetBodyBeadLo = 0.5;\n"
+    "const float kWetBodyBeadHi = 0.8;\n"
     "const float kWetWallFilm = 0.6;\n"
     "const float kTrickleAcross0 = 0.83;\n"
     "const float kTrickleAcross1 = 0.56;\n"
@@ -308,15 +311,16 @@ std::string waterVariant(const std::string& frag) {
     const auto le = lp == std::string::npos ? lp : s.find(";\n", lp);
     // a BODY in the rain, `scene.frag`'s: darker and deeper in colour, and its
     // SHEEN on the body's normal (`vBodyN`, the vertex variant's - the plain
-    // programs have no `vNrm`)
+    // programs have no `vNrm`), in beads on its texture
     if (le != std::string::npos)
         s.insert(le + 2, "    if (uWetBody > 0.5 && uWet > 0.0) {\n"
                          "        float y = dot(c, vec3(0.299, 0.587, 0.114));\n"
                          "        c = max(mix(vec3(y), c, 1.0 + kWetBodySat * uWet), 0.0) * (1.0 - kWetBodyDark * uWet);\n"
                          "        vec3 nB = normalize(vBodyN), v = normalize(vToEye);\n"
-                         "        float rim = pow(1.0 - abs(dot(nB, v)), kWetBodyRim);\n"
-                         "        float sky = pow(max(-reflect(-v, nB).y, 0.0), kWetBodySkyPower) * kWetBodySky;\n"
-                         "        c = clamp(c + kWetBodySheen * uWet * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);\n"
+                         "        float bead = smoothstep(kWetBodyBeadLo, kWetBodyBeadHi, dustNoise(vec3(vUV * kWetBodyBeadScale, 0.5)));\n"
+                         "        float rim = pow(1.0 - abs(dot(nB, v)), kWetBodyRim) * mix(kWetBodyRimFilm, 1.0, bead);\n"
+                         "        float sky = pow(max(-reflect(-v, nB).y, 0.0), kWetBodySkyPower) * kWetBodySky * bead;\n"
+                         "        c = clamp(c + kWetBodySheen * uWet * (rim + sky) * shade, 0.0, 1.0);\n"
                          "    }\n"
                          "    if (uSnow > 0.5 && uWet > 0.0)\n"
                          "        c = mix(c, clamp(c / max(t.rgb, vec3(0.04)) * 0.9, 0.0, 1.0), uWet * vOpen *\n"

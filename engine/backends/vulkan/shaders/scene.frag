@@ -703,11 +703,14 @@ vec3 ripples(vec2 p, float clock, float rain) {
 // A WET BODY (`Draw::wetBody`) - GLES's twin in glesrender_remaster_shaders.inl
 const float kWetBodyDark = 0.3;         // its darkening at full wet: wet cloth and skin go darker...
 const float kWetBodySat = 0.35;         // ...and deeper in colour (the saturation's gain)
-const float kWetBodySheen = 0.9;        // its SHEEN, the lit street mirrored by the film, at full wet
-const float kWetBodyRim = 4.0;          // ...growing toward the grazing angles (the Fresnel's power)
-const float kWetBodySky = 0.6;          // ...and where the film faces up, mirroring the sky's glow
-const float kWetBodySkyPower = 12.0;    // ...in a tight highlight (the power on the reflection's lift)
-const float kWetBodySheenFloor = 0.15;  // the sheen's light where the body's own light is darkest
+const float kWetBodySheen = 0.75;       // its SHEEN, the lit street mirrored by the water, at full wet
+const float kWetBodyRim = 5.0;          // ...toward the grazing angles (the Fresnel's power)...
+const float kWetBodyRimFilm = 0.25;     // ...faint where no bead sits: an even rim is a plastic film
+const float kWetBodySky = 1.0;          // ...and where a bead faces up, mirroring the sky's glow
+const float kWetBodySkyPower = 16.0;    // ...in a tight highlight (the power on the reflection's lift)
+const float kWetBodyBeadScale = 48.0;   // the BEADS of water, a noise on the body's texture (it moves
+const float kWetBodyBeadLo = 0.5;       // with the body, where the world's would slide over it)...
+const float kWetBodyBeadHi = 0.8;       // ...thresholded to patches between these
 
 // THE TRICKLES on a WET WALL (`o3de/wetfloor.h`, the reader's "wet walls and
 // characters", 2026-10-28): thin lines of water down some columns of the
@@ -846,17 +849,19 @@ void main() {
     // its own light - `c / texel`, the light alone - by the cover times the
     // open sky here, before the fog takes it like the rest
     // A BODY IN THE RAIN (`Draw::wetBody`): darker and deeper in colour, and
-    // a SHEEN - the film mirroring the lit street around it, so lit by the
-    // body's own light (`shade`): strongest at the grazing angles (Fresnel)
-    // and where the reflected ray rises to the sky (Y is down: -y). `reflect`
-    // takes either sign of the normal alike. GLES alike
+    // a SHEEN - the water mirroring the lit street around it, so lit by the
+    // body's own light (`shade`), in BEADS on its texture (an even film read
+    // as plastic: the reader, 2026-10-28): strongest at the grazing angles
+    // (Fresnel) and where the reflected ray rises to the sky (Y is down: -y).
+    // `reflect` takes either sign of the normal alike. GLES alike
     if (wetBody && wetFilm > 0.0) {
         float y = dot(c, vec3(0.299, 0.587, 0.114));
         c = max(mix(vec3(y), c, 1.0 + kWetBodySat * wetFilm), 0.0) * (1.0 - kWetBodyDark * wetFilm);
         vec3 v = normalize(lg.eye.xyz - vWorld);
-        float rim = pow(1.0 - abs(dot(nL, v)), kWetBodyRim);
-        float sky = pow(max(-reflect(-v, nL).y, 0.0), kWetBodySkyPower) * kWetBodySky;
-        c = clamp(c + kWetBodySheen * wetFilm * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);
+        float bead = smoothstep(kWetBodyBeadLo, kWetBodyBeadHi, dustNoise(vec3(vUV * kWetBodyBeadScale, 0.5)));
+        float rim = pow(1.0 - abs(dot(nL, v)), kWetBodyRim) * mix(kWetBodyRimFilm, 1.0, bead);
+        float sky = pow(max(-reflect(-v, nL).y, 0.0), kWetBodySkyPower) * kWetBodySky * bead;
+        c = clamp(c + kWetBodySheen * wetFilm * (rim + sky) * shade, 0.0, 1.0);
         wetFilm = 0.0;   // no floor's film, no ripples, on a body
     }
     if (snowLying && wetFilm > 0.0) {

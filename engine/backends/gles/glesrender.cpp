@@ -1536,6 +1536,7 @@ private:
     void remasterProgramUniforms(bool pointLit);   // ...their starting uniforms, once linked
     void remasterRelease();                        // its GL objects, at the renderer's end
     void remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCache& U, bool uv);   // a draw's water, floor, clip
+    bool remasterWantsNormals(const Draw& d) const;   // a plain draw's normals for the remaster (a wet body's sheen)
     void remasterLightMap(const Tex& t);           // the bloom's light map on unit 3
     bool remasterInitUpscale();                    // FSR's programs; false: the target failed
     void remasterInitCodecs();                     // the pack's block formats the context samples
@@ -1647,7 +1648,8 @@ bool GlesRenderer::linkScene() {
     }
     if (!prog_)
         prog_ = link(vScene, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
-                                              {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"}});
+                                              {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
+                                              {kAttrNormal, "aNormal"}});   // the remaster's variants read it
     if (!prog_) return false;
     if (!enhanced) {
         // at start with the others, for the shader cache (above); a context
@@ -3233,7 +3235,7 @@ void GlesRenderer::submit(const Draw& d) {
     PoseVbo* pvb = nullptr;
     bool posed = usePosed(d);
     // a LIT plain draw reads its normals from a buffer of their own
-    const bool litNrm = !posed && pixLights_ && d.lit != 0;
+    const bool litNrm = !posed && ((pixLights_ && d.lit != 0) || remasterWantsNormals(d));
     const double fu0 = glesClockMs();
     bool uploaded = posed ? uploadPosedGeometry(d.geo, pvb) : uploadGeometry(d.geo, !litNrm);
     if (uploaded && litNrm) uploaded = uploadNormals(d.geo);
@@ -4084,6 +4086,7 @@ bool GlesRenderer::astcBlocks(const PackBlocks&) { return false; }
 bool GlesRenderer::uploadAstc(const PackBlocks&, bool) { return true; }
 void GlesRenderer::remasterRelease() {}
 void GlesRenderer::remasterWaterUniforms(const Draw&, const SceneLoc&, UniCache&, bool) {}
+bool GlesRenderer::remasterWantsNormals(const Draw&) const { return false; }
 void GlesRenderer::remasterLightMap(const Tex&) {}
 #endif  // OMK_REMASTER
 

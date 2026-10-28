@@ -98,8 +98,8 @@ inline constexpr float kSnowCover = 0.85f;   // how white a fully covered floor 
 
 // THE WET BODIES (the remaster's, the reader's "wet walls and characters"):
 // a body under the open sky in the rain is drawn wet (`Draw::wetBody`) - its
-// film and its gloss the shaders' (`kWetBodyFilm`, `kWetBodyGloss`); the
-// roof ray from `kWetBodyHead` above where it stands
+// darker film and its sheen the shaders' (`kWetBodyDark`, `kWetBodySheen`...);
+// the roof ray from `kWetBodyHead` above where it stands
 inline constexpr double kWetBodyHead = 150.0;
 
 class Wetness {

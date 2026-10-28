@@ -476,6 +476,13 @@ void GlesRenderer::remasterInitCodecs() {
 // ---- A DRAW'S REMASTER STATE (`submit`, moved here from the shared file -
 // the audit's cleanliness, 2026-10-26) --------------------------------------
 
+// A WET BODY posed on the CPU (`Draw::wetBody` with no pose - the player
+// under the mapped shadows) reads its posed normals from their own buffer, as
+// a lit draw does, for its sheen (the water variant's `vBodyN`)
+bool GlesRenderer::remasterWantsNormals(const Draw& d) const {
+    return d.wetBody && waterWant_ > 0.0f;
+}
+
 // THE WATER's uniforms, with the water variant built: its strength and the
 // clip through the cache (every draw of every frame sent them, water or none),
 // the water draws' and the reflection's own each time
@@ -523,7 +530,8 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             std::memcpy(U.veilColour, veilColour_, sizeof U.veilColour);
         }
         // ...whose rays start at the frame's eye: the vertex variant's `uEye`
-        if ((m0 > 0.0f || d0 > 0.0f || v0 > 0.0f) && !(waterNow_ || floorNow) &&
+        // (a wet body's sheen faces it too)
+        if ((m0 > 0.0f || d0 > 0.0f || v0 > 0.0f || (film > 0.0f && d.wetBody)) && !(waterNow_ || floorNow) &&
             set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
             glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
             std::memcpy(U.eye, waterEye_, sizeof U.eye);

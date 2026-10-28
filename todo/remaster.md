@@ -1452,16 +1452,28 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   casts one roof ray from `kWetBodyHead` (150 units) above its root through
   the shot soup, and if nothing is over it its draws carry `Draw::wetBody`
   with `wet` the floors' wetness. Vulkan's bit 21 of `Push.water`, GLES's
-  `uWetBody`: the BODY rule, before the fog - `c * (1 - 0.2 w) + 1.2 w c^3`
-  (`kWetBodyFilm`, `kWetBodyGloss`): a little darker, its lit parts brighter,
-  a wet surface's gloss with no normal (GLES's water pass has none for a
-  body), so both backends draw it alike. Subtle by design; a true sheen
-  would need the posed normal in GLES's water variant. Anekbah with Kay'l
-  and the extras near him: 4 of 4 bodies wet; 33622 pixels on Vulkan,
-  33627 on GLES, overlap 1.000, 25938 of them brighter - under the FLOOR
-  rule (`wetBody` lost) 1316, which is what part 11 tells apart.
-  `OMK_NO_WET_BODIES=1` (an instrument) leaves them dry. Qalisar with its
-  crowd: 79 of 84. `engine: wet floors` part 11.
+  `uWetBody`: the BODY rule, before the fog. First a gloss with no normal,
+  `c * (1 - 0.2 w) + 1.2 w c^3` - which the reader could not see in the
+  game ("wet effect on characters is not visible", 2026-10-28). Now: darker
+  (`kWetBodyDark` 0.3) and deeper in colour (`kWetBodySat`), and a SHEEN -
+  the film mirroring the lit street, lit by the body's own light: a
+  Fresnel rim (`kWetBodyRim`, power 4) and a tight highlight where the
+  reflected ray rises to the sky (`kWetBodySky`, power 12), `kWetBodySheen`
+  0.9 at full wet. GLES had no normal for it in its plain programs: the
+  water vertex variant hands down `vBodyN` (a posing stage's turned `nrm`,
+  a set stage's `aNormal`, which the plain program now binds), and a wet
+  body posed on the CPU reads its posed normals from their own buffer
+  (`remasterWantsNormals`). AND THE BODIES POSED ON THE CPU were never
+  found - they carry no pose: GLES poses Kay'l on the CPU under the mapped
+  shadows (the preset's), so in the reader's run the player was never wet
+  on GLES. `remasterWetBodies` now knows them by their posed copy (the
+  player's, the staged, the crowd's, the traffic's) and places each by its
+  lowest corner. Anekbah at 640x480: 33969 pixels on Vulkan, 33970 on GLES,
+  overlap 1.000; 1343 brighter by more than 48 - under the FLOOR rule
+  (`wetBody` lost) 0, which part 11 tells apart; Kay'l on the CPU
+  (`OMK_CPU_PLAYER=1`) on GLES 1343 too, 1 with his normals or his marking
+  lost. `OMK_NO_WET_BODIES=1` (an instrument) leaves them dry. Qalisar
+  with its crowd: 79 of 84. `engine: wet floors` part 11.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

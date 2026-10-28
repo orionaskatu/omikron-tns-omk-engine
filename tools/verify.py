@@ -33902,11 +33902,16 @@ def c_engine_wet_floors():
          are drawn wet (`remaster.wetbodies` at frame 690, more than 0 of
          them); against `OMK_NO_WET_BODIES=1` more than 5000 pixels move on
          Vulkan, and on GLES the same ones (overlap above 0.8) - and more
-         than 10000 of them BRIGHTER (the three channels' sum up by more
-         than 24 in 8-bit steps): the body rule's gloss lifts the lit parts,
-         where a body drawn under the FLOOR rule (`wetBody` lost, `wet`
-         kept - the mutation it is shown to fail with) darkens: 25938 there
-         against 1316.
+         than 500 of them BRIGHTER (the three channels' sum up by more
+         than 48 in 8-bit steps): the body rule darkens the film but its
+         SHEEN lights the edges, where a body drawn under the FLOOR rule
+         (`wetBody` lost, `wet` kept - the mutation it is shown to fail
+         with) only darkens: 1343 there against 0 (2026-10-28). And Kay'l
+         POSED ON THE CPU (`OMK_CPU_PLAYER=1`, as GLES poses him under the
+         mapped shadows - he carries no pose to be found by): on GLES more
+         than 5000 pixels move against `OMK_NO_WET_BODIES=1` and more than
+         300 brighten the same way - his posed normals reach the sheen
+         (`remasterWantsNormals`).
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -34008,6 +34013,11 @@ def c_engine_wet_floors():
         gb0 = None
         if platform.system() == "Darwin":
             gb0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gb0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
+        gc1 = gc0 = None
+        if platform.system() == "Darwin":
+            gc1, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gc1", 2, 1, 700, {"OMK_CPU_PLAYER": "1"})
+            gc0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gc0", 2, 1, 700,
+                         {"OMK_CPU_PLAYER": "1", "OMK_NO_WET_BODIES": "1"})
         sv1, sev = snow_run(vkb, "sv1", 1)
         sv0, _ = snow_run(vkb, "sv0", 0)
         sg1 = sg0 = None
@@ -34081,12 +34091,18 @@ def c_engine_wet_floors():
     else:
         bgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
     def brighter(a, b):
-        # pixels whose 565 colour's channel sum rose by more than 24 from b to a
+        # pixels whose 565 colour's channel sum rose by more than 48 from b to a
         s = lambda v: ((v >> 11) & 31) * 8 + ((v >> 5) & 63) * 4 + (v & 31) * 8
-        return sum(1 for x, y in zip(px(a), px(b)) if s(x) - s(y) > 24) if a and b else 0
+        return sum(1 for x, y in zip(px(a), px(b)) if s(x) - s(y) > 48) if a and b else 0
     glossed = brighter(wl1, bd0)
     print(f"        the wet bodies brighter in {glossed} pixels")
-    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 10000, bgl)
+    if gc1 and gc0:
+        cmv, cgl = len(moved(gc1, gc0)), brighter(gc1, gc0)
+        cpu = (cmv > 5000, cgl > 300)
+        print(f"        Kay'l posed on the CPU, GLES: {cmv} pixels wet, {cgl} brighter")
+    else:
+        cpu = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 500, bgl, cpu)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34099,7 +34115,7 @@ def c_engine_wet_floors():
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
             (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
             (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True))),
-            (True, True, True, _or_skip(bgl, (True, True)))), \
+            (True, True, True, _or_skip(bgl, (True, True)), _or_skip(cpu, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies"

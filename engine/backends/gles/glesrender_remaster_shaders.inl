@@ -168,10 +168,16 @@ constexpr const char* kPuddleGlsl =
     "}\n";
 
 // THE TRICKLES on a wet wall, `scene.frag`'s `trickles` and its constants -
-// keep the two in step (after kRipplesGlsl, whose hash it takes)
+// keep the two in step (after kRipplesGlsl, whose hash it takes); and a WET
+// BODY's constants, `scene.frag`'s too
 constexpr const char* kTrickleGlsl =
-    "const float kWetBodyFilm = 0.2;\n"
-    "const float kWetBodyGloss = 1.2;\n"
+    "const float kWetBodyDark = 0.3;\n"
+    "const float kWetBodySat = 0.35;\n"
+    "const float kWetBodySheen = 0.9;\n"
+    "const float kWetBodyRim = 4.0;\n"
+    "const float kWetBodySky = 0.6;\n"
+    "const float kWetBodySkyPower = 12.0;\n"
+    "const float kWetBodySheenFloor = 0.15;\n"
     "const float kWetWallFilm = 0.6;\n"
     "const float kTrickleAcross0 = 0.83;\n"
     "const float kTrickleAcross1 = 0.56;\n"
@@ -242,7 +248,7 @@ std::string waterVariant(const std::string& frag) {
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
                     "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
                     "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
-                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
+                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec3 vBodyN;\n" +
                     std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
                     std::string(kPuddleGlsl) + std::string(kTrickleGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
@@ -300,9 +306,18 @@ std::string waterVariant(const std::string& frag) {
     const std::string lit = "vec3 c = clamp(t.rgb * shade";
     const auto lp = s.find(lit);
     const auto le = lp == std::string::npos ? lp : s.find(";\n", lp);
+    // a BODY in the rain, `scene.frag`'s: darker and deeper in colour, and its
+    // SHEEN on the body's normal (`vBodyN`, the vertex variant's - the plain
+    // programs have no `vNrm`)
     if (le != std::string::npos)
-        s.insert(le + 2, "    if (uWetBody > 0.5 && uWet > 0.0)\n"   // a BODY in the rain, `scene.frag`'s
-                         "        c = clamp(c * (1.0 - kWetBodyFilm * uWet) + kWetBodyGloss * uWet * c * c * c, 0.0, 1.0);\n"
+        s.insert(le + 2, "    if (uWetBody > 0.5 && uWet > 0.0) {\n"
+                         "        float y = dot(c, vec3(0.299, 0.587, 0.114));\n"
+                         "        c = max(mix(vec3(y), c, 1.0 + kWetBodySat * uWet), 0.0) * (1.0 - kWetBodyDark * uWet);\n"
+                         "        vec3 nB = normalize(vBodyN), v = normalize(vToEye);\n"
+                         "        float rim = pow(1.0 - abs(dot(nB, v)), kWetBodyRim);\n"
+                         "        float sky = pow(max(-reflect(-v, nB).y, 0.0), kWetBodySkyPower) * kWetBodySky;\n"
+                         "        c = clamp(c + kWetBodySheen * uWet * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);\n"
+                         "    }\n"
                          "    if (uSnow > 0.5 && uWet > 0.0)\n"
                          "        c = mix(c, clamp(c / max(t.rgb, vec3(0.04)) * 0.9, 0.0, 1.0), uWet * vOpen *\n"
                          "                clamp((1.0 - dot(t.rgb, vec3(0.299, 0.587, 0.114))) * 1.4, 0.0, 1.0));\n");
@@ -381,8 +396,13 @@ std::string tintVariant(const std::string& vert) {
 // whatever the program transforms - `aPos` for a set, `wp` for a posed body -
 // and the ray to the eye as `vToEye`, made here where the floats are highp
 std::string waterVertVariant(const char* vert) {
+    // (a set's stage reads `aNormal` for a wet body's sheen - the plain one
+    // declares it here - and a posing one hands down the normal it turned)
+    const bool hasNormal = std::string(vert).find("attribute vec3  aNormal;") != std::string::npos;
     std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec2 vWxz;\n"
-                                "varying float vOpen;\nvarying float vWall;\n") + vert;
+                                "varying float vOpen;\nvarying float vWall;\nvarying vec3 vBodyN;\n") +
+                    (hasNormal ? "" : "attribute vec3 aNormal;\n") + vert;
+    const bool posing = s.find("vec3 nrm = ") != std::string::npos;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
     const auto end = at == std::string::npos ? at : s.find(", 1.0);", at);
@@ -391,7 +411,7 @@ std::string waterVertVariant(const char* vert) {
     // ...and the open sky a wet floor's corner carries in its phase
     // (`encodeOpenSky`: a floor's `-2 - open`, a wall's `-6 - open`, under the
     // depth tie's -8192 shift)
-    s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
+    s.insert(at, std::string("vBodyN = ") + (posing ? "nrm" : "aNormal") + ";\n    vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
                  ").xz;\n    float wph = aPhase < -4096.0 ? aPhase + 8192.0 : aPhase;\n"
                  "    vWall = wph <= -5.5 ? 1.0 : 0.0;\n"
                  "    vOpen = wph <= -5.5 ? clamp(-6.0 - wph, 0.0, 1.0) : wph <= -1.5 ? clamp(-2.0 - wph, 0.0, 1.0) : 1.0;\n    ");

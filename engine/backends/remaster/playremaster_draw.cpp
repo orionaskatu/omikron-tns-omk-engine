@@ -297,16 +297,41 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
         return;
     const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
     if (shownSlot.shotSoup.empty()) return;
-    // one ray a body: its draws share the pose
-    const float* lastPose = nullptr;
+    // the bodies POSED ON THE CPU draw their own posed copy, with no pose to
+    // place them by (the player with a smoothed body on GLES, any body on a
+    // renderer that poses none): known by that copy
+    std::vector<const omk::Geometry*> cpuPosed{&playerBody.posed};
+    for (const auto& up : staged) cpuPosed.push_back(&up->posed);
+    for (const auto& up : crowd.staged) cpuPosed.push_back(&up->posed);
+    for (const auto& up : traffic.staged) cpuPosed.push_back(&up->posed);
+    // one ray a body: its draws share the pose, or the posed copy
+    const void* lastBody = nullptr;
     bool lastOpen = false;
     int bodies = 0, wetBodies = 0;
     for (auto& d : list) {
-        if (!d.meshPose || d.meshPoses == 0) continue;
-        if (d.meshPose != lastPose) {
-            lastPose = d.meshPose;
+        const bool gpu = d.meshPose && d.meshPoses != 0;
+        if (!gpu && std::find(cpuPosed.begin(), cpuPosed.end(), d.geo) == cpuPosed.end()) continue;
+        const void* body = gpu ? static_cast<const void*>(d.meshPose) : static_cast<const void*>(d.geo);
+        if (body != lastBody) {
+            lastBody = body;
+            // its root, or the posed copy's lowest corner (Y is down) below its middle
+            double at[3] = {0.0, 0.0, 0.0};
+            if (gpu) {
+                at[0] = d.meshPose[3]; at[1] = d.meshPose[7]; at[2] = d.meshPose[11];
+            } else if (!d.geo->corners.empty()) {
+                float lo[3] = {1e30f, -1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+                for (const auto& c : d.geo->corners) {
+                    lo[0] = std::min(lo[0], c.x); hi[0] = std::max(hi[0], c.x);
+                    lo[2] = std::min(lo[2], c.z); hi[2] = std::max(hi[2], c.z);
+                    hi[1] = std::max(hi[1], c.y);
+                }
+                at[0] = 0.5 * (lo[0] + hi[0]); at[1] = hi[1]; at[2] = 0.5 * (lo[2] + hi[2]);
+            } else {
+                lastOpen = false;
+                continue;
+            }
             const double up[3] = {0.0, -omk::kWetSkyRay, 0.0};   // Y points down
-            const double p0[3] = {d.meshPose[3], d.meshPose[7] - omk::kWetBodyHead, d.meshPose[11]};
+            const double p0[3] = {at[0], at[1] - omk::kWetBodyHead, at[2]};
             lastOpen = !omk::sweepSphere(shownSlot.shotSoup, shownSlot.shotRunBoxes, p0, up, 0.0).has_value();
             ++bodies;
             wetBodies += lastOpen ? 1 : 0;

@@ -402,13 +402,20 @@ vec3 ripples(vec2 p, float clock, float rain) {
     return g;
 }
 
+// A WET BODY (`Draw::wetBody`) - GLES's twin in glesrender_remaster_shaders.inl
+const float kWetBodyDark = 0.3;         // its darkening at full wet: wet cloth and skin go darker...
+const float kWetBodySat = 0.35;         // ...and deeper in colour (the saturation's gain)
+const float kWetBodySheen = 0.9;        // its SHEEN, the lit street mirrored by the film, at full wet
+const float kWetBodyRim = 4.0;          // ...growing toward the grazing angles (the Fresnel's power)
+const float kWetBodySky = 0.6;          // ...and where the film faces up, mirroring the sky's glow
+const float kWetBodySkyPower = 12.0;    // ...in a tight highlight (the power on the reflection's lift)
+const float kWetBodySheenFloor = 0.15;  // the sheen's light where the body's own light is darkest
+
 // THE TRICKLES on a WET WALL (`o3de/wetfloor.h`, the reader's "wet walls and
 // characters", 2026-10-28): thin lines of water down some columns of the
 // wall - a bead running down each, a glint, its wet trail above it darker
 // (-> trail, bead) - on the ripples'
 // clock. GLES's twin in glesrender_remaster_shaders.inl.
-const float kWetBodyFilm = 0.2;         // a wet body's darkening at full wet
-const float kWetBodyGloss = 1.2;        // ...and its highlights' gain, on the cube of the colour
 const float kWetWallFilm = 0.6;       // a wet wall's film against a floor's: the water runs off
 const float kTrickleAcross0 = 0.83;   // a trickle's columns run along this level direction...
 const float kTrickleAcross1 = 0.56;   // ...(any wall but one rare heading)
@@ -535,11 +542,18 @@ void main() {
     // SNOW LYING (`o3de/wetfloor.h` coverRuns): the floor turned white under
     // its own light - `c / texel`, the light alone - by the cover times the
     // open sky here, before the fog takes it like the rest
-    // A BODY IN THE RAIN (`Draw::wetBody`): a little darker, and its lit
-    // highlights brighter - `c * c * c` grows with the light - a wet surface's
-    // gloss with no normal, GLES alike
+    // A BODY IN THE RAIN (`Draw::wetBody`): darker and deeper in colour, and
+    // a SHEEN - the film mirroring the lit street around it, so lit by the
+    // body's own light (`shade`): strongest at the grazing angles (Fresnel)
+    // and where the reflected ray rises to the sky (Y is down: -y). `reflect`
+    // takes either sign of the normal alike. GLES alike
     if (wetBody && wetFilm > 0.0) {
-        c = clamp(c * (1.0 - kWetBodyFilm * wetFilm) + kWetBodyGloss * wetFilm * c * c * c, 0.0, 1.0);
+        float y = dot(c, vec3(0.299, 0.587, 0.114));
+        c = max(mix(vec3(y), c, 1.0 + kWetBodySat * wetFilm), 0.0) * (1.0 - kWetBodyDark * wetFilm);
+        vec3 v = normalize(lg.eye.xyz - vWorld);
+        float rim = pow(1.0 - abs(dot(nL, v)), kWetBodyRim);
+        float sky = pow(max(-reflect(-v, nL).y, 0.0), kWetBodySkyPower) * kWetBodySky;
+        c = clamp(c + kWetBodySheen * wetFilm * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);
         wetFilm = 0.0;   // no floor's film, no ripples, on a body
     }
     if (snowLying && wetFilm > 0.0) {

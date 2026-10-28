@@ -189,6 +189,20 @@ int autoArguments(int argc, char** argv, std::vector<std::string>& args) {
 #endif
     }
     fs::current_path(exeDir, ec);   // the saves and the config are read from here
+#ifdef _WIN32
+    // The exe has no console: started by double-click (or from a terminal without a
+    // redirect) its output would go nowhere, and a report of "it froze" would have
+    // nothing behind it. Write the log beside the exe, line by line so a stall keeps
+    // everything up to it. A redirect (`omk-play.exe > log.txt`) is left alone.
+    for (const DWORD h : {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
+        const HANDLE s = GetStdHandle(h);
+        if (s != nullptr && s != INVALID_HANDLE_VALUE) continue;
+        const bool out = h == STD_OUTPUT_HANDLE;
+        const std::string log = (exeDir / (out ? "omk-play.log" : "omk-play-errors.log")).string();
+        if (std::freopen(log.c_str(), "w", out ? stdout : stderr) != nullptr)
+            std::setvbuf(out ? stdout : stderr, nullptr, _IOLBF, 4096);
+    }
+#endif
     const bool tables = fs::exists(exeDir / "tables" / "vm_opcodes.json", ec);
     args.push_back(argc > 0 ? argv[0] : "omk-play");
     args.push_back(game.string());

@@ -327,6 +327,14 @@ struct Settings {
     // (`o3de/texpack.h`), drawn by the Vulkan and GLES backends. Empty is off.
     std::string texturePack;
     Source texturePackSource = Source::Default;
+    // `[Enhancements] texturepack = DIR`: the FORK's texture pack - the layout
+    // `DIR/<group>/<model>/<MATERIAL>.png` that `tools/texpack.py` writes
+    // (`o3de/texpack.h` `openFork`), indexed into the same pack the key above
+    // opens. Empty is off; a relative path is taken from the ini's directory.
+    // It names a directory, so `all = max` cannot give it. It wins over
+    // `texturePack` when both are set.
+    std::string enhTexturePack;
+    Source enhTexturePackSource = Source::Default;
     // `uipack = DIR`: the INTERFACE PACK (`ui/uipack.h`) - the 640x480
     // bitmaps drawn from upscaled ones when enlarged. Empty is off.
     std::string uiPack;
@@ -447,7 +455,7 @@ struct Settings {
     // OMK_REMASTER says it ignores them (`playremaster_off.cpp`; the audit's
     // bug 5 - only the preset and the texture pack were named)
     bool anyRemaster() const {
-        return !texturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
+        return !texturePack.empty() || !enhTexturePack.empty() || !uiPack.empty() || !fontPack.empty() || !filmPack.empty() ||
                !grade.empty() || !remasterDir.empty() || !smoothSkip.empty() || bloom > 0.0f || water > 0.0f ||
                floors > 0.0f || wet > 0.0f || rain3d > 0.0f || mist > 0.0f || upscale > 1.0f || preload > 0.0f || ao > 0.0f || relief > 0.0f ||
                smooth > 0.0f || fxLight > 0.0f || bodyLight > 0.0f;

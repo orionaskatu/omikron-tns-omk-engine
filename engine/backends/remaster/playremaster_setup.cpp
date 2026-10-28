@@ -79,7 +79,16 @@ void PlayState::remasterSetup() {
         }
         const std::string packDir = !texturePackFlag.empty() ? texturePackFlag
                                   : !settings.texturePack.empty() ? settings.texturePack : presetPack;
-        if (!packDir.empty()) omk::openTexturePack(packDir);
+        // THE FORK'S PACK (`[Enhancements] texturepack`, `--texturepack`, `<group>/<model>/<MATERIAL>.png`,
+        // `tools/texpack.py`) is the release's: indexed into the same TexturePack, so the preload, the
+        // F10 switch and the renderers' uploads are shared. It wins over a `[Remaster]` pack.
+        const std::string forkDir = !texturePackArg.empty() ? texturePackArg : settings.enhTexturePack;
+        if (!forkDir.empty()) {
+            if (!packDir.empty())
+                std::printf("texture pack: [Enhancements] texturepack = %s wins over the [Remaster] pack %s "
+                            "(one texture pack at a time)\n", forkDir.c_str(), packDir.c_str());
+            omk::openForkTexturePack(forkDir, dataRoot);
+        } else if (!packDir.empty()) omk::openTexturePack(packDir);
         // THE INTERFACE PACK (`ui/uipack.h`): its flag, its key, the preset's
         // `ui/pack` - opened before the first bitmap loads (the splash's)
         {

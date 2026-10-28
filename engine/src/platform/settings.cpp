@@ -243,13 +243,24 @@ Settings resolveSettings(const OptionsFile& ini,
             else std::fprintf(stderr, "settings: framegen = %s is not a mode "
                                       "(off|on) - ignored\n", w->c_str());
         }
-        // a key that MOVED: the texture pack is the REMASTER's one (`[Remaster] texturepack = DIR`, the
-        // content-keyed pack `tools/omktexpack.py` builds - Vulkan, GLES and Direct3D 12); the old
-        // `<group>/<model>/<material>.png` pack format is gone with its tool
-        for (const char* gone : {"texturepack"})
-            if (ini.find(kEnhancements, gone))
-                std::fprintf(stderr, "settings: [Enhancements] %s is no longer read - the texture pack is "
-                             "[Remaster] texturepack = DIR (a pack tools/omktexpack.py builds) - ignored\n", gone);
+        // THE FORK'S TEXTURE PACK (`o3de/texpack.h` `openFork`): `DIR/<group>/<model>/<MATERIAL>.png`, as
+        // `tools/texpack.py` writes it. A relative path is taken from the ini's directory, so a pack
+        // beside the ini is found whatever directory the game is started from. Named only: it is a
+        // directory, `all = max` cannot give it. (`[Remaster] texturepack` below is the content-keyed
+        // layout of `tools/omktexpack.py`.)
+        if (const std::string* w = ini.find(kEnhancements, "texturepack")) {
+            std::string p = *w;
+            while (!p.empty() && (p.back() == ' ' || p.back() == '\t')) p.pop_back();
+            while (!p.empty() && (p.front() == ' ' || p.front() == '\t')) p.erase(p.begin());
+            if (p.size() >= 2 && p.front() == '"' && p.back() == '"') p = p.substr(1, p.size() - 2);
+            const bool absolute = !p.empty() && (p[0] == '/' || p[0] == '\\' ||
+                                                 (p.size() > 1 && p[1] == ':'));
+            if (!p.empty() && !absolute) {
+                const auto cut = ini.path.find_last_of("/\\");
+                if (cut != std::string::npos) p = ini.path.substr(0, cut + 1) + p;
+            }
+            if (!p.empty()) { s.enhTexturePack = p; s.enhTexturePackSource = Settings::Source::Ini; }
+        }
         if (const std::string* w = ini.find(kEnhancements, "upscaler")) {
             const int m = upscalerMode(*w);
             if (m >= 0) { s.upscaler = m; s.upscalerSource = Settings::Source::Ini; }

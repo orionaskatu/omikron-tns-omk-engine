@@ -112,6 +112,7 @@ struct PlayState {
     int & volumetricsFlag = opt.volumetricsFlag;
     int & frameGenFlag = opt.frameGenFlag;
     std::string & texturePackFlag = opt.texturePackFlag;
+    std::string & texturePackArg = opt.texturePackArg;
     std::string & uiPackFlag = opt.uiPackFlag;
     std::string & fontPackFlag = opt.fontPackFlag;
     std::string & filmPackFlag = opt.filmPackFlag;

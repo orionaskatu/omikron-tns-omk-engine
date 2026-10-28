@@ -364,6 +364,23 @@
 ; ...and its render size: native (1.0x), quality (1.5x), balanced (1.7x),
 ; performance (2.0x), ultraperformance (3.0x).
 ;upscalequality = quality
+;
+; TEXTURE PACK - a folder of replacement textures in the fork's layout:
+; DIR/<group>/<model>/<MATERIAL>.png, one PNG per page of the game's models and
+; sets, at a whole multiple (2x, 4x ... 16x) of the original's size, 8-bit RGB
+; or RGBA, pure black the colour key. `python3 tools/texpack.py extract DIR`
+; writes the originals, `texpack.py upscale IN OUT --factor 4 [--tool
+; realesrgan-ncnn-vulkan.exe]` upscales them, `texpack.py check OUT` says what
+; the engine will take. At start the folder is INDEXED against the game's own
+; models (a directory naming no model is ignored, said), and a texture is
+; matched by its pixels, so it is replaced wherever the game draws it. It
+; shares everything with the [Remaster] pack below (lazy decoding, the preload,
+; F10's original/remaster switch); when both are written, this one is used and
+; the log says so. Vulkan, GLES and Direct3D 12; the game's data is never
+; touched. Empty (the default) is off; a relative path is taken from this
+; file's directory. It names a folder, so NOT part of `all = max`.
+; `--texturepack DIR`. `todo/enhancements.md` 25.
+;texturepack =
 [Remaster]
 ; THE REMASTER (`todo/remaster.md`): what the original never had and does not
 ; claim to be - every key OFF unless written, never turned on by
@@ -408,8 +425,9 @@
 ; makes them; the preset takes DIR/films/pack.
 ;filmpack = /path/to/omk-pack/films/pack
 ;
-; The HD texture pack alone (a folder of <key>.png), and the city grades
-; alone (a folder of <SET>.cube and map.txt). The pack: Vulkan, GLES and Direct3D 12 (its PNG colours there); the grades: Vulkan, GLES and Direct3D 12 (the shared post chain takes the LUT first).
+; The content-keyed HD texture pack alone (a folder of <key>.png, built by
+; tools/omktexpack.py - the fork's <group>/<model>/<MATERIAL>.png folder is
+; `[Enhancements] texturepack` above), and the city grades alone (a folder of <SET>.cube and map.txt). The pack: Vulkan, GLES and Direct3D 12 (its PNG colours there); the grades: Vulkan, GLES and Direct3D 12 (the shared post chain takes the LUT first).
 ;texturepack = /path/to/pack
 ;grade = /path/to/grades
 ;

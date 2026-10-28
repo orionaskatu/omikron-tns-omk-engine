@@ -40,6 +40,15 @@
 //     texpack_tool open <pack>              the pack as the engine opens it:
 //                                           "@pack files N lights N normals N
 //                                           excluded N" (exclude.txt, B2)
+//     texpack_tool forkopen <pack> <gamedata> [<GROUP/Model>...]
+//                                           the FORK'S LAYOUT (`[Enhancements]
+//                                           texturepack`, `openFork`): "@fork
+//                                           indexed N models N dups N rejected N
+//                                           strays N missing N", "@scale k n",
+//                                           then per material of each model named
+//                                           "mat <i> <key> <ok> <w> <h> <keyed>
+//                                           <opaque> <opaqueBlack>" - the
+//                                           replacement the pack answers
 //     texpack_tool islands <gamedata> <outdir>
 //                                           every texture's COVERAGE by the
 //                                           faces that sample it, <key>.cov
@@ -244,6 +253,39 @@ int keys(const std::string& data) {
     }
     std::fprintf(stderr, "%ld textures in %zu models (those with a .3DT)\n", n, models.size());
     return 0;
+}
+
+// THE FORK'S LAYOUT (`TexturePack::openFork`): index `pack` (`DIR/<group>/<model>/<MATERIAL>.png`) against the
+// game data, say what was found, and - for each model named (`GROUP/Model`, MESHES-relative, no extension) -
+// what the pack answers for each of its materials: its size, the texels the colour key took, the opaque ones
+// and how many of those are still pure black (none: black is the key)
+int forkopen(int argc, char** argv) {
+    omk::TexturePack::ForkStats st;
+    const bool ok = omk::texturePack().openFork(argv[2], argv[3], &st);
+    std::printf("@fork indexed %d models %d dups %d rejected %d strays %d missing %d%s\n", st.indexed, st.models,
+                st.dups, st.rejected, st.strays, st.missing, ok ? "" : " (nothing usable)");
+    for (const auto& [k, n] : st.scales) std::printf("@scale %d %d\n", k, n);
+    omk::DataFs game(argv[3]);
+    for (int a = 4; a < argc; ++a) {
+        const std::string rel = std::string("MESHES/") + argv[a] + ".3DO";
+        const auto d = game.read(rel);
+        const auto tex = omk::textures(d, game.readSibling(rel, ".3dt"));
+        std::vector<const omk::Texture*> ptrs;
+        for (const auto& x : tex) ptrs.push_back(&x);
+        const auto reps = omk::texturePack().replacements(ptrs, true, false);
+        for (std::size_t i = 0; i < tex.size(); ++i) {
+            if (!tex[i].hasPixels()) continue;
+            std::size_t keyed = 0, opaque = 0, black = 0;
+            for (std::size_t q = 0; q + 3 < reps[i].rgba.size(); q += 4) {
+                const std::uint8_t* p = reps[i].rgba.data() + q;
+                if (p[3] == 0) ++keyed;
+                else { ++opaque; black += (p[0] | p[1] | p[2]) == 0; }
+            }
+            std::printf("mat %zu %s %d %d %d %zu %zu %zu\n", i, omk::textureKeyHex(omk::textureKey(tex[i])).c_str(),
+                        reps[i].ok ? 1 : 0, reps[i].w, reps[i].h, keyed, opaque, black);
+        }
+    }
+    return ok ? 0 : 1;
 }
 
 // THE ISLANDS: which texels of each texture a face samples, over every model
@@ -652,6 +694,7 @@ int main(int argc, char** argv) {
     if (mode == "normals" && argc >= 4 && argc <= 9) return normals(argc, argv);
     if (mode == "islands" && argc == 4) return islands(argv[2], argv[3]);
     if (mode == "floors" && argc == 3) return floors(argv[2]);
+    if (mode == "forkopen" && argc >= 4) return forkopen(argc, argv);
     if (mode == "open" && argc == 3) {
         // the pack as the engine opens it: what `exclude.txt` left out
         if (!omk::texturePack().open(argv[2])) return 1;
@@ -665,6 +708,7 @@ int main(int argc, char** argv) {
                          "       | probe <model.3DO> ... | lights <pack> <model.3DO>\n"
                          "       | normals <in.png> <out.raw> [base.png [key.cov [strength wide [fade]]]]\n"
                          "       | islands <gamedata> <outdir> | floors <model.3DO> | open <pack>\n"
+                         "       | forkopen <pack> <gamedata> [<GROUP/Model>...]\n"
                          "       | uikeys <gamedata> | uiblit <gamedata> <uipack|-> <file.bmp> <w> <h> <out.raw>\n"
                          "       | fontline <gamedata> <tables> <fontpack|-> <face> <num> <den> <filter> <text> <out.raw>\n"
                          "       | filmkey <file>... | filmframe <gamedata> <filmpack|-> <FLIS/NAME.mpg> <W> <H> <n> <out.raw>\n"

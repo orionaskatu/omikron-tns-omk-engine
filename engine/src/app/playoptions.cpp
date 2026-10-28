@@ -350,6 +350,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --texture-pack DIR  REMASTER, off by default: replace textures with the\n"
 "                   pack in DIR (<key>.png files, tools/omktexpack.py makes\n"
 "                   them); Vulkan, GLES, Direct3D 12; [Remaster] texturepack=DIR\n"
+"  --texturepack DIR  ENHANCEMENT, off by default: a texture pack in the fork's\n"
+"                   layout, DIR/<group>/<model>/<MATERIAL>.png (tools/texpack.py\n"
+"                   makes it; whole-number multiples of the original's size);\n"
+"                   Vulkan, GLES, Direct3D 12; [Enhancements] texturepack=DIR\n"
 "  --ui-pack DIR    REMASTER, off by default: the interface's bitmaps (menus,\n"
 "                   HUD, documents, the map) drawn from the upscaled pack in\n"
 "                   DIR (tools/omktexpack.py ui makes it) when the window\n"
@@ -695,6 +699,7 @@ int PlayOptions::parse(int argc, char** argv) {
             }
         }
         else if (a == "--texture-pack" && i + 1 < argc) texturePackFlag = argv[++i];
+        else if (a == "--texturepack" && i + 1 < argc) texturePackArg = argv[++i];
         else if (a == "--ui-pack" && i + 1 < argc) uiPackFlag = argv[++i];
         else if (a == "--font-pack" && i + 1 < argc) fontPackFlag = argv[++i];
         else if (a == "--film-pack" && i + 1 < argc) filmPackFlag = argv[++i];

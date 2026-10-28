@@ -202,7 +202,8 @@ void PlayState::remasterAliasGrey(const omk::Texture& colour, const omk::Texture
 
 // the scene viewer's TEXTURE PACK: its flag alone
 void PlayState::remasterSceneViewer() {
-    if (!texturePackFlag.empty()) omk::openTexturePack(texturePackFlag);
+    if (!texturePackArg.empty()) omk::openForkTexturePack(texturePackArg, dataRoot);
+    else if (!texturePackFlag.empty()) omk::openTexturePack(texturePackFlag);
 }
 
 // a GPU renderer's remaster requests (GLES; Vulkan, desktop only, asks its own)

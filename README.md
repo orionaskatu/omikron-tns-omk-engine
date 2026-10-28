@@ -184,14 +184,14 @@ The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supe
 The release has no HD textures inside (they are huge, and you make them from your own game). If you have some, put the folders next to `omk-play.exe`:
 
 ```
-remaster\pack          the textures
+remaster\pack          the textures (a folder of `<group>/<model>/<MATERIAL>.png`)
 remaster\ui\pack       the menus and the HUD
 remaster\fonts\pack    the fonts
 remaster\films\pack    the intro films
 remaster\grades        the colour looks of the cities
 ```
 
-The release's `omk.ini` already points to them. A folder that is not there is just ignored (the log says so). To make a texture pack from your game, use `tools/omktexpack.py` (`--help` explains it; it needs Python, and an AI upscaler like Real-ESRGAN for the upscaling step).
+The release's `omk.ini` already points to them. A folder that is not there is just ignored (the log says so). The texture folder (`[Enhancements] texturepack`) is this fork's layout, `<group>/<model>/<MATERIAL>.png` at a whole multiple of the original size, which `tools/texpack.py` makes (`extract`, `upscale`, `check`; it needs Python, and an AI upscaler like Real-ESRGAN for the upscaling step). The upstream project's own packs (`<key>.png` files, made with `tools/omktexpack.py`) still work through `[Remaster] texturepack`; if both are set, the fork's folder is used.
 
 Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too. On Direct3D 12 the water, the wet streets, the relief and the lights of the flames and glows work like on Vulkan (checked frame by frame against Vulkan); the remaster's `bloom`, `ao` and `upscale` are Vulkan's, Direct3D 12 has this fork's own bloom, ambient occlusion and upscalers instead.
 

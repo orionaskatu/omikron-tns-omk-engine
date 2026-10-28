@@ -7,6 +7,7 @@
 
 #include "o3de/greybank.h"
 #include "formats/blockdecode.h"
+#include "formats/mesh3do.h"
 #include "platform/datafs.h"
 #include "platform/events.h"
 #include "platform/hostfs.h"
@@ -15,7 +16,10 @@
 #include "platform/threads.h"
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <cstdio>
+#include <set>
 
 namespace omk {
 namespace {
@@ -39,6 +43,22 @@ bool powerOfTwoFactor(int big, int small) {
     if (small <= 0 || big % small) return false;
     const int f = big / small;
     return f >= 1 && f <= 16 && !(f & (f - 1));
+}
+
+// the FORK's rule: any whole k, 1..16, the same both ways
+bool anyFactor(int bigW, int smallW, int bigH, int smallH) {
+    if (smallW <= 0 || smallH <= 0 || bigW % smallW || bigH % smallH) return false;
+    const int f = bigW / smallW;
+    return f >= 1 && f <= 16 && bigH / smallH == f;
+}
+
+std::string lastPart(const std::string& p) {
+    const auto cut = p.find_last_of("/\\:");
+    return cut == std::string::npos ? p : p.substr(cut + 1);
+}
+std::string lowerOf(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
 }
 
 bool blockPixels(const std::string* path, const Texture& t, bool light, std::vector<std::uint8_t>& px,
@@ -118,8 +138,32 @@ std::uint64_t textureKey(const Texture& t) {
 
 std::string textureKeyHex(std::uint64_t key) { return keyHex(key); }
 
-bool TexturePack::open(const std::string& dir) {
+
+// The file stem a fork-layout pack uses for each material of a model
+// (`tools/texpack.py` `pack_file_names` is the same rule): any character
+// outside `A-Za-z0-9 _+.~-` (and a trailing space or dot) as '_', an empty
+// name as `mat<i>`, a name repeated (case aside) as `<name>~<i>` on the later.
+std::vector<std::string> packFileNames(const std::vector<std::string>& names) {
+    static const std::string safe =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _+.~-";
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        std::string s = names[i];
+        for (char& c : s)
+            if (safe.find(c) == std::string::npos) c = '_';
+        for (std::size_t k = s.size(); k > 0 && (s[k - 1] == ' ' || s[k - 1] == '.'); --k) s[k - 1] = '_';
+        if (s.empty()) s = "mat" + std::to_string(i);
+        if (seen.count(lowerOf(s))) s += "~" + std::to_string(i);
+        seen.insert(lowerOf(s));
+        out.push_back(s);
+    }
+    return out;
+}
+
+void TexturePack::clear() {
     files_.clear();
+    forkKeyed_.clear();
     lights_.clear();
     normals_.clear();
     for (auto& c : ktx_) for (auto& m : c) m.clear();
@@ -133,6 +177,79 @@ bool TexturePack::open(const std::string& dir) {
         parkedOrder_.clear();
     }
     opened_ = false;
+    excluded_ = 0;
+}
+
+bool TexturePack::openFork(const std::string& dir, const std::string& dataRoot, ForkStats* out) {
+    clear();
+    dir_ = dir;
+    if (!hostfs::isDirectory(dir)) {
+        std::fprintf(stderr, "texture pack: %s is not a directory - the textures stay as shipped\n",
+                     dir.c_str());
+        return false;
+    }
+    ForkStats st;
+    const DataFs pack(dir), game(dataRoot);
+    int told = 0;
+    for (const std::string& gp : pack.subdirs(".")) {
+        const std::string group = lastPart(gp);
+        for (const std::string& mp : pack.subdirs(group)) {
+            const std::string model = lastPart(mp);
+            const std::string rel = "MESHES/" + group + "/" + model + ".3DO";
+            const auto d = game.read(rel);
+            const auto h = d.empty() ? std::nullopt : readHeader(d);
+            if (!h) {
+                if (told++ < 20)
+                    std::printf("texture pack: %s/%s names no model of the game's MESHES - ignored\n",
+                                group.c_str(), model.c_str());
+                ++st.strays;
+                continue;
+            }
+            const auto tex = textures(d, game.readSibling(rel, ".3dt"));
+            std::vector<std::string> names;
+            for (int i = 0; i < h->materials; ++i) {
+                const auto m = readMaterial(d, *h, i);
+                names.push_back(m ? std::string(m->name) : std::string());
+            }
+            const auto stems = packFileNames(names);
+            bool any = false;
+            for (std::size_t i = 0; i < tex.size() && i < stems.size(); ++i) {
+                const auto png = pack.resolve(group + "/" + model + "/" + stems[i] + ".png");
+                if (!tex[i].hasPixels()) continue;
+                if (!png) { ++st.missing; continue; }
+                const auto head = readFileRange(*png, 0, 33);
+                int w = 0, ht = 0;
+                std::string why;
+                if (head.size() < 33 ||
+                    !pngSize(reinterpret_cast<const std::uint8_t*>(head.data()), head.size(), w, ht))
+                    why = "not a PNG this reads";
+                else if (!anyFactor(w, tex[i].width, ht, tex[i].height))
+                    why = std::to_string(w) + "x" + std::to_string(ht) + " is not 1..16 x the original's " +
+                          std::to_string(tex[i].width) + "x" + std::to_string(tex[i].height);
+                if (!why.empty()) {
+                    if (told++ < 20)
+                        std::printf("texture pack: %s - %s; the original stays\n", png->c_str(), why.c_str());
+                    ++st.rejected;
+                    continue;
+                }
+                any = true;
+                const std::uint64_t key = textureKey(tex[i]);
+                if (files_.count(key)) { ++st.dups; continue; }
+                files_.emplace(key, *png);
+                forkKeyed_.insert(key);
+                st.scales[w / tex[i].width]++;
+                ++st.indexed;
+            }
+            st.models += any;
+        }
+    }
+    opened_ = true;
+    if (out) *out = st;
+    return !files_.empty();
+}
+
+bool TexturePack::open(const std::string& dir) {
+    clear();
     dir_ = dir;
     if (!hostfs::isDirectory(dir)) {
         std::fprintf(stderr, "texture pack: %s is not a directory - the textures stay as shipped\n",
@@ -335,12 +452,25 @@ std::vector<PackImage> TexturePack::replacements(std::span<const Texture* const>
                 if (!decodePng(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), img, &jb.why))
                     continue;
             }
-            if (!powerOfTwoFactor(img.w, t.width) || !powerOfTwoFactor(img.h, t.height)) {
-                char b[96];
-                std::snprintf(b, sizeof b, "%dx%d, not %dx%d times a power of two (1..16) each way",
+            // a fork-layout file (`openFork`): any whole k, 1..16, and the colour key is BLACK in an RGB
+            // file (or alpha < 128 in an RGBA one) - made (0,0,0,0), anything else opaque, as
+            // `Texture::toRgbaKeyed` keys the original
+            const bool fork = forkKeyed_.count(jb.key) != 0;
+            if (fork ? !anyFactor(img.w, t.width, img.h, t.height)
+                     : !powerOfTwoFactor(img.w, t.width) || !powerOfTwoFactor(img.h, t.height)) {
+                char b[112];
+                std::snprintf(b, sizeof b, fork ? "%dx%d, not %dx%d times a whole k (1..16) both ways"
+                                                : "%dx%d, not %dx%d times a power of two (1..16) each way",
                               img.w, img.h, t.width, t.height);
                 jb.why = b;
                 continue;
+            }
+            if (fork) {
+                std::uint8_t* p = img.rgba.data();
+                for (std::size_t k = 0; k + 3 < img.rgba.size(); k += 4) {
+                    if ((p[k] | p[k + 1] | p[k + 2]) == 0 || p[k + 3] < 128) p[k] = p[k + 1] = p[k + 2] = p[k + 3] = 0;
+                    else p[k + 3] = 255;
+                }
             }
             if (jb.grey) {
                 std::uint8_t* p = img.rgba.data();
@@ -449,6 +579,29 @@ bool openTexturePack(const std::string& dir) {
                            {"lights", static_cast<long>(texturePack().lightMaps())},
                            {"excluded", static_cast<long>(texturePack().excluded())}});
     return true;
+}
+
+bool openForkTexturePack(const std::string& dir, const std::string& dataRoot) {
+    const auto t0 = std::chrono::steady_clock::now();
+    TexturePack::ForkStats st;
+    const bool ok = texturePack().openFork(dir, dataRoot, &st);
+    const long ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count());
+    if (!texturePack().active()) return false;
+    std::string by;
+    for (const auto& [k, n] : st.scales)
+        by += (by.empty() ? "" : ", ") + std::string("x") + std::to_string(k) + " " + std::to_string(n);
+    std::printf("texture pack: %s - an ENHANCEMENT (the fork's <group>/<model>/<MATERIAL>.png layout): %d materials "
+                "indexed over %d models%s%s (%d the same pixels as an earlier one), %d rejected, %d with no PNG, "
+                "%d directories matching no model; indexed in %ld ms (drawn by Vulkan, GLES and Direct3D 12, "
+                "not the software reference)\n",
+                dir.c_str(), st.indexed, st.models, by.empty() ? "" : " - ", by.c_str(), st.dups, st.rejected,
+                st.missing, st.strays, ms);
+    event("texpack.fork", {{"dir", dir}, {"indexed", static_cast<long>(st.indexed)}, {"models", st.models},
+                           {"rejected", st.rejected}, {"strays", st.strays}, {"missing", st.missing},
+                           {"ms", ms}});
+    if (!ok) std::fprintf(stderr, "texture pack: %s - nothing in it matches a material of the game's models\n", dir.c_str());
+    return ok;
 }
 
 }  // namespace omk

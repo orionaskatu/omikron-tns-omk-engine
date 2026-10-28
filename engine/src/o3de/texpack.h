@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // THE TEXTURE PACK - the remaster's first feature (`todo/remaster.md` B4).
 //
-// NOT IN THE ORIGINAL, and not an `[Enhancements]` row either: it replaces
-// authored pixels, so it lives under `[Remaster]` (`texturepack = DIR`, or
-// `--texture-pack DIR`), OFF unless named. With no pack nothing here runs and
+// NOT IN THE ORIGINAL: it replaces authored pixels, so it lives under
+// `[Remaster]` (`texturepack = DIR`, or `--texture-pack DIR`), OFF unless named
+// - and, in the FORK's layout (below), under `[Enhancements]`. With no pack nothing here runs and
 // every backend uploads exactly what it did before.
 //
 // A pack is a DIRECTORY of `<key>.png` files, `key` the sixteen hex digits of
@@ -24,6 +24,16 @@
 // (0 where the original is cut out, and the colour there 0 too), so a cutout
 // mesh (flag 0x800) keeps its silhouette rule.
 //
+// THE FORK'S LAYOUT (`[Enhancements] texturepack = DIR`, `--texturepack DIR`,
+// `tools/texpack.py`): the same class holds a pack laid out
+// `DIR/<group>/<model>/<MATERIAL>.png` - one PNG per material of a model, at
+// an integer multiple (1..16) of the page, pure black the colour key. `openFork`
+// INDEXES it at start (the model's `.3DT` decoded, each material's file name by
+// `packFileNames`, the content key by `textureKey` - the one key both layouts
+// share) and registers key -> PNG in `files_`, so the lazy decode, the preload,
+// the F10 switch and every renderer's upload are the ones a `[Remaster]` pack
+// has; nothing downstream knows the layout.
+//
 // Drawn by the Vulkan and GLES backends only. The software reference, the
 // GL1 and the 3DS backends never consult it: the reference is what the
 // original drew, and the two small consoles' textures are the original's size
@@ -36,6 +46,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -46,6 +57,13 @@ namespace omk {
 
 std::uint64_t textureKey(const Texture& t);
 std::string textureKeyHex(std::uint64_t key);
+
+// The file stem a fork-layout pack uses for each material of a model, from the
+// material records' +0 names (`tools/texpack.py` `pack_file_names` is the same
+// rule): any character outside `A-Za-z0-9 _+.~-` (and a trailing space or
+// dot) as '_', an empty name as `mat<i>`, a name repeated (case aside) as
+// `<name>~<i>` on the later material.
+std::vector<std::string> packFileNames(const std::vector<std::string>& names);
 
 // THE BLOCK FORMATS (`todo/remaster.md`, the pack's KTX2 files): beside each
 // `<key>.png` the pack may hold `<key>.bc7.ktx2` (BC7, desktop GPUs) and
@@ -97,6 +115,19 @@ public:
     // Index DIR's `<16 hex>.png` files (nothing is decoded yet). False, and
     // said on stderr, when DIR is not a directory. An empty directory opens.
     bool open(const std::string& dir);
+    // Index a pack of the FORK's layout (see the head of this file) against
+    // the game data at `dataRoot`. What is found is in `forkIndexed`; false,
+    // said on stderr, when DIR is not a directory.
+    struct ForkStats {
+        int models = 0;        // directories that name a model of MESHES/
+        int indexed = 0;       // materials registered (distinct contents)
+        int dups = 0;          // ...whose content an earlier one already had
+        int rejected = 0;      // PNGs refused (size, format), said once each
+        int strays = 0;        // directories naming no model
+        int missing = 0;       // materials of those models with no PNG
+        std::map<int, int> scales;   // k -> how many
+    };
+    bool openFork(const std::string& dir, const std::string& dataRoot, ForkStats* stats = nullptr);
     bool active() const { return opened_; }
     // THE ORIGINAL/REMASTER SWITCH (`todo/graphics-menu.md` B): a pack open but
     // hidden is not drawn - the backends' uploads ask `shown`, and draw the
@@ -184,6 +215,7 @@ public:
     void setLightHook(LightHook h, RawFilter raw = nullptr) { lightHook_ = h; rawFilter_ = raw; }
 
 private:
+    void clear();
     LightHook lightHook_ = nullptr;
     RawFilter rawFilter_ = nullptr;
     unsigned codecs_ = 0;
@@ -199,6 +231,9 @@ private:
     bool opened_ = false;
     bool shown_ = true;
     std::unordered_map<std::uint64_t, std::string> files_;
+    // the keys `openFork` registered: their PNGs are RGB with black as the key
+    // and any whole k, not RGBA with alpha as the key and a power of two
+    std::unordered_set<std::uint64_t> forkKeyed_;
     std::unordered_map<std::uint64_t, std::string> lights_;   // `<key>_e.png`
     std::unordered_map<std::uint64_t, std::uint64_t> greyOf_;   // grey key -> colour key
     mutable std::unordered_set<std::uint64_t> refused_;
@@ -217,5 +252,10 @@ TexturePack& texturePack();
 // line and `@evt texpack.open dir= entries=`). False, said, when it is not a
 // directory.
 bool openTexturePack(const std::string& dir);
+
+// ...and the fork's layout (`[Enhancements] texturepack`, `--texturepack`):
+// `openFork` and the same two lines. False, said, when it is not a directory or
+// nothing in it matched a model's material.
+bool openForkTexturePack(const std::string& dir, const std::string& dataRoot);
 
 }  // namespace omk

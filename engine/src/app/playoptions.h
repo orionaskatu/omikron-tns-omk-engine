@@ -153,6 +153,7 @@ struct PlayOptions {
     int upscalerFlag = -1;       // --upscaler off|fsr|dlss, [Enhancements] upscaler
     int upscaleQualityFlag = -1; // --upscale-quality Q, [Enhancements] upscalequality
     std::string texturePackFlag;  // --texture-pack DIR, [Remaster] texturepack; "" = the settings'
+    std::string texturePackArg;   // --texturepack DIR, [Enhancements] texturepack (the fork's layout); "" = the settings'
     std::string uiPackFlag;       // --ui-pack DIR, [Remaster] uipack; "" = the settings'
     std::string fontPackFlag;     // --font-pack DIR, [Remaster] fontpack; "" = the settings'
     std::string filmPackFlag;     // --film-pack DIR, [Remaster] filmpack; "" = the settings'
@@ -175,7 +176,7 @@ struct PlayOptions {
     // whether any remaster flag above was given - `Settings::anyRemaster`'s
     // twin for the command line (a 0 strength asks for nothing)
     bool anyRemaster() const {
-        return !texturePackFlag.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
+        return !texturePackFlag.empty() || !texturePackArg.empty() || !uiPackFlag.empty() || !fontPackFlag.empty() || !filmPackFlag.empty() ||
                !gradeFlag.empty() || !remasterFlag.empty() || !smoothSkipFlag.empty() || bloomFlag > 0.0f ||
                waterFlag > 0.0f || floorsFlag > 0.0f || wetFlag > 0.0f || rain3dFlag > 0.0f || mistFlag > 0.0f || upscaleFlag > 1.0f || preloadFlag > 0.0f ||
                bodyLightFlag > 0.0f || fxLightFlag > 0.0f || reliefFlag > 0.0f || smoothFlag > 0.0f || aoFlag > 0.0f;

@@ -7647,8 +7647,9 @@ def c_enhance_all():
     # leaves it off, asserted below
     # ...and the post chain's GRADE and HDR (2026-10-19): a look, and a display
     # that must say yes - asked for by name
-    # (the TEXTURE PACK, which named a directory, is the remaster's now: `[Remaster] texturepack`)
-    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr"}
+    # ...and the TEXTURE PACK (the fork's layout, `[Enhancements] texturepack = DIR`): it names a
+    # directory, which `all = max` cannot give. (`[Remaster] texturepack` is the content-keyed one.)
+    SEPARATE = {"supersampling", "upscaler", "upscalequality", "colorgrade", "hdr", "texturepack"}
     keys = set(re.findall(r'k(?:Enhancements),\s*"([^"]+)"', cpp)) - {"all"} - SEPARATE
     body = hdr[hdr.index("inline void applyMaxEnhancements"):]
     body = body[:body.index("\n}")]
@@ -34852,7 +34853,9 @@ def c_texture_pack_curation():
 
 def c_engine_texture_pack():
     r"""THE TEXTURE PACK - the remaster's first feature (`todo/remaster.md` B4),
-    OFF unless `[Remaster] texturepack = DIR` / `--texture-pack DIR` names one.
+    OFF unless `[Remaster] texturepack = DIR` / `--texture-pack DIR` names one
+    (the fork's `<group>/<model>/<MATERIAL>.png` layout, `[Enhancements]
+    texturepack`, has its own check below: `engine: texture pack, fork layout`).
 
     A pack is a directory of `<key>.png`, the key the engine's `textureKey`
     (FNV-1a 64 over a texture's size, indices and palette; `o3de/texpack.h`).
@@ -34945,8 +34948,11 @@ def c_engine_texture_pack():
     max_body = sh[sh.index("inline void applyMaxEnhancements"):]
     max_body = max_body[:max_body.index("\n}\n")]
     src_ok = (bool(re.search(r"std::string\s+texturePack;", sh)),
-              'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' not in sc,
-              "texturePack" not in max_body,
+              # ...and the FORK's layout is `[Enhancements] texturepack` (its own field, `enhTexturePack`),
+              # named only: neither field is in `all = max`'s body
+              'kRemaster, "texturepack"' in sc and 'kEnhancements, "texturepack"' in sc and
+              re.search(r"std::string\s+enhTexturePack;", sh) is not None,
+              "texturePack" not in max_body and "enhTexturePack" not in max_body,
               '"--texture-pack"' in po,
               # ...`shown()` since the original/remaster switch (`todo/graphics-menu.md`
               # B): open and hidden is the original mode, which uploads as shipped
@@ -35137,6 +35143,173 @@ def c_engine_texture_pack():
            "Adler-32; greyed as the greyscale bank greys them, all 21 answered with the " \
            "grey texture exactly; on Vulkan and GLES a nearest 4x pack draws byte-identical to none, a " \
            "one-colour pack is drawn, all 21 textures replaced"
+
+
+def c_engine_texture_pack_fork():
+    r"""THE FORK'S TEXTURE PACK, kept - `[Enhancements] texturepack = DIR` /
+    `--texturepack DIR`, the `<group>/<model>/<MATERIAL>.png` layout
+    `tools/texpack.py` writes (todo/enhancements.md 25). The upstream merge
+    replaced it by the content-keyed `[Remaster]` pack and the user's own pack
+    was silently ignored; it is back, as an INDEX into the one `TexturePack`
+    (`openFork`) - lazy decode, preload, the F10 switch and the renderers'
+    uploads are the `[Remaster]` pack's, nothing downstream knows the layout.
+
+    Four parts:
+      1. the source: the key is read under `[Enhancements]` into its own
+         field, `all = max` never gives it, `--texturepack` is parsed, the
+         setup opens the fork's pack ahead of a `[Remaster]` one and says so,
+         and the old "is no longer read" refusal is gone;
+      2. THE KEY: `texpack_tool forkopen` prints the key the engine files each
+         of Aapkayl's 21 materials under; it must equal the shipped
+         `omktexpack.texture_key`, the key every pool is matched by. (The
+         fork's own `contentKey` is NOT that key: its FNV offset basis was
+         written 1469598103934665603, a digit short of 14695981039346656037,
+         so its values differ - a pack is indexed under the engine's
+         `textureKey` and lookups need no change);
+      3. THE INDEX of a pack `texpack.py extract` writes, then altered: one
+         material replaced at 2x, one at 3x (the fork took any whole k, the
+         `[Remaster]` rule is a power of two), one at 300x300 (refused, and
+         said), one RGB all red (nothing keyed), one RGBA all alpha 0 (all
+         keyed). Indexed 20 of 21, rejected 1; the 2x and 3x answer their own
+         size; the texels BLACK in the PNG are exactly the engine's keyed
+         (0,0,0,0) texels and none stays opaque black;
+      4. THE PATH: a relative `texturepack` is taken from the ini's directory
+         (`settings_probe --config`), an absolute one as written, and an ini
+         with `all = max` and no key leaves it empty.
+    Shown to fail (2026-10-28): the black-key conversion in `replacements`
+    removed answers the keyed counts 0 and 15908 / 20826 opaque black texels.
+    """
+    import subprocess, tempfile, shutil, re, struct
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    model = os.path.join(fr, "MESHES", "DECORS", "Aapkayl.3DO")
+    if not (os.path.isdir(eng) and os.path.exists(model)):
+        return ("skipped",), ("skipped",), "engine/ or Aapkayl.3DO absent"
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import omktexpack, tex3dt, texpack
+
+    # ---- 1. the source
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    po = open(os.path.join(eng, "src", "app", "playoptions.cpp")).read()
+    su = open(os.path.join(eng, "backends", "remaster", "playremaster_setup.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    i_fork = su.find("openForkTexturePack(forkDir")
+    i_rem = su.find("openTexturePack(packDir)")
+    src_ok = ('kEnhancements, "texturepack"' in sc and "s.enhTexturePack" in sc,
+              "enhTexturePack" not in max_body,
+              '"--texturepack"' in po and "texturePackArg" in po,
+              0 <= i_fork < i_rem and "wins over the [Remaster] pack" in su,
+              "is no longer read" not in sc)
+
+    for target in ("build/texpack_tool", "build/settings_probe"):
+        mk = subprocess.run(["make", "-s", target], cwd=eng, capture_output=True, text=True)
+        if mk.returncode != 0:
+            return ("build", target), ("built",), mk.stderr[-300:]
+    tool = os.path.join(eng, "build", "texpack_tool")
+    probe = os.path.join(eng, "build", "settings_probe")
+    tmp = tempfile.mkdtemp()
+    try:
+        pack = os.path.join(tmp, "pack")
+        subprocess.run([sys.executable, os.path.join(ROOT, "tools", "texpack.py"), "extract", pack,
+                        "--model", "Aapkayl", "--data", fr], capture_output=True, text=True, timeout=300)
+        mdir = os.path.join(pack, "DECORS", "Aapkayl")
+        files = sorted(os.listdir(mdir), key=str.lower)
+        tx = tex3dt.textures(model)
+
+        # ---- 2. the key
+        r0 = subprocess.run([tool, "forkopen", pack, fr, "DECORS/Aapkayl"], capture_output=True, text=True, timeout=300)
+        mats0 = [ln.split() for ln in r0.stdout.splitlines() if ln.startswith("mat ")]
+        keys = (len(mats0),
+                all(m[2] == omktexpack.texture_key(tx[int(m[1])]["w"], tx[int(m[1])]["h"], tx[int(m[1])]["idx"],
+                                                  tx[int(m[1])]["pal"]) for m in mats0))
+
+        # ---- 3. the index of an altered pack
+        def read(f):
+            return texpack.png_read(os.path.join(mdir, f))
+        def black_of(f):
+            w, h, ch, px = read(f)
+            return sum(1 for q in range(0, len(px), ch) if px[q] == 0 and px[q + 1] == 0 and px[q + 2] == 0), w, h, ch, px
+        # the materials that hold some black, by their position in the extract (== the engine's order of names)
+        withblack = [f for f in files if black_of(f)[0] > 0]
+        f2x, f3x = withblack[0], withblack[1]
+        fbad, fred, falpha = [f for f in files if f not in (f2x, f3x)][:3]
+        def up(f, k):
+            b, w, h, ch, px = black_of(f)
+            out = bytearray()
+            for y in range(h * k):
+                for x in range(w * k):
+                    q = ((y // k) * w + (x // k)) * ch
+                    out += px[q:q + 3]
+            texpack.png_write(os.path.join(mdir, f), w * k, h * k, out)
+            return b * k * k
+        keyed2 = up(f2x, 2)
+        keyed3 = up(f3x, 3)
+        texpack.png_write(os.path.join(mdir, fbad), 300, 300, bytes([9, 9, 9]) * (300 * 300))
+        texpack.png_write(os.path.join(mdir, fred), 256, 256, bytes([200, 10, 10]) * (256 * 256))
+        # an RGBA file: every texel alpha 0 (a colour, but keyed) - written by hand
+        import zlib
+        def rgba_png(path, w, h, px4):
+            raw = b"".join(b"\0" + px4[y * w * 4:(y + 1) * w * 4] for y in range(h))
+            def ch_(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            with open(path, "wb") as fh:
+                fh.write(b"\x89PNG\r\n\x1a\n" + ch_(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+                         ch_(b"IDAT", zlib.compress(raw)) + ch_(b"IEND", b""))
+        rgba_png(os.path.join(mdir, falpha), 256, 256, bytes([10, 200, 10, 0]) * (256 * 256))
+        r1 = subprocess.run([tool, "forkopen", pack, fr, "DECORS/Aapkayl"], capture_output=True, text=True, timeout=300)
+        head = re.search(r"@fork indexed (\d+) models (\d+) dups (\d+) rejected (\d+) strays (\d+) missing (\d+)", r1.stdout)
+        head = tuple(int(v) for v in head.groups()) if head else ("no @fork line",)
+        mats = {int(m[1]): m[2:] for m in (ln.split() for ln in r1.stdout.splitlines() if ln.startswith("mat "))}
+        # the materials in the .3DO's own order, named as the extract names them
+        order = texpack.pack_file_names(texpack.material_names(open(model, "rb").read()))
+        pos = {n.lower() + ".png": j for j, n in enumerate(order)}
+        def row(f):
+            return mats.get(pos.get(f.lower()), ["-"] * 8)
+        r2, r3, rb, rr, ra = row(f2x), row(f3x), row(fbad), row(fred), row(falpha)
+        # a row: key ok w h keyed opaque opaqueBlack
+        got = (head[:1] + head[3:4],
+               (r2[1], r2[2], r2[3], r2[4], r2[6]),
+               (r3[1], r3[2], r3[3], r3[4], r3[6]),
+               rb[1],
+               (rr[4], rr[5], rr[6]),
+               (ra[4], ra[5], ra[6]))
+        want = ((20, 1),
+                ("1", "512", "512", str(keyed2), "0"),
+                ("1", "768", "768", str(keyed3), "0"),
+                "0",
+                ("0", str(256 * 256), "0"),
+                (str(256 * 256), "0", "0"))
+        # the opaque count of the 2x: its texels less the keyed
+        part3 = (got, want, int(r2[5]) == 512 * 512 - keyed2 and int(r3[5]) == 768 * 768 - keyed3)
+
+        # ---- 4. the path
+        ini = os.path.join(tmp, "a", "omk.ini")
+        os.makedirs(os.path.dirname(ini))
+        def path_of(text):
+            open(ini, "w").write(text)
+            o = subprocess.run([probe, "--config", ini], capture_output=True, text=True, timeout=60).stdout
+            m = re.search(r"^enh texturepack (\d) (\S+)\ntexturepack (.*)$", o, re.M)
+            return (m.group(1), m.group(2), m.group(3).strip().replace("\\", "/")) if m else None
+        rel = path_of("[Enhancements]\ntexturepack = packs/mine\n")
+        absolute = path_of("[Enhancements]\ntexturepack = C:/omk-pack4\n")
+        none = path_of("[Enhancements]\nall = max\n")
+        here = os.path.dirname(ini).replace("\\", "/")
+        part4 = (rel is not None and rel[0] == "1" and rel[2].endswith("/a/packs/mine") and
+                 rel[2].replace("\\", "/").startswith(here[:2]),
+                 absolute == ("1", "config", "C:/omk-pack4"),
+                 none is not None and none[0] == "0" and none[2] == "")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"        keys {keys}; head {head}; got {got}; paths {part4}")
+    return (src_ok, keys, part3, part4), \
+           ((True,) * 5, (21, True), (want, want, True), (True, True, True)), \
+           "the source (own field, all = max never gives it, --texturepack parsed, fork's pack opened first " \
+           "and said, no 'no longer read'); the engine's keys equal the shipped " \
+           "texture_key on all 21 of Aapkayl; an altered pack indexes 20 of 21 (the 300x300 refused), takes 2x " \
+           "and 3x at their own size, black is the key and none stays opaque, an RGBA alpha-0 file is all keyed; " \
+           "a relative key is taken from the ini's directory"
 
 
 def c_engine_bloom_and_grade():
@@ -55673,6 +55846,7 @@ SLOW = [
     ("engine: texture filter", c_engine_texture_filter, "ASSETS 4"),
     ("engine: mipmaps", c_engine_mipmaps, "ASSETS 4"),
     ("engine: texture pack", c_engine_texture_pack, "todo/remaster.md B; o3de/texpack.h"),
+    ("engine: texture pack, fork layout", c_engine_texture_pack_fork, "todo/enhancements.md 25; o3de/texpack.h openFork; tools/texpack.py"),
     ("engine: bloom and grade", c_engine_bloom_and_grade, "todo/remaster.md step 2; o3de/colourgrade.h"),
     ("engine: remaster preset", c_engine_remaster_preset, "todo/remaster.md"),
     ("engine: water reflection", c_engine_water_reflection, "todo/remaster.md A3; o3de/renderer.h"),

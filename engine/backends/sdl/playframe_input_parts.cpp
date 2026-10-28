@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "platform/events.h"
 #if OMK_OPENXR
 #include "../openxr/xrhost.h"
 #endif
@@ -208,6 +209,24 @@ void PlayState::inputPause() {
     // ...and SELECT / BACK on a pad (`pad::switchPressed`)
     remasterModeFrame(std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x44) != devices.keyboard.end() ||
                       omk::pad::switchPressed(host.pad));
+    // ...and F9, OMK's own, off every binding path: WHERE THE PLAYER STANDS,
+    // printed as the `--area` and `--stand` that put him back there - so a
+    // place seen in play can be named for a headless run (the reader's "let
+    // me set the position with a key press", 2026-10-28)
+    {
+        static bool f9Was = false;
+        const bool f9 = std::find(devices.keyboard.begin(), devices.keyboard.end(), 0x43) != devices.keyboard.end();
+        if (f9 && !f9Was && player) {
+            const float* p = player->pos();
+            const int area = session_->residentSlot(session_->activeSlot() & 1).area;
+            std::printf("frame %ld: F9 - the player stands here: --area %d --stand %.0f,%.0f,%.0f,%.0f\n", frameNo,
+                        area, double(p[0]), double(p[1]), double(p[2]), double(player->euler()[1]));
+            omk::event("player.here", {{"frame", frameNo}, {"area", area}, {"x", static_cast<double>(p[0])},
+                                       {"y", static_cast<double>(p[1])}, {"z", static_cast<double>(p[2])},
+                                       {"facing", static_cast<double>(player->euler()[1])}});
+        }
+        f9Was = f9;
+    }
     if (esc && !walk && playerScreen < 0) {
         playerScreen = omk::screen::Pause;
         std::printf("frame %ld: ESC -> screen %d PAUSE GAME "

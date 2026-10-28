@@ -54,14 +54,17 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
         if (!noBlend) omk::encodeOpenSky(w.geo, w.wet);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         std::printf("wet: set %s - %zu floor triangles under the open sky (%.0f m2), %zu covered (%.0f m2), "
-                    "%zu levels; %zu wall triangles the rain reaches (%.0f m2); %.0f ms\n", L.stem.c_str(),
-                    w.wet.openTris, w.wet.openArea / 1550.0, w.wet.coveredTris, w.wet.coveredArea / 1550.0,
-                    w.wet.planes.levels.size(), w.wet.wallTris, w.wet.wallArea / 1550.0, ms);
+                    "%zu levels; %zu wall triangles the rain reaches (%.0f m2); %zu drips off roofs' edges; %.0f ms\n",
+                    L.stem.c_str(), w.wet.openTris, w.wet.openArea / 1550.0, w.wet.coveredTris,
+                    w.wet.coveredArea / 1550.0, w.wet.planes.levels.size(), w.wet.wallTris, w.wet.wallArea / 1550.0,
+                    w.wet.drips.size(), ms);
         omk::event("world.wet", {{"set", L.stem}, {"open", static_cast<long>(w.wet.openTris)},
                                  {"covered", static_cast<long>(w.wet.coveredTris)},
                                  {"blended", static_cast<long>(w.wet.blendedTris)},
                                  {"levels", static_cast<long>(w.wet.planes.levels.size())},
-                                 {"walls", static_cast<long>(w.wet.wallTris)}});
+                                 {"walls", static_cast<long>(w.wet.wallTris)},
+                                 {"drips", static_cast<long>(w.wet.drips.size())},
+                                 {"dripsCovered", static_cast<long>(w.wet.dripsCovered)}});
     } else {
         w.wet = omk::WetFloors{};
     }

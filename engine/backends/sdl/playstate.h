@@ -729,6 +729,7 @@ struct PlayState {
     std::vector<RainSplash> rainSplashes{};      // ...the live ones (`playremaster_rain.cpp`)
     double splashClock = -1.0;                   // ...the weather's clock they were last spawned at
     double splashOwed = 0.0;                     // ...the fraction of a splash carried to the next frame
+    double dripClock = -1.0;                     // ...and the drips' last frame on the weather's clock, ms
     std::uint32_t splashSeed = 0x2F6B1D35u;      // ...where they land: a fixed sequence, the same on every backend
     int splashTexSlot = -1;                      // ...their crown texture's pool slot, -1 none
     float mistStrength{};    // the mist's (`View::mist`), 0 off

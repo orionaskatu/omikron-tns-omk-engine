@@ -65,6 +65,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
+    "OMK_NO_DRIPS",             // =1 no drips off the roofs' edges in the rain (engine: rain 3d)
     "OMK_NO_DUST",              // =1 the restored sand's dust fog left out, its grains and grade kept (engine: rain 3d)
     "OMK_NO_FX_GATE",           // A/B: every particle drawn, none gated by distance (engine: particle gate)
     "OMK_NO_GEOMETRY_RELEASE",  // GLES: a destroyed geometry's GPU state kept (engine: geometry release)

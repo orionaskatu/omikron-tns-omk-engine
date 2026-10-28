@@ -34292,6 +34292,19 @@ def c_engine_rain3d():
          20597 on Vulkan, 19722 on GLES, none darker, at `kHaloGain` 2; at
          1.5 (the reader's) 9964 and 9504, overlap 0.842; `View::halo` held at 0
          (the mutation it is shown to fail with) 0.
+      16. THE DRIPS off the roofs' edges (`o3de/wetfloor.h` DripPoint, the
+         rain's draw): Qalisar's start facing the arcade (15516, 0, -10182,
+         270), the restored shower, `--wet 1 --rain3d 1` - more than 1000
+         drip points at the set's load and at most 1% of them with ANYTHING
+         over where they fall, shot soup or drawn set (`world.wet`
+         dripsCovered: a drop starts past the eaves - dropped from under the
+         roof's overhang it came "through the ceiling", the reader); more
+         than 10 in the air at frame 690 and none under
+         `OMK_NO_DRIPS=1`; more than 100 pixels move on Vulkan, and on GLES
+         the same ones (overlap above 0.8). Measured 2026-10-28: 2346 points,
+         11 under anything; 30 in the air; 206 pixels each, overlap 1.000.
+         Shown to fail: dropped from under the roof (the walk out past the
+         eaves skipped), 5880 of 5894 under something.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34491,6 +34504,34 @@ def c_engine_rain3d():
                            capture_output=True, text=True, errors="replace", env=env, timeout=300)
             return open(out, "rb").read() if os.path.exists(out) else None
         hv1, hv0 = haloed(vkb, 1), haloed(vkb, 0)
+        def dripped(binary, on):
+            out = os.path.join(tmp, "drip%s%d.bin" % ("g" if binary.endswith("gles") else "v", on))
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000",
+                       **({} if on else {"OMK_NO_DRIPS": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            r = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                      os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                      "--stand", "15516,0,-10182,270", "--no-crowd", "--nofmv", "--nodelay",
+                                      "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                      "--frames", "700", "--detail", "2", "--wet", "1", "--rain3d", "1",
+                                      "--restore-weather", "1", "--dump", out] +
+                               ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            evs = _events(r.stdout)
+            world = next((k for n, k in evs if n == "world.wet" and k.get("set") == "QALISAR"), {})
+            live = int(next((k for n, k in evs if n == "remaster.rain3d" and k.get("frame") == "690"),
+                            {}).get("drips", -1))
+            return (open(out, "rb").read() if os.path.exists(out) else None), world, live
+        (rv1, dw1, dl1), (rv0, _, dl0) = dripped(vkb, 1), dripped(vkb, 0)
+        rg1 = rg0 = None
+        if platform.system() == "Darwin":
+            (rg1, _, _), (rg0, _, _) = dripped(os.path.join(eng, "build", "omk-play-gles"), 1), \
+                                       dripped(os.path.join(eng, "build", "omk-play-gles"), 0)
         hg1 = hg0 = None
         if platform.system() == "Darwin":
             hg1, hg0 = haloed(os.path.join(eng, "build", "omk-play-gles"), 1), \
@@ -34591,6 +34632,19 @@ def c_engine_rain3d():
         # pixels whose 565 colour's channel sum rose by more than 24 from b to a
         sm = lambda v: ((v >> 11) & 31) * 8 + ((v >> 5) & 63) * 4 + (v & 31) * 8
         return {i for i, (x, y) in enumerate(zip(px(a), px(b))) if sm(x) - sm(y) > 24}
+    npts, nthru = int(dw1.get("drips", 0)), int(dw1.get("dripsCovered", -1))
+    rmv = moved(rv1, rv0) if rv1 and rv0 else set()
+    if rg1 and rg0:
+        rmg = moved(rg1, rg0)
+        riou = len(rmv & rmg) / max(1, len(rmv | rmg))
+        rgl = (len(rmg) > 100, riou > 0.8)
+        print(f"        the drips: {npts} points, {nthru} under anything; {dl1} in the air at frame 690, "
+              f"{dl0} switched off; Vulkan {len(rmv)}, GLES {len(rmg)} pixels, overlap {riou:.3f}")
+    else:
+        rgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+        print(f"        the drips: {npts} points, {nthru} under anything; {dl1} at frame 690, {dl0} off; "
+              f"Vulkan {len(rmv)} pixels")
+    dripped_ = (npts > 1000, 0 <= nthru * 100 <= npts, dl1 > 10, dl0, len(rmv) > 100, rgl)
     hgl = ("skipped",)
     if not os.path.isdir(hpack):
         haloes = ("skipped",)
@@ -34611,12 +34665,13 @@ def c_engine_rain3d():
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted, neoned, veils, splashes, haloes), \
+            dusted, neoned, veils, splashes, haloes, dripped_), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
             (True, _or_skip(dgl, (True, True))), (True, 0), (True, _or_skip(vgl, (True, True))),
             (True, 0, True, _or_skip(sgl, (True, True))),
-            _or_skip(haloes, (True, _or_skip(hgl, (True, True))))), \
+            _or_skip(haloes, (True, _or_skip(hgl, (True, True)))),
+            (True, True, True, 0, True, _or_skip(rgl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same; the splashes"

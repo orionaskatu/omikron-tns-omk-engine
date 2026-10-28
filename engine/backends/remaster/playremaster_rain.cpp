@@ -156,6 +156,16 @@ constexpr double kSplashSkyFrom = 2.0;    // the roof ray starts this far above 
 constexpr double kSplashStepMax = 100.0;  // the most ms of splashes one frame spawns (a hitch, not a shower)
 constexpr double kRainFull = 200.0;       // the full shower's drops (`o3de/weather.h`): the rate's 1
 constexpr int kSplashTex = 32;            // the crown texture's side
+// THE DRIPS off the roofs' edges (`o3de/wetfloor.h` DripPoint): each point's
+// drops fall under gravity, one at a time, every `kDripPeriod..` seconds plus
+// its own fall, and land in a splash
+constexpr float kDripFar = 900.0f;        // drawn within this of the eye (~23 m; 1500: far ones read as dots)
+constexpr double kDripG = 386.0;          // gravity, units a second squared (an inch a unit)
+constexpr double kDripPeriodMin = 0.35, kDripPeriodMax = 1.2;   // seconds between drops, past the fall
+constexpr double kDripStreakSec = 0.07;   // a drop's streak: its fall over this long (a frame's blur and more)
+constexpr float kDripLenMin = 16.0f, kDripLenMax = 80.0f;       // ...no shorter, no longer
+constexpr float kDripGlow = 2.0f;         // its brightness against a rain drop's (fewer, bigger drops)
+constexpr float kDripWide = 1.3f;         // ...and its width (2: short wide ones read as squares)
 
 // THE CROWN, generated as the streak: a grey texel per palette index. Its
 // foot at the bottom row: a faint rim (the ring seen edge on, brighter at its
@@ -309,12 +319,14 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     // the roofs: the shown set's shot soup, as the weather's own ray
     const omk::TriangleSoup* shot = nullptr;
     const omk::SoupRunBoxes* boxes = nullptr;
+    const std::vector<omk::DripPoint>* drips = nullptr;
     std::span<const omk::Light3do> lights;
     std::size_t setLightCount = 0;   // ...the set's own first, then the emitters' (the neon, the flames)
     for (const auto& ws : worldSlots)
         if (!ws.stem.empty() && ws.stem == worldSet) {
             shot = &ws.shotSoup;
             boxes = &ws.shotRunBoxes;
+            drips = &ws.wet.drips;
             lights = ws.lights;
             setLightCount = std::min(ws.setLights, ws.lights.size());
         }
@@ -551,6 +563,75 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c3, c0, c3, c2});
     }
     const std::size_t drawnDrops = rainGeo.corners.size() / 6;
+    // THE DRIPS off the roofs' edges (the reader's "ok for the drips",
+    // 2026-10-28): from each `DripPoint` near the eye a drop at a time falls
+    // under gravity, a streak as long as its speed blurs it, lit as a rain
+    // drop, more of them the heavier the shower - and lands in a splash. On
+    // the weather's clock (held while paused). `OMK_NO_DRIPS=1`, an
+    // INSTRUMENT, none (`verify.py: engine: rain 3d` part 16)
+    static const bool noDrips = omk::envFlag("OMK_NO_DRIPS");
+    const bool noSplashSpawn = omk::envFlag("OMK_NO_SPLASHES");   // (the splashes' own instrument)
+    int drawnDrips = 0;
+    const double dripNow = weatherClockMs / 1000.0;
+    const double dripWas = dripClock < 0.0 || weatherClockMs < dripClock ? -1.0 : dripClock / 1000.0;
+    dripClock = weatherClockMs;
+    if (!snow && !sand && !noDrips && drips && !drips->empty()) {
+        const float shower = std::min(1.0f, static_cast<float>(rainDrops.size() / kRainFull));
+        for (std::size_t i = 0; i < drips->size(); ++i) {
+            const omk::DripPoint& dp = (*drips)[i];
+            const float ex = dp.x - v.cam.eye[0], ez = dp.z - v.cam.eye[2];
+            if (ex * ex + ez * ez > kDripFar * kDripFar) continue;
+            std::uint32_t h = static_cast<std::uint32_t>(i) * 0x9E3779B1u;
+            h ^= h >> 15; h *= 0x85EBCA6Bu; h ^= h >> 13;
+            if (static_cast<float>(h & 0xFFu) / 255.0f > shower) continue;   // fewer in a light shower
+            const double fall = static_cast<double>(dp.floor - dp.top);
+            const double tf = std::sqrt(2.0 * fall / kDripG);
+            const double period = tf + kDripPeriodMin +
+                                  (kDripPeriodMax - kDripPeriodMin) * static_cast<double>((h >> 8) & 0xFFu) / 255.0;
+            const double off = period * static_cast<double>((h >> 16) & 0xFFFFu) / 65535.0;
+            const double ph = std::fmod(dripNow + off, period);
+            // ...landed since the last frame: its splash
+            if (dripWas >= 0.0 && !noSplashSpawn) {
+                const double was = std::fmod(dripWas + off, period);
+                if ((was < tf && ph >= tf) || (ph < was && was < tf))
+                    rainSplashes.push_back({{dp.x, dp.floor, dp.z}, weatherClockMs});
+            }
+            if (ph >= tf) continue;   // between its drops
+            const float y = dp.top + static_cast<float>(0.5 * kDripG * ph * ph);
+            const float len = std::clamp(static_cast<float>(kDripG * ph * kDripStreakSec), kDripLenMin, kDripLenMax);
+            const float lead[3] = {dp.x, y, dp.z};
+            const float trail[3] = {dp.x, std::max(dp.top, y - len), dp.z};   // above it (Y down)
+            const float a[3] = {0.0f, 1.0f, 0.0f};   // falling straight down
+            const float e[3] = {v.cam.eye[0] - lead[0], v.cam.eye[1] - lead[1], v.cam.eye[2] - lead[2]};
+            float side[3] = {a[1] * e[2] - a[2] * e[1], a[2] * e[0] - a[0] * e[2], a[0] * e[1] - a[1] * e[0]};
+            const float sl = std::sqrt(side[0] * side[0] + side[1] * side[1] + side[2] * side[2]);
+            if (!(sl > 0.0f)) continue;
+            for (float& k : side) k /= sl;
+            const float offp[3] = {lead[0] + side[0], lead[1] + side[1], lead[2] + side[2]};
+            const omk::Projected pa = omk::project(v.cam, lead), pb = omk::project(v.cam, offp);
+            if (pa.z <= 0.0f || pb.z <= 0.0f) continue;
+            const float ppu = std::hypot(pb.x - pa.x, pb.y - pa.y);
+            if (!(ppu > 0.0f)) continue;
+            const float w = kDripWide * halfPx / ppu;
+            const float nearT = std::clamp((pa.z - kRainNearFrom) / (kRainNear - kRainNearFrom), 0.0f, 1.0f);
+            const float fade = nearT * nearT * (3.0f - 2.0f * nearT) *
+                               std::clamp((kDripFar - pa.z) / (kDripFar * 0.3f), 0.0f, 1.0f);
+            if (!(fade > 0.0f)) continue;
+            float rgb[3];
+            lightAt(lead, 192.0f / 255.0f * kRainUnlit, rgb);
+            const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
+            for (float& c : rgb) c = std::min(1.0f, c / top * s * fade * kDripGlow);
+            const float W = static_cast<float>(kStreakW), H = static_cast<float>(kStreakH);
+            const float l0[3] = {lead[0] - side[0] * w, lead[1] - side[1] * w, lead[2] - side[2] * w};
+            const float l1[3] = {lead[0] + side[0] * w, lead[1] + side[1] * w, lead[2] + side[2] * w};
+            const float t0[3] = {trail[0] - side[0] * w, trail[1] - side[1] * w, trail[2] - side[2] * w};
+            const float t1[3] = {trail[0] + side[0] * w, trail[1] + side[1] * w, trail[2] + side[2] * w};
+            const omk::Corner c0 = corner(l0, rgb, 0.0f, 0.0f), c1 = corner(l1, rgb, W, 0.0f);
+            const omk::Corner c2 = corner(t0, rgb, 0.0f, H), c3 = corner(t1, rgb, W, H);
+            rainGeo.corners.insert(rainGeo.corners.end(), {c0, c1, c3, c0, c3, c2});
+            ++drawnDrips;
+        }
+    }
     // THE SPLASHES - the rain's alone: spawned as the weather's clock runs
     // (so none while paused, and none from the skip's jump), aged on it
     const std::size_t rainCorners = rainGeo.corners.size();
@@ -627,16 +708,17 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     const std::size_t drawnSplashes = (rainGeo.corners.size() - rainCorners) / 6;
     if (frameNo % 30 == 0) {
         std::printf("frame %ld: the %s in the scene - %zu of %zu %s drawn (the weather's %zu and %d each "
-                    "more), %d under a roof, %d lit by the set's lights; %zu splashes on the floor\n", frameNo,
+                    "more), %d under a roof, %d lit by the set's lights; %zu splashes on the floor; %d drips "
+                    "off the roofs\n", frameNo,
                     snow ? "snow" : sand ? "sand" : "rain", drawnDrops, all.size(),
                     snow ? "flakes" : sand ? "grains" : "drops", rainDrops.size(), kRainCopies, roofed,
-                    litDrops, drawnSplashes);
+                    litDrops, drawnSplashes, drawnDrips);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
                                        {"streak", (snow ? snowTexSlot : rainTexSlot) >= 0}, {"lit", litDrops},
                                        {"snow", snow}, {"sand", sand}, {"neon", neonDrops},
                                        {"splashes", static_cast<long>(drawnSplashes)},
-                                       {"splashRoofed", splashRoofed}});
+                                       {"splashRoofed", splashRoofed}, {"drips", drawnDrips}});
     }
     if (rainGeo.corners.empty()) return;
     ++rainGeo.revision;

@@ -1136,6 +1136,11 @@ field answers `WM_CHAR`, and BACKSPACE and RETURN reach no binding table at
 all, so a scan code in that list cannot express them (`docs/UI.md` §3f).
 `--keydelay N` spaces the presses.
 
+**Naming a place seen in play**: **F9** prints where the player stands as
+the `--area N --stand x,y,z,facing` that puts him back there (and a
+`player.here` event) - the reader presses it at a spot, the headless run
+starts from the log's line (2026-10-28).
+
 **FLYING A SLIDER**: `--ride` mounts the engine's own flight model where the
 player stands and drives it with the same input word the walker takes - arrows
 to steer, up and down for the six-value thrust ladder, and the interface's

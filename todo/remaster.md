@@ -1566,6 +1566,43 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   "reflections themselves are good", then with the fade "better".
   **Not checked**: the fade over the transition (a headless run stands
   still); by construction it is continuous in the camera's distances.
+* **4, THE DRIPS off the roofs' edges** (2026-10-28, the reader's "ok for
+  the drips"; the rain SOUND by cover dropped - the shower's sound is its
+  music track, 118-122, its city's music mixed with the rain, ASSETS 4e):
+  `DripPoint`s found with the wet floors (`wetFloors`): every floor edge an
+  OPEN triangle shares with a covered one, or whose corners disagree in an
+  open one - a roof's edge runs along a triangle's side as often as across
+  it - with one of its corners under the open sky, a point every
+  `kDripSpacing` (32); the roof found up from a little toward the covered
+  side, then the point walked OUT `kDripStep` at a time (to `kDripSearch`)
+  until the sky is clear in the shot soup AND the drawn set - so the drop
+  falls past the eaves. Drawn in the rain's draw (`remasterRainDraws`):
+  each point near the eye (`kDripFar` 900) drops one at a time under
+  gravity (`kDripG` 386, an inch a unit), a streak as long as its speed
+  blurs it (`kDripStreakSec`, 16..80), `kDripGlow` 2 and `kDripWide` 1.3
+  against a rain drop, lit as one, more of them the heavier the shower, and
+  lands in a splash. Tuned by the reader's eye: at 1500 far ones read as
+  floating dots, wide and short as squares; at the floor's edge they fell
+  from under the roof's overhang, "drips through the ceiling" (542 of 1760
+  with drawn geometry in their fall) - and edges wholly under a hall's
+  ceiling dripped. Qalisar 2346 points (11 with anything over them, the
+  `world.wet` self-check), Anekbah 3583; ~30 in the air at Qalisar's start.
+  The load: Qalisar's wet pass 155 -> ~300 ms, Anekbah's 223 -> ~590 ms
+  (M3) - the walk out and the drawn soup. `OMK_NO_DRIPS=1` (an instrument)
+  none. `engine: rain 3d` part 16. Not the drips: the reader's marks in a
+  hall (15303, 0, -10414) are the 3D RAIN - its drops have no drawn
+  triangle over them, the set open to the sky there.
+* **Open, the DARKNESS** (the reader, 2026-10-28, from play, "global
+  lighting/reflections changes completely in a few steps"): older than the
+  weather work (it stays with streaks, halos, drips and the wet band off).
+  Reproduced: `--area 101 --stand 15132,0,-10597,204 --remaster pack
+  --enhance-all` (F9's), the same every run. (1) Kay'l BLACK: the body light
+  (`--body-light 0`: the centre 2.4 -> 33.7); (2) the set unlit by the
+  emitters: on Vulkan's TILED path they add nothing here (`--fx-light 0`
+  the same 7.2; `OMK_NO_TILES=1` 15.4, the arcade pink; `OMK_TILES_LOOSE=1`
+  the same 7.2 - the lists hold them, the shader's lookup does not find
+  them). Not the mist, AO, relief, reflections, the 3D rain, the preload or
+  a set switch.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

@@ -63,6 +63,9 @@ const std::map<int, int>& keymap() {
         // ...and OMK's own: F10 switches the original and the remaster's look
         // (`backends/remaster/playremaster_mode.cpp`), off every binding path
         {SDL_SCANCODE_F10, 0x44},
+        // ...and F9, OMK's own too: where the player stands, printed as the
+        // `--stand` that puts him back there (`playframe_input_parts.cpp`)
+        {SDL_SCANCODE_F9, 0x43},
     };
     return m;
 }

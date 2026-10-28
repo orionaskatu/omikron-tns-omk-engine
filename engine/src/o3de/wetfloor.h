@@ -52,6 +52,20 @@ inline constexpr std::uint8_t kWetWallCorner = 2;   // `cornerOpen` of a wall's 
 // the open sky in a corner's phase (`encodeOpenSky`): a floor's `-2 - open`,
 // a wall's `-6 - open` - the shaders tell the two apart below -5.5
 inline constexpr float kOpenSkyFloor = -2.0f, kOpenSkyWall = -6.0f;
+// THE DRIPS (the remaster's, the reader's "ok for the drips", 2026-10-28):
+// where a roof's edge crosses a wet floor - an open triangle's edge whose two
+// corners disagree - water runs off it in drops. One point every
+// `kDripSpacing` along those edges, its roof `kDripRoofMin` to `kDripRoofMax`
+// above the floor (a ledge lower, a tower higher: no drip)
+inline constexpr float kDripSpacing = 32.0f;
+inline constexpr double kDripRoofMin = 40.0, kDripRoofMax = 1200.0;
+inline constexpr double kDripTowardRoof = 0.3;   // the roof found this far from the edge toward the covered corner
+inline constexpr double kDripStep = 4.0, kDripSearch = 96.0;   // ...then out to the sky, so far at most
+inline constexpr std::size_t kDripDrawnRun = 32;   // the drawn set's soup boxed this many triangles a run
+struct DripPoint {
+    float x = 0.0f, z = 0.0f;
+    float top = 0.0f, floor = 0.0f;   // the roof's edge and the floor below it (Y down: top < floor)
+};
 
 
 struct WetFloors {
@@ -72,6 +86,8 @@ struct WetFloors {
     std::size_t wallTris = 0;        // the walls the rain reaches
     double wallArea = 0.0;           // ...their area, square game units
     double openArea = 0.0, coveredArea = 0.0;   // square game units
+    std::vector<DripPoint> drips;    // where water runs off a roof's edge (`kDripSpacing`)
+    std::size_t dripsCovered = 0;    // ...of them, with anything over where they fall (a self-check)
     bool any() const { return planes.any(); }
 };
 // (`walls` false: the floors alone)

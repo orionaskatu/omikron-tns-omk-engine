@@ -11,6 +11,7 @@
 #include <cmath>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace omk {
 
@@ -65,6 +66,27 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
         return v;
     };
     std::map<int, FloorPlanes::Level> byHeight;
+    // THE DRIPS: every floor edge, by its two corners' places - whether an
+    // open triangle has it, a covered one, its corners disagreeing in an open
+    // one, and a point toward the covered side (where the roof is)
+    struct DripEdge {
+        const Corner* p = nullptr;
+        const Corner* q = nullptr;
+        bool open = false, covered = false, mixed = false;
+        bool sky = false;   // one of its corners under the open sky: an edge wholly under a ceiling never drips
+        float toward[2] = {0.0f, 0.0f};
+    };
+    std::unordered_map<std::uint64_t, DripEdge> edges;
+    const auto placeKey = [](const Corner& c) {
+        const auto q = [](float v) { return static_cast<std::uint64_t>(static_cast<std::uint32_t>(
+                                         static_cast<std::int32_t>(std::lround(v * 4.0f))) & 0x1FFFFFu); };
+        return q(c.x) | q(c.y) << 21 | q(c.z) << 42;
+    };
+    const auto edgeKey = [&](const Corner& a2, const Corner& b2) {
+        std::uint64_t ka = placeKey(a2), kb = placeKey(b2);
+        if (ka > kb) std::swap(ka, kb);
+        return ka * 0x9E3779B97F4A7C15ull ^ (kb + 0x632BE59BD9B4E019ull + (ka << 6) + (ka >> 2));
+    };
     for (const auto& bt : g.batches) {
         if (bt.blend != Blend::Opaque) continue;
         const std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(bt.start) + bt.count, g.corners.size());
@@ -108,6 +130,11 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             if (seen == 0) {
                 ++out.coveredTris;
                 out.coveredArea += area;
+                for (int e = 0; e < 3; ++e) {   // (THE DRIPS: an edge it shares with an open one)
+                    auto& E = edges[edgeKey(g.corners[t + e], g.corners[t + (e + 1) % 3])];
+                    E.covered = true;
+                    E.toward[0] = static_cast<float>(cx); E.toward[1] = static_cast<float>(cz);
+                }
                 continue;
             }
             out.open[t / 3] = 1;
@@ -117,6 +144,17 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             out.cornerOpen[t + 2] = k2;
             ++out.openTris;
             if (k0 != k1 || k0 != k2) ++out.blendedTris;
+            // (THE DRIPS: its edges, the covered side's corner where they disagree)
+            for (int e = 0; e < 3; ++e) {
+                const Corner& p = g.corners[t + e];
+                const Corner& q = g.corners[t + (e + 1) % 3];
+                const std::uint8_t kp = e == 0 ? k0 : e == 1 ? k1 : k2;
+                const std::uint8_t kq = e == 0 ? k1 : e == 1 ? k2 : k0;
+                auto& E = edges[edgeKey(p, q)];
+                E.p = &p; E.q = &q; E.open = true;
+                E.sky = E.sky || kp || kq;   // a corner of it under the open sky
+                if (kp != kq) { E.mixed = true; E.toward[0] = kp ? q.x : p.x; E.toward[1] = kp ? q.z : p.z; }
+            }
             out.openArea += area;
             // ...and the LEVEL ones are the planes the reflection may take
             // (`forLevelTriangles`' 2 units)
@@ -125,6 +163,86 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             L.area += area;
             L.tris.insert(L.tris.end(), {static_cast<float>(cx), static_cast<float>(cz), static_cast<float>(area)});
         }
+    }
+    // THE DRIPS (`DripPoint`): along each edge where a roof's edge crosses
+    // the wet floor - shared by an open triangle and a covered one, or its
+    // corners disagreeing in an open one (a roof's edge across a triangle, or
+    // along its side: both are in the sets) - a point every `kDripSpacing`,
+    // one a cell, its roof found up from a little toward the covered side
+    std::unordered_set<std::uint64_t> dripCells;
+    // ...and the sky they fall from clear in the DRAWN set too: a hall's
+    // ceiling may be missing from the shot soup (no bolt reaches it), and its
+    // floor then reads open - drips fell inside under it (the reader, 2026-10-28)
+    TriangleSoup drawn;
+    std::vector<std::uint32_t> drawnRuns;
+    if (!edges.empty())
+        for (const auto& bt : g.batches) {
+            if (bt.blend != Blend::Opaque) continue;
+            const std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(bt.start) + bt.count, g.corners.size());
+            for (std::size_t t = bt.start; t + 2 < end; t += 3) {
+                if ((drawn.size() / 9) % kDripDrawnRun == 0) drawnRuns.push_back(static_cast<std::uint32_t>(drawn.size() / 9));
+                for (int k = 0; k < 3; ++k) {
+                    drawn.push_back(g.corners[t + k].x);
+                    drawn.push_back(g.corners[t + k].y);
+                    drawn.push_back(g.corners[t + k].z);
+                }
+            }
+        }
+    const SoupRunBoxes drawnBoxes = soupRunBoxes(drawn, drawnRuns);
+    for (const auto& [key, E] : edges) {
+        if (!E.open || !E.sky || !(E.covered || E.mixed) || !E.p) continue;
+        const double ex = E.q->x - E.p->x, ez = E.q->z - E.p->z;
+        const int n = std::max(1, static_cast<int>(std::hypot(ex, ez) / kDripSpacing));
+        for (int k = 0; k < n; ++k) {
+            const double f = (k + 0.5) / n;
+            const double mx = E.p->x + ex * f, mz = E.p->z + ez * f, my = E.p->y + (E.q->y - E.p->y) * f;
+            const auto cell = [](double v) { return static_cast<std::uint64_t>(static_cast<std::uint32_t>(
+                                  static_cast<std::int32_t>(std::floor(v / kDripSpacing)))); };
+            if (!dripCells.insert(cell(mx) | cell(mz) << 32).second) continue;
+            // the roof: up from a little toward the covered side...
+            double cx0 = mx + kDripTowardRoof * (E.toward[0] - mx), cz0 = mz + kDripTowardRoof * (E.toward[1] - mz);
+            const double p0[3] = {cx0, my - 2.0, cz0};
+            auto hit = sweepSphere(shot, boxes, p0, up, 0.0);
+            if (!hit) continue;
+            // ...then OUT toward the open side, `kDripStep` at a time, to where
+            // the sky is first clear: the drop falls past the eaves - a roof
+            // juts out over the floor's edge, and one dropped at the floor's
+            // edge fell through it (the reader's "drips through the ceiling",
+            // 2026-10-28: 542 of 1760 with drawn geometry over them)
+            double ox = mx - E.toward[0], oz = mz - E.toward[1];
+            const double ol = std::hypot(ox, oz);
+            if (!(ol > 0.0)) continue;
+            ox /= ol; oz /= ol;
+            double top = my - 2.0 - kWetSkyRay * hit->t;
+            bool found = false;
+            double dx = cx0, dz = cz0;
+            for (double s2 = kDripStep; s2 <= kDripSearch; s2 += kDripStep) {
+                const double qx = cx0 + ox * s2, qz = cz0 + oz * s2;
+                const double q0[3] = {qx, my - 2.0, qz};
+                const auto h2 = sweepSphere(shot, boxes, q0, up, 0.0);
+                if (!h2) {
+                    if (sweepSphere(drawn, drawnBoxes, q0, up, 0.0).has_value()) break;   // a drawn ceiling: no drip
+                    found = true; dx = qx; dz = qz;
+                    break;
+                }
+                top = my - 2.0 - kWetSkyRay * h2->t;   // still under it: its edge's height
+            }
+            if (!found) continue;
+            const double rise = my - top;
+            if (rise < kDripRoofMin || rise > kDripRoofMax) continue;
+            out.drips.push_back({static_cast<float>(dx), static_cast<float>(dz),
+                                 static_cast<float>(top), static_cast<float>(my)});
+        }
+    }
+    // ...and how many fall UNDER anything - a self-check: past the eaves the
+    // sky over a drop is clear, in the shot soup and the drawn set alike
+    // (`verify.py: engine: rain 3d` part 16; dropped from under the roof's
+    // overhang, they came "through the ceiling", the reader)
+    for (const auto& d : out.drips) {
+        const double p0[3] = {d.x, d.floor - 2.0, d.z};
+        if (sweepSphere(shot, boxes, p0, up, 0.0).has_value() ||
+            sweepSphere(drawn, drawnBoxes, p0, up, 0.0).has_value())
+            ++out.dripsCovered;
     }
     // levels within `kFloorMerge` of each other are one, at the highest -
     // `floorPlanes`' rule, for the same reason

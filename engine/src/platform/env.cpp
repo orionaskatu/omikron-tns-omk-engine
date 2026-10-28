@@ -31,6 +31,7 @@ constexpr const char* kSwitches[] = {
     "OMK_CPU_PLAYER",           // A/B: the player posed on the CPU on a renderer that poses bodies
     "OMK_CPU_SKY",              // A/B: the sky moved on the CPU on a renderer that moves it
     "OMK_D3D12_DEBUG",          // the D3D12 debug layer on, every message printed (engine: d3d12)
+    "OMK_D3D12_GBV",            // =1 with OMK_D3D12_DEBUG: GPU-based validation (shaders instrumented; slow) (a diagnostic)
     "OMK_DIRTY_AUDIT",          // GLES: checks the dirty-corner list is complete on every partial upload
     "OMK_DOF_LOG",              // =1 D3D12: the depth of field's focus each frame (a character or the picture centre) (engine: post chain)
     "OMK_EAGER_SOUPS",          // A/B: every collision soup built at the load instead of when first asked (engine: lazy collision)
@@ -39,6 +40,7 @@ constexpr const char* kSwitches[] = {
     "OMK_FEETLOG",              // =<actor> log: that body's lowest drawn corner against the floor, every 30 frames (engine: astaroth floor)
     "OMK_FIGHT_REFUSE",         // the frontend refuses every fight, so a script's wait for event 2 shows (engine: fight park)
     "OMK_FORCE_CINE",           // =1 D3D12: the post chain treats every frame as cinematic, so depth of field runs on it (engine: post chain)
+    "OMK_FORCE_GPU_HANG",       // =<pass name or id>[@frame] D3D12: an endless compute loop at that pass - proves the device-removal report names it (a diagnostic)
     "OMK_FRAMEGEN_ALWAYS",      // D3D12 framegen: an in-between frame whatever the display's room (engine: framegen)
     "OMK_FRAMEGEN_PROBE",       // =<prefix> D3D12 framegen: frames N-2 and N interpolated and laid against N-1, a line a frame (engine: framegen)
     "OMK_FRAMEGEN_TIMING",      // log: the D3D12 frame generation's GPU time (timestamps), every 60 frames
@@ -75,6 +77,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
+    "OMK_NO_DRED",              // =1 D3D12: DRED (the driver's breadcrumbs and page-fault report for a device removal) left off
     "OMK_NO_DUST",              // =1 the restored sand's dust fog left out, its grains and grade kept (engine: rain 3d)
     "OMK_NO_FX_GATE",           // A/B: every particle drawn, none gated by distance (engine: particle gate)
     "OMK_NO_GEOMETRY_RELEASE",  // GLES: a destroyed geometry's GPU state kept (engine: geometry release)

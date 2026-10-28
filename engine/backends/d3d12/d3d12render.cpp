@@ -92,9 +92,12 @@
 #include "platform/datafs.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -390,6 +393,136 @@ struct Res {
     }
 };
 
+// ---- GPU BREADCRUMBS - a diagnostic, compiled in and always on ----------------
+//
+// A device removal (0x887A0006, DEVICE_HUNG, a TDR) says THAT the GPU hung, never WHICH work. Every major pass
+// writes `begin` before and `end` after itself into a small buffer with `WriteBufferImmediate` (MARKER_IN: when
+// the command processor reaches it; MARKER_OUT: when everything before it has finished). The buffer sits in
+// system memory, so it is still readable after the device is gone: the pass whose `begin` landed and whose
+// `end` did not is the one that hung. Each marker's value is a running sequence number; the CPU keeps what
+// each number stood for (`Rec`), so a stale slot from an older frame is never taken for a fresh one.
+// `OMK_FORCE_GPU_HANG=<pass name or id>[@frame]` (or `list`) puts a long compute loop at the start of that
+// pass - the way to see the report without a real hang. `OMK_NO_DRED=1` leaves DRED (below) off.
+enum CrumbPass : std::uint8_t {
+    kCpNone = 0, kCpFrame, kCpShadow, kCpWaterRefl, kCpScene, kCpDraws, kCpResolve, kCpAo, kCpVol, kCpUpscale,
+    kCpBloom, kCpPost, kCpFgCapture, kCpRtList, kCpRtBlas, kCpRtBlasJob, kCpRtTlas, kCpTexUpload, kCpOneShot,
+    kCpPresent, kCpPresPass, kCpOverlay, kCpFgMid, kCpFgPresent, kCpReadback, kCpUploadColour, kCpCount
+};
+constexpr const char* kCrumbNames[kCpCount] = {
+    "none", "frame list", "shadow map", "water reflection", "scene (main pass: every draw, RT shading)",
+    "scene draw milestone", "msaa resolve", "ssao / ray-traced AO", "volumetric lamp light", "upscaler dispatch",
+    "bloom chain", "post chain final (grade, DoF)", "framegen capture", "rt list (acceleration structures)",
+    "rt BLAS builds", "rt BLAS build (progress)", "rt TLAS build", "texture upload", "one-shot list (other)",
+    "present blit", "present pass", "overlay", "framegen in-between", "framegen deferred present (thread)",
+    "readback copy", "cpu frame upload"};
+// the lists a marker can be written on, and the short names the report gives them
+enum CrumbList : unsigned { kClFrame = 0, kClOne, kClRt, kClFg, kClCount };
+constexpr const char* kCrumbLists[kClCount] = {"frame list (frame queue)", "one-shot list", "rt list (frame queue)",
+                                               "framegen list (present queue)"};
+
+struct Crumbs {
+    static constexpr UINT kSlots = 256;
+    struct Rec { std::uint32_t seq = 0, frame = 0, arg = 0; std::uint8_t pass = 0, end = 0, list = 0; };
+    ID3D12Resource* buf = nullptr;
+    std::uint32_t* mem = nullptr;                  // mapped for life; the GPU writes, the CPU reads after a removal
+    D3D12_GPU_VIRTUAL_ADDRESS va = 0;
+    Rec rec[kSlots];
+    std::atomic<std::uint32_t> seq{0};
+    bool on = false;
+    ID3D12GraphicsCommandList2* l2[kClCount] = {};
+    // the list's pointer is the one this id was first used with
+    ID3D12GraphicsCommandList* base[kClCount] = {};
+    int hangPass = -1;                             // OMK_FORCE_GPU_HANG
+    std::uint32_t hangFrame = 0;
+    bool hangDone = false;
+
+    bool make(ID3D12Device* dev) {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS3 o3{};
+        if (FAILED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &o3, sizeof o3)) ||
+            !(o3.WriteBufferImmediateSupportFlags & D3D12_COMMAND_LIST_SUPPORT_FLAG_DIRECT)) {
+            std::printf("d3d12: GPU breadcrumbs off - this device has no WriteBufferImmediate on a direct list\n");
+            return false;
+        }
+        D3D12_RESOURCE_DESC d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        d.Width = kSlots * 4; d.Height = 1; d.DepthOrArraySize = 1; d.MipLevels = 1;
+        d.SampleDesc.Count = 1;
+        d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        // system memory the CPU reads cached (write-back, pool L0): what a hung GPU wrote stays there. A
+        // READBACK heap is the same memory by another name, tried when the custom one is refused.
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_CUSTOM;
+        hp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
+        hp.MemoryPoolPreference = D3D12_MEMORY_POOL_L0;
+        HRESULT hr = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COMMON,
+                                                  nullptr, IID_PPV_ARGS(&buf));
+        if (FAILED(hr)) {
+            hp = D3D12_HEAP_PROPERTIES{};
+            hp.Type = D3D12_HEAP_TYPE_READBACK;
+            hr = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST,
+                                              nullptr, IID_PPV_ARGS(&buf));
+        }
+        void* p = nullptr;
+        if (FAILED(hr) || FAILED(buf->Map(0, nullptr, &p))) {
+            std::printf("d3d12: GPU breadcrumbs off - the marker buffer could not be made (0x%08lx)\n",
+                        static_cast<unsigned long>(hr));
+            if (buf) { buf->Release(); buf = nullptr; }
+            return false;
+        }
+        mem = static_cast<std::uint32_t*>(p);
+        std::memset(mem, 0, kSlots * 4);
+        va = buf->GetGPUVirtualAddress();
+        buf->SetName(L"omk GPU breadcrumbs");
+        on = true;
+        if (const char* h = omk::envStr("OMK_FORCE_GPU_HANG")) {
+            std::string s = h;
+            const std::size_t at = s.find('@');
+            if (at != std::string::npos) { hangFrame = static_cast<std::uint32_t>(std::atoi(s.c_str() + at + 1)); s.resize(at); }
+            for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (!s.empty() && std::isdigit(static_cast<unsigned char>(s[0]))) hangPass = std::atoi(s.c_str());
+            else
+                for (int i = 1; i < kCpCount && hangPass < 0; ++i) {
+                    std::string n = kCrumbNames[i];
+                    for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (!s.empty() && n.find(s) != std::string::npos) hangPass = i;
+                }
+            if (hangPass <= 0 || hangPass >= kCpCount) {
+                std::printf("d3d12: OMK_FORCE_GPU_HANG=%s names no pass; they are:", h);
+                for (int i = 1; i < kCpCount; ++i) std::printf(" %d=\"%s\"", i, kCrumbNames[i]);
+                std::printf("\n");
+                hangPass = -1;
+            } else {
+                std::printf("d3d12: OMK_FORCE_GPU_HANG: a GPU hang will be forced at the start of pass %d \"%s\" "
+                            "from frame %u on (a diagnostic - the device WILL be removed)\n", hangPass,
+                            kCrumbNames[hangPass], hangFrame);
+            }
+        }
+        return true;
+    }
+
+    // one marker, written as the GPU reaches it. Cheap: a few of these a frame.
+    void mark(ID3D12GraphicsCommandList* l, unsigned lid, std::uint8_t pass, bool end, std::uint32_t frame,
+              std::uint32_t arg = 0) {
+        if (!on || !l || lid >= kClCount) return;
+        if (!l2[lid]) {
+            if (FAILED(l->QueryInterface(IID_PPV_ARGS(&l2[lid])))) { on = false; return; }
+            base[lid] = l;
+        }
+        const std::uint32_t s = seq.fetch_add(1) + 1;
+        const UINT slot = (s - 1) % kSlots;
+        rec[slot] = Rec{s, frame, arg, pass, static_cast<std::uint8_t>(end), static_cast<std::uint8_t>(lid)};
+        const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER p{va + 4ull * slot, s};
+        const D3D12_WRITEBUFFERIMMEDIATE_MODE m = end ? D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_OUT
+                                                       : D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_IN;
+        l2[lid]->WriteBufferImmediate(1, &p, &m);
+    }
+    void kill() {
+        for (auto*& p : l2) if (p) { p->Release(); p = nullptr; }
+        if (buf) { buf->Release(); buf = nullptr; }
+        on = false;
+    }
+};
+
 class D3D12Renderer : public omk::Renderer {
 public:
     bool init(int w, int h) override;
@@ -557,7 +690,35 @@ private:
     void flush();                       // signal, wait, report the debug layer
     void flushQueue(ID3D12CommandQueue* q);
     void drainDebug();
-    ID3D12GraphicsCommandList* oneShotBegin();
+    // GPU BREADCRUMBS, DRED and the report a device removal prints ("GPU BREADCRUMBS" above)
+    void crumb(ID3D12GraphicsCommandList* l, unsigned lid, std::uint8_t pass, bool end, std::uint32_t arg = 0) {
+        crumbs_.mark(l, lid, pass, end, diagFrame_, arg);
+        if (crumbs_.hangPass == pass && !end && !crumbs_.hangDone && diagFrame_ >= crumbs_.hangFrame) forceHang(l);
+    }
+    // begin now, end when the scope closes (a pass with early returns)
+    struct Scope {
+        D3D12Renderer& r; ID3D12GraphicsCommandList* l; unsigned lid; std::uint8_t pass;
+        Scope(D3D12Renderer& r_, ID3D12GraphicsCommandList* l_, unsigned lid_, std::uint8_t p, std::uint32_t arg = 0)
+            : r(r_), l(l_), lid(lid_), pass(p) { r.crumb(l, lid, pass, false, arg); }
+        ~Scope() { r.crumb(l, lid, pass, true); }
+        Scope(const Scope&) = delete;
+        Scope& operator=(const Scope&) = delete;
+    };
+    void forceHang(ID3D12GraphicsCommandList* l);
+    // a resource's debug name - "omk <tag> WxH" - which DRED's page-fault report gives back
+    void nameResource(ID3D12Resource* r, const char* tag, UINT a, UINT b) {
+        wchar_t n[96];
+        std::swprintf(n, sizeof n / sizeof *n, b ? L"omk %hs %ux%u" : L"omk %hs %u B", tag, a, b ? b : a);
+        r->SetName(n);
+    }
+    void reportRemoval(const char* where);
+    // the device has been removed (and said so): what fails after it is the same news over and over
+    bool lost() const { return removalSaid_.test(); }
+    void crumbReport(std::string& out);
+    void dredReport(std::string& out);
+    void logGfxModules();
+    void notePresented() { presFrames_[presN_.fetch_add(1) % 8] = diagFrame_; }
+    ID3D12GraphicsCommandList* oneShotBegin(std::uint8_t pass = kCpOneShot);
     void oneShotEnd(ID3D12CommandQueue* q = nullptr);
     void openFrameList();
     ID3D12Resource* makeBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, const char* tag);
@@ -679,6 +840,24 @@ private:
     ID3D12InfoQueue*           info_ = nullptr;      // OMK_D3D12_DEBUG only
     long                       dbgErrors_ = 0, dbgWarnings_ = 0;
     std::string                devName_;
+    // diagnostics: the breadcrumbs, the frame count, what was last submitted and the fence values around it
+    Crumbs                     crumbs_;
+    std::uint32_t              diagFrame_ = 0;          // frame lists opened so far
+    std::uint32_t              sceneDraws_ = 0;
+    std::uint8_t               oneId_ = kCpOneShot;     // the pass the open one-shot list is
+    const char*                lastSub_ = "nothing submitted yet";
+    const char*                lastQueue_ = "";
+    UINT64                     fenceDone_ = 0;          // the last fence value seen reached
+    std::atomic<std::uint32_t> presN_{0};
+    std::uint32_t              presFrames_[8] = {};
+    std::string                adapterInfo_;
+    std::string                rtNote_;                 // the last ray-tracing build's size, for the report
+    bool                       dredOn_ = false;
+    bool                       proxyDll_ = false;       // a dxgi.dll / d3d12.dll that is not the system's is loaded
+    std::atomic_flag           removalSaid_ = ATOMIC_FLAG_INIT;
+    ID3D12RootSignature*       hangRs_ = nullptr;       // OMK_FORCE_GPU_HANG's compute loop
+    ID3D12PipelineState*       hangPso_ = nullptr;
+    ID3D12Resource*            hangBuf_ = nullptr;
     DescHeap                   srv_, rtv_, dsv_;
 
     // ---- the sizes (the header's "two sizes") ----
@@ -1081,11 +1260,13 @@ ID3D12Resource* D3D12Renderer::makeBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, co
                                                                       : D3D12_RESOURCE_STATE_COMMON;
     ID3D12Resource* r = nullptr;
     if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, st, nullptr, IID_PPV_ARGS(&r)))) {
-        std::fprintf(stderr, "d3d12: buffer of %llu bytes (%s) failed\n",
-                     static_cast<unsigned long long>(bytes), tag);
+        if (!lost())
+            std::fprintf(stderr, "d3d12: buffer of %llu bytes (%s) failed\n",
+                         static_cast<unsigned long long>(bytes), tag);
         return nullptr;
     }
     OMK_GPU_ALLOC(tag, omk::prof::gpuKey(omk::prof::kD3dResource, r), bytes);
+    nameResource(r, tag, static_cast<UINT>(bytes), 0);
     return r;
 }
 
@@ -1104,36 +1285,291 @@ ID3D12Resource* D3D12Renderer::makeImage(DXGI_FORMAT fmt, UINT w, UINT h, UINT16
     d.Flags = flags;
     ID3D12Resource* r = nullptr;
     if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, init, clear, IID_PPV_ARGS(&r)))) {
-        std::fprintf(stderr, "d3d12: image %ux%u (%s) failed\n", w, h, tag);
+        if (!lost()) std::fprintf(stderr, "d3d12: image %ux%u (%s) failed\n", w, h, tag);
         return nullptr;
     }
     [[maybe_unused]] const D3D12_RESOURCE_ALLOCATION_INFO ai = dev_->GetResourceAllocationInfo(0, 1, &d);
     OMK_GPU_ALLOC(tag, omk::prof::gpuKey(omk::prof::kD3dResource, r), ai.SizeInBytes);
+    nameResource(r, tag, w, h);
     return r;
 }
 
 // Every list is submitted and WAITED, as every Vulkan submit here is: the
 // frame is synchronous, which is what lets the CPU write the vertex, pose and
 // uniform buffers in place at the next `begin` with nothing in flight.
+// The wait is in slices that look at the device: a removed device completes every fence by itself, but a
+// wait that never ends is the one failure a log cannot show - so after 10 s without progress it says so.
 void D3D12Renderer::flushQueue(ID3D12CommandQueue* q) {
     ++fenceVal_;
+    lastQueue_ = q == presQ_ ? "present queue" : "frame queue";
     q->Signal(fence_, fenceVal_);
     if (fence_->GetCompletedValue() < fenceVal_) {
         fence_->SetEventOnCompletion(fenceVal_, fenceEvent_);
-        WaitForSingleObject(fenceEvent_, INFINITE);
+        int waited = 0;
+        while (WaitForSingleObject(fenceEvent_, 250) == WAIT_TIMEOUT) {
+            if (FAILED(dev_->GetDeviceRemovedReason())) break;
+            if (++waited == 40) {
+                std::fprintf(stderr, "d3d12: the GPU has not finished the %s (fence %llu) in 10 s - last submitted: %s\n",
+                             lastQueue_, static_cast<unsigned long long>(fenceVal_), lastSub_);
+                std::fflush(stderr);
+            }
+        }
     }
+    const UINT64 done = fence_->GetCompletedValue();
+    if (done != UINT64_MAX && done >= fenceVal_) fenceDone_ = fenceVal_;
 }
 
 void D3D12Renderer::flush() {
     if (presQ_) flushQueue(presQ_);
     flushQueue(queue_);
     const HRESULT why = dev_->GetDeviceRemovedReason();
-    if (FAILED(why)) {
-        static bool said = false;
-        if (!said) std::fprintf(stderr, "d3d12: DEVICE REMOVED - 0x%08lx\n", static_cast<unsigned long>(why));
-        said = true;
-    }
+    if (FAILED(why)) reportRemoval("after waiting for the GPU");
     drainDebug();
+}
+
+// ---- THE REMOVAL REPORT -------------------------------------------------------------------------------------------
+static void appendf(std::string& s, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+static void appendf(std::string& s, const char* fmt, ...) {
+    char b[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    s += b;
+}
+
+static const char* removalName(HRESULT h) {
+    switch (static_cast<unsigned long>(h)) {
+        case 0x887A0005ul: return "DXGI_ERROR_DEVICE_REMOVED";
+        case 0x887A0006ul: return "DXGI_ERROR_DEVICE_HUNG (the GPU stopped answering: a TDR)";
+        case 0x887A0007ul: return "DXGI_ERROR_DEVICE_RESET";
+        case 0x887A0020ul: return "DXGI_ERROR_DRIVER_INTERNAL_ERROR";
+        case 0x887A0001ul: return "DXGI_ERROR_INVALID_CALL";
+        default: return "";
+    }
+}
+
+// which marker the GPU got to - the heart of the report (the comment on `Crumbs`)
+void D3D12Renderer::crumbReport(std::string& out) {
+    if (!crumbs_.on) { out += "breadcrumbs: off\n"; return; }
+    const std::uint32_t top = crumbs_.seq.load();
+    if (top == 0) { out += "breadcrumbs: no marker was ever recorded\n"; return; }
+    const std::uint32_t first = top > Crumbs::kSlots ? top - Crumbs::kSlots + 1 : 1;
+    const auto slotOf = [](std::uint32_t s) { return (s - 1) % Crumbs::kSlots; };
+    const auto reached = [&](std::uint32_t s) {
+        return crumbs_.rec[slotOf(s)].seq == s && crumbs_.mem[slotOf(s)] == s;
+    };
+    std::uint32_t lastOk = 0;
+    for (std::uint32_t s = top; s >= first && !lastOk; --s) if (reached(s)) lastOk = s;
+    appendf(out, "breadcrumbs: %u markers recorded, the GPU's last write is #%u (frame %u)\n", top, lastOk,
+            lastOk ? crumbs_.rec[slotOf(lastOk)].frame : 0u);
+    const std::uint32_t from = std::max(first, lastOk > 14 ? lastOk - 14 : 1u), to = std::min(top, lastOk + 10);
+    for (std::uint32_t s = from; s <= to; ++s) {
+        const Crumbs::Rec& r = crumbs_.rec[slotOf(s)];
+        appendf(out, "  %c #%-5u frame %-5u %-6s %-30s %s", reached(s) ? '+' : '-', s, r.frame, r.end ? "end" : "begin",
+                r.list < kClCount ? kCrumbLists[r.list] : "?", r.pass < kCpCount ? kCrumbNames[r.pass] : "?");
+        if (r.arg) appendf(out, " (%u)", r.arg);
+        out += "\n";
+    }
+    // a pass whose begin the GPU wrote and whose end it never did
+    out += "unfinished passes, oldest first (a begin is written when the command processor reaches it, so a later\n"
+           "one may only have been STARTED while an earlier one ran - the first non-container line is the suspect):\n";
+    int n = 0;
+    for (std::uint32_t s = first; s <= top; ++s) {
+        const Crumbs::Rec& r = crumbs_.rec[slotOf(s)];
+        if (r.seq != s || r.end || !reached(s) || r.pass == kCpDraws || r.pass == kCpRtBlasJob) continue;
+        bool done = false;
+        for (std::uint32_t t = s + 1; t <= top; ++t) {
+            const Crumbs::Rec& e = crumbs_.rec[slotOf(t)];
+            if (e.seq == t && e.end && e.pass == r.pass && e.list == r.list) { done = reached(t); break; }
+        }
+        if (done) continue;
+        const bool box = r.pass == kCpFrame || r.pass == kCpRtList;
+        appendf(out, "  >> pass \"%s\" on the %s, frame %u%s\n", kCrumbNames[r.pass], kCrumbLists[r.list], r.frame,
+                box ? " (the container of the rest)" : "");
+        ++n;
+    }
+    if (!n) out += "  none: every marker the GPU reached was closed - the hang is before the first marker of the next list, "
+                   "or in work no marker covers (a present, a copy between lists)\n";
+    // progress inside a long pass
+    for (std::uint32_t s = top; s >= first; --s) {
+        const Crumbs::Rec& r = crumbs_.rec[slotOf(s)];
+        if (r.seq == s && !r.end && (r.pass == kCpDraws || r.pass == kCpRtBlasJob) && reached(s)) {
+            appendf(out, "last %s reached: #%u in frame %u (the last frame recorded %u scene draws)\n", kCrumbNames[r.pass],
+                    r.arg, r.frame, sceneDraws_);
+            break;
+        }
+        if (s == first) break;
+    }
+    if (!rtNote_.empty()) appendf(out, "last ray-tracing build: %s\n", rtNote_.c_str());
+}
+
+static const char* const kDredOps[] = {
+    "SETMARKER", "BEGINEVENT", "ENDEVENT", "DRAWINSTANCED", "DRAWINDEXEDINSTANCED", "EXECUTEINDIRECT", "DISPATCH",
+    "COPYBUFFERREGION", "COPYTEXTUREREGION", "COPYRESOURCE", "COPYTILES", "RESOLVESUBRESOURCE", "CLEARRENDERTARGETVIEW",
+    "CLEARUNORDEREDACCESSVIEW", "CLEARDEPTHSTENCILVIEW", "RESOURCEBARRIER", "EXECUTEBUNDLE", "PRESENT",
+    "RESOLVEQUERYDATA", "BEGINSUBMISSION", "ENDSUBMISSION", "DECODEFRAME", "PROCESSFRAMES", "ATOMICCOPYBUFFERUINT",
+    "ATOMICCOPYBUFFERUINT64", "RESOLVESUBRESOURCEREGION", "WRITEBUFFERIMMEDIATE", "DECODEFRAME1",
+    "SETPROTECTEDRESOURCESESSION", "DECODEFRAME2", "PROCESSFRAMES1", "BUILDRAYTRACINGACCELERATIONSTRUCTURE",
+    "EMITRAYTRACINGACCELERATIONSTRUCTUREPOSTBUILDINFO", "COPYRAYTRACINGACCELERATIONSTRUCTURE", "DISPATCHRAYS",
+    "INITIALIZEMETACOMMAND", "EXECUTEMETACOMMAND", "ESTIMATEMOTION", "RESOLVEMOTIONVECTORHEAP", "SETPIPELINESTATE1",
+    "INITIALIZEEXTENSIONCOMMAND", "EXECUTEEXTENSIONCOMMAND", "DISPATCHMESH", "ENCODEFRAME",
+    "RESOLVEENCODEROUTPUTMETADATA", "BARRIER", "BEGIN_COMMAND_LIST"};
+
+// DRED (Device Removed Extended Data): the driver's own auto-breadcrumbs - every command of every list, which
+// ones completed - and, for a page fault, the address and the allocations around it
+void D3D12Renderer::dredReport(std::string& out) {
+    if (!dredOn_) { out += "DRED: off (OMK_NO_DRED, or the runtime has no DRED)\n"; return; }
+    ID3D12DeviceRemovedExtendedData1* d1 = nullptr;
+    if (FAILED(dev_->QueryInterface(IID_PPV_ARGS(&d1)))) { out += "DRED: the device gives no DeviceRemovedExtendedData1\n"; return; }
+    ID3D12DeviceRemovedExtendedData2* d2 = nullptr;
+    if (SUCCEEDED(dev_->QueryInterface(IID_PPV_ARGS(&d2)))) {
+        static const char* const st[] = {"unknown", "", "", "hung", "", "", "fault", "page fault"};
+        const unsigned s = static_cast<unsigned>(d2->GetDeviceState());
+        appendf(out, "DRED device state: %s (%u)\n", s < 8 && st[s][0] ? st[s] : "?", s);
+        d2->Release();
+    }
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 ab{};
+    if (SUCCEEDED(d1->GetAutoBreadcrumbsOutput1(&ab)) && ab.pHeadAutoBreadcrumbNode) {
+        int lists = 0, shown = 0;
+        for (const D3D12_AUTO_BREADCRUMB_NODE1* nd = ab.pHeadAutoBreadcrumbNode; nd; nd = nd->pNext) {
+            ++lists;
+            const UINT done = nd->pLastBreadcrumbValue ? *nd->pLastBreadcrumbValue : nd->BreadcrumbCount;
+            if (done >= nd->BreadcrumbCount || shown >= 6) continue;
+            ++shown;
+            char ln[128] = "(unnamed)", qn[128] = "(unnamed)";
+            if (nd->pCommandListDebugNameW) std::snprintf(ln, sizeof ln, "%ls", nd->pCommandListDebugNameW);
+            if (nd->pCommandQueueDebugNameW) std::snprintf(qn, sizeof qn, "%ls", nd->pCommandQueueDebugNameW);
+            appendf(out, "DRED: command list \"%s\" on queue \"%s\": %u of %u commands completed\n", ln, qn, done,
+                    nd->BreadcrumbCount);
+            const UINT lo = done > 4 ? done - 4 : 0;
+            for (UINT i = lo; i <= done && i < nd->BreadcrumbCount; ++i) {
+                const unsigned op = static_cast<unsigned>(nd->pCommandHistory[i]);
+                appendf(out, "    %s op #%u %s\n", i == done ? ">> HUNG HERE:" : "   done:     ", i,
+                        op < sizeof kDredOps / sizeof *kDredOps ? kDredOps[op] : "?");
+            }
+            for (UINT c = 0; c < nd->BreadcrumbContextsCount; ++c)
+                if (nd->pBreadcrumbContexts[c].BreadcrumbIndex <= done && nd->pBreadcrumbContexts[c].pContextString)
+                    appendf(out, "    context at op #%u: %ls\n", nd->pBreadcrumbContexts[c].BreadcrumbIndex,
+                            nd->pBreadcrumbContexts[c].pContextString);
+        }
+        if (!shown) appendf(out, "DRED: %d command lists tracked, none left incomplete\n", lists);
+    } else {
+        out += proxyDll_ ? "DRED: no auto-breadcrumbs recorded - a proxy dxgi.dll is loaded (see the `module` lines at "
+                           "the start of the log) and turns DRED's breadcrumbs off; the GPU breadcrumbs above still stand\n"
+                         : "DRED: no auto-breadcrumbs recorded\n";
+    }
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 pf{};
+    if (SUCCEEDED(d1->GetPageFaultAllocationOutput1(&pf)) && pf.PageFaultVA) {
+        appendf(out, "DRED PAGE FAULT at GPU virtual address 0x%llx\n", static_cast<unsigned long long>(pf.PageFaultVA));
+        for (int pass = 0; pass < 2; ++pass) {
+            const D3D12_DRED_ALLOCATION_NODE1* nd = pass ? pf.pHeadRecentFreedAllocationNode : pf.pHeadExistingAllocationNode;
+            out += pass ? "  recently FREED allocations that matched:\n" : "  existing allocations that matched:\n";
+            int k = 0;
+            for (; nd && k < 8; nd = nd->pNext, ++k)
+                appendf(out, "    %ls (type 0x%x)\n", nd->ObjectNameW ? nd->ObjectNameW : L"(unnamed)",
+                        static_cast<unsigned>(nd->AllocationType));
+            if (!k) out += "    none\n";
+        }
+    } else {
+        out += "DRED: no page fault (the GPU hung rather than touched bad memory)\n";
+    }
+    d1->Release();
+}
+
+// printed ONCE, to the error log and the log alike, and flushed: the next thing may be a crash or a kill
+void D3D12Renderer::reportRemoval(const char* where) {
+    if (removalSaid_.test_and_set()) return;
+    const HRESULT why = dev_->GetDeviceRemovedReason();
+    std::string o;
+    appendf(o, "d3d12: DEVICE REMOVED - 0x%08lx %s\n", static_cast<unsigned long>(why), removalName(why));
+    appendf(o, "  noticed %s; frame %u (frame lists opened); last submitted: %s on the %s\n", where, diagFrame_, lastSub_,
+            lastQueue_);
+    appendf(o, "  fences: %llu signalled on the frame queue's fence, %llu seen reached before the failure\n",
+            static_cast<unsigned long long>(fenceVal_), static_cast<unsigned long long>(fenceDone_));
+    appendf(o, "  adapter: %s\n", adapterInfo_.c_str());
+    const std::uint32_t pn = presN_.load();
+    o += "  last presented frames (oldest first):";
+    for (std::uint32_t i = pn > 8 ? pn - 8 : 0; i < pn; ++i) appendf(o, " %u", presFrames_[i % 8]);
+    o += pn ? "\n" : " none\n";
+    std::string c;
+    crumbReport(c);
+    o += c;
+    std::string d;
+    dredReport(d);
+    o += d;
+    o += "d3d12: end of the device-removal report\n";
+    std::fputs(o.c_str(), stderr);
+    std::fputs(o.c_str(), stdout);
+    std::fflush(stderr);
+    std::fflush(stdout);
+}
+
+// the graphics DLLs in this process and where they came from: a `dxgi.dll` or `d3d12.dll` that is not the
+// system's is a proxy sitting between the engine and the driver, and the first thing to rule out
+void D3D12Renderer::logGfxModules() {
+    wchar_t sys[MAX_PATH] = {};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    static const wchar_t* const names[] = {
+        L"dxgi.dll", L"d3d12.dll", L"d3d12core.dll", L"dxcompiler.dll", L"amdxc64.dll", L"atidxx64.dll",
+        L"nvwgf2umx.dll", L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss.dll", L"nvngx_dlss.dll", L"nvngx.dll",
+        L"_nvngx.dll", L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_upscaler_dx12.dll", L"reshade.dll",
+        L"d3d11.dll"};
+    for (const wchar_t* n : names) {
+        const HMODULE m = GetModuleHandleW(n);
+        if (!m) continue;
+        wchar_t path[MAX_PATH] = {};
+        GetModuleFileNameW(m, path, MAX_PATH);
+        const bool system = !_wcsnicmp(path, sys, wcslen(sys));
+        const bool proxy = !system && (!_wcsicmp(n, L"dxgi.dll") || !_wcsicmp(n, L"d3d12.dll") || !_wcsicmp(n, L"d3d11.dll"));
+        proxyDll_ |= proxy;
+        std::printf("d3d12: module %ls = %ls%s\n", n, path,
+                    proxy ? "   <-- NOT the system's: a proxy DLL sits between the engine and the driver" : "");
+    }
+}
+
+// OMK_FORCE_GPU_HANG: a compute dispatch that does not end, at the point in the list the named pass begins
+void D3D12Renderer::forceHang(ID3D12GraphicsCommandList* l) {
+    crumbs_.hangDone = true;
+    if (!hangPso_) {
+        using Compile = HRESULT (WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const void*, void*, LPCSTR, LPCSTR, UINT, UINT,
+                                          ID3DBlob**, ID3DBlob**);
+        const HMODULE m = LoadLibraryW(L"d3dcompiler_47.dll");
+        const auto compile = m ? reinterpret_cast<Compile>(reinterpret_cast<void*>(GetProcAddress(m, "D3DCompile"))) : nullptr;
+        static const char src[] =
+            "cbuffer C : register(b0) { uint n; };\n"
+            "RWByteAddressBuffer o : register(u0);\n"
+            "[numthreads(1,1,1)] void main() { uint x = 1; [loop] for (uint i = 0; i < n; i++) x = x * 1664525u + 1013904223u + (x >> 7); o.Store(0, x); }\n";
+        ID3DBlob* code = nullptr;
+        ID3DBlob* err = nullptr;
+        if (compile) compile(src, sizeof src - 1, "hang", nullptr, nullptr, "main", "cs_5_0", 0, 0, &code, &err);
+        release(err);
+        D3D12_ROOT_PARAMETER p[2]{};
+        p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        p[0].Constants.Num32BitValues = 1;
+        p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        D3D12_ROOT_SIGNATURE_DESC d{};
+        d.NumParameters = 2; d.pParameters = p;
+        hangRs_ = makeRootSig(d, "forced hang");
+        hangBuf_ = rtBuffer(256, D3D12_HEAP_TYPE_DEFAULT, true, D3D12_RESOURCE_STATE_COMMON, "forced hang");
+        if (code && hangRs_ && hangBuf_) {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC cd{};
+            cd.pRootSignature = hangRs_;
+            cd.CS = {code->GetBufferPointer(), code->GetBufferSize()};
+            dev_->CreateComputePipelineState(&cd, IID_PPV_ARGS(&hangPso_));
+        }
+        release(code);
+        if (!hangPso_) { std::fprintf(stderr, "d3d12: OMK_FORCE_GPU_HANG: the compute loop could not be made\n"); return; }
+    }
+    const UINT n = 0xFFFFFFFFu;
+    l->SetComputeRootSignature(hangRs_);
+    l->SetPipelineState(hangPso_);
+    l->SetComputeRoot32BitConstants(0, 1, &n, 0);
+    l->SetComputeRootUnorderedAccessView(1, hangBuf_->GetGPUVirtualAddress());
+    l->Dispatch(1, 1, 1);
+    bound_ = nullptr;
+    std::printf("d3d12: OMK_FORCE_GPU_HANG: the endless compute dispatch is in the list (frame %u)\n", diagFrame_);
+    std::fflush(stdout);
 }
 
 // `OMK_D3D12_DEBUG=1`: every message the debug layer stored, printed and
@@ -1160,17 +1596,21 @@ void D3D12Renderer::drainDebug() {
     info_->ClearStoredMessages();
 }
 
-ID3D12GraphicsCommandList* D3D12Renderer::oneShotBegin() {
+ID3D12GraphicsCommandList* D3D12Renderer::oneShotBegin(std::uint8_t pass) {
     oneAlloc_->Reset();
     oneList_->Reset(oneAlloc_, nullptr);
     ID3D12DescriptorHeap* heaps[] = {srv_.heap};
     oneList_->SetDescriptorHeaps(1, heaps);
+    oneId_ = pass;
+    crumb(oneList_, kClOne, pass, false);
     return oneList_;
 }
 
 void D3D12Renderer::oneShotEnd(ID3D12CommandQueue* q) {
+    crumb(oneList_, kClOne, oneId_, true);
     oneList_->Close();
     ID3D12CommandList* l[] = {oneList_};
+    lastSub_ = oneId_ < kCpCount ? kCrumbNames[oneId_] : "one-shot list";
     (q ? q : queue_)->ExecuteCommandLists(1, l);
     if (q && q != queue_) {
         flushQueue(q);
@@ -1191,6 +1631,9 @@ void D3D12Renderer::openFrameList() {
     list_->SetDescriptorHeaps(1, heaps);
     bound_ = nullptr;
     listOpen_ = true;
+    ++diagFrame_;
+    sceneDraws_ = 0;
+    crumb(list_, kClFrame, kCpFrame, false);
 }
 
 bool D3D12Renderer::pickDevice() {
@@ -1201,45 +1644,101 @@ bool D3D12Renderer::pickDevice() {
         ID3D12Debug* dbg = nullptr;
         if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dbg)))) {
             dbg->EnableDebugLayer();
+            // `OMK_D3D12_GBV=1` with it: GPU-BASED VALIDATION - the shaders instrumented, so a descriptor that
+            // is uninitialised, of the wrong type or of a freed resource is reported where it is read (slow)
+            if (omk::envFlag("OMK_D3D12_GBV")) {
+                ID3D12Debug1* d1 = nullptr;
+                if (SUCCEEDED(dbg->QueryInterface(IID_PPV_ARGS(&d1)))) {
+                    d1->SetEnableGPUBasedValidation(TRUE);
+                    d1->Release();
+                    std::printf("d3d12: GPU-based validation ON (OMK_D3D12_GBV)\n");
+                }
+            }
             dbg->Release();
             std::printf("d3d12: debug layer ON (OMK_D3D12_DEBUG)\n");
         } else {
             std::fprintf(stderr, "d3d12: OMK_D3D12_DEBUG set but no debug layer (Graphics Tools)\n");
         }
     }
+    // DRED, before the device exists (the settings are read when it is made): the driver's own breadcrumbs
+    // for every command and the page-fault report - what `reportRemoval` prints when the device goes.
+    // On by default, it is a diagnostic the player cannot switch on after the fact; `OMK_NO_DRED=1` leaves it.
+    if (!omk::envFlag("OMK_NO_DRED")) {
+        ID3D12DeviceRemovedExtendedDataSettings* ds = nullptr;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&ds)))) {
+            ds->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            ds->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+            ds->Release();
+            dredOn_ = true;
+        }
+    }
     DXCHECK(CreateDXGIFactory2(debug ? DXGI_CREATE_FACTORY_DEBUG : 0, IID_PPV_ARGS(&factory_)),
             "CreateDXGIFactory2");
-    // The HIGH-PERFORMANCE adapter first (a laptop's discrete GPU), never the
-    // software rasteriser: a WARP frame would be a third renderer, not this one.
+    // THE ADAPTER. Every hardware adapter, listed with its memory; the one with the MOST DEDICATED VIDEO MEMORY
+    // first (a discrete card has gigabytes, an integrated GPU a few hundred megabytes), ties in DXGI's
+    // high-performance order - so the choice never depends on which GPU a monitor is plugged into, nor on
+    // Windows' per-app GPU setting. The software rasteriser never: a WARP frame would be a third renderer.
     IDXGIFactory6* f6 = nullptr;
     factory_->QueryInterface(IID_PPV_ARGS(&f6));
+    struct Cand { IDXGIAdapter1* a; DXGI_ADAPTER_DESC1 d; UINT order; };
+    std::vector<Cand> cands;
     for (UINT i = 0;; ++i) {
         IDXGIAdapter1* a = nullptr;
         const HRESULT hr = f6 ? f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
                                                                 IID_PPV_ARGS(&a))
                               : factory_->EnumAdapters1(i, &a);
         if (FAILED(hr)) break;
-        DXGI_ADAPTER_DESC1 ad{};
-        a->GetDesc1(&ad);
-        HRESULT made = E_FAIL;
-        if (!(ad.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-            made = D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_));
-            // a hardware adapter passed over is said, with why: which GPU drew
-            // the frame is the first thing a reader of a log needs
-            if (FAILED(made))
-                std::fprintf(stderr, "d3d12: adapter %u (%ls) passed over - D3D12CreateDevice 0x%08lx\n", i,
-                             ad.Description, static_cast<unsigned long>(made));
-        }
-        if (SUCCEEDED(made)) {
-            adapter_ = a;
-            char name[256] = {};
-            WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name, sizeof name, nullptr, nullptr);
-            devName_ = name;
-            break;
-        }
-        a->Release();
+        Cand c{a, {}, i};
+        a->GetDesc1(&c.d);
+        if (c.d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) { a->Release(); continue; }
+        cands.push_back(c);
     }
     release(f6);
+    std::stable_sort(cands.begin(), cands.end(), [](const Cand& x, const Cand& y) {
+        return x.d.DedicatedVideoMemory > y.d.DedicatedVideoMemory;
+    });
+    for (const Cand& c : cands) {
+        char nm[256] = {};
+        WideCharToMultiByte(CP_UTF8, 0, c.d.Description, -1, nm, sizeof nm, nullptr, nullptr);
+        std::printf("d3d12: adapter (DXGI order %u): %s, vendor 0x%04x device 0x%04x, %llu MB dedicated, %llu MB shared\n",
+                    c.order, nm, c.d.VendorId, c.d.DeviceId,
+                    static_cast<unsigned long long>(c.d.DedicatedVideoMemory >> 20),
+                    static_cast<unsigned long long>(c.d.SharedSystemMemory >> 20));
+    }
+    for (std::size_t k = 0; k < cands.size() && !dev_; ++k) {
+        IDXGIAdapter1* a = cands[k].a;
+        const DXGI_ADAPTER_DESC1& ad = cands[k].d;
+        const HRESULT made = D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev_));
+        // a hardware adapter passed over is said, with why: which GPU drew
+        // the frame is the first thing a reader of a log needs
+        if (FAILED(made)) {
+            std::fprintf(stderr, "d3d12: adapter %u (%ls) passed over - D3D12CreateDevice 0x%08lx\n", cands[k].order,
+                         ad.Description, static_cast<unsigned long>(made));
+            continue;
+        }
+        adapter_ = a;
+        a->AddRef();
+        char name[256] = {};
+        WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name, sizeof name, nullptr, nullptr);
+        devName_ = name;
+        D3D12_FEATURE_DATA_ARCHITECTURE1 arch{};
+        const bool uma = SUCCEEDED(dev_->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE1, &arch, sizeof arch)) && arch.UMA;
+        LARGE_INTEGER drv{};
+        char ver[64] = "?";
+        if (SUCCEEDED(a->CheckInterfaceSupport(IID_IDXGIDevice, &drv)))
+            std::snprintf(ver, sizeof ver, "%u.%u.%u.%u", static_cast<unsigned>(HIWORD(drv.HighPart)),
+                          static_cast<unsigned>(LOWORD(drv.HighPart)), static_cast<unsigned>(HIWORD(drv.LowPart)),
+                          static_cast<unsigned>(LOWORD(drv.LowPart)));
+        char b[640];
+        std::snprintf(b, sizeof b, "%s - %s GPU (%s), vendor 0x%04x device 0x%04x, LUID %08lx:%08lx, driver %s, %llu MB dedicated",
+                      name, uma ? "INTEGRATED (UMA)" : "DISCRETE", cands[k].order == 0 ? "DXGI's first" : "NOT DXGI's first",
+                      ad.VendorId, ad.DeviceId, static_cast<unsigned long>(ad.AdapterLuid.HighPart),
+                      static_cast<unsigned long>(ad.AdapterLuid.LowPart), ver,
+                      static_cast<unsigned long long>(ad.DedicatedVideoMemory >> 20));
+        adapterInfo_ = b;
+        std::printf("d3d12: picked %s - the most dedicated video memory of %zu hardware adapter(s)\n", b, cands.size());
+    }
+    for (Cand& c : cands) c.a->Release();
     if (!dev_) { std::fprintf(stderr, "d3d12: no hardware D3D12 device\n"); return false; }
     if (debug && SUCCEEDED(dev_->QueryInterface(IID_PPV_ARGS(&info_)))) {
         info_->SetMuteDebugOutput(TRUE);   // ours prints them; no duplicate on the debugger
@@ -1267,6 +1766,17 @@ bool D3D12Renderer::pickDevice() {
     list_->Close();
     oneList_->Close();
     DXCHECK(dev_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)), "CreateFence");
+    // names, for DRED's report and the debug layer's
+    queue_->SetName(L"omk frame queue");
+    alloc_->SetName(L"omk frame allocator");
+    oneAlloc_->SetName(L"omk one-shot allocator");
+    list_->SetName(L"omk frame list");
+    oneList_->SetName(L"omk one-shot list");
+    fence_->SetName(L"omk frame fence");
+    crumbs_.make(dev_);
+    std::printf("d3d12: diagnostics - DRED %s, GPU breadcrumbs %s: a device removal prints which pass the GPU was in\n",
+                dredOn_ ? "on (auto-breadcrumbs + page faults)" : "off", crumbs_.on ? "on" : "off");
+    logGfxModules();
     fenceEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent_) return false;
     if (!srv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvHeapSize, true, kSlotFirstFree) ||
@@ -2103,7 +2613,7 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
     }
     const UINT idx = swap_->GetCurrentBackBufferIndex();
     Res& bb = swapBuf_[idx];
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpPresent);
     recordBlit(l, src, srv, sw, sh, texW, texH, idx);
     const int sW = static_cast<int>(swapW_), sH = static_cast<int>(swapH_);
     // THE WINDOW'S PICTURE, when asked (`captureWindow`): the back buffer as
@@ -2163,7 +2673,9 @@ bool D3D12Renderer::presentImage(Res& src, UINT srv, int sw, int sh, int texW, i
         freeRes(capBuf);
     }
     // FIFO, v-synced - what a 30 Hz game wants (Vulkan's FIFO)
-    swap_->Present(1, 0);
+    const HRESULT ph = swap_->Present(1, 0);
+    notePresented();
+    if (ph == DXGI_ERROR_DEVICE_REMOVED || ph == DXGI_ERROR_DEVICE_RESET) reportRemoval("by Present");
     return true;
 }
 
@@ -2193,7 +2705,7 @@ bool D3D12Renderer::uploadToColour(const unsigned char* rgba) {
     // into the DISPLAY image - `colour_` natively, the upscaler's output
     // (display-sized, where `colour_` is smaller) with one on
     Res& img = upscaleSource();
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpUploadColour);
     img.to(l, D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_TEXTURE_COPY_LOCATION dst{}, srcL{};
     dst.pResource = img.r;
@@ -2286,7 +2798,7 @@ bool D3D12Renderer::runPresentPass(int vy, int vh, Res* over) {
     // the POST CHAIN's picture when it ran this frame (display size, folded) -
     // or FRAME GENERATION's in-between picture (display size)
     Res& src = over ? *over : displaySource();
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpPresPass);
     src.to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(rtvPres_);
@@ -2409,7 +2921,7 @@ bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* ma
                     static_cast<std::size_t>(w_));
     }
     ovBuf_->Unmap(0, nullptr);
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpOverlay);
     const auto copy = [&](Res& img, DXGI_FORMAT f, UINT64 off, UINT64 pitch) {
         img.to(l, D3D12_RESOURCE_STATE_COPY_DEST);
         D3D12_TEXTURE_COPY_LOCATION dst{}, srcL{};
@@ -2436,7 +2948,7 @@ bool D3D12Renderer::presentOverlay(const omk::Surface& s, const std::uint8_t* ma
 
 // The overlay's planes blended over the present pass's picture in `presImg_`.
 void D3D12Renderer::ovDraw(const float fade[4]) {
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpOverlay);
     presImg_.to(l, D3D12_RESOURCE_STATE_RENDER_TARGET);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(rtvPres_);
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
@@ -2526,6 +3038,7 @@ bool D3D12Renderer::init(int w, int h) {
             if (FAILED(dev_->CreateCommandQueue(&qd, IID_PPV_ARGS(&presQ_)))) presQ_ = nullptr;
         }
     }
+    if (presQ_) presQ_->SetName(L"omk present queue");
     srcW_ = sourceW(); srcH_ = sourceH();
     if (!makeTarget()) return false;
     if (!makePipelines()) return false;
@@ -2579,11 +3092,32 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
     for (auto it = uploaded_.begin(); it != uploaded_.end();) {
         if (it->second.used) { ++it; continue; }
         if (!waited) { flush(); waited = true; }
+        // The freed texture's pair of descriptors is pointed at the 1x1 white and the flat normal map BEFORE the
+        // images go: the heap would keep a view of a released resource, and a ray-tracing record still naming
+        // this slot (a set drawn in the last 120 frames stays in the TLAS, drawn or not) would have a shader
+        // sample freed - with the 4x pack, unmapped - memory: a GPU page fault, which D3D12 reports as DEVICE_HUNG.
+        if (it->second.t.srv != UINT(-1) && white_.img && flat_.img) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+            sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            sv.Texture2D.MipLevels = 1;
+            dev_->CreateShaderResourceView(white_.img, &sv, srv_.cpu(it->second.t.srv));
+            dev_->CreateShaderResourceView(flat_.img, &sv, srv_.cpu(it->second.t.srv + 1));
+        }
         freeRes(it->second.t.img);
         freeRes(it->second.t.nm);
         srv_.freePair(it->second.t.srv);
         ++texGen_;   // no ray-tracing record may name the view now
         it = uploaded_.erase(it);
+    }
+    // ...and neither may a RETAINED set's: `rtNote` clears a set's records when the set is drawn, but a set in
+    // the TLAS that no draw names this frame kept the words of the textures just freed
+    for (auto& [g, b] : rtSet_) {
+        if (!b.recPtr || b.texGen == texGen_ || !white_.img) continue;
+        b.texGen = texGen_;
+        b.texAt.clear();
+        for (std::uint32_t t = 0; t < b.nOpaque + b.nCut; ++t) b.recPtr[16 * t + 15] = white_.srv;
     }
     tex_.assign(t.size(), Tex{});
     std::vector<std::pair<std::size_t, decltype(uploaded_)::key_type>> fresh;
@@ -2624,7 +3158,7 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
         // linear blit at exactly half size computes. The (0,0,0,0) key texels
         // keep every level premultiplied, as there.
         std::vector<ID3D12Resource*> staging;
-        ID3D12GraphicsCommandList* l = oneShotBegin();
+        ID3D12GraphicsCommandList* l = oneShotBegin(kCpTexUpload);
         for (Pending& p : pend) {
             UINT16 levels = 1;
             if (filter_ >= 2)
@@ -2985,6 +3519,7 @@ void D3D12Renderer::shadowPass(const omk::View& v, std::span<const omk::Draw> ca
     if (!live[0]) return;
 
     openFrameList();
+    Scope shadowScope(*this, list_, kClFrame, kCpShadow);
     // a posed caster is placed on the CPU: the depth-only pipeline reads no pose
     std::vector<omk::Draw> placed;
     placed.reserve(casters.size());
@@ -3125,6 +3660,7 @@ void D3D12Renderer::begin(const omk::View& view) {
     softDraws_ = 0;
     depthRo_ = false;
     openFrameList();
+    crumb(list_, kClFrame, kCpScene, false);   // (the clears, every draw and the RT shading in them; closed in `end`)
     // a frame with no shadow pass says so through the uniform
     if (!shadowLive_ && shUboPtr_) {
         ShadowUbo ub{};
@@ -3372,6 +3908,8 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         list_->DrawInstanced(static_cast<UINT>(j - i), 1, static_cast<UINT>(i), 0);
         i = j;
     }
+    // a milestone every 128 draws: how far into a long scene pass the GPU got
+    if ((++sceneDraws_ & 127u) == 0) crumb(list_, kClFrame, kCpDraws, false, sceneDraws_);
     if (subj) list_->OMSetStencilRef(1);
     st_.drawn += static_cast<long>(d.count / 3);
 }
@@ -3501,6 +4039,7 @@ void D3D12Renderer::beginReflection(const omk::View& rv) {
     // the reflection's tiles, into the buffer's second half (the points are the frame's, written by its `begin`)
     binTiles(rv, true);
     openFrameList();
+    crumb(list_, kClFrame, kCpWaterRefl, false);
     Res& rt = samples_ > 1 ? msColour_ : refl_;
     rt.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
     depth_.to(list_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
@@ -3537,6 +4076,7 @@ void D3D12Renderer::endReflection() {
         list_->ResolveSubresource(refl_.r, 0, msColour_.r, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
     }
     refl_.to(list_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    crumb(list_, kClFrame, kCpWaterRefl, true);
 }
 
 bool D3D12Renderer::drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
@@ -3725,11 +4265,13 @@ ID3D12Resource* D3D12Renderer::rtBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, bool
     d.Flags = uav ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE;
     ID3D12Resource* r = nullptr;
     if (FAILED(dev_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, st, nullptr, IID_PPV_ARGS(&r)))) {
-        std::fprintf(stderr, "d3d12: ray tracing buffer of %llu bytes (%s) failed\n",
-                     static_cast<unsigned long long>(bytes), tag);
+        if (!lost())
+            std::fprintf(stderr, "d3d12: ray tracing buffer of %llu bytes (%s) failed\n",
+                         static_cast<unsigned long long>(bytes), tag);
         return nullptr;
     }
     OMK_GPU_ALLOC(tag, omk::prof::gpuKey(omk::prof::kD3dResource, r), bytes);
+    nameResource(r, tag, static_cast<UINT>(bytes), 0);
     return r;
 }
 
@@ -3771,6 +4313,8 @@ bool D3D12Renderer::rtInit() {
         release(dev5_);
         return false;
     }
+    rtList_->SetName(L"omk rt list");
+    rtAlloc_->SetName(L"omk rt allocator");
     rtList_->Close();
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS in{};
     in.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
@@ -4035,8 +4579,22 @@ void D3D12Renderer::rtBuild() {
     ID3D12GraphicsCommandList4* l = rtList_;
     const D3D12_GPU_VIRTUAL_ADDRESS sva = rtScratch_->GetGPUVirtualAddress();
     UINT64 so = 0;
+    {
+        long long tris = 0;
+        int nSet = 0;
+        for (const Job& j : jobs) { tris += j.b->nOpaque + j.b->nCut; nSet += j.body ? 0 : 1; }
+        char nb[256];
+        std::snprintf(nb, sizeof nb, "frame %u: %zu BLAS builds (%d set, %zu body), %lld triangles, scratch %llu MB, "
+                      "%zu set BLAS held", diagFrame_, jobs.size(), nSet, jobs.size() - static_cast<std::size_t>(nSet),
+                      tris, static_cast<unsigned long long>(scratch >> 20), rtSet_.size());
+        rtNote_ = nb;
+    }
+    crumb(l, kClRt, kCpRtList, false);
+    crumb(l, kClRt, kCpRtBlas, false, static_cast<std::uint32_t>(jobs.size()));
+    UINT jobNo = 0;
     for (Job& j : jobs) {
         if (!j.b->as) continue;
+        if ((++jobNo & 15u) == 0) crumb(l, kClRt, kCpRtBlasJob, false, jobNo);
         D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC bd{};
         bd.Inputs = j.in;
         bd.DestAccelerationStructureData = j.b->as->GetGPUVirtualAddress();
@@ -4050,6 +4608,7 @@ void D3D12Renderer::rtBuild() {
     D3D12_RESOURCE_BARRIER uav{};
     uav.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     l->ResourceBarrier(1, &uav);
+    crumb(l, kClRt, kCpRtBlas, true);
     // 3. the TLAS: an instance a BLAS, its custom index the row of the table
     auto* inst = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(rtInstDescPtr_);
     auto* tab = static_cast<std::uint32_t*>(rtInstTabPtr_);
@@ -4086,8 +4645,11 @@ void D3D12Renderer::rtBuild() {
     td.Inputs.InstanceDescs = rtInstDesc_->GetGPUVirtualAddress();
     td.DestAccelerationStructureData = rtTlas_->GetGPUVirtualAddress();
     td.ScratchAccelerationStructureData = sva + so;
+    crumb(l, kClRt, kCpRtTlas, false, ni);
     l->BuildRaytracingAccelerationStructure(&td, 0, nullptr);
     l->ResourceBarrier(1, &uav);
+    crumb(l, kClRt, kCpRtTlas, true);
+    crumb(l, kClRt, kCpRtList, true);
     l->Close();
     rtRecorded_ = true;
     // the CPU's share (the bodies posed, the inputs recorded), for the log
@@ -4330,16 +4892,18 @@ void D3D12Renderer::end() {
                         "decides\n", t.dropped, static_cast<long>(g->corners.size() / 3));
         }
     if (!recording_) return;
+    crumb(list_, kClFrame, kCpScene, true);
     // MSAA: the resolve Vulkan's render pass does at its end
     if (samples_ > 1) {
+        Scope s(*this, list_, kClFrame, kCpResolve);
         msColour_.to(list_, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
         colour_.to(list_, D3D12_RESOURCE_STATE_RESOLVE_DEST);
         list_->ResolveSubresource(colour_.r, 0, msColour_.r, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
     }
-    if (ssaoOn_) runSsao();
+    if (ssaoOn_) { Scope s(*this, list_, kClFrame, kCpAo, rtOn_ ? 1u : 0u); runSsao(); }
     // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): added over the scene,
     // so the upscaler and the post chain take it with the rest
-    if (volOn_) runVol();
+    if (volOn_) { Scope s(*this, list_, kClFrame, kCpVol); runVol(); }
     if (softOn_ && softDraws_ > 0 && !softTold_) {
         softTold_ = true;
         std::printf("d3d12: soft particles - %ld sprite batches faded against the depth on this frame\n",
@@ -4350,12 +4914,12 @@ void D3D12Renderer::end() {
     // and `depth_` its depth: the input the upscaler takes (the header), and
     // the HUD and the rest of the 2D are composited over its OUTPUT later, at
     // the display size, on the CPU as ever.
-    if (up_) upscale();
+    if (up_) { Scope s(*this, list_, kClFrame, kCpUpscale); upscale(); }
     // THE POST CHAIN (todo/enhancements.md 22), display size, when asked
     runPost();
     // FRAME GENERATION (todo/enhancements.md 27): the finished world picture
     // kept, with its motion and depth at the display size
-    if (fgOn_) fgCapture();
+    if (fgOn_) { Scope s(*this, list_, kClFrame, kCpFgCapture); fgCapture(); }
     // It rests in COPY_SOURCE, where the readback copy and the present pass
     // expect it. The readback COPY itself is not recorded: a frame the GPU
     // presents never reads it (`readback()` does it when asked).
@@ -4369,10 +4933,14 @@ void D3D12Renderer::end() {
         rtBuild();
         rtTallyCopy(list_);
     }
+    crumb(list_, kClFrame, kCpFrame, true);
     list_->Close();
     if (rtRecorded_) {
         ID3D12CommandList* b[] = {rtList_};
+        lastSub_ = "rt list (acceleration structures), then the frame list";
         queue_->ExecuteCommandLists(1, b);
+    } else {
+        lastSub_ = "frame list";
     }
     ID3D12CommandList* l[] = {list_};
     queue_->ExecuteCommandLists(1, l);
@@ -4872,6 +5440,7 @@ void D3D12Renderer::runPost() {
         l->RSSetScissorRects(1, &sr);
     };
     if (postReq_.bloom) {
+        Scope bloomScope(*this, l, kClFrame, kCpBloom);
         l->SetGraphicsRootSignature(bloomRs_);
         // DOWN: the bright pass into level 0 from the frame, then level by level
         l->SetPipelineState(bloomDownPipe_);
@@ -4898,6 +5467,7 @@ void D3D12Renderer::runPost() {
         bloom_[0].to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
     // THE FINAL PASS
+    Scope finalScope(*this, l, kClFrame, kCpPost);
     depth_.to(l, D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     target(postImg_, rtvPost_, w_, h_);
     l->SetGraphicsRootSignature(postRs_);
@@ -4982,6 +5552,8 @@ bool D3D12Renderer::fgStart() {
         std::fprintf(stderr, "framegen: no command list for the deferred present - off\n");
         return false;
     }
+    fgList_->SetName(L"omk framegen list");
+    fgAlloc_->SetName(L"omk framegen allocator");
     fgList_->Close();
     fgEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fgEvent_) return false;
@@ -5236,7 +5808,7 @@ void D3D12Renderer::fgInterpolate(int n, int p, float k) {
     // motion-and-depth images (rewritten here: the frames before were waited for)
     Res* in[4] = {&fgCol_[n], &fgCol_[p], &fgAux_[n], &fgAux_[p]};
     for (int i = 0; i < 4; ++i) dev_->CreateShaderResourceView(in[i]->r, nullptr, srv_.cpu(kSlotFgIn + static_cast<UINT>(i)));
-    ID3D12GraphicsCommandList* l = oneShotBegin();
+    ID3D12GraphicsCommandList* l = oneShotBegin(kCpFgMid);
     const bool timed = fgQ_ && fgQBuf_;
     if (timed) l->EndQuery(fgQ_, D3D12_QUERY_TYPE_TIMESTAMP, 0);
     for (Res* r : in) r->to(l, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -5413,19 +5985,26 @@ void D3D12Renderer::fgBlitPresent() {
     fgList_->Reset(fgAlloc_, nullptr);
     ID3D12DescriptorHeap* heaps[] = {srv_.heap};
     fgList_->SetDescriptorHeaps(1, heaps);
+    crumb(fgList_, kClFg, kCpFgPresent, false);
     recordBlit(fgList_, presImg_, kSlotPres, w_, h_, w_, h_, idx);
     swapBuf_[idx].to(fgList_, D3D12_RESOURCE_STATE_PRESENT);
     presImg_.to(fgList_, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    crumb(fgList_, kClFg, kCpFgPresent, true);
     fgList_->Close();
     ID3D12CommandList* ls[] = {fgList_};
     swapQueue()->ExecuteCommandLists(1, ls);
-    swap_->Present(1, 0);
+    const HRESULT ph = swap_->Present(1, 0);
+    notePresented();
     ++fgFenceVal_;
     swapQueue()->Signal(fgFence_, fgFenceVal_);
     if (fgFence_->GetCompletedValue() < fgFenceVal_) {
+        // (in slices, like `flushQueue`: a removed device completes the fence by itself, but never wait blind)
         fgFence_->SetEventOnCompletion(fgFenceVal_, fgEvent_);
-        WaitForSingleObject(fgEvent_, INFINITE);
+        while (WaitForSingleObject(fgEvent_, 250) == WAIT_TIMEOUT)
+            if (FAILED(dev_->GetDeviceRemovedReason())) break;
     }
+    if (ph == DXGI_ERROR_DEVICE_REMOVED || ph == DXGI_ERROR_DEVICE_RESET || FAILED(dev_->GetDeviceRemovedReason()))
+        reportRemoval("by the framegen present thread");
     // how late it reached the screen's queue against when it was due
     // (hurried ones, sent early by the next frame, are not counted)
     std::lock_guard<std::mutex> lk(fgMu_);
@@ -5464,7 +6043,7 @@ const omk::Surface& D3D12Renderer::readback() {
     dirty_ = false;
     if (copyOwed_) {
         copyOwed_ = false;
-        ID3D12GraphicsCommandList* l = oneShotBegin();
+        ID3D12GraphicsCommandList* l = oneShotBegin(kCpReadback);
         // the scene's colour, or the upscaler's output - or THE POST CHAIN's
         // display-size picture when it ran (an SDR one: HDR's is FP16, and
         // HDR's frames go out on the GPU, `colour depth 32`'s overlay)
@@ -5630,6 +6209,10 @@ D3D12Renderer::~D3D12Renderer() {
     release(srv_.heap);
     release(rtv_.heap);
     release(dsv_.heap);
+    release(hangPso_);
+    release(hangRs_);
+    freeRes(hangBuf_);
+    crumbs_.kill();
     release(list_);
     release(oneList_);
     release(alloc_);

@@ -173,7 +173,7 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc glslang-tools python3
+          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc glslang-tools python3 mesa-vulkan-drivers
 
       # FSR 3.1 over Vulkan: AMD's FidelityFX SDK v1.1.4 (MIT) has no Linux library, so
       # linux/ffx-vk/ builds one from its source. Only the parts the build needs are taken.
@@ -196,6 +196,15 @@ jobs:
           bash linux/ffx-vk/build.sh upscalers/fsr-vk upscalers/ffx-build
           mkdir -p upscalers/lib
           cp upscalers/ffx-build/libamd_fidelityfx_vk.so upscalers/lib/
+
+      # No GPU here, but Mesa's software Vulkan (lavapipe) is enough to load the library,
+      # make an FSR 3.1 upscaler on it (every pass's pipeline is built from the generated
+      # shader headers) and ask for a render size.
+      - name: FSR 3.1 library test (software Vulkan)
+        continue-on-error: true
+        run: |
+          g++ -std=c++17 -I upscalers/fsr-vk/ffx-api/include linux/ffx-vk/test_context.cpp -o ffx-test -ldl -lvulkan
+          ./ffx-test upscalers/lib
 
       - name: Build
         working-directory: engine

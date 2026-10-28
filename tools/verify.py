@@ -28755,8 +28755,8 @@ def c_engine_framegen():
     ONE SOURCE FOR BOTH WINDOWS (`fg_cap.frag`, `fg_splat.frag`, `fg_resolve.frag` in
     `backends/vulkan/shaders/`; the push blocks, the room rule, the cut test and the probe in
     `o3de/framegen.h`; the scene's motion vectors are the `scene_mv` builds of the same two scene shaders):
-    every element above runs on the default Vulkan window too - except the FSR one, the upscalers being
-    Direct3D 12's - and the two windows agree: the real frame is byte-identical to the plain run's on both,
+    every element above runs on the default Vulkan window too - except the FSR one, which is
+    `engine: vulkan upscaler`'s there - and the two windows agree: the real frame is byte-identical to the plain run's on both,
     the probe's moving error is the same (3.92 warped against 9.38 blended, 42%, on an RX 9070 XT), and the
     last warped picture of the riding run differs from Direct3D 12's by under 0.1 on average, at most a
     few pixels more than 8 levels (measured: worst 20 of 255, mean 0.000).

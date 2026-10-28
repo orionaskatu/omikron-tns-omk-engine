@@ -31,6 +31,8 @@ concurrency:
 env:
   VULKAN_VERSION: 1.4.363.0
   FSR_VERSION: v2.3.0
+  # FSR 3.1 for the Vulkan renderer: AMD ships a signed Vulkan DLL only in the 1.1.x SDKs (2.x is DX12 only)
+  FSR_VK_VERSION: v1.1.4
   STREAMLINE_VERSION: v2.14.16
   W64DEVKIT_VERSION: 2.10.1
   SDL2_VERSION: 2.32.10
@@ -80,7 +82,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: upscalers
-          key: upscalers-fsr-${{ env.FSR_VERSION }}-sl-${{ env.STREAMLINE_VERSION }}
+          key: upscalers-fsr-${{ env.FSR_VERSION }}-fsrvk-${{ env.FSR_VK_VERSION }}-sl-${{ env.STREAMLINE_VERSION }}
 
       - name: Upscaler SDKs download
         if: steps.upscaler-cache.outputs.cache-hit != 'true'
@@ -94,6 +96,12 @@ jobs:
             "Kits/FidelityFX/upscalers/include/" "Kits/FidelityFX/docs/license.md"
           mv upscalers/fsr-clone/Kits/FidelityFX upscalers/fsr
           rm -rf upscalers/fsr-clone
+          # ...and the 1.1.x SDK's ffx-api headers and prebuilt signed Vulkan DLL (the 2.x one has no Vulkan)
+          git clone -q --depth 1 --branch "$FSR_VK_VERSION" --filter=blob:none --sparse \
+            https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git upscalers/fsr-vk
+          git -C upscalers/fsr-vk sparse-checkout set --no-cone \
+            "PrebuiltSignedDLL/amd_fidelityfx_vk.dll" "ffx-api/include/" "LICENSE.txt"
+          ls upscalers/fsr-vk/PrebuiltSignedDLL upscalers/fsr-vk/ffx-api/include/ffx_api/vk
           mkdir -p upscalers/streamline
           curl -sSL -o streamline.zip \
             "https://github.com/NVIDIAGameWorks/Streamline/releases/download/$STREAMLINE_VERSION/streamline-sdk-$STREAMLINE_VERSION.zip"
@@ -108,6 +116,7 @@ jobs:
           export VULKAN_SDK="C:/VulkanSDK/$VULKAN_VERSION"
           export SDL2_DIR="$(pwd -W)/deps/sdl2/SDL2-$SDL2_VERSION/x86_64-w64-mingw32"
           export FSR_SDK="$(pwd -W)/upscalers/fsr"
+          export FSRVK_SDK="$(pwd -W)/upscalers/fsr-vk"
           export SL_SDK="$(pwd -W)/upscalers/streamline"
           bash ./build-windows.sh -j"$(nproc)"
 
@@ -119,18 +128,19 @@ jobs:
           cp engine/build/omk-play.exe dist/
           cp engine/build/*.dll dist/
           # the build must have both upscalers, or the release would be missing a feature
-          for f in amd_fidelityfx_loader_dx12.dll amd_fidelityfx_upscaler_dx12.dll sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll; do
+          for f in amd_fidelityfx_loader_dx12.dll amd_fidelityfx_upscaler_dx12.dll amd_fidelityfx_vk.dll sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll; do
             [ -f "dist/$f" ] || { echo "MISSING $f - FSR / DLSS did not get built in"; exit 1; }
           done
           cp -r tables dist/tables
           cp windows/omk.ini omk.ini.example dist/
           cp LICENSE dist/licenses/OMK-LICENSE.txt
           cp upscalers/fsr/docs/license.md dist/licenses/AMD-FidelityFX-license.md
+          cp upscalers/fsr-vk/LICENSE.txt dist/licenses/AMD-FidelityFX-1.1.4-license.txt
           cp upscalers/streamline/license.txt dist/licenses/NVIDIA-Streamline-license.txt
           cp upscalers/streamline/3rd-party-licenses.md dist/licenses/NVIDIA-Streamline-3rd-party.md
           cp upscalers/streamline/bin/x64/nvngx_dlss.license.txt dist/licenses/NVIDIA-DLSS-license.txt
           cat > dist/README.txt <<'EOT'
-          Omikron - OMK engine, Windows build (Direct3D 12 / Vulkan, FSR and DLSS).
+          Omikron - OMK engine, Windows build (Direct3D 12 / Vulkan, FSR and DLSS on both).
 
           1. You need your own copy of the game (the Steam one is fine).
           2. Unzip ALL of this INTO the game's folder (the one with Runtime.exe).

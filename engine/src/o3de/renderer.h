@@ -637,9 +637,10 @@ public:
     // depth and motion vectors over a sub-pixel jitter. `kind` 1 is AMD FSR,
     // 2 NVIDIA DLSS; `quality` 0 native AA (ratio 1.0), 1 quality (1.5),
     // 2 balanced (1.7), 3 performance (2.0), 4 ultra performance (3.0). Same
-    // contract as the rest: a request before `init()`. Only the Direct3D 12
-    // backend takes it - the SDKs ship D3D12 libraries - and everything the
-    // upscaler needs (the jitter, the previous camera, the motion target) is
+    // contract as the rest: a request before `init()`. The Direct3D 12 and the
+    // Vulkan backends take it (the SDKs' libraries are loaded at run time:
+    // `backends/d3d12/upscale.h`, `backends/vulkan/upscale_vk.h`) and everything
+    // the upscaler needs (the jitter, the previous camera, the motion target) is
     // that backend's own state, so nothing on this boundary changes for the
     // others: they answer false and draw exactly as before.
     virtual bool setUpscaler(int /*kind*/, int /*quality*/) { return false; }

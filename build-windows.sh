@@ -64,8 +64,11 @@ fi
 # FSR and DLSS are built in when their SDKs are given (see the README):
 #   FSR_SDK  the AMD FidelityFX SDK's Kits/FidelityFX folder
 #   SL_SDK   the unzipped NVIDIA Streamline SDK
+#   FSRVK_SDK  the AMD FidelityFX SDK v1.1.4 (its ffx-api headers and the signed
+#              Vulkan DLL), for FSR 3.1 on the Vulkan renderer
 [ -n "$FSR_SDK" ] && set -- "FSR_SDK=$FSR_SDK" "$@"
 [ -n "$SL_SDK" ] && set -- "SL_SDK=$SL_SDK" "$@"
+[ -n "$FSRVK_SDK" ] && set -- "FSRVK_SDK=$FSRVK_SDK" "$@"
 
 cd "$HERE/engine"
 make play CXX=g++ "$@"

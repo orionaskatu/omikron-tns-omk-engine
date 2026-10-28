@@ -18,7 +18,7 @@ Good to know:
 
 ## Quick start on Linux
 
-Same idea, with the Linux archive of the [latest release](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest): **`omk-linux.tar.gz`**. It draws with Vulkan (there is no Direct3D 12 on Linux, so no FSR 4 / DLSS there yet; everything else is on).
+Same idea, with the Linux archive of the [latest release](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest): **`omk-linux.tar.gz`**. It draws with Vulkan (there is no Direct3D 12 on Linux). The upscaler is not in the archive yet: it needs AMD's Vulkan library for FSR 3.1, which AMD only hands out for Windows (on Linux it has to be built from AMD's source), and DLSS has no Linux library in NVIDIA's Streamline kit. Everything else is on.
 
 1. Find the folder of your copy of Omikron, the one that has the `IAM` folder in it. On Steam: right click the game, *Manage*, *Browse local files*.
 2. Extract the archive **into that folder**:
@@ -62,7 +62,7 @@ This fork is mainly to have a working **Windows** build (the original being focu
   - Bloom
   - Depth of Field
 
-All features ported to Vulkan except FSR4/DLSS.
+All features are on Vulkan too. FSR 4 only exists on Direct3D 12 (AMD has no Vulkan version of it); on Vulkan the upscaler is FSR 3.1, or DLSS on an NVIDIA card. I could only test FSR (on an AMD card), DLSS on Vulkan is written from NVIDIA's documentation and has never run.
 
 > [!NOTE]
 > **Done exclusively with Opus 5.5 and Sonnet 5.5 with low to no human review, so expect this to be really badly optimized**
@@ -176,7 +176,7 @@ These are the settings added by this fork, all in `omk.ini.example` with a longe
 | `animblend` | Smooths the animations when a character changes movement (starts walking, stops, turns). |
 | `lod` | `best` keeps every passer-by on the best model, even far away. `game` is the original. |
 | `vehicleshine` | Shiny lights and sky reflection on the sliders and motos. |
-| `upscaler` | `fsr` or `dlss` draws the game smaller and upscales it. Direct3D 12 only. |
+| `upscaler` | `fsr` or `dlss` draws the game smaller and upscales it. Works with both renderers: FSR 4 on Direct3D 12 with an RDNA 4 card, FSR 3.1 everywhere else and on Vulkan. DLSS was never run on an NVIDIA card. |
 | `upscalequality` | `native`, `quality`, `balanced`, `performance` or `ultraperformance`. |
 
 The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supersampling`, `shadowquality`, `lighting`, `framerate`, `uiscaling`, `textscaling`...) are in the same section.
@@ -198,7 +198,7 @@ The release's `omk.ini` already points to them. A folder that is not there is ju
 Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
 
 > [!NOTE]
-> FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK` and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has both. DLSS does not compile with the MSYS2 compiler (its Windows headers are too old), the releases are built with [w64devkit](https://github.com/skeeto/w64devkit) instead (see `.github/workflows/windows-build.yml`).
+> FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK`, `FSRVK_SDK` for FSR on Vulkan, and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has all of them. DLSS does not compile with the MSYS2 compiler (its Windows headers are too old), the releases are built with [w64devkit](https://github.com/skeeto/w64devkit) instead (see `.github/workflows/build.yml`).
 
 ----
 

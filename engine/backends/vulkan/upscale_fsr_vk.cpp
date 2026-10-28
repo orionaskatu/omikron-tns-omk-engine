@@ -24,10 +24,17 @@
 
 #if defined(OMK_FSR_VK)
 
+#ifndef _WIN32
+// ffx_api.h marks its entry points __declspec(dllexport); this file only calls them
+#define __declspec(x)
+#endif
 #include <ffx_api/ffx_api.h>
 #include <ffx_api/ffx_api_types.h>
 #include <ffx_api/ffx_upscale.h>
 #include <ffx_api/vk/ffx_api_vk.h>
+#ifndef _WIN32
+#undef __declspec
+#endif
 
 namespace omk::vkup {
 namespace {

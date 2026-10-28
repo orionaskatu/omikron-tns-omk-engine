@@ -29938,7 +29938,7 @@ def c_engine_upscaler():
       `DLSS unsupported on this GPU` or `DLSS unavailable` - and falls back to
       FSR with the frame still dumped; on an NVIDIA GPU it must load instead;
       and the DLSS_NR query is logged either way when Streamline is present;
-    * Vulkan declines the upscaler and says it is the D3D12 backend's.
+    * Vulkan takes the upscaler too now (`engine: vulkan upscaler`): it no longer says "off on Vulkan".
     Skipped without a D3D12 device or without the FSR DLLs next to the viewer.
     SHOWN TO FAIL with the motion vectors forced to zero (`scene.frag`'s
     `outMotion` made `vec2(0.0)` under OMK_MOTION): the walking crowd moves
@@ -29978,8 +29978,9 @@ def c_engine_upscaler():
         t_crowd, _ = run("d3d12", ["--upscaler", "fsr"], "crowd", frames=40, crowd=True)
         t_dlss, d_dlss = run("d3d12", ["--upscaler", "dlss"], "dlss", frames=10)
         t_vk, _ = run("vulkan", ["--upscaler", "fsr"], "vulkan", frames=3)
-    evt_ok = bool(re.search(r"@evt upscaler sdk=FSR version=\S+ rw=\d+ rh=\d+ dw=%d dh=%d" % (W, H), t_fsr))
-    m = re.search(r"upscaler: (\w+) (\S+) - render (\d+)x(\d+) -> display (\d+)x(\d+)", t_fsr)
+    # (the loader's default provider names itself with a trailing " *": "4.1.2 *", quoted in the event)
+    evt_ok = bool(re.search(r'@evt upscaler sdk=FSR version=(?:"[^"]*"|\S+) rw=\d+ rh=\d+ dw=%d dh=%d' % (W, H), t_fsr))
+    m = re.search(r"upscaler: (\w+) (\S+(?: \*)?) - render (\d+)x(\d+) -> display (\d+)x(\d+)", t_fsr)
     sdk, ver = (m.group(1), m.group(2)) if m else ("", "")
     rw, rh, dw, dh = (int(m.group(k)) for k in range(3, 7)) if m else (0, 0, 0, 0)
     def compare(d0, d1):
@@ -30014,7 +30015,7 @@ def c_engine_upscaler():
     got = (sdk, evt_ok, bool(re.match(r"\d", ver)), (abs(rw - 853) <= 1, abs(rh - 480) <= 1, dw, dh),
            len(d_fsr) == n * 2, mean < 0.35, within > 0.97, errs,
            len(still) > 10, still_max < 0.005, walk_share > 0.01, walk_px > 2.0,
-           nvidia or dlss_fell, nr_logged, "off on Vulkan" in t_vk)
+           nvidia or dlss_fell, nr_logged, "off on Vulkan" not in t_vk)
     want = ("FSR", True, True, (True, True, W, H), True, True, True, 0,
             True, True, True, True, True, True, True)
     return got, want, (
@@ -30024,6 +30025,153 @@ def c_engine_upscaler():
             ver, rw, rh, dw, dh, mean, 100.0 * within, errs, 100.0 * still_max, len(still),
             100.0 * walk_share, walk_px, "loaded (NVIDIA)" if nvidia else
             "fell back to FSR" if dlss_fell else "NO clean fallback"))
+
+
+def c_engine_vulkan_upscaler():
+    r"""`omk-play --upscaler fsr|dlss` on VULKAN: TEMPORAL UPSCALING on the second window (`todo/enhancements.md` 18).
+
+    The Vulkan backend draws the frame at a RENDER size below the display size over the same per-frame
+    sub-pixel jitter, writes the same motion vectors (`scene.vert`/`scene.frag` -DOMK_MOTION, the builds frame
+    generation uses), copies its depth into a plain R32_SFLOAT image and hands colour, depth and motion to
+    AMD FSR 3.1 - the FidelityFX SDK v1.1.4's Vulkan library, `amd_fidelityfx_vk.dll`, the newest AMD ships
+    one for (FSR 4 is DX12-only) - or NVIDIA DLSS through Streamline (`backends/vulkan/upscale_*vk*`). The
+    result is copied back over `colour_` at the display size, so the post chain, the present pass, the
+    readback and frame generation take it as an ordinary picture. Off by default. Asserted, on the street
+    start at 1280x720 through `--world-vulkan`:
+    * FSR LOADS on Vulkan and reports its version (`@evt upscaler ... api=vulkan`), the render size the
+      quality ladder's: quality 853x480, balanced 752x423, ultra performance 426x240, native 1280x720;
+    * supersampling and MSAA give way, each said (`--ssaa 2 --aa 4`);
+    * the upscaled frame is CLOSE to the native Vulkan one (same frame, no crowd): mean difference under 0.35
+      565 steps (0.171-0.239 measured), 97% of pixels within two (98.4-98.9%), and no Vulkan validation-layer error
+      (`VK_LAYER_KHRONOS_validation`, when the machine has it - FidelityFX's own storage-image format
+      warning is not counted);
+    * the MOTION VECTORS (`OMK_MOTION_STATS`, `@evt upscaler.motion`): with no crowd and the camera at rest,
+      under 0.5% of the picture moves more than half a pixel in every frame after the first cut; with the
+      crowd walking, some frame has more than 1% moving and a vector of more than 2 pixels (8% and 36 px
+      measured);
+    * `--upscaler dlss` on a GPU DLSS does not run (this one: AMD) says so - `DLSS unsupported on this GPU` -
+      and falls back to FSR with the frame still drawn; on an NVIDIA GPU it must load instead. **DLSS on
+      Vulkan is written to the SDK's documentation and has NOT been run on NVIDIA hardware**;
+    * off, the run says nothing of an upscaler and two runs are byte-identical;
+    * the WINDOW (hidden, 640x480, 32-bit colour, `OMK_WINDUMP`): the FSR picture is the native one's within
+      mean 4 levels and not byte-equal to it; with the post chain (bloom, grade) it differs from the FSR-only
+      picture (the chain reads the UPSCALED picture); and with frame generation on, in-between frames
+      are presented over the upscaled frames.
+    Skipped without the FidelityFX Vulkan library next to the viewer or without a Vulkan device.
+    SHOWN TO FAIL with the motion vectors forced to zero (`scene.frag`'s `outMotion` made `vec2(0.0)` under
+    OMK_MOTION): the walking crowd moves nothing.
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "the viewer did not build"
+    if not (os.path.exists(os.path.join(eng, "build", "amd_fidelityfx_vk.dll")) or
+            os.path.exists(os.path.join(eng, "build", "libamd_fidelityfx_vk.so"))):
+        return ("skipped",), ("skipped",), "no FidelityFX Vulkan library next to the viewer (deps/fsr-sdk-1.1.4 absent)"
+    W, H = 1280, 720
+    n = W * H
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(extra, name, frames=60, crowd=False, env=None):
+            out = os.path.join(tmp, name + ".bin")
+            e = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_MOTION_STATS="1")
+            e.update(env or {})
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save, "--area", "0", "--stand", "1804,0,-6890,336",
+                                "--world-vulkan", "--nofmv", "--nodelay",
+                                "--res", "%dx%d" % (W, H), "--frames", str(frames),
+                                "--dump", out] + ([] if crowd else ["--no-crowd"]) + extra,
+                               capture_output=True, env=e)
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            data = open(out, "rb").read() if os.path.exists(out) else b""
+            return text, data
+        t_nat, d_nat = run([], "native")
+        t_nat2, d_nat2 = run([], "native2")
+        if "the world through VULKAN" not in t_nat:
+            return ("skipped",), ("skipped",), "no Vulkan device"
+        t_fsr, d_fsr = run(["--upscaler", "fsr", "--upscale-quality", "quality"], "fsr",
+                           env={"VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation"})
+        t_crowd, _ = run(["--upscaler", "fsr"], "crowd", frames=40, crowd=True)
+        t_dlss, d_dlss = run(["--upscaler", "dlss"], "dlss", frames=10)
+        t_ms, _ = run(["--upscaler", "fsr", "--aa", "4", "--ssaa", "2"], "ms", frames=3)
+        sizes = {}
+        for q in ("native", "balanced", "ultraperformance"):
+            tq, _ = run(["--upscaler", "fsr", "--upscale-quality", q], "q_" + q, frames=3)
+            m = re.search(r"upscaler: FSR \S+ - render (\d+)x(\d+) -> display (\d+)x(\d+)", tq)
+            sizes[q] = tuple(int(m.group(k)) for k in range(1, 5)) if m else (0, 0, 0, 0)
+        # THE WINDOW: the default Vulkan one, hidden, 32-bit colour
+        always = {"OMK_FRAMEGEN_ALWAYS": "1"}
+        wr = _d3d12_street_runs([("nat", [], {}),
+                                 ("fsr", ["--upscaler", "fsr"], {}),
+                                 ("post", ["--upscaler", "fsr", "--bloom", "--colorgrade", "cyber"], {}),
+                                 ("fg", ["--upscaler", "fsr", "--framegen"], always)], backend="vulkan")
+        if isinstance(wr, tuple):
+            return wr
+    evt_ok = bool(re.search(r"@evt upscaler sdk=FSR version=3\.\S+ rw=\d+ rh=\d+ dw=%d dh=%d quality=quality api=vulkan" % (W, H), t_fsr))
+    m = re.search(r"upscaler: (\w+) (\S+) - render (\d+)x(\d+) -> display (\d+)x(\d+)", t_fsr)
+    sdk, ver = (m.group(1), m.group(2)) if m else ("", "")
+    rw, rh, dw, dh = (int(m.group(k)) for k in range(3, 7)) if m else (0, 0, 0, 0)
+    def compare(d0, d1):
+        if not (len(d0) == len(d1) == n * 2):
+            return 99.0, 0.0
+        tot, within = 0.0, 0
+        for p, q in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+            if p == q:
+                within += 1
+                continue
+            dr = abs(((p >> 11) & 31) - ((q >> 11) & 31))
+            dg = abs(((p >> 5) & 63) - ((q >> 5) & 63)) / 2.0
+            db = abs((p & 31) - (q & 31))
+            tot += (dr + dg + db) / 3.0
+            within += max(dr, dg, db) <= 2
+        return tot / n, within / n
+    mean, within = compare(d_nat, d_fsr)
+    errs = sum(1 for l in t_fsr.splitlines() if "Validation Error" in l)
+    def motion(text):
+        rows = re.findall(r"@evt upscaler\.motion frame=(\d+) moving=([\d.]+) max=([\d.]+) mean=([\d.]+) reset=(\d)",
+                          text)
+        return [(int(f), float(mv), float(mx)) for f, mv, mx, _, rs in rows if rs == "0"]
+    still = motion(t_fsr)
+    walk = motion(t_crowd)
+    still_max = max((mv for _, mv, _ in still), default=1.0)
+    walk_share = max((mv for _, mv, _ in walk), default=0.0)
+    walk_px = max((mx for _, _, mx in walk), default=0.0)
+    nvidia = "DLSS loaded on Vulkan" in t_dlss
+    dlss_fell = ("DLSS unsupported on this GPU" in t_dlss and "trying FSR" in t_dlss
+                 and "upscaler: FSR" in t_dlss and len(d_dlss) == n * 2)
+    ladder = (sizes["native"] == (W, H, W, H), sizes["balanced"][:2] in ((752, 423), (753, 424)),
+              sizes["ultraperformance"][:2] in ((426, 240), (427, 240)))
+    ms_ok = "supersampling x2 ignored" in t_ms and "4x MSAA off" in t_ms
+    quiet = "upscaler" not in t_nat.lower().replace("remaster", "") and "vulkan motion" not in t_nat
+    def pdiff(a, b):
+        if not a or len(a) != len(b):
+            return 99.0
+        return sum(abs(x - y) for x, y in zip(a, b)) / float(len(a))
+    nat_w, fsr_w, post_w, fg_w = (wr[k] for k in ("nat", "fsr", "post", "fg"))
+    win_ok = (bool(fsr_w[1]) and "upscaler: FSR" in fsr_w[0] and "renderer: VULKAN" in fsr_w[0]
+              and fsr_w[1] != nat_w[1] and pdiff(nat_w[1], fsr_w[1]) < 4.0)
+    post_ok = bool(post_w[1]) and post_w[1] != fsr_w[1] and "post: the chain ran" in post_w[0]
+    fgm = re.findall(r"@evt framegen\.stats real=(\d+) interp=(\d+)", fg_w[0])
+    fg_ok = bool(fgm) and int(fgm[-1][1]) > 20 and bool(fg_w[1])
+    got = (sdk, evt_ok, bool(re.match(r"\d", ver)), (abs(rw - 853) <= 1, abs(rh - 480) <= 1, dw, dh),
+           len(d_fsr) == n * 2, mean < 0.35, within > 0.97, errs, ladder, ms_ok,
+           len(still) > 10, still_max < 0.005, walk_share > 0.01, walk_px > 2.0,
+           nvidia or dlss_fell, quiet, d_nat == d_nat2 and len(d_nat) == n * 2, win_ok, post_ok, fg_ok)
+    want = ("FSR", True, True, (True, True, W, H), True, True, True, 0, (True, True, True), True,
+            True, True, True, True, True, True, True, True, True, True)
+    return got, want, (
+        "FSR %s on Vulkan, render %dx%d -> %dx%d (ladder %s); against the native frame mean %.3f steps, "
+        "%.2f%% within 2, %d validation errors; motion: still scene at most %.3f%% moving over %d frames, "
+        "walking crowd up to %.2f%% moving and %.1f px; dlss: %s; window: fsr %.2f levels off native, "
+        "framegen %s" % (
+            ver, rw, rh, dw, dh, "/".join("%dx%d" % sizes[q][:2] for q in ("native", "balanced", "ultraperformance")),
+            mean, 100.0 * within, errs, 100.0 * still_max, len(still), 100.0 * walk_share, walk_px,
+            "loaded (NVIDIA)" if nvidia else "fell back to FSR" if dlss_fell else "NO clean fallback",
+            pdiff(nat_w[1], fsr_w[1]), "%s in-between of %s real" % (fgm[-1][1], fgm[-1][0]) if fgm else "no stats"))
 
 
 def c_engine_vulkan_parity_rt():
@@ -52544,6 +52692,8 @@ def c_licence_headers():
     # 642: + `engine/src/o3de/floormesh.h` (ray-traced reflections' ground)
     # 644: + `postfx.h`, `framegen.h` (the census was not moved when they came)
     # 646: + `engine/src/o3de/rtscene.{h,cpp}` (hybrid ray tracing's scene, shared by both backends)
+    # 709: + `engine/src/o3de/upscaleshared.h` and `engine/backends/vulkan/upscale_vk.{h,cpp}`, `upscale_fsr_vk.cpp`,
+    # `upscale_dlss_vk.cpp` (the upscalers on Vulkan)
     # 704: the merge of the upstream author's remaster (2026-10-27): our `formats/png.{h,cpp}` and `tools/texpack.py`
     # left for theirs (`platform/pngread`, `omktexpack.py`), our 10 files (the D3D12 backend and its upscalers,
     # `floormesh.h`, `postfx.h`, `framegen.h`, `rtscene.{h,cpp}`) kept beside their 694
@@ -52595,7 +52745,7 @@ def c_licence_headers():
     # 693: + `engine/src/o3de/wetfloor.{h,cpp}` (the rain's wet floors, todo/remaster.md)
     # 694: + `engine/backends/remaster/playremaster_rain.cpp` (the rain in 3D)
     return (authored, sorted(missing), len(vendored), mislabelled), \
-           (704, [], 10, []), \
+           (709, [], 10, []), \
            "authored source files under tools/, engine/src, engine/tools, " \
            "engine/backends and scripts/; those MISSING the SPDX tag; " \
            "vendored files in engine/third_party; and vendored files wrongly " \
@@ -55372,6 +55522,7 @@ SLOW = [
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
+    ("engine: vulkan upscaler", c_engine_vulkan_upscaler, "todo/enhancements.md 18; backends/vulkan/upscale_vk.h, vkrender.cpp upscale"),
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/vulkan/shaders/rt.glsl"),
     ("engine: face lines", c_engine_face_lines, "todo/enhancements.md 19; scene.frag rtCharacter"),
     ("engine: character shadows", c_engine_character_shadows, "todo/enhancements.md 19; ssao.frag, scene.frag rtCharacter"),

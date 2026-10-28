@@ -7,12 +7,13 @@ You don't need to build anything.
 3. Unzip the whole zip **into that folder**. If Windows asks about replacing files, say yes.
 4. Double-click **`omk-play.exe`**. That's it.
 
-Every feature is already turned on: ray tracing, reflections, bloom, depth of field, 32 bit colours, frame generation, the weather, and FSR / DLSS (DLSS on NVIDIA cards, FSR on the others). Your original game files are never changed, the saves go in a new `omk-saves` folder.
+Every feature is already turned on: ray tracing, reflections, bloom, depth of field (in dialogues), the cyber colour grade, HDR (if Windows HDR is on), 32 bit colours, frame generation, the weather, and FSR / DLSS (DLSS on NVIDIA cards, FSR on the others, at native quality). It starts in fullscreen at your desktop resolution (F11 goes back to a window) and the extra menus follow the language of your game. Your original game files are never changed, the saves go in a new `omk-saves` folder.
 
 Good to know:
 - You need Windows 10 or 11 (64 bit) and a graphics card that can run DirectX 12, with a recent driver. Ray tracing needs a card that supports it, on the others it is just left off.
 - It's heavy with everything on. If it's too slow, open `omk.ini` with Notepad and turn things off by putting a `;` at the start of the line (the file explains each one, and see "The ini file" below).
 - A box saying "The game's files were not found" means the zip is not in the game's folder.
+- You have HD texture packs? Put them in a `remaster` folder next to `omk-play.exe`, they are used by themselves. See "HD texture packs" below.
 - If you unzip a newer release over the old one, `omk.ini` gets replaced. Keep a copy of yours.
 
 ## Windows build
@@ -132,9 +133,11 @@ These are the settings added by this fork, all in `omk.ini.example` with a longe
 | `rtreflections` | Ray traced reflections on wet streets (needs `raytracing`). |
 | `ssao` | Soft dark corners and creases (ambient occlusion), without ray tracing. Vulkan only. |
 | `bloom` | `on` makes neons, lamps and fires glow. |
-| `dof` | `on` blurs the background in dialogues and cutscenes (depth of field). |
-| `colorgrade` | A colour look over the whole picture: `off`, `cyber`, `warm`, `noir` or `filmic`. |
-| `hdr` | `on` for HDR output, if Windows has HDR turned on. Not tested, I don't have an HDR screen. |
+| `dof` | `on` blurs the background during dialogues, to keep the focus on the person who speaks (depth of field). Nothing is blurred in the intro or in cutscenes without a dialogue. |
+| `colorgrade` | A colour look over the whole picture: `off`, `cyber`, `warm`, `noir` or `filmic`. Not in `all`; the release's `omk.ini` sets `cyber`. |
+| `hdr` | `on` for HDR output, if Windows has HDR turned on. Not in `all`; the release's `omk.ini` sets it. Not tested, I don't have an HDR screen. |
+| `desktopresolution` (`[OMK]`) | `on`: in fullscreen the game is drawn at your desktop's resolution. |
+| `language` (`[OMK]`) | The language of the menus added by this fork: `fr` or `en`. By default it follows the language of your game, and English if it is neither. |
 | `softparticles` | Smoke, steam and fire fade where they touch walls, instead of cutting hard. |
 | `volumetrics` | A soft glow of light in the air around the street lamps. |
 | `framegen` | Frame generation: adds a picture between each two real ones. Only kicks in when the game runs slow. |
@@ -145,6 +148,20 @@ These are the settings added by this fork, all in `omk.ini.example` with a longe
 | `upscalequality` | `native`, `quality`, `balanced`, `performance` or `ultraperformance`. |
 
 The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supersampling`, `shadowquality`, `lighting`, `framerate`, `uiscaling`, `textscaling`...) are in the same section.
+
+### HD texture packs
+
+The release has no HD textures inside (they are huge, and you make them from your own game). If you have some, put the folders next to `omk-play.exe`:
+
+```
+remaster\pack          the textures
+remaster\ui\pack       the menus and the HUD
+remaster\fonts\pack    the fonts
+remaster\films\pack    the intro films
+remaster\grades        the colour looks of the cities
+```
+
+The release's `omk.ini` already points to them. A folder that is not there is just ignored (the log says so). To make a texture pack from your game, use `tools/omktexpack.py` (`--help` explains it; it needs Python, and an AI upscaler like Real-ESRGAN for the upscaling step).
 
 Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
 

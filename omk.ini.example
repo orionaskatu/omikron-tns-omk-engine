@@ -453,11 +453,18 @@
 ; The LANGUAGE of OMK's own menu rows (the "Graphismes (OMK)" pages,
 ; `todo/graphics-menu.md`): their texts are `engine/lang/omk-menu.ini`, in
 ; French and English. The game's own rows keep the language of the copy
-; installed (`IAM\Options`), which neither the data nor the exe names - so
-; this is set by hand. fr (the default) or en.
+; installed (`IAM\Options`). Left out (or `auto`, the default) it follows the
+; game's own language - a French copy gets fr, any other copy en. Or set it
+; by hand: fr or en.
 ; The menu's own "Langue des options OMK" row writes it. A copy of
 ; omk-menu.ini beside this file is read over the compiled texts.
-;language = fr
+;language = auto
+;
+; FULLSCREEN AT THE DESKTOP'S SIZE: with `[Preferences] window = 0` (fullscreen)
+; the frame is drawn at what your desktop is (1920x1080, 2560x1440...) instead of
+; the 800x600 or the size the save remembers, and not scaled up from it. The
+; resolution row of the options screen still changes it while you play.
+;desktopresolution = off
 
 [Restored]
 ; What the 1999 game PLANNED and never shipped - neither an enhancement (the

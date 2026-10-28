@@ -77,6 +77,8 @@ inline constexpr float kBloomFalloff = 0.6f;
 struct Focus {
     int vw = 0, vh = 0;            // the picture's rectangle, display pixels
     bool cine = false;             // the frame is cinematic: a full-width letterbox strip
+    bool dialogue = false;         // a conversation is open: its people are named (`View::focusN`)
+    bool forced = false;           // OMK_FORCE_CINE: depth of field on any frame (a test switch)
     float focus = 0.0f;            // the camera's eye-to-target distance
     bool subjStencil = false;      // this frame marks translucent bodies in the stencil
     float eye[3] = {}, fwd[3] = {}, right[3] = {}, tan = 1.0f;
@@ -93,11 +95,13 @@ struct Focus {
         vw = view.letterboxed() ? std::min(view.vw, w) : w;
         vh = view.letterboxed() ? std::min(view.vh, h) : h;
         static const bool forceCine = omk::envFlag("OMK_FORCE_CINE");   // a test switch: depth of field on any frame
+        forced = forceCine;
         cine = forceCine || (vw >= w && vh < h);
+        dialogue = view.focusN > 0;
         const float dx = view.cam.at[0] - view.cam.eye[0], dy = view.cam.at[1] - view.cam.eye[1],
                     dz = view.cam.at[2] - view.cam.eye[2];
         focus = std::sqrt(dx * dx + dy * dy + dz * dz);
-        subjStencil = dof && cine && focus > 1.0f;
+        subjStencil = dof && cine && focus > 1.0f && (dialogue || forced);
         // the frame's camera frame for `note` (the world's Y is DOWN)
         for (int k = 0; k < 3; ++k) eye[k] = view.cam.eye[k];
         const float il = focus > 1e-3f ? 1.0f / focus : 0.0f;
@@ -163,14 +167,18 @@ struct Focus {
         if (score < bodyScore) { bodyScore = score; bodyZ = z; }
     }
 
-    // does the final pass run depth of field on this frame
-    bool dofLive(bool dofRequested) const { return dofRequested && cine && focus > 1.0f; }
+    // does the final pass run depth of field on this frame: only in a CONVERSATION, with
+    // somebody to focus on in the picture - not in the intro, the logo or a cutscene that
+    // has no speaker, where nothing is the subject and the whole picture would blur
+    bool dofLive(bool dofRequested) const {
+        return dofRequested && cine && focus > 1.0f && (forced || (dialogue && (subjZ > 0.0f || bodyZ > 0.0f)));
+    }
 
     // `pp.dof` for the final pass, the focus smoothed across frames
     void dofParams(PostPush& pp, int h) {
-        // the largest blur ~1.2% of the frame's height (9 px at 720p, 26 at
+        // the largest blur ~0.8% of the frame's height (6 px at 720p, 17 at
         // 2160p), the spiral's step chosen for ~48 taps whatever the size
-        const float maxR = std::max(3.0f, 0.012f * static_cast<float>(h));
+        const float maxR = std::max(3.0f, 0.008f * static_cast<float>(h));
         // a character in the picture's middle third: its depth, smoothed (a
         // negative `dof[0]` tells the shader this focus is EXPLICIT); else the
         // camera's own, as before

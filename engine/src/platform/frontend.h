@@ -245,6 +245,9 @@ public:
         names.assign(1, std::to_string(curW) + " x " + std::to_string(curH) + " x 16 bpp");
         return 0;
     }
+    // The desktop's size, for a frame drawn at it (`[OMK] desktopresolution`);
+    // false where the host has none to tell.
+    virtual bool desktopSize(int& /*w*/, int& /*h*/) { return false; }
     // An opaque identity for the window shown, null without one: a caller
     // that labels a window keeps its base title per window.
     virtual const void* windowId() const { return nullptr; }

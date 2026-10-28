@@ -110,6 +110,7 @@ public:
     std::uint64_t perfFrequency() override;
     void delayMs(std::uint32_t ms) override;
     int displayModes(int curW, int curH, std::vector<std::string>& names) override;
+    bool desktopSize(int& w, int& h) override;
     const void* windowId() const override { return active(); }
     std::string windowTitle() const override;
     void setWindowTitle(const std::string& t) override;

@@ -347,9 +347,17 @@ Settings resolveSettings(const OptionsFile& ini,
             if (v == "fr" || v == "en") {
                 s.language = v;
                 s.languageSource = Settings::Source::Ini;
+            } else if (v == "auto") {
+                // the default: the game's own language, found at the options' setup
             } else {
-                std::fprintf(stderr, "settings: [OMK] language = %s is not fr|en - ignored\n", w->c_str());
+                std::fprintf(stderr, "settings: [OMK] language = %s is not auto|fr|en - ignored\n", w->c_str());
             }
+        }
+        if (const std::string* w = ini.find(kOmk, "desktopresolution")) {
+            const int m = escapeBackMode(*w);     // the same off|on words
+            if (m >= 0) { s.desktopFrame = m > 0; s.desktopFrameSource = Settings::Source::Ini; }
+            else std::fprintf(stderr, "settings: [OMK] desktopresolution = %s is not off|on - ignored\n",
+                              w->c_str());
         }
 
         // ---- [Restored], what the original planned and never shipped ------

@@ -425,6 +425,23 @@ int SdlFrontend::displayModes(int curW, int curH, std::vector<std::string>& name
     return optionDisplayModes(curW, curH, names);
 }
 
+bool SdlFrontend::desktopSize(int& w, int& h) {
+#if defined(OMK_SDL3)
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && !SDL_InitSubSystem(SDL_INIT_VIDEO)) return false;
+    const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+    if (!dm) return false;
+    w = dm->w;
+    h = dm->h;
+#else
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
+    SDL_DisplayMode m{};
+    if (SDL_GetDesktopDisplayMode(0, &m) != 0) return false;
+    w = m.w;
+    h = m.h;
+#endif
+    return w > 0 && h > 0;
+}
+
 void SdlFrontend::readPad(omk::HostInput& out) {
     out.pad = {};
     if (!padInit_) {

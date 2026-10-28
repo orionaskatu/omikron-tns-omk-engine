@@ -26,6 +26,15 @@ std::string textOverride(const std::string& configFile) {
 // Once, beside screen 35 (`setupOptions`): the texts in `[OMK] language`, and
 // the pages - the Remaster page only in a build that has the remaster.
 void PlayState::omkOptionsSetup() {
+    // No language written (or `auto`): the GAME'S OWN. A French copy's options text
+    // calls the last driver "Rendu logiciel" (string 68); any other copy gets English.
+    if (settings.languageSource == omk::Settings::Source::Default) {
+        std::string t = optMenu_ ? optMenu_->str(68) : std::string();
+        for (auto& c : t) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c);
+        settings.language = t.find("rendu") != std::string::npos ? "fr" : "en";
+        std::printf("language: %s - the game's own, read from its texts (\"%s\")\n",
+                    settings.language.c_str(), t.c_str());
+    }
     const bool over = omkText_.load(settings.language, textOverride(configFile));
     auto& o = omkOpt_.emplace(remasterBuilt());
     o.setText(&omkText_);

@@ -101,6 +101,17 @@ int PlayState::setupSession() {
         dispW = settings.v.screenX;
         dispH = settings.v.screenY;
     }
+    // FULLSCREEN AT THE DESKTOP'S SIZE (`[OMK] desktopresolution = on`): the frame is
+    // drawn at what the desktop is, over the saved or ini size - not scaled up from it
+    if (!resFlag && settings.desktopFrame &&
+        (fullscreenFlag >= 0 ? fullscreenFlag != 0 : settings.fullscreen)) {
+        int dw = 0, dh = 0;
+        if (front.desktopSize(dw, dh) && dw >= 640 && dh >= 480 && dw <= 8192 && dh <= 8192) {
+            dispW = dw;
+            dispH = dh;
+            std::printf("fullscreen: the frame at the desktop's size, %dx%d\n", dw, dh);
+        }
+    }
     // ...and the block carries the mode that RUNS, as `g_ScreenSize` does:
     // row 2 reads it back and a settings save writes it
     settings.v.screenX = dispW;

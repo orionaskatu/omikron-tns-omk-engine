@@ -1369,6 +1369,13 @@ void PlayState::modesScreenWalk(omk::Input& in, omk::OptionsMenu& optMenu, omk::
             optMenu.open(openScreen == omk::screen::StartMenu ? 1 : 0, settings.v);
             std::vector<std::string> modes;
             const int cur = front.displayModes(dispW, dispH, modes);
+            // the list says 16 bpp (the original's device); the window's picture is 32 bit
+            // with [Enhancements] colordepth = 32, so the row says so too
+            if (colourDepth >= 32)
+                for (auto& m : modes) {
+                    const auto at = m.rfind(" x 16 bpp");
+                    if (at != std::string::npos) m.replace(at, 9, " x 32 bpp");
+                }
             optMenu.setDevices(2, modes, cur);
             // row 8's drivers: the GPU backend running, then string 68,
             // "Rendu logiciel", which `0x00493380` draws for the last one

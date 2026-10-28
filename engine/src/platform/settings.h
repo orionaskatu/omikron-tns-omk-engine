@@ -423,8 +423,14 @@ struct Settings {
     // `engine/lang/omk-menu.ini`). The game's own rows are the installed
     // copy's `IAM\Options`, whose language neither the data nor the exe names
     // - so this is set by hand. French, as the shipped data is.
+    // (Left unwritten, or `auto`, it follows the game's own language - read from
+    // its texts at the options' setup - and falls back to English.)
     std::string language = "fr";
     Source languageSource = Source::Default;
+    // `desktopresolution = on`: in FULLSCREEN the frame is drawn at the desktop's
+    // size, over the one the save header or `screen_x` / `screen_y` name.
+    bool   desktopFrame = false;
+    Source desktopFrameSource = Source::Default;
 
     // ---- [Restored] - what the 1999 game PLANNED and never shipped ----------
     // Neither an enhancement (the original meant these) nor the remaster's

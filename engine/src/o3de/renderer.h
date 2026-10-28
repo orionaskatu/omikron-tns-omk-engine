@@ -340,6 +340,10 @@ struct Draw {
     // ...and SNOW lying on it instead (`o3de/wetfloor.h` coverRuns): `wet` is
     // then how white it turns, not how dark
     bool            snow             = false;
+    // ...or a BODY in the rain (the remaster's wet characters,
+    // `playremaster_draw.cpp` remasterWetBodies): `wet` how wet, the shaders'
+    // body rule - a little darker, its lit highlights brighter - not a floor's
+    bool            wetBody          = false;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and

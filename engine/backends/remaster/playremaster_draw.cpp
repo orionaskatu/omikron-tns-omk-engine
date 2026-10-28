@@ -282,4 +282,43 @@ void PlayState::remasterSnowCover(std::vector<omk::Draw>& list) {
     }
 }
 
+// THE WET BODIES (the reader's "wet walls and characters", 2026-10-28): in a
+// rain area while the floors are wet, every body the renderer poses that
+// stands under the open sky - the roof ray from `kWetBodyHead` above its root
+// through the shot soup, the wet floors' own - is drawn wet (`Draw::wetBody`),
+// as wet as the floors. `OMK_NO_WET_BODIES=1`, an INSTRUMENT, leaves them dry
+// (`verify.py: engine: wet floors` part 11).
+void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
+    static const bool noBodies = omk::envFlag("OMK_NO_WET_BODIES");
+    const bool rainArea = weatherBitsTold != 0xFFFFu && (weatherBitsTold & 2u) != 0;
+    const float amount = wetStrength * wetness.value();
+    if (noBodies || !rainArea || !(amount > 0.0f) || !remasterShown_ || !world_ ||
+        !(world_->takes() & omk::kTakesWater))
+        return;
+    const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+    if (shownSlot.shotSoup.empty()) return;
+    // one ray a body: its draws share the pose
+    const float* lastPose = nullptr;
+    bool lastOpen = false;
+    int bodies = 0, wetBodies = 0;
+    for (auto& d : list) {
+        if (!d.meshPose || d.meshPoses == 0) continue;
+        if (d.meshPose != lastPose) {
+            lastPose = d.meshPose;
+            const double up[3] = {0.0, -omk::kWetSkyRay, 0.0};   // Y points down
+            const double p0[3] = {d.meshPose[3], d.meshPose[7] - omk::kWetBodyHead, d.meshPose[11]};
+            lastOpen = !omk::sweepSphere(shownSlot.shotSoup, shownSlot.shotRunBoxes, p0, up, 0.0).has_value();
+            ++bodies;
+            wetBodies += lastOpen ? 1 : 0;
+        }
+        if (!lastOpen) continue;
+        d.wet = std::min(amount, 1.0f);
+        d.wetBody = true;
+    }
+    if (frameNo % 30 == 0) {
+        std::printf("frame %ld: %d of %d bodies wet in the rain\n", frameNo, wetBodies, bodies);
+        omk::event("remaster.wetbodies", {{"frame", frameNo}, {"bodies", bodies}, {"wet", wetBodies}});
+    }
+}
+
 #endif  // OMK_REMASTER

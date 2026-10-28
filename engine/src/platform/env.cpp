@@ -86,6 +86,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_TIE_BAKE",          // A/B: the depth tie per frame instead of baked (engine: gles tie bake)
     "OMK_NO_TILES",             // the tiled point lights off: the nearest 60 instead (engine: emitter light)
     "OMK_NO_VEIL",              // =1 the rain's distant veils left out, the rest of the remaster's rain kept (engine: rain 3d)
+    "OMK_NO_WET_BODIES",        // =1 the bodies stay dry in the rain (engine: wet floors)
     "OMK_NO_WET_WALLS",         // =1 the rain wets the floors alone, no wall (engine: wet floors)
     "OMK_NO_ZONE_BAND",         // a trigger zone's height band not tested
     "OMK_PANEL_CHECK",          // 3DS: the bottom-screen panel checks what it draws

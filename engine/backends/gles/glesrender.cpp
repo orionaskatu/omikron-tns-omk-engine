@@ -1316,6 +1316,7 @@ private:
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint snow = -1;                                                     // ...or snow lying
+        GLint wetBody = -1;                                                  // ...or a body in the rain
         GLint mist = -1;                                                     // ...and the mist
         GLint dust = -1, dustColour = -1;                                    // ...and the sand's dust
         GLint veil = -1, veilColour = -1;                                    // ...and the rain's veils
@@ -1403,6 +1404,7 @@ private:
         float water = -1; int clip = -1;   // the water variant's
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float snow = -1;                               // ...or snow lying
+        float wetBody = -1;                            // ...or a body in the rain
         float mist[3] = {-1, -1, -1};                  // ...and the mist
         float dust[4] = {-1, -1, -1, -1}, dustColour[3] = {-1, -1, -1};   // ...and the sand's dust
         float veil[4] = {-1, -1, -1, -1}, veilColour[3] = {-1, -1, -1};   // ...and the rain's veils
@@ -1692,6 +1694,7 @@ bool GlesRenderer::linkScene() {
         L.rain = glGetUniformLocation(p, "uRain");
         L.rippleClock = glGetUniformLocation(p, "uRippleClock");
         L.snow = glGetUniformLocation(p, "uSnow");
+        L.wetBody = glGetUniformLocation(p, "uWetBody");
         L.mist = glGetUniformLocation(p, "uMist");
         L.dust = glGetUniformLocation(p, "uDust");
         L.dustColour = glGetUniformLocation(p, "uDustColour");

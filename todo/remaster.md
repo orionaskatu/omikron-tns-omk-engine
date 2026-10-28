@@ -1447,6 +1447,21 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   pixels move on Vulkan, 61410 on GLES, overlap 0.999 (measured with the
   five rays); `OMK_NO_WET_WALLS=1` (an instrument) wets the floors alone.
   `engine: wet floors` part 10.
+* **Wet bodies** (step 2, 2026-10-28): `remasterWetBodies` - in a rain area
+  while the floors are wet, every body the renderer poses (`Draw::meshPose`)
+  casts one roof ray from `kWetBodyHead` (150 units) above its root through
+  the shot soup, and if nothing is over it its draws carry `Draw::wetBody`
+  with `wet` the floors' wetness. Vulkan's bit 21 of `Push.water`, GLES's
+  `uWetBody`: the BODY rule, before the fog - `c * (1 - 0.2 w) + 1.2 w c^3`
+  (`kWetBodyFilm`, `kWetBodyGloss`): a little darker, its lit parts brighter,
+  a wet surface's gloss with no normal (GLES's water pass has none for a
+  body), so both backends draw it alike. Subtle by design; a true sheen
+  would need the posed normal in GLES's water variant. Anekbah with Kay'l
+  and the extras near him: 4 of 4 bodies wet; 33622 pixels on Vulkan,
+  33627 on GLES, overlap 1.000, 25938 of them brighter - under the FLOOR
+  rule (`wetBody` lost) 1316, which is what part 11 tells apart.
+  `OMK_NO_WET_BODIES=1` (an instrument) leaves them dry. Qalisar with its
+  crowd: 79 of 84. `engine: wet floors` part 11.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

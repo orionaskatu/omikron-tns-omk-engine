@@ -33898,6 +33898,15 @@ def c_engine_wet_floors():
          walls) and none under `OMK_NO_WET_WALLS=1`; at full rain more than
          10000 pixels move against it on Vulkan, and on GLES the same ones
          (overlap above 0.8).
+     11. THE WET BODIES: in the walls' run the bodies standing in the open
+         are drawn wet (`remaster.wetbodies` at frame 690, more than 0 of
+         them); against `OMK_NO_WET_BODIES=1` more than 5000 pixels move on
+         Vulkan, and on GLES the same ones (overlap above 0.8) - and more
+         than 10000 of them BRIGHTER (the three channels' sum up by more
+         than 24 in 8-bit steps): the body rule's gloss lifts the lit parts,
+         where a body drawn under the FLOOR rule (`wetBody` lost, `wet`
+         kept - the mutation it is shown to fail with) darkens: 25938 there
+         against 1316.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -33995,6 +34004,10 @@ def c_engine_wet_floors():
         if platform.system() == "Darwin":
             gw1, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gw1", 2, 1)
             gw0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gw0", 2, 1, 700, {"OMK_NO_WET_WALLS": "1"})
+        bd0, _ = run(vkb, "bd0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
+        gb0 = None
+        if platform.system() == "Darwin":
+            gb0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gb0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
         sv1, sev = snow_run(vkb, "sv1", 1)
         sv0, _ = snow_run(vkb, "sv0", 0)
         sg1 = sg0 = None
@@ -34058,6 +34071,22 @@ def c_engine_wet_floors():
     else:
         wgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
     walled = (wcount(wev1) > 5000, wcount(wev0), len(wmv) > 10000, wgl)
+    wb = next((k for n, k in wev1 if n == "remaster.wetbodies" and k.get("frame") == "690"), {})
+    bmv = moved(wl1, bd0) if wl1 and bd0 else set()
+    if gw1 and gb0:
+        bmg = moved(gw1, gb0)
+        biou = len(bmv & bmg) / max(1, len(bmv | bmg))
+        bgl = (len(bmg) > 5000, biou > 0.8)
+        print(f"        the wet bodies: {wb}; Vulkan {len(bmv)}, GLES {len(bmg)} pixels, overlap {biou:.3f}")
+    else:
+        bgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    def brighter(a, b):
+        # pixels whose 565 colour's channel sum rose by more than 24 from b to a
+        s = lambda v: ((v >> 11) & 31) * 8 + ((v >> 5) & 63) * 4 + (v & 31) * 8
+        return sum(1 for x, y in zip(px(a), px(b)) if s(x) - s(y) > 24) if a and b else 0
+    glossed = brighter(wl1, bd0)
+    print(f"        the wet bodies brighter in {glossed} pixels")
+    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 10000, bgl)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34066,13 +34095,14 @@ def c_engine_wet_floors():
           f"frame 690 {live}; "
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled), \
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled, bodied), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
             (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
-            (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True)))), \
+            (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True))),
+            (True, True, True, _or_skip(bgl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
-        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls"
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies"
 
 
 def c_engine_rain3d():

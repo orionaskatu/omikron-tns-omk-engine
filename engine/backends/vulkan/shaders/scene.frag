@@ -407,6 +407,8 @@ vec3 ripples(vec2 p, float clock, float rain) {
 // wall - a bead running down each, a glint, its wet trail above it darker
 // (-> trail, bead) - on the ripples'
 // clock. GLES's twin in glesrender_remaster_shaders.inl.
+const float kWetBodyFilm = 0.2;         // a wet body's darkening at full wet
+const float kWetBodyGloss = 1.2;        // ...and its highlights' gain, on the cube of the colour
 const float kWetWallFilm = 0.6;       // a wet wall's film against a floor's: the water runs off
 const float kTrickleAcross0 = 0.83;   // a trickle's columns run along this level direction...
 const float kTrickleAcross1 = 0.56;   // ...(any wall but one rare heading)
@@ -444,6 +446,7 @@ void main() {
     float wetFilm = float((pc.water >> 4) & 255) / 255.0;     // a wet floor's darkening
     float rainNow = float((pc.water >> 12) & 255) / 255.0;    // ...and the rain on it
     bool snowLying = (pc.water & (1 << 20)) != 0;              // ...or snow lying on it, bit 20
+    bool wetBody = (pc.water & (1 << 21)) != 0;                // ...or a BODY in the rain, bit 21
     // the open sky at this point, the corners' answers blended (`encodeOpenSky`)
     // - a WALL's (`-6 - open`) below -5.5, a floor's (`-2 - open`) below -1.5
     bool wetWall = vPhase <= -5.5;
@@ -532,6 +535,13 @@ void main() {
     // SNOW LYING (`o3de/wetfloor.h` coverRuns): the floor turned white under
     // its own light - `c / texel`, the light alone - by the cover times the
     // open sky here, before the fog takes it like the rest
+    // A BODY IN THE RAIN (`Draw::wetBody`): a little darker, and its lit
+    // highlights brighter - `c * c * c` grows with the light - a wet surface's
+    // gloss with no normal, GLES alike
+    if (wetBody && wetFilm > 0.0) {
+        c = clamp(c * (1.0 - kWetBodyFilm * wetFilm) + kWetBodyGloss * wetFilm * c * c * c, 0.0, 1.0);
+        wetFilm = 0.0;   // no floor's film, no ripples, on a body
+    }
     if (snowLying && wetFilm > 0.0) {
         // ...the more the darker the texel: a snow texture keeps its own
         // drawing, stone and wood go white

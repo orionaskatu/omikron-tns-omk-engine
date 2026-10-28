@@ -170,6 +170,8 @@ constexpr const char* kPuddleGlsl =
 // THE TRICKLES on a wet wall, `scene.frag`'s `trickles` and its constants -
 // keep the two in step (after kRipplesGlsl, whose hash it takes)
 constexpr const char* kTrickleGlsl =
+    "const float kWetBodyFilm = 0.2;\n"
+    "const float kWetBodyGloss = 1.2;\n"
     "const float kWetWallFilm = 0.6;\n"
     "const float kTrickleAcross0 = 0.83;\n"
     "const float kTrickleAcross1 = 0.56;\n"
@@ -238,7 +240,7 @@ constexpr const char* kRipplesGlsl =
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
-                    "uniform float uSnow;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
+                    "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
                     "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
                     std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
@@ -271,7 +273,7 @@ std::string waterVariant(const std::string& frag) {
                      "        vec3 vw = vec3(vWxz.x, vWy, vWxz.y);\n"
                      "        c = mix(c, uVeilColour, veilAmount(vw + vToEye, vw, uVeil));\n"
                      "    }\n"
-                     "    float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
+                     "    float wetF = uSnow > 0.5 || uWetBody > 0.5 ? 0.0 : uWet;\n"
                      "    float pud = 0.0;\n"   // the PUDDLES, `scene.frag`'s `puddleMask`
                      "    bool wall = vWall > 0.5;\n"   // a WALL: a lighter film and its trickles, `scene.frag`'s
                      "    if (wetF > 0.0 && !wall) pud = puddleMask(vWxz) * uVeil.w;\n"
@@ -299,7 +301,9 @@ std::string waterVariant(const std::string& frag) {
     const auto lp = s.find(lit);
     const auto le = lp == std::string::npos ? lp : s.find(";\n", lp);
     if (le != std::string::npos)
-        s.insert(le + 2, "    if (uSnow > 0.5 && uWet > 0.0)\n"
+        s.insert(le + 2, "    if (uWetBody > 0.5 && uWet > 0.0)\n"   // a BODY in the rain, `scene.frag`'s
+                         "        c = clamp(c * (1.0 - kWetBodyFilm * uWet) + kWetBodyGloss * uWet * c * c * c, 0.0, 1.0);\n"
+                         "    if (uSnow > 0.5 && uWet > 0.0)\n"
                          "        c = mix(c, clamp(c / max(t.rgb, vec3(0.04)) * 0.9, 0.0, 1.0), uWet * vOpen *\n"
                          "                clamp((1.0 - dot(t.rgb, vec3(0.299, 0.587, 0.114))) * 1.4, 0.0, 1.0));\n");
     else anchorMissed("snow", lit);

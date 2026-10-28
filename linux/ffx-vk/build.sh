@@ -38,7 +38,7 @@ sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ff
 python3 "$here/gen_shaders.py" --sdk "$sdk" --out "$out/shaders" \
     --glslang "${GLSLANG:-glslangValidator}" --jobs "$jobs"
 
-flags=(-std=c++17 -O0 -g -fPIC -fvisibility=hidden -w -include "$here/compat.h"
+flags=(-std=c++17 -O2 -g -fsanitize=undefined -fPIC -fvisibility=hidden -w -include "$here/compat.h"
        -DFFX_BACKEND_VK -DFFX_FSR3UPSCALER
        -I"$out/include" -I"$out/shaders"
        -I"$sdk/ffx-api/src" -I"$sdk/ffx-api/include" -I"$out/sdkinclude"
@@ -67,7 +67,7 @@ printf '%s\n' "${sources[@]}" | xargs -P "$jobs" -I{} sh -c \
     'g++ "$@" -c "$0" -o "$OUT/obj/$(basename "$0" .cpp).o"' {} "${flags[@]}"
 
 so="$out/libamd_fidelityfx_vk.so"
-g++ -shared -o "$so" "$out"/obj/*.o -lvulkan -ldl -lpthread \
+g++ -shared -fsanitize=undefined -o "$so" "$out"/obj/*.o -lvulkan -ldl -lpthread \
     -Wl,-soname,libamd_fidelityfx_vk.so -Wl,--no-undefined
 
 echo "--- exported symbols"

@@ -207,6 +207,7 @@ jobs:
           ./ffx-test upscalers/lib || {
             cat > gdbcmds <<'EOT'
           set pagination off
+          set breakpoint pending on
           break CreatePipelineVK
           commands
           finish

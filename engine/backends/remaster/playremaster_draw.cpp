@@ -19,12 +19,28 @@
 #include <cmath>
 #include <cstdio>
 
+namespace {
+constexpr float kShowerMist = 0.1f;        // the mist the full shower adds (0.3 too dark in Anekbah's own fog)
+// the veils' and the dust's colour lit as the set's ambient: this much at
+// none, `kAirAmbientGain` more per unit of its grey
+constexpr float kAirAmbientMin = 0.25f, kAirAmbientGain = 1.6f;
+constexpr float kVeilGrey[3] = {0.62f, 0.66f, 0.72f};   // the rain's veils, a light cold grey
+constexpr double kVeilFallPerMs = 1.5;     // ...falling 1500 units a second
+constexpr double kVeilFallWrap = 1.4e6;    // ...wrapped here, so the float keeps its precision
+constexpr float kVeilScale = 2500.0f;      // ...63% thick at full shower this far off
+constexpr float kDustOchre[3] = {0.80f, 0.64f, 0.42f};  // the sand's dust
+constexpr double kDustDriftPerMs = 0.70;   // ...drifting 700 units a second with the wind (300 read as still)
+constexpr double kDustRisePerMs = 0.04;    // ...and slowly across
+constexpr double kDustDriftWrap = 4e5;     // ...wrapped here
+constexpr float kDustScale = 1100.0f;      // ...63% at full storm this far (1400 before it came nearer)
+}  // namespace
+
 // THE MIST (`View::mist`): on the shown set's ground
 void PlayState::remasterViewMist(omk::View& v) {
     // ...thickened by the SHOWER while the 3D rain shows (the shower's sky,
     // `remasterGrade`): the city's fog colour closing in as it rains
     v.mist = std::min(1.0f, mistStrength + (rain3dStrength > 0.0f && remasterShown_
-                                                ? 0.1f * std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) : 0.0f));   // 0.3 too dark in Anekbah's own fog
+                                                ? kShowerMist * std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) : 0.0f));
     v.mistGround = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)].ground;
     // ...and the RAIN's ripples on the wet floors (`o3de/wetfloor.h`): the
     // shower's strength, which is 0 outside a rain area
@@ -48,12 +64,12 @@ void PlayState::remasterViewMist(omk::View& v) {
     static const bool noVeil = omk::envFlag("OMK_NO_VEIL");
     if (!noVeil && rain3dStrength > 0.0f && remasterShown_ && weatherRain > 0.0f) {
         const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
-        const float amb = std::clamp(0.25f + 1.6f * static_cast<float>(ws.ambientGrey) / 255.0f, 0.25f, 1.0f);
-        const float grey[3] = {0.62f, 0.66f, 0.72f};
+        const float amb = std::clamp(kAirAmbientMin + kAirAmbientGain * static_cast<float>(ws.ambientGrey) / 255.0f,
+                                     kAirAmbientMin, 1.0f);
         v.veil = std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f);
-        v.veilFall = static_cast<float>(std::fmod(weatherClockMs * 1.5, 1400000.0));
-        v.veilScale = 2500.0f;
-        for (int k = 0; k < 3; ++k) v.veilColour[k] = grey[k] * amb;
+        v.veilFall = static_cast<float>(std::fmod(weatherClockMs * kVeilFallPerMs, kVeilFallWrap));
+        v.veilScale = kVeilScale;
+        for (int k = 0; k < 3; ++k) v.veilColour[k] = kVeilGrey[k] * amb;
     }
     v.dust = 0.0f;
     // `OMK_NO_DUST=1`, an INSTRUMENT: the dust fog alone left out, the grains
@@ -61,13 +77,13 @@ void PlayState::remasterViewMist(omk::View& v) {
     static const bool noDust = omk::envFlag("OMK_NO_DUST");
     if (!noDust && restoredWeather && rain3dStrength > 0.0f && remasterShown_ && weatherSandLevel > 0.0f) {
         const WorldSlot& ws = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
-        const float amb = std::clamp(0.25f + 1.6f * static_cast<float>(ws.ambientGrey) / 255.0f, 0.25f, 1.0f);
-        const float ochre[3] = {0.80f, 0.64f, 0.42f};
+        const float amb = std::clamp(kAirAmbientMin + kAirAmbientGain * static_cast<float>(ws.ambientGrey) / 255.0f,
+                                     kAirAmbientMin, 1.0f);
         v.dust = std::clamp(weatherSandLevel * rain3dStrength, 0.0f, 1.0f);
-        v.dustDrift[0] = static_cast<float>(std::fmod(weatherClockMs * 0.70, 400000.0));   // 700 units a second (300 read as still)
-        v.dustDrift[1] = static_cast<float>(std::fmod(weatherClockMs * 0.04, 400000.0));
-        v.dustScale = 1100.0f;   // 63% at full storm this far (1400 before it came nearer)
-        for (int k = 0; k < 3; ++k) v.dustColour[k] = ochre[k] * amb;
+        v.dustDrift[0] = static_cast<float>(std::fmod(weatherClockMs * kDustDriftPerMs, kDustDriftWrap));
+        v.dustDrift[1] = static_cast<float>(std::fmod(weatherClockMs * kDustRisePerMs, kDustDriftWrap));
+        v.dustScale = kDustScale;
+        for (int k = 0; k < 3; ++k) v.dustColour[k] = kDustOchre[k] * amb;
     }
 }
 

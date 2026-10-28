@@ -126,19 +126,45 @@ constexpr const char* kDustGlsl =
 // THE RAIN'S VEILS (`View::veil`), `scene.frag`'s `veilAmount` - keep the two
 // in step (after kDustGlsl, whose noise it takes)
 constexpr const char* kVeilGlsl =
+    "const float kVeilFirst = 500.0;\n"
+    "const float kVeilStep = 700.0;\n"
+    "const float kVeilSlant = 0.577;\n"
+    "const float kVeilAcross = 0.008;\n"
+    "const float kVeilAlong = 0.0007;\n"
+    "const float kVeilLow = 0.5;\n"
+    "const float kVeilHigh = 0.85;\n"
+    "const float kVeilMax = 0.85;\n"
     "float veilAmount(vec3 e, vec3 w, vec4 veil) {\n"
     "    float d = length(w - e);\n"
-    "    if (d < 500.0) return 0.0;\n"
+    "    if (d < kVeilFirst) return 0.0;\n"
     "    vec3 dir = (w - e) / d;\n"
     "    float sum = 0.0;\n"
     "    for (int k = 0; k < 3; ++k) {\n"
-    "        float t = 500.0 + float(k) * 700.0;\n"
+    "        float t = kVeilFirst + float(k) * kVeilStep;\n"
     "        if (t > d) break;\n"
     "        vec3 p = e + dir * t;\n"
-    "        vec3 q = vec3((p.x + 0.577 * p.y) * 0.008, (p.y - veil.y) * 0.0007, p.z * 0.008);\n"
-    "        sum += smoothstep(0.5, 0.85, dustNoise(q));\n"
+    "        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);\n"
+    "        sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));\n"
     "    }\n"
-    "    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * 0.85;\n"
+    "    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;\n"
+    "}\n";
+
+// THE PUDDLES' MASK, `scene.frag`'s `puddleMask` and its constants - keep the
+// two in step (after kDustGlsl, whose noise it takes)
+constexpr const char* kPuddleGlsl =
+    "const float kPuddleBroad = 0.004;\n"
+    "const float kPuddleFine = 0.011;\n"
+    "const float kPuddleFineShare = 0.3;\n"
+    "const float kPuddleDry = 0.52;\n"
+    "const float kPuddleFull = 0.68;\n"
+    "const vec2 kPuddleFilm = vec2(0.5, 1.8);\n"
+    "const vec2 kPuddleMirror = vec2(0.5, 2.2);\n"
+    "const vec2 kPuddleRipples = vec2(0.6, 1.6);\n"
+    "const float kPuddleFresnel = 0.18;\n"
+    "float puddleMask(vec2 xz) {\n"
+    "    float n = dustNoise(vec3(xz.x * kPuddleBroad, 0.0, xz.y * kPuddleBroad)) * (1.0 - kPuddleFineShare) +\n"
+    "              dustNoise(vec3(xz.x * kPuddleFine, 3.7, xz.y * kPuddleFine)) * kPuddleFineShare;\n"
+    "    return smoothstep(kPuddleDry, kPuddleFull, n);\n"
     "}\n";
 
 constexpr const char* kRipplesGlsl =
@@ -180,7 +206,8 @@ std::string waterVariant(const std::string& frag) {
                     "uniform float uSnow;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
                     "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
-                    std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) + frag;
+                    std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
+                    std::string(kPuddleGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
@@ -211,19 +238,15 @@ std::string waterVariant(const std::string& frag) {
                      "    }\n"
                      "    float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
                      "    float pud = 0.0;\n"   // the PUDDLES, `scene.frag`'s `puddleMask`
-                     "    if (wetF > 0.0) {\n"
-                     "        float pn = dustNoise(vec3(vWxz.x * 0.004, 0.0, vWxz.y * 0.004)) * 0.7 +\n"
-                     "                   dustNoise(vec3(vWxz.x * 0.011, 3.7, vWxz.y * 0.011)) * 0.3;\n"
-                     "        pud = smoothstep(0.52, 0.68, pn) * uVeil.w;\n"
-                     "    }\n"
-                     "    float wetHere = wetF > 0.0 ? vOpen * mix(0.5, 2.2, pud) : 1.0;\n"
-                     "    c *= 1.0 - wetF * vOpen * mix(0.5, 1.8, pud);\n    vec3 rip = vec3(0.0);\n"
+                     "    if (wetF > 0.0) pud = puddleMask(vWxz) * uVeil.w;\n"
+                     "    float wetHere = wetF > 0.0 ? vOpen * mix(kPuddleMirror.x, kPuddleMirror.y, pud) : 1.0;\n"
+                     "    c *= 1.0 - wetF * vOpen * mix(kPuddleFilm.x, kPuddleFilm.y, pud);\n    vec3 rip = vec3(0.0);\n"
                      "    if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
-                     "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen * mix(0.6, 1.6, pud);\n"
+                     "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen * mix(kPuddleRipples.x, kPuddleRipples.y, pud);\n"
                      "        c += vec3(kRippleLight * rip.z);\n"
                      "    }\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
-                     "        float f = max(0.02 + 0.98 * pow(1.0 - ct, 5.0), 0.18 * pud);\n"
+                     "        float f = max(0.02 + 0.98 * pow(1.0 - ct, 5.0), kPuddleFresnel * pud);\n"
                      "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"
                      "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f * wetHere;\n"
                      "    }\n    ");

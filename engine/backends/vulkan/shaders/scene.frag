@@ -330,28 +330,47 @@ float dustAmount(vec3 e, vec3 w, vec4 dust) {
 // along the ray (at 500, 1200 and 1900 units, those nearer than the surface),
 // a light grey lit as the scene, thicker with distance. GLES's twin in
 // glesrender_remaster_shaders.inl.
+const float kVeilFirst = 500.0;         // the first sample in the air, units from the eye
+const float kVeilStep = 700.0;          // ...and between the samples
+const float kVeilSlant = 0.577;         // the bands' slant with the wind (30 degrees)
+const float kVeilAcross = 0.008;        // the bands' noise across, per unit
+const float kVeilAlong = 0.0007;        // ...and along the fall: long sheets
+const float kVeilLow = 0.5;             // the noise where a sheet starts...
+const float kVeilHigh = 0.85;           // ...and where it is full
+const float kVeilMax = 0.85;            // the veils' strength at full, far off
 float veilAmount(vec3 e, vec3 w, vec4 veil) {
     float d = length(w - e);
-    if (d < 500.0) return 0.0;
+    if (d < kVeilFirst) return 0.0;
     vec3 dir = (w - e) / d;
     float sum = 0.0;
     for (int k = 0; k < 3; ++k) {
-        float t = 500.0 + float(k) * 700.0;
+        float t = kVeilFirst + float(k) * kVeilStep;
         if (t > d) break;
         vec3 p = e + dir * t;
-        vec3 q = vec3((p.x + 0.577 * p.y) * 0.008, (p.y - veil.y) * 0.0007, p.z * 0.008);
-        sum += smoothstep(0.5, 0.85, dustNoise(q));
+        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);
+        sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));
     }
-    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * 0.85;
+    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;
 }
 
 // THE PUDDLES' MASK: 0 between them, 1 in one - a value noise of the ground's
 // x and z (about 2.5 m patches), its edge soft over a fifth of its range.
 // GLES's twin in glesrender_remaster_shaders.inl.
+const float kPuddleBroad = 0.004;   // the patches' noise, a cycle in 250 units
+const float kPuddleFine = 0.011;    // ...and their edges' detail
+const float kPuddleFineShare = 0.3; // ...its share of the noise
+const float kPuddleDry = 0.52;      // the noise where a puddle starts...
+const float kPuddleFull = 0.68;     // ...and where it is full
+// what a puddle does, as (between them, in one): the wet film's darkening,
+// the reflection's strength, the ripples'; and the Fresnel's floor in one
+const vec2 kPuddleFilm = vec2(0.5, 1.8);
+const vec2 kPuddleMirror = vec2(0.5, 2.2);
+const vec2 kPuddleRipples = vec2(0.6, 1.6);
+const float kPuddleFresnel = 0.18;
 float puddleMask(vec2 xz) {
-    float n = dustNoise(vec3(xz.x * 0.004, 0.0, xz.y * 0.004)) * 0.7 +
-              dustNoise(vec3(xz.x * 0.011, 3.7, xz.y * 0.011)) * 0.3;
-    return smoothstep(0.52, 0.68, n);
+    float n = dustNoise(vec3(xz.x * kPuddleBroad, 0.0, xz.y * kPuddleBroad)) * (1.0 - kPuddleFineShare) +
+              dustNoise(vec3(xz.x * kPuddleFine, 3.7, xz.y * kPuddleFine)) * kPuddleFineShare;
+    return smoothstep(kPuddleDry, kPuddleFull, n);
 }
 
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
@@ -528,19 +547,19 @@ void main() {
     // in one, the film darker, the reflection much stronger, the ripples more;
     // between them, the film and the reflection lighter
     float puddle = wetFilm > 0.0 ? puddleMask(vWorld.xz) * lg.veil.w : 0.0;
-    float wetHere = wetFilm > 0.0 ? openSky * mix(0.5, 2.2, puddle) : 1.0;
-    c *= 1.0 - wetFilm * openSky * mix(0.5, 1.8, puddle);
+    float wetHere = wetFilm > 0.0 ? openSky * mix(kPuddleMirror.x, kPuddleMirror.y, puddle) : 1.0;
+    c *= 1.0 - wetFilm * openSky * mix(kPuddleFilm.x, kPuddleFilm.y, puddle);
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
     vec3 rip = vec3(0.0);
     if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
-        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(0.6, 1.6, puddle);
+        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(kPuddleRipples.x, kPuddleRipples.y, puddle);
         c += vec3(kRippleLight * rip.z);
     }
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
-        f = max(f, 0.18 * puddle);   // standing water mirrors, looked into too
+        f = max(f, kPuddleFresnel * puddle);   // standing water mirrors, looked into too
         vec2 rs = vec2(textureSize(refl, 0));
         // (a floor's reflection is at HALF size, in the image's top-left quarter)
         float k = waterMode == 3 ? 0.5 : 1.0;

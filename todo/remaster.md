@@ -1416,6 +1416,15 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   ones. Anekbah at full rain: 115 live at frame 690; 1287 pixels on Vulkan,
   1288 on GLES, overlap 0.999; `OMK_NO_SPLASHES=1` (an instrument) leaves
   them out. `engine: rain 3d` part 14.
+* **The drops less solid** (the reader, from play, 2026-10-28: "they look
+  too solid, almost like a shooting star"): the streak was a comet - a
+  bright head a fifth of the way back, fading behind it - and grew with the
+  frame's height (10 px wide at 1600 lines). Now the streak is EVEN along
+  its length, a drop's motion blur, soft over a quarter at each end
+  (`kStreakEnds`); its width grows as the ROOT of the height (about 5.5 px
+  at 1600, soft edges included); each drop has its own brightness,
+  `kRainOwnMin` 0.35..1, kept as it falls; and the strips are 0.4 bright
+  where they were 0.55 (`kRainGlow`).
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

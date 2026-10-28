@@ -23,8 +23,9 @@
 //
 // ...and SOFT (the reader's "do 1 and 2", 2026-10-27, after the hard 1-pixel
 // lines read as scratches near the eye): each strip carries a generated
-// STREAK (`rainStreakTexture`: soft across, a soft tip at the leading end,
-// fading out behind it) three times the line's width, so its edges are the
+// STREAK (`rainStreakTexture`: soft across, even along with soft ends - its
+// first bright head read as a shooting star) three times the line's width at
+// 480 lines, wider as the root of the frame's height, so its edges are the
 // texture's, not the raster's; and it is `kRainLength` long in the WORLD - a
 // camera's shutter open half a frame on a drop falling 64 units a frame - so
 // perspective makes a near drop's streak long and a far one's short, where
@@ -84,23 +85,27 @@ namespace {
 constexpr double kRainRoofRay = 4000.0;   // how far up a roof stops a drop (`kWetSkyRay`'s)
 constexpr float kRainBox = 1000.0f;       // the rain's box (`dword_4D0780`, `o3de/weather.cpp`)
 constexpr int kRainCopies = 3;            // the drops each original one brings
-constexpr float kRainGlow = 0.55f;        // a strip's brightness against the original line's
+constexpr float kRainGlow = 0.4f;         // a strip's brightness against the original line's (0.55: solid)
+constexpr float kRainOwnMin = 0.35f;      // ...times each drop's own, from this to 1
 // ...faded in from `kRainNearFrom` to `kRainNear` from the eye, smoothly: a drop
 // a step away is a long bright streak across the frame (the reader's "fade the
 // near streaks", 2026-10-27 - it was 0..80, linear)
 constexpr float kRainNearFrom = 40.0f;
 constexpr float kRainNear = 260.0f;
 constexpr float kRainLength = 32.0f;      // a streak's length in the world: half a frame's fall
-constexpr float kRainHalfPx = 1.5f;       // ...its half width in pixels at 480 lines, the texture's soft edge in it
+constexpr float kRainHalfPx = 1.5f;       // ...its half width in pixels at 480 lines, the texture's soft edge in it,
+                                          // growing as the root of the frame's height (in step: 10 px wide at 1600)
 constexpr int kStreakW = 8, kStreakH = 32;   // the streak texture, across and along
+constexpr float kStreakEnds = 0.25f;      // ...soft over this much of its length at each end
 constexpr float kRainUnlit = 0.35f;       // a drop no light reaches, against the line's grey
 constexpr float kRainNeon = 2.0f;         // ...and the emitters' (the neon), four times the set's lights
 constexpr float kRainLit = 0.5f;          // ...and the lights' colour added on it - Anekbah's
                                           // street has two fills reaching everywhere, ~0.8 together
 
 // THE STREAK, generated: a grey texel per palette index (index = brightness)
-// - across, a soft bell; along it, from the leading end (v 0), a short soft
-// tip, the brightest a fifth of the way back, fading out to the trailing end
+// - across, a soft bell; along it EVEN, a drop's motion blur, soft at both
+// ends (the first one's bright head fading behind read as a shooting star,
+// the reader, 2026-10-28)
 omk::Texture rainStreakTexture() {
     omk::Texture t;
     t.name = "OMK_RAIN_STREAK";
@@ -115,9 +120,8 @@ omk::Texture rainStreakTexture() {
     std::uint8_t* px = t.idx.mutableData();
     for (int y = 0; y < kStreakH; ++y) {
         const float along = (static_cast<float>(y) + 0.5f) / kStreakH;   // 0 the leading end
-        const float tip = std::clamp(along / 0.2f, 0.0f, 1.0f);
-        const float tail = std::pow(std::clamp((1.0f - along) / 0.8f, 0.0f, 1.0f), 1.5f);
-        const float l = tip * tip * (3.0f - 2.0f * tip) * tail;
+        const float end = std::clamp(std::min(along, 1.0f - along) / kStreakEnds, 0.0f, 1.0f);
+        const float l = end * end * (3.0f - 2.0f * end);
         for (int x = 0; x < kStreakW; ++x) {
             const float a = (static_cast<float>(x) + 0.5f) / kStreakW * 2.0f - 1.0f;   // -1..1 across
             const float across = std::pow(std::max(0.0f, 1.0f - a * a), 2.0f);
@@ -143,6 +147,14 @@ constexpr float kSplashNear = 60.0f, kSplashFar = 1100.0f;   // ...landing this 
 constexpr float kSplashHalfAngle = 0.9f;  // ...within this many radians of the view's heading
 constexpr float kSplashW = 4.5f, kSplashH = 6.0f;   // ...a crown's half width and height at its fullest (7, 9: icons)
 constexpr float kSplashGlow = 0.6f;       // ...its brightness, additive
+constexpr float kSplashSizeMin = 0.6f, kSplashSizeMax = 1.2f;   // ...each its own size, between these
+constexpr float kSplashBornW = 0.55f, kSplashBornH = 0.35f;     // ...born this much of its full width and height
+constexpr float kSplashFoot = 0.5f;       // ...its foot this far above the floor
+constexpr float kSplashFarFade = 0.3f;    // ...faded out over this much of `kSplashFar`'s end
+constexpr double kSplashFloorNy = -0.7;   // a floor faces up at least this much (Y down: -1 straight up)
+constexpr double kSplashSkyFrom = 2.0;    // the roof ray starts this far above the floor
+constexpr double kSplashStepMax = 100.0;  // the most ms of splashes one frame spawns (a hitch, not a shower)
+constexpr double kRainFull = 200.0;       // the full shower's drops (`o3de/weather.h`): the rate's 1
 constexpr int kSplashTex = 32;            // the crown texture's side
 
 // THE CROWN, generated as the streak: a grey texel per palette index. Its
@@ -335,7 +347,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         }
     // the streak three times the original's 1-pixel line at 640x480, scaled
     // with the frame - its texture's soft edge inside that
-    const float halfPx = kRainHalfPx * std::max(1.0f, static_cast<float>(fb.h) / 480.0f);
+    const float halfPx = kRainHalfPx * std::sqrt(std::max(1.0f, static_cast<float>(fb.h) / 480.0f));
     int roofed = 0;
     const auto corner = [](const float p[3], const float rgb[3], float u, float tv) {
         omk::Corner c{};
@@ -522,7 +534,13 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         // burner's drops stay orange instead of going white - and a drop in a
         // neon's light catches it, brighter (up to 1.8x)
         const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
-        for (float& c : rgb) c = std::min(1.0f, c / top * s * fade * (1.0f + 0.8f * neonL));
+        // ...and each drop its own brightness, `kRainOwnMin`..1, kept as it falls (a
+        // drop is its index): rain is many faint drops and a few catching
+        // the light, not one even field of bright ones
+        std::uint32_t hv = static_cast<std::uint32_t>(&d - all.data()) * 0x9E3779B1u;
+        hv ^= hv >> 15;
+        const float own = kRainOwnMin + (1.0f - kRainOwnMin) * static_cast<float>(hv & 0xFFu) / 255.0f;
+        for (float& c : rgb) c = std::min(1.0f, c / top * s * fade * own * (1.0f + 0.8f * neonL));
         const float W = static_cast<float>(kStreakW), H = static_cast<float>(kStreakH);
         const float l0[3] = {lead[0] - side[0] * w, lead[1] - side[1] * w, lead[2] - side[2] * w};
         const float l1[3] = {lead[0] + side[0] * w, lead[1] + side[1] * w, lead[2] + side[2] * w};
@@ -543,10 +561,10 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         splashClock = -1.0;
     } else {
         const double now = weatherClockMs;
-        const double dt = splashClock < 0.0 ? 0.0 : std::clamp(now - splashClock, 0.0, 100.0);
+        const double dt = splashClock < 0.0 ? 0.0 : std::clamp(now - splashClock, 0.0, kSplashStepMax);
         splashClock = now;
         std::erase_if(rainSplashes, [&](const RainSplash& sp) { return now - sp.born >= kSplashLife; });
-        splashOwed += kSplashRate * dt / 1000.0 * std::min(1.0, static_cast<double>(rainDrops.size()) / 200.0);
+        splashOwed += kSplashRate * dt / 1000.0 * std::min(1.0, static_cast<double>(rainDrops.size()) / kRainFull);
         const auto rnd = [&] {
             splashSeed = splashSeed * 1664525u + 1013904223u;
             return static_cast<float>(splashSeed >> 8) / 16777216.0f;
@@ -561,9 +579,9 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             const double p0[3] = {v.cam.eye[0] + std::cos(a) * r, v.cam.eye[1], v.cam.eye[2] + std::sin(a) * r};
             const double down[3] = {0.0, kRainRoofRay, 0.0};   // Y points down
             const auto ground = omk::sweepSphere(*shot, *boxes, p0, down, 0.0);
-            if (!ground || ground->n[1] > -0.7) continue;   // nothing below, or a wall's slope
+            if (!ground || ground->n[1] > kSplashFloorNy) continue;   // nothing below, or a wall's slope
             const double fy = p0[1] + down[1] * ground->t;
-            const double from[3] = {p0[0], fy - 2.0, p0[2]};
+            const double from[3] = {p0[0], fy - kSplashSkyFrom, p0[2]};
             const double up[3] = {0.0, -kRainRoofRay, 0.0};
             if (omk::sweepSphere(*shot, *boxes, from, up, 0.0).has_value()) { ++splashRoofed; continue; }
             rainSplashes.push_back({{static_cast<float>(p0[0]), static_cast<float>(fy), static_cast<float>(p0[2])},
@@ -578,23 +596,24 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             const float el = std::hypot(ex, ez);
             if (!(el > 1.0f)) continue;
             const float rx = ez / el, rz = -ex / el;   // across the eye's line, level
-            const float fade = std::clamp((kSplashFar - el) / (kSplashFar * 0.3f), 0.0f, 1.0f) *
+            const float fade = std::clamp((kSplashFar - el) / (kSplashFar * kSplashFarFade), 0.0f, 1.0f) *
                                (1.0f - t) * (1.0f - t);
             if (!(fade > 0.0f)) continue;
-            // each its own size (0.6..1.2) and way round, from where it fell
+            // each its own size and way round, from where it fell
             std::uint32_t h = static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[0] * 7.0f)) * 73856093u ^
                               static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[2] * 7.0f)) * 19349663u;
             h ^= h >> 13; h *= 0x5BD1E995u; h ^= h >> 15;
-            const float size = 0.6f + 0.6f * static_cast<float>(h & 0xFFu) / 255.0f;
+            const float size = kSplashSizeMin + (kSplashSizeMax - kSplashSizeMin) * static_cast<float>(h & 0xFFu) / 255.0f;
             const bool mirror = (h & 0x100u) != 0;
             const float rise = std::sqrt(t);
-            const float hw = size * kSplashW * (0.55f + 0.45f * rise), hh = size * kSplashH * (0.35f + 0.65f * rise);
+            const float hw = size * kSplashW * (kSplashBornW + (1.0f - kSplashBornW) * rise);
+            const float hh = size * kSplashH * (kSplashBornH + (1.0f - kSplashBornH) * rise);
             const float mid[3] = {sp.p[0], sp.p[1] - hh * 0.5f, sp.p[2]};
             float rgb[3];
             lightAt(mid, kRainUnlit, rgb);
             const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
             for (float& c : rgb) c = c / top * glow * fade;
-            const float foot = sp.p[1] - 0.5f, head = sp.p[1] - hh;   // just above the floor
+            const float foot = sp.p[1] - kSplashFoot, head = sp.p[1] - hh;
             const float q0[3] = {sp.p[0] - rx * hw, foot, sp.p[2] - rz * hw};
             const float q1[3] = {sp.p[0] + rx * hw, foot, sp.p[2] + rz * hw};
             const float q2[3] = {sp.p[0] + rx * hw, head, sp.p[2] + rz * hw};

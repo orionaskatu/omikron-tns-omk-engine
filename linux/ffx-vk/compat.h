@@ -6,6 +6,7 @@
 // MSVC's headers pull these in on their own
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>

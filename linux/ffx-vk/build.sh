@@ -37,6 +37,8 @@ ln -sfn "$out/sdkinclude/FidelityFX" "$out/include/FidelityFx"
 # vector stores and crashes. Natural alignment (8) is all the data needs.
 sed 's/struct alignas(32) EffectContext/struct EffectContext/' "$sdk/sdk/src/backends/vk/ffx_vk.cpp" > "$out/src/ffx_vk.cpp"
 grep -q "struct EffectContext {" "$out/src/ffx_vk.cpp" || { echo "the SDK's EffectContext line changed"; exit 1; }
+# say which Vulkan call failed (the SDK only returns an error code)
+sed -i 's|return FFX_ERROR_BACKEND_API_ERROR;|{ fprintf(stderr, "ffx_vk.cpp:%d: a Vulkan call failed\\n", __LINE__); return FFX_ERROR_BACKEND_API_ERROR; }|' "$out/src/ffx_vk.cpp"
 # MSVC's 64 bit literal suffix
 sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ffx_provider_fsr3upscale.cpp"
 

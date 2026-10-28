@@ -149,7 +149,7 @@ The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supe
 Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
 
 > [!NOTE]
-> FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK` and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has both.
+> FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK` and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has both. DLSS does not compile with the MSYS2 compiler (its Windows headers are too old), the releases are built with [w64devkit](https://github.com/skeeto/w64devkit) instead (see `.github/workflows/windows-build.yml`).
 
 ----
 

@@ -18,6 +18,8 @@ env:
   VULKAN_VERSION: 1.4.363.0
   FSR_VERSION: v2.3.0
   STREAMLINE_VERSION: v2.14.16
+  W64DEVKIT_VERSION: 2.10.1
+  SDL2_VERSION: 2.32.10
 
 jobs:
   build:
@@ -25,16 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: MSYS2 (compiler, make, SDL2)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: >-
-            make
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-SDL2
+      # The compiler is w64devkit (gcc, make, pkg-config in one folder) and SDL2 is
+      # its MinGW package. MSYS2's Windows headers are too old for NVIDIA's DLSS header.
+      - name: Compiler (w64devkit) and SDL2
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/skeeto/w64devkit/releases/download/v$env:W64DEVKIT_VERSION/w64devkit-x64-$env:W64DEVKIT_VERSION.7z.exe" -OutFile w64devkit.7z.exe
+          Start-Process .\w64devkit.7z.exe -Wait -ArgumentList "-y", "-oC:\"
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL2_VERSION/SDL2-devel-$env:SDL2_VERSION-mingw.tar.gz" -OutFile sdl2.tar.gz
+          New-Item -ItemType Directory -Force deps\sdl2 | Out-Null
+          tar -xzf sdl2.tar.gz -C deps\sdl2
+          Get-ChildItem C:/w64devkit/bin/g++.exe, C:/w64devkit/bin/make.exe, C:/w64devkit/bin/pkg-config.exe, "deps/sdl2/SDL2-$env:SDL2_VERSION/x86_64-w64-mingw32/bin/SDL2.dll"
 
       # The Vulkan SDK gives the headers, vulkan-1.lib and the shader tools
       # (glslc, spirv-cross, dxc). It is big, so it is cached.
@@ -52,7 +55,7 @@ jobs:
           $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
           Invoke-WebRequest $url -OutFile vulkan-sdk.exe
           Start-Process .\vulkan-sdk.exe -Wait -ArgumentList "--accept-licenses --default-answer --confirm-command install"
-          Get-ChildItem C:\VulkanSDK\$env:VULKAN_VERSION\Bin\glslc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\dxc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\spirv-cross.exe
+          Get-ChildItem C:/w64devkit/bin/g++.exe, C:/w64devkit/bin/make.exe, C:/w64devkit/bin/pkg-config.exe, "deps/sdl2/SDL2-$env:SDL2_VERSION/x86_64-w64-mingw32/bin/SDL2.dll"
 
       # The upscalers: AMD's FidelityFX SDK (FSR, MIT licence, signed DLLs) and
       # NVIDIA's Streamline SDK (DLSS). Both come from their public GitHub repos;
@@ -84,23 +87,22 @@ jobs:
           rm -rf upscalers/streamline/bin/x64/development streamline.zip
 
       - name: Build
-        shell: msys2 {0}
-        env:
-          VULKAN_SDK: C:/VulkanSDK/${{ env.VULKAN_VERSION }}
+        shell: bash
         run: |
+          export PATH="/c/w64devkit/bin:$PATH"
+          export VULKAN_SDK="C:/VulkanSDK/$VULKAN_VERSION"
+          export SDL2_DIR="$(pwd -W)/deps/sdl2/SDL2-$SDL2_VERSION/x86_64-w64-mingw32"
           export FSR_SDK="$(pwd -W)/upscalers/fsr"
           export SL_SDK="$(pwd -W)/upscalers/streamline"
-          ./build-windows.sh -j"$(nproc)"
+          bash ./build-windows.sh -j"$(nproc)"
 
       - name: Pack the zip
-        shell: msys2 {0}
+        shell: bash
         run: |
           mkdir -p dist/licenses
-          # the exe, SDL2, and the upscalers' DLLs (the build copies them next to the exe)
+          # the exe (the compiler's runtime is linked in), SDL2, and the upscalers' DLLs (the build copies them next to the exe)
           cp engine/build/omk-play.exe dist/
           cp engine/build/*.dll dist/
-          # the compiler's own runtime (this build is not linked statically)
-          for d in libstdc++-6 libgcc_s_seh-1 libwinpthread-1; do cp "/mingw64/bin/$d.dll" dist/; done
           # the build must have both upscalers, or the release would be missing a feature
           for f in amd_fidelityfx_loader_dx12.dll amd_fidelityfx_upscaler_dx12.dll sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll; do
             [ -f "dist/$f" ] || { echo "MISSING $f - FSR / DLSS did not get built in"; exit 1; }

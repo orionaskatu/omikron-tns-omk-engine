@@ -57,6 +57,7 @@ sources=(
     "$sdk/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp"
     "$sdk/sdk/src/shared/ffx_assert.cpp"
     "$here/ffx_message_linux.cpp"
+    "$here/ffx_stubs_linux.cpp"
     "$sdk/sdk/src/shared/ffx_breadcrumbs_list.cpp"
     "$sdk/sdk/src/shared/ffx_object_management.cpp"
 )

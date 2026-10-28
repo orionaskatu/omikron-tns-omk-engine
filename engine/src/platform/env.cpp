@@ -75,6 +75,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
+    "OMK_NO_DUST",              // =1 the restored sand's dust fog left out, its grains and grade kept (engine: rain 3d)
     "OMK_NO_FX_GATE",           // A/B: every particle drawn, none gated by distance (engine: particle gate)
     "OMK_NO_GEOMETRY_RELEASE",  // GLES: a destroyed geometry's GPU state kept (engine: geometry release)
     "OMK_NO_GPU_PRESENT",       // the GPU window hidden and every frame read back - a measurement run (engine: grey bank)
@@ -85,13 +86,18 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_OVERLAY",           // the interface composed on the CPU instead of drawn as an overlay (engine: gles overlay)
     "OMK_NO_PED_LOD",           // A/B: every walker on its largest skeleton
     "OMK_NO_PROGSPIN",          // diagnostic: a scene call's Euler not applied to the body
+    "OMK_NO_PUDDLES",           // =1 the wet floors an even film, no puddles (engine: wet floors)
     "OMK_NO_ROOTSPIN",          // diagnostic: a scene clip's root motion not turned by the call's Euler (engine: scene facing)
     "OMK_NO_SIDECULL",          // A/B: the staged-body side cull off (engine: unlimited clip)
+    "OMK_NO_SPLASHES",          // =1 no splashes where the 3D rain meets the floor (engine: rain 3d)
     "OMK_NO_STREAM",            // GLES: the streamed upload off where it is on by default
     "OMK_NO_SWEEP_GRID",        // A/B: the body and camera sweeps as a linear scan instead of through the grids
     "OMK_NO_TIE",               // the coincident-face depth tie off (engine: sign tie)
     "OMK_NO_TIE_BAKE",          // A/B: the depth tie per frame instead of baked (engine: gles tie bake)
     "OMK_NO_TILES",             // the tiled point lights off: the nearest 60 instead (engine: emitter light)
+    "OMK_NO_VEIL",              // =1 the rain's distant veils left out, the rest of the remaster's rain kept (engine: rain 3d)
+    "OMK_NO_WET_BODIES",        // =1 the bodies stay dry in the rain (engine: wet floors)
+    "OMK_NO_WET_WALLS",         // =1 the rain wets the floors alone, no wall (engine: wet floors)
     "OMK_NO_ZONE_BAND",         // a trigger zone's height band not tested
     "OMK_PANEL_CHECK",          // 3DS: the bottom-screen panel checks what it draws
     "OMK_PED_LOD_MAX",          // =<n> no walker skeleton past level n (default 3)

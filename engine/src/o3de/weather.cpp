@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "o3de/weather.h"
 
+#include <algorithm>
 #include <cmath>
 #include <climits>
 
@@ -100,6 +101,21 @@ std::vector<WeatherDrop> Weather::step(unsigned bits, const float eye[3], const 
             w.q[0] = px + tail[0]; w.q[1] = py + tail[1]; w.q[2] = pz + tail[2];
             out.push_back(w);
         }
+    } else if (bits & 8u) {
+        // THE SAND (restored): `sub_481D90`'s else branch, the first `count_`
+        const float box = 300.0f, half = 150.0f, speed = 30.0f;
+        for (int i = 0; i < count_ && i < kWeatherDrops; ++i) {
+            WeatherDrop w;
+            const float px = x_[i] - d[0] * box * -0.33333334f / len + eye[0];
+            const float py = y_[i] - d[1] * box * -0.33333334f / len + eye[1];
+            const float pz = z_[i] - d[2] * box * -0.33333334f / len + eye[2];
+            x_[i] -= speed * 0.866f;          if (x_[i] < -half) x_[i] = box * 0.5f;
+            y_[i] -= speed * -0.30000001f;    if (y_[i] > half)  y_[i] = -box * 0.5f;
+            if (z_[i] > half) z_[i] = -box * 0.5f;
+            w.p[0] = px; w.p[1] = py; w.p[2] = pz;
+            w.q[0] = px + 15.0f; w.q[1] = py; w.q[2] = pz;
+            out.push_back(w);
+        }
     } else if (bits & 4u) {
         // the SNOW (`sub_481D90`'s bit-4 arm): every one of the 200, box 400,
         // speed 20 - x drifts back by 0.866 of it, y falls 0.3 of it, z only
@@ -118,6 +134,36 @@ std::vector<WeatherDrop> Weather::step(unsigned bits, const float eye[3], const 
             out.push_back(w);
         }
     }
+    return out;
+}
+
+std::vector<GrainRect> grainsOf(int w, int h, const std::function<bool(int, int)>& solid) {
+    std::vector<GrainRect> out;
+    if (w <= 0 || h <= 0) return out;
+    std::vector<unsigned char> seen(static_cast<std::size_t>(w) * h, 0);
+    std::vector<std::pair<int, int>> stack;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            if (seen[static_cast<std::size_t>(y) * w + x] || !solid(x, y)) continue;
+            int x0 = x, y0 = y, x1 = x, y1 = y;
+            stack.assign(1, {x, y});
+            seen[static_cast<std::size_t>(y) * w + x] = 1;
+            while (!stack.empty()) {
+                const auto [a, b] = stack.back();
+                stack.pop_back();
+                x0 = std::min(x0, a); x1 = std::max(x1, a); y0 = std::min(y0, b); y1 = std::max(y1, b);
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int qx = a + dx, qy = b + dy;
+                        if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+                        unsigned char& s = seen[static_cast<std::size_t>(qy) * w + qx];
+                        if (s || !solid(qx, qy)) continue;
+                        s = 1;
+                        stack.push_back({qx, qy});
+                    }
+            }
+            out.push_back({x0, y0, x1 - x0 + 1, y1 - y0 + 1});
+        }
     return out;
 }
 

@@ -132,6 +132,11 @@ void PlayState::omkOptionsOpen() {
     row("omk.language", settings.language == "en" ? 1 : 0, f0.language == "en" ? 1 : 0,
         f1.language == "en" ? 1 : 0);
     o.setDefault("omk.language", 0);
+    // ---- [Restored]: the restored weather - its flag holds the row; reset
+    // gives what the start gives, on under the remaster preset
+    row("restored.weather", restoredWeather ? 1 : 0, f0.restoredWeather, f1.restoredWeather);
+    o.setDefault("restored.weather", (!remasterFlag.empty() || !settings.remasterDir.empty()) && remasterBuilt() ? 1 : 0);
+    o.setHeld("restored.weather", restoreWeatherFlag >= 0 ? "--restore-weather" : "");
 }
 
 // Each frame screen 35 is up: the changes written to the config, and the

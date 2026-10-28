@@ -1364,9 +1364,117 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   follow camera 0 in each; no config beside the saves, the save unchanged
   since August. Likely a binary rebuilt by a check (or a mutation's build)
   between renders; the logs of those runs were not kept. Watch for it.
-* **Open**: the neon's own colour on the rain (the neon are emitters - lit
-  only with the emitters' light on; Qalisar, the neon city, has no shower in
-  the shipped game - `todo/restore-weather.md`); snow on slopes.
+* **The rain under neon** (the reader's "rain effect on neon", 2026-10-27):
+  each drop's light in two halves - the set's own lights, then the
+  EMITTERS' (the neon, the glowing surfaces, the flames - in the slot's table
+  with the emitters' light on), these weighed 2.0 (the set's 0.5) and
+  replacing up to 70% of the grey base as they grow, the drop up to 1.8x
+  brighter in a neon's light: under Qalisar's pink "?" sign the rain glows
+  pink. 156 drops at frame 690 there with the emitters' light, 0 without.
+  `engine: rain 3d` part 12.
+* **More realistic rain, 1 - the VEILS** (the reader's "how could the rain be
+  more realistic", then "do 1, 2 and 3", 2026-10-28): far rain reads as
+  falling sheets, not streaks - `veilAmount` in both scene shaders samples
+  three points IN THE AIR along the ray (500, 1200, 1900 units, those nearer
+  than the surface) in a value noise of long bands (0.0007 along the fall,
+  0.008 across) slanted by the wind and falling 1500 units a second on the
+  weather's clock (held while paused), a light grey lit by the set's
+  ambient, as thick as the shower and with distance (`1 - exp(-d / 2500)`,
+  0.85 at full). Qalisar's lamp-lit street: 107261 pixels the veils' own on
+  Vulkan, the same on GLES; `OMK_NO_VEIL=1` (an instrument) leaves them out.
+  `engine: rain 3d` part 13.
+* **More realistic rain, 2 - the PUDDLES** (2026-10-28): the wet film is
+  no longer even - `puddleMask` in both scene shaders lays a two-octave
+  value noise over the floor's world x/z (0.004 and 0.011 per unit,
+  `smoothstep(0.52, 0.68)`), and where it is high the floor is a puddle:
+  the film darkens it up to 1.8x the even film (0.5x between), its mirror
+  is 2.2x as strong (0.5x between), the ripples 1.6x, and Fresnel never
+  falls below 0.18 so a puddle mirrors even seen from above. Only under
+  the open sky, only where the floor is wet. The puddle strength rides in
+  the veil vector's w (`View::puddles`; `OMK_NO_PUDDLES=1`, an instrument,
+  gives the even film back). For the puddles to mirror the street the
+  player stands on, the wet plane is now `chooseFloorNear` (the listed
+  level below the eye NEAREST the camera's target height, with at least
+  `kWetPlaneMin` = 1.5e5 square units near) rather than the one with the
+  most area near: in Qalisar the largest level was not the street.
+  Anekbah's street at full rain: 61427 pixels move on Vulkan, 61405 on
+  GLES, overlap 0.989. `engine: wet floors` part 9.
+* **More realistic rain, 3 - the SPLASHES** (2026-10-28): where the rain
+  meets open ground ahead of the eye, a drop's crown -
+  `playremaster_rain.cpp`. 700 a second at the full shower (fewer as its
+  count ramps), each landing at random over the half-disc 60..1100 units
+  ahead within 0.9 rad of the view's heading, on the floor a ray down
+  through the shot soup meets (a face no steeper than `n.y` 0.7), and only
+  where the roof ray up from there meets nothing. Each lives 240 ms on the
+  weather's clock (none spawned or aged while paused, none from
+  `OMK_WEATHER_SKIP_MS`'s jump): an upright sprite turned to the eye, its
+  own size (0.6..1.2 of 4.5 x 6 units) and way round, rising as it fades,
+  additive, lit as the drops (the set's lights, the neon). The picture is
+  generated (`splashTexture`: a rim, two flaring walls, a spray, four beads,
+  blurred twice - the first, sharp one at 7 x 9 read as an icon of a crown).
+  Their own fixed sequence, not `rand()`, so the backends draw the same
+  ones. Anekbah at full rain: 115 live at frame 690; 1287 pixels on Vulkan,
+  1288 on GLES, overlap 0.999; `OMK_NO_SPLASHES=1` (an instrument) leaves
+  them out. `engine: rain 3d` part 14.
+* **The drops less solid** (the reader, from play, 2026-10-28: "they look
+  too solid, almost like a shooting star"): the streak was a comet - a
+  bright head a fifth of the way back, fading behind it - and grew with the
+  frame's height (10 px wide at 1600 lines). Now the streak is EVEN along
+  its length, a drop's motion blur, soft over a quarter at each end
+  (`kStreakEnds`); its width grows as the ROOT of the height (about 5.5 px
+  at 1600, soft edges included); each drop has its own brightness,
+  `kRainOwnMin` 0.35..1, kept as it falls; and the strips are 0.4 bright
+  where they were 0.55 (`kRainGlow`).
+* **Wet walls** (the reader's "wet walls and characters", step 1,
+  2026-10-28): `wetFloors` also takes a set's opaque triangles within ~20
+  degrees of upright (`kWetWallSteep` 0.34 on the normal's y) and calls a
+  wall's corner wet when a point `kWetWallOut` (8 units) in front of it
+  sees the sky - ONE roof ray, not the floors' five (five took Anekbah's
+  load from 196 to 500 ms on an M1; one, 337 ms; Qalisar 121 -> ~200).
+  `WetFloors::rained` (1 a floor, 2 a wall) is the wet pass's list - the
+  snow keeps `open`, the floors alone. A wall's corner carries `-6 - open`
+  in its phase (`kOpenSkyWall`; a floor's `-2 - open`), so both shaders
+  tell the two apart below -5.5 (GLES: the new `vWall` varying). A wet wall
+  darkens `kWetWallFilm` (0.6) of a floor's film and takes no puddle, no
+  ripples and no reflection, but its TRICKLES (`trickles`, scene.frag and
+  `kTrickleGlsl`): in some 5-unit columns, now and then a bead runs down
+  on the ripples' clock (16 or 32 cycles in its 256, so it wraps whole),
+  meandering a little, a glint (`kTrickleLight`) with its wet trail above
+  it darker (`kTrickleDark`), gone past 900 units. The columns run along
+  a fixed level direction (0.83, 0.56), so a wall at one rare heading
+  would show one wide column - GLES has no normal to do better.
+  Anekbah: 22152 wall triangles the rain reaches; at full rain 61374
+  pixels move on Vulkan, 61410 on GLES, overlap 0.999 (measured with the
+  five rays); `OMK_NO_WET_WALLS=1` (an instrument) wets the floors alone.
+  `engine: wet floors` part 10.
+* **Wet bodies** (step 2, 2026-10-28): `remasterWetBodies` - in a rain area
+  while the floors are wet, every body the renderer poses (`Draw::meshPose`)
+  casts one roof ray from `kWetBodyHead` (150 units) above its root through
+  the shot soup, and if nothing is over it its draws carry `Draw::wetBody`
+  with `wet` the floors' wetness. Vulkan's bit 21 of `Push.water`, GLES's
+  `uWetBody`: the BODY rule, before the fog. First a gloss with no normal,
+  `c * (1 - 0.2 w) + 1.2 w c^3` - which the reader could not see in the
+  game ("wet effect on characters is not visible", 2026-10-28). Now: darker
+  (`kWetBodyDark` 0.3) and deeper in colour (`kWetBodySat`), and a SHEEN -
+  the film mirroring the lit street, lit by the body's own light: a
+  Fresnel rim (`kWetBodyRim`, power 4) and a tight highlight where the
+  reflected ray rises to the sky (`kWetBodySky`, power 12), `kWetBodySheen`
+  0.9 at full wet. GLES had no normal for it in its plain programs: the
+  water vertex variant hands down `vBodyN` (a posing stage's turned `nrm`,
+  a set stage's `aNormal`, which the plain program now binds), and a wet
+  body posed on the CPU reads its posed normals from their own buffer
+  (`remasterWantsNormals`). AND THE BODIES POSED ON THE CPU were never
+  found - they carry no pose: GLES poses Kay'l on the CPU under the mapped
+  shadows (the preset's), so in the reader's run the player was never wet
+  on GLES. `remasterWetBodies` now knows them by their posed copy (the
+  player's, the staged, the crowd's, the traffic's) and places each by its
+  lowest corner. Anekbah at 640x480: 33969 pixels on Vulkan, 33970 on GLES,
+  overlap 1.000; 1343 brighter by more than 48 - under the FLOOR rule
+  (`wetBody` lost) 0, which part 11 tells apart; Kay'l on the CPU
+  (`OMK_CPU_PLAYER=1`) on GLES 1343 too, 1 with his normals or his marking
+  lost. `OMK_NO_WET_BODIES=1` (an instrument) leaves them dry. Qalisar
+  with its crowd: 79 of 84. `engine: wet floors` part 11.
+* **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)
 

@@ -14,9 +14,10 @@
 
 namespace omk {
 
-WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes) {
+WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes, bool walls) {
     WetFloors out;
     out.open.assign(g.corners.size() / 3, 0);
+    out.rained.assign(g.corners.size() / 3, 0);
     out.cornerOpen.assign(g.corners.size(), kWetNotFloor);
     if (shot.empty()) return out;
     // straight UP (the game's Y points down), from just above the floor
@@ -48,6 +49,21 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
         atCorner.emplace(key, v);
         return v;
     };
+    // ...and a WALL's corner: the sky seen from `kWetWallOut` in front of it,
+    // once per such point (the coplanar triangles of one face agree) - ONE
+    // ray, not the floors' five: a set has twice as many wall triangles, and
+    // five took Anekbah's load from 196 to 500 ms on an M1
+    std::unordered_map<std::uint64_t, std::uint8_t> atWall;
+    const auto skyFront = [&](const Corner& c, double ox, double oz) -> std::uint8_t {
+        const double x = c.x + ox, z = c.z + oz;
+        const auto q = [](double v) { return static_cast<std::uint64_t>(static_cast<std::uint32_t>(
+                                         static_cast<std::int32_t>(std::lround(v * 4.0))) & 0x1FFFFFu); };
+        const std::uint64_t key = q(x) | q(c.y) << 21 | q(z) << 42;
+        if (const auto it = atWall.find(key); it != atWall.end()) return it->second;
+        const std::uint8_t v = ray(x, c.y, z) ? 0 : 1;   // one ray: a wire over a wall's foot matters little
+        atWall.emplace(key, v);
+        return v;
+    };
     std::map<int, FloorPlanes::Level> byHeight;
     for (const auto& bt : g.batches) {
         if (bt.blend != Blend::Opaque) continue;
@@ -64,7 +80,24 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             const double vx = c2.x - a.x, vy = c2.y - a.y, vz = c2.z - a.z;
             const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
             const double n = std::sqrt(nx * nx + ny * ny + nz * nz);
-            if (!(n > 0.0) || ny >= 0.0 || -ny < kWetFlat * n) continue;
+            if (!(n > 0.0)) continue;
+            if (std::fabs(ny) <= kWetWallSteep * n) {
+                if (!walls) continue;
+                // A WALL: its outward normal level, out `kWetWallOut`
+                const double h = std::hypot(nx, nz);
+                if (!(h > 0.0)) continue;
+                const double ox = nx / h * kWetWallOut, oz = nz / h * kWetWallOut;
+                const std::uint8_t w0 = skyFront(a, ox, oz), w1 = skyFront(c1, ox, oz), w2 = skyFront(c2, ox, oz);
+                if (w0 + w1 + w2 == 0) continue;
+                out.rained[t / 3] = 2;
+                out.cornerOpen[t] = static_cast<std::uint8_t>(kWetWallCorner + w0);
+                out.cornerOpen[t + 1] = static_cast<std::uint8_t>(kWetWallCorner + w1);
+                out.cornerOpen[t + 2] = static_cast<std::uint8_t>(kWetWallCorner + w2);
+                ++out.wallTris;
+                out.wallArea += n * 0.5;
+                continue;
+            }
+            if (ny >= 0.0 || -ny < kWetFlat * n) continue;
             const double area = std::fabs(ny) * 0.5;   // the horizontal area
             const double cx = (a.x + c1.x + c2.x) / 3.0, cy = (a.y + c1.y + c2.y) / 3.0,
                          cz = (a.z + c1.z + c2.z) / 3.0;
@@ -78,6 +111,7 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
                 continue;
             }
             out.open[t / 3] = 1;
+            out.rained[t / 3] = 1;
             out.cornerOpen[t] = k0;
             out.cornerOpen[t + 1] = k1;
             out.cornerOpen[t + 2] = k2;
@@ -111,8 +145,9 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
 void encodeOpenSky(Geometry& g, const WetFloors& w) {
     if (w.cornerOpen.size() != g.corners.size()) return;
     for (std::size_t i = 0; i < g.corners.size(); ++i)
-        if (w.cornerOpen[i] != kWetNotFloor && g.corners[i].phase == -1.0f)
-            g.corners[i].phase = -2.0f - static_cast<float>(w.cornerOpen[i]);
+        if (const std::uint8_t k = w.cornerOpen[i]; k != kWetNotFloor && g.corners[i].phase == -1.0f)
+            g.corners[i].phase = k >= kWetWallCorner ? kOpenSkyWall - static_cast<float>(k - kWetWallCorner)
+                                                     : kOpenSkyFloor - static_cast<float>(k);
 }
 
 std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const std::vector<std::uint8_t>& open,

@@ -95,6 +95,121 @@ std::string bloomVariant(const char* frag) {
 // THE RAIN'S RIPPLES (`o3de/wetfloor.h`), `scene.frag`'s `ripples` - keep the
 // two in step: cells of 48 units, a drop where the hash is below the rain, one
 // soft ring to its own size over 64 of the shimmer's clock
+// THE SAND'S DUST (the restored weather's), `scene.frag`'s `dustAmount` - keep
+// the two in step
+constexpr const char* kDustGlsl =
+    "float dustHash(vec3 p) {\n"
+    "    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));\n"
+    "    p *= 17.0;\n"
+    "    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));\n"
+    "}\n"
+    "float dustNoise(vec3 x) {\n"
+    "    vec3 i = floor(x), f = fract(x);\n"
+    "    f = f * f * (3.0 - 2.0 * f);\n"
+    "    return mix(mix(mix(dustHash(i), dustHash(i + vec3(1.0, 0.0, 0.0)), f.x),\n"
+    "                   mix(dustHash(i + vec3(0.0, 1.0, 0.0)), dustHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),\n"
+    "               mix(mix(dustHash(i + vec3(0.0, 0.0, 1.0)), dustHash(i + vec3(1.0, 0.0, 1.0)), f.x),\n"
+    "                   mix(dustHash(i + vec3(0.0, 1.0, 1.0)), dustHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);\n"
+    "}\n"
+    "float dustCloud(vec3 p) {\n"
+    "    float g = dustNoise(p * vec3(0.0012, 0.004, 0.004));\n"
+    "    return g * g * 2.2;\n"
+    "}\n"
+    "float dustAmount(vec3 e, vec3 w, vec4 dust) {\n"
+    "    vec3 drift = vec3(dust.y, 0.0, dust.z);\n"
+    "    float d = length(w - e);\n"
+    "    vec3 near = e + (w - e) * min(1.0, 250.0 / max(d, 1.0));\n"
+    "    float n = 0.1 + (dustCloud(near + drift) + dustCloud(mix(e, w, 0.5) + drift) + dustCloud(w + drift)) / 3.0 * 1.6;\n"
+    "    return 1.0 - exp(-dust.x * n * (d + 300.0) / dust.w);\n"
+    "}\n";
+
+// THE RAIN'S VEILS (`View::veil`), `scene.frag`'s `veilAmount` - keep the two
+// in step (after kDustGlsl, whose noise it takes)
+constexpr const char* kVeilGlsl =
+    "const float kVeilFirst = 500.0;\n"
+    "const float kVeilStep = 700.0;\n"
+    "const float kVeilSlant = 0.577;\n"
+    "const float kVeilAcross = 0.008;\n"
+    "const float kVeilAlong = 0.0007;\n"
+    "const float kVeilLow = 0.5;\n"
+    "const float kVeilHigh = 0.85;\n"
+    "const float kVeilMax = 0.85;\n"
+    "float veilAmount(vec3 e, vec3 w, vec4 veil) {\n"
+    "    float d = length(w - e);\n"
+    "    if (d < kVeilFirst) return 0.0;\n"
+    "    vec3 dir = (w - e) / d;\n"
+    "    float sum = 0.0;\n"
+    "    for (int k = 0; k < 3; ++k) {\n"
+    "        float t = kVeilFirst + float(k) * kVeilStep;\n"
+    "        if (t > d) break;\n"
+    "        vec3 p = e + dir * t;\n"
+    "        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);\n"
+    "        sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));\n"
+    "    }\n"
+    "    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;\n"
+    "}\n";
+
+// THE PUDDLES' MASK, `scene.frag`'s `puddleMask` and its constants - keep the
+// two in step (after kDustGlsl, whose noise it takes)
+constexpr const char* kPuddleGlsl =
+    "const float kPuddleBroad = 0.004;\n"
+    "const float kPuddleFine = 0.011;\n"
+    "const float kPuddleFineShare = 0.3;\n"
+    "const float kPuddleDry = 0.52;\n"
+    "const float kPuddleFull = 0.68;\n"
+    "const vec2 kPuddleFilm = vec2(0.5, 1.8);\n"
+    "const vec2 kPuddleMirror = vec2(0.5, 2.2);\n"
+    "const vec2 kPuddleRipples = vec2(0.6, 1.6);\n"
+    "const float kPuddleFresnel = 0.18;\n"
+    "float puddleMask(vec2 xz) {\n"
+    "    float n = dustNoise(vec3(xz.x * kPuddleBroad, 0.0, xz.y * kPuddleBroad)) * (1.0 - kPuddleFineShare) +\n"
+    "              dustNoise(vec3(xz.x * kPuddleFine, 3.7, xz.y * kPuddleFine)) * kPuddleFineShare;\n"
+    "    return smoothstep(kPuddleDry, kPuddleFull, n);\n"
+    "}\n";
+
+// THE TRICKLES on a wet wall, `scene.frag`'s `trickles` and its constants -
+// keep the two in step (after kRipplesGlsl, whose hash it takes); and a WET
+// BODY's constants, `scene.frag`'s too
+constexpr const char* kTrickleGlsl =
+    "const float kWetBodyDark = 0.3;\n"
+    "const float kWetBodySat = 0.35;\n"
+    "const float kWetBodySheen = 0.9;\n"
+    "const float kWetBodyRim = 4.0;\n"
+    "const float kWetBodySky = 0.6;\n"
+    "const float kWetBodySkyPower = 12.0;\n"
+    "const float kWetBodySheenFloor = 0.15;\n"
+    "const float kWetWallFilm = 0.6;\n"
+    "const float kTrickleAcross0 = 0.83;\n"
+    "const float kTrickleAcross1 = 0.56;\n"
+    "const float kTrickleSpan = 5.0;\n"
+    "const float kTrickleShare = 0.45;\n"
+    "const float kTrickleWidth = 0.12;\n"
+    "const float kTrickleLength = 40.0;\n"
+    "const float kTrickleRate = 0.0625;\n"
+    "const float kTrickleDark = 0.35;\n"
+    "const float kTrickleRuns = 0.5;\n"
+    "const float kTrickleMeander = 0.04;\n"
+    "const float kTrickleWave = 0.07;\n"
+    "const float kTrickleFar = 900.0;\n"
+    "const float kTrickleLight = 0.22;\n"
+    "vec2 trickles(vec3 w, float clock, float rain) {\n"
+    "    float u = (w.x * kTrickleAcross0 + w.z * kTrickleAcross1) / kTrickleSpan;\n"
+    "    float col = floor(u);\n"
+    "    vec3 h = rippleHash(vec2(col, 17.0));\n"
+    "    if (h.z > kTrickleShare * rain) return vec2(0.0);\n"
+    "    float speed = kTrickleRate * (1.0 + floor(h.y * 2.0));\n"
+    "    float v = w.y / kTrickleLength - clock * speed + h.x * 7.0;\n"
+    "    // ...a run now and then down the column, not every cycle\n"
+    "    if (rippleHash(vec2(col, floor(v))).x > kTrickleRuns) return vec2(0.0);\n"
+    "    float f = fract(v);\n"
+    "    // ...meandering a little as it runs\n"
+    "    float centre = 0.3 + 0.4 * h.x + kTrickleMeander * sin(w.y * kTrickleWave + h.y * 6.28);\n"
+    "    float line = 1.0 - smoothstep(kTrickleWidth * 0.5, kTrickleWidth, abs(fract(u) - centre));\n"
+    "    float bead = smoothstep(0.82, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));\n"
+    "    float trail = smoothstep(0.1, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));\n"
+    "    return line * vec2(trail, bead);\n"
+    "}\n";
+
 constexpr const char* kRipplesGlsl =
     "const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)\n"
     "vec3 rippleHash(vec2 p) {\n"
@@ -130,10 +245,12 @@ constexpr const char* kRipplesGlsl =
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
-                    "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\n"
-                    "uniform float uSnow;\nuniform vec3 uMist;\n"
-                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\n" +
-                    std::string(kRipplesGlsl) + frag;
+                    "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
+                    "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
+                    "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
+                    "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec3 vBodyN;\n" +
+                    std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
+                    std::string(kPuddleGlsl) + std::string(kTrickleGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
@@ -154,15 +271,31 @@ std::string waterVariant(const std::string& frag) {
                      "                                        : exp(-h0 / H);\n"
                      "        c = mix(c, uFogColour, 1.0 - exp(-uMist.x * dist * mean / 1500.0));\n"
                      "    }\n"
-                     "    float wetF = uSnow > 0.5 ? 0.0 : uWet;\n"
-                     "    float wetHere = wetF > 0.0 ? vOpen : 1.0;\n"
-                     "    c *= 1.0 - wetF * vOpen;\n    vec3 rip = vec3(0.0);\n"
-                     "    if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
-                     "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen;\n"
+                     "    if (uDust.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
+                     "        vec3 dw = vec3(vWxz.x, vWy, vWxz.y);\n"
+                     "        c = mix(c, uDustColour, dustAmount(dw + vToEye, dw, uDust));\n"
+                     "    }\n"
+                     "    if (uVeil.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
+                     "        vec3 vw = vec3(vWxz.x, vWy, vWxz.y);\n"
+                     "        c = mix(c, uVeilColour, veilAmount(vw + vToEye, vw, uVeil));\n"
+                     "    }\n"
+                     "    float wetF = uSnow > 0.5 || uWetBody > 0.5 ? 0.0 : uWet;\n"
+                     "    float pud = 0.0;\n"   // the PUDDLES, `scene.frag`'s `puddleMask`
+                     "    bool wall = vWall > 0.5;\n"   // a WALL: a lighter film and its trickles, `scene.frag`'s
+                     "    if (wetF > 0.0 && !wall) pud = puddleMask(vWxz) * uVeil.w;\n"
+                     "    float wetHere = wetF > 0.0 ? vOpen * mix(kPuddleMirror.x, kPuddleMirror.y, pud) : 1.0;\n"
+                     "    c *= 1.0 - wetF * vOpen * (wall ? kWetWallFilm : mix(kPuddleFilm.x, kPuddleFilm.y, pud));\n"
+                     "    vec3 rip = vec3(0.0);\n"
+                     "    if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0 && wall) {\n"
+                     "        float near = 1.0 - smoothstep(kTrickleFar * 0.6, kTrickleFar, length(vToEye));\n"
+                     "        vec2 tr = trickles(vec3(vWxz.x, vWy, vWxz.y), uRippleClock, uRain) * vOpen * near;\n"
+                     "        c = c * (1.0 - kTrickleDark * tr.x) + vec3(kTrickleLight * tr.y);\n"
+                     "    } else if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
+                     "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen * mix(kPuddleRipples.x, kPuddleRipples.y, pud);\n"
                      "        c += vec3(kRippleLight * rip.z);\n"
                      "    }\n    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
-                     "        float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);\n"
+                     "        float f = max(0.02 + 0.98 * pow(1.0 - ct, 5.0), kPuddleFresnel * pud);\n"
                      "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"
                      "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f * wetHere;\n"
                      "    }\n    ");
@@ -173,8 +306,19 @@ std::string waterVariant(const std::string& frag) {
     const std::string lit = "vec3 c = clamp(t.rgb * shade";
     const auto lp = s.find(lit);
     const auto le = lp == std::string::npos ? lp : s.find(";\n", lp);
+    // a BODY in the rain, `scene.frag`'s: darker and deeper in colour, and its
+    // SHEEN on the body's normal (`vBodyN`, the vertex variant's - the plain
+    // programs have no `vNrm`)
     if (le != std::string::npos)
-        s.insert(le + 2, "    if (uSnow > 0.5 && uWet > 0.0)\n"
+        s.insert(le + 2, "    if (uWetBody > 0.5 && uWet > 0.0) {\n"
+                         "        float y = dot(c, vec3(0.299, 0.587, 0.114));\n"
+                         "        c = max(mix(vec3(y), c, 1.0 + kWetBodySat * uWet), 0.0) * (1.0 - kWetBodyDark * uWet);\n"
+                         "        vec3 nB = normalize(vBodyN), v = normalize(vToEye);\n"
+                         "        float rim = pow(1.0 - abs(dot(nB, v)), kWetBodyRim);\n"
+                         "        float sky = pow(max(-reflect(-v, nB).y, 0.0), kWetBodySkyPower) * kWetBodySky;\n"
+                         "        c = clamp(c + kWetBodySheen * uWet * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);\n"
+                         "    }\n"
+                         "    if (uSnow > 0.5 && uWet > 0.0)\n"
                          "        c = mix(c, clamp(c / max(t.rgb, vec3(0.04)) * 0.9, 0.0, 1.0), uWet * vOpen *\n"
                          "                clamp((1.0 - dot(t.rgb, vec3(0.299, 0.587, 0.114))) * 1.4, 0.0, 1.0));\n");
     else anchorMissed("snow", lit);
@@ -252,18 +396,25 @@ std::string tintVariant(const std::string& vert) {
 // whatever the program transforms - `aPos` for a set, `wp` for a posed body -
 // and the ray to the eye as `vToEye`, made here where the floats are highp
 std::string waterVertVariant(const char* vert) {
+    // (a set's stage reads `aNormal` for a wet body's sheen - the plain one
+    // declares it here - and a posing one hands down the normal it turned)
+    const bool hasNormal = std::string(vert).find("attribute vec3  aNormal;") != std::string::npos;
     std::string s = std::string("uniform vec3 uEye;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec2 vWxz;\n"
-                                "varying float vOpen;\n") + vert;
+                                "varying float vOpen;\nvarying float vWall;\nvarying vec3 vBodyN;\n") +
+                    (hasNormal ? "" : "attribute vec3 aNormal;\n") + vert;
+    const bool posing = s.find("vec3 nrm = ") != std::string::npos;
     const std::string key = "gl_Position = uMvp * vec4(";
     const auto at = s.find(key);
     const auto end = at == std::string::npos ? at : s.find(", 1.0);", at);
     if (end == std::string::npos) { anchorMissed("water (vertex)", key); return s; }
     const std::string expr = s.substr(at + key.size(), end - at - key.size());
     // ...and the open sky a wet floor's corner carries in its phase
-    // (`encodeOpenSky`: `-2 - open`, under the depth tie's -8192 shift)
-    s.insert(at, "vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
+    // (`encodeOpenSky`: a floor's `-2 - open`, a wall's `-6 - open`, under the
+    // depth tie's -8192 shift)
+    s.insert(at, std::string("vBodyN = ") + (posing ? "nrm" : "aNormal") + ";\n    vWy = (" + expr + ").y;\n    vToEye = uEye - (" + expr + ");\n    vWxz = (" + expr +
                  ").xz;\n    float wph = aPhase < -4096.0 ? aPhase + 8192.0 : aPhase;\n"
-                 "    vOpen = wph <= -1.5 ? clamp(-2.0 - wph, 0.0, 1.0) : 1.0;\n    ");
+                 "    vWall = wph <= -5.5 ? 1.0 : 0.0;\n"
+                 "    vOpen = wph <= -5.5 ? clamp(-6.0 - wph, 0.0, 1.0) : wph <= -1.5 ? clamp(-2.0 - wph, 0.0, 1.0) : 1.0;\n    ");
     return s;
 }
 

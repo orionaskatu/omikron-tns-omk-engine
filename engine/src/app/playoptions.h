@@ -123,6 +123,7 @@ struct PlayOptions {
     bool cpuBodiesFlag = false;   // --cpu-bodies: pose every body on the CPU even where the renderer can
     bool fullTexturesFlag = false; // --full-textures: GL1's textures at full size whatever the card's memory (docs/ASSETS.md 4b)
     int detailFlag = -1;   // --detail 0..2, options row 7; -1 = the settings'
+    int restoreWeatherFlag = -1;   // --restore-weather 0|1, [Restored] weather; -1 = the settings'
     int aaFlag = -1;       // --aa N, [Enhancements] antialiasing; -1 = the settings'
     int filterFlag = -1;   // --filter nearest|bilinear|trilinear, [Enhancements] texturefiltering
     int anisoFlag = -1;    // --anisotropy N, [Enhancements] anisotropy

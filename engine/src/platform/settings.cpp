@@ -17,6 +17,8 @@ constexpr const char* kEnhancements = "enhancements";
 constexpr const char* kRemaster = "remaster";
 // And this port's own interface: the language of its menu rows.
 constexpr const char* kOmk = "omk";
+// And what the original planned and never shipped (settings.h).
+constexpr const char* kRestored = "restored";
 
 }  // namespace
 
@@ -348,6 +350,14 @@ Settings resolveSettings(const OptionsFile& ini,
             } else {
                 std::fprintf(stderr, "settings: [OMK] language = %s is not fr|en - ignored\n", w->c_str());
             }
+        }
+
+        // ---- [Restored], what the original planned and never shipped ------
+        takeInt(kRestored, "weather", s.restoredWeather, s.restoredWeatherSource);
+        if (s.restoredWeather < 0 || s.restoredWeather > 1) {
+            std::fprintf(stderr, "settings: [Restored] weather = %d is not 0|1 - ignored\n", s.restoredWeather);
+            s.restoredWeather = 0;
+            s.restoredWeatherSource = Settings::Source::Default;
         }
     }
 

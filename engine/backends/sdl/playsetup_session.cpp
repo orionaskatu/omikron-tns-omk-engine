@@ -163,6 +163,10 @@ int PlayState::setupSession() {
     shadowQuality = enh(shadowQFlag, settings.shadowQuality,
                             omk::kMaxShadowQuality);
     shadowDetail = detailFlag >= 0 ? detailFlag : settings.v.levelOfDetail;
+    // THE RESTORED WEATHER (`[Restored] weather`, `todo/restore-weather.md`):
+    // its flag, its key - off otherwise; the remaster preset may turn it on
+    // (`remasterSetup`)
+    restoredWeather = restoreWeatherFlag >= 0 ? restoreWeatherFlag != 0 : settings.restoredWeather != 0;
     // Row 7. Per pixel ALSO widens who receives: the engine lights the
     // procedural crowd and nothing else, and this lets every character.
     lighting = enh(lightingFlag, settings.lighting, omk::kMaxLighting);

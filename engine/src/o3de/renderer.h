@@ -167,6 +167,19 @@ struct View {
     // game's shower now, 0..1 - its RIPPLES on a draw with `Draw::wet`, rings
     // timed by `shimmerClock`. 0 none. Vulkan and GLES.
     float rain = 0.0f;
+    // THE SAND'S DUST (the restored weather's, the remaster's): the storm's
+    // strength, 0 none; the drifting clouds' offset (x, z); the distance that
+    // takes 63% at strength 1; its colour, lit as the scene. Vulkan and GLES.
+    float dust = 0.0f, dustDrift[2] = {0.0f, 0.0f}, dustScale = 1400.0f;
+    float dustColour[3] = {0.0f, 0.0f, 0.0f};
+    // THE RAIN'S VEILS (the remaster's, with the 3D weather): far rain as
+    // falling sheets - the shower's strength, 0 none; how far they have
+    // fallen; the distance that takes 63%; their colour. Vulkan and GLES.
+    float veil = 0.0f, veilFall = 0.0f, veilScale = 2500.0f;
+    float veilColour[3] = {0.0f, 0.0f, 0.0f};
+    // THE PUDDLES on the wet floors (the remaster's): their strength, 0 an
+    // even film. Vulkan and GLES.
+    float puddles = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed
@@ -390,6 +403,10 @@ struct Draw {
     // ...and SNOW lying on it instead (`o3de/wetfloor.h` coverRuns): `wet` is
     // then how white it turns, not how dark
     bool            snow             = false;
+    // ...or a BODY in the rain (the remaster's wet characters,
+    // `playremaster_draw.cpp` remasterWetBodies): `wet` how wet, the shaders'
+    // body rule - a little darker, its lit highlights brighter - not a floor's
+    bool            wetBody          = false;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and

@@ -43,7 +43,7 @@ void PlayState::remasterGrade() {}
 void PlayState::remasterAliasGrey(const omk::Texture&, const omk::Texture&) {}
 void PlayState::remasterConfigure(omk::Renderer&) {}
 bool PlayState::remasterOpenFilm(const std::string&, omk::Movie&, const char*) { return false; }
-void PlayState::remasterViewMist(omk::View& v) { v.mist = 0.0f; v.rain = 0.0f; }
+void PlayState::remasterViewMist(omk::View& v) { v.mist = 0.0f; v.rain = 0.0f; v.dust = 0.0f; v.veil = 0.0f; }
 // the per-pixel lighting as it always was: no night, no relief, no point lights
 int PlayState::remasterViewLights(omk::View& v, bool& fxPix, float& kFxView) {
     fxPix = false;
@@ -63,6 +63,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>&, const omk::View&) {}
 void PlayState::remasterPoolRain(std::vector<omk::Texture>&) {}
 bool PlayState::remasterWeatherRoofless() const { return false; }
 void PlayState::remasterSnowCover(std::vector<omk::Draw>&) {}
+void PlayState::remasterWetBodies(std::vector<omk::Draw>&) {}
 bool PlayState::remasterDrawReflected(omk::Renderer&, std::span<const omk::Draw>, const omk::View&) { return false; }
 void PlayState::bodyTint(const float[3], float out[3]) const { out[0] = out[1] = out[2] = 1.0f; }
 

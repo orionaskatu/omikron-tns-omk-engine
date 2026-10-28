@@ -114,6 +114,10 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --no-tie         the GLES window draws WITHOUT the depth tie (o3de/depthtie.h),\n"
 "                   for judging on a console whether its 16-bit depth needs it\n"
 "  --detail 0..2    how many bones cast one - options row 7\n"
+"  --restore-weather 0|1  RESTORED, what the 1999 game planned and never\n"
+"                   shipped: Qalisar's and Lahoreh's showers and type 3's\n"
+"                   sand (Jaunpur, the docks...). Off by default, on under\n"
+"                   the remaster preset; [Restored] weather=0|1\n"
 "  --world-vulkan   draw the WORLD through an offscreen Vulkan renderer (a\n"
 "                   harness: it needs no window, so the GPU-only enhancements\n"
 "                   can be measured headlessly)\n"
@@ -616,6 +620,13 @@ int PlayOptions::parse(int argc, char** argv) {
         else if (a == "--full-textures") fullTexturesFlag = true;
         else if (a == "--no-shadows") shadowFlag = 0;
         else if (a == "--detail" && i + 1 < argc) detailFlag = std::atoi(argv[++i]);
+        else if (a == "--restore-weather" && i + 1 < argc) {
+            restoreWeatherFlag = std::atoi(argv[++i]);
+            if (restoreWeatherFlag < 0 || restoreWeatherFlag > 1) {
+                std::fprintf(stderr, "--restore-weather %s: not 0|1\n", argv[i]);
+                return 2;
+            }
+        }
         else if (a == "--config" && i + 1 < argc) configFile = argv[++i];
         // `--clip 0` is the ENHANCEMENT, not a zero distance: the option's
         // five values stop at 200 m and 0 is outside them, so it says "no cap".

@@ -25,6 +25,7 @@ std::string iniNumber(double v) {
 constexpr const char* kEnh = "Enhancements";
 constexpr const char* kRem = "Remaster";
 constexpr const char* kOmk = "OMK";
+constexpr const char* kRestored = "Restored";   // what the 1999 game planned and never shipped
 
 std::string lowerId(const std::string& section, const std::string& key) {
     std::string s = section + "." + key;
@@ -95,6 +96,9 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageGraphics, header("page.remaster", kPageRemaster, true));
     add(kPageGraphics, choice(kOmk, "language", {{"fr", 0, "language.fr", 0}, {"en", 1, "language.en", 0}},
                               0, false));
+    // `[Restored] weather` (todo/restore-weather.md): neither an enhancement
+    // nor the remaster's - its own section, on this first page
+    add(kPageGraphics, choice(kRestored, "weather", twoState("0", "1"), 0, false));
     tail(kPageGraphics);
 
     // ---- 101, Améliorations: `[Enhancements]`, in `todo/enhancements.md`'s order

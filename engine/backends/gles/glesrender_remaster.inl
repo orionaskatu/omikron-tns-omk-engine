@@ -374,6 +374,7 @@ void GlesRenderer::remasterProgramUniforms(bool pointLit) {
             glUniform1f(glGetUniformLocation(p, "uWet"), 0.0f);
             glUniform1f(glGetUniformLocation(p, "uRain"), 0.0f);
             glUniform1f(glGetUniformLocation(p, "uSnow"), 0.0f);
+            glUniform1f(glGetUniformLocation(p, "uWetBody"), 0.0f);
         }
         glUseProgram(0);
         std::printf("gles: the water reflection - the scene programs' water variant (unit 4)\n");
@@ -475,6 +476,13 @@ void GlesRenderer::remasterInitCodecs() {
 // ---- A DRAW'S REMASTER STATE (`submit`, moved here from the shared file -
 // the audit's cleanliness, 2026-10-26) --------------------------------------
 
+// A WET BODY posed on the CPU (`Draw::wetBody` with no pose - the player
+// under the mapped shadows) reads its posed normals from their own buffer, as
+// a lit draw does, for its sheen (the water variant's `vBodyN`)
+bool GlesRenderer::remasterWantsNormals(const Draw& d) const {
+    return d.wetBody && waterWant_ > 0.0f;
+}
+
 // THE WATER's uniforms, with the water variant built: its strength and the
 // clip through the cache (every draw of every frame sent them, water or none),
 // the water draws' and the reflection's own each time
@@ -501,8 +509,29 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             glUniform3f(L.mist, m0, mist_[1], mist_[2]);
             U.mist[0] = m0; U.mist[1] = mist_[1]; U.mist[2] = mist_[2];
         }
+        // ...and THE SAND'S DUST (`View::dust`), not in the reflection's pass
+        const float d0 = reflectingNow_ ? 0.0f : dust_[0];
+        if (set(!uv || U.dust[0] != d0 || U.dust[1] != dust_[1] || U.dust[2] != dust_[2] || U.dust[3] != dust_[3])) {
+            glUniform4f(L.dust, d0, dust_[1], dust_[2], dust_[3]);
+            U.dust[0] = d0; U.dust[1] = dust_[1]; U.dust[2] = dust_[2]; U.dust[3] = dust_[3];
+        }
+        if (d0 > 0.0f && set(!uv || std::memcmp(U.dustColour, dustColour_, sizeof U.dustColour) != 0)) {
+            glUniform3f(L.dustColour, dustColour_[0], dustColour_[1], dustColour_[2]);
+            std::memcpy(U.dustColour, dustColour_, sizeof U.dustColour);
+        }
+        // ...and THE RAIN'S VEILS (`View::veil`), not in the reflection's pass
+        const float v0 = reflectingNow_ ? 0.0f : veil_[0];
+        if (set(!uv || U.veil[0] != v0 || U.veil[1] != veil_[1] || U.veil[2] != veil_[2] || U.veil[3] != veil_[3])) {
+            glUniform4f(L.veil, v0, veil_[1], veil_[2], veil_[3]);   // w the PUDDLES' strength
+            U.veil[0] = v0; U.veil[1] = veil_[1]; U.veil[2] = veil_[2]; U.veil[3] = veil_[3];
+        }
+        if (v0 > 0.0f && set(!uv || std::memcmp(U.veilColour, veilColour_, sizeof U.veilColour) != 0)) {
+            glUniform3f(L.veilColour, veilColour_[0], veilColour_[1], veilColour_[2]);
+            std::memcpy(U.veilColour, veilColour_, sizeof U.veilColour);
+        }
         // ...whose rays start at the frame's eye: the vertex variant's `uEye`
-        if (m0 > 0.0f && !(waterNow_ || floorNow) &&
+        // (a wet body's sheen faces it too)
+        if ((m0 > 0.0f || d0 > 0.0f || v0 > 0.0f || (film > 0.0f && d.wetBody)) && !(waterNow_ || floorNow) &&
             set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
             glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
             std::memcpy(U.eye, waterEye_, sizeof U.eye);
@@ -513,6 +542,12 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
     if (set(!uv || U.snow != snowNow)) {
         glUniform1f(L.snow, snowNow);
         U.snow = snowNow;
+    }
+    // ...or a BODY in the rain (`Draw::wetBody`): `uWet` is then how wet
+    const float bodyNow = film > 0.0f && d.wetBody ? 1.0f : 0.0f;
+    if (set(!uv || U.wetBody != bodyNow)) {
+        glUniform1f(L.wetBody, bodyNow);
+        U.wetBody = bodyNow;
     }
     // ...and its RIPPLES: the rain's strength and the shimmer's clock
     const float rain = film > 0.0f ? rain_ : 0.0f;

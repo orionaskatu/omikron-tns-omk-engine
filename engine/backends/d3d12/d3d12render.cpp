@@ -189,6 +189,7 @@ struct LightUbo {
     int32_t tiles;     // the TILED lights module's - never bound here, 0
     float   eye[4];    // the camera's position (vehicle shine's view vector, the water's Fresnel); w the NIGHT (View::setDim)
     float   fx[4];     // x the relief (none here); y, z, w the MIST's strength, ground and height
+    float   dust[4], dustColour[4], veil[4], veilColour[4];   // the sand's dust and the rain's veils (View): never set here, 0
     float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
 struct ShadowUbo {

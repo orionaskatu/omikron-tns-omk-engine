@@ -1316,7 +1316,10 @@ private:
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint snow = -1;                                                     // ...or snow lying
+        GLint wetBody = -1;                                                  // ...or a body in the rain
         GLint mist = -1;                                                     // ...and the mist
+        GLint dust = -1, dustColour = -1;                                    // ...and the sand's dust
+        GLint veil = -1, veilColour = -1;                                    // ...and the rain's veils
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1401,7 +1404,10 @@ private:
         float water = -1; int clip = -1;   // the water variant's
         float wet = -1, rain = -1, rippleClock = -1;   // ...a wet floor's film, its ripples
         float snow = -1;                               // ...or snow lying
+        float wetBody = -1;                            // ...or a body in the rain
         float mist[3] = {-1, -1, -1};                  // ...and the mist
+        float dust[4] = {-1, -1, -1, -1}, dustColour[3] = {-1, -1, -1};   // ...and the sand's dust
+        float veil[4] = {-1, -1, -1, -1}, veilColour[3] = {-1, -1, -1};   // ...and the rain's veils
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1504,6 +1510,8 @@ private:
     // strength, ground, height for the frame; on while the variant is built
     float  mist_[3] = {0.0f, 0.0f, 400.0f};
     bool   mistOn_ = false;
+    float  dust_[4] = {0.0f, 0.0f, 0.0f, 1400.0f}, dustColour_[3] = {0.0f, 0.0f, 0.0f};   // View::dust
+    float  veil_[4] = {0.0f, 0.0f, 2500.0f, 0.0f}, veilColour_[3] = {0.0f, 0.0f, 0.0f};   // View::veil
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
@@ -1528,6 +1536,7 @@ private:
     void remasterProgramUniforms(bool pointLit);   // ...their starting uniforms, once linked
     void remasterRelease();                        // its GL objects, at the renderer's end
     void remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCache& U, bool uv);   // a draw's water, floor, clip
+    bool remasterWantsNormals(const Draw& d) const;   // a plain draw's normals for the remaster (a wet body's sheen)
     void remasterLightMap(const Tex& t);           // the bloom's light map on unit 3
     bool remasterInitUpscale();                    // FSR's programs; false: the target failed
     void remasterInitCodecs();                     // the pack's block formats the context samples
@@ -1639,7 +1648,8 @@ bool GlesRenderer::linkScene() {
     }
     if (!prog_)
         prog_ = link(vScene, sceneFrag, {{kAttrPos, "aPos"}, {kAttrUV, "aUV"},
-                                              {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"}});
+                                              {kAttrCol, "aCol"}, {kAttrPhase, "aPhase"},
+                                              {kAttrNormal, "aNormal"}});   // the remaster's variants read it
     if (!prog_) return false;
     if (!enhanced) {
         // at start with the others, for the shader cache (above); a context
@@ -1686,7 +1696,12 @@ bool GlesRenderer::linkScene() {
         L.rain = glGetUniformLocation(p, "uRain");
         L.rippleClock = glGetUniformLocation(p, "uRippleClock");
         L.snow = glGetUniformLocation(p, "uSnow");
+        L.wetBody = glGetUniformLocation(p, "uWetBody");
         L.mist = glGetUniformLocation(p, "uMist");
+        L.dust = glGetUniformLocation(p, "uDust");
+        L.dustColour = glGetUniformLocation(p, "uDustColour");
+        L.veil = glGetUniformLocation(p, "uVeil");
+        L.veilColour = glGetUniformLocation(p, "uVeilColour");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
@@ -2912,7 +2927,11 @@ void GlesRenderer::beginPass(const View& view) {
 #if OMK_REMASTER
     // THE MIST's frame, and the eye its rays start from (the water's, the same)
     mist_[0] = view.mist; mist_[1] = view.mistGround; mist_[2] = view.mistHeight;
-    mistOn_ = view.mist > 0.0f && mainLoc_.water >= 0;
+    dust_[0] = view.dust; dust_[1] = view.dustDrift[0]; dust_[2] = view.dustDrift[1]; dust_[3] = view.dustScale;
+    for (int k = 0; k < 3; ++k) dustColour_[k] = view.dustColour[k];
+    veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale; veil_[3] = view.puddles;
+    for (int k = 0; k < 3; ++k) veilColour_[k] = view.veilColour[k];
+    mistOn_ = (view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f) && mainLoc_.water >= 0;
     for (int k = 0; k < 3; ++k) waterEye_[k] = view.cam.eye[k];
 #endif
     lastPose_ = nullptr;
@@ -3216,7 +3235,7 @@ void GlesRenderer::submit(const Draw& d) {
     PoseVbo* pvb = nullptr;
     bool posed = usePosed(d);
     // a LIT plain draw reads its normals from a buffer of their own
-    const bool litNrm = !posed && pixLights_ && d.lit != 0;
+    const bool litNrm = !posed && ((pixLights_ && d.lit != 0) || remasterWantsNormals(d));
     const double fu0 = glesClockMs();
     bool uploaded = posed ? uploadPosedGeometry(d.geo, pvb) : uploadGeometry(d.geo, !litNrm);
     if (uploaded && litNrm) uploaded = uploadNormals(d.geo);
@@ -4067,6 +4086,7 @@ bool GlesRenderer::astcBlocks(const PackBlocks&) { return false; }
 bool GlesRenderer::uploadAstc(const PackBlocks&, bool) { return true; }
 void GlesRenderer::remasterRelease() {}
 void GlesRenderer::remasterWaterUniforms(const Draw&, const SceneLoc&, UniCache&, bool) {}
+bool GlesRenderer::remasterWantsNormals(const Draw&) const { return false; }
 void GlesRenderer::remasterLightMap(const Tex&) {}
 #endif  // OMK_REMASTER
 

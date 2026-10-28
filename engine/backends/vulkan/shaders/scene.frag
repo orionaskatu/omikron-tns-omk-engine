@@ -158,6 +158,11 @@ layout(set = 1, binding = 2) uniform Lights {
     vec4  eye;         // the camera, for the water's Fresnel (xyz); w the NIGHT, View::setDim
     vec4  fx;          // x: the RELIEF's strength (View::relief) - the tiled module's alone;
                        // y, z, w: the MIST's strength, ground and height (View::mist...), both
+    vec4  dust;        // THE SAND'S DUST (View::dust): strength, the drift's x and z, the distance scale
+    vec4  dustColour;  // ...its colour, lit as the scene (rgb)
+    vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
+                       // w the PUDDLES' strength (View::puddles)
+    vec4  veilColour;  // ...their colour, lit as the scene (rgb)
 #ifdef OMK_SOFT
     vec4  soft;        // SOFT PARTICLES: x A, y B (view z = B / (depth - A)), z 1 / the fade's range
 #endif
@@ -582,6 +587,90 @@ vec3 relief(vec3 n, vec3 w, vec2 uv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2) {
 // tenth and fading as it goes. -> xy the rings' slope at `p` (the reflection's
 // bend), z their crest (the light). GLES's twin is in
 // `glesrender_remaster_shaders.inl` - keep the two in step.
+// THE SAND'S DUST (the restored weather's, the remaster's - `View::dust`): a
+// fog toward an ochre lit as the scene, thickening with the storm and with
+// distance, its density broken into drifting clouds - a 3D value noise moved
+// along the wind - so gusts pass. GLES's twin in glesrender_remaster_shaders.inl.
+float dustHash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float dustNoise(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(dustHash(i), dustHash(i + vec3(1, 0, 0)), f.x),
+                   mix(dustHash(i + vec3(0, 1, 0)), dustHash(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(dustHash(i + vec3(0, 0, 1)), dustHash(i + vec3(1, 0, 1)), f.x),
+                   mix(dustHash(i + vec3(0, 1, 1)), dustHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// -> how much of the dust's colour a point `w` seen from `e` takes - with
+// `kDustNear` of dust in front of everything, so it drifts by the player too
+// (the reader: "make the moving fog go closer to the player")
+// The clouds are STRETCHED along the wind (x, the arm's: long that way,
+// narrow across), sampled near the eye too, and contrasted - gaps and thick
+// gusts sweeping past (the reader: "make the fog movements more visible").
+const float kDustNear = 300.0;
+float dustCloud(vec3 p) {
+    float g = dustNoise(p * vec3(0.0012, 0.004, 0.004));
+    return g * g * 2.2;                                   // 0..2.2, most of it thin
+}
+float dustAmount(vec3 e, vec3 w, vec4 dust) {
+    vec3 drift = vec3(dust.y, 0.0, dust.z);
+    float d = length(w - e);
+    vec3 near = e + (w - e) * min(1.0, 250.0 / max(d, 1.0));
+    float n = 0.1 + (dustCloud(near + drift) + dustCloud(mix(e, w, 0.5) + drift) + dustCloud(w + drift)) / 3.0 * 1.6;
+    return 1.0 - exp(-dust.x * n * (d + kDustNear) / dust.w);
+}
+
+// THE RAIN'S VEILS (the remaster's, `View::veil`): far rain reads as sheets,
+// not streaks - long bands slanted by the wind and falling, sampled IN THE AIR
+// along the ray (at 500, 1200 and 1900 units, those nearer than the surface),
+// a light grey lit as the scene, thicker with distance. GLES's twin in
+// glesrender_remaster_shaders.inl.
+const float kVeilFirst = 500.0;         // the first sample in the air, units from the eye
+const float kVeilStep = 700.0;          // ...and between the samples
+const float kVeilSlant = 0.577;         // the bands' slant with the wind (30 degrees)
+const float kVeilAcross = 0.008;        // the bands' noise across, per unit
+const float kVeilAlong = 0.0007;        // ...and along the fall: long sheets
+const float kVeilLow = 0.5;             // the noise where a sheet starts...
+const float kVeilHigh = 0.85;           // ...and where it is full
+const float kVeilMax = 0.85;            // the veils' strength at full, far off
+float veilAmount(vec3 e, vec3 w, vec4 veil) {
+    float d = length(w - e);
+    if (d < kVeilFirst) return 0.0;
+    vec3 dir = (w - e) / d;
+    float sum = 0.0;
+    for (int k = 0; k < 3; ++k) {
+        float t = kVeilFirst + float(k) * kVeilStep;
+        if (t > d) break;
+        vec3 p = e + dir * t;
+        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);
+        sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));
+    }
+    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;
+}
+
+// THE PUDDLES' MASK: 0 between them, 1 in one - a value noise of the ground's
+// x and z (about 2.5 m patches), its edge soft over a fifth of its range.
+// GLES's twin in glesrender_remaster_shaders.inl.
+const float kPuddleBroad = 0.004;   // the patches' noise, a cycle in 250 units
+const float kPuddleFine = 0.011;    // ...and their edges' detail
+const float kPuddleFineShare = 0.3; // ...its share of the noise
+const float kPuddleDry = 0.52;      // the noise where a puddle starts...
+const float kPuddleFull = 0.68;     // ...and where it is full
+// what a puddle does, as (between them, in one): the wet film's darkening,
+// the reflection's strength, the ripples'; and the Fresnel's floor in one
+const vec2 kPuddleFilm = vec2(0.5, 1.8);
+const vec2 kPuddleMirror = vec2(0.5, 2.2);
+const vec2 kPuddleRipples = vec2(0.6, 1.6);
+const float kPuddleFresnel = 0.18;
+float puddleMask(vec2 xz) {
+    float n = dustNoise(vec3(xz.x * kPuddleBroad, 0.0, xz.y * kPuddleBroad)) * (1.0 - kPuddleFineShare) +
+              dustNoise(vec3(xz.x * kPuddleFine, 3.7, xz.y * kPuddleFine)) * kPuddleFineShare;
+    return smoothstep(kPuddleDry, kPuddleFull, n);
+}
+
 const float kRippleLight = 0.13;   // a ring's crest, added light (GLES: the same)
 vec3 rippleHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -611,13 +700,62 @@ vec3 ripples(vec2 p, float clock, float rain) {
     return g;
 }
 
+// A WET BODY (`Draw::wetBody`) - GLES's twin in glesrender_remaster_shaders.inl
+const float kWetBodyDark = 0.3;         // its darkening at full wet: wet cloth and skin go darker...
+const float kWetBodySat = 0.35;         // ...and deeper in colour (the saturation's gain)
+const float kWetBodySheen = 0.9;        // its SHEEN, the lit street mirrored by the film, at full wet
+const float kWetBodyRim = 4.0;          // ...growing toward the grazing angles (the Fresnel's power)
+const float kWetBodySky = 0.6;          // ...and where the film faces up, mirroring the sky's glow
+const float kWetBodySkyPower = 12.0;    // ...in a tight highlight (the power on the reflection's lift)
+const float kWetBodySheenFloor = 0.15;  // the sheen's light where the body's own light is darkest
+
+// THE TRICKLES on a WET WALL (`o3de/wetfloor.h`, the reader's "wet walls and
+// characters", 2026-10-28): thin lines of water down some columns of the
+// wall - a bead running down each, a glint, its wet trail above it darker
+// (-> trail, bead) - on the ripples'
+// clock. GLES's twin in glesrender_remaster_shaders.inl.
+const float kWetWallFilm = 0.6;       // a wet wall's film against a floor's: the water runs off
+const float kTrickleAcross0 = 0.83;   // a trickle's columns run along this level direction...
+const float kTrickleAcross1 = 0.56;   // ...(any wall but one rare heading)
+const float kTrickleSpan = 5.0;       // ...one column every this many units
+const float kTrickleShare = 0.45;     // ...this share of them running at the full shower
+const float kTrickleWidth = 0.12;     // ...a line's half width, of its column
+const float kTrickleLength = 40.0;    // ...a bead and its wet trail, units of fall
+const float kTrickleRate = 0.0625;    // ...cycles a clock step: 16 in the clock's 256, so it wraps whole
+const float kTrickleDark = 0.35;        // ...the wet trail above a bead, darker by this
+const float kTrickleRuns = 0.5;       // ...a cycle's run there or not, this share running
+const float kTrickleMeander = 0.04;   // ...wandering this much of its column either way
+const float kTrickleWave = 0.07;      // ...over this many radians a unit of fall
+const float kTrickleFar = 900.0;      // ...gone this far from the eye, finer than a pixel
+const float kTrickleLight = 0.22;      // ...a bead's light, added
+vec2 trickles(vec3 w, float clock, float rain) {
+    float u = (w.x * kTrickleAcross0 + w.z * kTrickleAcross1) / kTrickleSpan;
+    float col = floor(u);
+    vec3 h = rippleHash(vec2(col, 17.0));
+    if (h.z > kTrickleShare * rain) return vec2(0.0);
+    float speed = kTrickleRate * (1.0 + floor(h.y * 2.0));
+    float v = w.y / kTrickleLength - clock * speed + h.x * 7.0;
+    // ...a run now and then down the column, not every cycle
+    if (rippleHash(vec2(col, floor(v))).x > kTrickleRuns) return vec2(0.0);
+    float f = fract(v);
+    // ...meandering a little as it runs
+    float centre = 0.3 + 0.4 * h.x + kTrickleMeander * sin(w.y * kTrickleWave + h.y * 6.28);
+    float line = 1.0 - smoothstep(kTrickleWidth * 0.5, kTrickleWidth, abs(fract(u) - centre));
+    float bead = smoothstep(0.82, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));
+    float trail = smoothstep(0.1, 0.93, f) * (1.0 - smoothstep(0.93, 0.97, f));
+    return line * vec2(trail, bead);
+}
+
 void main() {
     int waterMode = PC_WATER & 15;                            // the water's mode (`Push`)
     float wetFilm = float((PC_WATER >> 4) & 255) / 255.0;     // a wet floor's darkening
     float rainNow = float((PC_WATER >> 12) & 255) / 255.0;    // ...and the rain on it
     bool snowLying = (PC_WATER & (1 << 20)) != 0;              // ...or snow lying on it, bit 20
+    bool wetBody = (PC_WATER & (1 << 21)) != 0;                // ...or a BODY in the rain, bit 21
     // the open sky at this point, the corners' answers blended (`encodeOpenSky`)
-    float openSky = vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
+    // - a WALL's (`-6 - open`) below -5.5, a floor's (`-2 - open`) below -1.5
+    bool wetWall = vPhase <= -5.5;
+    float openSky = wetWall ? clamp(-6.0 - vPhase, 0.0, 1.0) : vPhase <= -1.5 ? clamp(-2.0 - vPhase, 0.0, 1.0) : 1.0;
 #ifdef OMK_LATE_DEPTH
     // THE CUTOUT'S DEPTH, decided AFTER the shader (the cutout pipelines'
     // module, -DOMK_LATE_DEPTH, bound for an opaque cutout draw alone): on
@@ -707,6 +845,20 @@ void main() {
     // SNOW LYING (`o3de/wetfloor.h` coverRuns): the floor turned white under
     // its own light - `c / texel`, the light alone - by the cover times the
     // open sky here, before the fog takes it like the rest
+    // A BODY IN THE RAIN (`Draw::wetBody`): darker and deeper in colour, and
+    // a SHEEN - the film mirroring the lit street around it, so lit by the
+    // body's own light (`shade`): strongest at the grazing angles (Fresnel)
+    // and where the reflected ray rises to the sky (Y is down: -y). `reflect`
+    // takes either sign of the normal alike. GLES alike
+    if (wetBody && wetFilm > 0.0) {
+        float y = dot(c, vec3(0.299, 0.587, 0.114));
+        c = max(mix(vec3(y), c, 1.0 + kWetBodySat * wetFilm), 0.0) * (1.0 - kWetBodyDark * wetFilm);
+        vec3 v = normalize(lg.eye.xyz - vWorld);
+        float rim = pow(1.0 - abs(dot(nL, v)), kWetBodyRim);
+        float sky = pow(max(-reflect(-v, nL).y, 0.0), kWetBodySkyPower) * kWetBodySky;
+        c = clamp(c + kWetBodySheen * wetFilm * (rim + sky) * max(shade, vec3(kWetBodySheenFloor)), 0.0, 1.0);
+        wetFilm = 0.0;   // no floor's film, no ripples, on a body
+    }
     if (snowLying && wetFilm > 0.0) {
         // ...the more the darker the texel: a snow texture keeps its own
         // drawing, stone and wood go white
@@ -775,6 +927,12 @@ void main() {
         float m = 1.0 - exp(-lg.fx.y * dist * mean / 1500.0);
         c = mix(c, pc.fogColour, m);
     }
+    // ...and THE SAND'S DUST (`dustAmount` above), on the same batches
+    if (lg.dust.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
+        c = mix(c, lg.dustColour.rgb, dustAmount(lg.eye.xyz, vWorld, lg.dust));
+    // ...and THE RAIN'S VEILS (`veilAmount` above), on the same batches
+    if (lg.veil.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
+        c = mix(c, lg.veilColour.rgb, veilAmount(lg.eye.xyz, vWorld, lg.veil));
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.
@@ -786,19 +944,30 @@ void main() {
     // reflection, if it has one, is added over the darker ground - all of it
     // times how open to the sky this point is, the corners' answers blended
     // (`encodeOpenSky`: `-2 - open` in the phase; any other phase is open)
-    float wetHere = wetFilm > 0.0 ? openSky : 1.0;
-    c *= 1.0 - wetFilm * openSky;
+    // PUDDLES (the reader's "more realistic rain", 2 of 3): patches of standing
+    // water across the wet floor - a noise mask on the ground (`puddleMask`):
+    // in one, the film darker, the reflection much stronger, the ripples more;
+    // between them, the film and the reflection lighter
+    // A WALL takes a lighter film and its TRICKLES instead - no puddle, no ripples
+    float puddle = wetFilm > 0.0 && !wetWall ? puddleMask(vWorld.xz) * lg.veil.w : 0.0;
+    float wetHere = wetFilm > 0.0 ? openSky * mix(kPuddleMirror.x, kPuddleMirror.y, puddle) : 1.0;
+    c *= 1.0 - wetFilm * openSky * (wetWall ? kWetWallFilm : mix(kPuddleFilm.x, kPuddleFilm.y, puddle));
     // ...and while it RAINS, its RIPPLES (`ripples` above): a little light on
     // their crests, and bending the reflection below
     vec3 rip = vec3(0.0);
-    if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
-        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky;
+    if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0 && wetWall) {
+        float near = 1.0 - smoothstep(kTrickleFar * 0.6, kTrickleFar, length(lg.eye.xyz - vWorld));
+        vec2 tr = trickles(vWorld, sh.shimmer, rainNow) * openSky * near;
+        c = c * (1.0 - kTrickleDark * tr.x) + vec3(kTrickleLight * tr.y);
+    } else if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
+        rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(kPuddleRipples.x, kPuddleRipples.y, puddle);
         c += vec3(kRippleLight * rip.z);
     }
 #ifndef OMK_DX
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
+        f = max(f, kPuddleFresnel * puddle);   // standing water mirrors, looked into too
         vec2 rs = vec2(textureSize(refl, 0));
         // (a floor's reflection is at HALF size, in the image's top-left quarter)
         float k = waterMode == 3 ? 0.5 : 1.0;

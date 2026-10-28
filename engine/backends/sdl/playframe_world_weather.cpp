@@ -21,7 +21,9 @@ void PlayState::weatherFrame(const omk::View& v) {
     if (uiPause && remasterWeatherRoofless()) return;
     weatherLines.clear();
     weatherFlakes.clear();
+    weatherGrains.clear();
     weatherRain = 0.0f;
+    weatherSandLevel = 0.0f;
     weatherSnowing = false;
     rainDrops.clear();   // the remaster's 3D rain takes them afresh, or has none
     auto& session = *session_;
@@ -40,10 +42,21 @@ void PlayState::weatherFrame(const omk::View& v) {
     if (chunk.size() >= 178)
         type = static_cast<int>(static_cast<std::uint8_t>(chunk[176])) |
                static_cast<int>(static_cast<std::uint8_t>(chunk[177])) << 8;
+    const int areaNow = session.residentSlot(session.activeSlot() & 1).area;
+    // THE RESTORED WEATHER (`[Restored] weather`, `todo/restore-weather.md`):
+    // Qalisar (101) and Lahoreh (64) subscribe to the shower's messages 23 and
+    // 24 with tracks 120/56 and 121/27 and ship type 0 - the rain, the type
+    // their shower tracks are (the reader heard each as its city's music under
+    // the rain sound); the cycle, the roof ray and the messages stay the
+    // original's own code and data. OMK's reconstruction, not a reading.
+    if (restoredWeather && type == 0 && (areaNow == 101 || areaNow == 64)) {
+        type = 1;
+        if (areaNow != weatherAreaTold)
+            omk::event("weather.restored", {{"frame", frameNo}, {"area", areaNow}, {"type", type}});
+    }
     const unsigned viewBits = omk::weatherBitsOfAreaType(type);
     // ...and whether the player has just come into this area (for the 3D
     // weather's music, below)
-    const int areaNow = session.residentSlot(session.activeSlot() & 1).area;
     const bool areaEntered = areaNow != weatherAreaTold;
     weatherAreaTold = areaNow;
     // `cmp byte ptr [0x90E727], 2` - option row 7 (the `--detail` flag holds it)
@@ -91,6 +104,9 @@ void PlayState::weatherFrame(const omk::View& v) {
     });
     // the RAIN's strength for the remaster's wet floors (`o3de/wetfloor.h`):
     // its drops over their 200, the snow and the undrawn third none
+    if ((viewBits & 8u) && restoredWeather)
+        weatherSandLevel = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
+                           static_cast<float>(omk::kWeatherDrops);
     if (viewBits & 2u)
         weatherRain = static_cast<float>(std::clamp(weather.count(), 0, omk::kWeatherDrops)) /
                       static_cast<float>(omk::kWeatherDrops);
@@ -113,7 +129,9 @@ void PlayState::weatherFrame(const omk::View& v) {
                     frameNo, weather.state(), weather.count(), covered ? ", a roof overhead" : "",
                     weather.waitEndsAt(), now);
     }
-    const auto drops = weather.step(viewBits, v.cam.eye, v.cam.at);
+    // the sand's arm (bit 8) only with the restored weather - the original's
+    // caller reaches `sub_481D90` on bit 4 alone (docs/ASSETS.md 4e)
+    const auto drops = weather.step(restoredWeather ? viewBits : (viewBits & ~8u), v.cam.eye, v.cam.at);
     if (drops.empty()) {
         if (frameNo % 30 == 0)
             std::printf("frame %ld: weather - state %d, %d drops, nothing stepped%s\n", frameNo,
@@ -150,7 +168,9 @@ void PlayState::weatherFrame(const omk::View& v) {
     const auto onScreen = [&](int x, int y) { return x >= 0 && y >= 0 && x <= W && y <= H; };
     const std::uint32_t fog = (std::uint32_t(v.fogColour[0]) << 16) |
                               (std::uint32_t(v.fogColour[1]) << 8) | v.fogColour[2];
+    int dropIndex = -1;
     for (const auto& d : drops) {
+        ++dropIndex;
         omk::Projected pa, pb;
         if (!clipProject(d.p, d.q, pa, pb)) continue;
         const int x0 = static_cast<int>(pa.x) + v.vx, y0 = static_cast<int>(pa.y) + v.vy;
@@ -160,6 +180,14 @@ void PlayState::weatherFrame(const omk::View& v) {
             // `I2D_DrawLine` flags 0x18: the scene's fog colour (+336) at the
             // drop, 0xC0C0C0 at its tail
             weatherLines.push_back({x0, y0, x1, y1, fog, 0xC0C0C0u});
+        } else if (viewBits & 8u) {
+            // THE RESTORED SAND: one grain of the field a drop, `kSandGrainWorld`
+            // across for a 4-texel grain (the arm's 15 units, `x1 - x0`, scaled)
+            // - and no bigger than a few pixels (OMK's): a near grain blown up to
+            // forty pixels reads as a block, not as dust
+            const float cap = 3.0f * std::max(1.0f, static_cast<float>(H) / 480.0f);
+            const float half = std::min(cap, std::abs(x1 - x0) * omk::kSandGrainWorld / 15.0f / 2.0f);
+            weatherGrains.push_back({x0, y0, std::max(0.5f, half), dropIndex});
         } else {
             // the flake: half the projected size, kept wholly on the screen
             const int r = std::abs(x1 - x0) / 2;
@@ -168,9 +196,15 @@ void PlayState::weatherFrame(const omk::View& v) {
         }
     }
     // once a second, from what the projection kept - the draw's own input
-    if (frameNo % 30 == 0)
-        std::printf("frame %ld: weather - %zu drops stepped, %zu streaks and %zu flakes drawn\n",
-                    frameNo, drops.size(), weatherLines.size(), weatherFlakes.size());
+    if (frameNo % 30 == 0) {
+        std::printf("frame %ld: weather - %zu drops stepped, %zu streaks and %zu flakes drawn", frameNo,
+                    drops.size(), weatherLines.size(), weatherFlakes.size());
+        if (viewBits & 8u) std::printf(", %zu grains of sand", weatherGrains.size());
+        std::printf("\n");
+        if (viewBits & 8u)
+            omk::event("weather.sand", {{"frame", frameNo}, {"drops", static_cast<long>(drops.size())},
+                                        {"grains", static_cast<long>(weatherGrains.size())}});
+    }
 }
 
 // The drops into `fb`, under every interface layer - the 3D view's own
@@ -179,6 +213,28 @@ void PlayState::weatherDraw() {
     if (!fb.valid()) return;
     for (const auto& l : weatherLines)
         omk::drawLineGouraud(fb, l.x0, l.y0, l.x1, l.y1, l.c0, l.c1);
+    // THE RESTORED SAND: each grain blitted from the field, the loader's key 0
+    if (!weatherGrains.empty()) {
+        if (!weatherSandTried) {
+            weatherSandTried = true;
+            weatherSand = omk::surfaceFromBmp(fs_->read("IMAGES/sand.bmp"));
+            if (weatherSand.valid())
+                weatherSandGrains = omk::grainsOf(weatherSand.w, weatherSand.h,
+                                                  [&](int x, int y) { return weatherSand.at(x, y) != 0; });
+            std::printf("weather: Images\\sand.bmp %dx%d - %zu grains (the restored sand)\n", weatherSand.w,
+                        weatherSand.h, weatherSandGrains.size());
+        }
+        if (!weatherSandGrains.empty())
+            for (const auto& g : weatherGrains) {
+                const omk::GrainRect& gr = weatherSandGrains[static_cast<std::size_t>(g.grain) % weatherSandGrains.size()];
+                const float hx = g.half * gr.w / 4.0f, hy = g.half * gr.h / 4.0f;
+                const int x0 = g.cx - static_cast<int>(hx + 0.5f), x1 = g.cx + std::max(1, static_cast<int>(hx + 0.5f));
+                const int y0 = g.cy - static_cast<int>(hy + 0.5f), y1 = g.cy + std::max(1, static_cast<int>(hy + 0.5f));
+                if (x0 < 0 || y0 < 0 || x1 > fb.w || y1 > fb.h) continue;   // wholly on the screen, as the arm
+                omk::blt(fb, omk::Rect{x0, y0, x1, y1}, weatherSand, omk::Rect{gr.x, gr.y, gr.x + gr.w, gr.y + gr.h},
+                         0x8000u, 0);
+            }
+    }
     if (weatherFlakes.empty()) return;
     if (!weatherSnowTried) {
         weatherSnowTried = true;

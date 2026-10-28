@@ -121,6 +121,7 @@ struct PlayState {
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
     float & wetFlag = opt.wetFlag;
+    int & restoreWeatherFlag = opt.restoreWeatherFlag;
     float & rain3dFlag = opt.rain3dFlag;
     float & mistFlag = opt.mistFlag;
     float & upscaleFlag = opt.upscaleFlag;
@@ -767,7 +768,15 @@ struct PlayState {
     omk::Geometry rainGeo{};                     // ...and their strips, rebuilt each frame
     int rainTexSlot = -1;                        // ...their streak texture's pool slot, -1 none
     int snowTexSlot = -1;                        // ...and the snow's flake (`Images\snow.bmp`)
+    int sandTexSlot = -1;                        // ...and the restored sand's field (`Images\sand.bmp`)
+    std::vector<omk::GrainRect> sandGrains3d{};  // ...its grains, texel rectangles
     unsigned rainBits = 0;                       // ...the view's weather bits they were taken under
+    struct RainSplash { float p[3]; double born; };   // a drop's crown on the floor, born on the weather's clock
+    std::vector<RainSplash> rainSplashes{};      // ...the live ones (`playremaster_rain.cpp`)
+    double splashClock = -1.0;                   // ...the weather's clock they were last spawned at
+    double splashOwed = 0.0;                     // ...the fraction of a splash carried to the next frame
+    std::uint32_t splashSeed = 0x2F6B1D35u;      // ...where they land: a fixed sequence, the same on every backend
+    int splashTexSlot = -1;                      // ...their crown texture's pool slot, -1 none
     float mistStrength{};    // the mist's (`View::mist`), 0 off
     float upscale{};         // the upscale's factor (`Renderer::setUpscale`), <= 1 off
     float bodyLight{};       // the body light's strength (`o3de/lightprobe.h`), 0 off
@@ -906,6 +915,7 @@ struct PlayState {
     void remasterPoolRain(std::vector<omk::Texture>& slots);   // the streak's texture, after the sprites
     bool remasterWeatherRoofless() const;   // the 3D weather showing: a roof does not end the shower
     void remasterSnowCover(std::vector<omk::Draw>& list);      // the snow lying (`o3de/wetfloor.h` coverRuns)
+    void remasterWetBodies(std::vector<omk::Draw>& list);      // the bodies wet in the rain (`o3de/wetfloor.h`)
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);
     bool fxTiled{};   // this frame's emitters' lights go to `View::points` (`remasterViewLights`)
     // the pinned list: every prepared preload's textures
@@ -1181,11 +1191,20 @@ struct PlayState {
     std::vector<WeatherFlake> weatherFlakes{};
     omk::Surface weatherSnow{};
     bool weatherSnowTried = false;
+    // THE RESTORED SAND (`[Restored] weather`): each drop one grain of
+    // `Images\sand.bmp` around its centre, drawn `half` across a 4-texel grain
+    struct WeatherGrain { int cx, cy; float half; int grain; };
+    std::vector<WeatherGrain> weatherGrains{};
+    omk::Surface weatherSand{};
+    std::vector<omk::GrainRect> weatherSandGrains{};
+    bool weatherSandTried = false;
     unsigned weatherBitsTold = 0xFFFFu;
     int weatherStateTold = -1;
     float weatherRain = 0.0f;   // the rain's drops / 200 this frame, 0 with none (the wet floors' input)
+    float weatherSandLevel = 0.0f;   // ...the restored sand's, likewise (its dusty sky's input)
     bool weatherSnowing = false;   // the SNOW's cycle runs here this frame (the snow lying's input)
     int weatherAreaTold = -2;      // the active area the weather last saw (coming back into a shower)
+    bool restoredWeather = false;  // [Restored] weather: Qalisar's and Lahoreh's showers, the sand
     bool drawPlayer{};
     bool drawArm{};
     bool sideCullSet{};

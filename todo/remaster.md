@@ -1592,17 +1592,24 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   none. `engine: rain 3d` part 16. Not the drips: the reader's marks in a
   hall (15303, 0, -10414) are the 3D RAIN - its drops have no drawn
   triangle over them, the set open to the sky there.
-* **Open, the DARKNESS** (the reader, 2026-10-28, from play, "global
-  lighting/reflections changes completely in a few steps"): older than the
-  weather work (it stays with streaks, halos, drips and the wet band off).
-  Reproduced: `--area 101 --stand 15132,0,-10597,204 --remaster pack
-  --enhance-all` (F9's), the same every run. (1) Kay'l BLACK: the body light
-  (`--body-light 0`: the centre 2.4 -> 33.7); (2) the set unlit by the
-  emitters: on Vulkan's TILED path they add nothing here (`--fx-light 0`
-  the same 7.2; `OMK_NO_TILES=1` 15.4, the arcade pink; `OMK_TILES_LOOSE=1`
-  the same 7.2 - the lists hold them, the shader's lookup does not find
-  them). Not the mist, AO, relief, reflections, the 3D rain, the preload or
-  a set switch.
+* **THE DARKNESS, found and fixed** (the reader, 2026-10-28, from play,
+  "global lighting/reflections changes completely in a few steps": the
+  arcade dark and Kay'l a black silhouette, a step from a lit spot). Older
+  than the weather work (it stayed with streaks, halos, drips and the wet
+  band off). F9 named the place: `--area 101 --stand 15132,0,-10597,204
+  --remaster pack --enhance-all`, dark every run. Vulkan pushed a draw's
+  lighting mode only while the Lights block held a light
+  (`push_.lit = litCount_ > 0 ? d.lit : 0`) - and with the emitters'
+  lights TILED the block holds the set's own lights alone, those within
+  reach of the player: out of their reach EVERY draw went unlit (mode 0,
+  bodies too), the 313 tiled point lights unread. A shader colouring each
+  pixel by its mode showed the whole frame mode 0 there and mode 3 a step
+  away. Now lit while the block holds a light OR the tiles are bound:
+  the arcade 7.7 -> 16.9 (the nearest-slots way, `OMK_NO_TILES=1`, 16.7 -
+  which slotted the emitters into the block and hid it); a lit spot
+  unchanged. `engine: emitter light` part 7. On the way, ruled out: the
+  binning (`OMK_TILES_LOOSE=1` the same), the preload, a set switch, free
+  look, the mist, AO, relief, the reflections, the 3D rain, blended draws.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

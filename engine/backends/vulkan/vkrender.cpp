@@ -3704,7 +3704,13 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         push_.texScaleU = bound.su;
         push_.texScaleV = bound.sv;
     }
-    push_.lit = litCount_ > 0 ? d.lit : 0;
+    // ...lit while the frame has lights: the uniform block's - or the TILED
+    // point lights, which hold the emitters' when they are tiled: with the
+    // block's count alone, a frame where none of the set's own lights reached
+    // the player drew every draw unlit, the emitters' lights in the tiles
+    // unread - the arcade and Kay'l went dark a step from a lit spot (the
+    // reader, 2026-10-28; `OMK_NO_TILES=1`, slotting the emitters, hid it)
+    push_.lit = litCount_ > 0 || tilesNow_ ? d.lit : 0;
     // THE FOG's two exclusions, applied here because this is where the bucket
     // key is - the same rule `renderer.cpp` applies for the software loop, and
     // it MUST be the same rule or the two backends draw different pictures.

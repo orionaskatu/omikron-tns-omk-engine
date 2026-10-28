@@ -33293,6 +33293,16 @@ def c_engine_emitter_light():
          camera moved - "flickering big shadows"), and the TIGHT box test draws
          the frame byte-identical to `OMK_TILES_LOOSE=1` (no test, no cap) -
          13118 entries against 182000-odd at 640x480;
+      7. LIT WHERE THE SET'S OWN LIGHTS DO NOT REACH (2026-10-28, the
+         reader: "global lighting changes completely in a few steps", the
+         arcade dark and Kay'l black): with the emitters' lights TILED the
+         uniform block holds the set's own lights alone, and a draw was lit
+         only while that count was not 0 - out of their reach every draw went
+         unlit, the tiles unread. Qalisar's arcade (15132, 0, -10597, 204,
+         the reader's F9) with the pack and `--enhance-all`: the tiled frame
+         at least 0.9 of the nearest-slots one (`OMK_NO_TILES=1`) - 16.9
+         against 16.7; 7.7 before (the mutation it is shown to fail with,
+         `push_.lit` on the block's count alone). Skipped without the pack.
       6. THE CUTOUT'S DEPTH (2026-10-26): Qalisar's frame of part 5 WITHOUT
          MSAA (`--aa 1`) three times, the same bytes each run, and an opaque
          cutout draw binding the late-depth pipelines (`pipeCut_`,
@@ -33452,6 +33462,26 @@ def c_engine_emitter_light():
             res[kind] = (reach, moved > 100000, darker < len(on) // 1000)
             frames[kind] = same if kind == "vulkan" and same is not None else on
             print(f"        {kind}: the emitters' light moves {moved} pixels, {darker} darker; reaches {reach}")
+        # 7. LIT WHERE THE SET'S OWN LIGHTS DO NOT REACH (the tiled frame
+        # against the nearest-slots one, at the reader's dark spot)
+        dark = ("skipped",)
+        if os.path.isdir(pack):
+            means = []
+            for notiles in (False, True):
+                if notiles:
+                    os.environ["OMK_NO_TILES"] = "1"
+                try:
+                    _, dpx = run(vk, os.path.join(tmp, "dark%d.bin" % notiles), "101", "15132,0,-10597,204",
+                                 "--remaster", pack, "--enhance-all")
+                finally:
+                    os.environ.pop("OMK_NO_TILES", None)
+                luma = lambda q: ((q >> 11) & 31) * 8 * 0.3 + ((q >> 5) & 63) * 4 * 0.59 + (q & 31) * 8 * 0.11
+                means.append(sum(map(luma, dpx)) / len(dpx) if dpx else None)
+            if None in means:
+                dark = ("no frame",)
+            else:
+                print(f"        Qalisar's arcade (15132, 0, -10597): tiled {means[0]:.1f}, nearest slots {means[1]:.1f}")
+                dark = (means[0] > 0.9 * means[1],)
         agree = ("skipped",)
         if len(frames) == 2:
             big = lambda x, y: abs(((x >> 11) & 31) - ((y >> 11) & 31)) > 2 or \
@@ -33465,13 +33495,13 @@ def c_engine_emitter_light():
     print(f"        rule {rule}")
     vres, gres = res.get("vulkan"), res.get("gles")
     want = (True, True, True)
-    return (src_ok, rule, curate, tiles, vres, gres, agree, cut), \
+    return (src_ok, rule, curate, tiles, vres, gres, agree, cut, dark), \
            ((True,) * 4, ((117, 12, 24), (89, 8, 7), (15, 0, 32)),
             _or_skip(curate, (True,) * 6),
             _or_skip(tiles, (True,) * 3),
             _or_skip(vres, want), _or_skip(gres, want),
             agree if isinstance(agree, tuple) else True,
-            _or_skip(cut, (True, True))), \
+            _or_skip(cut, (True, True)), _or_skip(dark, (True,))), \
            "the source (off by default, [Remaster] only, never all = max, the GLES variant only when " \
            "asked); the glows and flames of Anekbah, Qalisar and Jaunpur; by Anekbah's burner the " \
            "light reaches the player, lights the set, only adds, and Vulkan and GLES agree"

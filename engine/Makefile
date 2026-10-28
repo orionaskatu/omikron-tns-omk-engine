@@ -152,7 +152,7 @@ GLSLC :=
 endif
 VK_SHADERS := build/shaders/scene.vert.inc build/shaders/scene.frag.inc build/shaders/scene_tiled.frag.inc \
               build/shaders/scene_cut.frag.inc build/shaders/scene_tiled_cut.frag.inc \
-              build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc \
+              build/shaders/fsq.vert.inc build/shaders/fsq.frag.inc build/shaders/depthcopy.frag.inc \
               build/shaders/shadow.vert.inc \
               build/shaders/present.frag.inc build/shaders/overlay.frag.inc               build/shaders/bloom.frag.inc build/shaders/post.frag.inc build/shaders/post_ms.frag.inc               build/shaders/blit_hdr.frag.inc \
               build/shaders/ssao.frag.inc build/shaders/ssao_blur.frag.inc               build/shaders/ssao_ms.frag.inc build/shaders/ssao_blur_ms.frag.inc \
@@ -381,6 +381,30 @@ $(UP_DLL_DSTS): $(dir $(PLAY_BIN))%.dll: %.dll
 	@mkdir -p $(@D)
 	cp -f $< $@
 
+# ---- THE UPSCALERS ON VULKAN (`backends/vulkan/upscale_*vk*`)
+#
+# The same upscalers on the Vulkan backend. AMD FSR 3.1 comes from the
+# FidelityFX SDK v1.1.4's ffx-api (its HEADERS here; its signed
+# `amd_fidelityfx_vk.dll` copied next to the viewer on Windows, a
+# `libamd_fidelityfx_vk.so` built from that SDK's source on Linux, loaded at run
+# time like the others). AMD's SDK 2.x - the D3D12 backend's FSR 4 - has no
+# Vulkan library. DLSS goes through Streamline (the SL_SDK above, Windows only;
+# its libraries are the D3D12 path's too). Not tied to D3D12: a Linux build has
+# them, and each half is a stub without its SDK. Licences:
+# `engine/third_party/licenses/`.
+FSRVK_SDK ?= ../../deps/fsr-sdk-1.1.4
+FSRVK_ON  := $(if $(VK_PKG)$(GLSLC),$(if $(wildcard $(FSRVK_SDK)/ffx-api/include/ffx_api/vk/ffx_api_vk.h),1))
+SLVK_ON   := $(if $(VK_PKG)$(GLSLC),$(if $(filter Windows_NT,$(OS)),$(if $(wildcard $(SL_SDK)/include/sl_helpers_vk.h),1)))
+UPVK_FLAGS := $(if $(FSRVK_ON),-DOMK_FSR_VK -isystem $(FSRVK_SDK)/ffx-api/include)               $(if $(SLVK_ON),-DOMK_DLSS_VK $(if $(SL_ON),,-DOMK_SL_SECURITY) -isystem $(SL_SDK)/include)
+UPVK_DLL_SRCS := $(if $(FSRVK_ON),$(if $(filter Windows_NT,$(OS)),$(wildcard $(FSRVK_SDK)/PrebuiltSignedDLL/amd_fidelityfx_vk.dll)))
+UPVK_DLL_DSTS := $(addprefix $(dir $(PLAY_BIN)),$(notdir $(UPVK_DLL_SRCS)))
+vpath %.dll $(sort $(dir $(UPVK_DLL_SRCS)))
+$(UPVK_DLL_DSTS): $(dir $(PLAY_BIN))%.dll: %.dll
+	@mkdir -p $(@D)
+	cp -f $< $@
+UPVK_OBJS = $(PLAY_VK_DIR)/upscale_vk.o $(PLAY_VK_DIR)/upscale_fsr_vk.o $(PLAY_VK_DIR)/upscale_dlss_vk.o
+UPVK_LIBS := $(if $(filter Windows_NT,$(OS)),,$(if $(filter Linux,$(shell uname -s)),-ldl))
+
 # Both optional targets depend on $(SRCOBJS) rather than assuming they are
 # current. They compile their own source fresh and LINK the prebuilt objects,
 # so a header change that alters a struct's layout - `Geometry` growing a field
@@ -495,6 +519,10 @@ $(PLAY_VK_DIR)/d3d12render.o: backends/d3d12/d3d12render.cpp | $(D3D_SHADERS)
 $(PLAY_VK_DIR)/upscale_%.o: backends/d3d12/upscale_%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) $(UPSCALE_FLAGS) -c -o $@ $<
+# ...and the Vulkan backend's own (`upscale_vk.cpp`, `upscale_fsr_vk.cpp`, `upscale_dlss_vk.cpp`)
+$(PLAY_VK_DIR)/upscale_vk.o $(PLAY_VK_DIR)/upscale_fsr_vk.o $(PLAY_VK_DIR)/upscale_dlss_vk.o: $(PLAY_VK_DIR)/%.o: backends/vulkan/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_VK_FLAGS) $(UPVK_FLAGS) -c -o $@ $<
 $(PLAY_GL_DIR)/%.o: backends/sdl/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(PLAY_GL_FLAGS) -c -o $@ $<
@@ -509,12 +537,12 @@ $(PLAY_BIN): $(PLAY_SW_OBJS) $(SRCOBJS) $(INSTR_STAMP)
 	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS)
 PLAY_WITH := $(SDL_PKG) (no Vulkan - software renderer only)
 else
-$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o \
+$(PLAY_BIN): $(PLAY_VK_OBJS) $(PLAY_VK_DIR)/vkrender.o $(UPVK_OBJS) \
              $(if $(D3D_ON),$(PLAY_VK_DIR)/d3d12render.o $(PLAY_VK_DIR)/upscale_fsr.o $(PLAY_VK_DIR)/upscale_dlss.o) \
              $(SRCOBJS) $(INSTR_STAMP)
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(VK_LIBS) $(if $(D3D_ON),$(D3D_LIBS))
-PLAY_WITH := $(SDL_PKG) + $(VK_PKG)$(if $(D3D_ON), + d3d12)$(if $(FSR_ON), + fsr)$(if $(SL_ON), + streamline)
+	$(CXX) $(CXXFLAGS) -o $@ $(filter %.o,$^) $(SDL_LIBS) $(VK_LIBS) $(if $(D3D_ON),$(D3D_LIBS)) $(UPVK_LIBS)
+PLAY_WITH := $(SDL_PKG) + $(VK_PKG)$(if $(D3D_ON), + d3d12)$(if $(FSR_ON), + fsr)$(if $(SL_ON), + streamline)$(if $(FSRVK_ON), + fsr-vk)$(if $(SLVK_ON), + dlss-vk)
 endif
 endif
 
@@ -576,7 +604,7 @@ build/hardened/%: $(OBJDIR)/tools/%.o $(SRCOBJS)
 .PHONY: hardened
 
 .PHONY: play
-play: $(if $(SDL_PKG),$(PLAY_BIN) $(UP_DLL_DSTS))
+play: $(if $(SDL_PKG),$(PLAY_BIN) $(UP_DLL_DSTS) $(UPVK_DLL_DSTS))
 ifeq ($(SDL_PKG),)
 	@echo "no SDL found (pkg-config sdl3 or sdl2) - the frontend is optional;"
 	@echo "everything else builds and the suite passes without it (PORTING A8)."

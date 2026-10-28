@@ -75,6 +75,7 @@
 #include "o3de/colourgrade.h"
 #include "o3de/lighttiles.h"
 #include "o3de/fsrcon.h"
+#include "upscale_vk.h"
 #include "platform/events.h"
 #include "platform/env.h"
 #include "platform/events.h"
@@ -178,6 +179,10 @@ const uint32_t kFragTiledCut[] =
 ;
 const uint32_t kFsqVert[] =
 #include "fsq.vert.inc"
+;
+// the temporal upscaler's depth copy (`depthcopy.frag`)
+const uint32_t kDepthCopyFrag[] =
+#include "depthcopy.frag.inc"
 ;
 const uint32_t kFsqFrag[] =
 #include "fsq.frag.inc"
@@ -570,6 +575,14 @@ public:
         up_ = f > 1.0f ? std::min(f, 3.0f) : 1.0f;
         return true;
     }
+    // THE TEMPORAL UPSCALER (`upscale_vk.h`, `todo/enhancements.md` 18): FSR 3.1 or DLSS asked for here,
+    // before `init`; it is made once the device exists (`makeTemporalUpscaler`) and decides the render size
+    bool setUpscaler(int kind, int quality) override {
+        if (dev_ != VK_NULL_HANDLE) return false;   // too late: the device and the target exist
+        tupKind_ = kind < 0 ? 0 : kind > 2 ? 2 : kind;
+        tupQuality_ = quality < 0 ? 0 : quality > 4 ? 4 : quality;
+        return true;
+    }
     int supersample() const { return ss_; }
     float upscale() const { return up_; }
     int textureFilter() const { return filter_; }
@@ -651,8 +664,12 @@ private:
     // a picture `v` output pixels long, in RENDER pixels - the one rule every
     // size the frame is drawn at goes through (EASU's viewport is the same)
     int rs(int v) const {
+        if (tupOn_) return std::max(1, static_cast<int>(std::lround(static_cast<float>(v) / tupDiv_)));
         return up_ > 1.0f ? std::max(1, static_cast<int>(std::lround(static_cast<float>(v) / up_))) : v * ss_;
     }
+    // ...and the supersample the display half folds: one, once the temporal upscaler has rebuilt the
+    // frame at the display size in `colour_` (`upscale()`)
+    int outSs() const { return tupOn_ ? 1 : ss_; }
     int picH_ = 0;           // the last frame's picture height, output pixels (`readback`'s upscale)
     // Which region of `colour_` the present blit should take. `end()` fills
     // the whole render target; `presentSurface` uploads a finished picture at
@@ -707,6 +724,40 @@ private:
     VkImage motion_ = VK_NULL_HANDLE; VkDeviceMemory motionMem_ = VK_NULL_HANDLE; VkImageView motionView_ = VK_NULL_HANDLE;
     VkQueue presQ_ = VK_NULL_HANDLE;   // a second queue of the family, for the deferred present
     PushMv pm_{};
+    // ---- THE TEMPORAL UPSCALER (`upscale_vk.h`; off unless asked) ----
+    //
+    // FSR 3.1 or DLSS rebuilds the display-size picture from the scene's colour, depth and motion at a
+    // RENDER size below it, over the sub-pixel jitter `begin` puts in the push block. `colour_` is then
+    // the DISPLAY size (the scene pass draws into its top-left `rw_ x rh_`); `upscale()` records the SDK
+    // from it into `tupOut_` and copies the result back over it, so every reader after it - the post
+    // chain, the present pass, the readback, the frame-generation capture - finds an ordinary display-size
+    // picture (`outSs()`: no supersample to fold).
+    int tupKind_ = 0, tupQuality_ = 1;           // asked: 0 off, 1 FSR, 2 DLSS
+    std::unique_ptr<omk::vkup::Upscaler> tup_;   // ...and running
+    bool tupOn_ = false;
+    float tupDiv_ = 1.0f;                        // the display-to-render ratio (`rs`)
+    bool tupFeat_ = false;                       // the device feature the motion target's blend needs is enabled
+    bool tupTold_ = false;
+    VkImage tupOut_ = VK_NULL_HANDLE; VkDeviceMemory tupOutMem_ = VK_NULL_HANDLE; VkImageView tupOutView_ = VK_NULL_HANDLE;
+    // the depth as the SDK takes it: a plain R32_SFLOAT image, `depth_`'s depth drawn into it (`depthcopy.frag`;
+    // FidelityFX's Vulkan backend views a depth input as D32_SFLOAT and its barriers name the depth aspect alone,
+    // neither legal on the depth+stencil image the mirror pass needs, and no copy converts between the two)
+    VkImage tupDepth_ = VK_NULL_HANDLE; VkDeviceMemory tupDepthMem_ = VK_NULL_HANDLE; VkImageView tupDepthView_ = VK_NULL_HANDLE;
+    VkRenderPass tdPass_ = VK_NULL_HANDLE; VkFramebuffer tdFb_ = VK_NULL_HANDLE;
+    VkPipeline tdPipe_ = VK_NULL_HANDLE; VkPipelineLayout tdPlo_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout tdDsl_ = VK_NULL_HANDLE; VkDescriptorPool tdPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet tdDs_ = VK_NULL_HANDLE; VkSampler tdSampler_ = VK_NULL_HANDLE;
+    bool makeTupDepth();
+    void killTupDepth();
+    int jitterIndex_ = 0;
+    float jitterPx_[2] = {};                     // this frame's, in render pixels
+    long upFrames_ = 0;
+    omk::vkup::DlssNeeds dlssNeeds_;             // what Streamline asked of the instance and device
+    bool dlssPrepared_ = false, dlssFeat_ = false;
+    uint32_t dlssQueueStart_ = 0;
+    bool makeTemporalUpscaler();
+    void upscale();
+    void motionStats();
     float curMain_[16] = {}, prevMain_[16] = {};
     bool havePrev_ = false;
     float frameEye_[3] = {}, prevEye_[3] = {}, prevFwd_[3] = {};
@@ -1567,8 +1618,13 @@ void* VulkanRenderer::createInstanceOnly() {
     if (inst_ != VK_NULL_HANDLE) return inst_;
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "omk";
+    // DLSS asks what to add to the instance and the device BEFORE they are made (Streamline's
+    // `slGetFeatureRequirements`); a refusal says why and the upscaler falls back to FSR
+    if (tupKind_ == omk::vkup::kDlss && !dlssPrepared_) dlssPrepared_ = omk::vkup::dlssPrepare(dlssNeeds_);
     // HYBRID RAY TRACING needs Vulkan 1.2 (SPIR-V 1.5, buffer device address, descriptor indexing)
-    app.apiVersion = rtWant_ ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;
+    app.apiVersion = rtWant_ || tupKind_ > 0 ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;
+    if (dlssPrepared_ && dlssNeeds_.uses12 && app.apiVersion < VK_API_VERSION_1_2) app.apiVersion = VK_API_VERSION_1_2;
+    if (dlssPrepared_ && dlssNeeds_.uses13) app.apiVersion = VK_API_VERSION_1_3;
     instApi_ = app.apiVersion;
     // MoltenVK is a PORTABILITY driver: without this extension and flag the
     // loader reports zero devices on macOS and the failure looks like "no GPU"
@@ -1585,6 +1641,19 @@ void* VulkanRenderer::createInstanceOnly() {
         for (const auto& e : ex)
             if (std::strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) == 0)
                 iexts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+    }
+    if (dlssPrepared_) {
+        uint32_t ne = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, nullptr);
+        std::vector<VkExtensionProperties> ex(ne);
+        vkEnumerateInstanceExtensionProperties(nullptr, &ne, ex.data());
+        for (const std::string& want : dlssNeeds_.instanceExtensions) {
+            bool have = false;
+            for (const auto& e : ex) have = have || want == e.extensionName;
+            bool dup = false;
+            for (const auto& i : iexts) dup = dup || want == i;
+            if (have && !dup) iexts.push_back(want.c_str());
+        }
     }
     VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ci.pApplicationInfo = &app;
@@ -1689,6 +1758,10 @@ bool VulkanRenderer::pickDevice() {
         enable.independentBlend = VK_TRUE;
         if (qs[qfam_].queueCount >= 2) qi.queueCount = 2;
     }
+    // THE TEMPORAL UPSCALER's motion target is written beside the colour with a blend state of its own
+    // (the scene pipelines' `_mv` builds): the device feature that allows it, enabled whenever asked
+    tupFeat_ = tupKind_ > 0 && have.independentBlend;
+    if (tupFeat_) enable.independentBlend = VK_TRUE;
     // ...and enabled whenever the device has it, asked or not - it changes
     // nothing a sampler does not ask for, and OMK's options menu may ask later
     // (`retexture`)
@@ -1782,8 +1855,137 @@ bool VulkanRenderer::pickDevice() {
         if (all) { enable.textureCompressionBC = VK_TRUE; bcOk_ = true; }
     }
     omk::texturePack().setCodecs(bcOk_ ? omk::kCodecBc : 0u);
+    // DLSS (`upscale_dlss_vk.cpp`): the device extensions, 1.2 / 1.3 features and queues Streamline asked for,
+    // when this device is NVIDIA's and has every one - else DLSS says so later and FSR takes over
+    VkPhysicalDeviceVulkan13Features dl13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    bool dlss12 = false, dlss13 = false;
+    dlssQueueStart_ = qi.queueCount;
+    if (dlssPrepared_ && props_.vendorID == 0x10DE) {
+        const auto hasExt = [&](const std::string& name) {
+            for (const auto& e : exts)
+                if (name == e.extensionName) return true;
+            return false;
+        };
+        const char* why = nullptr;
+        for (const std::string& e : dlssNeeds_.deviceExtensions)
+            if (!hasExt(e)) { why = "a device extension is missing"; break; }
+        if (!why && (dlssNeeds_.uses12 && props_.apiVersion < VK_API_VERSION_1_2)) why = "the device does not speak Vulkan 1.2";
+        if (!why && (dlssNeeds_.uses13 && props_.apiVersion < VK_API_VERSION_1_3)) why = "the device does not speak Vulkan 1.3";
+        if (!why) {
+            // every feature asked for must be one the device has
+            VkPhysicalDeviceVulkan12Features h12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            VkPhysicalDeviceVulkan13Features h13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+            VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            f2.pNext = &h12; h12.pNext = &h13;
+            vkGetPhysicalDeviceFeatures2(phys_, &f2);
+            // (the structures are a header, then one VkBool32 a feature, up to the 1.2 properties' strings)
+            const auto covers = [](const void* want, const void* have, std::size_t bytes) {
+                const auto* w = static_cast<const VkBool32*>(want);
+                const auto* h = static_cast<const VkBool32*>(have);
+                for (std::size_t i = 0; i < bytes / sizeof(VkBool32); ++i)
+                    if (w[i] && !h[i]) return false;
+                return true;
+            };
+            const std::size_t o12 = offsetof(VkPhysicalDeviceVulkan12Features, samplerMirrorClampToEdge);
+            const std::size_t o13 = offsetof(VkPhysicalDeviceVulkan13Features, robustImageAccess);
+            if (dlssNeeds_.uses12 &&
+                !covers(reinterpret_cast<const char*>(&dlssNeeds_.f12) + o12, reinterpret_cast<const char*>(&h12) + o12,
+                        sizeof h12 - o12))
+                why = "a Vulkan 1.2 feature is missing";
+            if (dlssNeeds_.uses13 &&
+                !covers(reinterpret_cast<const char*>(&dlssNeeds_.f13) + o13, reinterpret_cast<const char*>(&h13) + o13,
+                        sizeof h13 - o13))
+                why = "a Vulkan 1.3 feature is missing";
+        }
+        if (!why && dlssNeeds_.computeQueues + dlssNeeds_.graphicsQueues + qi.queueCount > qs[qfam_].queueCount)
+            why = "the queue family has no room for Streamline's queues";
+        if (why) {
+            std::puts((std::string("upscaler: DLSS unsupported on this GPU (") + why + ")").c_str());
+        } else {
+            for (const std::string& e : dlssNeeds_.deviceExtensions) {
+                bool dup = false;
+                for (const char* w : want) dup = dup || e == w;
+                if (!dup) want.push_back(e.c_str());
+            }
+            dlss12 = dlssNeeds_.uses12;
+            dlss13 = dlssNeeds_.uses13;
+            qi.queueCount += dlssNeeds_.computeQueues + dlssNeeds_.graphicsQueues;
+            dlssFeat_ = true;
+        }
+    } else if (dlssPrepared_) {
+        std::puts("upscaler: DLSS unsupported on this GPU (not an NVIDIA device)");
+    }
+    if (dlss12) {
+        // (Vulkan 1.2's features once: ray tracing's struct takes the OR of the two)
+        const std::size_t o12 = offsetof(VkPhysicalDeviceVulkan12Features, samplerMirrorClampToEdge);
+        const std::size_t n12 = (sizeof(VkPhysicalDeviceVulkan12Features) - o12) / sizeof(VkBool32);
+        auto* dst = reinterpret_cast<VkBool32*>(reinterpret_cast<char*>(&rt12) + o12);
+        const auto* src = reinterpret_cast<const VkBool32*>(reinterpret_cast<const char*>(&dlssNeeds_.f12) + o12);
+        for (std::size_t i = 0; i < n12; ++i) dst[i] = dst[i] || src[i];
+    }
+    if (dlss13) {
+        dl13 = dlssNeeds_.f13;
+        dl13.pNext = nullptr;
+        if (rtFeat_) rtRq.pNext = &dl13; else rt12.pNext = &dl13;
+    }
+    // THE FIDELITYFX VULKAN BACKEND (`upscale_fsr_vk.cpp`) decides what it may use from what the DEVICE offers
+    // (its extension list, its feature structures) and not from what was enabled: so what it keys on is enabled
+    // here when the device has it - the memory-requirements extension it calls without asking, 16-bit
+    // arithmetic and storage for its half-precision shaders, the subgroup size control its wave64 permutations
+    // want - as the SDK's own samples do
+    VkPhysicalDeviceVulkan11Features fsr11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    VkPhysicalDeviceSubgroupSizeControlFeaturesEXT fsrSg{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
+    bool fsr12 = false;
+    if (tupKind_ > 0) {
+        const auto hasExt = [&](const char* name) {
+            for (const auto& e : exts)
+                if (std::strcmp(e.extensionName, name) == 0) return true;
+            return false;
+        };
+        for (const char* e : {"VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation", "VK_AMD_buffer_marker"}) {
+            bool dup = false;
+            for (const char* w : want) dup = dup || std::strcmp(w, e) == 0;
+            if (hasExt(e) && !dup) want.push_back(e);
+        }
+        if (have.shaderInt16) enable.shaderInt16 = VK_TRUE;
+        if (have.shaderStorageImageReadWithoutFormat) enable.shaderStorageImageReadWithoutFormat = VK_TRUE;
+        if (have.shaderStorageImageWriteWithoutFormat) enable.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+        if (props_.apiVersion >= VK_API_VERSION_1_2 && instApi_ >= VK_API_VERSION_1_2) {
+            VkPhysicalDeviceVulkan11Features h11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+            VkPhysicalDeviceVulkan12Features h12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            VkPhysicalDeviceSubgroupSizeControlFeaturesEXT hsg{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
+            VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            f2.pNext = &h11; h11.pNext = &h12;
+            const bool sgExt = hasExt("VK_EXT_subgroup_size_control");
+            if (sgExt) h12.pNext = &hsg;
+            vkGetPhysicalDeviceFeatures2(phys_, &f2);
+            if (h12.shaderFloat16 && h11.storageBuffer16BitAccess && h11.uniformAndStorageBuffer16BitAccess) {
+                rt12.shaderFloat16 = VK_TRUE;
+                fsr11.storageBuffer16BitAccess = fsr11.uniformAndStorageBuffer16BitAccess = VK_TRUE;
+                fsr12 = true;
+            }
+            if (sgExt && hsg.subgroupSizeControl) {
+                want.push_back("VK_EXT_subgroup_size_control");
+                fsrSg.subgroupSizeControl = VK_TRUE;
+                fsrSg.computeFullSubgroups = hsg.computeFullSubgroups;
+                fsr12 = true;
+            }
+        }
+    }
+    if (fsr12) {
+        // (appended to the end of whatever chain the ray tracing and DLSS built on `rt12`)
+        const auto append = [&](void* st) {
+            auto* b = static_cast<VkBaseOutStructure*>(st);
+            b->pNext = nullptr;
+            VkBaseOutStructure* t = reinterpret_cast<VkBaseOutStructure*>(&rt12);
+            while (t->pNext) t = t->pNext;
+            t->pNext = b;
+        };
+        if (fsr11.storageBuffer16BitAccess) append(&fsr11);
+        if (fsrSg.subgroupSizeControl) append(&fsrSg);
+    }
     VkDeviceCreateInfo di{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    if (rtFeat_) di.pNext = &rt12;
+    if (rtFeat_ || dlss12 || dlss13 || fsr12) di.pNext = &rt12;
     di.queueCreateInfoCount = 1; di.pQueueCreateInfos = &qi;
     di.pEnabledFeatures = &enable;
     di.enabledExtensionCount = static_cast<uint32_t>(want.size());
@@ -1837,24 +2039,36 @@ bool VulkanRenderer::makeTarget() {
     }
     const bool msaa = samples_ != VK_SAMPLE_COUNT_1_BIT;
 
-    auto image = [&](VkFormat f, VkImageUsageFlags use, VkImageAspectFlags asp,
-                     VkSampleCountFlagBits samples,
-                     VkImage& img, VkDeviceMemory& mem, VkImageView& view) -> bool {
+    // (THE TEMPORAL UPSCALER: `colour_` is the DISPLAY size, the scene pass drawing into its top-left
+    // `rw_ x rh_` and `upscale()` writing the finished picture over all of it)
+    auto imageAt = [&](int iw, int ih, VkFormat f, VkImageUsageFlags use, VkImageAspectFlags asp,
+                       VkSampleCountFlagBits samples,
+                       VkImage& img, VkDeviceMemory& mem, VkImageView& view) -> bool {
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ii.imageType = VK_IMAGE_TYPE_2D; ii.format = f;
-        ii.extent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
+        ii.extent = {static_cast<uint32_t>(iw), static_cast<uint32_t>(ih), 1};
         ii.mipLevels = 1; ii.arrayLayers = 1;
         ii.samples = samples; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
         ii.usage = use; ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         return makeImage2D(ii, asp, "render targets", img, mem, &view);
     };
-    if (!image(VK_FORMAT_R8G8B8A8_UNORM,
-               // SAMPLED for the present pass, which reads the frame where it is
-               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                   VK_IMAGE_USAGE_SAMPLED_BIT,
-               VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT,
-               colour_, colourMem_, colourView_)) return false;
+    auto image = [&](VkFormat f, VkImageUsageFlags use, VkImageAspectFlags asp, VkSampleCountFlagBits samples,
+                     VkImage& img, VkDeviceMemory& mem, VkImageView& view) -> bool {
+        return imageAt(rw_, rh_, f, use, asp, samples, img, mem, view);
+    };
+    if (!imageAt(tupOn_ ? w_ : rw_, tupOn_ ? h_ : rh_, VK_FORMAT_R8G8B8A8_UNORM,
+                 // SAMPLED for the present pass, which reads the frame where it is; TRANSFER_DST for the
+                 // temporal upscaler's output copied over it
+                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                     VK_IMAGE_USAGE_SAMPLED_BIT | (tupOn_ ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0u),
+                 VK_IMAGE_ASPECT_COLOR_BIT, VK_SAMPLE_COUNT_1_BIT,
+                 colour_, colourMem_, colourView_)) return false;
+    // ...and its display-size output (`upscale()`)
+    if (tupOn_ && !makeImage2d(VK_FORMAT_R8G8B8A8_UNORM, w_, h_,
+                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               tupOut_, tupOutMem_, tupOutView_, "upscaler output")) return false;
     // (TRANSIENT: resolved within the pass, never stored - `makeImage2D`)
     if (msaa && !image(VK_FORMAT_R8G8B8A8_UNORM,
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
@@ -1966,7 +2180,7 @@ bool VulkanRenderer::makeTarget() {
             omk::event("framegen", {{"on", 0}, {"refresh", 0}});
         }
     }
-    mvOn_ = fgOn_;
+    mvOn_ = fgOn_ || tupOn_;   // (the temporal upscaler reads the same vectors)
     poseRange_ = mvOn_ ? kPoseRangeMv : kPoseRange;
     // ...SAMPLED and KEPT where the ambient occlusion reads it - and only there
     aoOk_ = false;
@@ -1976,7 +2190,7 @@ bool VulkanRenderer::makeTarget() {
         aoOk_ = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
         if (!aoOk_) std::fprintf(stderr, "vulkan: the depth format cannot be sampled - no ambient occlusion\n");
     }
-    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_ || fgOn_ || aoOk_;
+    const bool depthKept = ssaoOn_ || dofOn_ || softOn_ || volOn_ || fgOn_ || aoOk_ || tupOn_;
     // (TRANSIENT where nothing reads it after the pass - the AO's absence - SAMPLED where the AO or any
     // of this backend's depth readers does: the post chain, SSAO, soft particles, volumetrics, the warp)
     VkImageUsageFlags depthUse = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
@@ -1987,7 +2201,8 @@ bool VulkanRenderer::makeTarget() {
                VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, samples_,
                depth_, depthMem_, depthView_)) return false;
     if (mvOn_ && !makeImage2d(VK_FORMAT_R16G16_SFLOAT, rw_, rh_,
-                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                               motion_, motionMem_, motionView_, "motion vectors")) return false;
     if (depthKept) {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -1995,6 +2210,8 @@ bool VulkanRenderer::makeTarget() {
         vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
         VKCHECK(vkCreateImageView(dev_, &vi, nullptr, &depthSampleView_), "depth sample view");
     }
+    // THE TEMPORAL UPSCALER's depth image and the pass that fills it from the depth just made
+    if (tupOn_ && !makeTupDepth()) return false;
     if (dofOn_) {
         // the stencil plane as the shader reads it: `post.frag` takes the mark
         // from `.g` (Direct3D's X32_TYPELESS_G8X24_UINT view), a Vulkan stencil
@@ -3159,6 +3376,8 @@ bool VulkanRenderer::resize(int w, int h) {
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     img(motionView_, motion_, motionMem_);
+    img(tupOutView_, tupOut_, tupOutMem_);
+    killTupDepth();
     killSsao();
     killVol();
     if (depthRead_) { vkDestroyImageView(dev_, depthRead_, nullptr); depthRead_ = VK_NULL_HANDLE; }
@@ -3185,8 +3404,14 @@ bool VulkanRenderer::resize(int w, int h) {
     killRmPost();   // it reads `colour_` and is sized by the target
     killReflection();
     w_ = w; h_ = h;
+    // (the upscaler is made for ONE display size: made again at the new one, which gives the render size)
+    tup_.reset(); tupOn_ = false; tupDiv_ = 1.0f;
     rw_ = rs(w_); rh_ = rs(h_);
-    srcW_ = rw_; srcH_ = rh_;
+    resizing_ = true;
+    if (tupKind_ > 0 && !makeTemporalUpscaler())
+        std::puts("upscaler: off after the resize - the native frame");
+    resizing_ = false;
+    srcW_ = tupOn_ ? w_ : rw_; srcH_ = tupOn_ ? h_ : rh_;
     resizing_ = true;
     const bool ok = makeTarget();
     resizing_ = false;
@@ -3605,7 +3830,7 @@ bool VulkanRenderer::runPresentPass(int vy, int vh, bool mid, bool raw) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, presPlo_, 0, 1, presIn,
                             0, nullptr);
     // (`depth`: 32 passes the picture through; `rcas`/`raw`: the remaster's upscale, `present.frag`)
-    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, up ? 1 : (post || mid) ? 1 : ss_, hdrOn_ ? 32 : colourDepth_,
+    const PresentPush pp{vy, vh, w_, dither_ ? 1 : 0, up ? 1 : (post || mid) ? 1 : outSs(), hdrOn_ ? 32 : colourDepth_,
                          up ? 1 : 0, up ? omk::fsrRcasCon(omk::kFsrRcasStops) : 0u, raw ? 1 : 0};
     vkCmdPushConstants(cb, presPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
@@ -3798,7 +4023,7 @@ bool VulkanRenderer::presentImageHdr(VkImage src, int sw, int sh, uint32_t idx, 
     if (blitPipe_ == VK_NULL_HANDLE || idx >= swapFbufs_.size()) return false;
     const bool isPres = src == presImg_;
     const VkDescriptorSet ds = isPres ? blitDs_[1] : blitDs_[0];
-    const float texW = static_cast<float>(isPres ? w_ : rw_), texH = static_cast<float>(isPres ? h_ : rh_);
+    const float texW = static_cast<float>(isPres || tupOn_ ? w_ : rw_), texH = static_cast<float>(isPres || tupOn_ ? h_ : rh_);
     const auto layout = [&](VkImageLayout from, VkImageLayout to, VkAccessFlags sa, VkAccessFlags da,
                             VkPipelineStageFlags ss, VkPipelineStageFlags ds_) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -3822,7 +4047,7 @@ bool VulkanRenderer::presentImageHdr(VkImage src, int sw, int sh, uint32_t idx, 
     vkCmdBindDescriptorSets(pcb_, VK_PIPELINE_BIND_POINT_GRAPHICS, blitPlo_, 0, 1, &ds, 0, nullptr);
     const BlitPush bp{{static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(dW), static_cast<float>(dH)},
                       {static_cast<float>(sw), static_cast<float>(sh), texW, texH},
-                      ss_ > 1 ? 1 : 0, kPaperWhite / 80.0f, hdrPeak_ / 80.0f};
+                      outSs() > 1 ? 1 : 0, kPaperWhite / 80.0f, hdrPeak_ / 80.0f};
     vkCmdPushConstants(pcb_, blitPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof bp, &bp);
     vkCmdDraw(pcb_, 3, 1, 0, 0);
     vkCmdEndRenderPass(pcb_);
@@ -4159,7 +4384,7 @@ void VulkanRenderer::runPost() {
     begin(postPass_, postFbuf_, w_, h_);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &postDs_, 0, nullptr);
-    const omk::postfx::PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, ss_,
+    const omk::postfx::PostPush pp = omk::postfx::buildPost(postReq_, foc_, dof, w_, h_, rw_, rh_, outSs(),
                                                             hdrOn_ ? hdrPeak_ : 0.0f);
     vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pp, &pp);
     vkCmdDraw(cb, 3, 1, 0, 0);
@@ -4451,6 +4676,383 @@ bool VulkanRenderer::probeUpload(const unsigned char* rgba) {
     return true;
 }
 
+// The upscaler's depth image and the pass that fills it (`tupDepth_`): made with the target, at the render size.
+bool VulkanRenderer::makeTupDepth() {
+    if (!makeImage2d(VK_FORMAT_R32_SFLOAT, rw_, rh_, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     tupDepth_, tupDepthMem_, tupDepthView_, "upscaler depth")) return false;
+    VkAttachmentDescription a{};
+    a.format = VK_FORMAT_R32_SFLOAT; a.samples = VK_SAMPLE_COUNT_1_BIT;
+    a.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.storeOp = VK_ATTACHMENT_STORE_OP_STORE;   // (every texel is written)
+    a.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; a.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    a.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; a.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1; sub.pColorAttachments = &ref;
+    VkSubpassDependency dep{};
+    dep.srcSubpass = 0; dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkRenderPassCreateInfo rpi{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rpi.attachmentCount = 1; rpi.pAttachments = &a;
+    rpi.subpassCount = 1; rpi.pSubpasses = &sub;
+    rpi.dependencyCount = 1; rpi.pDependencies = &dep;
+    VKCHECK(vkCreateRenderPass(dev_, &rpi, nullptr, &tdPass_), "upscaler depth pass");
+    VkFramebufferCreateInfo fi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fi.renderPass = tdPass_; fi.attachmentCount = 1; fi.pAttachments = &tupDepthView_;
+    fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
+    VKCHECK(vkCreateFramebuffer(dev_, &fi, nullptr, &tdFb_), "upscaler depth framebuffer");
+    VkDescriptorSetLayoutBinding b{};
+    b.binding = 0; b.descriptorCount = 1;
+    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dli.bindingCount = 1; dli.pBindings = &b;
+    VKCHECK(vkCreateDescriptorSetLayout(dev_, &dli, nullptr, &tdDsl_), "upscaler depth set layout");
+    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pi.maxSets = 1; pi.poolSizeCount = 1; pi.pPoolSizes = &ps;
+    VKCHECK(vkCreateDescriptorPool(dev_, &pi, nullptr, &tdPool_), "upscaler depth pool");
+    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = tdPool_; ai.descriptorSetCount = 1; ai.pSetLayouts = &tdDsl_;
+    VKCHECK(vkAllocateDescriptorSets(dev_, &ai, &tdDs_), "upscaler depth set");
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    si.magFilter = VK_FILTER_NEAREST; si.minFilter = VK_FILTER_NEAREST;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VKCHECK(vkCreateSampler(dev_, &si, nullptr, &tdSampler_), "upscaler depth sampler");
+    // (the scene's depth, sampled where the scene pass leaves it)
+    const VkDescriptorImageInfo ii{tdSampler_, depthSampleView_, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = tdDs_; wr.dstBinding = 0; wr.descriptorCount = 1;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.pImageInfo = &ii;
+    vkUpdateDescriptorSets(dev_, 1, &wr, 0, nullptr);
+    const VkPushConstantRange* noRange = nullptr;
+    VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &tdDsl_;
+    pli.pushConstantRangeCount = 0; pli.pPushConstantRanges = noRange;
+    VKCHECK(vkCreatePipelineLayout(dev_, &pli, nullptr, &tdPlo_), "upscaler depth pipeline layout");
+    VkShaderModule qv = shaderModule(kFsqVert, sizeof(kFsqVert));
+    VkShaderModule qf = shaderModule(kDepthCopyFrag, sizeof(kDepthCopyFrag));
+    if (!qv || !qf) { std::puts("vulkan: upscaler depth shader module"); return false; }
+    VkPipelineShaderStageCreateInfo st[2]{};
+    st[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, qv, "main", nullptr};
+    st[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, qf, "main", nullptr};
+    VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkViewport vp{0, 0, static_cast<float>(rw_), static_cast<float>(rh_), 0.0f, 1.0f};
+    VkRect2D sc{{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+    VkPipelineViewportStateCreateInfo vps{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+    VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    rs.polygonMode = VK_POLYGON_MODE_FILL; rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth = 1.0f;
+    VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.colorWriteMask = 0xF;
+    VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    cb.attachmentCount = 1; cb.pAttachments = &cba;
+    VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    gp.stageCount = 2; gp.pStages = st;
+    gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms; gp.pColorBlendState = &cb;
+    gp.layout = tdPlo_; gp.renderPass = tdPass_;
+    const VkResult pr = vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &tdPipe_);
+    vkDestroyShaderModule(dev_, qv, nullptr);
+    vkDestroyShaderModule(dev_, qf, nullptr);
+    if (pr != VK_SUCCESS) { std::puts("vulkan: upscaler depth pipeline"); return false; }
+    return true;
+}
+
+void VulkanRenderer::killTupDepth() {
+    if (!dev_) return;
+    if (tdPipe_) { vkDestroyPipeline(dev_, tdPipe_, nullptr); tdPipe_ = VK_NULL_HANDLE; }
+    if (tdPlo_) { vkDestroyPipelineLayout(dev_, tdPlo_, nullptr); tdPlo_ = VK_NULL_HANDLE; }
+    if (tdSampler_) { vkDestroySampler(dev_, tdSampler_, nullptr); tdSampler_ = VK_NULL_HANDLE; }
+    if (tdPool_) { vkDestroyDescriptorPool(dev_, tdPool_, nullptr); tdPool_ = VK_NULL_HANDLE; tdDs_ = VK_NULL_HANDLE; }
+    if (tdDsl_) { vkDestroyDescriptorSetLayout(dev_, tdDsl_, nullptr); tdDsl_ = VK_NULL_HANDLE; }
+    if (tdFb_) { vkDestroyFramebuffer(dev_, tdFb_, nullptr); tdFb_ = VK_NULL_HANDLE; }
+    if (tdPass_) { vkDestroyRenderPass(dev_, tdPass_, nullptr); tdPass_ = VK_NULL_HANDLE; }
+    if (tupDepthView_) vkDestroyImageView(dev_, tupDepthView_, nullptr);
+    if (tupDepth_) vkDestroyImage(dev_, tupDepth_, nullptr);
+    if (tupDepthMem_) freeDeviceMemory(tupDepthMem_);
+    tupDepthView_ = VK_NULL_HANDLE; tupDepth_ = VK_NULL_HANDLE; tupDepthMem_ = VK_NULL_HANDLE;
+}
+
+// ---- THE TEMPORAL UPSCALER (`upscale_vk.h`, `todo/enhancements.md` 18) ----------
+//
+// Made once the device exists, for the display size: DLSS when asked and the GPU
+// runs it, else FSR 3.1, else nothing - each step said. With one running the
+// RENDER size is the SDK's answer for the quality (the scene, SSAO and the
+// volumetrics draw at it, `rs`), supersampling and the remaster's FSR 1 upscale
+// give way (all three decide the render size; the temporal upscaler is the one
+// asked for), and so does MSAA: the SDKs take a single-sampled colour and depth,
+// and a temporal upscaler's own accumulation IS the anti-aliasing.
+bool VulkanRenderer::makeTemporalUpscaler() {
+    namespace up = omk::vkup;
+    tup_.reset();
+    tupOn_ = false;
+    tupDiv_ = 1.0f;
+    if (tupKind_ == up::kOff || !dev_) return false;
+    // what the scene pass must write for it: the motion vectors (the `_mv` builds, their push block, the
+    // targets' separate blend) and a depth the SDK can sample
+    VkFormatProperties fp{};
+    vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_D32_SFLOAT_S8_UINT, &fp);
+    const char* why = nullptr;
+    if (!tupFeat_) why = "the device cannot blend its colour and motion targets apart (independentBlend)";
+    else if (props_.limits.maxPushConstantsSize < sizeof(PushMv))
+        why = "the device's push constants are too small for the motion block";
+    else if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) ||
+             !(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+        why = "the 32-bit float depth cannot be sampled";
+    else {
+        VkFormatProperties dp{};
+        vkGetPhysicalDeviceFormatProperties(phys_, VK_FORMAT_R32_SFLOAT, &dp);
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+        if ((dp.optimalTilingFeatures & need) != need) why = "a 32-bit float colour image cannot be drawn and sampled";
+    }
+    if (why) {
+        if (!resizing_) std::printf("upscaler: %s - the native frame\n", why);
+        return false;
+    }
+    up::Device d;
+    d.instance = inst_; d.phys = phys_; d.device = dev_; d.queue = queue_; d.family = qfam_;
+    d.getInstanceProcAddr = vkGetInstanceProcAddr;
+    d.getDeviceProcAddr = vkGetDeviceProcAddr;
+    d.vendorId = props_.vendorID;
+    d.extraQueueStart = dlssQueueStart_;
+    if (tupKind_ == up::kDlss) {
+        if (dlssFeat_) tup_ = up::makeDlss(d, w_, h_, tupQuality_);
+        if (!tup_) std::printf("upscaler: DLSS not available - trying FSR\n");
+    }
+    if (!tup_) tup_ = up::makeFsr(d, w_, h_, tupQuality_);
+    if (!tup_) {
+        std::printf("upscaler: none available - the native frame\n");
+        return false;
+    }
+    if (ss_ > 1) {
+        std::printf("upscaler: supersampling x%d ignored - the upscaler decides the render size\n", ss_);
+        ss_ = 1;
+    }
+    if (up_ > 1.0f) {
+        std::printf("upscaler: the remaster's upscale (FSR 1, x%.2f) ignored - the upscaler decides the "
+                    "render size\n", static_cast<double>(up_));
+        up_ = 1.0f;
+    }
+    if (wantSamples_ > 1) {
+        std::printf("upscaler: %dx MSAA off - the upscaler takes one sample a pixel, and its temporal "
+                    "resolve is the anti-aliasing\n", wantSamples_);
+        wantSamples_ = 1;
+    }
+    int rw = 0, rh = 0;
+    tup_->renderSize(rw, rh);
+    rw = std::clamp(rw, 1, w_);
+    tupDiv_ = static_cast<float>(w_) / static_cast<float>(rw);
+    tupOn_ = true;
+    rw_ = rs(w_);
+    rh_ = rs(h_);   // (the scene's own size rule, so the viewport and the target agree to the pixel)
+    std::printf("upscaler: %s %s - render %dx%d -> display %dx%d (ratio %.2f, %s)\n", tup_->name(),
+                tup_->version().c_str(), rw_, rh_, w_, h_, static_cast<double>(w_) / rw_,
+                up::qualityName(tupQuality_));
+    omk::event("upscaler", {{"sdk", tup_->name()}, {"version", tup_->version()}, {"rw", rw_}, {"rh", rh_},
+                            {"dw", w_}, {"dh", h_}, {"quality", up::qualityName(tupQuality_)}, {"api", "vulkan"}});
+    jitterIndex_ = 0;
+    havePrev_ = false;
+    resetOwed_ = true;
+    return true;
+}
+
+// The upscale itself, recorded on the frame's command buffer after SSAO and the volumetrics: the colour,
+// depth and motion at the render size in, the display-size image out - and that copied back over
+// `colour_`, which the rest of the backend then reads as the finished display-size picture.
+void VulkanRenderer::upscale() {
+    VkCommandBuffer cb = cb_;
+    const auto barrier = [&](VkImage img, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                             VkAccessFlags srcA, VkAccessFlags dstA, VkPipelineStageFlags srcS,
+                             VkPipelineStageFlags dstS) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from; b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = img; b.subresourceRange = {aspect, 0, 1, 0, 1};
+        b.srcAccessMask = srcA; b.dstAccessMask = dstA;
+        vkCmdPipelineBarrier(cb, srcS, dstS, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    const VkImageAspectFlags colourAsp = VK_IMAGE_ASPECT_COLOR_BIT;
+    // what the scene pass, SSAO and the volumetrics wrote - the colour, the depth, the motion - visible to the SDK
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                       VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 1, &mb, 0, nullptr, 0, nullptr);
+    // the inputs to the layout the SDK is told they are in, the output to GENERAL
+    barrier(colour_, colourAsp, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            0, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    // the depth: drawn into the plain R32_SFLOAT image the SDK takes (see `tupDepth_`); `depth_` stays where the
+    // scene pass left it, read-only, which is where the pass samples it
+    {
+        VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+        rp.renderPass = tdPass_; rp.framebuffer = tdFb_;
+        rp.renderArea = {{0, 0}, {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_)}};
+        vkCmdBeginRenderPass(cb, &rp, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tdPipe_);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, tdPlo_, 0, 1, &tdDs_, 0, nullptr);
+        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdEndRenderPass(cb);   // `tupDepth_` left SHADER_READ_ONLY, visible to the SDK (the pass's dependency)
+    }
+    barrier(tupOut_, colourAsp, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+
+    omk::vkup::Frame f;
+    f.cb = cb;
+    const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    f.colour = {colour_, colourView_, VK_FORMAT_R8G8B8A8_UNORM, static_cast<uint32_t>(w_), static_cast<uint32_t>(h_),
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                    VK_IMAGE_USAGE_SAMPLED_BIT, ro};
+    f.depth = {tupDepth_, tupDepthView_, VK_FORMAT_R32_SFLOAT, static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_),
+               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, ro};
+    f.motion = {motion_, motionView_, VK_FORMAT_R16G16_SFLOAT, static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_),
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, ro};
+    f.output = {tupOut_, tupOutView_, VK_FORMAT_R8G8B8A8_UNORM, static_cast<uint32_t>(w_), static_cast<uint32_t>(h_),
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                    VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_LAYOUT_GENERAL};
+    f.rw = rw_; f.rh = rh_; f.dw = w_; f.dh = h_;
+    f.jitterX = jitterPx_[0]; f.jitterY = jitterPx_[1];
+    f.reset = resetOwed_;
+    f.frameMs = 1000.0f / 30.0f;   // the game's tick
+    // THE CAMERA, for the SDK that wants it (DLSS), in the Y-UP clip space the Direct3D 12 glue gives it: this
+    // engine's matrices are Vulkan's Y-down ones, whose second row is negated here (`upscale_vk.h`)
+    omk::vkup::Camera& c = f.cam;
+    const float nearP = omk::kNearCut, farP = 200000.0f;
+    c.nearP = nearP;
+    c.farP = farP;
+    c.fovV = 2.0f * std::atan(aoTanV_);
+    c.aspect = aoTanH_ / aoTanV_;
+    const float* ax[3] = {mainS_, mainU_, mainF_};
+    std::memset(c.worldToView, 0, sizeof c.worldToView);
+    for (int r = 0; r < 3; ++r) {
+        float dd = 0.0f;
+        for (int k = 0; k < 3; ++k) { c.worldToView[k * 4 + r] = ax[r][k]; dd += ax[r][k] * frameEye_[k]; }
+        c.worldToView[12 + r] = -dd;
+    }
+    c.worldToView[15] = 1.0f;
+    std::memset(c.viewToClip, 0, sizeof c.viewToClip);
+    c.viewToClip[0] = 1.0f / aoTanH_;
+    c.viewToClip[5] = 1.0f / aoTanV_;   // -(-1 / tanV): the flip
+    c.viewToClip[10] = farP / (farP - nearP);
+    c.viewToClip[14] = -farP * nearP / (farP - nearP);
+    c.viewToClip[11] = 1.0f;
+    for (int i = 0; i < 16; ++i) {
+        const bool row1 = i % 4 == 1;
+        c.worldToClip[i] = row1 ? -curMain_[i] : curMain_[i];
+        const float pv = havePrev_ && !resetOwed_ ? prevMain_[i] : curMain_[i];
+        c.prevWorldToClip[i] = row1 ? -pv : pv;
+    }
+    for (int k = 0; k < 3; ++k) {
+        c.pos[k] = frameEye_[k]; c.right[k] = mainS_[k]; c.up[k] = mainU_[k]; c.fwd[k] = mainF_[k];
+    }
+    const bool ok = tup_->dispatch(f);
+    if (!ok) {
+        // the SDK refused (it said so): the render-size picture scaled up instead, so the frame is still whole
+        barrier(colour_, colourAsp, ro, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        barrier(tupOut_, colourAsp, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkImageBlit bl{};
+        bl.srcSubresource = bl.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        bl.srcOffsets[1] = {rw_, rh_, 1};
+        bl.dstOffsets[1] = {w_, h_, 1};
+        vkCmdBlitImage(cb, colour_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tupOut_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &bl, VK_FILTER_LINEAR);
+        barrier(tupOut_, colourAsp, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+        barrier(colour_, colourAsp, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+    } else {
+        barrier(tupOut_, colourAsp, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT);
+        barrier(colour_, colourAsp, ro, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    }
+    VkImageCopy cp{};
+    cp.srcSubresource = cp.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.extent = {static_cast<uint32_t>(w_), static_cast<uint32_t>(h_), 1};
+    vkCmdCopyImage(cb, tupOut_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, colour_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &cp);
+    // the picture where the rest of the backend expects it (TRANSFER_SRC), the depth where the post chain reads it
+    barrier(colour_, colourAsp, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT);
+    ++upFrames_;
+}
+
+// `OMK_MOTION_STATS=1`: the frame's motion target read back and summed up - how much of the picture moves
+// more than half a render pixel, the largest and the mean vector - as a line and an `upscaler.motion`
+// event, the Direct3D 12 backend's (`engine: upscaler`, `engine: vulkan upscaler`). Called after the
+// frame is submitted and waited for.
+void VulkanRenderer::motionStats() {
+    if (motion_ == VK_NULL_HANDLE) return;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(rw_) * rh_ * 4;   // R16G16: four bytes a pixel
+    VkBuffer buf = VK_NULL_HANDLE; VkDeviceMemory mem = VK_NULL_HANDLE;
+    if (!makeBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buf, mem)) return;
+    VkCommandBuffer cb = oneShotBegin();
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = motion_; b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.srcAccessMask = VK_ACCESS_SHADER_READ_BIT; b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &b);
+    VkBufferImageCopy cp{};
+    cp.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    cp.imageExtent = {static_cast<uint32_t>(rw_), static_cast<uint32_t>(rh_), 1};
+    vkCmdCopyImageToBuffer(cb, motion_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &cp);
+    b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &b);
+    oneShotEnd(cb);
+    void* p = nullptr;
+    if (vkMapMemory(dev_, mem, 0, bytes, 0, &p) == VK_SUCCESS) {
+        const auto half = [](std::uint16_t h) {
+            const std::uint32_t s = (h >> 15) & 1u, e = (h >> 10) & 31u, m = h & 1023u;
+            float v = e == 0 ? std::ldexp(static_cast<float>(m), -24)
+                    : e == 31 ? 65504.0f : std::ldexp(static_cast<float>(m | 1024u), static_cast<int>(e) - 25);
+            return s ? -v : v;
+        };
+        const auto* px = static_cast<const std::uint16_t*>(p);
+        long moving = 0;
+        double sum = 0.0, most = 0.0;
+        const long n = static_cast<long>(rw_) * rh_;
+        for (long i = 0; i < n; ++i) {
+            const double mx = half(px[2 * i]) * rw_, my = half(px[2 * i + 1]) * rh_;
+            const double len = std::sqrt(mx * mx + my * my);
+            sum += len;
+            most = std::max(most, len);
+            moving += len > 0.5;
+        }
+        vkUnmapMemory(dev_, mem);
+        const double share = n ? static_cast<double>(moving) / n : 0.0;
+        std::printf("vulkan motion: frame %ld - %.2f%% of pixels move more than half a pixel, largest %.1f px, "
+                    "mean %.3f px%s\n", upFrames_, 100.0 * share, most, n ? sum / n : 0.0,
+                    resetOwed_ ? " (a cut: no motion)" : "");
+        omk::event("upscaler.motion", {{"frame", upFrames_}, {"moving", share}, {"max", most},
+                                       {"mean", n ? sum / n : 0.0}, {"reset", resetOwed_}});
+    }
+    vkDestroyBuffer(dev_, buf, nullptr);
+    freeDeviceMemory(mem);
+}
+
 bool VulkanRenderer::init(int w, int h) {
     w_ = w; h_ = h;
     if (up_ > 1.0f && ss_ > 1) {
@@ -4467,6 +5069,8 @@ bool VulkanRenderer::init(int w, int h) {
     }
     srcW_ = rw_; srcH_ = rh_;
     if (!pickDevice()) return false;
+    // THE TEMPORAL UPSCALER (`makeTemporalUpscaler`): decides the render size, so before the target
+    if (tupKind_ > 0 && makeTemporalUpscaler()) srcW_ = w_, srcH_ = h_;
     // HYBRID RAY TRACING, before the pipelines it changes (`rtInit`), and its REFLECTIONS on the
     // ground (`todo/enhancements.md` 26)
     if (rtFeat_) rtInit();
@@ -5490,8 +6094,8 @@ void VulkanRenderer::begin(const omk::View& view) {
     softDraws_ = 0;
     if (rtOn_) rtBind(view);
     aoTanH_ = viewTanH_; aoTanV_ = viewTanV_;
-    aoVw_ = (view.letterboxed() ? view.vw : w_) * ss_;
-    aoVh_ = (view.letterboxed() ? view.vh : h_) * ss_;
+    aoVw_ = tupOn_ ? rs(view.letterboxed() ? view.vw : w_) : (view.letterboxed() ? view.vw : w_) * ss_;
+    aoVh_ = tupOn_ ? rs(view.letterboxed() ? view.vh : h_) : (view.letterboxed() ? view.vh : h_) * ss_;
     // ---- FRAME GENERATION's per-frame half: the motion, the cuts and the bodies' previous poses ----
     if (mvOn_) {
         std::memcpy(curMain_, push_.mvp, sizeof curMain_);
@@ -5506,6 +6110,15 @@ void VulkanRenderer::begin(const omk::View& view) {
         // across a cut the vectors say "no motion": the history is dropped anyway
         if (resetOwed_) std::memcpy(pm_.prevMvp, push_.mvp, sizeof pm_.prevMvp);
         pm_.jitter[0] = pm_.jitter[1] = 0.0f;   // (no upscaler, no jitter)
+        if (tupOn_) {
+            // THE JITTER: the SDK's sequence, one step a frame, in render pixels; the clip space is the VIEW's
+            // (a letterbox's strip), a pixel `2 / width` of it, Y down as the pixels are (`upscale_vk.h`)
+            const int phases = tup_->jitterPhases(rw_, w_);
+            tup_->jitter(jitterIndex_ % phases, phases, jitterPx_[0], jitterPx_[1]);
+            ++jitterIndex_;
+            pm_.jitter[0] = 2.0f * jitterPx_[0] / static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_);
+            pm_.jitter[1] = 2.0f * jitterPx_[1] / static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_);
+        }
         // the bodies' affines: last frame's become the previous ones
         prevAffines_.swap(curAffines_);
         curAffines_.clear();
@@ -6891,7 +7504,7 @@ void VulkanRenderer::fgCapture() {
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, fgPlo_, 0, 1, &fgCapDs_, 0, nullptr);
     const float pw = static_cast<float>(std::max(foc_.vw, 1)), ph = static_cast<float>(std::max(foc_.vh, 1));
     const float nearP = omk::kNearCut, farP = 200000.0f;
-    const omk::framegen::CapPush cp{{pw, ph, static_cast<float>(post ? 1 : ss_), 0.0f},
+    const omk::framegen::CapPush cp{{pw, ph, static_cast<float>(post ? 1 : outSs()), 0.0f},
                                     {static_cast<float>(aoVw_ > 0 ? aoVw_ : rw_) / pw,
                                      static_cast<float>(aoVh_ > 0 ? aoVh_ : rh_) / ph, 0.0f, 0.0f},
                                     {farP / (farP - nearP), -farP * nearP / (farP - nearP), 0.0f, 0.0f}};
@@ -7462,6 +8075,8 @@ void VulkanRenderer::end() {
     // VOLUMETRIC LAMP LIGHT (todo/enhancements.md 24): added over the scene, so the post chain takes it
     // with the rest
     if (volOn_) runVol();
+    // THE TEMPORAL UPSCALER: the render-size frame rebuilt at the display size, in `colour_`
+    if (tupOn_) upscale();
     runPost();   // bloom, depth of field, grade - when asked and due
     // FRAME GENERATION: the finished world picture, with its motion and depth, kept for the present
     if (fgOn_) fgCapture();
@@ -7472,7 +8087,7 @@ void VulkanRenderer::end() {
     // is read - the image is in TRANSFER_SRC_OPTIMAL then too, the present
     // pass handing it back so.
     copyOwed_ = true;
-    srcW_ = rw_; srcH_ = rh_;   // the whole render target is live
+    srcW_ = tupOn_ ? w_ : rw_; srcH_ = tupOn_ ? h_ : rh_;   // the whole render target is live
     vkEndCommandBuffer(cb_);
     // HYBRID RAY TRACING: the frame's acceleration structures, on their own command buffer
     // submitted just before the frame's (which reads them; the builds end on a barrier)
@@ -7493,6 +8108,8 @@ void VulkanRenderer::end() {
     cbStarted_ = false;
     shadowLive_ = false;
     dirty_ = true;
+    static const bool motionStatsOn = omk::envFlag("OMK_MOTION_STATS");
+    if (tupOn_ && motionStatsOn) motionStats();
     if (mvOn_) {
         // this frame's camera is the next one's previous
         std::memcpy(prevMain_, curMain_, sizeof prevMain_);
@@ -7517,7 +8134,7 @@ const omk::Surface& VulkanRenderer::readback() {
     // and RCAS as the present pass's (`raw`: undithered), and quantised below
     // as a frame drawn at that size would be
     const bool up = up_ > 1.0f;
-    const int cw = up ? w_ : rw_, ch = up ? h_ : rh_;
+    const int cw = up || tupOn_ ? w_ : rw_, ch = up || tupOn_ ? h_ : rh_;
     if (readBuf_ == VK_NULL_HANDLE &&
         !makeBuffer(static_cast<VkDeviceSize>(cw) * ch * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -7557,8 +8174,8 @@ const omk::Surface& VulkanRenderer::readback() {
     // frame - 15 ms on one core, paid by every frame with a subtitle, a fade
     // or the HUD over the world.
     const bool postRead = postLive_ && !hdrOn_;
-    const int ss = postRead ? 1 : ss_;   // the chain's picture is folded already
-    const int srcW = postRead ? w_ : rw_;
+    const int ss = postRead ? 1 : outSs();   // the chain's picture is folded already
+    const int srcW = postRead || tupOn_ ? w_ : rw_;
     omk::Threads::shared().parallelFor(0, static_cast<std::size_t>(h_), 16,
                                        [&](std::size_t rowFrom, std::size_t rowTo) {
     const int y0 = static_cast<int>(rowFrom), y1 = static_cast<int>(rowTo);
@@ -7621,7 +8238,7 @@ void VulkanRenderer::geometryGone(void* self, const omk::Geometry* g) {
 
 VulkanRenderer::~VulkanRenderer() {
     omk::removeGeometryListener(&VulkanRenderer::geometryGone, this);
-    if (!dev_) return;
+    if (!dev_) { omk::vkup::dlssShutdown(); return; }
     if (fgThread_.joinable()) {   // the pacing thread first: it presents on the swapchain
         {
             std::lock_guard<std::mutex> lk(fgMu_);
@@ -7632,6 +8249,8 @@ VulkanRenderer::~VulkanRenderer() {
         fgThread_.join();
     }
     vkDeviceWaitIdle(dev_);
+    tup_.reset();   // the SDK's context before the device it was made on
+    omk::vkup::dlssShutdown();
     killFg();
     rtKill();
     for (auto& p : pipeCount_) if (p) vkDestroyPipeline(dev_, p, nullptr);
@@ -7714,6 +8333,10 @@ VulkanRenderer::~VulkanRenderer() {
     if (depthView_) vkDestroyImageView(dev_, depthView_, nullptr);
     if (depth_) vkDestroyImage(dev_, depth_, nullptr);
     if (depthMem_) freeDeviceMemory(depthMem_);
+    if (tupOutView_) vkDestroyImageView(dev_, tupOutView_, nullptr);
+    if (tupOut_) vkDestroyImage(dev_, tupOut_, nullptr);
+    if (tupOutMem_) freeDeviceMemory(tupOutMem_);
+    killTupDepth();
     killUpscale();
     if (presPipe_) vkDestroyPipeline(dev_, presPipe_, nullptr);
     if (presPlo_) vkDestroyPipelineLayout(dev_, presPlo_, nullptr);

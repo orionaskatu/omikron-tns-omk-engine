@@ -29,6 +29,22 @@ constexpr double kVeilFallPerMs = 1.5;     // ...falling 1500 units a second
 constexpr double kVeilFallWrap = 1.4e6;    // ...wrapped here, so the float keeps its precision
 constexpr float kVeilScale = 2500.0f;      // ...63% thick at full shower this far off
 constexpr float kDustOchre[3] = {0.80f, 0.64f, 0.42f};  // the sand's dust
+// THE SPLASHES OFF THE BODIES (`remasterWetBodies`, the weather list's 5)
+constexpr double kBodyTall = 70.0;         // a body posed on the GPU: its head this far above its feet (Kay'l 71)
+constexpr double kBodyFloorReach = 200.0;  // ...its feet the floor found this far below its root
+constexpr float kBodyStrideJump = 60.0f;   // ...moved more in a frame: placed, not walked
+constexpr double kBodySplashStepMax = 100.0;   // the most ms of splashes one frame spawns (a hitch)
+constexpr double kBodyShowerFull = 200.0;  // the full shower's drops (`o3de/weather.h`): the head's rate's 1
+constexpr float kFootStride = 26.0f;       // a crown at the feet every this far walked (a step)
+constexpr float kFootSide = 4.5f;          // ...this far either side of the way, foot by foot
+constexpr float kFootAhead = 0.0f;         // ...and this far ahead of the root (6: in front of the foot, the leg hid it from behind)
+constexpr float kFootSplashSize = 2.5f;    // ...wider than the foot, so it shows past it from behind
+constexpr float kFootSplashGlow = 3.0f;    // ...and brighter (a drop's own glow, and 2: too faint on a bright wet floor)
+constexpr double kHeadSplashRate = 10.0;   // the drops bursting on a head a second at the full shower
+constexpr float kHeadSplashSpread = 7.0f;  // ...within this of the body's middle
+constexpr float kHeadSplashDrop = 10.0f;   // ...from its top to this far down (the shoulders)
+constexpr float kHeadSplashSize = 0.45f;   // ...a drop's crown this much its size
+constexpr float kHeadSplashGlow = 1.5f;    // ...and this much its brightness
 constexpr double kDustDriftPerMs = 0.70;   // ...drifting 700 units a second with the wind (300 read as still)
 constexpr double kDustRisePerMs = 0.04;    // ...and slowly across
 constexpr double kDustDriftWrap = 4e5;     // ...wrapped here
@@ -341,6 +357,7 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
     if (noBodies || !rainArea || !(wetStrength * floors > 0.0f) || !remasterShown_ || !world_ ||
         !(world_->takes() & omk::kTakesWater)) {
         bodyWet.clear();
+        bodyStride.clear();
         return;
     }
     const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
@@ -357,7 +374,22 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
     bool lastOpen = false;
     float lastWet = 0.0f;
     int bodies = 0, wetBodies = 0, drying = 0;
+    int playerOpen = -1;   // the player's own roof answer, when posed on the CPU (-1 not seen)
     std::unordered_map<const void*, float> seen;   // the bodies drawn this frame: the rest forgotten
+    std::unordered_map<const void*, BodyStride> strode;   // ...and their strides
+    // THE SPLASHES OFF THE BODIES (the weather list's 5, 2026-10-29): in the
+    // 3D rain's shower, a body in the open splashes at its feet a step at a
+    // time as it walks, and drops burst on its head
+    static const bool noSplashes = omk::envFlag("OMK_NO_SPLASHES");
+    static const bool noBodySplashes = omk::envFlag("OMK_NO_BODY_SPLASHES");
+    const bool splashing = !noSplashes && !noBodySplashes && rain3dStrength > 0.0f && !rainDrops.empty() &&
+                           (rainBits & 2u) != 0 && splashClock >= 0.0;
+    const double shower = std::min(1.0, static_cast<double>(rainDrops.size()) / kBodyShowerFull);
+    const auto rnd = [&] {
+        bodySplashSeed = bodySplashSeed * 1664525u + 1013904223u;
+        return static_cast<float>(bodySplashSeed >> 8) / 16777216.0f;
+    };
+    static long footSplashes = 0, headSplashes = 0;   // (since the start: the event's)
     for (auto& d : list) {
         const bool gpu = d.meshPose && d.meshPoses != 0;
         if (!gpu && std::find(cpuPosed.begin(), cpuPosed.end(), d.geo) == cpuPosed.end()) continue;
@@ -366,16 +398,25 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
             lastBody = body;
             // its root, or the posed copy's lowest corner (Y is down) below its middle
             double at[3] = {0.0, 0.0, 0.0};
+            double top = 0.0;   // ...and its head's height (Y down: above `at`)
             if (gpu) {
+                // its ROOT is not where it stands - Kay'l's at -63.6 over the
+                // street at 0, near his head (2026-10-29) - so the floor under
+                // it, `kBodyFloorReach` down through the shot soup, is
                 at[0] = d.meshPose[3]; at[1] = d.meshPose[7]; at[2] = d.meshPose[11];
+                const double down[3] = {0.0, kBodyFloorReach, 0.0};   // Y points down
+                if (const auto fl = omk::sweepSphere(shownSlot.shotSoup, shownSlot.shotRunBoxes, at, down, 0.0))
+                    at[1] += kBodyFloorReach * fl->t;
+                top = at[1] - kBodyTall;
             } else if (!d.geo->corners.empty()) {
-                float lo[3] = {1e30f, -1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+                float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
                 for (const auto& c : d.geo->corners) {
                     lo[0] = std::min(lo[0], c.x); hi[0] = std::max(hi[0], c.x);
+                    lo[1] = std::min(lo[1], c.y); hi[1] = std::max(hi[1], c.y);
                     lo[2] = std::min(lo[2], c.z); hi[2] = std::max(hi[2], c.z);
-                    hi[1] = std::max(hi[1], c.y);
                 }
                 at[0] = 0.5 * (lo[0] + hi[0]); at[1] = hi[1]; at[2] = 0.5 * (lo[2] + hi[2]);
+                top = lo[1];
             } else {
                 lastWet = 0.0f;
                 continue;
@@ -390,18 +431,66 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
             seen[body] = lastWet;
             ++bodies;
             wetBodies += lastOpen ? 1 : 0;
+            if (body == &playerBody.posed) playerOpen = lastOpen ? 1 : 0;
             drying += !lastOpen && lastWet > 0.0f ? 1 : 0;
+            // ...its STRIDE: how far it moved since last frame (a jump past
+            // `kBodyStrideJump` is a placement, not a step) and on the
+            // weather's clock (none while paused)
+            BodyStride st{{static_cast<float>(at[0]), static_cast<float>(at[1]), static_cast<float>(at[2])}, 0.0f, 0,
+                          weatherClockMs};
+            float moved = 0.0f, dir[2] = {0.0f, 0.0f};
+            double dt = 0.0;
+            if (const auto was = bodyStride.find(body); was != bodyStride.end()) {
+                const float dx = st.at[0] - was->second.at[0], dz = st.at[2] - was->second.at[2];
+                const float m = std::hypot(dx, dz);
+                if (m < kBodyStrideJump) {
+                    moved = m;
+                    if (m > 0.0f) { dir[0] = dx / m; dir[1] = dz / m; }
+                }
+                st.owed = was->second.owed;
+                st.side = was->second.side;
+                dt = std::clamp(weatherClockMs - was->second.clock, 0.0, kBodySplashStepMax);
+            }
+            if (splashing && lastOpen) {
+                // a crown in the puddle at each step, foot by foot either side
+                // of the way it walks - its own puddle, bigger than a drop's
+                st.owed += moved;
+                for (; st.owed >= kFootStride; st.owed -= kFootStride) {
+                    const float sd = st.side ? kFootSide : -kFootSide;
+                    st.side ^= 1;
+                    const float f[3] = {st.at[0] - dir[1] * sd + dir[0] * kFootAhead, st.at[1],
+                                        st.at[2] + dir[0] * sd + dir[1] * kFootAhead};
+                    rainSplashes.push_back({{f[0], f[1], f[2]}, weatherClockMs - rnd() * dt, kFootSplashSize,
+                                            kFootSplashGlow});
+                    ++footSplashes;
+                }
+                // ...and the drops bursting on its head and shoulders, as many
+                // as the shower is strong (none while the clock stands)
+                for (double owe = kHeadSplashRate * shower * dt / 1000.0; owe > 0.0; owe -= 1.0) {
+                    if (owe < 1.0 && rnd() >= owe) break;
+                    const float a = rnd() * 6.2831853f, r = kHeadSplashSpread * std::sqrt(rnd());
+                    const float y = static_cast<float>(top) + kHeadSplashDrop * rnd();   // the head, or a shoulder below it
+                    rainSplashes.push_back({{st.at[0] + std::cos(a) * r, y, st.at[2] + std::sin(a) * r},
+                                            weatherClockMs - rnd() * dt, kHeadSplashSize, kHeadSplashGlow});
+                    ++headSplashes;
+                }
+            } else {
+                st.owed = 0.0f;   // a step's worth carried only while it splashes
+            }
+            strode[body] = st;
         }
         if (!(lastWet > 0.0f)) continue;
         d.wet = std::min(wetStrength * lastWet, 1.0f);
         d.wetBody = true;
     }
     bodyWet.swap(seen);
+    bodyStride.swap(strode);
     if (frameNo % 30 == 0) {
         std::printf("frame %ld: %d of %d bodies wet in the rain, %d drying under cover\n", frameNo, wetBodies, bodies,
                     drying);
         omk::event("remaster.wetbodies", {{"frame", frameNo}, {"bodies", bodies}, {"wet", wetBodies},
-                                          {"drying", drying}});
+                                          {"drying", drying}, {"playerOpen", playerOpen},
+                                          {"footSplashes", footSplashes}, {"headSplashes", headSplashes}});
     }
 }
 

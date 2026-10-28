@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -47,7 +48,10 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
         // `OMK_NO_WET_WALLS=1`, an INSTRUMENT: the floors alone, no wall wet
         // (`verify.py: engine: wet floors`)
         static const bool noWalls = omk::envFlag("OMK_NO_WET_WALLS");
-        w.wet = omk::wetFloors(w.geo, w.shotSoup, w.shotRunBoxes, !noWalls);
+        // `OMK_WET_RUN_BOXES=1`, an INSTRUMENT: the rays through the meshes'
+        // boxes, not the grid - the same answers, slower (`engine: wet floors`)
+        static const bool runBoxes = omk::envFlag("OMK_WET_RUN_BOXES");
+        w.wet = omk::wetFloors(w.geo, w.shotSoup, w.shotRunBoxes, !noWalls, !runBoxes);
         // the open sky per corner, for the shaders to blend - `OMK_WET_NO_BLEND=1`,
         // an INSTRUMENT, leaves it out (`verify.py: engine: wet floors`)
         static const bool noBlend = omk::envFlag("OMK_WET_NO_BLEND");
@@ -64,7 +68,9 @@ void PlayState::remasterPrepareSet(SetLoad& L) {
                                  {"levels", static_cast<long>(w.wet.planes.levels.size())},
                                  {"walls", static_cast<long>(w.wet.wallTris)},
                                  {"drips", static_cast<long>(w.wet.drips.size())},
-                                 {"dripsCovered", static_cast<long>(w.wet.dripsCovered)}});
+                                 {"dripsCovered", static_cast<long>(w.wet.dripsCovered)},
+                                 {"sum", static_cast<long>(omk::wetChecksum(w.wet))},
+                                 {"ms", static_cast<long>(std::lround(ms))}});
     } else {
         w.wet = omk::WetFloors{};
     }

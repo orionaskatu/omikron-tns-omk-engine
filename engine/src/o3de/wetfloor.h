@@ -48,6 +48,7 @@ inline constexpr float kWetDarken = 0.22f;       // ...and how much darker its f
 inline constexpr std::uint8_t kWetNotFloor = 255;
 inline constexpr double kWetWallSteep = 0.34;    // a wet wall's normal at most this far from level (~20 degrees off upright)
 inline constexpr double kWetWallOut = 8.0;       // ...its sky tested this far in front of each corner
+inline constexpr double kWetWallBelow = 8.0;     // ...and this far below it (a top corner meets its ceiling)
 inline constexpr std::uint8_t kWetWallCorner = 2;   // `cornerOpen` of a wall's corner: this plus its open sky
 // the open sky in a corner's phase (`encodeOpenSky`): a floor's `-2 - open`,
 // a wall's `-6 - open` - the shaders tell the two apart below -5.5
@@ -61,7 +62,8 @@ inline constexpr float kDripSpacing = 32.0f;
 inline constexpr double kDripRoofMin = 40.0, kDripRoofMax = 1200.0;
 inline constexpr double kDripTowardRoof = 0.3;   // the roof found this far from the edge toward the covered corner
 inline constexpr double kDripStep = 4.0, kDripSearch = 96.0;   // ...then out to the sky, so far at most
-inline constexpr std::size_t kDripDrawnRun = 32;   // the drawn set's soup boxed this many triangles a run
+inline constexpr double kWetGridCell = 64.0;   // the vertical rays' grid cell (`SoupGrid`; widened past 512 an axis)
+inline constexpr std::size_t kDripDrawnRun = 32;   // ...or, without it, the drawn set's soup boxed this many triangles a run
 struct DripPoint {
     float x = 0.0f, z = 0.0f;
     float top = 0.0f, floor = 0.0f;   // the roof's edge and the floor below it (Y down: top < floor)
@@ -90,8 +92,13 @@ struct WetFloors {
     std::size_t dripsCovered = 0;    // ...of them, with anything over where they fall (a self-check)
     bool any() const { return planes.any(); }
 };
-// (`walls` false: the floors alone)
-WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes, bool walls = true);
+// (`walls` false: the floors alone; `grid` false, an instrument's, the rays
+// through the meshes' `boxes` instead of a grid - the same answers, slower)
+WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes, bool walls = true,
+                    bool grid = true);
+// ...and a checksum of what it found (the corners' open sky, the triangles
+// the rain wets, the drips), so two ways of finding it can be compared
+std::uint32_t wetChecksum(const WetFloors& w);
 
 // THE OPEN SKY PER CORNER, in the vertex: a wet triangle's corner that does
 // not shimmer (`Corner::phase` -1) takes `-2 - open` - a wall's `-6 - open`
@@ -115,8 +122,12 @@ inline constexpr float kSnowCover = 0.85f;   // how white a fully covered floor 
 // THE WET BODIES (the remaster's, the reader's "wet walls and characters"):
 // a body under the open sky in the rain is drawn wet (`Draw::wetBody`) - its
 // darker film and its sheen the shaders' (`kWetBodyDark`, `kWetBodySheen`...);
-// the roof ray from `kWetBodyHead` above where it stands
-inline constexpr double kWetBodyHead = 150.0;
+// the roof ray from `kWetBodyHead` above where it stands (a body posed on the
+// GPU: the floor under its root, `remasterWetBodies`) - just under the
+// head: Kay'l is 71 tall, and from 150 (twice that) a ceiling lower than it
+// was above the ray's start - he stood "in the rain" under Qalisar's hall
+// ceiling at 136.7 (2026-10-28)
+inline constexpr double kWetBodyHead = 64.0;
 // ...and each body its OWN wetness (the reader's "go" on the weather list's
 // 3, 2026-10-28): soaked over `kWetBodySoakMs` in the open, drying over
 // `kWetBodyDryMs` under cover, never wetter than the floors

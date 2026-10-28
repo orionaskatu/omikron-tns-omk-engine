@@ -684,7 +684,8 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             std::uint32_t h = static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[0] * 7.0f)) * 73856093u ^
                               static_cast<std::uint32_t>(static_cast<std::int32_t>(sp.p[2] * 7.0f)) * 19349663u;
             h ^= h >> 13; h *= 0x5BD1E995u; h ^= h >> 15;
-            const float size = kSplashSizeMin + (kSplashSizeMax - kSplashSizeMin) * static_cast<float>(h & 0xFFu) / 255.0f;
+            const float size = sp.size * (kSplashSizeMin + (kSplashSizeMax - kSplashSizeMin) *
+                                                static_cast<float>(h & 0xFFu) / 255.0f);
             const bool mirror = (h & 0x100u) != 0;
             const float rise = std::sqrt(t);
             const float hw = size * kSplashW * (kSplashBornW + (1.0f - kSplashBornW) * rise);
@@ -693,7 +694,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
             float rgb[3];
             lightAt(mid, kRainUnlit, rgb);
             const float top = std::max({rgb[0], rgb[1], rgb[2], 1.0f});
-            for (float& c : rgb) c = c / top * glow * fade;
+            for (float& c : rgb) c = std::min(1.0f, c / top * glow * sp.glow * fade);
             const float foot = sp.p[1] - kSplashFoot, head = sp.p[1] - hh;
             const float q0[3] = {sp.p[0] - rx * hw, foot, sp.p[2] - rz * hw};
             const float q1[3] = {sp.p[0] + rx * hw, foot, sp.p[2] + rz * hw};

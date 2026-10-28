@@ -15,17 +15,34 @@
 
 namespace omk {
 
-WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes, bool walls) {
+WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBoxes& boxes, bool walls, bool grid) {
     WetFloors out;
     out.open.assign(g.corners.size() / 3, 0);
     out.rained.assign(g.corners.size() / 3, 0);
     out.cornerOpen.assign(g.corners.size(), kWetNotFloor);
     if (shot.empty()) return out;
-    // straight UP (the game's Y points down), from just above the floor
+    // EVERY RAY HERE IS STRAIGHT UP, so a grid over the soup in X and Z
+    // hands each the triangles of one cell - where the meshes' boxes
+    // (`boxes`, the original's broad phase) leave every mesh whose box spans
+    // the point, a street's whole facade. The same triangles through the same
+    // test in ascending order (`collision.h`, `SoupGrid`): the same answers,
+    // bit for bit (`verify.py: engine: wet floors` part 16; `grid` false,
+    // the boxes - an instrument's). The weather list's 12, 2026-10-28: the
+    // drips' walk out took Anekbah's pass 223 -> ~590 ms on the M3
+    SplitSoupGrid shotGrid;
+    if (grid) {
+        shotGrid.fixed = buildSoupGrid(shot, kWetGridCell);
+        shotGrid.moving = buildSoupGrid(shot, kWetGridCell, std::span<const std::uint32_t>{});
+    }
+    // straight UP (the game's Y points down)
     const double up[3] = {0.0, -kWetSkyRay, 0.0};
+    const auto shotUp = [&](const double p0[3]) {
+        return grid ? sweepSphere(shot, shotGrid, p0, up, 0.0) : sweepSphere(shot, boxes, p0, up, 0.0);
+    };
+    // ...from just above the floor
     const auto ray = [&](double x, double y, double z) {
         const double p0[3] = {x, y - 2.0, z};
-        return sweepSphere(shot, boxes, p0, up, 0.0).has_value();
+        return shotUp(p0).has_value();
     };
     // ...and a ROOF is wider than a cable: the soup carries the streets'
     // overhead wires, thin lines across Anekbah's street that made whole
@@ -53,15 +70,22 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
     // ...and a WALL's corner: the sky seen from `kWetWallOut` in front of it,
     // once per such point (the coplanar triangles of one face agree) - ONE
     // ray, not the floors' five: a set has twice as many wall triangles, and
-    // five took Anekbah's load from 196 to 500 ms on an M1
+    // five took Anekbah's load from 196 to 500 ms on an M1. From
+    // `kWetWallBelow` BELOW the corner, never below the triangle's foot: a
+    // wall's top corner sits AT the ceiling it meets, and a ray from just
+    // above it starts past that ceiling - Qalisar's hall (15303, 0, -10414,
+    // the reader's "rain under the hall's roof", 2026-10-28): its far wall
+    // `Sol07` tops out at -136.7, the ceiling `PlafSSol02`'s height, and ran
+    // with water
     std::unordered_map<std::uint64_t, std::uint8_t> atWall;
-    const auto skyFront = [&](const Corner& c, double ox, double oz) -> std::uint8_t {
+    const auto skyFront = [&](const Corner& c, double ox, double oz, double foot) -> std::uint8_t {
         const double x = c.x + ox, z = c.z + oz;
+        const double y = c.y + std::clamp(foot - c.y, 0.0, kWetWallBelow);   // Y points down
         const auto q = [](double v) { return static_cast<std::uint64_t>(static_cast<std::uint32_t>(
                                          static_cast<std::int32_t>(std::lround(v * 4.0))) & 0x1FFFFFu); };
-        const std::uint64_t key = q(x) | q(c.y) << 21 | q(z) << 42;
+        const std::uint64_t key = q(x) | q(y) << 21 | q(z) << 42;
         if (const auto it = atWall.find(key); it != atWall.end()) return it->second;
-        const std::uint8_t v = ray(x, c.y, z) ? 0 : 1;   // one ray: a wire over a wall's foot matters little
+        const std::uint8_t v = ray(x, y, z) ? 0 : 1;   // one ray: a wire over a wall's foot matters little
         atWall.emplace(key, v);
         return v;
     };
@@ -109,7 +133,9 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
                 const double h = std::hypot(nx, nz);
                 if (!(h > 0.0)) continue;
                 const double ox = nx / h * kWetWallOut, oz = nz / h * kWetWallOut;
-                const std::uint8_t w0 = skyFront(a, ox, oz), w1 = skyFront(c1, ox, oz), w2 = skyFront(c2, ox, oz);
+                const double foot = std::max({static_cast<double>(a.y), static_cast<double>(c1.y), static_cast<double>(c2.y)});
+                const std::uint8_t w0 = skyFront(a, ox, oz, foot), w1 = skyFront(c1, ox, oz, foot),
+                                   w2 = skyFront(c2, ox, oz, foot);
                 if (w0 + w1 + w2 == 0) continue;
                 out.rained[t / 3] = 2;
                 out.cornerOpen[t] = static_cast<std::uint8_t>(kWetWallCorner + w0);
@@ -174,13 +200,14 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
     // ceiling may be missing from the shot soup (no bolt reaches it), and its
     // floor then reads open - drips fell inside under it (the reader, 2026-10-28)
     TriangleSoup drawn;
-    std::vector<std::uint32_t> drawnRuns;
+    std::vector<std::uint32_t> drawnRuns;   // (the boxes' way: `kDripDrawnRun` triangles a box)
     if (!edges.empty())
         for (const auto& bt : g.batches) {
             if (bt.blend != Blend::Opaque) continue;
             const std::size_t end = std::min<std::size_t>(static_cast<std::size_t>(bt.start) + bt.count, g.corners.size());
             for (std::size_t t = bt.start; t + 2 < end; t += 3) {
-                if ((drawn.size() / 9) % kDripDrawnRun == 0) drawnRuns.push_back(static_cast<std::uint32_t>(drawn.size() / 9));
+                if (!grid && (drawn.size() / 9) % kDripDrawnRun == 0)
+                    drawnRuns.push_back(static_cast<std::uint32_t>(drawn.size() / 9));
                 for (int k = 0; k < 3; ++k) {
                     drawn.push_back(g.corners[t + k].x);
                     drawn.push_back(g.corners[t + k].y);
@@ -188,7 +215,18 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
                 }
             }
         }
-    const SoupRunBoxes drawnBoxes = soupRunBoxes(drawn, drawnRuns);
+    // ...its rays straight up too: a grid, as the shot soup's
+    SplitSoupGrid drawnGrid;
+    SoupRunBoxes drawnBoxes;
+    if (grid) {
+        drawnGrid.fixed = buildSoupGrid(drawn, kWetGridCell);
+        drawnGrid.moving = buildSoupGrid(drawn, kWetGridCell, std::span<const std::uint32_t>{});
+    } else {
+        drawnBoxes = soupRunBoxes(drawn, drawnRuns);
+    }
+    const auto drawnUp = [&](const double p0[3]) {
+        return grid ? sweepSphere(drawn, drawnGrid, p0, up, 0.0) : sweepSphere(drawn, drawnBoxes, p0, up, 0.0);
+    };
     for (const auto& [key, E] : edges) {
         if (!E.open || !E.sky || !(E.covered || E.mixed) || !E.p) continue;
         const double ex = E.q->x - E.p->x, ez = E.q->z - E.p->z;
@@ -202,7 +240,7 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             // the roof: up from a little toward the covered side...
             double cx0 = mx + kDripTowardRoof * (E.toward[0] - mx), cz0 = mz + kDripTowardRoof * (E.toward[1] - mz);
             const double p0[3] = {cx0, my - 2.0, cz0};
-            auto hit = sweepSphere(shot, boxes, p0, up, 0.0);
+            auto hit = shotUp(p0);
             if (!hit) continue;
             // ...then OUT toward the open side, `kDripStep` at a time, to where
             // the sky is first clear: the drop falls past the eaves - a roof
@@ -219,9 +257,9 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
             for (double s2 = kDripStep; s2 <= kDripSearch; s2 += kDripStep) {
                 const double qx = cx0 + ox * s2, qz = cz0 + oz * s2;
                 const double q0[3] = {qx, my - 2.0, qz};
-                const auto h2 = sweepSphere(shot, boxes, q0, up, 0.0);
+                const auto h2 = shotUp(q0);
                 if (!h2) {
-                    if (sweepSphere(drawn, drawnBoxes, q0, up, 0.0).has_value()) break;   // a drawn ceiling: no drip
+                    if (drawnUp(q0).has_value()) break;   // a drawn ceiling: no drip
                     found = true; dx = qx; dz = qz;
                     break;
                 }
@@ -240,8 +278,7 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
     // overhang, they came "through the ceiling", the reader)
     for (const auto& d : out.drips) {
         const double p0[3] = {d.x, d.floor - 2.0, d.z};
-        if (sweepSphere(shot, boxes, p0, up, 0.0).has_value() ||
-            sweepSphere(drawn, drawnBoxes, p0, up, 0.0).has_value())
+        if (shotUp(p0).has_value() || drawnUp(p0).has_value())
             ++out.dripsCovered;
     }
     // levels within `kFloorMerge` of each other are one, at the highest -
@@ -258,6 +295,21 @@ WetFloors wetFloors(const Geometry& g, const TriangleSoup& shot, const SoupRunBo
         }
     }
     return out;
+}
+
+std::uint32_t wetChecksum(const WetFloors& w) {
+    std::uint32_t h = 2166136261u;   // FNV-1a
+    const auto mix = [&](const void* p, std::size_t n) {
+        const auto* b = static_cast<const unsigned char*>(p);
+        for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 16777619u;
+    };
+    mix(w.cornerOpen.data(), w.cornerOpen.size());
+    mix(w.rained.data(), w.rained.size());
+    for (const auto& d : w.drips) {
+        const float f[4] = {d.x, d.z, d.top, d.floor};
+        mix(f, sizeof f);
+    }
+    return h;
 }
 
 void encodeOpenSky(Geometry& g, const WetFloors& w) {

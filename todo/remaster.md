@@ -1449,7 +1449,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   `engine: wet floors` part 10.
 * **Wet bodies** (step 2, 2026-10-28): `remasterWetBodies` - in a rain area
   while the floors are wet, every body the renderer poses (`Draw::meshPose`)
-  casts one roof ray from `kWetBodyHead` (150 units) above its root through
+  casts one roof ray from `kWetBodyHead` (150 units; 64 since 2026-10-29,
+  "10, the hall" below) above its root through
   the shot soup, and if nothing is over it its draws carry `Draw::wetBody`
   with `wet` the floors' wetness. Vulkan's bit 21 of `Push.water`, GLES's
   `uWetBody`: the BODY rule, before the fog. First a gloss with no normal,
@@ -1505,14 +1506,14 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   | 2 | halos round the lights in the shower | DONE `2cf19683`, gain 1.5 |
   | 3 | bodies drying slowly under cover | DONE `2cf19683` |
   | 4 | drips from roof edges | DONE `ca3f49de` - past the eaves, the drawn set's sky too |
-  | 5 | splashes from feet and on shoulders | OPEN - the splash code is there (`rainSplashes`); a walker's foot in a puddle, drops bursting on heads in the open (`remasterWetBodies` knows who is open) |
+  | 5 | splashes from feet and on shoulders | DONE (2026-10-29) - a crown at each step of a body in the open, drops bursting on heads and shoulders; see "5, the splashes off the bodies" below |
   | 6 | the rain sound by cover | DROPPED - the shower's sound is its music track (118-122, the city's music mixed with the rain, ASSETS 4e): muffling it muffles the music. Only a separate drip sound, if the game ships one (not looked for) |
   | 7 | gusts | OPEN - the drops' slant and the veils swaying over time; the original's own wind and drops must stay as they are |
   | 8 | lightning | OPEN, last - invented (the game has none) and needs a thunder sound |
   | 9 | a SECOND reflecting level (new, from play) | OPEN - one plane reflects a frame: a walkway above the street or a square below it takes the film alone. A second pass, or screen-space reflections - the costliest |
-  | 10 | rain under a hall's roof (new, from play) | OPEN, a question - the reader's hall (F9's 15303, 0, -10414, 76): the 3D rain's drops there have no triangle over them, shot soup or drawn set, so the original's own roof test lets them fall; whether the roof has a gap the geometry shows, or the drops should be stopped some other way, is unread |
+  | 10 | rain under a hall's roof (new, from play) | DONE (2026-10-29) - NOT the 3D rain: the wet WALLS' trickles, on a wall whose top meets its ceiling, and Kay'l "in the rain" under a low ceiling; see "10, the hall" below |
   | 11 | snow on slopes | OPEN (from the snow lying) |
-  | 12 | the drips' load cost (new) | OPEN - Anekbah's wet pass 223 -> ~590 ms on the M3 (the walk out past the eaves, the drawn soup); the M1 slower. Coarser steps or fewer edges if it shows |
+  | 12 | the drips' load cost (new) | DONE (2026-10-29) - the wet pass's rays through a grid: Anekbah 668 -> 106 ms, Qalisar 464 -> 85 (M1), the same answers bit for bit; see "12, the grid" below |
 
   Fixed on the way, not on the list: the wet floors reflecting off the
   level (`2cf19683`, a street's kerbs and slopes within 16 of the plane);
@@ -1541,6 +1542,12 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   1.5, 9964 and 9504, overlap 0.842.
   `OMK_NO_HALO=1` (an instrument) leaves the bloom as it is dry.
   `engine: rain 3d` part 15 (skipped without the pack).
+  **RED since, not from the code** (2026-10-29): part 15's overlap is
+  0.782 against its 0.8 - and the same, to the pixel, built at `2cf19683`
+  itself, `d50f917b`, `ca3f49de` and `1e50247`: Vulkan 9959 brighter as
+  recorded (9964), GLES 9304 where 9504 was. What moved is outside the
+  tree - the pack's files or GLES on this machine (M1); not attributed
+  further.
 * **1, the streaks - TRIED AND TAKEN OUT** (2026-10-28): the reflection's
   bright part (over 0.35) smeared along the screen's vertical, 8 taps each
   way over 8% of the frame, on a wet REFLECTING floor (mode 3). It moved 0
@@ -1613,8 +1620,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   The load: Qalisar's wet pass 155 -> ~300 ms, Anekbah's 223 -> ~590 ms
   (M3) - the walk out and the drawn soup. `OMK_NO_DRIPS=1` (an instrument)
   none. `engine: rain 3d` part 16. Not the drips: the reader's marks in a
-  hall (15303, 0, -10414) are the 3D RAIN - its drops have no drawn
-  triangle over them, the set open to the sky there.
+  hall (15303, 0, -10414) - read then as the 3D rain, which was WRONG: they
+  are the wet walls' trickles (2026-10-29, "10, the hall" below).
 * **THE DARKNESS, found and fixed** (the reader, 2026-10-28, from play,
   "global lighting/reflections changes completely in a few steps": the
   arcade dark and Kay'l a black silhouette, a step from a lit spot). Older
@@ -1633,6 +1640,53 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   unchanged. `engine: emitter light` part 7. On the way, ruled out: the
   binning (`OMK_TILES_LOOSE=1` the same), the preload, a set switch, free
   look, the mist, AO, relief, the reflections, the 3D rain, blended draws.
+* **10, THE HALL - the wet walls, not the rain** (2026-10-29): rendered at
+  the reader's place (`--area 101 --stand 15303,0,-10414,76`), the marks
+  are rows of falling dots in front of the far wall. Taken apart: removing
+  every 3D drop moved 25 pixels; the drops behind the wall (x > 15595, the
+  set's soup EMPTY there from -1000 to 2000) are hidden by depth; the drips
+  off, the same; `OMK_NO_WET_WALLS=1` - gone. The far wall `Sol07` (x
+  15590) tops out at -136.7, exactly the ceiling `PlafSSol02`'s height
+  (`shot_ray`, `soup_dump`), and a wall corner's roof ray started 2 ABOVE
+  the corner - already past the ceiling it meets: every wall that meets its
+  ceiling ran with water. Now from `kWetWallBelow` (8) below the corner,
+  never below the triangle's foot (`skyFront`): Qalisar's wet walls 10444
+  -> 9465, Anekbah's 22152 -> 20682. The same fault in the bodies: the roof
+  ray from `kWetBodyHead` 150 above the feet - twice Kay'l's 71 - so under
+  the hall's 136.7 he stood "in the rain"; now 64. And a body posed on the
+  GPU has its ROOT near its head, not at its feet (Kay'l's at -63.6 over
+  the street at 0): its feet are now the floor `kBodyFloorReach` (200) under
+  the root. In the hall: the walls' trickles 6724 -> 1099 pixels (the rest a
+  ramp past the ceiling's edge and the side wall's outside), the player
+  under cover (`remaster.wetbodies`' new `playerOpen`). `engine: wet
+  floors` part 15. Also: Qalisar's shower is the RESTORED one (the preset
+  turns it on), and without the 3D rain the original's camera roof stops
+  it there.
+* **12, THE GRID** (2026-10-29): every ray of the set's wet pass is straight
+  up, so `wetFloors` builds a `SoupGrid` (`kWetGridCell` 64, widened past
+  512 cells an axis) over the shot soup and one over the drawn set, and
+  each ray visits one cell's triangles - where the meshes' boxes left every
+  mesh whose box spans the point. The same triangles through the same test
+  in ascending order, so the same answers: `world.wet`'s new `sum` (FNV of
+  the corners' open sky, the triangles wetted, the drips) identical with
+  `OMK_WET_RUN_BOXES=1` (an instrument, the boxes). Anekbah 668 -> 106 ms,
+  Qalisar 464 -> 85 (M1) - the drips' walk out and the floors' and walls'
+  rays alike. The grids live only for the pass. `engine: wet floors` part
+  16, shown to fail with every 100th triangle left out of the grid.
+* **5, THE SPLASHES OFF THE BODIES** (2026-10-29, `remasterWetBodies`): in
+  the 3D rain's shower, a body in the open (its roof ray) lays a crown at
+  its feet every `kFootStride` (26) walked, either side of its way
+  (`kFootSide`), `kFootSplashSize` 2.5 and `kFootSplashGlow` 3 against a
+  drop's (2 was too faint on a bright wet floor, and 6 ahead of the root
+  the leg hid it from the camera behind); and drops burst on its head and
+  shoulders, `kHeadSplashRate` (10) a second at the full shower, a small
+  crown (0.45) within 7 of its middle. Their own random sequence
+  (`bodySplashSeed`), so the floor's splashes land as without them; on the
+  weather's clock (none while paused); a move past `kBodyStrideJump` in a
+  frame is a placement. Anekbah's street, frames 600 -> 690: 19 at the feet
+  walking, 1 standing (another walker); ~125 on the heads either way.
+  `OMK_NO_BODY_SPLASHES=1` (an instrument) none. `engine: rain 3d` part
+  17. **Not judged in play yet** - the strengths are the reader's to set.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

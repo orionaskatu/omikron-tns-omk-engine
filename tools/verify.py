@@ -33972,6 +33972,27 @@ def c_engine_wet_floors():
          7355, overlap 0.915 (25946 and 25981 moved at all - the faint edges
          round apart, 0.787). Shown to fail: the lights' count sent as 0 on
          Vulkan, the GLES upload skipped - 0 pixels on each.
+     15. UNDER A CEILING THAT MEETS ITS WALLS (the reader's "rain under the
+         hall's roof", 2026-10-28): Qalisar's hall at 15303, 0, -10414, its
+         ceiling `PlafSSol02` at -136.7 and the far wall `Sol07` topping out
+         there, the restored shower with `--rain3d 1` (without it the
+         original's camera roof stops the shower) and `OMK_CPU_PLAYER=1` (the
+         player known by his posed copy): the wet walls move fewer than 3000
+         pixels against `OMK_NO_WET_WALLS=1` (the ramp past the ceiling's edge
+         stays wet), and the player is under cover (`remaster.wetbodies`'
+         `playerOpen` 0). Measured 2026-10-28: 1099 pixels, 0. Shown to fail:
+         `kWetWallBelow` 0 and `kWetBodyHead` 150 (the rays from above the
+         ceiling, as before) - 6724 pixels, the player open (1).
+     16. THE VERTICAL RAYS THROUGH A GRID (the weather list's 12, 2026-10-28):
+         every ray of the set's wet pass is straight up, so `wetFloors` sends
+         them through a `SoupGrid` over the shot soup and the drawn set, not
+         the meshes' boxes - the same triangles through the same test, so the
+         same answers. Anekbah and Qalisar at load: `world.wet`'s `sum` (the
+         corners' open sky, the triangles wetted, the drips) the same as with
+         `OMK_WET_RUN_BOXES=1` (an instrument, the boxes), every count too.
+         Measured 2026-10-29 (M1): Anekbah 668 -> 106 ms, Qalisar 464 -> 85.
+         Shown to fail: the shot grid built without every 100th triangle -
+         the sums differ.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -34092,6 +34113,30 @@ def c_engine_wet_floors():
                                   "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
                            capture_output=True, text=True, errors="replace", env=env, timeout=300)
             return open(out, "rb").read() if os.path.exists(out) else None
+        def hall(name, env_extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000",
+                       OMK_CPU_PLAYER="1", **env_extra)
+            r = subprocess.run([vkb, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                "--stand", "15303,0,-10414,76", "--no-crowd", "--nofmv", "--nodelay",
+                                "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                "--frames", "700", "--detail", "2", "--wet", "1", "--rain3d", "1",
+                                "--restore-weather", "1", "--world-vulkan", "--dump", out],
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return (open(out, "rb").read() if os.path.exists(out) else None), _events(r.stdout)
+        def at_load(area, stand, env_extra):
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1", **env_extra)
+            r = subprocess.run([vkb, fr, os.path.join(ROOT, "tables"), "--save",
+                                os.path.join(ROOT, "traces", "save-appart.bin"), "--area", area, "--stand", stand,
+                                "--no-crowd", "--nofmv", "--nodelay", "--saves", tempfile.mkdtemp(dir=tmp),
+                                "--res", "640x480", "--frames", "3", "--wet", "1", "--world-vulkan"],
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return [k for n, k in _events(r.stdout) if n == "world.wet"]
+        gridded = [(at_load(a2, s2, {}), at_load(a2, s2, {"OMK_WET_RUN_BOXES": "1"}))
+                   for a2, s2 in (("0", "1804,0,-6890,336"), ("101", "15303,0,-10414,76"))]
+        hw1, hev = hall("hw1", {})
+        hw0, _ = hall("hw0", {"OMK_NO_WET_WALLS": "1"})
         sk1, sk0 = streaked(vkb, 1), streaked(vkb, 0)
         gk1 = gk0 = None
         if platform.system() == "Darwin":
@@ -34224,6 +34269,21 @@ def c_engine_wet_floors():
         streaks = (len(kmv) > 3000, kgl)
     else:
         streaks = ("no frame",)
+    same_rays = []
+    for g_ev, b_ev in gridded:
+        strip = lambda evs: [{k: v for k, v in e.items() if k != "ms"} for e in evs]
+        same_rays.append(bool(g_ev) and strip(g_ev) == strip(b_ev))
+        for ge, be in zip(g_ev, b_ev):
+            print(f"        {ge.get('set')}'s wet pass: the grid {ge.get('ms')} ms, the boxes {be.get('ms')} ms, "
+                  f"sum {ge.get('sum')} / {be.get('sum')}")
+    same_rays = tuple(same_rays)
+    if hw1 and hw0:
+        hmv = len(moved(hw1, hw0))
+        hb = next((k for n, k in hev if n == "remaster.wetbodies" and k.get("frame") == "690"), {})
+        ceiled = (hmv < 3000, hb.get("playerOpen"))
+        print(f"        Qalisar's hall: the wet walls move {hmv} pixels, the player open {hb.get('playerOpen')}")
+    else:
+        ceiled = ("no frame",)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34233,16 +34293,17 @@ def c_engine_wet_floors():
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
     return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled, bodied,
-            banded, streaks), \
+            banded, streaks, ceiled, same_rays), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
             (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
             (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True))),
             (True, True, True, _or_skip(bgl, (True, True)), _or_skip(cpu, (True, True)), (True, "0")),
             (True, _or_skip(egl, (True, True))),
-            _or_skip(streaks, (True, _or_skip(kgl, (True, True))))), \
+            _or_skip(streaks, (True, _or_skip(kgl, (True, True)))), (True, "0"), (True, True)), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
-        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies"
+        "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies; " \
+        "dry under a ceiling that meets its walls; the grid's rays the boxes' answers"
 
 
 def c_engine_rain3d():
@@ -34335,6 +34396,16 @@ def c_engine_rain3d():
          11 under anything; 30 in the air; 206 pixels each, overlap 1.000.
          Shown to fail: dropped from under the roof (the walk out past the
          eaves skipped), 5880 of 5894 under something.
+     17. THE SPLASHES OFF THE BODIES (the weather list's 5, 2026-10-29):
+         Anekbah's street, `--wet 1 --rain3d 1`, Kay'l walking from frame 600
+         (`--hold`): `remaster.wetbodies`' counts from frame 600 to 690 -
+         at least 10 crowns at the feet (one a `kFootStride` walked) and
+         some drops on the heads; standing still at most 3 at the feet (the
+         street's other walkers) and still some on the heads; more than 200
+         pixels move against `OMK_NO_BODY_SPLASHES=1` at frame 690 on
+         Vulkan, and on GLES. Measured 2026-10-29: 19 and 127 walking, 1
+         and 124 standing. Shown to fail: the stride never counted
+         (`st.owed += moved` gone) - 0 at the feet.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34558,6 +34629,36 @@ def c_engine_rain3d():
                             {}).get("drips", -1))
             return (open(out, "rb").read() if os.path.exists(out) else None), world, live
         (rv1, dw1, dl1), (rv0, _, dl0) = dripped(vkb, 1), dripped(vkb, 0)
+        def body_splashed(binary, walk, on):
+            out = os.path.join(tmp, "bsp%s%d%d.bin" % ("g" if binary.endswith("gles") else "v", walk, on))
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000",
+                       **({} if on else {"OMK_NO_BODY_SPLASHES": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            r = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                      os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                                      "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                                      "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                      "--frames", "691", "--detail", "2", "--wet", "1", "--rain3d", "1",
+                                      "--dump", out] + (["--hold", "0*600,k200*100"] if walk else []) +
+                               ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            evs = _events(r.stdout)
+            at = lambda f: next((k for n, k in evs if n == "remaster.wetbodies" and k.get("frame") == f), {})
+            # the crowns spawned over the walk, frames 600 -> 690 (the event counts from the start)
+            grew = lambda key: int(at("690").get(key, -1)) - int(at("600").get(key, 0))
+            return (open(out, "rb").read() if os.path.exists(out) else None), \
+                {"feet": grew("footSplashes"), "heads": grew("headSplashes")}
+        (bw1, bwe), (bw0, _) = body_splashed(vkb, 1, 1), body_splashed(vkb, 1, 0)
+        _, bse = body_splashed(vkb, 0, 1)
+        bg1 = bg0 = None
+        if platform.system() == "Darwin":
+            (bg1, _), (bg0, _) = body_splashed(os.path.join(eng, "build", "omk-play-gles"), 1, 1), \
+                                 body_splashed(os.path.join(eng, "build", "omk-play-gles"), 1, 0)
         rg1 = rg0 = None
         if platform.system() == "Darwin":
             (rg1, _, _), (rg0, _, _) = dripped(os.path.join(eng, "build", "omk-play-gles"), 1), \
@@ -34675,6 +34776,14 @@ def c_engine_rain3d():
         print(f"        the drips: {npts} points, {nthru} under anything; {dl1} at frame 690, {dl0} off; "
               f"Vulkan {len(rmv)} pixels")
     dripped_ = (npts > 1000, 0 <= nthru * 100 <= npts, dl1 > 10, dl0, len(rmv) > 100, rgl)
+    bmv = len(moved(bw1, bw0)) if bw1 and bw0 else -1
+    if bg1 and bg0:
+        bgl = len(moved(bg1, bg0)) > 200
+    else:
+        bgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+    print(f"        the splashes off the bodies, frames 600 -> 690: walking {bwe['feet']} at the feet, "
+          f"{bwe['heads']} on heads; standing {bse['feet']}, {bse['heads']}; Vulkan {bmv} pixels; GLES {bgl}")
+    bodysplash = (bwe["feet"] >= 10, bwe["heads"] > 0, 0 <= bse["feet"] <= 3, bse["heads"] > 0, bmv > 200, bgl)
     hgl = ("skipped",)
     if not os.path.isdir(hpack):
         haloes = ("skipped",)
@@ -34695,16 +34804,17 @@ def c_engine_rain3d():
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted, neoned, veils, splashes, haloes, dripped_), \
+            dusted, neoned, veils, splashes, haloes, dripped_, bodysplash), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
             (True, _or_skip(dgl, (True, True))), (True, 0), (True, _or_skip(vgl, (True, True))),
             (True, 0, True, _or_skip(sgl, (True, True))),
             _or_skip(haloes, (True, _or_skip(hgl, (True, True)))),
-            (True, True, True, 0, True, _or_skip(rgl, (True, True)))), \
+            (True, True, True, 0, True, _or_skip(rgl, (True, True))),
+            (True, True, True, True, True, _or_skip(bgl, True))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
-        "pixels on Vulkan and GLES, the same; the splashes"
+        "pixels on Vulkan and GLES, the same; the splashes; the bodies' splashes"
 
 
 def c_engine_clip_memo():

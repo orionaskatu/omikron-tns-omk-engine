@@ -62,6 +62,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NOUI",                 // the interface left out of the frame - the HUD, the bars, the fight gauges (engine: fight letterbox)
     "OMK_NO_AMBIENT_CLAMP",     // A/B: a set's ambient floor not clamped (engine: ambient clamp)
     "OMK_NO_BLOCK_FORMATS",     // the pack's KTX2 block files not read - its PNGs uploaded, for comparison (engine: block formats)
+    "OMK_NO_BODY_SPLASHES",     // =1 no splashes at the bodies' feet and on their heads in the 3D rain (engine: rain 3d)
     "OMK_NO_CAM_COLLIDE",       // the follow camera's collision with the set off (engine: camera collision)
     "OMK_NO_CULL",              // both faces drawn - the back-face cull off (engine: back-face cull)
     "OMK_NO_DIRTY",             // A/B: whole uploads instead of the dirty corners (engine: dirty corners)
@@ -136,6 +137,7 @@ constexpr const char* kSwitches[] = {
     "OMK_WET_BODY_COVER_AT",    // =N every body under cover from frame N: the drying seen (engine: wet floors)
     "OMK_WET_NO_BLEND",         // =1 the wet floors' open sky is not written into the corners - wet and dry meet at triangle edges (engine: wet floors)
     "OMK_WET_PLANE_EXACT",      // =1 a wet floor reflects only within 4 of the plane, as a listed floor (engine: wet floors)
+    "OMK_WET_RUN_BOXES",        // =1 the wet floors' rays through the meshes' boxes, not the grid - the same answers, slower (engine: wet floors)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);
 

@@ -1,3 +1,20 @@
+## Quick start (just play it)
+
+You don't need to build anything.
+
+1. Download the last release: **[omk-windows.zip](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest/download/omk-windows.zip)** (all the releases are [here](https://github.com/orionaskatu/omikron-tns-omk-engine/releases)).
+2. Open the folder of your copy of Omikron. The one that has `Runtime.exe` in it. On Steam: right click the game, *Manage*, *Browse local files*.
+3. Unzip the whole zip **into that folder**. If Windows asks about replacing files, say yes.
+4. Double-click **`omk-play.exe`**. That's it.
+
+Every feature is already turned on: ray tracing, reflections, bloom, depth of field, 32 bit colours, frame generation, the weather, and FSR / DLSS (DLSS on NVIDIA cards, FSR on the others). Your original game files are never changed, the saves go in a new `omk-saves` folder.
+
+Good to know:
+- You need Windows 10 or 11 (64 bit) and a graphics card that can run DirectX 12, with a recent driver. Ray tracing needs a card that supports it, on the others it is just left off.
+- It's heavy with everything on. If it's too slow, open `omk.ini` with Notepad and turn things off by putting a `;` at the start of the line (the file explains each one, and see "The ini file" below).
+- A box saying "The game's files were not found" means the zip is not in the game's folder.
+- If you unzip a newer release over the old one, `omk.ini` gets replaced. Keep a copy of yours.
+
 ## Windows build
 This fork is mainly to have a working **Windows** build (the original being focused on MacOS) and to add these new features:
   - Directx12
@@ -56,7 +73,7 @@ cd omikron-tns-omk-engine
 The first build takes a few minutes. When it says `Done`, the game is `engine/build/omk-play.exe`. If you pull new changes later, run `./build-windows.sh` again, it only rebuilds what changed.
 
 > [!NOTE]
-> You don't want to build it? Every push on the `fixes` branch is built by GitHub, and the result is on the **Releases** page of this repo. Download the zip and unzip it anywhere.
+> You don't want to build it? See the quick start at the top of this page, every push on the `fixes` branch is built by GitHub and published as a release.
 
 ### Start the game
 
@@ -68,7 +85,7 @@ engine\build\omk-play.exe "C:\Program Files (x86)\Steam\steamapps\common\Omikron
 
 The first path is the folder of your game, change it if yours is somewhere else. `tables` is the folder with the same name in this repo. You can put that line in a `.bat` file, then you just double-click it.
 
-If you use the zip from the Releases page, you don't need any of this: unzip it, and double-click `Play Omikron.bat` (open it with Notepad first if your game is not in the default Steam folder, the path is on one line at the top). It also reads `omk.ini` if you put one next to it.
+You can also just double-click `omk-play.exe` (or run it with flags only) when it sits in the game's folder: it finds the game, the `tables` folder and `omk.ini` by itself.
 
 By default the game starts like the original, same look, nothing added. Everything new is **off** until you turn it on in the ini file. See below.
 
@@ -79,6 +96,8 @@ The ini file is where you turn the new features on. It's a plain text file.
 1. Copy `omk.ini.example` and call the copy `omk.ini`.
 2. Open it with Notepad. Every line starts with `;`, which means "ignored". To use a setting, remove the `;` at the start of that line and change the value.
 3. Start the game with `--config omk.ini` (like in the command above).
+
+The zip from the Releases page already contains an `omk.ini` with everything turned on (it is `windows/omk.ini` in this repo). Edit that one.
 
 A few rules that save time:
 
@@ -130,7 +149,7 @@ The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supe
 Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
 
 > [!NOTE]
-> FSR and DLSS are only in the build if the AMD and NVIDIA SDKs are on your computer when you build. The zip from the Releases page doesn't have them.
+> FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK` and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has both.
 
 ----
 

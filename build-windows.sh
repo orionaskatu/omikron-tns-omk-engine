@@ -61,6 +61,12 @@ if ! pkg-config --exists sdl2; then
     exit 1
 fi
 
+# FSR and DLSS are built in when their SDKs are given (see the README):
+#   FSR_SDK  the AMD FidelityFX SDK's Kits/FidelityFX folder
+#   SL_SDK   the unzipped NVIDIA Streamline SDK
+[ -n "$FSR_SDK" ] && set -- "FSR_SDK=$FSR_SDK" "$@"
+[ -n "$SL_SDK" ] && set -- "SL_SDK=$SL_SDK" "$@"
+
 cd "$HERE/engine"
 make play CXX=g++ "$@"
 

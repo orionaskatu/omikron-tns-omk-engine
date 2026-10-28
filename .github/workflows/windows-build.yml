@@ -1,5 +1,5 @@
 # Builds the game for Windows on every push to the `fixes` branch and puts
-# the result on the Releases page as a zip.
+# the result on the Releases page as a zip (FSR and DLSS included).
 name: Windows build
 
 on:
@@ -16,6 +16,8 @@ concurrency:
 
 env:
   VULKAN_VERSION: 1.4.363.0
+  FSR_VERSION: v2.3.0
+  STREAMLINE_VERSION: v2.14.16
 
 jobs:
   build:
@@ -52,30 +54,75 @@ jobs:
           Start-Process .\vulkan-sdk.exe -Wait -ArgumentList "--accept-licenses --default-answer --confirm-command install"
           Get-ChildItem C:\VulkanSDK\$env:VULKAN_VERSION\Bin\glslc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\dxc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\spirv-cross.exe
 
+      # The upscalers: AMD's FidelityFX SDK (FSR, MIT licence, signed DLLs) and
+      # NVIDIA's Streamline SDK (DLSS). Both come from their public GitHub repos;
+      # only the parts the build needs are taken.
+      - name: Upscaler SDKs cache
+        id: upscaler-cache
+        uses: actions/cache@v4
+        with:
+          path: upscalers
+          key: upscalers-fsr-${{ env.FSR_VERSION }}-sl-${{ env.STREAMLINE_VERSION }}
+
+      - name: Upscaler SDKs download
+        if: steps.upscaler-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p upscalers
+          git clone -q --depth 1 --branch "$FSR_VERSION" --filter=blob:none --sparse \
+            https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git upscalers/fsr-clone
+          git -C upscalers/fsr-clone sparse-checkout set --no-cone \
+            "Kits/FidelityFX/api/" "Kits/FidelityFX/signedbin/" \
+            "Kits/FidelityFX/upscalers/include/" "Kits/FidelityFX/docs/license.md"
+          mv upscalers/fsr-clone/Kits/FidelityFX upscalers/fsr
+          rm -rf upscalers/fsr-clone
+          mkdir -p upscalers/streamline
+          curl -sSL -o streamline.zip \
+            "https://github.com/NVIDIAGameWorks/Streamline/releases/download/$STREAMLINE_VERSION/streamline-sdk-$STREAMLINE_VERSION.zip"
+          # Windows' own tar reads zips (Git's does not)
+          /c/Windows/System32/tar.exe -xf streamline.zip -C upscalers/streamline include bin/x64 license.txt 3rd-party-licenses.md
+          rm -rf upscalers/streamline/bin/x64/development streamline.zip
+
       - name: Build
         shell: msys2 {0}
         env:
           VULKAN_SDK: C:/VulkanSDK/${{ env.VULKAN_VERSION }}
-        run: ./build-windows.sh -j"$(nproc)"
+        run: |
+          export FSR_SDK="$(pwd -W)/upscalers/fsr"
+          export SL_SDK="$(pwd -W)/upscalers/streamline"
+          ./build-windows.sh -j"$(nproc)"
 
       - name: Pack the zip
         shell: msys2 {0}
         run: |
-          mkdir -p dist
-          cp engine/build/omk-play.exe engine/build/SDL2.dll dist/
+          mkdir -p dist/licenses
+          # the exe, SDL2, and the upscalers' DLLs (the build copies them next to the exe)
+          cp engine/build/omk-play.exe dist/
+          cp engine/build/*.dll dist/
           # the compiler's own runtime (this build is not linked statically)
           for d in libstdc++-6 libgcc_s_seh-1 libwinpthread-1; do cp "/mingw64/bin/$d.dll" dist/; done
+          # the build must have both upscalers, or the release would be missing a feature
+          for f in amd_fidelityfx_loader_dx12.dll amd_fidelityfx_upscaler_dx12.dll sl.interposer.dll sl.common.dll sl.dlss.dll nvngx_dlss.dll; do
+            [ -f "dist/$f" ] || { echo "MISSING $f - FSR / DLSS did not get built in"; exit 1; }
+          done
           cp -r tables dist/tables
-          cp omk.ini.example LICENSE dist/
-          cp "windows/Play Omikron.bat" dist/
+          cp windows/omk.ini omk.ini.example dist/
+          cp LICENSE dist/licenses/OMK-LICENSE.txt
+          cp upscalers/fsr/docs/license.md dist/licenses/AMD-FidelityFX-license.md
+          cp upscalers/streamline/license.txt dist/licenses/NVIDIA-Streamline-license.txt
+          cp upscalers/streamline/3rd-party-licenses.md dist/licenses/NVIDIA-Streamline-3rd-party.md
+          cp upscalers/streamline/bin/x64/nvngx_dlss.license.txt dist/licenses/NVIDIA-DLSS-license.txt
           cat > dist/README.txt <<'EOT'
-          Omikron - OMK engine, Windows build.
+          Omikron - OMK engine, Windows build (Direct3D 12 / Vulkan, FSR and DLSS).
 
           1. You need your own copy of the game (the Steam one is fine).
-          2. Double-click "Play Omikron.bat". If your game is not in the default
-             Steam folder, edit the path in that file.
-          3. To change settings, copy omk.ini.example to omk.ini and edit it.
-             The comments in the file explain every setting.
+          2. Unzip ALL of this INTO the game's folder (the one with Runtime.exe).
+          3. Double-click omk-play.exe. Every feature is on by default.
+          4. To turn features off, edit omk.ini with Notepad (omk.ini.example explains
+             every setting).
+
+          The game's own files are never changed. To remove everything, delete the files
+          you unzipped (and the omk-saves folder if you want to forget the saves).
 
           More: https://github.com/orionaskatu/omikron-tns-omk-engine
           EOT
@@ -91,10 +138,10 @@ jobs:
         run: |
           short="${GITHUB_SHA::7}"
           tag="build-${GITHUB_RUN_NUMBER}"
-          printf 'Windows build of commit %s (branch %s).\n\nUnzip it, then double-click "Play Omikron.bat".\n\nLast commit:\n\n%s\n' \
+          printf 'Windows build of commit %s (branch %s), with FSR and DLSS.\n\nUnzip it INTO your game folder (the one with Runtime.exe), then double-click omk-play.exe.\n\nLast commit:\n\n%s\n' \
             "$short" "$GITHUB_REF_NAME" "$(git log -1 --format=%B)" > notes.txt
           gh release create "$tag" omk-windows.zip \
             --target "$GITHUB_SHA" \
             --title "Windows build #${GITHUB_RUN_NUMBER} ($short)" \
             --notes-file notes.txt \
-            --prerelease
+            --latest

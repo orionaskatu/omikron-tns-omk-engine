@@ -1496,6 +1496,29 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   (5) splashes from feet and on shoulders, (6) the rain sound by cover,
   (7) gusts, (8) lightning (invented, last) - and the reader's "ok, go" on
   the recommended 1 + 2, then 3.
+* **The weather list - where it stands** (updated 2026-10-28, the reader's
+  "update the weather plan with the new items"):
+
+  | # | item | state |
+  |---|---|---|
+  | 1 | the lights' streaks on wet floors | DONE `d50f917b` - from the lights themselves (the reflection-based try taken out); faded in against the first light left out |
+  | 2 | halos round the lights in the shower | DONE `2cf19683`, gain 1.5 |
+  | 3 | bodies drying slowly under cover | DONE `2cf19683` |
+  | 4 | drips from roof edges | DONE `ca3f49de` - past the eaves, the drawn set's sky too |
+  | 5 | splashes from feet and on shoulders | OPEN - the splash code is there (`rainSplashes`); a walker's foot in a puddle, drops bursting on heads in the open (`remasterWetBodies` knows who is open) |
+  | 6 | the rain sound by cover | DROPPED - the shower's sound is its music track (118-122, the city's music mixed with the rain, ASSETS 4e): muffling it muffles the music. Only a separate drip sound, if the game ships one (not looked for) |
+  | 7 | gusts | OPEN - the drops' slant and the veils swaying over time; the original's own wind and drops must stay as they are |
+  | 8 | lightning | OPEN, last - invented (the game has none) and needs a thunder sound |
+  | 9 | a SECOND reflecting level (new, from play) | OPEN - one plane reflects a frame: a walkway above the street or a square below it takes the film alone. A second pass, or screen-space reflections - the costliest |
+  | 10 | rain under a hall's roof (new, from play) | OPEN, a question - the reader's hall (F9's 15303, 0, -10414, 76): the 3D rain's drops there have no triangle over them, shot soup or drawn set, so the original's own roof test lets them fall; whether the roof has a gap the geometry shows, or the drops should be stopped some other way, is unread |
+  | 11 | snow on slopes | OPEN (from the snow lying) |
+  | 12 | the drips' load cost (new) | OPEN - Anekbah's wet pass 223 -> ~590 ms on the M3 (the walk out past the eaves, the drawn soup); the M1 slower. Coarser steps or fewer edges if it shows |
+
+  Fixed on the way, not on the list: the wet floors reflecting off the
+  level (`2cf19683`, a street's kerbs and slopes within 16 of the plane);
+  THE DARKNESS (`e86a9cbd`, Vulkan's draws unlit where none of the set's own
+  lights reached the player, the emitters' tiled lights unread); F9 to name
+  a place seen in play.
 * **3, the bodies dry slowly** (`stepBodyWet`, `bodyWet` by the body's
   pose): a body soaks over `kWetBodySoakMs` (4 s) in the open and dries over
   `kWetBodyDryMs` (45 s) under cover, never wetter than the floors - where

@@ -175,7 +175,8 @@ bool safeOutputPath(const std::string& path) {
         }
     }
     // And anything inside a directory that looks like the shipped tree.
-    const std::string abs = hostfs::comparablePath(path);
+    std::string abs = hostfs::comparablePath(path);
+    for (auto& c : abs) if (c == '\\') c = '/';   // Windows separators
     for (const char* dir : {"/MESHES/", "/IAM/", "/SCPTDATA/", "/FONTS/",
                             "/TRACKS/", "/I2D/", "/IMAGES/", "/FLIS/"}) {
         if (abs.find(dir) != std::string::npos) {

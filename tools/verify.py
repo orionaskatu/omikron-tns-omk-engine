@@ -6869,8 +6869,8 @@ def c_options_write():
         t = os.path.join(td, "t.ini")
         shutil.copyfile(tpl, t)
         r = subprocess.run([probe, "--edit", t] + edits, capture_output=True, text=True)
-        a = open(tpl, "rb").read().decode("cp1252").split("\n")
-        b = open(t, "rb").read().decode("cp1252").split("\n")
+        a = open(tpl, "rb").read().decode("cp1252").replace("\r\n", "\n").split("\n")   # a CRLF checkout
+        b = open(t, "rb").read().decode("cp1252").replace("\r\n", "\n").split("\n")
         replaced, inserted, other = [], [], []
         for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
             if op == "equal":
@@ -35143,7 +35143,7 @@ def c_engine_remaster_preset():
             opened = [f["dir"] for n, f in ev if n == "texpack.open"]
             grade = [(f["set"], f["taken"]) for n, f in ev if n == "remaster.grade"]
             bloom = any(ln.startswith("bloom: 1.60") for ln in r.stdout.splitlines())
-            return (opened[0] if opened else None, bloom, grade[0] if grade else None)
+            return (os.path.normpath(opened[0]) if opened else None, bloom, grade[0] if grade else None)
         def detail(*extra):
             r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"), "--area", "0",
                                 "--frames", "2", "--nofmv", "--software", "--saves", tempfile.mkdtemp(dir=tmp)]
@@ -35156,13 +35156,16 @@ def c_engine_remaster_preset():
                run("--remaster", dir_a, "--bloom", "0", "--texture-pack", other),
                run(),
                (detail("--remaster", dir_a), detail("--remaster", dir_a, "--detail", "1"), detail()))
+        # the boot default is the shipped IAM/GAMES header's: 1 on the French disc,
+        # 2 on the English Steam data, where there is nothing to raise
+        base = got[4][2][1]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     want = ((os.path.join(dir_a, "pack"), True, ("ANEKBAH", "0")),
             os.path.join(dir_b, "full", "pack"),
             (other, False, ("ANEKBAH", "0")),
             (None, False, None),
-            ((True, 2), (False, 1), (False, 1)))
+            ((base is not None and base < 2, 2), (False, 1), (False, base)))
     return got, want, "the preset alone (its pack, bloom 1.6, its grade for ANEKBAH); " \
                       "full/pack found; --bloom 0 and --texture-pack beat it; no preset, nothing; " \
                       "the preset raising Niveau de detail to 2, --detail 1 holding it, none without"
@@ -37508,7 +37511,7 @@ def c_engine_film_pack():
     flis = os.path.join(fr, next(n for n in os.listdir(fr) if n.upper() == "FLIS"))
     films = {n: next((os.path.join(flis, f) for f in os.listdir(flis) if f.upper() == n + ".MPG"), None)
              for n in ("EIDOS", "QUANTIC", "GAME")}
-    eng_keys = dict(l.split()[::-1] for l in subprocess.run([tool, "filmkey"] + list(films.values()),
+    eng_keys = dict(l.split(None, 1)[::-1] for l in subprocess.run([tool, "filmkey"] + list(films.values()),
                                                            capture_output=True, text=True).stdout.splitlines())
     py_keys = {films[n]: omktexpack.film_key(films[n]) for n in films}
     keys = (sum(1 for f in py_keys if eng_keys.get(f) == py_keys[f]), len(set(py_keys.values())))

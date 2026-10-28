@@ -47,30 +47,19 @@
 #include <memory>
 #include <string>
 
+#include "o3de/upscaleshared.h"
+
 namespace omk::d3dup {
 
-enum Kind : int { kOff = 0, kFsr = 1, kDlss = 2 };
-
-// The display-to-render ratio of each quality, per dimension - the figures
-// both SDKs document; an SDK's own answer, when it gives one, wins.
-inline float qualityRatio(int quality) {
-    return quality <= 0 ? 1.0f : quality == 1 ? 1.5f : quality == 2 ? 1.7f : quality == 3 ? 2.0f : 3.0f;
-}
-inline const char* qualityName(int quality) {
-    return quality <= 0 ? "native" : quality == 1 ? "quality" : quality == 2 ? "balanced"
-         : quality == 3 ? "performance" : "ultraperformance";
-}
-
-// The camera, for the SDK that asks (DLSS's common constants; FSR takes only
-// the planes and the vertical fov). Column-major, unjittered.
-struct Camera {
-    float viewToClip[16];
-    float worldToView[16];
-    float worldToClip[16];
-    float prevWorldToClip[16];
-    float pos[3], right[3], up[3], fwd[3];
-    float nearP = 1.0f, farP = 1.0f, fovV = 1.0f, aspect = 1.0f;
-};
+// the kinds, the quality ladder and the camera are the Vulkan glue's too
+// (`o3de/upscaleshared.h`)
+using omk::upscale::Kind;
+using omk::upscale::kOff;
+using omk::upscale::kFsr;
+using omk::upscale::kDlss;
+using omk::upscale::qualityRatio;
+using omk::upscale::qualityName;
+using omk::upscale::Camera;
 
 // One dispatch. The resources are in the states named: the inputs readable
 // by any shader stage, the output an unordered-access target.

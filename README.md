@@ -1,6 +1,4 @@
-## Quick start (just play it)
-
-You don't need to build anything.
+## Quick start on Windows
 
 1. Download the last release: **[omk-windows.zip](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest/download/omk-windows.zip)** (all the releases are [here](https://github.com/orionaskatu/omikron-tns-omk-engine/releases)).
 2. Open the folder of your copy of Omikron. The one that has `Runtime.exe` in it. On Steam: right click the game, *Manage*, *Browse local files*.
@@ -47,22 +45,20 @@ cd engine && make play -j"$(nproc)"
 
 The program is `engine/build/omk-play`. Run it from the `engine` folder with the game's path: `build/omk-play /path/to/Omikron`.
 
-## Windows build
-This fork is mainly to have a working **Windows** build (the original being focused on MacOS) and to add these new features:
-  - Directx12
+## Why this fork
+This fork is mainly to have **Windows** and **Linux** builds (the original being focused on MacOS) and to add these new features:
+  - Directx12 (Windows only)
   - True 32 bits colour depth
   - Texture pack support
   - Ray tracing
-  - Gamepad support
+  - Better gamepad support
   - Better shadows
   - HDR support (not tested, I don't have an HDR screen)
-  - FSR4 / DLSS (only tested FSR)
+  - FSR4(Windows D3D12) / FSR3.1(Windows Vulkan/Linux) / DLSS
   - Better LOD
   - SSAO
   - Bloom
   - Depth of Field
-
-All features ported to Vulkan except FSR4/DLSS.
 
 > [!NOTE]
 > **Done exclusively with Opus 5.5 and Sonnet 5.5 with low to no human review, so expect this to be really badly optimized**

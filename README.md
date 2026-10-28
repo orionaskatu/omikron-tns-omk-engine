@@ -16,6 +16,37 @@ Good to know:
 - You have HD texture packs? Put them in a `remaster` folder next to `omk-play.exe`, they are used by themselves. See "HD texture packs" below.
 - If you unzip a newer release over the old one, `omk.ini` gets replaced. Keep a copy of yours.
 
+## Quick start on Linux
+
+Same idea, with the Linux archive of the [latest release](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest): **`omk-linux.tar.gz`**. It draws with Vulkan (there is no Direct3D 12 on Linux, so no FSR 4 / DLSS there yet; everything else is on).
+
+1. Find the folder of your copy of Omikron, the one that has the `IAM` folder in it. On Steam: right click the game, *Manage*, *Browse local files*.
+2. Extract the archive **into that folder**:
+   ```bash
+   tar -xzf omk-linux.tar.gz -C "/path/to/Omikron"
+   ```
+3. Run it:
+   ```bash
+   cd "/path/to/Omikron" && ./omk-play
+   ```
+
+You can also extract it anywhere and, from that folder, give the game's folder: `./omk-play /path/to/Omikron`. With nothing given, it also looks in Steam's usual folders.
+
+Good to know:
+- You need a Vulkan driver (Mesa or the NVIDIA one) and the SDL2 library (`libsdl2-2.0-0` on Debian / Ubuntu, `sdl2` on Arch and Fedora). Ray tracing needs a card with ray queries, otherwise it is left off.
+- The archive is built on Ubuntu 24.04, so you need a system with a glibc that new (Ubuntu 24.04, Fedora, Arch, SteamOS 3.7...). On an older one, build it yourself (below).
+- The settings are in `omk.ini`, same as on Windows. Saves go to `omk-saves/`.
+- I could not test the Linux build on every driver, tell me what breaks.
+
+To build it yourself you need `g++` (version 13 or newer), `make`, `pkg-config`, the SDL2 and Vulkan development packages and `glslc`. On Ubuntu / Debian:
+
+```bash
+sudo apt install g++ make pkg-config libsdl2-dev libvulkan-dev glslc
+cd engine && make play -j"$(nproc)"
+```
+
+The program is `engine/build/omk-play`. Run it from the `engine` folder with the game's path: `build/omk-play /path/to/Omikron`.
+
 ## Windows build
 This fork is mainly to have a working **Windows** build (the original being focused on MacOS) and to add these new features:
   - Directx12

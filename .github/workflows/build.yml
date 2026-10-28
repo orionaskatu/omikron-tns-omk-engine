@@ -1,6 +1,8 @@
-# Builds the game for Windows on every push to the `fixes` branch and puts
-# the result on the Releases page as a zip (FSR and DLSS included).
-name: Windows build
+# Builds the game for Windows (zip, FSR and DLSS included) and for Linux
+# (tar.gz, Vulkan) on every push to the `fixes` branch, and puts both on one
+# release. A commit message with [linux-only] builds just the Linux package
+# (no release): handy while working on it.
+name: Build
 
 on:
   push:
@@ -23,7 +25,7 @@ permissions:
   contents: write   # to create the release
 
 concurrency:
-  group: windows-build
+  group: build
   cancel-in-progress: true
 
 env:
@@ -34,7 +36,8 @@ env:
   SDL2_VERSION: 2.32.10
 
 jobs:
-  build:
+  windows:
+    if: ${{ !contains(github.event.head_commit.message, '[linux-only]') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -145,17 +148,93 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\* -DestinationPath omk-windows.zip
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omk-windows
+          path: omk-windows.zip
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # SDL2 and the Vulkan headers to build against, glslc to compile the shaders
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc
+
+      - name: Build
+        working-directory: engine
+        run: make play -j"$(nproc)"
+
+      - name: Pack the archive
+        run: |
+          ldd engine/build/omk-play
+          mkdir -p dist/licenses
+          cp engine/build/omk-play dist/
+          cp -r tables dist/tables
+          cp linux/omk.ini omk.ini.example dist/
+          cp LICENSE dist/licenses/OMK-LICENSE.txt
+          cat > dist/README.txt <<'EOT'
+          Omikron - OMK engine, Linux build (Vulkan).
+
+          1. You need your own copy of the game (the Steam one is fine).
+          2. Put ALL of this INTO the game's folder (the one with the IAM folder),
+             or extract it anywhere and, from that folder, run: ./omk-play /path/to/Omikron
+             With no path it also looks in Steam's usual folders.
+          3. Run ./omk-play. Every feature is on by default.
+          4. To turn features off, edit omk.ini (omk.ini.example explains every setting).
+
+          You need a Vulkan driver and the SDL2 library (libsdl2-2.0-0 on Debian and
+          Ubuntu, sdl2 on Arch and Fedora). Ray tracing needs a GPU with ray queries.
+          Built on Ubuntu 24.04: it needs a glibc of that age or newer.
+
+          The game's own files are never changed. Saves go to the omk-saves folder
+          next to omk-play.
+
+          More: https://github.com/orionaskatu/omikron-tns-omk-engine
+          EOT
+          tar -czf omk-linux.tar.gz -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omk-linux
+          path: omk-linux.tar.gz
+          if-no-files-found: error
+
+  # One release with whatever was built: Windows has to have worked, Linux is
+  # added when it did.
+  release:
+    needs: [windows, linux]
+    if: ${{ always() && needs.windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: pkg
+          merge-multiple: true
+
       - name: Release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           short="${GITHUB_SHA::7}"
           tag="build-${GITHUB_RUN_NUMBER}"
-          printf 'Windows build of commit %s (branch %s), with FSR and DLSS.\n\nUnzip it INTO your game folder (the one with Runtime.exe), then double-click omk-play.exe.\n\nLast commit:\n\n%s\n' \
-            "$short" "$GITHUB_REF_NAME" "$(git log -1 --format=%B)" > notes.txt
-          gh release create "$tag" omk-windows.zip \
-            --target "$GITHUB_SHA" \
-            --title "Windows build #${GITHUB_RUN_NUMBER} ($short)" \
-            --notes-file notes.txt \
-            --latest
+          files="pkg/omk-windows.zip"
+          linux="no Linux package (that build failed)"
+          if [ -f pkg/omk-linux.tar.gz ]; then files="$files pkg/omk-linux.tar.gz"; linux="omk-linux.tar.gz (Vulkan)"; fi
+          {
+            echo "Build of commit $short (branch $GITHUB_REF_NAME)."
+            echo
+            echo "- omk-windows.zip: Direct3D 12 / Vulkan, with FSR and DLSS. Unzip it INTO your game folder (the one with Runtime.exe), then double-click omk-play.exe."
+            echo "- $linux: put it INTO your game folder, then run ./omk-play."
+            echo
+            echo "Last commit:"
+            echo
+            git log -1 --format=%B
+          } > notes.txt
+          gh release create "$tag" $files --target "$GITHUB_SHA" --title "Build #${GITHUB_RUN_NUMBER} ($short)" --notes-file notes.txt --latest

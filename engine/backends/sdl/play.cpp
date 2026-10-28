@@ -27,6 +27,7 @@
 #include "playstate.h"
 #include "playframe.h"
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -147,12 +148,26 @@ int autoArguments(int argc, char** argv, std::vector<std::string>& args) {
 #ifdef _WIN32
     char exe[MAX_PATH] = {};
     if (GetModuleFileNameA(nullptr, exe, MAX_PATH) > 0) exeDir = fs::path(exe).parent_path();
+#elif defined(__linux__)
+    // started through PATH, argv[0] has no folder
+    {
+        std::error_code self;
+        const fs::path p = fs::read_symlink("/proc/self/exe", self);
+        if (!self) exeDir = p.parent_path();
+    }
 #endif
     if (exeDir.empty()) exeDir = fs::current_path(ec);
     std::vector<fs::path> where = {exeDir, fs::current_path(ec)};
     if (const char* pf = std::getenv("ProgramFiles(x86)"))
         where.push_back(fs::path(pf) / "Steam" / "steamapps" / "common" / "Omikron");
     where.push_back("C:/Program Files (x86)/Steam/steamapps/common/Omikron");
+    // Steam on Linux: the usual library, the old symlink, and the Flatpak one
+    if (const char* home = std::getenv("HOME")) {
+        const fs::path h(home);
+        where.push_back(h / ".local/share/Steam/steamapps/common/Omikron");
+        where.push_back(h / ".steam/steam/steamapps/common/Omikron");
+        where.push_back(h / ".var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/common/Omikron");
+    }
     fs::path game;
     for (const auto& d : where)
         if (isGameFolder(d)) { game = d; break; }
@@ -165,7 +180,12 @@ int autoArguments(int argc, char** argv, std::vector<std::string>& args) {
                     "Omikron (OMK engine)", MB_OK | MB_ICONERROR);
         return 1;
 #else
-        return -1;   // the usage text says what to give
+        if (argc >= 2) return -1;   // flags only: the usage text says what to give
+        std::fprintf(stderr,
+                     "The game's files were not found.\n\nPut this build INTO the game's folder (the one "
+                     "that contains the IAM folder) and run ./omk-play again, or name the folder: "
+                     "./omk-play /path/to/Omikron\n");
+        return 1;
 #endif
     }
     fs::current_path(exeDir, ec);   // the saves and the config are read from here

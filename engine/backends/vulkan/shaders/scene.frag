@@ -119,6 +119,8 @@ layout(set = 1, binding = 2) uniform Lights {
     vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
                        // w the PUDDLES' strength (View::puddles)
     vec4  veilColour;  // ...their colour, lit as the scene (rgb)
+    vec4  streakN;     // THE LIGHTS' STREAKS on the wet floors: x how many, y their strength (View::streaks)
+    GpuLight streak[16];   // ...the lights (View::streakLights, kMaxStreakLights): posA, colourI
 } lg;
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
@@ -367,6 +369,38 @@ const vec2 kPuddleFilm = vec2(0.5, 1.8);
 const vec2 kPuddleMirror = vec2(0.5, 2.2);
 const vec2 kPuddleRipples = vec2(0.6, 1.6);
 const float kPuddleFresnel = 0.18;
+// THE LIGHTS' STREAKS on a wet floor (the reader's "go with 1", 2026-10-28):
+// a wet street draws each lamp and neon out into a long streak toward the
+// eye - the light's highlight on the water with a slope distribution TIGHT
+// across the view and LONG along it (an anisotropic Gaussian of the half
+// vector, Ward's), the floor's normal up (Y is down). From the lights
+// themselves, so on every wet floor - the reflection holds one plane a
+// frame. GLES's twin in glesrender_remaster_shaders.inl.
+const float kStreakLong = 0.30;     // the slope spread along the view: the streak's length
+const float kStreakWide = 0.035;    // ...and across it: its width
+const float kStreakGain = 1.2;      // its light at full wet
+const float kStreakIMax = 1.5;      // a light's intensity, at most
+const float kStreakFar = 4000.0;    // past this from the floor the light streaks no more (`o3de/renderer.h`'s)
+const float kStreakFilmFull = 0.22; // a wet floor's film at full wet (`o3de/wetfloor.h` kWetDarken)
+const vec2 kStreakPuddle = vec2(0.6, 1.4);   // ...between the puddles, in one
+vec3 streakOf(vec3 w, vec3 e, vec4 posA, vec4 colourI) {
+    vec3 l = posA.xyz - w;
+    float dl = length(l);
+    if (dl <= 1.0 || dl > kStreakFar || l.y >= 0.0) return vec3(0.0);   // a light above the floor
+    l /= dl;
+    vec3 v = normalize(e - w);
+    vec2 tv = v.xz;
+    float tl = length(tv);
+    if (tl < 1e-3) return vec3(0.0);
+    vec3 t = vec3(tv.x / tl, 0.0, tv.y / tl), b = vec3(-t.z, 0.0, t.x);
+    vec3 h = normalize(l + v);
+    float hn = -h.y;
+    if (hn <= 1e-3) return vec3(0.0);
+    float x = dot(h, t) / hn, y = dot(h, b) / hn;
+    float s = exp(-(x * x / (kStreakLong * kStreakLong) + y * y / (kStreakWide * kStreakWide)));
+    float fall = 1.0 - smoothstep(0.6 * kStreakFar, kStreakFar, dl);
+    return colourI.rgb * min(colourI.a, kStreakIMax) * (s * fall);
+}
 float puddleMask(vec2 xz) {
     float n = dustNoise(vec3(xz.x * kPuddleBroad, 0.0, xz.y * kPuddleBroad)) * (1.0 - kPuddleFineShare) +
               dustNoise(vec3(xz.x * kPuddleFine, 3.7, xz.y * kPuddleFine)) * kPuddleFineShare;
@@ -628,6 +662,14 @@ void main() {
     } else if (wetFilm > 0.0 && rainNow > 0.0 && openSky > 0.0) {
         rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(kPuddleRipples.x, kPuddleRipples.y, puddle);
         c += vec3(kRippleLight * rip.z);
+    }
+    // ...and THE LIGHTS' STREAKS (`streakOf` above), on a wet floor
+    if (wetFilm > 0.0 && !wetWall && openSky > 0.0 && lg.streakN.y > 0.0) {
+        vec3 st = vec3(0.0);
+        int ns = int(lg.streakN.x);
+        for (int i = 0; i < ns; ++i) st += streakOf(vWorld, lg.eye.xyz, lg.streak[i].posA, lg.streak[i].colourI);
+        c += st * (kStreakGain * lg.streakN.y * min(wetFilm / kStreakFilmFull, 1.0) * openSky *
+                   mix(kStreakPuddle.x, kStreakPuddle.y, puddle));
     }
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);

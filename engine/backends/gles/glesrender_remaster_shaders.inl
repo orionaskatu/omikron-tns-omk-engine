@@ -89,6 +89,35 @@ void main() {
 }
 )";
 
+// THE LIGHTS' STREAKS on a wet floor, `scene.frag`'s `streakOf` and its
+// constants - keep the two in step
+constexpr const char* kStreakGlsl =
+    "const float kStreakLong = 0.30;\n"
+    "const float kStreakWide = 0.035;\n"
+    "const float kStreakGain = 1.2;\n"
+    "const float kStreakIMax = 1.5;\n"
+    "const float kStreakFar = 4000.0;\n"
+    "const float kStreakFilmFull = 0.22;\n"
+    "const vec2 kStreakPuddle = vec2(0.6, 1.4);\n"
+    "vec3 streakOf(vec3 w, vec3 e, vec4 posA, vec4 colourI) {\n"
+    "    vec3 l = posA.xyz - w;\n"
+    "    float dl = length(l);\n"
+    "    if (dl <= 1.0 || dl > kStreakFar || l.y >= 0.0) return vec3(0.0);\n"
+    "    l /= dl;\n"
+    "    vec3 v = normalize(e - w);\n"
+    "    vec2 tv = v.xz;\n"
+    "    float tl = length(tv);\n"
+    "    if (tl < 1e-3) return vec3(0.0);\n"
+    "    vec3 t = vec3(tv.x / tl, 0.0, tv.y / tl), b = vec3(-t.z, 0.0, t.x);\n"
+    "    vec3 h = normalize(l + v);\n"
+    "    float hn = -h.y;\n"
+    "    if (hn <= 1e-3) return vec3(0.0);\n"
+    "    float x = dot(h, t) / hn, y = dot(h, b) / hn;\n"
+    "    float s = exp(-(x * x / (kStreakLong * kStreakLong) + y * y / (kStreakWide * kStreakWide)));\n"
+    "    float fall = 1.0 - smoothstep(0.6 * kStreakFar, kStreakFar, dl);\n"
+    "    return colourI.rgb * min(colourI.a, kStreakIMax) * (s * fall);\n"
+    "}\n";
+
 // A variant's ANCHOR not found: said, never silent - the shader text it
 // patches changed and the variant would build and do nothing (the review of
 // 2026-10-21)
@@ -269,9 +298,10 @@ std::string waterVariant(const std::string& frag) {
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
                     "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
                     "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
+                    "uniform vec4 uStreak[32];\nuniform vec2 uStreakN;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec3 vBodyN;\n" +
                     std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
-                    std::string(kPuddleGlsl) + std::string(kTrickleGlsl) + frag;
+                    std::string(kPuddleGlsl) + std::string(kTrickleGlsl) + std::string(kStreakGlsl) + frag;
     // times the FRESNEL (Schlick, F0 0.02 - `scene.frag`'s): `uWater` is the
     // grazing strength, and the level plane's cos theta the eye ray's height
     const auto at = s.rfind("gl_FragColor = vec4(c,");
@@ -314,7 +344,18 @@ std::string waterVariant(const std::string& frag) {
                      "    } else if (wetF > 0.0 && uRain > 0.0 && vOpen > 0.0) {\n"
                      "        rip = ripples(vWxz, uRippleClock, uRain) * vOpen * mix(kPuddleRipples.x, kPuddleRipples.y, pud);\n"
                      "        c += vec3(kRippleLight * rip.z);\n"
-                     "    }\n    if (uWater > 0.0) {\n"
+                     "    }\n"
+                     // ...and THE LIGHTS' STREAKS on a wet floor, `scene.frag`'s
+                     "    if (wetF > 0.0 && !wall && vOpen > 0.0 && uStreakN.y > 0.0) {\n"
+                     "        vec3 sw = vec3(vWxz.x, vWy, vWxz.y), st = vec3(0.0);\n"
+                     "        for (int i = 0; i < 16; ++i) {\n"
+                     "            if (float(i) >= uStreakN.x) break;\n"
+                     "            st += streakOf(sw, sw + vToEye, uStreak[2 * i], uStreak[2 * i + 1]);\n"
+                     "        }\n"
+                     "        c += st * (kStreakGain * uStreakN.y * min(wetF / kStreakFilmFull, 1.0) * vOpen *\n"
+                     "                   mix(kStreakPuddle.x, kStreakPuddle.y, pud));\n"
+                     "    }\n"
+                     "    if (uWater > 0.0) {\n"
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = max(0.02 + 0.98 * pow(1.0 - ct, 5.0), kPuddleFresnel * pud);\n"
                      "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"

@@ -33931,6 +33931,17 @@ def c_engine_wet_floors():
          30000 pixels move on Vulkan, and on GLES the same ones (overlap
          above 0.8). Measured: 79426 and 80238, overlap 0.958; the band at
          4 (the mutation it is shown to fail with) 0.
+     14. THE LIGHTS' STREAKS (`View::streakLights`, `scene.frag`'s
+         `streakOf`): each emitter's light drawn as a long highlight down
+         every wet floor, from the light itself. Qalisar's lamp street at
+         full rain with the remaster pack (`omk.conf` pack; skipped without
+         it) and `--enhance-all` (the lights are picked under per-pixel
+         light), against `OMK_NO_STREAKS=1` - more than 3000 pixels brighter
+         on Vulkan (the three channels' sum up by more than 24), and on GLES
+         the same ones (overlap above 0.8). Measured 2026-10-28: 7278 and
+         7355, overlap 0.915 (25946 and 25981 moved at all - the faint edges
+         round apart, 0.787). Shown to fail: the lights' count sent as 0 on
+         Vulkan, the GLES upload skipped - 0 pixels on each.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -34031,6 +34042,31 @@ def c_engine_wet_floors():
             gw0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gw0", 2, 1, 700, {"OMK_NO_WET_WALLS": "1"})
         bd0, _ = run(vkb, "bd0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
         _, dev = run(vkb, "dr1", 2, 1, 750, {"OMK_WET_BODY_COVER_AT": "690"})
+        spack = omkpaths.pack_path() or ""
+        def streaked(binary, on):
+            if not os.path.isdir(spack):
+                return None
+            out = os.path.join(tmp, "streak%s%d.bin" % ("g" if binary.endswith("gles") else "v", on))
+            env = dict(os.environ, OMK_WEATHER_SKIP_MS="900000", **({} if on else {"OMK_NO_STREAKS": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                  os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                  "--stand", "10341,-260,-9507,90", "--no-crowd", "--nofmv", "--nodelay",
+                                  "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                  "--frames", "700", "--remaster", spack, "--mist", "0", "--enhance-all",
+                                  "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                           capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return open(out, "rb").read() if os.path.exists(out) else None
+        sk1, sk0 = streaked(vkb, 1), streaked(vkb, 0)
+        gk1 = gk0 = None
+        if platform.system() == "Darwin":
+            gk1, gk0 = streaked(os.path.join(eng, "build", "omk-play-gles"), 1), \
+                       streaked(os.path.join(eng, "build", "omk-play-gles"), 0)
         gb0 = None
         if platform.system() == "Darwin":
             gb0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gb0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
@@ -34138,6 +34174,26 @@ def c_engine_wet_floors():
         egl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
         print(f"        the band: Vulkan {len(emv)} pixels against the exact plane")
     banded = (len(emv) > 30000, egl)
+    def lit_up(a, b):
+        # pixels whose 565 colour's channel sum rose by more than 24 from b to a
+        sm = lambda q: ((q >> 11) & 31) * 8 + ((q >> 5) & 63) * 4 + (q & 31) * 8
+        return {i for i, (x, y) in enumerate(zip(px(a), px(b))) if sm(x) - sm(y) > 24}
+    kgl = ("skipped",)
+    if not os.path.isdir(spack):
+        streaks = ("skipped",)
+    elif sk1 and sk0:
+        kmv = lit_up(sk1, sk0)
+        if gk1 and gk0:
+            kmg = lit_up(gk1, gk0)
+            kiou = len(kmv & kmg) / max(1, len(kmv | kmg))
+            kgl = (len(kmg) > 3000, kiou > 0.8)
+            print(f"        the lights' streaks: Vulkan {len(kmv)}, GLES {len(kmg)} pixels brighter, overlap {kiou:.3f}")
+        else:
+            kgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+            print(f"        the lights' streaks: Vulkan {len(kmv)} pixels brighter")
+        streaks = (len(kmv) > 3000, kgl)
+    else:
+        streaks = ("no frame",)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34147,12 +34203,13 @@ def c_engine_wet_floors():
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
     return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled, bodied,
-            banded), \
+            banded, streaks), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
             (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
             (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True))),
             (True, True, True, _or_skip(bgl, (True, True)), _or_skip(cpu, (True, True)), (True, "0")),
-            (True, _or_skip(egl, (True, True)))), \
+            (True, _or_skip(egl, (True, True))),
+            _or_skip(streaks, (True, _or_skip(kgl, (True, True))))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies"

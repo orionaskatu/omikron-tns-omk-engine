@@ -177,12 +177,17 @@ struct LightUbo {
     // the distance scale; their colour at 3168
     float   veil[4];
     float   veilColour[4];
+    // THE LIGHTS' STREAKS on the wet floors (`View::streakLights`), at 3184:
+    // x how many, y their strength (`View::streaks`); the lights at 3200
+    float   streakN[4];
+    GpuLightStd140 streak[omk::View::kMaxStreakLights];
 };
 // the offsets `scene.frag`'s block reads them at (std140: 64 lights of 48
-// bytes, four scalars, then the two vec4s)
+// bytes, four scalars, then the vec4s)
 static_assert(offsetof(LightUbo, eye) == 3088 && offsetof(LightUbo, fx) == 3104 &&
               offsetof(LightUbo, dust) == 3120 && offsetof(LightUbo, dustColour) == 3136 &&
-              offsetof(LightUbo, veil) == 3152 && offsetof(LightUbo, veilColour) == 3168,
+              offsetof(LightUbo, veil) == 3152 && offsetof(LightUbo, veilColour) == 3168 &&
+              offsetof(LightUbo, streakN) == 3184 && offsetof(LightUbo, streak) == 3200,
               "the Lights block's layout is scene.frag's");
 
 struct ShadowUbo {
@@ -3451,6 +3456,16 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.veil[3] = view.puddles;   // the PUDDLES' strength, in the veils' spare
         for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
         ub.veilColour[3] = 0.0f;
+        const int ns = static_cast<int>(std::min<std::size_t>(view.streakLights.size(),
+                                                              static_cast<std::size_t>(omk::View::kMaxStreakLights)));
+        for (int i = 0; i < ns; ++i) {
+            const auto& l = view.streakLights[static_cast<std::size_t>(i)];
+            for (int k = 0; k < 3; ++k) { ub.streak[i].posA[k] = l.pos[k]; ub.streak[i].colourI[k] = l.colour[k]; }
+            ub.streak[i].posA[3] = l.radiusA;
+            ub.streak[i].colourI[3] = l.intensity;
+        }
+        ub.streakN[0] = static_cast<float>(ns);
+        ub.streakN[1] = view.streaks;
         // THE TILED POINT LIGHTS (`o3de/lighttiles.h`): every one the frame
         // keeps, and their tiles binned for THIS camera at the render size.
         // The reflection pass begins first and the frame's pass last - the

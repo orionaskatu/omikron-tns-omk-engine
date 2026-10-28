@@ -33,6 +33,7 @@ constexpr double kDustDriftPerMs = 0.70;   // ...drifting 700 units a second wit
 constexpr double kDustRisePerMs = 0.04;    // ...and slowly across
 constexpr double kDustDriftWrap = 4e5;     // ...wrapped here
 constexpr float kDustScale = 1100.0f;      // ...63% at full storm this far (1400 before it came nearer)
+constexpr float kStreakCutFade = 0.35f;    // the lights' streaks faded over this share of the cut's distance
 }  // namespace
 
 // THE MIST (`View::mist`): on the shown set's ground
@@ -58,6 +59,13 @@ void PlayState::remasterViewMist(omk::View& v) {
     // even film instead (`verify.py: engine: wet floors` part 9)
     static const bool noPuddles = omk::envFlag("OMK_NO_PUDDLES");
     v.puddles = noPuddles ? 0.0f : 1.0f;
+    // ...and THE LIGHTS' STREAKS on them (the reader's "go with 1", 2026-10-28):
+    // their lights picked with the emitters' (`remasterPointLights`), which
+    // run under per-pixel light alone - `OMK_NO_STREAKS=1`, an INSTRUMENT,
+    // none (`verify.py: engine: wet floors` part 14)
+    static const bool noStreaks = omk::envFlag("OMK_NO_STREAKS");
+    v.streaks = !noStreaks && remasterShown_ ? wetStrength : 0.0f;
+    v.streakLights.clear();
     v.veil = 0.0f;
     // `OMK_NO_VEIL=1`, an INSTRUMENT: the veils alone left out
     // (`verify.py: engine: rain 3d` part 13)
@@ -135,16 +143,41 @@ int PlayState::remasterViewLights(omk::View& v, bool& fxPix, float& kFxView) {
 // `kFxSlots`, `fxCut` the first left out
 void PlayState::remasterPointLights(omk::View& v, std::vector<std::pair<float, const omk::Light3do*>>& fx,
                                     float kFxView, int kFxSlots, float& fxCut) {
+    const auto gpu = [](const omk::Light3do& l, float fade) {
+        omk::View::GpuLight g{};
+        for (int k = 0; k < 3; ++k) { g.pos[k] = l.pos[k]; g.dir[k] = l.dir[k]; }
+        g.radiusA = l.radiusA; g.radiusB = l.radiusB;
+        g.colour[0] = static_cast<float>((l.colour >> 16) & 0xFF) / 255.0f;
+        g.colour[1] = static_cast<float>((l.colour >> 8) & 0xFF) / 255.0f;
+        g.colour[2] = static_cast<float>(l.colour & 0xFF) / 255.0f;
+        g.intensity = l.f32 * fade;
+        return g;
+    };
+    // THE LIGHTS' STREAKS on the wet floors: the nearest the camera, faded
+    // over the reach's last fifth - and, past `kMaxStreakLights`, against the
+    // FIRST ONE LEFT OUT, as the emitters' slots are below: ranked by
+    // distance alone a light entering the nearest came in whole, "from nothing
+    // to a huge reflection in one step" (the reader, 2026-10-28). The frame's
+    // wet floors decide whether anything draws them
+    if (v.streaks > 0.0f) {
+        const std::size_t cap = static_cast<std::size_t>(omk::View::kMaxStreakLights);
+        // (the emitters' own reach, `kFxView`, may be the nearer: 3000 untiled)
+        const float far = std::min(omk::kStreakFar, kFxView);
+        float cut = far;
+        if (fx.size() > cap) cut = std::min(cut, std::sqrt(fx[cap].first));
+        for (const auto& [e2, l] : fx) {
+            if (v.streakLights.size() >= cap || e2 >= cut * cut) break;
+            const float d = std::sqrt(e2);
+            const float fade = std::min(std::clamp((far - d) / (0.2f * far), 0.0f, 1.0f),
+                                        std::clamp((cut - d) / (kStreakCutFade * cut), 0.0f, 1.0f));
+            const auto g = gpu(*l, fade);
+            if (g.intensity > 0.0f) v.streakLights.push_back(g);
+        }
+    }
     if (fxTiled) {
         for (const auto& [e2, l] : fx) {
             if (v.points.size() >= static_cast<std::size_t>(omk::kMaxPoints)) break;
-            omk::View::GpuLight g{};
-            for (int k = 0; k < 3; ++k) { g.pos[k] = l->pos[k]; g.dir[k] = l->dir[k]; }
-            g.radiusA = l->radiusA; g.radiusB = l->radiusB;
-            g.colour[0] = static_cast<float>((l->colour >> 16) & 0xFF) / 255.0f;
-            g.colour[1] = static_cast<float>((l->colour >> 8) & 0xFF) / 255.0f;
-            g.colour[2] = static_cast<float>(l->colour & 0xFF) / 255.0f;
-            g.intensity = l->f32 * std::clamp((kFxView - std::sqrt(e2)) / (0.2f * kFxView), 0.0f, 1.0f);
+            const auto g = gpu(*l, std::clamp((kFxView - std::sqrt(e2)) / (0.2f * kFxView), 0.0f, 1.0f));
             if (g.intensity > 0.0f) v.points.push_back(g);
         }
         fx.clear();

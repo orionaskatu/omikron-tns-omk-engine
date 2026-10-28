@@ -1320,6 +1320,7 @@ private:
         GLint mist = -1;                                                     // ...and the mist
         GLint dust = -1, dustColour = -1;                                    // ...and the sand's dust
         GLint veil = -1, veilColour = -1;                                    // ...and the rain's veils
+        GLint streak = -1, streakN = -1;                                     // ...and the lights' streaks
         GLint tint = -1;   // the body light's variant
         GLint setDim = -1; // the emitters' light's variant: the night
     };
@@ -1408,6 +1409,7 @@ private:
         float mist[3] = {-1, -1, -1};                  // ...and the mist
         float dust[4] = {-1, -1, -1, -1}, dustColour[3] = {-1, -1, -1};   // ...and the sand's dust
         float veil[4] = {-1, -1, -1, -1}, veilColour[3] = {-1, -1, -1};   // ...and the rain's veils
+        std::uint64_t streakFrame = 0;                                     // ...the lights' streaks, sent that frame
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
     struct DrawState {
@@ -1507,6 +1509,8 @@ private:
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     float  rain_ = 0.0f, rippleClock_ = 0.0f;  // the frame's rain and clock, the wet floors' ripples
     float  halo_ = 0.0f;                        // ...and its halos, the bloom spread (`View::halo`)
+    float  streak_[View::kMaxStreakLights * 8] = {};   // ...the lights' streaks (`View::streakLights`)
+    float  streakN_[2] = {0.0f, 0.0f};                 // ...how many, their strength
     // THE MIST (`View::mist`, the remaster's A4 - Vulkan's `scene.frag` rule):
     // strength, ground, height for the frame; on while the variant is built
     float  mist_[3] = {0.0f, 0.0f, 400.0f};
@@ -1703,6 +1707,8 @@ bool GlesRenderer::linkScene() {
         L.dustColour = glGetUniformLocation(p, "uDustColour");
         L.veil = glGetUniformLocation(p, "uVeil");
         L.veilColour = glGetUniformLocation(p, "uVeilColour");
+        L.streak = glGetUniformLocation(p, "uStreak");
+        L.streakN = glGetUniformLocation(p, "uStreakN");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
@@ -2931,6 +2937,15 @@ void GlesRenderer::beginPass(const View& view) {
     dust_[0] = view.dust; dust_[1] = view.dustDrift[0]; dust_[2] = view.dustDrift[1]; dust_[3] = view.dustScale;
     for (int k = 0; k < 3; ++k) dustColour_[k] = view.dustColour[k];
     halo_ = view.halo;
+    streakN_[0] = static_cast<float>(std::min<std::size_t>(view.streakLights.size(),
+                                                           static_cast<std::size_t>(View::kMaxStreakLights)));
+    streakN_[1] = view.streaks;
+    for (std::size_t i = 0; i < static_cast<std::size_t>(streakN_[0]); ++i) {
+        const auto& l = view.streakLights[i];
+        float* o = streak_ + 8 * i;
+        for (int k = 0; k < 3; ++k) { o[k] = l.pos[k]; o[4 + k] = l.colour[k]; }
+        o[3] = l.radiusA; o[7] = l.intensity;
+    }
     veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale; veil_[3] = view.puddles;
     for (int k = 0; k < 3; ++k) veilColour_[k] = view.veilColour[k];
     mistOn_ = (view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f) && mainLoc_.water >= 0;

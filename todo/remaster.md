@@ -1524,11 +1524,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   pixels in Qalisar (lamp street and the reader's street start) and 190 in
   Anekbah: one plane reflects a frame (`chooseFloorNear`), and painting the
   branch red showed only a far patch of Qalisar's lamp street on it - the
-  green street the player stands on is wet but not that plane. **Open**:
-  the streaks from the LIGHTS themselves - an anisotropic highlight (tight
-  across the view, long along it) of each point light on every wet floor,
-  from the emitters' list (`lg.l`, the tiled `pts`) and GLES's own; no
-  reflection needed.
+  green street the player stands on is wet but not that plane - see the
+  next, from the lights themselves.
 * **The wet floors reflect off the level** (2026-10-28, the reader: "wet
   floor reflections ... missing in most places (working at some
   locations)"): the one plane a frame took a wet triangle only with its
@@ -1545,6 +1542,30 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   4 back. `engine: wet floors` part 13. The reader: "better". **Open**: a
   second level in view (a walkway above the street, a square below) still
   takes only the film - a second pass, or screen-space reflections.
+* **1 again, THE LIGHTS' STREAKS from the lights themselves** (2026-10-28,
+  the reader's "go with 1"): each emitter's light drawn on every wet floor as
+  a long highlight toward the eye - `streakOf` (`scene.frag`, GLES's twin in
+  `kStreakGlsl`): an anisotropic Gaussian of the half vector in the floor's
+  frame, LONG along the view (`kStreakLong` 0.30) and TIGHT across it
+  (`kStreakWide` 0.035), the floor's normal up; `kStreakGain` 1.2 at full
+  wet (the film over `kStreakFilmFull`, the shaders' `kWetDarken`), more in
+  a puddle (`kStreakPuddle`), on open floors alone - no wall, body or snow.
+  The lights: `View::streakLights`, the `kMaxStreakLights` (16) emitters'
+  nearest the camera within `kStreakFar` (4000) - or the emitters' own
+  reach, `kFxView`, 3000 untiled, the nearer - picked in
+  `remasterPointLights` (so under per-pixel light, which `--enhance-all`
+  gives), each faded over the reach's last fifth AND against the first one
+  left out (`kStreakCutFade` 0.35, as the emitters' slots): ranked by
+  distance alone a light entering the 16 came in whole, "from nothing to a
+  huge reflection in one step" (the reader). Vulkan: the Lights block's tail
+  (`streakN` at 3184, the lights at 3200); GLES: `uStreak[32]`,
+  `uStreakN`, sent once a frame on a program that draws a wet floor.
+  Qalisar's lamp street: 7278 pixels brighter by more than 24 on Vulkan,
+  7355 on GLES, overlap 0.915. `OMK_NO_STREAKS=1` (an instrument) none.
+  `engine: wet floors` part 14 (skipped without the pack). The reader:
+  "reflections themselves are good", then with the fade "better".
+  **Not checked**: the fade over the transition (a headless run stands
+  still); by construction it is continuous in the camera's distances.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

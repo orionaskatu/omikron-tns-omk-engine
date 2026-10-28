@@ -520,6 +520,15 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             glUniform3f(L.dustColour, dustColour_[0], dustColour_[1], dustColour_[2]);
             std::memcpy(U.dustColour, dustColour_, sizeof U.dustColour);
         }
+        // ...and THE LIGHTS' STREAKS (`View::streakLights`), once a frame on a
+        // program that draws a wet floor
+        if (film > 0.0f && L.streakN >= 0 && (!uv || U.streakFrame != frameNo_)) {
+            stateSet(true);
+            if (streakN_[0] > 0.0f && L.streak >= 0)
+                glUniform4fv(L.streak, 2 * static_cast<GLsizei>(streakN_[0]), streak_);
+            glUniform2f(L.streakN, streakN_[0], streakN_[1]);
+            U.streakFrame = frameNo_;
+        }
         // ...and THE RAIN'S VEILS (`View::veil`), not in the reflection's pass
         const float v0 = reflectingNow_ ? 0.0f : veil_[0];
         if (set(!uv || U.veil[0] != v0 || U.veil[1] != veil_[1] || U.veil[2] != veil_[2] || U.veil[3] != veil_[3])) {

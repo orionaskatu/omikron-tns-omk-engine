@@ -241,6 +241,14 @@ struct View {
     // keeps, binned to screen tiles there - `lights` then holds the set's own
     // alone. Empty unless the remaster's emitters' light is on.
     std::vector<GpuLight> points;
+    // THE LIGHTS' STREAKS on the wet floors (the remaster's, with the wet
+    // floors): the emitters' lights nearest the camera within `kStreakFar`,
+    // each drawn as a long highlight down every wet floor - tight across the
+    // view, long along it (`scene.frag`'s `streakOf`); `streaks` their
+    // strength, 0 none. Vulkan and GLES, under the emitters' per-pixel light.
+    static constexpr int kMaxStreakLights = 16;
+    std::vector<GpuLight> streakLights;
+    float streaks = 0.0f;
 
     // ---------------------------------------------- THE SHIMMER's clock
     //
@@ -363,6 +371,9 @@ struct Draw {
 // there; the low fourteen bits - the sort, the fog's bits, the six-bit slot
 // itself - stay the engine's. A draw whose maker sets only the low bits
 // (the interface's models, `splitDraws`) binds the six bits as before.
+// the LIGHTS' STREAKS on the wet floors (`View::streakLights`): the emitters'
+// lights within this of the camera (~100 m), faded over its last fifth
+inline constexpr float kStreakFar = 4000.0f;
 inline constexpr unsigned kKeySlotShift = 16;
 inline std::uint32_t withPoolSlot(std::uint32_t key14, std::uint32_t slot) {
     return key14 | ((slot + 1u) << kKeySlotShift);

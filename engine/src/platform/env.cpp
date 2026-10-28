@@ -70,6 +70,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_GEOMETRY_RELEASE",  // GLES: a destroyed geometry's GPU state kept (engine: geometry release)
     "OMK_NO_GPU_PRESENT",       // the GPU window hidden and every frame read back - a measurement run (engine: grey bank)
     "OMK_NO_GROUND_GRID",       // A/B: the floor probe as a linear scan instead of through the grid (engine: ground grid)
+    "OMK_NO_HALO",              // =1 the rain's halos left out: the bloom as it is dry (engine: rain 3d)
     "OMK_NO_LOAD_GATE",         // the Vita's load gate off
     "OMK_NO_MIRROR",            // a mirror drawn as a flat pane instead of reflecting
     "OMK_NO_NEON",              // the generic loop instead of the NEON one, for comparing
@@ -130,7 +131,9 @@ constexpr const char* kSwitches[] = {
     "OMK_WATER_LEVELS",         // texpack_tool water: every level of horizontal additive area, not the plane alone
     "OMK_WATER_NO_CPU_CLIP",    // =1 the water reflection is handed the whole scene, clipped by its shader alone (engine: water reflection)
     "OMK_WEATHER_SKIP_MS",      // =<ms> the weather's clock jumps that far on frame 1 (engine: weather)
+    "OMK_WET_BODY_COVER_AT",    // =N every body under cover from frame N: the drying seen (engine: wet floors)
     "OMK_WET_NO_BLEND",         // =1 the wet floors' open sky is not written into the corners - wet and dry meet at triangle edges (engine: wet floors)
+    "OMK_WET_PLANE_EXACT",      // =1 a wet floor reflects only within 4 of the plane, as a listed floor (engine: wet floors)
 };
 constexpr int kCount = static_cast<int>(sizeof kSwitches / sizeof kSwitches[0]);
 

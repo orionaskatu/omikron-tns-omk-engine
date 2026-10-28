@@ -1492,7 +1492,7 @@ private:
     GLuint lightBlack_ = 0;              // the light map of a texture with none
     GLuint lastEmis_ = 0;
     std::string bloomFrag_, bloomFragX_; // the variants' fragment sources (plain, enhanced), kept for `link`
-    GLint  postLoc_[8] = {-1, -1, -1, -1, -1, -1, -1, -1};   // uSrc .. uLutN, at link
+    GLint  postLoc_[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};   // uSrc .. uLutN, uHalo, at link
     GLuint postProg_ = 0, postSrc_ = 0, glowTex_[2] = {0, 0}, glowFbo_[2] = {0, 0}, lutTex_ = 0;
     int    lutN_ = 0;
     int    postW_ = 0, postH_ = 0;
@@ -1506,6 +1506,7 @@ private:
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
     float  waterEye_[3] = {0.0f, 0.0f, 0.0f};  // the frame's eye, for the Fresnel
     float  rain_ = 0.0f, rippleClock_ = 0.0f;  // the frame's rain and clock, the wet floors' ripples
+    float  halo_ = 0.0f;                        // ...and its halos, the bloom spread (`View::halo`)
     // THE MIST (`View::mist`, the remaster's A4 - Vulkan's `scene.frag` rule):
     // strength, ground, height for the frame; on while the variant is built
     float  mist_[3] = {0.0f, 0.0f, 400.0f};
@@ -2929,6 +2930,7 @@ void GlesRenderer::beginPass(const View& view) {
     mist_[0] = view.mist; mist_[1] = view.mistGround; mist_[2] = view.mistHeight;
     dust_[0] = view.dust; dust_[1] = view.dustDrift[0]; dust_[2] = view.dustDrift[1]; dust_[3] = view.dustScale;
     for (int k = 0; k < 3; ++k) dustColour_[k] = view.dustColour[k];
+    halo_ = view.halo;
     veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale; veil_[3] = view.puddles;
     for (int k = 0; k < 3; ++k) veilColour_[k] = view.veilColour[k];
     mistOn_ = (view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f) && mainLoc_.water >= 0;

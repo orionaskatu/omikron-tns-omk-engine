@@ -101,6 +101,14 @@ inline constexpr float kSnowCover = 0.85f;   // how white a fully covered floor 
 // darker film and its sheen the shaders' (`kWetBodyDark`, `kWetBodySheen`...);
 // the roof ray from `kWetBodyHead` above where it stands
 inline constexpr double kWetBodyHead = 150.0;
+// ...and each body its OWN wetness (the reader's "go" on the weather list's
+// 3, 2026-10-28): soaked over `kWetBodySoakMs` in the open, drying over
+// `kWetBodyDryMs` under cover, never wetter than the floors
+inline constexpr double kWetBodySoakMs = 4000.0;
+inline constexpr double kWetBodyDryMs = 45000.0;
+// `w` a body's wetness, `floors` the floors' now (0..1), `open` whether the
+// sky is over it, `dtMs` the frame's -> its wetness now
+float stepBodyWet(float w, float floors, bool open, double dtMs);
 
 class Wetness {
 public:

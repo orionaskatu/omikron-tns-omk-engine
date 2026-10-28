@@ -70,6 +70,13 @@ WaterPlane chooseFloor(const FloorPlanes& f, const float eye[3]);
 // with the most floor may be another (Qalisar's lamp street at -260 against
 // its lower level at 0)
 inline constexpr double kWetPlaneMin = 1.5e5;   // square units near (~100 m2)
+// ...and a WET floor's triangle reflects in that plane with its corners within
+// this of it, where a listed floor's must be within 4: a street is not level -
+// its kerbs and slopes put corners 5 to 16 units off, and nothing lies between
+// 16 and 32 (Qalisar's lamp street and start, Anekbah's street, 2026-10-28:
+// 3402 triangles near within 4, 119724 more within 16, none to 32). The
+// mirror is out by that much there, which the ripples and puddles hide
+inline constexpr float kWetPlaneBand = 16.0f;
 WaterPlane chooseFloorNear(const FloorPlanes& f, const float eye[3], float refY);
 
 }  // namespace omk

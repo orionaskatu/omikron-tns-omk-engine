@@ -1489,6 +1489,62 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   then "a bit stronger": `kWetBodySheen` 0.75, `kWetBodySky` 1.0, more beads
   (`kWetBodyBeadLo` 0.5) - 292 brighter, Kay'l on the CPU 300, overlap
   0.993. The reader: "better" again.
+* **The weather list, round 2** (2026-10-28): asked "what else could be done
+  to improve the weather rendering in the remaster mode?", eight offered -
+  (1) the lights' streaks on wet floors, (2) halos round the lights in the
+  shower, (3) bodies drying slowly under cover, (4) drips from roof edges,
+  (5) splashes from feet and on shoulders, (6) the rain sound by cover,
+  (7) gusts, (8) lightning (invented, last) - and the reader's "ok, go" on
+  the recommended 1 + 2, then 3.
+* **3, the bodies dry slowly** (`stepBodyWet`, `bodyWet` by the body's
+  pose): a body soaks over `kWetBodySoakMs` (4 s) in the open and dries over
+  `kWetBodyDryMs` (45 s) under cover, never wetter than the floors - where
+  the roof ray of the frame alone had it dry the moment it stepped under an
+  awning. Anekbah with every body under cover from frame 690
+  (`OMK_WET_BODY_COVER_AT`, an instrument): 4 of 4 still wet at 720, dry
+  at 2070 (46 s on). The `remaster.wetbodies` event counts them
+  (`drying`). `engine: wet floors` part 12.
+* **2, the HALOS in the shower** (`View::halo`, with the 3D rain, as strong
+  as the shower): `post.frag`'s final pass adds round each light a wide soft
+  glow of its bloom - the glow image on two rings (8 taps at half
+  `kHaloRadius`, 16 at it: 12 glow texels, a quarter of the frame's), times
+  `kHaloGain` - so a lamp keeps its core and gains the halo. 2 at first, then
+  1.5 (the reader: "reduce the halo strength a little bit"; "halos are good
+  now"). First tried as
+  the bloom's blur reaching further (1.5 x) and 0.6 brighter: 10 pixels
+  brighter and 1785 DARKER - a wider blur spreads the same light thinner, the
+  lamps' cores dimmed. Qalisar's lamp street at full rain with the pack, at
+  gain 2: 20597 pixels brighter on Vulkan, 19722 on GLES, none darker; at
+  1.5, 9964 and 9504, overlap 0.842.
+  `OMK_NO_HALO=1` (an instrument) leaves the bloom as it is dry.
+  `engine: rain 3d` part 15 (skipped without the pack).
+* **1, the streaks - TRIED AND TAKEN OUT** (2026-10-28): the reflection's
+  bright part (over 0.35) smeared along the screen's vertical, 8 taps each
+  way over 8% of the frame, on a wet REFLECTING floor (mode 3). It moved 0
+  pixels in Qalisar (lamp street and the reader's street start) and 190 in
+  Anekbah: one plane reflects a frame (`chooseFloorNear`), and painting the
+  branch red showed only a far patch of Qalisar's lamp street on it - the
+  green street the player stands on is wet but not that plane. **Open**:
+  the streaks from the LIGHTS themselves - an anisotropic highlight (tight
+  across the view, long along it) of each point light on every wet floor,
+  from the emitters' list (`lg.l`, the tiled `pts`) and GLES's own; no
+  reflection needed.
+* **The wet floors reflect off the level** (2026-10-28, the reader: "wet
+  floor reflections ... missing in most places (working at some
+  locations)"): the one plane a frame took a wet triangle only with its
+  three corners within 4 of it, a listed floor's rule - and a street is not
+  level. Near the camera on Qalisar's lamp street 3402 open wet triangles
+  were within 4 and 119724 more within 16, NONE between 16 and 32 (the next
+  levels past 64); the reader's start and Anekbah's street alike. The plane
+  itself was right (the eye 280 above the street at -4, the look-at -272).
+  A wet FLOOR's triangle (`rained` 1, not a wall) now reflects within
+  `kWetPlaneBand` 16 (`o3de/floorreflect.h`, `drawWithWater`'s
+  `onWetPlane`); the listed floors keep 4. Moved against the 4: 47560
+  pixels on the lamp street, 12191 at the start; Anekbah 79426 on Vulkan,
+  80238 on GLES, overlap 0.958. `OMK_WET_PLANE_EXACT=1` (an instrument) the
+  4 back. `engine: wet floors` part 13. The reader: "better". **Open**: a
+  second level in view (a walkway above the street, a square below) still
+  takes only the film - a second pass, or screen-space reflections.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

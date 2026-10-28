@@ -21,8 +21,8 @@ void GlesRenderer::runPost() {
         omk::event("remaster.post", {{"backend", "gles"}, {"bloom", static_cast<double>(bloom_)},
                                      {"grade", lutN_}});
         // its uniforms, looked up once
-        const char* names[8] = {"uSrc", "uGlow", "uLut", "uSrcInv", "uDir", "uStrength", "uMode", "uLutN"};
-        for (int k = 0; k < 8; ++k) postLoc_[k] = glGetUniformLocation(postProg_, names[k]);
+        const char* names[9] = {"uSrc", "uGlow", "uLut", "uSrcInv", "uDir", "uStrength", "uMode", "uLutN", "uHalo"};
+        for (int k = 0; k < 9; ++k) postLoc_[k] = glGetUniformLocation(postProg_, names[k]);
     }
     const auto texture = [](GLuint& id, int w, int h) {
         if (!id) glGenTextures(1, &id);
@@ -65,6 +65,7 @@ void GlesRenderer::runPost() {
     // (the grade alone when no draw bound a light map: the glow would be black)
     const bool glow = bloom_ > 0.0f && lightMapNow_;
     glUniform1f(lStr, glow ? bloom_ : 0.0f);
+    glUniform1f(postLoc_[8], glow ? halo_ : 0.0f);   // ...and its halos in the rain (`View::halo`)
     glUniform1f(lN, lutN_ > 1 ? static_cast<float>(lutN_) : 0.0f);
     glBindBuffer(GL_ARRAY_BUFFER, quad_);
     for (GLuint a = 1; a <= kAttrPhase; ++a) glDisableVertexAttribArray(a);

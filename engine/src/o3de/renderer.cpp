@@ -14,6 +14,7 @@
 // that this data has coincident faces whose tie-break is decided by exactly
 // that order.
 #include "o3de/renderer.h"
+#include "o3de/floorreflect.h"   // kWetPlaneBand
 #include "platform/profile.h"
 #include "platform/env.h"
 #include <cstdio>
@@ -339,6 +340,11 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     static std::vector<Draw> scene, water;
     scene.clear(); water.clear();
     const auto onPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= 4.0f; };
+    // a WET floor's triangle is on it within `kWetPlaneBand` (`o3de/floorreflect.h`);
+    // `OMK_WET_PLANE_EXACT=1`, an INSTRUMENT, within 4 as a listed floor's
+    // (`verify.py: engine: wet floors` part 13)
+    static const float band = omk::envFlag("OMK_WET_PLANE_EXACT") ? 4.0f : kWetPlaneBand;
+    const auto onWetPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= band; };
     bool floored = false;
     for (const auto& d : draws) {
         if (floorStrength || wetTris) {
@@ -375,6 +381,9 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                 if (onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2])) {
                     value = s;
                     if (open) value = std::max(value, wetReflect);
+                } else if (open && (*wetTris)[t / 3] == 1 && onWetPlane(g.corners[t]) &&
+                           onWetPlane(g.corners[t + 1]) && onWetPlane(g.corners[t + 2])) {
+                    value = wetReflect;   // a wet FLOOR (1; a wall is 2) a little off the level
                 }
                 const float dark = open ? wetDarken : 0.0f;
                 if (value != runValue || dark != runWet) { flush(t); runStart = t; runValue = value; runWet = dark; }

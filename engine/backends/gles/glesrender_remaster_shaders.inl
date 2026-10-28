@@ -27,7 +27,23 @@ uniform vec2  uDir;
 uniform float uStrength;
 uniform int   uMode;
 uniform float uLutN;
+uniform float uHalo;
 varying vec2 vUv;
+// THE HALOS in the rain, `post.frag`'s - keep the two in step
+const float kHaloGain = 1.5;
+const float kHaloRadius = 12.0;
+vec3 haloOf(vec2 uv, vec2 texel) {
+    vec3 h = texture2D(uGlow, uv).rgb;
+    for (int i = 0; i < 8; ++i) {
+        float a = (float(i) + 0.5) * 0.7853982;
+        h += texture2D(uGlow, uv + vec2(cos(a), sin(a)) * (0.5 * kHaloRadius) * texel).rgb;
+    }
+    for (int i = 0; i < 16; ++i) {
+        float a = float(i) * 0.3926991;
+        h += texture2D(uGlow, uv + vec2(cos(a), sin(a)) * kHaloRadius * texel).rgb;
+    }
+    return h / 25.0;
+}
 vec3 graded(vec3 c) {
     float n = uLutN;
     c = clamp(c, 0.0, 1.0);
@@ -62,7 +78,9 @@ void main() {
     } else {
         vec3 c = texture2D(uSrc, vUv).rgb;
         if (uStrength > 0.0) {
-            vec3 g = min(texture2D(uGlow, vUv).rgb * uStrength, vec3(1.0));
+            vec3 g = texture2D(uGlow, vUv).rgb;
+            if (uHalo > 0.0) g += haloOf(vUv, 4.0 * uSrcInv) * (kHaloGain * uHalo);
+            g = min(g * uStrength, vec3(1.0));
             c = 1.0 - (1.0 - c) * (1.0 - g);
         }
         if (uLutN > 1.5) c = graded(c);

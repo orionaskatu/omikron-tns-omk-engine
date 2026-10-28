@@ -129,7 +129,7 @@ const uint32_t kEasuFrag[] =
 const uint32_t kPostFrag[] =
 #include "post.frag.inc"
 ;
-struct PostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; int32_t ao; };
+struct PostPush { float dstInv[2], srcInv[2], dir[2]; float strength; int32_t mode; int32_t lutSize; int32_t ao; float halo; };
 // THE AMBIENT OCCLUSION (`todo/remaster.md` A4): from the frame's depth, half
 // size, plain and multisampled
 const uint32_t kAoFrag[] =
@@ -578,6 +578,7 @@ private:
     int             litCount_ = 0;         // lights uploaded for this frame
     float           shimmerClock_ = 0.0f;  // the View's, held for the uniform
     float           rain_ = 0.0f;          // the View's rain, for the wet floors' ripples
+    float           halo_ = 0.0f;          // ...and its halos, the bloom spread (`View::halo`)
     bool            dither_ = true;        // the engine's DITHERENABLE, see surface.h
 
     struct Tex {
@@ -3416,6 +3417,7 @@ void VulkanRenderer::begin(const omk::View& view) {
     // ---- THE LIGHTS, per frame (`todo/enhancements.md` row 7) ------------
     shimmerClock_ = view.shimmerClock;
     rain_ = view.rain;
+    halo_ = view.halo;
     dither_ = view.dither;
     litCount_ = 0;
     if (litUboPtr_) {

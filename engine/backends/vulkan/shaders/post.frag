@@ -22,6 +22,7 @@ layout(push_constant) uniform Push {
     int   mode;
     int   lutSize;    // the grade's N, 0 off
     int   ao;         // 1: binding 3 holds the half-size occlusion
+    float halo;       // the HALOS in the rain (`View::halo`), 0 none
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D src;
@@ -33,6 +34,27 @@ layout(location = 0) out vec4 outColour;
 // the GLOW a texel's alpha carries (`scene.frag`): 0 on a body (alpha 0) and
 // on the set without light (1/255), its light map's value above
 float glowOf(float a) { return max(0.0, a * 255.0 - 1.0) / 254.0; }
+
+// THE HALOS in the rain (`View::halo`, the reader's "go" on the weather
+// list's 2, 2026-10-28): the wet air spreads each light's bloom into a wide
+// soft glow round it - the glow image sampled on two rings about the pixel,
+// added to the bloom, so a lamp keeps its core and gains a halo (a wider
+// blur alone would have dimmed the core). GLES's twin in
+// glesrender_remaster_shaders.inl.
+const float kHaloGain = 1.5;      // the halo's light against the bloom's, at full rain
+const float kHaloRadius = 12.0;   // its outer ring, in glow texels (a quarter of the frame's)
+vec3 haloOf(vec2 uv, vec2 texel) {
+    vec3 h = texture(glow, uv).rgb;
+    for (int i = 0; i < 8; ++i) {
+        float a = (float(i) + 0.5) * 0.7853982;
+        h += texture(glow, uv + vec2(cos(a), sin(a)) * (0.5 * kHaloRadius) * texel).rgb;
+    }
+    for (int i = 0; i < 16; ++i) {
+        float a = float(i) * 0.3926991;
+        h += texture(glow, uv + vec2(cos(a), sin(a)) * kHaloRadius * texel).rgb;
+    }
+    return h / 25.0;
+}
 
 vec3 graded(vec3 c) {
     float n = float(pc.lutSize);
@@ -74,7 +96,9 @@ void main() {
         // occluded, and neither is a BODY (alpha 0): the occlusion is the set's
         if (pc.ao != 0) c *= s0.a < 0.5 / 255.0 ? 1.0 : mix(texture(occlusion, uv).r, 1.0, glowOf(s0.a));
         if (pc.strength > 0.0) {
-            vec3 g = min(texture(glow, uv).rgb * pc.strength, vec3(1.0));
+            vec3 g = texture(glow, uv).rgb;
+            if (pc.halo > 0.0) g += haloOf(uv, 4.0 * pc.srcInv) * (kHaloGain * pc.halo);
+            g = min(g * pc.strength, vec3(1.0));
             c = 1.0 - (1.0 - c) * (1.0 - g);
         }
         if (pc.lutSize > 1) c = graded(c);

@@ -560,7 +560,8 @@ void VulkanRenderer::recordPost(VkCommandBuffer cb) {
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, postPlo_, 0, 1, &ds, 0, nullptr);
         const PostPush p{{1.0f / static_cast<float>(w), 1.0f / static_cast<float>(h)},
                          {1.0f / static_cast<float>(srcW), 1.0f / static_cast<float>(srcH)},
-                         {dx, dy}, glow ? bloom_ : 0.0f, mode, lutN_ > 1 ? lutN_ : 0, aoOk_ ? 1 : 0};
+                         {dx, dy}, glow ? bloom_ : 0.0f, mode, lutN_ > 1 ? lutN_ : 0, aoOk_ ? 1 : 0,
+                         glow ? halo_ : 0.0f};
         vkCmdPushConstants(cb, postPlo_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof p, &p);
         vkCmdDraw(cb, 3, 1, 0, 0);
         vkCmdEndRenderPass(cb);

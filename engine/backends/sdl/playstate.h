@@ -715,6 +715,7 @@ struct PlayState {
     float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
     float wetStrength{};     // the wet floors', 0 off (`o3de/wetfloor.h`)
     omk::Wetness wetness{};  // ...how wet they are now, after the shower
+    std::unordered_map<const void*, float> bodyWet{};   // ...and each body, by its pose (`stepBodyWet`)
     bool wetTold{};          // ...whether the log last said they reflect
     float rain3dStrength{};  // the rain drawn in the scene, 0 off (`playremaster_rain.cpp`)
     std::vector<omk::WeatherDrop> rainDrops{};   // ...the weather's drops it takes, last stepped

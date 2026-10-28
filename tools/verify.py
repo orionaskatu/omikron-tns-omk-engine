@@ -33914,6 +33914,23 @@ def c_engine_wet_floors():
          than 5000 pixels move against `OMK_NO_WET_BODIES=1` and more than
          60 brighten the same way (143 with the beads) - his posed normals reach the sheen
          (`remasterWantsNormals`).
+     12. THE WET BODIES DRY SLOWLY: each keeps its own wetness, soaked over
+         `kWetBodySoakMs` in the open and dried over `kWetBodyDryMs` under
+         cover (`stepBodyWet`). With every body under cover from frame 690
+         (`OMK_WET_BODY_COVER_AT`, an instrument), at frame 720 none is in
+         the open and three or more are still wet ("drying": 4 of 4,
+         2026-10-28; dry at 2070, 46 s on); the frame's roof ray alone - the
+         rule before - gives 0 (the mutation it is shown to fail with:
+         drying 0 from frame 690, 2026-10-28).
+     13. A WET FLOOR REFLECTS A LITTLE OFF THE LEVEL (`kWetPlaneBand`, 16 -
+         where a listed floor's triangle must be within 4): a street is not
+         level, and its kerbs and slopes left most of it unreflecting (the
+         reader: "wet floor reflections ... missing in most places",
+         2026-10-28). Anekbah's street at full rain against
+         `OMK_WET_PLANE_EXACT=1` (an instrument, the 4 back) - more than
+         30000 pixels move on Vulkan, and on GLES the same ones (overlap
+         above 0.8). Measured: 79426 and 80238, overlap 0.958; the band at
+         4 (the mutation it is shown to fail with) 0.
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
     load; 109969 pixels moved on Vulkan, 109950 on GLES; no rain, 0. With the
@@ -33981,7 +33998,8 @@ def c_engine_wet_floors():
         on716, _ = run(vkb, "on716", 2, 1, 716)
         off716, _ = run(vkb, "off716", 2, 0, 716)
         nb, _ = run(vkb, "nb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
-        gnb = None
+        pe, _ = run(vkb, "pe", 2, 1, 700, {"OMK_WET_PLANE_EXACT": "1"})
+        gnb = gpe = None
         def snow_run(binary, name, wet):
             out = os.path.join(tmp, name + ".bin")
             env = dict(os.environ, OMK_EVENTS="1")
@@ -34012,6 +34030,7 @@ def c_engine_wet_floors():
             gw1, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gw1", 2, 1)
             gw0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gw0", 2, 1, 700, {"OMK_NO_WET_WALLS": "1"})
         bd0, _ = run(vkb, "bd0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
+        _, dev = run(vkb, "dr1", 2, 1, 750, {"OMK_WET_BODY_COVER_AT": "690"})
         gb0 = None
         if platform.system() == "Darwin":
             gb0, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gb0", 2, 1, 700, {"OMK_NO_WET_BODIES": "1"})
@@ -34031,6 +34050,7 @@ def c_engine_wet_floors():
             gon, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gon", 2, 1)
             goff, _ = run(os.path.join(eng, "build", "omk-play-gles"), "goff", 2, 0)
             gnb, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gnb", 2, 1, 700, {"OMK_WET_NO_BLEND": "1"})
+            gpe, _ = run(os.path.join(eng, "build", "omk-play-gles"), "gpe", 2, 1, 700, {"OMK_WET_PLANE_EXACT": "1"})
             gl = ("no frame",) if gon is None or goff is None else None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -34104,7 +34124,20 @@ def c_engine_wet_floors():
         print(f"        Kay'l posed on the CPU, GLES: {cmv} pixels wet, {cgl} brighter")
     else:
         cpu = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
-    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 60, bgl, cpu)
+    dr = next((k for n, k in dev if n == "remaster.wetbodies" and k.get("frame") == "720"), {})
+    dried = (int(dr.get("drying", 0)) >= 3, dr.get("wet"))
+    print(f"        every body under cover from frame 690: at 720 {dr}")
+    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 60, bgl, cpu, dried)
+    emv = moved(on, pe) if on and pe else set()
+    if gon and gpe:
+        emg = moved(gon, gpe)
+        eiou = len(emv & emg) / max(1, len(emv | emg))
+        egl = (len(emg) > 30000, eiou > 0.8)
+        print(f"        the band: Vulkan {len(emv)}, GLES {len(emg)} pixels against the exact plane, overlap {eiou:.3f}")
+    else:
+        egl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+        print(f"        the band: Vulkan {len(emv)} pixels against the exact plane")
+    banded = (len(emv) > 30000, egl)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "
@@ -34113,11 +34146,13 @@ def c_engine_wet_floors():
           f"frame 690 {live}; "
           f"moved {len(mv)} on Vulkan; no rain identical {same}; GLES {gl}; the ripples move {ripple} more; "
           f"blended against not {len(moved(on, nb))}")
-    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled, bodied), \
+    return (src_ok, sky, live, len(mv) > 50000, same, gl, ripple > 10000, blend, snowed, puddled, walled, bodied,
+            banded), \
            ((True,) * 4, (True, True, True), ("1.000", "1"), True, True, _or_skip(gl, (True, True)), True,
             (True, _or_skip(gblend, True)), (True, True, _or_skip(sgl, (True, True)), True),
             (True, _or_skip(pgl, (True, True))), (True, 0, True, _or_skip(wgl, (True, True))),
-            (True, True, True, _or_skip(bgl, (True, True)), _or_skip(cpu, (True, True)))), \
+            (True, True, True, _or_skip(bgl, (True, True)), _or_skip(cpu, (True, True)), (True, "0")),
+            (True, _or_skip(egl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); Anekbah's floors open " \
         "to the sky and under a roof; at full rain the wetness 1 and the plane live, the street darkened and " \
         "reflecting on Vulkan; no rain, no change; GLES where Vulkan; the ripples moving; the puddles; the walls; the wet bodies"
@@ -34190,6 +34225,16 @@ def c_engine_rain3d():
          (`remaster.rain3d` splashes) and none under `OMK_NO_SPLASHES=1`;
          more than 1000 pixels move on Vulkan, and on GLES the same ones
          (overlap above 0.8).
+      15. THE HALOS (`View::halo`, the lights' bloom spread wider and
+         brighter by the wet air - `kHaloWiden`, `kHaloGain`): Qalisar's
+         lamp-lit street (part 13's spot, the restored shower) with the
+         remaster pack (`omk.conf` pack; skipped without it) and the mist at
+         0, against `OMK_NO_HALO=1` - more than 8000 pixels brighter on
+         Vulkan (the three channels' sum up by more than 24 in 8-bit steps),
+         and on GLES the same ones (overlap above 0.8). Measured 2026-10-28:
+         20597 on Vulkan, 19722 on GLES, none darker, at `kHaloGain` 2; at
+         1.5 (the reader's) 9964 and 9504, overlap 0.842; `View::halo` held at 0
+         (the mutation it is shown to fail with) 0.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34368,6 +34413,31 @@ def c_engine_rain3d():
                             {}).get("splashes", -1))
             return (open(out, "rb").read() if os.path.exists(out) else None), live
         (sv1, sl1), (sv0, sl0) = splashed(vkb, 1), splashed(vkb, 0)
+        hpack = omkpaths.pack_path() or ""
+        def haloed(binary, on):
+            if not os.path.isdir(hpack):
+                return None
+            out = os.path.join(tmp, "halo%s%d.bin" % ("g" if binary.endswith("gles") else "v", on))
+            env = dict(os.environ, OMK_WEATHER_SKIP_MS="900000", **({} if on else {"OMK_NO_HALO": "1"}))
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                  os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "101",
+                                  "--stand", "10341,-260,-9507,90", "--no-crowd", "--nofmv", "--nodelay",
+                                  "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                  "--frames", "700", "--remaster", hpack, "--mist", "0",
+                                  "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                           capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            return open(out, "rb").read() if os.path.exists(out) else None
+        hv1, hv0 = haloed(vkb, 1), haloed(vkb, 0)
+        hg1 = hg0 = None
+        if platform.system() == "Darwin":
+            hg1, hg0 = haloed(os.path.join(eng, "build", "omk-play-gles"), 1), \
+                       haloed(os.path.join(eng, "build", "omk-play-gles"), 0)
         sg1 = sg0 = None
         if platform.system() == "Darwin":
             (sg1, _), (sg0, _) = splashed(os.path.join(eng, "build", "omk-play-gles"), 1), \
@@ -34460,15 +34530,36 @@ def c_engine_rain3d():
     else:
         sgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
     splashes = (sl1 > 60, sl0, len(smv) > 1000, sgl)
+    def lit_up(a, b):
+        # pixels whose 565 colour's channel sum rose by more than 24 from b to a
+        sm = lambda v: ((v >> 11) & 31) * 8 + ((v >> 5) & 63) * 4 + (v & 31) * 8
+        return {i for i, (x, y) in enumerate(zip(px(a), px(b))) if sm(x) - sm(y) > 24}
+    hgl = ("skipped",)
+    if not os.path.isdir(hpack):
+        haloes = ("skipped",)
+    elif hv1 and hv0:
+        hmv = lit_up(hv1, hv0)
+        if hg1 and hg0:
+            hmg = lit_up(hg1, hg0)
+            hiou = len(hmv & hmg) / max(1, len(hmv | hmg))
+            hgl = (len(hmg) > 8000, hiou > 0.8)
+            print(f"        the halos: Vulkan {len(hmv)}, GLES {len(hmg)} pixels brighter, overlap {hiou:.3f}")
+        else:
+            hgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+            print(f"        the halos: Vulkan {len(hmv)} pixels brighter")
+        haloes = (len(hmv) > 8000, hgl)
+    else:
+        haloes = ("no frame",)
     print(f"        the rain under neon: {nev(neon_on)} drops with the emitters' light, {nev(neon_off)} without")
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted, neoned, veils, splashes), \
+            dusted, neoned, veils, splashes, haloes), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
             (True, _or_skip(dgl, (True, True))), (True, 0), (True, _or_skip(vgl, (True, True))),
-            (True, 0, True, _or_skip(sgl, (True, True)))), \
+            (True, 0, True, _or_skip(sgl, (True, True))),
+            _or_skip(haloes, (True, _or_skip(hgl, (True, True))))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
         "pixels on Vulkan and GLES, the same; the splashes"

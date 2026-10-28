@@ -184,6 +184,13 @@ float Wetness::step(float rain, double dtMs) {
     return w_;
 }
 
+float stepBodyWet(float w, float floors, bool open, double dtMs) {
+    const float f = std::clamp(floors, 0.0f, 1.0f);
+    const double dt = std::max(0.0, dtMs);
+    if (open && w < f) return std::min(f, w + static_cast<float>(dt / kWetBodySoakMs));
+    return std::min(f, std::max(0.0f, w - static_cast<float>(dt / kWetBodyDryMs)));
+}
+
 }  // namespace omk
 
 #endif  // OMK_REMASTER

@@ -166,6 +166,11 @@ struct View {
     // THE PUDDLES on the wet floors (the remaster's): their strength, 0 an
     // even film. Vulkan and GLES.
     float puddles = 0.0f;
+    // THE HALOS in the rain (the remaster's, with the 3D weather): around the
+    // lights a wide soft glow of their bloom, the wet air's - the shower's
+    // strength, 0 none (`post.frag`'s `kHaloGain`, `kHaloRadius`). Vulkan and
+    // GLES, with the bloom.
+    float halo = 0.0f;
     // THE GREYSCALE BANK (ops 150/151, `o3de/greybank.h`): the vertex colour
     // a batch ends with - after its shimmer and its lights - is taken to its
     // luma before the texture modulates it. The caller has already greyed

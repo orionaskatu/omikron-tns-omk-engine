@@ -71,6 +71,13 @@ void PlayState::remasterViewMist(omk::View& v) {
         v.veilScale = kVeilScale;
         for (int k = 0; k < 3; ++k) v.veilColour[k] = kVeilGrey[k] * amb;
     }
+    // ...and THE HALOS in the rain (with the 3D weather - the reader's "go" on
+    // the weather list's 2, 2026-10-28): the lights' bloom spread by the wet
+    // air, as strong as the shower. `OMK_NO_HALO=1`, an INSTRUMENT, leaves
+    // the bloom as it is dry (`verify.py: engine: rain 3d` part 15)
+    static const bool noHalo = omk::envFlag("OMK_NO_HALO");
+    v.halo = !noHalo && rain3dStrength > 0.0f && remasterShown_
+        ? std::clamp(weatherRain * rain3dStrength, 0.0f, 1.0f) : 0.0f;
     v.dust = 0.0f;
     // `OMK_NO_DUST=1`, an INSTRUMENT: the dust fog alone left out, the grains
     // and the grade kept (`verify.py: engine: rain 3d` part 11)
@@ -286,15 +293,23 @@ void PlayState::remasterSnowCover(std::vector<omk::Draw>& list) {
 // rain area while the floors are wet, every body the renderer poses that
 // stands under the open sky - the roof ray from `kWetBodyHead` above its root
 // through the shot soup, the wet floors' own - is drawn wet (`Draw::wetBody`),
-// as wet as the floors. `OMK_NO_WET_BODIES=1`, an INSTRUMENT, leaves them dry
-// (`verify.py: engine: wet floors` part 11).
+// as wet as the floors. Each body keeps its own wetness (`bodyWet`, by its
+// pose): it soaks in the open and dries slowly under cover, so a body that
+// steps under an awning stays wet a while (`stepBodyWet`).
+// `OMK_NO_WET_BODIES=1`, an INSTRUMENT, leaves them dry (`verify.py: engine:
+// wet floors` part 11); `OMK_WET_BODY_COVER_AT=N`, another, has every body
+// under cover from frame N - the drying seen with no roof to walk under
+// (part 12).
 void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
     static const bool noBodies = omk::envFlag("OMK_NO_WET_BODIES");
+    static const long coverAt = static_cast<long>(omk::envNum("OMK_WET_BODY_COVER_AT", 0.0));
     const bool rainArea = weatherBitsTold != 0xFFFFu && (weatherBitsTold & 2u) != 0;
-    const float amount = wetStrength * wetness.value();
-    if (noBodies || !rainArea || !(amount > 0.0f) || !remasterShown_ || !world_ ||
-        !(world_->takes() & omk::kTakesWater))
+    const float floors = wetness.value();
+    if (noBodies || !rainArea || !(wetStrength * floors > 0.0f) || !remasterShown_ || !world_ ||
+        !(world_->takes() & omk::kTakesWater)) {
+        bodyWet.clear();
         return;
+    }
     const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
     if (shownSlot.shotSoup.empty()) return;
     // the bodies POSED ON THE CPU draw their own posed copy, with no pose to
@@ -307,7 +322,9 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
     // one ray a body: its draws share the pose, or the posed copy
     const void* lastBody = nullptr;
     bool lastOpen = false;
-    int bodies = 0, wetBodies = 0;
+    float lastWet = 0.0f;
+    int bodies = 0, wetBodies = 0, drying = 0;
+    std::unordered_map<const void*, float> seen;   // the bodies drawn this frame: the rest forgotten
     for (auto& d : list) {
         const bool gpu = d.meshPose && d.meshPoses != 0;
         if (!gpu && std::find(cpuPosed.begin(), cpuPosed.end(), d.geo) == cpuPosed.end()) continue;
@@ -327,22 +344,31 @@ void PlayState::remasterWetBodies(std::vector<omk::Draw>& list) {
                 }
                 at[0] = 0.5 * (lo[0] + hi[0]); at[1] = hi[1]; at[2] = 0.5 * (lo[2] + hi[2]);
             } else {
-                lastOpen = false;
+                lastWet = 0.0f;
                 continue;
             }
             const double up[3] = {0.0, -omk::kWetSkyRay, 0.0};   // Y points down
             const double p0[3] = {at[0], at[1] - omk::kWetBodyHead, at[2]};
-            lastOpen = !omk::sweepSphere(shownSlot.shotSoup, shownSlot.shotRunBoxes, p0, up, 0.0).has_value();
+            lastOpen = !omk::sweepSphere(shownSlot.shotSoup, shownSlot.shotRunBoxes, p0, up, 0.0).has_value() &&
+                       !(coverAt > 0 && frameNo >= coverAt);
+            const auto had = bodyWet.find(body);
+            lastWet = omk::stepBodyWet(had == bodyWet.end() ? 0.0f : had->second, floors, lastOpen,
+                                       frameSec * 1000.0);
+            seen[body] = lastWet;
             ++bodies;
             wetBodies += lastOpen ? 1 : 0;
+            drying += !lastOpen && lastWet > 0.0f ? 1 : 0;
         }
-        if (!lastOpen) continue;
-        d.wet = std::min(amount, 1.0f);
+        if (!(lastWet > 0.0f)) continue;
+        d.wet = std::min(wetStrength * lastWet, 1.0f);
         d.wetBody = true;
     }
+    bodyWet.swap(seen);
     if (frameNo % 30 == 0) {
-        std::printf("frame %ld: %d of %d bodies wet in the rain\n", frameNo, wetBodies, bodies);
-        omk::event("remaster.wetbodies", {{"frame", frameNo}, {"bodies", bodies}, {"wet", wetBodies}});
+        std::printf("frame %ld: %d of %d bodies wet in the rain, %d drying under cover\n", frameNo, wetBodies, bodies,
+                    drying);
+        omk::event("remaster.wetbodies", {{"frame", frameNo}, {"bodies", bodies}, {"wet", wetBodies},
+                                          {"drying", drying}});
     }
 }
 

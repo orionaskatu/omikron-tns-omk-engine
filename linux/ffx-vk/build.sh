@@ -32,13 +32,18 @@ sed -i 's/(1024 \* 128)/(1024 * 512)/' "$out/sdkinclude/FidelityFX/host/ffx_type
 grep -q "(1024 \* 512)" "$out/sdkinclude/FidelityFX/host/ffx_types.h" || { echo "the SDK's context size line changed"; exit 1; }
 # a few sources spell the include folder FidelityFx
 ln -sfn "$out/sdkinclude/FidelityFX" "$out/include/FidelityFx"
+# the backend's per-effect context is declared alignas(32) but lives in a scratch
+# buffer at 4 byte aligned offsets: MSVC never minded, gcc -O2 zeroes it with aligned
+# vector stores and crashes. Natural alignment (8) is all the data needs.
+sed 's/struct alignas(32) EffectContext/struct EffectContext/' "$sdk/sdk/src/backends/vk/ffx_vk.cpp" > "$out/src/ffx_vk.cpp"
+grep -q "struct EffectContext {" "$out/src/ffx_vk.cpp" || { echo "the SDK's EffectContext line changed"; exit 1; }
 # MSVC's 64 bit literal suffix
 sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ffx_provider_fsr3upscale.cpp"
 
 python3 "$here/gen_shaders.py" --sdk "$sdk" --out "$out/shaders" \
     --glslang "${GLSLANG:-glslangValidator}" --jobs "$jobs"
 
-flags=(-std=c++17 -O2 -g -fsanitize=undefined -fPIC -fvisibility=hidden -w -include "$here/compat.h"
+flags=(-std=c++17 -O2 -g -fno-strict-aliasing -fPIC -fvisibility=hidden -w -include "$here/compat.h"
        -DFFX_BACKEND_VK -DFFX_FSR3UPSCALER
        -I"$out/include" -I"$out/shaders"
        -I"$sdk/ffx-api/src" -I"$sdk/ffx-api/include" -I"$out/sdkinclude"
@@ -52,7 +57,7 @@ sources=(
     "$out/src/ffx_provider_fsr3upscale.cpp"
     "$here/ffx_provider_linux.cpp"
     "$sdk/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp"
-    "$sdk/sdk/src/backends/vk/ffx_vk.cpp"
+    "$out/src/ffx_vk.cpp"
     "$sdk/sdk/src/backends/shared/ffx_shader_blobs.cpp"
     "$sdk/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp"
     "$sdk/sdk/src/shared/ffx_assert.cpp"
@@ -67,7 +72,7 @@ printf '%s\n' "${sources[@]}" | xargs -P "$jobs" -I{} sh -c \
     'g++ "$@" -c "$0" -o "$OUT/obj/$(basename "$0" .cpp).o"' {} "${flags[@]}"
 
 so="$out/libamd_fidelityfx_vk.so"
-g++ -shared -fsanitize=undefined -o "$so" "$out"/obj/*.o -lvulkan -ldl -lpthread \
+g++ -shared -o "$so" "$out"/obj/*.o -lvulkan -ldl -lpthread \
     -Wl,-soname,libamd_fidelityfx_vk.so -Wl,--no-undefined
 
 echo "--- exported symbols"

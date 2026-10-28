@@ -22,8 +22,16 @@ here=$(cd "$(dirname "$0")" && pwd)
 jobs=$(nproc 2>/dev/null || echo 2)
 
 mkdir -p "$out/shaders" "$out/include" "$out/src" "$out/obj"
+# the SDK's headers, with the context made bigger: its private context holds wide
+# strings, and a wchar_t is 4 bytes here (2 on Windows), so the 128K words the
+# public struct has are not enough (a static assert says so). The context is
+# opaque to the caller (ffx-api allocates it), so only this library sees the size.
+rm -rf "$out/sdkinclude"
+cp -r "$sdk/sdk/include" "$out/sdkinclude"
+sed -i 's/(1024 \* 128)/(1024 * 512)/' "$out/sdkinclude/FidelityFX/host/ffx_types.h"
+grep -q "(1024 \* 512)" "$out/sdkinclude/FidelityFX/host/ffx_types.h" || { echo "the SDK's context size line changed"; exit 1; }
 # a few sources spell the include folder FidelityFx
-ln -sfn "$sdk/sdk/include/FidelityFX" "$out/include/FidelityFx"
+ln -sfn "$out/sdkinclude/FidelityFX" "$out/include/FidelityFx"
 # MSVC's 64 bit literal suffix
 sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ffx_provider_fsr3upscale.cpp"
 
@@ -33,7 +41,7 @@ python3 "$here/gen_shaders.py" --sdk "$sdk" --out "$out/shaders" \
 flags=(-std=c++17 -O2 -fPIC -fvisibility=hidden -w -include "$here/compat.h"
        -DFFX_BACKEND_VK -DFFX_FSR3UPSCALER
        -I"$out/include" -I"$out/shaders"
-       -I"$sdk/ffx-api/src" -I"$sdk/ffx-api/include" -I"$sdk/sdk/include"
+       -I"$sdk/ffx-api/src" -I"$sdk/ffx-api/include" -I"$out/sdkinclude"
        -I"$sdk/sdk/src/shared" -I"$sdk/sdk/src/backends/shared"
        -I"$sdk/sdk/src/components" -I"$sdk/sdk/src/backends/vk")
 
@@ -48,7 +56,7 @@ sources=(
     "$sdk/sdk/src/backends/shared/ffx_shader_blobs.cpp"
     "$sdk/sdk/src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp"
     "$sdk/sdk/src/shared/ffx_assert.cpp"
-    "$sdk/sdk/src/shared/ffx_message.cpp"
+    "$here/ffx_message_linux.cpp"
     "$sdk/sdk/src/shared/ffx_breadcrumbs_list.cpp"
     "$sdk/sdk/src/shared/ffx_object_management.cpp"
 )

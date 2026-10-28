@@ -10,6 +10,8 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <locale>    // std::wstring_convert
+#include <codecvt>
 
 #ifndef _WIN32
 
@@ -20,6 +22,7 @@
 
 #define __declspec(x) __attribute__((visibility("default")))
 #define _countof(a) (sizeof(a) / sizeof((a)[0]))
+#define sprintf_s snprintf
 
 // into a wchar_t array of a known size
 template <size_t N>

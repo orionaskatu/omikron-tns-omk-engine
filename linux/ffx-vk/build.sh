@@ -32,13 +32,9 @@ sed -i 's/(1024 \* 128)/(1024 * 512)/' "$out/sdkinclude/FidelityFX/host/ffx_type
 grep -q "(1024 \* 512)" "$out/sdkinclude/FidelityFX/host/ffx_types.h" || { echo "the SDK's context size line changed"; exit 1; }
 # a few sources spell the include folder FidelityFx
 ln -sfn "$out/sdkinclude/FidelityFX" "$out/include/FidelityFx"
-# the backend's per-effect context is declared alignas(32) but lives in a scratch
-# buffer at 4 byte aligned offsets: MSVC never minded, gcc -O2 zeroes it with aligned
-# vector stores and crashes. Natural alignment (8) is all the data needs.
-sed 's/struct alignas(32) EffectContext/struct EffectContext/' "$sdk/sdk/src/backends/vk/ffx_vk.cpp" > "$out/src/ffx_vk.cpp"
-grep -q "struct EffectContext {" "$out/src/ffx_vk.cpp" || { echo "the SDK's EffectContext line changed"; exit 1; }
-# say which Vulkan call failed (the SDK only returns an error code)
-sed -i 's|return FFX_ERROR_BACKEND_API_ERROR;|{ fprintf(stderr, "ffx_vk.cpp:%d: a Vulkan call failed\\n", __LINE__); return FFX_ERROR_BACKEND_API_ERROR; }|' "$out/src/ffx_vk.cpp"
+# ffx_vk.cpp: no alignas(32) on the effect context (gcc -O2 crashed on it), a memory
+# fallback for software Vulkan, a note of the failed Vulkan call - see patch_vk.py
+python3 "$here/patch_vk.py" "$sdk/sdk/src/backends/vk/ffx_vk.cpp" "$out/src/ffx_vk.cpp"
 # MSVC's 64 bit literal suffix
 sed 's/ui64/ULL/' "$sdk/ffx-api/src/ffx_provider_fsr3upscale.cpp" > "$out/src/ffx_provider_fsr3upscale.cpp"
 

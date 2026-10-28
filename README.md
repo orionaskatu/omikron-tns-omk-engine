@@ -1,3 +1,38 @@
+## Windows build
+This fork is mainly to have a working **Windows** build (the original being focused on MacOS) and to add these new features:
+  - Directx12
+  - True 32 bits colour depth
+  - Texture pack support
+  - Ray tracing
+  - Gamepad support
+  - Better shadows
+  - HDR support (not tested, I don't have an HDR screen)
+  - FSR4 / DLSS (only tested FSR)
+  - Better LOD
+  - SSAO
+  - Bloom
+  - Depth of Field
+
+All features ported to Vulkan except FSR4/DLSS.
+
+> [!NOTE]
+> **Done exclusively with Opus 5.5 and Sonnet 5.5 with low to no human review, so expect this to be really badly optimized**
+
+> [!WARNING]
+> **There's still a lot of game breaking bugs, the next phase will focus on fixing all remaining ones.**
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/1c43913e-74fe-4fc0-b03f-b2431cc16546" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4602c57d-5eae-4bab-b565-501656aad639" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e7153e84-50fb-4e35-98aa-6a3c75fc8fce" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/e92de189-90d3-4536-956b-6320f9beb4f5" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/6c30547c-a0a8-45c8-aa2c-844641094abc" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/6cda0372-05a9-4320-acbf-7b21c0db24e6" />
+
+> [!IMPORTANT]
+> Thanks a lot to sosso33 (https://github.com/sosso33/omikron-tns-omk-engine) for his great work!
+
+----
+
 # OMK — an open-source engine for *Omikron: The Nomad Soul*
 
 A from-scratch, dependency-free C++20 reimplementation of the engine behind

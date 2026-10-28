@@ -402,6 +402,9 @@ vpath %.dll $(sort $(dir $(UPVK_DLL_SRCS)))
 $(UPVK_DLL_DSTS): $(dir $(PLAY_BIN))%.dll: %.dll
 	@mkdir -p $(@D)
 	cp -f $< $@
+# (the probe tools link no Direct3D 12 glue, so Streamline's header-only signature check lives in the Vulkan one)
+UPVK_PROBE_FLAGS = $(filter-out -DOMK_SL_SECURITY,$(UPVK_FLAGS)) $(if $(SLVK_ON),-DOMK_SL_SECURITY)
+UPVK_SRCS := backends/vulkan/upscale_vk.cpp backends/vulkan/upscale_fsr_vk.cpp backends/vulkan/upscale_dlss_vk.cpp
 UPVK_OBJS = $(PLAY_VK_DIR)/upscale_vk.o $(PLAY_VK_DIR)/upscale_fsr_vk.o $(PLAY_VK_DIR)/upscale_dlss_vk.o
 UPVK_LIBS := $(if $(filter Windows_NT,$(OS)),,$(if $(filter Linux,$(shell uname -s)),-ldl))
 
@@ -421,14 +424,14 @@ else ifeq ($(GLSLC),)
 else
 	@$(MAKE) -s $(VK_SHADERS)
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) -Ibuild/shaders -o build/run_vulkan \
-	    tools/run_vulkan.cpp backends/vulkan/vkrender.cpp $(SRCOBJS) $(VK_LIBS)
-	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) -Ibuild/shaders -o build/shadow_probe \
-	    tools/shadow_probe.cpp backends/vulkan/vkrender.cpp $(SRCOBJS) $(VK_LIBS)
-	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) -Ibuild/shaders -o build/perpixel_probe \
-	    tools/perpixel_probe.cpp backends/vulkan/vkrender.cpp $(SRCOBJS) $(VK_LIBS)
-	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) -Ibuild/shaders -o build/present_probe \
-	    tools/present_probe.cpp backends/vulkan/vkrender.cpp $(SRCOBJS) $(VK_LIBS)
+	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) $(UPVK_PROBE_FLAGS) -Ibuild/shaders -o build/run_vulkan \
+	    tools/run_vulkan.cpp backends/vulkan/vkrender.cpp $(UPVK_SRCS) $(SRCOBJS) $(VK_LIBS) $(UPVK_LIBS)
+	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) $(UPVK_PROBE_FLAGS) -Ibuild/shaders -o build/shadow_probe \
+	    tools/shadow_probe.cpp backends/vulkan/vkrender.cpp $(UPVK_SRCS) $(SRCOBJS) $(VK_LIBS) $(UPVK_LIBS)
+	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) $(UPVK_PROBE_FLAGS) -Ibuild/shaders -o build/perpixel_probe \
+	    tools/perpixel_probe.cpp backends/vulkan/vkrender.cpp $(UPVK_SRCS) $(SRCOBJS) $(VK_LIBS) $(UPVK_LIBS)
+	$(CXX) $(CXXFLAGS) $(VK_CFLAGS) $(UPVK_PROBE_FLAGS) -Ibuild/shaders -o build/present_probe \
+	    tools/present_probe.cpp backends/vulkan/vkrender.cpp $(UPVK_SRCS) $(SRCOBJS) $(VK_LIBS) $(UPVK_LIBS)
 	@echo "built build/run_vulkan and build/shadow_probe against $(VK_PKG)"
 endif
 

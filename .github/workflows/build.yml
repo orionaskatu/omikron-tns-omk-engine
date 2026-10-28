@@ -201,7 +201,6 @@ jobs:
       # make an FSR 3.1 upscaler on it (every pass's pipeline is built from the generated
       # shader headers) and ask for a render size.
       - name: FSR 3.1 library test (software Vulkan)
-        continue-on-error: true
         run: |
           g++ -std=c++17 -g -I upscalers/fsr-vk/ffx-api/include linux/ffx-vk/test_context.cpp -o ffx-test -ldl -lvulkan
           ./ffx-test upscalers/lib || {

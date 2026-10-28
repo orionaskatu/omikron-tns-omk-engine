@@ -16,7 +16,7 @@ Good to know:
 
 ## Quick start on Linux
 
-Same idea, with the Linux archive of the [latest release](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest): **`omk-linux.tar.gz`**. It draws with Vulkan (there is no Direct3D 12 on Linux). The upscaler is not in the archive yet: it needs AMD's Vulkan library for FSR 3.1, which AMD only hands out for Windows (on Linux it has to be built from AMD's source), and DLSS has no Linux library in NVIDIA's Streamline kit. Everything else is on.
+Same idea, with the Linux archive of the [latest release](https://github.com/orionaskatu/omikron-tns-omk-engine/releases/latest): **`omk-linux.tar.gz`**. It draws with Vulkan (there is no Direct3D 12 on Linux). The upscaler is AMD FSR 3.1 (`libamd_fidelityfx_vk.so`, keep it next to `omk-play`). AMD only ships that library for Windows, so the build here compiles it from AMD's open source. DLSS is not in the Linux build (NVIDIA's Streamline kit has no Linux library). Everything else is on.
 
 1. Find the folder of your copy of Omikron, the one that has the `IAM` folder in it. On Steam: right click the game, *Manage*, *Browse local files*.
 2. Extract the archive **into that folder**:
@@ -60,7 +60,7 @@ This fork is mainly to have **Windows** and **Linux** builds (the original being
   - Bloom
   - Depth of Field
 
-All features are on Vulkan too. FSR 4 only exists on Direct3D 12 (AMD has no Vulkan version of it); on Vulkan the upscaler is FSR 3.1, or DLSS on an NVIDIA card. I could only test FSR (on an AMD card), DLSS on Vulkan is written from NVIDIA's documentation and has never run. On Linux the FSR 3.1 library is not in the archive yet, so there is no upscaler there for now.
+All features are on Vulkan too. FSR 4 only exists on Direct3D 12 (AMD has no Vulkan version of it); on Vulkan the upscaler is FSR 3.1, or DLSS on an NVIDIA card. I could only test FSR (on an AMD card), DLSS on Vulkan is written from NVIDIA's documentation and has never run. On Linux FSR 3.1 is built from AMD's source and comes in the archive; DLSS is not there.
 
 > [!NOTE]
 > **Done exclusively with Opus 5.5 and Sonnet 5.5 with low to no human review, so expect this to be really badly optimized**

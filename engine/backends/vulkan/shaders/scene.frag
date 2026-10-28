@@ -1,4 +1,10 @@
 #version 450
+#ifdef OMK_DX
+// THE DIRECT3D 12 BUILD has no second module: the tiled point lights, the relief and the water's
+// lookups are always in it, switched by the frame's uniforms (`lg.tiles`, `lg.fx.x`, the push
+// block's water bits) - `d3d12render.cpp` binds empty descriptors where a frame has none
+#define OMK_TILED
+#endif
 #ifdef OMK_RT
 // HYBRID RAY TRACING (`todo/enhancements.md` 19): the -DOMK_RT build, both
 // backends' (`rt.glsl`; the descriptor sets are `OMK_RT_SET`'s three).
@@ -88,14 +94,19 @@ layout(push_constant) uniform Push {
 #endif
 #endif
 #ifdef OMK_DX
-    // the Direct3D 12 build (-DOMK_DX): no bloom, no water pass, 64 root dwords - the pack's scale alone
-    uint  texScale;    // the pack's scale per axis, minus 1: u in bits 0..3, v in 4..7 (0: none)
+    // the Direct3D 12 build (-DOMK_DX): no bloom, and 64 root dwords - ONE word for the pack's scale and
+    // the water's per-draw bits (the rest of the water is in `lg.wat`)
+    uint  texScale;    // 0..7 the pack's scale per axis, minus 1: u in bits 0..3, v in 4..7 (0: none);
+                       // 8..19 the water's mode and wet film (`water`'s bits 0..11, raised by 8);
+                       // 20, 21 snow lying, a wet body (`water`'s own bits); 22..29 a floor's reflection x255
 #endif
 } pc;
 #ifdef OMK_DX
 #define PC_BLOOM 0
-#define PC_WSTR 0.0
-#define PC_WATER 0
+// `water` as Vulkan's push block has it: the rain's strength (bits 12..19) is the frame's, in `lg.wat.y`
+#define PC_WATER (int(((pc.texScale >> 8) & 4095u) | (uint(lg.wat.y) << 12) | (pc.texScale & 0x300000u)))
+// ...and `waterStrength`: the water's (`lg.wat.x`), a floor's share of it, or - in the reflection pass - its height
+#define PC_WSTR ((PC_WATER & 15) == 2 ? lg.wat.z :                  lg.wat.x * ((PC_WATER & 15) == 3 ? float((pc.texScale >> 22) & 255u) / 255.0 : 1.0))
 #define PC_TEXDIV vec2(float(pc.texScale & 15u) + 1.0, float((pc.texScale >> 4) & 15u) + 1.0)
 #else
 #define PC_BLOOM pc.bloomMode
@@ -112,11 +123,18 @@ layout(set = 0, binding = 1) uniform sampler2D emis;
 // the WATER pass's reflection, the scene through the camera reflected in the
 // water plane (black unless a water pass made one); read only by water draws
 layout(set = 0, binding = 2) uniform sampler2D refl;
+#else
+// ...Direct3D 12's is the FRAME's, in the table that holds the shadow map (set 1, binding 5: t5)
+layout(set = 1, binding = 5) uniform sampler2D refl;
 #endif
 #ifdef OMK_TILED
 // THE NORMAL MAP (the pack's `<key>_n.png`, the remaster's B3) - the relief's;
-// a flat one of ALPHA 0 where the texture has none
+// a flat one of ALPHA 0 where the texture has none (Direct3D 12: the texture's second descriptor, t1)
+#ifdef OMK_DX
+layout(set = 0, binding = 1) uniform sampler2D nmap;
+#else
 layout(set = 0, binding = 3) uniform sampler2D nmap;
+#endif
 #endif
 
 // ---- the MAPPED shadow, `todo/enhancements.md` 6 - an ENHANCEMENT ----------
@@ -163,6 +181,10 @@ layout(set = 1, binding = 2) uniform Lights {
     vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
                        // w the PUDDLES' strength (View::puddles)
     vec4  veilColour;  // ...their colour, lit as the scene (rgb)
+#ifdef OMK_DX
+    vec4  wat;         // THE WATER's frame constants (Vulkan's push block has them a draw): x the strength, y the
+                       // rain's 0..255 (the wet floors' ripples), z the plane's height in the reflection pass
+#endif
 #ifdef OMK_SOFT
     vec4  soft;        // SOFT PARTICLES: x A, y B (view z = B / (depth - A)), z 1 / the fade's range
 #endif
@@ -968,7 +990,6 @@ void main() {
         rip = ripples(vWorld.xz, sh.shimmer, rainNow) * openSky * mix(kPuddleRipples.x, kPuddleRipples.y, puddle);
         c += vec3(kRippleLight * rip.z);
     }
-#ifndef OMK_DX
     if (waterMode == 1 || waterMode == 3) {
         float ct = abs(normalize(lg.eye.xyz - vWorld).y);
         float f = 0.02 + 0.98 * pow(1.0 - ct, 5.0);
@@ -987,7 +1008,6 @@ void main() {
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
         if (!(waterMode == 3 && rtFloor)) c += texture(refl, at / rs).rgb * PC_WSTR * f * wetHere;
     }
-#endif
 #ifdef OMK_SOFT
     // the sprite FADES as it nears what is behind it: by the view-depth gap
     // between this fragment and the opaque surface at its pixel, over the

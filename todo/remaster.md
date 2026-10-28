@@ -2798,9 +2798,31 @@ What the merge decided:
   its darkening and ripples but not the planar reflection (`scene.frag` `rtFloor`); without it, the remaster's
   floors are exactly as before.
 * **Direct3D 12 takes** (`takes()`): the grade (the city's and the shower's overcast, through the shared
-  post chain, before `colorgrade`), the mist, the 3D rain and snow, the body light and the textures' pack. It
-  has no water pass: water, floors, wet-floor reflections, the relief, the bloom from light maps, the AO,
-  the emitters' tiled lights and the upscale (EASU) are Vulkan's and GLES's.
+  post chain, before `colorgrade`), the mist, the 3D rain and snow, the body light and the textures' pack.
+  **Since 2026-10-28 it also takes the water pass and what rides on it** (`drawWaterScene`: the scene through
+  the mirrored camera into `refl_`, then the frame - water, the listed floors, the rain's wet floors with their
+  ripples, puddles and planar reflection), **the relief** (the pack's normal maps, else the brightness) **and the
+  emitters' tiled point lights** - `scene.frag -DOMK_DX` carries all of it, the same GLSL as Vulkan's, so the two
+  backends' pictures agree to the bit where measured (`engine: d3d12 remaster`; the street's rain, the canal's
+  water, MSAA 4x, an FSR upscaler and `--enhance-all` with ray tracing also run with the debug layer clean). How it
+  fits the 64 root dwords: the pack's scale and the water's per-draw bits share the ONE push word, the water's
+  frame constants (strength, rain, plane height) ride `LightUbo::wat`, and the frame's table (t1..t5 of space 1)
+  holds the shadow map, the tiled lights' points and tiles and the reflection - the reflection pass has a twin of it
+  (its own tiles, binned for the mirrored camera, and no reflection); a texture's descriptor is a PAIR (colour,
+  normal map or the flat one). The reflection pass shares the frame's depth and, under MSAA, its multisampled
+  colour; the floors' reflection is half size in the image's top-left quarter, as on Vulkan. The dust and the rain's
+  veils (`View::dust`, `View::veil`, `puddles`), which the shader had and the lights block never sent, are sent too.
+  Not verified: a texture pack WITH normal maps on D3D12 (none on this machine - the brightness relief is what ran),
+  DLSS (FSR ran), the windowed present beyond a hidden window with the debug layer on.
+* **The remaster's bloom, AO and upscale are NOT on Direct3D 12 - the fork has its own, and one effect gets one
+  control**: `[Remaster] bloom` is hidden (no `kTakesBloom`; `[Enhancements] bloom` is the bloom there, both
+  backends have it), `ao` likewise - `ao.frag` is the same kind of effect as SSAO (half-size depth, an estimator
+  over a disk, a blur; the remaster's is set-only through the alpha) and ray-traced AO, so `[Enhancements] ssao`
+  / `raytracing` are D3D12's - and `upscale` (EASU, FSR 1 spatial) is a different feature from `[Enhancements]
+  upscaler` (FSR 3.1/4, DLSS) and stays Vulkan's and GLES's. The keys do not act on D3D12 and say so at start
+  (`remasterConfigure`); the light maps are not decoded for the bloom. On Vulkan nothing changed: its menu has the
+  remaster's bloom/ao/upscale rows and the fork's own are ini-only, so there are never two rows; both passes can
+  still run there if both keys are set.
 * **The original/remaster switch holds the enhancements too** (`View::enhOff`, `PlayState::enhShown_`): F10 /
   `[Remaster] mode = original` puts away bloom, depth of field, grade, HDR, 32-bit colour, soft particles,
   volumetrics, ray tracing and its reflections, frame generation, SSAO, vehicle shine, animation blend and the

@@ -201,7 +201,7 @@ void PlayState::remasterSetup() {
                     : !preset.empty() ? pv("wet") : 0.0f;
         if (wetStrength > 0.0f)
             std::printf("wet: %.2f - a REMASTER feature: the game's rain wets the floors under the open sky, "
-                        "drawn by Vulkan and GLES only; the rain needs option row 7 at 2\n",
+                        "drawn by Vulkan, Direct3D 12 and GLES; the rain needs option row 7 at 2\n",
                         static_cast<double>(wetStrength));
         // THE RAIN IN 3D (`playremaster_rain.cpp`): its flag, its key, the preset's 1
         rain3dStrength = rain3dFlag >= 0.0f ? rain3dFlag
@@ -217,7 +217,7 @@ void PlayState::remasterSetup() {
                       : !preset.empty() ? pv("water") : 0.0f;
         if (waterStrength > 0.0f)
             std::printf("water: %.2f - a REMASTER feature: the water reflects the scene, drawn by "
-                        "Vulkan and GLES only\n", static_cast<double>(waterStrength));
+                        "Vulkan, Direct3D 12 and GLES\n", static_cast<double>(waterStrength));
         // the BODY LIGHT (`o3de/lightprobe.h`): its flag, its key, the preset's 1 (the reader's, 2026-10-20)
         bodyLight = bodyLightFlag >= 0.0f ? bodyLightFlag
                   : settings.bodyLightSource == omk::Settings::Source::Ini ? settings.bodyLight
@@ -275,12 +275,12 @@ void PlayState::remasterSetup() {
             // the brightness elsewhere
             omk::texturePack().setNormals(true);
             std::printf("relief: %.2f - a REMASTER feature: the textures' relief under the emitters' lights, "
-                        "%zu normal maps in the pack (the brightness elsewhere), drawn by Vulkan only\n",
+                        "%zu normal maps in the pack (the brightness elsewhere), drawn by Vulkan and Direct3D 12\n",
                         static_cast<double>(relief), omk::texturePack().normalMaps());
         }
         if (fxLight > 0.0f)
             std::printf("fx light: %.2f - a REMASTER feature: the set's flames and glows light the bodies "
-                        "near them, drawn by Vulkan and GLES only\n", static_cast<double>(fxLight));
+                        "near them, drawn by Vulkan, Direct3D 12 and GLES\n", static_cast<double>(fxLight));
         if (bodyLight > 0.0f)
             std::printf("body light: %.2f - a REMASTER feature: the bodies take the set's painted light "
                         "around them, drawn by Vulkan and GLES only\n", static_cast<double>(bodyLight));
@@ -296,7 +296,7 @@ void PlayState::remasterSetup() {
         if (floorStrength > 0.0f) {
             if (!gradeDir.empty() && omk::floorList().open(gradeDir + "/floors.txt"))
                 std::printf("floors: %.2f - a REMASTER feature: %zu floors of %s/floors.txt reflect the scene, "
-                            "drawn by Vulkan and GLES only\n", static_cast<double>(floorStrength),
+                            "drawn by Vulkan, Direct3D 12 and GLES\n", static_cast<double>(floorStrength),
                             omk::floorList().size(), gradeDir.c_str());
             else {
                 std::printf("floors: no floors.txt beside the grades - nothing reflects\n");

@@ -29911,6 +29911,94 @@ def c_engine_d3d12():
     return tuple(got), tuple(want), "; ".join(notes)
 
 
+def c_engine_d3d12_remaster():
+    r"""`omk-play --world-d3d12` draws the REMASTER's water, relief and emitters' light as Vulkan does.
+
+    `scene.frag -DOMK_DX` carries the water's lookups, the tiled point lights and the relief, and
+    `d3d12render.cpp` feeds them (`drawWaterScene`'s reflection pass into `refl_`, the tiles in two
+    halves, the push block's one word, the frame's descriptor table). The two backends are compared
+    frame against frame, as `engine: d3d12` does, on the 640x480 street/canal starts with the
+    remaster's keys named (no texture pack: the relief reads the textures' brightness):
+    * the canal (area 1) with `--water 0.6`, and the street (area 0) with `--lighting perpixel
+      --fx-light 1 --relief 2`: mean under 0.05 565 steps, 99% of pixels within two - bit for bit
+      when measured (an RX 9070 XT, 2026-10-28) - and no D3D12 debug-layer error;
+    * each effect CHANGES the D3D12 frame (more than 1% of pixels against the same run with its
+      strength 0), so a backend that ignored the key cannot pass by matching a Vulkan run that
+      showed it - which is what a lights block that never got the water's strength did: the water
+      draws were the plain frame's, 4.8% of the canal off.
+    Skipped where the viewer has no D3D12 backend or no D3D12 / Vulkan device.
+    """
+    import subprocess, struct, tempfile
+    eng = os.path.join(ROOT, "engine")
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    if not (os.path.isdir(eng) and os.path.exists(save)):
+        return ("skipped",), ("skipped",), "engine/ or the save absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0 or not (os.path.exists(play) or os.path.exists(play + ".exe")):
+        return ("skipped",), ("skipped",), "the viewer did not build"
+    W, H = 640, 480
+    n = W * H
+    canal = ["--area", "1", "--stand", "10524,-40,10284,180"]
+    street = ["--area", "0", "--stand", "1780,0,-7380,336"]
+    with tempfile.TemporaryDirectory() as tmp:
+        def run(api, where, extra, name):
+            out = os.path.join(tmp, "%s-%s.bin" % (name, api))
+            env = dict(os.environ, SDL_VIDEODRIVER="dummy")
+            if api == "d3d12":
+                env["OMK_D3D12_DEBUG"] = "1"
+            r = subprocess.run([play, omkpaths.data_root(), os.path.join(ROOT, "tables"),
+                                "--save", save] + where + ["--world-" + api, "--no-crowd", "--nofmv", "--nodelay",
+                                "--saves", tempfile.mkdtemp(dir=tmp), "--res", "%dx%d" % (W, H),
+                                "--filter", "nearest", "--frames", "30", "--dump", out] + extra,
+                               capture_output=True, env=env)
+            text = r.stdout.decode("latin-1") + r.stderr.decode("latin-1")
+            return text, (open(out, "rb").read() if os.path.exists(out) else b"")
+        light = ["--lighting", "perpixel", "--fx-light", "1"]
+        cases = (("water", canal, ["--water", "0.6"], ["--water", "0"]),
+                 ("relief", street, light + ["--relief", "2"], light + ["--relief", "0"]),
+                 ("emitters", street, light + ["--relief", "0"], ["--lighting", "perpixel", "--fx-light", "0"]))
+        runs = {}
+        for name, where, on, off in cases:
+            runs[name] = (run("vulkan", where, on, name), run("d3d12", where, on, name),
+                          run("d3d12", where, off, name + "-off"))
+            if name == "water":
+                if "renderer: the world through D3D12" not in runs[name][1][0]:
+                    why = ("this viewer has no D3D12 backend" if "without Direct3D 12" in runs[name][1][0]
+                           else "no D3D12 device")
+                    return ("skipped",), ("skipped",), why
+                if "renderer: the world through VULKAN" not in runs[name][0][0]:
+                    return ("skipped",), ("skipped",), "no Vulkan device to compare against"
+    def compare(d0, d1):
+        if not (len(d0) == len(d1) == n * 2):
+            return 99.0, 0.0, 1.0
+        tot = 0.0
+        within = same = 0
+        for p, q in zip(struct.unpack("<%dH" % n, d0), struct.unpack("<%dH" % n, d1)):
+            if p == q:
+                same += 1
+                within += 1
+                continue
+            dr = abs(((p >> 11) & 31) - ((q >> 11) & 31))
+            dg = abs(((p >> 5) & 63) - ((q >> 5) & 63)) / 2.0
+            db = abs((p & 31) - (q & 31))
+            tot += (dr + dg + db) / 3.0
+            within += max(dr, dg, db) <= 2
+        return tot / n, within / n, 1.0 - same / n
+    got, want, notes = [], [], []
+    for name in ("water", "relief", "emitters"):
+        (t_vk, d_vk), (t_dx, d_dx), (t_off, d_off) = runs[name]
+        mean, within, _ = compare(d_vk, d_dx)
+        _, _, moved = compare(d_off, d_dx)
+        errs = sum(1 for l in t_dx.splitlines()
+                   if "d3d12 debug [ERROR]" in l or "d3d12 debug [CORRUPTION]" in l)
+        got += [mean < 0.05, within > 0.99, errs, moved > 0.01]
+        want += [True, True, 0, True]
+        notes.append("%s: mean %.3f steps, %.2f%% within 2, %d debug-layer errors, moved %.1f%% by the effect"
+                     % (name, mean, 100.0 * within, errs, 100.0 * moved))
+    return tuple(got), tuple(want), "; ".join(notes)
+
+
 def c_engine_upscaler():
     r"""`omk-play --world-d3d12 --upscaler fsr|dlss`: TEMPORAL UPSCALING (`todo/enhancements.md` 18).
 
@@ -55521,6 +55609,7 @@ SLOW = [
     ("engine: escape back", c_engine_escape_back, "todo/enhancements.md; todo/sneak.md"),
     ("engine: ssao", c_engine_ssao, "todo/enhancements.md 15; vulkan/shaders/ssao.frag"),
     ("engine: d3d12", c_engine_d3d12, "backends/d3d12/d3d12render.cpp; engine/Makefile (DIRECT3D 12)"),
+    ("engine: d3d12 remaster", c_engine_d3d12_remaster, "todo/remaster.md; backends/d3d12/d3d12render.cpp drawWaterScene; scene.frag -DOMK_DX"),
     ("engine: upscaler", c_engine_upscaler, "todo/enhancements.md 18; backends/d3d12/upscale.h"),
     ("engine: vulkan upscaler", c_engine_vulkan_upscaler, "todo/enhancements.md 18; backends/vulkan/upscale_vk.h, vkrender.cpp upscale"),
     ("engine: raytracing", c_engine_raytracing, "todo/enhancements.md 19; backends/vulkan/shaders/rt.glsl"),

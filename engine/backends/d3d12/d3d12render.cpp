@@ -86,6 +86,7 @@
 #include "o3de/rtscene.h"
 #include "o3de/texpack.h"
 #include "o3de/colourgrade.h"
+#include "o3de/lighttiles.h"
 #include "platform/env.h"
 #include "platform/events.h"
 #include "platform/datafs.h"
@@ -186,10 +187,11 @@ struct LightUbo {
     int32_t count;
     float   base;      // View::litBase
     int32_t grey;      // View::grey, the greyscale bank (ops 150/151)
-    int32_t tiles;     // the TILED lights module's - never bound here, 0
+    int32_t tiles;     // 1: the TILED point lights (`o3de/lighttiles.h`) are bound, in the frame's table
     float   eye[4];    // the camera's position (vehicle shine's view vector, the water's Fresnel); w the NIGHT (View::setDim)
-    float   fx[4];     // x the relief (none here); y, z, w the MIST's strength, ground and height
-    float   dust[4], dustColour[4], veil[4], veilColour[4];   // the sand's dust and the rain's veils (View): never set here, 0
+    float   fx[4];     // x the relief (View::relief); y, z, w the MIST's strength, ground and height
+    float   dust[4], dustColour[4], veil[4], veilColour[4];   // the sand's dust and the rain's veils (View)
+    float   wat[4];    // THE WATER's frame constants: the strength, the rain 0..255, the plane's height (reflection pass)
     float   soft[4];   // SOFT PARTICLES (`scene.frag` -DOMK_SOFT): A, B, 1 / the fade's range
 };
 struct ShadowUbo {
@@ -229,12 +231,14 @@ struct Push {
     int32_t posed;     // 100
 };
 static_assert(sizeof(Push) == 104, "the push block's common part is 104 bytes");
-// ...and what `scene.frag` -DOMK_DX adds after it: THE TEXTURE PACK's replacement (the remaster's,
-// `o3de/texpack.h`) is `su` x `sv` times the original, the UVs staying in the original's texels (1, 1 on
-// every shipped texture). This backend has no bloom, no water pass: nothing else rides.
+// ...and what `scene.frag` -DOMK_DX adds after it, ONE word (`scene.frag`'s `texScale`): THE TEXTURE PACK's
+// replacement (the remaster's, `o3de/texpack.h`) is `su` x `sv` times the original, the UVs staying in the
+// original's texels (1, 1 on every shipped texture) - (u - 1) | (v - 1) << 4 in bits 0..7 - and THE WATER's
+// per-draw bits above them: the mode and the wet film (`water`'s low twelve, raised by 8), snow and a wet
+// body (bits 20, 21), a floor's reflection share x255 (22..29). The rest of the water is `LightUbo::wat`.
 struct PushSc {
     Push p;
-    std::uint32_t texScale;   // 104: (u - 1) | (v - 1) << 4, `scene.frag`'s `texScale`
+    std::uint32_t texScale;   // 104
 };
 static_assert(sizeof(PushSc) == 108, "the plain push block is 108 bytes");
 constexpr UINT kPushDwords = sizeof(PushSc) / 4;
@@ -265,21 +269,31 @@ constexpr UINT kPushSpace = 7;   // the push block, `register(b0, space7)`
 constexpr UINT kSlotColour = 0;   // `colour_`, the present pass's and the blit's source
 constexpr UINT kSlotDepth = 1;    // `depth_`'s depth plane (SSAO; an upscaler)
 constexpr UINT kSlotAo = 2;       // the AO factor
-constexpr UINT kSlotShadow = 3;   // the shadow map's three layers
-constexpr UINT kSlotPres = 4;     // the present pass's output, for the blit
-constexpr UINT kSlotUpOut = 5;    // the UPSCALER's display-size output
-constexpr UINT kSlotOvPic = 6;    // the OVERLAY's 565 colour plane (colour depth 32)...
-constexpr UINT kSlotOvMask = 7;   // ...and its mask plane, the next slot (one table)
+// THE FRAME's table, `scene.frag`'s set 1 (t1..t5 of space1) - ONE root table: the shadow map's three
+// layers, (t2: the lights block's, a constant buffer - an empty slot here), the tiled point lights'
+// points (t3) and their tiles (t4), and the water's reflection (t5). The reflection pass binds a
+// TWIN of it (`kSlotFrameB`): its own tiles, binned for the reflected camera, and no reflection
+// (the image it is drawing)
+constexpr UINT kSlotShadow = 3;
+constexpr UINT kSlotPoints = kSlotShadow + 2;
+constexpr UINT kSlotTiles = kSlotShadow + 3;
+constexpr UINT kSlotRefl = kSlotShadow + 4;
+constexpr UINT kFrameTable = 5;                    // its descriptors
+constexpr UINT kSlotFrameB = kSlotShadow + kFrameTable;
+constexpr UINT kSlotPres = kSlotFrameB + kFrameTable;   // the present pass's output, for the blit
+constexpr UINT kSlotUpOut = kSlotPres + 1;    // the UPSCALER's display-size output
+constexpr UINT kSlotOvPic = kSlotPres + 2;    // the OVERLAY's 565 colour plane (colour depth 32)...
+constexpr UINT kSlotOvMask = kSlotPres + 3;   // ...and its mask plane, the next slot (one table)
 // THE POST CHAIN (todo/enhancements.md 22): `post.frag`'s ONE table - the
 // source, bloom level 0, the depth, its stencil plane, the grade's LUT - then the chain's output
 // and the levels
-constexpr UINT kSlotPostSrc = 8;
-constexpr UINT kSlotPostBloom = 9;
-constexpr UINT kSlotPostDepth = 10;
-constexpr UINT kSlotPostStencil = 11;
-constexpr UINT kSlotPostLut = 12;   // the REMASTER's city grade (`setGrade`): the table's fifth, a null view without one
-constexpr UINT kSlotPostOut = 13;
-constexpr UINT kSlotBloom0 = 14;
+constexpr UINT kSlotPostSrc = kSlotOvMask + 1;
+constexpr UINT kSlotPostBloom = kSlotPostSrc + 1;
+constexpr UINT kSlotPostDepth = kSlotPostSrc + 2;
+constexpr UINT kSlotPostStencil = kSlotPostSrc + 3;
+constexpr UINT kSlotPostLut = kSlotPostSrc + 4;   // the REMASTER's city grade (`setGrade`): the table's fifth, a null view without one
+constexpr UINT kSlotPostOut = kSlotPostLut + 1;
+constexpr UINT kSlotBloom0 = kSlotPostOut + 1;
 // the stencil value a TRANSLUCENT BODY's pixels take for depth of field
 constexpr UINT kSubjectStencil = omk::postfx::kSubjectStencil;
 constexpr int kBloomLevels = omk::postfx::kBloomLevels;   // half the display size down to 1/64
@@ -345,6 +359,15 @@ struct DescHeap {
         return next < cap ? next++ : UINT(-1);
     }
     void free(UINT i) { if (i != UINT(-1)) freed.push_back(i); }
+    // two CONSECUTIVE slots - a texture's colour and its normal map, one root table (`scene.frag` t0, t1)
+    std::vector<UINT> freedPairs;
+    UINT allocPair() {
+        if (!freedPairs.empty()) { const UINT i = freedPairs.back(); freedPairs.pop_back(); return i; }
+        if (next + 1 >= cap) return UINT(-1);
+        next += 2;
+        return next - 2;
+    }
+    void freePair(UINT i) { if (i != UINT(-1)) freedPairs.push_back(i); }
 };
 
 // One resource and the state it is in. D3D12 has no layouts that a render
@@ -469,8 +492,30 @@ public:
     unsigned takes() const override {
         return omk::kTakesMultisample | omk::kTakesTextureFilter | omk::kTakesSupersample |
                omk::kTakesAnisotropy | omk::kTakesShadowMap | omk::kTakesPixelLights | omk::kTakesGrade |
-               omk::kTakesBodyTint | omk::kTakesMist | omk::kTakesRain3d | omk::kTakesTrilinear;
+               omk::kTakesBodyTint | omk::kTakesMist | omk::kTakesRain3d | omk::kTakesTrilinear |
+               omk::kTakesWater | omk::kTakesEmitterLights | omk::kTakesRelief;
+        // (NOT the remaster's bloom, AO and upscale: this backend has its own - `[Enhancements]` bloom, SSAO
+        // and ray-traced AO, the temporal upscalers - and a second row for the same effect would only mislead)
     }
+    // THE WATER PASS (`todo/remaster.md` A3), the wet floors and their reflections: the scene through the camera
+    // mirrored in the plane into a target of its own, sampled by the water's and the floors' draws. Asked
+    // before `init`; the target is made on first use
+    bool setWater(float) override { wantWater_ = true; return true; }
+    bool drawsWater() const override { return wantWater_; }
+    bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                        std::span<const omk::Draw> above, std::span<const omk::Draw> water,
+                        float strength, float planeY) override;
+    // THE EMITTERS' LIGHTS (`o3de/lighttiles.h`) - every point light of the frame, binned to screen tiles - and the
+    // RELIEF (the pack's normal maps, else the texture's brightness): `scene.frag`'s tiled module, always in this
+    // backend's build; the buffers are made at `init` only when asked
+    bool setEmitterLights(bool on) override {
+        if (dev_) return false;
+        wantEmitters_ = on;
+        return true;
+    }
+    bool drawsEmitterLights() const override { return true; }
+    bool tilesLights() const override { return pointsBuf_ != nullptr && tilesBuf_ != nullptr; }
+    bool drawsRelief() const override { return true; }
     // the body light: `Draw::lightTint` rides in the pose buffer's tint vec4 (`writePose`, `scene.vert`)
     bool setBodyTint(bool) override { return true; }
     bool drawsBodyTint() const override { return true; }
@@ -535,6 +580,11 @@ private:
     void submitOne(const omk::Draw& d, bool posed, UINT64 poseOff);
     bool makeSsao();
     void runSsao();
+    // THE WATER REFLECTION's pass (`drawWaterScene`, "THE WATER" below)
+    bool makeReflection();
+    void beginReflection(const omk::View& rv);
+    void endReflection();
+    bool binTiles(const omk::View& view, bool reflection);
     // HYBRID RAY TRACING ("HYBRID RAY TRACING" below)
     struct RtBlas;
     ID3D12Resource* rtBuffer(UINT64 bytes, D3D12_HEAP_TYPE type, bool uav, D3D12_RESOURCE_STATES st,
@@ -542,6 +592,7 @@ private:
     bool rtMapped(UINT64 bytes, ID3D12Resource*& r, void*& p, UINT64& cap);
     bool rtInit();
     void rtBind(const omk::View& view);
+    void rtBindRoots();
     // what goes into a BLAS is made by `o3de/rtscene.h`, for both backends
     using RtTri = omk::rt::Tri;
     using RtRun = omk::rt::Run;
@@ -649,6 +700,19 @@ private:
     UINT rtvPost_ = 5, rtvBloom0_ = 6;                           // the post chain's (6 levels)
     static constexpr UINT kRtvSwap = 6 + kBloomLevels;           // ...and the swapchain's, after them
     UINT dsvDepth_ = 0;                                          // DSV 0; the shadow layers 1..3
+    // THE WATER REFLECTION (`todo/remaster.md` A3): what `drawWaterScene` draws through the mirrored camera
+    // into `refl_` (the shared depth and, under MSAA, the shared multisampled colour - resolved into it), then
+    // the water's and the floors' draws sample it (`scene.frag` t5 of the frame's table)
+    bool wantWater_ = false;
+    Res refl_;
+    bool reflNow_ = false;      // the reflection pass is recording: clip below `waterY_`, nothing counted
+    bool reflHalf_ = false;     // ...the FLOORS' (no water draws): half size, in the image's top-left quarter
+    bool reflFailed_ = false;   // `makeReflection` said it could not - not asked again
+    bool waterOn_ = false;      // the frame's pass has its reflection: a floor's draw may sample it
+    bool waterNow_ = false;     // the water's own draws
+    float waterStrength_ = 0.0f, waterY_ = 0.0f;
+    bool reflFramed_ = false;   // the reflection began this frame: `begin` keeps what it set up
+    float rain_ = 0.0f;         // View::rain, the wet floors' ripples
     ID3D12Resource* readBuf_ = nullptr;
     UINT64 readPitch_ = 0;
     ID3D12Resource* upBuf_ = nullptr;   // a w_ x h_ picture going up (presentSurface)
@@ -688,7 +752,7 @@ private:
     bool shadowLive_ = false;
     int litCount_ = 0;
     float shimmerClock_ = 0.0f;
-    std::uint32_t texScale_ = 0;   // the bound texture's pack scale, for the push block
+    std::uint32_t texScale_ = 0;   // the bound texture's pack scale and the draw's water bits, for the push block
     bool enhOff_ = false;          // `View::enhOff`: the original's look shows - ours left out
     bool dither_ = true;
     int colourDepth_ = 16;   // the View's colour depth: 32 = the present pass leaves the picture 8-bit
@@ -762,9 +826,14 @@ private:
     // ---- the textures ----
     // `scale`: THE TEXTURE PACK's k (`o3de/texpack.h`) - the image is k x the
     // original, the UVs stay in the original's units (`scene.frag`, `rt.glsl`)
-    struct Tex { ID3D12Resource* img = nullptr; UINT srv = UINT(-1); float su = 1.0f, sv = 1.0f; bool packed = false; };
+    // `srv` is the texture's FIRST of two consecutive slots: its colour, then its NORMAL MAP (the pack's `<key>_n.png`,
+    // the relief's) or, without one, `flat_`'s alpha-0 texel - one root table of two (`scene.frag` t0, t1)
+    struct Tex { ID3D12Resource* img = nullptr; ID3D12Resource* nm = nullptr; UINT srv = UINT(-1);
+                 float su = 1.0f, sv = 1.0f; bool packed = false; };
     std::vector<Tex> tex_;
     Tex white_;
+    Tex flat_;   // the flat normal map: alpha 0 says "none"
+    int normals_ = 0;   // the pack's normal maps uploaded so far
     struct Uploaded { Tex t; omk::PixelBuffer idx, pal; bool used = false; };
     std::map<std::tuple<const std::uint8_t*, const std::uint8_t*, int, int>, Uploaded> uploaded_;
     // a slot's texture word for a ray-tracing record: the heap index, and the
@@ -816,6 +885,16 @@ private:
     ID3D12RootSignature* aoRs_ = nullptr;
     ID3D12PipelineState* aoPipe_ = nullptr;
     ID3D12PipelineState* aoBlurPipe_ = nullptr;
+    // ---- THE TILED POINT LIGHTS (`o3de/lighttiles.h`; the remaster's, asked by `setEmitterLights`) ----
+    // the points and the tiles' lists - TWO halves of tiles, the frame's camera's and the reflection's - in
+    // upload buffers mapped for their life, read through the frame's table (`kSlotPoints`, `kSlotTiles`)
+    static constexpr UINT64 kPointsBytes = omk::kMaxPoints * sizeof(GpuLightStd140);
+    static constexpr UINT64 kTileWordsMax = 1u << 22;   // 16 MB a half
+    bool wantEmitters_ = false;
+    ID3D12Resource* pointsBuf_ = nullptr; void* pointsPtr_ = nullptr;
+    ID3D12Resource* tilesBuf_ = nullptr;  void* tilesPtr_ = nullptr;
+    omk::LightTiles tiles_, tilesRefl_;
+    bool tilesTold_ = false, tilesOverTold_ = false;
     float viewTanH_ = 1.0f, viewTanV_ = 1.0f;
     float aoTanH_ = 1.0f, aoTanV_ = 1.0f;
     int aoVw_ = 0, aoVh_ = 0;
@@ -936,6 +1015,7 @@ private:
     bool fgWant_ = false, fgOn_ = false;
     static constexpr int kFgMaxSlots = 3;
     static constexpr UINT kRtvFg = kRtvSwap + kSwapBuffers + 1;   // the kept frames' RTVs, then the in-between's
+    static constexpr UINT kRtvRefl = kRtvFg + 2 * kFgMaxSlots + 1;   // the water reflection's
     int fgSlots_ = 2;                  // the frames kept (3 for the probe's N-2/N pair)
     Res fgCol_[kFgMaxSlots];           // display size, `presFmt_`: a frame's finished world picture
     Res fgAux_[kFgMaxSlots];           // display size, RGBA16F: its motion (display px), view depth / 4
@@ -1190,7 +1270,7 @@ bool D3D12Renderer::pickDevice() {
     fenceEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!fenceEvent_) return false;
     if (!srv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSrvHeapSize, true, kSlotFirstFree) ||
-        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvFg + 2 * kFgMaxSlots + 1, false, 0) ||
+        !rtv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kRtvRefl + 1, false, 0) ||
         !dsv_.make(dev_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kDsvDepthRo + 1, false, 0)) {
         std::fprintf(stderr, "d3d12: descriptor heaps\n");
         return false;
@@ -1382,6 +1462,7 @@ bool D3D12Renderer::makeTarget() {
         sv.Texture2DArray.MipLevels = 1;
         sv.Texture2DArray.ArraySize = kShadowLayers;
         dev_->CreateShaderResourceView(shadow_.r, &sv, srv_.cpu(kSlotShadow));
+        dev_->CreateShaderResourceView(shadow_.r, &sv, srv_.cpu(kSlotFrameB));
     } else {
         std::fprintf(stderr, "d3d12: no shadow map here - `--shadow-quality mapped` will draw nothing\n");
     }
@@ -1401,6 +1482,53 @@ bool D3D12Renderer::makeTarget() {
     litUbo_->Map(0, &none, &litUboPtr_);
     if (shUboPtr_) std::memset(shUboPtr_, 0, sizeof(ShadowUbo));
     if (litUboPtr_) std::memset(litUboPtr_, 0, sizeof(LightUbo));
+
+    // ---- THE TILED POINT LIGHTS' buffers (`setEmitterLights`), and the frame's table's other views ----
+    // the points, and the tiles' lists in two halves - the frame camera's, then the water reflection's
+    // (`binTiles`); raw views for the shader's byte-address buffers
+    if (wantEmitters_) {
+        pointsBuf_ = makeBuffer(kPointsBytes, D3D12_HEAP_TYPE_UPLOAD, "tiled lights");
+        tilesBuf_ = makeBuffer(kTileWordsMax * 4 * 2, D3D12_HEAP_TYPE_UPLOAD, "tiled lights");
+        if (pointsBuf_ && tilesBuf_ && SUCCEEDED(pointsBuf_->Map(0, &none, &pointsPtr_)) &&
+            SUCCEEDED(tilesBuf_->Map(0, &none, &tilesPtr_))) {
+            std::memset(pointsPtr_, 0, static_cast<std::size_t>(kPointsBytes));
+            std::memset(tilesPtr_, 0, 16);
+            std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+        } else {
+            std::fprintf(stderr, "d3d12: no tiled lights' buffers - the emitters' point lights beyond the 64 nearest are off\n");
+            freeRes(pointsBuf_);
+            freeRes(tilesBuf_);
+            pointsPtr_ = tilesPtr_ = nullptr;
+        }
+    }
+    {
+        const auto rawBuf = [&](ID3D12Resource* r, UINT64 firstWord, UINT64 words, UINT slot) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+            v.Format = DXGI_FORMAT_R32_TYPELESS;
+            v.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            v.Buffer.FirstElement = firstWord;
+            v.Buffer.NumElements = static_cast<UINT>(r ? words : 1);
+            v.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+            dev_->CreateShaderResourceView(r, &v, srv_.cpu(slot));   // (null: a view that reads zeros)
+        };
+        const auto nullTex = [&](UINT slot) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+            v.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            v.Texture2D.MipLevels = 1;
+            dev_->CreateShaderResourceView(nullptr, &v, srv_.cpu(slot));
+        };
+        const UINT64 pw = kPointsBytes / 4;
+        for (const UINT base : {kSlotShadow, kSlotFrameB}) {
+            nullTex(base + 1);                       // t2: the lights block's binding - never read as a texture
+            rawBuf(pointsBuf_, 0, pw, base + 2);     // t3: the points...
+            nullTex(base + 4);                       // t5: no reflection yet (`makeReflection`)
+        }
+        rawBuf(tilesBuf_, 0, kTileWordsMax, kSlotTiles);                      // t4: the frame's tiles...
+        rawBuf(tilesBuf_, kTileWordsMax, kTileWordsMax, kSlotFrameB + 3);     // ...and the reflection's, the second half
+    }
     return true;
 }
 
@@ -1423,6 +1551,16 @@ void D3D12Renderer::killTarget() {
     freeRes(motionRead_);
     freeRes(postImg_.r);     // ...and the post chain's (`makePost`)
     freeRes(vol_.r);         // ...and the volumetrics' (`makeVol`)
+    if (refl_.r) {           // ...and the water reflection's (`makeReflection`): its view back to empty
+        freeRes(refl_.r);
+        D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+        v.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        v.Texture2D.MipLevels = 1;
+        dev_->CreateShaderResourceView(nullptr, &v, srv_.cpu(kSlotRefl));
+    }
+    reflFailed_ = false;
     for (Res& b : bloom_) freeRes(b.r);
     postLive_ = false;
     for (Res& f : fgCol_) freeRes(f.r);   // ...and frame generation's (`makeFg`)
@@ -1509,17 +1647,18 @@ bool D3D12Renderer::makePipelines() {
     // ---- THE SCENE's root signature: Vulkan's three sets and its push block,
     // at the registers spirv-cross gave them (set S binding B -> spaceS, B):
     //   0  the push block, 26 root constants, b0 space7, both stages
-    //   1  set 0 binding 0, the material's texture, t0 space0 (a table)
+    //   1  set 0 binding 0, the material's texture, t0 space0, and its NORMAL MAP (the relief's), t1 (a table of two)
     //   2  set 1 binding 0, the Shadow block, a root CBV b0 space1
-    //   3  set 1 binding 1, the shadow map's layers, t1 space1 (a table)
+    //   3  set 1's textures, t1..t5 space1 (a table of five, `kFrameTable`): the shadow map's layers, the
+    //      tiled lights' points (t3) and tiles (t4), the water's reflection (t5)
     //   4  set 1 binding 2, the Lights block, a root CBV b2 space1
     //   5  set 2 binding 0, the POSE buffer, a root SRV t0 space2 - Vulkan's
     //      dynamic offset becomes the root descriptor's address
     // and the two samplers static: the texture's (s0 space0) is fixed at init
     // by the filter enhancement, the shadow map's (s1 space1) is NEAREST.
     {
-        const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 1);
-        const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, 1);
+        const D3D12_DESCRIPTOR_RANGE texRange = rs::srvs(0, 0, 2);
+        const D3D12_DESCRIPTOR_RANGE shRange = rs::srvs(1, 1, kFrameTable);
         // (44 root constants with an upscaler or frame generation: `PushMv`)
         D3D12_ROOT_PARAMETER p[13] = {
             rs::constants(0, kPushSpace, mvOn_ ? kPushMvDwords : kPushDwords, D3D12_SHADER_VISIBILITY_ALL),
@@ -1562,13 +1701,21 @@ bool D3D12Renderer::makePipelines() {
         // 63 of the 64 dwords with an upscaler and ray tracing - and its
         // sampler (s0 space6; the shader fetches texels)
         UINT nss = rtOn_ ? 3 : 2;
-        D3D12_STATIC_SAMPLER_DESC ssAll[4] = {ss[0], ss[1], ss[2], {}};
+        D3D12_STATIC_SAMPLER_DESC ssAll[6] = {ss[0], ss[1], ss[2], {}, {}, {}};
         const D3D12_DESCRIPTOR_RANGE softRange = rs::srvs(0, 6, 1);
         if (softOn_) {
             softParam_ = np;
             p[np++] = rs::table(&softRange, D3D12_SHADER_VISIBILITY_PIXEL);
             ssAll[nss++] = rs::sampler(0, 6, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f);
         }
+        // THE WATER's two (the push block's word and the tables above took none of the 64): the relief's
+        // normal map (s1 space0) through the scene's own filter, and the reflection (s5 space1) through its
+        // min/mag filter, CLAMPed - Vulkan's one sampler serves both
+        ssAll[nss] = ss[0];
+        ssAll[nss].ShaderRegister = 1;
+        ++nss;
+        ssAll[nss++] = rs::sampler(5, 1, filter_ >= 1 ? D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_POINT,
+                                   D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f);
         D3D12_ROOT_SIGNATURE_DESC d{};
         d.NumParameters = np; d.pParameters = p;
         d.NumStaticSamplers = nss; d.pStaticSamplers = ssAll;
@@ -2393,31 +2540,36 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
     // device from an earlier pool, by its pixel storage, palette and size, is
     // kept; what no slot of the new pool uses is released, after a wait for
     // the device only then. All the new ones go up in ONE submission.
-    struct Pending { Tex* out; std::vector<unsigned char> rgba; int w, h; };
+    // `normal`: the texture's NORMAL MAP (the relief's), into `out.nm`, its view in the pair's second slot
+    struct Pending { Tex* out; std::vector<unsigned char> rgba; int w, h; bool normal; };
     std::vector<Pending> pend;
     // `fill` writes tw*th RGBA texels, alpha the COLOUR KEY (`toRgbaKeyed`)
-    const auto queue = [&](auto&& fill, int tw, int th, Tex& out) {
-        Pending p{&out, std::vector<unsigned char>(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th) * 4), tw, th};
+    const auto queue = [&](auto&& fill, int tw, int th, Tex& out, bool normal = false) {
+        Pending p{&out, std::vector<unsigned char>(static_cast<std::size_t>(tw) * static_cast<std::size_t>(th) * 4), tw, th, normal};
         fill(p.rgba.data());
         pend.push_back(std::move(p));
     };
     if (!white_.img)
         queue([](unsigned char* d) { d[0] = d[1] = d[2] = d[3] = 255; }, 1, 1, white_);
+    // ...and the FLAT normal map every texture without one reads: alpha 0 is `relief()`'s "none"
+    if (!flat_.img)
+        queue([](unsigned char* d) { d[0] = d[1] = 128; d[2] = 255; d[3] = 0; }, 1, 1, flat_);
     const auto keyOf = [](const omk::Texture& x) {
         return std::make_tuple(x.idx.data(), x.pal.data(), x.width, x.height);
     };
     // THE REMASTER's TEXTURE PACK (`o3de/texpack.h`, the project's one: `[Remaster] texturepack`, content-keyed
     // PNGs): consulted only when one is open and shown. What the pool brings that the device does not hold
     // yet is decoded together on the thread pool, as Vulkan's pool does; this backend takes the PNGs'
-    // colours alone (no block formats, light maps or relief here), at the pack's size - the UVs stay in the
-    // original's texels (`Tex::su`/`sv`, the push block's `texScale*`)
+    // colours and its normal maps (the relief's: no block formats, no light maps - the bloom is not this
+    // backend's), at the pack's size - the UVs stay in the original's texels (`Tex::su`/`sv`, the push block's
+    // `texScale*`)
     const omk::TexturePack& pack = omk::texturePack();
     std::vector<omk::PackImage> reps;
     if (pack.shown()) {
         std::vector<const omk::Texture*> toDecode(t.size(), nullptr);
         for (std::size_t i = 0; i < t.size(); ++i)
             if (t[i].hasPixels() && !uploaded_.count(keyOf(t[i]))) toDecode[i] = &t[i];
-        reps = pack.replacements(toDecode, true, false);
+        reps = pack.replacements(toDecode, true, true);
     }
     for (auto& [key, u] : uploaded_) u.used = false;
     for (const auto& x : t)
@@ -2428,7 +2580,8 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
         if (it->second.used) { ++it; continue; }
         if (!waited) { flush(); waited = true; }
         freeRes(it->second.t.img);
-        srv_.free(it->second.t.srv);
+        freeRes(it->second.t.nm);
+        srv_.freePair(it->second.t.srv);
         ++texGen_;   // no ray-tracing record may name the view now
         it = uploaded_.erase(it);
     }
@@ -2453,6 +2606,13 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
             } else {
                 queue([&](unsigned char* d) { x.toRgbaKeyed(d); }, x.width, x.height, hit->second.t);
             }
+            // ...and its NORMAL MAP, when the pack has one (`o3de/normalmap.h`: RGBA8, alpha >= 1)
+            if (pack.shown() && i < reps.size() && !reps[i].normal.empty() && reps[i].nw > 0) {
+                const omk::PackImage& rep = reps[i];
+                queue([&](unsigned char* d) { std::memcpy(d, rep.normal.data(), rep.normal.size()); },
+                      rep.nw, rep.nh, hit->second.t, true);
+                ++normals_;
+            }
         }
         fresh.push_back({i, hit->first});
     }
@@ -2469,11 +2629,12 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
             UINT16 levels = 1;
             if (filter_ >= 2)
                 for (int m = std::max(p.w, p.h); m > 1; m >>= 1) ++levels;
-            p.out->img = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(p.w), static_cast<UINT>(p.h),
-                                   1, levels, 1, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST,
-                                   nullptr, "textures");
-            if (!p.out->img) continue;
-            D3D12_RESOURCE_DESC rd = p.out->img->GetDesc();
+            ID3D12Resource*& image = p.normal ? p.out->nm : p.out->img;
+            image = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(p.w), static_cast<UINT>(p.h),
+                              1, levels, 1, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST,
+                              nullptr, "textures");
+            if (!image) continue;
+            D3D12_RESOURCE_DESC rd = image->GetDesc();
             std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(levels);
             UINT64 total = 0;
             dev_->GetCopyableFootprints(&rd, 0, levels, 0, fp.data(), nullptr, nullptr, &total);
@@ -2510,7 +2671,7 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
                                 cur.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(pw) * 4,
                                 static_cast<std::size_t>(pw) * 4);
                 D3D12_TEXTURE_COPY_LOCATION td{}, sl{};
-                td.pResource = p.out->img;
+                td.pResource = image;
                 td.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
                 td.SubresourceIndex = lv;
                 sl.pResource = sb;
@@ -2521,18 +2682,30 @@ void D3D12Renderer::setTextures(std::span<const omk::Texture> t) {
             sb->Unmap(0, nullptr);
             D3D12_RESOURCE_BARRIER b{};
             b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-            b.Transition.pResource = p.out->img;
+            b.Transition.pResource = image;
             b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
             b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
             b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             l->ResourceBarrier(1, &b);
-            p.out->srv = srv_.alloc();
+            if (p.normal) continue;   // (its view: in the pass below, in the pair's second slot)
+            p.out->srv = srv_.allocPair();
             D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
             sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             sv.Texture2D.MipLevels = levels;
             if (p.out->srv != UINT(-1)) dev_->CreateShaderResourceView(p.out->img, &sv, srv_.cpu(p.out->srv));
+        }
+        // every colour's PAIR: the normal map beside it, or the flat one
+        for (const Pending& p : pend) {
+            if (p.normal || p.out->srv == UINT(-1) || !flat_.img) continue;
+            ID3D12Resource* nmImg = p.out->nm ? p.out->nm : flat_.img;
+            D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+            sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            sv.Texture2D.MipLevels = UINT(-1);
+            dev_->CreateShaderResourceView(nmImg, &sv, srv_.cpu(p.out->srv + 1));
         }
         oneShotEnd();
         for (ID3D12Resource*& sb : staging) freeRes(sb);
@@ -2660,8 +2833,11 @@ void D3D12Renderer::setViewport(const omk::View& view) {
     // ...in RENDER pixels, so the letterbox's strip scales with the frame -
     // by the supersample, or by the upscaler's ratio (`toRenderX` is `* ss_`
     // exactly when there is no upscaler)
-    const int vw = toRenderX(view.letterboxed() ? view.vw : w_);
-    const int vh = toRenderY(view.letterboxed() ? view.vh : h_);
+    int vw = toRenderX(view.letterboxed() ? view.vw : w_);
+    int vh = toRenderY(view.letterboxed() ? view.vh : h_);
+    // the FLOORS' reflection (no water draws) is drawn at half size, in the image's top-left quarter - the
+    // floors sample it there (`scene.frag` mode 3) - a quarter of the pixels
+    if (reflNow_ && reflHalf_) { vw = (vw + 1) / 2; vh = (vh + 1) / 2; }
     const D3D12_VIEWPORT vp{0.0f, 0.0f, static_cast<float>(vw), static_cast<float>(vh), 0.0f, 1.0f};
     const D3D12_RECT sc{0, 0, vw, vh};
     list_->RSSetViewports(1, &vp);
@@ -2864,11 +3040,15 @@ void D3D12Renderer::shadowPass(const omk::View& v, std::span<const omk::Draw> ca
 }
 
 void D3D12Renderer::begin(const omk::View& view) {
-    st_ = omk::RasterStats{};
-    poseUsed_ = 0;
-    poseCache_.clear();
-    for (ID3D12Resource*& r : deadBufs_) freeRes(r);   // the frame that used them was waited for
-    deadBufs_.clear();
+    // (a water reflection that began this frame (`beginReflection`) did these, and its pose blocks stand)
+    if (!reflFramed_) {
+        st_ = omk::RasterStats{};
+        poseUsed_ = 0;
+        poseCache_.clear();
+        for (ID3D12Resource*& r : deadBufs_) freeRes(r);   // the frame that used them was waited for
+        deadBufs_.clear();
+    }
+    reflFramed_ = false;
     fog_ = view.fog;
     fogStart_ = view.fogStart;
     fogEnd_ = view.fogEnd;
@@ -2902,7 +3082,25 @@ void D3D12Renderer::begin(const omk::View& view) {
         ub.grey = view.grey ? 1 : 0;
         for (int k = 0; k < 3; ++k) ub.eye[k] = view.cam.eye[k];
         ub.eye[3] = view.setDim;   // the remaster's night (1: a multiply by one)
+        ub.fx[0] = view.relief;    // THE RELIEF (the tiled module's, `scene.frag` `relief`)
         ub.fx[1] = view.mist; ub.fx[2] = view.mistGround; ub.fx[3] = view.mistHeight;   // THE MIST
+        // THE SAND'S DUST and THE RAIN'S VEILS (`View::dust`, `View::veil`), and the PUDDLES' strength
+        // (the veils' spare): the shader had them, this block never sent them
+        ub.dust[0] = view.dust; ub.dust[1] = view.dustDrift[0]; ub.dust[2] = view.dustDrift[1];
+        ub.dust[3] = view.dustScale;
+        for (int k = 0; k < 3; ++k) ub.dustColour[k] = view.dustColour[k];
+        ub.veil[0] = view.veil; ub.veil[1] = view.veilFall; ub.veil[2] = view.veilScale;
+        ub.veil[3] = view.puddles;
+        for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
+        // THE WATER's frame constants: its strength and the plane's height (`drawWaterScene` set them), the
+        // rain's for the wet floors' ripples - 0..255, as the push block carries it in Vulkan
+        rain_ = view.rain;
+        ub.wat[0] = waterOn_ ? waterStrength_ : 0.0f;
+        ub.wat[1] = static_cast<float>(std::lround(std::clamp(rain_, 0.0f, 1.0f) * 255.0f));
+        ub.wat[2] = waterY_;
+        // THE TILED POINT LIGHTS: every one the frame keeps, binned for this camera (the reflection's own were
+        // binned into the buffer's second half when it began)
+        ub.tiles = binTiles(view, false) ? 1 : 0;
         if (softOn_) {
             const float nearP = omk::kNearCut, farP = 200000.0f;
             ub.soft[0] = farP / (farP - nearP);
@@ -3062,15 +3260,15 @@ omk::Draw D3D12Renderer::cpuPose(const omk::Draw& d) {
 
 void D3D12Renderer::submit(const omk::Draw& d) {
     if (!recording_ || !d.geo || !d.count) return;
-    foc_.note(d);
+    if (!reflNow_) foc_.note(d);   // (the water reflection's draws are not the frame's: no focus, no structures)
     curBody_ = (d.meshPose && d.meshPoses) || d.castsShadow;
     // HYBRID RAY TRACING: the draw into the frame's acceleration structures,
     // and a posed body takes the character's traced terms even with the
     // game's shadows off (`caster` - no shadow then receives anyway)
     if (rtOn_) {
-        rtNote(d);
+        if (!reflNow_) rtNote(d);
         rtBodyDraw_ = omk::rt::isBodyDraw(d);
-        rtFloorDraws_ += (d.lit & omk::kDrawFloor) != 0;
+        if (!reflNow_) rtFloorDraws_ += (d.lit & omk::kDrawFloor) != 0;
     }
     if (d.meshPose && d.meshPoses && d.geo->cornerMesh.size() == d.geo->corners.size()) {
         UINT64 off = 0;
@@ -3084,21 +3282,21 @@ void D3D12Renderer::submit(const omk::Draw& d) {
 void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
     if (!uploadGeometry(d.geo)) return;
     resolveTies(d);
-    st_.triangles += static_cast<long>(d.count / 3);
+    if (!reflNow_) st_.triangles += static_cast<long>(d.count / 3);
 
     const int k = d.blend == omk::Blend::Opaque ? 0 : d.blend == omk::Blend::Add ? 1 : 2;
     // SOFT PARTICLES: an effect sprite (`kDrawSoft`) is drawn by the soft
     // twin with the depth bound READ-ONLY - so its shader can read the depth it
     // is tested against - and the next draw that writes depth binds it
     // writable again (the engine's order puts the sprites after the opaque)
-    const bool soft = softOn_ && !enhOff_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePso_ && !reflStencil_;
+    const bool soft = softOn_ && !enhOff_ && k > 0 && (d.lit & omk::kDrawSoft) && !forcePso_ && !reflStencil_ && !reflNow_;
     if (soft && !depthRo_) depthReadOnly(true);
     else if (depthRo_ && (k == 0 || forcePso_)) depthReadOnly(false);
     softDraws_ += soft;
     ID3D12PipelineState* use = forcePso_ ? forcePso_ : reflStencil_ ? pipeRefl_[k]
-                             : soft ? pipeSoft_[k] : rtCounting_ ? pipeCount_[k] : pipe_[k];
+                             : soft ? pipeSoft_[k] : rtCounting_ && !reflNow_ ? pipeCount_[k] : pipe_[k];
     // a translucent body on a frame with depth of field: its twin, which marks the stencil
-    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !soft && !forcePso_ && !reflStencil_ &&
+    const bool subj = foc_.subjStencil && k > 0 && curBody_ && !soft && !forcePso_ && !reflStencil_ && !reflNow_ &&
                       (rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k]) != nullptr;
     if (subj) use = rtCounting_ ? pipeCountSubj_[k] : pipeSubj_[k];
     if (use != bound_) { list_->SetPipelineState(use); bound_ = use; }
@@ -3118,6 +3316,20 @@ void D3D12Renderer::submitOne(const omk::Draw& d, bool posed, UINT64 poseOff) {
         const Tex& bound = (slot < tex_.size() && tex_[slot].srv != UINT(-1)) ? tex_[slot] : white_;
         const auto k = [](float s) { const long r = static_cast<long>(s + 0.5f); return static_cast<std::uint32_t>(r < 1 ? 0 : r > 16 ? 15 : r - 1); };
         texScale_ = bound.packed ? (k(bound.su) | (k(bound.sv) << 4)) : 0u;
+    }
+    // THE WATER's per-draw bits, above the pack's scale in the same word (`scene.frag`; Vulkan's `push_.water`):
+    // the water's own draws are mode 1, a reflecting floor's 3 (in the frame's pass, once it has a reflection),
+    // the reflection pass 2 - and a wet floor's film, snow lying on it or a body in the rain
+    {
+        const bool floorNow = waterOn_ && !reflNow_ && d.reflect > 0.0f;
+        std::uint32_t w = waterNow_ ? 1u : floorNow ? 3u : reflNow_ ? 2u : 0u;
+        if (!reflNow_ && d.wet > 0.0f) {
+            w |= static_cast<std::uint32_t>(std::lround(std::min(d.wet, 1.0f) * 255.0f)) << 4;
+            if (d.snow) w |= 1u << 12;
+            if (d.wetBody) w |= 1u << 13;
+        }
+        texScale_ |= (w & 0xFFFu) << 8 | (w & 0x3000u) << 8;
+        if (floorNow) texScale_ |= static_cast<std::uint32_t>(std::lround(std::clamp(d.reflect, 0.0f, 1.0f) * 255.0f)) << 22;
     }
     push_.caster = (d.castsShadow || (rtOn_ && rtBodyDraw_)) ? 1 : 0;
     push_.lit = litCount_ > 0 ? d.lit : (d.lit & (omk::kDrawShine | omk::kDrawFloor));
@@ -3179,6 +3391,174 @@ bool D3D12Renderer::drawMirrorScene(const omk::View& v, const omk::View& refl,
     pushView(v);
     for (const auto& d : scene) submit(d);
     for (const auto& d : mirror) submit(d);
+    end();
+    return true;
+}
+
+// ---- THE WATER (`todo/remaster.md` A3): the reflection, the water's draws and the floors ----------
+//
+// The remaster's water pass as Vulkan draws it (`vkrender_remaster.inl`, `drawWaterScene`): the scene through
+// the camera mirrored in the water's plane, into a target of its own, then the frame - the water's draws (and
+// the reflecting floors', `Draw::reflect`) adding that image at their own screen position. `scene.frag` is the
+// same GLSL (`-DOMK_DX` keeps the water's bits in one push word and the frame's constants in `LightUbo::wat`).
+// The reflection reuses the frame's DEPTH (cleared again by `begin`) and, under MSAA, its multisampled colour
+// (resolved into `refl_`); it is drawn by the same pipelines, so a pass of its own would be a copy of them.
+bool D3D12Renderer::makeReflection() {
+    if (refl_.r) return true;
+    if (reflFailed_) return false;
+    refl_.r = makeImage(DXGI_FORMAT_R8G8B8A8_UNORM, static_cast<UINT>(rw_), static_cast<UINT>(rh_), 1, 1, 1,
+                        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                        nullptr, "water reflection");
+    if (!refl_.r) {
+        reflFailed_ = true;
+        std::fprintf(stderr, "d3d12: the water reflection's target - refused\n");
+        return false;
+    }
+    refl_.st = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    D3D12_RENDER_TARGET_VIEW_DESC rv{};
+    rv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    dev_->CreateRenderTargetView(refl_.r, &rv, rtv_.cpu(kRtvRefl));
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Texture2D.MipLevels = 1;
+    dev_->CreateShaderResourceView(refl_.r, &sv, srv_.cpu(kSlotRefl));   // (the reflection pass's own table keeps its empty one)
+    std::printf("d3d12: the water reflection's target - %dx%d (a REMASTER feature)\n", rw_, rh_);
+    return true;
+}
+
+// the frame's tiled point lights binned for `view`'s camera (`o3de/lighttiles.h`), at the render size: the
+// FRAME's into the buffer's first half - its points written too - or, for the reflection (`reflection`),
+// the second, binned for the REFLECTED camera (the world's lights light the world wherever it is seen from).
+// -> whether the tiles are on
+bool D3D12Renderer::binTiles(const omk::View& view, bool reflection) {
+    if (view.points.empty() || !pointsPtr_ || !tilesPtr_) return false;
+    const std::size_t np = std::min<std::size_t>(view.points.size(), static_cast<std::size_t>(omk::kMaxPoints));
+    omk::RCamera bc = view.cam;
+    bc.w = view.letterboxed() ? view.vw : w_;
+    bc.h = view.letterboxed() ? view.vh : h_;
+    const std::span<const omk::View::GpuLight> pts(view.points.data(), np);
+    if (reflection) {
+        const int hd = reflHalf_ ? 2 : 1;   // the floors' reflection is drawn at half size
+        omk::binLights(bc, (toRenderX(bc.w) + hd - 1) / hd, (toRenderY(bc.h) + hd - 1) / hd, pts, tilesRefl_);
+        char* half = static_cast<char*>(tilesPtr_) + kTileWordsMax * 4;
+        if (tilesRefl_.words.size() > kTileWordsMax) {
+            std::memset(half, 0, 16);   // no tiles across: the pass lights nothing from them
+            return false;
+        }
+        std::memcpy(half, tilesRefl_.words.data(), tilesRefl_.words.size() * 4);
+        return true;
+    }
+    auto* gp = static_cast<GpuLightStd140*>(pointsPtr_);
+    for (std::size_t i = 0; i < np; ++i) {
+        const auto& l = view.points[i];
+        for (int k = 0; k < 3; ++k) { gp[i].posA[k] = l.pos[k]; gp[i].dirB[k] = l.dir[k]; gp[i].colourI[k] = l.colour[k]; }
+        gp[i].posA[3] = l.radiusA; gp[i].dirB[3] = l.radiusB; gp[i].colourI[3] = l.intensity;
+    }
+    omk::binLights(bc, toRenderX(bc.w), toRenderY(bc.h), pts, tiles_);
+    if (tiles_.words.size() > kTileWordsMax) {
+        if (!tilesOverTold_) {
+            tilesOverTold_ = true;   // said, never silent: every point light goes with it
+            std::fprintf(stderr, "d3d12: the tiled lights' lists (%zu words) past the buffer's %llu - "
+                         "the point lights off this frame\n", tiles_.words.size(),
+                         static_cast<unsigned long long>(kTileWordsMax));
+        }
+        return false;
+    }
+    std::memcpy(tilesPtr_, tiles_.words.data(), tiles_.words.size() * 4);
+    if (!tilesTold_) {
+        tilesTold_ = true;
+        omk::event("remaster.tiles", {{"lights", static_cast<long>(np)}, {"listed", tiles_.listed},
+                                      {"full", tiles_.full}, {"tile", tiles_.tile}});
+        std::printf("d3d12: the tiled point lights - %zu lights over %dx%d tiles of %d px, %ld listed, "
+                    "%d tiles full (a REMASTER feature)\n", np, tiles_.across, tiles_.down, tiles_.tile,
+                    tiles_.listed, tiles_.full);
+    }
+    return true;
+}
+
+// the reflection pass's start: a `begin` for the mirrored camera that touches nothing the frame owns - no
+// upscaler history, no uniforms (the frame's own `begin` writes them, and the GPU reads them when the list
+// runs) - into `refl_` (or the multisampled colour, resolved by `endReflection`), the frame's depth cleared
+void D3D12Renderer::beginReflection(const omk::View& rv) {
+    st_ = omk::RasterStats{};
+    poseUsed_ = 0;
+    poseCache_.clear();
+    for (ID3D12Resource*& r : deadBufs_) freeRes(r);   // the frame that used them was waited for
+    deadBufs_.clear();
+    reflFramed_ = true;
+    fog_ = rv.fog;
+    fogStart_ = rv.fogStart;
+    fogEnd_ = rv.fogEnd;
+    for (int i = 0; i < 3; ++i) fogColour_[i] = static_cast<float>(rv.fogColour[i]) / 255.0f;
+    for (int i = 0; i < 3; ++i) clearColour_[i] = static_cast<float>(rv.clearColour[i]) / 255.0f;
+    enhOff_ = rv.enhOff;
+    depthRo_ = false;   // (the last frame's soft sprites left it read-only: `depthReadOnly` would rebind the FRAME's colour)
+    reflNow_ = true;
+    pushView(rv);
+    // the reflection's tiles, into the buffer's second half (the points are the frame's, written by its `begin`)
+    binTiles(rv, true);
+    openFrameList();
+    Res& rt = samples_ > 1 ? msColour_ : refl_;
+    rt.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    depth_.to(list_, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_.cpu(samples_ > 1 ? rtvMs_ : kRtvRefl);
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_.cpu(dsvDepth_);
+    // (an upscaler's motion target, which the pipelines write too: the frame clears it again)
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = {rtv, rtv_.cpu(rtvMotion_)};
+    if (mvOn_) motion_.to(list_, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    list_->OMSetRenderTargets(mvOn_ ? 2 : 1, rtvs, FALSE, &dsv);
+    const float cc[4] = {clearColour_[0], clearColour_[1], clearColour_[2], 1.0f};
+    list_->ClearRenderTargetView(rtv, cc, 0, nullptr);
+    list_->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+    setViewport(rv);
+    list_->OMSetStencilRef(1);
+    list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    list_->SetGraphicsRootSignature(sceneRs_);
+    list_->SetGraphicsRootConstantBufferView(2, shUbo_->GetGPUVirtualAddress());
+    list_->SetGraphicsRootDescriptorTable(3, srv_.gpu(kSlotFrameB));
+    list_->SetGraphicsRootConstantBufferView(4, litUbo_->GetGPUVirtualAddress());
+    if (poseBuf_) list_->SetGraphicsRootShaderResourceView(5, poseBuf_->GetGPUVirtualAddress());
+    if (softOn_) list_->SetGraphicsRootDescriptorTable(softParam_, srv_.gpu(kSlotDepth));
+    if (rtOn_) rtBindRoots();
+    bound_ = nullptr;
+    recording_ = true;
+    // (no jitter: the pass is a mirror image sampled by screen position, not resolved by the upscaler)
+    pm_.jitter[0] = pm_.jitter[1] = 0.0f;
+}
+
+void D3D12Renderer::endReflection() {
+    reflNow_ = false;
+    if (samples_ > 1) {
+        msColour_.to(list_, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+        refl_.to(list_, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+        list_->ResolveSubresource(refl_.r, 0, msColour_.r, 0, DXGI_FORMAT_R8G8B8A8_UNORM);
+    }
+    refl_.to(list_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+bool D3D12Renderer::drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                                   std::span<const omk::Draw> above, std::span<const omk::Draw> water,
+                                   float strength, float planeY) {
+    // (no water draws: the REFLECTING FLOORS' frame - its floors are in `scene`, `Draw::reflect` set)
+    if (strength <= 0.0f || !wantWater_ || !dev_ || !makeReflection()) return false;
+    reflHalf_ = water.empty();   // the floors': half size, in the image's top-left quarter
+    waterStrength_ = strength;
+    waterY_ = planeY;
+    // 1. THE REFLECTION: what lies above the plane, through the mirrored camera; the pixels below it are
+    //    discarded in the shader (a posed body's place is not known on the CPU)
+    beginReflection(refl);
+    for (const auto& d : above) submit(d);
+    endReflection();
+    // 2. THE FRAME, the water's own draws (and the floors') adding the reflection
+    waterOn_ = true;   // (before `begin`, which writes the strength into the lights block)
+    begin(v);
+    for (const auto& d : scene) submit(d);
+    waterNow_ = true;
+    for (const auto& d : water) submit(d);
+    waterNow_ = false;
     end();
     return true;
 }
@@ -3440,6 +3820,12 @@ void D3D12Renderer::rtBind(const omk::View& view) {
     omk::rt::fillFrame(fog_ ? fogColour_ : clearColour_, rtEye_, view.skyMean, rtReflOn_, f);
     if (view.enhOff) { f.sky[3] = 0.0f; f.refl[0] = 0.0f; }   // the original's look: no traced light, no reflections
     std::memcpy(rtFramePtr_, &f, sizeof f);
+    rtBindRoots();
+}
+
+// the ray-traced frame's root bindings - the water reflection's pass takes them too (its shading reads the
+// same acceleration structures; they were built before the frame's list runs, and `RtFrame` is the frame's)
+void D3D12Renderer::rtBindRoots() {
     list_->SetGraphicsRootShaderResourceView(6, rtTlas_->GetGPUVirtualAddress());
     list_->SetGraphicsRootShaderResourceView(7, rtInstTab_->GetGPUVirtualAddress());
     list_->SetGraphicsRootConstantBufferView(8, rtFrameCb_->GetGPUVirtualAddress());
@@ -4044,6 +4430,8 @@ void D3D12Renderer::end() {
     recording_ = false;
     listOpen_ = false;
     shadowLive_ = false;
+    waterOn_ = false;   // (the water's frame constants are `drawWaterScene`'s, once a frame)
+    waterStrength_ = waterY_ = 0.0f;
     dirty_ = true;
     if (mvOn_) {
         static const bool stats = omk::envFlag("OMK_MOTION_STATS");
@@ -5185,9 +5573,12 @@ D3D12Renderer::~D3D12Renderer() {
     rtKill();
     for (ID3D12Resource*& b : deadBufs_) freeRes(b);
     for (auto& [g, b] : vbo_) freeRes(b.res);
-    for (auto& [key, u] : uploaded_) freeRes(u.t.img);
+    for (auto& [key, u] : uploaded_) { freeRes(u.t.img); freeRes(u.t.nm); }
     freeRes(lutImg_);
     freeRes(white_.img);
+    freeRes(flat_.img);
+    freeRes(pointsBuf_);
+    freeRes(tilesBuf_);
     killTarget();
     freeRes(shadow_.r);
     freeRes(shUbo_);

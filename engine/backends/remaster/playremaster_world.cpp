@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 // a set's water and ground, its floors, probes and glowing surfaces - on the
@@ -220,6 +221,26 @@ void PlayState::remasterConfigure(omk::Renderer& r) {
     if ((r.takes() & omk::kTakesGrade) && !(r.takes() & omk::kTakesBloom) &&
         (omk::cityGrades().active() || rain3dStrength > 0.0f))
         r.setGrade(nullptr, 0);
+    // THE REMASTER'S BLOOM, AO AND UPSCALE on a renderer that has its own of each (Direct3D 12's: [Enhancements] bloom,
+    // SSAO and ray-traced AO, the FSR/DLSS upscalers): not drawn there, and no row on OMK's menu (`takes()`) - one
+    // effect, one control - so the key says so instead of doing nothing, and the pack's light maps (the bloom's alone)
+    // are not decoded for it
+    const bool own = std::strcmp(r.name(), "d3d12") == 0;
+    if (own && bloomStrength > 0.0f && !(r.takes() & omk::kTakesBloom)) {
+        std::printf("bloom: not drawn by Direct3D 12, which has its own - [Enhancements] bloom\n");
+        bloomStrength = 0.0f;
+        omk::texturePack().setLights(false);
+    }
+    if (own && aoStrength > 0.0f && !(r.takes() & omk::kTakesAmbientOcclusion)) {
+        std::printf("ao: not drawn by Direct3D 12, which has the same effect - [Enhancements] ssao (and, with "
+                    "raytracing, ray-traced AO)\n");
+        aoStrength = 0.0f;
+    }
+    if (own && upscale > 1.0f && !(r.takes() & omk::kTakesUpscale)) {
+        std::printf("upscale: the remaster's FSR 1 spatial upscale is Vulkan's and GLES's - Direct3D 12 has "
+                    "[Enhancements] upscaler (FSR 3.1/4, DLSS)\n");
+        upscale = 1.0f;
+    }
     if (upscale > 1.0f) r.setUpscale(upscale);   // in the supersample's place
     if (bloomStrength > 0.0f) r.setBloom(bloomStrength);
     // the floors, listed or wet, ride on the water's pass - and the MIST, the

@@ -193,7 +193,7 @@ remaster\grades        the colour looks of the cities
 
 The release's `omk.ini` already points to them. A folder that is not there is just ignored (the log says so). To make a texture pack from your game, use `tools/omktexpack.py` (`--help` explains it; it needs Python, and an AI upscaler like Real-ESRGAN for the upscaling step).
 
-Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
+Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too. On Direct3D 12 the water, the wet streets, the relief and the lights of the flames and glows work like on Vulkan (checked frame by frame against Vulkan); the remaster's `bloom`, `ao` and `upscale` are Vulkan's, Direct3D 12 has this fork's own bloom, ambient occlusion and upscalers instead.
 
 > [!NOTE]
 > FSR and DLSS are only in a build you make yourself if the AMD and NVIDIA SDKs are on your computer when you build (`FSR_SDK`, `FSRVK_SDK` for FSR on Vulkan, and `SL_SDK`, see the top of `build-windows.sh`). The zip from the Releases page has all of them. DLSS does not compile with the MSYS2 compiler (its Windows headers are too old), the releases are built with [w64devkit](https://github.com/skeeto/w64devkit) instead (see `.github/workflows/build.yml`).

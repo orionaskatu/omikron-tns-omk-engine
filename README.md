@@ -31,6 +31,107 @@ All features ported to Vulkan except FSR4/DLSS.
 > [!IMPORTANT]
 > Thanks a lot to sosso33 (https://github.com/sosso33/omikron-tns-omk-engine) for his great work!
 
+## Build it on Windows
+
+You need to install three things once. After that, building is one command.
+
+**1. MSYS2** (it gives you the compiler). Download it from https://www.msys2.org and install it with the default options. Then open **"MSYS2 MINGW64"** from the Start menu (not the other MSYS2 icons, it has to be the MINGW64 one) and paste this:
+
+```
+pacman -S --needed git make mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-SDL2
+```
+
+**2. The Vulkan SDK.** Download it from https://vulkan.lunarg.com/sdk/home#windows and install it with the default options. Even if you only want to use Direct3D 12, you still need it, because it brings the tools that build the shaders.
+
+**3. A copy of the game.** The Steam version is fine. This repo doesn't contain the game, it reads the files from your install. It never writes anything into it.
+
+Now, still in the MINGW64 window:
+
+```
+git clone -b fixes https://github.com/orionaskatu/omikron-tns-omk-engine.git
+cd omikron-tns-omk-engine
+./build-windows.sh
+```
+
+The first build takes a few minutes. When it says `Done`, the game is `engine/build/omk-play.exe`. If you pull new changes later, run `./build-windows.sh` again, it only rebuilds what changed.
+
+> [!NOTE]
+> You don't want to build it? Every push on the `fixes` branch is built by GitHub, and the result is on the **Releases** page of this repo. Download the zip and unzip it anywhere.
+
+### Start the game
+
+Open a normal Windows terminal (cmd or PowerShell) in the repo folder and run:
+
+```
+engine\build\omk-play.exe "C:\Program Files (x86)\Steam\steamapps\common\Omikron" tables --config omk.ini
+```
+
+The first path is the folder of your game, change it if yours is somewhere else. `tables` is the folder with the same name in this repo. You can put that line in a `.bat` file, then you just double-click it.
+
+If you use the zip from the Releases page, you don't need any of this: unzip it, and double-click `Play Omikron.bat` (open it with Notepad first if your game is not in the default Steam folder, the path is on one line at the top). It also reads `omk.ini` if you put one next to it.
+
+By default the game starts like the original, same look, nothing added. Everything new is **off** until you turn it on in the ini file. See below.
+
+### The ini file
+
+The ini file is where you turn the new features on. It's a plain text file.
+
+1. Copy `omk.ini.example` and call the copy `omk.ini`.
+2. Open it with Notepad. Every line starts with `;`, which means "ignored". To use a setting, remove the `;` at the start of that line and change the value.
+3. Start the game with `--config omk.ini` (like in the command above).
+
+A few rules that save time:
+
+- The file has sections: `[Preferences]`, `[Options]`, `[Enhancements]`, `[Remaster]`, `[OMK]` and `[Restored]`. A setting only works under its own section.
+- A save file beats the ini for the options of the game's own menu (clipping distance, level of detail...). So if a setting doesn't change anything, it may be because your save already has a value.
+- A flag on the command line beats everything else.
+- Don't want to think about it? Under `[Enhancements]`, write `all = max`. It turns every enhancement on, as high as it goes. Any line you add after it still wins, so you can do `all = max` and then `dof = off`, for example.
+- Most of the file is comments that explain each setting. Read them, they are written for people.
+
+Here is a small example. It turns everything on, plays in full screen with Direct3D 12 and 32 bit colours:
+
+```
+[Preferences]
+window = 0
+renderer = d3d12
+
+[Enhancements]
+all = max
+colordepth = 32
+```
+
+### What you can change
+
+These are the settings added by this fork, all in `omk.ini.example` with a longer explanation. They are all under `[Enhancements]` unless I say otherwise.
+
+| Setting | What it does |
+|---|---|
+| `renderer` (`[Preferences]`) | `vulkan` (default) or `d3d12`. You can also switch while playing with the **V** key. |
+| `all` | `max` turns everything below on. `off` (default) leaves everything alone. |
+| `colordepth` | `16` is the original look. `32` gives real 32 bit colours (smooth skies and fog, no dithering). |
+| `raytracing` | Ray traced ambient occlusion, and characters lit by the colours of the place around them. Needs a graphics card that can do ray queries. |
+| `rtreflections` | Ray traced reflections on wet streets (needs `raytracing`). |
+| `ssao` | Soft dark corners and creases (ambient occlusion), without ray tracing. Vulkan only. |
+| `bloom` | `on` makes neons, lamps and fires glow. |
+| `dof` | `on` blurs the background in dialogues and cutscenes (depth of field). |
+| `colorgrade` | A colour look over the whole picture: `off`, `cyber`, `warm`, `noir` or `filmic`. |
+| `hdr` | `on` for HDR output, if Windows has HDR turned on. Not tested, I don't have an HDR screen. |
+| `softparticles` | Smoke, steam and fire fade where they touch walls, instead of cutting hard. |
+| `volumetrics` | A soft glow of light in the air around the street lamps. |
+| `framegen` | Frame generation: adds a picture between each two real ones. Only kicks in when the game runs slow. |
+| `animblend` | Smooths the animations when a character changes movement (starts walking, stops, turns). |
+| `lod` | `best` keeps every passer-by on the best model, even far away. `game` is the original. |
+| `vehicleshine` | Shiny lights and sky reflection on the sliders and motos. |
+| `upscaler` | `fsr` or `dlss` draws the game smaller and upscales it. Direct3D 12 only. |
+| `upscalequality` | `native`, `quality`, `balanced`, `performance` or `ultraperformance`. |
+
+The usual graphics ones (`antialiasing`, `texturefiltering`, `anisotropy`, `supersampling`, `shadowquality`, `lighting`, `framerate`, `uiscaling`, `textscaling`...) are in the same section.
+
+Everything under `[Remaster]` comes from the upstream project (HD texture packs, weather, wet streets, water, mist, bloom, face smoothing...). The comments in the file explain each one. `mode = original` there, or the **F10** key in game, switches back to the original look, and that switches off the features of this fork too.
+
+> [!NOTE]
+> FSR and DLSS are only in the build if the AMD and NVIDIA SDKs are on your computer when you build. The zip from the Releases page doesn't have them.
+
 ----
 
 # OMK — an open-source engine for *Omikron: The Nomad Soul*

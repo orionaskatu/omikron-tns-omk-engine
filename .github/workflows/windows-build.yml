@@ -1,0 +1,100 @@
+# Builds the game for Windows on every push to the `fixes` branch and puts
+# the result on the Releases page as a zip.
+name: Windows build
+
+on:
+  push:
+    branches: [fixes]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to create the release
+
+concurrency:
+  group: windows-build
+  cancel-in-progress: true
+
+env:
+  VULKAN_VERSION: 1.4.363.0
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSYS2 (compiler, make, SDL2)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-SDL2
+
+      # The Vulkan SDK gives the headers, vulkan-1.lib and the shader tools
+      # (glslc, spirv-cross, dxc). It is big, so it is cached.
+      - name: Vulkan SDK cache
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: vulkan-sdk-${{ env.VULKAN_VERSION }}
+
+      - name: Vulkan SDK install
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          Invoke-WebRequest $url -OutFile vulkan-sdk.exe
+          Start-Process .\vulkan-sdk.exe -Wait -ArgumentList "--accept-licenses --default-answer --confirm-command install"
+          Get-ChildItem C:\VulkanSDK\$env:VULKAN_VERSION\Bin\glslc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\dxc.exe, C:\VulkanSDK\$env:VULKAN_VERSION\Bin\spirv-cross.exe
+
+      - name: Build
+        shell: msys2 {0}
+        env:
+          VULKAN_SDK: C:/VulkanSDK/${{ env.VULKAN_VERSION }}
+        run: ./build-windows.sh -j"$(nproc)"
+
+      - name: Pack the zip
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp engine/build/omk-play.exe engine/build/SDL2.dll dist/
+          # the compiler's own runtime (this build is not linked statically)
+          for d in libstdc++-6 libgcc_s_seh-1 libwinpthread-1; do cp "/mingw64/bin/$d.dll" dist/; done
+          cp -r tables dist/tables
+          cp omk.ini.example LICENSE dist/
+          cp "windows/Play Omikron.bat" dist/
+          cat > dist/README.txt <<'EOT'
+          Omikron - OMK engine, Windows build.
+
+          1. You need your own copy of the game (the Steam one is fine).
+          2. Double-click "Play Omikron.bat". If your game is not in the default
+             Steam folder, edit the path in that file.
+          3. To change settings, copy omk.ini.example to omk.ini and edit it.
+             The comments in the file explain every setting.
+
+          More: https://github.com/orionaskatu/omikron-tns-omk-engine
+          EOT
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\* -DestinationPath omk-windows.zip
+
+      - name: Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short="${GITHUB_SHA::7}"
+          tag="build-${GITHUB_RUN_NUMBER}"
+          printf 'Windows build of commit %s (branch %s).\n\nUnzip it, then double-click "Play Omikron.bat".\n\nLast commit:\n\n%s\n' \
+            "$short" "$GITHUB_REF_NAME" "$(git log -1 --format=%B)" > notes.txt
+          gh release create "$tag" omk-windows.zip \
+            --target "$GITHUB_SHA" \
+            --title "Windows build #${GITHUB_RUN_NUMBER} ($short)" \
+            --notes-file notes.txt \
+            --prerelease

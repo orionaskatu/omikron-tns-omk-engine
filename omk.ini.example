@@ -87,6 +87,12 @@
 ;MouseSensY = 0
 
 
+; --- which graphics API draws the game (Windows) -----------------------------
+; vulkan (the default) or d3d12. The same as the --vulkan / --d3d12 flags.
+; V switches between them while you play. FSR / DLSS only work on d3d12.
+;renderer = vulkan
+
+
 [Options]
 ; THIS PORT'S OWN SECTION, for the two option rows the engine has no ini key
 ; for. They are not invented settings: both are real rows of the game's menu

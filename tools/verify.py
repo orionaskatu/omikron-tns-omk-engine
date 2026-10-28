@@ -36176,15 +36176,17 @@ def c_engine_wet_floors():
          are drawn wet (`remaster.wetbodies` at frame 690, more than 0 of
          them); against `OMK_NO_WET_BODIES=1` more than 5000 pixels move on
          Vulkan, and on GLES the same ones (overlap above 0.8) - and more
-         than 500 of them BRIGHTER (the three channels' sum up by more
+         than 60 of them BRIGHTER (the three channels' sum up by more
          than 48 in 8-bit steps): the body rule darkens the film but its
-         SHEEN lights the edges, where a body drawn under the FLOOR rule
-         (`wetBody` lost, `wet` kept - the mutation it is shown to fail
-         with) only darkens: 1343 there against 0 (2026-10-28). And Kay'l
+         SHEEN lights the beads of water, where a body drawn under the FLOOR
+         rule (`wetBody` lost, `wet` kept - the mutation it is shown to fail
+         with) only darkens: 1343 there against 0 with the even film
+         (2026-10-28), 133 with the beads (the even film read as plastic,
+         the reader, the same day). And Kay'l
          POSED ON THE CPU (`OMK_CPU_PLAYER=1`, as GLES poses him under the
          mapped shadows - he carries no pose to be found by): on GLES more
          than 5000 pixels move against `OMK_NO_WET_BODIES=1` and more than
-         300 brighten the same way - his posed normals reach the sheen
+         60 brighten the same way (143 with the beads) - his posed normals reach the sheen
          (`remasterWantsNormals`).
 
     Measured 2026-10-27 (M3): 9913 open, 2217 covered, 111 ms at the set's
@@ -36372,11 +36374,11 @@ def c_engine_wet_floors():
     print(f"        the wet bodies brighter in {glossed} pixels")
     if gc1 and gc0:
         cmv, cgl = len(moved(gc1, gc0)), brighter(gc1, gc0)
-        cpu = (cmv > 5000, cgl > 300)
+        cpu = (cmv > 5000, cgl > 60)
         print(f"        Kay'l posed on the CPU, GLES: {cmv} pixels wet, {cgl} brighter")
     else:
         cpu = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
-    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 500, bgl, cpu)
+    bodied = (int(wb.get("wet", 0)) > 0, len(bmv) > 5000, glossed > 60, bgl, cpu)
     snowed = (int(lying.get("covered", 0)) > 300, len(smv) > 3000, sgl,
               not any(n == "remaster.snow" for n, _ in ev))
     print(f"        the snow lying in Mahaleel: {lying.get('covered')} covered, {len(smv)} pixels on Vulkan; "

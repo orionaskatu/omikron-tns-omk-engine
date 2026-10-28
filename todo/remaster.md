@@ -1474,6 +1474,21 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   (`OMK_CPU_PLAYER=1`) on GLES 1343 too, 1 with his normals or his marking
   lost. `OMK_NO_WET_BODIES=1` (an instrument) leaves them dry. Qalisar
   with its crowd: 79 of 84. `engine: wet floors` part 11.
+* **The sheen in BEADS** (2026-10-28): the even sheen read as plastic - the
+  reader in Qalisar's restored rain at 4K, `--remaster --enhance-all`:
+  "it looks like character are in a plastic film". The sheen now sits in
+  beads of water, a value noise on the body's TEXTURE (`kWetBodyBeadScale`
+  48 on `vUV`, thresholded `kWetBodyBeadLo..Hi` 0.55..0.8) so they move with
+  the body (the world's would slide over it); the rim between them a
+  quarter (`kWetBodyRimFilm`, power 5), the sky's highlight on the beads
+  alone (power 16), `kWetBodySheen` 0.55, and no floor of light in the
+  body's shadows - lit by `shade` alone. The darkening and the colour kept.
+  Anekbah 640x480: 34803 pixels on Vulkan, 34804 on GLES, overlap 0.994;
+  133 brighter by more than 48 (part 11 now asks more than 60; the floor
+  rule's 0 still told apart), Kay'l on the CPU 143. The reader: "better",
+  then "a bit stronger": `kWetBodySheen` 0.75, `kWetBodySky` 1.0, more beads
+  (`kWetBodyBeadLo` 0.5) - 292 brighter, Kay'l on the CPU 300, overlap
+  0.993. The reader: "better" again.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

@@ -173,20 +173,48 @@ jobs:
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc
+          sudo apt-get install -y g++ make pkg-config libsdl2-dev libvulkan-dev glslc glslang-tools python3
+
+      # FSR 3.1 over Vulkan: AMD's FidelityFX SDK v1.1.4 (MIT) has no Linux library, so
+      # linux/ffx-vk/ builds one from its source. Only the parts the build needs are taken.
+      - name: FidelityFX SDK (FSR 3.1, Vulkan)
+        run: |
+          mkdir -p upscalers
+          git clone -q --depth 1 --branch "$FSR_VK_VERSION" --filter=blob:none --sparse             https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git upscalers/fsr-vk
+          git -C upscalers/fsr-vk sparse-checkout set --no-cone "ffx-api/" "sdk/include/" "sdk/src/" "LICENSE.txt"
+
+      - name: FSR 3.1 library cache
+        id: ffx-cache
+        uses: actions/cache@v4
+        with:
+          path: upscalers/lib
+          key: ffx-vk-linux-${{ env.FSR_VK_VERSION }}-${{ hashFiles('linux/ffx-vk/**') }}
+
+      - name: FSR 3.1 library (libamd_fidelityfx_vk.so)
+        if: steps.ffx-cache.outputs.cache-hit != 'true'
+        run: |
+          bash linux/ffx-vk/build.sh upscalers/fsr-vk upscalers/ffx-build
+          mkdir -p upscalers/lib
+          cp upscalers/ffx-build/libamd_fidelityfx_vk.so upscalers/lib/
 
       - name: Build
         working-directory: engine
-        run: make play -j"$(nproc)"
+        run: make play FSRVK_SDK="$GITHUB_WORKSPACE/upscalers/fsr-vk" -j"$(nproc)"
 
       - name: Pack the archive
         run: |
           ldd engine/build/omk-play
           mkdir -p dist/licenses
           cp engine/build/omk-play dist/
+          # the build must have the FSR 3.1 library and its glue, or the release would miss the upscaler
+          [ -f upscalers/lib/libamd_fidelityfx_vk.so ] || { echo "MISSING libamd_fidelityfx_vk.so"; exit 1; }
+          cp upscalers/lib/libamd_fidelityfx_vk.so dist/
+          ldd dist/libamd_fidelityfx_vk.so
+          strings engine/build/omk-play | grep -q libamd_fidelityfx_vk.so || { echo "the viewer was built without the FSR 3.1 glue"; exit 1; }
           cp -r tables dist/tables
           cp linux/omk.ini omk.ini.example dist/
           cp LICENSE dist/licenses/OMK-LICENSE.txt
+          cp upscalers/fsr-vk/LICENSE.txt dist/licenses/AMD-FidelityFX-1.1.4-license.txt
           cat > dist/README.txt <<'EOT'
           Omikron - OMK engine, Linux build (Vulkan).
 
@@ -199,6 +227,7 @@ jobs:
 
           You need a Vulkan driver and the SDL2 library (libsdl2-2.0-0 on Debian and
           Ubuntu, sdl2 on Arch and Fedora). Ray tracing needs a GPU with ray queries.
+          The upscaler is AMD FSR 3.1 (libamd_fidelityfx_vk.so, keep it next to omk-play).
           Built on Ubuntu 24.04: it needs a glibc of that age or newer.
 
           The game's own files are never changed. Saves go to the omk-saves folder

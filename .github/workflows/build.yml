@@ -223,7 +223,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           short="${GITHUB_SHA::7}"
-          tag="build-${GITHUB_RUN_NUMBER}"
+          tag="build-$(date -u +%Y%m%d-%H%M)"   # not the run number: it restarted when the workflow was renamed and would meet old tags
           files="pkg/omk-windows.zip"
           linux="no Linux package (that build failed)"
           if [ -f pkg/omk-linux.tar.gz ]; then files="$files pkg/omk-linux.tar.gz"; linux="omk-linux.tar.gz (Vulkan)"; fi
@@ -237,4 +237,4 @@ jobs:
             echo
             git log -1 --format=%B
           } > notes.txt
-          gh release create "$tag" $files --target "$GITHUB_SHA" --title "Build #${GITHUB_RUN_NUMBER} ($short)" --notes-file notes.txt --latest
+          gh release create "$tag" $files --target "$GITHUB_SHA" --title "Build $(date -u +%Y-%m-%d\ %H:%M) ($short)" --notes-file notes.txt --latest

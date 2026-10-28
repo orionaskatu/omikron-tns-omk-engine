@@ -167,6 +167,7 @@ These are the settings added by this fork, all in `omk.ini.example` with a longe
 | `colorgrade` | A colour look over the whole picture: `off`, `cyber`, `warm`, `noir` or `filmic`. Not in `all`; the release's `omk.ini` sets `cyber`. |
 | `hdr` | `on` for HDR output, if Windows has HDR turned on. Not in `all`; the release's `omk.ini` sets it. Not tested, I don't have an HDR screen. |
 | `desktopresolution` (`[OMK]`) | `on`: in fullscreen the game is drawn at your desktop's resolution. |
+| `debug` (`[OMK]`) | `on`: Windows writes `omk-play.log` and `omk-play-errors.log` next to the exe (send them with a bug report). Off by default; the release `omk.ini` has it on. |
 | `language` (`[OMK]`) | The language of the menus added by this fork: `fr` or `en`. By default it follows the language of your game, and English if it is neither. |
 | `softparticles` | Smoke, steam and fire fade where they touch walls, instead of cutting hard. |
 | `volumetrics` | A soft glow of light in the air around the street lamps. |

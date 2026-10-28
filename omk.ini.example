@@ -468,6 +468,12 @@
 [OMK]
 ; THIS PORT'S OWN INTERFACE - neither the game's settings nor a look.
 ;
+; THE LOG FILES (Windows): `debug = on` makes the exe, which has no console, write
+;   omk-play.log and omk-play-errors.log beside itself, line by line (a freeze
+;   keeps everything up to it). Off by default: nothing is written. Started with a
+;   redirect (omk-play.exe > log.txt) the redirect wins. Linux prints to the terminal.
+;debug = on
+;
 ; The LANGUAGE of OMK's own menu rows (the "Graphismes (OMK)" pages,
 ; `todo/graphics-menu.md`): their texts are `engine/lang/omk-menu.ini`, in
 ; French and English. The game's own rows keep the language of the copy

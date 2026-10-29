@@ -1663,7 +1663,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   under cover (`remaster.wetbodies`' new `playerOpen`). `engine: wet
   floors` part 15. Also: Qalisar's shower is the RESTORED one (the preset
   turns it on), and without the 3D rain the original's camera roof stops
-  it there.
+  it there. **CONFIRMED IN PLAY** (the reader's "good", 2026-10-29, at
+  their place in the hall).
 * **12, THE GRID** (2026-10-29): every ray of the set's wet pass is straight
   up, so `wetFloors` builds a `SoupGrid` (`kWetGridCell` 64, widened past
   512 cells an axis) over the shot soup and one over the drawn set, and
@@ -1688,7 +1689,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   frame is a placement. Anekbah's street, frames 600 -> 690: 19 at the feet
   walking, 1 standing (another walker); ~125 on the heads either way.
   `OMK_NO_BODY_SPLASHES=1` (an instrument) none. `engine: rain 3d` part
-  17. **Not judged in play yet** - the strengths are the reader's to set.
+  17. **CONFIRMED IN PLAY** (the reader's "good", 2026-10-29, Qalisar
+  with the full pack and `--enhance-all`, M1).
 * **7, THE GUSTS** (2026-10-29, the reader's "go with 7"): the original's
   wind is one fixed step a frame - `(0.5, 0.866, 0) * 64`, the rain 30
   degrees off the vertical - and stays so: its drops, their step, their
@@ -1706,8 +1708,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   `veilAmount`. Anekbah's street: the lean -0.081..0.285 over frames 600 ->
   870; at 870, 53781 pixels on Vulkan (42466 the veils'), 54038 on GLES,
   overlap 0.920. `OMK_NO_GUSTS=1` (an instrument) none. Not the snow, the
-  drips or the splashes. `engine: rain 3d` part 18. **Not judged in play
-  yet.**
+  drips or the splashes. `engine: rain 3d` part 18. **CONFIRMED IN PLAY**
+  (the reader's "good", 2026-10-29, the same run).
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

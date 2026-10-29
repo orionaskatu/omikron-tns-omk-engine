@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseScreens`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/events.h"
 #include "platform/env.h"
 
 namespace {
@@ -297,6 +298,42 @@ void PlayState::screensHuds() {
     // for the four seconds after `Fight_Begin`'s `Hud_Refresh`
     // (`ui/hudbar.h`). Hidden through the KO replay, as the engine's gate.
     screensFightHud(lay);
+    // ---- THE ADVENTURE GAUGE, `Actors_TickAll`'s ACTOR_STATE-1 arm ----
+    //
+    // Read from the bytes (0x468A04): with the stamp set, at 3000 ms past
+    // it the stamp is cleared (`nullsub_4` first); before it the drawn
+    // value; under 2500 ms that value eased toward the target,
+    //     shown += (value - shown) * e / (2500 - e)     (`idiv`, truncated)
+    // and drawn; from 2500 the target. `Hud_DrawBar(v, 200, 0, mode)`. Only
+    // while the player is in state 1 - a flash armed in another state waits.
+    if (hudFlash.armed && player && player->state() == omk::ActorState::Normal &&
+        !omk::envFlag("OMK_NOUI")) {
+        const long now = static_cast<long>(hudFlash.clock);
+        const long at = static_cast<long>(hudFlash.stamp);
+        if (now >= at + 3000) {
+            hudFlash.armed = false;
+            std::printf("frame %ld: HUD gauge off (3 s after Hud_ShowValue)\n", frameNo);
+            omk::event("hud.gauge", {{"state", "off"}});
+        } else {
+            int v = hudFlash.shown;
+            if (now >= at + 2500) {
+                v = hudFlash.value;
+            } else if (now >= at) {
+                const long e = now - at;
+                v = static_cast<int>(hudFlash.shown +
+                                     (static_cast<long>(hudFlash.value) - hudFlash.shown) * e /
+                                         (2500 - e));
+                hudFlash.shown = v;
+            }
+            if (!hudBar.loaded()) hudBar.load(fs);
+            const omk::HudBarFrame g = hudBar.draw(fb, v, 200, 0, hudFlash.mode, &lay,
+                                                   hudFlash.clock);
+            if (frameNo % 10 == 0)
+                std::printf("    adventure gauge (Hud_DrawBar mode %d): %d/200 = %d%%, "
+                            "card rows %d\n", hudFlash.mode, v, g.percent, g.cardRows);
+            omk::event("hud.gauge", {{"value", v}, {"mode", hudFlash.mode}});
+        }
+    }
     // ---- THE BREATH GAUGE (`todo/swimming.md` step 4) ----------------
     //
     // `sub_4A8F30`'s underwater arm, every tick until the 40 seconds are

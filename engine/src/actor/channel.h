@@ -338,6 +338,10 @@ public:
         return -1;
     }
     float frame() const { return frame_; }
+    // `+220`, how many times in a row `gotoMove` re-entered the state it left
+    // (0 on any other edge or under NoInputPass) - `sub_45AD10` (0x0045AD10),
+    // `return dword_8F59FC[57 * chan]`, which MDRUN / MDWALK read.
+    int repeat() const { return repeat_; }
     // THE CURRENT CLIP'S LENGTH IN FRAMES - the channel's `+8`, which
     // `gotoMove` writes from `Actor_ClipFrames` (or from the blend length
     // while a blend runs). `sub_45ACF0` (0x0045ACF0) is exactly this read -

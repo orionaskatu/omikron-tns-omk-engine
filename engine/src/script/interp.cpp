@@ -792,6 +792,11 @@ RunResult Interpreter::resume(std::span<const std::byte> code, std::size_t at) {
                 const auto actor = fetch16(code, q);
                 const auto prop  = fetch16(code, q);
                 const auto var   = fetch16(code, q);
+                if (actor == -1 && hooks_) {
+                    std::int32_t vie = 0;
+                    getProperty(-1, 1, vie);
+                    hooks_->hudShowValue(prop, state_.var(var), vie);
+                }
                 setProperty(actor, prop, state_.var(var));
                 recordCall(op, {actor, prop, var});
                 continue;

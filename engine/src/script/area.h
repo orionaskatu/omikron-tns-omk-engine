@@ -506,6 +506,16 @@ public:
         w.swap(shootStatWrites_);
         return w;
     }
+    // `Hud_ShowValue`'s calls (`script/hooks.h`), for the frontend, which
+    // owns the gauge: the property, the value about to be written, `Vie`
+    // before the write, and `Hud_Refresh`'s six reads (16, 19, 17, 3, 18,
+    // 2) - made inside the call, so also before the write. Taken once a frame.
+    struct HudShow { int property = 0; std::int32_t value = 0, vie = 0; int card[6] = {}; };
+    std::vector<HudShow> takeHudShows() {
+        std::vector<HudShow> w;
+        w.swap(hudShows_);
+        return w;
+    }
     // ops 80 and 81, and the ONE door a harness may use as well: the weapon
     // table at `IAM\GLOBAL +42` is read on the first call, so a caller that
     // went straight to `ShootMode::begin` would enter with slot 11 and no
@@ -1748,6 +1758,7 @@ private:
     // Shoot mode: the opcodes' decisions and the actor->action map.
     ShootMode shoot_;
     std::vector<ShootStatWrite> shootStatWrites_;   // `sub_423A40`, for the frontend
+    std::vector<HudShow> hudShows_;                 // `Hud_ShowValue`, for the frontend
     bool shootTableRead_ = false;    // GLOBAL +42, read on the first `shoot.begin`
     float bumpCooldown_ = 0.0f;              // dword_538318, frames at 30 Hz, run down by the delta
     long  runOvers_ = 0;                     // message-17 posts, an instrument
@@ -1883,6 +1894,7 @@ private:
         bool propById(int id, PropRef& out) override;
         void placeObjectAt(int character, int stateIndex) override;
         void shootStatSet(int actor, int property, std::int32_t value) override;
+        void hudShowValue(int property, std::int32_t value, std::int32_t vie) override;
     private:
         Session* s_;
         // `Actor_FindById` over the two slots' blocks (the DB's own record is

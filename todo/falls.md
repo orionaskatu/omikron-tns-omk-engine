@@ -61,6 +61,7 @@ neighbouring block here, CLAUDE.md 1's trap): `sub_414DE0(actor, 0, 0)`, the
 | 4 | VEHICLE hits | **done 2026-09-17** - §4 |
 | 5 | health at 0 outside a fight or a shoot phase | **read 2026-09-17: nothing takes it there** - §5 |
 | 6 | play | |
+| 7 | the HEALTH FLASH - the gauge a landing or a run-over shows | **done 2026-10-29** - §6 |
 
 `verify.py: engine: fall reaction` (the crate stack and the catacombs) and
 `engine: run over` (Anekbah's lane).
@@ -147,3 +148,32 @@ catacombs - a shoot phase, where the shoot mode's own death applies. AREAs 41,
 61 and 168 list subscriptions to 10/11 whose script offset is 0, dead records.
 **So nothing in adventure mode kills the player, and there is no adventure
 death to port.**
+
+## 6. The health flash, read and ported 2026-10-29
+
+The reader asked whether the original shows the health bar when a fall or a
+vehicle costs health. **It does, and the port never drew it.** Every one of
+these handlers ends `actor.stat.set -1, 1, Vie`, and op 93's player arm
+(0x404790, field 0 == -1) calls `Hud_ShowValue` (0x0041CE50) BEFORE
+`Actor_SetProperty`: refused while ACTOR_STATE is 3 and for properties 4 and
+5; property 1 sets `dword_4E90A8` = 0 (mode 0, the gauge),
+`dword_910688` = the new value, `dword_930748` = `Vie` as it stands
+(`movsx [rec+0AAh]`); any other stat sets mode 2 (the gauge and the stat
+card) and leaves those two. Then `dword_4E90A4` = `Sys_GetTimeMs()` and
+`Hud_Refresh`.
+
+`Actors_TickAll`'s ACTOR_STATE-1 arm draws it, read from the bytes at
+0x468A04 (the decompiled CLEAN body called it "an ambience fade" and dropped
+the first arm; corrected in `readable/src/21_d3d.c`): with the stamp set,
+3000 ms past it -> `nullsub_4`, stamp 0; before it -> `Hud_DrawBar(shown)`;
+under 2500 ms -> `shown += (value - shown) * e / (2500 - e)` (`idiv`) and
+drawn; then the target. At 30 fps that lands on the target in ~1.25 s with
+no overshoot. Drawn only in state 1, so a flash armed in a fight or a screen
+waits for state 1, as in the original.
+
+Ported as `WorldHooks::hudShowValue` -> `Session::takeHudShows` (with
+`Hud_Refresh`'s six reads, made before the write) -> `PlayState::hudFlash`,
+drawn in `screensHuds`. Measured: the catacombs' 5 m landing (AREA 141,
+the no-floor handler) gives `Hud_ShowValue(1, -35, Vie 10)`, the gauge eases
+10 -> -35 (drawn clamped to 0) and goes off after 90 frames.
+`engine: hud flash`, shown to fail (the hook removed; the 3 s stretched).

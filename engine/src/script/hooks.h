@@ -107,6 +107,13 @@ public:
     // how a medikit a SHOOT zone applies (`actor.stat.set(player, 1, ...)`)
     // reaches the gauge. `actor` is -1 for the player.
     virtual void shootStatSet(int /*actor*/, int /*property*/, std::int32_t /*value*/) {}
+
+    // ---- `Hud_ShowValue` (0x0041CE50), op 93's PLAYER arm ---------------
+    // `actor.stat.set` with field 0 == -1 calls it BEFORE `Actor_SetProperty`
+    // with the new value and the record's `+0xAA` - property 1, `Vie`, as it
+    // stands before the write. It arms the adventure HUD's gauge (the
+    // frontend, `Actors_TickAll`'s ACTOR_STATE-1 arm) and calls `Hud_Refresh`.
+    virtual void hudShowValue(int /*property*/, std::int32_t /*value*/, std::int32_t /*vie*/) {}
 };
 
 }  // namespace omk

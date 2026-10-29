@@ -240,6 +240,23 @@ bool PlayerController::jumpLaunch() {
     return walker_.jump(jumpV_[1], jumpV_[0], jumpV_[2]);
 }
 
+// The breath groups by ID: H1Avnt's 164 (H_RUN-SD -> H_BREATH -> H_STAND)
+// and 166 (H_WK-SD -> H_BREATH -> H_STAND).
+bool PlayerController::breathMove(const std::string& mv) {
+    if (mv == "MDRUN")  { runLoops_  = static_cast<std::uint32_t>(rt_.channel().repeat()); return false; }
+    if (mv == "MDWALK") { walkLoops_ = static_cast<std::uint32_t>(rt_.channel().repeat()); return false; }
+    bool took = false;
+    if (mv == "MDSTOPR") {
+        if (runLoops_ > 30) took = enterGroupById(164);
+        runLoops_ = 0;
+    } else if (mv == "MDSTOPW") {
+        if (runLoops_ > 30 && walkLoops_ < 3) took = enterGroupById(166);
+        runLoops_ = 0;
+        walkLoops_ = 0;
+    }
+    return took;
+}
+
 // ---- THE LANDING, `MDJUMP03` (0x0046BE40) --------------------------------
 //
 //     dword_6A52CC = 0                          -- the airborne flag

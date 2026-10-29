@@ -52,7 +52,7 @@ is small enough to not count it as a task"). Count a request when it is a
 piece of work in its own right; a flag or a convenience over what was just
 built rides with it.
 
-**tasks since the last full sweep: 0**
+**tasks since the last full sweep: 1** - (OUT OF BREATH AND THE HEALTH FLASH, the reader's "running cooldown, health lose when hit by a vehicle or when falling", 2026-10-29: MDRUN/MDWALK/MDSTOPR/MDSTOPW, groups 164/166 after more than 30 run loops; `Hud_ShowValue` and `Actors_TickAll`'s state-1 gauge, eased over 2.5 s, off at 3; `engine: out of breath` and `engine: hud flash` new, shown to fail.)
 
 (2026-10-05: CPU AGAINST THE ORIGINAL, `todo/cpu-vs-original.md` steps 1-2 and tier A (1 task so far) - `--only` over the 39 checks it could reach, one red re-pinned (`engine: profiler`, the palette textures), `engine: raster cost` new.)
 

@@ -15138,6 +15138,97 @@ def c_engine_fall_reaction():
            ("the crate stack: fall group, camera 18, landing group 4, camera 16; the " \
             "catacombs' 5 m: group 5, message 11, camera 19, and camera 0 on the get-up")
 
+def c_engine_out_of_breath():
+    r"""`omk-play`: a long run stops OUT OF BREATH, a short one does not.
+
+    `tab_special_move` rows 59..62, read from the raw image (no `proc`
+    labels; `asmfn.py` snaps to the wrong block there). MDRUN (0x0046C0C0)
+    and MDWALK (0x0046C050) store the channel's `+220` repeat count in
+    `dword_53B07C` / `dword_53B080`; MDSTOPR (0x0046C0E0) takes H1Avnt's
+    group 164 (H_RUN-SD, H_BREATH) when the run's is over 30, MDSTOPW
+    (0x0046C070) group 166 when the run's is over 30 and the walk's under 3.
+    `PlayerController::breathMove`. In Anekbah's street, ~1000 frames of
+    running stop into 164 after ~52 loops; ~250 frames (~12 loops) stop
+    plainly."""
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "SCPTDATA"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0:
+        return ("build failed",), ("built",), "engine/ must build"
+    if not os.path.exists(play):
+        return ("no sdl",), ("no sdl",), "needs SDL to render"
+    save = os.path.join(ROOT, "traces", "save-appart.bin")
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+
+    def run(frames, held):
+        return subprocess.run(
+            [play, fr, os.path.join(ROOT, "tables"), "--save", save, "--area", "0",
+             "--stand", "1804,0,-6890,336", "--no-crowd", "--frames", str(frames),
+             "--nodelay", "--hold", "k200+54*%d,0*150" % held],
+            capture_output=True, text=True, errors="replace", env=env).stdout
+
+    long_, short = run(1150, 1000), run(400, 250)
+    runs = (long_.count("special move: MDRUN"), short.count("special move: MDRUN"))
+    if not all(runs):
+        return runs, ("> 0", "> 0"), "both runs must run (MDRUN lines)"
+    b1 = [e for n, e in _events(long_) if n == "breath"]
+    b2 = [e for n, e in _events(short) if n == "breath"]
+    loops = int(b1[0]["loops"]) if b1 else -1
+    return ([e["move"] for e in b1], loops > 30, len(b2), "MDSTOPR" in short), \
+           (["MDSTOPR"], True, 0, True), \
+           "the long run (%d MDRUNs) stops into group 164 after more than 30 loops; " \
+           "the short (%d) stops plainly" % runs
+
+def c_engine_hud_flash():
+    r"""`omk-play`: a script's health write flashes the gauge in adventure mode.
+
+    Op 93 `actor.stat.set` with field 0 == -1 calls `Hud_ShowValue`
+    (0x0041CE50) BEFORE `Actor_SetProperty`, with the new value and `Vie`
+    as it stands; for property 1 that arms `dword_4E90A8` = 0, the target
+    and the value drawn, stamped. `Actors_TickAll`'s ACTOR_STATE-1 arm
+    (read from the bytes at 0x468A04) then draws `Hud_DrawBar(v, 200, 0,
+    mode)` with v eased `shown += (value - shown) * e / (2500 - e)` under
+    2500 ms, the target after, and clears the stamp at 3000 ms. Every
+    landing and run-over handler is such a write. The catacombs' 5 m
+    landing (AREA 141's message 11, no floor): Vie 10 -> -35, the gauge
+    easing down from 10 and off 90 frames later."""
+    import subprocess
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not (os.path.isdir(eng) and os.path.isdir(os.path.join(fr, "SCPTDATA"))):
+        return ("skipped",), ("skipped",), "engine/ or gamedata/ absent"
+    mk = subprocess.run(["make", "-s", "play"], cwd=eng, capture_output=True, text=True)
+    play = os.path.join(eng, "build", "omk-play")
+    if mk.returncode != 0:
+        return ("build failed",), ("built",), "engine/ must build"
+    if not os.path.exists(play):
+        return ("no sdl",), ("no sdl",), "needs SDL to render"
+    env = dict(os.environ, SDL_VIDEODRIVER="dummy", OMK_EVENTS="1")
+    out = subprocess.run(
+        [play, fr, os.path.join(ROOT, "tables"), "--save",
+         os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "141",
+         "--stand", "42785,855,-2678,270", "--frames", "400", "--nodelay",
+         "--hold", "k200*260"],
+        capture_output=True, text=True, errors="replace", env=env).stdout
+    ev = _events(out)
+    shows = [e for n, e in ev if n == "hud.show"]
+    gauge = [e for n, e in ev if n == "hud.gauge"]
+    if not shows:
+        return ("no hud.show",), ("hud.show",), "the landing must reach Hud_ShowValue"
+    vals = [int(e["value"]) for e in gauge if "value" in e]
+    off = sum(1 for e in gauge if e.get("state") == "off")
+    s = shows[0]
+    eased = bool(vals) and vals[0] == 10 and vals[-1] == -35 and \
+        all(a >= b for a, b in zip(vals, vals[1:]))
+    return ((s["property"], s["value"], s["vie"], s["mode"]), eased, len(vals), off), \
+           (("1", "-35", "10", "0"), True, 90, 1), \
+           "the catacombs' landing: Hud_ShowValue(1, -35, Vie 10), the gauge eased " \
+           "10 -> -35 over 3 s (90 frames) and switched off"
+
 def c_engine_run_over():
     r"""`omk-play`: the traffic brakes for a player standing on the road, and STOPS IN TIME.
 
@@ -53437,6 +53528,8 @@ SLOW = [
     ("engine: fight loser pose", c_engine_fight_loser_pose, "todo/fight-mode 15.16"),
     ("engine: fall reaction", c_engine_fall_reaction, "todo/falls.md 1"),
     ("engine: run over", c_engine_run_over, "todo/falls.md 4"),
+    ("engine: out of breath", c_engine_out_of_breath, "todo/scene-gameplay-audit.md 18"),
+    ("engine: hud flash", c_engine_hud_flash, "todo/falls.md 6"),
     ("engine: script timer", c_engine_script_timer, "todo/drift-audit.md S1; GAME_STATE"),
     ("engine: reply action", c_engine_reply_action, "todo/drift-audit.md S2; SCRIPT_VM"),
     ("engine: hide show", c_engine_hide_show, "todo/drift-audit.md M1; SCRIPT_VM"),

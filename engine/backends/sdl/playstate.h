@@ -618,6 +618,16 @@ struct PlayState {
     } gun{};
     float playerDeathCountdown{};
     int hudHealth{};
+    // THE ADVENTURE GAUGE's state, `Hud_ShowValue`'s globals: the mode
+    // (`dword_4E90A8`: 0 for `Vie`, 2 for any other stat - the gauge plus the
+    // stat card), the target (`dword_910688`), the value drawn (`dword_930748`,
+    // eased toward the target) and the stamp (`dword_4E90A4`, 0 = off) on
+    // `clock`, the `Sys_GetTimeMs` stand-in.
+    struct HudFlash {
+        int mode = 0, value = 0, shown = 0;
+        double stamp = 0.0, clock = 0.0;
+        bool armed = false;
+    } hudFlash{};
     omk::ShootRecord playerShootRec{};
     omk::ShotLatch shotLatch{};
     omk::ShootAim shootAim{};

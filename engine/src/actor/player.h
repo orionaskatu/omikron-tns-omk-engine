@@ -738,6 +738,19 @@ public:
     // reaction. -> the band it decided (2 ordinary, 1 / 3 / 4 a reaction).
     int  jumpLand();
 
+    // OUT OF BREATH, `tab_special_move` rows 59..62, read from the raw image
+    // (no `proc` labels). MDRUN (0x0046C0C0, H_RUN) and MDWALK (0x0046C050,
+    // H_WALK) store the channel's repeat count (`sub_45AD10`) in
+    // `dword_53B07C` / `dword_53B080`: how many times the loop came round.
+    // MDSTOPR (0x0046C0E0, the stop out of a run): over 30 loops ->
+    // `SetPersoBankGroup(Cef_FindGroupById(bank, 164))`, H_RUN-SD then
+    // H_BREATH; the run count zeroed either way. MDSTOPW (0x0046C070, the stop
+    // out of a walk): over 30 loops of the run AND under 3 of the walk ->
+    // group 166, H_WK-SD then H_BREATH; both counts zeroed. Both compares are
+    // unsigned (`jbe` / `jae`). -> true when it took the breath group.
+    bool breathMove(const std::string& mv);
+    std::uint32_t runLoops() const { return runLoops_; }
+
     // MDJUMP03's band table on its own, so it can be TESTED without a drop to
     // stand under. The reaction arm needs 1.50 m of fall and every fixture in
     // the suite stands on flat ground, so asserting this through a jump would
@@ -781,6 +794,8 @@ private:
     // (y, per second) and `flt_53AE58` (z, per frame)
     double       jumpV_[3] = {0.0, 0.0, 0.0};
     bool         jumpArmed_ = false;
+    std::uint32_t runLoops_ = 0;       // dword_53B07C, MDRUN's
+    std::uint32_t walkLoops_ = 0;      // dword_53B080, MDWALK's
     std::vector<std::string> moves_;
     float pos_[3];
     float start_[3];

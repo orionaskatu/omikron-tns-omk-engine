@@ -4258,6 +4258,21 @@ void Session::Hooks::shootStatSet(int actor, int property, std::int32_t value) {
     s_->shootStatWrites_.push_back({actor, property, value});
 }
 
+// `Hud_ShowValue` keeps nothing for properties 4 and 5 (`Argent`,
+// `Anneaux`); its ACTOR_STATE-3 refusal is the frontend's, which holds it.
+void Session::Hooks::hudShowValue(int property, std::int32_t value, std::int32_t vie) {
+    if (property == 4 || property == 5) return;
+    HudShow h{property, value, vie, {}};
+    static const int kCard[6] = {16, 19, 17, 3, 18, 2};
+    const auto rec = s_->state_.raw().subspan(
+        static_cast<std::size_t>(GameState::kPlayerRecord), kActorRecordSize);
+    for (int k = 0; k < 6; ++k) {
+        std::int32_t c = 0;
+        h.card[k] = readActorProperty(rec, kCard[k], c) ? c : 0;
+    }
+    s_->hudShows_.push_back(h);
+}
+
 int Session::Hooks::heldObjectField(int actor) {
     const auto r = record(actor);
     return r.empty() ? -1 : heldObjectOf(r);

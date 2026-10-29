@@ -4,6 +4,7 @@
 // the phase calls them in this order.
 #include "playframe.h"
 #include "platform/env.h"
+#include "platform/events.h"
 #include "o3de/vecmath.h"
 
 // The follow camera's offsets, first-person aim
@@ -2154,6 +2155,16 @@ void PlayState::adventureSpecialMove(const std::string& mv, omk::Input& in, omk:
     // `MDRAISE0` (0x0046BED0, `H_SOL-SD` - getting up from a
     // 5 m landing): `sub_414DE0(actor, 0, 0)`, home from 19
     if (mv == "MDRAISE0") fallCamRequest(0, false, "MDRAISE0", static_cast<int>(player->state()));
+    // OUT OF BREATH (`PlayerController::breathMove`): MDRUN / MDWALK count
+    // the loops, MDSTOPR / MDSTOPW stop into groups 164 / 166 after a long run
+    if (mv == "MDRUN" || mv == "MDWALK" || mv == "MDSTOPR" || mv == "MDSTOPW") {
+        const std::uint32_t loops = player->runLoops();
+        if (player->breathMove(mv)) {
+            std::printf("frame %ld: %s - out of breath after %u run loops\n", frameNo,
+                        mv.c_str(), loops);
+            omk::event("breath", {{"move", mv}, {"loops", static_cast<long>(loops)}});
+        }
+    }
     // THE WATER MOVES (`todo/swimming.md` 1, read from the raw
     // image). `MDDIVEND` 0x0046BEF0: ACTOR_STATE 14 and message 22.
     // `MDSW2SD` 0x0046BF20: ACTOR_STATE 1 and, if a camera is

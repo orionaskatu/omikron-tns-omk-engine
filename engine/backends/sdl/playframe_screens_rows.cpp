@@ -3,6 +3,7 @@
 // Parts of `PlayState::phaseScreens`, split out by `todo/play-split.md`;
 // the phase calls them in this order.
 #include "playframe.h"
+#include "platform/events.h"
 
 // Interface sound `id` (`IAM\I2D\sounds`, by the widget table's name) at the
 // device rate, decoded once and kept
@@ -1785,5 +1786,34 @@ void PlayState::screensPropertyTail() {
                 if (row->key >= 2 && row->key >= 6 && row->key == (w.value >> 16) + 2)
                     hudAmmo = static_cast<int>(w.value & 0xFFFF);
         }
+    }
+    // ---- `Hud_ShowValue` (0x0041CE50), op 93's player arm ------------
+    //
+    // Refused for any actor but the player and while his ACTOR_STATE is 3
+    // (properties 4 and 5 the Session already dropped). `Vie` arms mode 0
+    // with the target and the value before the write; any other stat
+    // arms mode 2 and leaves both alone. Then the stamp and `Hud_Refresh`:
+    // the sparks reseeded at y 22 and the stat card's snapshot.
+    if (frames) hudFlash.clock += frameSec * 1000.0;
+    else hudFlash.clock = static_cast<double>(front.ticksMs());
+    for (const auto& h : session.takeHudShows()) {
+        if (!player || player->state() == omk::ActorState::Shoot) continue;
+        if (h.property == 1) {
+            hudFlash.mode = 0;
+            hudFlash.value = static_cast<int>(h.value);
+            hudFlash.shown = static_cast<int>(h.vie);
+        } else {
+            hudFlash.mode = 2;
+        }
+        hudFlash.stamp = hudFlash.clock;
+        hudFlash.armed = true;
+        if (!hudBar.loaded()) hudBar.load(*fs_);
+        hudBar.refresh(0, 22, fb.w);
+        hudBar.refresh(1, 22, fb.w);
+        hudBar.refreshCard(h.card, hudFlash.clock);
+        std::printf("frame %ld: HUD (Hud_ShowValue) - property %d -> %d, Vie %d, mode %d\n",
+                    frameNo, h.property, int(h.value), int(h.vie), hudFlash.mode);
+        omk::event("hud.show", {{"property", h.property}, {"value", static_cast<long>(h.value)},
+                                {"vie", static_cast<long>(h.vie)}, {"mode", hudFlash.mode}});
     }
 }

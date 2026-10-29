@@ -286,8 +286,15 @@ struct ClipMemo {
     }
 };
 
+// ...TWO of them (`[Remaster] reflections = 2`): a frame with a second level
+// clips at both heights, and one memo would forget each plane's runs for the
+// other every frame - the memo whose height it is, else the one not used last.
 void clipAbove(const std::vector<Draw>& in, float y, const Geometry* stable, std::vector<Draw>& out) {
-    static ClipMemo memo;
+    static ClipMemo memos[2];
+    static int last = 0;
+    const int k = memos[0].y == y ? 0 : memos[1].y == y ? 1 : 1 - last;
+    last = k;
+    ClipMemo& memo = memos[k];
     if (!memo.listening) { addGeometryListener(&ClipMemo::gone, &memo); memo.listening = true; }
     if (memo.y != y) { memo.runs.clear(); memo.y = y; }
     const float n[3] = {0.0f, -1.0f, 0.0f};
@@ -333,7 +340,9 @@ float groundLevel(const Geometry& g) {
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
                    const std::vector<float>* floorStrength,
-                   const std::vector<std::uint8_t>* wetTris, float wetReflect, float wetDarken) {
+                   const std::vector<std::uint8_t>* wetTris, float wetReflect, float wetDarken,
+                   SecondPlane* second) {
+    if (second) second->drawn = false;
     if (!wp.found || strength <= 0.0f || !setGeo || !r.drawsWater()) return false;
     // above the water: the game's Y points DOWN, so a smaller y
     if (v.cam.eye[1] >= wp.y - 1.0f) return false;
@@ -345,7 +354,37 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
     // (`verify.py: engine: wet floors` part 13)
     static const float band = omk::envFlag("OMK_WET_PLANE_EXACT") ? 4.0f : kWetPlaneBand;
     const auto onWetPlane = [&](const Corner& c) { return std::fabs(c.y - wp.y) <= band; };
-    bool floored = false;
+    // THE SECOND LEVEL (`SecondPlane`): the floors' alone, the eye above it,
+    // and apart from the first by more than the wet band - a triangle within
+    // it reflects in the first
+    const bool two = second && second->plane.found && (floorStrength || wetTris) && r.drawsTwoReflections() &&
+                     v.cam.eye[1] < second->plane.y - 1.0f && std::fabs(second->plane.y - wp.y) > 2.0f * band;
+    const float y2 = two ? second->plane.y : 0.0f;
+    const auto onPlane2 = [&](const Corner& c) { return std::fabs(c.y - y2) <= 4.0f; };
+    const auto onWetPlane2 = [&](const Corner& c) { return std::fabs(c.y - y2) <= band; };
+    // ...and of its triangles those IN SHOT alone (the view's frustum, a tenth
+    // wider; out when all three corners are past one side): the level's floor
+    // near the eye was off screen at Qalisar's lamp street, its pass drawn for
+    // nothing (2026-10-29) - with none in shot, no second pass
+    float vs[3] = {}, vu[3] = {}, vf[3] = {}, tanH = 1.0f, tanV = 1.0f;
+    if (two) cameraBasis(v.cam, vs, vu, vf, tanH, tanV);
+    const auto inShot = [&](const Corner* c) {
+        int out[5] = {0, 0, 0, 0, 0};
+        for (int k = 0; k < 3; ++k) {
+            const float d[3] = {c[k].x - v.cam.eye[0], c[k].y - v.cam.eye[1], c[k].z - v.cam.eye[2]};
+            const float x = d[0] * vs[0] + d[1] * vs[1] + d[2] * vs[2];
+            const float y = d[0] * vu[0] + d[1] * vu[1] + d[2] * vu[2];
+            const float z = d[0] * vf[0] + d[1] * vf[1] + d[2] * vf[2];
+            out[0] += z < kNearCut;
+            out[1] += x > z * tanH * 1.1f;
+            out[2] += x < -z * tanH * 1.1f;
+            out[3] += y > z * tanV * 1.1f;
+            out[4] += y < -z * tanV * 1.1f;
+        }
+        for (const int o : out) if (o == 3) return false;
+        return true;
+    };
+    bool floored = false, floored2 = false;
     for (const auto& d : draws) {
         if (floorStrength || wetTris) {
             // THE FLOORS: a listed floor's runs on the plane reflect, in place
@@ -367,26 +406,47 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
             const Geometry& g = *d.geo;
             std::size_t runStart = d.start;
             float runValue = -1.0f, runWet = 0.0f;
+            std::uint8_t runPlane = 0;
             const auto flush = [&](std::size_t end) {
                 if (runValue < 0.0f || end <= runStart) return;
                 Draw o = d; o.start = runStart; o.count = end - runStart;
                 o.reflect = runValue;
                 o.wet = runWet;
+                o.reflectPlane = runPlane;
                 floored |= runValue > 0.0f;
+                floored2 |= runValue > 0.0f && runPlane == 1;
                 scene.push_back(o);
             };
             for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {
                 const bool open = wet && t / 3 < wetTris->size() && (*wetTris)[t / 3];
+                const bool wetFloor = open && (*wetTris)[t / 3] == 1;   // a wet FLOOR (1; a wall is 2)
+                const Corner* c = &g.corners[t];
                 float value = 0.0f;
-                if (onPlane(g.corners[t]) && onPlane(g.corners[t + 1]) && onPlane(g.corners[t + 2])) {
+                std::uint8_t plane = 0;
+                if (onPlane(c[0]) && onPlane(c[1]) && onPlane(c[2])) {
                     value = s;
                     if (open) value = std::max(value, wetReflect);
-                } else if (open && (*wetTris)[t / 3] == 1 && onWetPlane(g.corners[t]) &&
-                           onWetPlane(g.corners[t + 1]) && onWetPlane(g.corners[t + 2])) {
-                    value = wetReflect;   // a wet FLOOR (1; a wall is 2) a little off the level
+                } else if (wetFloor && onWetPlane(c[0]) && onWetPlane(c[1]) && onWetPlane(c[2])) {
+                    value = wetReflect;   // a little off the level
+                } else if (two && onPlane2(c[0]) && onPlane2(c[1]) && onPlane2(c[2])) {
+                    value = open ? std::max(s, wetReflect) : s;   // ...or on the SECOND level, its rules
+                    plane = 1;
+                } else if (two && wetFloor && onWetPlane2(c[0]) && onWetPlane2(c[1]) && onWetPlane2(c[2])) {
+                    value = wetReflect;
+                    plane = 1;
+                }
+                if (plane == 1) {
+                    // off screen: nothing to reflect, nothing to query; in
+                    // shot, the level's fade - at 0 still marked, for its query
+                    if (value <= 0.0f || !inShot(c)) { value = 0.0f; plane = 0; }
+                    else value *= second->fade;
+                } else if (value <= 0.0f) {
+                    plane = 0;
                 }
                 const float dark = open ? wetDarken : 0.0f;
-                if (value != runValue || dark != runWet) { flush(t); runStart = t; runValue = value; runWet = dark; }
+                if (value != runValue || dark != runWet || plane != runPlane) {
+                    flush(t); runStart = t; runValue = value; runWet = dark; runPlane = plane;
+                }
             }
             flush(d.start + d.count);
             continue;
@@ -437,6 +497,27 @@ bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
         casters.clear();
         for (const auto& d : draws) if (d.castsShadow) casters.push_back(d);
         if (!casters.empty()) r.shadowPass(v, casters);
+    }
+    // ...and the SECOND level's reflection: its own mirrored view and its own
+    // clip, the posed draws whole as for the first
+    if (floored2) {
+        View rv2 = v;
+        rv2.cam.eye[1] = 2.0f * y2 - v.cam.eye[1];
+        rv2.cam.at[1] = 2.0f * y2 - v.cam.at[1];
+        rv2.cam.rollDeg = 180.0f - v.cam.rollDeg;
+        rv2.cam.flipX = !v.cam.flipX;
+        static std::vector<Draw> above2, clipped2;
+        clipAbove(flat, y2, setGeo, clipped2);
+        above2.assign(posed.begin(), posed.end());
+        above2.insert(above2.end(), clipped2.begin(), clipped2.end());
+        if (noCpuClip) above2.assign(scene.begin(), scene.end());
+        if (water.empty() && r.drawTwoReflections(v, rv, scene, above, strength, wp.y, rv2, above2, y2)) {
+            second->drawn = true;
+            return true;
+        }
+        // refused after all: the second level's runs reflect nothing
+        for (auto& d : scene)
+            if (d.reflectPlane == 1) { d.reflect = 0.0f; d.reflectPlane = 0; }
     }
     return r.drawWaterScene(v, rv, scene, above, water, strength, wp.y);
 }

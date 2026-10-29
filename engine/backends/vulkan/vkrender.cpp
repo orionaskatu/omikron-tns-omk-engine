@@ -316,6 +316,13 @@ public:
     bool drawWaterScene(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
                         std::span<const omk::Draw> above, std::span<const omk::Draw> water,
                         float strength, float planeY) override;
+    bool drawsTwoReflections() const override {
+        return samples_ == VK_SAMPLE_COUNT_1_BIT ? reflPassKeep_ != VK_NULL_HANDLE : reflPass1Keep_ != VK_NULL_HANDLE;
+    }
+    bool drawTwoReflections(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                            std::span<const omk::Draw> above, float strength, float planeY,
+                            const omk::View& refl2, std::span<const omk::Draw> above2, float planeY2) override;
+    int secondLevelSeen() override { return levelSeen_; }
     bool drawMirrorScene(const omk::View& v, const omk::View& refl,
                          std::span<const omk::Draw> scene,
                          std::span<const omk::Draw> sceneClipped,
@@ -503,6 +510,10 @@ private:
     VkImageView    depthView_ = VK_NULL_HANDLE;
     VkRenderPass   pass_ = VK_NULL_HANDLE;
     VkRenderPass   reflPass_ = VK_NULL_HANDLE;   // the water reflection's, under the AO (its depth not stored)
+    // ...and, without MSAA, the SECOND floor level's (`drawTwoReflections`):
+    // the same, its colour KEPT - it begins in COLOR_ATTACHMENT, so its clear
+    // touches its own quarter (the render area) and the first's stays
+    VkRenderPass   reflPassKeep_ = VK_NULL_HANDLE;
     VkFramebuffer  fbuf_ = VK_NULL_HANDLE;
     VkBuffer       readBuf_ = VK_NULL_HANDLE; VkDeviceMemory readMem_ = VK_NULL_HANDLE;
 
@@ -519,6 +530,7 @@ private:
     // count is fixed) - the reflection's per-fragment lights ran four times a
     // pixel for an image the relief blurs anyway. The water's keeps the MSAA.
     VkRenderPass          reflPass1_ = VK_NULL_HANDLE;
+    VkRenderPass          reflPass1Keep_ = VK_NULL_HANDLE;   // ...the second level's, its colour kept
     VkPipeline            pipe1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     VkPipeline            pipeTiled1_[3] = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     bool                  tilesNow_ = false;   // this frame's tiles are on: the tiled pipelines
@@ -541,6 +553,10 @@ private:
     VkDescriptorSet       ds1_  = VK_NULL_HANDLE;
     VkDescriptorSet       ds1Refl_ = VK_NULL_HANDLE;   // ...the water reflection's: its own tiles
     omk::LightTiles       tilesRefl_;                  // ...binned for the reflected camera
+    // ...and the SECOND floor level's: the upper half of the reflection's
+    // half of the buffer - each reflection's lists then within a quarter
+    // of the words (`reflTilesCap`), half-size frames binned in a quarter of the tiles
+    VkDescriptorSet       ds1Refl2_ = VK_NULL_HANDLE;
     VkBuffer        shUbo_ = VK_NULL_HANDLE;   VkDeviceMemory shUboMem_ = VK_NULL_HANDLE;
     void*           shUboPtr_ = nullptr;
     VkBuffer        litUbo_ = VK_NULL_HANDLE;  VkDeviceMemory litUboMem_ = VK_NULL_HANDLE;
@@ -567,6 +583,19 @@ private:
     // buffer, OUTSIDE every render pass, read after the frame's fence (no
     // extra wait); the means per pass every 60 frames, as `gpu.time` too.
     VkQueryPool     tsPool_ = VK_NULL_HANDLE;
+    // THE SECOND LEVEL'S OCCLUSION TEST (`Renderer::secondLevelSeen`): one
+    // query round each of its floors' runs in the floors' frame (a query
+    // cannot pause between the draws its runs sit among), read after the
+    // frame's fence; past `kLevelQueries` runs, taken as seen
+    static constexpr uint32_t kLevelQueries = 64;
+    VkQueryPool     levelPool_ = VK_NULL_HANDLE;
+    // ...queried AFTER the frame's scene, so a wall drawn later counts: its
+    // floors drawn again through this - depth LESS_OR_EQUAL, written neither
+    // depth nor colour - their own pixels passing only where nothing covers them
+    VkPipeline      pipeProbe_ = VK_NULL_HANDLE;
+    uint32_t        levelIssued_ = 0;
+    bool            levelOver_ = false;
+    int             levelSeen_ = -1;
     static constexpr uint32_t kStamps = 8;
     uint32_t        tsCount_ = 0;
     const char*     tsLabel_[kStamps] = {};
@@ -823,6 +852,17 @@ private:
     // there (`scene.frag` mode 3) - one image and one binding for both
     bool             reflHalf_ = false;
     bool reflHalfNow() const { return reflHalf_ && passFb_ != VK_NULL_HANDLE; }
+    // ...and the SECOND level's (`drawTwoReflections`): `second_` while its
+    // reflection is drawn, into the top-RIGHT quarter (x from `reflHalfW()`);
+    // `twoRefl_` for the whole frame - the floors then sample each its own
+    // quarter, and the reflections' tiles share their half of the buffer
+    bool             second_ = false, twoRefl_ = false;
+    const omk::View* secondView_ = nullptr;
+    std::span<const omk::Draw> secondAbove_;
+    float            secondY_ = 0.0f;
+    int reflHalfW() const { return (rw_ + 1) / 2; }
+    VkDeviceSize reflTilesAt() const { return kTileWordsMax * 4 + (second_ ? kTileWordsMax * 2 : 0); }
+    std::size_t reflTilesCap() const { return twoRefl_ ? kTileWordsMax / 2 : kTileWordsMax; }
     float            waterStrength_ = 0.0f, waterY_ = 0.0f;
     bool makeReflection();
     void killReflection();
@@ -1192,6 +1232,13 @@ bool VulkanRenderer::pickDevice() {
     cai.commandPool = pool_; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cai.commandBufferCount = 1;
     VKCHECK(vkAllocateCommandBuffers(dev_, &cai, &cb_), "vkAllocateCommandBuffers");
+#if OMK_REMASTER
+    {
+        VkQueryPoolCreateInfo lqi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        lqi.queryType = VK_QUERY_TYPE_OCCLUSION; lqi.queryCount = kLevelQueries;
+        if (vkCreateQueryPool(dev_, &lqi, nullptr, &levelPool_) != VK_SUCCESS) levelPool_ = VK_NULL_HANDLE;
+    }
+#endif
     if (omk::envFlag("OMK_GPU_TIMES")) {
         if (props_.limits.timestampComputeAndGraphics && props_.limits.timestampPeriod > 0.0f) {
             VkQueryPoolCreateInfo qpi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -1340,6 +1387,15 @@ bool VulkanRenderer::makeTarget() {
         att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         if (vkCreateRenderPass(dev_, &rpi, nullptr, &reflPass_) != VK_SUCCESS) reflPass_ = VK_NULL_HANDLE;
         att[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
+    // ...and the second floor level's, one sample (with MSAA it is
+    // `reflPass1Keep_`'s): layouts and ops do not touch compatibility either
+    if (!msaa) {
+        const VkAttachmentDescription keep0 = att[0], keep1 = att[1];
+        att[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        if (vkCreateRenderPass(dev_, &rpi, nullptr, &reflPassKeep_) != VK_SUCCESS) reflPassKeep_ = VK_NULL_HANDLE;
+        att[0] = keep0; att[1] = keep1;
     }
 
     VkImageView views[3] = {msaa ? msColourView_ : colourView_, depthView_, colourView_};
@@ -1728,6 +1784,26 @@ bool VulkanRenderer::makePipelines() {
             gp.pStages = stages;
         }
     }
+#if OMK_REMASTER
+    // ---- the second level's PROBE (`pipeProbe_`): the plain module, the frame's pass
+    {
+        VkPipelineColorBlendAttachmentState none{};   // no colour written
+        VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        cb.attachmentCount = 1; cb.pAttachments = &none;
+        ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        ds.depthWriteEnable = VK_FALSE;
+        VkGraphicsPipelineCreateInfo gp{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        gp.stageCount = 2; gp.pStages = stages;
+        gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia;
+        gp.pViewportState = &vps; gp.pRasterizationState = &rs;
+        gp.pMultisampleState = &ms; gp.pDepthStencilState = &ds;
+        gp.pColorBlendState = &cb;
+        gp.pDynamicState = &dsi; gp.layout = plo_; gp.renderPass = pass_;
+        if (vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &gp, nullptr, &pipeProbe_) != VK_SUCCESS)
+            pipeProbe_ = VK_NULL_HANDLE;
+        ds.depthCompareOp = VK_COMPARE_OP_LESS;
+    }
+#endif
     // ---- THE FLOORS' REFLECTION at one sample (`reflPass1_`), with MSAA on
     if (samples_ != VK_SAMPLE_COUNT_1_BIT) {
         VkAttachmentDescription a1[2]{};
@@ -1757,6 +1833,10 @@ bool VulkanRenderer::makePipelines() {
         rp1.attachmentCount = 2; rp1.pAttachments = a1;
         rp1.subpassCount = 1; rp1.pSubpasses = &sub1;
         if (vkCreateRenderPass(dev_, &rp1, nullptr, &reflPass1_) != VK_SUCCESS) reflPass1_ = VK_NULL_HANDLE;
+        // ...and the second level's, its colour kept (`reflPassKeep_`'s rule)
+        a1[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        if (reflPass1_ && vkCreateRenderPass(dev_, &rp1, nullptr, &reflPass1Keep_) != VK_SUCCESS)
+            reflPass1Keep_ = VK_NULL_HANDLE;
         VkPipelineMultisampleStateCreateInfo ms1{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         ms1.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         for (int k = 0; k < 3 && reflPass1_; ++k) {
@@ -1787,6 +1867,7 @@ bool VulkanRenderer::makePipelines() {
                 for (auto& p : pipe1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
                 for (auto& p : pipeTiled1_) if (p) { vkDestroyPipeline(dev_, p, nullptr); p = VK_NULL_HANDLE; }
                 if (reflPass1_) { vkDestroyRenderPass(dev_, reflPass1_, nullptr); reflPass1_ = VK_NULL_HANDLE; }
+                if (reflPass1Keep_) { vkDestroyRenderPass(dev_, reflPass1Keep_, nullptr); reflPass1Keep_ = VK_NULL_HANDLE; }
                 break;
             }
     }
@@ -1900,10 +1981,10 @@ bool VulkanRenderer::makePipelines() {
     VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 531},   // four a texture's set
                                   {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};   // set 1's tiled lights
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6}};   // set 1's tiled lights
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    // (+1: the reflection's own set 1, `ds1Refl_`)
-    dpi.maxSets = 132; dpi.poolSizeCount = 4; dpi.pPoolSizes = ps;
+    // (+2: the reflections' own sets 1, `ds1Refl_` and `ds1Refl2_`)
+    dpi.maxSets = 133; dpi.poolSizeCount = 4; dpi.pPoolSizes = ps;
     // a texture's set is freed on its own when it leaves the pool (`setTextures`)
     dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VKCHECK(vkCreateDescriptorPool(dev_, &dpi, nullptr, &dpool_), "descriptorPool");
@@ -2028,6 +2109,8 @@ void VulkanRenderer::makeShadowSet() {
     if (pointsBuf_ && tilesBuf_) {
         if (ds1Refl_) { vkFreeDescriptorSets(dev_, dpool_, 1, &ds1Refl_); ds1Refl_ = VK_NULL_HANDLE; }
         if (vkAllocateDescriptorSets(dev_, &sai, &ds1Refl_) != VK_SUCCESS) ds1Refl_ = VK_NULL_HANDLE;
+        if (ds1Refl2_) { vkFreeDescriptorSets(dev_, dpool_, 1, &ds1Refl2_); ds1Refl2_ = VK_NULL_HANDLE; }
+        if (vkAllocateDescriptorSets(dev_, &sai, &ds1Refl2_) != VK_SUCCESS) ds1Refl2_ = VK_NULL_HANDLE;
     }
     VkWriteDescriptorSet wr[5]{};
     wr[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -2053,6 +2136,12 @@ void VulkanRenderer::makeShadowSet() {
         VkDescriptorBufferInfo rbufi{tilesBuf_, kTileWordsMax * 4, kTileWordsMax * 4};
         for (auto& w : wr) w.dstSet = ds1Refl_;
         wr[4].pBufferInfo = &rbufi;
+        vkUpdateDescriptorSets(dev_, 5, wr, 0, nullptr);
+    }
+    if (ds1Refl2_) {
+        VkDescriptorBufferInfo rbufi2{tilesBuf_, kTileWordsMax * 4 + kTileWordsMax * 2, kTileWordsMax * 2};
+        for (auto& w : wr) w.dstSet = ds1Refl2_;
+        wr[4].pBufferInfo = &rbufi2;
         vkUpdateDescriptorSets(dev_, 5, wr, 0, nullptr);
     }
 }
@@ -2164,6 +2253,7 @@ bool VulkanRenderer::resize(int w, int h) {
     if (fbuf_) { vkDestroyFramebuffer(dev_, fbuf_, nullptr); fbuf_ = VK_NULL_HANDLE; }
     if (pass_) { vkDestroyRenderPass(dev_, pass_, nullptr); pass_ = VK_NULL_HANDLE; }
     if (reflPass_) { vkDestroyRenderPass(dev_, reflPass_, nullptr); reflPass_ = VK_NULL_HANDLE; }
+    if (reflPassKeep_) { vkDestroyRenderPass(dev_, reflPassKeep_, nullptr); reflPassKeep_ = VK_NULL_HANDLE; }
     img(colourView_, colour_, colourMem_);
     img(msColourView_, msColour_, msColourMem_);
     if (depthRead_) { vkDestroyImageView(dev_, depthRead_, nullptr); depthRead_ = VK_NULL_HANDLE; }
@@ -3232,9 +3322,11 @@ void VulkanRenderer::setViewport(const omk::View& view) {
     // the FLOORS' reflection: drawn at HALF size into the image's top-left
     // quarter (`reflHalf_`) - a quarter of the pixels; the water's, whole
     if (reflHalfNow()) { vw = (vw + 1) / 2; vh = (vh + 1) / 2; }
-    const VkViewport vp{0, 0, static_cast<float>(vw), static_cast<float>(vh),
+    // ...the second level's in the top-RIGHT one (`second_`)
+    const int x0 = second_ && reflHalfNow() ? reflHalfW() : 0;
+    const VkViewport vp{static_cast<float>(x0), 0, static_cast<float>(vw), static_cast<float>(vh),
                         0.0f, 1.0f};
-    const VkRect2D sc{{0, 0}, {static_cast<uint32_t>(vw), static_cast<uint32_t>(vh)}};
+    const VkRect2D sc{{x0, 0}, {static_cast<uint32_t>(std::min(vw, rw_ - x0)), static_cast<uint32_t>(vh)}};
     vkCmdSetViewport(cb_, 0, 1, &vp);
     vkCmdSetScissor(cb_, 0, 1, &sc);
 }
@@ -3478,11 +3570,11 @@ void VulkanRenderer::begin(const omk::View& view) {
         if (passFb_ != VK_NULL_HANDLE && reflUnlit && !view.points.empty() && tilesPtr_ && pipeTiled_[0]) {
             // the tiled pipelines, as the reflection drew with, and NO tiles
             // (0 across): the module the same, its lights none
-            std::memset(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, 0, 16);
+            std::memset(static_cast<char*>(tilesPtr_) + reflTilesAt(), 0, 16);
             ub.tiles = 1;
             tilesNow_ = true;
         } else if (passFb_ != VK_NULL_HANDLE && !view.points.empty() && pointsPtr_ && tilesPtr_ && pipeTiled_[0] &&
-            ds1Refl_ != VK_NULL_HANDLE) {
+            (second_ ? ds1Refl2_ : ds1Refl_) != VK_NULL_HANDLE) {
             // THE WATER REFLECTION'S begin: its tiles binned for the REFLECTED
             // camera into the buffer's second half, which its own set 1 binds
             // (the points are the frame's - the world's lights light the world
@@ -3494,8 +3586,11 @@ void VulkanRenderer::begin(const omk::View& view) {
             const int hd = reflHalf_ ? 2 : 1;   // the floors' reflection is drawn at half size
             omk::binLights(bc, (rs(bc.w) + hd - 1) / hd, (rs(bc.h) + hd - 1) / hd,
                            std::span<const omk::View::GpuLight>(view.points.data(), np), tilesRefl_);
-            if (tilesRefl_.words.size() <= kTileWordsMax) {
-                std::memcpy(static_cast<char*>(tilesPtr_) + kTileWordsMax * 4, tilesRefl_.words.data(),
+            // (the second level's: its x origin above the tile's size, `scene.frag`)
+            if (second_ && tilesRefl_.words.size() > 3)
+                tilesRefl_.words[3] |= static_cast<std::uint32_t>(reflHalfW()) << 16;
+            if (tilesRefl_.words.size() <= reflTilesCap()) {
+                std::memcpy(static_cast<char*>(tilesPtr_) + reflTilesAt(), tilesRefl_.words.data(),
                             tilesRefl_.words.size() * 4);
                 ub.tiles = 1;
                 tilesNow_ = true;
@@ -3561,7 +3656,8 @@ void VulkanRenderer::begin(const omk::View& view) {
     clear[0].color = {{clearColour_[0], clearColour_[1], clearColour_[2], bloom_ > 0.0f ? 0.0f : 1.0f}};
     clear[1].depthStencil = {1.0f, 0};   // depth far, stencil 0
     VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp.renderPass = passFb_ && passFb_ == reflFbuf1_ ? reflPass1_ : passFb_ && reflPass_ ? reflPass_ : pass_;
+    rp.renderPass = passFb_ && second_ ? (passFb_ == reflFbuf1_ ? reflPass1Keep_ : reflPassKeep_)
+                  : passFb_ && passFb_ == reflFbuf1_ ? reflPass1_ : passFb_ && reflPass_ ? reflPass_ : pass_;
     // the post's this frame: decided here, where the scene's target is
     // chosen - with it the scene lands in `postSrc_`, and `end` must run it.
     // The bloom asks for it only with a light map in the pool: without one
@@ -3576,6 +3672,11 @@ void VulkanRenderer::begin(const omk::View& view) {
     // the resolve then averages four blocks of uninitialised memory.
     rp.renderArea = {{0, 0}, {static_cast<uint32_t>(reflHalfNow() ? (rw_ + 1) / 2 : rw_),
                               static_cast<uint32_t>(reflHalfNow() ? (rh_ + 1) / 2 : rh_)}};
+    // (the second level's: the top-right quarter alone - its clear too)
+    if (second_ && reflHalfNow()) {
+        rp.renderArea.offset.x = reflHalfW();
+        rp.renderArea.extent.width = static_cast<uint32_t>(rw_ - reflHalfW());
+    }
     rp.clearValueCount = 2; rp.pClearValues = clear;
     vkCmdBeginRenderPass(cb_, &rp, VK_SUBPASS_CONTENTS_INLINE);
     setViewport(view);
@@ -3668,7 +3769,8 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
     lightMapNow_ |= slot < tex_.size() && tex_[slot].emView != VK_NULL_HANDLE;
     vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 0, 1, &ds, 0, nullptr);
     // (the water reflection's pass binds its own: the tiles of ITS camera)
-    const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && ds1Refl_ != VK_NULL_HANDLE ? ds1Refl_ : ds1_;
+    const VkDescriptorSet dsR = second_ ? ds1Refl2_ : ds1Refl_;
+    const VkDescriptorSet ds1 = passFb_ != VK_NULL_HANDLE && dsR != VK_NULL_HANDLE ? dsR : ds1_;
     if (ds1 != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb_, VK_PIPELINE_BIND_POINT_GRAPHICS, plo_, 1, 1,
                                 &ds1, 0, nullptr);
@@ -3697,6 +3799,9 @@ void VulkanRenderer::submitOne(const omk::Draw& d, bool posed, uint32_t poseOff)
         // ...and bit 21: a BODY in the rain (`Draw::wetBody`), not a floor
         if (d.wetBody) push_.water |= 1 << 21;
     }
+    // ...and bit 22: a floor of the SECOND level (`Draw::reflectPlane`), its
+    // reflection the image's top-right quarter
+    if (floorNow && twoRefl_ && d.reflectPlane == 1) push_.water |= 1 << 22;
     push_.waterStrength = reflectingNow_ ? waterY_ : floorNow ? waterStrength_ * d.reflect : waterStrength_;
     {
         const Tex& bound = slot < tex_.size() && tex_[slot].ds != VK_NULL_HANDLE ? tex_[slot] : white_;
@@ -3869,6 +3974,21 @@ void VulkanRenderer::end() {
     vkQueueSubmit(queue_, 1, &si, fence_);
     vkWaitForFences(dev_, 1, &fence_, VK_TRUE, UINT64_MAX);
     readStamps();
+    // the second level's queries, this frame's: seen if any sample passed
+    if (levelIssued_ > 0) {
+        uint64_t q[kLevelQueries] = {};
+        if (vkGetQueryPoolResults(dev_, levelPool_, 0, levelIssued_, sizeof q, q, sizeof(uint64_t),
+                                  VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            levelSeen_ = levelOver_ ? 1 : 0;
+            for (uint32_t i = 0; i < levelIssued_; ++i) if (q[i] > 0) levelSeen_ = 1;
+        } else {
+            levelSeen_ = -1;
+        }
+    } else {
+        levelSeen_ = -1;
+    }
+    levelIssued_ = 0;
+    levelOver_ = false;
     recording_ = false;
     cbStarted_ = false;
     shadowLive_ = false;
@@ -4011,13 +4131,16 @@ VulkanRenderer::~VulkanRenderer() {
     for (VkSampler old : retiredSamplers_) vkDestroySampler(dev_, old, nullptr);
     if (dpool_) vkDestroyDescriptorPool(dev_, dpool_, nullptr);
     if (tsPool_) vkDestroyQueryPool(dev_, tsPool_, nullptr);
+    if (levelPool_) vkDestroyQueryPool(dev_, levelPool_, nullptr);
     for (auto& p : pipe_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipeTiled_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (pipeCut_) vkDestroyPipeline(dev_, pipeCut_, nullptr);
+    if (pipeProbe_) vkDestroyPipeline(dev_, pipeProbe_, nullptr);
     if (pipeTiledCut_) vkDestroyPipeline(dev_, pipeTiledCut_, nullptr);
     for (auto& p : pipe1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     for (auto& p : pipeTiled1_) if (p) vkDestroyPipeline(dev_, p, nullptr);
     if (reflPass1_) vkDestroyRenderPass(dev_, reflPass1_, nullptr);
+    if (reflPass1Keep_) vkDestroyRenderPass(dev_, reflPass1Keep_, nullptr);
     if (plo_) vkDestroyPipelineLayout(dev_, plo_, nullptr);
     if (dsl_) vkDestroyDescriptorSetLayout(dev_, dsl_, nullptr);
     if (dsl2_) vkDestroyDescriptorSetLayout(dev_, dsl2_, nullptr);
@@ -4035,6 +4158,7 @@ VulkanRenderer::~VulkanRenderer() {
     if (fbuf_) vkDestroyFramebuffer(dev_, fbuf_, nullptr);
     if (pass_) vkDestroyRenderPass(dev_, pass_, nullptr);
     if (reflPass_) vkDestroyRenderPass(dev_, reflPass_, nullptr);
+    if (reflPassKeep_) vkDestroyRenderPass(dev_, reflPassKeep_, nullptr);
     if (colourView_) vkDestroyImageView(dev_, colourView_, nullptr);
     if (colour_) vkDestroyImage(dev_, colour_, nullptr);
     if (colourMem_) freeDeviceMemory(colourMem_);

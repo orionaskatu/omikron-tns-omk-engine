@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace {
 constexpr float kShowerMist = 0.1f;        // the mist the full shower adds (0.3 too dark in Anekbah's own fog)
@@ -273,14 +274,27 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
     const float wetDarken = rainArea ? wetStrength * wet * omk::kWetDarken : 0.0f;
     const bool wetOn = wetReflect > 0.0f && shownSlot.wet.any();
     const bool listOn = floorStrength > 0.0f && shownSlot.floors.any();
+    // `[Remaster] reflections`: 0 no floor mirrors (the wet film is laid
+    // without the pass, `remasterSnowCover`), 1 one level, 2 a second too
+    const bool mirrors = reflectLevels >= 0.5f;
     omk::WaterPlane floorPlane;
-    if (!watered && listOn)
+    if (!watered && listOn && mirrors)
         floorPlane = omk::chooseFloor(shownSlot.floors, drawn.cam.eye);
-    if (!watered && wetOn) {
+    if (!watered && wetOn && mirrors) {
         // the wet level nearest the height the camera looks at - the street
         // the player stands in - takes the reflection (its puddles mirror)
         const omk::WaterPlane wp = omk::chooseFloorNear(shownSlot.wet.planes, drawn.cam.eye, drawn.cam.at[1]);
         if (wp.found) floorPlane = wp;
+    }
+    // ...and THE SECOND LEVEL (`chooseFloorSecond`, the weather list's 9): of
+    // the wet levels and the listed ones, the one with the most floor ahead
+    omk::SecondPlane second;
+    if (floorPlane.found && reflectLevels >= 1.5f) {
+        if (wetOn) second.plane = omk::chooseFloorSecond(shownSlot.wet.planes, drawn.cam.eye, drawn.cam.at, floorPlane.y);
+        if (listOn) {
+            const omk::WaterPlane lp = omk::chooseFloorSecond(shownSlot.floors, drawn.cam.eye, drawn.cam.at, floorPlane.y);
+            if (lp.found && lp.area > second.plane.area) second.plane = lp;
+        }
     }
     // with the rain, the pass at 1 and each run its own: the listed floors'
     // strength times `floors`, the wet ones' `wetReflect`
@@ -295,9 +309,33 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
             listStrength = &listed;
         }
     }
+    // `OMK_SWAP_LEVELS=1`, an INSTRUMENT: the two levels swapped, so the
+    // frame's own floor reflects from the SECOND quarter - the same picture
+    // as one plane, pixel for pixel, when that pass is right (`verify.py:
+    // engine: floors` part 4)
+    static const bool swapLevels = omk::envFlag("OMK_SWAP_LEVELS");
+    if (swapLevels && second.plane.found) std::swap(floorPlane, second.plane);
+    // ...SEEN, or no pass (the occlusion test, `Renderer::secondLevelSeen`):
+    // the last frame's query round its floors - a level hidden behind a wall
+    // costs no pass, its floors still drawn and queried; one seen again fades
+    // in over `kLevel2FadeSec` (the query is a frame late: no pop). A new
+    // level starts at 0, queried before it is drawn. `OMK_NO_LEVEL_QUERY=1`,
+    // an INSTRUMENT, takes every level as seen (`engine: floor levels` part 6)
+    static const bool noQuery = omk::envFlag("OMK_NO_LEVEL_QUERY");
+    if (second.plane.found) {
+        const int seen = noQuery ? 1 : world.secondLevelSeen();
+        if (second.plane.y != level2Y) level2Fade = 0.0f;
+        else if (seen == 0) level2Fade = 0.0f;
+        else level2Fade = std::min(1.0f, level2Fade + static_cast<float>(frameSec) / kLevel2FadeSec);
+        level2Y = second.plane.y;
+        second.fade = level2Fade;
+    } else {
+        level2Fade = 0.0f;
+        level2Y = 1e30f;
+    }
     const bool floored = floorPlane.found &&
         omk::drawWithWater(world, list, drawn, &shownSlot.geo, floorPlane, passStrength, listStrength,
-                           wetOn ? &shownSlot.wet.rained : nullptr, wetReflect, wetDarken);
+                           wetOn ? &shownSlot.wet.rained : nullptr, wetReflect, wetDarken, &second);
     if (wetStrength > 0.0f && (wetOn != wetTold || frameNo % 30 == 0)) {
         if (wetOn != wetTold)
             std::printf("frame %ld: the wet floors %s (wetness %.2f, reflection %.2f)\n", frameNo,
@@ -309,15 +347,22 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
                                     {"reflect", wetReflect}, {"live", wetOn && floored},
                                     {"y", static_cast<double>(floorPlane.y)}});
     }
-    if (floored != floorLive || (floored && floorPlane.y != floorLiveY)) {
+    const float y2 = second.drawn ? second.plane.y : 0.0f;
+    if (floored != floorLive || (floored && floorPlane.y != floorLiveY) || second.drawn != floor2Live ||
+        (second.drawn && y2 != floor2LiveY)) {
         floorLive = floored;
         floorLiveY = floorPlane.y;
-        std::printf("frame %ld: the floors %s (y %.0f)\n", frameNo,
+        floor2Live = second.drawn;
+        floor2LiveY = y2;
+        std::printf("frame %ld: the floors %s (y %.0f)%s\n", frameNo,
                     floored ? "REFLECT - the scene mirrored in the level below the eye"
                             : "do not reflect here (none listed near, the water reflecting, or no pass)",
-                    static_cast<double>(floorPlane.y));
+                    static_cast<double>(floorPlane.y),
+                    second.drawn ? (" and a SECOND level, its own pass (y " + std::to_string(std::lround(y2)) + ")").c_str()
+                                 : "");
         omk::event("remaster.floors", {{"frame", frameNo}, {"live", floored},
-                                       {"y", static_cast<double>(floorPlane.y)}});
+                                       {"y", static_cast<double>(floorPlane.y)}, {"second", second.drawn},
+                                       {"y2", static_cast<double>(y2)}});
     }
     return watered || floored;
 }
@@ -327,9 +372,23 @@ bool PlayState::remasterDrawReflected(omk::Renderer& world, std::span<const omk:
 // (docs/ASSETS.md 4e) and needs option row 7 at 2 - the set's floors under the
 // open sky turn white under their own light, the corners' open sky blending
 // the edge. No reflection pass: the frame's own draws, split into runs.
+// ...and with `[Remaster] reflections = 0`, the RAIN's film the same way: no
+// level mirrors, so no pass lays it (`drawWithWater`), and a wet floor keeps
+// its darkening, its ripples and the lights' streaks - how wet, the frame
+// before's (`wetness`, stepped by `remasterDrawReflected`).
 void PlayState::remasterSnowCover(std::vector<omk::Draw>& list) {
-    if (wetStrength <= 0.0f || !weatherSnowing || !remasterShown_ || !world_ || !(world_->takes() & omk::kTakesWater))
+    if (wetStrength <= 0.0f || !remasterShown_ || !world_ || !(world_->takes() & omk::kTakesWater)) return;
+    if (!weatherSnowing) {
+        const bool rainArea = weatherBitsTold != 0xFFFFu && (weatherBitsTold & 2u) != 0;
+        const WorldSlot& slot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
+        const float dark = wetStrength * wetness.value() * omk::kWetDarken;
+        if (reflectLevels < 0.5f && rainArea && dark > 0.0f && !slot.wet.rained.empty()) {
+            const std::size_t covered = omk::coverRuns(list, &slot.geo, slot.wet.rained, dark, false);
+            if (frameNo % 30 == 0)
+                omk::event("remaster.wetfilm", {{"frame", frameNo}, {"covered", static_cast<long>(covered)}});
+        }
         return;
+    }
     const WorldSlot& shownSlot = worldSlots[static_cast<std::size_t>(session_->shownSlot() & 1)];
     if (shownSlot.wet.open.empty()) return;
     const std::size_t covered = omk::coverRuns(list, &shownSlot.geo, shownSlot.wet.open,

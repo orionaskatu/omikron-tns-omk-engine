@@ -144,6 +144,7 @@ struct PlayOptions {
     std::string remasterFlag;     // --remaster DIR, [Remaster] dir: the preset over the four
     float waterFlag = -1.0f;      // --water S, [Remaster] water; < 0 = the settings'
     float floorsFlag = -1.0f;     // --floors S, [Remaster] floors; < 0 = the settings'
+    float reflectionsFlag = -1.0f;   // --reflections N, [Remaster] reflections; < 0 = the settings'
     float wetFlag = -1.0f;        // --wet S, [Remaster] wet; < 0 = the settings'
     float rain3dFlag = -1.0f;     // --rain3d S, [Remaster] rain3d; < 0 = the settings'
     float mistFlag = -1.0f;       // --mist S, [Remaster] mist; < 0 = the settings'

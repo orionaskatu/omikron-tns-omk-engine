@@ -243,6 +243,13 @@ struct Settings {
     // (`o3de/floorreflect.h`), S times each one's strength. 0 = off.
     float  floors = 0.0f;
     Source floorsSource = Source::Default;
+    // `reflections = N`: how many floor LEVELS mirror a frame (the weather
+    // list's 9, `o3de/floorreflect.h` chooseFloorSecond) - 0 none (the wet
+    // film stays), 1 the level below the eye, 2 that and a second (a walkway
+    // above the street, a square below it), a second pass where there is one.
+    // Unset: 1, as before; the preset's 2. The water's is its own (`water`).
+    float  reflections = 1.0f;
+    Source reflectionsSource = Source::Default;
     // `wet = S`: the game's weather ON THE GROUND (`o3de/wetfloor.h`): its RAIN
     // wets the floors under the open sky while the shower falls, and where its
     // SNOW falls, snow lies on them; S their strength. 0 = off.
@@ -497,6 +504,7 @@ inline constexpr RemasterPresetValue kRemasterPreset[] = {
     {"bloom", 1.6f},     // 1.3 the previews'; 1.6 with the neons' (2026-10-20)
     {"water", 0.6f},     // 0.35 before the Fresnel (2026-10-20)
     {"floors", 1.0f},
+    {"reflections", 2.0f},   // the second level (the reader's "go with 9", 2026-10-29)
     {"wet", 1.0f},
     {"rain3d", 1.0f},
     {"mist", 0.5f},      // the reader's, from a sheet of 0, 0.5 and 1 (2026-10-21)

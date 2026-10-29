@@ -62,7 +62,7 @@ layout(push_constant) uniform Push {
     // FLOOR's draw, as 1 with its relief (`o3de/floorreflect.h`); 0 otherwise.
     // Those are the LOW FOUR BITS: above them a WET floor's darkening, 0..255
     // (`o3de/wetfloor.h`), and above that the RAIN's, 0..255 (`View::rain`, its
-    // ripples) - `waterMode`, `wetFilm` and `rainNow` below
+    // ripples) - `waterMode`, `wetFilm` and `rainNow` below; bits 20-22 flags
     int   water;          // 120
     float waterStrength;  // 124
 } pc;
@@ -125,8 +125,10 @@ layout(set = 1, binding = 2) uniform Lights {
 
 // THE TILED POINT LIGHTS (`o3de/lighttiles.h`, the remaster's): every point
 // light of the frame, and the screen's 32-pixel tiles cut in 16 depth slices -
-// [0] across, [1] down, [2] slices, [3] the tile's size, two words a cluster
-// (its list's offset, its count), then the lists
+// [0] across, [1] down, [2] slices, [3] the tile's size - and above its low
+// 16 bits the pass's x ORIGIN, the second floor level's reflection drawn in
+// the image's right half - two words a cluster (its list's offset, its
+// count), then the lists
 //
 // COMPILED TWICE (the Makefile's `scene_tiled.frag.inc`, -DOMK_TILED): these
 // buffers and the loop that reads them only in the TILED module, which the
@@ -198,7 +200,9 @@ vec3 litColour(vec3 n, vec3 w, bool pointsOnly) {
 #ifdef OMK_TILED
     if (lg.tiles != 0) {
         uint across = tl.t[0], down = tl.t[1];
-        uvec2 tc = uvec2(gl_FragCoord.xy) / max(tl.t[3], 1u);   // the tile's size, by resolution
+        uvec2 fc = uvec2(gl_FragCoord.xy);
+        fc.x -= min(tl.t[3] >> 16, fc.x);                          // the pass's x origin
+        uvec2 tc = fc / max(tl.t[3] & 0xFFFFu, 1u);   // the tile's size, by resolution
         // the depth slice: `depthSlice` in `o3de/lighttiles.cpp`, the same
         // log spacing from 50 to 20000 units
         int sl = vDepth > 50.0 ? clamp(int(log(vDepth / 50.0) / log(400.0) * 16.0), 0, 15) : 0;
@@ -493,6 +497,7 @@ void main() {
     float rainNow = float((pc.water >> 12) & 255) / 255.0;    // ...and the rain on it
     bool snowLying = (pc.water & (1 << 20)) != 0;              // ...or snow lying on it, bit 20
     bool wetBody = (pc.water & (1 << 21)) != 0;                // ...or a BODY in the rain, bit 21
+    bool level2 = (pc.water & (1 << 22)) != 0;                 // a floor of the SECOND level, bit 22
     // the open sky at this point, the corners' answers blended (`encodeOpenSky`)
     // - a WALL's (`-6 - open`) below -5.5, a floor's (`-2 - open`) below -1.5
     bool wetWall = vPhase <= -5.5;
@@ -689,6 +694,12 @@ void main() {
 #endif
         if (waterMode == 3) at += rip.xy * rs.y * 0.02 * k;   // the ripples' slope
         if (waterMode == 3) at = clamp(at, vec2(0.5), rs * 0.5 - 0.5);   // inside its quarter
+        // ...the SECOND level's the top-RIGHT one (`[Remaster] reflections = 2`),
+        // from the render width's half rounded up (`reflHalfW`)
+        if (waterMode == 3 && level2) {
+            float x0 = floor((rs.x + 1.0) * 0.5);
+            at.x = min(at.x + x0, rs.x - 0.5);
+        }
         c += texture(refl, at / rs).rgb * pc.waterStrength * f * wetHere;
     }
     // THE ALPHA, read by the post-pass (`post.frag`, `ao.frag`): 0 on a BODY

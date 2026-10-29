@@ -146,6 +146,17 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     waterY_ = planeY;
     for (const auto& d : above) submit(d);
     reflectingNow_ = false;
+    // ...and THE SECOND LEVEL's (`drawTwoReflections`), in the right half's
+    // quarter - a pass of the same frame
+    if (secondView_) {
+        reflSecond_ = true;
+        beginPass(*secondView_);
+        reflectingNow_ = true;
+        waterY_ = secondY_;
+        for (const auto& d : secondAbove_) submit(d);
+        reflectingNow_ = false;
+        reflSecond_ = false;
+    }
     passFbo_ = 0;
     recording_ = false;
     glActiveTexture(GL_TEXTURE4);
@@ -157,11 +168,79 @@ bool GlesRenderer::drawWaterScene(const View& v, const View& refl, std::span<con
     rain_ = v.rain;                 // the wet floors' ripples (`View::rain`)
     rippleClock_ = v.shimmerClock;
     for (const auto& d : scene) submit(d);
+    // ...then the SECOND level's floors again, each in an occlusion query
+    // (`secondLevelSeen`), Vulkan's probe: after the whole scene, depth
+    // LEQUAL, neither depth nor colour written
+    levelIssued_ = 0;
+    levelOver_ = false;
+#if OMK_GLES_QUERY
+    bool marked = false;
+    for (const auto& d : scene) marked |= d.reflectPlane == 1;
+    if (water.empty() && marked) {
+        if (!levelQ_[0]) glGenQueries(kLevelQueries, levelQ_);
+        forgetState();
+        probeNow_ = true;
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glDepthMask(GL_FALSE);
+        glDepthFunc(GL_LEQUAL);
+        for (const auto& d : scene) {
+            if (d.reflectPlane != 1) continue;
+            if (levelIssued_ >= kLevelQueries) { levelOver_ = true; break; }
+            glBeginQuery(OMK_GLES_QUERY_TARGET, levelQ_[levelIssued_++]);
+            submit(d);
+            glEndQuery(OMK_GLES_QUERY_TARGET);
+        }
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthFunc(GL_LESS);
+        probeNow_ = false;
+        forgetState();
+    }
+#endif
     waterNow_ = true;
     for (const auto& d : water) submit(d);
     waterNow_ = false;
     end();
     return true;
+}
+
+// THE SECOND LEVEL'S OCCLUSION TEST: the last floors' frame's queries - seen
+// if any sample passed; -1 with none issued or a result not in yet (the
+// level then counts as seen)
+int GlesRenderer::secondLevelSeen() {
+#if OMK_GLES_QUERY
+    if (levelIssued_ <= 0) return -1;
+    GLuint ready = 0;
+    glGetQueryObjectuiv(levelQ_[levelIssued_ - 1], GL_QUERY_RESULT_AVAILABLE, &ready);
+    if (!ready) return -1;
+    int seen = levelOver_ ? 1 : 0;
+    for (int i = 0; i < levelIssued_; ++i) {
+        GLuint n = 0;
+        glGetQueryObjectuiv(levelQ_[i], GL_QUERY_RESULT, &n);
+        if (n > 0) seen = 1;
+    }
+    levelIssued_ = 0;
+    return seen;
+#else
+    return -1;
+#endif
+}
+
+// THE SECOND REFLECTING LEVEL (`Renderer::drawTwoReflections`, Vulkan's): the
+// floors' frame of `drawWaterScene` with a second reflection after the first,
+// and each floor sampling its own quarter (`uReflOff`, `uReflBox`)
+bool GlesRenderer::drawTwoReflections(const View& v, const View& refl, std::span<const Draw> scene,
+                                      std::span<const Draw> above, float strength, float planeY,
+                                      const View& refl2, std::span<const Draw> above2, float planeY2) {
+    if (!drawsTwoReflections()) return false;
+    twoRefl_ = true;
+    secondView_ = &refl2;
+    secondAbove_ = above2;
+    secondY_ = planeY2;
+    const bool ok = drawWaterScene(v, refl, scene, above, {}, strength, planeY);
+    secondView_ = nullptr;
+    secondAbove_ = {};
+    twoRefl_ = false;
+    return ok;
 }
 
 // THE UPSCALE's two passes (`kEasuFrag`, `kRcasFrag`): `colour_`'s drawn
@@ -576,6 +655,19 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             glUniform2f(L.reflInv, k / static_cast<float>(rw_), k / static_cast<float>(rh_));
             U.reflK = k;
         }
+        // ...in a two-level frame, the floor's own quarter: the second's from
+        // the right half, each clamped inside its own (the filter would read
+        // the other's edge); else as before, no offset and no clamp
+        const int plane = floorNow && twoRefl_ ? 1 + (d.reflectPlane == 1 ? 1 : 0) : 0;
+        if (L.reflOff >= 0 && set(!uv || U.reflPlane != plane)) {
+            const float iw = 1.0f / static_cast<float>(rw_), ih = 1.0f / static_cast<float>(rh_);
+            const float x0 = plane == 2 ? static_cast<float>((rw_ + 1) / 2) * iw : 0.0f;
+            const float qw = static_cast<float>((rw_ + 1) / 2) * iw, qh = static_cast<float>((rh_ + 1) / 2) * ih;
+            glUniform2f(L.reflOff, x0, 0.0f);
+            if (plane == 0) glUniform4f(L.reflBox, -1e4f, -1e4f, 1e4f, 1e4f);
+            else glUniform4f(L.reflBox, x0 + 0.5f * iw, 0.5f * ih, std::min(x0 + qw, 1.0f) - 0.5f * iw, qh - 0.5f * ih);
+            U.reflPlane = plane;
+        }
         if (set(!uv || std::memcmp(U.eye, waterEye_, sizeof U.eye) != 0)) {
             glUniform3f(L.eye, waterEye_[0], waterEye_[1], waterEye_[2]);
             std::memcpy(U.eye, waterEye_, sizeof U.eye);
@@ -630,4 +722,7 @@ void GlesRenderer::remasterRelease() {
     if (reflTex_) deleteTextures(1, &reflTex_);
     if (reflDepth_) deleteRenderbuffers(1, &reflDepth_);
     if (reflFbo_) glDeleteFramebuffers(1, &reflFbo_);
+#if OMK_GLES_QUERY
+    if (levelQ_[0]) glDeleteQueries(kLevelQueries, levelQ_);
+#endif
 }

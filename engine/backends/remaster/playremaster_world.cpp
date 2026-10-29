@@ -268,6 +268,8 @@ bool PlayState::remasterApplyLive(const std::string& key, float v) {
         return true;
     }
     if (key == "mist") { mistStrength = v; return true; }
+    // HOW MANY LEVELS mirror: a choice of the frame's, nothing to load
+    if (key == "reflections") { reflectLevels = v; return true; }
     // the PRELOAD RADIUS is read by its phase each frame, which also loads
     // what it needs: any value moves - to 0, what it prepared is released
     if (key == "preload") {

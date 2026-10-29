@@ -25,7 +25,8 @@
 // reflection.
 // The wet triangles darken (`Draw::wet`), and reflect through the reflecting
 // floors' pass (`o3de/floorreflect.h`, `drawWithWater`) - one plane a frame,
-// the level below the eye with the most of them near; while it rains, RIPPLES
+// the level below the eye with the most of them near (two with `[Remaster]
+// reflections = 2`, none with 0 - the film laid then by `coverRuns`); while it rains, RIPPLES
 // spread on them (`View::rain`, the shaders' `ripples`).
 #pragma once
 
@@ -115,8 +116,10 @@ void encodeOpenSky(Geometry& g, const WetFloors& w);
 // = `amount` and `Draw::snow` - the shaders turn it white under its own baked
 // light, blended by each corner's open sky (`encodeOpenSky`). No reflection
 // pass: the frame's own draws, in order. -> the triangles covered.
+// ...or, `snow` false, the RAIN's film alone (`[Remaster] reflections = 0`:
+// no pass to lay it) - `amount` its darkening.
 std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const std::vector<std::uint8_t>& open,
-                      float amount);
+                      float amount, bool snow = true);
 inline constexpr float kSnowCover = 0.85f;   // how white a fully covered floor turns
 
 // THE WET BODIES (the remaster's, the reader's "wet walls and characters"):

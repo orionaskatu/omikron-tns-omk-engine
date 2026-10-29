@@ -296,6 +296,7 @@ constexpr const char* kRipplesGlsl =
 // every other draw. Made at `init` only when the water is asked for.
 std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
+                    "uniform vec2 uReflOff;\nuniform vec4 uReflBox;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
                     "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
                     "uniform vec4 uVeil;\nuniform vec4 uVeilColour;\n"
@@ -360,7 +361,7 @@ std::string waterVariant(const std::string& frag) {
                      "        float ct = abs(normalize(vToEye).y);\n"
                      "        float f = max(0.02 + 0.98 * pow(1.0 - ct, 5.0), kPuddleFresnel * pud);\n"
                      "        vec2 at = gl_FragCoord.xy + rip.xy * 0.02 * (0.5 / uReflInv.y);\n"
-                     "        c += texture2D(uRefl, at * uReflInv).rgb * uWater * f * wetHere;\n"
+                     "        c += texture2D(uRefl, clamp(at * uReflInv + uReflOff, uReflBox.xy, uReflBox.zw)).rgb * uWater * f * wetHere;\n"
                      "    }\n    ");
     else anchorMissed("water", "gl_FragColor = vec4(c,");
     // SNOW LYING (`o3de/wetfloor.h` coverRuns, `scene.frag`'s rule): the floor

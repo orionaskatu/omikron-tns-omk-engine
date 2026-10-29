@@ -321,7 +321,7 @@ void encodeOpenSky(Geometry& g, const WetFloors& w) {
 }
 
 std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const std::vector<std::uint8_t>& open,
-                      float amount) {
+                      float amount, bool snow) {
     if (!setGeo || amount <= 0.0f || open.empty()) return 0;
     static std::vector<Draw> out;
     out.clear();
@@ -333,7 +333,7 @@ std::size_t coverRuns(std::vector<Draw>& draws, const Geometry* setGeo, const st
         const auto flush = [&](std::size_t end) {
             if (runKind < 0 || end <= runStart) return;
             Draw o = d; o.start = runStart; o.count = end - runStart;
-            if (runKind) { o.wet = amount; o.snow = true; }
+            if (runKind) { o.wet = amount; o.snow = snow; }
             out.push_back(o);
         };
         for (std::size_t t = d.start; t + 2 < d.start + d.count; t += 3) {

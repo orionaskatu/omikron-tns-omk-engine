@@ -671,9 +671,11 @@ bool VulkanRenderer::makeReflection() {
     fi.renderPass = pass_; fi.attachmentCount = msaa ? 3 : 2; fi.pAttachments = views;
     fi.width = static_cast<uint32_t>(rw_); fi.height = static_cast<uint32_t>(rh_); fi.layers = 1;
     if (vkCreateFramebuffer(dev_, &fi, nullptr, &reflFbuf_) != VK_SUCCESS) { killReflection(); return false; }
-    // ...and the floors' one-sample one: the colour image itself, a depth of its own at half size
+    // ...and the floors' one-sample one: the colour image itself, a depth of
+    // its own at half height - and the FULL width, for the second level's
+    // reflection in the top-right quarter (`drawTwoReflections`)
     if (reflPass1_) {
-        const int hw = (rw_ + 1) / 2, hh = (rh_ + 1) / 2;
+        const int hw = rw_, hh = (rh_ + 1) / 2;
         VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         ii.imageType = VK_IMAGE_TYPE_2D; ii.format = dsFmt_;
         ii.extent = {static_cast<uint32_t>(hw), static_cast<uint32_t>(hh), 1};
@@ -766,6 +768,29 @@ bool VulkanRenderer::drawWaterScene(const omk::View& v, const omk::View& refl,
     vkCmdEndRenderPass(cb_);
     stamp("reflection");
     recording_ = false;
+    // ...and THE SECOND LEVEL's (`drawTwoReflections`), into the top-right
+    // quarter of the same image: the first's writes done and the image back
+    // in COLOR_ATTACHMENT, where its keeping pass begins
+    if (secondView_) {
+        VkImageMemoryBarrier k{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        k.srcQueueFamilyIndex = k.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        k.image = reflColour_; k.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        k.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; k.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        k.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        k.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &k);
+        second_ = true;
+        begin(*secondView_);
+        reflectingNow_ = true;
+        waterY_ = secondY_;
+        for (const auto& d : secondAbove_) submit(d);
+        reflectingNow_ = false;
+        vkCmdEndRenderPass(cb_);
+        stamp("reflection");   // (the GPU times add both reflections)
+        recording_ = false;
+        second_ = false;
+    }
     passFb_ = VK_NULL_HANDLE;
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -775,12 +800,48 @@ bool VulkanRenderer::drawWaterScene(const omk::View& v, const omk::View& refl,
     vkCmdPipelineBarrier(cb_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &b);
     // 2. THE FRAME, the water's own draws (and the floors') adding the reflection
+    const bool query = levelPool_ != VK_NULL_HANDLE && pipeProbe_ != VK_NULL_HANDLE && water.empty();
+    if (query) vkCmdResetQueryPool(cb_, levelPool_, 0, kLevelQueries);   // (outside the render pass)
     begin(v);
     waterStrength_ = strength;
     for (const auto& d : scene) submit(d);
+    // ...then the SECOND level's floors again, each in an occlusion query
+    // (`secondLevelSeen`) through the probe: after the whole scene, so what
+    // covers them counts whatever order it was drawn in
+    if (query) {
+        forcePipeline_ = pipeProbe_;
+        for (const auto& d : scene) {
+            if (d.reflectPlane != 1) continue;
+            if (levelIssued_ >= kLevelQueries) { levelOver_ = true; break; }
+            vkCmdBeginQuery(cb_, levelPool_, levelIssued_, 0);
+            submit(d);
+            vkCmdEndQuery(cb_, levelPool_, levelIssued_++);
+        }
+        forcePipeline_ = VK_NULL_HANDLE;
+    }
     waterNow_ = true;
     for (const auto& d : water) submit(d);
     waterNow_ = false;
     end();
     return true;
+}
+
+// THE SECOND REFLECTING LEVEL (`Renderer::drawTwoReflections`): the floors'
+// frame of `drawWaterScene`, its pass drawing a second reflection after the
+// first - and the frame's floors each sampling its own quarter (bit 22)
+bool VulkanRenderer::drawTwoReflections(const omk::View& v, const omk::View& refl, std::span<const omk::Draw> scene,
+                                        std::span<const omk::Draw> above, float strength, float planeY,
+                                        const omk::View& refl2, std::span<const omk::Draw> above2, float planeY2) {
+    if (!drawsTwoReflections() || !makeReflection()) return false;
+    // (one sample: with MSAA the floors' own pass, else `pass_`'s full one)
+    if (samples_ != VK_SAMPLE_COUNT_1_BIT && !reflFbuf1_) return false;
+    twoRefl_ = true;
+    secondView_ = &refl2;
+    secondAbove_ = above2;
+    secondY_ = planeY2;
+    const bool ok = drawWaterScene(v, refl, scene, above, {}, strength, planeY);
+    secondView_ = nullptr;
+    secondAbove_ = {};
+    twoRefl_ = false;
+    return ok;
 }

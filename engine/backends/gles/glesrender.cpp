@@ -94,6 +94,20 @@
 #  define OMK_GLES_MSAA 0
 #endif
 
+// THE SECOND REFLECTING LEVEL'S OCCLUSION TEST (`Renderer::secondLevelSeen`)
+// needs queries: desktop GL has had them since 1.5 (counting samples), GLES 3
+// as "any passed"; GLES2 and vitaGL have none - the level then counts as seen,
+// as before the test
+#if defined(__APPLE__)
+#  define OMK_GLES_QUERY 1
+#  define OMK_GLES_QUERY_TARGET GL_SAMPLES_PASSED
+#elif defined(__ANDROID__)
+#  define OMK_GLES_QUERY 1
+#  define OMK_GLES_QUERY_TARGET GL_ANY_SAMPLES_PASSED
+#else
+#  define OMK_GLES_QUERY 0
+#endif
+
 // The one call whose NAME differs: GLES has only the float form, desktop GL
 // 2.1 only the double one.
 #if defined(__APPLE__)
@@ -1048,6 +1062,11 @@ public:
     bool drawWaterScene(const View& v, const View& refl, std::span<const Draw> scene,
                         std::span<const Draw> above, std::span<const Draw> water, float strength,
                         float planeY) override;
+    bool drawsTwoReflections() const override { return drawsWater(); }
+    int secondLevelSeen() override;
+    bool drawTwoReflections(const View& v, const View& refl, std::span<const Draw> scene,
+                            std::span<const Draw> above, float strength, float planeY, const View& refl2,
+                            std::span<const Draw> above2, float planeY2) override;
     // ...and the city grade, any time: n^3 RGB 0..1, red fastest
     bool setGrade(const float* rgb, int n) override;
 #endif
@@ -1314,6 +1333,7 @@ private:
               shadowP = -1, litBase = -1;
         GLint grey = -1;   // View::grey, both scene fragment programs
         GLint water = -1, reflInv = -1, clip = -1, clipY = -1, eye = -1;   // the water variant's
+        GLint reflOff = -1, reflBox = -1;                                    // ...the floors' quarter
         GLint wet = -1, rain = -1, rippleClock = -1;                         // ...and a wet floor's film, ripples
         GLint snow = -1;                                                     // ...or snow lying
         GLint wetBody = -1;                                                  // ...or a body in the rain
@@ -1411,6 +1431,7 @@ private:
         float veil[4] = {-1, -1, -1, -1}, veilColour[4] = {-1, -1, -1, -1};   // ...and the rain's veils
         std::uint64_t streakFrame = 0;                                     // ...the lights' streaks, sent that frame
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
+        int reflPlane = -1;   // the quarter the floors' lookup is in: -1 unset, 0 none/first, 1 second
     };
     struct DrawState {
         int blend = -1;                    // a `Blend`, -1 unknown
@@ -1503,6 +1524,20 @@ private:
     // the WATER REFLECTION (`todo/remaster.md` A3)
     float  waterWant_ = 0.0f;            // asked for at creation: the variant is built
     bool   reflHalf_ = false;            // the floors' frame: its reflection at half size
+    // ...and THE SECOND LEVEL's (`drawTwoReflections`, Vulkan's): `reflSecond_`
+    // while its reflection is drawn, into the right half's quarter; `twoRefl_`
+    // for the frame - each floor then samples its own quarter, clamped to it
+    bool   reflSecond_ = false, twoRefl_ = false;
+    const View* secondView_ = nullptr;
+    std::span<const Draw> secondAbove_;
+    float  secondY_ = 0.0f;
+    // ...its floors' occlusion queries (`secondLevelSeen`), one a run, read
+    // the next frame; past `kLevelQueries` runs, taken as seen
+    static constexpr int kLevelQueries = 64;
+    GLuint levelQ_[kLevelQueries] = {};
+    int    levelIssued_ = 0;
+    bool   levelOver_ = false;
+    bool   probeNow_ = false;   // ...drawn again for them: no depth or colour written
     bool   waterNow_ = false;            // the draws being submitted are WATER
     bool   reflectingNow_ = false;       // the reflection pass: clip below `waterY_`
     float  waterStrength_ = 0.0f, waterY_ = 0.0f;
@@ -1528,7 +1563,8 @@ private:
     static constexpr float  bloom_ = 0.0f, waterWant_ = 0.0f;
     static constexpr bool   bloomBuilt_ = false;
     static constexpr GLuint lightBlack_ = 0, postProg_ = 0, passFbo_ = 0;
-    static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false, fxWant_ = false;
+    static constexpr bool   waterNow_ = false, reflectingNow_ = false, reflHalf_ = false, fxWant_ = false,
+                            reflSecond_ = false, probeNow_ = false;
     static constexpr int    lutN_ = 0;
 #endif
     bool   lightMapNow_ = false;         // a draw of this pass bound a light map: else the glow is black
@@ -1710,6 +1746,8 @@ bool GlesRenderer::linkScene() {
         L.streak = glGetUniformLocation(p, "uStreak");
         L.streakN = glGetUniformLocation(p, "uStreakN");
         L.reflInv = glGetUniformLocation(p, "uReflInv");
+        L.reflOff = glGetUniformLocation(p, "uReflOff");
+        L.reflBox = glGetUniformLocation(p, "uReflBox");
         L.clip = glGetUniformLocation(p, "uClip");
         L.clipY = glGetUniformLocation(p, "uClipY");
         L.eye = glGetUniformLocation(p, "uEye");
@@ -2817,7 +2855,7 @@ void GlesRenderer::setView(const View& view) {
     // lower-left quarter, magnified 2x - the audit's bug 1, 2026-10-23.)
     if (passFbo_ && reflHalf_) {
         const int y0 = (rh_ - rs(vh)) / 2;
-        glViewport(0, y0, (rs(vw) + 1) / 2, (rh_ + 1) / 2 - y0);
+        glViewport(reflSecond_ ? (rw_ + 1) / 2 : 0, y0, (rs(vw) + 1) / 2, (rh_ + 1) / 2 - y0);
     } else {
         glViewport(0, rh_ - rs(vh), rs(vw), rs(vh));
     }
@@ -2928,7 +2966,16 @@ void GlesRenderer::beginPass(const View& view) {
                  view.clearColour[2] / 255.0f, bloom_ > 0.0f ? 0.0f : 1.0f);
     OMK_GL_CLEAR_DEPTH(1.0f);
     glDepthMask(GL_TRUE);
+#if OMK_REMASTER
+    // (the SECOND level's reflection clears the right half alone - the
+    // first's quarter is drawn)
+    if (passFbo_ && reflSecond_) {
+        glEnable(GL_SCISSOR_TEST);
+        glScissor((rw_ + 1) / 2, 0, rw_ - (rw_ + 1) / 2, rh_);
+    }
+#endif
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
 
     setView(view);
 #if OMK_REMASTER
@@ -3327,7 +3374,7 @@ void GlesRenderer::submit(const Draw& d) {
         } else {
             glDisable(GL_BLEND);
         }
-        glDepthMask(r.depthWrite ? GL_TRUE : GL_FALSE);
+        glDepthMask(r.depthWrite && !probeNow_ ? GL_TRUE : GL_FALSE);
         ds_.blend = static_cast<int>(d.blend);
     }
 

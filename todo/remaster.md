@@ -1510,7 +1510,7 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   | 6 | the rain sound by cover | DROPPED - the shower's sound is its music track (118-122, the city's music mixed with the rain, ASSETS 4e): muffling it muffles the music. Only a separate drip sound, if the game ships one (not looked for) |
   | 7 | gusts | DONE (2026-10-29) - the drawn rain's lean and the veils' sheets sway with a wind that comes and goes; the original's drops, step and roof test untouched; see "7, the gusts" below |
   | 8 | lightning | OPEN, last - invented (the game has none) and needs a thunder sound |
-  | 9 | a SECOND reflecting level (new, from play) | OPEN - one plane reflects a frame: a walkway above the street or a square below it takes the film alone. A second pass, or screen-space reflections - the costliest |
+  | 9 | a SECOND reflecting level (new, from play) | DONE (2026-10-29) - planar, a second pass where a second level is in shot, chosen in OMK's Remaster page (`reflections`: none, one plane, two planes; the preset's two); see "9, the second level" below; **CONFIRMED IN PLAY** with its occlusion test (the reader's "commit", 2026-10-29) |
   | 10 | rain under a hall's roof (new, from play) | DONE (2026-10-29) - NOT the 3D rain: the wet WALLS' trickles, on a wall whose top meets its ceiling, and Kay'l "in the rain" under a low ceiling; see "10, the hall" below |
   | 11 | snow on slopes | OPEN (from the snow lying) |
   | 12 | the drips' load cost (new) | DONE (2026-10-29) - the wet pass's rays through a grid: Anekbah 668 -> 106 ms, Qalisar 464 -> 85 (M1), the same answers bit for bit; see "12, the grid" below |
@@ -1573,7 +1573,8 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   80238 on GLES, overlap 0.958. `OMK_WET_PLANE_EXACT=1` (an instrument) the
   4 back. `engine: wet floors` part 13. The reader: "better". **Open**: a
   second level in view (a walkway above the street, a square below) still
-  takes only the film - a second pass, or screen-space reflections.
+  takes only the film - a second pass, or screen-space reflections. (Done
+  as the weather list's 9, "9, the second level" below.)
 * **1 again, THE LIGHTS' STREAKS from the lights themselves** (2026-10-28,
   the reader's "go with 1"): each emitter's light drawn on every wet floor as
   a long highlight toward the eye - `streakOf` (`scene.frag`, GLES's twin in
@@ -1710,6 +1711,62 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   overlap 0.920. `OMK_NO_GUSTS=1` (an instrument) none. Not the snow, the
   drips or the splashes. `engine: rain 3d` part 18. **CONFIRMED IN PLAY**
   (the reader's "good", 2026-10-29, the same run).
+* **9, THE SECOND LEVEL** (2026-10-29, the reader's "go with 9, two
+  planes and add it as a selection on the reflection setting"):
+  `[Remaster] reflections = N` / `--reflections N`, OMK's Remaster page
+  "Niveaux qui reflètent" - 0 none, 1 one plane (unset: as before), 2 two;
+  the `--remaster` preset's 2. With 2, beside the frame's plane
+  (`chooseFloor` / `chooseFloorNear`, unchanged) the level below the eye
+  with the most floor AHEAD of the camera (`chooseFloorSecond`: within
+  `kSecondCone`, 60 degrees, of the look on the ground; at least
+  `kWetPlaneMin`; more than twice `kWetPlaneBand` from the first), of the
+  wet levels and the listed ones; `drawWithWater` gives its floors' runs
+  `Draw::reflectPlane` 1 - those IN SHOT alone (the frustum a tenth wider) -
+  and the backend draws a second reflection, half size, into the
+  reflection image's top-RIGHT quarter (`Renderer::drawTwoReflections`):
+  Vulkan with a keeping render pass (`reflPass1Keep_`, `reflPassKeep_`
+  without MSAA: the colour begun in COLOR_ATTACHMENT, so the clear is the
+  quarter's), GLES with a scissored clear; each floor samples its own
+  quarter (`scene.frag` bit 22; GLES `uReflOff`, `uReflBox`, a clamp only
+  in a two-level frame - one-plane frames the same bytes). The clip memo
+  keeps two planes (`clipAbove`). Found on the way: the tiled lights are
+  indexed by `gl_FragCoord`, so the right quarter read past the tiles - its
+  reflection unlit; the pass's x origin now rides in the tile header's
+  word 3 above the tile's size, its lists in the upper quarter of the
+  buffer (`ds1Refl2_`). And the first choice, the most floor within 100 m,
+  gave the lamp street's second pass to a sunken court (y 176) not a pixel
+  of which was drawn - hence ahead-only and in shot. With 0, no level
+  mirrors and the wet film is laid without the pass (`coverRuns`, its
+  `snow` false; the `remaster.wetfilm` event). On Qalisar's raised walk
+  (`--area 101 --stand 15000,-140,-10500,270`, the rain) the street below
+  mirrors the banner and the signs: 2513 pixels brighter, none darker. The
+  cost there at 4K (M3, headless, the frame read back): the median frame
+  37.8 -> 41.0 ms, the reflections' GPU time 1.4 -> 2.9 ms.
+  `OMK_SWAP_LEVELS=1` (an instrument) swaps the two levels: the frame's
+  own floor from the second quarter is one plane's picture, 0 pixels on
+  Vulkan, 4 on GLES. `engine: floor levels` (new, 5 parts), `engine:
+  floors` pinned to one plane.
+  **The occlusion test** (the reader's "ok, do it", the same day): the
+  lamp street's second level (y -140, the raised walks) is in shot but
+  behind walls - its pass, 6.2 ms a frame at 4K (44.9 -> 51.1), drew
+  nothing. Now the backend draws that level's floors AGAIN after the
+  frame's scene, each run in an occlusion query, through a probe that
+  writes neither depth nor colour at depth LESS_OR_EQUAL (Vulkan's
+  `pipeProbe_`, GLES's masks; queries since GL 1.5 on the Mac, GLES 3 on
+  Android, none on GLES2/vitaGL - there the level counts as seen); the
+  next frame runs the second pass only if a sample passed
+  (`Renderer::secondLevelSeen`), the reflection fading in over
+  `kLevel2FadeSec` (0.25 s) - the query is a frame late. The first try
+  queried the runs where the frame draws them: a wall drawn after the
+  floor did not count, and the hidden level read "seen". A new level
+  starts at 0, queried before it is drawn; at fade 0 its runs are marked
+  (`reflectPlane` 1) but reflect nothing. The lamp street: no second
+  pass, its frame `OMK_NO_LEVEL_QUERY=1`'s (an instrument: every level
+  seen) pixel for pixel; 4K 45.6 ms against one plane's 44.9. The walk
+  keeps its pass, the probe moving no pixel. `engine: floor levels` part
+  6, and part 4 on GLES. **CONFIRMED IN PLAY** (the reader's "commit" after
+  the run on Qalisar's raised walk, 2026-10-29, the full pack and
+  `--enhance-all`, M3). **Open**: which second level elsewhere, by eye.
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

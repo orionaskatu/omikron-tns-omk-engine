@@ -117,6 +117,8 @@ void PlayState::omkOptionsOpen() {
         rem("bloom", bloomStrength, bloomFlag, "--bloom", &S::bloom, &S::bloomSource);
         rem("water", waterStrength, waterFlag, "--water", &S::water, &S::waterSource);
         rem("floors", floorStrength, floorsFlag, "--floors", &S::floors, &S::floorsSource);
+        rem("reflections", reflectLevels, reflectionsFlag, "--reflections", &S::reflections, &S::reflectionsSource,
+            1.0f);
         rem("wet", wetStrength, wetFlag, "--wet", &S::wet, &S::wetSource);
         rem("rain3d", rain3dStrength, rain3dFlag, "--rain3d", &S::rain3d, &S::rain3dSource);
         rem("mist", mistStrength, mistFlag, "--mist", &S::mist, &S::mistSource);

@@ -74,6 +74,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_GROUND_GRID",       // A/B: the floor probe as a linear scan instead of through the grid (engine: ground grid)
     "OMK_NO_GUSTS",             // =1 the 3D rain and its veils lean only with the original's wind - no gusts (engine: rain 3d)
     "OMK_NO_HALO",              // =1 the rain's halos left out: the bloom as it is dry (engine: rain 3d)
+    "OMK_NO_LEVEL_QUERY",       // =1 the second floor level taken as seen: no occlusion test, its pass whenever in shot (engine: floor levels)
     "OMK_NO_LOAD_GATE",         // the Vita's load gate off
     "OMK_NO_MIRROR",            // a mirror drawn as a flat pane instead of reflecting
     "OMK_NO_NEON",              // the generic loop instead of the NEON one, for comparing
@@ -113,6 +114,7 @@ constexpr const char* kSwitches[] = {
     "OMK_STAGE_PROBE",          // log: the staged bodies' placement every frame, every body posed (engine: scene facing)
     "OMK_STICKY_EULER",         // A/B: a scene call's Euler kept across steps - the old, wrong reading (engine: scene facing)
     "OMK_STREAM",               // GLES: the streamed upload on where it is off by default
+    "OMK_SWAP_LEVELS",          // =1 the two reflecting floor levels swapped: the frame's from the second quarter (engine: floor levels)
     "OMK_SWIMTRACE",            // log: the swimmer's probes every tick
     "OMK_SYNC_SETS",            // A/B: a set loaded on the frame's own thread instead of a job
     "OMK_TEXTURE_MEMORY",       // =<bytes> GL1: the free texture memory to size the textures by (engine: gl1 backend)

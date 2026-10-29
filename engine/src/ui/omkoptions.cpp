@@ -131,6 +131,9 @@ OmkOptions::OmkOptions(bool remasterBuilt) : remasterBuilt_(remasterBuilt) {
     add(kPageRemaster, choice(kRem, "bloom", numbers({0, 0.5, 1, 1.6, 2.5, 4}, 0), kTakesBloom, true));
     add(kPageRemaster, choice(kRem, "water", numbers({0, 0.3, 0.6, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "floors", numbers({0, 0.5, 1}, 0), kTakesWater, true));
+    // how many floor levels mirror a frame: captions `reflections.N`
+    add(kPageRemaster, choice(kRem, "reflections", {{"0", 0, "", 0}, {"1", 1, "", 0}, {"2", 2, "", 0}},
+                              kTakesWater, true));
     add(kPageRemaster, choice(kRem, "wet", numbers({0, 0.5, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "rain3d", numbers({0, 0.5, 1}, 0), kTakesWater, true));
     add(kPageRemaster, choice(kRem, "mist", numbers({0, 0.25, 0.5, 1}, 0), kTakesMist, true));

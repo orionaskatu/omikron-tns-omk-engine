@@ -124,6 +124,31 @@ WaterPlane chooseFloorNear(const FloorPlanes& f, const float eye[3], float refY)
     return out;
 }
 
+WaterPlane chooseFloorSecond(const FloorPlanes& f, const float eye[3], const float at[3], float firstY) {
+    WaterPlane out;
+    const float r2 = kFloorNear * kFloorNear;
+    // the way the camera looks, on the ground: floor behind it is never drawn
+    float fx = at[0] - eye[0], fz = at[2] - eye[2];
+    const float fl = std::sqrt(fx * fx + fz * fz);
+    if (fl > 0.0f) { fx /= fl; fz /= fl; }
+    for (const auto& L : f.levels) {
+        if (eye[1] >= L.y - 1.0f) continue;                              // not below the eye (Y is down)
+        if (std::fabs(L.y - firstY) <= 2.0f * kWetPlaneBand) continue;   // the first plane's
+        double near = 0.0;
+        for (std::size_t i = 0; i + 2 < L.tris.size(); i += 3) {
+            const float dx = L.tris[i] - eye[0], dz = L.tris[i + 1] - eye[2];
+            const float d2 = dx * dx + dz * dz;
+            if (d2 > r2) continue;
+            // within `kSecondCone` of the look (a camera looking straight down: all)
+            const float ahead = dx * fx + dz * fz;
+            if (fl > 0.0f && (ahead <= 0.0f || ahead * ahead < kSecondCone * kSecondCone * d2)) continue;
+            near += L.tris[i + 2];
+        }
+        if (near >= kWetPlaneMin && near > out.area) { out.found = true; out.y = L.y; out.area = near; }
+    }
+    return out;
+}
+
 }  // namespace omk
 
 #endif  // OMK_REMASTER

@@ -33839,7 +33839,8 @@ def c_engine_floors():
             args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
                     "--nofmv", "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--frames", "30",
                     "--area", "101", "--stand", "15300,0,-10050,270", "--dump", out, "--filter", "nearest",
-                    "--remaster", pack, "--grade", grades, "--enhance-all"] + list(extra) + \
+                    # (one plane, as measured - the preset's second level is `engine: floor levels`')
+                    "--remaster", pack, "--grade", grades, "--enhance-all", "--reflections", "1"] + list(extra) + \
                    ([] if binary.endswith("gles") else ["--world-vulkan"])
             r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=300)
             if r.returncode != 0 or not os.path.exists(out):
@@ -33880,6 +33881,169 @@ def c_engine_floors():
         "the source (off by default, [Remaster] only, never all = max, the preset's 1, mode 3, the reflection's " \
         "tiles read); in Qalisar the listed floors reflect on Vulkan at y 0, their reflection lit by the tiled " \
         "lights, and on GLES - where Vulkan's do"
+
+
+def c_engine_floor_levels():
+    r"""THE SECOND REFLECTING LEVEL - the remaster's, the weather list's 9
+    (`todo/remaster.md`, "9, the second level"; `o3de/floorreflect.h`
+    chooseFloorSecond). `[Remaster] reflections = N` / `--reflections N`: 0
+    no floor mirrors (a wet one keeps its film, laid without the pass), 1 the
+    level below the eye (unset: as before), 2 that and a SECOND level in shot
+    - a walkway above the street, a square below it - its own reflection
+    pass at half size into the reflection image's top-RIGHT quarter (Vulkan's
+    `reflPass1Keep_` / `reflPassKeep_`, GLES's scissored clear), each floor
+    sampling its own quarter (`Draw::reflectPlane`, `scene.frag` bit 22,
+    GLES's `uReflOff`/`uReflBox`); the `--remaster` preset's 2.
+
+    Parts (Qalisar in the RAIN - `OMK_WEATHER_SKIP_MS`, 400 frames, the pack,
+    `--enhance-all`, `--mist 0`):
+      1. the source: 1 unset, [Remaster] only, never `all = max`, the preset's
+         2; the options row with its three captions in both languages; the
+         tiles' x origin in the shader (the second pass's lights);
+      2. Vulkan, on the raised walk (15000, -140, -10500, 270): `--reflections
+         2` moves more than 1000 pixels of `--reflections 1`, BRIGHTER - fewer
+         than 20 darker (the first plane's quarter kept) - and the
+         `remaster.floors` event has the second level at y 0, the street;
+      3. Vulkan, the lamp street (10341, -260, -9507, 90): `OMK_SWAP_LEVELS=1`
+         (an instrument: the two levels swapped, the street the player stands
+         on reflected from the SECOND quarter, its tiles from the buffer's upper
+         quarter) is `--reflections 1`'s frame, pixel for pixel;
+      4. GLES the same, within 20 pixels (the clamp at the quarter's edge,
+         taken only in a two-level frame: 4 measured); and its occlusion
+         test: on the lamp street `--reflections 2` ends with no second pass;
+      5. Vulkan, `--reflections 0`: no floor reflects (the event), more than
+         1000 pixels of `--reflections 1` moved, and the film still laid
+         without the pass - the `remaster.wetfilm` event, more than 1000
+         triangles covered;
+      6. THE OCCLUSION TEST (`Renderer::secondLevelSeen`), Vulkan: on the
+         lamp street the second level chosen (y -140) is in shot but behind
+         walls - `--reflections 2` ends with NO second pass (the event), and
+         its frame is `OMK_NO_LEVEL_QUERY=1`'s (an instrument: every level
+         seen, the pass drawn) pixel for pixel - the pass showed nothing; on
+         the walk (part 2) the street below is seen and keeps it.
+
+    Measured 2026-10-29 (M3): part 2, 2513 pixels brighter, 0 darker; part 3,
+    0; part 4, 4; 4K on the walk, the frame's median 37.8 -> 41.0 ms, the
+    reflection's GPU time 1.4 -> 2.9 ms; 4K on the lamp street, one plane
+    44.9 ms, two with the occlusion test 45.6, two without it 51.1.
+
+    SHOWN TO FAIL (2026-10-29): the second pass's tiles without their x
+    origin - part 3 (7900 pixels; found that way, 713 darker at a 24-step
+    threshold, the street's lamps unlit in its reflection); `scene.frag`
+    reading the second level from the FIRST quarter - part 3 (24065); GLES's
+    second quarter's offset 0 - part 4; the film laid at 0 with no level
+    mirroring - part 5 (0 triangles; read first as pixels against `--wet 0`,
+    which the wet bodies, splashes and sky moved by 47718 without any film:
+    the event replaced it). NOT CAUGHT: the second pass begun with the
+    first's CLEARING render pass (`reflPass1_`, an UNDEFINED initial layout)
+    - MoltenVK keeps the first quarter all the same (part 2, 0 darker); the
+    keeping pass is the specification's, not this driver's. The occlusion
+    test's probe at depth ALWAYS - every sample passing, what a query round
+    the run's own draw measured (the first try: walls drawn after the floor
+    did not count, the lamp street's hidden level "seen") - part 6 on
+    Vulkan, part 4 on GLES.
+
+    NOT CHECKED: the choice of the second level beyond these two places (by
+    eye, in play); the fade-in when a level comes into view (a headless run
+    stands still).
+    """
+    import subprocess, tempfile, shutil, re, sys, platform
+    eng = os.path.join(ROOT, "engine")
+    fr = omkpaths.data_root()
+    if not os.path.isdir(eng):
+        return ("skipped",), ("skipped",), "engine/ absent"
+    sh = open(os.path.join(eng, "src", "platform", "settings.h")).read()
+    sc = open(os.path.join(eng, "src", "platform", "settings.cpp")).read()
+    ps = _engine_src("backends/remaster/playremaster_setup.cpp")
+    fs = open(os.path.join(eng, "backends", "vulkan", "shaders", "scene.frag")).read()
+    oo = open(os.path.join(eng, "src", "ui", "omkoptions.cpp")).read()
+    tx = open(os.path.join(eng, "src", "ui", "omktext_data.cpp")).read()
+    max_body = sh[sh.index("inline void applyMaxEnhancements"):]
+    max_body = max_body[:max_body.index("\n}\n")]
+    pre = ps[ps.index("reflectLevels = reflectionsFlag"):]
+    pre = pre[:pre.index(";") + 1]
+    src_ok = (bool(re.search(r"float\s+reflections\s*=\s*1\.0f;", sh)),
+              'kRemaster, "reflections"' in sc and 'kEnhancements, "reflections"' not in sc,
+              "reflections" not in max_body,
+              '!preset.empty() ? pv("reflections") : 1.0f;' in pre and '{"reflections", 2.0f}' in sh,
+              'choice(kRem, "reflections"' in oo and all(tx.count("reflections.%d " % n) == 2 for n in range(3))
+              and tx.count("row.reflections ") == 2,
+              "fc.x -= min(tl.t[3] >> 16, fc.x);" in fs)
+    mk = subprocess.run(["make", "-s", "play", "play-gles"], cwd=eng, capture_output=True, text=True)
+    if mk.returncode != 0:
+        return ("build",), ("built",), mk.stderr[-300:]
+    pack = omkpaths.pack_path() or ""
+    if not os.path.isdir(pack):
+        return (src_ok, ("skipped",)), ((True,) * 6, ("skipped",)), "no texture pack (omk.conf pack =)"
+    tmp = tempfile.mkdtemp()
+    walk, lamp = "15000,-140,-10500,270", "10341,-260,-9507,90"
+    try:
+        def run(binary, name, stand, env_extra, *extra):
+            out = os.path.join(tmp, name + ".bin")
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000", **env_extra)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            args = [fr, os.path.join(ROOT, "tables"), "--save", os.path.join(ROOT, "traces", "save-appart.bin"),
+                    "--area", "101", "--stand", stand, "--no-crowd", "--nofmv", "--nodelay",
+                    "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                    "--frames", "400", "--remaster", pack, "--mist", "0", "--enhance-all", "--dump", out] + \
+                   list(extra) + ([] if binary.endswith("gles") else ["--world-vulkan"])
+            r = subprocess.run(cmd + args, capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None, []
+            raw = open(out, "rb").read()
+            return struct.unpack("<%dH" % (len(raw) // 2), raw), _events(r.stdout + r.stderr)
+        luma = lambda v: ((v >> 11) & 31) * 2 + ((v >> 5) & 63) + (v & 31) * 2
+        brighter = lambda a, b: sum(1 for x, y in zip(a, b) if luma(y) > luma(x) + 6)
+        darker = lambda a, b: sum(1 for x, y in zip(a, b) if luma(y) < luma(x) - 6)
+        diff = lambda a, b: sum(1 for x, y in zip(a, b) if x != y)
+        vkb = os.path.join(eng, "build", "omk-play")
+        w1, _ = run(vkb, "w1", walk, {}, "--reflections", "1")
+        w2, ev2 = run(vkb, "w2", walk, {}, "--reflections", "2")
+        l1, _ = run(vkb, "l1", lamp, {}, "--reflections", "1")
+        ls, _ = run(vkb, "ls", lamp, {"OMK_SWAP_LEVELS": "1"}, "--reflections", "2")
+        l0, ev0 = run(vkb, "l0", lamp, {}, "--reflections", "0")
+        l2, evl2 = run(vkb, "l2", lamp, {}, "--reflections", "2")
+        lf, _ = run(vkb, "lf", lamp, {"OMK_NO_LEVEL_QUERY": "1"}, "--reflections", "2")
+        gl = ("skipped",)
+        if platform.system() == "Darwin":
+            gb = os.path.join(eng, "build", "omk-play-gles")
+            g1, _ = run(gb, "g1", lamp, {}, "--reflections", "1")
+            gs, _ = run(gb, "gs", lamp, {"OMK_SWAP_LEVELS": "1"}, "--reflections", "2")
+            g2, evg = run(gb, "g2", lamp, {}, "--reflections", "2")
+            flg = [k for n, k in evg if n == "remaster.floors"]
+            gl = ("no frame",) if g1 is None or gs is None or g2 is None else \
+                (diff(g1, gs) <= 20, bool(flg) and flg[-1].get("second") in ("0", "false"))
+            if g1 is not None and gs is not None:
+                print(f"        GLES: the levels swapped, {diff(g1, gs)} pixels from one plane")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if None in (w1, w2, l1, ls, l0, l2, lf):
+        return (src_ok, ("no frame",)), ((True,) * 6, ("frames",)), "a Vulkan run wrote no frame"
+    fl2 = [k for n, k in ev2 if n == "remaster.floors"]
+    fl0 = [k for n, k in ev0 if n == "remaster.floors"]
+    up, down = brighter(w1, w2), darker(w1, w2)
+    sw, off = diff(l1, ls), diff(l1, l0)
+    films = [int(k.get("covered", 0)) for n, k in ev0 if n == "remaster.wetfilm"]
+    film = films[-1] if films else 0
+    second = bool(fl2) and fl2[-1].get("second") in ("1", "true") and float(fl2[-1].get("y2", "nan")) == 0.0
+    none = not any(k.get("live") in ("1", "true") for k in fl0)
+    fll = [k for n, k in evl2 if n == "remaster.floors"]
+    hidden = bool(fll) and fll[-1].get("second") in ("0", "false")
+    nothing = diff(l2, lf)
+    print(f"        the walk: two levels {up} brighter, {down} darker, events {fl2[-1:]}; the lamp street: "
+          f"swapped {sw}, none {off} from one, its film on {film} triangles; its hidden level "
+          f"{'without' if hidden else 'WITH'} a pass, {nothing} pixels from the pass forced; GLES {gl}")
+    return (src_ok, (up > 1000, down < 20, second), sw == 0, gl, (none, off > 1000, film > 1000),
+            (hidden, nothing == 0)), \
+           ((True,) * 6, (True, True, True), True, _or_skip(gl, (True, True)), (True, True, True), (True, True)), \
+        "the source (1 unset, [Remaster] only, never all = max, the preset's 2, the row, the tiles' origin); " \
+        "on Qalisar's walk the street below mirrors too; the second quarter is the first's picture on Vulkan " \
+        "and GLES; with none, no floor mirrors and the film stays; a level behind walls has no pass"
 
 
 def c_engine_wet_floors():
@@ -53529,6 +53693,7 @@ SLOW = [
     ("engine: relief", c_engine_relief, "todo/remaster.md B3; scene.frag relief()"),
     ("engine: normal maps", c_engine_normal_maps, "todo/remaster.md B3; o3de/normalmap.h"),
     ("engine: floors",       c_engine_floors,       "todo/remaster.md A3; o3de/floorreflect.h"),
+    ("engine: floor levels", c_engine_floor_levels, "todo/remaster.md weather 9; o3de/floorreflect.h"),
     ("engine: wet floors",   c_engine_wet_floors,   "todo/remaster.md wet floors; o3de/wetfloor.h"),
     ("engine: rain 3d",      c_engine_rain3d,       "todo/remaster.md rain in 3D; backends/remaster/playremaster_rain.cpp"),
     ("engine: clip memo",    c_engine_clip_memo,    "todo/remaster.md audit bug 2; o3de/renderer.cpp clipAbove"),

@@ -102,6 +102,7 @@ struct PlayState {
     std::string & remasterFlag = opt.remasterFlag;
     float & waterFlag = opt.waterFlag;
     float & floorsFlag = opt.floorsFlag;
+    float & reflectionsFlag = opt.reflectionsFlag;
     float & wetFlag = opt.wetFlag;
     int & restoreWeatherFlag = opt.restoreWeatherFlag;
     float & rain3dFlag = opt.rain3dFlag;
@@ -713,6 +714,7 @@ struct PlayState {
     float bloomStrength{};
     float waterStrength{};   // the water reflection's, 0 off
     float floorStrength{};   // the reflecting floors', 0 off (`o3de/floorreflect.h`)
+    float reflectLevels = 1.0f;   // ...how many levels mirror a frame, 0..2 (`[Remaster] reflections`)
     float wetStrength{};     // the wet floors', 0 off (`o3de/wetfloor.h`)
     omk::Wetness wetness{};  // ...how wet they are now, after the shower
     std::unordered_map<const void*, float> bodyWet{};   // ...and each body, by its pose (`stepBodyWet`)
@@ -755,6 +757,11 @@ struct PlayState {
     bool waterLive{};        // the frame drew through the water pass (for the log)
     bool floorLive{};        // ...the floors' (for the log), at this plane
     float floorLiveY{};
+    bool floor2Live{};       // ...and a SECOND level's (`[Remaster] reflections = 2`), at this one
+    float floor2LiveY{};
+    float level2Fade{};      // ...its reflection fading in while it is seen (the occlusion test)
+    float level2Y = 1e30f;   // ...the level that fade is of
+    static constexpr float kLevel2FadeSec = 0.25f;
     std::string gradeFor{"\x01"};
     int gradeOvercast = 0;   // ...the shower's step it was built at, 0..16 (`remasterGrade`)
     std::size_t worldTexBase[2] = {0, 0};   // each slot's first index in `worldTex`

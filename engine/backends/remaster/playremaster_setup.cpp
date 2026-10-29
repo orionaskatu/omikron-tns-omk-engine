@@ -194,6 +194,15 @@ void PlayState::remasterSetup() {
         floorStrength = floorsFlag >= 0.0f ? floorsFlag
                       : settings.floorsSource == omk::Settings::Source::Ini ? settings.floors
                       : !preset.empty() ? pv("floors") : 0.0f;
+        // ...and how many LEVELS mirror a frame (`chooseFloorSecond`): its
+        // flag, its key, the preset's 2 - else 1, one plane as before
+        reflectLevels = reflectionsFlag >= 0.0f ? reflectionsFlag
+                      : settings.reflectionsSource == omk::Settings::Source::Ini ? settings.reflections
+                      : !preset.empty() ? pv("reflections") : 1.0f;
+        if (reflectLevels != 1.0f)
+            std::printf("reflections: %.0f - a REMASTER feature: %s\n", static_cast<double>(reflectLevels),
+                        reflectLevels >= 2.0f ? "a second floor level in view mirrors too, its own pass"
+                                              : "no floor mirrors (a wet one keeps its film)");
         // the WET FLOORS (`o3de/wetfloor.h`): its flag, its key, the preset's 1 -
         // no list: every level floor under the open sky, in a rain area
         wetStrength = wetFlag >= 0.0f ? wetFlag

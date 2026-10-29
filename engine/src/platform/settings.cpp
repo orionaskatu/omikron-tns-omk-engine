@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "platform/settings.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -192,6 +193,8 @@ Settings resolveSettings(const OptionsFile& ini,
         strength(ini.find(kRemaster, "bloom"), "bloom", 4.0f, s.bloom, s.bloomSource);
         strength(ini.find(kRemaster, "water"), "water", 1.0f, s.water, s.waterSource);
         strength(ini.find(kRemaster, "floors"), "floors", 1.0f, s.floors, s.floorsSource);
+        strength(ini.find(kRemaster, "reflections"), "reflections", 2.0f, s.reflections, s.reflectionsSource);
+        if (s.reflectionsSource == Settings::Source::Ini) s.reflections = std::round(s.reflections);
         strength(ini.find(kRemaster, "wet"), "wet", 1.0f, s.wet, s.wetSource);
         strength(ini.find(kRemaster, "rain3d"), "rain3d", 1.0f, s.rain3d, s.rain3dSource);
         strength(ini.find(kRemaster, "mist"), "mist", 1.0f, s.mist, s.mistSource);

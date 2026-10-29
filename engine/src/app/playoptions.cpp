@@ -338,6 +338,11 @@ int PlayOptions::parse(int argc, char** argv) {
 "  --floors S       REMASTER, off by default: the floors the grades' floors.txt\n"
 "                   lists reflect the scene, strength S (0..1) times theirs;\n"
 "                   Vulkan and GLES only; [Remaster] floors=S\n"
+"  --reflections N  REMASTER: how many floor levels mirror a frame - 0 none (a\n"
+"                   wet floor keeps its film), 1 the level below the eye (the\n"
+"                   default), 2 that and a second one in view (a walkway above\n"
+"                   the street, a square below it), a second pass; the\n"
+"                   --remaster preset's 2; [Remaster] reflections=N\n"
 "  --wet S          REMASTER, off by default: the game's own weather on the\n"
 "                   ground (option row 7 at 2) - while its rain falls the floors\n"
 "                   under the open sky wet and reflect the scene, drying over 2\n"
@@ -677,6 +682,14 @@ int PlayOptions::parse(int argc, char** argv) {
                 std::fprintf(stderr, "--floors %s: not 0..1\n", argv[i]);
                 return 2;
             }
+        }
+        else if (a == "--reflections" && i + 1 < argc) {
+            const std::string n = argv[++i];
+            if (n != "0" && n != "1" && n != "2") {
+                std::fprintf(stderr, "--reflections %s: not 0, 1 or 2\n", n.c_str());
+                return 2;
+            }
+            reflectionsFlag = static_cast<float>(n[0] - '0');
         }
         else if (a == "--rain3d" && i + 1 < argc) {
             rain3dFlag = static_cast<float>(std::atof(argv[++i]));

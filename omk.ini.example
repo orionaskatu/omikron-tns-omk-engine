@@ -244,7 +244,8 @@
 ; The preset: a folder holding the texture pack (pack/ or full/pack/) and
 ; the grades (grades/, with lights.txt and floors.txt) - `omktexpack.py`
 ; builds it. Its values: bloom 1.6, water 0.6, body light 1, fx light 1,
-; relief 2, ao 2, floors 1, wet 1, rain3d 1, mist 0.5, smooth 0.75, preload 15
+; relief 2, ao 2, floors 1, reflections 2, wet 1, rain3d 1, mist 0.5,
+; smooth 0.75, preload 15
 ; (`kRemasterPreset` in engine/src/platform/settings.h).
 ;dir = /path/to/omk-pack
 ;
@@ -302,6 +303,12 @@
 ;ao = 0
 ;floors = 0
 ;wet = 0
+;
+; How many floor LEVELS mirror a frame, the listed and the wet ones alike:
+; 0 none (a wet floor keeps its darker film), 1 the level below the eye, 2
+; that and a second one in view - a walkway above the street, a square below
+; it - drawn by a second reflection pass where there is one (Vulkan and GLES).
+;reflections = 1
 ;rain3d = 0
 ;mist = 0
 ;

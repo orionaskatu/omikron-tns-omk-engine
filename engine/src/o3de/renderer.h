@@ -360,6 +360,11 @@ struct Draw {
     // `playremaster_draw.cpp` remasterWetBodies): `wet` how wet, the shaders'
     // body rule - a little darker, its lit highlights brighter - not a floor's
     bool            wetBody          = false;
+    // ...and WHICH plane's reflection a reflecting floor's run adds: 0 the
+    // frame's plane, 1 its SECOND level (`[Remaster] reflections = 2`,
+    // `drawWithWater`'s `SecondPlane`) - a walkway above the street, a square
+    // below it. Set only by `drawWithWater`, for its own frame.
+    std::uint8_t    reflectPlane     = 0;
 };
 
 // THE TEXTURE A DRAW BINDS. The engine's is the key's low six bits and
@@ -523,6 +528,27 @@ public:
     virtual bool drawWaterScene(const View& /*v*/, const View& /*reflected*/,
                                 std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
                                 std::span<const Draw> /*water*/, float /*strength*/, float /*planeY*/) {
+        return false;
+    }
+    // THE SECOND REFLECTING LEVEL (`[Remaster] reflections = 2`): the floors'
+    // frame with TWO planes, each its own reflection - `drawWaterScene`'s, and
+    // the second through `reflected2` from `above2` (what lies above
+    // `planeY2`), both at half size, the first in the reflection image's
+    // top-left quarter and the second in its top-right; a floor's run reads
+    // its own (`Draw::reflectPlane`). Floors only - no water draws.
+    // `drawsTwoReflections` is asked before the runs are split: false, and
+    // the frame keeps one plane.
+    virtual bool drawsTwoReflections() const { return false; }
+    // ...and whether the second level's floors were SEEN in the last frame
+    // that drew any - an occlusion query round each of their runs in the
+    // frame's pass (walls included, which the frustum test cannot see): 1
+    // some sample passed, 0 none, -1 unknown (no query, or no result yet).
+    // The frontend runs the second pass only while they are seen.
+    virtual int secondLevelSeen() { return -1; }
+    virtual bool drawTwoReflections(const View& /*v*/, const View& /*reflected*/,
+                                    std::span<const Draw> /*scene*/, std::span<const Draw> /*above*/,
+                                    float /*strength*/, float /*planeY*/, const View& /*reflected2*/,
+                                    std::span<const Draw> /*above2*/, float /*planeY2*/) {
         return false;
     }
     virtual bool drawMirrorScene(const View& /*v*/, const View& /*reflected*/,
@@ -779,11 +805,24 @@ float groundLevel(const Geometry& g);
 // `wetReflect` too (the larger of it and their material's), and every one of
 // them, on the plane or not, darkened by `wetDarken` (`Draw::wet`). Either
 // list may be null; both null is the water.
+// ...and a SECOND floor level (`[Remaster] reflections = 2`): `second`'s
+// plane, when found, the backend draws two (`drawsTwoReflections`) and the
+// eye is above it too, takes the floors' triangles on it - within 4, a wet
+// floor's within `kWetPlaneBand` - that the first plane does not; `drawn`
+// says whether any did and the second reflection was drawn.
+// ...`fade` scales its floors' reflection (0..1): at 0 its runs are still
+// marked (`Draw::reflectPlane` 1, `reflect` 0) - the occlusion query's - but
+// reflect nothing and no second pass is drawn.
+struct SecondPlane {
+    WaterPlane plane;
+    float fade = 1.0f;
+    bool drawn = false;
+};
 bool drawWithWater(Renderer& r, std::span<const Draw> draws, const View& v,
                    const Geometry* setGeo, const WaterPlane& wp, float strength,
                    const std::vector<float>* floorStrength = nullptr,
                    const std::vector<std::uint8_t>* wetTris = nullptr, float wetReflect = 0.0f,
-                   float wetDarken = 0.0f);
+                   float wetDarken = 0.0f, SecondPlane* second = nullptr);
 #endif  // OMK_REMASTER
 
 }  // namespace omk

@@ -12,7 +12,8 @@
 // the highest - a kerb's 4 units); each frame mirrors in ONE of them, the
 // level below the eye with the most listed floor within `kFloorNear` of it
 // (`chooseFloor`), through the water's own pass (`drawWithWater`) - the water
-// first when its plane reflects.
+// first when its plane reflects. With `[Remaster] reflections = 2` a SECOND
+// level in shot mirrors too, its own pass (`chooseFloorSecond`); with 0, none.
 #pragma once
 
 #include "formats/tex3dt.h"
@@ -78,5 +79,17 @@ inline constexpr double kWetPlaneMin = 1.5e5;   // square units near (~100 m2)
 // mirror is out by that much there, which the ripples and puddles hide
 inline constexpr float kWetPlaneBand = 16.0f;
 WaterPlane chooseFloorNear(const FloorPlanes& f, const float eye[3], float refY);
+// THE SECOND LEVEL (`[Remaster] reflections = 2`, the weather list's 9): one
+// plane a frame left a walkway above the street, or a square below it, with
+// the wet film and no mirror. Beside the frame's plane at `firstY`, the level
+// below the eye with the MOST floor near it and AHEAD of the camera - within
+// `kSecondCone` of the way it looks toward `at`, on the ground; at least
+// `kWetPlaneMin`, so a sliver costs no pass - and more than twice
+// `kWetPlaneBand` from the first (a wet triangle within the band reflects in
+// the first); not `found` when none. Counted over the whole of `kFloorNear`
+// the second pass went to a sunken court behind Qalisar's lamp street,
+// 274575 square units near and not a pixel of it drawn (2026-10-29)
+inline constexpr float kSecondCone = 0.5f;   // cos 60 degrees: a wide lens's half-width and margin
+WaterPlane chooseFloorSecond(const FloorPlanes& f, const float eye[3], const float at[3], float firstY);
 
 }  // namespace omk

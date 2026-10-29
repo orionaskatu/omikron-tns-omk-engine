@@ -1508,7 +1508,7 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   | 4 | drips from roof edges | DONE `ca3f49de` - past the eaves, the drawn set's sky too |
   | 5 | splashes from feet and on shoulders | DONE (2026-10-29) - a crown at each step of a body in the open, drops bursting on heads and shoulders; see "5, the splashes off the bodies" below |
   | 6 | the rain sound by cover | DROPPED - the shower's sound is its music track (118-122, the city's music mixed with the rain, ASSETS 4e): muffling it muffles the music. Only a separate drip sound, if the game ships one (not looked for) |
-  | 7 | gusts | OPEN - the drops' slant and the veils swaying over time; the original's own wind and drops must stay as they are |
+  | 7 | gusts | DONE (2026-10-29) - the drawn rain's lean and the veils' sheets sway with a wind that comes and goes; the original's drops, step and roof test untouched; see "7, the gusts" below |
   | 8 | lightning | OPEN, last - invented (the game has none) and needs a thunder sound |
   | 9 | a SECOND reflecting level (new, from play) | OPEN - one plane reflects a frame: a walkway above the street or a square below it takes the film alone. A second pass, or screen-space reflections - the costliest |
   | 10 | rain under a hall's roof (new, from play) | DONE (2026-10-29) - NOT the 3D rain: the wet WALLS' trickles, on a wall whose top meets its ceiling, and Kay'l "in the rain" under a low ceiling; see "10, the hall" below |
@@ -1546,8 +1546,10 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   0.782 against its 0.8 - and the same, to the pixel, built at `2cf19683`
   itself, `d50f917b`, `ca3f49de` and `1e50247`: Vulkan 9959 brighter as
   recorded (9964), GLES 9304 where 9504 was. What moved is outside the
-  tree - the pack's files or GLES on this machine (M1); not attributed
-  further.
+  tree: the record was taken on the M3 (the day's other sessions, the
+  reader), this on the M1 - GLES's count is the machine's, Vulkan's is not.
+  To settle: the part on the M3; green there, the threshold is one
+  machine's.
 * **1, the streaks - TRIED AND TAKEN OUT** (2026-10-28): the reflection's
   bright part (over 0.35) smeared along the screen's vertical, 8 taps each
   way over 8% of the frame, on a wet REFLECTING floor (mode 3). It moved 0
@@ -1687,6 +1689,25 @@ The reader's "continue" after the wet floors - item 3 of the weather list.
   walking, 1 standing (another walker); ~125 on the heads either way.
   `OMK_NO_BODY_SPLASHES=1` (an instrument) none. `engine: rain 3d` part
   17. **Not judged in play yet** - the strengths are the reader's to set.
+* **7, THE GUSTS** (2026-10-29, the reader's "go with 7"): the original's
+  wind is one fixed step a frame - `(0.5, 0.866, 0) * 64`, the rain 30
+  degrees off the vertical - and stays so: its drops, their step, their
+  roof test. What sways is what the remaster DRAWS: `remasterGust`
+  (`playremaster_rain.cpp`) gives the lean a gust adds to the slant's
+  tangent - three slow waves on the weather's clock (13, 6.1 and 2.3 s,
+  weights 0.6/0.3/0.1; 4.3 and 1.7 s read as a nervous flutter), coming and
+  going in 23-s spells (`kGustCalm` 0.25 between them), a lull taking back
+  a third (`kGustLull`), up to `kGustShear` 0.35, times the shower - and a
+  gust front travels down the wind (`kGustSpeed` 900 units a second along
+  x). Each streak leans by the gust where its drop is; the veils' sheets
+  are sheared by the gust where the eye is, about the eye's height
+  (`View::veilGust`, in the veils' colour's unused w: Vulkan's Lights
+  block at 3180, GLES's `uVeilColour` now a vec4) - both shaders'
+  `veilAmount`. Anekbah's street: the lean -0.081..0.285 over frames 600 ->
+  870; at 870, 53781 pixels on Vulkan (42466 the veils'), 54038 on GLES,
+  overlap 0.920. `OMK_NO_GUSTS=1` (an instrument) none. Not the snow, the
+  drips or the splashes. `engine: rain 3d` part 18. **Not judged in play
+  yet.**
 * **Open**: snow on slopes.
 
 ## Tier E - the interface pack: as built (2026-10-22)

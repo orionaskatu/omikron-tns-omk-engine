@@ -72,6 +72,7 @@ constexpr const char* kSwitches[] = {
     "OMK_NO_GEOMETRY_RELEASE",  // GLES: a destroyed geometry's GPU state kept (engine: geometry release)
     "OMK_NO_GPU_PRESENT",       // the GPU window hidden and every frame read back - a measurement run (engine: grey bank)
     "OMK_NO_GROUND_GRID",       // A/B: the floor probe as a linear scan instead of through the grid (engine: ground grid)
+    "OMK_NO_GUSTS",             // =1 the 3D rain and its veils lean only with the original's wind - no gusts (engine: rain 3d)
     "OMK_NO_HALO",              // =1 the rain's halos left out: the bloom as it is dry (engine: rain 3d)
     "OMK_NO_LOAD_GATE",         // the Vita's load gate off
     "OMK_NO_MIRROR",            // a mirror drawn as a flat pane instead of reflecting

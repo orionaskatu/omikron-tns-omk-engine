@@ -536,7 +536,7 @@ void GlesRenderer::remasterWaterUniforms(const Draw& d, const SceneLoc& L, UniCa
             U.veil[0] = v0; U.veil[1] = veil_[1]; U.veil[2] = veil_[2]; U.veil[3] = veil_[3];
         }
         if (v0 > 0.0f && set(!uv || std::memcmp(U.veilColour, veilColour_, sizeof U.veilColour) != 0)) {
-            glUniform3f(L.veilColour, veilColour_[0], veilColour_[1], veilColour_[2]);
+            glUniform4f(L.veilColour, veilColour_[0], veilColour_[1], veilColour_[2], veilColour_[3]);
             std::memcpy(U.veilColour, veilColour_, sizeof U.veilColour);
         }
         // ...whose rays start at the frame's eye: the vertex variant's `uEye`

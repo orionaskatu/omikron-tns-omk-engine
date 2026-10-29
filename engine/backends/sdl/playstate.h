@@ -874,6 +874,7 @@ struct PlayState {
     void remasterRainDraws(std::vector<omk::Draw>& list, const omk::View& v);
     void remasterPoolRain(std::vector<omk::Texture>& slots);   // the streak's texture, after the sprites
     bool remasterWeatherRoofless() const;   // the 3D weather showing: a roof does not end the shower
+    float remasterGust(double ms, float along, float shower) const;   // the gusts' lean (`playremaster_rain.cpp`)
     void remasterSnowCover(std::vector<omk::Draw>& list);      // the snow lying (`o3de/wetfloor.h` coverRuns)
     void remasterWetBodies(std::vector<omk::Draw>& list);      // the bodies wet in the rain (`o3de/wetfloor.h`)
     bool remasterDrawReflected(omk::Renderer& world, std::span<const omk::Draw> list, const omk::View& drawn);

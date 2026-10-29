@@ -83,6 +83,7 @@ void PlayState::remasterViewMist(omk::View& v) {
     v.streaks = !noStreaks && remasterShown_ ? wetStrength : 0.0f;
     v.streakLights.clear();
     v.veil = 0.0f;
+    v.veilGust = 0.0f;
     // `OMK_NO_VEIL=1`, an INSTRUMENT: the veils alone left out
     // (`verify.py: engine: rain 3d` part 13)
     static const bool noVeil = omk::envFlag("OMK_NO_VEIL");
@@ -94,6 +95,7 @@ void PlayState::remasterViewMist(omk::View& v) {
         v.veilFall = static_cast<float>(std::fmod(weatherClockMs * kVeilFallPerMs, kVeilFallWrap));
         v.veilScale = kVeilScale;
         for (int k = 0; k < 3; ++k) v.veilColour[k] = kVeilGrey[k] * amb;
+        v.veilGust = remasterGust(weatherClockMs, v.cam.eye[0], weatherRain);   // the gust where the eye is
     }
     // ...and THE HALOS in the rain (with the 3D weather - the reader's "go" on
     // the weather list's 2, 2026-10-28): the lights' bloom spread by the wet

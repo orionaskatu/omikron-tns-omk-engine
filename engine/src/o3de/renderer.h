@@ -163,6 +163,9 @@ struct View {
     // fallen; the distance that takes 63%; their colour. Vulkan and GLES.
     float veil = 0.0f, veilFall = 0.0f, veilScale = 2500.0f;
     float veilColour[3] = {0.0f, 0.0f, 0.0f};
+    // ...and the GUST's lean on them now: what it adds to their slant's
+    // tangent, sheared about the eye's height (`remasterGust`)
+    float veilGust = 0.0f;
     // THE PUDDLES on the wet floors (the remaster's): their strength, 0 an
     // even film. Vulkan and GLES.
     float puddles = 0.0f;

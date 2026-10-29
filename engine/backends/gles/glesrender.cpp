@@ -1408,7 +1408,7 @@ private:
         float wetBody = -1;                            // ...or a body in the rain
         float mist[3] = {-1, -1, -1};                  // ...and the mist
         float dust[4] = {-1, -1, -1, -1}, dustColour[3] = {-1, -1, -1};   // ...and the sand's dust
-        float veil[4] = {-1, -1, -1, -1}, veilColour[3] = {-1, -1, -1};   // ...and the rain's veils
+        float veil[4] = {-1, -1, -1, -1}, veilColour[4] = {-1, -1, -1, -1};   // ...and the rain's veils
         std::uint64_t streakFrame = 0;                                     // ...the lights' streaks, sent that frame
         float reflK = -1, eye[3] = {0, 0, 0}, clipY = 0;
     };
@@ -1516,7 +1516,7 @@ private:
     float  mist_[3] = {0.0f, 0.0f, 400.0f};
     bool   mistOn_ = false;
     float  dust_[4] = {0.0f, 0.0f, 0.0f, 1400.0f}, dustColour_[3] = {0.0f, 0.0f, 0.0f};   // View::dust
-    float  veil_[4] = {0.0f, 0.0f, 2500.0f, 0.0f}, veilColour_[3] = {0.0f, 0.0f, 0.0f};   // View::veil
+    float  veil_[4] = {0.0f, 0.0f, 2500.0f, 0.0f}, veilColour_[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // View::veil, w its gust
     std::string waterVert_, waterPosedVert_;   // the water variant's vertex sources...
     std::string waterVertX_, waterPosedVertX_; // ...over the enhanced ones
     bool tintWant_ = false;                    // the body light's (`setBodyTint`)
@@ -2948,6 +2948,7 @@ void GlesRenderer::beginPass(const View& view) {
     }
     veil_[0] = view.veil; veil_[1] = view.veilFall; veil_[2] = view.veilScale; veil_[3] = view.puddles;
     for (int k = 0; k < 3; ++k) veilColour_[k] = view.veilColour[k];
+    veilColour_[3] = view.veilGust;
     mistOn_ = (view.mist > 0.0f || view.dust > 0.0f || view.veil > 0.0f) && mainLoc_.water >= 0;
     for (int k = 0; k < 3; ++k) waterEye_[k] = view.cam.eye[k];
 #endif

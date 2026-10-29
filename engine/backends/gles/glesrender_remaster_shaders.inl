@@ -181,7 +181,7 @@ constexpr const char* kVeilGlsl =
     "const float kVeilLow = 0.5;\n"
     "const float kVeilHigh = 0.85;\n"
     "const float kVeilMax = 0.85;\n"
-    "float veilAmount(vec3 e, vec3 w, vec4 veil) {\n"
+    "float veilAmount(vec3 e, vec3 w, vec4 veil, float gust) {\n"
     "    float d = length(w - e);\n"
     "    if (d < kVeilFirst) return 0.0;\n"
     "    vec3 dir = (w - e) / d;\n"
@@ -190,7 +190,8 @@ constexpr const char* kVeilGlsl =
     "        float t = kVeilFirst + float(k) * kVeilStep;\n"
     "        if (t > d) break;\n"
     "        vec3 p = e + dir * t;\n"
-    "        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);\n"
+    "        vec3 q = vec3((p.x + kVeilSlant * p.y + gust * (p.y - e.y)) * kVeilAcross, (p.y - veil.y) * kVeilAlong,\n"
+    "                      p.z * kVeilAcross);\n"
     "        sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));\n"
     "    }\n"
     "    return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;\n"
@@ -297,7 +298,7 @@ std::string waterVariant(const std::string& frag) {
     std::string s = "uniform sampler2D uRefl;\nuniform float uWater;\nuniform vec2 uReflInv;\nuniform float uWet;\n"
                     "uniform float uRain;\nuniform float uRippleClock;\nvarying vec2 vWxz;\nvarying float vOpen;\nvarying float vWall;\n"
                     "uniform float uSnow;\nuniform float uWetBody;\nuniform vec3 uMist;\nuniform vec4 uDust;\nuniform vec3 uDustColour;\n"
-                    "uniform vec4 uVeil;\nuniform vec3 uVeilColour;\n"
+                    "uniform vec4 uVeil;\nuniform vec4 uVeilColour;\n"
                     "uniform vec4 uStreak[32];\nuniform vec2 uStreakN;\n"
                     "uniform int uClip;\nuniform float uClipY;\nvarying float vWy;\nvarying vec3 vToEye;\nvarying vec3 vBodyN;\n" +
                     std::string(kRipplesGlsl) + std::string(kDustGlsl) + std::string(kVeilGlsl) +
@@ -328,7 +329,7 @@ std::string waterVariant(const std::string& frag) {
                      "    }\n"
                      "    if (uVeil.x > 0.0 && (uFogEnd > uFogStart || uFogEnd < 0.0)) {\n"
                      "        vec3 vw = vec3(vWxz.x, vWy, vWxz.y);\n"
-                     "        c = mix(c, uVeilColour, veilAmount(vw + vToEye, vw, uVeil));\n"
+                     "        c = mix(c, uVeilColour.rgb, veilAmount(vw + vToEye, vw, uVeil, uVeilColour.w));\n"
                      "    }\n"
                      "    float wetF = uSnow > 0.5 || uWetBody > 0.5 ? 0.0 : uWet;\n"
                      "    float pud = 0.0;\n"   // the PUDDLES, `scene.frag`'s `puddleMask`

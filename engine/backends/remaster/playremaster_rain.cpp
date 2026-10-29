@@ -101,6 +101,19 @@ constexpr float kRainUnlit = 0.35f;       // a drop no light reaches, against th
 constexpr float kRainNeon = 2.0f;         // ...and the emitters' (the neon), four times the set's lights
 constexpr float kRainLit = 0.5f;          // ...and the lights' colour added on it - Anekbah's
                                           // street has two fills reaching everywhere, ~0.8 together
+// THE GUSTS (the remaster's, the weather list's 7, 2026-10-29): the drawn
+// slant of the rain sways with the wind - the original's drops, their step and
+// their roof test untouched, only the streak's lean and the veils' sheets
+// (`remasterGust`). Three slow waves on the weather's clock, coming and going
+// in bursts, a gust front travelling down the wind
+constexpr double kGustShear = 0.35;       // the most a gust adds to the slant's tangent (the original's 0.577)
+constexpr double kGustPeriod[3] = {13000.0, 6100.0, 2300.0};   // ...its waves, ms (4300 and 1700: a nervous flutter)
+constexpr double kGustWeight[3] = {0.6, 0.3, 0.1};
+constexpr double kGustPhase[3] = {0.0, 1.3, 0.4};
+constexpr double kGustLull = 0.35;        // ...a lull takes this much of a gust's lean away (the slant below the original's)
+constexpr double kGustBurstPeriod = 23000.0;   // the gusty spells come and go this often
+constexpr double kGustCalm = 0.25;        // ...the gusts' share between them
+constexpr double kGustSpeed = 0.9;        // a gust front's speed down the wind, units a ms
 
 // THE STREAK, generated: a grey texel per palette index (index = brightness)
 // - across, a soft bell; along it EVEN, a drop's motion blur, soft at both
@@ -290,6 +303,22 @@ void PlayState::remasterPoolRain(std::vector<omk::Texture>& slots) {
     }
 }
 
+// THE GUST at `ms` on the weather's clock, `along` units down the original
+// wind (its x): what it adds to the rain's lean, the tangent of its slant -
+// times the shower's strength (`shower` 0..1). `OMK_NO_GUSTS=1`, an
+// INSTRUMENT: none (`verify.py: engine: rain 3d` part 18)
+float PlayState::remasterGust(double ms, float along, float shower) const {
+    static const bool noGusts = omk::envFlag("OMK_NO_GUSTS");
+    if (noGusts || !(shower > 0.0f)) return 0.0f;
+    const double t = ms - static_cast<double>(along) / kGustSpeed;
+    double wave = 0.0;
+    for (int k = 0; k < 3; ++k) wave += kGustWeight[k] * std::sin(6.283185307 * t / kGustPeriod[k] + kGustPhase[k]);
+    const double spell = 0.5 + 0.5 * std::sin(6.283185307 * ms / kGustBurstPeriod);
+    const double burst = kGustCalm + (1.0 - kGustCalm) * spell * spell * (3.0 - 2.0 * spell);
+    const double lean = wave >= 0.0 ? wave : wave * kGustLull;
+    return static_cast<float>(kGustShear * burst * lean * std::clamp(static_cast<double>(shower), 0.0, 1.0));
+}
+
 // whether the cycle keeps a shower going under a roof: the 3D weather shows
 // (it stops the drops at the roof itself)
 bool PlayState::remasterWeatherRoofless() const {
@@ -360,6 +389,7 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     // the streak three times the original's 1-pixel line at 640x480, scaled
     // with the frame - its texture's soft edge inside that
     const float halfPx = kRainHalfPx * std::sqrt(std::max(1.0f, static_cast<float>(fb.h) / 480.0f));
+    const float shower = std::min(1.0f, static_cast<float>(rainDrops.size()) / static_cast<float>(kRainFull));
     int roofed = 0;
     const auto corner = [](const float p[3], const float rgb[3], float u, float tv) {
         omk::Corner c{};
@@ -511,8 +541,13 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
         // the streak: from the drop's leading end - the original line's bright
         // one, its tail ahead along the wind - back `kRainLength` against it
         float a[3] = {d.q[0] - d.p[0], d.q[1] - d.p[1], d.q[2] - d.p[2]};
-        const float al = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        float al = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
         if (!(al > 0.0f)) continue;
+        for (float& k : a) k /= al;
+        // ...leaning with the GUST where it is (Y down: the fall is +y, the
+        // lean along the original wind's x)
+        a[0] += remasterGust(weatherClockMs, d.p[0], shower) * a[1];
+        al = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
         for (float& k : a) k /= al;
         const float lead[3] = {d.q[0], d.q[1], d.q[2]};
         const float trail[3] = {lead[0] - a[0] * kRainLength, lead[1] - a[1] * kRainLength,
@@ -576,7 +611,6 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
     const double dripWas = dripClock < 0.0 || weatherClockMs < dripClock ? -1.0 : dripClock / 1000.0;
     dripClock = weatherClockMs;
     if (!snow && !sand && !noDrips && drips && !drips->empty()) {
-        const float shower = std::min(1.0f, static_cast<float>(rainDrops.size() / kRainFull));
         for (std::size_t i = 0; i < drips->size(); ++i) {
             const omk::DripPoint& dp = (*drips)[i];
             const float ex = dp.x - v.cam.eye[0], ez = dp.z - v.cam.eye[2];
@@ -716,6 +750,8 @@ void PlayState::remasterRainDraws(std::vector<omk::Draw>& list, const omk::View&
                     litDrops, drawnSplashes, drawnDrips);
         omk::event("remaster.rain3d", {{"frame", frameNo}, {"drops", static_cast<long>(rainDrops.size())},
                                        {"drawn", static_cast<long>(drawnDrops)}, {"roofed", roofed},
+                                       {"gust", static_cast<long>(std::lround(
+                                                    1000.0f * remasterGust(weatherClockMs, v.cam.eye[0], shower)))},
                                        {"streak", (snow ? snowTexSlot : rainTexSlot) >= 0}, {"lit", litDrops},
                                        {"snow", snow}, {"sand", sand}, {"neon", neonDrops},
                                        {"splashes", static_cast<long>(drawnSplashes)},

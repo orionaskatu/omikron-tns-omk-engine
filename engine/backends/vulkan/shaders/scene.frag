@@ -118,7 +118,7 @@ layout(set = 1, binding = 2) uniform Lights {
     vec4  dustColour;  // ...its colour, lit as the scene (rgb)
     vec4  veil;        // THE RAIN'S VEILS (View::veil): strength, the fall's offset, the distance scale;
                        // w the PUDDLES' strength (View::puddles)
-    vec4  veilColour;  // ...their colour, lit as the scene (rgb)
+    vec4  veilColour;  // ...their colour, lit as the scene (rgb), and the gust's lean (w, `View::veilGust`)
     vec4  streakN;     // THE LIGHTS' STREAKS on the wet floors: x how many, y their strength (View::streaks)
     GpuLight streak[16];   // ...the lights (View::streakLights, kMaxStreakLights): posA, colourI
 } lg;
@@ -340,7 +340,7 @@ const float kVeilAlong = 0.0007;        // ...and along the fall: long sheets
 const float kVeilLow = 0.5;             // the noise where a sheet starts...
 const float kVeilHigh = 0.85;           // ...and where it is full
 const float kVeilMax = 0.85;            // the veils' strength at full, far off
-float veilAmount(vec3 e, vec3 w, vec4 veil) {
+float veilAmount(vec3 e, vec3 w, vec4 veil, float gust) {
     float d = length(w - e);
     if (d < kVeilFirst) return 0.0;
     vec3 dir = (w - e) / d;
@@ -349,7 +349,9 @@ float veilAmount(vec3 e, vec3 w, vec4 veil) {
         float t = kVeilFirst + float(k) * kVeilStep;
         if (t > d) break;
         vec3 p = e + dir * t;
-        vec3 q = vec3((p.x + kVeilSlant * p.y) * kVeilAcross, (p.y - veil.y) * kVeilAlong, p.z * kVeilAcross);
+        // the gust leans the sheets further, sheared about the eye's height
+        vec3 q = vec3((p.x + kVeilSlant * p.y + gust * (p.y - e.y)) * kVeilAcross, (p.y - veil.y) * kVeilAlong,
+                      p.z * kVeilAcross);
         sum += smoothstep(kVeilLow, kVeilHigh, dustNoise(q));
     }
     return veil.x * (1.0 - exp(-d / veil.z)) * sum / 3.0 * kVeilMax;
@@ -632,7 +634,7 @@ void main() {
         c = mix(c, lg.dustColour.rgb, dustAmount(lg.eye.xyz, vWorld, lg.dust));
     // ...and THE RAIN'S VEILS (`veilAmount` above), on the same batches
     if (lg.veil.x > 0.0 && (pc.fogEnd > pc.fogStart || pc.fogEnd < 0.0) && waterMode != 2)
-        c = mix(c, lg.veilColour.rgb, veilAmount(lg.eye.xyz, vWorld, lg.veil));
+        c = mix(c, lg.veilColour.rgb, veilAmount(lg.eye.xyz, vWorld, lg.veil, lg.veilColour.w));
     // THE FRESNEL (Schlick, F0 0.02 - water's): the water mirrors little
     // looked down into and nearly all at grazing, so `waterStrength` is the
     // GRAZING strength. The plane is level: cos theta is the eye ray's height.

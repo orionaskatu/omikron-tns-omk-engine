@@ -174,7 +174,7 @@ struct LightUbo {
     float   dust[4];
     float   dustColour[4];
     // THE RAIN'S VEILS (`View::veil`), at 3152: strength, the fall's offset,
-    // the distance scale; their colour at 3168
+    // the distance scale; their colour at 3168, and the gust's lean at 3180 (`View::veilGust`)
     float   veil[4];
     float   veilColour[4];
     // THE LIGHTS' STREAKS on the wet floors (`View::streakLights`), at 3184:
@@ -3455,7 +3455,7 @@ void VulkanRenderer::begin(const omk::View& view) {
         ub.veil[0] = view.veil; ub.veil[1] = view.veilFall; ub.veil[2] = view.veilScale;
         ub.veil[3] = view.puddles;   // the PUDDLES' strength, in the veils' spare
         for (int k = 0; k < 3; ++k) ub.veilColour[k] = view.veilColour[k];
-        ub.veilColour[3] = 0.0f;
+        ub.veilColour[3] = view.veilGust;   // w the gust's lean
         const int ns = static_cast<int>(std::min<std::size_t>(view.streakLights.size(),
                                                               static_cast<std::size_t>(omk::View::kMaxStreakLights)));
         for (int i = 0; i < ns; ++i) {

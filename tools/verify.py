@@ -34406,6 +34406,18 @@ def c_engine_rain3d():
          Vulkan, and on GLES. Measured 2026-10-29: 19 and 127 walking, 1
          and 124 standing. Shown to fail: the stride never counted
          (`st.owed += moved` gone) - 0 at the feet.
+     18. THE GUSTS (the weather list's 7, 2026-10-29; `remasterGust`): the
+         drawn rain leans with a wind that comes and goes - the original's
+         drops, step and roof test untouched. Anekbah's street, `--wet 1
+         --rain3d 1`, 870 frames: `remaster.rain3d`'s `gust` (the lean x1000)
+         from frame 600 to 870 spans more than 100 and is 0 throughout under
+         `OMK_NO_GUSTS=1`; at frame 870 more than 20000 pixels move against
+         it on Vulkan, more than 10000 of them the VEILS' (moved with the
+         veils, not under `OMK_NO_VEIL=1`), and on GLES the same ones
+         (overlap above 0.8). Measured 2026-10-29 (M1): the lean -81..177 (its samples to 840; 285 at 870);
+         53781 pixels, 42466 the veils', GLES 54038, overlap 0.920. Shown to
+         fail: the gust never sent to Vulkan's veils (`veilColour[3]` 0) -
+         the veils' share and the overlap; `remasterGust` 0 - every part.
       9. PAUSED (the reader: the rain went on moving in the pause menu): ESC
          at frame 650 - with `--rain3d 1` frames 700 and 710 are the same
          bytes, and with `--rain3d 0` the original's 2D rain still moves
@@ -34654,6 +34666,33 @@ def c_engine_rain3d():
             return (open(out, "rb").read() if os.path.exists(out) else None), \
                 {"feet": grew("footSplashes"), "heads": grew("headSplashes")}
         (bw1, bwe), (bw0, _) = body_splashed(vkb, 1, 1), body_splashed(vkb, 1, 0)
+        def gusted(binary, env_extra):
+            out = os.path.join(tmp, "gust%s%d.bin" % ("g" if binary.endswith("gles") else "v", len(gust_runs)))
+            gust_runs.append(out)
+            env = dict(os.environ, OMK_EVENTS="1", OMK_WEATHER_SKIP_MS="900000", **env_extra)
+            if binary.endswith("gles"):
+                env["OMK_NO_GPU_PRESENT"] = "1"
+                cmd = ["caffeinate", "-d", "-u", "-i", binary]
+            else:
+                env["SDL_VIDEODRIVER"] = "dummy"
+                cmd = [binary]
+            r = subprocess.run(cmd + [fr, os.path.join(ROOT, "tables"), "--save",
+                                      os.path.join(ROOT, "traces", "save-appart.bin"), "--area", "0",
+                                      "--stand", "1804,0,-6890,336", "--no-crowd", "--nofmv", "--nodelay",
+                                      "--saves", tempfile.mkdtemp(dir=tmp), "--res", "640x480", "--filter", "nearest",
+                                      "--frames", "870", "--detail", "2", "--wet", "1", "--rain3d", "1",
+                                      "--dump", out] + ([] if binary.endswith("gles") else ["--world-vulkan"]),
+                               capture_output=True, text=True, errors="replace", env=env, timeout=300)
+            leans = [int(k.get("gust", 0)) for n, k in _events(r.stdout)
+                     if n == "remaster.rain3d" and 600 <= int(k.get("frame", 0)) <= 870]
+            return (open(out, "rb").read() if os.path.exists(out) else None), leans
+        gust_runs = []
+        (gv1, gl1), (gv0, gl0) = gusted(vkb, {}), gusted(vkb, {"OMK_NO_GUSTS": "1"})
+        (gn1, _), (gn0, _) = gusted(vkb, {"OMK_NO_VEIL": "1"}), gusted(vkb, {"OMK_NO_VEIL": "1", "OMK_NO_GUSTS": "1"})
+        gg1 = gg0 = None
+        if platform.system() == "Darwin":
+            (gg1, _), (gg0, _) = gusted(os.path.join(eng, "build", "omk-play-gles"), {}), \
+                                 gusted(os.path.join(eng, "build", "omk-play-gles"), {"OMK_NO_GUSTS": "1"})
         _, bse = body_splashed(vkb, 0, 1)
         bg1 = bg0 = None
         if platform.system() == "Darwin":
@@ -34783,6 +34822,20 @@ def c_engine_rain3d():
         bgl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
     print(f"        the splashes off the bodies, frames 600 -> 690: walking {bwe['feet']} at the feet, "
           f"{bwe['heads']} on heads; standing {bse['feet']}, {bse['heads']}; Vulkan {bmv} pixels; GLES {bgl}")
+    gm = moved(gv1, gv0) if gv1 and gv0 else set()
+    gd = moved(gn1, gn0) if gn1 and gn0 else set()
+    if gg1 and gg0:
+        gmg = moved(gg1, gg0)
+        giou = len(gm & gmg) / max(1, len(gm | gmg))
+        ggl = (len(gmg) > 20000, giou > 0.8)
+    else:
+        ggl = ("skipped",) if platform.system() != "Darwin" else ("no frame",)
+        giou = -1.0
+    span = (max(gl1) - min(gl1)) if gl1 else 0
+    print(f"        the gusts, frames 600 -> 870: the lean {min(gl1, default=0)}..{max(gl1, default=0)}, "
+          f"{len(gl0)} samples off all 0 {all(g == 0 for g in gl0)}; Vulkan {len(gm)} pixels, the veils' "
+          f"{len(gm - gd)}; GLES {ggl}, overlap {giou:.3f}")
+    gusts = (span > 100, bool(gl0) and all(g == 0 for g in gl0), len(gm) > 20000, len(gm - gd) > 10000, ggl)
     bodysplash = (bwe["feet"] >= 10, bwe["heads"] > 0, 0 <= bse["feet"] <= 3, bse["heads"] > 0, bmv > 200, bgl)
     hgl = ("skipped",)
     if not os.path.isdir(hpack):
@@ -34804,17 +34857,18 @@ def c_engine_rain3d():
     print(f"        back into the shower: {reenter}; paused - the 3D rain held, the 2D one moving: {held}; "
           f"the restored sand in the scene: {sd}")
     return (src_ok, scene, flat, len(mv) > 1000, gl, overcast, snowed, roofed_shower, reenter, held, sand3d,
-            dusted, neoned, veils, splashes, haloes, dripped_, bodysplash), \
+            dusted, neoned, veils, splashes, haloes, dripped_, bodysplash, gusts), \
            ((True,) * 4, ("200", True, True, "1", True, True, True), True, True, _or_skip(gl, (True, True)),
             (16, 0), ("1", True, "1", True), (True, True, True), (True, True), (True, True), ("1", True, "1", -16),
             (True, _or_skip(dgl, (True, True))), (True, 0), (True, _or_skip(vgl, (True, True))),
             (True, 0, True, _or_skip(sgl, (True, True))),
             _or_skip(haloes, (True, _or_skip(hgl, (True, True)))),
             (True, True, True, 0, True, _or_skip(rgl, (True, True))),
-            (True, True, True, True, True, _or_skip(bgl, True))), \
+            (True, True, True, True, True, _or_skip(bgl, True)),
+            (True, True, True, True, _or_skip(ggl, (True, True)))), \
         "the source (off by default, [Remaster] only, never all = max, the preset's 1); at full rain the 200 " \
         "drops drawn in the scene, some stopped by a roof, no 2D streaks; without it the 2D streaks; the rain's " \
-        "pixels on Vulkan and GLES, the same; the splashes; the bodies' splashes"
+        "pixels on Vulkan and GLES, the same; the splashes; the bodies' splashes; the gusts"
 
 
 def c_engine_clip_memo():
